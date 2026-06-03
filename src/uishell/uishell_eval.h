@@ -46,6 +46,16 @@ struct UIShell_EvalSchemaChildren
 ////////////////////////////////
 //~ rjf: Shell Query Provider Hooks
 
+E_TYPE_ACCESS_FUNCTION_DEF(uishell_commands);
+E_TYPE_EXPAND_INFO_FUNCTION_DEF(uishell_commands);
+E_TYPE_EXPAND_RANGE_FUNCTION_DEF(uishell_commands);
+E_TYPE_ACCESS_FUNCTION_DEF(uishell_themes);
+E_TYPE_EXPAND_INFO_FUNCTION_DEF(uishell_themes);
+E_TYPE_EXPAND_RANGE_FUNCTION_DEF(uishell_themes);
+E_TYPE_ACCESS_FUNCTION_DEF(uishell_views);
+E_TYPE_EXPAND_INFO_FUNCTION_DEF(uishell_views);
+E_TYPE_EXPAND_RANGE_FUNCTION_DEF(uishell_views);
+
 internal String8Array uishell_eval_command_names_from_filter(Arena *arena, RD_CmdKindFlags required_flags, String8 filter);
 internal String8Array uishell_eval_view_names_from_filter(Arena *arena, String8 filter);
 internal String8Array uishell_eval_theme_names_from_filter(Arena *arena, String8 filter);

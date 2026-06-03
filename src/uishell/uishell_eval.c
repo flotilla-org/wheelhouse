@@ -4,6 +4,140 @@
 ////////////////////////////////
 //~ rjf: Shell Eval Provider Helpers
 
+E_TYPE_ACCESS_FUNCTION_DEF(uishell_commands)
+{
+  E_IRTreeAndType result = {&e_irnode_nil};
+  if(expr->kind == E_ExprKind_MemberAccess)
+  {
+    String8 cmd_name = expr->first->next->string;
+    UIShell_CmdInfo *cmd_info = uishell_cmd_info_from_name(cmd_name);
+    E_TypeKey cmd_type = e_type_key_cons(.kind = E_TypeKind_U64, .name = str8_lit("command"));
+    cmd_type = e_type_key_cons_meta_description(cmd_type, cmd_info->description);
+    result.type_key = cmd_type;
+    result.mode = E_Mode_Value;
+    result.root = e_irtree_set_space(arena, e_space_make(RD_EvalSpaceKind_MetaCmd), e_irtree_const_u(arena, e_id_from_string(cmd_name)));
+  }
+  return result;
+}
+
+E_TYPE_EXPAND_INFO_FUNCTION_DEF(uishell_commands)
+{
+  E_TypeExpandInfo result = {0};
+  {
+    E_Type *type = e_type_from_key(eval.irtree.type_key);
+    RD_CmdKindFlags required_flags = RD_CmdKindFlag_ListInUI;
+    if(str8_match(type->name, str8_lit("text_pt_commands"), 0))
+    {
+      required_flags |= RD_CmdKindFlag_ListInTextPt;
+    }
+    if(str8_match(type->name, str8_lit("text_range_commands"), 0))
+    {
+      required_flags |= RD_CmdKindFlag_ListInTextRng;
+    }
+    if(str8_match(type->name, str8_lit("tab_commands"), 0))
+    {
+      required_flags |= RD_CmdKindFlag_ListInTab;
+    }
+    UIShell_EvalContext ctx = {.required_cmd_flags = required_flags};
+    UIShell_EvalProvider *provider = uishell_eval_provider_from_namespace(str8_lit("query:commands"));
+    String8Array *accel = push_array(arena, String8Array, 1);
+    *accel = provider->children(arena, &ctx, filter);
+    result.user_data = accel;
+    result.expr_count = accel->count;
+  }
+  return result;
+}
+
+E_TYPE_EXPAND_RANGE_FUNCTION_DEF(uishell_commands)
+{
+  U64 out_idx = 0;
+  String8Array *accel = (String8Array *)user_data;
+  for(U64 idx = idx_range.min; idx < idx_range.max; idx += 1, out_idx += 1)
+  {
+    String8 cmd_name = accel->v[idx];
+    E_Eval cmd_eval = e_eval_from_stringf("query:commands.%S", cmd_name);
+    evals_out[out_idx] = cmd_eval;
+  }
+}
+
+E_TYPE_ACCESS_FUNCTION_DEF(uishell_themes)
+{
+  E_IRTreeAndType result = {&e_irnode_nil};
+  if(expr->kind == E_ExprKind_ArrayIndex &&
+     expr->first->next->kind == E_ExprKind_LeafStringLiteral)
+  {
+    String8 theme_name = expr->first->next->string;
+    E_TypeKey theme_type = e_type_key_cons(.kind = E_TypeKind_U64, .name = str8_lit("theme"));
+    result.type_key = theme_type;
+    result.mode = E_Mode_Value;
+    result.root = e_irtree_set_space(arena, e_space_make(RD_EvalSpaceKind_MetaTheme), e_irtree_const_u(arena, e_id_from_string(theme_name)));
+  }
+  return result;
+}
+
+E_TYPE_EXPAND_INFO_FUNCTION_DEF(uishell_themes)
+{
+  E_TypeExpandInfo result = {0};
+  {
+    UIShell_EvalProvider *provider = uishell_eval_provider_from_namespace(str8_lit("query:themes"));
+    String8Array *accel = push_array(arena, String8Array, 1);
+    *accel = provider->children(arena, 0, filter);
+    result.user_data = accel;
+    result.expr_count = accel->count;
+  }
+  return result;
+}
+
+E_TYPE_EXPAND_RANGE_FUNCTION_DEF(uishell_themes)
+{
+  U64 out_idx = 0;
+  String8Array *accel = (String8Array *)user_data;
+  for(U64 idx = idx_range.min; idx < idx_range.max; idx += 1, out_idx += 1)
+  {
+    String8 name = accel->v[idx];
+    evals_out[out_idx] = e_eval_wrapf(eval, "$[\"%S\"]", name);
+  }
+}
+
+E_TYPE_ACCESS_FUNCTION_DEF(uishell_views)
+{
+  E_IRTreeAndType result = {&e_irnode_nil};
+  if(expr->kind == E_ExprKind_ArrayIndex &&
+     expr->first->next->kind == E_ExprKind_LeafStringLiteral)
+  {
+    String8 view_name = expr->first->next->string;
+    E_TypeKey view_type = e_type_key_cons(.kind = E_TypeKind_U64, .name = str8_lit("view"));
+    result.type_key = view_type;
+    result.mode = E_Mode_Null;
+    result.root = e_irtree_set_space(arena, e_space_make(RD_EvalSpaceKind_MetaView), e_irtree_const_u(arena, e_id_from_string(view_name)));
+  }
+  return result;
+}
+
+E_TYPE_EXPAND_INFO_FUNCTION_DEF(uishell_views)
+{
+  E_TypeExpandInfo result = {0};
+  {
+    UIShell_EvalProvider *provider = uishell_eval_provider_from_namespace(str8_lit("query:views"));
+    String8Array *accel = push_array(arena, String8Array, 1);
+    *accel = provider->children(arena, 0, filter);
+    result.user_data = accel;
+    result.expr_count = accel->count;
+  }
+  return result;
+}
+
+E_TYPE_EXPAND_RANGE_FUNCTION_DEF(uishell_views)
+{
+  U64 out_idx = 0;
+  String8Array *accel = (String8Array *)user_data;
+  for(U64 idx = idx_range.min; idx < idx_range.max; idx += 1, out_idx += 1)
+  {
+    String8 name = accel->v[idx];
+    evals_out[out_idx] = e_eval_from_string(name);
+  }
+}
+
 internal void
 uishell_eval_cmd_names_push_filtered(Arena *arena, String8List *cmd_names, UIShell_CmdInfo *info, RD_CmdKindFlags required_flags, String8 filter)
 {
@@ -335,11 +469,11 @@ uishell_eval_register_query_macros(Arena *arena, Arena *type_arena, E_String2Exp
       E_TypeKey type_key = e_type_key_cons(.kind = E_TypeKind_Set,
                                            .flags = E_TypeFlag_StubSingleLineExpansion,
                                            .name = name,
-                                           .access = E_TYPE_ACCESS_FUNCTION_NAME(commands),
+                                           .access = E_TYPE_ACCESS_FUNCTION_NAME(uishell_commands),
                                            .expand =
                                            {
-                                             .info  = E_TYPE_EXPAND_INFO_FUNCTION_NAME(commands),
-                                             .range = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(commands),
+                                             .info  = E_TYPE_EXPAND_INFO_FUNCTION_NAME(uishell_commands),
+                                             .range = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(uishell_commands),
                                            });
       E_Expr *expr = e_push_expr(arena, E_ExprKind_LeafOffset, r1u64(0, 0));
       expr->type_key = type_key;
@@ -360,11 +494,11 @@ uishell_eval_register_query_macros(Arena *arena, Arena *type_arena, E_String2Exp
       E_TypeKey type_key = e_type_key_cons(.kind = E_TypeKind_Set,
                                            .flags = E_TypeFlag_StubSingleLineExpansion,
                                            .name = name,
-                                           .access = E_TYPE_ACCESS_FUNCTION_NAME(themes),
+                                           .access = E_TYPE_ACCESS_FUNCTION_NAME(uishell_themes),
                                            .expand =
                                            {
-                                             .info  = E_TYPE_EXPAND_INFO_FUNCTION_NAME(themes),
-                                             .range = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(themes),
+                                             .info  = E_TYPE_EXPAND_INFO_FUNCTION_NAME(uishell_themes),
+                                             .range = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(uishell_themes),
                                            });
       E_Expr *expr = e_push_expr(arena, E_ExprKind_LeafOffset, r1u64(0, 0));
       expr->type_key = type_key;
@@ -385,11 +519,11 @@ uishell_eval_register_query_macros(Arena *arena, Arena *type_arena, E_String2Exp
       E_TypeKey type_key = e_type_key_cons(.kind = E_TypeKind_Set,
                                            .flags = E_TypeFlag_StubSingleLineExpansion,
                                            .name = name,
-                                           .access = E_TYPE_ACCESS_FUNCTION_NAME(views),
+                                           .access = E_TYPE_ACCESS_FUNCTION_NAME(uishell_views),
                                            .expand =
                                            {
-                                             .info  = E_TYPE_EXPAND_INFO_FUNCTION_NAME(views),
-                                             .range = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(views),
+                                             .info  = E_TYPE_EXPAND_INFO_FUNCTION_NAME(uishell_views),
+                                             .range = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(uishell_views),
                                            });
       E_Expr *expr = e_push_expr(arena, E_ExprKind_LeafOffset, r1u64(0, 0));
       expr->type_key = type_key;

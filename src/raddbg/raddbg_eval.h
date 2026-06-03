@@ -5,27 +5,6 @@
 #define RADDBG_EVAL_H
 
 ////////////////////////////////
-//~ rjf: `commands` Type Hooks
-
-E_TYPE_ACCESS_FUNCTION_DEF(commands);
-E_TYPE_EXPAND_INFO_FUNCTION_DEF(commands);
-E_TYPE_EXPAND_RANGE_FUNCTION_DEF(commands);
-
-////////////////////////////////
-//~ rjf: `themes` Type Hooks
-
-E_TYPE_ACCESS_FUNCTION_DEF(themes);
-E_TYPE_EXPAND_INFO_FUNCTION_DEF(themes);
-E_TYPE_EXPAND_RANGE_FUNCTION_DEF(themes);
-
-////////////////////////////////
-//~ rjf: `views` Type Hooks
-
-E_TYPE_ACCESS_FUNCTION_DEF(views);
-E_TYPE_EXPAND_INFO_FUNCTION_DEF(views);
-E_TYPE_EXPAND_RANGE_FUNCTION_DEF(views);
-
-////////////////////////////////
 //~ rjf: Schema Type Hooks
 
 E_TYPE_IREXT_FUNCTION_DEF(schema);

@@ -176,7 +176,7 @@ The order from here is:
 ## Next Cuts
 
 1. Split the evaluator boundary into shell app-state providers and debugger/RDI machinery. The shell wants expressions over app state, config, files, windows, panels, tabs, current selection, and app-provided overlays; it does not want the RDI bytecode interpreter, process/register memory spaces, debug modules, or debug-info symbol lookup.
-2. Continue moving current shell query providers out of `raddbg_eval.c` into the shell-owned provider layer. Command, view, theme, config-child, schema-expansion, and query-root registration now live in `uishell_eval.*`; the remaining work is adapting the evaluator/list wrappers and moving tab/file-system rows.
+2. Continue moving current shell query providers out of `raddbg_eval.c` into the shell-owned provider layer. Command, view, theme, config-child, schema-expansion, and query-root registration now live in `uishell_eval.*`; the remaining work is adapting the schema/config evaluator/list wrappers and moving file-system rows.
 3. Keep the list/property rendering behavior, but make it consume shell provider rows instead of debugger-shaped `E_Eval`/RDI type payloads. This is the principled replacement for the remaining generic property/list dialogs, not a recreation of watch-window debugger behavior.
 4. Keep query completion and shell command metadata on shell-owned packets; do not revive the old debugger watch/query table path unless a concrete shell feature needs it.
 5. Continue replacing shell-facing `RD_Regs *` storage declarations with `UIShell_Regs *` at stable ownership points, next targeting query state, hover state, and drag/drop state.

@@ -209,9 +209,11 @@ Thirteenth slice: more active shell query row production has moved into `src/uis
 
 Fourteenth slice: shell query-root registration has moved into `uishell_eval_register_query_macros`. `rd_frame` no longer constructs the command, tab-command, theme, view, top-level config, or config collection query roots inline. This moves the `query:recent_projects` registration path into shell-owned code while still using the inherited `cfgs_slice` adapter to render the rows.
 
+Fifteenth slice: the simple command/theme/view `E_TYPE_*` adapters have moved out of `raddbg_eval.c` and into shell-owned hook names in `uishell_eval.c`. `raddbg_eval.c` now starts at schema/config hooks; command, tab-command, theme, and view lists still flow through the existing evaluator/list renderer, but their access and expansion callbacks are no longer RAD-named.
+
 The current source split is:
 
-- `src/raddbg/raddbg_eval.c`: active shell query/config behavior still has inherited `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
+- `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
 - `src/eval/eval_parse.c`: mostly reusable parsing/tokenization. RDI type-name lookup and primary-module architecture assumptions are gone; pointer type construction now uses the evaluator's explicit address architecture.
 - `src/eval/eval_core.*`: mixed infrastructure. Generic expression/type/value/cache shapes are reusable in principle. Module arrays, instruction-pointer fields, thread register/process spaces, thread architecture/unwind state, TLS conversion, and register maps are gone.
 - `src/eval/eval_types.*`: mixed. Basic scalar/array/struct/type formatting can inform the shell value model. RDI type construction and RDI member expansion are gone, but debug-flavored auto-hook/type-lens behavior still needs review.
