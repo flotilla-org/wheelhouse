@@ -163,7 +163,6 @@ typedef enum E_TypeKeyKind
 {
   E_TypeKeyKind_Null,
   E_TypeKeyKind_Basic,
-  E_TypeKeyKind_Ext,
   E_TypeKeyKind_Cons,
   E_TypeKeyKind_Reg,
 }
@@ -1241,7 +1240,6 @@ internal void e_select_ir_ctx(E_IRCtx *ctx);
 //~ rjf: Context Accessors
 
 internal E_DbgInfo *e_dbg_info_from_module(E_Module *module);
-internal E_DbgInfo *e_dbg_info_from_type_key(E_TypeKey type_key);
 internal U32 e_dbg_info_num_from_rdi_prefer_primary(RDI_Parsed *rdi);
 
 ////////////////////////////////

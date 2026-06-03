@@ -963,47 +963,6 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
       //- rjf: symbolof
       case E_ExprKind_Symbolof:
       {
-        E_IRTreeAndType r_tree = e_push_irtree_and_type_from_expr(arena, parent, &e_default_identifier_resolution_rule, disallow_autohooks, 1, expr->first);
-        E_IRNode *r_value_tree = e_irtree_resolve_to_value(arena, r_tree.mode, r_tree.root, r_tree.type_key);
-        E_OpList oplist = e_oplist_from_irtree(scratch.arena, r_value_tree);
-        String8 bytecode = e_bytecode_from_oplist(scratch.arena, &oplist);
-        E_Interpretation interpretation = e_interpret(bytecode);
-        E_Module *module = &e_module_nil;
-        for EachIndex(idx, e_base_ctx->modules_count)
-        {
-          E_Module *m = &e_base_ctx->modules[idx];
-          if(e_space_match(interpretation.space, m->space) && contains_1u64(m->vaddr_range, interpretation.value.u64))
-          {
-            module = m;
-            break;
-          }
-        }
-        if(module != &e_module_nil)
-        {
-          E_DbgInfo *dbg_info = e_dbg_info_from_module(module);
-          U64 voff = interpretation.value.u64 - module->vaddr_range.min;
-          U64 new_vaddr = 0;
-          RDI_Symbol *p = rdi_procedure_from_voff(dbg_info->rdi, voff);
-          RDI_Symbol *g = rdi_global_variable_from_voff(dbg_info->rdi, voff);
-          U32 type_idx = 0;
-          if(p->name_string_idx != 0)
-          {
-            type_idx = p->type_idx;
-            new_vaddr = module->vaddr_range.min + rdi_first_voff_from_procedure(dbg_info->rdi, p);
-          }
-          else if(g->name_string_idx != 0 && rdi_kind_from_location(g->location) == RDI_LocationKind_ModuleOff)
-          {
-            type_idx = g->type_idx;
-            new_vaddr = module->vaddr_range.min + rdi_voff_from_location(g->location);
-          }
-          if(type_idx != 0)
-          {
-            RDI_TypeNode *t = rdi_element_from_name_idx(dbg_info->rdi, TypeNodes, type_idx);
-            result.root = e_irtree_const_u(arena, new_vaddr);
-            result.mode = E_Mode_Value;
-            result.type_key = e_type_key_ext(e_type_kind_from_rdi(t->kind), type_idx, module->dbg_info_num);
-          }
-        }
       }break;
       
       //- rjf: byteswap
@@ -2098,75 +2057,6 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
       {
         E_IRExt ext = irext(arena, expr, &result);
         result.user_data = ext.user_data;
-      }
-    }
-    
-    //- rjf: if the evaluated type has a virtual table pointer, then we must
-    // pre-emptively evaluate this ir tree, and determine a more resolved type.
-    if(!disallow_autohooks && result.mode != E_Mode_Null)
-    {
-      E_TypeKey type_key = e_type_key_unwrap(result.type_key, E_TypeUnwrapFlag_Modifiers);
-      if(e_type_kind_is_pointer_or_ref(e_type_kind_from_key(type_key)))
-      {
-        E_TypeKey ptee_key = e_type_key_unwrap(result.type_key, E_TypeUnwrapFlag_All);
-        E_TypeKind ptee_kind = e_type_kind_from_key(ptee_key);
-        if(ptee_kind == E_TypeKind_Struct || 
-           ptee_kind == E_TypeKind_Class)
-        {
-          E_Type *ptee_type = e_type_from_key(ptee_key);
-          B32 has_vtable = 0;
-          for(U64 idx = 0; idx < ptee_type->count; idx += 1)
-          {
-            if(ptee_type->members[idx].kind == E_MemberKind_VirtualMethod)
-            {
-              has_vtable = 1;
-              break;
-            }
-          }
-          if(has_vtable)
-          {
-            E_IRNode *class_base_value_tree = e_irtree_resolve_to_value(scratch.arena, result.mode, result.root, result.type_key);
-            E_OpList oplist = e_oplist_from_irtree(scratch.arena, class_base_value_tree);
-            String8 bytecode = e_bytecode_from_oplist(scratch.arena, &oplist);
-            E_Interpretation interpret = e_interpret(bytecode);
-            U64 class_base_vaddr = interpret.value.u64;
-            U64 vtable_vaddr = 0;
-            U64 addr_size = e_type_byte_size_from_key(type_key);
-            if(e_space_read(interpret.space, &vtable_vaddr, 0, r1u64(class_base_vaddr, class_base_vaddr+addr_size)))
-            {
-              Arch arch = e_base_ctx->primary_module->arch;
-              U32 dbg_info_num = 0;
-              RDI_Parsed *rdi = 0;
-              U64 module_base = 0;
-              for(U64 idx = 0; idx < e_base_ctx->modules_count; idx += 1)
-              {
-                if(contains_1u64(e_base_ctx->modules[idx].vaddr_range, vtable_vaddr))
-                {
-                  E_DbgInfo *dbg_info = e_dbg_info_from_module(&e_base_ctx->modules[idx]);
-                  arch = e_base_ctx->modules[idx].arch;
-                  module_base = e_base_ctx->modules[idx].vaddr_range.min;
-                  dbg_info_num = e_base_ctx->modules[idx].dbg_info_num;
-                  rdi = dbg_info->rdi;
-                  break;
-                }
-              }
-              if(rdi != 0)
-              {
-                U64 vtable_voff = vtable_vaddr - module_base;
-                U64 global_idx = rdi_vmap_idx_from_section_kind_voff(rdi, RDI_SectionKind_GlobalVMap, vtable_voff);
-                RDI_Symbol *global_var = rdi_element_from_name_idx(rdi, GlobalVariables, global_idx);
-                if((global_var->container_flags & RDI_ContainerFlag_KindMask) == RDI_ContainerKind_Type)
-                {
-                  RDI_UDT *udt = rdi_element_from_name_idx(rdi, UDTs, global_var->container_idx);
-                  RDI_TypeNode *type = rdi_element_from_name_idx(rdi, TypeNodes, udt->self_type_idx);
-                  E_TypeKey derived_type_key = e_type_key_ext(e_type_kind_from_rdi(type->kind), udt->self_type_idx, dbg_info_num);
-                  E_TypeKey ptr_to_derived_type_key = e_type_key_cons_ptr(arch, derived_type_key, 1, 0);
-                  result.type_key = ptr_to_derived_type_key;
-                }
-              }
-            }
-          }
-        }
       }
     }
     

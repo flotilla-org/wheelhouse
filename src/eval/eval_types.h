@@ -42,8 +42,6 @@ global read_only E_TypeExpandRule e_type_expand_rule__default =
 //~ rjf: Type Kind Enum Functions
 
 internal E_TypeKind e_type_kind_from_base(TypeKind kind);
-internal E_TypeKind e_type_kind_from_rdi(RDI_TypeKind kind);
-internal E_MemberKind e_member_kind_from_rdi(RDI_MemberKind kind);
 internal RDI_EvalTypeGroup e_type_group_from_kind(E_TypeKind kind);
 internal B32 e_type_kind_is_integer(E_TypeKind kind);
 internal B32 e_type_kind_is_signed(E_TypeKind kind);
@@ -70,7 +68,6 @@ internal E_EnumValArray e_enum_val_array_from_list(Arena *arena, E_EnumValList *
 //- rjf: basic key constructors
 internal E_TypeKey e_type_key_zero(void);
 internal E_TypeKey e_type_key_basic(E_TypeKind kind);
-internal E_TypeKey e_type_key_ext(E_TypeKind kind, U32 type_idx, U32 rdi_num);
 internal E_TypeKey e_type_key_reg(Arch arch, ARCH_RegCode code);
 
 //- rjf: constructed type construction

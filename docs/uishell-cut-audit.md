@@ -197,6 +197,8 @@ Seventh slice: debug-info name/type resolution has been removed from the active 
 
 Eighth slice: scoped debugger identifier materialization has been removed from the active evaluator. The default/callable identifier paths no longer include local-variable or implicit-`this` member lookup, the RDI scope-to-local/member map builders are gone, and code coloring no longer consults local/member maps. Generic parent-expression member access over constructed shell types remains intact for config/file/property views.
 
+Ninth slice: external RDI type keys have been removed from the shell evaluator. `E_TypeKeyKind_Ext`, `e_type_key_ext`, RDI-to-eval type/member kind conversion, RDI record/enum/function/alias/bitfield type materialization, `symbolof` debug-info resolution, dynamic vtable-derived type correction, and pointer-to-procedure/inline symbol display are gone. Built-in, constructed, register, lens, and shell expand-rule types remain.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell query/config provider behavior still lives here. It constructs the current `query:commands`, config/settings, theme, view, and metadata rows. This is the first code to fork into `src/uishell`, because it is shell product behavior but still RAD-named and expressed through `E_*`/`RD_EvalSpaceKind_*`.
