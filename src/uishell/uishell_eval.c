@@ -317,6 +317,152 @@ uishell_eval_cfg_children_from_parent(Arena *arena, CFG_Node *root_cfg, String8 
   return result;
 }
 
+internal void
+uishell_eval_register_query_macros(Arena *arena, Arena *type_arena, E_String2ExprMap *macro_map, E_String2TypeKeyMap *type_map)
+{
+  //- rjf: add macros for command groups
+  {
+    String8 names[] =
+    {
+      str8_lit("commands"),
+      str8_lit("tab_commands"),
+      str8_lit("text_pt_commands"),
+      str8_lit("text_range_commands"),
+    };
+    for EachElement(idx, names)
+    {
+      String8 name = names[idx];
+      E_TypeKey type_key = e_type_key_cons(.kind = E_TypeKind_Set,
+                                           .flags = E_TypeFlag_StubSingleLineExpansion,
+                                           .name = name,
+                                           .access = E_TYPE_ACCESS_FUNCTION_NAME(commands),
+                                           .expand =
+                                           {
+                                             .info  = E_TYPE_EXPAND_INFO_FUNCTION_NAME(commands),
+                                             .range = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(commands),
+                                           });
+      E_Expr *expr = e_push_expr(arena, E_ExprKind_LeafOffset, r1u64(0, 0));
+      expr->type_key = type_key;
+      expr->space = e_space_make(RD_EvalSpaceKind_MetaQuery);
+      e_string2expr_map_insert(arena, macro_map, name, expr);
+    }
+  }
+
+  //- rjf: add macro for themes
+  {
+    String8 names[] =
+    {
+      str8_lit("themes"),
+    };
+    for EachElement(idx, names)
+    {
+      String8 name = names[idx];
+      E_TypeKey type_key = e_type_key_cons(.kind = E_TypeKind_Set,
+                                           .flags = E_TypeFlag_StubSingleLineExpansion,
+                                           .name = name,
+                                           .access = E_TYPE_ACCESS_FUNCTION_NAME(themes),
+                                           .expand =
+                                           {
+                                             .info  = E_TYPE_EXPAND_INFO_FUNCTION_NAME(themes),
+                                             .range = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(themes),
+                                           });
+      E_Expr *expr = e_push_expr(arena, E_ExprKind_LeafOffset, r1u64(0, 0));
+      expr->type_key = type_key;
+      expr->space = e_space_make(RD_EvalSpaceKind_MetaQuery);
+      e_string2expr_map_insert(arena, macro_map, name, expr);
+    }
+  }
+
+  //- rjf: add macro for views
+  {
+    String8 names[] =
+    {
+      str8_lit("views"),
+    };
+    for EachElement(idx, names)
+    {
+      String8 name = names[idx];
+      E_TypeKey type_key = e_type_key_cons(.kind = E_TypeKind_Set,
+                                           .flags = E_TypeFlag_StubSingleLineExpansion,
+                                           .name = name,
+                                           .access = E_TYPE_ACCESS_FUNCTION_NAME(views),
+                                           .expand =
+                                           {
+                                             .info  = E_TYPE_EXPAND_INFO_FUNCTION_NAME(views),
+                                             .range = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(views),
+                                           });
+      E_Expr *expr = e_push_expr(arena, E_ExprKind_LeafOffset, r1u64(0, 0));
+      expr->type_key = type_key;
+      expr->space = e_space_make(RD_EvalSpaceKind_MetaQuery);
+      e_string2expr_map_insert(arena, macro_map, name, expr);
+    }
+  }
+
+  //- rjf: build schema types & cache (name -> type) mapping
+  for EachElement(idx, uishell_name_schema_info_table)
+  {
+    String8 name = uishell_name_schema_info_table[idx].name;
+    E_TypeKey type_key = e_type_key_cons(.name = name,
+                                         .kind = E_TypeKind_Set,
+                                         .irext  = E_TYPE_IREXT_FUNCTION_NAME(schema),
+                                         .access = E_TYPE_ACCESS_FUNCTION_NAME(schema),
+                                         .expand =
+                                         {
+                                           .info  = E_TYPE_EXPAND_INFO_FUNCTION_NAME(schema),
+                                           .range = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(schema),
+                                         });
+    e_string2typekey_map_insert(type_arena, type_map, name, type_key);
+  }
+
+  //- rjf: add macro for top-level config root
+  {
+    String8 name = str8_lit("config");
+    E_TypeKey type_key = e_type_key_cons(.name = name,
+                                         .kind = E_TypeKind_Set,
+                                         .access = E_TYPE_ACCESS_FUNCTION_NAME(cfgs));
+    E_Expr *expr = e_push_expr(arena, E_ExprKind_LeafOffset, r1u64(0, 0));
+    expr->type_key = type_key;
+    expr->space = e_space_make(RD_EvalSpaceKind_MetaQuery);
+    e_string2expr_map_insert(arena, macro_map, name, expr);
+    e_string2typekey_map_insert(type_arena, type_map, name, type_key);
+  }
+
+  //- rjf: add macros for shell config collection queries
+  String8 evallable_cfg_names[] =
+  {
+    str8_lit("breakpoint"),
+    str8_lit("watch_pin"),
+    str8_lit("target"),
+    str8_lit("file_path_map"),
+    str8_lit("type_view"),
+    str8_lit("recent_project"),
+  };
+  for EachElement(cfg_name_idx, evallable_cfg_names)
+  {
+    String8 cfg_name = evallable_cfg_names[cfg_name_idx];
+    if(!uishell_cfg_schema_name_is_listed(cfg_name))
+    {
+      continue;
+    }
+    String8 collection_name = rd_plural_from_code_name(cfg_name);
+    E_TypeKey collection_type_key = e_type_key_cons(.kind = E_TypeKind_Set, .name = collection_name,
+                                                    .irext = E_TYPE_IREXT_FUNCTION_NAME(cfgs_slice),
+                                                    .access = E_TYPE_ACCESS_FUNCTION_NAME(cfgs_slice),
+                                                    .expand =
+                                                    {
+                                                      .info = E_TYPE_EXPAND_INFO_FUNCTION_NAME(cfgs_slice),
+                                                      .range= E_TYPE_EXPAND_RANGE_FUNCTION_NAME(cfgs_slice),
+                                                      .id_from_num = E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(cfgs_slice),
+                                                      .num_from_id = E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_NAME(cfgs_slice),
+                                                    });
+    E_Expr *expr = e_push_expr(arena, E_ExprKind_LeafOffset, r1u64(0, 0));
+    expr->type_key = collection_type_key;
+    expr->space = e_space_make(RD_EvalSpaceKind_MetaQuery);
+    e_string2expr_map_insert(arena, macro_map, collection_name, expr);
+    e_string2typekey_map_insert(type_arena, type_map, collection_name, collection_type_key);
+  }
+}
+
 ////////////////////////////////
 //~ rjf: Shell Eval Providers
 

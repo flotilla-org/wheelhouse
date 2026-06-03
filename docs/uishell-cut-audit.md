@@ -207,9 +207,11 @@ Twelfth slice: the fake module/IP base-context scaffolding has been removed. `E_
 
 Thirteenth slice: more active shell query row production has moved into `src/uishell/uishell_eval.*`. The shell provider table now owns `query:themes`, and theme preset/file filtering no longer lives in `raddbg_eval.c`. Schema expansion row gathering for preferences/settings also moved to `uishell_eval_schema_children_from_cfg_and_schemas`; the inherited `E_TYPE_*` wrapper still adapts those shell rows back into the existing evaluator/list machinery.
 
+Fourteenth slice: shell query-root registration has moved into `uishell_eval_register_query_macros`. `rd_frame` no longer constructs the command, tab-command, theme, view, top-level config, or config collection query roots inline. This moves the `query:recent_projects` registration path into shell-owned code while still using the inherited `cfgs_slice` adapter to render the rows.
+
 The current source split is:
 
-- `src/raddbg/raddbg_eval.c`: active shell query/config behavior still has inherited `E_TYPE_*` wrappers here. Command, view, theme, config-child, and schema-expansion row gathering now delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
+- `src/raddbg/raddbg_eval.c`: active shell query/config behavior still has inherited `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
 - `src/eval/eval_parse.c`: mostly reusable parsing/tokenization. RDI type-name lookup and primary-module architecture assumptions are gone; pointer type construction now uses the evaluator's explicit address architecture.
 - `src/eval/eval_core.*`: mixed infrastructure. Generic expression/type/value/cache shapes are reusable in principle. Module arrays, instruction-pointer fields, thread register/process spaces, thread architecture/unwind state, TLS conversion, and register maps are gone.
 - `src/eval/eval_types.*`: mixed. Basic scalar/array/struct/type formatting can inform the shell value model. RDI type construction and RDI member expansion are gone, but debug-flavored auto-hook/type-lens behavior still needs review.

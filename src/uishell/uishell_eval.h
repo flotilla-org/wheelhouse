@@ -53,6 +53,7 @@ internal UIShell_EvalSchemaChildren uishell_eval_schema_children_from_cfg_and_sc
 internal UIShell_EvalCfgChildren uishell_eval_cfg_children_from_name(Arena *arena, String8 cfg_name);
 internal CFG_NodePtrArray uishell_eval_cfg_array_from_filter(Arena *arena, CFG_NodePtrArray cfgs, String8 filter);
 internal UIShell_EvalCfgChildren uishell_eval_cfg_children_from_parent(Arena *arena, CFG_Node *root_cfg, String8 child_key, String8 filter);
+internal void uishell_eval_register_query_macros(Arena *arena, Arena *type_arena, E_String2ExprMap *macro_map, E_String2TypeKeyMap *type_map);
 internal UIShell_EvalProvider *uishell_eval_provider_from_namespace(String8 namespace_name);
 
 #endif // UISHELL_EVAL_H
