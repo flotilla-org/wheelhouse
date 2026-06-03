@@ -156,44 +156,6 @@ struct DI_LoadCompletion
 };
 
 ////////////////////////////////
-//~ rjf: Search Types
-
-typedef struct DI_SearchItem DI_SearchItem;
-struct DI_SearchItem
-{
-  U64 idx;
-  DI_Key key;
-  U64 missed_size;
-  FuzzyMatchRangeList match_ranges;
-};
-
-typedef struct DI_SearchItemChunk DI_SearchItemChunk;
-struct DI_SearchItemChunk
-{
-  DI_SearchItemChunk *next;
-  U64 base_idx;
-  DI_SearchItem *v;
-  U64 count;
-  U64 cap;
-};
-
-typedef struct DI_SearchItemChunkList DI_SearchItemChunkList;
-struct DI_SearchItemChunkList
-{
-  DI_SearchItemChunk *first;
-  DI_SearchItemChunk *last;
-  U64 chunk_count;
-  U64 total_count;
-};
-
-typedef struct DI_SearchItemArray DI_SearchItemArray;
-struct DI_SearchItemArray
-{
-  DI_SearchItem *v;
-  U64 count;
-};
-
-////////////////////////////////
 //~ rjf: Match Types
 
 typedef struct DI_Match DI_Match;
@@ -355,7 +317,6 @@ internal void di_conversion_completion_signal_receiver_thread_entry_point(void *
 
 internal AC_Artifact di_search_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U64 *gen_out);
 internal void di_search_artifact_destroy(AC_Artifact artifact);
-internal DI_SearchItemArray di_search_item_array_from_target_query(Access *access, RDI_SectionKind target, String8 query, U64 endt_us, B32 *stale_out);
 
 ////////////////////////////////
 //~ rjf: Match Artifact Cache Hooks / Lookups

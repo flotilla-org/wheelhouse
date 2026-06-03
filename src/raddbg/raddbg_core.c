@@ -6162,7 +6162,7 @@ rd_set_autocomp_regs_(E_Eval dst_eval, RD_Regs *regs)
       // rjf: calculate most general list expression, given the dst_eval space
       B32 force_allow = 0;
       B32 expr_based_replace = 1;
-      String8 list_expr = str8_lit("query:locals, query:views, query:globals, query:thread_locals, query:procedures, query:types, query:constants");
+      String8 list_expr = str8_lit("query:views");
       {
         E_TypeKey maybe_enum_type = e_type_key_unwrap(dst_eval.irtree.type_key, E_TypeUnwrapFlag_AllDecorative & ~E_TypeUnwrapFlag_Enums);
         if(dst_eval.space.kind == RD_EvalSpaceKind_MetaCfg)
@@ -8145,19 +8145,6 @@ rd_frame(void)
         e_string2typekey_map_insert(rd_frame_arena(), rd_state->meta_name2type_map, name, type_key);
       }
       
-      //- rjf: add macro for top-level control root
-      {
-        String8 name = str8_lit("control");
-        E_TypeKey type_key = e_type_key_cons(.name = name,
-                                             .kind = E_TypeKind_Set,
-                                             .access = E_TYPE_ACCESS_FUNCTION_NAME(control));
-        E_Expr *expr = e_push_expr(scratch.arena, E_ExprKind_LeafOffset, r1u64(0, 0));
-        expr->type_key = type_key;
-        expr->space = e_space_make(RD_EvalSpaceKind_MetaQuery);
-        e_string2expr_map_insert(scratch.arena, macro_map, name, expr);
-        e_string2typekey_map_insert(rd_frame_arena(), rd_state->meta_name2type_map, name, type_key);
-      }
-      
       //- rjf: add macros for config "slice" collections (targets, breakpoints, etc.)
       String8 evallable_cfg_names[] =
       {
@@ -8403,70 +8390,6 @@ rd_frame(void)
                                                       .id_from_num = E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(cfgs_slice),
                                                       .num_from_id = E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_NAME(cfgs_slice),
                                                     }));
-      }
-      
-      //- rjf: add macro for collections with specific lookup rules (but no unique id rules)
-      {
-        struct
-        {
-          String8 name;
-          E_TypeIRExtFunctionType *irext;
-          E_TypeExpandInfoFunctionType *info;
-          E_TypeExpandRangeFunctionType *range;
-        }
-        collection_infos[] =
-        {
-#define Collection1(name) {str8_lit_comp(#name), 0, E_TYPE_EXPAND_INFO_FUNCTION_NAME(name), E_TYPE_EXPAND_RANGE_FUNCTION_NAME(name)}
-#define Collection2(name) {str8_lit_comp(#name), E_TYPE_IREXT_FUNCTION_NAME(name), E_TYPE_EXPAND_INFO_FUNCTION_NAME(name), E_TYPE_EXPAND_RANGE_FUNCTION_NAME(name)}
-          Collection1(locals),
-          Collection1(registers),
-          Collection2(autos),
-#undef Collection1
-#undef Collection2
-        };
-        for EachElement(idx, collection_infos)
-        {
-          String8 collection_name = collection_infos[idx].name;
-          E_Expr *expr = e_push_expr(scratch.arena, E_ExprKind_LeafOffset, r1u64(0, 0));
-          expr->type_key = e_type_key_cons(.kind = E_TypeKind_Set,
-                                           .name = collection_name,
-                                           .irext = collection_infos[idx].irext,
-                                           .expand =
-                                           {
-                                             .info  = collection_infos[idx].info,
-                                             .range = collection_infos[idx].range,
-                                           });
-          expr->space = e_space_make(RD_EvalSpaceKind_MetaQuery);
-          e_string2expr_map_insert(scratch.arena, macro_map, collection_name, expr);
-        }
-      }
-      
-      //- rjf: add macros for debug info table collections
-      String8 debug_info_table_collection_names[] =
-      {
-        str8_lit_comp("procedures"),
-        str8_lit_comp("thread_locals"),
-        str8_lit_comp("constants"),
-        str8_lit_comp("globals"),
-        str8_lit_comp("types"),
-        str8_lit_comp("source_files"),
-      };
-      for EachElement(idx, debug_info_table_collection_names)
-      {
-        String8 name = debug_info_table_collection_names[idx];
-        E_Expr *expr = e_push_expr(scratch.arena, E_ExprKind_LeafOffset, r1u64(0, 0));
-        expr->space = e_space_make(RD_EvalSpaceKind_MetaQuery);
-        expr->type_key = e_type_key_cons(.kind = E_TypeKind_Set,
-                                         .flags = E_TypeFlag_StubSingleLineExpansion,
-                                         .name = name,
-                                         .expand =
-                                         {
-                                           .info        = E_TYPE_EXPAND_INFO_FUNCTION_NAME(debug_info_table),
-                                           .range       = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(debug_info_table),
-                                           .id_from_num = E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(debug_info_table),
-                                           .num_from_id = E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_NAME(debug_info_table)
-                                         });
-        e_string2expr_map_insert(scratch.arena, macro_map, name, expr);
       }
       
       //- rjf: add macro for output log

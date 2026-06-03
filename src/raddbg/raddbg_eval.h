@@ -26,25 +26,6 @@ E_TYPE_EXPAND_INFO_FUNCTION_DEF(views);
 E_TYPE_EXPAND_RANGE_FUNCTION_DEF(views);
 
 ////////////////////////////////
-//~ rjf: `locals` Type Hooks
-
-E_TYPE_EXPAND_INFO_FUNCTION_DEF(locals);
-E_TYPE_EXPAND_RANGE_FUNCTION_DEF(locals);
-
-////////////////////////////////
-//~ rjf: `registers` Type Hooks
-
-E_TYPE_EXPAND_INFO_FUNCTION_DEF(registers);
-E_TYPE_EXPAND_RANGE_FUNCTION_DEF(registers);
-
-////////////////////////////////
-//~ rjf: `autos` Type Hooks
-
-E_TYPE_IREXT_FUNCTION_DEF(autos);
-E_TYPE_EXPAND_INFO_FUNCTION_DEF(autos);
-E_TYPE_EXPAND_RANGE_FUNCTION_DEF(autos);
-
-////////////////////////////////
 //~ rjf: Schema Type Hooks
 
 E_TYPE_IREXT_FUNCTION_DEF(schema);
@@ -56,11 +37,6 @@ E_TYPE_EXPAND_RANGE_FUNCTION_DEF(schema);
 //~ rjf: Config Type Hooks
 
 E_TYPE_ACCESS_FUNCTION_DEF(cfgs);
-
-////////////////////////////////
-//~ rjf: Control Type Hooks
-
-E_TYPE_ACCESS_FUNCTION_DEF(control);
 
 ////////////////////////////////
 //~ rjf: Config Slice Type Hooks
@@ -102,20 +78,5 @@ E_TYPE_EXPAND_INFO_FUNCTION_DEF(peek_types);
 E_TYPE_EXPAND_RANGE_FUNCTION_DEF(peek_types);
 E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_DEF(peek_types);
 E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_DEF(peek_types);
-
-////////////////////////////////
-//~ rjf: Control Entity List Type Hooks (`processes`, `threads`, etc.)
-
-E_TYPE_ACCESS_FUNCTION_DEF(ctrl_entities);
-E_TYPE_EXPAND_INFO_FUNCTION_DEF(ctrl_entities);
-E_TYPE_EXPAND_RANGE_FUNCTION_DEF(ctrl_entities);
-
-////////////////////////////////
-//~ rjf: Debug Info Tables Eval Hooks
-
-E_TYPE_EXPAND_INFO_FUNCTION_DEF(debug_info_table);
-E_TYPE_EXPAND_RANGE_FUNCTION_DEF(debug_info_table);
-E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_DEF(debug_info_table);
-E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_DEF(debug_info_table);
 
 #endif // RADDBG_EVAL_H

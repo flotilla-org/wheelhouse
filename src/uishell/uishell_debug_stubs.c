@@ -283,14 +283,6 @@ di_search_artifact_destroy(AC_Artifact artifact)
 {
 }
 
-internal DI_SearchItemArray
-di_search_item_array_from_target_query(Access *access, RDI_SectionKind target, String8 query, U64 endt_us, B32 *stale_out)
-{
-  if(stale_out != 0) { *stale_out = 0; }
-  DI_SearchItemArray result = {0};
-  return result;
-}
-
 internal AC_Artifact
 di_match_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U64 *gen_out)
 {

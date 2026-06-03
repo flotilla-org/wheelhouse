@@ -185,6 +185,8 @@ First slice: `src/uishell/uishell_eval.*` now owns the shell command/view query 
 
 Second slice: config collection child gathering is now also shell-owned. `cfgs_slice` and `cfgs_query` remain inherited evaluator adapters, but their top-level config collection lookup, collection command lookup, child lookup, and fuzzy title filtering now route through `uishell_eval_cfg_*` helpers. Schema member access, config eval spaces, row IDs, editing, and writes are unchanged.
 
+Third slice: standalone debugger query collections have been removed from the shell frame setup. The shell no longer registers `locals`, `registers`, `autos`, `control`, or debug-info table query roots such as `procedures`, `globals`, `thread_locals`, `constants`, `types`, and `source_files`; their `raddbg_eval.c` hooks have been deleted. Autocompletion's generic fallback now starts from `query:views`, with config/theme-specific completions still handled by the existing config branch. The now-stranded debug-info search item API and shell stub were removed as well.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell query/config provider behavior still lives here. It constructs the current `query:commands`, config/settings, theme, view, and metadata rows. This is the first code to fork into `src/uishell`, because it is shell product behavior but still RAD-named and expressed through `E_*`/`RD_EvalSpaceKind_*`.
