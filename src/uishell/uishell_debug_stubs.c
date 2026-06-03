@@ -36,13 +36,3 @@ d_hash_from_string__case_insensitive(String8 string)
   U64 result = d_hash_from_seed_string__case_insensitive(5381, string);
   return result;
 }
-
-////////////////////////////////
-//~ rjf: Debug Info Shell Stubs
-
-internal void
-di_init(CmdLine *cmdline)
-{
-}
-
-internal void di_async_tick(void) {}

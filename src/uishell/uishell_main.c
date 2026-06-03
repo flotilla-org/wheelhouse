@@ -48,7 +48,6 @@
 #include "text/text.h"
 #include "mutable_text/mutable_text.h"
 #include "arch/arch_inc.h"
-#include "dbg_info/dbg_info.h"
 #include "eval/eval_inc.h"
 #include "dbg_engine/generated/dbg_engine.meta.h"
 #include "dbg_engine/dbg_engine_user.h"

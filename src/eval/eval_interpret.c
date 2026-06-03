@@ -5,30 +5,9 @@
 //~ rjf: Context Selection Functions (Selection Required For All Subsequent APIs)
 
 internal void
-e_select_interpret_ctx(E_InterpretCtx *ctx, RDI_Parsed *primary_rdi, U64 ip_voff)
+e_select_interpret_ctx(E_InterpretCtx *ctx)
 {
   e_interpret_ctx = ctx;
-  
-  // compute and apply frame base
-  if(primary_rdi != 0)
-  {
-    Temp scratch = scratch_begin(0, 0);
-    RDI_Symbol *proc = rdi_procedure_from_voff(primary_rdi, ip_voff);
-    RDI_Location location = rdi_location_from_location_voff(primary_rdi, proc->location, ip_voff);
-    E_OpList oplist = e_oplist_from_location(scratch.arena, primary_rdi, location);
-    String8 bytecode = e_bytecode_from_oplist(scratch.arena, &oplist);
-    E_Interpretation frame_base_interpretation = e_interpret(bytecode);
-    U64 frame_base = frame_base_interpretation.value.u64;
-    if(frame_base_interpretation.code == E_InterpretationCode_Good)
-    {
-      *ctx->frame_base = frame_base;
-    }
-    else
-    {
-      ctx->frame_base = 0;
-    }
-    scratch_end(scratch);
-  }
 }
 
 ////////////////////////////////
@@ -155,23 +134,6 @@ e_space_read(E_Space space, void *out, E_SpaceRangeInfo *out_range_info, Rng1U64
         }
         
         access_close(access);
-      }break;
-      
-      //- rjf: debug info constant data
-      case E_SpaceKind_DebugConstantData:
-      {
-        U32 dbg_info_num = space.u64s[0];
-        if(1 <= dbg_info_num && dbg_info_num <= e_base_ctx->dbg_infos_count)
-        {
-          E_DbgInfo *dbg_info = &e_base_ctx->dbg_infos[dbg_info_num-1];
-          RDI_Parsed *rdi = dbg_info->rdi;
-          U64 all_constant_data_size = 0;
-          U8 *all_constant_data_ptr = rdi_table_from_name(rdi, LocationsConstantData, &all_constant_data_size);
-          String8 all_constant_data = str8(all_constant_data_ptr, all_constant_data_size);
-          String8 read_memory = str8_substr(all_constant_data, range);
-          result = (dim_1u64(range) == read_memory.size);
-          MemoryCopy(out, read_memory.str, read_memory.size);
-        }
       }break;
       
       //- rjf: default -> use hooks
@@ -372,15 +334,8 @@ e_interpret(String8 bytecode)
       
       case RDI_EvalOp_FrameOff:
       {
-        if(e_interpret_ctx->frame_base != 0)
-        {
-          nval.u64 = *e_interpret_ctx->frame_base + imm.u64;
-        }
-        else
-        {
-          result.code = E_InterpretationCode_BadFrameBase;
-          goto done;
-        }
+        result.code = E_InterpretationCode_BadFrameBase;
+        goto done;
       }break;
       
       case RDI_EvalOp_ModuleOff:

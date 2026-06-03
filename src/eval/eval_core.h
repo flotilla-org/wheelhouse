@@ -137,7 +137,6 @@ enum
   E_SpaceKind_File,
   E_SpaceKind_FileSystem,
   E_SpaceKind_HashStoreKey,
-  E_SpaceKind_DebugConstantData,
   E_SpaceKind_FirstUserDefined,
 };
 
@@ -567,23 +566,12 @@ struct E_ConsTypeSlot
 };
 
 ////////////////////////////////
-//~ rjf: Debug Info
-
-typedef struct E_DbgInfo E_DbgInfo;
-struct E_DbgInfo
-{
-  DI_Key dbgi_key;
-  RDI_Parsed *rdi;
-};
-
-////////////////////////////////
 //~ rjf: Modules
 
 typedef struct E_Module E_Module;
 struct E_Module
 {
   Rng1U64 vaddr_range;
-  U32 dbg_info_num;
   Arch arch;
   E_Space space;
 };
@@ -789,11 +777,6 @@ struct E_BaseCtx
   E_Space thread_process_space;
   Arch thread_arch;
   U64 thread_unwind_count;
-  
-  // rjf: debug infos
-  E_DbgInfo *dbg_infos;
-  U64 dbg_infos_count;
-  E_DbgInfo *primary_dbg_info;
   
   // rjf: modules
   E_Module *modules;
@@ -1090,9 +1073,6 @@ struct E_Cache
   E_CacheParentNode *top_parent_node;
   E_CacheParentNode *free_parent_node;
   
-  //- rjf: unpacked context
-  RDI_Symbol *thread_ip_procedure;
-  
   //- rjf: [types] JIT-constructed types tables
   U64 cons_id_gen;
   U64 cons_content_slots_count;
@@ -1144,7 +1124,6 @@ read_only global E_String2ExprMap e_string2expr_map_nil = {0};
 read_only global E_Expr e_expr_nil = {&e_expr_nil, &e_expr_nil, &e_expr_nil, &e_expr_nil, &e_expr_nil};
 read_only global E_IRNode e_irnode_nil = {&e_irnode_nil, &e_irnode_nil, &e_irnode_nil};
 read_only global E_Eval e_eval_nil = {{0}, {0}, {0}, &e_expr_nil, {&e_irnode_nil}};
-read_only global E_DbgInfo e_dbg_info_nil = {{0}, &rdi_parsed_nil};
 read_only global E_Module e_module_nil = {0};
 read_only global E_CacheBundle e_cache_bundle_nil = {0, {0}, {0}, {0}, {{0}, 0, &e_expr_nil, &e_expr_nil}, {&e_irnode_nil}};
 thread_static E_BaseCtx *e_base_ctx = 0;
@@ -1219,11 +1198,6 @@ internal void e_auto_hook_map_insert_new_(Arena *arena, E_AutoHookMap *map, E_Au
 #define e_auto_hook_map_insert_new(arena, map, ...) e_auto_hook_map_insert_new_((arena), (map), &(E_AutoHookParams){.type_key = zero_struct, __VA_ARGS__})
 
 ////////////////////////////////
-//~ rjf: RDI Location Info -> Eval Op List
-
-internal E_OpList e_oplist_from_location(Arena *arena, RDI_Parsed *rdi, RDI_Location loc);
-
-////////////////////////////////
 //~ rjf: Cache Creation & Selection
 
 internal E_Cache *e_cache_alloc(void);
@@ -1238,9 +1212,6 @@ internal void e_select_ir_ctx(E_IRCtx *ctx);
 
 ////////////////////////////////
 //~ rjf: Context Accessors
-
-internal E_DbgInfo *e_dbg_info_from_module(E_Module *module);
-internal U32 e_dbg_info_num_from_rdi_prefer_primary(RDI_Parsed *rdi);
 
 ////////////////////////////////
 //~ rjf: Base Cache Accessing Functions

@@ -199,15 +199,17 @@ Eighth slice: scoped debugger identifier materialization has been removed from t
 
 Ninth slice: external RDI type keys have been removed from the shell evaluator. `E_TypeKeyKind_Ext`, `e_type_key_ext`, RDI-to-eval type/member kind conversion, RDI record/enum/function/alias/bitfield type materialization, `symbolof` debug-info resolution, dynamic vtable-derived type correction, and pointer-to-procedure/inline symbol display are gone. Built-in, constructed, register, lens, and shell expand-rule types remain.
 
+Tenth slice: debug-info context plumbing has been removed from the shell evaluator. `E_DbgInfo`, debug-info arrays in `E_BaseCtx`, debug-info-backed module fields, RDI location-to-bytecode conversion, debug-constant-data spaces, RDI frame-base setup, and `di_init`/`di_async_tick` shell hooks are gone. The evaluator still uses the RDI eval opcode format as its internal bytecode representation.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell query/config provider behavior still lives here. It constructs the current `query:commands`, config/settings, theme, view, and metadata rows. This is the first code to fork into `src/uishell`, because it is shell product behavior but still RAD-named and expressed through `E_*`/`RD_EvalSpaceKind_*`.
-- `src/eval/eval_parse.c`: mostly reusable parsing/tokenization, but RDI type-name lookup and primary-module architecture assumptions are still embedded. Keep the parser shape only after type lookup becomes provider/type-registry based.
-- `src/eval/eval_core.*`: mixed infrastructure. Generic expression/type/value/cache shapes are reusable in principle, but `E_DbgInfo`, `E_Module`, `E_BaseCtx`, `E_IRCtx`, and `E_Cache` still carry debug-info keys, RDI pointers, modules, registers, locals, members, macro maps, TLS conversion, instruction pointer state, and unwind state.
-- `src/eval/eval_types.*`: mixed. Basic scalar/array/struct/type formatting can inform the shell value model, but RDI type construction, RDI member expansion, and debug auto-hook behavior are not shell concerns.
+- `src/eval/eval_parse.c`: mostly reusable parsing/tokenization. RDI type-name lookup is gone, but primary-module architecture assumptions still appear in pointer/array type construction.
+- `src/eval/eval_core.*`: mixed infrastructure. Generic expression/type/value/cache shapes are reusable in principle, but `E_Module`, `E_BaseCtx`, `E_IRCtx`, and `E_Cache` still carry modules, registers, macro maps, TLS conversion, instruction pointer state, and unwind state.
+- `src/eval/eval_types.*`: mixed. Basic scalar/array/struct/type formatting can inform the shell value model. RDI type construction and RDI member expansion are gone, but debug-flavored auto-hook/type-lens behavior still needs review.
 - `src/eval/eval_ir.*`: heavily mixed. It builds RDI-flavored IR/op lists for memory/register/type evaluation. Shell provider lookup should bypass or replace most of this path rather than pretending app-state rows are debuggee expressions.
-- `src/eval/eval_interpret.*`: mostly debugger/RDI VM. It decodes `RDI_EvalOp`, reads debug constant data, handles register reads through architecture mappings, and interprets frame/module/TLS/process-memory operations. This is the clearest deletion target once shell providers no longer depend on it.
-- `src/eval_visualization/eval_visualization_core.*`: mixed UI machinery. Row keys, expansion state, windowed row lists, simple value formatting, and list/tree expansion are useful. Pointer/procedure/source/module decoration and RDI-derived symbol display are debug-only garnish.
+- `src/eval/eval_interpret.*`: mostly debugger/RDI VM. It decodes `RDI_EvalOp`, handles register reads through architecture mappings, and interprets module/TLS/process-memory operations. Debug constant data and RDI frame-base setup are gone.
+- `src/eval_visualization/eval_visualization_core.*`: mixed UI machinery. Row keys, expansion state, windowed row lists, simple value formatting, and list/tree expansion are useful. RDI-derived pointer/procedure/inline symbol display is gone; remaining pointer/source/module display behavior still needs review.
 - `src/uishell/uishell_views.c`: current shell text/binary views are shell-owned, but list-like dialogs and settings still depend on the inherited query/eval row machinery elsewhere.
 
 The intended replacement is a shell provider layer:

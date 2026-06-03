@@ -522,98 +522,6 @@ e_auto_hook_map_insert_new_(Arena *arena, E_AutoHookMap *map, E_AutoHookParams *
 }
 
 ////////////////////////////////
-//~ rjf: RDI Location Info -> Eval Op List
-
-internal E_OpList
-e_oplist_from_location(Arena *arena, RDI_Parsed *rdi, RDI_Location loc)
-{
-  E_OpList result = {0};
-  B32 need_extra_memread = 0;
-  switch((RDI_LocationKindEnum)rdi_kind_from_location(loc))
-  {
-    case RDI_LocationKind_NULL:
-    case RDI_LocationKind_Set:{}break;
-    
-    //- rjf: bytecode
-    case RDI_LocationKind_AddrBytecodeStream:
-    case RDI_LocationKind_ValBytecodeStream:
-    {
-      U64 all_bytecode_size = 0;
-      U8 *all_bytecode = rdi_table_from_name(rdi, LocationsBytecodeData, &all_bytecode_size);
-      U64 bytecode_first_idx = rdi_bytecode_data_off_from_location(loc);
-      bytecode_first_idx = Min(bytecode_first_idx, all_bytecode_size);
-      U64 bytecode_opl_idx = bytecode_first_idx;
-      for(U64 off = bytecode_first_idx, next_off = all_bytecode_size; off < all_bytecode_size; off  = next_off)
-      {
-        next_off = all_bytecode_size;
-        U8 opcode = all_bytecode[off];
-        if(opcode == 0)
-        {
-          break;
-        }
-        U16 ctrlbits = rdi_eval_op_ctrlbits_table[opcode];
-        U32 p_size = RDI_DECODEN_FROM_CTRLBITS(ctrlbits);
-        bytecode_opl_idx += (1 + p_size);
-        next_off = (off + 1 + p_size);
-      }
-      String8 bytecode = str8(all_bytecode + bytecode_first_idx, (bytecode_opl_idx - bytecode_first_idx));
-      e_oplist_push_bytecode(arena, &result, bytecode);
-    }break;
-    
-    //- rjf: reg + off
-    case RDI_LocationKind_AddrRegPlusOff: goto reg_plus_off;
-    case RDI_LocationKind_AddrAddrRegPlusOff: need_extra_memread = 1; goto reg_plus_off;
-    reg_plus_off:;
-    {
-      RDI_TopLevelInfo *tli = rdi_element_from_name_idx(rdi, TopLevelInfo, 0);
-      Arch arch = arch_from_rdi_arch(tli->arch);
-      U64 arch_addr_bytesize = byte_size_from_arch(arch);
-      RDI_RegCode regcode = rdi_regcode_from_location(loc);
-      S64 reg_off = rdi_regoff_from_location(loc);
-      e_oplist_push_op(arena, &result, RDI_EvalOp_RegRead, e_value_u64(RDI_EncodeRegReadParam(regcode, arch_addr_bytesize, 0)));
-      e_oplist_push_sconst(arena, &result, reg_off);
-      e_oplist_push_op(arena, &result, RDI_EvalOp_Add, e_value_u64(0));
-      if(need_extra_memread)
-      {
-        e_oplist_push_op(arena, &result, RDI_EvalOp_MemRead, e_value_u64(arch_addr_bytesize));
-      }
-    }break;
-    
-    //- rjf: reg
-    case RDI_LocationKind_ValReg:
-    {
-      RDI_TopLevelInfo *tli = rdi_element_from_name_idx(rdi, TopLevelInfo, 0);
-      Arch arch = arch_from_rdi_arch(tli->arch);
-      ARCH_Info *arch_info = arch_info_from_arch(arch);
-      RDI_RegCode rdi_regcode = rdi_regcode_from_location(loc);
-      ARCH_RegCode reg_code = arch_reg_code_from_rdi(arch, rdi_regcode);
-      Rng1U16 reg_rng = arch_info->reg_code_rng_table[reg_code];
-      U64 byte_size = (U64)dim_1u16(reg_rng);
-      U64 byte_pos = reg_rng.min;
-      e_oplist_push_op(arena, &result, RDI_EvalOp_RegRead, e_value_u64(RDI_EncodeRegReadParam(rdi_regcode, byte_size, byte_pos)));
-    }break;
-    
-    //- rjf: space offsets
-    case RDI_LocationKind_ModuleOff:
-    {
-      U64 voff = rdi_voff_from_location(loc);
-      e_oplist_push_op(arena, &result, RDI_EvalOp_ModuleOff, e_value_u64(voff));
-    }break;
-    case RDI_LocationKind_TLSOff:
-    {
-      U64 toff = rdi_toff_from_location(loc);
-      e_oplist_push_op(arena, &result, RDI_EvalOp_TLSOff, e_value_u64(toff));
-    }break;
-    case RDI_LocationKind_ConstantDataOff:
-    {
-      U64 constant_data_off = rdi_constant_data_off_from_location(loc);
-      e_oplist_push_uconst(arena, &result, constant_data_off);
-    }break;
-  }
-  return result;
-}
-
-////////////////////////////////
 //~ rjf: Cache Creation & Selection
 
 internal E_Cache *
@@ -647,8 +555,6 @@ e_select_base_ctx(E_BaseCtx *ctx)
   //- rjf: select base context
   if(ctx->modules == 0)          { ctx->modules = &e_module_nil; }
   if(ctx->primary_module == 0)   { ctx->primary_module = &e_module_nil; }
-  if(ctx->dbg_infos == 0)        { ctx->dbg_infos = &e_dbg_info_nil; }
-  if(ctx->primary_dbg_info == 0) { ctx->primary_dbg_info = &e_dbg_info_nil; }
   e_base_ctx = ctx;
   
   //- rjf: reset the evaluation cache
@@ -689,7 +595,6 @@ e_select_base_ctx(E_BaseCtx *ctx)
                                                .id_from_num = E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(folder),
                                                .num_from_id = E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_NAME(folder),
                                              });
-  e_cache->thread_ip_procedure = rdi_procedure_from_voff(e_base_ctx->primary_dbg_info->rdi, e_base_ctx->thread_ip_voff);
   e_cache->used_expr_map = push_array(e_cache->arena, E_UsedExprMap, 1);
   e_cache->used_expr_map->slots_count = 64;
   e_cache->used_expr_map->slots = push_array(e_cache->arena, E_UsedExprSlot, e_cache->used_expr_map->slots_count);
@@ -710,48 +615,6 @@ e_select_ir_ctx(E_IRCtx *ctx)
   if(ctx->regs_map == 0)       { ctx->regs_map = &e_string2num_map_nil; }
   if(ctx->macro_map == 0)      { ctx->macro_map = push_array(e_cache->arena, E_String2ExprMap, 1); ctx->macro_map[0] = e_string2expr_map_make(e_cache->arena, 512); }
   e_ir_ctx = ctx;
-}
-
-////////////////////////////////
-//~ rjf: Context Accessors
-
-internal E_DbgInfo *
-e_dbg_info_from_module(E_Module *module)
-{
-  E_DbgInfo *result = &e_dbg_info_nil;
-  if(0 < module->dbg_info_num && module->dbg_info_num <= e_base_ctx->dbg_infos_count)
-  {
-    result = &e_base_ctx->dbg_infos[module->dbg_info_num-1];
-  }
-  return result;
-}
-
-internal U32
-e_dbg_info_num_from_rdi_prefer_primary(RDI_Parsed *rdi)
-{
-  U32 result = 0;
-  if(rdi != 0 && e_base_ctx != 0)
-  {
-    if(e_base_ctx->primary_dbg_info != 0 &&
-       e_base_ctx->dbg_infos <= e_base_ctx->primary_dbg_info &&
-       e_base_ctx->primary_dbg_info < e_base_ctx->dbg_infos + e_base_ctx->dbg_infos_count &&
-       e_base_ctx->primary_dbg_info->rdi == rdi)
-    {
-      result = (U32)(e_base_ctx->primary_dbg_info - e_base_ctx->dbg_infos) + 1;
-    }
-    for EachIndex(idx, e_base_ctx->dbg_infos_count)
-    {
-      if(result != 0)
-      {
-        break;
-      }
-      if(e_base_ctx->dbg_infos[idx].rdi == rdi)
-      {
-        result = (U32)idx + 1;
-      }
-    }
-  }
-  return result;
 }
 
 ////////////////////////////////

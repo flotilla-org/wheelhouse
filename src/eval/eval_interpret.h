@@ -15,7 +15,6 @@ struct E_InterpretCtx
   E_Space reg_space;
   U64 reg_unwind_count;
   U64 *module_base;
-  U64 *frame_base;
   U64 *tls_base;
   U64 cfa;
 };
@@ -28,7 +27,7 @@ thread_static E_InterpretCtx *e_interpret_ctx = 0;
 ////////////////////////////////
 //~ rjf: Context Selection Functions (Selection Required For All Subsequent APIs)
 
-internal void e_select_interpret_ctx(E_InterpretCtx *ctx, RDI_Parsed *primary_rdi, U64 ip_voff);
+internal void e_select_interpret_ctx(E_InterpretCtx *ctx);
 
 ////////////////////////////////
 //~ rjf: Space Reading Helpers

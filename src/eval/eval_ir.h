@@ -54,9 +54,6 @@ struct E_IRState
   // rjf: ir context
   E_IRCtx *ctx;
   
-  // rjf: unpacked ctx
-  RDI_Symbol *thread_ip_procedure;
-  
   // rjf: overridden irtree
   E_IRTreeAndType *overridden_irtree;
   B32 disallow_autohooks;

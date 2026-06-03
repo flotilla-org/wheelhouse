@@ -7628,13 +7628,6 @@ rd_frame(void)
     ProfEnd();
     
     ////////////////////////////
-    //- rjf: produce all debug infos
-    //
-    U64 eval_dbg_infos_count = 0;
-    E_DbgInfo *eval_dbg_infos = &e_dbg_info_nil;
-    E_DbgInfo *eval_dbg_infos_primary = &e_dbg_info_nil;
-    
-    ////////////////////////////
     //- rjf: produce all eval modules
     //
     U64 eval_modules_count = 0;
@@ -7660,11 +7653,6 @@ rd_frame(void)
       ctx->thread_process_space= (E_Space){0};
       ctx->thread_arch         = arch;
       ctx->thread_unwind_count = unwind_count;
-      
-      //- rjf: fill debug infos
-      ctx->dbg_infos        = eval_dbg_infos;
-      ctx->dbg_infos_count  = eval_dbg_infos_count;
-      ctx->primary_dbg_info = eval_dbg_infos_primary;
       
       //- rjf: fill modules
       ctx->modules          = eval_modules;
@@ -8265,10 +8253,9 @@ rd_frame(void)
       ctx->reg_space         = (E_Space){0};
       ctx->reg_unwind_count  = unwind_count;
       ctx->module_base       = push_array(scratch.arena, U64, 1);
-      ctx->frame_base        = push_array(scratch.arena, U64, 1);
       ctx->tls_base          = push_array(scratch.arena, U64, 1);
     }
-    e_select_interpret_ctx(interpret_ctx, eval_dbg_infos_primary->rdi, rip_voff);
+    e_select_interpret_ctx(interpret_ctx);
     
     ////////////////////////////
     //- rjf: evaluate unpacked settings (must be used earlier than this point in the frame,
