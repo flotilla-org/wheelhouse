@@ -642,7 +642,7 @@ e_type_key_from_expr(E_Expr *expr)
     case E_ExprKind_Ptr:
     {
       E_TypeKey direct_type_key = e_type_key_from_expr(expr->first);
-      result = e_type_key_cons_ptr(e_base_ctx->primary_module->arch, direct_type_key, 1, 0);
+      result = e_type_key_cons_ptr(e_base_ctx->address_arch, direct_type_key, 1, 0);
     }break;
     case E_ExprKind_Array:
     {
@@ -925,7 +925,7 @@ e_push_parse_from_string_tokens__prec(Arena *arena, String8 text, E_TokenArray t
             else
             {
               E_Expr *type = e_push_expr(arena, E_ExprKind_TypeIdent, token.range);
-              type->type_key = e_type_key_cons_ptr(e_base_ctx->primary_module->arch, e_type_key_basic(E_TypeKind_U64), 1, 0);
+              type->type_key = e_type_key_cons_ptr(e_base_ctx->address_arch, e_type_key_basic(E_TypeKind_U64), 1, 0);
               E_Expr *casted = atom;
               E_Expr *cast = e_push_expr(arena, E_ExprKind_Cast, token.range);
               e_expr_push_child(cast, type);

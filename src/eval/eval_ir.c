@@ -822,7 +822,7 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
         
         // rjf: generate
         result.root     = r_tree.root;
-        result.type_key = e_type_key_cons_ptr(e_base_ctx->primary_module->arch, r_type_unwrapped, 1, 0);
+        result.type_key = e_type_key_cons_ptr(e_base_ctx->address_arch, r_type_unwrapped, 1, 0);
         result.mode     = E_Mode_Value;
       }break;
       
@@ -1250,7 +1250,7 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
               E_TypeKey ptr_type = ptr_tree->type_key;
               if(ptr_is_decay)
               {
-                ptr_type = e_type_key_cons_ptr(e_base_ctx->primary_module->arch, direct_type, 1, 0);
+                ptr_type = e_type_key_cons_ptr(e_base_ctx->address_arch, direct_type, 1, 0);
               }
               E_IRNode *new_root = e_irtree_binary_op_u(arena, op, ptr_size, ptr_root, int_root);
               result.root     = new_root;
@@ -1902,7 +1902,7 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
       {
         E_IRTreeAndType ptee_irtree = e_push_irtree_and_type_from_expr(arena, parent, &e_default_identifier_resolution_rule, disallow_autohooks, 1, expr->first);
         result = ptee_irtree;
-        result.type_key = e_type_key_cons_ptr(e_base_ctx->primary_module->arch, result.type_key, 1, 0);
+        result.type_key = e_type_key_cons_ptr(e_base_ctx->address_arch, result.type_key, 1, 0);
       }break;
       case E_ExprKind_Array:
       {

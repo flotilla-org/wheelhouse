@@ -7601,16 +7601,7 @@ rd_frame(void)
     //
     ProfBegin("unpack eval-dependent info");
     E_Space primary_space = {0};
-    U64 rip_vaddr = 0;
-    U64 rip_voff = 0;
     ProfEnd();
-    
-    ////////////////////////////
-    //- rjf: produce all eval modules
-    //
-    U64 eval_modules_count = 0;
-    E_Module *eval_modules = &e_module_nil;
-    E_Module *eval_modules_primary = &e_module_nil;
     
     ////////////////////////////
     //- rjf: begin evaluation
@@ -7623,14 +7614,7 @@ rd_frame(void)
     E_BaseCtx *eval_base_ctx = push_array(scratch.arena, E_BaseCtx, 1);
     {
       E_BaseCtx *ctx = eval_base_ctx;
-      
-      //- rjf: fill instruction pointer info
-      ctx->thread_ip_vaddr     = rip_vaddr;
-      ctx->thread_ip_voff      = rip_voff;
-      //- rjf: fill modules
-      ctx->modules          = eval_modules;
-      ctx->modules_count    = eval_modules_count;
-      ctx->primary_module   = eval_modules_primary;
+      ctx->address_arch = Arch_CURRENT;
       
       //- rjf: fill space hooks
       ctx->space_gen   = rd_eval_space_gen;

@@ -565,17 +565,6 @@ struct E_ConsTypeSlot
 };
 
 ////////////////////////////////
-//~ rjf: Modules
-
-typedef struct E_Module E_Module;
-struct E_Module
-{
-  Rng1U64 vaddr_range;
-  Arch arch;
-  E_Space space;
-};
-
-////////////////////////////////
 //~ rjf: String -> Num
 
 typedef struct E_String2NumMapNode E_String2NumMapNode;
@@ -762,21 +751,14 @@ struct E_SpaceRangeInfo
 typedef U64 E_SpaceGenFunction(E_Space space);
 typedef B32 E_SpaceReadFunction(E_Space space, void *out, E_SpaceRangeInfo *out_range_info, Rng1U64 offset_range);
 typedef B32 E_SpaceWriteFunction(E_Space space, void *out, Rng1U64 offset_range);
-typedef B32 E_TLSVAddrFromPlatformVAddrFunction(E_Space space, U64 platform_tls_vaddr, U64 *vaddr_out);
 
 //- rjf: base context
 
 typedef struct E_BaseCtx E_BaseCtx;
 struct E_BaseCtx
 {
-  // rjf: instruction pointer info
-  U64 thread_ip_vaddr;
-  U64 thread_ip_voff;
-  // rjf: modules
-  E_Module *modules;
-  U64 modules_count;
-  E_Module *primary_module;
-  
+  Arch address_arch;
+
   // rjf: space hooks
   E_SpaceGenFunction *space_gen;
   E_SpaceReadFunction *space_read;
@@ -1116,7 +1098,6 @@ read_only global E_String2ExprMap e_string2expr_map_nil = {0};
 read_only global E_Expr e_expr_nil = {&e_expr_nil, &e_expr_nil, &e_expr_nil, &e_expr_nil, &e_expr_nil};
 read_only global E_IRNode e_irnode_nil = {&e_irnode_nil, &e_irnode_nil, &e_irnode_nil};
 read_only global E_Eval e_eval_nil = {{0}, {0}, {0}, &e_expr_nil, {&e_irnode_nil}};
-read_only global E_Module e_module_nil = {0};
 read_only global E_CacheBundle e_cache_bundle_nil = {0, {0}, {0}, {0}, {{0}, 0, &e_expr_nil, &e_expr_nil}, {&e_irnode_nil}};
 thread_static E_BaseCtx *e_base_ctx = 0;
 thread_static E_IRCtx *e_ir_ctx = 0;

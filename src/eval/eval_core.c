@@ -553,8 +553,6 @@ internal void
 e_select_base_ctx(E_BaseCtx *ctx)
 {
   //- rjf: select base context
-  if(ctx->modules == 0)          { ctx->modules = &e_module_nil; }
-  if(ctx->primary_module == 0)   { ctx->primary_module = &e_module_nil; }
   e_base_ctx = ctx;
   
   //- rjf: reset the evaluation cache
