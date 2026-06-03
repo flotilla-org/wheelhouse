@@ -82,42 +82,11 @@ E_TYPE_EXPAND_INFO_FUNCTION_DEF(themes)
 {
   E_TypeExpandInfo result = {0};
   {
-    Temp scratch = scratch_begin(&arena, 1);
-    
-    //- rjf: gather presets
-    String8List names = {0};
-    for EachEnumVal(RD_ThemePreset, p)
-    {
-      String8 name = rd_theme_preset_display_string_table[p];
-      FuzzyMatchRangeList name_matches = fuzzy_match_find(scratch.arena, filter, name);
-      if(name_matches.count == name_matches.needle_part_count)
-      {
-        str8_list_push(scratch.arena, &names, name);
-      }
-    }
-    
-    //- rjf: gather theme files
-    {
-      String8 theme_folder = push_str8f(scratch.arena, "%S/themes", rd_app_data_folder(scratch.arena));
-      FileIter *it = file_iter_begin(scratch.arena, theme_folder, FileIterFlag_SkipFolders);
-      for(FileInfo info = {0}; file_iter_next(scratch.arena, it, &info);)
-      {
-        String8 name = info.name;
-        FuzzyMatchRangeList name_matches = fuzzy_match_find(scratch.arena, filter, name);
-        if(name_matches.count == name_matches.needle_part_count)
-        {
-          str8_list_push(scratch.arena, &names, str8_copy(arena, name));
-        }
-      }
-      file_iter_end(it);
-    }
-    
-    //- rjf: flatten & build accelerator
+    UIShell_EvalProvider *provider = uishell_eval_provider_from_namespace(str8_lit("query:themes"));
     String8Array *accel = push_array(arena, String8Array, 1);
-    *accel = str8_array_from_list(arena, &names);
+    *accel = provider->children(arena, 0, filter);
     result.user_data = accel;
     result.expr_count = accel->count;
-    scratch_end(scratch);
   }
   return result;
 }
@@ -391,133 +360,27 @@ E_TYPE_ACCESS_FUNCTION_DEF(schema)
   return irtree;
 }
 
-typedef struct RD_SchemaExpandAccel RD_SchemaExpandAccel;
-struct RD_SchemaExpandAccel
-{
-  String8Array commands;
-  MD_Node **children;
-  U64 children_count;
-};
-
 E_TYPE_EXPAND_INFO_FUNCTION_DEF(schema)
 {
   E_TypeExpandInfo result = {0};
   {
-    Temp scratch = scratch_begin(&arena, 1);
-    
     // rjf: unpack
     RD_SchemaIRExt *ext = (RD_SchemaIRExt *)eval.irtree.user_data;
-    
-    // rjf: gather expansion commands
-    String8Array commands = {0};
-    {
-      String8List commands_list = {0};
-      for(MD_NodePtrNode *n = ext->schemas.first; n != 0; n = n->next)
-      {
-        MD_Node *schema = n->v;
-        MD_Node *tag = md_tag_from_string(schema, str8_lit("expand_commands"), 0);
-        for MD_EachNode(arg, tag->first)
-        {
-          B32 filtered = 0;
-          if(md_node_has_tag(arg, str8_lit("output"), 0))
-          {
-            String8 expr = rd_expr_from_cfg(ext->cfg);
-            filtered = (!str8_match(expr, str8_lit("query:output"), 0));
-          }
-          if(!filtered)
-          {
-            RD_AppCmdInfo cmd_info = rd_app_cmd_info_from_string(arg->string);
-            FuzzyMatchRangeList name_matches = fuzzy_match_find(scratch.arena, filter, rd_display_from_code_name(cmd_info.string));
-            FuzzyMatchRangeList desc_matches = fuzzy_match_find(scratch.arena, filter, cmd_info.description);
-            FuzzyMatchRangeList tags_matches = fuzzy_match_find(scratch.arena, filter, cmd_info.search_tags);
-            if(name_matches.count == name_matches.needle_part_count ||
-               desc_matches.count == desc_matches.needle_part_count ||
-               tags_matches.count == tags_matches.needle_part_count)
-            {
-              str8_list_push(scratch.arena, &commands_list, arg->string);
-            }
-          }
-        }
-      }
-      commands = str8_array_from_list(arena, &commands_list);
-    }
-    
-    // rjf: gather expansion children
-    typedef struct ExpandChildNode ExpandChildNode;
-    struct ExpandChildNode
-    {
-      ExpandChildNode *next;
-      MD_Node *n;
-    };
-    ExpandChildNode *first_child_node = 0;
-    ExpandChildNode *last_child_node = 0;
-    U64 child_count = 0;
-    for(MD_NodePtrNode *n = ext->schemas.first; n != 0; n = n->next)
-    {
-      MD_Node *schema = n->v;
-      for MD_EachNode(child, schema->first)
-      {
-        if(!md_node_has_tag(child, str8_lit("no_expand"), 0))
-        {
-          MD_Node *expand_check = md_tag_from_string(child, str8_lit("expand_if"), 0);
-          B32 expand_this_child = 1;
-          if(!md_node_is_nil(expand_check)) E_ParentKey(eval.key)
-          {
-            expand_this_child = !!e_value_from_string(expand_check->first->string).u64;
-          }
-          if(expand_this_child)
-          {
-            String8 display_name = md_tag_from_string(child, str8_lit("display_name"), 0)->first->string;
-            if(display_name.size == 0)
-            {
-              display_name = rd_display_from_code_name(child->string);
-            }
-            String8 desc = md_tag_from_string(child, str8_lit("description"), 0)->first->string;
-            FuzzyMatchRangeList name_matches         = fuzzy_match_find(scratch.arena, filter, child->string);
-            FuzzyMatchRangeList display_name_matches = fuzzy_match_find(scratch.arena, filter, display_name);
-            FuzzyMatchRangeList desc_matches         = fuzzy_match_find(scratch.arena, filter, desc);
-            if(name_matches.count == name_matches.needle_part_count ||
-               display_name_matches.count == display_name_matches.needle_part_count ||
-               desc_matches.count == desc_matches.needle_part_count)
-            {
-              ExpandChildNode *n = push_array(scratch.arena, ExpandChildNode, 1);
-              n->n = child;
-              SLLQueuePush(first_child_node, last_child_node, n);
-              child_count += 1;
-            }
-          }
-        }
-      }
-    }
-    
-    // rjf: flatten expansion member list
-    MD_Node **children = push_array(arena, MD_Node *, child_count);
-    {
-      U64 idx = 0;
-      for(ExpandChildNode *n = first_child_node; n != 0; n = n->next, idx += 1)
-      {
-        children[idx] = n->n;
-      }
-    }
-    
+
     // rjf: build accelerator for lookups
-    RD_SchemaExpandAccel *accel = push_array(arena, RD_SchemaExpandAccel, 1);
-    accel->commands = commands;
-    accel->children = children;
-    accel->children_count = child_count;
+    UIShell_EvalSchemaChildren *accel = push_array(arena, UIShell_EvalSchemaChildren, 1);
+    *accel = uishell_eval_schema_children_from_cfg_and_schemas(arena, ext->cfg, ext->schemas, eval.key, filter);
     
     // rjf: fill result
     result.user_data = accel;
-    result.expr_count = child_count + commands.count;
-    
-    scratch_end(scratch);
+    result.expr_count = accel->children_count + accel->commands.count;
   }
   return result;
 }
 
 E_TYPE_EXPAND_RANGE_FUNCTION_DEF(schema)
 {
-  RD_SchemaExpandAccel *accel = (RD_SchemaExpandAccel *)user_data;
+  UIShell_EvalSchemaChildren *accel = (UIShell_EvalSchemaChildren *)user_data;
   Rng1U64 cmds_idx_range = r1u64(0, accel->commands.count);
   Rng1U64 chld_idx_range = r1u64(cmds_idx_range.max, cmds_idx_range.max + accel->children_count);
   U64 out_idx = 0;

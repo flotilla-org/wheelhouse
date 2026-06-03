@@ -77,6 +77,146 @@ uishell_eval_view_names_from_filter(Arena *arena, String8 filter)
 }
 
 internal String8Array
+uishell_eval_theme_names_from_filter(Arena *arena, String8 filter)
+{
+  Temp scratch = scratch_begin(&arena, 1);
+  String8List names = {0};
+
+  //- rjf: gather presets
+  for EachEnumVal(RD_ThemePreset, p)
+  {
+    String8 name = rd_theme_preset_display_string_table[p];
+    FuzzyMatchRangeList name_matches = fuzzy_match_find(scratch.arena, filter, name);
+    if(name_matches.count == name_matches.needle_part_count)
+    {
+      str8_list_push(scratch.arena, &names, name);
+    }
+  }
+
+  //- rjf: gather theme files
+  {
+    String8 theme_folder = push_str8f(scratch.arena, "%S/themes", rd_app_data_folder(scratch.arena));
+    FileIter *it = file_iter_begin(scratch.arena, theme_folder, FileIterFlag_SkipFolders);
+    for(FileInfo info = {0}; file_iter_next(scratch.arena, it, &info);)
+    {
+      String8 name = info.name;
+      FuzzyMatchRangeList name_matches = fuzzy_match_find(scratch.arena, filter, name);
+      if(name_matches.count == name_matches.needle_part_count)
+      {
+        str8_list_push(scratch.arena, &names, str8_copy(arena, name));
+      }
+    }
+    file_iter_end(it);
+  }
+
+  String8Array result = str8_array_from_list(arena, &names);
+  scratch_end(scratch);
+  return result;
+}
+
+internal UIShell_EvalSchemaChildren
+uishell_eval_schema_children_from_cfg_and_schemas(Arena *arena, CFG_Node *cfg, MD_NodePtrList schemas, E_Key parent_key, String8 filter)
+{
+  Temp scratch = scratch_begin(&arena, 1);
+  UIShell_EvalSchemaChildren result = {0};
+
+  // rjf: gather expansion commands
+  {
+    String8List commands = {0};
+    for(MD_NodePtrNode *n = schemas.first; n != 0; n = n->next)
+    {
+      MD_Node *schema = n->v;
+      MD_Node *tag = md_tag_from_string(schema, str8_lit("expand_commands"), 0);
+      for MD_EachNode(arg, tag->first)
+      {
+        B32 filtered = 0;
+        if(md_node_has_tag(arg, str8_lit("output"), 0))
+        {
+          String8 expr = rd_expr_from_cfg(cfg);
+          filtered = (!str8_match(expr, str8_lit("query:output"), 0));
+        }
+        if(!filtered)
+        {
+          RD_AppCmdInfo cmd_info = rd_app_cmd_info_from_string(arg->string);
+          FuzzyMatchRangeList name_matches = fuzzy_match_find(scratch.arena, filter, rd_display_from_code_name(cmd_info.string));
+          FuzzyMatchRangeList desc_matches = fuzzy_match_find(scratch.arena, filter, cmd_info.description);
+          FuzzyMatchRangeList tags_matches = fuzzy_match_find(scratch.arena, filter, cmd_info.search_tags);
+          if(name_matches.count == name_matches.needle_part_count ||
+             desc_matches.count == desc_matches.needle_part_count ||
+             tags_matches.count == tags_matches.needle_part_count)
+          {
+            str8_list_push(scratch.arena, &commands, arg->string);
+          }
+        }
+      }
+    }
+    result.commands = str8_array_from_list(arena, &commands);
+  }
+
+  // rjf: gather expansion children
+  typedef struct UIShell_EvalSchemaChildNode UIShell_EvalSchemaChildNode;
+  struct UIShell_EvalSchemaChildNode
+  {
+    UIShell_EvalSchemaChildNode *next;
+    MD_Node *n;
+  };
+  UIShell_EvalSchemaChildNode *first_child_node = 0;
+  UIShell_EvalSchemaChildNode *last_child_node = 0;
+  U64 child_count = 0;
+  for(MD_NodePtrNode *n = schemas.first; n != 0; n = n->next)
+  {
+    MD_Node *schema = n->v;
+    for MD_EachNode(child, schema->first)
+    {
+      if(!md_node_has_tag(child, str8_lit("no_expand"), 0))
+      {
+        MD_Node *expand_check = md_tag_from_string(child, str8_lit("expand_if"), 0);
+        B32 expand_this_child = 1;
+        if(!md_node_is_nil(expand_check)) E_ParentKey(parent_key)
+        {
+          expand_this_child = !!e_value_from_string(expand_check->first->string).u64;
+        }
+        if(expand_this_child)
+        {
+          String8 display_name = md_tag_from_string(child, str8_lit("display_name"), 0)->first->string;
+          if(display_name.size == 0)
+          {
+            display_name = rd_display_from_code_name(child->string);
+          }
+          String8 desc = md_tag_from_string(child, str8_lit("description"), 0)->first->string;
+          FuzzyMatchRangeList name_matches         = fuzzy_match_find(scratch.arena, filter, child->string);
+          FuzzyMatchRangeList display_name_matches = fuzzy_match_find(scratch.arena, filter, display_name);
+          FuzzyMatchRangeList desc_matches         = fuzzy_match_find(scratch.arena, filter, desc);
+          if(name_matches.count == name_matches.needle_part_count ||
+             display_name_matches.count == display_name_matches.needle_part_count ||
+             desc_matches.count == desc_matches.needle_part_count)
+          {
+            UIShell_EvalSchemaChildNode *child_node = push_array(scratch.arena, UIShell_EvalSchemaChildNode, 1);
+            child_node->n = child;
+            SLLQueuePush(first_child_node, last_child_node, child_node);
+            child_count += 1;
+          }
+        }
+      }
+    }
+  }
+
+  // rjf: flatten expansion member list
+  result.children = push_array(arena, MD_Node *, child_count);
+  result.children_count = child_count;
+  {
+    U64 idx = 0;
+    for(UIShell_EvalSchemaChildNode *n = first_child_node; n != 0; n = n->next, idx += 1)
+    {
+      result.children[idx] = n->n;
+    }
+  }
+
+  scratch_end(scratch);
+  return result;
+}
+
+internal String8Array
 uishell_eval_collection_command_names_from_cfg_name(Arena *arena, String8 cfg_name)
 {
   Temp scratch = scratch_begin(&arena, 1);
@@ -199,11 +339,19 @@ uishell_eval_views_provider_children(Arena *arena, UIShell_EvalContext *ctx, Str
   return result;
 }
 
+internal String8Array
+uishell_eval_themes_provider_children(Arena *arena, UIShell_EvalContext *ctx, String8 filter)
+{
+  String8Array result = uishell_eval_theme_names_from_filter(arena, filter);
+  return result;
+}
+
 read_only global UIShell_EvalProvider uishell_eval_provider_nil = {0};
 read_only global UIShell_EvalProvider uishell_eval_provider_table[] =
 {
   {str8_lit_comp("query:commands"),     0, uishell_eval_commands_provider_children, 0, 0},
   {str8_lit_comp("query:tab_commands"), 0, uishell_eval_commands_provider_children, 0, 0},
+  {str8_lit_comp("query:themes"),       0, uishell_eval_themes_provider_children,   0, 0},
   {str8_lit_comp("query:views"),        0, uishell_eval_views_provider_children,    0, 0},
 };
 
