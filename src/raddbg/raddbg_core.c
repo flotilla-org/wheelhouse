@@ -6231,28 +6231,6 @@ rd_code_color_slot_from_txt_token_kind_lookup_string(TXT_TokenKind kind, String8
   {
     B32 mapped = 0;
     
-    // rjf: try to map as local
-    if(!mapped && kind == TXT_TokenKind_Identifier)
-    {
-      U64 local_num = e_num_from_string(e_ir_ctx->locals_map, string);
-      if(local_num != 0)
-      {
-        mapped = 1;
-        color = RD_CodeColorSlot_CodeLocal;
-      }
-    }
-    
-    // rjf: try to map as member
-    if(!mapped && kind == TXT_TokenKind_Identifier)
-    {
-      U64 member_num = e_num_from_string(e_ir_ctx->member_map, string);
-      if(member_num != 0)
-      {
-        mapped = 1;
-        color = RD_CodeColorSlot_CodeLocal;
-      }
-    }
-    
     // rjf: try to map as register
     if(!mapped)
     {

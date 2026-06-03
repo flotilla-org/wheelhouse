@@ -814,8 +814,6 @@ typedef struct E_IRCtx E_IRCtx;
 struct E_IRCtx
 {
   E_String2NumMap *regs_map;
-  E_String2NumMap *locals_map; // (within `primary_module`)
-  E_String2NumMap *member_map; // (within `primary_module`)
   E_String2ExprMap *macro_map;
   E_AutoHookMap *auto_hook_map;
 };
@@ -1220,12 +1218,6 @@ internal E_TypeKey e_string2typekey_map_lookup(E_String2TypeKeyMap *map, String8
 internal E_AutoHookMap e_auto_hook_map_make(Arena *arena, U64 slots_count);
 internal void e_auto_hook_map_insert_new_(Arena *arena, E_AutoHookMap *map, E_AutoHookParams *params);
 #define e_auto_hook_map_insert_new(arena, map, ...) e_auto_hook_map_insert_new_((arena), (map), &(E_AutoHookParams){.type_key = zero_struct, __VA_ARGS__})
-
-////////////////////////////////
-//~ rjf: Debug-Info-Driven Map Building Functions
-
-internal E_String2NumMap *e_push_locals_map_from_rdi_voff(Arena *arena, RDI_Parsed *rdi, U64 voff);
-internal E_String2NumMap *e_push_member_map_from_rdi_voff(Arena *arena, RDI_Parsed *rdi, U64 voff);
 
 ////////////////////////////////
 //~ rjf: RDI Location Info -> Eval Op List

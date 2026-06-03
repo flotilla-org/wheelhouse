@@ -1700,17 +1700,11 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
         String8 disambiguator = expr->disambiguator;
         String8 qualifier = expr->qualifier;
         String8 string = expr->string;
-        String8 string__redirected = string;
         B32 string_mapped = 0;
-        B32 string_is_implicit_member_name = 0;
         E_TypeKey mapped_type_key = zero_struct;
-        E_DbgInfo *mapped_dbg_info = &e_dbg_info_nil;
-        E_Module *mapped_location_module = &e_module_nil;
-        RDI_Location mapped_location = 0;
         E_Mode mapped_bytecode_mode = E_Mode_Offset;
         E_Space mapped_bytecode_space = zero_struct;
         String8 mapped_bytecode = {0};
-        void *mapped_user_data = 0;
         B32 generated = 0;
         
         //- rjf: iterate identifier resolution rule paths, try to resolve
@@ -1789,63 +1783,6 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
                   {
                     break;
                   }
-                }
-              }
-            }break;
-            
-            //- rjf: try to map name as member of `this` - if found, string__redirected := "this", and turn
-            // on later implicit-member-lookup generation
-            case E_IdentifierResolutionPath_ImplicitThisMember:
-            if(!string_mapped && (qualifier.size == 0 || str8_match(qualifier, str8_lit("member"), 0)))
-            {
-              E_Module *module = e_base_ctx->primary_module;
-              E_DbgInfo *dbg_info = e_dbg_info_from_module(module);
-              RDI_Parsed *rdi = dbg_info->rdi;
-              RDI_Symbol *procedure = e_cache->thread_ip_procedure;
-              RDI_UDT *udt = rdi_container_udt_from_procedure(rdi, procedure);
-              RDI_TypeNode *type_node = rdi_element_from_name_idx(rdi, TypeNodes, udt->self_type_idx);
-              E_TypeKey container_type_key = e_type_key_ext(e_type_kind_from_rdi(type_node->kind), udt->self_type_idx, module->dbg_info_num);
-              E_Member member = e_type_member_from_key_name__cached(container_type_key, string);
-              if(member.kind != E_MemberKind_Null)
-              {
-                string_is_implicit_member_name = 1;
-                string__redirected = str8_lit("this");
-              }
-            }break;
-            
-            //- rjf: try locals
-            case E_IdentifierResolutionPath_Local:
-            if(!string_mapped && (qualifier.size == 0 || str8_match(qualifier, str8_lit("local"), 0)))
-            {
-              E_Module *module = e_base_ctx->primary_module;
-              E_DbgInfo *dbg_info = e_dbg_info_from_module(module);
-              RDI_Parsed *rdi = dbg_info->rdi;
-              U64 local_num = e_num_from_string(e_ir_ctx->locals_map, string__redirected);
-              if(local_num != 0)
-              {
-                RDI_Symbol *local = rdi_element_from_name_idx(rdi, LocalVariables, local_num-1);
-                
-                // rjf: extract local's type key
-                RDI_TypeNode *type_node = rdi_element_from_name_idx(rdi, TypeNodes, local->type_idx);
-                mapped_type_key = e_type_key_ext(e_type_kind_from_rdi(type_node->kind), local->type_idx, module->dbg_info_num);
-                
-                // rjf: extract local's location block
-                B32 got_location_block = 0;
-                U64 ip_voff = e_base_ctx->thread_ip_voff;
-                {
-                  mapped_location = rdi_location_from_location_voff(rdi, local->location, ip_voff);
-                  if(mapped_location != 0)
-                  {
-                    got_location_block = 1;
-                    mapped_dbg_info = dbg_info;
-                    mapped_location_module = module;
-                  }
-                }
-                
-                // rjf: no location block -> error
-                if(!got_location_block)
-                {
-                  e_msgf(arena, &result.msgs, E_MsgKind_MissingInfo, expr->range, "Could not find location info for `%S`.", string__redirected);
                 }
               }
             }break;
@@ -1931,53 +1868,6 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
             }break;
           }
           
-          //- rjf: mapped to location -> extract or produce bytecode for this mapping
-          if(!generated && mapped_location != 0 && mapped_bytecode.size == 0)
-          {
-            E_Module *module = mapped_location_module;
-            E_DbgInfo *dbg_info = mapped_dbg_info;
-            E_Space space = module->space;
-            Arch arch = module->arch;
-            RDI_Parsed *rdi = dbg_info->rdi;
-            RDI_Location location = mapped_location;
-            E_OpList base_off_adjusted_oplist = {0};
-            if(module != e_base_ctx->primary_module)
-            {
-              e_oplist_push_set_base_off(scratch.arena, &base_off_adjusted_oplist, module->vaddr_range.min);
-            }
-            E_OpList oplist = e_oplist_from_location(scratch.arena, rdi, location);
-            e_oplist_concat_in_place(&base_off_adjusted_oplist, &oplist);
-            mapped_bytecode = e_bytecode_from_oplist(arena, &base_off_adjusted_oplist);
-            mapped_bytecode_space = space;
-            if(rdi_kind_from_location(location) == RDI_LocationKind_ConstantDataOff)
-            {
-              mapped_bytecode_space = e_space_make(E_SpaceKind_DebugConstantData);
-              mapped_bytecode_space.u64s[0] = (dbg_info != &e_dbg_info_nil ? (dbg_info - e_base_ctx->dbg_infos) + 1 : 0);
-            }
-            if(mapped_bytecode_mode == E_Mode_Null)
-            {
-              switch(rdi_kind_from_location(mapped_location))
-              {
-                default:{}break;
-                case RDI_LocationKind_ValBytecodeStream:
-                case RDI_LocationKind_ValReg:
-                {
-                  mapped_bytecode_mode = E_Mode_Value;
-                }break;
-                case RDI_LocationKind_AddrBytecodeStream:
-                case RDI_LocationKind_AddrRegPlusOff:
-                case RDI_LocationKind_AddrAddrRegPlusOff:
-                {
-                  mapped_bytecode_mode = E_Mode_Offset;
-                }break;
-                case RDI_LocationKind_ConstantDataOff:
-                {
-                  mapped_bytecode_mode = E_Mode_Offset;
-                }break;
-              }
-            }
-          }
-          
           //- rjf: generate IR trees for bytecode
           if(!generated && mapped_bytecode.size != 0)
           {
@@ -1997,13 +1887,6 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
             result.type_key = mapped_type_key;
             result.mode = E_Mode_Null;
           }
-        }
-        
-        //- rjf: extend generated result, if result was generated by an implicit member access
-        if(generated && string_is_implicit_member_name)
-        {
-          E_Expr *access = e_expr_irext_member_access(arena, &e_expr_nil, &result, string);
-          result = e_push_irtree_and_type_from_expr(arena, parent, &e_default_identifier_resolution_rule, disallow_autohooks, 1, access); 
         }
         
         //- rjf: error on failure-to-generate

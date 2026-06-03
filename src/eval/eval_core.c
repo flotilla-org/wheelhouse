@@ -522,129 +522,6 @@ e_auto_hook_map_insert_new_(Arena *arena, E_AutoHookMap *map, E_AutoHookParams *
 }
 
 ////////////////////////////////
-//~ rjf: Debug-Info-Driven Map Building Functions
-
-internal E_String2NumMap *
-e_push_locals_map_from_rdi_voff(Arena *arena, RDI_Parsed *rdi, U64 voff)
-{
-  Temp scratch = scratch_begin(&arena, 1);
-  
-  //- rjf: gather scopes to walk
-  typedef struct Task Task;
-  struct Task
-  {
-    Task *next;
-    RDI_Scope *scope;
-  };
-  Task *first_task = 0;
-  Task *last_task = 0;
-  
-  //- rjf: voff -> tightest scope
-  RDI_Scope *tightest_scope = 0;
-  {
-    U64 scope_idx = rdi_vmap_idx_from_section_kind_voff(rdi, RDI_SectionKind_ScopeVMap, voff);
-    RDI_Scope *scope = rdi_element_from_name_idx(rdi, Scopes, scope_idx);
-    Task *task = push_array(scratch.arena, Task, 1);
-    task->scope = scope;
-    SLLQueuePush(first_task, last_task, task);
-    tightest_scope = scope;
-  }
-  
-  //- rjf: voff-1 -> scope
-  if(voff > 0)
-  {
-    U64 scope_idx = rdi_vmap_idx_from_section_kind_voff(rdi, RDI_SectionKind_ScopeVMap, voff-1);
-    RDI_Scope *scope = rdi_element_from_name_idx(rdi, Scopes, scope_idx);
-    if(scope != tightest_scope)
-    {
-      Task *task = push_array(scratch.arena, Task, 1);
-      task->scope = scope;
-      SLLQueuePush(first_task, last_task, task);
-    }
-  }
-  
-  //- rjf: tightest scope -> walk up the tree & build tasks for each parent scope
-  if(tightest_scope != 0)
-  {
-    RDI_Scope *nil_scope = rdi_element_from_name_idx(rdi, Scopes, 0);
-    for(RDI_Scope *scope = rdi_element_from_name_idx(rdi, Scopes, tightest_scope->parent_scope_idx);
-        scope != 0 && scope != nil_scope;
-        scope = rdi_element_from_name_idx(rdi, Scopes, scope->parent_scope_idx))
-    {
-      Task *task = push_array(scratch.arena, Task, 1);
-      task->scope = scope;
-      SLLQueuePush(first_task, last_task, task);
-    }
-  }
-  
-  //- rjf: build blank map
-  E_String2NumMap *map = push_array(arena, E_String2NumMap, 1);
-  *map = e_string2num_map_make(arena, 1024);
-  
-  //- rjf: accumulate locals for all tasks
-  for(Task *task = first_task; task != 0; task = task->next)
-  {
-    RDI_Scope *scope = task->scope;
-    if(scope != 0)
-    {
-      U32 local_opl_idx = scope->local_first + scope->local_count;
-      for(U32 local_idx = scope->local_first; local_idx < local_opl_idx; local_idx += 1)
-      {
-        RDI_Symbol *local_var = rdi_element_from_name_idx(rdi, LocalVariables, local_idx);
-        U64 local_name_size = 0;
-        U8 *local_name_str = rdi_string_from_idx(rdi, local_var->name_string_idx, &local_name_size);
-        String8 name = push_str8_copy(arena, str8(local_name_str, local_name_size));
-        e_string2num_map_insert(arena, map, name, (U64)local_idx+1);
-      }
-    }
-  }
-  
-  scratch_end(scratch);
-  return map;
-}
-
-internal E_String2NumMap *
-e_push_member_map_from_rdi_voff(Arena *arena, RDI_Parsed *rdi, U64 voff)
-{
-  //- rjf: voff -> tightest scope
-  U64 scope_idx = rdi_vmap_idx_from_section_kind_voff(rdi, RDI_SectionKind_ScopeVMap, voff);
-  RDI_Scope *tightest_scope = rdi_element_from_name_idx(rdi, Scopes, scope_idx);
-  
-  //- rjf: tightest scope -> procedure
-  U32 proc_idx = tightest_scope->proc_idx;
-  RDI_Symbol *procedure = rdi_element_from_name_idx(rdi, Procedures, proc_idx);
-  
-  //- rjf: procedure -> udt
-  U32 udt_idx = (procedure->container_flags & RDI_ContainerFlag_KindMask) == RDI_ContainerKind_Type ? procedure->container_idx : 0;
-  RDI_UDT *udt = rdi_element_from_name_idx(rdi, UDTs, udt_idx);
-  
-  //- rjf: build blank map
-  E_String2NumMap *map = push_array(arena, E_String2NumMap, 1);
-  *map = e_string2num_map_make(arena, 64);
-  
-  //- rjf: udt -> fill member map
-  if(!(udt->flags & RDI_UDTFlag_EnumMembers))
-  {
-    U64 data_member_num = 1;
-    for(U32 member_idx = udt->member_first;
-        member_idx < udt->member_first+udt->member_count;
-        member_idx += 1)
-    {
-      RDI_Member *m = rdi_element_from_name_idx(rdi, Members, member_idx);
-      if(m->kind == RDI_MemberKind_DataField)
-      {
-        String8 name = {0};
-        name.str = rdi_string_from_idx(rdi, m->name_string_idx, &name.size);
-        e_string2num_map_insert(arena, map, name, data_member_num);
-        data_member_num += 1;
-      }
-    }
-  }
-  
-  return map;
-}
-
-////////////////////////////////
 //~ rjf: RDI Location Info -> Eval Op List
 
 internal E_OpList
@@ -831,8 +708,6 @@ internal void
 e_select_ir_ctx(E_IRCtx *ctx)
 {
   if(ctx->regs_map == 0)       { ctx->regs_map = &e_string2num_map_nil; }
-  if(ctx->locals_map == 0)     { ctx->locals_map = &e_string2num_map_nil; }
-  if(ctx->member_map == 0)     { ctx->member_map = &e_string2num_map_nil; }
   if(ctx->macro_map == 0)      { ctx->macro_map = push_array(e_cache->arena, E_String2ExprMap, 1); ctx->macro_map[0] = e_string2expr_map_make(e_cache->arena, 512); }
   e_ir_ctx = ctx;
 }
