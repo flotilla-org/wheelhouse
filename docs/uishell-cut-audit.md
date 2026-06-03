@@ -189,6 +189,8 @@ Third slice: standalone debugger query collections have been removed from the sh
 
 Fourth slice: control-entity eval spaces have been removed. Schema evaluation is now config-only, `RD_EvalSpaceKind_MetaCtrlEntity`/`MetaUnattachedProcess`/`MetaCallStackTree` and their conversion helpers are gone, and hover/query validity checks no longer try to validate debugger control entities. The built-in `list` lens now keys by `E_Space` and reads through the eval space read hook instead of calling debugger process-memory reads, which also removed the last shell stub for `d_process_memory_read`.
 
+Fifth slice: debugger control-entity UI/cache compatibility has been removed from the shell frame and widgets. The shell no longer carries control-entity rich tooltips, debugger-thread drop scaffolding in code slices, loaded-debug-info cache syncing, debug-info conversion event syncing, debugger handle fields in `RD_Regs`, or `D_Entity`/`D_Handle` shell stubs. `src/dbg_engine/dbg_engine.mdesk` now generates only developer toggles; the stale entity-kind metadata and unreferenced debug-engine core type header have been removed. The remaining `dbg_engine_user.h` surface is the generic `d_hash_*` helper naming used by config/keymap/vocabulary code.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell query/config provider behavior still lives here. It constructs the current `query:commands`, config/settings, theme, view, and metadata rows. This is the first code to fork into `src/uishell`, because it is shell product behavior but still RAD-named and expressed through `E_*`/`RD_EvalSpaceKind_*`.

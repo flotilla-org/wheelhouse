@@ -417,121 +417,6 @@ rd_title_fstrs_from_cfg(Arena *arena, CFG_Node *cfg, B32 include_extras)
 }
 
 internal DR_FStrList
-rd_title_fstrs_from_ctrl_entity(Arena *arena, D_Entity *entity, B32 include_extras)
-{
-  DR_FStrList result = {0};
-  
-  //- rjf: unpack entity info
-  F32 extras_size = ui_top_font_size()*0.95f;
-  Vec4F32 color = rd_color_from_ctrl_entity(entity);
-  if(color.w == 0)
-  {
-    color = ui_color_from_name(str8_lit("text"));
-  }
-  Vec4F32 secondary_color = color;
-  UI_TagF("weak")
-  {
-    secondary_color = ui_color_from_name(str8_lit("text"));
-  }
-  String8 name = rd_name_from_ctrl_entity(arena, entity);
-  RD_IconKind icon_kind = RD_IconKind_Null;
-  B32 name_is_code = 0;
-  switch(entity->kind)
-  {
-    default:{}break;
-    case D_EntityKind_Machine: {icon_kind = RD_IconKind_Machine;}break;
-    case D_EntityKind_Process: {icon_kind = RD_IconKind_Threads;}break;
-    case D_EntityKind_Thread:  {icon_kind = RD_IconKind_Thread; name_is_code = 1;}break;
-    case D_EntityKind_Module:  {icon_kind = RD_IconKind_Module;}break;
-  }
-  
-  //- rjf: set up drawing params
-  DR_FStrParams params = {rd_font_from_slot(RD_FontSlot_Code), rd_raster_flags_from_slot(RD_FontSlot_Code), color, ui_top_font_size()};
-  
-  //- rjf: push icon
-  if(icon_kind != RD_IconKind_Null)
-  {
-    dr_fstrs_push_new(arena, &result, &params, rd_icon_kind_text_table[icon_kind], .font = rd_font_from_slot(RD_FontSlot_Icons), .raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Icons), .color = secondary_color);
-    dr_fstrs_push_new(arena, &result, &params, str8_lit(" "));
-  }
-  
-  //- rjf: push frozen icon, if frozen
-  if((entity->kind == D_EntityKind_Machine ||
-      entity->kind == D_EntityKind_Process ||
-      entity->kind == D_EntityKind_Thread) &&
-     d_entity_tree_is_frozen(entity))
-    UI_TagF("bad")
-  {
-    dr_fstrs_push_new(arena, &result, &params, rd_icon_kind_text_table[RD_IconKind_Locked], .font = rd_font_from_slot(RD_FontSlot_Icons), .raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Icons), .color = ui_color_from_name(str8_lit("text")));
-    dr_fstrs_push_new(arena, &result, &params, str8_lit(" "));
-  }
-  
-  //- rjf: push selected icon, if selected thread
-  if(entity->kind == D_EntityKind_Thread)
-  {
-    B32 is_selected = d_handle_match(entity->handle, rd_base_regs()->thread);
-    if(is_selected)
-    {
-      dr_fstrs_push_new(arena, &result, &params, rd_icon_kind_text_table[RD_IconKind_RightArrow], .font = rd_font_from_slot(RD_FontSlot_Icons), .raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Icons), .color = color);
-      dr_fstrs_push_new(arena, &result, &params, str8_lit(" "));
-    }
-  }
-  
-  //- rjf: push containing process prefix
-  if(entity->kind == D_EntityKind_Thread ||
-     entity->kind == D_EntityKind_Module)
-  {
-    D_EntityArray processes = d_entity_array_from_kind(D_EntityKind_Process);
-    if(processes.count > 1)
-    {
-      D_Entity *process = d_entity_ancestor_from_kind(entity, D_EntityKind_Process);
-      String8 process_name = rd_name_from_ctrl_entity(arena, process);
-      Vec4F32 process_color = rd_color_from_ctrl_entity(process);
-      if(process_color.w == 0)
-      {
-        process_color = ui_color_from_name(str8_lit("text"));
-      }
-      if(process_name.size != 0)
-      {
-        dr_fstrs_push_new(arena, &result, &params, process_name, .font = rd_font_from_slot(RD_FontSlot_Main), .raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Main), .color = process_color);
-        dr_fstrs_push_new(arena, &result, &params, str8_lit(" "));
-        dr_fstrs_push_new(arena, &result, &params, push_str8f(arena, "(PID: %I64u)", process->id), .font = rd_font_from_slot(RD_FontSlot_Main), .raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Main), .color = secondary_color, .size = ui_top_font_size()*0.9f);
-        dr_fstrs_push_new(arena, &result, &params, str8_lit(" / "), .color = secondary_color);
-      }
-    }
-  }
-  
-  //- rjf: push name
-  dr_fstrs_push_new(arena, &result, &params, name,
-                    .font         = rd_font_from_slot(name_is_code ? RD_FontSlot_Code : RD_FontSlot_Main),
-                    .raster_flags = rd_raster_flags_from_slot(name_is_code ? RD_FontSlot_Code : RD_FontSlot_Main),
-                    .color        = color);
-  
-  //- rjf: push PID
-  if(entity->kind == D_EntityKind_Process && entity->id != 0)
-  {
-    dr_fstrs_push_new(arena, &result, &params, str8_lit(" "));
-    dr_fstrs_push_new(arena, &result, &params, push_str8f(arena, " (PID: %I64u)", entity->id), .font = rd_font_from_slot(RD_FontSlot_Main), .raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Main), .color = secondary_color, .size = ui_top_font_size()*0.85f);
-  }
-  
-  //- rjf: modules get debug info status extras
-  if(entity->kind == D_EntityKind_Module && include_extras)
-  {
-    Access *access = access_open();
-    DI_Key dbgi_key = d_dbgi_key_from_module(entity);
-    RDI_Parsed *rdi = di_rdi_from_key(access, dbgi_key, 0, 0);
-    if(rdi->raw_data_size == 0)
-    {
-      dr_fstrs_push_new(arena, &result, &params, str8_lit(" "));
-      dr_fstrs_push_new(arena, &result, &params, str8_lit("(Debug info not loaded)"), .font = rd_font_from_slot(RD_FontSlot_Main), .raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Main), .size = extras_size, .color = secondary_color);
-    }
-    access_close(access);
-  }
-  
-  return result;
-}
-
-internal DR_FStrList
 rd_title_fstrs_from_code_name(Arena *arena, String8 code_name)
 {
   DR_FStrList result = {0};
@@ -1231,7 +1116,6 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
   //
   B32 drop_can_hit_lines = 0;
   CFG_Node *drop_cfg = &cfg_nil_node;
-  D_Entity *drop_thread = &d_entity_nil;
   String8 drop_expr = {0};
   Vec4F32 drop_color = pop_color;
   UI_Key drop_site_key = ui_key_from_stringf(top_container_box->key, "drop_site");
@@ -1245,16 +1129,6 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
       drop_can_hit_lines = 1;
       drop_cfg = cfg;
       drop_color = linear_from_srgba(rd_color_from_cfg(cfg));
-      if(drop_color.w == 0)
-      {
-        drop_color = pop_color;
-      }
-    }
-    if(rd_state->drag_drop_regs_slot == RD_RegSlot_Thread)
-    {
-      drop_can_hit_lines = 1;
-      drop_thread = d_entity_from_handle(rd_state->drag_drop_regs->thread);
-      drop_color = rd_color_from_ctrl_entity(drop_thread);
       if(drop_color.w == 0)
       {
         drop_color = pop_color;
@@ -1681,9 +1555,6 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
 	      {
 	      }
 	      if(rd_state->drag_drop_regs_slot == RD_RegSlot_Cfg && drop_cfg != &cfg_nil_node)
-	      {
-	      }
-	      if(drop_thread != &d_entity_nil)
 	      {
 	      }
 	    }

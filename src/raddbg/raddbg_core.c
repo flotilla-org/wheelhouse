@@ -692,52 +692,6 @@ rd_possible_overrides_from_file_path(Arena *arena, String8 file_path)
 }
 
 ////////////////////////////////
-//~ rjf: Control Entity Info Extraction
-
-internal Vec4F32
-rd_color_from_ctrl_entity(D_Entity *entity)
-{
-  Vec4F32 result = {0};
-  if(entity->rgba != 0)
-  {
-    result = linear_from_srgba(rgba_from_u32(entity->rgba));
-  }
-  if(entity->rgba == 0) switch(entity->kind)
-  {
-    default:{}break;
-    case D_EntityKind_Thread:
-    {
-      D_Entity *process = d_entity_ancestor_from_kind(entity, D_EntityKind_Process);
-      D_Entity *main_thread = d_entity_child_from_kind(process, D_EntityKind_Thread);
-      if(main_thread != entity)
-      {
-        result = ui_color_from_name(str8_lit("thread_1"));
-      }
-      else
-      {
-        result = ui_color_from_name(str8_lit("thread_0"));
-      }
-    }break;
-  }
-  return result;
-}
-
-internal String8
-rd_name_from_ctrl_entity(Arena *arena, D_Entity *entity)
-{
-  String8 string = entity->string;
-  if(string.size == 0)
-  {
-    string = str8_lit("unnamed");
-  }
-  if(entity->kind == D_EntityKind_Module || entity->kind == D_EntityKind_Process)
-  {
-    string = str8_skip_last_slash(string);
-  }
-  return string;
-}
-
-////////////////////////////////
 //~ rjf: Evaluation Spaces
 
 //- rjf: cfg <-> eval space
@@ -857,26 +811,6 @@ rd_eval_space_read(E_Space space, void *out, E_SpaceRangeInfo *out_range_info, R
             {
               break;
             }
-          }
-        }
-        
-        // rjf: if this is a query -> compute the value string based on query path
-        if(md_node_has_tag(child_schema, str8_lit("query"), 0))
-        {
-          // TODO(rjf): this needs to be replaced by hooks
-          if(str8_match(child_schema->string, str8_lit("guid"), 0))
-          {
-            Access *access = access_open();
-            String8 path = rd_path_from_cfg(root_cfg);
-            U64 timestamp = 0;
-            try_u64_from_str8_c_rules(cfg_node_child_from_string(root_cfg, str8_lit("timestamp"))->first->string, &timestamp);
-            DI_Key key = di_key_from_path_timestamp(path, timestamp);
-            RDI_Parsed *rdi = di_rdi_from_key(access, key, 0, 0);
-            RDI_TopLevelInfo *tli = rdi_element_from_name_idx(rdi, TopLevelInfo, 0);
-            Guid guid = {0};
-            MemoryCopy(&guid, &tli->guid, Min(sizeof guid, sizeof tli->guid));
-            value_string = string_from_guid(scratch.arena, guid);
-            access_close(access);
           }
         }
         
@@ -2718,7 +2652,6 @@ rd_window_frame(void)
       Temp scratch = scratch_begin(0, 0);
       RD_RegSlot slot = ((rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active()) ? rd_state->drag_drop_regs_slot : rd_state->hover_regs_slot);
       RD_Regs *regs = (((rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active()) ? rd_state->drag_drop_regs : rd_state->hover_regs));
-      D_Entity *ctrl_entity = &d_entity_nil;
       ui_state->tooltip_anchor_key = regs->ui_key;
       ui_state->tooltip_can_overflow_window = rd_drag_is_active();
       switch(slot)
@@ -2772,65 +2705,6 @@ rd_window_frame(void)
             UI_Box *box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
             ui_box_equip_display_fstrs(box, &fstrs);
           }
-        }break;
-        
-        ////////////////////////
-        //- rjf: control entity tooltips
-        //
-        case RD_RegSlot_Machine:   {ctrl_entity = d_entity_from_handle(regs->machine);     }goto ctrl_entity_tooltip;
-        case RD_RegSlot_Process:   {ctrl_entity = d_entity_from_handle(regs->process);     }goto ctrl_entity_tooltip;
-        case RD_RegSlot_Module:    {ctrl_entity = d_entity_from_handle(regs->module);      }goto ctrl_entity_tooltip;
-        case RD_RegSlot_Thread:    {ctrl_entity = d_entity_from_handle(regs->thread);      }goto ctrl_entity_tooltip;
-        case RD_RegSlot_CtrlEntity:{ctrl_entity = d_entity_from_handle(regs->ctrl_entity); }goto ctrl_entity_tooltip;
-        ctrl_entity_tooltip:;
-        UI_Tooltip
-        {
-          // rjf: unpack
-          Arch arch = ctrl_entity->arch;
-          String8 arch_str = string_from_arch(arch);
-          DR_FStrList fstrs = rd_title_fstrs_from_ctrl_entity(scratch.arena, ctrl_entity, 0);
-          
-          // rjf: title
-          UI_PrefWidth(ui_children_sum(1)) UI_Row UI_PrefWidth(ui_text_dim(5, 1))
-          {
-            UI_Box *box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
-            ui_box_equip_display_fstrs(box, &fstrs);
-            ui_spacer(ui_em(0.5f, 1.f));
-            UI_FontSize(ui_top_font_size() - 1.f)
-              UI_CornerRadius(ui_top_font_size()*0.5f)
-            {
-              UI_TagF("weak") UI_FlagsAdd(UI_BoxFlag_DrawBorder) ui_label(arch_str);
-              ui_spacer(ui_em(0.5f, 1.f));
-              if(ctrl_entity->kind == D_EntityKind_Thread ||
-                 ctrl_entity->kind == D_EntityKind_Process)
-              {
-                UI_TagF("weak") UI_FlagsAdd(UI_BoxFlag_DrawBorder) ui_labelf("ID: %i", (U32)ctrl_entity->id);
-              }
-            }
-          }
-          
-          // rjf: debug info status
-          if(ctrl_entity->kind == D_EntityKind_Module) UI_TagF("weak")
-          {
-            Access *access = access_open();
-            D_Entity *dbg_info_entity = d_entity_child_from_kind(ctrl_entity, D_EntityKind_DebugInfoPath);
-            DI_Key dbgi_key = d_dbgi_key_from_module(ctrl_entity);
-            RDI_Parsed *rdi = di_rdi_from_key(access, dbgi_key, 0, 0);
-            if(rdi->raw_data_size != 0)
-            {
-              ui_labelf("Debug information successfully loaded from %S", dbg_info_entity->string);
-            }
-            else if(dbg_info_entity->string.size != 0)
-            {
-              ui_labelf("Debug info not found at %S", dbg_info_entity->string);
-            }
-            else if(dbg_info_entity->string.size == 0)
-            {
-              ui_labelf("Debug info location not found in module file");
-            }
-            access_close(access);
-          }
-          
         }break;
         
         ////////////////////////
@@ -2975,12 +2849,6 @@ rd_window_frame(void)
           ID(panel);
           ID(view);
 #undef ID
-#define Handle(name) ui_labelf("%s: [0x%x, 0x%x, 0x%I64x]", #name, (regs->name).machine_id, (regs->name).controller_kind, (regs->name).entity_id)
-          Handle(machine);
-          Handle(process);
-          Handle(module);
-          Handle(thread);
-#undef Handle
           ui_labelf("file_path: \"%S\"", regs->file_path);
           ui_labelf("cursor: (L:%I64d, C:%I64d)", regs->cursor.line, regs->cursor.column);
           ui_labelf("mark: (L:%I64d, C:%I64d)", regs->mark.line, regs->mark.column);
@@ -3018,8 +2886,6 @@ rd_window_frame(void)
             avg_ui_hash_chain_length = chain_length_sum / chain_count;
           }
           ui_labelf("Target Hz: %.2f", 1.f/rd_state->frame_dt);
-          ui_labelf("Ctrl Run Index: %I64u", d_run_gen());
-          ui_labelf("Ctrl Mem Gen Index: %I64u", d_mem_gen());
           ui_labelf("Window %p", w);
           ui_set_next_pref_width(ui_children_sum(1));
           ui_set_next_pref_height(ui_children_sum(1));
@@ -6989,12 +6855,6 @@ rd_init(CmdLine *cmdln)
     cfg_node_new(rd_state->cfg, cfg_node_root(), str8_lit("transient"));
   }
   
-  // rjf: set up loaded debug info cache
-  {
-    rd_state->loaded_dbg_info_slots_count = 4096;
-    rd_state->loaded_dbg_info_slots = push_array(arena, RD_LoadedDbgInfoSlot, rd_state->loaded_dbg_info_slots_count);
-  }
-  
   // rjf: set up window cache
   {
     rd_state->window_state_slots_count = 64;
@@ -7331,82 +7191,6 @@ rd_frame(void)
   }
   
   //////////////////////////////
-  //- rjf: apply debug info config trees -> loaded debug info cache
-  //
-  {
-    U64 current_update_tick_idx = update_tick_idx();
-    
-    //- rjf: for each debug info config, reflect in cache - open if needed
-    CFG_NodePtrList dbg_infos = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("debug_info"));
-    for EachNode(n, CFG_NodePtrNode, dbg_infos.first)
-    {
-      // rjf: skip debug infos for other projects
-      if(rd_cfg_is_project_filtered(n->v))
-      {
-        continue;
-      }
-      
-      // rjf: unpack debug info config
-      CFG_Node *di = n->v;
-      String8 path = rd_path_from_cfg(di);
-      CFG_Node *di_timestamp = cfg_node_child_from_string(di, str8_lit("timestamp"));
-      U64 timestamp = 0;
-      try_u64_from_str8_c_rules(di_timestamp->first->string, &timestamp);
-      DI_Key key = di_key_from_path_timestamp(path, timestamp);
-      
-      // rjf: touch in cache
-      U64 hash = u64_hash_from_str8(str8_struct(&key));
-      U64 slot_idx = hash%rd_state->loaded_dbg_info_slots_count;
-      RD_LoadedDbgInfoSlot *slot = &rd_state->loaded_dbg_info_slots[slot_idx];
-      RD_LoadedDbgInfoNode *node = 0;
-      for(RD_LoadedDbgInfoNode *n = slot->first; n != 0; n = n->hash_next)
-      {
-        if(di_key_match(key, n->key))
-        {
-          node = n;
-          break;
-        }
-      }
-      if(node == 0)
-      {
-        node = rd_state->free_loaded_dbg_info_node;
-        if(node)
-        {
-          SLLStackPop_N(rd_state->free_loaded_dbg_info_node, hash_next);
-        }
-        else
-        {
-          node = push_array(rd_state->arena, RD_LoadedDbgInfoNode, 1);
-        }
-        DLLPushBack_NP(slot->first, slot->last, node, hash_next, hash_prev);
-        node->key = key;
-        di_open(key);
-      }
-      node->last_tick_idx_touched = current_update_tick_idx;
-      DLLRemove_NP(rd_state->loaded_dbg_info_lru_first, rd_state->loaded_dbg_info_lru_last, node, lru_next, lru_prev);
-      DLLPushBack_NP(rd_state->loaded_dbg_info_lru_first, rd_state->loaded_dbg_info_lru_last, node, lru_next, lru_prev);
-    }
-    
-    //- rjf: iterate least-recently-used loaded debug infos - if any have not been updated this tick,
-    // then evict
-    for(RD_LoadedDbgInfoNode *n = rd_state->loaded_dbg_info_lru_first, *next = 0; n != 0; n = next)
-    {
-      next = n->lru_next;
-      if(n->last_tick_idx_touched >= current_update_tick_idx)
-      {
-        break;
-      }
-      U64 hash = u64_hash_from_str8(str8_struct(&n->key));
-      U64 slot_idx = hash%rd_state->loaded_dbg_info_slots_count;
-      RD_LoadedDbgInfoSlot *slot = &rd_state->loaded_dbg_info_slots[slot_idx];
-      DLLRemove_NP(rd_state->loaded_dbg_info_lru_first, rd_state->loaded_dbg_info_lru_last, n, lru_next, lru_prev);
-      DLLRemove_NP(slot->first, slot->last, n, hash_next, hash_prev);
-      SLLStackPush_N(rd_state->free_loaded_dbg_info_node, n, hash_next);
-      di_close(n->key, 0);
-    }
-  }
-  
-  //////////////////////////////
   //- rjf: garbage collect untouched immediate cfg trees
   //
   if(rd_state->frame_depth == 1)
@@ -7460,40 +7244,6 @@ rd_frame(void)
           DLLRemove_NP(rd_state->view_state_slots[slot_idx].first, rd_state->view_state_slots[slot_idx].last, vs, hash_next, hash_prev);
           SLLStackPush_N(rd_state->free_view_state, vs, hash_next);
         }
-      }
-    }
-  }
-  
-  //////////////////////////////
-  //- rjf: sync with di parsers
-  //
-  ProfScope("sync with di parsers")
-  {
-    DI_EventList events = di_get_events(scratch.arena);
-    for(DI_EventNode *n = events.first; n != 0; n = n->next)
-    {
-      DI_Event *event = &n->v;
-      switch(event->kind)
-      {
-        default:{}break;
-        case DI_EventKind_ConversionStarted:
-        {
-          CFG_Node *root = cfg_node_child_from_string(cfg_node_root(), str8_lit("transient"));
-          CFG_Node *task = cfg_node_new(rd_state->cfg, root, str8_lit("conversion_task"));
-          cfg_node_new(rd_state->cfg, task, event->string);
-        }break;
-        case DI_EventKind_ConversionEnded:
-        {
-          CFG_Node *root = cfg_node_child_from_string(cfg_node_root(), str8_lit("transient"));
-          for(CFG_Node *tln = root->first; tln != &cfg_nil_node; tln = tln->next)
-          {
-            if(str8_match(tln->string, str8_lit("conversion_task"), 0) && str8_match(tln->first->string, event->string, 0))
-            {
-              cfg_node_release(rd_state->cfg, tln);
-              break;
-            }
-          }
-        }break;
       }
     }
   }
@@ -8098,7 +7848,6 @@ rd_frame(void)
         str8_lit("breakpoint"),
         str8_lit("watch_pin"),
         str8_lit("target"),
-        str8_lit("debug_info"),
         str8_lit("file_path_map"),
         str8_lit("type_view"),
         str8_lit("recent_project"),
@@ -8959,12 +8708,9 @@ rd_frame(void)
   //- rjf: [windows] clear pages from working set shortly after startup, many of which will not be needed
   //
 #if OS_WINDOWS
-  if(di_load_count() < 50)
+  if(rd_state->frame_index == 15) ProfScope("SetProcessWorkingSetSize")
   {
-    if(rd_state->frame_index == 15) ProfScope("SetProcessWorkingSetSize")
-    {
-      SetProcessWorkingSetSize(GetCurrentProcess(), max_U64, max_U64);
-    }
+    SetProcessWorkingSetSize(GetCurrentProcess(), max_U64, max_U64);
   }
 #endif
   

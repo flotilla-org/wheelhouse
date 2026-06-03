@@ -145,11 +145,6 @@ struct RD_AutocompCursorInfo
 typedef enum RD_RegSlot
 {
   RD_RegSlot_Null,
-  RD_RegSlot_Machine,
-  RD_RegSlot_Module,
-  RD_RegSlot_Process,
-  RD_RegSlot_Thread,
-  RD_RegSlot_CtrlEntity,
   RD_RegSlot_Window,
   RD_RegSlot_Panel,
   RD_RegSlot_Tab,
@@ -196,11 +191,6 @@ RD_RegSlot;
 typedef struct RD_Regs RD_Regs;
 struct RD_Regs
 {
-  D_Handle machine;
-  D_Handle module;
-  D_Handle process;
-  D_Handle thread;
-  D_Handle ctrl_entity;
   CFG_ID window;
   CFG_ID panel;
   CFG_ID tab;
@@ -216,7 +206,6 @@ struct RD_Regs
   TxtPt mark;
   C_Key text_key;
   TXT_LangKind lang_kind;
-  DI_Key dbgi_key;
   U64 vaddr;
   U64 voff;
   Rng1U64 vaddr_range;
@@ -561,24 +550,6 @@ struct RD_WindowStateSlot
 ////////////////////////////////
 //~ rjf: Main Per-Process Graphical State
 
-typedef struct RD_LoadedDbgInfoNode RD_LoadedDbgInfoNode;
-struct RD_LoadedDbgInfoNode
-{
-  RD_LoadedDbgInfoNode *hash_next;
-  RD_LoadedDbgInfoNode *hash_prev;
-  RD_LoadedDbgInfoNode *lru_next;
-  RD_LoadedDbgInfoNode *lru_prev;
-  DI_Key key;
-  U64 last_tick_idx_touched;
-};
-
-typedef struct RD_LoadedDbgInfoSlot RD_LoadedDbgInfoSlot;
-struct RD_LoadedDbgInfoSlot
-{
-  RD_LoadedDbgInfoNode *first;
-  RD_LoadedDbgInfoNode *last;
-};
-
 typedef struct RD_AmbiguousPathNode RD_AmbiguousPathNode;
 struct RD_AmbiguousPathNode
 {
@@ -702,19 +673,6 @@ struct RD_State
   RD_Regs *next_hover_regs;
   RD_RegSlot next_hover_regs_slot;
   
-  // rjf: autos-determining code range
-  //
-  // NOTE(rjf): this includes only instructions that we've observed the
-  // selected thread passed. autos are *also* computed from disassembling
-  // the line at which any thread sits, but we only want to collect autos
-  // from larger ranges of instructions when we directly observer this
-  // on a particular selected thread within a single function.
-  //
-  D_Handle last_stop_selected_thread;
-  U64 last_stop_selected_thread_ip;
-  U64 last_stop_selected_thread_sp;
-  Rng1U64 autos_determining_vaddr_range;
-  
   // rjf: icon texture
   R_Handle icon_texture;
   
@@ -731,13 +689,6 @@ struct RD_State
   // rjf: cfg state
   CFG_State *cfg;
   CFG_SchemaTable *cfg_schema_table;
-  
-  // rjf: loaded debug info cache
-  U64 loaded_dbg_info_slots_count;
-  RD_LoadedDbgInfoSlot *loaded_dbg_info_slots;
-  RD_LoadedDbgInfoNode *loaded_dbg_info_lru_first;
-  RD_LoadedDbgInfoNode *loaded_dbg_info_lru_last;
-  RD_LoadedDbgInfoNode *free_loaded_dbg_info_node;
   
   // rjf: window state cache
   U64 window_state_slots_count;
@@ -869,12 +820,6 @@ internal CFG_Node *rd_immediate_cfg_from_keyf(char *fmt, ...);
 
 internal String8 rd_mapped_from_file_path(Arena *arena, String8 file_path);
 internal String8List rd_possible_overrides_from_file_path(Arena *arena, String8 file_path);
-
-////////////////////////////////
-//~ rjf: Control Entity Info Extraction
-
-internal Vec4F32 rd_color_from_ctrl_entity(D_Entity *entity);
-internal String8 rd_name_from_ctrl_entity(Arena *arena, D_Entity *entity);
 
 ////////////////////////////////
 //~ rjf: Evaluation Spaces

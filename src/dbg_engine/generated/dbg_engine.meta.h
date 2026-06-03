@@ -6,23 +6,6 @@
 #ifndef DBG_ENGINE_META_H
 #define DBG_ENGINE_META_H
 
-typedef enum D_EntityKind
-{
-D_EntityKind_Null,
-D_EntityKind_Root,
-D_EntityKind_Machine,
-D_EntityKind_Process,
-D_EntityKind_Thread,
-D_EntityKind_Module,
-D_EntityKind_EntryPoint,
-D_EntityKind_DebugInfoPath,
-D_EntityKind_PendingThreadName,
-D_EntityKind_PendingThreadColor,
-D_EntityKind_Breakpoint,
-D_EntityKind_AddressRangeAnnotation,
-D_EntityKind_COUNT,
-} D_EntityKind;
-
 global B32 DEV_always_refresh = 0;
 global B32 DEV_simulate_lag = 0;
 global B32 DEV_draw_ui_text_pos = 0;
@@ -44,10 +27,4 @@ struct {B32 *value_ptr; String8 name;} DEV_toggle_table[] =
 {&DEV_cmd_context_tooltips, str8_lit_comp("cmd_context_tooltips")},
 {&DEV_updating_indicator, str8_lit_comp("updating_indicator")},
 };
-C_LINKAGE_BEGIN
-extern String8 d_entity_kind_code_name_table[12];
-extern String8 d_entity_kind_display_string_table[12];
-
-C_LINKAGE_END
-
 #endif // DBG_ENGINE_META_H

@@ -50,7 +50,7 @@
 #include "arch/arch_inc.h"
 #include "dbg_info/dbg_info.h"
 #include "eval/eval_inc.h"
-#include "dbg_engine/dbg_engine_core.h"
+#include "dbg_engine/generated/dbg_engine.meta.h"
 #include "dbg_engine/dbg_engine_user.h"
 #include "eval_visualization/eval_visualization_inc.h"
 #include "font_provider/font_provider_inc.h"
