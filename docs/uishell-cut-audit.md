@@ -193,6 +193,8 @@ Fifth slice: debugger control-entity UI/cache compatibility has been removed fro
 
 Sixth slice: debug-info-derived code coloring has been removed. Syntax token coloring and inherited local/member/register/macro coloring remain, but identifier coloring no longer calls `di_match_from_string` or maps RDI procedure/global/TLS/type matches to `CodeSymbol`/`CodeType`. The color slots remain in theme metadata for compatibility with existing themes; they are no longer used by the shell coloring path.
 
+Seventh slice: debug-info name/type resolution has been removed from the active evaluator. Type identifiers now resolve through built-in type names only, and the default/callable identifier resolution paths no longer include the RDI name-map match step. This removed the `DI_Match` API surface, `di_match_from_string`, `di_rdi_from_key`, `di_key_match`, and the `e_match_from_rdi_name_maps` helper from the shell build. RDI-backed local/member/type materialization still exists deeper in eval and remains a separate cut.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell query/config provider behavior still lives here. It constructs the current `query:commands`, config/settings, theme, view, and metadata rows. This is the first code to fork into `src/uishell`, because it is shell product behavior but still RAD-named and expressed through `E_*`/`RD_EvalSpaceKind_*`.

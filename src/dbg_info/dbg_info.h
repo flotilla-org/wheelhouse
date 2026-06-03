@@ -156,18 +156,6 @@ struct DI_LoadCompletion
 };
 
 ////////////////////////////////
-//~ rjf: Match Types
-
-typedef struct DI_Match DI_Match;
-struct DI_Match
-{
-  DI_Key key;
-  RDI_SectionKind section_kind;
-  U32 idx;
-  U32 count;
-};
-
-////////////////////////////////
 //~ rjf: Events
 
 typedef enum DI_EventKind
@@ -268,7 +256,6 @@ global DI_Shared *di_shared = 0;
 //~ rjf: Helpers
 
 internal DI_Key di_key_zero(void);
-internal B32 di_key_match(DI_Key a, DI_Key b);
 internal void di_key_list_push(Arena *arena, DI_KeyList *list, DI_Key key);
 internal DI_KeyArray di_key_array_from_list(Arena *arena, DI_KeyList *list);
 
@@ -294,7 +281,6 @@ internal void di_close(DI_Key key, B32 force_closed);
 internal U64 di_load_gen(void);
 internal U64 di_load_count(void);
 internal DI_KeyArray di_push_all_loaded_keys(Arena *arena);
-internal RDI_Parsed *di_rdi_from_key(Access *access, DI_Key key, B32 high_priority, U64 endt_us);
 
 ////////////////////////////////
 //~ rjf: Events
@@ -317,11 +303,5 @@ internal void di_conversion_completion_signal_receiver_thread_entry_point(void *
 
 internal AC_Artifact di_search_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U64 *gen_out);
 internal void di_search_artifact_destroy(AC_Artifact artifact);
-
-////////////////////////////////
-//~ rjf: Match Artifact Cache Hooks / Lookups
-
-internal AC_Artifact di_match_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U64 *gen_out);
-internal DI_Match di_match_from_string(String8 string, U64 match_index, DI_Key preferred_dbgi_key, U64 endt_us);
 
 #endif // DBG_INFO_H
