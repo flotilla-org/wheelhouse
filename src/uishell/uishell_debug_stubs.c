@@ -40,13 +40,6 @@ d_hash_from_string__case_insensitive(String8 string)
 ////////////////////////////////
 //~ rjf: Debug Info Shell Stubs
 
-internal DI_Key
-di_key_zero(void)
-{
-  DI_Key result = {0};
-  return result;
-}
-
 internal B32
 di_key_match(DI_Key a, DI_Key b)
 {

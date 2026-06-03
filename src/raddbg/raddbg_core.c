@@ -6275,27 +6275,6 @@ rd_code_color_slot_from_txt_token_kind_lookup_string(TXT_TokenKind kind, String8
       }
     }
     
-    // rjf: try to map using asynchronous matching system
-    if(!mapped && kind == TXT_TokenKind_Identifier)
-    {
-      DI_Match match = di_match_from_string(string, 0, di_key_zero(), 0);
-      RDI_SectionKind section_kind = match.section_kind;
-      mapped = 1;
-      switch(section_kind)
-      {
-        default:{mapped = 0;}break;
-        case RDI_SectionKind_Procedures:
-        case RDI_SectionKind_GlobalVariables:
-        case RDI_SectionKind_ThreadVariables:
-        {
-          color = RD_CodeColorSlot_CodeSymbol;
-        }break;
-        case RDI_SectionKind_TypeNodes:
-        {
-          color = RD_CodeColorSlot_CodeType;
-        }break;
-      }
-    }
   }
   return color;
 }
