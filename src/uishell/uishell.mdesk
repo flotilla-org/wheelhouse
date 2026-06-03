@@ -1,0 +1,78 @@
+// Copyright (c) Epic Games Tools
+// Licensed under the MIT license (https://opensource.org/license/mit/)
+
+////////////////////////////////
+//~ rjf: Shell Vocabulary
+
+@table(code_name       code_name_plural       display_name                       display_name_plural       icon_kind)
+UIShell_VocabTable:
+{
+  {view                _                      "View"                             _                         Binoculars}
+  {window              _                      "Window"                           _                         Window}
+  {panel               _                      "Panel"                            _                         Null}
+  {tab                 _                      "Tab"                              _                         Null}
+  {user                _                      "User"                             _                         Person}
+  {project             _                      "Project"                          _                         Briefcase}
+  {recent_project      _                      "Recent Project"                   _                         Briefcase}
+  {theme_color         _                      "Theme Color"                      _                         Palette}
+  {theme               _                      "Theme"                            _                         Palette}
+  {color               _                      "Color"                            _                         Palette}
+  {file                _                      "File"                             _                         FileOutline}
+  {folder              _                      "Folder"                           _                         FolderClosedFilled}
+  {path                ""                     "Path"                             ""                        FileOutline}
+  {current_path        ""                     "Current Path"                     ""                        FileOutline}
+  {name                _                      "Name"                             _                         Null}
+  {label               _                      "Label"                            _                         Null}
+  {string              _                      "String"                           _                         Null}
+  {bool                _                      "Boolean"                          _                         Null}
+  {expression          _                      "Expression"                       _                         Null}
+  {expr                _                      "Expression"                       _                         Null}
+  {lang                _                      "Language"                         _                         Null}
+  {font_size           ""                     "Font Size"                        ""                        Null}
+  {row_height          ""                     "Row Height"                       ""                        Null}
+  {tab_height          ""                     "Tab Height"                       ""                        Null}
+  {show_line_numbers   ""                     "Show Line Numbers"                ""                        Null}
+  {line_wrapping       ""                     "Line Wrapping"                    ""                        Null}
+  {scroll_to_bottom_on_change ""              "Scroll To Bottom On Change"       ""                        Null}
+  {auto                ""                     "Transient"                        ""                        Null}
+  {num_columns         ""                     "Number of Columns"                ""                        Null}
+  {auto_columns        ""                     "Automatically Size Columns"       ""                        Null}
+  {address             addresses              "Address"                          "Addresses"               Null}
+  {offset              _                      "Offset"                           _                         Null}
+  {text                ""                     "Text"                             ""                        FileOutline}
+  {binary              ""                     "Binary"                           ""                        Grid}
+  {output              _                      "Output"                           _                         List}
+  {command             _                      "Command"                          _                         Palette}
+  {tab_command         _                      "Tab Command"                      _                         Palette}
+  {user_settings       ""                     "User Settings"                    ""                        Gear}
+  {project_settings    ""                     "Project Settings"                 ""                        Gear}
+  {keybinding          _                      "Keybinding"                       _                         Null}
+}
+
+@data(RD_VocabInfo) uishell_vocab_info_table:
+{
+  @expand(UIShell_VocabTable a) `{str8_lit_comp("$(a.code_name)"), str8_lit_comp("$(a.code_name_plural == _ -> a.code_name .. 's')$(a.code_name_plural != _ -> a.code_name_plural)"), str8_lit_comp("$(a.display_name)"), str8_lit_comp("$(a.display_name_plural == _ -> a.display_name .. 's')$(a.display_name_plural != _ -> a.display_name_plural)"), RD_IconKind_$(a.icon_kind)}`;
+}
+
+////////////////////////////////
+//~ rjf: Shell Binding Version Remap
+
+@table(old_name new_name)
+UIShell_BindingVersionRemapTable:
+{
+  {"commands"     "run_command"}
+  {"load_user"    "open_user"}
+  {"load_profile" "open_profile"}
+  {"load_project" "open_project"}
+  {"open_profile" "open_project"}
+}
+
+@data(String8) uishell_binding_version_remap_old_name_table:
+{
+  @expand(UIShell_BindingVersionRemapTable a) `str8_lit_comp("$(a.old_name)")`
+}
+
+@data(String8) uishell_binding_version_remap_new_name_table:
+{
+  @expand(UIShell_BindingVersionRemapTable a) `str8_lit_comp("$(a.new_name)")`
+}

@@ -1,0 +1,71 @@
+// Copyright (c) Epic Games Tools
+// Licensed under the MIT license (https://opensource.org/license/mit/)
+
+////////////////////////////////
+//~ rjf: Developer Toggles
+
+@table(name)
+D_DevToggleTable:
+{
+  {always_refresh}
+  {simulate_lag}
+  {draw_ui_text_pos}
+  {draw_ui_focus_debug}
+  {draw_ui_box_heatmap}
+  {eval_compiler_tooltips}
+  {eval_watch_key_tooltips}
+  {cmd_context_tooltips}
+  {updating_indicator}
+}
+
+@gen
+{
+  @expand(D_DevToggleTable a) `global B32 DEV_$(a.name) = 0;`
+}
+
+@gen
+{
+  `struct {B32 *value_ptr; String8 name;} DEV_toggle_table[] =`;
+  `{`;
+    @expand(D_DevToggleTable a) `{&DEV_$(a.name), str8_lit_comp("$(a.name)")},`
+      `};`;
+}
+
+////////////////////////////////
+//~ rjf: Entity Kinds
+
+@table(name  code_name  display_string)
+D_EntityKindTable:
+{
+  {Root                      root                      "Root"                      }
+  {Machine                   machine                   "Machine"                   }
+  {Process                   process                   "Process"                   }
+  {Thread                    thread                    "Thread"                    }
+  {Module                    module                    "Module"                    }
+  {EntryPoint                entry_point               "Entry Point"               }
+  {DebugInfoPath             debug_info_path           "Debug Info Path"           }
+  {PendingThreadName         pending_thread_name       "Pending Thread Name"       }
+  {PendingThreadColor        pending_thread_color      "Pending Thread Color"      }
+  {Breakpoint                breakpoint                "Breakpoint"                }
+  {AddressRangeAnnotation    address_range_annotation  "Address Range Annotation"  }
+}
+
+@enum D_EntityKind:
+{
+  Null,
+  @expand(D_EntityKindTable a) `$(a.name)`,
+  COUNT,
+}
+
+@data(String8) d_entity_kind_code_name_table:
+{
+  `{0}`,
+  @expand(D_EntityKindTable a) `str8_lit_comp("$(a.code_name)")`
+}
+
+@data(String8) d_entity_kind_display_string_table:
+{
+  `{0}`,
+  @expand(D_EntityKindTable a) `str8_lit_comp("$(a.display_name)")`
+}
+
