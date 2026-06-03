@@ -179,7 +179,9 @@ Implication: binary files are still supported as raw byte/hex views, but executa
 
 ### Split evaluator from RDI/debug-info
 
-Result: pending. The evaluator is now the largest remaining debugger-shaped dependency cluster. It should not be deleted as a unit: part of it is the app/query/list machinery that preferences, command palette, file-open rows, tab commands, and config views still need; another part is the old debugger expression engine that evaluates against RDI debug info, registers, modules, TLS, and process memory.
+Result: in progress. The evaluator is now the largest remaining debugger-shaped dependency cluster. It should not be deleted as a unit: part of it is the app/query/list machinery that preferences, command palette, file-open rows, tab commands, and config views still need; another part is the old debugger expression engine that evaluates against RDI debug info, registers, modules, TLS, and process memory.
+
+First slice: `src/uishell/uishell_eval.*` now owns the shell command/view query name providers. The inherited `commands` and `views` `E_TYPE_*` hooks in `src/raddbg/raddbg_eval.c` are still present as compatibility adapters, but their child-name filtering now routes through shell-owned helpers. This is intentionally not a renderer rewrite; it moves ownership of active shell namespaces while keeping existing list/dialog behavior stable.
 
 The current source split is:
 

@@ -61,6 +61,7 @@
 #include "raddbg/raddbg_inc.h"
 #include "uishell/uishell_commands.h"
 #include "uishell/uishell_meta.h"
+#include "uishell/uishell_eval.h"
 #include "uishell/uishell_dispatch.h"
 #include "uishell/uishell_views.h"
 
@@ -87,6 +88,7 @@
 #include "font_cache/font_cache.c"
 #include "draw/draw.c"
 #include "ui/ui_inc.c"
+#include "uishell/uishell_eval.c"
 #include "uishell/uishell_views.c"
 #include "raddbg/raddbg_inc.c"
 

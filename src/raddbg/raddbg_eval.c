@@ -20,45 +20,10 @@ E_TYPE_ACCESS_FUNCTION_DEF(commands)
   return result;
 }
 
-internal void
-rd_cmd_names_push_filtered(Arena *arena, String8List *cmd_names, String8 code_name, String8 description, String8 search_tags, RD_CmdKindFlags info_flags, RD_CmdKindFlags required_flags, String8 filter)
-{
-  Temp scratch = scratch_begin(&arena, 1);
-  if((info_flags & required_flags) == required_flags)
-  {
-    String8 display_name = rd_display_from_code_name(code_name);
-    FuzzyMatchRangeList desc_matches = fuzzy_match_find(scratch.arena, filter, description);
-    FuzzyMatchRangeList name_matches = fuzzy_match_find(scratch.arena, filter, display_name);
-    FuzzyMatchRangeList tags_matches = fuzzy_match_find(scratch.arena, filter, search_tags);
-    B32 binding_matches_good = 0;
-    CFG_KeyMapNodePtrList bindings = cfg_key_map_node_ptr_list_from_name(scratch.arena, rd_state->key_map, code_name);
-    for(CFG_KeyMapNodePtr *n = bindings.first; n != 0; n = n->next)
-    {
-      String8 binding_text = wm_string_from_modifiers_key(scratch.arena, n->v->binding.modifiers, n->v->binding.key);
-      FuzzyMatchRangeList matches = fuzzy_match_find(scratch.arena, filter, binding_text);
-      if(matches.count == matches.needle_part_count)
-      {
-        binding_matches_good = 1;
-        break;
-      }
-    }
-    if(name_matches.count == name_matches.needle_part_count ||
-       desc_matches.count == desc_matches.needle_part_count ||
-       tags_matches.count == tags_matches.needle_part_count ||
-       binding_matches_good)
-    {
-      str8_list_push(arena, cmd_names, code_name);
-    }
-  }
-  scratch_end(scratch);
-}
-
 E_TYPE_EXPAND_INFO_FUNCTION_DEF(commands)
 {
   E_TypeExpandInfo result = {0};
   {
-    Temp scratch = scratch_begin(&arena, 1);
-    String8List cmd_names = {0};
     E_Type *type = e_type_from_key(eval.irtree.type_key);
     RD_CmdKindFlags required_flags = RD_CmdKindFlag_ListInUI;
     if(str8_match(type->name, str8_lit("text_pt_commands"), 0))
@@ -73,17 +38,12 @@ E_TYPE_EXPAND_INFO_FUNCTION_DEF(commands)
     {
       required_flags |= RD_CmdKindFlag_ListInTab;
     }
-    for EachElement(idx, uishell_cmd_info_table)
-    {
-      UIShell_CmdInfo *info = &uishell_cmd_info_table[idx];
-      RD_CmdKindFlags info_flags = rd_cmd_flags_from_uishell_cmd_flags(info->flags);
-      rd_cmd_names_push_filtered(scratch.arena, &cmd_names, info->string, info->description, info->search_tags, info_flags, required_flags, filter);
-    }
+    UIShell_EvalContext ctx = {.required_cmd_flags = required_flags};
+    UIShell_EvalProvider *provider = uishell_eval_provider_from_namespace(str8_lit("query:commands"));
     String8Array *accel = push_array(arena, String8Array, 1);
-    *accel = str8_array_from_list(arena, &cmd_names);
+    *accel = provider->children(arena, &ctx, filter);
     result.user_data = accel;
     result.expr_count = accel->count;
-    scratch_end(scratch);
   }
   return result;
 }
@@ -176,10 +136,6 @@ E_TYPE_EXPAND_RANGE_FUNCTION_DEF(themes)
 ////////////////////////////////
 //~ rjf: `views` Type Hooks
 
-#if !defined(RD_APP_NAME_SCHEMA_INFO_TABLE)
-#  define RD_APP_NAME_SCHEMA_INFO_TABLE uishell_name_schema_info_table
-#endif
-
 E_TYPE_ACCESS_FUNCTION_DEF(views)
 {
   E_IRTreeAndType result = {&e_irnode_nil};
@@ -201,30 +157,11 @@ E_TYPE_EXPAND_INFO_FUNCTION_DEF(views)
 {
   E_TypeExpandInfo result = {0};
   {
-    Temp scratch = scratch_begin(&arena, 1);
-    
-    //- rjf: gather cfgs
-    String8List names = {0};
-    for EachElement(idx, RD_APP_NAME_SCHEMA_INFO_TABLE)
-    {
-      if(RD_APP_NAME_SCHEMA_INFO_TABLE[idx].is_view &&
-         rd_view_name_is_listed_in_app(RD_APP_NAME_SCHEMA_INFO_TABLE[idx].name))
-      {
-        String8 name = RD_APP_NAME_SCHEMA_INFO_TABLE[idx].name;
-        FuzzyMatchRangeList name_matches = fuzzy_match_find(scratch.arena, filter, name);
-        if(name_matches.count == name_matches.needle_part_count)
-        {
-          str8_list_push(scratch.arena, &names, name);
-        }
-      }
-    }
-    
-    //- rjf: flatten & build accelerator
+    UIShell_EvalProvider *provider = uishell_eval_provider_from_namespace(str8_lit("query:views"));
     String8Array *accel = push_array(arena, String8Array, 1);
-    *accel = str8_array_from_list(arena, &names);
+    *accel = provider->children(arena, 0, filter);
     result.user_data = accel;
     result.expr_count = accel->count;
-    scratch_end(scratch);
   }
   return result;
 }
