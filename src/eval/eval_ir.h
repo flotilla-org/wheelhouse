@@ -14,7 +14,6 @@ typedef enum E_IdentifierResolutionPath
   E_IdentifierResolutionPath_ParentExprMember,
   E_IdentifierResolutionPath_BuiltInConstants,
   E_IdentifierResolutionPath_BuiltInTypes,
-  E_IdentifierResolutionPath_Registers,
   E_IdentifierResolutionPath_Macros,
 }
 E_IdentifierResolutionPath;
@@ -78,7 +77,6 @@ E_IdentifierResolutionPath e_default_identifier_resolution_paths[] =
   E_IdentifierResolutionPath_ParentExprMember,
   E_IdentifierResolutionPath_BuiltInConstants,
   E_IdentifierResolutionPath_BuiltInTypes,
-  E_IdentifierResolutionPath_Registers,
   E_IdentifierResolutionPath_Macros,
 };
 E_IdentifierResolutionRule e_default_identifier_resolution_rule =
@@ -95,7 +93,6 @@ E_IdentifierResolutionPath e_callable_identifier_resolution_paths[] =
   E_IdentifierResolutionPath_ParentExprMember,
   E_IdentifierResolutionPath_BuiltInConstants,
   E_IdentifierResolutionPath_BuiltInTypes,
-  E_IdentifierResolutionPath_Registers,
 };
 E_IdentifierResolutionRule e_callable_identifier_resolution_rule =
 {
@@ -112,7 +109,6 @@ internal void e_oplist_push_uconst(Arena *arena, E_OpList *list, U64 x);
 internal void e_oplist_push_sconst(Arena *arena, E_OpList *list, S64 x);
 internal void e_oplist_push_bytecode(Arena *arena, E_OpList *list, String8 bytecode);
 internal void e_oplist_push_set_space(Arena *arena, E_OpList *list, E_Space space);
-internal void e_oplist_push_set_base_off(Arena *arena, E_OpList *list, U64 off);
 internal void e_oplist_push_string_literal(Arena *arena, E_OpList *list, String8 string);
 internal void e_oplist_concat_in_place(E_OpList *dst, E_OpList *to_push);
 

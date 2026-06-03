@@ -220,7 +220,7 @@ The current evaluator code splits into these buckets:
 
 - Keep or rename: expression tokenization/parsing for literals and simple paths, basic value formatting, config/file/hash-store spaces, list/property expansion mechanics when they are separated from debugger types.
 - Fork into shell ownership: query namespace resolution, config/schema row production, value/type descriptors for shell rows, selection/context packets, provider registration, and row editing.
-- Delete after migration: `RDI_EvalOp` bytecode interpretation, debug module/address/TLS/register spaces, process memory reads/writes, and remaining RDI parsed-data plumbing. RDI type/member/scope/procedure/global lookup and `DI_Key` plumbing have already been removed from the active shell evaluator.
+- Delete after migration: `RDI_EvalOp` bytecode interpretation, process-memory-style reads/writes if they are replaced by shell providers, and remaining RDI parsed-data plumbing. Debug-info lookup, `DI_Key` plumbing, debug module/TLS/register evaluation context, and register identifier resolution have already been removed from the active shell evaluator.
 
 The near-term sequence is:
 

@@ -11,11 +11,6 @@ typedef struct E_InterpretCtx E_InterpretCtx;
 struct E_InterpretCtx
 {
   E_Space primary_space;
-  Arch reg_arch;
-  E_Space reg_space;
-  U64 reg_unwind_count;
-  U64 *module_base;
-  U64 *tls_base;
   U64 cfa;
 };
 

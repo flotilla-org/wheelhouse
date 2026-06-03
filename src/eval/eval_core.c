@@ -612,7 +612,6 @@ e_select_base_ctx(E_BaseCtx *ctx)
 internal void
 e_select_ir_ctx(E_IRCtx *ctx)
 {
-  if(ctx->regs_map == 0)       { ctx->regs_map = &e_string2num_map_nil; }
   if(ctx->macro_map == 0)      { ctx->macro_map = push_array(e_cache->arena, E_String2ExprMap, 1); ctx->macro_map[0] = e_string2expr_map_make(e_cache->arena, 512); }
   e_ir_ctx = ctx;
 }

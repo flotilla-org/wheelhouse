@@ -1174,15 +1174,6 @@ rd_file_path_from_eval_string(Arena *arena, String8 string)
   return result;
 }
 
-internal B32
-rd_tls_vaddr_from_platform_vaddr(E_Space space, U64 platform_tls_vaddr, U64 *vaddr_out)
-{
-  (void)space;
-  (void)platform_tls_vaddr;
-  (void)vaddr_out;
-  return 0;
-}
-
 internal String8
 rd_eval_string_from_file_path(Arena *arena, String8 string)
 {
@@ -6231,17 +6222,6 @@ rd_code_color_slot_from_txt_token_kind_lookup_string(TXT_TokenKind kind, String8
   {
     B32 mapped = 0;
     
-    // rjf: try to map as register
-    if(!mapped)
-    {
-      U64 reg_num = e_num_from_string(e_ir_ctx->regs_map, string);
-      if(reg_num != 0)
-      {
-        mapped = 1;
-        color = RD_CodeColorSlot_CodeRegister;
-      }
-    }
-    
     // rjf: try to map as macro
     if((!mapped || is_called) && allow_macros)
     {
@@ -7620,9 +7600,7 @@ rd_frame(void)
     //- rjf: unpack basic evaluation context
     //
     ProfBegin("unpack eval-dependent info");
-    Arch arch = Arch_Null;
     E_Space primary_space = {0};
-    U64 unwind_count = rd_regs()->unwind_count;
     U64 rip_vaddr = 0;
     U64 rip_voff = 0;
     ProfEnd();
@@ -7649,11 +7627,6 @@ rd_frame(void)
       //- rjf: fill instruction pointer info
       ctx->thread_ip_vaddr     = rip_vaddr;
       ctx->thread_ip_voff      = rip_voff;
-      ctx->thread_reg_space    = (E_Space){0};
-      ctx->thread_process_space= (E_Space){0};
-      ctx->thread_arch         = arch;
-      ctx->thread_unwind_count = unwind_count;
-      
       //- rjf: fill modules
       ctx->modules          = eval_modules;
       ctx->modules_count    = eval_modules_count;
@@ -7663,7 +7636,6 @@ rd_frame(void)
       ctx->space_gen   = rd_eval_space_gen;
       ctx->space_read  = rd_eval_space_read;
       ctx->space_write = rd_eval_space_write;
-      ctx->tls_vaddr_from_platform_vaddr = rd_tls_vaddr_from_platform_vaddr;
     }
     e_select_base_ctx(eval_base_ctx);
     
@@ -8249,11 +8221,6 @@ rd_frame(void)
     {
       E_InterpretCtx *ctx = interpret_ctx;
       ctx->primary_space     = primary_space;
-      ctx->reg_arch          = arch;
-      ctx->reg_space         = (E_Space){0};
-      ctx->reg_unwind_count  = unwind_count;
-      ctx->module_base       = push_array(scratch.arena, U64, 1);
-      ctx->tls_base          = push_array(scratch.arena, U64, 1);
     }
     e_select_interpret_ctx(interpret_ctx);
     

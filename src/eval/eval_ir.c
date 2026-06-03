@@ -77,18 +77,6 @@ e_oplist_push_set_space(Arena *arena, E_OpList *list, E_Space space)
 }
 
 internal void
-e_oplist_push_set_base_off(Arena *arena, E_OpList *list, U64 off)
-{
-  E_Op *node = push_array_no_zero(arena, E_Op, 1);
-  node->opcode = E_IRExtKind_SetBaseOff;
-  StaticAssert(sizeof(node->value) >= sizeof(off), node_value_size_check);
-  MemoryCopy(&node->value, &off, sizeof(off));
-  SLLQueuePush(list->first, list->last, node);
-  list->op_count += 1;
-  list->encoded_size += 1 + sizeof(off);
-}
-
-internal void
 e_oplist_push_string_literal(Arena *arena, E_OpList *list, String8 string)
 {
   RDI_EvalOp opcode = RDI_EvalOp_ConstString;
@@ -305,10 +293,6 @@ e_irtree_resolve_to_value(Arena *arena, E_Mode from_mode, E_IRNode *tree, E_Type
   if(from_mode == E_Mode_Offset)
   {
     result = e_irtree_mem_read_type(arena, tree, type_key);
-  }
-  if(from_mode == E_Mode_Offset && e_space_match(tree->space, e_base_ctx->thread_reg_space))
-  {
-    result = e_irtree_set_space(arena, e_base_ctx->thread_process_space, result);
   }
   if(e_type_kind_from_key(type_key) == E_TypeKind_Bitfield)
   {
@@ -1779,37 +1763,6 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
               string_mapped = !e_type_key_match(mapped_type_key, e_type_key_zero());
             }break;
             
-            //- rjf: try registers
-            case E_IdentifierResolutionPath_Registers:
-            if(!string_mapped && (qualifier.size == 0 || str8_match(qualifier, str8_lit("reg"), 0)))
-            {
-              U64 reg_num = e_num_from_string(e_ir_ctx->regs_map, string);
-              if(reg_num != 0)
-              {
-                string_mapped = 1;
-                Arch arch = e_base_ctx->thread_arch;
-                ARCH_Info *arch_info = arch_info_from_arch(arch);
-                ARCH_RegCode reg_code = reg_num;
-                Rng1U16 reg_rng = arch_info->reg_code_rng_table[reg_code];
-                U64 reg_size = dim_1u16(reg_rng);
-                E_OpList oplist = {0};
-                e_oplist_push_uconst(arena, &oplist, reg_rng.min);
-                mapped_bytecode = e_bytecode_from_oplist(arena, &oplist);
-                mapped_bytecode_mode = E_Mode_Offset;
-                mapped_bytecode_space = e_base_ctx->thread_reg_space;
-                B32 is_vector = arch_info->reg_code_is_vector_table[reg_code];
-                if(0){}
-                else if(!is_vector && reg_size == 1) {mapped_type_key = e_type_key_basic(E_TypeKind_U8);}
-                else if(!is_vector && reg_size == 2) {mapped_type_key = e_type_key_basic(E_TypeKind_U16);}
-                else if(!is_vector && reg_size == 4) {mapped_type_key = e_type_key_basic(E_TypeKind_U32);}
-                else if(!is_vector && reg_size == 8) {mapped_type_key = e_type_key_basic(E_TypeKind_U64);}
-                else
-                {
-                  mapped_type_key = e_type_key_reg(arch, reg_code);
-                }
-              }
-            }break;
-            
             //- rjf: try macros
             case E_IdentifierResolutionPath_Macros:
             {
@@ -2194,11 +2147,6 @@ e_append_oplist_from_irtree(Arena *arena, E_IRNode *root, E_Space *current_space
       e_oplist_push_set_space(arena, out, space);
     }break;
     
-    case E_IRExtKind_SetBaseOff:
-    {
-      e_oplist_push_set_base_off(arena, out, root->value.u64);
-    }break;
-    
     case RDI_EvalOp_Cond:
     {
       // rjf: generate oplists for each child
@@ -2342,20 +2290,6 @@ e_bytecode_from_oplist(Arena *arena, E_OpList *oplist)
         ptr = next_ptr;
       }break;
       
-      case E_IRExtKind_SetBaseOff:
-      {
-        // rjf: compute bytecode advance
-        U64 extra_byte_count = sizeof(U64);
-        U8 *next_ptr = ptr + 1 + extra_byte_count;
-        Assert(next_ptr <= opl);
-        
-        // rjf: fill bytecode
-        ptr[0] = opcode;
-        MemoryCopy(ptr + 1, &op->value.u64, extra_byte_count);
-        
-        // rjf: advance
-        ptr = next_ptr;
-      }break;
     }
   }
   

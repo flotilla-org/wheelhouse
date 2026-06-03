@@ -73,7 +73,6 @@ enum
 {
   E_IRExtKind_Bytecode = RDI_EvalOp_COUNT,
   E_IRExtKind_SetSpace,
-  E_IRExtKind_SetBaseOff,
   E_IRExtKind_COUNT
 };
 
@@ -773,11 +772,6 @@ struct E_BaseCtx
   // rjf: instruction pointer info
   U64 thread_ip_vaddr;
   U64 thread_ip_voff;
-  E_Space thread_reg_space;
-  E_Space thread_process_space;
-  Arch thread_arch;
-  U64 thread_unwind_count;
-  
   // rjf: modules
   E_Module *modules;
   U64 modules_count;
@@ -787,7 +781,6 @@ struct E_BaseCtx
   E_SpaceGenFunction *space_gen;
   E_SpaceReadFunction *space_read;
   E_SpaceWriteFunction *space_write;
-  E_TLSVAddrFromPlatformVAddrFunction *tls_vaddr_from_platform_vaddr;
 };
 
 //- rjf: ir generation context
@@ -795,7 +788,6 @@ struct E_BaseCtx
 typedef struct E_IRCtx E_IRCtx;
 struct E_IRCtx
 {
-  E_String2NumMap *regs_map;
   E_String2ExprMap *macro_map;
   E_AutoHookMap *auto_hook_map;
 };

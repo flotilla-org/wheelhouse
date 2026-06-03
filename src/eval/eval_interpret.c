@@ -185,12 +185,6 @@ e_interpret(String8 bytecode)
   {
     selected_space = e_interpret_ctx->primary_space;
   }
-  U64 base_off = 0;
-  if(e_interpret_ctx->module_base != 0)
-  {
-    base_off = e_interpret_ctx->module_base[0];
-  }
-  
   //- rjf: iterate bytecode & perform ops
   U8 *ptr = bytecode.str;
   U8 *opl = bytecode.str + bytecode.size;
@@ -206,7 +200,6 @@ e_interpret(String8 bytecode)
     else switch(op)
     {
       case E_IRExtKind_SetSpace:{ctrlbits = RDI_EVAL_CTRLBITS(32, 0, 0);}break;
-      case E_IRExtKind_SetBaseOff:{ctrlbits = RDI_EVAL_CTRLBITS(8, 0, 0);}break;
       default:
       {
         result.code = E_InterpretationCode_BadOp;
@@ -259,11 +252,7 @@ e_interpret(String8 bytecode)
       {
         MemoryCopy(&selected_space, &imm, sizeof(selected_space));
       }break;
-      case E_IRExtKind_SetBaseOff:
-      {
-        base_off = imm.u64;
-      }break;
-      
+
       case RDI_EvalOp_Stop:
       {
         goto done;
@@ -298,74 +287,23 @@ e_interpret(String8 bytecode)
       }break;
       
       case RDI_EvalOp_RegRead:
-      {
-        U8 rdi_reg_code     = (imm.u64&0x0000FF)>>0;
-        U8 byte_size        = (imm.u64&0x00FF00)>>8;
-        U8 byte_off         = (imm.u64&0xFF0000)>>16;
-        Arch arch = e_interpret_ctx->reg_arch;
-        ARCH_Info *arch_info = arch_info_from_arch(arch);
-        ARCH_RegCode base_reg_code = arch_reg_code_from_rdi(arch, rdi_reg_code);
-        B32 good_read = 0;
-        if(0 <= base_reg_code && base_reg_code < arch_info->reg_code_count)
-        {
-          Rng1U16 rng = arch_info->reg_code_rng_table[base_reg_code];
-          U64 off = (U64)rng.min + byte_off;
-          U64 size = (U64)byte_size;
-          good_read = e_space_read(e_interpret_ctx->reg_space, &nval, 0, r1u64(off, off+size));
-        }
-        if(!good_read)
-        {
-          result.code = E_InterpretationCode_BadRegRead;
-          goto done;
-        }
-      }break;
-      
       case RDI_EvalOp_RegReadDyn:
       {
-        U64 off  = svals[0].u64;
-        U64 size = bit_size_from_arch(e_interpret_ctx->reg_arch)/8;
-        B32 good_read = e_space_read(e_interpret_ctx->reg_space, &nval, 0, r1u64(off, off+size));
-        if(!good_read)
-        {
-          result.code = E_InterpretationCode_BadRegRead;
-          goto done;
-        }
+        result.code = E_InterpretationCode_BadRegRead;
+        goto done;
       }break;
-      
+
       case RDI_EvalOp_FrameOff:
       {
         result.code = E_InterpretationCode_BadFrameBase;
         goto done;
       }break;
-      
+
       case RDI_EvalOp_ModuleOff:
-      {
-        nval.u64 = base_off + imm.u64;
-      }break;
-      
       case RDI_EvalOp_TLSOff:
       {
-        U64 platform_tls_vaddr = base_off + imm.u64;
-        U64 resolved_tls_vaddr = 0;
-        if(e_base_ctx->tls_vaddr_from_platform_vaddr != 0 &&
-           e_base_ctx->tls_vaddr_from_platform_vaddr(selected_space, platform_tls_vaddr, &resolved_tls_vaddr))
-        {
-          if(resolved_tls_vaddr == 0)
-          {
-            result.code = E_InterpretationCode_BadTLSBase;
-            goto done;
-          }
-          nval.u64 = resolved_tls_vaddr;
-        }
-        else if(e_interpret_ctx->tls_base != 0 && *e_interpret_ctx->tls_base != 0)
-        {
-          nval.u64 = *e_interpret_ctx->tls_base + imm.u64;
-        }
-        else
-        {
-          result.code = E_InterpretationCode_BadTLSBase;
-          goto done;
-        }
+        result.code = E_InterpretationCode_BadTLSBase;
+        goto done;
       }break;
       
       case RDI_EvalOp_ConstU8:
