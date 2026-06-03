@@ -181,13 +181,6 @@ d_entity_kind_from_string(String8 string)
 internal U64 d_run_gen(void) { return 0; }
 internal U64 d_mem_gen(void) { return 0; }
 
-internal B32
-d_process_memory_read(D_Handle process, Rng1U64 range, B32 *is_stale_out, void *out, U64 endt_us)
-{
-  if(is_stale_out != 0) { *is_stale_out = 0; }
-  return 0;
-}
-
 ////////////////////////////////
 //~ rjf: Debug Info Shell Stubs
 

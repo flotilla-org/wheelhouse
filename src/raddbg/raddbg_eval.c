@@ -184,7 +184,6 @@ typedef struct RD_SchemaIRExt RD_SchemaIRExt;
 struct RD_SchemaIRExt
 {
   CFG_Node *cfg;
-  D_Entity *entity;
   MD_NodePtrList schemas;
 };
 
@@ -199,7 +198,6 @@ E_TYPE_IREXT_FUNCTION_DEF(schema)
     E_TypeKey type_key = irtree->type_key;
     E_Type *type = e_type_from_key(type_key);
     ext->cfg = rd_cfg_from_eval_space(interpret.space);
-    ext->entity = rd_ctrl_entity_from_eval_space(interpret.space);
     ext->schemas = cfg_schemas_from_name(arena, rd_state->cfg_schema_table, type->name);
     scratch_end(scratch);
   }
@@ -228,28 +226,12 @@ E_TYPE_ACCESS_FUNCTION_DEF(schema)
     if(child_schema != &md_nil_node)
     {
       CFG_Node *cfg = ext->cfg;
-      D_Entity *entity = ext->entity;
       CFG_Node *child = cfg_node_child_from_string(cfg, child_schema->string);
       E_TypeKey child_type_key = zero_struct;
       B32 wrap_child_w_meta_expr = 0;
       B32 is_query_child = md_node_has_tag(child_schema, str8_lit("query"), 0);
       E_TypeFlags type_flags = (!!is_query_child * E_TypeFlag_IsNotEditable);
       if(0){}
-      
-      //- rjf: ctrl entity members
-      else if(entity != &d_entity_nil && str8_match(child_schema->string, str8_lit("label"), 0))
-      {
-        child_type_key = e_type_key_cons_array(e_type_key_basic(E_TypeKind_U8), entity->string.size, type_flags|E_TypeFlag_IsCodeText);
-      }
-      else if(entity != &d_entity_nil && str8_match(child_schema->string, str8_lit("exe"), 0))
-      {
-        child_type_key = e_type_key_cons_array(e_type_key_basic(E_TypeKind_U8), entity->string.size, type_flags|E_TypeFlag_IsPathText);
-      }
-      else if(entity != &d_entity_nil && str8_match(child_schema->string, str8_lit("dbg"), 0))
-      {
-        D_Entity *dbg = d_entity_child_from_kind(entity, D_EntityKind_DebugInfoPath);
-        child_type_key = e_type_key_cons_array(e_type_key_basic(E_TypeKind_U8), dbg->string.size, type_flags|E_TypeFlag_IsPathText);
-      }
       
       //- rjf: cfg members
       else if(str8_match(child_schema->first->string, str8_lit("code_string"), 0) ||
@@ -400,11 +382,6 @@ E_TYPE_ACCESS_FUNCTION_DEF(schema)
         child_eval_space = e_space_make(RD_EvalSpaceKind_MetaCfg);
         child_eval_space.u64s[0] = cfg->id;
         child_eval_space.u64s[1] = e_id_from_string(child_schema->string);
-      }
-      else
-      {
-        child_eval_space = rd_eval_space_from_ctrl_entity(entity, RD_EvalSpaceKind_MetaCtrlEntity);
-        child_eval_space.u64s[2] = e_id_from_string(child_schema->string);
       }
       irtree.root     = e_irtree_set_space(arena, child_eval_space, e_push_irnode(arena, RDI_EvalOp_ConstU64));
       irtree.type_key = child_type_key;

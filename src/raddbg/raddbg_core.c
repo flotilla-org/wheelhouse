@@ -762,37 +762,6 @@ rd_eval_space_from_cfg(CFG_Node *cfg)
   return space;
 }
 
-//- rjf: ctrl entity <-> eval space
-
-internal D_Entity *
-rd_ctrl_entity_from_eval_space(E_Space space)
-{
-  D_Entity *entity = &d_entity_nil;
-  if(space.kind == RD_EvalSpaceKind_MetaCtrlEntity ||
-     space.kind == RD_EvalSpaceKind_MetaUnattachedProcess)
-  {
-    D_Handle handle;
-    handle.machine_id      = (U32)((space.u64s[0] & 0xffffffff00000000ull) >> 32);
-    handle.controller_kind = (U32)((space.u64s[0] & 0x00000000ffffffffull) >> 0);
-    handle.entity_id       = space.u64s[1];
-    entity = d_entity_from_handle(handle);
-  }
-  return entity;
-}
-
-internal E_Space
-rd_eval_space_from_ctrl_entity(D_Entity *entity, E_SpaceKind kind)
-{
-  E_Space space = {0};
-  if(entity != &d_entity_nil)
-  {
-    space = e_space_make(kind);
-    space.u64s[0] = (((U64)entity->handle.machine_id) << 32) | (((U64)entity->handle.controller_kind) << 0);
-    space.u64s[1] = entity->handle.entity_id;
-  }
-  return space;
-}
-
 //- rjf: command name <-> eval space
 
 internal String8
@@ -2019,18 +1988,7 @@ rd_lang_kind_from_eval(E_Eval eval)
 internal Arch
 rd_arch_from_eval(E_Eval eval)
 {
-  // rjf: try implicitly from either `eval` itself, or from context
-  D_Entity *ctrl_entity = rd_ctrl_entity_from_eval_space(eval.space);
-  D_Entity *process = d_process_from_entity(ctrl_entity);
-  if(process == &d_entity_nil)
-  {
-    process = d_entity_from_handle(rd_regs()->process);
-  }
-  Arch arch = process->arch;
-  if(arch == Arch_Null)
-  {
-    arch = Arch_CURRENT;
-  }
+  Arch arch = Arch_CURRENT;
   
   // rjf: try arch arguments
   E_Type *type = e_type_from_key(eval.irtree.type_key);
@@ -3433,11 +3391,6 @@ rd_window_frame(void)
           {
             build_hover_eval = 0;
           }
-          else if(hover_eval.space.kind == RD_EvalSpaceKind_MetaCtrlEntity &&
-                  rd_ctrl_entity_from_eval_space(hover_eval.space) == &d_entity_nil)
-          {
-            build_hover_eval = 0;
-          }
         }
         
         // rjf: request frames if we're waiting to open
@@ -3529,12 +3482,6 @@ rd_window_frame(void)
         }
         else if(eval.space.kind == RD_EvalSpaceKind_MetaCfg &&
                 rd_cfg_from_eval_space(eval.space) == &cfg_nil_node)
-        {
-          query_is_open = 0;
-          rd_cmd_name("cancel_query");
-        }
-        else if(eval.space.kind == RD_EvalSpaceKind_MetaCtrlEntity &&
-                rd_ctrl_entity_from_eval_space(eval.space) == &d_entity_nil)
         {
           query_is_open = 0;
           rd_cmd_name("cancel_query");

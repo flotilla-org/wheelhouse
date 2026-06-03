@@ -187,6 +187,8 @@ Second slice: config collection child gathering is now also shell-owned. `cfgs_s
 
 Third slice: standalone debugger query collections have been removed from the shell frame setup. The shell no longer registers `locals`, `registers`, `autos`, `control`, or debug-info table query roots such as `procedures`, `globals`, `thread_locals`, `constants`, `types`, and `source_files`; their `raddbg_eval.c` hooks have been deleted. Autocompletion's generic fallback now starts from `query:views`, with config/theme-specific completions still handled by the existing config branch. The now-stranded debug-info search item API and shell stub were removed as well.
 
+Fourth slice: control-entity eval spaces have been removed. Schema evaluation is now config-only, `RD_EvalSpaceKind_MetaCtrlEntity`/`MetaUnattachedProcess`/`MetaCallStackTree` and their conversion helpers are gone, and hover/query validity checks no longer try to validate debugger control entities. The built-in `list` lens now keys by `E_Space` and reads through the eval space read hook instead of calling debugger process-memory reads, which also removed the last shell stub for `d_process_memory_read`.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell query/config provider behavior still lives here. It constructs the current `query:commands`, config/settings, theme, view, and metadata rows. This is the first code to fork into `src/uishell`, because it is shell product behavior but still RAD-named and expressed through `E_*`/`RD_EvalSpaceKind_*`.

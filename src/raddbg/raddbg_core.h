@@ -15,9 +15,6 @@ enum
   RD_EvalSpaceKind_MetaCmd,
   RD_EvalSpaceKind_MetaTheme,
   RD_EvalSpaceKind_MetaView,
-  RD_EvalSpaceKind_MetaCtrlEntity,
-  RD_EvalSpaceKind_MetaUnattachedProcess,
-  RD_EvalSpaceKind_MetaCallStackTree,
 };
 
 ////////////////////////////////
@@ -885,10 +882,6 @@ internal String8 rd_name_from_ctrl_entity(Arena *arena, D_Entity *entity);
 //- rjf: cfg <-> eval space
 internal CFG_Node *rd_cfg_from_eval_space(E_Space space);
 internal E_Space rd_eval_space_from_cfg(CFG_Node *cfg);
-
-//- rjf: ctrl entity <-> eval space
-internal D_Entity *rd_ctrl_entity_from_eval_space(E_Space space);
-internal E_Space rd_eval_space_from_ctrl_entity(D_Entity *entity, E_SpaceKind kind);
 
 //- rjf: command name <-> eval space
 internal String8 rd_cmd_name_from_eval(E_Eval eval);

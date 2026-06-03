@@ -2582,15 +2582,14 @@ e_list_gather_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U
   Temp scratch = scratch_begin(0, 0);
   
   //- rjf: unpack key
-  // TODO(rjf): this needs to take any `E_Space`, once eval has been upgraded.
-  D_Handle process = {0};
+  E_Space space = zero_struct;
   U64 base_off = 0;
   U64 member_element_off = 0;
   U64 member_size = 0;
   E_SpaceReadFunction *space_read = 0;
   {
     U64 key_read_off = 0;
-    key_read_off += str8_deserial_read_struct(key, key_read_off, &process);
+    key_read_off += str8_deserial_read_struct(key, key_read_off, &space);
     key_read_off += str8_deserial_read_struct(key, key_read_off, &base_off);
     key_read_off += str8_deserial_read_struct(key, key_read_off, &member_element_off);
     key_read_off += str8_deserial_read_struct(key, key_read_off, &member_size);
@@ -2666,9 +2665,13 @@ e_list_gather_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U
       }
       
       //- rjf: read next offset, advance
-      B32 read_stale = 0;
-      B32 read_good = d_process_memory_read(process, r1u64(off + member_element_off, off + member_element_off + member_size), &read_stale, &next_off, 0);
-      if(read_stale)
+      E_SpaceRangeInfo range_info = {0};
+      B32 read_good = 0;
+      if(space_read != 0)
+      {
+        read_good = space_read(space, &next_off, &range_info, r1u64(off + member_element_off, off + member_element_off + member_size));
+      }
+      if(range_info.flags & E_SpaceRangeFlag_Stale)
       {
         retry = 1;
       }
@@ -2808,7 +2811,7 @@ E_TYPE_IREXT_FUNCTION_DEF(list)
 #pragma pack(push, 1)
     struct
     {
-      D_Handle process;
+      E_Space space;
       U64 base_off;
       U64 member_element_off;
       U64 member_size;
@@ -2816,9 +2819,7 @@ E_TYPE_IREXT_FUNCTION_DEF(list)
     }
     key_data =
     {
-      // TODO(rjf): we cannot use `rd_` here - only doing this because the base eval layer does not
-      // support what we need yet...
-      rd_ctrl_entity_from_eval_space(base_off_interpret.space)->handle,
+      base_off_interpret.space,
       base_off_interpret.value.u64,
       next_link_member.off,
       e_type_byte_size_from_key(next_link_member.type_key),
