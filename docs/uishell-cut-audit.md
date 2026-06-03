@@ -183,6 +183,8 @@ Result: in progress. The evaluator is now the largest remaining debugger-shaped 
 
 First slice: `src/uishell/uishell_eval.*` now owns the shell command/view query name providers. The inherited `commands` and `views` `E_TYPE_*` hooks in `src/raddbg/raddbg_eval.c` are still present as compatibility adapters, but their child-name filtering now routes through shell-owned helpers. This is intentionally not a renderer rewrite; it moves ownership of active shell namespaces while keeping existing list/dialog behavior stable.
 
+Second slice: config collection child gathering is now also shell-owned. `cfgs_slice` and `cfgs_query` remain inherited evaluator adapters, but their top-level config collection lookup, collection command lookup, child lookup, and fuzzy title filtering now route through `uishell_eval_cfg_*` helpers. Schema member access, config eval spaces, row IDs, editing, and writes are unchanged.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell query/config provider behavior still lives here. It constructs the current `query:commands`, config/settings, theme, view, and metadata rows. This is the first code to fork into `src/uishell`, because it is shell product behavior but still RAD-named and expressed through `E_*`/`RD_EvalSpaceKind_*`.

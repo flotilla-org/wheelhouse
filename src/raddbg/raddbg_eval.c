@@ -753,48 +753,16 @@ E_TYPE_IREXT_FUNCTION_DEF(cfgs_slice)
 {
   RD_CfgsIRExt *ext = push_array(arena, RD_CfgsIRExt, 1);
   {
-    Temp scratch = scratch_begin(&arena, 1);
-    
     //- rjf: determine which key we'll be gathering
     E_TypeKey type_key = irtree->type_key;
     E_Type *type = e_type_from_key(type_key);
     String8 cfg_name = rd_singular_from_code_name_plural(type->name);
-    
-    //- rjf: gather cfgs
-    CFG_NodePtrList cfgs_list = {0};
-    {
-      CFG_NodePtrList cfgs_list__all = cfg_node_top_level_list_from_string(scratch.arena, cfg_name);
-      for EachNode(n, CFG_NodePtrNode, cfgs_list__all.first)
-      {
-        if(rd_cfg_is_project_filtered(n->v))
-        {
-          continue;
-        }
-        cfg_node_ptr_list_push(scratch.arena, &cfgs_list, n->v);
-      }
-    }
-    
-    //- rjf: gather commands
-    String8List cmds_list = {0};
-    {
-      MD_NodePtrList schemas = cfg_schemas_from_name(scratch.arena, rd_state->cfg_schema_table, cfg_name);
-      for(MD_NodePtrNode *n = schemas.first; n != 0; n = n->next)
-      {
-        MD_Node *schema = n->v;
-        MD_Node *collection_cmds_root = md_tag_from_string(schema, str8_lit("collection_commands"), 0);
-        for MD_EachNode(cmd, collection_cmds_root->first)
-        {
-          str8_list_push(arena, &cmds_list, cmd->string);
-        }
-      }
-    }
+    UIShell_EvalCfgChildren children = uishell_eval_cfg_children_from_name(arena, cfg_name);
     
     //- rjf: package & fill
     ext->cfg_name = cfg_name;
-    ext->cfgs = cfg_node_ptr_array_from_list(arena, &cfgs_list);
-    ext->cmds = str8_array_from_list(arena, &cmds_list);
-    
-    scratch_end(scratch);
+    ext->cfgs = children.cfgs;
+    ext->cmds = children.cmds;
   }
   E_IRExt result = {ext};
   return result;
@@ -850,33 +818,12 @@ E_TYPE_EXPAND_INFO_FUNCTION_DEF(cfgs_slice)
 {
   RD_CfgsExpandAccel *accel = push_array(arena, RD_CfgsExpandAccel, 1);
   E_TypeExpandInfo info = {accel};
-  Temp scratch = scratch_begin(&arena, 1);
   {
     //- rjf: unpack
     RD_CfgsIRExt *ext = (RD_CfgsIRExt *)eval.irtree.user_data;
     
     //- rjf: filter cfgs
-    CFG_NodePtrArray cfgs__filtered = ext->cfgs;
-    if(filter.size != 0)
-    {
-      CFG_NodePtrList cfgs_list__filtered = {0};
-      for EachIndex(idx, ext->cfgs.count)
-      {
-        CFG_Node *cfg = ext->cfgs.v[idx];
-        if(rd_cfg_is_project_filtered(cfg))
-        {
-          continue;
-        }
-        DR_FStrList fstrs = rd_title_fstrs_from_cfg(scratch.arena, cfg, 1);
-        String8 string = dr_string_from_fstrs(scratch.arena, &fstrs);
-        FuzzyMatchRangeList fuzzy_matches = fuzzy_match_find(scratch.arena, filter, string);
-        if(fuzzy_matches.count == fuzzy_matches.needle_part_count)
-        {
-          cfg_node_ptr_list_push(scratch.arena, &cfgs_list__filtered, cfg);
-        }
-      }
-      cfgs__filtered = cfg_node_ptr_array_from_list(arena, &cfgs_list__filtered);
-    }
+    CFG_NodePtrArray cfgs__filtered = uishell_eval_cfg_array_from_filter(arena, ext->cfgs, filter);
     
     //- rjf: fill
     // TODO(rjf): @cleanup don't smuggle this through like this...
@@ -889,7 +836,6 @@ E_TYPE_EXPAND_INFO_FUNCTION_DEF(cfgs_slice)
     accel->cfgs_idx_range = r1u64(accel->cmds_idx_range.max, accel->cmds_idx_range.max + accel->cfgs.count);
     info.expr_count = (accel->cmds.count + accel->cfgs.count);
   }
-  scratch_end(scratch);
   return info;
 }
 
@@ -897,46 +843,13 @@ E_TYPE_EXPAND_INFO_FUNCTION_DEF(cfgs_query)
 {
   RD_CfgsExpandAccel *accel = push_array(arena, RD_CfgsExpandAccel, 1);
   {
-    Temp scratch = scratch_begin(&arena, 1);
     CFG_Node *root_cfg = rd_cfg_from_eval_space(eval.space);
     String8 child_key = e_string_from_id(eval.space.u64s[1]);
-    String8 child_key_singular = rd_singular_from_code_name_plural(child_key);
-    if(child_key_singular.size != 0)
-    {
-      child_key = child_key_singular;
-    }
-    String8List cmds = {0};
-    MD_NodePtrList schemas = cfg_schemas_from_name(scratch.arena, rd_state->cfg_schema_table, child_key);
-    for(MD_NodePtrNode *n = schemas.first; n != 0; n = n->next)
-    {
-      MD_Node *schema = n->v;
-      MD_Node *collection_cmds_root = md_tag_from_string(schema, str8_lit("collection_commands"), 0);
-      for MD_EachNode(cmd, collection_cmds_root->first)
-      {
-        str8_list_push(scratch.arena, &cmds, cmd->string);
-      }
-    }
-    CFG_NodePtrList children = cfg_node_child_list_from_string(scratch.arena, root_cfg, child_key);
-    CFG_NodePtrList children__filtered = children;
-    if(filter.size != 0)
-    {
-      MemoryZeroStruct(&children__filtered);
-      for(CFG_NodePtrNode *n = children.first; n != 0; n = n->next)
-      {
-        DR_FStrList cfg_fstrs = rd_title_fstrs_from_cfg(scratch.arena, n->v, 1);
-        String8 cfg_string = dr_string_from_fstrs(scratch.arena, &cfg_fstrs);
-        FuzzyMatchRangeList ranges = fuzzy_match_find(scratch.arena, filter, cfg_string);
-        if(ranges.count == ranges.needle_part_count)
-        {
-          cfg_node_ptr_list_push(scratch.arena, &children__filtered, n->v);
-        }
-      }
-    }
-    accel->cmds = str8_array_from_list(arena, &cmds);
+    UIShell_EvalCfgChildren children = uishell_eval_cfg_children_from_parent(arena, root_cfg, child_key, filter);
+    accel->cmds = children.cmds;
     accel->cmds_idx_range = r1u64(0, accel->cmds.count);
-    accel->cfgs = cfg_node_ptr_array_from_list(arena, &children__filtered);
+    accel->cfgs = children.cfgs;
     accel->cfgs_idx_range = r1u64(accel->cmds.count + 0, accel->cmds.count + accel->cfgs.count);
-    scratch_end(scratch);
   }
   E_TypeExpandInfo info = {accel, accel->cfgs.count + accel->cmds.count};
   return info;
