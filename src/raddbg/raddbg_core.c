@@ -7676,7 +7676,6 @@ rd_frame(void)
       }
       
       //- rjf: add macros for windows/tabs
-      CFG_NodePtrList watch_tabs = {0};
       {
         CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
         for(CFG_NodePtrNode *n = windows.first; n != 0; n = n->next)
@@ -7706,69 +7705,6 @@ rd_frame(void)
               expr->mode     = E_Mode_Offset;
               expr->type_key = type_key;
               e_string2expr_map_insert(scratch.arena, macro_map, push_str8f(scratch.arena, "query:config.$%I64x", tab->id), expr);
-              if(str8_match(tab->string, str8_lit("watch"), 0))
-              {
-                cfg_node_ptr_list_push(scratch.arena, &watch_tabs, tab);
-              }
-            }
-          }
-        }
-      }
-      
-      //- rjf: add macros for all watches in all watch tabs which define identifiers
-      for(CFG_NodePtrNode *n = watch_tabs.first; n != 0; n = n->next)
-      {
-        CFG_Node *watch_tab = n->v;
-        for(CFG_Node *child = watch_tab->first; child != &cfg_nil_node; child = child->next)
-        {
-          if(rd_cfg_is_project_filtered(child))
-          {
-            continue;
-          }
-          if(str8_match(child->string, str8_lit("watch"), 0))
-          {
-            CFG_Node *watch = child;
-            String8 expr = watch->first->string;
-            E_Parse parse = e_parse_from_string(expr);
-            if(parse.msgs.max_kind == E_MsgKind_Null)
-            {
-              for(E_Expr *expr = parse.expr; expr != &e_expr_nil; expr = expr->next)
-              {
-                typedef struct ExprWalkTask ExprWalkTask;
-                struct ExprWalkTask
-                {
-                  ExprWalkTask *next;
-                  E_Expr *expr;
-                };
-                ExprWalkTask start_task = {0, expr};
-                ExprWalkTask *first_task = &start_task;
-                ExprWalkTask *last_task = first_task;
-                for(ExprWalkTask *t = first_task; t != 0; t = t->next)
-                {
-                  switch(t->expr->kind)
-                  {
-                    case E_ExprKind_Call:{}break;
-                    case E_ExprKind_Define:
-                    {
-                      E_Expr *lhs = t->expr->first;
-                      E_Expr *rhs = lhs->next;
-                      if(lhs->kind == E_ExprKind_LeafIdentifier)
-                      {
-                        e_string2expr_map_insert(scratch.arena, macro_map, lhs->string, rhs);
-                      }
-                    }break;
-                    default:
-                    {
-                      for(E_Expr *child = t->expr->first; child != &e_expr_nil; child = child->next)
-                      {
-                        ExprWalkTask *task = push_array(scratch.arena, ExprWalkTask, 1);
-                        SLLQueuePush(first_task, last_task, task);
-                        task->expr = child;
-                      }
-                    }break;
-                  }
-                }
-              }
             }
           }
         }
@@ -7807,32 +7743,6 @@ rd_frame(void)
                                                       .range       = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(environment),
                                                       .id_from_num = E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(environment),
                                                       .num_from_id = E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_NAME(environment),
-                                                    }));
-        e_string2typekey_map_insert(rd_frame_arena(), rd_state->meta_name2type_map, str8_lit("watches"),
-                                    e_type_key_cons(.kind = E_TypeKind_Set,
-                                                    .flags = E_TypeFlag_EditableChildren|E_TypeFlag_StubSingleLineExpansion,
-                                                    .name = str8_lit("watches"),
-                                                    .irext  = E_TYPE_IREXT_FUNCTION_NAME(watches),
-                                                    .access = E_TYPE_ACCESS_FUNCTION_NAME(watches),
-                                                    .expand =
-                                                    {
-                                                      .info        = E_TYPE_EXPAND_INFO_FUNCTION_NAME(watches),
-                                                      .range       = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(watches),
-                                                      .id_from_num = E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(watches),
-                                                      .num_from_id = E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_NAME(watches),
-                                                    }));
-        e_string2typekey_map_insert(rd_frame_arena(), rd_state->meta_name2type_map, str8_lit("peek_types"),
-                                    e_type_key_cons(.kind = E_TypeKind_Set,
-                                                    .flags = E_TypeFlag_EditableChildren,
-                                                    .name = str8_lit("peek_types"),
-                                                    .irext  = E_TYPE_IREXT_FUNCTION_NAME(peek_types),
-                                                    .access = E_TYPE_ACCESS_FUNCTION_NAME(peek_types),
-                                                    .expand =
-                                                    {
-                                                      .info        = E_TYPE_EXPAND_INFO_FUNCTION_NAME(peek_types),
-                                                      .range       = E_TYPE_EXPAND_RANGE_FUNCTION_NAME(peek_types),
-                                                      .id_from_num = E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(peek_types),
-                                                      .num_from_id = E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_NAME(peek_types),
                                                     }));
         e_string2typekey_map_insert(rd_frame_arena(), rd_state->meta_name2type_map, str8_lit("theme_colors"),
                                     e_type_key_cons(.kind = E_TypeKind_Set,

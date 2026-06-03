@@ -307,9 +307,7 @@ uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
       info.group_cfg_name = singular_name.size != 0 ? singular_name : block_type->name;
       if(info.group_cfg_name.size != 0 &&
          (block_type->expand.id_from_num == E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(cfgs_slice) ||
-          block_type->expand.id_from_num == E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(watches) ||
-          block_type->expand.id_from_num == E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(environment) ||
-          block_type->expand.id_from_num == E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(peek_types)))
+          block_type->expand.id_from_num == E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_NAME(environment)))
       {
         (void)parent_cfg;
         info.group_cfg_child = cfg_node_from_id(row->key.child_id);
@@ -915,7 +913,7 @@ uishell_watch_view_ui(Rng2F32 rect)
     String8 expr_string = rd_expr_from_cfg(view);
     if(expr_string.size == 0)
     {
-      expr_string = push_str8f(scratch.arena, "query:config.$%I64x.watches", rd_regs()->view);
+      expr_string = str8_lit("query:views");
     }
     E_Eval eval = e_eval_from_string(expr_string);
     UIShell_WatchViewState *wv = rd_view_state(UIShell_WatchViewState);

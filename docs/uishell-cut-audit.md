@@ -211,6 +211,8 @@ Fourteenth slice: shell query-root registration has moved into `uishell_eval_reg
 
 Fifteenth slice: the simple command/theme/view `E_TYPE_*` adapters have moved out of `raddbg_eval.c` and into shell-owned hook names in `uishell_eval.c`. `raddbg_eval.c` now starts at schema/config hooks; command, tab-command, theme, and view lists still flow through the existing evaluator/list renderer, but their access and expansion callbacks are no longer RAD-named.
 
+Sixteenth slice: debugger-specific stored watch and memory peek-type set hooks have been removed. The `watches` and `peek_types` `E_TYPE_*` declarations/implementations are gone, their type registrations are gone from frame setup, and the generic shell lister no longer special-cases their row IDs. The inherited `watch` view name remains only as the generic lister/property view surface used by query popups and settings; expressionless instances now default to `query:views`. The retained `environment` hook is unaffected.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
