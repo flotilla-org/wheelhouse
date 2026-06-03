@@ -59,8 +59,6 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@display_name('Project Name') 'name': string,"
     "@default(2) @display_name('Project Tab Width') 'tab_width': @range[1, 32] u64,"
     "@display_name('Display Pointer Addresses Before Contents') @description(\"When visualizing pointers, always shows the address first.\") @default(0) display_pointer_addresses_before_contents: bool,"
-    "@display_name('Use Default C++ STL Type Visualizers') @description(\"Enables the built-in type views for C++ STL types.\") @default(1) use_default_stl_type_views: bool,"
-    "@display_name('Use Default Unreal Engine Type Visualizers') @description(\"Enables the built-in type views for Unreal Engine types.\") @default(1) use_default_ue_type_views: bool,"
     "@default(\"None\") @display_name('Project Theme') @description(\"The project's theme, which can override the user's theme.\") 'theme': string,"
     "@no_expand @display_name('Project Theme') @description(\"The project's theme colors, which can override the user's theme.\") 'theme_colors': set,"
     "}"

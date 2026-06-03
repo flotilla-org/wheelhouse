@@ -564,11 +564,6 @@ uishell_eval_register_query_macros(Arena *arena, Arena *type_arena, E_String2Exp
   //- rjf: add macros for shell config collection queries
   String8 evallable_cfg_names[] =
   {
-    str8_lit("breakpoint"),
-    str8_lit("watch_pin"),
-    str8_lit("target"),
-    str8_lit("file_path_map"),
-    str8_lit("type_view"),
     str8_lit("recent_project"),
   };
   for EachElement(cfg_name_idx, evallable_cfg_names)

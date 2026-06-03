@@ -579,8 +579,6 @@ struct RD_State
   // rjf: unpacked settings (cached, because they need to be used
   // earlier than setting evaluation is legal in a frame)
   B32 alt_menu_bar_enabled;
-  B32 use_default_stl_type_views;
-  B32 use_default_ue_type_views;
   EV_StringFlags eval_viz_base_string_flags;
   
   // rjf: animation rates

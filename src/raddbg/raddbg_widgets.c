@@ -331,42 +331,6 @@ rd_title_fstrs_from_cfg(Arena *arena, CFG_Node *cfg, B32 include_extras)
       }
     }
     
-    //- rjf: special case: type views
-    if(str8_match(cfg->string, str8_lit("type_view"), 0))
-    {
-      String8 src_string = cfg_node_child_from_string(cfg, str8_lit("type"))->first->string;
-      String8 dst_string = cfg_node_child_from_string(cfg, str8_lit("expr"))->first->string;
-      Vec4F32 src_color = rgba;
-      Vec4F32 dst_color = rgba;
-      DR_FStrList src_fstrs = {0};
-      DR_FStrList dst_fstrs = {0};
-      if(src_string.size == 0)
-      {
-        src_string = str8_lit("(type)");
-        src_color = rgba_secondary;
-        dr_fstrs_push_new(arena, &src_fstrs, &params, src_string, .color = src_color);
-      }
-      else RD_Font(RD_FontSlot_Code)
-      {
-        src_fstrs = rd_fstrs_from_code_string(arena, 1.f, 0, src_color, src_string);
-      }
-      if(dst_string.size == 0)
-      {
-        dst_string = str8_lit("(expression)");
-        dst_color = rgba_secondary;
-        dr_fstrs_push_new(arena, &dst_fstrs, &params, dst_string, .color = dst_color);
-      }
-      else RD_Font(RD_FontSlot_Code)
-      {
-        dst_fstrs = rd_fstrs_from_code_string(arena, 1.f, 0, dst_color, dst_string);
-      }
-      dr_fstrs_concat_in_place(&result, &src_fstrs);
-      dr_fstrs_push_new(arena, &result, &params, str8_lit("  "));
-      dr_fstrs_push_new(arena, &result, &params, rd_icon_kind_text_table[RD_IconKind_RightArrow], .font = rd_font_from_slot(RD_FontSlot_Icons), .raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Icons), .color = rgba_secondary);
-      dr_fstrs_push_new(arena, &result, &params, str8_lit("  "));
-      dr_fstrs_concat_in_place(&result, &dst_fstrs);
-    }
-    
     //- rjf: special case: file path maps
     if(str8_match(cfg->string, str8_lit("file_path_map"), 0))
     {

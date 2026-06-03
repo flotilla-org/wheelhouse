@@ -7628,8 +7628,6 @@ rd_frame(void)
     //
     E_String2ExprMap *macro_map = push_array(scratch.arena, E_String2ExprMap, 1);
     macro_map[0] = e_string2expr_map_make(scratch.arena, 512);
-    E_AutoHookMap *auto_hook_map = push_array(scratch.arena, E_AutoHookMap, 1);
-    auto_hook_map[0] = e_auto_hook_map_make(scratch.arena, 512);
     rd_state->meta_name2type_map = push_array(rd_frame_arena(), E_String2TypeKeyMap, 1);
     rd_state->meta_name2type_map[0] = e_string2typekey_map_make(rd_frame_arena(), 256);
     EV_ExpandRuleTable *expand_rule_table = push_array(scratch.arena, EV_ExpandRuleTable, 1);
@@ -7881,90 +7879,12 @@ rd_frame(void)
     ev_select_expand_rule_table(expand_rule_table);
     
     ////////////////////////////
-    //- rjf: gather config from loaded modules
-    //
-    CFG_NodePtrList immediate_type_views = {0};
-    
-    ////////////////////////////
-    //- rjf: construct default immediate-mode configs based on loaded modules
-    //
-    ProfScope("construct default immediate-mode configs based on loaded modules")
-    {
-      local_persist read_only struct
-      {
-        B32 stl;
-        B32 ue;
-        String8 pattern;
-        String8 expr;
-      }
-      type_views[] =
-      {
-        { 1, 0, str8_lit_comp("std::vector<?>"),             str8_lit_comp("slice(_Mypair._Myval2)") },
-        { 1, 0, str8_lit_comp("std::unique_ptr<?>"),         str8_lit_comp("_Mypair._Myval2") },
-        { 1, 0, str8_lit_comp("std::basic_string<?>"),       str8_lit_comp("_Mypair._Myval2._Myres <= 15 ? _Mypair._Myval2._Bx._Buf : array(_Mypair._Myval2._Bx._Ptr, _Mypair._Myval2._Mysize)") },
-        { 1, 0, str8_lit_comp("std::basic_string_view<?>"),  str8_lit_comp("array(_Mydata, _Mysize)") },
-        { 0, 1, str8_lit_comp("FString"),                    str8_lit_comp("(TCHAR *)Data.AllocatorInstance.Data, Data.ArrayNum") },
-        { 0, 1, str8_lit_comp("FAnsiString"),                str8_lit_comp("(ANSICHAR *)Data.AllocatorInstance.Data, Data.ArrayNum") },
-        { 0, 1, str8_lit_comp("FUtf8String"),                str8_lit_comp("(UTF8CHAR *)Data.AllocatorInstance.Data, Data.ArrayNum") },
-        { 0, 1, str8_lit_comp("TStringView<?>"),             str8_lit_comp("DataPtr, Size") },
-        { 0, 1, str8_lit_comp("TArray<?{element_type}>"),    str8_lit_comp("array(cast(element_type *)AllocatorInstance.Data, ArrayNum)") },
-        { 0, 1, str8_lit_comp("TSharedRef<?>"),              str8_lit_comp("Object") },
-        { 0, 1, str8_lit_comp("TRefCountPtr<?>"),            str8_lit_comp("Reference") },
-        { 0, 1, str8_lit_comp("FNameEntry"),                 str8_lit_comp("AnsiName, Header.Len") },
-        { 0, 1, str8_lit_comp("FNameEntryId"),               str8_lit_comp("*(cast(FNameEntry *)(&GNameBlocksDebug[Value >> FNameDebugVisualizer::OffsetBits][FNameDebugVisualizer::EntryStride * (Value & FNameDebugVisualizer::OffsetMask)]))") },
-        { 0, 1, str8_lit_comp("TObjectPtr<?>"),              str8_lit_comp("DebugPtr") },
-        { 0, 1, str8_lit_comp("FColor"),                     str8_lit_comp("hex(color(Bits))") },
-      };
-      if(rd_state->use_default_stl_type_views)
-      {
-        for EachElement(idx, type_views)
-        {
-          if((type_views[idx].stl && rd_state->use_default_stl_type_views) ||
-             (type_views[idx].ue  && rd_state->use_default_ue_type_views))
-          {
-            CFG_Node *immediate_root = rd_immediate_cfg_from_keyf("default_type_vis_%I64x", idx);
-            CFG_Node *type_view = cfg_node_child_from_string_or_alloc(rd_state->cfg, immediate_root, str8_lit("type_view"));
-            CFG_Node *type = cfg_node_child_from_string_or_alloc(rd_state->cfg, type_view, str8_lit("type"));
-            CFG_Node *expr = cfg_node_child_from_string_or_alloc(rd_state->cfg, type_view, str8_lit("expr"));
-            cfg_node_new_replace(rd_state->cfg, type, type_views[idx].pattern);
-            cfg_node_new_replace(rd_state->cfg, expr, type_views[idx].expr);
-            cfg_node_ptr_list_push(scratch.arena, &immediate_type_views, type_view);
-          }
-        }
-      }
-    }
-    
-    ////////////////////////////
-    //- rjf: add auto-hook rules for type views
-    //
-    {
-      CFG_NodePtrList type_views = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("type_view"));
-      CFG_NodePtrList rules_lists[] =
-      {
-        type_views,
-        immediate_type_views,
-      };
-      for EachElement(list_idx, rules_lists)
-      {
-        CFG_NodePtrList list = rules_lists[list_idx];
-        for(CFG_NodePtrNode *n = list.first; n != 0; n = n->next)
-        {
-          CFG_Node *rule = n->v;
-          String8 type_string = cfg_node_child_from_string(rule, str8_lit("type"))->first->string;
-          String8 expr_string = cfg_node_child_from_string(rule, str8_lit("expr"))->first->string;
-          e_auto_hook_map_insert_new(scratch.arena, auto_hook_map, .type_pattern = type_string, .tag_expr_string = expr_string);
-        }
-      }
-    }
-    
-    ////////////////////////////
     //- rjf: build IR evaluation context
     //
     E_IRCtx *ir_ctx = push_array(scratch.arena, E_IRCtx, 1);
     {
       E_IRCtx *ctx = ir_ctx;
       ctx->macro_map      = macro_map;
-      ctx->auto_hook_map  = auto_hook_map;
     }
     e_select_ir_ctx(ir_ctx);
     
@@ -7983,8 +7903,6 @@ rd_frame(void)
     // but cannot evaluate before this point, so we need to prep for next frame
     //
     rd_state->alt_menu_bar_enabled = rd_setting_b32_from_name(str8_lit("focus_menu_bar_with_alt"));
-    rd_state->use_default_stl_type_views = rd_setting_b32_from_name(str8_lit("use_default_stl_type_views"));
-    rd_state->use_default_ue_type_views = rd_setting_b32_from_name(str8_lit("use_default_ue_type_views"));
     rd_state->eval_viz_base_string_flags = 0;
     if(rd_setting_b32_from_name(str8_lit("display_pointer_addresses_before_contents")))
     {

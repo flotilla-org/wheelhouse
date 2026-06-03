@@ -12,10 +12,6 @@
 # define RADDBG_MARKUP_VSNPRINTF vsnprintf
 #endif
 
-#if !defined(RADDBG_MARKUP_STL_TYPE_VIEWS)
-# define RADDBG_MARKUP_STL_TYPE_VIEWS 1
-#endif
-
 ////////////////////////////////
 //~ Usage Macros
 
@@ -34,7 +30,6 @@
 # define raddbg_pin(expr, ...)                        /* NOTE(rjf): inspected by debugger ui - does not change program execution */
 # define raddbg_log(...)                              raddbg_log__impl(__VA_ARGS__)
 # define raddbg_entry_point(...)                      raddbg_exe_data char raddbg_gen_data_id()[] = ("entry_point: \"" #__VA_ARGS__ "\"")
-# define raddbg_type_view(type, ...)                  raddbg_exe_data char raddbg_gen_data_id()[] = ("type_view: {type: ```" #type "```, expr: ```" #__VA_ARGS__ "```}")
 # define raddbg_add_breakpoint(ptr, size, r, w, x)    raddbg_add_or_remove_breakpoint__impl((ptr), (1), (size), (r), (w), (x))
 # define raddbg_remove_breakpoint(ptr, size, r, w, x) raddbg_add_or_remove_breakpoint__impl((ptr), (0), (size), (r), (w), (x))
 # define raddbg_annotate_vaddr_range(ptr, size, ...)  raddbg_annotate_vaddr_range__impl((ptr), (size), __VA_ARGS__)
@@ -53,7 +48,6 @@
 # define raddbg_pin(expr, ...)
 # define raddbg_log(fmt, ...)                         ((void)0)
 # define raddbg_entry_point(...)                      struct raddbg_gen_data_id(){int __unused__;}
-# define raddbg_type_view(type, ...)                  struct raddbg_gen_data_id(){int __unused__;}
 # define raddbg_add_breakpoint(ptr, size, r, w, x)    ((void)0)
 # define raddbg_remove_breakpoint(ptr, size, r, w, x) ((void)0)
 # define raddbg_annotate_vaddr_range(ptr, size, ...)  ((void)0)
@@ -468,23 +462,5 @@ raddbg_annotate_vaddr_range__impl(void *ptr, unsigned __int64 size, char *fmt, .
 
 #endif // defined(RADDBG_MARKUP_IMPLEMENTATION)
 #endif // defined(_WIN32) && !defined(RADDBG_MARKUP_STUBS)
-
-////////////////////////////////
-//~ Win32 STL Type Views
-
-#if defined(_WIN32) && defined(RADDBG_MARKUP_IMPLEMENTATION) && RADDBG_MARKUP_STL_TYPE_VIEWS
-# if defined(_VECTOR_)
-raddbg_type_view(std::vector<?>, slice(_Mypair._Myval2));
-# endif
-# if defined(_MEMORY_)
-raddbg_type_view(std::unique_ptr<?>, _Mypair._Myval2);
-# endif
-# if defined(_STRING_)
-raddbg_type_view(std::basic_string<?>, _Mypair._Myval2._Myres <= 15 ? _Mypair._Myval2._Bx._Buf : array(_Mypair._Myval2._Bx._Ptr, _Mypair._Myval2._Mysize));
-# endif
-# if defined(_STRING_VIEW_)
-raddbg_type_view(std::basic_string_view<?>, array(_Mydata, _Mysize));
-# endif
-#endif // defined(_WIN32) && defined(RADDBG_MARKUP_IMPLEMENTATION) && RADDBG_MARKUP_STL_TYPE_VIEWS
 
 #endif // RADDBG_MARKUP_H

@@ -213,6 +213,8 @@ Fifteenth slice: the simple command/theme/view `E_TYPE_*` adapters have moved ou
 
 Sixteenth slice: debugger-specific stored watch and memory peek-type set hooks have been removed. The `watches` and `peek_types` `E_TYPE_*` declarations/implementations are gone, their type registrations are gone from frame setup, and the generic shell lister no longer special-cases their row IDs. The inherited `watch` view name remains only as the generic lister/property view surface used by query popups and settings; expressionless instances now default to `query:views`. The retained `environment` hook is unaffected.
 
+Seventeenth slice: debugger type-view configuration has been removed from the shell product surface. Project settings no longer include the default STL/Unreal visualizer toggles, `rd_frame` no longer builds immediate `type_view` configs or inserts type-view auto-hooks, shell config query registration no longer carries stale debugger collection names, the type-view title-rendering special case is gone, and `raddbg_markup.h` no longer defines `raddbg_type_view` or default STL type-view records. The remaining `E_AutoHook*` internals are now producerless evaluator scaffolding and should be removed in a later evaluator-internal cut.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
