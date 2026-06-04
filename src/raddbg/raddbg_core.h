@@ -213,7 +213,6 @@ struct UIShell_Regs
   String8 cmd_name;
   WM_Event *wm_event;
 };
-typedef UIShell_Regs RD_Regs;
 
 #define UISHELL_REGS_LIT_INIT_TOP \
 .window = uishell_regs()->window,\
@@ -417,7 +416,7 @@ typedef struct UIShell_RegsNode UIShell_RegsNode;
 struct UIShell_RegsNode
 {
   UIShell_RegsNode *next;
-  RD_Regs v;
+  UIShell_Regs v;
 };
 
 ////////////////////////////////

@@ -247,6 +247,8 @@ Thirty-second slice: the live register accessors now use shell names. Source cal
 
 Thirty-third slice: command and autocompletion packets no longer use the temporary `RD_CmdRegs` alias. `RD_Cmd.regs`, command list insertion, stored command replay, command emission macros, and autocompletion all take `UIShell_Regs *` directly.
 
+Thirty-fourth slice: the `RD_Regs` compatibility alias is gone from source. The live stack node now stores `UIShell_Regs` directly, and source scans show no remaining `RD_Regs`, `RD_CmdRegs`, `rd_regs()`, or `rd_base_regs()` references.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
@@ -301,7 +303,7 @@ Removed:
 1. The local `raddbg` product build target has been removed. Keep `~/dev/raddebugger` as the reference.
 2. Split shell metadata/registers from `raddbg/generated/raddbg.meta.*`.
    - Done for active command info, command flags, default bindings, menus, schemas, vocabulary, binding-version remaps, fixed-tab policy, view listing, app register-slot lookup, and generated register initializer usage.
-   - The temporary `RD_RegSlot`/`RD_Regs` compatibility packet has moved out of generated metadata but still needs to be shrunk or replaced.
+   - `RD_Regs` is gone from source. The remaining register compatibility surface is the temporary `RD_RegSlot`/`RD_AppRegSlot` slot metadata bridge.
    - Remaining generated RAD metadata is the shared icon/code-color/theme/font/app-icon data.
 3. Split or drop `app_ui_tables` from shell. Done for the active shell unity build.
    - The inactive local source has been removed; use the original RAD repository as reference if needed.
