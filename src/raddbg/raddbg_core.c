@@ -202,7 +202,8 @@ rd_drag_begin(RD_RegSlot slot)
   if(!rd_drag_is_active())
   {
     arena_clear(rd_state->drag_drop_arena);
-    rd_state->drag_drop_regs = rd_regs_copy(rd_state->drag_drop_arena, rd_regs());
+    rd_state->drag_drop_regs = push_array(rd_state->drag_drop_arena, UIShell_Regs, 1);
+    rd_state->drag_drop_regs[0] = uishell_regs_from_rd_regs(rd_state->drag_drop_arena, rd_regs());
     rd_state->drag_drop_regs_slot = slot;
     rd_state->drag_drop_state = RD_DragDropState_Dragging;
   }
@@ -2506,13 +2507,7 @@ rd_window_frame(void)
       Temp scratch = scratch_begin(0, 0);
       B32 use_drag_regs = (rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active());
       RD_RegSlot slot = use_drag_regs ? rd_state->drag_drop_regs_slot : rd_state->hover_regs_slot;
-      UIShell_Regs drag_regs = {0};
-      UIShell_Regs *regs = rd_state->hover_regs;
-      if(use_drag_regs)
-      {
-        drag_regs = uishell_regs_from_rd_regs(scratch.arena, rd_state->drag_drop_regs);
-        regs = &drag_regs;
-      }
+      UIShell_Regs *regs = use_drag_regs ? rd_state->drag_drop_regs : rd_state->hover_regs;
       ui_state->tooltip_anchor_key = regs->ui_key;
       ui_state->tooltip_can_overflow_window = rd_drag_is_active();
       switch(slot)
@@ -6599,7 +6594,7 @@ rd_init(CmdLine *cmdln)
   rd_state->drop_completion_key = ui_key_from_string(ui_key_zero(), str8_lit("drop_completion_ctx_menu"));
   rd_state->bind_change_arena = arena_alloc();
   rd_state->drag_drop_arena = arena_alloc();
-  rd_state->drag_drop_regs = push_array(rd_state->drag_drop_arena, RD_Regs, 1);
+  rd_state->drag_drop_regs = push_array(rd_state->drag_drop_arena, UIShell_Regs, 1);
   rd_state->top_regs = &rd_state->base_regs;
   
   // rjf: set up schemas

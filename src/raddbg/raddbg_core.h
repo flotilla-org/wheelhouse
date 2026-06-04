@@ -664,7 +664,7 @@ struct RD_State
   
   // rjf: drag/drop state
   Arena *drag_drop_arena;
-  RD_Regs *drag_drop_regs;
+  UIShell_Regs *drag_drop_regs;
   RD_RegSlot drag_drop_regs_slot;
   RD_DragDropState drag_drop_state;
   

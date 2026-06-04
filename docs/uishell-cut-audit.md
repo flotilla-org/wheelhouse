@@ -225,6 +225,8 @@ Twenty-first slice: window-local query and autocompletion register snapshots now
 
 Twenty-second slice: hover register snapshots now store `UIShell_Regs`. `RD_State.hover_regs` and `next_hover_regs` no longer retain debugger compatibility packets, the unused `rd_get_hover_regs` accessor is gone, and rich tooltip/dev-menu rendering consumes shell register snapshots. Drag/drop still stores `RD_Regs` and is adapted to `UIShell_Regs` only at tooltip display time.
 
+Twenty-third slice: drag/drop register snapshots now store `UIShell_Regs`. `RD_State.drag_drop_regs` no longer retains a debugger compatibility packet, tab/panel drag-drop code consumes the shell snapshot fields directly, and the temporary tooltip-time conversion from `RD_Regs` was removed. The remaining `RD_Regs` surface is now the live register stack and APIs/macros built around it.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
