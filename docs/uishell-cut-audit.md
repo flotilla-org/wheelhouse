@@ -219,6 +219,8 @@ Eighteenth slice: debugger source path-map and legacy config migration scaffoldi
 
 Nineteenth slice: debugger-only RAD markup annotations have been removed from the shell product path. `raddbg_watch`, `raddbg_pin`, `raddbg_entry_point`, explicit debugger breakpoint add/remove markup, and virtual-address range annotations are gone from `raddbg_markup.h`. The code-slice no longer consumes line breakpoint/watch-pin config lists, no longer builds breakpoint/watch-pin margin glyphs, no longer parses inline `raddbg_pin(...)` source annotations, and no longer carries the now-empty line-extra annotation containers. Generic instrumentation markup remains: thread naming/coloring, `raddbg_log`, and local break helpers.
 
+Twentieth slice: stale debugger register compatibility fields have been removed. `RD_RegSlot_UnwindCount`, `InlineDepth`, `Lines`, `DbgiKey`, `Voff`, `VaddrRange`, `VoffRange`, `PID`, and `NoRichTooltip` are gone, along with the corresponding `RD_Regs` fields and dev-menu display rows. The rich-tooltip path now keys only on whether a hover or drag/drop slot is active. The dead shell debug-control/tick hooks were also removed; they had already returned false and were no longer called.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.

@@ -435,18 +435,6 @@ uishell_build_help_menu(void)
   }
 }
 
-internal B32
-uishell_should_build_debug_controls(void)
-{
-  return 0;
-}
-
-internal B32
-uishell_should_tick_debug_runtime(void)
-{
-  return 0;
-}
-
 ////////////////////////////////
 //~ rjf: Shell App Menu Metadata
 

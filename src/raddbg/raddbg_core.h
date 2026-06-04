@@ -153,27 +153,18 @@ typedef enum RD_RegSlot
   RD_RegSlot_DstPanel,
   RD_RegSlot_Cfg,
   RD_RegSlot_CfgList,
-  RD_RegSlot_UnwindCount,
-  RD_RegSlot_InlineDepth,
   RD_RegSlot_FilePath,
   RD_RegSlot_Cursor,
   RD_RegSlot_Mark,
   RD_RegSlot_TextKey,
   RD_RegSlot_LangKind,
-  RD_RegSlot_Lines,
-  RD_RegSlot_DbgiKey,
   RD_RegSlot_Vaddr,
-  RD_RegSlot_Voff,
-  RD_RegSlot_VaddrRange,
-  RD_RegSlot_VoffRange,
   RD_RegSlot_Expr,
   RD_RegSlot_UIKey,
   RD_RegSlot_OffPx,
   RD_RegSlot_RegSlot,
-  RD_RegSlot_PID,
   RD_RegSlot_ForceConfirm,
   RD_RegSlot_ForceFocus,
-  RD_RegSlot_NoRichTooltip,
   RD_RegSlot_DoImplicitRoot,
   RD_RegSlot_DoLister,
   RD_RegSlot_DoBigRows,
@@ -199,25 +190,18 @@ struct RD_Regs
   CFG_ID dst_panel;
   CFG_ID cfg;
   CFG_IDList cfg_list;
-  U64 unwind_count;
-  U64 inline_depth;
   String8 file_path;
   TxtPt cursor;
   TxtPt mark;
   C_Key text_key;
   TXT_LangKind lang_kind;
   U64 vaddr;
-  U64 voff;
-  Rng1U64 vaddr_range;
-  Rng1U64 voff_range;
   String8 expr;
   UI_Key ui_key;
   Vec2F32 off_px;
   RD_RegSlot reg_slot;
-  U32 pid;
   B32 force_confirm;
   B32 force_focus;
-  B32 no_rich_tooltip;
   B32 do_implicit_root;
   B32 do_lister;
   B32 do_big_rows;

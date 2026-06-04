@@ -186,14 +186,6 @@ rd_reg_slot_from_app_reg_slot(RD_AppRegSlot slot)
 
 #undef RD_APP_REG_SLOT_X_LIST
 
-internal B32
-rd_app_should_build_debug_controls(void)
-{
-  B32 result = 1;
-  result = uishell_should_build_debug_controls();
-  return result;
-}
-
 ////////////////////////////////
 //~ rjf: Global Cross-Window UI Interaction State Functions
 
@@ -2514,7 +2506,7 @@ rd_window_frame(void)
     ////////////////////////////
     //- rjf: @window_ui_part rich hover / drag/drop tooltips
     //
-    if((rd_state->hover_regs_slot != RD_RegSlot_Null && !rd_state->hover_regs->no_rich_tooltip) || (rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active()))
+    if((rd_state->hover_regs_slot != RD_RegSlot_Null) || (rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active()))
     {
       Temp scratch = scratch_begin(0, 0);
       RD_RegSlot slot = ((rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active()) ? rd_state->drag_drop_regs_slot : rd_state->hover_regs_slot);
@@ -2719,12 +2711,8 @@ rd_window_frame(void)
           ui_labelf("file_path: \"%S\"", regs->file_path);
           ui_labelf("cursor: (L:%I64d, C:%I64d)", regs->cursor.line, regs->cursor.column);
           ui_labelf("mark: (L:%I64d, C:%I64d)", regs->mark.line, regs->mark.column);
-          ui_labelf("unwind_count: %I64u", regs->unwind_count);
-          ui_labelf("inline_depth: %I64u", regs->inline_depth);
           ui_labelf("text_key: [0x%I64x / 0x%I64x:0x%I64x]", regs->text_key.root.u64[0], regs->text_key.id.u128[0].u64[0], regs->text_key.id.u128[0].u64[1]);
           ui_labelf("lang_kind: '%S'", txt_extension_from_lang_kind(regs->lang_kind));
-          ui_labelf("vaddr_range: [0x%I64x, 0x%I64x)", regs->vaddr_range.min, regs->vaddr_range.max);
-          ui_labelf("voff_range: [0x%I64x, 0x%I64x)", regs->voff_range.min, regs->voff_range.max);
         }
         
         ui_divider(ui_em(1.f, 1.f));
