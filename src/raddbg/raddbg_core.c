@@ -18,15 +18,6 @@ rd_regs_copy_contents(Arena *arena, RD_Regs *dst, RD_Regs *src)
   UIShell_Regs shell_regs = uishell_regs_from_rd_regs(arena, src);
   uishell_regs_into_rd_regs(dst, &shell_regs);
 }
-
-internal RD_Regs *
-rd_regs_copy(Arena *arena, RD_Regs *src)
-{
-  RD_Regs *dst = push_array(arena, RD_Regs, 1);
-  rd_regs_copy_contents(arena, dst, src);
-  return dst;
-}
-
 ////////////////////////////////
 //~ rjf: Commands Type Functions
 

@@ -1745,9 +1745,9 @@ uishell_dispatch_config_command(String8 name)
       MemoryZeroStruct(&rd_state->popup_cmds);
       rd_state->popup_title = push_str8f(rd_state->popup_arena, "Are you sure you want to save to this path?");
       rd_state->popup_desc = push_str8f(rd_state->popup_arena, "The existing file at '%S' will be overwritten.", new_path);
-      RD_Regs *regs = rd_regs_copy(rd_frame_arena(), rd_regs());
-      regs->force_confirm = 1;
-      rd_cmd_list_push_new_from_rd_regs(rd_state->popup_arena, &rd_state->popup_cmds, name, regs);
+      UIShell_Regs regs = uishell_regs_from_rd_regs(rd_state->popup_arena, rd_regs());
+      regs.force_confirm = 1;
+      rd_cmd_list_push_new(rd_state->popup_arena, &rd_state->popup_cmds, name, &regs);
     }
     else if(is_user)
     {

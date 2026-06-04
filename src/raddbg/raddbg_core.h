@@ -747,7 +747,6 @@ global CFG_ID rd_last_drag_drop_prev_tab = 0;
 //~ rjf: Registers Type Functions
 
 internal void rd_regs_copy_contents(Arena *arena, RD_Regs *dst, RD_Regs *src);
-internal RD_Regs *rd_regs_copy(Arena *arena, RD_Regs *src);
 
 ////////////////////////////////
 //~ rjf: Commands Type Functions
