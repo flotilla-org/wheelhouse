@@ -26,13 +26,7 @@
 # define raddbg_thread_id_color_rgba(id, r, g, b, a)  raddbg_thread_color__impl((id), ((unsigned int)((r)*255) << 24) | ((unsigned int)((g)*255) << 16) | ((unsigned int)((b)*255) << 8) | ((unsigned int)(a)*255))
 # define raddbg_break(...)                            raddbg_break__impl()
 # define raddbg_break_if(expr, ...)                   ((expr) ? raddbg_break__impl() : (void)0)
-# define raddbg_watch(fmt, ...)                       raddbg_watch__impl((fmt), __VA_ARGS__)
-# define raddbg_pin(expr, ...)                        /* NOTE(rjf): inspected by debugger ui - does not change program execution */
 # define raddbg_log(...)                              raddbg_log__impl(__VA_ARGS__)
-# define raddbg_entry_point(...)                      raddbg_exe_data char raddbg_gen_data_id()[] = ("entry_point: \"" #__VA_ARGS__ "\"")
-# define raddbg_add_breakpoint(ptr, size, r, w, x)    raddbg_add_or_remove_breakpoint__impl((ptr), (1), (size), (r), (w), (x))
-# define raddbg_remove_breakpoint(ptr, size, r, w, x) raddbg_add_or_remove_breakpoint__impl((ptr), (0), (size), (r), (w), (x))
-# define raddbg_annotate_vaddr_range(ptr, size, ...)  raddbg_annotate_vaddr_range__impl((ptr), (size), __VA_ARGS__)
 #else
 # define raddbg_is_attached(...)                      (0)
 # define raddbg_thread_id(...)                        ((void)0)
@@ -44,21 +38,8 @@
 # define raddbg_thread_id_color_rgba(id, r, g, b, a)  ((void)0)
 # define raddbg_break(...)                            ((void)0)
 # define raddbg_break_if(expr, ...)                   ((void)expr)
-# define raddbg_watch(fmt, ...)                       ((void)0)
-# define raddbg_pin(expr, ...)
 # define raddbg_log(fmt, ...)                         ((void)0)
-# define raddbg_entry_point(...)                      struct raddbg_gen_data_id(){int __unused__;}
-# define raddbg_add_breakpoint(ptr, size, r, w, x)    ((void)0)
-# define raddbg_remove_breakpoint(ptr, size, r, w, x) ((void)0)
-# define raddbg_annotate_vaddr_range(ptr, size, ...)  ((void)0)
 #endif
-
-////////////////////////////////
-//~ Helpers
-
-#define raddbg_glue_(a, b) a##b
-#define raddbg_glue(a, b) raddbg_glue_(a, b)
-#define raddbg_gen_data_id() raddbg_glue(raddbg_data__, __COUNTER__)
 
 ////////////////////////////////
 //~ Global Symbols
@@ -69,10 +50,7 @@ int raddbg_is_attached__impl(void);
 int raddbg_thread_id__impl(void);
 void raddbg_thread_name__impl(int id, char *fmt, ...);
 void raddbg_thread_color__impl(int id, unsigned int hexcode);
-void raddbg_watch__impl(char *fmt, ...);
 void raddbg_log__impl(char *fmt, ...);
-void raddbg_add_or_remove_breakpoint__impl(void *ptr, int set, int size, int r, int w, int x);
-void raddbg_annotate_vaddr_range__impl(void *ptr, unsigned __int64 size, char *fmt, ...);
 #endif
 
 ////////////////////////////////
@@ -355,12 +333,6 @@ raddbg_thread_color__impl(int id, unsigned int hexcode)
 #define raddbg_break__impl() (__debugbreak())
 
 void
-raddbg_watch__impl(char *fmt, ...)
-{
-  // TODO(rjf)
-}
-
-void
 raddbg_log__impl(char *fmt, ...)
 {
   // rjf: resolve variadic arguments
@@ -374,90 +346,6 @@ raddbg_log__impl(char *fmt, ...)
   
   // rjf: output debug string
   OutputDebugStringA(buffer);
-}
-
-void
-raddbg_add_or_remove_breakpoint__impl(void *ptr, int set, int size, int r, int w, int x)
-{
-  if(raddbg_is_attached())
-  {
-#pragma pack(push, 8)
-    typedef struct RADDBG_AddBreakpointInfo RADDBG_AddBreakpointInfo;
-    struct RADDBG_AddBreakpointInfo
-    {
-      unsigned __int64 vaddr;
-      unsigned __int64 size;
-      unsigned __int64 r;
-      unsigned __int64 w;
-      unsigned __int64 x;
-      unsigned __int64 add;
-    };
-#pragma pack(pop)
-    RADDBG_AddBreakpointInfo info;
-    info.vaddr = (unsigned __int64)ptr;
-    info.size  = size;
-    info.r     = r;
-    info.w     = w;
-    info.x     = x;
-    info.add   = set;
-#pragma warning(push)
-#pragma warning(disable: 6320 6322)
-    __try
-    {
-      RaiseException(0x00524145u, 0, sizeof(info) / sizeof(void *), (const ULONG_PTR *)&info);
-    }
-    __except(1)
-    {
-    }
-#pragma warning(pop)
-  }
-}
-
-void
-raddbg_annotate_vaddr_range__impl(void *ptr, unsigned __int64 size, char *fmt, ...)
-{
-  if(raddbg_is_attached())
-  {
-    // rjf: resolve variadic arguments
-    char buffer[4096];
-    int buffer_size = 0;
-    {
-      va_list args;
-      va_start(args, fmt);
-      buffer_size = RADDBG_MARKUP_VSNPRINTF(buffer, sizeof(buffer), fmt, args);
-      buffer_size = ((buffer_size < 0) ? 0 :
-                     (buffer_size > sizeof(buffer)) ? sizeof(buffer) :
-                     buffer_size);
-      va_end(args);
-    }
-    
-    // rjf: send annotation info via exception
-#pragma pack(push, 8)
-    typedef struct RADDBG_VaddrRangeAnnotationInfo RADDBG_VaddrRangeAnnotationInfo;
-    struct RADDBG_VaddrRangeAnnotationInfo
-    {
-      unsigned __int64 vaddr;
-      unsigned __int64 size;
-      void *name;
-      unsigned __int64 name_size;
-    };
-#pragma pack(pop)
-    RADDBG_VaddrRangeAnnotationInfo info;
-    info.vaddr     = (unsigned __int64)ptr;
-    info.size      = size;
-    info.name      = buffer;
-    info.name_size = buffer_size;
-#pragma warning(push)
-#pragma warning(disable: 6320 6322)
-    __try
-    {
-      RaiseException(0x00524156u, 0, sizeof(info) / sizeof(void *), (const ULONG_PTR *)&info);
-    }
-    __except(1)
-    {
-    }
-#pragma warning(pop)
-  }
 }
 
 #endif // defined(RADDBG_MARKUP_IMPLEMENTATION)

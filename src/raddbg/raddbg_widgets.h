@@ -101,8 +101,6 @@ struct RD_CodeSliceParams
   String8 *line_text;
   Rng1U64 *line_ranges;
   TXT_TokenArray *line_tokens;
-  CFG_NodePtrList *line_bps;
-  CFG_NodePtrList *line_pins;
   U64 *line_vaddrs;
   TXT_TextInfo *text_info;
   String8 text_data;
@@ -160,7 +158,6 @@ internal UI_Signal rd_icon_buttonf(RD_IconKind kind, FuzzyMatchRangeList *matche
 
 internal UI_BOX_CUSTOM_DRAW(rd_code_slice_text_draw_extensions);
 internal UI_BOX_CUSTOM_DRAW(rd_thread_box_draw_extensions);
-internal UI_BOX_CUSTOM_DRAW(rd_bp_box_draw_extensions);
 internal RD_CodeSliceSignal rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *preferred_column, String8 string);
 internal RD_CodeSliceSignal rd_code_slicef(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *preferred_column, char *fmt, ...);
 

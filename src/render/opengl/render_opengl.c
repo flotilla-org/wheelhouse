@@ -140,8 +140,8 @@ r_init(CmdLine *cmdln)
         stages[idx].errors.str = push_array(r_ogl_state->arena, U8, info_log_length+1);
         stages[idx].errors.size = info_log_length;
         glGetShaderInfoLog(stages[idx].out, info_log_length, 0, (char *)stages[idx].errors.str);
+        raddbg_log("[OpenGL shader] %.*s\n", (int)stages[idx].errors.size, stages[idx].errors.str);
       }
-      raddbg_pin(text(stages[idx].errors.str));
     }
     
     // rjf: attach compilations to program

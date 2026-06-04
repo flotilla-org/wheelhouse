@@ -895,115 +895,6 @@ internal UI_BOX_CUSTOM_DRAW(rd_thread_box_draw_extensions)
   }
 }
 
-typedef struct RD_BreakpointBoxDrawExtData RD_BreakpointBoxDrawExtData;
-struct RD_BreakpointBoxDrawExtData
-{
-  Vec4F32 color;
-  F32 alive_t;
-  F32 hover_t;
-  F32 remap_px_delta;
-  B32 do_lines;
-  B32 do_glow;
-  B32 is_disabled;
-  B32 is_conditioned;
-};
-
-internal UI_BOX_CUSTOM_DRAW(rd_bp_box_draw_extensions)
-{
-  RD_BreakpointBoxDrawExtData *u = (RD_BreakpointBoxDrawExtData *)box->custom_draw_user_data;
-  
-  // rjf: draw line before next-to-execute line
-  if(u->do_lines)
-  {
-    R_Rect2DInst *inst = dr_rect(r2f32p(box->parent->parent->parent->rect.x0,
-                                        box->parent->rect.y0 - box->font_size*0.125f,
-                                        box->parent->parent->parent->rect.x0 + ui_top_font_size()*250.f*u->alive_t,
-                                        box->parent->rect.y0 + box->font_size*0.125f),
-                                 v4f32(u->color.x, u->color.y, u->color.z, 0),
-                                 0, 0, 1.f);
-    inst->colors[Corner_00] = inst->colors[Corner_01] = u->color;
-  }
-  
-  // rjf: draw rich hover fill
-  if(u->hover_t > 0.001f)
-  {
-    Vec4F32 weak_color = u->color;
-    weak_color.w *= 0.5f*u->hover_t;
-    R_Rect2DInst *inst = dr_rect(r2f32p(box->rect.x0,
-                                        box->parent->rect.y0,
-                                        box->rect.x0 + ui_top_font_size()*22.f*u->hover_t,
-                                        box->parent->rect.y1),
-                                 v4f32(0, 0, 0, 0),
-                                 0, 0, 1);
-    inst->colors[Corner_00] = inst->colors[Corner_01] = weak_color;
-  }
-  
-  // rjf: draw slight fill
-  if(u->do_glow)
-  {
-    Vec4F32 weak_thread_color = u->color;
-    weak_thread_color.w *= 0.3f;
-    R_Rect2DInst *inst = dr_rect(r2f32p(box->rect.x0,
-                                        box->parent->rect.y0,
-                                        box->rect.x0 + ui_top_font_size()*22.f*u->alive_t,
-                                        box->parent->rect.y1),
-                                 v4f32(0, 0, 0, 0),
-                                 0, 0, 1);
-    inst->colors[Corner_00] = inst->colors[Corner_01] = weak_thread_color;
-  }
-  
-  // rjf: draw remaps
-  if(u->remap_px_delta != 0)
-  {
-    F32 remap_px_delta = u->remap_px_delta;
-    F32 circle_advance = fnt_dim_from_tag_size_string(box->font, box->font_size, 0, 0, rd_icon_kind_text_table[RD_IconKind_CircleFilled]).x;
-    Vec2F32 bp_text_pos = ui_box_text_position(box);
-    Vec2F32 bp_center = v2f32(bp_text_pos.x + circle_advance/2, bp_text_pos.y);
-    FNT_Metrics icon_font_metrics = fnt_metrics_from_tag_size(box->font, box->font_size);
-    F32 icon_font_line_height = fnt_line_height_from_metrics(&icon_font_metrics);
-    F32 remap_bar_thickness = 0.3f*ui_top_font_size();
-    Vec4F32 remap_color = u->color;
-    remap_color.w *= 0.3f;
-    R_Rect2DInst *inst = dr_rect(r2f32p(bp_center.x - remap_bar_thickness,
-                                        bp_center.y + ClampTop(remap_px_delta, 0) + remap_bar_thickness,
-                                        bp_center.x + remap_bar_thickness,
-                                        bp_center.y + ClampBot(remap_px_delta, 0) - remap_bar_thickness),
-                                 remap_color, 2.f, 0, 1.f);
-    dr_text(box->font, box->font_size, 0, 0, FNT_RasterFlag_Smooth,
-            v2f32(bp_text_pos.x,
-                  bp_center.y + remap_px_delta),
-            remap_color,
-            rd_icon_kind_text_table[RD_IconKind_CircleFilled]);
-  }
-  
-  // rjf: draw conditioned marker
-  if(u->is_conditioned) UI_TagF(u->is_disabled ? "weak" : "")
-  {
-    Temp scratch = scratch_begin(0, 0);
-    Vec4F32 color = ui_color_from_name(str8_lit("text"));
-    FNT_Run run = dr_fnt_run_from_string(rd_font_from_slot(RD_FontSlot_Code), box->font_size*0.8f, 0, 0, FNT_RasterFlag_Smooth, str8_lit("if"));
-    Vec2F32 p = center_2f32(box->rect);
-    p.x -= run.dim.x*0.5f;
-    p.y += run.descent;
-    dr_text_run(p, color, run);
-    scratch_end(scratch);
-  }
-  
-  // rjf: draw disabled marker
-  if(u->is_disabled)
-  {
-    Temp scratch = scratch_begin(0, 0);
-    Vec4F32 color = ui_color_from_name(str8_lit("breakpoint"));
-    FNT_Run run = dr_fnt_run_from_string(rd_font_from_slot(RD_FontSlot_Icons), box->font_size*0.95f, 0, 0, FNT_RasterFlag_Smooth, str8_lit("x"));
-    Vec2F32 box_dim = dim_2f32(box->rect);
-    Vec2F32 p = center_2f32(box->rect);
-    p.x += box_dim.x*0.1f;
-    p.y -= box_dim.y*0.2f;
-    dr_text_run(p, color, run);
-    scratch_end(scratch);
-  }
-}
-
 internal RD_CodeSliceSignal
 rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *preferred_column, String8 string)
 {
@@ -1013,10 +904,6 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
   B32 is_focused = ui_is_focus_active();
   B32 ctrlified = (wm_get_modifiers() & WM_Modifier_Ctrl);
   F32 line_num_padding_px = ui_top_font_size()*1.f;
-  F32 entity_alive_t_rate = rd_state->entity_alive_animation_rate;
-  F32 entity_hover_t_rate = rd_state->rich_hover_animation_rate;
-  B32 do_bp_lines = rd_setting_b32_from_name(s("breakpoint_lines"));
-  B32 do_bp_glow = rd_setting_b32_from_name(s("breakpoint_glow"));
   B32 do_scope_lines = rd_setting_b32_from_name(s("cursor_scope_lines"));
   B32 do_scope_end_annotations = rd_setting_b32_from_name(s("cursor_scope_end_annotations"));
   B32 do_cursor_trail = rd_setting_b32_from_name(s("cursor_trail"));
@@ -1052,32 +939,15 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
   }
   
   //////////////////////////////
-  //- rjf: dragging cfgs/entities/expressions? -> drop site
+  //- rjf: dragging expressions? -> drop site
   //
   B32 drop_can_hit_lines = 0;
-  CFG_Node *drop_cfg = &cfg_nil_node;
-  String8 drop_expr = {0};
-  Vec4F32 drop_color = pop_color;
   UI_Key drop_site_key = ui_key_from_stringf(top_container_box->key, "drop_site");
   if(rd_drag_is_active())
   {
-    CFG_Node *cfg = cfg_node_from_id(rd_state->drag_drop_regs->cfg);
-    if(rd_state->drag_drop_regs_slot == RD_RegSlot_Cfg &&
-       (str8_match(cfg->string, s("breakpoint"), 0) ||
-        str8_match(cfg->string, s("watch_pin"), 0)))
-    {
-      drop_can_hit_lines = 1;
-      drop_cfg = cfg;
-      drop_color = linear_from_srgba(rd_color_from_cfg(cfg));
-      if(drop_color.w == 0)
-      {
-        drop_color = pop_color;
-      }
-    }
     if(rd_state->drag_drop_regs_slot == RD_RegSlot_Expr)
     {
       drop_can_hit_lines = 1;
-      drop_expr = rd_state->drag_drop_regs->expr;
     }
     if(drop_can_hit_lines) UI_WidthFill UI_HeightFill
     {
@@ -1147,144 +1017,15 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
           line_num <= params->line_num_range.max;
           line_num += 1, line_idx += 1)
       {
-        CFG_NodePtrList line_bps = params->line_bps[line_idx];
-        CFG_NodePtrList line_pins = params->line_pins[line_idx];
         ui_set_next_hover_cursor(WM_Cursor_HandPoint);
         ui_set_next_background_color(v4f32(0, 0, 0, 0));
         UI_Box *line_margin_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable*!!(params->flags & RD_CodeSliceFlag_Clickable)|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawActiveEffects, "line_margin_%I64x", line_num);
-        UI_Parent(line_margin_box)
-        {
-          //- rjf: build margin breakpoint ui
-          for(CFG_NodePtrNode *n = line_bps.first; n != 0; n = n->next)
-          {
-            CFG_Node *bp = n->v;
-            Vec4F32 bp_rgba = rd_color_from_cfg(bp);
-            if(bp_rgba.w == 0)
-            {
-              bp_rgba = ui_color_from_name(s("breakpoint"));
-            }
-            B32 bp_is_disabled = rd_disabled_from_cfg(bp);
-            if(bp_is_disabled)
-            {
-              bp_rgba = v4f32(bp_rgba.x*0.45f, bp_rgba.y*0.45f, bp_rgba.z*0.45f, bp_rgba.w*0.45f);
-            }
-            
-            // rjf: prep custom rendering data
-            RD_BreakpointBoxDrawExtData *bp_draw = push_array(ui_build_arena(), RD_BreakpointBoxDrawExtData, 1);
-            {
-              RD_Regs *hover_regs = rd_get_hover_regs();
-              B32 is_hovering = (cfg_node_from_id(hover_regs->cfg) == bp && rd_state->hover_regs_slot == RD_RegSlot_Cfg);
-              bp_draw->color    = bp_rgba;
-              bp_draw->alive_t  = ui_anim(ui_key_from_stringf(ui_key_zero(), "cfg_alive_t_%p", bp), 1.f, .rate = entity_alive_t_rate);
-              bp_draw->hover_t  = ui_anim(ui_key_from_stringf(ui_key_zero(), "cfg_hover_t_%p", bp), (F32)!!is_hovering, .rate = entity_hover_t_rate);
-              bp_draw->do_lines = do_bp_lines;
-              bp_draw->do_glow  = do_bp_glow;
-              bp_draw->is_disabled = bp_is_disabled;
-              bp_draw->is_conditioned = (cfg_node_child_from_string(bp, s("condition"))->first->string.size != 0);
-            }
-            
-            // rjf: build box for breakpoint
-            ui_set_next_font(rd_font_from_slot(RD_FontSlot_Icons));
-            ui_set_next_font_size(params->font_size * 1.f);
-            ui_set_next_text_raster_flags(FNT_RasterFlag_Smooth);
-            ui_set_next_text_alignment(UI_TextAlign_Center);
-            ui_set_next_text_color(bp_rgba);
-            UI_Box *bp_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|
-                                                       UI_BoxFlag_Clickable*!!(params->flags & RD_CodeSliceFlag_Clickable)|
-                                                       UI_BoxFlag_DisableTextTrunc,
-                                                       "%S##bp_%p",
-                                                       rd_icon_kind_text_table[RD_IconKind_CircleFilled],
-                                                       bp);
-            ui_box_equip_custom_draw(bp_box, rd_bp_box_draw_extensions, bp_draw);
-            UI_Signal bp_sig = ui_signal_from_box(bp_box);
-            
-            // rjf: bp hovering
-            if(ui_hovering(bp_sig) && !rd_drag_is_active())
-            {
-              RD_RegsScope(.cfg = bp->id) rd_set_hover_regs(RD_RegSlot_Cfg);
-            }
-            
-            // rjf: bp right-click => open query
-            if(ui_right_clicked(bp_sig))
-            {
-              rd_cmd_name("push_query",
-                     .ui_key = bp_box->key,
-                     .expr = push_str8f(scratch.arena, "query:config.$%I64x", bp->id));
-            }
-            
-	            // rjf: shift+click => enable breakpoint
-	            if(ui_clicked(bp_sig) && bp_sig.event_flags & WM_Modifier_Shift)
-	            {
-	            }
-	            
-	            // rjf: click => remove breakpoint
-	            if(ui_clicked(bp_sig) && bp_sig.event_flags == 0)
-	            {
-	            }
-            
-            // rjf: drag start
-            if(ui_dragging(bp_sig) && !contains_2f32(bp_box->rect, ui_mouse()))
-            {
-              RD_RegsScope(.cfg = bp->id) rd_drag_begin(RD_RegSlot_Cfg);
-            }
-          }
-          
-          //- rjf: build margin watch pin ui
-          for(CFG_NodePtrNode *n = line_pins.first; n != 0; n = n->next)
-          {
-            CFG_Node *pin = n->v;
-            Vec4F32 color = rd_color_from_cfg(pin);
-            if(color.w == 0)
-            {
-              color = ui_color_from_name(s("code_default"));
-            }
-            
-            // rjf: build box for watch
-            ui_set_next_font(rd_font_from_slot(RD_FontSlot_Icons));
-            ui_set_next_font_size(params->font_size * 1.f);
-            ui_set_next_text_raster_flags(FNT_RasterFlag_Smooth);
-            ui_set_next_text_alignment(UI_TextAlign_Center);
-            ui_set_next_text_color(color);
-            UI_Box *pin_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|
-                                                        UI_BoxFlag_Clickable*!!(params->flags & RD_CodeSliceFlag_Clickable)|
-                                                        UI_BoxFlag_DisableTextTrunc,
-                                                        "%S##watch_%p",
-                                                        rd_icon_kind_text_table[RD_IconKind_Pin],
-                                                        pin);
-            UI_Signal pin_sig = ui_signal_from_box(pin_box);
-            
-            // rjf: watch hovering
-            if(ui_hovering(pin_sig) && !rd_drag_is_active())
-            {
-              RD_RegsScope(.cfg = pin->id) rd_set_hover_regs(RD_RegSlot_Cfg);
-            }
-            
-            // rjf: pin right-click => open query
-            if(ui_right_clicked(pin_sig))
-            {
-              rd_cmd_name("push_query",
-                     .ui_key = pin_box->key,
-                     .expr = push_str8f(scratch.arena, "query:config.$%I64x", pin->id));
-            }
-            
-	            // rjf: click => remove pin
-	            if(ui_clicked(pin_sig))
-	            {
-	            }
-            
-            // rjf: drag start
-            if(ui_dragging(pin_sig) && !contains_2f32(pin_box->rect, ui_mouse()))
-            {
-              RD_RegsScope(.cfg = pin->id) rd_drag_begin(RD_RegSlot_Cfg);
-            }
-          }
-        }
         
         // rjf: empty margin interaction
-	        UI_Signal line_margin_sig = ui_signal_from_box(line_margin_box);
-	        if(ui_clicked(line_margin_sig))
-	        {
-	        }
+        UI_Signal line_margin_sig = ui_signal_from_box(line_margin_box);
+        if(ui_clicked(line_margin_sig))
+        {
+        }
       }
     }
   }
@@ -1491,13 +1232,10 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
     //- rjf: drop target is dropped -> process
     if(drop_can_hit_lines && ui_key_match(ui_drop_hot_key(), drop_site_key) && rd_drag_drop())
     {
-	      if(rd_state->drag_drop_regs_slot == RD_RegSlot_Expr)
-	      {
-	      }
-	      if(rd_state->drag_drop_regs_slot == RD_RegSlot_Cfg && drop_cfg != &cfg_nil_node)
-	      {
-	      }
-	    }
+      if(rd_state->drag_drop_regs_slot == RD_RegSlot_Expr)
+      {
+      }
+    }
     
     //- rjf: commit text container signal to main output
     result.base = text_container_sig;
@@ -1718,180 +1456,6 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
   }
   
   //////////////////////////////
-  //- rjf: determine starting offset for each at line, at which we can begin placing extra info to the right
-  //
-  F32 *line_extras_off = push_array(scratch.arena, F32, dim_1s64(params->line_num_range)+1);
-  {
-    U64 line_idx = 0;
-    for(S64 line_num = params->line_num_range.min;
-        line_num <= params->line_num_range.max;
-        line_num += 1, line_idx += 1)
-    {
-      F32 line_text_dim = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, params->line_text[line_idx]).x + params->line_num_width_px + params->catchall_margin_width_px + params->priority_margin_width_px;
-      line_extras_off[line_idx] = Max(line_text_dim, params->font_size*30);
-    }
-  }
-  
-  //////////////////////////////
-  //- rjf: produce per-line extra annotation containers
-  //
-  UI_Box **line_extras_boxes = push_array(scratch.arena, UI_Box *, dim_1s64(params->line_num_range)+1);
-  UI_PrefWidth(ui_children_sum(1)) UI_PrefHeight(ui_px(params->line_height_px, 1.f)) UI_Parent(text_container_box) UI_Focus(UI_FocusKind_Off)
-  {
-    U64 line_idx = 0;
-    for(S64 line_num = params->line_num_range.min;
-        line_num < params->line_num_range.max;
-        line_num += 1, line_idx += 1)
-    {
-      ui_set_next_fixed_x(line_extras_off[line_idx]);
-      ui_set_next_fixed_y(line_idx*params->line_height_px);
-      line_extras_boxes[line_idx] = ui_build_box_from_stringf(0, "###extras_%I64x", line_idx);
-    }
-  }
-  
-  //////////////////////////////
-  //- rjf: build watch pin / auto annotations
-  //
-  UI_Focus(UI_FocusKind_Off)
-  {
-    U64 line_idx = 0;
-    for(S64 line_num = params->line_num_range.min;
-        line_num < params->line_num_range.max;
-        line_num += 1, line_idx += 1)
-    {
-      CFG_NodePtrList immediate_pins = {0};
-      
-      //- rjf: gather pins from source
-      String8 line_text = params->line_text[line_idx];
-      for(U64 off = 0, next_off = line_text.size;
-          off < line_text.size;
-          off = next_off)
-      {
-        // rjf: find next opener
-        String8 markup_opener = s("raddbg_pin(");
-        next_off = str8_find_needle(line_text, off, markup_opener, 0);
-        next_off += markup_opener.size;
-        
-        // rjf: extract contents of markup
-        String8 contents = {0};
-        S32 nest = 1;
-        for(U64 off2 = next_off; off2 < line_text.size; off2 += 1)
-        {
-          if(line_text.str[off2] == '(')
-          {
-            nest += 1;
-          }
-          else if(line_text.str[off2] == ')')
-          {
-            nest -= 1;
-            if(nest == 0)
-            {
-              contents = str8_substr(line_text, r1u64(next_off, off2));
-              break;
-            }
-          }
-        }
-        
-        // rjf: gather arguments
-        String8List args = {0};
-        {
-          S32 nest = 0;
-          U64 arg_start_off = 0;
-          for(U64 contents_off = 0; contents_off <= contents.size; contents_off += 1)
-          {
-            if(nest == 0 && (contents_off == contents.size || contents.str[contents_off] == ','))
-            {
-              String8 arg = str8_substr(contents, r1u64(arg_start_off, contents_off));
-              arg = str8_skip_chop_whitespace(arg);
-              str8_list_push(scratch.arena, &args, arg);
-              arg_start_off = contents_off+1;
-            }
-            if(contents_off < contents.size)
-            {
-              if(contents.str[contents_off] == '(')
-              {
-                nest += 1;
-              }
-              else if(contents.str[contents_off] == ')')
-              {
-                nest -= 1;
-              }
-            }
-          }
-        }
-        
-        // rjf: extract fixed arguments
-        String8 expr_string = {0};
-        if(args.first != 0)
-        {
-          expr_string = args.first->string;
-        }
-        
-        // rjf: build immediate pin for this markup
-        if(expr_string.size != 0)
-        {
-          CFG_Node *immediate_root = rd_immediate_cfg_from_keyf("markup_pin_%I64x_%I64x", line_num, off);
-          CFG_Node *pin = cfg_node_child_from_string_or_alloc(rd_state->cfg, immediate_root, s("watch_pin"));
-          CFG_Node *expr = cfg_node_child_from_string_or_alloc(rd_state->cfg, pin, s("expression"));
-          cfg_node_new_replace(rd_state->cfg, expr, expr_string);
-          cfg_node_ptr_list_push(scratch.arena, &immediate_pins, pin);
-        }
-      }
-      
-      //- rjf: build pin ui
-      CFG_NodePtrList pin_lists[] =
-      {
-        params->line_pins[line_idx],
-        immediate_pins,
-      };
-      E_ParentKey(e_key_zero()) for EachElement(list_idx, pin_lists)
-      {
-        CFG_NodePtrList pins = pin_lists[list_idx];
-        if(pins.count != 0) UI_Parent(line_extras_boxes[line_idx])
-          RD_Font(RD_FontSlot_Code)
-          UI_FontSize(params->font_size)
-          UI_PrefHeight(ui_px(params->line_height_px, 1.f))
-        {
-          F32 pin_value_string_max_width_px = params->font_size * (80.f / pins.count);
-          for(CFG_NodePtrNode *n = pins.first; n != 0; n = n->next)
-          {
-            CFG_Node *pin = n->v;
-            String8 pin_expr = rd_expr_from_cfg(pin);
-            E_Eval eval = e_eval_from_string(pin_expr);
-            String8 eval_string = {0};
-            if(!e_type_key_match(e_type_key_zero(), eval.irtree.type_key))
-            {
-              EV_StringParams string_params = {.flags = EV_StringFlag_ReadOnlyDisplayRules|rd_state->eval_viz_base_string_flags, .radix = 10};
-              eval_string = rd_value_string_from_eval(scratch.arena, str8_zero(), &string_params, params->font, params->font_size, pin_value_string_max_width_px, eval);
-            }
-            ui_spacer(ui_em(1.5f, 1.f));
-            ui_set_next_pref_width(ui_children_sum(1));
-            UI_Key pin_box_key = ui_key_from_stringf(ui_key_zero(), "###pin_%p", pin);
-            UI_Box *pin_box = ui_build_box_from_key(0, pin_box_key);
-            F32 pin_t = ui_anim(pin_box_key, 1.f, .rate = rd_state->catchall_animation_rate);
-            UI_Parent(pin_box) UI_PrefWidth(ui_text_dim(1, 1))
-            {
-              Vec4F32 pin_color = rd_color_from_cfg(pin);
-              if(pin_color.w == 0)
-              {
-                pin_color = ui_color_from_name(s("text"));
-              }
-              Vec4F32 default_code_color = ui_color_from_name(s("code_default"));
-              rd_code_label(pin_t*0.6f, 0, default_code_color, pin_expr);
-              rd_code_label(pin_t*0.6f, 0, default_code_color, str8_lit("="));
-              rd_code_label(pin_t*0.6f, 0, default_code_color, eval_string);
-            }
-            if(ui_hovering(text_container_sig) && contains_2f32(pin_box->rect, ui_mouse()))
-            {
-              rd_set_hover_eval(v2f32(pin_box->rect.x0, pin_box->rect.y1-2.f), pin_expr);
-            }
-          }
-        }
-      }
-    }
-  }
-  
-  //////////////////////////////
   //- rjf: mouse -> expression range info
   //
   TxtRng mouse_expr_rng = {0};
@@ -1964,7 +1528,7 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
     DR_Bucket *bucket = dr_bucket_make();
     DR_BucketScope(bucket)
     {
-      Vec4F32 color = drop_color;
+      Vec4F32 color = pop_color;
       color.w *= 0.2f;
       Rng2F32 drop_line_rect = r2f32p(top_container_box->rect.x0,
                                       top_container_box->rect.y0 + (mouse_pt.line - params->line_num_range.min) * params->line_height_px,
