@@ -147,88 +147,18 @@ typedef enum UIShell_AppRegSlot
 UIShell_AppRegSlot;
 
 internal UIShell_Regs
-uishell_regs_from_rd_regs(Arena *arena, RD_Regs *src)
+uishell_regs_copy(Arena *arena, UIShell_Regs *src)
 {
-  UIShell_Regs dst = {0};
-  dst.window = src->window;
-  dst.panel = src->panel;
-  dst.tab = src->tab;
-  dst.view = src->view;
-  dst.prev_tab = src->prev_tab;
-  dst.dst_panel = src->dst_panel;
-  dst.cfg = src->cfg;
+  UIShell_Regs dst = src[0];
   dst.cfg_list = cfg_id_list_copy(arena, &src->cfg_list);
   dst.file_path = push_str8_copy(arena, src->file_path);
-  dst.cursor = src->cursor;
-  dst.mark = src->mark;
-  dst.text_key = src->text_key;
-  dst.lang_kind = src->lang_kind;
-  dst.vaddr = src->vaddr;
   dst.expr = push_str8_copy(arena, src->expr);
-  dst.ui_key = src->ui_key;
-  dst.off_px = src->off_px;
-  dst.reg_slot = src->reg_slot;
-  dst.force_confirm = src->force_confirm;
-  dst.force_focus = src->force_focus;
-  dst.do_implicit_root = src->do_implicit_root;
-  dst.do_lister = src->do_lister;
-  dst.do_big_rows = src->do_big_rows;
-  dst.non_graphical = src->non_graphical;
-  dst.prefer_new_tab = src->prefer_new_tab;
-  dst.activate_with_single_click = src->activate_with_single_click;
-  dst.dir2 = src->dir2;
   dst.string = push_str8_copy(arena, src->string);
   dst.cmd_name = push_str8_copy(arena, src->cmd_name);
-  dst.wm_event = src->wm_event;
   if(dst.cfg_list.count == 0 && dst.cfg != 0)
   {
     cfg_id_list_push(arena, &dst.cfg_list, dst.cfg);
   }
-  return dst;
-}
-
-internal void
-uishell_regs_into_rd_regs(RD_Regs *dst, UIShell_Regs *src)
-{
-  MemoryZeroStruct(dst);
-  dst->window = src->window;
-  dst->panel = src->panel;
-  dst->tab = src->tab;
-  dst->view = src->view;
-  dst->prev_tab = src->prev_tab;
-  dst->dst_panel = src->dst_panel;
-  dst->cfg = src->cfg;
-  dst->cfg_list = src->cfg_list;
-  dst->file_path = src->file_path;
-  dst->cursor = src->cursor;
-  dst->mark = src->mark;
-  dst->text_key = src->text_key;
-  dst->lang_kind = src->lang_kind;
-  dst->vaddr = src->vaddr;
-  dst->expr = src->expr;
-  dst->ui_key = src->ui_key;
-  dst->off_px = src->off_px;
-  dst->reg_slot = src->reg_slot;
-  dst->force_confirm = src->force_confirm;
-  dst->force_focus = src->force_focus;
-  dst->do_implicit_root = src->do_implicit_root;
-  dst->do_lister = src->do_lister;
-  dst->do_big_rows = src->do_big_rows;
-  dst->non_graphical = src->non_graphical;
-  dst->prefer_new_tab = src->prefer_new_tab;
-  dst->activate_with_single_click = src->activate_with_single_click;
-  dst->dir2 = src->dir2;
-  dst->string = src->string;
-  dst->cmd_name = src->cmd_name;
-  dst->wm_event = src->wm_event;
-}
-
-internal UIShell_Regs
-uishell_regs_copy(Arena *arena, UIShell_Regs *src)
-{
-  RD_Regs tmp = {0};
-  uishell_regs_into_rd_regs(&tmp, src);
-  UIShell_Regs dst = uishell_regs_from_rd_regs(arena, &tmp);
   return dst;
 }
 

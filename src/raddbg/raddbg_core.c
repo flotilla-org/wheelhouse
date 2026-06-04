@@ -186,7 +186,7 @@ rd_drag_begin(RD_RegSlot slot)
   {
     arena_clear(rd_state->drag_drop_arena);
     rd_state->drag_drop_regs = push_array(rd_state->drag_drop_arena, UIShell_Regs, 1);
-    rd_state->drag_drop_regs[0] = uishell_regs_from_rd_regs(rd_state->drag_drop_arena, rd_regs());
+    rd_state->drag_drop_regs[0] = uishell_regs_copy(rd_state->drag_drop_arena, rd_regs());
     rd_state->drag_drop_regs_slot = slot;
     rd_state->drag_drop_state = RD_DragDropState_Dragging;
   }
@@ -214,7 +214,7 @@ internal void
 rd_set_hover_regs(RD_RegSlot slot)
 {
   rd_state->next_hover_regs = push_array(rd_frame_arena(), UIShell_Regs, 1);
-  rd_state->next_hover_regs[0] = uishell_regs_from_rd_regs(rd_frame_arena(), rd_regs());
+  rd_state->next_hover_regs[0] = uishell_regs_copy(rd_frame_arena(), rd_regs());
   rd_state->next_hover_regs_slot = slot;
 }
 
@@ -2668,7 +2668,7 @@ rd_window_frame(void)
         
         //- rjf: draw registers
         ui_labelf("hover_reg_slot: %i", rd_state->hover_regs_slot);
-        UIShell_Regs top_regs = uishell_regs_from_rd_regs(scratch.arena, rd_regs());
+        UIShell_Regs top_regs = uishell_regs_copy(scratch.arena, rd_regs());
         struct
         {
           String8 name;
@@ -7772,7 +7772,7 @@ rd_frame(void)
       for(;rd_next_cmd(&cmd);) UIShell_RegsScope()
       {
         // rjf: unpack command
-        uishell_regs_into_rd_regs(rd_regs(), cmd->regs);
+        MemoryCopyStruct(rd_regs(), cmd->regs);
         
         // rjf: request frame
         rd_request_frame();

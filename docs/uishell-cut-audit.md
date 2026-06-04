@@ -241,6 +241,8 @@ Twenty-ninth slice: the live stack internals now use shell names for their stora
 
 Thirtieth slice: the live stack push/pop/scope API now uses shell names. `rd_push_regs_`, `rd_push_regs`, `rd_pop_regs`, and `RD_RegsScope` became `uishell_push_regs_`, `uishell_push_regs`, `uishell_pop_regs`, and `UIShell_RegsScope`. The broad `rd_regs()` accessor remains as the main inherited register name still used throughout shared UI code.
 
+Thirty-first slice: the RD-named register conversion helpers are gone. Stored snapshots now use `uishell_regs_copy` directly, queued command dispatch copies the already-shell packet into the live stack, and there is no longer a `uishell_regs_from_rd_regs`/`uishell_regs_into_rd_regs` adapter pair.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
