@@ -21,7 +21,7 @@ uishell_regs_copy_contents(Arena *arena, UIShell_Regs *dst, UIShell_Regs *src)
 //~ rjf: Commands Type Functions
 
 internal void
-rd_cmd_list_push_new(Arena *arena, RD_CmdList *cmds, String8 name, RD_CmdRegs *regs)
+rd_cmd_list_push_new(Arena *arena, RD_CmdList *cmds, String8 name, UIShell_Regs *regs)
 {
   RD_CmdNode *n = push_array(arena, RD_CmdNode, 1);
   n->cmd.name = push_str8_copy(arena, name);
@@ -5791,7 +5791,7 @@ rd_set_hover_eval(Vec2F32 pos, String8 string)
 //~ rjf: Autocompletion Lister
 
 internal void
-rd_set_autocomp_regs_(E_Eval dst_eval, RD_CmdRegs *regs)
+rd_set_autocomp_regs_(E_Eval dst_eval, UIShell_Regs *regs)
 {
   CFG_Node *window_cfg = cfg_node_from_id(uishell_regs()->window);
   RD_WindowState *ws = rd_window_state_from_cfg(window_cfg);
@@ -6356,7 +6356,7 @@ rd_app_cmd_info_from_string(String8 string)
 //- rjf: pushing
 
 internal void
-rd_push_stored_cmd(String8 name, RD_CmdRegs *regs)
+rd_push_stored_cmd(String8 name, UIShell_Regs *regs)
 {
   rd_cmd_list_push_new(rd_state->cmds_arenas[0], &rd_state->cmds[0], name, regs);
 }

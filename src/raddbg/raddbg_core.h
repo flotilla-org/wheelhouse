@@ -387,13 +387,11 @@ struct RD_Location
 ////////////////////////////////
 //~ rjf: Command Types
 
-typedef UIShell_Regs RD_CmdRegs;
-
 typedef struct RD_Cmd RD_Cmd;
 struct RD_Cmd
 {
   String8 name;
-  RD_CmdRegs *regs;
+  UIShell_Regs *regs;
 };
 
 typedef struct RD_CmdNode RD_CmdNode;
@@ -751,7 +749,7 @@ internal void uishell_regs_copy_contents(Arena *arena, UIShell_Regs *dst, UIShel
 ////////////////////////////////
 //~ rjf: Commands Type Functions
 
-internal void rd_cmd_list_push_new(Arena *arena, RD_CmdList *cmds, String8 name, RD_CmdRegs *regs);
+internal void rd_cmd_list_push_new(Arena *arena, RD_CmdList *cmds, String8 name, UIShell_Regs *regs);
 
 ////////////////////////////////
 //~ rjf: View UI Rule Functions
@@ -897,8 +895,8 @@ internal void rd_set_hover_eval(Vec2F32 pos, String8 string);
 ////////////////////////////////
 //~ rjf: Autocompletion Lister
 
-internal void rd_set_autocomp_regs_(E_Eval dst_eval, RD_CmdRegs *regs);
-#define rd_set_autocomp_regs(dst_eval, ...) rd_set_autocomp_regs_((dst_eval), &(RD_CmdRegs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
+internal void rd_set_autocomp_regs_(E_Eval dst_eval, UIShell_Regs *regs);
+#define rd_set_autocomp_regs(dst_eval, ...) rd_set_autocomp_regs_((dst_eval), &(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
 
 ////////////////////////////////
 //~ rjf: Colors, Fonts, Config
@@ -960,9 +958,9 @@ internal RD_AppRegSlot rd_app_reg_slot_from_rd_reg_slot(RD_RegSlot slot);
 internal RD_RegSlot rd_reg_slot_from_app_reg_slot(RD_AppRegSlot slot);
 
 //- rjf: pushing
-internal void rd_push_stored_cmd(String8 name, RD_CmdRegs *regs);
-#define rd_push_cmd_current(name) rd_push_stored_cmd((name), &(RD_CmdRegs){UISHELL_REGS_LIT_INIT_TOP})
-#define rd_cmd_name(name, ...) rd_push_stored_cmd(str8_lit(name), &(RD_CmdRegs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
+internal void rd_push_stored_cmd(String8 name, UIShell_Regs *regs);
+#define rd_push_cmd_current(name) rd_push_stored_cmd((name), &(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP})
+#define rd_cmd_name(name, ...) rd_push_stored_cmd(str8_lit(name), &(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
 
 //- rjf: iterating
 internal B32 rd_next_cmd(RD_Cmd **cmd);

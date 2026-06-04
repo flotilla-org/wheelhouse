@@ -243,7 +243,9 @@ Thirtieth slice: the live stack push/pop/scope API now uses shell names. `rd_pus
 
 Thirty-first slice: the RD-named register conversion helpers are gone. Stored snapshots now use `uishell_regs_copy` directly, queued command dispatch copies the already-shell packet into the live stack, and there is no longer a `uishell_regs_from_rd_regs`/`uishell_regs_into_rd_regs` adapter pair.
 
-Thirty-second slice: the live register accessors now use shell names. Source call sites moved from `rd_regs()` and `rd_base_regs()` to `uishell_regs()` and `uishell_base_regs()`. The remaining `RD_Regs` name is now just the compatibility type alias used by query/register-slot metadata.
+Thirty-second slice: the live register accessors now use shell names. Source call sites moved from `rd_regs()` and `rd_base_regs()` to `uishell_regs()` and `uishell_base_regs()`. At this point, the remaining `RD_Regs` name was just the compatibility type alias used by query/register-slot metadata.
+
+Thirty-third slice: command and autocompletion packets no longer use the temporary `RD_CmdRegs` alias. `RD_Cmd.regs`, command list insertion, stored command replay, command emission macros, and autocompletion all take `UIShell_Regs *` directly.
 
 The current source split is:
 
