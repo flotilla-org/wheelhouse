@@ -89,42 +89,42 @@ enum
   RD_CmdKindFlag_ListInTextRng = (1<<3),
 };
 
-typedef enum RD_AppRegSlot
+typedef enum UIShell_AppRegSlot
 {
-  RD_AppRegSlot_Null,
-  RD_AppRegSlot_Window,
-  RD_AppRegSlot_Panel,
-  RD_AppRegSlot_Tab,
-  RD_AppRegSlot_View,
-  RD_AppRegSlot_PrevTab,
-  RD_AppRegSlot_DstPanel,
-  RD_AppRegSlot_Cfg,
-  RD_AppRegSlot_CfgList,
-  RD_AppRegSlot_FilePath,
-  RD_AppRegSlot_Cursor,
-  RD_AppRegSlot_Mark,
-  RD_AppRegSlot_TextKey,
-  RD_AppRegSlot_LangKind,
-  RD_AppRegSlot_Vaddr,
-  RD_AppRegSlot_Expr,
-  RD_AppRegSlot_UIKey,
-  RD_AppRegSlot_OffPx,
-  RD_AppRegSlot_RegSlot,
-  RD_AppRegSlot_ForceConfirm,
-  RD_AppRegSlot_ForceFocus,
-  RD_AppRegSlot_DoImplicitRoot,
-  RD_AppRegSlot_DoLister,
-  RD_AppRegSlot_DoBigRows,
-  RD_AppRegSlot_NonGraphical,
-  RD_AppRegSlot_PreferNewTab,
-  RD_AppRegSlot_ActivateWithSingleClick,
-  RD_AppRegSlot_Dir2,
-  RD_AppRegSlot_String,
-  RD_AppRegSlot_CmdName,
-  RD_AppRegSlot_WMEvent,
-  RD_AppRegSlot_COUNT
+  UIShell_AppRegSlot_Null,
+  UIShell_AppRegSlot_Window,
+  UIShell_AppRegSlot_Panel,
+  UIShell_AppRegSlot_Tab,
+  UIShell_AppRegSlot_View,
+  UIShell_AppRegSlot_PrevTab,
+  UIShell_AppRegSlot_DstPanel,
+  UIShell_AppRegSlot_Cfg,
+  UIShell_AppRegSlot_CfgList,
+  UIShell_AppRegSlot_FilePath,
+  UIShell_AppRegSlot_Cursor,
+  UIShell_AppRegSlot_Mark,
+  UIShell_AppRegSlot_TextKey,
+  UIShell_AppRegSlot_LangKind,
+  UIShell_AppRegSlot_Vaddr,
+  UIShell_AppRegSlot_Expr,
+  UIShell_AppRegSlot_UIKey,
+  UIShell_AppRegSlot_OffPx,
+  UIShell_AppRegSlot_RegSlot,
+  UIShell_AppRegSlot_ForceConfirm,
+  UIShell_AppRegSlot_ForceFocus,
+  UIShell_AppRegSlot_DoImplicitRoot,
+  UIShell_AppRegSlot_DoLister,
+  UIShell_AppRegSlot_DoBigRows,
+  UIShell_AppRegSlot_NonGraphical,
+  UIShell_AppRegSlot_PreferNewTab,
+  UIShell_AppRegSlot_ActivateWithSingleClick,
+  UIShell_AppRegSlot_Dir2,
+  UIShell_AppRegSlot_String,
+  UIShell_AppRegSlot_CmdName,
+  UIShell_AppRegSlot_WMEvent,
+  UIShell_AppRegSlot_COUNT
 }
-RD_AppRegSlot;
+UIShell_AppRegSlot;
 
 ////////////////////////////////
 //~ rjf: Autocompletion Cursor Info Type
@@ -710,7 +710,7 @@ struct RD_AppCmdInfo
   String8 ctx_filter;
   RD_CmdKindFlags flags;
   RD_QueryFlags query_flags;
-  RD_AppRegSlot query_slot;
+  UIShell_AppRegSlot query_slot;
   String8 query_expr;
   String8 query_view_name;
 };
@@ -953,8 +953,7 @@ internal void rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr,
 
 //- rjf: name -> info
 internal RD_AppCmdInfo rd_app_cmd_info_from_string(String8 string);
-internal RD_AppRegSlot rd_app_reg_slot_from_rd_reg_slot(RD_RegSlot slot);
-internal RD_RegSlot rd_reg_slot_from_app_reg_slot(RD_AppRegSlot slot);
+internal RD_RegSlot rd_reg_slot_from_app_reg_slot(UIShell_AppRegSlot slot);
 
 //- rjf: pushing
 internal void rd_push_stored_cmd(String8 name, UIShell_Regs *regs);

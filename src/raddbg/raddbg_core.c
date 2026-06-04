@@ -106,7 +106,7 @@ rd_app_reg_slot_code_name(RD_RegSlot slot)
   return result;
 }
 
-#define RD_APP_REG_SLOT_X_LIST \
+#define UISHELL_APP_REG_SLOT_X_LIST \
 X(Null) \
 X(Window) \
 X(Panel) \
@@ -139,35 +139,21 @@ X(String) \
 X(CmdName) \
 X(WMEvent)
 
-internal RD_AppRegSlot
-rd_app_reg_slot_from_rd_reg_slot(RD_RegSlot slot)
-{
-  RD_AppRegSlot result = RD_AppRegSlot_Null;
-  switch(slot)
-  {
-    default: break;
-#define X(name) case RD_RegSlot_##name: {result = RD_AppRegSlot_##name;}break;
-    RD_APP_REG_SLOT_X_LIST
-#undef X
-  }
-  return result;
-}
-
 internal RD_RegSlot
-rd_reg_slot_from_app_reg_slot(RD_AppRegSlot slot)
+rd_reg_slot_from_app_reg_slot(UIShell_AppRegSlot slot)
 {
   RD_RegSlot result = RD_RegSlot_Null;
   switch(slot)
   {
     default: break;
-#define X(name) case RD_AppRegSlot_##name: {result = RD_RegSlot_##name;}break;
-    RD_APP_REG_SLOT_X_LIST
+#define X(name) case UIShell_AppRegSlot_##name: {result = RD_RegSlot_##name;}break;
+    UISHELL_APP_REG_SLOT_X_LIST
 #undef X
   }
   return result;
 }
 
-#undef RD_APP_REG_SLOT_X_LIST
+#undef UISHELL_APP_REG_SLOT_X_LIST
 
 ////////////////////////////////
 //~ rjf: Global Cross-Window UI Interaction State Functions
@@ -3525,7 +3511,7 @@ rd_window_frame(void)
           }
           
           // rjf: any queries which take a file path mutate the debugger's "current path"
-          if(cmd_info.query_slot == RD_AppRegSlot_FilePath)
+          if(cmd_info.query_slot == UIShell_AppRegSlot_FilePath)
           {
             CFG_Node *query = cfg_node_child_from_string(view, str8_lit("query"));
             CFG_Node *input = cfg_node_child_from_string(query, str8_lit("input"));

@@ -243,20 +243,20 @@ rd_cmd_flags_from_uishell_cmd_flags(UIShell_CmdFlags flags)
   return result;
 }
 
-internal RD_AppRegSlot
+internal UIShell_AppRegSlot
 rd_app_reg_slot_from_uishell_reg_slot(UIShell_RegSlot slot)
 {
-  RD_AppRegSlot result = RD_AppRegSlot_Null;
+  UIShell_AppRegSlot result = UIShell_AppRegSlot_Null;
   switch(slot)
   {
     default: break;
-    case UIShell_RegSlot_Null:     {result = RD_AppRegSlot_Null;}break;
-    case UIShell_RegSlot_FilePath: {result = RD_AppRegSlot_FilePath;}break;
-    case UIShell_RegSlot_Cfg:      {result = RD_AppRegSlot_Cfg;}break;
-    case UIShell_RegSlot_CmdName:  {result = RD_AppRegSlot_CmdName;}break;
-    case UIShell_RegSlot_String:   {result = RD_AppRegSlot_String;}break;
-    case UIShell_RegSlot_Cursor:   {result = RD_AppRegSlot_Cursor;}break;
-    case UIShell_RegSlot_Vaddr:    {result = RD_AppRegSlot_Vaddr;}break;
+    case UIShell_RegSlot_Null:     {result = UIShell_AppRegSlot_Null;}break;
+    case UIShell_RegSlot_FilePath: {result = UIShell_AppRegSlot_FilePath;}break;
+    case UIShell_RegSlot_Cfg:      {result = UIShell_AppRegSlot_Cfg;}break;
+    case UIShell_RegSlot_CmdName:  {result = UIShell_AppRegSlot_CmdName;}break;
+    case UIShell_RegSlot_String:   {result = UIShell_AppRegSlot_String;}break;
+    case UIShell_RegSlot_Cursor:   {result = UIShell_AppRegSlot_Cursor;}break;
+    case UIShell_RegSlot_Vaddr:    {result = UIShell_AppRegSlot_Vaddr;}break;
   }
   return result;
 }

@@ -109,43 +109,6 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
   {str8_lit_comp("recent_project"), 0, str8_lit_comp("x:{'path':path, 'name':string}")},
 };
 
-typedef enum UIShell_AppRegSlot
-{
-  UIShell_AppRegSlot_Null,
-  UIShell_AppRegSlot_Window,
-  UIShell_AppRegSlot_Panel,
-  UIShell_AppRegSlot_Tab,
-  UIShell_AppRegSlot_View,
-  UIShell_AppRegSlot_PrevTab,
-  UIShell_AppRegSlot_DstPanel,
-  UIShell_AppRegSlot_Cfg,
-  UIShell_AppRegSlot_CfgList,
-  UIShell_AppRegSlot_FilePath,
-  UIShell_AppRegSlot_Cursor,
-  UIShell_AppRegSlot_Mark,
-  UIShell_AppRegSlot_TextKey,
-  UIShell_AppRegSlot_LangKind,
-  UIShell_AppRegSlot_Vaddr,
-  UIShell_AppRegSlot_Expr,
-  UIShell_AppRegSlot_UIKey,
-  UIShell_AppRegSlot_OffPx,
-  UIShell_AppRegSlot_RegSlot,
-  UIShell_AppRegSlot_ForceConfirm,
-  UIShell_AppRegSlot_ForceFocus,
-  UIShell_AppRegSlot_DoImplicitRoot,
-  UIShell_AppRegSlot_DoLister,
-  UIShell_AppRegSlot_DoBigRows,
-  UIShell_AppRegSlot_NonGraphical,
-  UIShell_AppRegSlot_PreferNewTab,
-  UIShell_AppRegSlot_ActivateWithSingleClick,
-  UIShell_AppRegSlot_Dir2,
-  UIShell_AppRegSlot_String,
-  UIShell_AppRegSlot_CmdName,
-  UIShell_AppRegSlot_WMEvent,
-  UIShell_AppRegSlot_COUNT
-}
-UIShell_AppRegSlot;
-
 internal UIShell_Regs
 uishell_regs_copy(Arena *arena, UIShell_Regs *src)
 {
