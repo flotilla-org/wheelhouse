@@ -494,7 +494,7 @@ struct RD_WindowState
   // rjf: query state
   B32 query_is_active;
   Arena *query_arena;
-  RD_Regs *query_regs;
+  UIShell_Regs *query_regs;
   CFG_ID query_view_id;
   CFG_ID query_last_view_id;
   
@@ -509,7 +509,7 @@ struct RD_WindowState
   // rjf: autocompletion state
   U64 autocomp_last_frame_index;
   Arena *autocomp_arena;
-  RD_Regs *autocomp_regs;
+  UIShell_Regs *autocomp_regs;
   RD_AutocompCursorInfo autocomp_cursor_info;
   
   // rjf: error state

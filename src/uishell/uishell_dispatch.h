@@ -1862,7 +1862,8 @@ uishell_dispatch_query_command(String8 name)
       {
         ws->query_is_active = 1;
         arena_clear(ws->query_arena);
-        ws->query_regs = rd_regs_copy(ws->query_arena, rd_regs());
+        ws->query_regs = push_array(ws->query_arena, UIShell_Regs, 1);
+        ws->query_regs[0] = uishell_regs_from_rd_regs(ws->query_arena, rd_regs());
       }
       CFG_Node *window_query = rd_immediate_cfg_from_keyf("window_query_%p", window);
       cfg_node_release_all_children(rd_state->cfg, window_query);

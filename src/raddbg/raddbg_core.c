@@ -2996,7 +2996,7 @@ rd_window_frame(void)
     {
       FloatingViewTask *next;
       CFG_Node *view;
-      RD_Regs *regs;
+      UIShell_Regs *regs;
       Rng2F32 rect;
       B32 is_focused;
       B32 is_anchored;
@@ -6010,7 +6010,8 @@ rd_set_autocomp_regs_(E_Eval dst_eval, RD_Regs *regs)
     if(is_allowed)
     {
       ws->autocomp_last_frame_index = rd_state->frame_index;
-      ws->autocomp_regs = rd_regs_copy(ws->autocomp_arena, regs);
+      ws->autocomp_regs = push_array(ws->autocomp_arena, UIShell_Regs, 1);
+      ws->autocomp_regs[0] = uishell_regs_from_rd_regs(ws->autocomp_arena, regs);
       ws->autocomp_cursor_info = cursor_info;
     }
   }

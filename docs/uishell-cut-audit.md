@@ -221,6 +221,8 @@ Nineteenth slice: debugger-only RAD markup annotations have been removed from th
 
 Twentieth slice: stale debugger register compatibility fields have been removed. `RD_RegSlot_UnwindCount`, `InlineDepth`, `Lines`, `DbgiKey`, `Voff`, `VaddrRange`, `VoffRange`, `PID`, and `NoRichTooltip` are gone, along with the corresponding `RD_Regs` fields and dev-menu display rows. The rich-tooltip path now keys only on whether a hover or drag/drop slot is active. The dead shell debug-control/tick hooks were also removed; they had already returned false and were no longer called.
 
+Twenty-first slice: window-local query and autocompletion register snapshots now store `UIShell_Regs` instead of `RD_Regs`. `RD_WindowState.query_regs`, `autocomp_regs`, and floating query tasks no longer retain debugger compatibility packets. The live `RD_Regs` stack and the `rd_set_autocomp_regs` input macro remain as temporary adapters for inherited widget code.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
