@@ -5799,7 +5799,7 @@ rd_set_hover_eval(Vec2F32 pos, String8 string)
 //~ rjf: Autocompletion Lister
 
 internal void
-rd_set_autocomp_regs_(E_Eval dst_eval, RD_Regs *regs)
+rd_set_autocomp_regs_(E_Eval dst_eval, RD_CmdRegs *regs)
 {
   CFG_Node *window_cfg = cfg_node_from_id(rd_regs()->window);
   RD_WindowState *ws = rd_window_state_from_cfg(window_cfg);
@@ -6000,7 +6000,7 @@ rd_set_autocomp_regs_(E_Eval dst_eval, RD_Regs *regs)
     {
       ws->autocomp_last_frame_index = rd_state->frame_index;
       ws->autocomp_regs = push_array(ws->autocomp_arena, UIShell_Regs, 1);
-      ws->autocomp_regs[0] = uishell_regs_from_rd_regs(ws->autocomp_arena, regs);
+      ws->autocomp_regs[0] = uishell_regs_copy(ws->autocomp_arena, regs);
       ws->autocomp_cursor_info = cursor_info;
     }
   }

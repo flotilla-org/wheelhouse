@@ -898,8 +898,8 @@ internal void rd_set_hover_eval(Vec2F32 pos, String8 string);
 ////////////////////////////////
 //~ rjf: Autocompletion Lister
 
-internal void rd_set_autocomp_regs_(E_Eval dst_eval, RD_Regs *regs);
-#define rd_set_autocomp_regs(dst_eval, ...) rd_set_autocomp_regs_((dst_eval), &(RD_Regs){RD_APP_REGS_LIT_INIT_TOP __VA_ARGS__})
+internal void rd_set_autocomp_regs_(E_Eval dst_eval, RD_CmdRegs *regs);
+#define rd_set_autocomp_regs(dst_eval, ...) rd_set_autocomp_regs_((dst_eval), &(RD_CmdRegs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
 
 ////////////////////////////////
 //~ rjf: Colors, Fonts, Config
