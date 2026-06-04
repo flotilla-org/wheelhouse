@@ -1697,7 +1697,7 @@ uishell_watch_view_ui(Rng2F32 rect)
                           rd_regs()->view = cfg->id;
                         }
                       }
-                      rd_push_cmd(cell_info.cmd_name, rd_regs());
+                      rd_push_cmd_current(cell_info.cmd_name);
                     }
                   }
                   else if(!(sig.f & UI_SignalFlag_KeyboardPressed) && cell_info.flags & UIShell_WatchCellFlag_CanEdit)

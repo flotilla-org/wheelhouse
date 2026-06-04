@@ -32,13 +32,6 @@ rd_cmd_list_push_new(Arena *arena, RD_CmdList *cmds, String8 name, RD_CmdRegs *r
   cmds->count += 1;
 }
 
-internal void
-rd_cmd_list_push_new_from_rd_regs(Arena *arena, RD_CmdList *cmds, String8 name, RD_Regs *regs)
-{
-  UIShell_Regs shell_regs = uishell_regs_from_rd_regs(arena, regs);
-  rd_cmd_list_push_new(arena, cmds, name, &shell_regs);
-}
-
 ////////////////////////////////
 //~ rjf: View UI Rule Functions
 
@@ -6362,12 +6355,6 @@ rd_app_cmd_info_from_string(String8 string)
 }
 
 //- rjf: pushing
-
-internal void
-rd_push_cmd(String8 name, RD_Regs *regs)
-{
-  rd_cmd_list_push_new_from_rd_regs(rd_state->cmds_arenas[0], &rd_state->cmds[0], name, regs);
-}
 
 internal void
 rd_push_stored_cmd(String8 name, RD_CmdRegs *regs)

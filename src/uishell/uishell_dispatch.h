@@ -38,8 +38,8 @@ uishell_dispatch_app_command(String8 name)
   
   if(str8_match(name, str8_lit("exit"), 0))
   {
-    rd_push_cmd(str8_lit("write_user_data"), rd_regs());
-    rd_push_cmd(str8_lit("write_project_data"), rd_regs());
+    rd_push_cmd_current(str8_lit("write_user_data"));
+    rd_push_cmd_current(str8_lit("write_project_data"));
     rd_state->quit = 1;
   }
   else if(str8_match(name, str8_lit("wm_event"), 0))
@@ -441,7 +441,7 @@ uishell_dispatch_command_palette_command(String8 name)
     String8 expr = str8_list_join(scratch.arena, &exprs, &(StringJoin){.sep = str8_lit(", ")});
     RD_RegsScope(.expr = expr, .do_implicit_root = 1, .do_lister = 1, .do_big_rows = 1, .view = tab->id, .tab = tab->id)
     {
-      rd_push_cmd(str8_lit("push_query"), rd_regs());
+      rd_push_cmd_current(str8_lit("push_query"));
     }
     scratch_end(scratch);
   }
@@ -459,7 +459,7 @@ uishell_dispatch_command_palette_command(String8 name)
       String8 cmd_name = rd_regs()->cmd_name;
       RD_RegsScope(.cmd_name = str8_zero())
       {
-        rd_push_cmd(cmd_name, rd_regs());
+        rd_push_cmd_current(cmd_name);
       }
     }
     else if(info->query.slot == UIShell_RegSlot_FilePath && rd_setting_b32_from_name(str8_lit("use_native_file_system_dialog")))
@@ -478,11 +478,11 @@ uishell_dispatch_command_palette_command(String8 name)
         String8 cmd_name = rd_regs()->cmd_name;
         RD_RegsScope(.cmd_name = str8_zero(), .file_path = file_path)
         {
-          rd_push_cmd(cmd_name, rd_regs());
+          rd_push_cmd_current(cmd_name);
         }
         RD_RegsScope(.file_path = str8_chop_last_slash(file_path))
         {
-          rd_push_cmd(str8_lit("set_current_path"), rd_regs());
+          rd_push_cmd_current(str8_lit("set_current_path"));
         }
       }
     }
@@ -490,7 +490,7 @@ uishell_dispatch_command_palette_command(String8 name)
     {
       RD_RegsScope(.do_implicit_root = 1, .do_lister = info->query.expr.size != 0)
       {
-        rd_push_cmd(str8_lit("push_query"), rd_regs());
+        rd_push_cmd_current(str8_lit("push_query"));
       }
     }
     scratch_end(scratch);
@@ -499,14 +499,14 @@ uishell_dispatch_command_palette_command(String8 name)
   {
     RD_RegsScope(.string = str8_lit("text"), .expr = str8_lit("query:output"))
     {
-      rd_push_cmd(str8_lit("build_tab"), rd_regs());
+      rd_push_cmd_current(str8_lit("build_tab"));
     }
   }
   else if(str8_match(name, str8_lit("text"), 0))
   {
     RD_RegsScope(.string = str8_lit("text"), .expr = str8_zero())
     {
-      rd_push_cmd(str8_lit("build_tab"), rd_regs());
+      rd_push_cmd_current(str8_lit("build_tab"));
     }
   }
   else
@@ -610,7 +610,7 @@ uishell_dispatch_tab_command(String8 name)
     {
       RD_RegsScope(.tab = next_selected_tab->id)
       {
-        rd_push_cmd(str8_lit("focus_tab"), rd_regs());
+        rd_push_cmd_current(str8_lit("focus_tab"));
       }
     }
     scratch_end(scratch);
@@ -658,7 +658,7 @@ uishell_dispatch_tab_command(String8 name)
     }
     RD_RegsScope(.dst_panel = panel->cfg->id, .view = tab->id, .prev_tab = new_prev->id)
     {
-      rd_push_cmd(str8_lit("move_view"), rd_regs());
+      rd_push_cmd_current(str8_lit("move_view"));
     }
     scratch_end(scratch);
   }
@@ -704,7 +704,7 @@ uishell_dispatch_tab_command(String8 name)
       }
       RD_RegsScope(.tab = tab->id)
       {
-        rd_push_cmd(str8_lit("focus_tab"), rd_regs());
+        rd_push_cmd_current(str8_lit("focus_tab"));
       }
     }
     scratch_end(scratch);
@@ -716,7 +716,7 @@ uishell_dispatch_tab_command(String8 name)
     cfg_node_insert_child(rd_state->cfg, src->parent, src, dst);
     RD_RegsScope(.tab = dst->id)
     {
-      rd_push_cmd(str8_lit("focus_tab"), rd_regs());
+      rd_push_cmd_current(str8_lit("focus_tab"));
     }
   }
   else if(str8_match(name, str8_lit("close_tab"), 0))
@@ -746,7 +746,7 @@ uishell_dispatch_tab_command(String8 name)
       }
       RD_RegsScope(.tab = next_selected_tab->id)
       {
-        rd_push_cmd(str8_lit("focus_tab"), rd_regs());
+        rd_push_cmd_current(str8_lit("focus_tab"));
       }
     }
     cfg_node_release(rd_state->cfg, tab);
@@ -765,11 +765,11 @@ uishell_dispatch_tab_command(String8 name)
       cfg_node_insert_child(rd_state->cfg, dst_panel, prev_tab, view);
       RD_RegsScope(.panel = dst_panel->id, .tab = view->id)
       {
-        rd_push_cmd(str8_lit("focus_tab"), rd_regs());
+        rd_push_cmd_current(str8_lit("focus_tab"));
       }
       RD_RegsScope(.panel = dst_panel->id)
       {
-        rd_push_cmd(str8_lit("focus_panel"), rd_regs());
+        rd_push_cmd_current(str8_lit("focus_panel"));
       }
       CFG_PanelTree src_panel_tree = cfg_panel_tree_from_cfg(scratch.arena, src_panel);
       CFG_PanelNode *src_panel_node = cfg_panel_node_from_tree_cfg(src_panel_tree.root, src_panel);
@@ -783,7 +783,7 @@ uishell_dispatch_tab_command(String8 name)
           {
             RD_RegsScope(.panel = src_panel->id, .tab = n->v->id)
             {
-              rd_push_cmd(str8_lit("focus_tab"), rd_regs());
+              rd_push_cmd_current(str8_lit("focus_tab"));
             }
             src_panel_is_empty = 0;
             break;
@@ -794,7 +794,7 @@ uishell_dispatch_tab_command(String8 name)
       {
         RD_RegsScope(.panel = src_panel->id)
         {
-          rd_push_cmd(str8_lit("close_panel"), rd_regs());
+          rd_push_cmd_current(str8_lit("close_panel"));
         }
       }
     }
@@ -824,7 +824,7 @@ uishell_dispatch_tab_command(String8 name)
     String8 expr = push_str8f(rd_frame_arena(), "query:config.$%I64x", rd_regs()->tab);
     RD_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
     {
-      rd_push_cmd(str8_lit("push_query"), rd_regs());
+      rd_push_cmd_current(str8_lit("push_query"));
     }
   }
   else
@@ -1013,7 +1013,7 @@ uishell_dispatch_panel_command(String8 name)
             {
               RD_RegsScope(.panel = origin_panel->cfg->id, .tab = n->v->id)
               {
-                rd_push_cmd(str8_lit("focus_tab"), rd_regs());
+                rd_push_cmd_current(str8_lit("focus_tab"));
               }
               break;
             }
@@ -1021,11 +1021,11 @@ uishell_dispatch_panel_command(String8 name)
         }
         if(origin_panel->cfg != split_panel && origin_panel->tabs.count == 0)
         {
-          rd_push_cmd(str8_lit("close_panel"), rd_regs());
+          rd_push_cmd_current(str8_lit("close_panel"));
         }
         RD_RegsScope(.panel = new_panel_cfg->id, .tab = dragdrop_tab->id)
         {
-          rd_push_cmd(str8_lit("focus_tab"), rd_regs());
+          rd_push_cmd_current(str8_lit("focus_tab"));
         }
       }
       
@@ -1033,7 +1033,7 @@ uishell_dispatch_panel_command(String8 name)
       {
         RD_RegsScope(.panel = new_panel_cfg->id)
         {
-          rd_push_cmd(str8_lit("focus_panel"), rd_regs());
+          rd_push_cmd_current(str8_lit("focus_panel"));
         }
       }
       
@@ -1041,7 +1041,7 @@ uishell_dispatch_panel_command(String8 name)
       {
         RD_RegsScope(.panel = new_panel_cfg->id)
         {
-          rd_push_cmd(str8_lit("tab_bar_bottom"), rd_regs());
+          rd_push_cmd_current(str8_lit("tab_bar_bottom"));
         }
       }
     }
@@ -1117,7 +1117,7 @@ uishell_dispatch_panel_command(String8 name)
           }
           RD_RegsScope(.panel = new_focused->cfg->id)
           {
-            rd_push_cmd(str8_lit("focus_panel"), rd_regs());
+            rd_push_cmd_current(str8_lit("focus_panel"));
           }
         }
       }
@@ -1152,7 +1152,7 @@ uishell_dispatch_panel_command(String8 name)
           }
           RD_RegsScope(.panel = new_focused->cfg->id)
           {
-            rd_push_cmd(str8_lit("focus_panel"), rd_regs());
+            rd_push_cmd_current(str8_lit("focus_panel"));
           }
         }
       }
@@ -1215,7 +1215,7 @@ uishell_dispatch_panel_command(String8 name)
     }
     RD_RegsScope(.panel = next_focused->cfg->id)
     {
-      rd_push_cmd(str8_lit("focus_panel"), rd_regs());
+      rd_push_cmd_current(str8_lit("focus_panel"));
     }
     scratch_end(scratch);
   }
@@ -1312,7 +1312,7 @@ uishell_dispatch_panel_command(String8 name)
       }
       RD_RegsScope(.panel = dst_panel->cfg->id)
       {
-        rd_push_cmd(str8_lit("focus_panel"), rd_regs());
+        rd_push_cmd_current(str8_lit("focus_panel"));
       }
     }
     scratch_end(scratch);
@@ -1419,7 +1419,7 @@ uishell_dispatch_window_command(String8 name)
     String8 expr = push_str8f(rd_frame_arena(), "query:config.$%I64x", rd_regs()->window);
     RD_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
     {
-      rd_push_cmd(str8_lit("push_query"), rd_regs());
+      rd_push_cmd_current(str8_lit("push_query"));
     }
   }
   else if(str8_match(name, str8_lit("close_window"), 0) ||
@@ -1430,7 +1430,7 @@ uishell_dispatch_window_command(String8 name)
     CFG_Node *wcfg = cfg_node_from_id(rd_regs()->window);
     if(all_windows.count == 1 && all_windows.first->v == wcfg)
     {
-      rd_push_cmd(str8_lit("exit"), rd_regs());
+      rd_push_cmd_current(str8_lit("exit"));
     }
     else
     {
@@ -1552,7 +1552,7 @@ uishell_dispatch_config_command(String8 name)
     {
       RD_RegsScope(.file_path = path->first->string)
       {
-        rd_push_cmd(str8_lit("open_project"), rd_regs());
+        rd_push_cmd_current(str8_lit("open_project"));
       }
     }
   }
@@ -1650,7 +1650,7 @@ uishell_dispatch_config_command(String8 name)
         String8 reset_cmd = num_lines_in_monitor_height < 100 ? str8_lit("reset_to_compact_panels") : str8_lit("reset_to_default_panels");
         RD_RegsScope(.window = new_window->id)
         {
-          rd_push_cmd(reset_cmd, rd_regs());
+          rd_push_cmd_current(reset_cmd);
         }
       }
     }
@@ -1660,18 +1660,18 @@ uishell_dispatch_config_command(String8 name)
       CFG_NodePtrList all_keybindings = cfg_node_child_list_from_string(scratch.arena, file_root, str8_lit("keybindings"));
       if(all_keybindings.count == 0)
       {
-        rd_push_cmd(str8_lit("reset_to_default_bindings"), rd_regs());
+        rd_push_cmd_current(str8_lit("reset_to_default_bindings"));
       }
     }
     
     if(file_is_okay && is_user && !rd_regs()->non_graphical)
     {
-      rd_push_cmd(str8_lit("record_user_as_last_opened"), rd_regs());
+      rd_push_cmd_current(str8_lit("record_user_as_last_opened"));
     }
     
     if(file_is_okay && is_project)
     {
-      rd_push_cmd(str8_lit("record_project_in_user"), rd_regs());
+      rd_push_cmd_current(str8_lit("record_project_in_user"));
     }
     
     if(file_is_okay && is_project)
@@ -1696,7 +1696,7 @@ uishell_dispatch_config_command(String8 name)
             }
             RD_RegsScope(.panel = panel->cfg->id, .tab = fallback_tab->id)
             {
-              rd_push_cmd(str8_lit("focus_tab"), rd_regs());
+              rd_push_cmd_current(str8_lit("focus_tab"));
             }
           }
         }
@@ -1710,7 +1710,7 @@ uishell_dispatch_config_command(String8 name)
       {
         RD_RegsScope(.file_path = new_current_dir)
         {
-          rd_push_cmd(str8_lit("set_current_path"), rd_regs());
+          rd_push_cmd_current(str8_lit("set_current_path"));
         }
       }
     }
@@ -1720,14 +1720,14 @@ uishell_dispatch_config_command(String8 name)
   {
     RD_RegsScope(.file_path = str8_zero())
     {
-      rd_push_cmd(str8_lit("open_user"), rd_regs());
+      rd_push_cmd_current(str8_lit("open_user"));
     }
   }
   else if(str8_match(name, str8_lit("new_project"), 0))
   {
     RD_RegsScope(.file_path = str8_zero())
     {
-      rd_push_cmd(str8_lit("open_project"), rd_regs());
+      rd_push_cmd_current(str8_lit("open_project"));
     }
   }
   else if(str8_match(name, str8_lit("save_user"), 0) ||
@@ -1753,15 +1753,15 @@ uishell_dispatch_config_command(String8 name)
     {
       arena_clear(rd_state->user_path_arena);
       rd_state->user_path = push_str8_copy(rd_state->user_path_arena, new_path);
-      rd_push_cmd(str8_lit("write_user_data"), rd_regs());
-      rd_push_cmd(str8_lit("record_user_as_last_opened"), rd_regs());
+      rd_push_cmd_current(str8_lit("write_user_data"));
+      rd_push_cmd_current(str8_lit("record_user_as_last_opened"));
     }
     else
     {
       arena_clear(rd_state->project_path_arena);
       rd_state->project_path = push_str8_copy(rd_state->project_path_arena, new_path);
-      rd_push_cmd(str8_lit("write_project_data"), rd_regs());
-      rd_push_cmd(str8_lit("record_project_in_user"), rd_regs());
+      rd_push_cmd_current(str8_lit("write_project_data"));
+      rd_push_cmd_current(str8_lit("record_project_in_user"));
     }
   }
   else if(str8_match(name, str8_lit("record_project_in_user"), 0))
@@ -1990,7 +1990,7 @@ uishell_dispatch_query_command(String8 name)
       {
         rd_regs()->view = ws->query_regs->view;
       }
-      rd_push_cmd(cmd_name, rd_regs());
+      rd_push_cmd_current(cmd_name);
     }
     
     // rjf: complete query, either by closing the query popup, or closing the
@@ -2048,7 +2048,7 @@ uishell_dispatch_file_query_command(String8 name)
     String8 expr = str8_match(name, str8_lit("user_settings"), 0) ? str8_lit("query:user_settings") : str8_lit("query:project_settings");
     RD_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
     {
-      rd_push_cmd(str8_lit("push_query"), rd_regs());
+      rd_push_cmd_current(str8_lit("push_query"));
     }
   }
   else if(str8_match(name, str8_lit("set_current_path"), 0))
@@ -2067,7 +2067,7 @@ uishell_dispatch_file_query_command(String8 name)
       String8 expr = rd_eval_string_from_file_path(scratch.arena, path);
       RD_RegsScope(.string = str8_lit("pending"), .expr = expr)
       {
-        rd_push_cmd(str8_lit("build_tab"), rd_regs());
+        rd_push_cmd_current(str8_lit("build_tab"));
       }
     }
     else

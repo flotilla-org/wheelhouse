@@ -233,6 +233,8 @@ Twenty-fifth slice: the common `rd_cmd_name(...)` command-emission macro now con
 
 Twenty-sixth slice: the autocompletion adapter now accepts `RD_CmdRegs`/`UIShell_Regs` and stores an arena-owned shell copy directly. `rd_set_autocomp_regs(...)` no longer builds a temporary `RD_Regs` literal, so `RD_APP_REGS_LIT_INIT_TOP` is now reserved for the live register-scope stack.
 
+Twenty-seventh slice: direct command emissions now use `rd_push_cmd_current(name)`, which snapshots the current live context into a `RD_CmdRegs`/`UIShell_Regs` literal before queue insertion. The old `rd_push_cmd(String8, RD_Regs *)` and `rd_cmd_list_push_new_from_rd_regs` adapters are gone, so the command queue input side no longer accepts `RD_Regs *`.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
