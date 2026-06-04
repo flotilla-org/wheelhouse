@@ -779,7 +779,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
       default:
       {
         String8 string = e_string_from_expr(scratch.arena, eval.expr, str8_zero());
-        RD_RegsScope(.string = string)
+        UIShell_RegsScope(.string = string)
         {
           rd_cmd_name("complete_query");
         }
@@ -792,14 +792,14 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         if(str8_match(type->name, str8_lit("folder"), 0))
         {
           String8 new_input_string = push_str8f(scratch.arena, "%S/", file);
-          RD_RegsScope(.string = new_input_string)
+          UIShell_RegsScope(.string = new_input_string)
           {
             rd_cmd_name("update_query");
           }
         }
         else
         {
-          RD_RegsScope(.file_path = file)
+          UIShell_RegsScope(.file_path = file)
           {
             rd_cmd_name("complete_query");
           }
@@ -808,7 +808,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
       case RD_EvalSpaceKind_MetaCfg:
       {
         CFG_Node *cfg = rd_cfg_from_eval_space(eval.space);
-        RD_RegsScope(.cfg = cfg->id)
+        UIShell_RegsScope(.cfg = cfg->id)
         {
           rd_cmd_name("complete_query");
         }
@@ -816,7 +816,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
       case RD_EvalSpaceKind_MetaCmd:
       {
         String8 selected_cmd_name = rd_cmd_name_from_eval(eval);
-        RD_RegsScope(.cmd_name = selected_cmd_name)
+        UIShell_RegsScope(.cmd_name = selected_cmd_name)
         {
           rd_cmd_name("complete_query");
         }
@@ -824,7 +824,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
       case RD_EvalSpaceKind_MetaTheme:
       {
         String8 name = e_string_from_id(eval.value.u64);
-        RD_RegsScope(.string = name)
+        UIShell_RegsScope(.string = name)
         {
           rd_cmd_name("complete_query");
         }
@@ -839,7 +839,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
       default:
       {
         String8 expr = e_full_expr_string_from_key(scratch.arena, eval.key);
-        RD_RegsScope(.expr = expr, .do_implicit_root = 0)
+        UIShell_RegsScope(.expr = expr, .do_implicit_root = 0)
         {
           rd_cmd_name("push_query");
         }
@@ -848,7 +848,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
       case E_SpaceKind_FileSystem:
       {
         String8 file = rd_file_path_from_eval(scratch.arena, eval);
-        RD_RegsScope(.file_path = file)
+        UIShell_RegsScope(.file_path = file)
         {
           rd_cmd_name("open");
         }
@@ -858,7 +858,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         CFG_Node *cfg = rd_cfg_from_eval_space(eval.space);
         if(str8_match(cfg->string, str8_lit("recent_project"), 0))
         {
-          RD_RegsScope(.cfg = cfg->id)
+          UIShell_RegsScope(.cfg = cfg->id)
           {
             rd_cmd_name("open_recent_project");
           }
@@ -866,7 +866,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         else if(e_type_kind_from_key(e_type_key_unwrap(eval.irtree.type_key, E_TypeUnwrapFlag_AllDecorative)) == E_TypeKind_Set)
         {
           String8 expr = e_full_expr_string_from_key(scratch.arena, eval.key);
-          RD_RegsScope(.expr = expr, .do_implicit_root = 0)
+          UIShell_RegsScope(.expr = expr, .do_implicit_root = 0)
           {
             rd_cmd_name("push_query");
           }
@@ -879,7 +879,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
       case RD_EvalSpaceKind_MetaQuery:
       {
         String8 expr = e_full_expr_string_from_key(scratch.arena, eval.key);
-        RD_RegsScope(.expr = expr, .do_implicit_root = 0)
+        UIShell_RegsScope(.expr = expr, .do_implicit_root = 0)
         {
           rd_cmd_name("push_query");
         }
@@ -887,7 +887,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
       case RD_EvalSpaceKind_MetaCmd:
       {
         String8 selected_cmd_name = rd_cmd_name_from_eval(eval);
-        RD_RegsScope(.cmd_name = selected_cmd_name)
+        UIShell_RegsScope(.cmd_name = selected_cmd_name)
         {
           rd_cmd_name("run_command");
         }
@@ -1685,7 +1685,7 @@ uishell_watch_view_ui(Rng2F32 rect)
                     {
                       cfg = rd_cfg_from_eval_space(row->block->eval.space);
                     }
-                    RD_RegsScope(.cfg = cfg->id)
+                    UIShell_RegsScope(.cfg = cfg->id)
                     {
                       if(cfg != &cfg_nil_node)
                       {

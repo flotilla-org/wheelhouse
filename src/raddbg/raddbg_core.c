@@ -1601,7 +1601,7 @@ rd_view_ui(Rng2F32 rect)
       String8 cmd_name = rd_view_query_cmd();
       String8 input = rd_view_query_input();
       RD_AppCmdInfo cmd_info = rd_app_cmd_info_from_string(cmd_name);
-      RD_RegsScope()
+      UIShell_RegsScope()
       {
         rd_regs_fill_slot_from_string(rd_reg_slot_from_app_reg_slot(cmd_info.query_slot), str8_zero(), input);
         rd_cmd_name("complete_query");
@@ -2407,7 +2407,7 @@ rd_window_frame(void)
     {
       // rjf: get top-level font size info
       F32 top_level_font_size = 0;
-      RD_RegsScope(.view = 0, .tab = 0) top_level_font_size = rd_font_size();
+      UIShell_RegsScope(.view = 0, .tab = 0) top_level_font_size = rd_font_size();
       
       // rjf: build icon info
       UI_IconInfo icon_info = {0};
@@ -2577,7 +2577,7 @@ rd_window_frame(void)
     //- rjf: @window_ui_part drag/drop visualization tooltips
     //
     if(rd_drag_is_active() && window_is_focused)
-      RD_RegsScope(.window = rd_state->drag_drop_regs->window,
+      UIShell_RegsScope(.window = rd_state->drag_drop_regs->window,
                    .panel = rd_state->drag_drop_regs->panel,
                    .tab = 0,
                    .view = rd_state->drag_drop_regs->view)
@@ -3011,7 +3011,7 @@ rd_window_frame(void)
         
         // rjf: determine container size
         EV_BlockTree predicted_block_tree = {0};
-        RD_RegsScope(.view = view->id, .tab = 0)
+        UIShell_RegsScope(.view = view->id, .tab = 0)
         {
           String8 expr = rd_expr_from_cfg(view);
           E_Eval list_eval = e_eval_from_string(expr);
@@ -3118,7 +3118,7 @@ rd_window_frame(void)
           
           // rjf: determine size of hover evaluation container
           EV_BlockTree predicted_block_tree = {0};
-          RD_RegsScope(.view = view->id, .tab = 0)
+          UIShell_RegsScope(.view = view->id, .tab = 0)
           {
             ev_key_set_expansion(rd_view_eval_view(), ev_key_root(), ev_key_make(ev_hash_from_key(ev_key_root()), 1), 1);
             predicted_block_tree = ev_block_tree_from_eval(scratch.arena, rd_view_eval_view(), str8_zero(), hover_eval);
@@ -3259,7 +3259,7 @@ rd_window_frame(void)
         
         // rjf: compute query view's top-level rectangle
         Rng2F32 rect = {0};
-        RD_RegsScope(.view = view->id, .tab = 0)
+        UIShell_RegsScope(.view = view->id, .tab = 0)
         {
           F32 row_height_px = ui_top_font_size() * rd_setting_f32_from_name(str8_lit("row_height"));
           Vec2F32 content_rect_center = center_2f32(content_rect);
@@ -3353,7 +3353,7 @@ rd_window_frame(void)
         }
         
         // rjf: push view regs
-        rd_push_regs();
+        uishell_push_regs();
         {
           if(t->regs != 0)
           {
@@ -3451,7 +3451,7 @@ rd_window_frame(void)
         }
         
         // rjf: pop interaction registers; commit if this is focused
-        RD_Regs *view_regs = rd_pop_regs();
+        UIShell_Regs *view_regs = uishell_pop_regs();
         if(is_focused)
         {
           MemoryCopyStruct(rd_regs(), view_regs);
@@ -4581,7 +4581,7 @@ rd_window_frame(void)
             UI_WidthFill
           {
             //- rjf: push interaction registers, fill with per-view states
-            rd_push_regs(.panel = panel->cfg->id,
+            uishell_push_regs(.panel = panel->cfg->id,
                          .tab = selected_tab->id,
                          .view = selected_tab->id);
             {
@@ -4666,7 +4666,7 @@ rd_window_frame(void)
             }
             
             //- rjf: pop interaction registers; commit if this is the selected view
-            RD_Regs *view_regs = rd_pop_regs();
+            UIShell_Regs *view_regs = uishell_pop_regs();
             if(panel_is_focused)
             {
               MemoryCopyStruct(rd_regs(), view_regs);
@@ -4825,7 +4825,7 @@ rd_window_frame(void)
               //- rjf: build tab
               DR_FStrList tab_fstrs = tab_task->fstrs;
               F32 tab_width_px = tab_task->tab_width;
-              if(tab != &cfg_nil_node) RD_RegsScope(.panel = panel->cfg->id, .view = tab->id, .tab = tab->id)
+              if(tab != &cfg_nil_node) UIShell_RegsScope(.panel = panel->cfg->id, .view = tab->id, .tab = tab->id)
               {
                 // rjf: gather info for this tab
                 B32 tab_is_selected = (tab == panel->selected_tab);
@@ -6192,8 +6192,8 @@ rd_frame_arena(void)
 ////////////////////////////////
 //~ rjf: Registers
 
-internal RD_Regs *
-rd_push_regs_(RD_Regs *regs)
+internal UIShell_Regs *
+uishell_push_regs_(UIShell_Regs *regs)
 {
   UIShell_RegsNode *n = push_array(rd_frame_arena(), UIShell_RegsNode, 1);
   uishell_regs_copy_contents(rd_frame_arena(), &n->v, regs);
@@ -6201,10 +6201,10 @@ rd_push_regs_(RD_Regs *regs)
   return &n->v;
 }
 
-internal RD_Regs *
-rd_pop_regs(void)
+internal UIShell_Regs *
+uishell_pop_regs(void)
 {
-  RD_Regs *regs = &rd_state->top_regs->v;
+  UIShell_Regs *regs = &rd_state->top_regs->v;
   SLLStackPop(rd_state->top_regs);
   if(rd_state->top_regs == 0)
   {
@@ -6276,7 +6276,7 @@ rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 strin
           // view info in the block tree build via raddbg-layer eval hooks, but we
           // should really keep all parameterization info in eval views themselves,
           // to not couple block tree building with frontend state...
-          RD_RegsScope(.window = 0, .panel = 0, .view = view->id)
+          UIShell_RegsScope(.window = 0, .panel = 0, .view = view->id)
           {
             block_tree = ev_block_tree_from_eval(scratch.arena, eval_view, string, eval);
             block_ranges = ev_block_range_list_from_tree(scratch.arena, &block_tree);
@@ -7283,7 +7283,7 @@ rd_frame(void)
     for(WM_Event *event = events.first, *next = 0;
         event != 0;
         event = next)
-      RD_RegsScope()
+      UIShell_RegsScope()
     {
       next = event->next;
       RD_WindowState *ws = rd_window_state_from_os_handle(event->window);
@@ -7769,7 +7769,7 @@ rd_frame(void)
     //
     if(rd_state->frame_depth == 1) ProfScope("process top-level graphical commands")
     {
-      for(;rd_next_cmd(&cmd);) RD_RegsScope()
+      for(;rd_next_cmd(&cmd);) UIShell_RegsScope()
       {
         // rjf: unpack command
         uishell_regs_into_rd_regs(rd_regs(), cmd->regs);
@@ -7931,7 +7931,7 @@ rd_frame(void)
           {
             continue;
           }
-          RD_RegsScope(.tab = tab->id, .view = tab->id)
+          UIShell_RegsScope(.tab = tab->id, .view = tab->id)
           {
             String8 eval_string = rd_expr_from_cfg(tab);
             String8 file_path = rd_file_path_from_eval_string(scratch.arena, eval_string);
@@ -8011,11 +8011,11 @@ rd_frame(void)
       {
         rd_state->last_focused_window = w->cfg_id;
       }
-      rd_push_regs();
+      uishell_push_regs();
       rd_regs()->window = w->cfg_id;
       rd_window_frame();
       MemoryZeroStruct(&w->ui_events);
-      RD_Regs *window_regs = rd_pop_regs();
+      UIShell_Regs *window_regs = uishell_pop_regs();
       if(rd_state->last_focused_window == w->cfg_id)
       {
         MemoryCopyStruct(rd_regs(), window_regs);

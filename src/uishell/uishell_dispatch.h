@@ -439,7 +439,7 @@ uishell_dispatch_command_palette_command(String8 name)
     }
     uishell_push_palette_query_roots(scratch.arena, &exprs);
     String8 expr = str8_list_join(scratch.arena, &exprs, &(StringJoin){.sep = str8_lit(", ")});
-    RD_RegsScope(.expr = expr, .do_implicit_root = 1, .do_lister = 1, .do_big_rows = 1, .view = tab->id, .tab = tab->id)
+    UIShell_RegsScope(.expr = expr, .do_implicit_root = 1, .do_lister = 1, .do_big_rows = 1, .view = tab->id, .tab = tab->id)
     {
       rd_push_cmd_current(str8_lit("push_query"));
     }
@@ -457,7 +457,7 @@ uishell_dispatch_command_palette_command(String8 name)
     else if(!(info->query.flags & UIShell_QueryFlag_Required))
     {
       String8 cmd_name = rd_regs()->cmd_name;
-      RD_RegsScope(.cmd_name = str8_zero())
+      UIShell_RegsScope(.cmd_name = str8_zero())
       {
         rd_push_cmd_current(cmd_name);
       }
@@ -476,11 +476,11 @@ uishell_dispatch_command_palette_command(String8 name)
       if(file_path.size != 0)
       {
         String8 cmd_name = rd_regs()->cmd_name;
-        RD_RegsScope(.cmd_name = str8_zero(), .file_path = file_path)
+        UIShell_RegsScope(.cmd_name = str8_zero(), .file_path = file_path)
         {
           rd_push_cmd_current(cmd_name);
         }
-        RD_RegsScope(.file_path = str8_chop_last_slash(file_path))
+        UIShell_RegsScope(.file_path = str8_chop_last_slash(file_path))
         {
           rd_push_cmd_current(str8_lit("set_current_path"));
         }
@@ -488,7 +488,7 @@ uishell_dispatch_command_palette_command(String8 name)
     }
     else
     {
-      RD_RegsScope(.do_implicit_root = 1, .do_lister = info->query.expr.size != 0)
+      UIShell_RegsScope(.do_implicit_root = 1, .do_lister = info->query.expr.size != 0)
       {
         rd_push_cmd_current(str8_lit("push_query"));
       }
@@ -497,14 +497,14 @@ uishell_dispatch_command_palette_command(String8 name)
   }
   else if(str8_match(name, str8_lit("output"), 0))
   {
-    RD_RegsScope(.string = str8_lit("text"), .expr = str8_lit("query:output"))
+    UIShell_RegsScope(.string = str8_lit("text"), .expr = str8_lit("query:output"))
     {
       rd_push_cmd_current(str8_lit("build_tab"));
     }
   }
   else if(str8_match(name, str8_lit("text"), 0))
   {
-    RD_RegsScope(.string = str8_lit("text"), .expr = str8_zero())
+    UIShell_RegsScope(.string = str8_lit("text"), .expr = str8_zero())
     {
       rd_push_cmd_current(str8_lit("build_tab"));
     }
@@ -608,7 +608,7 @@ uishell_dispatch_tab_command(String8 name)
     }
     if(next_selected_tab != &cfg_nil_node)
     {
-      RD_RegsScope(.tab = next_selected_tab->id)
+      UIShell_RegsScope(.tab = next_selected_tab->id)
       {
         rd_push_cmd_current(str8_lit("focus_tab"));
       }
@@ -656,7 +656,7 @@ uishell_dispatch_tab_command(String8 name)
     {
       new_prev = filtered_tabs.last->v;
     }
-    RD_RegsScope(.dst_panel = panel->cfg->id, .view = tab->id, .prev_tab = new_prev->id)
+    UIShell_RegsScope(.dst_panel = panel->cfg->id, .view = tab->id, .prev_tab = new_prev->id)
     {
       rd_push_cmd_current(str8_lit("move_view"));
     }
@@ -702,7 +702,7 @@ uishell_dispatch_tab_command(String8 name)
         CFG_Node *project = cfg_node_new(rd_state->cfg, tab, str8_lit("project"));
         cfg_node_new(rd_state->cfg, project, rd_state->project_path);
       }
-      RD_RegsScope(.tab = tab->id)
+      UIShell_RegsScope(.tab = tab->id)
       {
         rd_push_cmd_current(str8_lit("focus_tab"));
       }
@@ -714,7 +714,7 @@ uishell_dispatch_tab_command(String8 name)
     CFG_Node *src = cfg_node_from_id(rd_regs()->tab);
     CFG_Node *dst = cfg_node_deep_copy(rd_state->cfg, src);
     cfg_node_insert_child(rd_state->cfg, src->parent, src, dst);
-    RD_RegsScope(.tab = dst->id)
+    UIShell_RegsScope(.tab = dst->id)
     {
       rd_push_cmd_current(str8_lit("focus_tab"));
     }
@@ -744,7 +744,7 @@ uishell_dispatch_tab_command(String8 name)
           }
         }
       }
-      RD_RegsScope(.tab = next_selected_tab->id)
+      UIShell_RegsScope(.tab = next_selected_tab->id)
       {
         rd_push_cmd_current(str8_lit("focus_tab"));
       }
@@ -763,11 +763,11 @@ uishell_dispatch_tab_command(String8 name)
     {
       cfg_node_unhook(rd_state->cfg, src_panel, view);
       cfg_node_insert_child(rd_state->cfg, dst_panel, prev_tab, view);
-      RD_RegsScope(.panel = dst_panel->id, .tab = view->id)
+      UIShell_RegsScope(.panel = dst_panel->id, .tab = view->id)
       {
         rd_push_cmd_current(str8_lit("focus_tab"));
       }
-      RD_RegsScope(.panel = dst_panel->id)
+      UIShell_RegsScope(.panel = dst_panel->id)
       {
         rd_push_cmd_current(str8_lit("focus_panel"));
       }
@@ -781,7 +781,7 @@ uishell_dispatch_tab_command(String8 name)
         {
           if(!rd_cfg_is_project_filtered(n->v))
           {
-            RD_RegsScope(.panel = src_panel->id, .tab = n->v->id)
+            UIShell_RegsScope(.panel = src_panel->id, .tab = n->v->id)
             {
               rd_push_cmd_current(str8_lit("focus_tab"));
             }
@@ -792,7 +792,7 @@ uishell_dispatch_tab_command(String8 name)
       }
       if(src_panel_is_empty)
       {
-        RD_RegsScope(.panel = src_panel->id)
+        UIShell_RegsScope(.panel = src_panel->id)
         {
           rd_push_cmd_current(str8_lit("close_panel"));
         }
@@ -822,7 +822,7 @@ uishell_dispatch_tab_command(String8 name)
   else if(str8_match(name, str8_lit("tab_settings"), 0))
   {
     String8 expr = push_str8f(rd_frame_arena(), "query:config.$%I64x", rd_regs()->tab);
-    RD_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
+    UIShell_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
     {
       rd_push_cmd_current(str8_lit("push_query"));
     }
@@ -1011,7 +1011,7 @@ uishell_dispatch_panel_command(String8 name)
           {
             if(!rd_cfg_is_project_filtered(n->v))
             {
-              RD_RegsScope(.panel = origin_panel->cfg->id, .tab = n->v->id)
+              UIShell_RegsScope(.panel = origin_panel->cfg->id, .tab = n->v->id)
               {
                 rd_push_cmd_current(str8_lit("focus_tab"));
               }
@@ -1023,7 +1023,7 @@ uishell_dispatch_panel_command(String8 name)
         {
           rd_push_cmd_current(str8_lit("close_panel"));
         }
-        RD_RegsScope(.panel = new_panel_cfg->id, .tab = dragdrop_tab->id)
+        UIShell_RegsScope(.panel = new_panel_cfg->id, .tab = dragdrop_tab->id)
         {
           rd_push_cmd_current(str8_lit("focus_tab"));
         }
@@ -1031,7 +1031,7 @@ uishell_dispatch_panel_command(String8 name)
       
       if(new_panel_cfg != &cfg_nil_node)
       {
-        RD_RegsScope(.panel = new_panel_cfg->id)
+        UIShell_RegsScope(.panel = new_panel_cfg->id)
         {
           rd_push_cmd_current(str8_lit("focus_panel"));
         }
@@ -1039,7 +1039,7 @@ uishell_dispatch_panel_command(String8 name)
       
       if(panel->tab_side == Side_Max && split_axis == Axis2_X)
       {
-        RD_RegsScope(.panel = new_panel_cfg->id)
+        UIShell_RegsScope(.panel = new_panel_cfg->id)
         {
           rd_push_cmd_current(str8_lit("tab_bar_bottom"));
         }
@@ -1115,7 +1115,7 @@ uishell_dispatch_panel_command(String8 name)
           {
             new_focused = grandchild;
           }
-          RD_RegsScope(.panel = new_focused->cfg->id)
+          UIShell_RegsScope(.panel = new_focused->cfg->id)
           {
             rd_push_cmd_current(str8_lit("focus_panel"));
           }
@@ -1150,7 +1150,7 @@ uishell_dispatch_panel_command(String8 name)
           {
             new_focused = grandchild;
           }
-          RD_RegsScope(.panel = new_focused->cfg->id)
+          UIShell_RegsScope(.panel = new_focused->cfg->id)
           {
             rd_push_cmd_current(str8_lit("focus_panel"));
           }
@@ -1213,7 +1213,7 @@ uishell_dispatch_panel_command(String8 name)
         }
       }
     }
-    RD_RegsScope(.panel = next_focused->cfg->id)
+    UIShell_RegsScope(.panel = next_focused->cfg->id)
     {
       rd_push_cmd_current(str8_lit("focus_panel"));
     }
@@ -1310,7 +1310,7 @@ uishell_dispatch_panel_command(String8 name)
           break;
         }
       }
-      RD_RegsScope(.panel = dst_panel->cfg->id)
+      UIShell_RegsScope(.panel = dst_panel->cfg->id)
       {
         rd_push_cmd_current(str8_lit("focus_panel"));
       }
@@ -1417,7 +1417,7 @@ uishell_dispatch_window_command(String8 name)
   else if(str8_match(name, str8_lit("window_settings"), 0))
   {
     String8 expr = push_str8f(rd_frame_arena(), "query:config.$%I64x", rd_regs()->window);
-    RD_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
+    UIShell_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
     {
       rd_push_cmd_current(str8_lit("push_query"));
     }
@@ -1550,7 +1550,7 @@ uishell_dispatch_config_command(String8 name)
     if(str8_match(cfg->string, str8_lit("recent_project"), 0) &&
        path->first->string.size != 0)
     {
-      RD_RegsScope(.file_path = path->first->string)
+      UIShell_RegsScope(.file_path = path->first->string)
       {
         rd_push_cmd_current(str8_lit("open_project"));
       }
@@ -1648,7 +1648,7 @@ uishell_dispatch_config_command(String8 name)
         F32 line_height_guess = 11.f * (monitor_dpi / 96.f);
         F32 num_lines_in_monitor_height = monitor_dim.y / line_height_guess;
         String8 reset_cmd = num_lines_in_monitor_height < 100 ? str8_lit("reset_to_compact_panels") : str8_lit("reset_to_default_panels");
-        RD_RegsScope(.window = new_window->id)
+        UIShell_RegsScope(.window = new_window->id)
         {
           rd_push_cmd_current(reset_cmd);
         }
@@ -1694,7 +1694,7 @@ uishell_dispatch_config_command(String8 name)
                 break;
               }
             }
-            RD_RegsScope(.panel = panel->cfg->id, .tab = fallback_tab->id)
+            UIShell_RegsScope(.panel = panel->cfg->id, .tab = fallback_tab->id)
             {
               rd_push_cmd_current(str8_lit("focus_tab"));
             }
@@ -1708,7 +1708,7 @@ uishell_dispatch_config_command(String8 name)
       String8 new_current_dir = str8_chop_last_slash(rd_regs()->file_path);
       if(new_current_dir.size != 0)
       {
-        RD_RegsScope(.file_path = new_current_dir)
+        UIShell_RegsScope(.file_path = new_current_dir)
         {
           rd_push_cmd_current(str8_lit("set_current_path"));
         }
@@ -1718,14 +1718,14 @@ uishell_dispatch_config_command(String8 name)
   }
   else if(str8_match(name, str8_lit("new_user"), 0))
   {
-    RD_RegsScope(.file_path = str8_zero())
+    UIShell_RegsScope(.file_path = str8_zero())
     {
       rd_push_cmd_current(str8_lit("open_user"));
     }
   }
   else if(str8_match(name, str8_lit("new_project"), 0))
   {
-    RD_RegsScope(.file_path = str8_zero())
+    UIShell_RegsScope(.file_path = str8_zero())
     {
       rd_push_cmd_current(str8_lit("open_project"));
     }
@@ -1984,7 +1984,7 @@ uishell_dispatch_query_command(String8 name)
     B32 is_lister = (cfg_node_child_from_string(view, str8_lit("lister")) != &cfg_nil_node);
     
     // rjf: push command
-    if(cmd_name.size != 0) RD_RegsScope()
+    if(cmd_name.size != 0) UIShell_RegsScope()
     {
       if(is_lister)
       {
@@ -2046,7 +2046,7 @@ uishell_dispatch_file_query_command(String8 name)
      str8_match(name, str8_lit("project_settings"), 0))
   {
     String8 expr = str8_match(name, str8_lit("user_settings"), 0) ? str8_lit("query:user_settings") : str8_lit("query:project_settings");
-    RD_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
+    UIShell_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
     {
       rd_push_cmd_current(str8_lit("push_query"));
     }
@@ -2065,7 +2065,7 @@ uishell_dispatch_file_query_command(String8 name)
     if(props.created != 0)
     {
       String8 expr = rd_eval_string_from_file_path(scratch.arena, path);
-      RD_RegsScope(.string = str8_lit("pending"), .expr = expr)
+      UIShell_RegsScope(.string = str8_lit("pending"), .expr = expr)
       {
         rd_push_cmd_current(str8_lit("build_tab"));
       }

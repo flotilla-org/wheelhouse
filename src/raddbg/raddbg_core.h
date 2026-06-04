@@ -945,10 +945,10 @@ internal Arena *rd_frame_arena(void);
 
 #define rd_regs() (&rd_state->top_regs->v)
 #define rd_base_regs() (&rd_state->base_regs.v)
-internal RD_Regs *rd_push_regs_(RD_Regs *regs);
-#define rd_push_regs(...) rd_push_regs_(&(RD_Regs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
-internal RD_Regs *rd_pop_regs(void);
-#define RD_RegsScope(...) DeferLoop(rd_push_regs(__VA_ARGS__), rd_pop_regs())
+internal UIShell_Regs *uishell_push_regs_(UIShell_Regs *regs);
+#define uishell_push_regs(...) uishell_push_regs_(&(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
+internal UIShell_Regs *uishell_pop_regs(void);
+#define UIShell_RegsScope(...) DeferLoop(uishell_push_regs(__VA_ARGS__), uishell_pop_regs())
 internal void rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 string);
 
 ////////////////////////////////
