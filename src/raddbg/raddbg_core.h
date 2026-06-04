@@ -963,7 +963,7 @@ internal RD_RegSlot rd_reg_slot_from_app_reg_slot(RD_AppRegSlot slot);
 //- rjf: pushing
 internal void rd_push_cmd(String8 name, RD_Regs *regs);
 internal void rd_push_stored_cmd(String8 name, RD_CmdRegs *regs);
-#define rd_cmd_name(name, ...) rd_push_cmd(str8_lit(name), &(RD_Regs){RD_APP_REGS_LIT_INIT_TOP __VA_ARGS__})
+#define rd_cmd_name(name, ...) rd_push_stored_cmd(str8_lit(name), &(RD_CmdRegs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
 
 //- rjf: iterating
 internal B32 rd_next_cmd(RD_Cmd **cmd);

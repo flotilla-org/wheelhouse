@@ -229,6 +229,8 @@ Twenty-third slice: drag/drop register snapshots now store `UIShell_Regs`. `RD_S
 
 Twenty-fourth slice: popup-confirmed commands now snapshot directly into `UIShell_Regs`. The save-overwrite confirmation path no longer allocates an intermediate `RD_Regs` copy before pushing into popup command storage, and the now-unused `rd_regs_copy` heap helper is gone. `rd_regs_copy_contents` remains because the live register stack still uses it as the compatibility copy boundary.
 
+Twenty-fifth slice: the common `rd_cmd_name(...)` command-emission macro now constructs `RD_CmdRegs`/`UIShell_Regs` literals directly and pushes them with `rd_push_stored_cmd`. Named command emissions no longer build temporary `RD_Regs` literals. The remaining `RD_APP_REGS_LIT_INIT_TOP` macro users are the live register-scope stack and autocompletion adapter.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.

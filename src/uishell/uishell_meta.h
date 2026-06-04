@@ -181,6 +181,38 @@ struct UIShell_Regs
   WM_Event *wm_event;
 };
 
+#define UISHELL_REGS_LIT_INIT_TOP \
+.window = rd_regs()->window,\
+.panel = rd_regs()->panel,\
+.tab = rd_regs()->tab,\
+.view = rd_regs()->view,\
+.prev_tab = rd_regs()->prev_tab,\
+.dst_panel = rd_regs()->dst_panel,\
+.cfg = rd_regs()->cfg,\
+.cfg_list = rd_regs()->cfg_list,\
+.file_path = rd_regs()->file_path,\
+.cursor = rd_regs()->cursor,\
+.mark = rd_regs()->mark,\
+.text_key = rd_regs()->text_key,\
+.lang_kind = rd_regs()->lang_kind,\
+.vaddr = rd_regs()->vaddr,\
+.expr = rd_regs()->expr,\
+.ui_key = rd_regs()->ui_key,\
+.off_px = rd_regs()->off_px,\
+.reg_slot = rd_regs()->reg_slot,\
+.force_confirm = rd_regs()->force_confirm,\
+.force_focus = rd_regs()->force_focus,\
+.do_implicit_root = rd_regs()->do_implicit_root,\
+.do_lister = rd_regs()->do_lister,\
+.do_big_rows = rd_regs()->do_big_rows,\
+.non_graphical = rd_regs()->non_graphical,\
+.prefer_new_tab = rd_regs()->prefer_new_tab,\
+.activate_with_single_click = rd_regs()->activate_with_single_click,\
+.dir2 = rd_regs()->dir2,\
+.string = rd_regs()->string,\
+.cmd_name = rd_regs()->cmd_name,\
+.wm_event = rd_regs()->wm_event,
+
 internal UIShell_Regs
 uishell_regs_from_rd_regs(Arena *arena, RD_Regs *src)
 {
