@@ -66,27 +66,27 @@ typedef enum RD_DragDropState
 RD_DragDropState;
 
 ////////////////////////////////
-//~ rjf: Command Kind Types
+//~ rjf: Shell Command Metadata Types
 
-typedef U32 RD_QueryFlags;
+typedef U32 UIShell_QueryFlags;
 enum
 {
-  RD_QueryFlag_AllowFiles       = (1<<0),
-  RD_QueryFlag_AllowFolders     = (1<<1),
-  RD_QueryFlag_CodeInput        = (1<<2),
-  RD_QueryFlag_KeepOldInput     = (1<<3),
-  RD_QueryFlag_SelectOldInput   = (1<<4),
-  RD_QueryFlag_Floating         = (1<<5),
-  RD_QueryFlag_Required         = (1<<6),
+  UIShell_QueryFlag_AllowFiles       = (1<<0),
+  UIShell_QueryFlag_AllowFolders     = (1<<1),
+  UIShell_QueryFlag_CodeInput        = (1<<2),
+  UIShell_QueryFlag_KeepOldInput     = (1<<3),
+  UIShell_QueryFlag_SelectOldInput   = (1<<4),
+  UIShell_QueryFlag_Floating         = (1<<5),
+  UIShell_QueryFlag_Required         = (1<<6),
 };
 
-typedef U32 RD_CmdKindFlags;
+typedef U32 UIShell_CmdFlags;
 enum
 {
-  RD_CmdKindFlag_ListInUI      = (1<<0),
-  RD_CmdKindFlag_ListInTab     = (1<<1),
-  RD_CmdKindFlag_ListInTextPt  = (1<<2),
-  RD_CmdKindFlag_ListInTextRng = (1<<3),
+  UIShell_CmdFlag_ListInUI      = (1<<0),
+  UIShell_CmdFlag_ListInTab     = (1<<2),
+  UIShell_CmdFlag_ListInTextPt  = (1<<3),
+  UIShell_CmdFlag_ListInTextRng = (1<<4),
 };
 
 typedef enum UIShell_AppRegSlot
@@ -708,8 +708,8 @@ struct RD_AppCmdInfo
   String8 description;
   String8 search_tags;
   String8 ctx_filter;
-  RD_CmdKindFlags flags;
-  RD_QueryFlags query_flags;
+  UIShell_CmdFlags flags;
+  UIShell_QueryFlags query_flags;
   UIShell_AppRegSlot query_slot;
   String8 query_expr;
   String8 query_view_name;

@@ -1237,7 +1237,7 @@ rd_view_ui(Rng2F32 rect)
     
     //- rjf: build contents
     UI_Parent(search_row) UI_WidthFill UI_HeightFill UI_Focus(vs->query_is_open && !vs->contents_are_focused ? UI_FocusKind_On : UI_FocusKind_Off)
-      RD_Font(cmd_info.query_flags & RD_QueryFlag_CodeInput ? RD_FontSlot_Code : RD_FontSlot_Main)
+      RD_Font(cmd_info.query_flags & UIShell_QueryFlag_CodeInput ? RD_FontSlot_Code : RD_FontSlot_Main)
     {
       if(cmd_name.size != 0)
       {
@@ -1256,7 +1256,7 @@ rd_view_ui(Rng2F32 rect)
       UI_Key line_edit_key = {0};
       RD_CellParams params = {0};
       {
-        params.flags |= !!(cmd_info.query_flags & RD_QueryFlag_CodeInput) * RD_CellFlag_CodeContents;
+        params.flags |= !!(cmd_info.query_flags & UIShell_QueryFlag_CodeInput) * RD_CellFlag_CodeContents;
         params.flags |= RD_CellFlag_Border;
         params.cursor               = &vs->query_cursor;
         params.mark                 = &vs->query_mark;
@@ -6322,9 +6322,9 @@ rd_app_cmd_info_from_string(String8 string)
     result.description = info->description;
     result.search_tags = info->search_tags;
     result.ctx_filter = info->ctx_filter;
-    result.flags = rd_cmd_flags_from_uishell_cmd_flags(info->flags);
-    result.query_flags = rd_query_flags_from_uishell_query_flags(info->query.flags);
-    result.query_slot = rd_app_reg_slot_from_uishell_reg_slot(info->query.slot);
+    result.flags = info->flags;
+    result.query_flags = info->query.flags;
+    result.query_slot = uishell_app_reg_slot_from_query_reg_slot(info->query.slot);
     result.query_expr = info->query.expr;
     result.query_view_name = info->query.view_name;
   }

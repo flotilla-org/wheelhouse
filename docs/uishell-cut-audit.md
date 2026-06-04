@@ -251,6 +251,8 @@ Thirty-fourth slice: the `RD_Regs` compatibility alias is gone from source. The 
 
 Thirty-fifth slice: the live/context register slot enum now uses shell names. `RD_RegSlot` became `UIShell_ContextRegSlot`, query completion fills slots through `uishell_regs_fill_slot_from_string`, and app/query slot conversion now returns `UIShell_ContextRegSlot`. Source scans show no remaining active `RD_RegSlot` or old slot-fill helper names.
 
+Thirty-sixth slice: command/query flag metadata now uses shell names at the shared boundary. `RD_QueryFlags`, `RD_CmdKindFlags`, and the `rd_*_from_uishell_*_flags` adapter helpers are gone from source. `RD_AppCmdInfo` stores `UIShell_QueryFlags` and `UIShell_CmdFlags` directly, and command filtering compares shell flags without remapping.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.

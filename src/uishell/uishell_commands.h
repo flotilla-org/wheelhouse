@@ -7,27 +7,6 @@
 ////////////////////////////////
 //~ rjf: Shell Command Metadata
 
-typedef U32 UIShell_QueryFlags;
-enum
-{
-  UIShell_QueryFlag_AllowFiles       = (1<<0),
-  UIShell_QueryFlag_AllowFolders     = (1<<1),
-  UIShell_QueryFlag_CodeInput        = (1<<2),
-  UIShell_QueryFlag_KeepOldInput     = (1<<3),
-  UIShell_QueryFlag_SelectOldInput   = (1<<4),
-  UIShell_QueryFlag_Floating         = (1<<5),
-  UIShell_QueryFlag_Required         = (1<<6),
-};
-
-typedef U32 UIShell_CmdFlags;
-enum
-{
-  UIShell_CmdFlag_ListInUI      = (1<<0),
-  UIShell_CmdFlag_ListInTab     = (1<<2),
-  UIShell_CmdFlag_ListInTextPt  = (1<<3),
-  UIShell_CmdFlag_ListInTextRng = (1<<4),
-};
-
 typedef enum UIShell_RegSlot
 {
   UIShell_RegSlot_Null,
@@ -218,33 +197,8 @@ uishell_cmd_info_from_name(String8 name)
   return result;
 }
 
-internal RD_QueryFlags
-rd_query_flags_from_uishell_query_flags(UIShell_QueryFlags flags)
-{
-  RD_QueryFlags result = 0;
-  result |= !!(flags & UIShell_QueryFlag_AllowFiles)     * RD_QueryFlag_AllowFiles;
-  result |= !!(flags & UIShell_QueryFlag_AllowFolders)   * RD_QueryFlag_AllowFolders;
-  result |= !!(flags & UIShell_QueryFlag_CodeInput)      * RD_QueryFlag_CodeInput;
-  result |= !!(flags & UIShell_QueryFlag_KeepOldInput)   * RD_QueryFlag_KeepOldInput;
-  result |= !!(flags & UIShell_QueryFlag_SelectOldInput) * RD_QueryFlag_SelectOldInput;
-  result |= !!(flags & UIShell_QueryFlag_Floating)       * RD_QueryFlag_Floating;
-  result |= !!(flags & UIShell_QueryFlag_Required)       * RD_QueryFlag_Required;
-  return result;
-}
-
-internal RD_CmdKindFlags
-rd_cmd_flags_from_uishell_cmd_flags(UIShell_CmdFlags flags)
-{
-  RD_CmdKindFlags result = 0;
-  result |= !!(flags & UIShell_CmdFlag_ListInUI)      * RD_CmdKindFlag_ListInUI;
-  result |= !!(flags & UIShell_CmdFlag_ListInTab)     * RD_CmdKindFlag_ListInTab;
-  result |= !!(flags & UIShell_CmdFlag_ListInTextPt)  * RD_CmdKindFlag_ListInTextPt;
-  result |= !!(flags & UIShell_CmdFlag_ListInTextRng) * RD_CmdKindFlag_ListInTextRng;
-  return result;
-}
-
 internal UIShell_AppRegSlot
-rd_app_reg_slot_from_uishell_reg_slot(UIShell_RegSlot slot)
+uishell_app_reg_slot_from_query_reg_slot(UIShell_RegSlot slot)
 {
   UIShell_AppRegSlot result = UIShell_AppRegSlot_Null;
   switch(slot)
@@ -269,11 +223,10 @@ uishell_cmd_name_is_listed(String8 name)
 }
 
 internal B32
-uishell_cmd_name_matches_listing_flags(String8 name, RD_CmdKindFlags flags)
+uishell_cmd_name_matches_listing_flags(String8 name, UIShell_CmdFlags flags)
 {
   UIShell_CmdInfo *info = uishell_cmd_info_from_name(name);
-  RD_CmdKindFlags info_flags = rd_cmd_flags_from_uishell_cmd_flags(info->flags);
-  B32 result = (info != &uishell_nil_cmd_info && (info_flags & flags) == flags);
+  B32 result = (info != &uishell_nil_cmd_info && (info->flags & flags) == flags);
   return result;
 }
 

@@ -10,7 +10,7 @@
 typedef struct UIShell_EvalContext UIShell_EvalContext;
 struct UIShell_EvalContext
 {
-  RD_CmdKindFlags required_cmd_flags;
+  UIShell_CmdFlags required_cmd_flags;
 };
 
 typedef void UIShell_EvalResolveFunc(void);
@@ -56,7 +56,7 @@ E_TYPE_ACCESS_FUNCTION_DEF(uishell_views);
 E_TYPE_EXPAND_INFO_FUNCTION_DEF(uishell_views);
 E_TYPE_EXPAND_RANGE_FUNCTION_DEF(uishell_views);
 
-internal String8Array uishell_eval_command_names_from_filter(Arena *arena, RD_CmdKindFlags required_flags, String8 filter);
+internal String8Array uishell_eval_command_names_from_filter(Arena *arena, UIShell_CmdFlags required_flags, String8 filter);
 internal String8Array uishell_eval_view_names_from_filter(Arena *arena, String8 filter);
 internal String8Array uishell_eval_theme_names_from_filter(Arena *arena, String8 filter);
 internal UIShell_EvalSchemaChildren uishell_eval_schema_children_from_cfg_and_schemas(Arena *arena, CFG_Node *cfg, MD_NodePtrList schemas, E_Key parent_key, String8 filter);

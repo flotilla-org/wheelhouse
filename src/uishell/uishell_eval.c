@@ -25,18 +25,18 @@ E_TYPE_EXPAND_INFO_FUNCTION_DEF(uishell_commands)
   E_TypeExpandInfo result = {0};
   {
     E_Type *type = e_type_from_key(eval.irtree.type_key);
-    RD_CmdKindFlags required_flags = RD_CmdKindFlag_ListInUI;
+    UIShell_CmdFlags required_flags = UIShell_CmdFlag_ListInUI;
     if(str8_match(type->name, str8_lit("text_pt_commands"), 0))
     {
-      required_flags |= RD_CmdKindFlag_ListInTextPt;
+      required_flags |= UIShell_CmdFlag_ListInTextPt;
     }
     if(str8_match(type->name, str8_lit("text_range_commands"), 0))
     {
-      required_flags |= RD_CmdKindFlag_ListInTextRng;
+      required_flags |= UIShell_CmdFlag_ListInTextRng;
     }
     if(str8_match(type->name, str8_lit("tab_commands"), 0))
     {
-      required_flags |= RD_CmdKindFlag_ListInTab;
+      required_flags |= UIShell_CmdFlag_ListInTab;
     }
     UIShell_EvalContext ctx = {.required_cmd_flags = required_flags};
     UIShell_EvalProvider *provider = uishell_eval_provider_from_namespace(str8_lit("query:commands"));
@@ -139,10 +139,10 @@ E_TYPE_EXPAND_RANGE_FUNCTION_DEF(uishell_views)
 }
 
 internal void
-uishell_eval_cmd_names_push_filtered(Arena *arena, String8List *cmd_names, UIShell_CmdInfo *info, RD_CmdKindFlags required_flags, String8 filter)
+uishell_eval_cmd_names_push_filtered(Arena *arena, String8List *cmd_names, UIShell_CmdInfo *info, UIShell_CmdFlags required_flags, String8 filter)
 {
   Temp scratch = scratch_begin(&arena, 1);
-  RD_CmdKindFlags info_flags = rd_cmd_flags_from_uishell_cmd_flags(info->flags);
+  UIShell_CmdFlags info_flags = info->flags;
   if((info_flags & required_flags) == required_flags)
   {
     String8 display_name = rd_display_from_code_name(info->string);
@@ -173,7 +173,7 @@ uishell_eval_cmd_names_push_filtered(Arena *arena, String8List *cmd_names, UIShe
 }
 
 internal String8Array
-uishell_eval_command_names_from_filter(Arena *arena, RD_CmdKindFlags required_flags, String8 filter)
+uishell_eval_command_names_from_filter(Arena *arena, UIShell_CmdFlags required_flags, String8 filter)
 {
   Temp scratch = scratch_begin(&arena, 1);
   String8List cmd_names = {0};
@@ -598,7 +598,7 @@ uishell_eval_register_query_macros(Arena *arena, Arena *type_arena, E_String2Exp
 internal String8Array
 uishell_eval_commands_provider_children(Arena *arena, UIShell_EvalContext *ctx, String8 filter)
 {
-  RD_CmdKindFlags required_flags = RD_CmdKindFlag_ListInUI;
+  UIShell_CmdFlags required_flags = UIShell_CmdFlag_ListInUI;
   if(ctx != 0 && ctx->required_cmd_flags != 0)
   {
     required_flags = ctx->required_cmd_flags;
