@@ -179,8 +179,8 @@ typedef enum RD_RegSlot
 }
 RD_RegSlot;
 
-typedef struct RD_Regs RD_Regs;
-struct RD_Regs
+typedef struct UIShell_Regs UIShell_Regs;
+struct UIShell_Regs
 {
   CFG_ID window;
   CFG_ID panel;
@@ -213,20 +213,9 @@ struct RD_Regs
   String8 cmd_name;
   WM_Event *wm_event;
 };
+typedef UIShell_Regs RD_Regs;
 
-#include "generated/raddbg.meta.h"
-
-typedef struct RD_VocabInfo RD_VocabInfo;
-struct RD_VocabInfo
-{
-  String8 code_name;
-  String8 code_name_plural;
-  String8 display_name;
-  String8 display_name_plural;
-  RD_IconKind icon_kind;
-};
-
-# define RD_APP_REGS_LIT_INIT_TOP \
+#define UISHELL_REGS_LIT_INIT_TOP \
 .window = rd_regs()->window,\
 .panel = rd_regs()->panel,\
 .tab = rd_regs()->tab,\
@@ -257,6 +246,20 @@ struct RD_VocabInfo
 .string = rd_regs()->string,\
 .cmd_name = rd_regs()->cmd_name,\
 .wm_event = rd_regs()->wm_event,
+
+#include "generated/raddbg.meta.h"
+
+typedef struct RD_VocabInfo RD_VocabInfo;
+struct RD_VocabInfo
+{
+  String8 code_name;
+  String8 code_name_plural;
+  String8 display_name;
+  String8 display_name_plural;
+  RD_IconKind icon_kind;
+};
+
+# define RD_APP_REGS_LIT_INIT_TOP UISHELL_REGS_LIT_INIT_TOP
 
 ////////////////////////////////
 //~ rjf: App Menu Specs
@@ -386,7 +389,6 @@ struct RD_Location
 ////////////////////////////////
 //~ rjf: Command Types
 
-typedef struct UIShell_Regs UIShell_Regs;
 typedef UIShell_Regs RD_CmdRegs;
 
 typedef struct RD_Cmd RD_Cmd;

@@ -235,6 +235,8 @@ Twenty-sixth slice: the autocompletion adapter now accepts `RD_CmdRegs`/`UIShell
 
 Twenty-seventh slice: direct command emissions now use `rd_push_cmd_current(name)`, which snapshots the current live context into a `RD_CmdRegs`/`UIShell_Regs` literal before queue insertion. The old `rd_push_cmd(String8, RD_Regs *)` and `rd_cmd_list_push_new_from_rd_regs` adapters are gone, so the command queue input side no longer accepts `RD_Regs *`.
 
+Twenty-eighth slice: the live register packet now has one concrete definition. `UIShell_Regs` moved to `raddbg_core.h`, and `RD_Regs` is now only a compatibility alias for that shell packet. The live stack APIs and node names still use `RD_Regs`/`RD_RegsNode`, but there is no longer a distinct debugger-shaped register struct for them to store.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
