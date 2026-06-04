@@ -229,14 +229,9 @@ rd_drag_kill(void)
 internal void
 rd_set_hover_regs(RD_RegSlot slot)
 {
-  rd_state->next_hover_regs = rd_regs_copy(rd_frame_arena(), rd_regs());
+  rd_state->next_hover_regs = push_array(rd_frame_arena(), UIShell_Regs, 1);
+  rd_state->next_hover_regs[0] = uishell_regs_from_rd_regs(rd_frame_arena(), rd_regs());
   rd_state->next_hover_regs_slot = slot;
-}
-
-internal RD_Regs *
-rd_get_hover_regs(void)
-{
-  return rd_state->hover_regs;
 }
 
 ////////////////////////////////
@@ -2509,8 +2504,15 @@ rd_window_frame(void)
     if((rd_state->hover_regs_slot != RD_RegSlot_Null) || (rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active()))
     {
       Temp scratch = scratch_begin(0, 0);
-      RD_RegSlot slot = ((rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active()) ? rd_state->drag_drop_regs_slot : rd_state->hover_regs_slot);
-      RD_Regs *regs = (((rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active()) ? rd_state->drag_drop_regs : rd_state->hover_regs));
+      B32 use_drag_regs = (rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active());
+      RD_RegSlot slot = use_drag_regs ? rd_state->drag_drop_regs_slot : rd_state->hover_regs_slot;
+      UIShell_Regs drag_regs = {0};
+      UIShell_Regs *regs = rd_state->hover_regs;
+      if(use_drag_regs)
+      {
+        drag_regs = uishell_regs_from_rd_regs(scratch.arena, rd_state->drag_drop_regs);
+        regs = &drag_regs;
+      }
       ui_state->tooltip_anchor_key = regs->ui_key;
       ui_state->tooltip_can_overflow_window = rd_drag_is_active();
       switch(slot)
@@ -2575,8 +2577,8 @@ rd_window_frame(void)
           ui_set_next_pref_width(ui_children_sum(1));
           UI_Row
           {
-            rd_code_label(1.f, 0, ui_color_from_name(str8_lit("text")), rd_state->drag_drop_regs->expr);
-            E_Eval eval = e_eval_from_string(rd_state->drag_drop_regs->expr);
+            rd_code_label(1.f, 0, ui_color_from_name(str8_lit("text")), regs->expr);
+            E_Eval eval = e_eval_from_string(regs->expr);
             if(eval.irtree.mode != E_Mode_Null)
             {
               EV_StringParams string_params = {.flags = EV_StringFlag_ReadOnlyDisplayRules|rd_state->eval_viz_base_string_flags, .radix = 10};
@@ -2688,21 +2690,22 @@ rd_window_frame(void)
         
         //- rjf: draw registers
         ui_labelf("hover_reg_slot: %i", rd_state->hover_regs_slot);
+        UIShell_Regs top_regs = uishell_regs_from_rd_regs(scratch.arena, rd_regs());
         struct
         {
           String8 name;
-          RD_Regs *regs;
+          UIShell_Regs *regs;
         }
         regs_info[] =
         {
-          {str8_lit("regs"),       rd_regs()},
+          {str8_lit("regs"),       &top_regs},
           {str8_lit("hover_regs"), rd_state->hover_regs},
         };
         for EachElement(idx, regs_info)
         {
           ui_divider(ui_em(1.f, 1.f));
           ui_label(regs_info[idx].name);
-          RD_Regs *regs = regs_info[idx].regs;
+          UIShell_Regs *regs = regs_info[idx].regs;
 #define ID(name) ui_labelf("%s: $0x%I64x", #name, (regs->name))
           ID(window);
           ID(panel);
@@ -6939,13 +6942,14 @@ rd_frame(void)
   }
   if(rd_state->next_hover_regs != 0)
   {
-    rd_state->hover_regs = rd_regs_copy(rd_frame_arena(), rd_state->next_hover_regs);
+    rd_state->hover_regs = push_array(rd_frame_arena(), UIShell_Regs, 1);
+    rd_state->hover_regs[0] = uishell_regs_copy(rd_frame_arena(), rd_state->next_hover_regs);
     rd_state->hover_regs_slot = rd_state->next_hover_regs_slot;
     rd_state->next_hover_regs = 0;
   }
   else
   {
-    rd_state->hover_regs = push_array(rd_frame_arena(), RD_Regs, 1);
+    rd_state->hover_regs = push_array(rd_frame_arena(), UIShell_Regs, 1);
     rd_state->hover_regs_slot = RD_RegSlot_Null;
   }
   B32 allow_text_hotkeys = !rd_state->text_edit_mode;

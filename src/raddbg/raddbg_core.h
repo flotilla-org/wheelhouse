@@ -650,9 +650,9 @@ struct RD_State
   B32 text_edit_mode;
   
   // rjf: contextual hover info
-  RD_Regs *hover_regs;
+  UIShell_Regs *hover_regs;
   RD_RegSlot hover_regs_slot;
-  RD_Regs *next_hover_regs;
+  UIShell_Regs *next_hover_regs;
   RD_RegSlot next_hover_regs_slot;
   
   // rjf: icon texture
@@ -773,7 +773,6 @@ internal B32 rd_drag_drop(void);
 internal void rd_drag_kill(void);
 
 internal void rd_set_hover_regs(RD_RegSlot slot);
-internal RD_Regs *rd_get_hover_regs(void);
 
 ////////////////////////////////
 //~ rjf: Config Functions
