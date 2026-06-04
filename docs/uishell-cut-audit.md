@@ -79,7 +79,7 @@ Implication: the remaining temporary register packet is still broad and still ca
 
 Result: succeeded. `uishell_app_reg_slot_info_table` now contains only shell slot names, not byte ranges into `RD_Regs`. Query numeric fill for the shell address/file-offset slot now assigns `rd_regs()->vaddr` explicitly instead of copying bytes through an app-provided register range.
 
-Implication: shell register metadata no longer needs to mirror the temporary `RD_Regs` compatibility layout. The generated all-fields `rd_regs_lit_init_top` macro was also removed from `src/raddbg/raddbg.mdesk`; regenerated RAD metadata no longer emits it, and the shell continues to use its explicit `RD_APP_REGS_LIT_INIT_TOP`.
+Implication: shell register metadata no longer needs to mirror a separate temporary `RD_Regs` compatibility layout. The generated all-fields `rd_regs_lit_init_top` macro was also removed from `src/raddbg/raddbg.mdesk`; regenerated RAD metadata no longer emits it, and the shell uses its explicit `UISHELL_REGS_LIT_INIT_TOP`.
 
 ### Trim app-facing register and command flag enums
 
@@ -227,15 +227,17 @@ Twenty-second slice: hover register snapshots now store `UIShell_Regs`. `RD_Stat
 
 Twenty-third slice: drag/drop register snapshots now store `UIShell_Regs`. `RD_State.drag_drop_regs` no longer retains a debugger compatibility packet, tab/panel drag-drop code consumes the shell snapshot fields directly, and the temporary tooltip-time conversion from `RD_Regs` was removed. The remaining `RD_Regs` surface is now the live register stack and APIs/macros built around it.
 
-Twenty-fourth slice: popup-confirmed commands now snapshot directly into `UIShell_Regs`. The save-overwrite confirmation path no longer allocates an intermediate `RD_Regs` copy before pushing into popup command storage, and the now-unused `rd_regs_copy` heap helper is gone. `rd_regs_copy_contents` remains because the live register stack still uses it as the compatibility copy boundary.
+Twenty-fourth slice: popup-confirmed commands now snapshot directly into `UIShell_Regs`. The save-overwrite confirmation path no longer allocates an intermediate `RD_Regs` copy before pushing into popup command storage, and the now-unused `rd_regs_copy` heap helper is gone. The stack copy helper was later renamed to `uishell_regs_copy_contents`.
 
 Twenty-fifth slice: the common `rd_cmd_name(...)` command-emission macro now constructs `RD_CmdRegs`/`UIShell_Regs` literals directly and pushes them with `rd_push_stored_cmd`. Named command emissions no longer build temporary `RD_Regs` literals. At this point, the remaining `RD_APP_REGS_LIT_INIT_TOP` macro users were the live register-scope stack and autocompletion adapter.
 
-Twenty-sixth slice: the autocompletion adapter now accepts `RD_CmdRegs`/`UIShell_Regs` and stores an arena-owned shell copy directly. `rd_set_autocomp_regs(...)` no longer builds a temporary `RD_Regs` literal, so `RD_APP_REGS_LIT_INIT_TOP` is now reserved for the live register-scope stack.
+Twenty-sixth slice: the autocompletion adapter now accepts `RD_CmdRegs`/`UIShell_Regs` and stores an arena-owned shell copy directly. `rd_set_autocomp_regs(...)` no longer builds a temporary `RD_Regs` literal, so at this point `RD_APP_REGS_LIT_INIT_TOP` was reserved for the live register-scope stack.
 
 Twenty-seventh slice: direct command emissions now use `rd_push_cmd_current(name)`, which snapshots the current live context into a `RD_CmdRegs`/`UIShell_Regs` literal before queue insertion. The old `rd_push_cmd(String8, RD_Regs *)` and `rd_cmd_list_push_new_from_rd_regs` adapters are gone, so the command queue input side no longer accepts `RD_Regs *`.
 
-Twenty-eighth slice: the live register packet now has one concrete definition. `UIShell_Regs` moved to `raddbg_core.h`, and `RD_Regs` is now only a compatibility alias for that shell packet. The live stack APIs and node names still use `RD_Regs`/`RD_RegsNode`, but there is no longer a distinct debugger-shaped register struct for them to store.
+Twenty-eighth slice: the live register packet now has one concrete definition. `UIShell_Regs` moved to `raddbg_core.h`, and `RD_Regs` is now only a compatibility alias for that shell packet. At this point, the live stack APIs and node names still used `RD_Regs`/`RD_RegsNode`, but there was no longer a distinct debugger-shaped register struct for them to store.
+
+Twenty-ninth slice: the live stack internals now use shell names for their storage and copy boundary. `RD_RegsNode` became `UIShell_RegsNode`, `rd_regs_copy_contents` became `uishell_regs_copy_contents`, and `rd_push_regs(...)` now expands from `UISHELL_REGS_LIT_INIT_TOP` directly instead of the removed `RD_APP_REGS_LIT_INIT_TOP` alias.
 
 The current source split is:
 

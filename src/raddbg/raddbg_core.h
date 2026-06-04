@@ -259,8 +259,6 @@ struct RD_VocabInfo
   RD_IconKind icon_kind;
 };
 
-# define RD_APP_REGS_LIT_INIT_TOP UISHELL_REGS_LIT_INIT_TOP
-
 ////////////////////////////////
 //~ rjf: App Menu Specs
 
@@ -417,10 +415,10 @@ struct RD_CmdList
 ////////////////////////////////
 //~ rjf: Context Register Types
 
-typedef struct RD_RegsNode RD_RegsNode;
-struct RD_RegsNode
+typedef struct UIShell_RegsNode UIShell_RegsNode;
+struct UIShell_RegsNode
 {
-  RD_RegsNode *next;
+  UIShell_RegsNode *next;
   RD_Regs v;
 };
 
@@ -626,8 +624,8 @@ struct RD_State
   RD_ViewUIRuleMap *view_ui_rule_map;
   
   // rjf: registers stack
-  RD_RegsNode base_regs;
-  RD_RegsNode *top_regs;
+  UIShell_RegsNode base_regs;
+  UIShell_RegsNode *top_regs;
   
   // rjf: autosave state
   F32 seconds_until_autosave;
@@ -748,7 +746,7 @@ global CFG_ID rd_last_drag_drop_prev_tab = 0;
 ////////////////////////////////
 //~ rjf: Registers Type Functions
 
-internal void rd_regs_copy_contents(Arena *arena, RD_Regs *dst, RD_Regs *src);
+internal void uishell_regs_copy_contents(Arena *arena, UIShell_Regs *dst, UIShell_Regs *src);
 
 ////////////////////////////////
 //~ rjf: Commands Type Functions
@@ -948,7 +946,7 @@ internal Arena *rd_frame_arena(void);
 #define rd_regs() (&rd_state->top_regs->v)
 #define rd_base_regs() (&rd_state->base_regs.v)
 internal RD_Regs *rd_push_regs_(RD_Regs *regs);
-#define rd_push_regs(...) rd_push_regs_(&(RD_Regs){RD_APP_REGS_LIT_INIT_TOP __VA_ARGS__})
+#define rd_push_regs(...) rd_push_regs_(&(RD_Regs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
 internal RD_Regs *rd_pop_regs(void);
 #define RD_RegsScope(...) DeferLoop(rd_push_regs(__VA_ARGS__), rd_pop_regs())
 internal void rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 string);

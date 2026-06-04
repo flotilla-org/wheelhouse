@@ -13,10 +13,9 @@
 //~ rjf: Registers Type Functions
 
 internal void
-rd_regs_copy_contents(Arena *arena, RD_Regs *dst, RD_Regs *src)
+uishell_regs_copy_contents(Arena *arena, UIShell_Regs *dst, UIShell_Regs *src)
 {
-  UIShell_Regs shell_regs = uishell_regs_from_rd_regs(arena, src);
-  uishell_regs_into_rd_regs(dst, &shell_regs);
+  dst[0] = uishell_regs_copy(arena, src);
 }
 ////////////////////////////////
 //~ rjf: Commands Type Functions
@@ -6196,8 +6195,8 @@ rd_frame_arena(void)
 internal RD_Regs *
 rd_push_regs_(RD_Regs *regs)
 {
-  RD_RegsNode *n = push_array(rd_frame_arena(), RD_RegsNode, 1);
-  rd_regs_copy_contents(rd_frame_arena(), &n->v, regs);
+  UIShell_RegsNode *n = push_array(rd_frame_arena(), UIShell_RegsNode, 1);
+  uishell_regs_copy_contents(rd_frame_arena(), &n->v, regs);
   SLLStackPush(rd_state->top_regs, n);
   return &n->v;
 }
@@ -6908,9 +6907,9 @@ rd_frame(void)
   {
     Temp scratch = scratch_begin(0, 0);
     rd_state->top_regs = &rd_state->base_regs;
-    rd_regs_copy_contents(scratch.arena, &rd_state->top_regs->v, &rd_state->top_regs->v);
+    uishell_regs_copy_contents(scratch.arena, &rd_state->top_regs->v, &rd_state->top_regs->v);
     arena_clear(rd_frame_arena());
-    rd_regs_copy_contents(rd_frame_arena(), &rd_state->top_regs->v, &rd_state->top_regs->v);
+    uishell_regs_copy_contents(rd_frame_arena(), &rd_state->top_regs->v, &rd_state->top_regs->v);
     scratch_end(scratch);
   }
   if(rd_state->next_hover_regs != 0)
