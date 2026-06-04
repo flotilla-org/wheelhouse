@@ -215,6 +215,8 @@ Sixteenth slice: debugger-specific stored watch and memory peek-type set hooks h
 
 Seventeenth slice: debugger type-view configuration has been removed from the shell product surface. Project settings no longer include the default STL/Unreal visualizer toggles, `rd_frame` no longer builds immediate `type_view` configs or inserts type-view auto-hooks, shell config query registration no longer carries stale debugger collection names, the type-view title-rendering special case is gone, and `raddbg_markup.h` no longer defines `raddbg_type_view` or default STL type-view records. The remaining `E_AutoHook*` internals are now producerless evaluator scaffolding and should be removed in a later evaluator-internal cut.
 
+Eighteenth slice: debugger source path-map and legacy config migration scaffolding has been removed. `file_path_map` is no longer referenced in source, the path remap/possible-override helpers are gone, the stale file-path-map config row-title special case is gone, and `raddbg_legacy_config.*` has been deleted. Shell config load now always uses `cfg_node_ptr_list_from_string` with the current shell schema table instead of invoking RAD's pre-0.9.16 target/path-map migration parser.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.

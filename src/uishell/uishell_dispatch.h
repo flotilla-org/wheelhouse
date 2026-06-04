@@ -1603,16 +1603,7 @@ uishell_dispatch_config_command(String8 name)
     CFG_NodePtrList file_cfg_list = {0};
     if(file_is_okay)
     {
-      U64 file_version_code = version_from_str8(file_version);
-      if(file_version_code < Version(0, 9, 16))
-      {
-        CFG_NodePtrList (*legacy_parse_function)(Arena *arena, String8 file_path, String8 data) = rd_cfg_tree_list_from_string__pre_0_9_16;
-        file_cfg_list = legacy_parse_function(scratch.arena, file_path, file_data);
-      }
-      else
-      {
-        file_cfg_list = cfg_node_ptr_list_from_string(scratch.arena, rd_state->cfg, rd_state->cfg_schema_table, str8_chop_last_slash(file_path), file_data);
-      }
+      file_cfg_list = cfg_node_ptr_list_from_string(scratch.arena, rd_state->cfg, rd_state->cfg_schema_table, str8_chop_last_slash(file_path), file_data);
     }
     
     if(file_is_okay)

@@ -816,9 +816,6 @@ internal F32 rd_setting_f32_from_name(String8 name);
 internal CFG_Node *rd_immediate_cfg_from_key(String8 string);
 internal CFG_Node *rd_immediate_cfg_from_keyf(char *fmt, ...);
 
-internal String8 rd_mapped_from_file_path(Arena *arena, String8 file_path);
-internal String8List rd_possible_overrides_from_file_path(Arena *arena, String8 file_path);
-
 ////////////////////////////////
 //~ rjf: Evaluation Spaces
 
