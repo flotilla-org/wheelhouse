@@ -734,7 +734,7 @@ rd_cmd_list_menu_buttons(U64 count, String8 *cmd_names, U32 *fastpath_codepoints
       {
         rd_cmd_name("run_command", .cmd_name = cmd_names[idx]);
         ui_ctx_menu_close();
-        CFG_Node *window = cfg_node_from_id(rd_regs()->window);
+        CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
         RD_WindowState *ws = rd_window_state_from_cfg(window);
         ws->menu_bar_focused = 0;
       }
@@ -1247,7 +1247,7 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
   TXT_ScopeNode *cursor_scope_node = &txt_scope_node_nil;
   if(params->text_info != 0)
   {
-    cursor_scope_node = txt_scope_node_from_info_pt(params->text_info, rd_regs()->cursor);
+    cursor_scope_node = txt_scope_node_from_info_pt(params->text_info, uishell_regs()->cursor);
   }
   
   //////////////////////////////
@@ -2876,7 +2876,7 @@ rd_cell(RD_CellParams *params, String8 string)
       // rjf: any valid *additive* op & autocomplete hint? -> perform autocomplete first, then re-compute op
       if(!(evt->flags & UI_EventFlag_Delete) && autocomplete_hint_string.size != 0)
       {
-        CFG_Node *window = cfg_node_from_id(rd_regs()->window);
+        CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
         RD_WindowState *ws = rd_window_state_from_cfg(window);
         RD_AutocompCursorInfo *autocomp_cursor_info = &ws->autocomp_cursor_info;
         String8 new_string = ui_push_string_replace_range(scratch.arena, edit_string, r1s64(autocomp_cursor_info->replaced_range.min+1, autocomp_cursor_info->replaced_range.max+1), autocomplete_hint_string);
@@ -2974,7 +2974,7 @@ rd_cell(RD_CellParams *params, String8 string)
       }
       if(autocomplete_hint_string.size != 0)
       {
-        CFG_Node *window = cfg_node_from_id(rd_regs()->window);
+        CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
         RD_WindowState *ws = rd_window_state_from_cfg(window);
         RD_AutocompCursorInfo *autocomp_cursor_info = &ws->autocomp_cursor_info;
         String8 autocomplete_append_string = str8_skip(autocomplete_hint_string, params->cursor->column-1 - autocomp_cursor_info->replaced_range.min);

@@ -336,7 +336,7 @@ uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
     }
   }
   
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   
   if(block->parent != &ev_nil_block && maybe_table_type->kind == E_TypeKind_Lens &&
      str8_match(maybe_table_type->name, str8_lit("columns"), 0) && maybe_table_type->count >= 1)
@@ -908,7 +908,7 @@ uishell_watch_view_ui(Rng2F32 rect)
   Temp scratch = scratch_begin(0, 0);
   RD_Font(RD_FontSlot_Code)
   {
-    CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+    CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
     RD_ViewState *vs = rd_view_state_from_cfg(view);
     String8 expr_string = rd_expr_from_cfg(view);
     if(expr_string.size == 0)
@@ -1693,8 +1693,8 @@ uishell_watch_view_ui(Rng2F32 rect)
                         CFG_PanelNode *parent_panel_node = cfg_panel_node_from_tree_cfg(panels.root, cfg->parent);
                         if(parent_panel_node != &cfg_nil_panel_node)
                         {
-                          rd_regs()->tab = cfg->id;
-                          rd_regs()->view = cfg->id;
+                          uishell_regs()->tab = cfg->id;
+                          uishell_regs()->view = cfg->id;
                         }
                       }
                       rd_push_cmd_current(cell_info.cmd_name);
@@ -2581,11 +2581,11 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
     }
   }
   
-  rd_regs()->file_path = file_path;
-  rd_regs()->text_key = text_key;
-  rd_regs()->lang_kind = lang_kind;
-  rd_regs()->cursor = tv->cursor;
-  rd_regs()->mark = tv->mark;
+  uishell_regs()->file_path = file_path;
+  uishell_regs()->text_key = text_key;
+  uishell_regs()->lang_kind = lang_kind;
+  uishell_regs()->cursor = tv->cursor;
+  uishell_regs()->mark = tv->mark;
   rd_store_view_scroll_pos(scroll_pos);
   rd_store_view_param_s64(str8_lit("cursor_line"), tv->cursor.line);
   rd_store_view_param_s64(str8_lit("cursor_column"), tv->cursor.column);

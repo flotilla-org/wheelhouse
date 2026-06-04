@@ -372,7 +372,7 @@ E_TYPE_EXPAND_INFO_FUNCTION_DEF(cfgs_slice)
     
     //- rjf: fill
     // TODO(rjf): @cleanup don't smuggle this through like this...
-    if(cfg_node_child_from_string(cfg_node_from_id(rd_regs()->view), str8_lit("lister")) == &cfg_nil_node)
+    if(cfg_node_child_from_string(cfg_node_from_id(uishell_regs()->view), str8_lit("lister")) == &cfg_nil_node)
     {
       accel->cmds = ext->cmds;
       accel->cmds_idx_range = r1u64(0, accel->cmds.count);

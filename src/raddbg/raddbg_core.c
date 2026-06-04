@@ -186,7 +186,7 @@ rd_drag_begin(RD_RegSlot slot)
   {
     arena_clear(rd_state->drag_drop_arena);
     rd_state->drag_drop_regs = push_array(rd_state->drag_drop_arena, UIShell_Regs, 1);
-    rd_state->drag_drop_regs[0] = uishell_regs_copy(rd_state->drag_drop_arena, rd_regs());
+    rd_state->drag_drop_regs[0] = uishell_regs_copy(rd_state->drag_drop_arena, uishell_regs());
     rd_state->drag_drop_regs_slot = slot;
     rd_state->drag_drop_state = RD_DragDropState_Dragging;
   }
@@ -214,7 +214,7 @@ internal void
 rd_set_hover_regs(RD_RegSlot slot)
 {
   rd_state->next_hover_regs = push_array(rd_frame_arena(), UIShell_Regs, 1);
-  rd_state->next_hover_regs[0] = uishell_regs_copy(rd_frame_arena(), rd_regs());
+  rd_state->next_hover_regs[0] = uishell_regs_copy(rd_frame_arena(), uishell_regs());
   rd_state->next_hover_regs_slot = slot;
 }
 
@@ -373,14 +373,14 @@ rd_setting_from_name(String8 name)
       CFG_Node *cfg;
       B32 allow_bucket_chains;
     };
-    CFG_Node *view_cfg = cfg_node_from_id(rd_regs()->view);
+    CFG_Node *view_cfg = cfg_node_from_id(uishell_regs()->view);
     if(view_cfg == &cfg_nil_node)
     {
-      view_cfg = cfg_node_from_id(rd_regs()->tab);
+      view_cfg = cfg_node_from_id(uishell_regs()->tab);
     }
     CfgSeedTask panel_task = {0, &cfg_nil_node, 1};
-    if(panel_task.cfg == &cfg_nil_node) { panel_task.cfg = cfg_node_from_id(rd_regs()->panel); }
-    if(panel_task.cfg == &cfg_nil_node) { panel_task.cfg = cfg_node_from_id(rd_regs()->window); }
+    if(panel_task.cfg == &cfg_nil_node) { panel_task.cfg = cfg_node_from_id(uishell_regs()->panel); }
+    if(panel_task.cfg == &cfg_nil_node) { panel_task.cfg = cfg_node_from_id(uishell_regs()->window); }
     CfgSeedTask view_task = {&panel_task, view_cfg, 1};
     CfgSeedTask *first_task = &view_task;
     CfgSeedTask *last_task = &panel_task;
@@ -1199,7 +1199,7 @@ internal void
 rd_view_ui(Rng2F32 rect)
 {
   ProfBeginFunction();
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   RD_ViewState *vs = rd_view_state_from_cfg(view);
   String8 view_name = view->string;
   String8 expr_string = rd_expr_from_cfg(view);
@@ -1491,7 +1491,7 @@ rd_view_ui(Rng2F32 rect)
           RD_Cmd *cmd = &cmd_node->cmd;
           rd_push_stored_cmd(cmd->name, cmd->regs);
         }
-        CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+        CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
         cfg_node_equip_string(rd_state->cfg, view, new_view_name);
         RD_ViewState *vs = rd_view_state_from_cfg(view);
         for(RD_ArenaExt *ext = vs->first_arena_ext; ext != 0; ext = ext->next)
@@ -1621,7 +1621,7 @@ rd_view_ui(Rng2F32 rect)
 internal Arena *
 rd_view_arena(void)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   RD_ViewState *view_state = rd_view_state_from_cfg(view);
   return view_state->arena;
 }
@@ -1629,7 +1629,7 @@ rd_view_arena(void)
 internal UI_ScrollPt2
 rd_view_scroll_pos(void)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   RD_ViewState *view_state = rd_view_state_from_cfg(view);
   return view_state->scroll_pos;
 }
@@ -1637,7 +1637,7 @@ rd_view_scroll_pos(void)
 internal EV_View *
 rd_view_eval_view(void)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   RD_ViewState *view_state = rd_view_state_from_cfg(view);
   return view_state->ev_view;
 }
@@ -1645,7 +1645,7 @@ rd_view_eval_view(void)
 internal String8
 rd_view_query_cmd(void)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   CFG_Node *query = cfg_node_child_from_string(view, str8_lit("query"));
   CFG_Node *cmd = cfg_node_child_from_string(query, str8_lit("cmd"));
   String8 string = cmd->first->string;
@@ -1655,7 +1655,7 @@ rd_view_query_cmd(void)
 internal String8
 rd_view_query_input(void)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   CFG_Node *query = cfg_node_child_from_string(view, str8_lit("query"));
   CFG_Node *input = cfg_node_child_from_string(query, str8_lit("input"));
   String8 string = input->first->string;
@@ -1665,7 +1665,7 @@ rd_view_query_input(void)
 internal String8
 rd_view_setting_from_name(String8 name)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   String8 result = cfg_node_child_from_string(view, name)->first->string;
   if(result.size == 0)
   {
@@ -1813,7 +1813,7 @@ rd_ip_register_name_from_arch(Arch arch)
 internal void *
 rd_view_state_by_size(U64 size)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   RD_ViewState *view_state = rd_view_state_from_cfg(view);
   if(view_state->user_data == 0)
   {
@@ -1825,7 +1825,7 @@ rd_view_state_by_size(U64 size)
 internal Arena *
 rd_push_view_arena(void)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   RD_ViewState *view_state = rd_view_state_from_cfg(view);
   RD_ArenaExt *ext = push_array(view_state->arena, RD_ArenaExt, 1);
   ext->arena = arena_alloc();
@@ -1838,7 +1838,7 @@ rd_push_view_arena(void)
 internal void
 rd_store_view_expr_string(String8 string)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   CFG_Node *expr = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("expression"));
   cfg_node_new_replace(rd_state->cfg, expr, string);
 }
@@ -1846,7 +1846,7 @@ rd_store_view_expr_string(String8 string)
 internal void
 rd_store_view_loading_info(B32 is_loading, U64 progress_u64, U64 progress_u64_target)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   RD_ViewState *view_state = rd_view_state_from_cfg(view);
   B32 loading_state_is_new = (is_loading && view_state->loading_t_target != (F32)!!is_loading);
   view_state->loading_t_target = (F32)!!is_loading;
@@ -1861,7 +1861,7 @@ rd_store_view_loading_info(B32 is_loading, U64 progress_u64, U64 progress_u64_ta
 internal void
 rd_store_view_scroll_pos(UI_ScrollPt2 pos)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   RD_ViewState *view_state = rd_view_state_from_cfg(view);
   view_state->scroll_pos = pos;
 }
@@ -1869,7 +1869,7 @@ rd_store_view_scroll_pos(UI_ScrollPt2 pos)
 internal void
 rd_store_view_param(String8 key, String8 value)
 {
-  CFG_Node *view = cfg_node_from_id(rd_regs()->view);
+  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   CFG_Node *child = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, key);
   cfg_node_new_replace(rd_state->cfg, child, value);
 }
@@ -2076,8 +2076,8 @@ rd_window_frame(void)
   //////////////////////////////
   //- rjf: @window_frame_part unpack context
   //
-  CFG_Node *window          = cfg_node_from_id(rd_regs()->window);
-  RD_WindowState *ws      = rd_window_state_from_cfg(cfg_node_from_id(rd_regs()->window));
+  CFG_Node *window          = cfg_node_from_id(uishell_regs()->window);
+  RD_WindowState *ws      = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
   CFG_PanelTree panel_tree = cfg_panel_tree_from_cfg(scratch.arena, window);
   B32 window_is_focused   = (wm_window_is_focused(ws->os) || ws->window_temporarily_focused_ipc);
   B32 popup_is_open       = (rd_state->popup_active);
@@ -2098,9 +2098,9 @@ rd_window_frame(void)
   //////////////////////////////
   //- rjf: @window_frame_part fill panel/view interaction registers
   //
-  rd_regs()->panel = panel_tree.focused->cfg->id;
-  rd_regs()->tab   = panel_tree.focused->selected_tab->id;
-  rd_regs()->view = panel_tree.focused->selected_tab->id;
+  uishell_regs()->panel = panel_tree.focused->cfg->id;
+  uishell_regs()->tab   = panel_tree.focused->selected_tab->id;
+  uishell_regs()->view = panel_tree.focused->selected_tab->id;
   
   //////////////////////////////
   //- rjf: @window_frame_part compute window's theme
@@ -2668,7 +2668,7 @@ rd_window_frame(void)
         
         //- rjf: draw registers
         ui_labelf("hover_reg_slot: %i", rd_state->hover_regs_slot);
-        UIShell_Regs top_regs = uishell_regs_copy(scratch.arena, rd_regs());
+        UIShell_Regs top_regs = uishell_regs_copy(scratch.arena, uishell_regs());
         struct
         {
           String8 name;
@@ -3357,9 +3357,9 @@ rd_window_frame(void)
         {
           if(t->regs != 0)
           {
-            rd_regs()->cfg = t->regs->cfg;
+            uishell_regs()->cfg = t->regs->cfg;
           }
-          rd_regs()->view = view->id;
+          uishell_regs()->view = view->id;
           String8 view_expr = rd_expr_from_cfg(view);
           String8 view_file_path = rd_file_path_from_eval_string(rd_frame_arena(), view_expr);
           // NOTE(rjf): we want to only fill out this view's file path slot if it
@@ -3368,7 +3368,7 @@ rd_window_frame(void)
           // apply to a cursor, for example.
           if(view_file_path.size != 0)
           {
-            rd_regs()->file_path = view_file_path;
+            uishell_regs()->file_path = view_file_path;
           }
         }
         
@@ -3454,7 +3454,7 @@ rd_window_frame(void)
         UIShell_Regs *view_regs = uishell_pop_regs();
         if(is_focused)
         {
-          MemoryCopyStruct(rd_regs(), view_regs);
+          MemoryCopyStruct(uishell_regs(), view_regs);
         }
         
         // rjf: is not anchored? -> darken rest of screen
@@ -4593,7 +4593,7 @@ rd_window_frame(void)
               // apply to a cursor, for example.
               if(view_file_path.size != 0)
               {
-                rd_regs()->file_path = view_file_path;
+                uishell_regs()->file_path = view_file_path;
               }
             }
             
@@ -4669,7 +4669,7 @@ rd_window_frame(void)
             UIShell_Regs *view_regs = uishell_pop_regs();
             if(panel_is_focused)
             {
-              MemoryCopyStruct(rd_regs(), view_regs);
+              MemoryCopyStruct(uishell_regs(), view_regs);
             }
           }
           
@@ -5767,7 +5767,7 @@ rd_value_string_from_eval(Arena *arena, String8 filter, EV_StringParams *params,
 internal void
 rd_set_hover_eval(Vec2F32 pos, String8 string)
 {
-  CFG_Node *window_cfg = cfg_node_from_id(rd_regs()->window);
+  CFG_Node *window_cfg = cfg_node_from_id(uishell_regs()->window);
   RD_WindowState *ws = rd_window_state_from_cfg(window_cfg);
   if(ws->hover_eval_lastt_us < rd_state->time_in_us &&
      ui_key_match(ui_active_key(UI_MouseButtonKind_Left), ui_key_zero()) &&
@@ -5793,7 +5793,7 @@ rd_set_hover_eval(Vec2F32 pos, String8 string)
 internal void
 rd_set_autocomp_regs_(E_Eval dst_eval, RD_CmdRegs *regs)
 {
-  CFG_Node *window_cfg = cfg_node_from_id(rd_regs()->window);
+  CFG_Node *window_cfg = cfg_node_from_id(uishell_regs()->window);
   RD_WindowState *ws = rd_window_state_from_cfg(window_cfg);
   if(ws->autocomp_last_frame_index < rd_state->frame_index)
   {
@@ -6038,7 +6038,7 @@ rd_theme_tree_from_name(Arena *arena, Access *access, String8 theme_name)
 internal Vec4F32
 rd_rgba_from_code_color_slot(RD_CodeColorSlot slot)
 {
-  RD_WindowState *ws = rd_window_state_from_cfg(cfg_node_from_id(rd_regs()->window));
+  RD_WindowState *ws = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
   Vec4F32 result = ws->theme_code_colors[slot];
   return result;
 }
@@ -6103,7 +6103,7 @@ rd_font_from_slot(RD_FontSlot slot)
 internal FNT_RasterFlags
 rd_raster_flags_from_slot(RD_FontSlot slot)
 {
-  CFG_Node *window = cfg_node_from_id(rd_regs()->window);
+  CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
   RD_WindowState *ws = rd_window_state_from_cfg(window);
   FNT_RasterFlags flags = ws->font_slot_raster_flags[slot];
   return flags;
@@ -6224,20 +6224,20 @@ rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 strin
     case RD_RegSlot_FilePath:
     {
       String8TxtPtPair pair = str8_txt_pt_pair_from_string(string);
-      rd_regs()->string = push_str8_copy(rd_frame_arena(), string);
+      uishell_regs()->string = push_str8_copy(rd_frame_arena(), string);
       if(pair.pt.line != 0)
       {
-        rd_regs()->file_path = push_str8_copy(rd_frame_arena(), pair.string);
-        rd_regs()->cursor = pair.pt;
+        uishell_regs()->file_path = push_str8_copy(rd_frame_arena(), pair.string);
+        uishell_regs()->cursor = pair.pt;
       }
     }break;
     case RD_RegSlot_Expr:
     {
-      rd_regs()->expr = push_str8_copy(rd_frame_arena(), string);
+      uishell_regs()->expr = push_str8_copy(rd_frame_arena(), string);
     }break;
     case RD_RegSlot_CmdName:
     {
-      rd_regs()->cmd_name = push_str8_copy(rd_frame_arena(), string);
+      uishell_regs()->cmd_name = push_str8_copy(rd_frame_arena(), string);
     }break;
     
     //- rjf: ctrl entities
@@ -6256,7 +6256,7 @@ rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 strin
       {
         String8 numeric_part = str8_skip(string, 1);
         CFG_ID id = u64_from_str8(numeric_part, 16);
-        rd_regs()->cfg = id;
+        uishell_regs()->cfg = id;
         good = 1;
       }
       if(!good && query_expr.size != 0)
@@ -6287,16 +6287,16 @@ rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 strin
             }
           }
           EV_Row *row = ev_row_from_num(scratch.arena, eval_view, &block_ranges, 1);
-          rd_regs()->cfg = rd_cfg_from_eval_space(row->eval.space)->id;
-          good = (rd_regs()->cfg != 0);
+          uishell_regs()->cfg = rd_cfg_from_eval_space(row->eval.space)->id;
+          good = (uishell_regs()->cfg != 0);
         }
         scratch_end(scratch);
       }
       if(!good)
       {
         E_Eval eval = e_eval_from_string(string);
-        rd_regs()->cfg = rd_cfg_from_eval_space(eval.space)->id;
-        good = (rd_regs()->cfg != 0);
+        uishell_regs()->cfg = rd_cfg_from_eval_space(eval.space)->id;
+        good = (uishell_regs()->cfg != 0);
       }
     }break;
     
@@ -6306,8 +6306,8 @@ rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 strin
       E_Eval eval = e_value_eval_from_eval(e_eval_from_string(string));
       if(eval.msgs.max_kind == E_MsgKind_Null)
       {
-        rd_regs()->cursor.column = 1;
-        rd_regs()->cursor.line   = (S64)eval.value.u64;
+        uishell_regs()->cursor.column = 1;
+        uishell_regs()->cursor.line   = (S64)eval.value.u64;
       }
       else
       {
@@ -6320,7 +6320,7 @@ rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 strin
       E_Eval eval = e_eval_from_string(string);
       if(eval.msgs.max_kind == E_MsgKind_Null)
       {
-        rd_regs()->vaddr = eval.value.u64;
+        uishell_regs()->vaddr = eval.value.u64;
       }
       else
       {
@@ -6386,7 +6386,7 @@ rd_next_view_cmd(RD_Cmd **cmd)
 {
   for(;rd_next_cmd(cmd);)
   {
-    if(rd_regs()->view == cmd[0]->regs->view)
+    if(uishell_regs()->view == cmd[0]->regs->view)
     {
       break;
     }
@@ -7287,14 +7287,14 @@ rd_frame(void)
     {
       next = event->next;
       RD_WindowState *ws = rd_window_state_from_os_handle(event->window);
-      if(ws != 0 && ws != rd_window_state_from_cfg(cfg_node_from_id(rd_regs()->window)))
+      if(ws != 0 && ws != rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window)))
       {
         Temp scratch = scratch_begin(0, 0);
         CFG_PanelTree panel_tree = cfg_panel_tree_from_cfg(scratch.arena, cfg_node_from_id(ws->cfg_id));
-        rd_regs()->window = ws->cfg_id;
-        rd_regs()->panel  = panel_tree.focused->cfg->id;
-        rd_regs()->tab    = panel_tree.focused->selected_tab->id;
-        rd_regs()->view   = panel_tree.focused->selected_tab->id;
+        uishell_regs()->window = ws->cfg_id;
+        uishell_regs()->panel  = panel_tree.focused->cfg->id;
+        uishell_regs()->tab    = panel_tree.focused->selected_tab->id;
+        uishell_regs()->view   = panel_tree.focused->selected_tab->id;
         scratch_end(scratch);
       }
       B32 take = 0;
@@ -7772,7 +7772,7 @@ rd_frame(void)
       for(;rd_next_cmd(&cmd);) UIShell_RegsScope()
       {
         // rjf: unpack command
-        MemoryCopyStruct(rd_regs(), cmd->regs);
+        MemoryCopyStruct(uishell_regs(), cmd->regs);
         
         // rjf: request frame
         rd_request_frame();
@@ -8012,13 +8012,13 @@ rd_frame(void)
         rd_state->last_focused_window = w->cfg_id;
       }
       uishell_push_regs();
-      rd_regs()->window = w->cfg_id;
+      uishell_regs()->window = w->cfg_id;
       rd_window_frame();
       MemoryZeroStruct(&w->ui_events);
       UIShell_Regs *window_regs = uishell_pop_regs();
       if(rd_state->last_focused_window == w->cfg_id)
       {
-        MemoryCopyStruct(rd_regs(), window_regs);
+        MemoryCopyStruct(uishell_regs(), window_regs);
       }
     }
   }

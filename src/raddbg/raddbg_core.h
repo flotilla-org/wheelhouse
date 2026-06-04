@@ -216,36 +216,36 @@ struct UIShell_Regs
 typedef UIShell_Regs RD_Regs;
 
 #define UISHELL_REGS_LIT_INIT_TOP \
-.window = rd_regs()->window,\
-.panel = rd_regs()->panel,\
-.tab = rd_regs()->tab,\
-.view = rd_regs()->view,\
-.prev_tab = rd_regs()->prev_tab,\
-.dst_panel = rd_regs()->dst_panel,\
-.cfg = rd_regs()->cfg,\
-.cfg_list = rd_regs()->cfg_list,\
-.file_path = rd_regs()->file_path,\
-.cursor = rd_regs()->cursor,\
-.mark = rd_regs()->mark,\
-.text_key = rd_regs()->text_key,\
-.lang_kind = rd_regs()->lang_kind,\
-.vaddr = rd_regs()->vaddr,\
-.expr = rd_regs()->expr,\
-.ui_key = rd_regs()->ui_key,\
-.off_px = rd_regs()->off_px,\
-.reg_slot = rd_regs()->reg_slot,\
-.force_confirm = rd_regs()->force_confirm,\
-.force_focus = rd_regs()->force_focus,\
-.do_implicit_root = rd_regs()->do_implicit_root,\
-.do_lister = rd_regs()->do_lister,\
-.do_big_rows = rd_regs()->do_big_rows,\
-.non_graphical = rd_regs()->non_graphical,\
-.prefer_new_tab = rd_regs()->prefer_new_tab,\
-.activate_with_single_click = rd_regs()->activate_with_single_click,\
-.dir2 = rd_regs()->dir2,\
-.string = rd_regs()->string,\
-.cmd_name = rd_regs()->cmd_name,\
-.wm_event = rd_regs()->wm_event,
+.window = uishell_regs()->window,\
+.panel = uishell_regs()->panel,\
+.tab = uishell_regs()->tab,\
+.view = uishell_regs()->view,\
+.prev_tab = uishell_regs()->prev_tab,\
+.dst_panel = uishell_regs()->dst_panel,\
+.cfg = uishell_regs()->cfg,\
+.cfg_list = uishell_regs()->cfg_list,\
+.file_path = uishell_regs()->file_path,\
+.cursor = uishell_regs()->cursor,\
+.mark = uishell_regs()->mark,\
+.text_key = uishell_regs()->text_key,\
+.lang_kind = uishell_regs()->lang_kind,\
+.vaddr = uishell_regs()->vaddr,\
+.expr = uishell_regs()->expr,\
+.ui_key = uishell_regs()->ui_key,\
+.off_px = uishell_regs()->off_px,\
+.reg_slot = uishell_regs()->reg_slot,\
+.force_confirm = uishell_regs()->force_confirm,\
+.force_focus = uishell_regs()->force_focus,\
+.do_implicit_root = uishell_regs()->do_implicit_root,\
+.do_lister = uishell_regs()->do_lister,\
+.do_big_rows = uishell_regs()->do_big_rows,\
+.non_graphical = uishell_regs()->non_graphical,\
+.prefer_new_tab = uishell_regs()->prefer_new_tab,\
+.activate_with_single_click = uishell_regs()->activate_with_single_click,\
+.dir2 = uishell_regs()->dir2,\
+.string = uishell_regs()->string,\
+.cmd_name = uishell_regs()->cmd_name,\
+.wm_event = uishell_regs()->wm_event,
 
 #include "generated/raddbg.meta.h"
 
@@ -943,8 +943,8 @@ internal Arena *rd_frame_arena(void);
 ////////////////////////////////
 //~ rjf: Registers
 
-#define rd_regs() (&rd_state->top_regs->v)
-#define rd_base_regs() (&rd_state->base_regs.v)
+#define uishell_regs() (&rd_state->top_regs->v)
+#define uishell_base_regs() (&rd_state->base_regs.v)
 internal UIShell_Regs *uishell_push_regs_(UIShell_Regs *regs);
 #define uishell_push_regs(...) uishell_push_regs_(&(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
 internal UIShell_Regs *uishell_pop_regs(void);
