@@ -701,8 +701,8 @@ struct RD_State
 
 read_only global RD_VocabInfo rd_nil_vocab_info = {0};
 
-typedef struct RD_AppCmdInfo RD_AppCmdInfo;
-struct RD_AppCmdInfo
+typedef struct UIShell_AppCmdInfo UIShell_AppCmdInfo;
+struct UIShell_AppCmdInfo
 {
   String8 string;
   String8 description;
@@ -952,7 +952,7 @@ internal void uishell_regs_fill_slot_from_string(UIShell_ContextRegSlot slot, St
 //~ rjf: Commands
 
 //- rjf: name -> info
-internal RD_AppCmdInfo rd_app_cmd_info_from_string(String8 string);
+internal UIShell_AppCmdInfo uishell_app_cmd_info_from_string(String8 string);
 internal UIShell_ContextRegSlot uishell_context_reg_slot_from_app_reg_slot(UIShell_AppRegSlot slot);
 
 //- rjf: pushing

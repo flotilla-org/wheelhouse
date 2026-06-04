@@ -1208,7 +1208,7 @@ rd_view_ui(Rng2F32 rect)
   {
     String8 cmd_name = cmd_root->first->string;
     RD_IconKind icon = rd_icon_kind_from_code_name(cmd_name);
-    RD_AppCmdInfo cmd_info = rd_app_cmd_info_from_string(cmd_name);
+    UIShell_AppCmdInfo cmd_info = uishell_app_cmd_info_from_string(cmd_name);
     
     //- rjf: store cfg's string into view's
     vs->query_string_size = Min(sizeof(vs->query_buffer), current_input.size);
@@ -1578,7 +1578,7 @@ rd_view_ui(Rng2F32 rect)
     {
       String8 cmd_name = rd_view_query_cmd();
       String8 input = rd_view_query_input();
-      RD_AppCmdInfo cmd_info = rd_app_cmd_info_from_string(cmd_name);
+      UIShell_AppCmdInfo cmd_info = uishell_app_cmd_info_from_string(cmd_name);
       UIShell_RegsScope()
       {
         uishell_regs_fill_slot_from_string(uishell_context_reg_slot_from_app_reg_slot(cmd_info.query_slot), str8_zero(), input);
@@ -3189,7 +3189,7 @@ rd_window_frame(void)
         
         // rjf: unpack query info
         String8 cmd_name = ws->query_regs->cmd_name;
-        RD_AppCmdInfo cmd_info = rd_app_cmd_info_from_string(cmd_name);
+        UIShell_AppCmdInfo cmd_info = uishell_app_cmd_info_from_string(cmd_name);
         String8 query_expr = ws->query_regs->expr;
         if(query_expr.size == 0 && cmd_name.size != 0)
         {
@@ -3491,7 +3491,7 @@ rd_window_frame(void)
           CFG_Node *view = query_floating_view_task->view;
           RD_ViewState *vs = rd_view_state_from_cfg(query_floating_view_task->view);
           String8 cmd_name = ws->query_regs->cmd_name;
-          RD_AppCmdInfo cmd_info = rd_app_cmd_info_from_string(cmd_name);
+          UIShell_AppCmdInfo cmd_info = uishell_app_cmd_info_from_string(cmd_name);
           
           // rjf: close queries
           if(query_floating_view_task->pressed_outside ||
@@ -3869,7 +3869,7 @@ rd_window_frame(void)
       {
         if(rd_state->bind_change_active)
         {
-          RD_AppCmdInfo info = rd_app_cmd_info_from_string(rd_state->bind_change_cmd_name);
+          UIShell_AppCmdInfo info = uishell_app_cmd_info_from_string(rd_state->bind_change_cmd_name);
           String8 display_name = rd_display_from_code_name(info.string);
           if(display_name.size == 0)
           {
@@ -6311,10 +6311,10 @@ uishell_regs_fill_slot_from_string(UIShell_ContextRegSlot slot, String8 query_ex
 ////////////////////////////////
 //~ rjf: Commands
 
-internal RD_AppCmdInfo
-rd_app_cmd_info_from_string(String8 string)
+internal UIShell_AppCmdInfo
+uishell_app_cmd_info_from_string(String8 string)
 {
-  RD_AppCmdInfo result = {0};
+  UIShell_AppCmdInfo result = {0};
   UIShell_CmdInfo *info = uishell_cmd_info_from_name(string);
   if(info != &uishell_nil_cmd_info)
   {
@@ -6427,7 +6427,7 @@ rd_wm_set_main_menu(void)
       }
       else
       {
-        RD_AppCmdInfo info = rd_app_cmd_info_from_string(item_spec->command_name);
+        UIShell_AppCmdInfo info = uishell_app_cmd_info_from_string(item_spec->command_name);
         item->kind = WM_MenuItemKind_Command;
         item->command_name = item_spec->command_name;
         item->label = rd_display_from_code_name(item_spec->command_name);

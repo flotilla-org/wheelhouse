@@ -85,7 +85,7 @@ Implication: shell register metadata no longer needs to mirror a separate tempor
 
 Result: succeeded. `RD_AppRegSlot` was first trimmed to only shell-relevant app register slots, then replaced by the shell-owned `UIShell_AppRegSlot` at the shared command/query boundary. The debugger-only app slots for machine/process/thread/module/control entity, eval/debug-info ranges, debug-info keys, PID, disassembly preference, and similar debugger payloads were dead and have been removed. The old `RD_CmdKindFlag_ListInIPCDocs` flag was also removed because the shell has no IPC documentation command listing path.
 
-Implication: shared command/query metadata still flows through the RAD-derived `RD_AppCmdInfo` struct, but its query slot field is now shell-owned instead of carrying unused debugger vocabulary.
+Implication: shared command/query metadata still flows through an app-level command info snapshot, but its query slot field is now shell-owned instead of carrying unused debugger vocabulary.
 
 ### Make binding-version remaps shell-generated
 
@@ -251,7 +251,9 @@ Thirty-fourth slice: the `RD_Regs` compatibility alias is gone from source. The 
 
 Thirty-fifth slice: the live/context register slot enum now uses shell names. `RD_RegSlot` became `UIShell_ContextRegSlot`, query completion fills slots through `uishell_regs_fill_slot_from_string`, and app/query slot conversion now returns `UIShell_ContextRegSlot`. Source scans show no remaining active `RD_RegSlot` or old slot-fill helper names.
 
-Thirty-sixth slice: command/query flag metadata now uses shell names at the shared boundary. `RD_QueryFlags`, `RD_CmdKindFlags`, and the `rd_*_from_uishell_*_flags` adapter helpers are gone from source. `RD_AppCmdInfo` stores `UIShell_QueryFlags` and `UIShell_CmdFlags` directly, and command filtering compares shell flags without remapping.
+Thirty-sixth slice: command/query flag metadata now uses shell names at the shared boundary. `RD_QueryFlags`, `RD_CmdKindFlags`, and the `rd_*_from_uishell_*_flags` adapter helpers are gone from source. `UIShell_AppCmdInfo` stores `UIShell_QueryFlags` and `UIShell_CmdFlags` directly, and command filtering compares shell flags without remapping.
+
+Thirty-seventh slice: app command info now uses shell names. `RD_AppCmdInfo` became `UIShell_AppCmdInfo`, and `rd_app_cmd_info_from_string` became `uishell_app_cmd_info_from_string`. Source scans show no remaining active `RD_AppCmdInfo` references.
 
 The current source split is:
 

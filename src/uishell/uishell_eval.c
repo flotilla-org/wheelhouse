@@ -271,7 +271,7 @@ uishell_eval_schema_children_from_cfg_and_schemas(Arena *arena, CFG_Node *cfg, M
         }
         if(!filtered)
         {
-          RD_AppCmdInfo cmd_info = rd_app_cmd_info_from_string(arg->string);
+          UIShell_AppCmdInfo cmd_info = uishell_app_cmd_info_from_string(arg->string);
           FuzzyMatchRangeList name_matches = fuzzy_match_find(scratch.arena, filter, rd_display_from_code_name(cmd_info.string));
           FuzzyMatchRangeList desc_matches = fuzzy_match_find(scratch.arena, filter, cmd_info.description);
           FuzzyMatchRangeList tags_matches = fuzzy_match_find(scratch.arena, filter, cmd_info.search_tags);
