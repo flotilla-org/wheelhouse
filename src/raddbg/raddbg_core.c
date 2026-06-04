@@ -98,14 +98,6 @@ rd_view_name_is_listed_in_app(String8 name)
 #  define RD_APP_BINDING_VERSION_REMAP_NEW_NAME_TABLE uishell_binding_version_remap_new_name_table
 #endif
 
-internal String8
-rd_app_reg_slot_code_name(RD_RegSlot slot)
-{
-  String8 result = {0};
-  result = uishell_reg_slot_code_name_from_rd_reg_slot(slot);
-  return result;
-}
-
 #define UISHELL_APP_REG_SLOT_X_LIST \
 X(Null) \
 X(Window) \
@@ -139,14 +131,14 @@ X(String) \
 X(CmdName) \
 X(WMEvent)
 
-internal RD_RegSlot
-rd_reg_slot_from_app_reg_slot(UIShell_AppRegSlot slot)
+internal UIShell_ContextRegSlot
+uishell_context_reg_slot_from_app_reg_slot(UIShell_AppRegSlot slot)
 {
-  RD_RegSlot result = RD_RegSlot_Null;
+  UIShell_ContextRegSlot result = UIShell_ContextRegSlot_Null;
   switch(slot)
   {
     default: break;
-#define X(name) case UIShell_AppRegSlot_##name: {result = RD_RegSlot_##name;}break;
+#define X(name) case UIShell_AppRegSlot_##name: {result = UIShell_ContextRegSlot_##name;}break;
     UISHELL_APP_REG_SLOT_X_LIST
 #undef X
   }
@@ -166,7 +158,7 @@ rd_drag_is_active(void)
 }
 
 internal void
-rd_drag_begin(RD_RegSlot slot)
+rd_drag_begin(UIShell_ContextRegSlot slot)
 {
   if(!rd_drag_is_active())
   {
@@ -197,7 +189,7 @@ rd_drag_kill(void)
 }
 
 internal void
-rd_set_hover_regs(RD_RegSlot slot)
+rd_set_hover_regs(UIShell_ContextRegSlot slot)
 {
   rd_state->next_hover_regs = push_array(rd_frame_arena(), UIShell_Regs, 1);
   rd_state->next_hover_regs[0] = uishell_regs_copy(rd_frame_arena(), uishell_regs());
@@ -1553,7 +1545,7 @@ rd_view_ui(Rng2F32 rect)
         }
         if(ui_dragging(pull_out_sig) && !contains_2f32(pull_out_sig.box->rect, ui_mouse()))
         {
-          rd_drag_begin(RD_RegSlot_View);
+          rd_drag_begin(UIShell_ContextRegSlot_View);
         }
         if(ui_hovering(pull_out_sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
         {
@@ -1589,7 +1581,7 @@ rd_view_ui(Rng2F32 rect)
       RD_AppCmdInfo cmd_info = rd_app_cmd_info_from_string(cmd_name);
       UIShell_RegsScope()
       {
-        rd_regs_fill_slot_from_string(rd_reg_slot_from_app_reg_slot(cmd_info.query_slot), str8_zero(), input);
+        uishell_regs_fill_slot_from_string(uishell_context_reg_slot_from_app_reg_slot(cmd_info.query_slot), str8_zero(), input);
         rd_cmd_name("complete_query");
       }
     }
@@ -2471,11 +2463,11 @@ rd_window_frame(void)
     ////////////////////////////
     //- rjf: @window_ui_part rich hover / drag/drop tooltips
     //
-    if((rd_state->hover_regs_slot != RD_RegSlot_Null) || (rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active()))
+    if((rd_state->hover_regs_slot != UIShell_ContextRegSlot_Null) || (rd_state->drag_drop_regs_slot != UIShell_ContextRegSlot_Null && rd_drag_is_active()))
     {
       Temp scratch = scratch_begin(0, 0);
-      B32 use_drag_regs = (rd_state->drag_drop_regs_slot != RD_RegSlot_Null && rd_drag_is_active());
-      RD_RegSlot slot = use_drag_regs ? rd_state->drag_drop_regs_slot : rd_state->hover_regs_slot;
+      B32 use_drag_regs = (rd_state->drag_drop_regs_slot != UIShell_ContextRegSlot_Null && rd_drag_is_active());
+      UIShell_ContextRegSlot slot = use_drag_regs ? rd_state->drag_drop_regs_slot : rd_state->hover_regs_slot;
       UIShell_Regs *regs = use_drag_regs ? rd_state->drag_drop_regs : rd_state->hover_regs;
       ui_state->tooltip_anchor_key = regs->ui_key;
       ui_state->tooltip_can_overflow_window = rd_drag_is_active();
@@ -2486,7 +2478,7 @@ rd_window_frame(void)
         ////////////////////////
         //- rjf: command tooltips
         //
-        case RD_RegSlot_CmdName:
+        case UIShell_ContextRegSlot_CmdName:
         UI_Tooltip
         {
           String8 cmd_name = regs->cmd_name;
@@ -2502,7 +2494,7 @@ rd_window_frame(void)
         ////////////////////////
         //- rjf: file path tooltips
         //
-        case RD_RegSlot_FilePath:
+        case UIShell_ContextRegSlot_FilePath:
         UI_Tooltip
         {
           FileProperties props = properties_from_file_path(regs->file_path);
@@ -2517,7 +2509,7 @@ rd_window_frame(void)
         ////////////////////////
         //- rjf: cfg tooltips
         //
-        case RD_RegSlot_Cfg:
+        case UIShell_ContextRegSlot_Cfg:
         UI_Tooltip
         {
           // rjf: unpack
@@ -2535,7 +2527,7 @@ rd_window_frame(void)
         ////////////////////////
         //- rjf: expression tooltips
         //
-        case RD_RegSlot_Expr:
+        case UIShell_ContextRegSlot_Expr:
         UI_Tooltip RD_Font(RD_FontSlot_Code)
         {
           ui_set_next_pref_width(ui_children_sum(1));
@@ -2572,7 +2564,7 @@ rd_window_frame(void)
       CFG_Node *view = cfg_node_from_id(rd_state->drag_drop_regs->view);
       {
         //- rjf: tab dragging
-        if(rd_state->drag_drop_regs_slot == RD_RegSlot_View && view != &cfg_nil_node)
+        if(rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && view != &cfg_nil_node)
         {
           CFG_Node *immediate_parent = &cfg_nil_node;
           for(CFG_Node *p = view->parent; p != &cfg_nil_node; p = p->parent)
@@ -3977,7 +3969,7 @@ rd_window_frame(void)
       //
       {
         CFG_Node *drag_view = cfg_node_from_id(rd_state->drag_drop_regs->view);
-        if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == RD_RegSlot_View && drag_view != &cfg_nil_node)
+        if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && drag_view != &cfg_nil_node)
         {
           //- rjf: params
           F32 drop_site_major_dim_px = ceil_f32(ui_top_font_size()*7.f);
@@ -4345,7 +4337,7 @@ rd_window_frame(void)
           if(build_panel)
           {
             CFG_Node *view = cfg_node_from_id(rd_state->drag_drop_regs->view);
-            if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == RD_RegSlot_View && view != &cfg_nil_node && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
+            if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && view != &cfg_nil_node && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
             {
               F32 drop_site_dim_px = ceil_f32(ui_top_font_size()*7.f);
               drop_site_dim_px = Min(drop_site_dim_px, dim_2f32(panel_rect).v[panel->split_axis]/4.f);
@@ -4519,7 +4511,7 @@ rd_window_frame(void)
           //- rjf: build catch-all panel drop-site
           //
           UI_Key catchall_drop_site_key = ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panel->cfg);
-          if(build_panel && rd_drag_is_active() && rd_state->drag_drop_regs_slot == RD_RegSlot_View) UI_Rect(panel_rect)
+          if(build_panel && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View) UI_Rect(panel_rect)
           {
             UI_Box *catchall_drop_site = ui_build_box_from_key(UI_BoxFlag_DropSite, catchall_drop_site_key);
             ui_signal_from_box(catchall_drop_site);
@@ -4587,7 +4579,7 @@ rd_window_frame(void)
             UI_Box *view_drop_site = &ui_nil_box;
             {
               RD_ViewUIRule *view_ui_rule = rd_view_ui_rule_from_string(selected_tab->string);
-              if(view_ui_rule != &rd_nil_view_ui_rule && rd_drag_is_active() && rd_state->drag_drop_regs_slot == RD_RegSlot_Expr &&
+              if(view_ui_rule != &rd_nil_view_ui_rule && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_Expr &&
                  !str8_match(selected_tab->string, str8_lit("text"), 0) &&
                  !str8_match(selected_tab->string, str8_lit("disasm"), 0))
               {
@@ -4824,7 +4816,7 @@ rd_window_frame(void)
                 
                 // rjf: choose palette
                 B32 omit_name = 0;
-                if(rd_drag_is_active() && rd_state->drag_drop_regs->view == tab->id && rd_state->drag_drop_regs_slot == RD_RegSlot_View)
+                if(rd_drag_is_active() && rd_state->drag_drop_regs->view == tab->id && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View)
                 {
                   omit_name = 1;
                 }
@@ -4927,7 +4919,7 @@ rd_window_frame(void)
                     }
                     else if(ui_dragging(sig) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
                     {
-                      rd_drag_begin(RD_RegSlot_View);
+                      rd_drag_begin(UIShell_ContextRegSlot_View);
                     }
                     else if(ui_right_clicked(sig))
                     {
@@ -4952,7 +4944,7 @@ rd_window_frame(void)
               // to visualize where tab will be moved once dropped
               if(tab_drop_is_active &&
                  rd_drag_is_active() &&
-                 rd_state->drag_drop_regs_slot == RD_RegSlot_View &&
+                 rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
                  tab == tab_drop_prev)
               {
                 // rjf: begin vertical region for this spot
@@ -5055,7 +5047,7 @@ rd_window_frame(void)
           //////////////////////////
           //- rjf: accept tab drops
           //
-          if(tab_drop_is_active && rd_drag_drop() && rd_state->drag_drop_regs_slot == RD_RegSlot_View)
+          if(tab_drop_is_active && rd_drag_drop() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View)
           {
             rd_cmd_name("move_view",
                    .dst_panel = panel->cfg->id,
@@ -6200,14 +6192,14 @@ uishell_pop_regs(void)
 }
 
 internal void
-rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 string)
+uishell_regs_fill_slot_from_string(UIShell_ContextRegSlot slot, String8 query_expr, String8 string)
 {
   switch(slot)
   {
     //- rjf: basic string cases
     default:
-    case RD_RegSlot_String:
-    case RD_RegSlot_FilePath:
+    case UIShell_ContextRegSlot_String:
+    case UIShell_ContextRegSlot_FilePath:
     {
       String8TxtPtPair pair = str8_txt_pt_pair_from_string(string);
       uishell_regs()->string = push_str8_copy(rd_frame_arena(), string);
@@ -6217,11 +6209,11 @@ rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 strin
         uishell_regs()->cursor = pair.pt;
       }
     }break;
-    case RD_RegSlot_Expr:
+    case UIShell_ContextRegSlot_Expr:
     {
       uishell_regs()->expr = push_str8_copy(rd_frame_arena(), string);
     }break;
-    case RD_RegSlot_CmdName:
+    case UIShell_ContextRegSlot_CmdName:
     {
       uishell_regs()->cmd_name = push_str8_copy(rd_frame_arena(), string);
     }break;
@@ -6229,13 +6221,13 @@ rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 strin
     //- rjf: ctrl entities
     
     //- rjf: cfgs
-    case RD_RegSlot_Cfg:
-    case RD_RegSlot_Window:
-    case RD_RegSlot_Panel:
-    case RD_RegSlot_Tab:
-    case RD_RegSlot_View:
-    case RD_RegSlot_PrevTab:
-    case RD_RegSlot_DstPanel:
+    case UIShell_ContextRegSlot_Cfg:
+    case UIShell_ContextRegSlot_Window:
+    case UIShell_ContextRegSlot_Panel:
+    case UIShell_ContextRegSlot_Tab:
+    case UIShell_ContextRegSlot_View:
+    case UIShell_ContextRegSlot_PrevTab:
+    case UIShell_ContextRegSlot_DstPanel:
     {
       B32 good = 0;
       if(!good && str8_match(str8_prefix(string, 1), str8_lit("$"), 0))
@@ -6287,7 +6279,7 @@ rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 strin
     }break;
     
     //- rjf: line numbers
-    case RD_RegSlot_Cursor:
+    case UIShell_ContextRegSlot_Cursor:
     {
       E_Eval eval = e_value_eval_from_eval(e_eval_from_string(string));
       if(eval.msgs.max_kind == E_MsgKind_Null)
@@ -6300,7 +6292,7 @@ rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 strin
         log_user_errorf("Couldn't interpret \"`%S`\" as a line number.", string);
       }
     }break;
-    case RD_RegSlot_Vaddr: goto use_numeric_eval;
+    case UIShell_ContextRegSlot_Vaddr: goto use_numeric_eval;
     use_numeric_eval:
     {
       E_Eval eval = e_eval_from_string(string);
@@ -6908,7 +6900,7 @@ rd_frame(void)
   else
   {
     rd_state->hover_regs = push_array(rd_frame_arena(), UIShell_Regs, 1);
-    rd_state->hover_regs_slot = RD_RegSlot_Null;
+    rd_state->hover_regs_slot = UIShell_ContextRegSlot_Null;
   }
   B32 allow_text_hotkeys = !rd_state->text_edit_mode;
   rd_state->text_edit_mode = 0;

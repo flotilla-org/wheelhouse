@@ -140,44 +140,44 @@ struct RD_AutocompCursorInfo
 };
 
 ////////////////////////////////
-//~ rjf: Compatibility Types + Generated Code
+//~ rjf: Shell Context Register Types
 
-typedef enum RD_RegSlot
+typedef enum UIShell_ContextRegSlot
 {
-  RD_RegSlot_Null,
-  RD_RegSlot_Window,
-  RD_RegSlot_Panel,
-  RD_RegSlot_Tab,
-  RD_RegSlot_View,
-  RD_RegSlot_PrevTab,
-  RD_RegSlot_DstPanel,
-  RD_RegSlot_Cfg,
-  RD_RegSlot_CfgList,
-  RD_RegSlot_FilePath,
-  RD_RegSlot_Cursor,
-  RD_RegSlot_Mark,
-  RD_RegSlot_TextKey,
-  RD_RegSlot_LangKind,
-  RD_RegSlot_Vaddr,
-  RD_RegSlot_Expr,
-  RD_RegSlot_UIKey,
-  RD_RegSlot_OffPx,
-  RD_RegSlot_RegSlot,
-  RD_RegSlot_ForceConfirm,
-  RD_RegSlot_ForceFocus,
-  RD_RegSlot_DoImplicitRoot,
-  RD_RegSlot_DoLister,
-  RD_RegSlot_DoBigRows,
-  RD_RegSlot_NonGraphical,
-  RD_RegSlot_PreferNewTab,
-  RD_RegSlot_ActivateWithSingleClick,
-  RD_RegSlot_Dir2,
-  RD_RegSlot_String,
-  RD_RegSlot_CmdName,
-  RD_RegSlot_WMEvent,
-  RD_RegSlot_COUNT,
+  UIShell_ContextRegSlot_Null,
+  UIShell_ContextRegSlot_Window,
+  UIShell_ContextRegSlot_Panel,
+  UIShell_ContextRegSlot_Tab,
+  UIShell_ContextRegSlot_View,
+  UIShell_ContextRegSlot_PrevTab,
+  UIShell_ContextRegSlot_DstPanel,
+  UIShell_ContextRegSlot_Cfg,
+  UIShell_ContextRegSlot_CfgList,
+  UIShell_ContextRegSlot_FilePath,
+  UIShell_ContextRegSlot_Cursor,
+  UIShell_ContextRegSlot_Mark,
+  UIShell_ContextRegSlot_TextKey,
+  UIShell_ContextRegSlot_LangKind,
+  UIShell_ContextRegSlot_Vaddr,
+  UIShell_ContextRegSlot_Expr,
+  UIShell_ContextRegSlot_UIKey,
+  UIShell_ContextRegSlot_OffPx,
+  UIShell_ContextRegSlot_RegSlot,
+  UIShell_ContextRegSlot_ForceConfirm,
+  UIShell_ContextRegSlot_ForceFocus,
+  UIShell_ContextRegSlot_DoImplicitRoot,
+  UIShell_ContextRegSlot_DoLister,
+  UIShell_ContextRegSlot_DoBigRows,
+  UIShell_ContextRegSlot_NonGraphical,
+  UIShell_ContextRegSlot_PreferNewTab,
+  UIShell_ContextRegSlot_ActivateWithSingleClick,
+  UIShell_ContextRegSlot_Dir2,
+  UIShell_ContextRegSlot_String,
+  UIShell_ContextRegSlot_CmdName,
+  UIShell_ContextRegSlot_WMEvent,
+  UIShell_ContextRegSlot_COUNT,
 }
-RD_RegSlot;
+UIShell_ContextRegSlot;
 
 typedef struct UIShell_Regs UIShell_Regs;
 struct UIShell_Regs
@@ -199,7 +199,7 @@ struct UIShell_Regs
   String8 expr;
   UI_Key ui_key;
   Vec2F32 off_px;
-  RD_RegSlot reg_slot;
+  UIShell_ContextRegSlot reg_slot;
   B32 force_confirm;
   B32 force_focus;
   B32 do_implicit_root;
@@ -648,9 +648,9 @@ struct RD_State
   
   // rjf: contextual hover info
   UIShell_Regs *hover_regs;
-  RD_RegSlot hover_regs_slot;
+  UIShell_ContextRegSlot hover_regs_slot;
   UIShell_Regs *next_hover_regs;
-  RD_RegSlot next_hover_regs_slot;
+  UIShell_ContextRegSlot next_hover_regs_slot;
   
   // rjf: icon texture
   R_Handle icon_texture;
@@ -662,7 +662,7 @@ struct RD_State
   // rjf: drag/drop state
   Arena *drag_drop_arena;
   UIShell_Regs *drag_drop_regs;
-  RD_RegSlot drag_drop_regs_slot;
+  UIShell_ContextRegSlot drag_drop_regs_slot;
   RD_DragDropState drag_drop_state;
   
   // rjf: cfg state
@@ -763,11 +763,11 @@ internal B32 rd_view_name_is_listed_in_app(String8 name);
 //~ rjf: Global Cross-Window UI Interaction State Functions
 
 internal B32 rd_drag_is_active(void);
-internal void rd_drag_begin(RD_RegSlot slot);
+internal void rd_drag_begin(UIShell_ContextRegSlot slot);
 internal B32 rd_drag_drop(void);
 internal void rd_drag_kill(void);
 
-internal void rd_set_hover_regs(RD_RegSlot slot);
+internal void rd_set_hover_regs(UIShell_ContextRegSlot slot);
 
 ////////////////////////////////
 //~ rjf: Config Functions
@@ -946,14 +946,14 @@ internal UIShell_Regs *uishell_push_regs_(UIShell_Regs *regs);
 #define uishell_push_regs(...) uishell_push_regs_(&(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
 internal UIShell_Regs *uishell_pop_regs(void);
 #define UIShell_RegsScope(...) DeferLoop(uishell_push_regs(__VA_ARGS__), uishell_pop_regs())
-internal void rd_regs_fill_slot_from_string(RD_RegSlot slot, String8 query_expr, String8 string);
+internal void uishell_regs_fill_slot_from_string(UIShell_ContextRegSlot slot, String8 query_expr, String8 string);
 
 ////////////////////////////////
 //~ rjf: Commands
 
 //- rjf: name -> info
 internal RD_AppCmdInfo rd_app_cmd_info_from_string(String8 string);
-internal RD_RegSlot rd_reg_slot_from_app_reg_slot(UIShell_AppRegSlot slot);
+internal UIShell_ContextRegSlot uishell_context_reg_slot_from_app_reg_slot(UIShell_AppRegSlot slot);
 
 //- rjf: pushing
 internal void rd_push_stored_cmd(String8 name, UIShell_Regs *regs);

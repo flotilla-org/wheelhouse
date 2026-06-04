@@ -249,6 +249,8 @@ Thirty-third slice: command and autocompletion packets no longer use the tempora
 
 Thirty-fourth slice: the `RD_Regs` compatibility alias is gone from source. The live stack node now stores `UIShell_Regs` directly, and source scans show no remaining `RD_Regs`, `RD_CmdRegs`, `rd_regs()`, or `rd_base_regs()` references.
 
+Thirty-fifth slice: the live/context register slot enum now uses shell names. `RD_RegSlot` became `UIShell_ContextRegSlot`, query completion fills slots through `uishell_regs_fill_slot_from_string`, and app/query slot conversion now returns `UIShell_ContextRegSlot`. Source scans show no remaining active `RD_RegSlot` or old slot-fill helper names.
+
 The current source split is:
 
 - `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
@@ -303,7 +305,7 @@ Removed:
 1. The local `raddbg` product build target has been removed. Keep `~/dev/raddebugger` as the reference.
 2. Split shell metadata/registers from `raddbg/generated/raddbg.meta.*`.
    - Done for active command info, command flags, default bindings, menus, schemas, vocabulary, binding-version remaps, fixed-tab policy, view listing, app register-slot lookup, and generated register initializer usage.
-   - `RD_Regs` and `RD_AppRegSlot` are gone from source. The remaining register compatibility surface is the temporary `RD_RegSlot` live/context slot enum and slot-fill helper naming.
+   - `RD_Regs`, `RD_AppRegSlot`, and `RD_RegSlot` are gone from source. Remaining register cleanup is now about inherited `rd_*` command/window/widget scaffolding names, not debugger-shaped register storage.
    - Remaining generated RAD metadata is the shared icon/code-color/theme/font/app-icon data.
 3. Split or drop `app_ui_tables` from shell. Done for the active shell unity build.
    - The inactive local source has been removed; use the original RAD repository as reference if needed.

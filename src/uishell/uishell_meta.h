@@ -166,50 +166,50 @@ read_only global UIShell_AppRegSlotInfo uishell_app_reg_slot_info_table[UIShell_
 };
 
 internal UIShell_AppRegSlot
-uishell_app_reg_slot_from_rd_reg_slot(RD_RegSlot slot)
+uishell_app_reg_slot_from_context_reg_slot(UIShell_ContextRegSlot slot)
 {
   UIShell_AppRegSlot result = UIShell_AppRegSlot_Null;
   switch(slot)
   {
     default: break;
-    case RD_RegSlot_Window:                  {result = UIShell_AppRegSlot_Window;}break;
-    case RD_RegSlot_Panel:                   {result = UIShell_AppRegSlot_Panel;}break;
-    case RD_RegSlot_Tab:                     {result = UIShell_AppRegSlot_Tab;}break;
-    case RD_RegSlot_View:                    {result = UIShell_AppRegSlot_View;}break;
-    case RD_RegSlot_PrevTab:                 {result = UIShell_AppRegSlot_PrevTab;}break;
-    case RD_RegSlot_DstPanel:                {result = UIShell_AppRegSlot_DstPanel;}break;
-    case RD_RegSlot_Cfg:                     {result = UIShell_AppRegSlot_Cfg;}break;
-    case RD_RegSlot_CfgList:                 {result = UIShell_AppRegSlot_CfgList;}break;
-    case RD_RegSlot_FilePath:                {result = UIShell_AppRegSlot_FilePath;}break;
-    case RD_RegSlot_Cursor:                  {result = UIShell_AppRegSlot_Cursor;}break;
-    case RD_RegSlot_Mark:                    {result = UIShell_AppRegSlot_Mark;}break;
-    case RD_RegSlot_TextKey:                 {result = UIShell_AppRegSlot_TextKey;}break;
-    case RD_RegSlot_LangKind:                {result = UIShell_AppRegSlot_LangKind;}break;
-    case RD_RegSlot_Vaddr:                   {result = UIShell_AppRegSlot_Vaddr;}break;
-    case RD_RegSlot_Expr:                    {result = UIShell_AppRegSlot_Expr;}break;
-    case RD_RegSlot_UIKey:                   {result = UIShell_AppRegSlot_UIKey;}break;
-    case RD_RegSlot_OffPx:                   {result = UIShell_AppRegSlot_OffPx;}break;
-    case RD_RegSlot_RegSlot:                 {result = UIShell_AppRegSlot_RegSlot;}break;
-    case RD_RegSlot_ForceConfirm:            {result = UIShell_AppRegSlot_ForceConfirm;}break;
-    case RD_RegSlot_ForceFocus:              {result = UIShell_AppRegSlot_ForceFocus;}break;
-    case RD_RegSlot_DoImplicitRoot:          {result = UIShell_AppRegSlot_DoImplicitRoot;}break;
-    case RD_RegSlot_DoLister:                {result = UIShell_AppRegSlot_DoLister;}break;
-    case RD_RegSlot_DoBigRows:               {result = UIShell_AppRegSlot_DoBigRows;}break;
-    case RD_RegSlot_NonGraphical:            {result = UIShell_AppRegSlot_NonGraphical;}break;
-    case RD_RegSlot_PreferNewTab:            {result = UIShell_AppRegSlot_PreferNewTab;}break;
-    case RD_RegSlot_ActivateWithSingleClick: {result = UIShell_AppRegSlot_ActivateWithSingleClick;}break;
-    case RD_RegSlot_Dir2:                    {result = UIShell_AppRegSlot_Dir2;}break;
-    case RD_RegSlot_String:                  {result = UIShell_AppRegSlot_String;}break;
-    case RD_RegSlot_CmdName:                 {result = UIShell_AppRegSlot_CmdName;}break;
-    case RD_RegSlot_WMEvent:                 {result = UIShell_AppRegSlot_WMEvent;}break;
+    case UIShell_ContextRegSlot_Window:                  {result = UIShell_AppRegSlot_Window;}break;
+    case UIShell_ContextRegSlot_Panel:                   {result = UIShell_AppRegSlot_Panel;}break;
+    case UIShell_ContextRegSlot_Tab:                     {result = UIShell_AppRegSlot_Tab;}break;
+    case UIShell_ContextRegSlot_View:                    {result = UIShell_AppRegSlot_View;}break;
+    case UIShell_ContextRegSlot_PrevTab:                 {result = UIShell_AppRegSlot_PrevTab;}break;
+    case UIShell_ContextRegSlot_DstPanel:                {result = UIShell_AppRegSlot_DstPanel;}break;
+    case UIShell_ContextRegSlot_Cfg:                     {result = UIShell_AppRegSlot_Cfg;}break;
+    case UIShell_ContextRegSlot_CfgList:                 {result = UIShell_AppRegSlot_CfgList;}break;
+    case UIShell_ContextRegSlot_FilePath:                {result = UIShell_AppRegSlot_FilePath;}break;
+    case UIShell_ContextRegSlot_Cursor:                  {result = UIShell_AppRegSlot_Cursor;}break;
+    case UIShell_ContextRegSlot_Mark:                    {result = UIShell_AppRegSlot_Mark;}break;
+    case UIShell_ContextRegSlot_TextKey:                 {result = UIShell_AppRegSlot_TextKey;}break;
+    case UIShell_ContextRegSlot_LangKind:                {result = UIShell_AppRegSlot_LangKind;}break;
+    case UIShell_ContextRegSlot_Vaddr:                   {result = UIShell_AppRegSlot_Vaddr;}break;
+    case UIShell_ContextRegSlot_Expr:                    {result = UIShell_AppRegSlot_Expr;}break;
+    case UIShell_ContextRegSlot_UIKey:                   {result = UIShell_AppRegSlot_UIKey;}break;
+    case UIShell_ContextRegSlot_OffPx:                   {result = UIShell_AppRegSlot_OffPx;}break;
+    case UIShell_ContextRegSlot_RegSlot:                 {result = UIShell_AppRegSlot_RegSlot;}break;
+    case UIShell_ContextRegSlot_ForceConfirm:            {result = UIShell_AppRegSlot_ForceConfirm;}break;
+    case UIShell_ContextRegSlot_ForceFocus:              {result = UIShell_AppRegSlot_ForceFocus;}break;
+    case UIShell_ContextRegSlot_DoImplicitRoot:          {result = UIShell_AppRegSlot_DoImplicitRoot;}break;
+    case UIShell_ContextRegSlot_DoLister:                {result = UIShell_AppRegSlot_DoLister;}break;
+    case UIShell_ContextRegSlot_DoBigRows:               {result = UIShell_AppRegSlot_DoBigRows;}break;
+    case UIShell_ContextRegSlot_NonGraphical:            {result = UIShell_AppRegSlot_NonGraphical;}break;
+    case UIShell_ContextRegSlot_PreferNewTab:            {result = UIShell_AppRegSlot_PreferNewTab;}break;
+    case UIShell_ContextRegSlot_ActivateWithSingleClick: {result = UIShell_AppRegSlot_ActivateWithSingleClick;}break;
+    case UIShell_ContextRegSlot_Dir2:                    {result = UIShell_AppRegSlot_Dir2;}break;
+    case UIShell_ContextRegSlot_String:                  {result = UIShell_AppRegSlot_String;}break;
+    case UIShell_ContextRegSlot_CmdName:                 {result = UIShell_AppRegSlot_CmdName;}break;
+    case UIShell_ContextRegSlot_WMEvent:                 {result = UIShell_AppRegSlot_WMEvent;}break;
   }
   return result;
 }
 
 internal String8
-uishell_reg_slot_code_name_from_rd_reg_slot(RD_RegSlot slot)
+uishell_context_reg_slot_code_name(UIShell_ContextRegSlot slot)
 {
-  UIShell_AppRegSlot app_slot = uishell_app_reg_slot_from_rd_reg_slot(slot);
+  UIShell_AppRegSlot app_slot = uishell_app_reg_slot_from_context_reg_slot(slot);
   String8 result = {0};
   if(app_slot < UIShell_AppRegSlot_COUNT)
   {

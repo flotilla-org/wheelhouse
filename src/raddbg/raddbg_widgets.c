@@ -945,7 +945,7 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
   UI_Key drop_site_key = ui_key_from_stringf(top_container_box->key, "drop_site");
   if(rd_drag_is_active())
   {
-    if(rd_state->drag_drop_regs_slot == RD_RegSlot_Expr)
+    if(rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_Expr)
     {
       drop_can_hit_lines = 1;
     }
@@ -1232,7 +1232,7 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
     //- rjf: drop target is dropped -> process
     if(drop_can_hit_lines && ui_key_match(ui_drop_hot_key(), drop_site_key) && rd_drag_drop())
     {
-      if(rd_state->drag_drop_regs_slot == RD_RegSlot_Expr)
+      if(rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_Expr)
       {
       }
     }
