@@ -3000,7 +3000,13 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     cleat_provider_desc provider_desc =
     {
       .abi_version = CLEAT_PROVIDER_ABI_VERSION,
+#if UISHELL_USE_CLEAT_PROVIDER
+      .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT,
+      .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS,
+#else
+      .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS,
       .backend = CLEAT_PROVIDER_BACKEND_MOCK,
+#endif
     };
     tv->provider = cleat_provider_open(&provider_desc);
     cleat_session_desc session_desc =
@@ -3009,11 +3015,16 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       .rows = rows,
       .cell_width_px = cell_width_px,
       .cell_height_px = cell_height_px,
+#if UISHELL_USE_CLEAT_PROVIDER
+      .vt_engine = CLEAT_PROVIDER_VT_GHOSTTY,
+#else
       .vt_engine = CLEAT_PROVIDER_VT_DEFAULT,
+#endif
     };
     tv->session = cleat_session_create(tv->provider, &session_desc);
   }
-  if(tv->cols != cols || tv->rows != rows)
+  B32 session_ready = (tv->provider != 0 && tv->session != 0);
+  if(session_ready && (tv->cols != cols || tv->rows != rows))
   {
     tv->cols = cols;
     tv->rows = rows;
@@ -3032,7 +3043,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     canvas_box = ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground, str8_lit("terminal_canvas"));
   }
   UI_Signal canvas_sig = ui_signal_from_box(canvas_box);
-  if(ui_pressed(canvas_sig))
+  if(session_ready && ui_pressed(canvas_sig))
   {
     uishell_cmd("focus_panel");
     Vec2F32 mouse = ui_mouse();
@@ -3060,7 +3071,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       for(UI_Event *evt = 0; ui_next_event(&evt);)
       {
         B32 taken = 0;
-        if((evt->kind == UI_EventKind_Edit ||
+        if(session_ready &&
+           (evt->kind == UI_EventKind_Edit ||
             evt->kind == UI_EventKind_Navigate ||
             evt->kind == UI_EventKind_Text) &&
            evt->delta_2s32.y == 0)
@@ -3097,7 +3109,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
             }
           }
         }
-        else if(evt->kind == UI_EventKind_Press &&
+        else if(session_ready &&
+                evt->kind == UI_EventKind_Press &&
                 evt->key != WM_Key_LeftMouseButton &&
                 evt->key != WM_Key_MiddleMouseButton &&
                 evt->key != WM_Key_RightMouseButton)
@@ -3118,7 +3131,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
             taken = 1;
           }
         }
-        else if(evt->kind == UI_EventKind_Scroll)
+        else if(session_ready && evt->kind == UI_EventKind_Scroll)
         {
           cleat_input_event input =
           {
@@ -3137,17 +3150,24 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         }
       }
     }
-    
-    cleat_snapshot snapshot = {0};
-    if(cleat_session_snapshot(tv->session, &snapshot))
+
+    if(!session_ready)
     {
-      DR_Bucket *terminal_bucket = dr_bucket_make();
-      DR_BucketScope(terminal_bucket)
+      UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f)) ui_label(str8_lit("terminal provider unavailable"));
+    }
+    else
+    {
+      cleat_snapshot snapshot = {0};
+      if(cleat_session_snapshot(tv->session, &snapshot))
       {
-        uishell_terminal_draw_snapshot(scratch.arena, canvas_box, &snapshot, cell_font, cell_font_raster_flags, cell_font_size, cell_width_px, cell_height_px);
+        DR_Bucket *terminal_bucket = dr_bucket_make();
+        DR_BucketScope(terminal_bucket)
+        {
+          uishell_terminal_draw_snapshot(scratch.arena, canvas_box, &snapshot, cell_font, cell_font_raster_flags, cell_font_size, cell_width_px, cell_height_px);
+        }
+        ui_box_equip_draw_bucket(canvas_box, terminal_bucket);
+        cleat_session_release_snapshot(tv->session, &snapshot);
       }
-      ui_box_equip_draw_bucket(canvas_box, terminal_bucket);
-      cleat_session_release_snapshot(tv->session, &snapshot);
     }
   }
   

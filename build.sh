@@ -1,6 +1,7 @@
 #!/bin/bash
 set -eu
 cd "$(dirname "$0")"
+repo_root="$(pwd)"
 
 # --- Unpack Arguments --------------------------------------------------------
 for arg in "$@"; do declare $arg='1'; done
@@ -13,6 +14,24 @@ if [ -n "${gcc+x}" ];     then compiler="${CC:-gcc}"; echo "[gcc compile]"; fi
 
 # --- Unpack Command Line Build Arguments -------------------------------------
 auto_compile_flags=''
+cleat_link=''
+
+if [ -n "${cleat+x}" ]; then
+  cleat_dir="${UISHELL_CLEAT_DIR:-$repo_root/../cleat}"
+  cleat_features="${UISHELL_CLEAT_FEATURES:-ghostty-vt}"
+  cleat_profile="debug"
+  cleat_profile_flags=""
+  if [ -n "${release+x}" ]; then
+    cleat_profile="release"
+    cleat_profile_flags="--release"
+  fi
+  cleat_target_dir="${UISHELL_CLEAT_TARGET_DIR:-$cleat_dir/target}"
+  cleat_lib_dir="$cleat_target_dir/$cleat_profile"
+  echo "[cleat provider: $cleat_dir]"
+  (cd "$cleat_dir" && cargo build -p cleat --locked $cleat_profile_flags --features "$cleat_features")
+  auto_compile_flags="$auto_compile_flags -DUISHELL_USE_CLEAT_PROVIDER=1 -I$cleat_dir/crates/cleat/include"
+  cleat_link="-L$cleat_lib_dir -lcleat -Wl,-rpath,$cleat_lib_dir"
+fi
 
 # --- Get Current Git Commit Id -----------------------------------------------
 git_hash=$(git describe --always --dirty 2>/dev/null || echo unknown)
@@ -87,8 +106,8 @@ sign_app_debug()
     codesign --force --sign "$codesign_identity" --entitlements "$codesign_entitlements" "$1"
   fi
 }
-if [ -n "${uishell+x}" ];             then didbuild=1 && $compile ../src/uishell/uishell_main.c                                  $compile_link $link_os_gfx $link_render $link_font_provider $out uishell; sign_app_debug uishell; fi
-if [ -n "${bundle+x}" ];              then didbuild=1; if [ "$host_os" != "Darwin" ]; then echo "[ERROR] bundle target is only supported on Darwin."; exit 1; fi; $compile ../src/uishell/uishell_main.c $compile_link $link_os_gfx $link_render $link_font_provider $out uishell; sign_app_debug uishell; rm -rf "UI Shell.app"; mkdir -p "UI Shell.app/Contents/MacOS" "UI Shell.app/Contents/Resources"; cp ../src/mac/uishell_Info.plist "UI Shell.app/Contents/Info.plist"; cp ../src/mac/uishell.icns "UI Shell.app/Contents/Resources/uishell.icns"; cp uishell "UI Shell.app/Contents/MacOS/uishell"; chmod +x "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app"; fi
+if [ -n "${uishell+x}" ];             then didbuild=1 && $compile ../src/uishell/uishell_main.c                                  $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $out uishell; sign_app_debug uishell; fi
+if [ -n "${bundle+x}" ];              then didbuild=1; if [ "$host_os" != "Darwin" ]; then echo "[ERROR] bundle target is only supported on Darwin."; exit 1; fi; $compile ../src/uishell/uishell_main.c $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $out uishell; sign_app_debug uishell; rm -rf "UI Shell.app"; mkdir -p "UI Shell.app/Contents/MacOS" "UI Shell.app/Contents/Resources"; cp ../src/mac/uishell_Info.plist "UI Shell.app/Contents/Info.plist"; cp ../src/mac/uishell.icns "UI Shell.app/Contents/Resources/uishell.icns"; cp uishell "UI Shell.app/Contents/MacOS/uishell"; chmod +x "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app"; fi
 cd ..
 
 # --- Warn On No Builds -------------------------------------------------------

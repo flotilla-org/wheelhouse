@@ -1,10 +1,45 @@
 #ifndef UISHELL_TERMINAL_PROVIDER_H
 #define UISHELL_TERMINAL_PROVIDER_H
 
+#if !defined(UISHELL_USE_CLEAT_PROVIDER)
+# define UISHELL_USE_CLEAT_PROVIDER 0
+#endif
+
+#if UISHELL_USE_CLEAT_PROVIDER
+
+#include "cleat_provider.h"
+
+#if !defined(CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS)
+# define CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS (1u << 0)
+# define CLEAT_PROVIDER_FEATURE_DAMAGE_ROWS (1u << 1)
+# define CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT (1u << 2)
+# define CLEAT_PROVIDER_FEATURE_IMAGE_STATE (1u << 3)
+# define CLEAT_PROVIDER_FEATURE_REMOTE_TARGETS (1u << 4)
+#endif
+
+#if !defined(CLEAT_CELL_FLAG_BOLD)
+# define CLEAT_CELL_FLAG_BOLD (1u << 0)
+# define CLEAT_CELL_FLAG_ITALIC (1u << 1)
+# define CLEAT_CELL_FLAG_FAINT (1u << 2)
+# define CLEAT_CELL_FLAG_BLINK (1u << 3)
+# define CLEAT_CELL_FLAG_INVERSE (1u << 4)
+# define CLEAT_CELL_FLAG_INVISIBLE (1u << 5)
+# define CLEAT_CELL_FLAG_STRIKETHROUGH (1u << 6)
+# define CLEAT_CELL_FLAG_OVERLINE (1u << 7)
+# define CLEAT_CELL_FLAG_UNDERLINE (1u << 8)
+#endif
+
+#else
+
 #define CLEAT_PROVIDER_ABI_VERSION 1u
 #define CLEAT_PROVIDER_BACKEND_MOCK 0u
 #define CLEAT_PROVIDER_BACKEND_IN_PROCESS 1u
 #define CLEAT_PROVIDER_BACKEND_DAEMON 2u
+#define CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS (1u << 0)
+#define CLEAT_PROVIDER_FEATURE_DAMAGE_ROWS (1u << 1)
+#define CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT (1u << 2)
+#define CLEAT_PROVIDER_FEATURE_IMAGE_STATE (1u << 3)
+#define CLEAT_PROVIDER_FEATURE_REMOTE_TARGETS (1u << 4)
 #define CLEAT_PROVIDER_VT_DEFAULT 0u
 #define CLEAT_PROVIDER_VT_PASSTHROUGH 1u
 #define CLEAT_PROVIDER_VT_GHOSTTY 2u
@@ -147,5 +182,7 @@ internal B32 cleat_session_write_bytes(cleat_session *session, U8 const *bytes, 
 internal cleat_dirty_state cleat_session_dirty(cleat_session const *session);
 internal B32 cleat_session_snapshot(cleat_session *session, cleat_snapshot *out);
 internal void cleat_session_release_snapshot(cleat_session *session, cleat_snapshot *snapshot);
+
+#endif
 
 #endif // UISHELL_TERMINAL_PROVIDER_H
