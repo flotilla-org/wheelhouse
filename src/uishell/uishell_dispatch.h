@@ -185,7 +185,9 @@ uishell_dispatch_config_command(String8 name)
       CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
       for(CFG_NodePtrNode *n = windows.first; n != 0; n = n->next)
       {
-        CFG_PanelTree panels = cfg_panel_tree_from_cfg(scratch.arena, n->v);
+        UIShell_ControlledSplit root_controlled_split = uishell_root_controlled_split_from_window(scratch.arena, n->v);
+        UIShell_WorkspaceMount *workspace_mount = uishell_controlled_split_selected_mount(&root_controlled_split);
+        CFG_PanelTree panels = workspace_mount->panel_tree;
         for(CFG_PanelNode *panel = panels.root; panel != &cfg_nil_panel_node; panel = cfg_panel_node_rec__depth_first_pre(panels.root, panel).next)
         {
           if(rd_cfg_is_project_filtered(panel->selected_tab))

@@ -338,11 +338,14 @@ uishell_app_file_menu_specs(void)
 internal void
 uishell_reset_panels(CFG_Node *window)
 {
-  CFG_Node *old_panels = cfg_node_child_from_string(window, str8_lit("panels"));
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_window(scratch.arena, window);
+  CFG_Node *panels_owner = workspace_mount.owner_cfg;
+  CFG_Node *old_panels = cfg_node_child_from_string(panels_owner, str8_lit("panels"));
   cfg_node_release(rd_state->cfg, old_panels);
-  cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("split_x"));
+  cfg_node_child_from_string_or_alloc(rd_state->cfg, panels_owner, str8_lit("split_x"));
   
-  CFG_Node *panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
+  CFG_Node *panels = cfg_node_new(rd_state->cfg, panels_owner, str8_lit("panels"));
   CFG_Node *main_panel = cfg_node_new(rd_state->cfg, panels, str8_lit("0.72"));
   CFG_Node *side_panel = cfg_node_new(rd_state->cfg, panels, str8_lit("0.28"));
   
@@ -355,6 +358,7 @@ uishell_reset_panels(CFG_Node *window)
   {
     ws->window_layout_reset = 1;
   }
+  scratch_end(scratch);
 }
 
 #define UISHELL_APP_RESET_PANELS(window) uishell_reset_panels(window)

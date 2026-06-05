@@ -140,10 +140,15 @@ internal UI_BOX_CUSTOM_DRAW(ui_line_edit_draw)
   FNT_Tag font = box->font;
   F32 font_size = box->font_size;
   F32 tab_size = box->tab_size;
+  F32 focus_active_t = 0;
+  for(UI_Box *p = box; !ui_box_is_nil(p); p = p->parent)
+  {
+    focus_active_t = Max(focus_active_t, p->focus_active_t);
+  }
   Vec4F32 cursor_color = ui_color_from_tags_key_name(box->tags_key, str8_lit("cursor"));
-  cursor_color.w *= box->parent->parent->focus_active_t;
+  cursor_color.w *= focus_active_t;
   Vec4F32 select_color = ui_color_from_tags_key_name(box->tags_key, str8_lit("selection"));
-  select_color.w *= (box->parent->parent->focus_active_t*0.2f + 0.8f);
+  select_color.w *= (focus_active_t*0.2f + 0.8f);
   Vec4F32 trail_color = cursor_color;
   trail_color.w *= 0.25f;
   Vec2F32 text_position = ui_box_text_position(box);

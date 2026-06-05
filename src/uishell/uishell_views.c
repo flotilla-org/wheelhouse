@@ -1689,7 +1689,8 @@ uishell_watch_view_ui(Rng2F32 rect)
                     {
                       if(cfg != &cfg_nil_node)
                       {
-                        CFG_PanelTree panels = cfg_panel_tree_from_cfg(scratch.arena, cfg);
+                        UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, cfg);
+                        CFG_PanelTree panels = workspace_mount.panel_tree;
                         CFG_PanelNode *parent_panel_node = cfg_panel_node_from_tree_cfg(panels.root, cfg->parent);
                         if(parent_panel_node != &cfg_nil_panel_node)
                         {

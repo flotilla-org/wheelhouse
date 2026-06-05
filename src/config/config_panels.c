@@ -17,18 +17,16 @@ cfg_window_from_cfg(CFG_Node *cfg)
 }
 
 internal CFG_PanelTree
-cfg_panel_tree_from_cfg(Arena *arena, CFG_Node *cfg_root)
+cfg_panel_tree_from_panels_cfg(Arena *arena, CFG_Node *panels_root, Axis2 root_split_axis)
 {
   Temp scratch = scratch_begin(&arena, 1);
-  CFG_Node *wcfg = cfg_window_from_cfg(cfg_root);
-  CFG_Node *src_root = cfg_node_child_from_string(wcfg, str8_lit("panels"));
   CFG_PanelNode *dst_root = &cfg_nil_panel_node;
   CFG_PanelNode *dst_focused = &cfg_nil_panel_node;
   {
-    Axis2 active_split_axis = cfg_node_child_from_string(wcfg, str8_lit("split_x")) != &cfg_nil_node ? Axis2_X : Axis2_Y;
+    Axis2 active_split_axis = root_split_axis;
     CFG_NodeRec rec = {0};
     CFG_PanelNode *dst_active_parent = &cfg_nil_panel_node;
-    for(CFG_Node *src = src_root; src != &cfg_nil_node; src = rec.next)
+    for(CFG_Node *src = panels_root; src != &cfg_nil_node; src = rec.next)
     {
       // rjf: build a panel node
       CFG_PanelNode *dst = push_array(arena, CFG_PanelNode, 1);
@@ -47,7 +45,7 @@ cfg_panel_tree_from_cfg(Arena *arena, CFG_Node *cfg_root)
       // rjf: extract cfg info
       B32 panel_has_children = 0;
       dst->cfg = src;
-      dst->pct_of_parent = (src == src_root ? 1.f : (F32)f64_from_str8(src->string));
+      dst->pct_of_parent = (src == panels_root ? 1.f : (F32)f64_from_str8(src->string));
       dst->tab_side = (cfg_node_child_from_string(src, str8_lit("tabs_on_bottom")) != &cfg_nil_node ? Side_Max : Side_Min);
       dst->split_axis = active_split_axis;
       for(CFG_Node *src_child = src->first; src_child != &cfg_nil_node; src_child = src_child->next)
@@ -76,12 +74,12 @@ cfg_panel_tree_from_cfg(Arena *arena, CFG_Node *cfg_root)
       }
       
       // rjf: recurse
-      rec = cfg_node_rec__depth_first(src_root, src);
+      rec = cfg_node_rec__depth_first(panels_root, src);
       if(!panel_has_children)
       {
         MemoryZeroStruct(&rec);
         rec.next = &cfg_nil_node;
-        for(CFG_Node *p = src; p != src_root && p != &cfg_nil_node; p = p->parent, rec.pop_count += 1)
+        for(CFG_Node *p = src; p != panels_root && p != &cfg_nil_node; p = p->parent, rec.pop_count += 1)
         {
           if(p->next != &cfg_nil_node)
           {
@@ -104,6 +102,16 @@ cfg_panel_tree_from_cfg(Arena *arena, CFG_Node *cfg_root)
   }
   scratch_end(scratch);
   CFG_PanelTree tree = {dst_root, dst_focused};
+  return tree;
+}
+
+internal CFG_PanelTree
+cfg_panel_tree_from_cfg(Arena *arena, CFG_Node *cfg_root)
+{
+  CFG_Node *wcfg = cfg_window_from_cfg(cfg_root);
+  CFG_Node *panels_root = cfg_node_child_from_string(wcfg, str8_lit("panels"));
+  Axis2 root_split_axis = cfg_node_child_from_string(wcfg, str8_lit("split_x")) != &cfg_nil_node ? Axis2_X : Axis2_Y;
+  CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(arena, panels_root, root_split_axis);
   return tree;
 }
 

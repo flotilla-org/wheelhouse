@@ -56,6 +56,7 @@ read_only global CFG_PanelNode cfg_nil_panel_node =
 };
 
 internal CFG_Node *cfg_window_from_cfg(CFG_Node *cfg);
+internal CFG_PanelTree cfg_panel_tree_from_panels_cfg(Arena *arena, CFG_Node *panels_root, Axis2 root_split_axis);
 internal CFG_PanelTree cfg_panel_tree_from_cfg(Arena *arena, CFG_Node *cfg_root);
 internal CFG_PanelNodeRec cfg_panel_node_rec__depth_first(CFG_PanelNode *root, CFG_PanelNode *panel, U64 sib_off, U64 child_off);
 #define cfg_panel_node_rec__depth_first_pre(root, p)     cfg_panel_node_rec__depth_first((root), (p), OffsetOf(CFG_PanelNode, next), OffsetOf(CFG_PanelNode, first))

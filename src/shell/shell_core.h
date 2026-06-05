@@ -529,6 +529,15 @@ struct RD_WindowState
   B32 menu_bar_key_held;
   B32 menu_bar_focus_press_started;
 
+  // rjf: root controlled split runtime state
+  B32 root_controlled_split_initialized;
+  CFG_ID root_controlled_split_selected_workspace_id;
+  CFG_ID root_controlled_split_renaming_workspace_id;
+  U8 root_controlled_split_rename_buffer[256];
+  U64 root_controlled_split_rename_size;
+  TxtPt root_controlled_split_rename_cursor;
+  TxtPt root_controlled_split_rename_mark;
+
   // rjf: drop-completion state
   Arena *drop_completion_arena;
   CFG_ID drop_completion_panel;
@@ -775,6 +784,46 @@ global CFG_ID rd_last_drag_drop_panel = 0;
 global CFG_ID rd_last_drag_drop_prev_tab = 0;
 
 ////////////////////////////////
+//~ rjf: Workspace Runtime Types
+
+typedef struct UIShell_WorkspaceMount UIShell_WorkspaceMount;
+struct UIShell_WorkspaceMount
+{
+  CFG_Node *owner_cfg;
+  CFG_Node *window_cfg;
+  CFG_Node *workspace_cfg;
+  CFG_Node *panels_root;
+  Axis2 root_split_axis;
+  CFG_PanelTree panel_tree;
+};
+
+typedef struct UIShell_MaterializedWorkspace UIShell_MaterializedWorkspace;
+struct UIShell_MaterializedWorkspace
+{
+  UIShell_MaterializedWorkspace *next;
+  UIShell_MaterializedWorkspace *prev;
+  CFG_ID id;
+  String8 display_name;
+  UIShell_WorkspaceMount mount;
+};
+
+typedef struct UIShell_MaterializedWorkspaceInventory UIShell_MaterializedWorkspaceInventory;
+struct UIShell_MaterializedWorkspaceInventory
+{
+  UIShell_MaterializedWorkspace *first;
+  UIShell_MaterializedWorkspace *last;
+  UIShell_MaterializedWorkspace *selected;
+  U64 count;
+};
+
+typedef struct UIShell_ControlledSplit UIShell_ControlledSplit;
+struct UIShell_ControlledSplit
+{
+  CFG_Node *owner_cfg;
+  UIShell_MaterializedWorkspaceInventory inventory;
+};
+
+////////////////////////////////
 //~ rjf: Registers Type Functions
 
 internal void uishell_regs_copy_contents(Arena *arena, UIShell_Regs *dst, UIShell_Regs *src);
@@ -910,8 +959,18 @@ internal void rd_store_view_paramf(String8 key, char *fmt, ...);
 
 internal String8 rd_push_window_title(Arena *arena);
 internal CFG_Node *rd_window_from_cfg(CFG_Node *cfg);
+internal RD_WindowState *rd_window_state_from_cfg__existing(CFG_Node *cfg);
 internal RD_WindowState *rd_window_state_from_cfg(CFG_Node *cfg);
 internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);
+internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);
+internal UIShell_WorkspaceMount uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner);
+internal UIShell_WorkspaceMount uishell_workspace_mount_from_window(Arena *arena, CFG_Node *window);
+internal UIShell_WorkspaceMount uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg);
+internal UIShell_WorkspaceMount uishell_workspace_mount_from_current_regs(Arena *arena);
+internal UIShell_ControlledSplit uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window);
+internal UIShell_WorkspaceMount *uishell_controlled_split_selected_mount(UIShell_ControlledSplit *split);
+internal Rng2F32 uishell_controlled_split_control_rect(UIShell_ControlledSplit *split, Rng2F32 rect);
+internal Rng2F32 uishell_controlled_split_workspace_rect(UIShell_ControlledSplit *split, Rng2F32 rect);
 internal void rd_window_frame(void);
 
 ////////////////////////////////
