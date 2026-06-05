@@ -2619,6 +2619,13 @@ uishell_terminal_rgba_from_rgb(cleat_rgb rgb)
   return result;
 }
 
+internal B32
+uishell_terminal_rgb_match(cleat_rgb a, cleat_rgb b)
+{
+  B32 result = (a.r == b.r && a.g == b.g && a.b == b.b);
+  return result;
+}
+
 internal String8
 uishell_terminal_string_from_cell(Arena *arena, cleat_cell const *cell)
 {
@@ -2630,6 +2637,103 @@ uishell_terminal_string_from_cell(Arena *arena, cleat_cell const *cell)
   }
   String8 result = str8(buffer, size);
   return result;
+}
+
+internal void
+uishell_terminal_draw_snapshot(Arena *arena, UI_Box *box, cleat_snapshot *snapshot, FNT_Tag font, FNT_RasterFlags raster_flags, F32 font_size, F32 cell_width_px, F32 cell_height_px)
+{
+  if(snapshot->cells != 0 && snapshot->cols != 0 && snapshot->rows != 0)
+  {
+    FNT_Metrics font_metrics = fnt_metrics_from_tag_size(font, font_size);
+    U64 expected_cell_count = (U64)snapshot->cols*(U64)snapshot->rows;
+    U64 cell_count = Min(snapshot->cell_count, expected_cell_count);
+    Rng2F32 canvas_rect = box->rect;
+    dr_rect(canvas_rect, v4f32(0.015f, 0.015f, 0.014f, 1.f), 0, 0, 0);
+
+    for(U64 row_idx = 0; row_idx < snapshot->rows; row_idx += 1)
+    {
+      F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
+      F32 row_y1 = ceil_f32(canvas_rect.y0 + (F32)(row_idx + 1)*cell_height_px);
+      if(row_y0 >= canvas_rect.y1 || row_y1 <= canvas_rect.y0)
+      {
+        continue;
+      }
+
+      for(U64 col_start = 0; col_start < snapshot->cols;)
+      {
+        U64 cell_idx = row_idx*(U64)snapshot->cols + col_start;
+        if(cell_idx >= cell_count)
+        {
+          break;
+        }
+        cleat_cell const *cell = &snapshot->cells[cell_idx];
+        cleat_rgb bg = cell->bg;
+        B32 cursor_cell = (snapshot->cursor.visible &&
+                           snapshot->cursor.row == row_idx &&
+                           snapshot->cursor.col == col_start);
+        if(cursor_cell)
+        {
+          bg = cell->fg;
+        }
+        U64 col_opl = col_start + 1;
+        for(; col_opl < snapshot->cols; col_opl += 1)
+        {
+          U64 run_cell_idx = row_idx*(U64)snapshot->cols + col_opl;
+          if(run_cell_idx >= cell_count)
+          {
+            break;
+          }
+          cleat_cell const *run_cell = &snapshot->cells[run_cell_idx];
+          cleat_rgb run_bg = run_cell->bg;
+          B32 run_cursor_cell = (snapshot->cursor.visible &&
+                                 snapshot->cursor.row == row_idx &&
+                                 snapshot->cursor.col == col_opl);
+          if(run_cursor_cell)
+          {
+            run_bg = run_cell->fg;
+          }
+          if(!uishell_terminal_rgb_match(run_bg, bg))
+          {
+            break;
+          }
+        }
+
+        F32 x0 = floor_f32(canvas_rect.x0 + (F32)col_start*cell_width_px);
+        F32 x1 = ceil_f32(canvas_rect.x0 + (F32)col_opl*cell_width_px);
+        dr_rect(r2f32p(x0, row_y0, x1, row_y1), uishell_terminal_rgba_from_rgb(bg), 0, 0, 0);
+        col_start = col_opl;
+      }
+
+      F32 text_y = floor_f32((row_y0 + row_y1)/2.f + font_metrics.ascent/2.f - font_metrics.descent/2.f);
+      for(U64 col_idx = 0; col_idx < snapshot->cols; col_idx += 1)
+      {
+        U64 cell_idx = row_idx*(U64)snapshot->cols + col_idx;
+        if(cell_idx >= cell_count)
+        {
+          break;
+        }
+        cleat_cell const *cell = &snapshot->cells[cell_idx];
+        if(cell->grapheme_count != 0)
+        {
+          String8 string = uishell_terminal_string_from_cell(arena, cell);
+          if(!(string.size == 1 && string.str[0] == ' '))
+          {
+            cleat_rgb fg = cell->fg;
+            if(snapshot->cursor.visible && snapshot->cursor.row == row_idx && snapshot->cursor.col == col_idx)
+            {
+              fg = cell->bg;
+            }
+            Vec2F32 text_pos =
+            {
+              floor_f32(canvas_rect.x0 + (F32)col_idx*cell_width_px),
+              text_y,
+            };
+            dr_text(font, font_size, 0, 0, raster_flags, text_pos, uishell_terminal_rgba_from_rgb(fg), string);
+          }
+        }
+      }
+    }
+  }
 }
 
 internal B32
@@ -2766,7 +2870,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   {
     ui_set_next_pref_width(ui_pct(1.f, 0.f));
     ui_set_next_pref_height(ui_pct(1.f, 0.f));
-    canvas_box = ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder, str8_lit("terminal_canvas"));
+    canvas_box = ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground, str8_lit("terminal_canvas"));
   }
   UI_Signal canvas_sig = ui_signal_from_box(canvas_box);
   if(ui_pressed(canvas_sig))
@@ -2878,40 +2982,12 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     cleat_snapshot snapshot = {0};
     if(cleat_session_snapshot(tv->session, &snapshot))
     {
-      UI_PrefWidth(ui_px(cell_width_px*(F32)snapshot.cols, 1.f))
-        UI_PrefHeight(ui_px(cell_height_px, 1.f))
-        UI_TextPadding(0)
-        UI_TextAlignment(UI_TextAlign_Left)
-        UI_Column
+      DR_Bucket *terminal_bucket = dr_bucket_make();
+      DR_BucketScope(terminal_bucket)
       {
-        for(U64 row_idx = 0; row_idx < snapshot.rows; row_idx += 1)
-        {
-          UI_PrefHeight(ui_px(cell_height_px, 1.f)) UI_Row
-          {
-            for(U64 col_idx = 0; col_idx < snapshot.cols; col_idx += 1)
-            {
-              U64 cell_idx = row_idx*(U64)snapshot.cols + col_idx;
-              cleat_cell const *cell = &snapshot.cells[cell_idx];
-              Vec4F32 bg = uishell_terminal_rgba_from_rgb(cell->bg);
-              Vec4F32 fg = uishell_terminal_rgba_from_rgb(cell->fg);
-              if(snapshot.cursor.visible && snapshot.cursor.row == row_idx && snapshot.cursor.col == col_idx)
-              {
-                Vec4F32 swap = fg;
-                fg = bg;
-                bg = swap;
-              }
-              UI_PrefWidth(ui_px(cell_width_px, 1.f))
-                UI_PrefHeight(ui_px(cell_height_px, 1.f))
-                UI_BackgroundColor(bg)
-                UI_TextColor(fg)
-              {
-                UI_Box *cell_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc, "###terminal_cell_%I64u_%I64u", row_idx, col_idx);
-                ui_box_equip_display_string(cell_box, uishell_terminal_string_from_cell(scratch.arena, cell));
-              }
-            }
-          }
-        }
+        uishell_terminal_draw_snapshot(scratch.arena, canvas_box, &snapshot, cell_font, cell_font_raster_flags, cell_font_size, cell_width_px, cell_height_px);
       }
+      ui_box_equip_draw_bucket(canvas_box, terminal_bucket);
       cleat_session_release_snapshot(tv->session, &snapshot);
     }
   }
