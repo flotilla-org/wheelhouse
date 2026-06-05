@@ -4529,8 +4529,7 @@ rd_window_frame(void)
             {
               RD_ViewUIRule *view_ui_rule = rd_view_ui_rule_from_string(selected_tab->string);
               if(view_ui_rule != &rd_nil_view_ui_rule && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_Expr &&
-                 !str8_match(selected_tab->string, str8_lit("text"), 0) &&
-                 !str8_match(selected_tab->string, str8_lit("disasm"), 0))
+                 !str8_match(selected_tab->string, str8_lit("text"), 0))
               {
                 UI_FixedSize(dim_2f32(content_rect))
                   view_drop_site = ui_build_box_from_stringf(UI_BoxFlag_DropSite|UI_BoxFlag_Floating, "drop_site_%I64x", selected_tab->id);
@@ -7413,8 +7412,7 @@ rd_frame(void)
         B32 is_individually_evallable = 0;
         for(MD_NodePtrNode *n = schemas.first; n != 0; n = n->next)
         {
-          if(md_node_has_child(n->v, str8_lit("label"), 0) ||
-             md_node_has_child(n->v, str8_lit("executable"), 0))
+          if(md_node_has_child(n->v, str8_lit("label"), 0))
           {
             is_individually_evallable = 1;
             break;
@@ -7552,10 +7550,10 @@ rd_frame(void)
         }
         table[] =
         {
-          {rd_state->user_cfg_string_key, str8_lit("raddbg_user_data")},
-          {rd_state->project_cfg_string_key, str8_lit("raddbg_project_data")},
-          {rd_state->cmdln_cfg_string_key, str8_lit("raddbg_command_line_data")},
-          {rd_state->transient_cfg_string_key, str8_lit("raddbg_transient_data")},
+          {rd_state->user_cfg_string_key, str8_lit("uishell_user_data")},
+          {rd_state->project_cfg_string_key, str8_lit("uishell_project_data")},
+          {rd_state->cmdln_cfg_string_key, str8_lit("uishell_command_line_data")},
+          {rd_state->transient_cfg_string_key, str8_lit("uishell_transient_data")},
         };
         for EachElement(idx, table)
         {

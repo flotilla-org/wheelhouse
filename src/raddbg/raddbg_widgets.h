@@ -157,7 +157,6 @@ internal UI_Signal rd_icon_buttonf(RD_IconKind kind, FuzzyMatchRangeList *matche
 //~ rjf: UI Widgets: Text View
 
 internal UI_BOX_CUSTOM_DRAW(rd_code_slice_text_draw_extensions);
-internal UI_BOX_CUSTOM_DRAW(rd_thread_box_draw_extensions);
 internal RD_CodeSliceSignal rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *preferred_column, String8 string);
 internal RD_CodeSliceSignal rd_code_slicef(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *preferred_column, char *fmt, ...);
 
