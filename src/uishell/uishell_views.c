@@ -18,8 +18,8 @@ typedef struct UIShell_TerminalViewState UIShell_TerminalViewState;
 struct UIShell_TerminalViewState
 {
   B32 initialized;
-  UIShell_TerminalProvider *provider;
-  UIShell_TerminalSession *session;
+  cleat_provider *provider;
+  cleat_session *session;
   U16 cols;
   U16 rows;
 };
@@ -2613,14 +2613,14 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
 //~ rjf: Terminal View
 
 internal Vec4F32
-uishell_terminal_rgba_from_rgb(UIShell_TerminalRGB rgb)
+uishell_terminal_rgba_from_rgb(cleat_rgb rgb)
 {
   Vec4F32 result = linear_from_srgba(v4f32((F32)rgb.r/255.f, (F32)rgb.g/255.f, (F32)rgb.b/255.f, 1.f));
   return result;
 }
 
 internal String8
-uishell_terminal_string_from_cell(Arena *arena, UIShell_TerminalCell *cell)
+uishell_terminal_string_from_cell(Arena *arena, cleat_cell const *cell)
 {
   U8 *buffer = push_array(arena, U8, cell->grapheme_count*4 + 1);
   U64 size = 0;
@@ -2629,6 +2629,33 @@ uishell_terminal_string_from_cell(Arena *arena, UIShell_TerminalCell *cell)
     size += utf8_encode(buffer + size, cell->graphemes[idx]);
   }
   String8 result = str8(buffer, size);
+  return result;
+}
+
+internal B32
+uishell_terminal_cleat_key_from_wm_key(WM_Key key, U32 *kind_out, U32 *code_out)
+{
+  B32 result = 1;
+  U32 kind = CLEAT_KEY_NAMED;
+  U32 code = 0;
+  switch(key)
+  {
+    default:{result = 0;}break;
+    case WM_Key_Return:{code = CLEAT_KEY_ENTER;}break;
+    case WM_Key_Esc:{code = CLEAT_KEY_ESCAPE;}break;
+    case WM_Key_Backspace:{code = CLEAT_KEY_BACKSPACE;}break;
+    case WM_Key_Tab:{code = CLEAT_KEY_TAB;}break;
+    case WM_Key_Delete:{code = CLEAT_KEY_DELETE;}break;
+    case WM_Key_Up:{code = CLEAT_KEY_ARROW_UP;}break;
+    case WM_Key_Down:{code = CLEAT_KEY_ARROW_DOWN;}break;
+    case WM_Key_Left:{code = CLEAT_KEY_ARROW_LEFT;}break;
+    case WM_Key_Right:{code = CLEAT_KEY_ARROW_RIGHT;}break;
+  }
+  if(result)
+  {
+    *kind_out = kind;
+    *code_out = code;
+  }
   return result;
 }
 
@@ -2707,24 +2734,27 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   if(!tv->initialized)
   {
     tv->initialized = 1;
-    Arena *provider_arena = rd_push_view_arena();
-    Arena *session_arena = rd_push_view_arena();
-    UIShell_TerminalProviderDesc provider_desc = {0};
-    tv->provider = uishell_terminal_mock_provider_open(provider_arena, &provider_desc);
-    UIShell_TerminalSessionDesc session_desc =
+    cleat_provider_desc provider_desc =
+    {
+      .abi_version = CLEAT_PROVIDER_ABI_VERSION,
+      .backend = CLEAT_PROVIDER_BACKEND_MOCK,
+    };
+    tv->provider = cleat_provider_open(&provider_desc);
+    cleat_session_desc session_desc =
     {
       .cols = cols,
       .rows = rows,
       .cell_width_px = cell_width_px,
       .cell_height_px = cell_height_px,
+      .vt_engine = CLEAT_PROVIDER_VT_DEFAULT,
     };
-    tv->session = uishell_terminal_session_create(session_arena, tv->provider, &session_desc);
+    tv->session = cleat_session_create(tv->provider, &session_desc);
   }
   if(tv->cols != cols || tv->rows != rows)
   {
     tv->cols = cols;
     tv->rows = rows;
-    uishell_terminal_session_resize(tv->session, cols, rows, cell_width_px, cell_height_px);
+    cleat_session_resize(tv->session, cols, rows, cell_width_px, cell_height_px);
   }
   
   UI_Box *canvas_box = &ui_nil_box;
@@ -2743,15 +2773,15 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   {
     uishell_cmd("focus_panel");
     Vec2F32 mouse = ui_mouse();
-    UIShell_TerminalInputEvent input =
+    cleat_input_event input =
     {
-      .kind = UIShell_TerminalInputKind_Mouse,
+      .kind = CLEAT_INPUT_MOUSE,
       .cell_col = (U16)Clamp(0, (S32)((mouse.x-canvas_box->rect.x0)/cell_width_px), (S32)(cols-1)),
       .cell_row = (U16)Clamp(0, (S32)((mouse.y-canvas_box->rect.y0)/cell_height_px), (S32)(rows-1)),
       .x_px = mouse.x-canvas_box->rect.x0,
       .y_px = mouse.y-canvas_box->rect.y0,
     };
-    uishell_terminal_session_send_input(tv->session, &input);
+    cleat_session_send_input(tv->session, &input);
   }
   
   UI_Parent(canvas_box)
@@ -2774,27 +2804,32 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         {
           if(evt->kind == UI_EventKind_Text || evt->flags & UI_EventFlag_Paste)
           {
-            UIShell_TerminalInputEvent input =
+            String8 text = (evt->flags & UI_EventFlag_Paste) ? wm_get_clipboard_text(scratch.arena) : evt->string;
+            cleat_input_event input =
             {
-              .kind = (evt->flags & UI_EventFlag_Paste) ? UIShell_TerminalInputKind_Paste : UIShell_TerminalInputKind_Text,
-              .modifiers = evt->modifiers,
-              .text = (evt->flags & UI_EventFlag_Paste) ? wm_get_clipboard_text(scratch.arena) : evt->string,
+              .kind = (evt->flags & UI_EventFlag_Paste) ? CLEAT_INPUT_PASTE : CLEAT_INPUT_TEXT,
+              .modifiers = (U16)evt->modifiers,
+              .text = text.str,
+              .text_len = text.size,
             };
-            uishell_terminal_session_send_input(tv->session, &input);
+            cleat_session_send_input(tv->session, &input);
             taken = 1;
           }
           else if(evt->kind == UI_EventKind_Edit || evt->kind == UI_EventKind_Navigate)
           {
             WM_Key key = uishell_terminal_key_from_ui_event(evt);
-            UIShell_TerminalInputEvent input =
+            U32 key_kind = 0;
+            U32 key_code = 0;
+            if(uishell_terminal_cleat_key_from_wm_key(key, &key_kind, &key_code))
             {
-              .kind = UIShell_TerminalInputKind_Key,
-              .modifiers = evt->modifiers,
-              .key = key,
-            };
-            if(key != WM_Key_Null)
-            {
-              uishell_terminal_session_send_input(tv->session, &input);
+              cleat_input_event input =
+              {
+                .kind = CLEAT_INPUT_KEY,
+                .modifiers = (U16)evt->modifiers,
+                .key_kind = key_kind,
+                .key_code = key_code,
+              };
+              cleat_session_send_input(tv->session, &input);
               taken = 1;
             }
           }
@@ -2805,28 +2840,31 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
                 evt->key != WM_Key_RightMouseButton)
         {
           WM_Key key = uishell_terminal_key_from_ui_event(evt);
-          UIShell_TerminalInputEvent input =
+          U32 key_kind = 0;
+          U32 key_code = 0;
+          if(uishell_terminal_cleat_key_from_wm_key(key, &key_kind, &key_code))
           {
-            .kind = UIShell_TerminalInputKind_Key,
-            .modifiers = evt->modifiers,
-            .key = key,
-          };
-          if(key != WM_Key_Null)
-          {
-            uishell_terminal_session_send_input(tv->session, &input);
+            cleat_input_event input =
+            {
+              .kind = CLEAT_INPUT_KEY,
+              .modifiers = (U16)evt->modifiers,
+              .key_kind = key_kind,
+              .key_code = key_code,
+            };
+            cleat_session_send_input(tv->session, &input);
             taken = 1;
           }
         }
         else if(evt->kind == UI_EventKind_Scroll)
         {
-          UIShell_TerminalInputEvent input =
+          cleat_input_event input =
           {
-            .kind = UIShell_TerminalInputKind_Mouse,
-            .modifiers = evt->modifiers,
+            .kind = CLEAT_INPUT_MOUSE,
+            .modifiers = (U16)evt->modifiers,
             .wheel_delta_x = evt->delta_2f32.x,
             .wheel_delta_y = evt->delta_2f32.y,
           };
-          uishell_terminal_session_send_input(tv->session, &input);
+          cleat_session_send_input(tv->session, &input);
           taken = 1;
         }
         if(taken)
@@ -2837,8 +2875,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       }
     }
     
-    UIShell_TerminalSnapshot snapshot = {0};
-    if(uishell_terminal_session_snapshot(tv->session, &snapshot))
+    cleat_snapshot snapshot = {0};
+    if(cleat_session_snapshot(tv->session, &snapshot))
     {
       UI_PrefWidth(ui_px(cell_width_px*(F32)snapshot.cols, 1.f))
         UI_PrefHeight(ui_px(cell_height_px, 1.f))
@@ -2853,7 +2891,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
             for(U64 col_idx = 0; col_idx < snapshot.cols; col_idx += 1)
             {
               U64 cell_idx = row_idx*(U64)snapshot.cols + col_idx;
-              UIShell_TerminalCell *cell = &snapshot.cells[cell_idx];
+              cleat_cell const *cell = &snapshot.cells[cell_idx];
               Vec4F32 bg = uishell_terminal_rgba_from_rgb(cell->bg);
               Vec4F32 fg = uishell_terminal_rgba_from_rgb(cell->fg);
               if(snapshot.cursor.visible && snapshot.cursor.row == row_idx && snapshot.cursor.col == col_idx)
@@ -2874,7 +2912,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           }
         }
       }
-      uishell_terminal_session_release_snapshot(tv->session, &snapshot);
+      cleat_session_release_snapshot(tv->session, &snapshot);
     }
   }
   
