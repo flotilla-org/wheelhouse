@@ -251,6 +251,8 @@ Thirty-fourth slice: the `RD_Regs` compatibility alias is gone from source. The 
 
 Thirty-fifth slice: the live/context register slot enum now uses shell names. `RD_RegSlot` became `UIShell_ContextRegSlot`, query completion fills slots through `uishell_regs_fill_slot_from_string`, and app/query slot conversion now returns `UIShell_ContextRegSlot`. Source scans show no remaining active `RD_RegSlot` or old slot-fill helper names.
 
+Thirty-sixth slice: the shell unity no longer directly includes `x64/x64.*` or `arm64/arm64.*`. `Arch` enums still come from `base`, and `arch`/`rdi_local` keep their guarded architecture-register hooks, but the shell target no longer defines `X64_H` or `ARM64_H`, so the generated x64/ARM64 register metadata and RDI register-code mapping tables are not compiled into `uishell`. This does not delete the source directories yet; the remaining dependency cleanup is the evaluator/RDI/arch split.
+
 Thirty-sixth slice: command/query flag metadata now uses shell names at the shared boundary. `RD_QueryFlags`, `RD_CmdKindFlags`, and the `rd_*_from_uishell_*_flags` adapter helpers are gone from source. `UIShell_AppCmdInfo` stores `UIShell_QueryFlags` and `UIShell_CmdFlags` directly, and command filtering compares shell flags without remapping.
 
 Thirty-seventh slice: app command info now uses shell names. `RD_AppCmdInfo` became `UIShell_AppCmdInfo`, and `rd_app_cmd_info_from_string` became `uishell_app_cmd_info_from_string`. Source scans show no remaining active `RD_AppCmdInfo` references.
