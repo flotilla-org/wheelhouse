@@ -63,6 +63,7 @@ wm_string_list_from_modifiers(Arena *arena, WM_Modifiers modifiers)
   if(modifiers & WM_Modifier_Ctrl)  { str8_list_push(arena, &result, str8_lit("Ctrl")); }
   if(modifiers & WM_Modifier_Shift) { str8_list_push(arena, &result, str8_lit("Shift")); }
   if(modifiers & WM_Modifier_Alt)   { str8_list_push(arena, &result, str8_lit("Alt")); }
+  if(modifiers & WM_Modifier_Super) { str8_list_push(arena, &result, str8_lit("Super")); }
   return result;
 }
 

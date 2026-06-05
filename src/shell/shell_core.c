@@ -7725,6 +7725,7 @@ rd_frame(void)
         if(event->modifiers & WM_Modifier_Ctrl)  { cfg_node_new(rd_state->cfg, binding, str8_lit("ctrl")); }
         if(event->modifiers & WM_Modifier_Shift) { cfg_node_new(rd_state->cfg, binding, str8_lit("shift")); }
         if(event->modifiers & WM_Modifier_Alt)   { cfg_node_new(rd_state->cfg, binding, str8_lit("alt")); }
+        if(event->modifiers & WM_Modifier_Super) { cfg_node_new(rd_state->cfg, binding, str8_lit("super")); }
         U32 codepoint = wm_codepoint_from_modifiers_and_key(event->modifiers, event->key);
         wm_text(&events, event->window, codepoint);
         wm_eat_event(&events, event);

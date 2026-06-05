@@ -449,6 +449,7 @@ wm_get_events(Arena *arena, B32 wait)
         if(evt.xkey.state & ShiftMask)   { modifiers |= WM_Modifier_Shift; }
         if(evt.xkey.state & ControlMask) { modifiers |= WM_Modifier_Ctrl; }
         if(evt.xkey.state & Mod1Mask)    { modifiers |= WM_Modifier_Alt; }
+        if(evt.xkey.state & Mod4Mask)    { modifiers |= WM_Modifier_Super; }
         
         // rjf: map keycode -> keysym & codepoint
         LNX_WM_Window *window = lnx_window_from_x11window(evt.xkey.window);
@@ -566,6 +567,7 @@ wm_get_events(Arena *arena, B32 wait)
         if(evt.xbutton.state & ShiftMask)   { modifiers |= WM_Modifier_Shift; }
         if(evt.xbutton.state & ControlMask) { modifiers |= WM_Modifier_Ctrl; }
         if(evt.xbutton.state & Mod1Mask)    { modifiers |= WM_Modifier_Alt; }
+        if(evt.xbutton.state & Mod4Mask)    { modifiers |= WM_Modifier_Super; }
         
         // rjf: map button -> WM_Key
         WM_Key key = WM_Key_Null;

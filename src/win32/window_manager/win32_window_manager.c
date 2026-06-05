@@ -1566,6 +1566,10 @@ wm_get_modifiers(void)
   {
     modifiers |= WM_Modifier_Alt;
   }
+  if((GetKeyState(VK_LWIN) & 0x8000) || (GetKeyState(VK_RWIN) & 0x8000))
+  {
+    modifiers |= WM_Modifier_Super;
+  }
   return modifiers;
 }
 

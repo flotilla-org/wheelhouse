@@ -1677,6 +1677,7 @@ uishell_dispatch_window_command(String8 name)
           if(binding.modifiers & WM_Modifier_Ctrl)  {cfg_node_newf(rd_state->cfg, binding_root, "ctrl");}
           if(binding.modifiers & WM_Modifier_Shift) {cfg_node_newf(rd_state->cfg, binding_root, "shift");}
           if(binding.modifiers & WM_Modifier_Alt)   {cfg_node_newf(rd_state->cfg, binding_root, "alt");}
+          if(binding.modifiers & WM_Modifier_Super) {cfg_node_newf(rd_state->cfg, binding_root, "super");}
         }
       }
     }

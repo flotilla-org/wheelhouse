@@ -495,9 +495,10 @@ internal WM_Modifiers
 mac_wm_modifiers_from_ns_flags(NSEventModifierFlags flags)
 {
   WM_Modifiers result = 0;
-  if(flags & (NSEventModifierFlagControl|NSEventModifierFlagCommand)) { result |= WM_Modifier_Ctrl; }
+  if(flags & NSEventModifierFlagControl) { result |= WM_Modifier_Ctrl; }
   if(flags & NSEventModifierFlagShift) { result |= WM_Modifier_Shift; }
   if(flags & NSEventModifierFlagOption) { result |= WM_Modifier_Alt; }
+  if(flags & NSEventModifierFlagCommand) { result |= WM_Modifier_Super; }
   return result;
 }
 

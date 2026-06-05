@@ -188,24 +188,24 @@ uishell_app_reg_slot_from_query_reg_slot(UIShell_RegSlot slot)
 
 read_only global UIShell_DefaultBinding uishell_app_config_default_binding_table[] =
 {
-  UISHELL_BIND("new_project", N, WM_Modifier_Ctrl|WM_Modifier_Shift),
-  UISHELL_BIND("open_project", O, WM_Modifier_Ctrl|WM_Modifier_Shift),
-  UISHELL_BIND("save_project", S, WM_Modifier_Ctrl|WM_Modifier_Shift),
+  UISHELL_BIND("new_project", N, WM_Modifier_Accel|WM_Modifier_Shift),
+  UISHELL_BIND("open_project", O, WM_Modifier_Accel|WM_Modifier_Shift),
+  UISHELL_BIND("save_project", S, WM_Modifier_Accel|WM_Modifier_Shift),
 };
 
 read_only global UIShell_DefaultBinding uishell_app_file_default_binding_table[] =
 {
-  UISHELL_BIND("open", O, WM_Modifier_Ctrl),
+  UISHELL_BIND("open", O, WM_Modifier_Accel),
 };
 
 read_only global UIShell_DefaultBinding uishell_app_viewer_default_binding_table[] =
 {
-  UISHELL_BIND("goto_line", G, WM_Modifier_Ctrl),
+  UISHELL_BIND("goto_line", G, WM_Modifier_Accel),
   UISHELL_BIND("goto_address", G, WM_Modifier_Alt),
-  UISHELL_BIND("search", F, WM_Modifier_Ctrl),
-  UISHELL_BIND("search_backwards", R, WM_Modifier_Ctrl),
+  UISHELL_BIND("search", F, WM_Modifier_Accel),
+  UISHELL_BIND("search_backwards", R, WM_Modifier_Accel),
   UISHELL_BIND("find_next", F3, 0),
-  UISHELL_BIND("find_prev", F3, WM_Modifier_Ctrl),
+  UISHELL_BIND("find_prev", F3, WM_Modifier_Accel),
 };
 
 #define UISHELL_CMD_PACK_BINDING_FUNCTIONS(prefix, table) \

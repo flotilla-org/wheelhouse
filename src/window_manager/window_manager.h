@@ -136,7 +136,14 @@ enum
   WM_Modifier_Ctrl  = (1<<0),
   WM_Modifier_Shift = (1<<1),
   WM_Modifier_Alt   = (1<<2),
+  WM_Modifier_Super = (1<<3),
 };
+
+#if OS_MAC
+# define WM_Modifier_Accel WM_Modifier_Super
+#else
+# define WM_Modifier_Accel WM_Modifier_Ctrl
+#endif
 
 typedef struct WM_Event WM_Event;
 struct WM_Event
