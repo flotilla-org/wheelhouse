@@ -11,44 +11,6 @@ arch_info_from_arch(Arch arch)
   switch(arch)
   {
     default:{}break;
-#if defined(X64_H)
-    case Arch_x64:
-    {
-      local_persist U8 trap_inst_bytes[] = {0xcc};
-      local_persist read_only ARCH_Info info =
-      {
-        .reg_block_size                  = sizeof(X64_RegBlock),
-        .instruction_pointer_reg_code    = X64_RegCode_rip,
-        .stack_pointer_reg_code          = X64_RegCode_rsp,
-        .reg_code_count                  = X64_RegCode_COUNT,
-        .trap_instruction                = {trap_inst_bytes, sizeof(trap_inst_bytes)},
-        .reg_code_rng_table              = x64_reg_code_rng_table,
-        .reg_code_name_table             = x64_reg_code_name_table,
-        .reg_code_base_table             = x64_reg_code_base_table,
-        .reg_code_is_vector_table        = x64_reg_code_is_vector_table,
-      };
-      result = &info;
-    }break;
-#endif
-#if defined(ARM64_H)
-    case Arch_arm64:
-    {
-      local_persist U8 trap_inst_bytes[] = {0x00, 0x00, 0x20, 0xd4};
-      local_persist read_only ARCH_Info info =
-      {
-        .reg_block_size                  = sizeof(ARM64_RegBlock),
-        .instruction_pointer_reg_code    = ARM64_RegCode_pc,
-        .stack_pointer_reg_code          = ARM64_RegCode_sp,
-        .reg_code_count                  = ARM64_RegCode_COUNT,
-        .trap_instruction                = {trap_inst_bytes, sizeof(trap_inst_bytes)},
-        .reg_code_rng_table              = arm64_reg_code_rng_table,
-        .reg_code_name_table             = arm64_reg_code_name_table,
-        .reg_code_base_table             = arm64_reg_code_base_table,
-        .reg_code_is_vector_table        = arm64_reg_code_is_vector_table,
-      };
-      result = &info;
-    }break;
-#endif
   }
   return result;
 }

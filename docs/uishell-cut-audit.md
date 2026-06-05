@@ -251,11 +251,13 @@ Thirty-fourth slice: the `RD_Regs` compatibility alias is gone from source. The 
 
 Thirty-fifth slice: the live/context register slot enum now uses shell names. `RD_RegSlot` became `UIShell_ContextRegSlot`, query completion fills slots through `uishell_regs_fill_slot_from_string`, and app/query slot conversion now returns `UIShell_ContextRegSlot`. Source scans show no remaining active `RD_RegSlot` or old slot-fill helper names.
 
-Thirty-sixth slice: the shell unity no longer directly includes `x64/x64.*` or `arm64/arm64.*`. `Arch` enums still come from `base`, but the shell target no longer defines `X64_H` or `ARM64_H`, so generated x64/ARM64 register metadata is not compiled into `uishell`.
+Thirty-sixth slice: the shell unity no longer directly includes `x64/x64.*` or `arm64/arm64.*`. `Arch` enums still come from `base`, but the shell target no longer defines architecture-register metadata headers.
 
 Thirty-seventh slice: the shell unity no longer includes `rdi/rdi_local.*`. A source scan showed no active shell references to the local RDI dump/string/path helpers or `rdi_parse`, and the build passes when `src/uishell/uishell_main.c` includes only `lib_rdi/rdi.h` and `lib_rdi/rdi.c`. `lib_rdi` remains active specifically because `eval` still uses RDI eval opcodes, type groups, conversion helpers, compatibility checks, and opcode control-bit tables as its internal bytecode vocabulary.
 
 Thirty-eighth slice: the unused RDI register-code bridge has been removed from `arch`. `arch_reg_code_from_rdi` and the `arch/rdi` include hook were only connected to the now-dormant generated RDI register mapping tables; no shell code called them. With that bridge gone, `src/arch/rdi` and `src/rdi` were deleted from the shell product tree. `lib_rdi` remains, but only as the evaluator opcode/type-group library.
+
+Thirty-ninth slice: the top-level architecture register metadata directories are gone. The remaining guarded hooks to `X64_H`, `ARM64_H`, and Win32 x64 thread-context-to-register-block conversion were debugger register-block support, not shell platform/windowing support. Removing those hooks allowed deleting `src/x64`, `src/arm64`, and `src/win32/x64` while preserving the active Win32 base/window-manager shell layer.
 
 Thirty-sixth slice: command/query flag metadata now uses shell names at the shared boundary. `RD_QueryFlags`, `RD_CmdKindFlags`, and the `rd_*_from_uishell_*_flags` adapter helpers are gone from source. `UIShell_AppCmdInfo` stores `UIShell_QueryFlags` and `UIShell_CmdFlags` directly, and command filtering compares shell flags without remapping.
 
