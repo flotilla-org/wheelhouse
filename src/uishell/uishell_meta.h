@@ -13,6 +13,7 @@ internal B32
 uishell_view_name_is_listed(String8 name)
 {
   B32 result = (str8_match(name, str8_lit("text"), 0) ||
+                str8_match(name, str8_lit("terminal"), 0) ||
                 str8_match(name, str8_lit("binary"), 0));
   return result;
 }
@@ -104,6 +105,13 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@description(\"An expression to describe data which should be viewed as binary.\") 'expression': expr_string,"
     "@optional @expand_if(\"!$.auto_columns\") @default(16) @description(\"The number of byte columns to build before building a new row.\") 'num_columns': @range[1, 64] u64,"
     "@no_callee_helper @default(0) @display_name(\"Automatically Size Columns\") @description(\"Determines the number of byte columns based on the available space.\") 'auto_columns': bool,"
+    "}"
+  )},
+  {str8_lit_comp("terminal"), 1, str8_lit_comp(
+    "@inherit(tab)"
+    "x:{"
+    "@optional @description(\"The command to run when a provider is attached.\") 'command': string,"
+    "@optional @description(\"The working directory to use when a provider is attached.\") 'cwd': path,"
     "}"
   )},
   {str8_lit_comp("recent_project"), 0, str8_lit_comp("x:{'path':path, 'name':string}")},

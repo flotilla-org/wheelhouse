@@ -7,7 +7,7 @@
 #define UISHELL_META_H
 
 C_LINKAGE_BEGIN
-extern RD_VocabInfo uishell_vocab_info_table[40];
+extern RD_VocabInfo uishell_vocab_info_table[41];
 extern String8 uishell_binding_version_remap_old_name_table[5];
 extern String8 uishell_binding_version_remap_new_name_table[5];
 

@@ -88,6 +88,7 @@ read_only global UIShell_CmdInfo uishell_app_viewer_cmd_info_table[] =
   
   UISHELL_CMD("output", "Output", List, "Opens an Output tab.", "tab", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("text", "Text", FileOutline, "Opens a Text tab.", "tab,file", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
+  UISHELL_CMD("terminal", "Terminal", Machine, "Opens a Terminal tab.", "tab,terminal,shell", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("binary", "Binary", Grid, "Opens a Binary tab.", "tab,file,hex", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
 };
 

@@ -14,6 +14,21 @@ struct UIShell_BinaryViewState
   U64 mark_off;
 };
 
+typedef struct UIShell_TerminalViewState UIShell_TerminalViewState;
+struct UIShell_TerminalViewState
+{
+  B32 initialized;
+  U16 cols;
+  U16 rows;
+  U64 input_event_count;
+  U8 input_buffer[1024];
+  U64 input_size;
+  TxtPt input_cursor;
+  TxtPt input_mark;
+  U8 status_buffer[256];
+  U64 status_size;
+};
+
 internal B32
 uishell_byte_is_printable_ascii(U8 byte)
 {
@@ -1779,6 +1794,7 @@ internal void
 uishell_register_view_ui_rules(Arena *arena, RD_ViewUIRuleMap *map)
 {
   rd_view_ui_rule_map_insert(arena, map, str8_lit("text"), RD_VIEW_UI_FUNCTION_NAME(shell_text));
+  rd_view_ui_rule_map_insert(arena, map, str8_lit("terminal"), RD_VIEW_UI_FUNCTION_NAME(terminal));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("binary"), RD_VIEW_UI_FUNCTION_NAME(binary));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("bitmap"), RD_VIEW_UI_FUNCTION_NAME(bitmap));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("color"), RD_VIEW_UI_FUNCTION_NAME(color));
@@ -2595,6 +2611,196 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
   rd_store_view_param_s64(str8_lit("mark_line"), tv->mark.line);
   rd_store_view_param_s64(str8_lit("mark_column"), tv->mark.column);
   access_close(access);
+  scratch_end(scratch);
+}
+
+////////////////////////////////
+//~ rjf: Terminal View
+
+internal void
+uishell_terminal_set_status(UIShell_TerminalViewState *tv, String8 string)
+{
+  tv->status_size = Min(string.size, sizeof(tv->status_buffer));
+  MemoryCopy(tv->status_buffer, string.str, tv->status_size);
+}
+
+internal String8
+uishell_terminal_key_name(Arena *arena, WM_Key key)
+{
+  String8 result = str8_lit("Unknown");
+  if(key < WM_Key_COUNT && wm_key_display_name_table[key].size != 0)
+  {
+    result = wm_key_display_name_table[key];
+  }
+  else
+  {
+    result = push_str8f(arena, "Key %u", key);
+  }
+  return result;
+}
+
+internal void
+uishell_terminal_apply_input_op(Arena *arena, UIShell_TerminalViewState *tv, UI_Event *evt)
+{
+  String8 edit_string = str8(tv->input_buffer, tv->input_size);
+  UI_TxtOp op = ui_single_line_txt_op_from_event(arena, evt, edit_string, tv->input_cursor, tv->input_mark);
+  if(!(op.flags & UI_TxtOpFlag_Invalid))
+  {
+    if(!txt_pt_match(op.range.min, op.range.max) || op.replace.size != 0)
+    {
+      String8 new_string = ui_push_string_replace_range(arena, edit_string, r1s64(op.range.min.column, op.range.max.column), op.replace);
+      new_string.size = Min(sizeof(tv->input_buffer), new_string.size);
+      MemoryCopy(tv->input_buffer, new_string.str, new_string.size);
+      tv->input_size = new_string.size;
+    }
+    if(op.flags & UI_TxtOpFlag_Copy)
+    {
+      wm_set_clipboard_text(op.copy);
+    }
+    tv->input_cursor = op.cursor;
+    tv->input_mark = op.mark;
+  }
+}
+
+RD_VIEW_UI_FUNCTION_DEF(terminal)
+{
+  (void)eval;
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_TerminalViewState *tv = rd_view_state(UIShell_TerminalViewState);
+  if(!tv->initialized)
+  {
+    tv->initialized = 1;
+    tv->input_cursor = tv->input_mark = txt_pt(1, 1);
+    uishell_terminal_set_status(tv, str8_lit("waiting for input"));
+  }
+  
+  F32 main_font_size = rd_font_size();
+  FNT_Tag cell_font = rd_font_from_slot(RD_FontSlot_Code);
+  FNT_RasterFlags cell_font_raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Code);
+  F32 cell_font_size = main_font_size;
+  F32 cell_width_px = ClampBot(1.f, fnt_dim_from_tag_size_string(cell_font, cell_font_size, 0, 0, str8_lit("W")).x);
+  FNT_Metrics cell_font_metrics = fnt_metrics_from_tag_size(cell_font, cell_font_size);
+  F32 cell_height_px = ceil_f32(ClampBot(1.f, fnt_line_height_from_metrics(&cell_font_metrics)*1.2f));
+  Vec2F32 view_dim = dim_2f32(rect);
+  U64 cols64 = ClampBot(1, (U64)(view_dim.x/cell_width_px));
+  U64 rows64 = ClampBot(1, (U64)(view_dim.y/cell_height_px));
+  U16 cols = (U16)Min(cols64, 4096);
+  U16 rows = (U16)Min(rows64, 4096);
+  if(tv->cols != cols || tv->rows != rows)
+  {
+    tv->cols = cols;
+    tv->rows = rows;
+    uishell_terminal_set_status(tv, push_str8f(scratch.arena, "resized to %ux%u", cols, rows));
+  }
+  
+  UI_Box *canvas_box = &ui_nil_box;
+  UI_BackgroundColor(v4f32(0.015f, 0.015f, 0.014f, 1.f))
+    UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f))
+    RD_Font(RD_FontSlot_Code)
+    UI_FontSize(cell_font_size)
+    UI_TextRasterFlags(cell_font_raster_flags)
+  {
+    ui_set_next_pref_width(ui_pct(1.f, 0.f));
+    ui_set_next_pref_height(ui_pct(1.f, 0.f));
+    canvas_box = ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder, str8_lit("terminal_canvas"));
+  }
+  UI_Signal canvas_sig = ui_signal_from_box(canvas_box);
+  if(ui_pressed(canvas_sig))
+  {
+    uishell_cmd("focus_panel");
+    Vec2F32 mouse = ui_mouse();
+    S32 col = (S32)ClampBot(0, (S32)((mouse.x-canvas_box->rect.x0)/cell_width_px));
+    S32 row = (S32)ClampBot(0, (S32)((mouse.y-canvas_box->rect.y0)/cell_height_px));
+    uishell_terminal_set_status(tv, push_str8f(scratch.arena, "mouse press at %d,%d", col, row));
+    tv->input_event_count += 1;
+  }
+  
+  UI_Parent(canvas_box)
+    UI_BackgroundColor(v4f32(0.015f, 0.015f, 0.014f, 1.f))
+    UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f))
+    RD_Font(RD_FontSlot_Code)
+    UI_FontSize(cell_font_size)
+    UI_TextRasterFlags(cell_font_raster_flags)
+    UI_Focus(UI_FocusKind_On)
+  {
+    if(ui_is_focus_active())
+    {
+      for(UI_Event *evt = 0; ui_next_event(&evt);)
+      {
+        B32 taken = 0;
+        if((evt->kind == UI_EventKind_Edit ||
+            evt->kind == UI_EventKind_Navigate ||
+            evt->kind == UI_EventKind_Text) &&
+           evt->delta_2s32.y == 0)
+        {
+          uishell_terminal_apply_input_op(scratch.arena, tv, evt);
+          uishell_terminal_set_status(tv, push_str8f(scratch.arena, "input edit %I64u bytes", tv->input_size));
+          taken = 1;
+        }
+        else if(evt->kind == UI_EventKind_Press &&
+                evt->key != WM_Key_LeftMouseButton &&
+                evt->key != WM_Key_MiddleMouseButton &&
+                evt->key != WM_Key_RightMouseButton)
+        {
+          String8 key_name = uishell_terminal_key_name(scratch.arena, evt->key);
+          uishell_terminal_set_status(tv, push_str8f(scratch.arena, "key press: %S", key_name));
+          taken = 1;
+        }
+        else if(evt->kind == UI_EventKind_Scroll)
+        {
+          uishell_terminal_set_status(tv, push_str8f(scratch.arena, "scroll %.1f %.1f", evt->delta_2f32.x, evt->delta_2f32.y));
+          taken = 1;
+        }
+        if(taken)
+        {
+          ui_eat_event(evt);
+          tv->input_event_count += 1;
+          rd_request_frame();
+        }
+      }
+    }
+    
+    UI_PrefWidth(ui_px(cell_width_px*(F32)cols, 1.f))
+      UI_PrefHeight(ui_px(cell_height_px, 1.f))
+      UI_TextPadding(0)
+      UI_TextAlignment(UI_TextAlign_Left)
+      UI_Column
+    {
+      String8 input_string = str8(tv->input_buffer, tv->input_size);
+      String8 status_string = str8(tv->status_buffer, tv->status_size);
+      for(U64 row_idx = 0; row_idx < rows; row_idx += 1)
+      {
+        String8 line = str8_zero();
+        if(row_idx == 0)
+        {
+          line = push_str8f(scratch.arena, "uishell terminal");
+        }
+        else if(row_idx == 1)
+        {
+          line = push_str8f(scratch.arena, "backend: ui mock (cleat provider not attached)");
+        }
+        else if(row_idx == 2)
+        {
+          line = push_str8f(scratch.arena, "grid: %ux%u cells, %.1fx%.1f px", cols, rows, cell_width_px, cell_height_px);
+        }
+        else if(row_idx == 3)
+        {
+          line = push_str8f(scratch.arena, "$ %S_", input_string);
+        }
+        else if(row_idx == 4)
+        {
+          line = push_str8f(scratch.arena, "last event: %S", status_string);
+        }
+        else if(row_idx == 5)
+        {
+          line = push_str8f(scratch.arena, "events captured: %I64u", tv->input_event_count);
+        }
+        UI_Box *line_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc, "###terminal_line_%I64u", row_idx);
+        ui_box_equip_display_string(line_box, line);
+      }
+    }
+  }
+  
   scratch_end(scratch);
 }
 

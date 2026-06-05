@@ -40,6 +40,7 @@ UIShell_VocabTable:
   {address             addresses              "Address"                          "Addresses"               Null}
   {offset              _                      "Offset"                           _                         Null}
   {text                ""                     "Text"                             ""                        FileOutline}
+  {terminal            ""                     "Terminal"                         ""                        Machine}
   {binary              ""                     "Binary"                           ""                        Grid}
   {output              _                      "Output"                           _                         List}
   {command             _                      "Command"                          _                         Palette}
