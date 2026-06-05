@@ -2342,8 +2342,9 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
   F32 main_font_size = rd_font_size();
   F32 row_height_px = main_font_size*1.45f;
   F32 bottom_bar_height = main_font_size*2.f;
+  F32 top_margin_px = floor_f32(main_font_size*0.35f);
   Vec2F32 rect_dim = dim_2f32(rect);
-  Vec2F32 list_dim = v2f32(rect_dim.x, Max(row_height_px, rect_dim.y-bottom_bar_height));
+  Vec2F32 list_dim = v2f32(rect_dim.x, Max(row_height_px, rect_dim.y-bottom_bar_height-top_margin_px));
   FNT_Tag code_font = rd_font_from_slot(RD_FontSlot_Code);
   F32 code_font_size = main_font_size;
   F32 code_glyph_advance = fnt_column_size_from_tag_size(code_font, code_font_size);
@@ -2512,6 +2513,7 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
       scroll_list_params.item_range = r1s64(0, (S64)visual_lines.count);
       scroll_list_params.cursor_range = r2s64(v2s64(0, 0), v2s64(0, 0));
       UI_ScrollListSignal scroll_list_sig = {0};
+      ui_spacer(ui_px(top_margin_px, 1.f));
       UI_ScrollList(&scroll_list_params, &scroll_pos.y, 0, 0, &visible_visual_line_rng, &scroll_list_sig)
       {
         if(visible_visual_line_rng.max > visible_visual_line_rng.min)
