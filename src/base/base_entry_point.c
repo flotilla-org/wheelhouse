@@ -86,7 +86,7 @@ main_thread_base_entry_point(int arguments_count, char **arguments)
 #if defined(FONT_CACHE_H) && !defined(FNT_INIT_MANUAL)
   fnt_init();
 #endif
-#if defined(RADDBG_CORE_H) && !defined(RD_INIT_MANUAL)
+#if defined(SHELL_CORE_H) && !defined(RD_INIT_MANUAL)
   rd_init(&cmdline);
 #endif
   
