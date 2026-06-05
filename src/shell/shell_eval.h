@@ -1,8 +1,8 @@
 // Copyright (c) Epic Games Tools
 // Licensed under the MIT license (https://opensource.org/license/mit/)
 
-#ifndef RADDBG_EVAL_H
-#define RADDBG_EVAL_H
+#ifndef SHELL_EVAL_H
+#define SHELL_EVAL_H
 
 ////////////////////////////////
 //~ rjf: Schema Type Hooks
@@ -32,8 +32,7 @@ E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_DEF(cfgs_slice);
 //~ rjf: `environment` Type Hooks
 //
 // Retained for the shell as a generic editable config string-list shape.
-// In RAD this was used by debugger targets for process launch environment
-// strings. The shell does not currently expose a target schema, but the
+// The shell does not currently expose an environment schema, but the
 // underlying list behavior is useful future scaffolding.
 
 E_TYPE_IREXT_FUNCTION_DEF(environment);
@@ -43,4 +42,4 @@ E_TYPE_EXPAND_RANGE_FUNCTION_DEF(environment);
 E_TYPE_EXPAND_ID_FROM_NUM_FUNCTION_DEF(environment);
 E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_DEF(environment);
 
-#endif // RADDBG_EVAL_H
+#endif // SHELL_EVAL_H

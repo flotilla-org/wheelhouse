@@ -1,6 +1,6 @@
 // Copyright (c) Epic Games Tools
 // Licensed under the MIT license (https://opensource.org/license/mit/)
 
-#include "raddbg_core.c"
-#include "raddbg_eval.c"
-#include "raddbg_widgets.c"
+#include "shell_core.c"
+#include "shell_eval.c"
+#include "shell_widgets.c"

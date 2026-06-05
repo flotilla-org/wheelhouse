@@ -7,7 +7,7 @@
 ////////////////////////////////
 //~ rjf: Generated Code
 
-#include "generated/raddbg.meta.c"
+#include "generated/shell.meta.c"
 
 ////////////////////////////////
 //~ rjf: Registers Type Functions
@@ -825,7 +825,7 @@ rd_whole_range_from_eval_space(E_Space space)
 ////////////////////////////////
 //~ rjf: Evaluation View Visualization & Interaction
 
-//- rjf: writing values back to child processes
+//- rjf: writing values back to evaluation spaces
 
 internal B32
 rd_commit_eval_value_string(E_Eval dst_eval, String8 string)
@@ -2575,7 +2575,7 @@ rd_window_frame(void)
         //- rjf: capture
         if(!ProfIsCapturing() && ui_clicked(ui_buttonf("Begin Profiler Capture###prof_cap")))
         {
-          ProfBeginCapture("raddbg");
+          ProfBeginCapture("uishell");
         }
         else if(ProfIsCapturing() && ui_clicked(ui_buttonf("End Profiler Capture###prof_cap")))
         {
@@ -3451,7 +3451,7 @@ rd_window_frame(void)
             uishell_cmd("cancel_query");
           }
           
-          // rjf: any queries which take a file path mutate the debugger's "current path"
+          // rjf: any queries which take a file path mutate the shell's current path
           if(cmd_info.query_slot == UIShell_AppRegSlot_FilePath)
           {
             CFG_Node *query = cfg_node_child_from_string(view, str8_lit("query"));
@@ -6199,7 +6199,7 @@ uishell_regs_fill_slot_from_string(UIShell_ContextRegSlot slot, String8 query_ex
           EV_BlockTree block_tree = {0};
           EV_BlockRangeList block_ranges = {0};
           // TODO(rjf): @cleanup we only need to do this because we implicitly use
-          // view info in the block tree build via raddbg-layer eval hooks, but we
+          // view info in the block tree build via shell-layer eval hooks, but we
           // should really keep all parameterization info in eval views themselves,
           // to not couple block tree building with frontend state...
           UIShell_RegsScope(.window = 0, .panel = 0, .view = view->id)
@@ -7766,10 +7766,6 @@ rd_frame(void)
   }
   
 	  //////////////////////////////
-	  //- rjf: retry find-thread
-	  //
-  
-  //////////////////////////////
   //- rjf: update window titles
   //
   if(rd_state->frame_depth == 1)

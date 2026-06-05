@@ -480,8 +480,7 @@ E_TYPE_EXPAND_NUM_FROM_ID_FUNCTION_DEF(cfgs_slice)
 //~ rjf: `environment` Type Hooks
 //
 // Retained for the shell as a generic editable config string-list shape.
-// In RAD this was used by debugger targets for process launch environment
-// strings. The shell does not currently expose a target schema, but the
+// The shell does not currently expose an environment schema, but the
 // underlying list behavior is useful future scaffolding.
 
 typedef struct RD_EnvironmentAccel RD_EnvironmentAccel;

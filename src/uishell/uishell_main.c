@@ -20,7 +20,7 @@
 #define RD_APP_LOG_FILE_NAME "ui_thread.uishell_log"
 #define OS_FEATURE_GRAPHICAL 1
 
-// Keep RAD-derived shell layers under explicit startup control.
+// Keep shell layers under explicit startup control.
 #define D_INIT_MANUAL 1
 #define WM_INIT_MANUAL 1
 #define FP_INIT_MANUAL 1
@@ -51,7 +51,7 @@
 #include "font_cache/font_cache.h"
 #include "draw/draw.h"
 #include "ui/ui_inc.h"
-#include "raddbg/raddbg_inc.h"
+#include "shell/shell_inc.h"
 #include "uishell/uishell_commands.h"
 #include "uishell/uishell_meta.h"
 #include "uishell/uishell_eval.h"
@@ -78,7 +78,7 @@
 #include "ui/ui_inc.c"
 #include "uishell/uishell_eval.c"
 #include "uishell/uishell_views.c"
-#include "raddbg/raddbg_inc.c"
+#include "shell/shell_inc.c"
 
 ////////////////////////////////
 //~ rjf: Top-Level Execution Types
@@ -134,7 +134,7 @@ entry_point(CmdLine *cmd_line)
     {
       wm_graphical_message(0,
                            str8_lit("UI Shell - Help"),
-                           str8_lit("UI Shell is a native app-shell experiment derived from the RAD Debugger UI stack.\n\n"
+                           str8_lit("UI Shell is a native app-shell experiment.\n\n"
                                     "--user:<path>\n"
                                     "Use to specify the location of a user file for window, panel, keybinding, theme, and visual settings.\n\n"
                                     "--project:<path>\n"
