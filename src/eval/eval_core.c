@@ -25,33 +25,33 @@ e_hash_from_string(U64 seed, String8 string)
 ////////////////////////////////
 //~ rjf: Expr Kind Enum Functions
 
-internal RDI_EvalOp
+internal E_BytecodeOp
 e_opcode_from_expr_kind(E_ExprKind kind)
 {
-  RDI_EvalOp result = RDI_EvalOp_Stop;
+  E_BytecodeOp result = E_BytecodeOp_Stop;
   switch(kind)
   {
-    case E_ExprKind_Neg:    result = RDI_EvalOp_Neg;    break;
-    case E_ExprKind_LogNot: result = RDI_EvalOp_LogNot; break;
-    case E_ExprKind_BitNot: result = RDI_EvalOp_BitNot; break;
-    case E_ExprKind_Mul:    result = RDI_EvalOp_Mul;    break;
-    case E_ExprKind_Div:    result = RDI_EvalOp_Div;    break;
-    case E_ExprKind_Mod:    result = RDI_EvalOp_Mod;    break;
-    case E_ExprKind_Add:    result = RDI_EvalOp_Add;    break;
-    case E_ExprKind_Sub:    result = RDI_EvalOp_Sub;    break;
-    case E_ExprKind_LShift: result = RDI_EvalOp_LShift; break;
-    case E_ExprKind_RShift: result = RDI_EvalOp_RShift; break;
-    case E_ExprKind_Less:   result = RDI_EvalOp_Less;   break;
-    case E_ExprKind_LsEq:   result = RDI_EvalOp_LsEq;   break;
-    case E_ExprKind_Grtr:   result = RDI_EvalOp_Grtr;   break;
-    case E_ExprKind_GrEq:   result = RDI_EvalOp_GrEq;   break;
-    case E_ExprKind_EqEq:   result = RDI_EvalOp_EqEq;   break;
-    case E_ExprKind_NtEq:   result = RDI_EvalOp_NtEq;   break;
-    case E_ExprKind_BitAnd: result = RDI_EvalOp_BitAnd; break;
-    case E_ExprKind_BitXor: result = RDI_EvalOp_BitXor; break;
-    case E_ExprKind_BitOr:  result = RDI_EvalOp_BitOr;  break;
-    case E_ExprKind_LogAnd: result = RDI_EvalOp_LogAnd; break;
-    case E_ExprKind_LogOr:  result = RDI_EvalOp_LogOr;  break;
+    case E_ExprKind_Neg:    result = E_BytecodeOp_Neg;    break;
+    case E_ExprKind_LogNot: result = E_BytecodeOp_LogNot; break;
+    case E_ExprKind_BitNot: result = E_BytecodeOp_BitNot; break;
+    case E_ExprKind_Mul:    result = E_BytecodeOp_Mul;    break;
+    case E_ExprKind_Div:    result = E_BytecodeOp_Div;    break;
+    case E_ExprKind_Mod:    result = E_BytecodeOp_Mod;    break;
+    case E_ExprKind_Add:    result = E_BytecodeOp_Add;    break;
+    case E_ExprKind_Sub:    result = E_BytecodeOp_Sub;    break;
+    case E_ExprKind_LShift: result = E_BytecodeOp_LShift; break;
+    case E_ExprKind_RShift: result = E_BytecodeOp_RShift; break;
+    case E_ExprKind_Less:   result = E_BytecodeOp_Less;   break;
+    case E_ExprKind_LsEq:   result = E_BytecodeOp_LsEq;   break;
+    case E_ExprKind_Grtr:   result = E_BytecodeOp_Grtr;   break;
+    case E_ExprKind_GrEq:   result = E_BytecodeOp_GrEq;   break;
+    case E_ExprKind_EqEq:   result = E_BytecodeOp_EqEq;   break;
+    case E_ExprKind_NtEq:   result = E_BytecodeOp_NtEq;   break;
+    case E_ExprKind_BitAnd: result = E_BytecodeOp_BitAnd; break;
+    case E_ExprKind_BitXor: result = E_BytecodeOp_BitXor; break;
+    case E_ExprKind_BitOr:  result = E_BytecodeOp_BitOr;  break;
+    case E_ExprKind_LogAnd: result = E_BytecodeOp_LogAnd; break;
+    case E_ExprKind_LogOr:  result = E_BytecodeOp_LogOr;  break;
   }
   return result;
 }
@@ -1357,8 +1357,8 @@ e_debug_log_from_expr_string(Arena *arena, String8 string)
       switch(irnode->op)
       {
         default:{}break;
-#define X(name) case RDI_EvalOp_##name:{str8_list_pushf(scratch.arena, &strings, #name);}break;
-        RDI_EvalOp_XList
+#define X(name) case E_BytecodeOp_##name:{str8_list_pushf(scratch.arena, &strings, #name);}break;
+        E_BytecodeOp_XList
 #undef X
       }
       if(irnode->value.u64 != 0)

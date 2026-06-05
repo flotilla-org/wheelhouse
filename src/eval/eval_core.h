@@ -71,7 +71,7 @@ union E_Value
 
 enum
 {
-  E_IRExtKind_Bytecode = RDI_EvalOp_COUNT,
+  E_IRExtKind_Bytecode = E_BytecodeOp_COUNT,
   E_IRExtKind_SetSpace,
   E_IRExtKind_COUNT
 };
@@ -80,7 +80,7 @@ typedef struct E_Op E_Op;
 struct E_Op
 {
   E_Op *next;
-  RDI_EvalOp opcode;
+  E_BytecodeOp opcode;
   E_Value value;
   String8 string;
 };
@@ -306,7 +306,7 @@ struct E_IRNode
   E_IRNode *first;
   E_IRNode *last;
   E_IRNode *next;
-  RDI_EvalOp op;
+  E_BytecodeOp op;
   E_Space space;
   String8 string;
   E_Value value;
@@ -1112,7 +1112,7 @@ internal U64 e_hash_from_string(U64 seed, String8 string);
 ////////////////////////////////
 //~ rjf: Expr Kind Enum Functions
 
-internal RDI_EvalOp e_opcode_from_expr_kind(E_ExprKind kind);
+internal E_BytecodeOp e_opcode_from_expr_kind(E_ExprKind kind);
 internal B32        e_expr_kind_is_comparison(E_ExprKind kind);
 
 ////////////////////////////////

@@ -35,10 +35,10 @@ e_type_kind_from_base(TypeKind kind)
   return result;
 }
 
-internal RDI_EvalTypeGroup
+internal E_TypeGroup
 e_type_group_from_kind(E_TypeKind kind)
 {
-  RDI_EvalTypeGroup result = 0;
+  E_TypeGroup result = 0;
   switch(kind)
   {
     default:{}break;
@@ -55,7 +55,7 @@ e_type_group_from_kind(E_TypeKind kind)
     case E_TypeKind_IncompleteUnion:  case E_TypeKind_IncompleteEnum:
     case E_TypeKind_Bitfield:
     case E_TypeKind_Variadic:
-    {result = RDI_EvalTypeGroup_Other;}break;
+    {result = E_TypeGroup_Other;}break;
     
     case E_TypeKind_Handle:
     case E_TypeKind_UChar8: case E_TypeKind_UChar16: case E_TypeKind_UChar32:
@@ -64,17 +64,17 @@ e_type_group_from_kind(E_TypeKind kind)
     case E_TypeKind_U512:
     case E_TypeKind_Ptr: case E_TypeKind_LRef: case E_TypeKind_RRef:
     case E_TypeKind_Function: case E_TypeKind_Method: case E_TypeKind_MemberPtr:
-    {result = RDI_EvalTypeGroup_U;}break;
+    {result = E_TypeGroup_U;}break;
     
     case E_TypeKind_Char8: case E_TypeKind_Char16: case E_TypeKind_Char32:
     case E_TypeKind_S8:    case E_TypeKind_S16:    case E_TypeKind_S32:
     case E_TypeKind_S64:   case E_TypeKind_S128:   case E_TypeKind_S256:
     case E_TypeKind_S512:
     case E_TypeKind_Bool:
-    {result = RDI_EvalTypeGroup_S;}break;
+    {result = E_TypeGroup_S;}break;
     
-    case E_TypeKind_F32:{result = RDI_EvalTypeGroup_F32;}break;
-    case E_TypeKind_F64:{result = RDI_EvalTypeGroup_F64;}break;
+    case E_TypeKind_F32:{result = E_TypeGroup_F32;}break;
+    case E_TypeKind_F64:{result = E_TypeGroup_F64;}break;
   }
   return result;
 }
@@ -2554,7 +2554,7 @@ E_TYPE_ACCESS_FUNCTION_DEF(slice)
         base_ptr_tree = struct_base_tree;
         if(ext->base_ptr_member->off != 0)
         {
-          base_ptr_tree = e_irtree_binary_op_u(arena, RDI_EvalOp_Add, addr_size, struct_base_tree, e_irtree_const_u(arena, ext->base_ptr_member->off));
+          base_ptr_tree = e_irtree_binary_op_u(arena, E_BytecodeOp_Add, addr_size, struct_base_tree, e_irtree_const_u(arena, ext->base_ptr_member->off));
         }
         base_ptr_tree = e_irtree_mem_read_type(arena, base_ptr_tree, ext->base_ptr_member->type_key);
       }
@@ -2565,8 +2565,8 @@ E_TYPE_ACCESS_FUNCTION_DEF(slice)
       {
         E_IRTreeAndType idx_irtree = e_push_irtree_and_type_from_expr(arena, 0, &e_default_identifier_resolution_rule, 0, 1, expr->first->next);
         E_IRNode *idx_root = e_irtree_resolve_to_value(arena, idx_irtree.mode, idx_irtree.root, idx_irtree.type_key);
-        E_IRNode *off_root = e_irtree_binary_op_u(arena, RDI_EvalOp_Mul, addr_size, idx_root, e_irtree_const_u(arena, e_type_byte_size_from_key(e_type_key_unwrap(ext->base_ptr_member->type_key, E_TypeUnwrapFlag_All))));
-        idxed_base_tree = e_irtree_binary_op_u(arena, RDI_EvalOp_Add, addr_size, base_ptr_tree, off_root);
+        E_IRNode *off_root = e_irtree_binary_op_u(arena, E_BytecodeOp_Mul, addr_size, idx_root, e_irtree_const_u(arena, e_type_byte_size_from_key(e_type_key_unwrap(ext->base_ptr_member->type_key, E_TypeUnwrapFlag_All))));
+        idxed_base_tree = e_irtree_binary_op_u(arena, E_BytecodeOp_Add, addr_size, base_ptr_tree, off_root);
       }
       
       // rjf: form final result

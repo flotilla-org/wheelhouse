@@ -1,6 +1,7 @@
 // Copyright (c) Epic Games Tools
 // Licensed under the MIT license (https://opensource.org/license/mit/)
 
+#include "eval/eval_bytecode.c"
 #include "eval/eval_core.c"
 #include "eval/eval_types.c"
 #include "eval/eval_parse.c"

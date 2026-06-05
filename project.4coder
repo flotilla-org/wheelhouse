@@ -76,10 +76,6 @@ commands =
   
   //- rjf: local target builds
   .build_raddbg                = { .win = "build raddbg",                .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
-  .build_rdi_from_pdb          = { .win = "build rdi_from_pdb",          .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
-  .build_rdi_from_dwarf        = { .win = "build rdi_from_dwarf",        .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
-  .build_rdi_dump              = { .win = "build rdi_dump",              .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
-  .build_rdi_breakpad_from_pdb = { .win = "build rdi_breakpad_from_pdb", .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
   .build_ryan_scratch          = { .win = "build ryan_scratch",          .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
   .build_mule_main             = { .win = "build mule_main",             .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
   .build_mule_module           = { .win = "build mule_module",           .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
@@ -88,10 +84,6 @@ commands =
   
   //- rjf: wsl target builds
   .build_raddbg_wsl                = { .win = "wsl ./build.sh raddbg",                .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
-  .build_rdi_from_pdb_wsl          = { .win = "wsl ./build.sh rdi_from_pdb",          .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
-  .build_rdi_from_dwarf_wsl        = { .win = "wsl ./build.sh rdi_from_dwarf",        .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
-  .build_rdi_dump_wsl              = { .win = "wsl ./build.sh rdi_dump",              .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
-  .build_rdi_breakpad_from_pdb_wsl = { .win = "wsl ./build.sh rdi_breakpad_from_pdb", .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
   .build_ryan_scratch_wsl          = { .win = "wsl ./build.sh ryan_scratch",          .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
   .build_mule_main_wsl             = { .win = "wsl ./build.sh mule_main",             .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },
   .build_mule_module_wsl           = { .win = "wsl ./build.sh mule_module",           .linux = "", .out = "*compilation*", .footer_panel = true, .save_dirty_files = true, .cursor_at_end = false, },

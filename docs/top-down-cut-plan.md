@@ -103,7 +103,7 @@ The shell target also no longer uses or generates the old all-fields register in
 
 The debugger runtime implementation has now left the shell unity build. `src/uishell/uishell_main.c` still includes the narrowed debug-engine compatibility declarations used by shared scaffolding, but it no longer includes `dbg_info/dbg_info.h`, and the `DI_*` shell stubs are gone. The runtime/debug-parser implementation files and directories are physically gone from the shell tree: `src/demon`, `demon_inc.*`, platform demon backends, `dbg_engine_*.c`, `dbg_engine_inc.*`, `dbg_engine_ctrl.h`, `dbg_info.c`, `src/dbg_info`, PDB/CodeView/MSF/minidump, RDI conversion, RDI make, disassembly, STAP, and broad DWARF.
 
-The executable/object-format readers are no longer shell surface. `coff`, `pe`, `elf`, `macho`, and `gnu` have left the unity build and their source directories have been deleted, along with the temporary DW/EH compatibility shim that existed only for those readers. The shell binary view remains a raw byte/hex file viewer. Architecture/register metadata has also left the shell product tree: `src/x64`, `src/arm64`, `src/win32/x64`, `src/arch/rdi`, and `src/rdi` have been deleted, while Win32 base/window-manager support remains. The shell unity includes `lib_rdi/rdi.*` directly and no longer includes `rdi_local` or `rdi_parse`. `lib_rdi` still remains because the evaluator still uses the RDI eval opcode format as its internal bytecode representation.
+The executable/object-format readers are no longer shell surface. `coff`, `pe`, `elf`, `macho`, and `gnu` have left the unity build and their source directories have been deleted, along with the temporary DW/EH compatibility shim that existed only for those readers. The shell binary view remains a raw byte/hex file viewer. Architecture/register metadata has also left the shell product tree: `src/x64`, `src/arm64`, `src/win32/x64`, `src/arch/rdi`, and `src/rdi` have been deleted, while Win32 base/window-manager support remains. Evaluator bytecode ownership has moved to `src/eval/eval_bytecode.*`, so the shell unity no longer includes `lib_rdi/rdi.*`, and `src/lib_rdi` has been deleted.
 
 The shell eval-space bridge has been cut away from live debugger memory. `RD_EvalSpaceKind_*` now starts from the generic evaluator user-defined range instead of `D_EvalSpaceKind_FirstUserDefined`, and the shell `rd_eval_space_gen/read/write`, async key, whole-range, and TLS conversion hooks no longer route unknown spaces through debug-control memory/register/process callbacks. Config, file, and hash-store spaces remain active; process memory, thread register blocks, call-stack-backed register unwinds, call-stack query expansion, and meta-control-entity reads are no longer shell behavior.
 
@@ -228,7 +228,7 @@ The current evaluator code splits into these buckets:
 
 - Keep or rename: expression tokenization/parsing for literals and simple paths, basic value formatting, config/file/hash-store spaces, list/property expansion mechanics when they are separated from debugger types.
 - Fork into shell ownership: query namespace resolution, config/schema row production, value/type descriptors for shell rows, selection/context packets, provider registration, and row editing.
-- Delete after migration: `RDI_EvalOp` bytecode interpretation, process-memory-style reads/writes if they are replaced by shell providers, and remaining RDI parsed-data plumbing. Debug-info lookup, `DI_Key` plumbing, debug module/TLS/register evaluation context, and register identifier resolution have already been removed from the active shell evaluator.
+- Delete after migration: inherited bytecode interpretation, process-memory-style reads/writes if they are replaced by shell providers, and remaining debugger-shaped value plumbing. Debug-info lookup, `DI_Key` plumbing, debug module/TLS/register evaluation context, register identifier resolution, RDI parsed-data plumbing, and `lib_rdi` have already been removed from the active shell evaluator.
 
 The near-term sequence is:
 
@@ -236,8 +236,8 @@ The near-term sequence is:
 2. Move the active shell query providers from `raddbg_eval.c` into `uishell_eval.*` without changing their UI behavior.
 3. Adapt list-like dialogs and preferences to consume shell provider rows.
 4. Replace shell `E_BaseCtx` setup with a shell context packet.
-5. Stop including `eval_interpret.c` in the shell unity once no active provider needs RDI bytecode evaluation.
-6. Then remove `lib_rdi`, `rdi`, `dbg_info`, `arch`, `arm64`, and `x64` only if exact include/reference scans and the build prove they are no longer active.
+5. Stop including `eval_interpret.c` in the shell unity once no active provider needs bytecode evaluation.
+6. Continue removing `dbg_info`/`arch`-shaped leftovers only if exact include/reference scans and the build prove they are no longer active.
 
 ## Deletion Rule
 

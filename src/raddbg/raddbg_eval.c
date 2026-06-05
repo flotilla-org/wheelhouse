@@ -207,7 +207,7 @@ E_TYPE_ACCESS_FUNCTION_DEF(schema)
         child_eval_space.u64s[0] = cfg->id;
         child_eval_space.u64s[1] = e_id_from_string(child_schema->string);
       }
-      irtree.root     = e_irtree_set_space(arena, child_eval_space, e_push_irnode(arena, RDI_EvalOp_ConstU64));
+      irtree.root     = e_irtree_set_space(arena, child_eval_space, e_push_irnode(arena, E_BytecodeOp_ConstU64));
       irtree.type_key = child_type_key;
       irtree.mode     = E_Mode_Offset;
     }

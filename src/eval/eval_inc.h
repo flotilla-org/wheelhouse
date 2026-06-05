@@ -4,6 +4,7 @@
 #ifndef EVAL_INC_H
 #define EVAL_INC_H
 
+#include "eval/eval_bytecode.h"
 #include "eval/eval_core.h"
 #include "eval/eval_types.h"
 #include "eval/eval_parse.h"

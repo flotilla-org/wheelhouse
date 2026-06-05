@@ -42,7 +42,7 @@ global read_only E_TypeExpandRule e_type_expand_rule__default =
 //~ rjf: Type Kind Enum Functions
 
 internal E_TypeKind e_type_kind_from_base(TypeKind kind);
-internal RDI_EvalTypeGroup e_type_group_from_kind(E_TypeKind kind);
+internal E_TypeGroup e_type_group_from_kind(E_TypeKind kind);
 internal B32 e_type_kind_is_integer(E_TypeKind kind);
 internal B32 e_type_kind_is_signed(E_TypeKind kind);
 internal B32 e_type_kind_is_basic_or_enum(E_TypeKind kind);
