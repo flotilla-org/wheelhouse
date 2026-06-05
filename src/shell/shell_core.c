@@ -7437,37 +7437,43 @@ rd_frame(void)
   }
   
   //////////////////////////////
-  //- rjf: iterate all tabs, touch their view-states
+  //- rjf: iterate all materialized workspace tabs, touch their view-states
   //
   if(rd_state->frame_depth == 1)
   {
     Temp scratch = scratch_begin(0, 0);
     CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
-    for(CFG_NodePtrNode *n = windows.first; n != 0; n = n->next)
+    for(CFG_NodePtrNode *window_n = windows.first; window_n != 0; window_n = window_n->next)
     {
-      CFG_Node *window = n->v;
+      CFG_Node *window = window_n->v;
       UIShell_ControlledSplit root_controlled_split = uishell_root_controlled_split_from_window(scratch.arena, window);
-      UIShell_WorkspaceMount *workspace_mount = uishell_controlled_split_selected_mount(&root_controlled_split);
-      CFG_PanelTree panel_tree = workspace_mount->panel_tree;
-      for(CFG_PanelNode *p = panel_tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
+      for(UIShell_MaterializedWorkspace *workspace = root_controlled_split.inventory.first;
+          workspace != 0;
+          workspace = workspace->next)
       {
-        CFG_Node *first_unfiltered_tab = &cfg_nil_node;
-        for(CFG_NodePtrNode *n = p->tabs.first; n != 0; n = n->next)
+        CFG_PanelTree panel_tree = workspace->mount.panel_tree;
+        for(CFG_PanelNode *p = panel_tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
         {
-          CFG_Node *tab = n->v;
-          if(rd_cfg_is_project_filtered(tab))
+          CFG_Node *first_unfiltered_tab = &cfg_nil_node;
+          for(CFG_NodePtrNode *tab_n = p->tabs.first; tab_n != 0; tab_n = tab_n->next)
           {
-            continue;
+            CFG_Node *tab = tab_n->v;
+            if(rd_cfg_is_project_filtered(tab))
+            {
+              continue;
+            }
+            if(first_unfiltered_tab == &cfg_nil_node)
+            {
+              first_unfiltered_tab = tab;
+            }
+            rd_view_state_from_cfg(tab);
           }
-          if(first_unfiltered_tab == &cfg_nil_node)
+          if(workspace == root_controlled_split.inventory.selected &&
+             p->selected_tab == &cfg_nil_node &&
+             first_unfiltered_tab != &cfg_nil_node)
           {
-            first_unfiltered_tab = tab;
+            uishell_cmd("focus_tab", .panel = p->cfg->id, .tab = first_unfiltered_tab->id);
           }
-          rd_view_state_from_cfg(tab);
-        }
-        if(p->selected_tab == &cfg_nil_node && first_unfiltered_tab != &cfg_nil_node)
-        {
-          uishell_cmd("focus_tab", .panel = p->cfg->id, .tab = first_unfiltered_tab->id);
         }
       }
     }

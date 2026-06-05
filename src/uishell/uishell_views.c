@@ -3074,8 +3074,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         if(session_ready &&
            (evt->kind == UI_EventKind_Edit ||
             evt->kind == UI_EventKind_Navigate ||
-            evt->kind == UI_EventKind_Text) &&
-           evt->delta_2s32.y == 0)
+            evt->kind == UI_EventKind_Text))
         {
           if(evt->kind == UI_EventKind_Text || evt->flags & UI_EventFlag_Paste)
           {
