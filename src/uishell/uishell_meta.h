@@ -263,6 +263,8 @@ uishell_push_palette_query_roots(Arena *arena, String8List *exprs)
   str8_list_pushf(arena, exprs, "query:project_settings");
 }
 
+#define UISHELL_APP_PUSH_PALETTE_QUERY_ROOTS(arena, exprs) uishell_push_palette_query_roots((arena), (exprs))
+
 internal String8
 uishell_initial_open_file_path_from_args(Arena *arena, Arena *scratch_arena, String8List *target_args)
 {
@@ -293,8 +295,10 @@ uishell_build_help_menu(void)
   }
 }
 
+#define UISHELL_APP_BUILD_HELP_MENU() uishell_build_help_menu()
+
 ////////////////////////////////
-//~ rjf: Shell App Menu Metadata
+//~ rjf: App Menu Metadata
 
 internal RD_AppMenuSpecList
 uishell_app_file_menu_specs(void)
@@ -328,95 +332,6 @@ uishell_app_file_menu_specs(void)
   return result;
 }
 
-internal RD_AppMenuSpecList
-uishell_shell_window_menu_specs(void)
-{
-#define UIShell_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
-#define UIShell_MenuSep()        {1, {0}, 0}
-  local_persist RD_AppMenuItemSpec window_items[] =
-  {
-    UIShell_MenuCmd("open_window", 'w'),
-    UIShell_MenuCmd("close_window", 'c'),
-    UIShell_MenuCmd("toggle_fullscreen", 'f'),
-    UIShell_MenuSep(),
-    UIShell_MenuCmd("window_settings", 's'),
-  };
-  local_persist RD_AppMenuSpec specs[] =
-  {
-    {str8_lit_comp("Window"), 'w', WM_Key_W, ArrayCount(window_items), window_items},
-  };
-  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
-#undef UIShell_MenuSep
-#undef UIShell_MenuCmd
-  return result;
-}
-
-internal RD_AppMenuSpecList
-uishell_shell_panel_menu_specs(void)
-{
-#define UIShell_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
-#define UIShell_MenuSep()        {1, {0}, 0}
-  local_persist RD_AppMenuItemSpec panel_items[] =
-  {
-    UIShell_MenuCmd("new_panel_up", 'u'),
-    UIShell_MenuCmd("new_panel_down", 'd'),
-    UIShell_MenuCmd("new_panel_right", 'r'),
-    UIShell_MenuCmd("new_panel_left", 'l'),
-    UIShell_MenuCmd("close_panel", 'o'),
-    UIShell_MenuSep(),
-    UIShell_MenuCmd("next_panel", 'n'),
-    UIShell_MenuCmd("prev_panel", 'p'),
-    UIShell_MenuSep(),
-    UIShell_MenuCmd("tab_bar_top", 0),
-    UIShell_MenuCmd("tab_bar_bottom", 0),
-  };
-  local_persist RD_AppMenuSpec specs[] =
-  {
-    {str8_lit_comp("Panel"), 'p', WM_Key_P, ArrayCount(panel_items), panel_items},
-  };
-  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
-#undef UIShell_MenuSep
-#undef UIShell_MenuCmd
-  return result;
-}
-
-internal RD_AppMenuSpecList
-uishell_shell_tab_menu_specs(void)
-{
-#define UIShell_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
-#define UIShell_MenuSep()        {1, {0}, 0}
-  local_persist RD_AppMenuItemSpec tab_items[] =
-  {
-    UIShell_MenuCmd("close_tab", 'c'),
-    UIShell_MenuCmd("duplicate_tab", 'd'),
-    UIShell_MenuSep(),
-    UIShell_MenuCmd("move_tab_left", 'l'),
-    UIShell_MenuCmd("move_tab_right", 'r'),
-    UIShell_MenuSep(),
-    UIShell_MenuCmd("next_tab", 'n'),
-    UIShell_MenuCmd("prev_tab", 'p'),
-  };
-  local_persist RD_AppMenuSpec specs[] =
-  {
-    {str8_lit_comp("Tab"), 'b', WM_Key_V, ArrayCount(tab_items), tab_items},
-  };
-  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
-#undef UIShell_MenuSep
-#undef UIShell_MenuCmd
-  return result;
-}
-
-internal RD_AppMenuSpecList
-uishell_shell_help_menu_specs(void)
-{
-  local_persist RD_AppMenuSpec specs[] =
-  {
-    {str8_lit_comp("Help"), 'h', WM_Key_H, 0, 0},
-  };
-  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
-  return result;
-}
-
 ////////////////////////////////
 //~ rjf: Shell Default Panels
 
@@ -441,5 +356,7 @@ uishell_reset_panels(CFG_Node *window)
     ws->window_layout_reset = 1;
   }
 }
+
+#define UISHELL_APP_RESET_PANELS(window) uishell_reset_panels(window)
 
 #endif // UISHELL_META_H

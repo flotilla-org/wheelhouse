@@ -5,6 +5,7 @@
 #define SHELL_INC_H
 
 #include "shell_core.h"
+#include "shell_commands.h"
 #include "shell_eval.h"
 #include "shell_widgets.h"
 

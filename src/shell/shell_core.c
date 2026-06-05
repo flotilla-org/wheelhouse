@@ -4,6 +4,10 @@
 #undef LAYER_COLOR
 #define LAYER_COLOR 0xf0a215ff
 
+#if !defined(UISHELL_APP_BUILD_HELP_MENU)
+# define UISHELL_APP_BUILD_HELP_MENU() ((void)0)
+#endif
+
 ////////////////////////////////
 //~ rjf: Generated Code
 
@@ -3550,7 +3554,7 @@ rd_window_frame(void)
                           ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
                       }
                       ui_spacer(ui_em(1.f, 1.f));
-                      uishell_build_help_menu();
+                      UISHELL_APP_BUILD_HELP_MENU();
                       ui_spacer(ui_em(0.5f, 1.f));
                     }
                   }
@@ -6503,6 +6507,7 @@ rd_init(CmdLine *cmdln)
     rd_state->frame_arenas[idx] = arena_alloc();
   }
   UISHELL_APP_REGISTER_CMD_PACKS();
+  uishell_register_shell_cmd_packs();
   rd_state->log = log_alloc();
   log_select(rd_state->log);
   {
