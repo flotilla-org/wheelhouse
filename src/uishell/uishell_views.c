@@ -2665,11 +2665,21 @@ uishell_terminal_text_color_from_cell(cleat_cell const *cell)
 }
 
 internal B32
-uishell_terminal_snapshot_cell_is_cursor(cleat_snapshot const *snapshot, U64 row, U64 col)
+uishell_terminal_cell_is_spacer(cleat_cell const *cell)
 {
-  B32 result = (snapshot->cursor.visible &&
-                snapshot->cursor.row == row &&
-                snapshot->cursor.col == col);
+  B32 result = (cell->width == CLEAT_CELL_WIDTH_SPACER_HEAD ||
+                cell->width == CLEAT_CELL_WIDTH_SPACER_TAIL);
+  return result;
+}
+
+internal U64
+uishell_terminal_cell_display_cols(cleat_cell const *cell)
+{
+  U64 result = 1;
+  if(cell->width == CLEAT_CELL_WIDTH_WIDE)
+  {
+    result = 2;
+  }
   return result;
 }
 
@@ -2677,6 +2687,40 @@ internal B32
 uishell_terminal_cursor_is_filled_block(cleat_cursor cursor)
 {
   B32 result = (cursor.visible && cursor.style == CLEAT_CURSOR_STYLE_BLOCK);
+  return result;
+}
+
+internal U64
+uishell_terminal_snapshot_cursor_cols(cleat_snapshot const *snapshot, U64 cell_count)
+{
+  U64 result = 1;
+  if(snapshot->cursor.visible &&
+     snapshot->cursor.row < snapshot->rows &&
+     snapshot->cursor.col < snapshot->cols)
+  {
+    U64 cell_idx = (U64)snapshot->cursor.row*(U64)snapshot->cols + snapshot->cursor.col;
+    if(cell_idx < cell_count)
+    {
+      cleat_cell const *cell = &snapshot->cells[cell_idx];
+      result = uishell_terminal_cell_display_cols(cell);
+      if(snapshot->cursor.wide_tail || cell->width == CLEAT_CELL_WIDTH_SPACER_TAIL)
+      {
+        result = 1;
+      }
+      result = Min(result, (U64)snapshot->cols - (U64)snapshot->cursor.col);
+    }
+  }
+  return result;
+}
+
+internal B32
+uishell_terminal_snapshot_cell_is_filled_cursor(cleat_snapshot const *snapshot, U64 cell_count, U64 row, U64 col)
+{
+  U64 cursor_cols = uishell_terminal_snapshot_cursor_cols(snapshot, cell_count);
+  B32 result = (uishell_terminal_cursor_is_filled_block(snapshot->cursor) &&
+                snapshot->cursor.row == row &&
+                (U64)snapshot->cursor.col <= col &&
+                col < (U64)snapshot->cursor.col + cursor_cols);
   return result;
 }
 
@@ -2692,11 +2736,12 @@ uishell_terminal_draw_cursor_overlay(cleat_snapshot const *snapshot, U64 cell_co
     {
       cleat_cell const *cell = &snapshot->cells[cell_idx];
       Vec4F32 cursor_color = uishell_terminal_text_color_from_cell(cell);
+      U64 cursor_cols = uishell_terminal_snapshot_cursor_cols(snapshot, cell_count);
       Rng2F32 cell_rect =
       {
         floor_f32(canvas_rect.x0 + (F32)snapshot->cursor.col*cell_width_px),
         floor_f32(canvas_rect.y0 + (F32)snapshot->cursor.row*cell_height_px),
-        ceil_f32(canvas_rect.x0 + (F32)(snapshot->cursor.col + 1)*cell_width_px),
+        ceil_f32(canvas_rect.x0 + (F32)(snapshot->cursor.col + cursor_cols)*cell_width_px),
         ceil_f32(canvas_rect.y0 + (F32)(snapshot->cursor.row + 1)*cell_height_px),
       };
       switch(snapshot->cursor.style)
@@ -2758,8 +2803,7 @@ uishell_terminal_draw_snapshot(Arena *arena, UI_Box *box, cleat_snapshot const *
         }
         cleat_cell const *cell = &snapshot->cells[cell_idx];
         cleat_rgb bg = uishell_terminal_cell_bg(cell);
-        B32 cursor_cell = uishell_terminal_snapshot_cell_is_cursor(snapshot, row_idx, col_start);
-        if(cursor_cell && uishell_terminal_cursor_is_filled_block(snapshot->cursor))
+        if(uishell_terminal_snapshot_cell_is_filled_cursor(snapshot, cell_count, row_idx, col_start))
         {
           bg = uishell_terminal_cell_fg(cell);
         }
@@ -2773,8 +2817,7 @@ uishell_terminal_draw_snapshot(Arena *arena, UI_Box *box, cleat_snapshot const *
           }
           cleat_cell const *run_cell = &snapshot->cells[run_cell_idx];
           cleat_rgb run_bg = uishell_terminal_cell_bg(run_cell);
-          B32 run_cursor_cell = uishell_terminal_snapshot_cell_is_cursor(snapshot, row_idx, col_opl);
-          if(run_cursor_cell && uishell_terminal_cursor_is_filled_block(snapshot->cursor))
+          if(uishell_terminal_snapshot_cell_is_filled_cursor(snapshot, cell_count, row_idx, col_opl))
           {
             run_bg = uishell_terminal_cell_fg(run_cell);
           }
@@ -2799,14 +2842,17 @@ uishell_terminal_draw_snapshot(Arena *arena, UI_Box *box, cleat_snapshot const *
           break;
         }
         cleat_cell const *cell = &snapshot->cells[cell_idx];
-        if(cell->grapheme_count != 0 && !(cell->flags & CLEAT_CELL_FLAG_INVISIBLE))
+        U64 cell_cols = uishell_terminal_cell_display_cols(cell);
+        cell_cols = Min(cell_cols, (U64)snapshot->cols - col_idx);
+        if(cell->grapheme_count != 0 &&
+           !uishell_terminal_cell_is_spacer(cell) &&
+           !(cell->flags & CLEAT_CELL_FLAG_INVISIBLE))
         {
           String8 string = uishell_terminal_string_from_cell(arena, cell);
           if(!(string.size == 1 && string.str[0] == ' '))
           {
             Vec4F32 fg = uishell_terminal_text_color_from_cell(cell);
-            if(uishell_terminal_snapshot_cell_is_cursor(snapshot, row_idx, col_idx) &&
-               uishell_terminal_cursor_is_filled_block(snapshot->cursor))
+            if(uishell_terminal_snapshot_cell_is_filled_cursor(snapshot, cell_count, row_idx, col_idx))
             {
               fg = uishell_terminal_rgba_from_rgb(uishell_terminal_cell_bg(cell));
             }
@@ -2826,7 +2872,7 @@ uishell_terminal_draw_snapshot(Arena *arena, UI_Box *box, cleat_snapshot const *
           {
             Vec4F32 line_color = uishell_terminal_text_color_from_cell(cell);
             F32 x0 = floor_f32(canvas_rect.x0 + (F32)col_idx*cell_width_px);
-            F32 x1 = ceil_f32(canvas_rect.x0 + (F32)(col_idx + 1)*cell_width_px);
+            F32 x1 = ceil_f32(canvas_rect.x0 + (F32)(col_idx + cell_cols)*cell_width_px);
             F32 thickness = Clamp(1.f, floor_f32(cell_height_px*0.08f), 2.f);
             if(cell->flags & CLEAT_CELL_FLAG_UNDERLINE)
             {
