@@ -4,9 +4,7 @@
 #undef LAYER_COLOR
 #define LAYER_COLOR 0xf0a215ff
 
-#if !defined(UISHELL_APP_BUILD_HELP_MENU)
-# define UISHELL_APP_BUILD_HELP_MENU() ((void)0)
-#endif
+#include "shell_app_hooks.h"
 
 ////////////////////////////////
 //~ rjf: Generated Code
@@ -3676,7 +3674,11 @@ rd_window_frame(void)
               UI_Signal user_sig = ui_signal_from_box(user_box);
               if(ui_clicked(user_sig))
               {
-                uishell_cmd("run_command", .cmd_name = str8_lit("open_user"));
+                String8 cmd_name = UISHELL_APP_OPEN_USER_COMMAND_NAME();
+                if(cmd_name.size != 0)
+                {
+                  uishell_cmd("run_command", .cmd_name = cmd_name);
+                }
               }
             }
             
@@ -3721,7 +3723,11 @@ rd_window_frame(void)
             UI_Signal prof_sig = ui_signal_from_box(prof_box);
             if(ui_clicked(prof_sig))
             {
-              uishell_cmd("run_command", .cmd_name = str8_lit("open_project"));
+              String8 cmd_name = UISHELL_APP_OPEN_PROJECT_COMMAND_NAME();
+              if(cmd_name.size != 0)
+              {
+                uishell_cmd("run_command", .cmd_name = cmd_name);
+              }
             }
           }
           
@@ -6475,10 +6481,6 @@ rd_vocab_info_map_insert(Arena *arena, RD_VocabInfoMap *map, RD_VocabInfo *info)
 # include "third_party/stb/stb_image.h"
 #endif
 
-#if !defined(UISHELL_APP_REGISTER_CMD_PACKS)
-# define UISHELL_APP_REGISTER_CMD_PACKS() ((void)0)
-#endif
-
 internal void
 rd_init(CmdLine *cmdln)
 {
@@ -6723,12 +6725,8 @@ rd_init(CmdLine *cmdln)
       rd_state->project_path = push_str8_copy(rd_state->project_path_arena, project_path);
     }
     
-    // rjf: do initial load of user/project
-    uishell_cmd("open_user", .file_path = user_path, .non_graphical = 1);
-    if(project_path.size != 0)
-    {
-      uishell_cmd("open_project", .file_path = project_path);
-    }
+    // rjf: do initial app load
+    UISHELL_APP_INITIAL_LOAD(user_path, project_path);
     if(initial_open_file_path.size != 0)
     {
       uishell_cmd("open", .file_path = initial_open_file_path);
@@ -7729,8 +7727,7 @@ rd_frame(void)
       rd_state->seconds_until_autosave -= rd_state->frame_dt;
       if(rd_state->seconds_until_autosave <= 0.f)
       {
-        uishell_cmd("write_user_data");
-        uishell_cmd("write_project_data");
+        UISHELL_APP_AUTOSAVE();
         rd_state->seconds_until_autosave = 5.f;
       }
     }

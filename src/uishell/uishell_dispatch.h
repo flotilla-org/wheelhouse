@@ -457,6 +457,29 @@ uishell_register_app_cmd_packs(void)
   uishell_register_cmd_pack(&app_viewer_pack);
 }
 
+#define UISHELL_APP_SAVE_BEFORE_EXIT() do \
+{ \
+  uishell_push_cmd_current(str8_lit("write_user_data")); \
+  uishell_push_cmd_current(str8_lit("write_project_data")); \
+} while(0)
+
+#define UISHELL_APP_AUTOSAVE() do \
+{ \
+  uishell_cmd("write_user_data"); \
+  uishell_cmd("write_project_data"); \
+} while(0)
+
+#define UISHELL_APP_INITIAL_LOAD(user_path, project_path) do \
+{ \
+  uishell_cmd("open_user", .file_path = (user_path), .non_graphical = 1); \
+  if((project_path).size != 0) \
+  { \
+    uishell_cmd("open_project", .file_path = (project_path)); \
+  } \
+} while(0)
+
+#define UISHELL_APP_OPEN_USER_COMMAND_NAME() str8_lit("open_user")
+#define UISHELL_APP_OPEN_PROJECT_COMMAND_NAME() str8_lit("open_project")
 #define UISHELL_APP_REGISTER_CMD_PACKS() uishell_register_app_cmd_packs()
 
 #endif // UISHELL_DISPATCH_H

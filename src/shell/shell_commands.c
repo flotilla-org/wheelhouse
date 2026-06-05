@@ -4,6 +4,8 @@
 ////////////////////////////////
 //~ rjf: Shell Menu Metadata
 
+#include "shell_app_hooks.h"
+
 internal RD_AppMenuSpecList
 uishell_shell_window_menu_specs(void)
 {
@@ -96,14 +98,6 @@ uishell_shell_help_menu_specs(void)
 ////////////////////////////////
 //~ rjf: Shell Command Dispatch Helpers
 
-#if !defined(UISHELL_APP_PUSH_PALETTE_QUERY_ROOTS)
-# define UISHELL_APP_PUSH_PALETTE_QUERY_ROOTS(arena, exprs) ((void)(arena), (void)(exprs))
-#endif
-
-#if !defined(UISHELL_APP_RESET_PANELS)
-# define UISHELL_APP_RESET_PANELS(window) ((void)(window))
-#endif
-
 internal void
 uishell_push_window_ui_event(UI_Event *event)
 {
@@ -135,8 +129,7 @@ uishell_dispatch_app_command(String8 name)
 
   if(str8_match(name, str8_lit("exit"), 0))
   {
-    uishell_push_cmd_current(str8_lit("write_user_data"));
-    uishell_push_cmd_current(str8_lit("write_project_data"));
+    UISHELL_APP_SAVE_BEFORE_EXIT();
     rd_state->quit = 1;
   }
   else if(str8_match(name, str8_lit("wm_event"), 0))
