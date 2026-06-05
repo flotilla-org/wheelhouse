@@ -409,6 +409,52 @@ struct UIShell_CmdList
   U64 count;
 };
 
+typedef struct UIShell_DefaultBinding UIShell_DefaultBinding;
+struct UIShell_DefaultBinding
+{
+  String8 string;
+  CFG_Binding binding;
+};
+
+typedef struct UIShell_AppCmdInfo UIShell_AppCmdInfo;
+struct UIShell_AppCmdInfo
+{
+  String8 string;
+  String8 display_name;
+  RD_IconKind icon_kind;
+  String8 description;
+  String8 search_tags;
+  String8 ctx_filter;
+  UIShell_CmdFlags flags;
+  UIShell_QueryFlags query_flags;
+  UIShell_AppRegSlot query_slot;
+  String8 query_expr;
+  String8 query_view_name;
+};
+
+typedef U64 UIShell_CmdPackCmdCountFunction(void);
+typedef UIShell_AppCmdInfo UIShell_CmdPackCmdInfoFromIndexFunction(U64 idx);
+typedef UIShell_AppCmdInfo UIShell_CmdPackCmdInfoFromStringFunction(String8 string);
+typedef U64 UIShell_CmdPackBindingCountFunction(void);
+typedef UIShell_DefaultBinding UIShell_CmdPackBindingFromIndexFunction(U64 idx);
+typedef RD_AppMenuSpecList UIShell_CmdPackMenuSpecsFunction(void);
+typedef B32 UIShell_CmdPackDispatchFunction(String8 name);
+
+typedef struct UIShell_CmdPack UIShell_CmdPack;
+struct UIShell_CmdPack
+{
+  UIShell_CmdPack *next;
+  UIShell_CmdPack *prev;
+  String8 name;
+  UIShell_CmdPackCmdCountFunction *cmd_count;
+  UIShell_CmdPackCmdInfoFromIndexFunction *cmd_info_from_index;
+  UIShell_CmdPackCmdInfoFromStringFunction *cmd_info_from_string;
+  UIShell_CmdPackBindingCountFunction *binding_count;
+  UIShell_CmdPackBindingFromIndexFunction *binding_from_index;
+  UIShell_CmdPackMenuSpecsFunction *menu_specs;
+  UIShell_CmdPackDispatchFunction *dispatch;
+};
+
 ////////////////////////////////
 //~ rjf: Context Register Types
 
@@ -628,6 +674,8 @@ struct RD_State
   F32 seconds_until_autosave;
 
   // rjf: commands
+  UIShell_CmdPack *first_cmd_pack;
+  UIShell_CmdPack *last_cmd_pack;
   Arena *cmds_arenas[2];
   UIShell_CmdList cmds[2];
   U64 cmds_gen;
@@ -700,20 +748,6 @@ struct RD_State
 //~ rjf: Globals
 
 read_only global RD_VocabInfo rd_nil_vocab_info = {0};
-
-typedef struct UIShell_AppCmdInfo UIShell_AppCmdInfo;
-struct UIShell_AppCmdInfo
-{
-  String8 string;
-  String8 description;
-  String8 search_tags;
-  String8 ctx_filter;
-  UIShell_CmdFlags flags;
-  UIShell_QueryFlags query_flags;
-  UIShell_AppRegSlot query_slot;
-  String8 query_expr;
-  String8 query_view_name;
-};
 
 RD_VIEW_UI_FUNCTION_DEF(null);
 read_only global RD_ViewUIRule rd_nil_view_ui_rule =
@@ -951,6 +985,7 @@ internal void uishell_regs_fill_slot_from_string(UIShell_ContextRegSlot slot, St
 //~ rjf: Commands
 
 //- rjf: name -> info
+internal void uishell_register_cmd_pack(UIShell_CmdPack *pack);
 internal UIShell_AppCmdInfo uishell_app_cmd_info_from_string(String8 string);
 internal UIShell_ContextRegSlot uishell_context_reg_slot_from_app_reg_slot(UIShell_AppRegSlot slot);
 

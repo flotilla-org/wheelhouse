@@ -429,11 +429,11 @@ uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
           }
         }
         String8 cmd_name = cmd->string;
-        UIShell_CmdInfo *cmd_info = uishell_cmd_info_from_name(cmd_name);
-        if(cmd_info != &uishell_nil_cmd_info)
+        UIShell_AppCmdInfo cmd_info = uishell_app_cmd_info_from_string(cmd_name);
+        if(cmd_info.string.size != 0)
         {
           uishell_watch_cell_list_push_new(arena, &info.cells, UIShell_WatchCellKind_Eval,
-                                           e_eval_from_stringf("query:commands.%S", cmd_info->string),
+                                           e_eval_from_stringf("query:commands.%S", cmd_info.string),
                                            .flags = UIShell_WatchCellFlag_ActivateWithSingleClick|UIShell_WatchCellFlag_Button,
                                            .px = floor_f32(ui_top_font_size()*3.f));
         }

@@ -6259,22 +6259,26 @@ uishell_regs_fill_slot_from_string(UIShell_ContextRegSlot slot, String8 query_ex
 ////////////////////////////////
 //~ rjf: Commands
 
+internal void
+uishell_register_cmd_pack(UIShell_CmdPack *pack)
+{
+  DLLPushBack(rd_state->first_cmd_pack, rd_state->last_cmd_pack, pack);
+}
+
 internal UIShell_AppCmdInfo
 uishell_app_cmd_info_from_string(String8 string)
 {
   UIShell_AppCmdInfo result = {0};
-  UIShell_CmdInfo *info = uishell_cmd_info_from_name(string);
-  if(info != &uishell_nil_cmd_info)
+  for(UIShell_CmdPack *pack = rd_state->first_cmd_pack; pack != 0; pack = pack->next)
   {
-    result.string = info->string;
-    result.description = info->description;
-    result.search_tags = info->search_tags;
-    result.ctx_filter = info->ctx_filter;
-    result.flags = info->flags;
-    result.query_flags = info->query.flags;
-    result.query_slot = uishell_app_reg_slot_from_query_reg_slot(info->query.slot);
-    result.query_expr = info->query.expr;
-    result.query_view_name = info->query.view_name;
+    if(pack->cmd_info_from_string != 0)
+    {
+      result = pack->cmd_info_from_string(string);
+      if(result.string.size != 0)
+      {
+        break;
+      }
+    }
   }
   return result;
 }
@@ -6326,7 +6330,29 @@ rd_app_menu_specs(void)
 {
 #define RD_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
 #define RD_MenuSep()        {1, {0}, 0}
-  RD_AppMenuSpecList result = uishell_app_menu_specs();
+  RD_AppMenuSpecList result = {0};
+  for(UIShell_CmdPack *pack = rd_state->first_cmd_pack; pack != 0; pack = pack->next)
+  {
+    if(pack->menu_specs != 0)
+    {
+      RD_AppMenuSpecList pack_specs = pack->menu_specs();
+      if(pack_specs.count != 0)
+      {
+        if(result.count == 0)
+        {
+          result = pack_specs;
+        }
+        else
+        {
+          RD_AppMenuSpec *v = push_array(rd_frame_arena(), RD_AppMenuSpec, result.count + pack_specs.count);
+          MemoryCopy(v, result.v, sizeof(RD_AppMenuSpec)*result.count);
+          MemoryCopy(v + result.count, pack_specs.v, sizeof(RD_AppMenuSpec)*pack_specs.count);
+          result.v = v;
+          result.count += pack_specs.count;
+        }
+      }
+    }
+  }
 #undef RD_MenuSep
 #undef RD_MenuCmd
   return result;
@@ -6445,6 +6471,10 @@ rd_vocab_info_map_insert(Arena *arena, RD_VocabInfoMap *map, RD_VocabInfo *info)
 # include "third_party/stb/stb_image.h"
 #endif
 
+#if !defined(UISHELL_APP_REGISTER_CMD_PACKS)
+# define UISHELL_APP_REGISTER_CMD_PACKS() ((void)0)
+#endif
+
 internal void
 rd_init(CmdLine *cmdln)
 {
@@ -6472,6 +6502,7 @@ rd_init(CmdLine *cmdln)
   {
     rd_state->frame_arenas[idx] = arena_alloc();
   }
+  UISHELL_APP_REGISTER_CMD_PACKS();
   rd_state->log = log_alloc();
   log_select(rd_state->log);
   {
@@ -6531,18 +6562,28 @@ rd_init(CmdLine *cmdln)
     {
       rd_vocab_info_map_insert(rd_state->arena, &rd_state->vocab_info_map, &RD_APP_VOCAB_INFO_TABLE[idx]);
     }
-    for EachElement(idx, uishell_cmd_info_table)
+    for(UIShell_CmdPack *pack = rd_state->first_cmd_pack; pack != 0; pack = pack->next)
     {
-      UIShell_CmdInfo *cmd_info = &uishell_cmd_info_table[idx];
-      RD_VocabInfo vocab_info =
+      if(pack->cmd_count != 0 && pack->cmd_info_from_index != 0)
       {
-        cmd_info->string,
-        str8_zero(),
-        cmd_info->display_name,
-        str8_zero(),
-        cmd_info->icon_kind,
-      };
-      rd_vocab_info_map_insert(rd_state->arena, &rd_state->vocab_info_map, &vocab_info);
+        U64 cmd_count = pack->cmd_count();
+        for(U64 idx = 0; idx < cmd_count; idx += 1)
+        {
+          UIShell_AppCmdInfo cmd_info = pack->cmd_info_from_index(idx);
+          if(cmd_info.string.size != 0)
+          {
+            RD_VocabInfo vocab_info =
+            {
+              cmd_info.string,
+              str8_zero(),
+              cmd_info.display_name,
+              str8_zero(),
+              cmd_info.icon_kind,
+            };
+            rd_vocab_info_map_insert(rd_state->arena, &rd_state->vocab_info_map, &vocab_info);
+          }
+        }
+      }
     }
   }
 
@@ -7703,53 +7744,12 @@ rd_frame(void)
         rd_request_frame();
         
         // rjf: process command
-        CFG_Node *cfg = &cfg_nil_node;
-        String8 dst_path = {0};
-        String8 bucket_name = {0};
-        Dir2 split_dir = Dir2_Invalid;
-        CFG_Node *split_panel = &cfg_nil_node;
-        U64 panel_sib_off = 0;
-        U64 panel_child_off = 0;
-        Vec2S32 panel_change_dir = {0};
-        if(uishell_dispatch_app_command(cmd->name))
+        for(UIShell_CmdPack *pack = rd_state->first_cmd_pack; pack != 0; pack = pack->next)
         {
-          continue;
-        }
-        if(uishell_dispatch_ui_event_command(cmd->name))
-        {
-          continue;
-        }
-        if(uishell_dispatch_command_palette_command(cmd->name))
-        {
-          continue;
-        }
-        if(uishell_dispatch_tab_command(cmd->name))
-        {
-          continue;
-        }
-        if(uishell_dispatch_panel_command(cmd->name))
-        {
-          continue;
-        }
-        if(uishell_dispatch_font_command(cmd->name))
-        {
-          continue;
-        }
-        if(uishell_dispatch_window_command(cmd->name))
-        {
-          continue;
-        }
-        if(uishell_dispatch_config_command(cmd->name))
-        {
-          continue;
-        }
-        if(uishell_dispatch_query_command(cmd->name))
-        {
-          continue;
-        }
-        if(uishell_dispatch_file_query_command(cmd->name))
-        {
-          continue;
+          if(pack->dispatch != 0 && pack->dispatch(cmd->name))
+          {
+            break;
+          }
         }
       }
     }

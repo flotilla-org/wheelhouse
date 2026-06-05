@@ -449,12 +449,12 @@ uishell_dispatch_command_palette_command(String8 name)
           str8_match(name, str8_lit("open_tab"), 0))
   {
     Temp scratch = scratch_begin(0, 0);
-    UIShell_CmdInfo *info = uishell_cmd_info_from_name(uishell_regs()->cmd_name);
-    if(info == &uishell_nil_cmd_info)
+    UIShell_AppCmdInfo info = uishell_app_cmd_info_from_string(uishell_regs()->cmd_name);
+    if(info.string.size == 0)
     {
       result = 0;
     }
-    else if(!(info->query.flags & UIShell_QueryFlag_Required))
+    else if(!(info.query_flags & UIShell_QueryFlag_Required))
     {
       String8 cmd_name = uishell_regs()->cmd_name;
       UIShell_RegsScope(.cmd_name = str8_zero())
@@ -462,7 +462,7 @@ uishell_dispatch_command_palette_command(String8 name)
         uishell_push_cmd_current(cmd_name);
       }
     }
-    else if(info->query.slot == UIShell_RegSlot_FilePath && rd_setting_b32_from_name(str8_lit("use_native_file_system_dialog")))
+    else if(info.query_slot == UIShell_AppRegSlot_FilePath && rd_setting_b32_from_name(str8_lit("use_native_file_system_dialog")))
     {
       CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
       CFG_Node *current_path = cfg_node_child_from_string(user, str8_lit("current_path"));
@@ -488,7 +488,7 @@ uishell_dispatch_command_palette_command(String8 name)
     }
     else
     {
-      UIShell_RegsScope(.do_implicit_root = 1, .do_lister = info->query.expr.size != 0)
+      UIShell_RegsScope(.do_implicit_root = 1, .do_lister = info.query_expr.size != 0)
       {
         uishell_push_cmd_current(str8_lit("push_query"));
       }
@@ -1487,16 +1487,24 @@ uishell_dispatch_window_command(String8 name)
     scratch_end(scratch);
     
     CFG_Node *keybindings = cfg_node_new(rd_state->cfg, user, str8_lit("keybindings"));
-    for EachElement(idx, uishell_default_binding_table)
+    for(UIShell_CmdPack *pack = rd_state->first_cmd_pack; pack != 0; pack = pack->next)
     {
-      String8 binding_name = uishell_default_binding_table[idx].string;
-      CFG_Binding binding = uishell_default_binding_table[idx].binding;
-      CFG_Node *binding_root = cfg_node_new(rd_state->cfg, keybindings, str8_zero());
-      cfg_node_new(rd_state->cfg, binding_root, binding_name);
-      cfg_node_new(rd_state->cfg, binding_root, wm_key_cfg_name_table[binding.key]);
-      if(binding.modifiers & WM_Modifier_Ctrl)  {cfg_node_newf(rd_state->cfg, binding_root, "ctrl");}
-      if(binding.modifiers & WM_Modifier_Shift) {cfg_node_newf(rd_state->cfg, binding_root, "shift");}
-      if(binding.modifiers & WM_Modifier_Alt)   {cfg_node_newf(rd_state->cfg, binding_root, "alt");}
+      if(pack->binding_count != 0 && pack->binding_from_index != 0)
+      {
+        U64 binding_count = pack->binding_count();
+        for(U64 idx = 0; idx < binding_count; idx += 1)
+        {
+          UIShell_DefaultBinding default_binding = pack->binding_from_index(idx);
+          String8 binding_name = default_binding.string;
+          CFG_Binding binding = default_binding.binding;
+          CFG_Node *binding_root = cfg_node_new(rd_state->cfg, keybindings, str8_zero());
+          cfg_node_new(rd_state->cfg, binding_root, binding_name);
+          cfg_node_new(rd_state->cfg, binding_root, wm_key_cfg_name_table[binding.key]);
+          if(binding.modifiers & WM_Modifier_Ctrl)  {cfg_node_newf(rd_state->cfg, binding_root, "ctrl");}
+          if(binding.modifiers & WM_Modifier_Shift) {cfg_node_newf(rd_state->cfg, binding_root, "shift");}
+          if(binding.modifiers & WM_Modifier_Alt)   {cfg_node_newf(rd_state->cfg, binding_root, "alt");}
+        }
+      }
     }
   }
   else
@@ -1841,7 +1849,7 @@ uishell_dispatch_query_command(String8 name)
   {
     Temp scratch = scratch_begin(0, 0);
     String8 cmd_name = uishell_regs()->cmd_name;
-    UIShell_CmdInfo *cmd_kind_info = uishell_cmd_info_from_name(cmd_name);
+    UIShell_AppCmdInfo cmd_kind_info = uishell_app_cmd_info_from_string(cmd_name);
     
     // rjf: close existing context menus
     {
@@ -1853,7 +1861,7 @@ uishell_dispatch_query_command(String8 name)
     
     // rjf: floating queries -> set up window to build immediate-mode top-level query
     CFG_Node *view = &cfg_nil_node;
-    B32 is_floating = (cmd_name.size == 0 || cmd_kind_info->query.flags & UIShell_QueryFlag_Floating);
+    B32 is_floating = (cmd_name.size == 0 || cmd_kind_info.query_flags & UIShell_QueryFlag_Floating);
     if(is_floating)
     {
       CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
@@ -1920,7 +1928,7 @@ uishell_dispatch_query_command(String8 name)
       String8 initial_input = {0};
       if(cmd_name.size != 0)
       {
-        if(cmd_kind_info->query.slot == UIShell_RegSlot_FilePath)
+        if(cmd_kind_info.query_slot == UIShell_AppRegSlot_FilePath)
         {
           CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
           CFG_Node *current_path = cfg_node_child_from_string(user, str8_lit("current_path"));
@@ -1932,7 +1940,7 @@ uishell_dispatch_query_command(String8 name)
           initial_input = current_path_string;
           initial_input = push_str8f(scratch.arena, "%S/", initial_input);
         }
-        else if(cmd_kind_info->query.flags & UIShell_QueryFlag_KeepOldInput)
+        else if(cmd_kind_info.query_flags & UIShell_QueryFlag_KeepOldInput)
         {
           initial_input = input->first->string;
         }
@@ -1945,7 +1953,7 @@ uishell_dispatch_query_command(String8 name)
       RD_ViewState *vs = rd_view_state_from_cfg(view);
       if(cmd_name.size != 0)
       {
-        if(!vs->query_is_open && cmd_kind_info->query.flags & UIShell_QueryFlag_SelectOldInput)
+        if(!vs->query_is_open && cmd_kind_info.query_flags & UIShell_QueryFlag_SelectOldInput)
         {
           vs->query_cursor = txt_pt(1, 1+input->first->string.size);
           vs->query_mark = txt_pt(1, 1);
@@ -1995,12 +2003,12 @@ uishell_dispatch_query_command(String8 name)
     
     // rjf: complete query, either by closing the query popup, or closing the
     // tab-embedded query edit
-    UIShell_CmdInfo *cmd_kind_info = uishell_cmd_info_from_name(cmd_name);
+    UIShell_AppCmdInfo cmd_kind_info = uishell_app_cmd_info_from_string(cmd_name);
     if(is_lister)
     {
       ws->query_is_active = 0;
     }
-    else if(!(cmd_kind_info->query.flags & UIShell_QueryFlag_KeepOldInput))
+    else if(!(cmd_kind_info.query_flags & UIShell_QueryFlag_KeepOldInput))
     {
       RD_ViewState *vs = rd_view_state_from_cfg(view);
       vs->query_is_open = 0;
@@ -2090,5 +2098,44 @@ uishell_dispatch_file_query_command(String8 name)
   
   return result;
 }
+
+internal B32
+uishell_cmd_pack_dispatch(String8 name)
+{
+  B32 result = 0;
+  if(uishell_dispatch_app_command(name) ||
+     uishell_dispatch_ui_event_command(name) ||
+     uishell_dispatch_command_palette_command(name) ||
+     uishell_dispatch_tab_command(name) ||
+     uishell_dispatch_panel_command(name) ||
+     uishell_dispatch_font_command(name) ||
+     uishell_dispatch_window_command(name) ||
+     uishell_dispatch_config_command(name) ||
+     uishell_dispatch_query_command(name) ||
+     uishell_dispatch_file_query_command(name))
+  {
+    result = 1;
+  }
+  return result;
+}
+
+internal void
+uishell_register_app_cmd_packs(void)
+{
+  local_persist UIShell_CmdPack pack =
+  {
+    .name = str8_lit_comp("uishell"),
+    .cmd_count = uishell_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_cmd_pack_binding_count,
+    .binding_from_index = uishell_cmd_pack_binding_from_index,
+    .menu_specs = uishell_app_menu_specs,
+    .dispatch = uishell_cmd_pack_dispatch,
+  };
+  uishell_register_cmd_pack(&pack);
+}
+
+#define UISHELL_APP_REGISTER_CMD_PACKS() uishell_register_app_cmd_packs()
 
 #endif // UISHELL_DISPATCH_H

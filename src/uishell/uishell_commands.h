@@ -197,6 +197,53 @@ uishell_cmd_info_from_name(String8 name)
   return result;
 }
 
+internal UIShell_AppRegSlot uishell_app_reg_slot_from_query_reg_slot(UIShell_RegSlot slot);
+
+internal UIShell_AppCmdInfo
+uishell_app_cmd_info_from_cmd_info(UIShell_CmdInfo *info)
+{
+  UIShell_AppCmdInfo result = {0};
+  if(info != &uishell_nil_cmd_info)
+  {
+    result.string = info->string;
+    result.display_name = info->display_name;
+    result.icon_kind = info->icon_kind;
+    result.description = info->description;
+    result.search_tags = info->search_tags;
+    result.ctx_filter = info->ctx_filter;
+    result.flags = info->flags;
+    result.query_flags = info->query.flags;
+    result.query_slot = uishell_app_reg_slot_from_query_reg_slot(info->query.slot);
+    result.query_expr = info->query.expr;
+    result.query_view_name = info->query.view_name;
+  }
+  return result;
+}
+
+internal U64
+uishell_cmd_pack_cmd_count(void)
+{
+  return ArrayCount(uishell_cmd_info_table);
+}
+
+internal UIShell_AppCmdInfo
+uishell_cmd_pack_cmd_info_from_index(U64 idx)
+{
+  UIShell_AppCmdInfo result = {0};
+  if(idx < ArrayCount(uishell_cmd_info_table))
+  {
+    result = uishell_app_cmd_info_from_cmd_info(&uishell_cmd_info_table[idx]);
+  }
+  return result;
+}
+
+internal UIShell_AppCmdInfo
+uishell_cmd_pack_cmd_info_from_string(String8 string)
+{
+  UIShell_AppCmdInfo result = uishell_app_cmd_info_from_cmd_info(uishell_cmd_info_from_name(string));
+  return result;
+}
+
 internal UIShell_AppRegSlot
 uishell_app_reg_slot_from_query_reg_slot(UIShell_RegSlot slot)
 {
@@ -253,13 +300,6 @@ uishell_cmd_name_is_tab_fast_path(String8 name)
 
 ////////////////////////////////
 //~ rjf: Shell Default Bindings
-
-typedef struct UIShell_DefaultBinding UIShell_DefaultBinding;
-struct UIShell_DefaultBinding
-{
-  String8 string;
-  CFG_Binding binding;
-};
 
 #define UISHELL_BIND(name, key, mods) {str8_lit_comp(name), {WM_Key_##key, mods}}
 
@@ -362,6 +402,23 @@ read_only global UIShell_DefaultBinding uishell_default_binding_table[] =
   UISHELL_BIND("open_palette", F1, 0),
   UISHELL_BIND("open_palette", P, WM_Modifier_Ctrl|WM_Modifier_Shift),
 };
+
+internal U64
+uishell_cmd_pack_binding_count(void)
+{
+  return ArrayCount(uishell_default_binding_table);
+}
+
+internal UIShell_DefaultBinding
+uishell_cmd_pack_binding_from_index(U64 idx)
+{
+  UIShell_DefaultBinding result = {0};
+  if(idx < ArrayCount(uishell_default_binding_table))
+  {
+    result = uishell_default_binding_table[idx];
+  }
+  return result;
+}
 
 #undef UISHELL_BIND
 

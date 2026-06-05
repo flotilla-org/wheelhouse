@@ -10,9 +10,9 @@ E_TYPE_ACCESS_FUNCTION_DEF(uishell_commands)
   if(expr->kind == E_ExprKind_MemberAccess)
   {
     String8 cmd_name = expr->first->next->string;
-    UIShell_CmdInfo *cmd_info = uishell_cmd_info_from_name(cmd_name);
+    UIShell_AppCmdInfo cmd_info = uishell_app_cmd_info_from_string(cmd_name);
     E_TypeKey cmd_type = e_type_key_cons(.kind = E_TypeKind_U64, .name = str8_lit("command"));
-    cmd_type = e_type_key_cons_meta_description(cmd_type, cmd_info->description);
+    cmd_type = e_type_key_cons_meta_description(cmd_type, cmd_info.description);
     result.type_key = cmd_type;
     result.mode = E_Mode_Value;
     result.root = e_irtree_set_space(arena, e_space_make(RD_EvalSpaceKind_MetaCmd), e_irtree_const_u(arena, e_id_from_string(cmd_name)));
@@ -139,7 +139,7 @@ E_TYPE_EXPAND_RANGE_FUNCTION_DEF(uishell_views)
 }
 
 internal void
-uishell_eval_cmd_names_push_filtered(Arena *arena, String8List *cmd_names, UIShell_CmdInfo *info, UIShell_CmdFlags required_flags, String8 filter)
+uishell_eval_cmd_names_push_filtered(Arena *arena, String8List *cmd_names, UIShell_AppCmdInfo *info, UIShell_CmdFlags required_flags, String8 filter)
 {
   Temp scratch = scratch_begin(&arena, 1);
   UIShell_CmdFlags info_flags = info->flags;
@@ -177,10 +177,17 @@ uishell_eval_command_names_from_filter(Arena *arena, UIShell_CmdFlags required_f
 {
   Temp scratch = scratch_begin(&arena, 1);
   String8List cmd_names = {0};
-  for EachElement(idx, uishell_cmd_info_table)
+  for(UIShell_CmdPack *pack = rd_state->first_cmd_pack; pack != 0; pack = pack->next)
   {
-    UIShell_CmdInfo *info = &uishell_cmd_info_table[idx];
-    uishell_eval_cmd_names_push_filtered(scratch.arena, &cmd_names, info, required_flags, filter);
+    if(pack->cmd_count != 0 && pack->cmd_info_from_index != 0)
+    {
+      U64 cmd_count = pack->cmd_count();
+      for(U64 idx = 0; idx < cmd_count; idx += 1)
+      {
+        UIShell_AppCmdInfo info = pack->cmd_info_from_index(idx);
+        uishell_eval_cmd_names_push_filtered(scratch.arena, &cmd_names, &info, required_flags, filter);
+      }
+    }
   }
   String8Array result = str8_array_from_list(arena, &cmd_names);
   scratch_end(scratch);
