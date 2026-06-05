@@ -781,7 +781,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         String8 string = e_string_from_expr(scratch.arena, eval.expr, str8_zero());
         UIShell_RegsScope(.string = string)
         {
-          rd_cmd_name("complete_query");
+          uishell_cmd("complete_query");
         }
       }break;
       case E_SpaceKind_File:
@@ -794,14 +794,14 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
           String8 new_input_string = push_str8f(scratch.arena, "%S/", file);
           UIShell_RegsScope(.string = new_input_string)
           {
-            rd_cmd_name("update_query");
+            uishell_cmd("update_query");
           }
         }
         else
         {
           UIShell_RegsScope(.file_path = file)
           {
-            rd_cmd_name("complete_query");
+            uishell_cmd("complete_query");
           }
         }
       }break;
@@ -810,7 +810,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         CFG_Node *cfg = rd_cfg_from_eval_space(eval.space);
         UIShell_RegsScope(.cfg = cfg->id)
         {
-          rd_cmd_name("complete_query");
+          uishell_cmd("complete_query");
         }
       }break;
       case RD_EvalSpaceKind_MetaCmd:
@@ -818,7 +818,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         String8 selected_cmd_name = rd_cmd_name_from_eval(eval);
         UIShell_RegsScope(.cmd_name = selected_cmd_name)
         {
-          rd_cmd_name("complete_query");
+          uishell_cmd("complete_query");
         }
       }break;
       case RD_EvalSpaceKind_MetaTheme:
@@ -826,7 +826,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         String8 name = e_string_from_id(eval.value.u64);
         UIShell_RegsScope(.string = name)
         {
-          rd_cmd_name("complete_query");
+          uishell_cmd("complete_query");
         }
       }break;
     }
@@ -841,7 +841,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         String8 expr = e_full_expr_string_from_key(scratch.arena, eval.key);
         UIShell_RegsScope(.expr = expr, .do_implicit_root = 0)
         {
-          rd_cmd_name("push_query");
+          uishell_cmd("push_query");
         }
       }break;
       case E_SpaceKind_File:
@@ -850,7 +850,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         String8 file = rd_file_path_from_eval(scratch.arena, eval);
         UIShell_RegsScope(.file_path = file)
         {
-          rd_cmd_name("open");
+          uishell_cmd("open");
         }
       }break;
       case RD_EvalSpaceKind_MetaCfg:
@@ -860,7 +860,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         {
           UIShell_RegsScope(.cfg = cfg->id)
           {
-            rd_cmd_name("open_recent_project");
+            uishell_cmd("open_recent_project");
           }
         }
         else if(e_type_kind_from_key(e_type_key_unwrap(eval.irtree.type_key, E_TypeUnwrapFlag_AllDecorative)) == E_TypeKind_Set)
@@ -868,7 +868,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
           String8 expr = e_full_expr_string_from_key(scratch.arena, eval.key);
           UIShell_RegsScope(.expr = expr, .do_implicit_root = 0)
           {
-            rd_cmd_name("push_query");
+            uishell_cmd("push_query");
           }
         }
         else
@@ -881,7 +881,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         String8 expr = e_full_expr_string_from_key(scratch.arena, eval.key);
         UIShell_RegsScope(.expr = expr, .do_implicit_root = 0)
         {
-          rd_cmd_name("push_query");
+          uishell_cmd("push_query");
         }
       }break;
       case RD_EvalSpaceKind_MetaCmd:
@@ -889,13 +889,13 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         String8 selected_cmd_name = rd_cmd_name_from_eval(eval);
         UIShell_RegsScope(.cmd_name = selected_cmd_name)
         {
-          rd_cmd_name("run_command");
+          uishell_cmd("run_command");
         }
       }break;
     }
     if(did_cmd)
     {
-      rd_cmd_name("complete_query");
+      uishell_cmd("complete_query");
     }
   }
   scratch_end(scratch);
@@ -1668,14 +1668,14 @@ uishell_watch_view_ui(Rng2F32 rect)
                     wv->next_cursor = wv->next_mark = cell_pt;
                     if(cell_info.flags & UIShell_WatchCellFlag_CanEdit)
                     {
-                      rd_cmd_name("edit");
-                      rd_cmd_name("edit");
+                      uishell_cmd("edit");
+                      uishell_cmd("edit");
                     }
                     else
                     {
-                      rd_cmd_name("edit");
+                      uishell_cmd("edit");
                       wv->next_cursor = wv->next_mark = cell_pt;
-                      rd_cmd_name("accept");
+                      uishell_cmd("accept");
                     }
                   }
                   else if(cell_info.cmd_name.size != 0)
@@ -1697,7 +1697,7 @@ uishell_watch_view_ui(Rng2F32 rect)
                           uishell_regs()->view = cfg->id;
                         }
                       }
-                      rd_push_cmd_current(cell_info.cmd_name);
+                      uishell_push_cmd_current(cell_info.cmd_name);
                     }
                   }
                   else if(!(sig.f & UI_SignalFlag_KeyboardPressed) && cell_info.flags & UIShell_WatchCellFlag_CanEdit)
@@ -1705,9 +1705,9 @@ uishell_watch_view_ui(Rng2F32 rect)
                     wv->next_cursor = wv->next_mark = cell_pt;
                     if(!uishell_watch_pt_match(wv->cursor, cell_pt))
                     {
-                      rd_cmd_name("edit");
+                      uishell_cmd("edit");
                     }
-                    rd_cmd_name("edit");
+                    uishell_cmd("edit");
                   }
                   else if(sig.f & UI_SignalFlag_KeyboardPressed && row_info->can_expand)
                   {
@@ -1766,7 +1766,7 @@ uishell_watch_view_ui(Rng2F32 rect)
     
     if(pressed)
     {
-      rd_cmd_name("focus_panel");
+      uishell_cmd("focus_panel");
     }
     vs->contents_are_focused = wv->text_editing;
     rd_store_view_scroll_pos(scroll_pos);
@@ -2373,7 +2373,7 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
   tv->cursor.column = Clamp(1, tv->cursor.column, (S64)cursor_line_string.size+1);
   tv->mark.column = Clamp(1, tv->mark.column, (S64)mark_line_string.size+1);
   
-  for(RD_Cmd *cmd = 0; rd_next_view_cmd(&cmd);)
+  for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
   {
     if(str8_match(cmd->name, str8_lit("center_cursor"), 0))
     {
@@ -2536,7 +2536,7 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
             UIShell_TextSliceSignal sig = uishell_text_slice(&slice_params, &tv->cursor, &tv->mark, &tv->preferred_column, str8_lit("text_slice"));
             if(ui_pressed(sig.base))
             {
-              rd_cmd_name("focus_panel");
+              uishell_cmd("focus_panel");
             }
             if(ui_dragging(sig.base) && sig.base.event_flags == 0)
             {
@@ -2679,7 +2679,7 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
   bv->cursor_off = Min(bv->cursor_off, last_off);
   bv->mark_off = Min(bv->mark_off, last_off);
   
-  for(RD_Cmd *cmd = 0; rd_next_view_cmd(&cmd);)
+  for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
   {
     if(str8_match(cmd->name, str8_lit("center_cursor"), 0))
     {
@@ -2938,7 +2938,7 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
           UI_Signal sig = ui_signal_from_box(cursor_bar_box);
           if(ui_pressed(sig))
           {
-            rd_cmd_name("focus_panel");
+            uishell_cmd("focus_panel");
           }
         }
         
@@ -2977,7 +2977,7 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
           UI_Signal sig = ui_signal_from_box(header_box);
           if(ui_pressed(sig))
           {
-            rd_cmd_name("focus_panel");
+            uishell_cmd("focus_panel");
           }
         }
         
@@ -3010,7 +3010,7 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
           UI_Signal sig = ui_signal_from_box(footer_box);
           if(ui_pressed(sig))
           {
-            rd_cmd_name("focus_panel");
+            uishell_cmd("focus_panel");
           }
         }
         
@@ -3069,7 +3069,7 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
           }
           if(ui_pressed(row_container_sig))
           {
-            rd_cmd_name("focus_panel");
+            uishell_cmd("focus_panel");
           }
           if(ui_dragging(row_container_sig) && mouse_hover_byte_num != 0)
           {
@@ -3457,7 +3457,7 @@ RD_VIEW_UI_FUNCTION_DEF(bitmap)
     {
       if(ui_pressed(canvas_sig))
       {
-        rd_cmd_name("focus_panel");
+        uishell_cmd("focus_panel");
         ui_store_drag_struct(&view_center_pos);
       }
       Vec2F32 start_view_center_pos = *ui_get_drag_struct(Vec2F32);
@@ -3955,7 +3955,7 @@ RD_VIEW_UI_FUNCTION_DEF(geo3d)
     {
       if(ui_pressed(sig))
       {
-        rd_cmd_name("focus_panel");
+        uishell_cmd("focus_panel");
         Vec2F32 data = v2f32(yaw_target, pitch_target);
         ui_store_drag_struct(&data);
       }

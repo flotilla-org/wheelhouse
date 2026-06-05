@@ -386,26 +386,26 @@ struct RD_Location
 ////////////////////////////////
 //~ rjf: Command Types
 
-typedef struct RD_Cmd RD_Cmd;
-struct RD_Cmd
+typedef struct UIShell_Cmd UIShell_Cmd;
+struct UIShell_Cmd
 {
   String8 name;
   UIShell_Regs *regs;
 };
 
-typedef struct RD_CmdNode RD_CmdNode;
-struct RD_CmdNode
+typedef struct UIShell_CmdNode UIShell_CmdNode;
+struct UIShell_CmdNode
 {
-  RD_CmdNode *next;
-  RD_CmdNode *prev;
-  RD_Cmd cmd;
+  UIShell_CmdNode *next;
+  UIShell_CmdNode *prev;
+  UIShell_Cmd cmd;
 };
 
-typedef struct RD_CmdList RD_CmdList;
-struct RD_CmdList
+typedef struct UIShell_CmdList UIShell_CmdList;
+struct UIShell_CmdList
 {
-  RD_CmdNode *first;
-  RD_CmdNode *last;
+  UIShell_CmdNode *first;
+  UIShell_CmdNode *last;
   U64 count;
 };
 
@@ -629,7 +629,7 @@ struct RD_State
   
   // rjf: commands
   Arena *cmds_arenas[2];
-  RD_CmdList cmds[2];
+  UIShell_CmdList cmds[2];
   U64 cmds_gen;
   Arena *cmd_output_arena;
   String8List cmd_outputs;
@@ -639,7 +639,7 @@ struct RD_State
   B32 popup_active;
   F32 popup_t;
   Arena *popup_arena;
-  RD_CmdList popup_cmds;
+  UIShell_CmdList popup_cmds;
   String8 popup_title;
   String8 popup_desc;
   
@@ -748,7 +748,7 @@ internal void uishell_regs_copy_contents(Arena *arena, UIShell_Regs *dst, UIShel
 ////////////////////////////////
 //~ rjf: Commands Type Functions
 
-internal void rd_cmd_list_push_new(Arena *arena, RD_CmdList *cmds, String8 name, UIShell_Regs *regs);
+internal void uishell_cmd_list_push_new(Arena *arena, UIShell_CmdList *cmds, String8 name, UIShell_Regs *regs);
 
 ////////////////////////////////
 //~ rjf: View UI Rule Functions
@@ -956,13 +956,13 @@ internal UIShell_AppCmdInfo uishell_app_cmd_info_from_string(String8 string);
 internal UIShell_ContextRegSlot uishell_context_reg_slot_from_app_reg_slot(UIShell_AppRegSlot slot);
 
 //- rjf: pushing
-internal void rd_push_stored_cmd(String8 name, UIShell_Regs *regs);
-#define rd_push_cmd_current(name) rd_push_stored_cmd((name), &(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP})
-#define rd_cmd_name(name, ...) rd_push_stored_cmd(str8_lit(name), &(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
+internal void uishell_push_stored_cmd(String8 name, UIShell_Regs *regs);
+#define uishell_push_cmd_current(name) uishell_push_stored_cmd((name), &(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP})
+#define uishell_cmd(name, ...) uishell_push_stored_cmd(str8_lit(name), &(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
 
 //- rjf: iterating
-internal B32 rd_next_cmd(RD_Cmd **cmd);
-internal B32 rd_next_view_cmd(RD_Cmd **cmd);
+internal B32 uishell_next_cmd(UIShell_Cmd **cmd);
+internal B32 uishell_next_view_cmd(UIShell_Cmd **cmd);
 
 //- rjf: app menus
 internal RD_AppMenuSpecList rd_app_menu_specs(void);

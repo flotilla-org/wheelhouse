@@ -21,9 +21,9 @@ uishell_regs_copy_contents(Arena *arena, UIShell_Regs *dst, UIShell_Regs *src)
 //~ rjf: Commands Type Functions
 
 internal void
-rd_cmd_list_push_new(Arena *arena, RD_CmdList *cmds, String8 name, UIShell_Regs *regs)
+uishell_cmd_list_push_new(Arena *arena, UIShell_CmdList *cmds, String8 name, UIShell_Regs *regs)
 {
-  RD_CmdNode *n = push_array(arena, RD_CmdNode, 1);
+  UIShell_CmdNode *n = push_array(arena, UIShell_CmdNode, 1);
   n->cmd.name = push_str8_copy(arena, name);
   n->cmd.regs = push_array(arena, UIShell_Regs, 1);
   n->cmd.regs[0] = uishell_regs_copy(arena, regs);
@@ -1283,7 +1283,7 @@ rd_view_ui(Rng2F32 rect)
         {
           vs->query_is_open = 1;
           vs->contents_are_focused = 0;
-          rd_cmd_name("focus_panel");
+          uishell_cmd("focus_panel");
         }
       }
     }
@@ -1392,7 +1392,7 @@ rd_view_ui(Rng2F32 rect)
       struct State
       {
         Arena *deferred_cmd_arena;
-        RD_CmdList deferred_cmds;
+        UIShell_CmdList deferred_cmds;
       };
       State *state = rd_view_state(State);
       if(state->deferred_cmd_arena == 0)
@@ -1402,14 +1402,14 @@ rd_view_ui(Rng2F32 rect)
       rd_store_view_loading_info(1, 0, 0);
       
       // rjf: any commands sent to this view need to be deferred until loading is complete
-      for(RD_Cmd *cmd = 0; rd_next_view_cmd(&cmd);)
+      for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
       {
         if(str8_match(cmd->name, str8_lit("goto_line"), 0) ||
            str8_match(cmd->name, str8_lit("goto_address"), 0) ||
            str8_match(cmd->name, str8_lit("center_cursor"), 0) ||
            str8_match(cmd->name, str8_lit("contain_cursor"), 0))
         {
-          rd_cmd_list_push_new(state->deferred_cmd_arena, &state->deferred_cmds, cmd->name, cmd->regs);
+          uishell_cmd_list_push_new(state->deferred_cmd_arena, &state->deferred_cmds, cmd->name, cmd->regs);
         }
       }
       
@@ -1462,12 +1462,12 @@ rd_view_ui(Rng2F32 rect)
       // that of the new visualizer.
       if(data_is_ready && new_view_name.size != 0)
       {
-        for(RD_CmdNode *cmd_node = state->deferred_cmds.first;
+        for(UIShell_CmdNode *cmd_node = state->deferred_cmds.first;
             cmd_node != 0;
             cmd_node = cmd_node->next)
         {
-          RD_Cmd *cmd = &cmd_node->cmd;
-          rd_push_stored_cmd(cmd->name, cmd->regs);
+          UIShell_Cmd *cmd = &cmd_node->cmd;
+          uishell_push_stored_cmd(cmd->name, cmd->regs);
         }
         CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
         cfg_node_equip_string(rd_state->cfg, view, new_view_name);
@@ -1485,7 +1485,7 @@ rd_view_ui(Rng2F32 rect)
       // close the tab.
       if(data_is_ready && new_view_name.size == 0)
       {
-        rd_cmd_name("close_tab");
+        uishell_cmd("close_tab");
       }
       
       scratch_end(scratch);
@@ -1582,7 +1582,7 @@ rd_view_ui(Rng2F32 rect)
       UIShell_RegsScope()
       {
         uishell_regs_fill_slot_from_string(uishell_context_reg_slot_from_app_reg_slot(cmd_info.query_slot), str8_zero(), input);
-        rd_cmd_name("complete_query");
+        uishell_cmd("complete_query");
       }
     }
   }
@@ -2755,7 +2755,7 @@ rd_window_frame(void)
         {
           for(String8Node *n = task->paths.first; n != 0; n = n->next)
           {
-            rd_cmd_name("open", .file_path = n->string);
+            uishell_cmd("open", .file_path = n->string);
           }
           done = 1;
         }
@@ -2809,12 +2809,12 @@ rd_window_frame(void)
               UI_TagF("pop")
                 if(ui_clicked(ui_buttonf("OK")) || (ui_key_match(bg_box->default_nav_focus_hot_key, ui_key_zero()) && ui_slot_press(UI_EventActionSlot_Accept)))
               {
-                rd_cmd_name("popup_accept");
+                uishell_cmd("popup_accept");
               }
               ui_spacer(ui_em(1.f, 1.f));
               if(ui_clicked(ui_buttonf("Cancel")) || ui_slot_press(UI_EventActionSlot_Cancel))
               {
-                rd_cmd_name("popup_cancel");
+                uishell_cmd("popup_cancel");
               }
             }
             ui_spacer(ui_em(3.f, 1.f));
@@ -3146,7 +3146,7 @@ rd_window_frame(void)
         if(!ui_key_match(ui_key_zero(), ws->query_regs->ui_key) && ui_box_is_nil(box))
         {
           query_is_open = 0;
-          rd_cmd_name("cancel_query");
+          uishell_cmd("cancel_query");
         }
       }
       
@@ -3158,13 +3158,13 @@ rd_window_frame(void)
         if(eval.msgs.max_kind > E_MsgKind_Null)
         {
           query_is_open = 0;
-          rd_cmd_name("cancel_query");
+          uishell_cmd("cancel_query");
         }
         else if(eval.space.kind == RD_EvalSpaceKind_MetaCfg &&
                 rd_cfg_from_eval_space(eval.space) == &cfg_nil_node)
         {
           query_is_open = 0;
-          rd_cmd_name("cancel_query");
+          uishell_cmd("cancel_query");
         }
       }
       
@@ -3499,7 +3499,7 @@ rd_window_frame(void)
              (cmd_name.size != 0 && !vs->query_is_open) ||
              ui_slot_press(UI_EventActionSlot_Cancel))
           {
-            rd_cmd_name("cancel_query");
+            uishell_cmd("cancel_query");
           }
           
           // rjf: any queries which take a file path mutate the debugger's "current path"
@@ -3514,7 +3514,7 @@ rd_window_frame(void)
               CFG_Node *current_path = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, str8_lit("current_path"));
               if(!str8_match(current_path->first->string, path_chopped, 0))
               {
-                rd_cmd_name("set_current_path", .file_path = path_chopped);
+                uishell_cmd("set_current_path", .file_path = path_chopped);
               }
             }
           }
@@ -3723,7 +3723,7 @@ rd_window_frame(void)
               UI_Signal user_sig = ui_signal_from_box(user_box);
               if(ui_clicked(user_sig))
               {
-                rd_cmd_name("run_command", .cmd_name = str8_lit("open_user"));
+                uishell_cmd("run_command", .cmd_name = str8_lit("open_user"));
               }
             }
             
@@ -3768,7 +3768,7 @@ rd_window_frame(void)
             UI_Signal prof_sig = ui_signal_from_box(prof_box);
             if(ui_clicked(prof_sig))
             {
-              rd_cmd_name("run_command", .cmd_name = str8_lit("open_project"));
+              uishell_cmd("run_command", .cmd_name = str8_lit("open_project"));
             }
           }
           
@@ -3783,11 +3783,11 @@ rd_window_frame(void)
           {
             if(ui_clicked(rd_icon_buttonf(RD_IconKind_Window, 0, "Close Window")))
             {
-              rd_cmd_name("close_window");
+              uishell_cmd("close_window");
             }
             if(ui_clicked(rd_icon_buttonf(RD_IconKind_X, 0, "Exit")))
             {
-              rd_cmd_name("exit");
+              uishell_cmd("exit");
             }
           }
 
@@ -3827,7 +3827,7 @@ rd_window_frame(void)
               }
               else
               {
-                rd_cmd_name("exit");
+                uishell_cmd("exit");
               }
             }
             wm_window_push_custom_title_bar_client_area(ws->os, min_sig.box->rect);
@@ -4061,7 +4061,7 @@ rd_window_frame(void)
                 if(dir != Dir2_Invalid)
                 {
                   CFG_PanelNode *split_panel = panel;
-                  rd_cmd_name("split_panel",
+                  uishell_cmd("split_panel",
                          .dst_panel  = split_panel->cfg->id,
                          .panel      = rd_state->drag_drop_regs->panel,
                          .view      = rd_state->drag_drop_regs->view,
@@ -4153,7 +4153,7 @@ rd_window_frame(void)
                 split_panel = panel->last;
                 dir = (panel->split_axis == Axis2_X ? Dir2_Right : Dir2_Down);
               }
-              rd_cmd_name("split_panel",
+              uishell_cmd("split_panel",
                      .dst_panel  = split_panel->cfg->id,
                      .panel      = rd_state->drag_drop_regs->panel,
                      .view      = rd_state->drag_drop_regs->view,
@@ -4460,7 +4460,7 @@ rd_window_frame(void)
                 {
                   if(dir != Dir2_Invalid)
                   {
-                    rd_cmd_name("split_panel",
+                    uishell_cmd("split_panel",
                            .dst_panel = panel->cfg->id,
                            .panel = rd_state->drag_drop_regs->panel,
                            .view = rd_state->drag_drop_regs->view,
@@ -4468,7 +4468,7 @@ rd_window_frame(void)
                   }
                   else
                   {
-                    rd_cmd_name("move_view",
+                    uishell_cmd("move_view",
                            .dst_panel = panel->cfg->id,
                            .panel = rd_state->drag_drop_regs->panel,
                            .view = rd_state->drag_drop_regs->view,
@@ -4614,7 +4614,7 @@ rd_window_frame(void)
                 {
                   if(ui_clicked(rd_icon_buttonf(RD_IconKind_X, 0, "Close Panel")))
                   {
-                    rd_cmd_name("close_panel");
+                    uishell_cmd("close_panel");
                   }
                 }
               }
@@ -4671,7 +4671,7 @@ rd_window_frame(void)
             UI_Signal panel_sig = ui_signal_from_box(panel_box);
             if(ui_pressed(panel_sig))
             {
-              rd_cmd_name("focus_panel", .panel = panel->cfg->id);
+              uishell_cmd("focus_panel", .panel = panel->cfg->id);
             }
           }
           
@@ -4876,11 +4876,11 @@ rd_window_frame(void)
                           if(ws->query_is_active &&
                              ui_key_match(sig.box->key, ws->query_regs->ui_key))
                           {
-                            rd_cmd_name("cancel_query");
+                            uishell_cmd("cancel_query");
                           }
                           else
                           {
-                            rd_cmd_name("push_query",
+                            uishell_cmd("push_query",
                                    .ui_key       = sig.box->key,
                                    .expr         = push_str8f(scratch.arena, "query:config.$%I64x", tab->id));
                           }
@@ -4904,7 +4904,7 @@ rd_window_frame(void)
                       UI_Signal sig = ui_signal_from_box(close_box);
                       if(ui_clicked(sig) || ui_middle_clicked(sig))
                       {
-                        rd_cmd_name("close_tab");
+                        uishell_cmd("close_tab");
                       }
                     }
                   }
@@ -4914,8 +4914,8 @@ rd_window_frame(void)
                     UI_Signal sig = ui_signal_from_box(tab_box);
                     if(ui_pressed(sig))
                     {
-                      rd_cmd_name("focus_tab");
-                      rd_cmd_name("focus_panel");
+                      uishell_cmd("focus_tab");
+                      uishell_cmd("focus_panel");
                     }
                     else if(ui_dragging(sig) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
                     {
@@ -4923,13 +4923,13 @@ rd_window_frame(void)
                     }
                     else if(ui_right_clicked(sig))
                     {
-                      rd_cmd_name("push_query",
+                      uishell_cmd("push_query",
                              .ui_key       = sig.box->key,
                              .expr         = push_str8f(scratch.arena, "query:config.$%I64x", tab->id));
                     }
                     else if(ui_middle_clicked(sig))
                     {
-                      rd_cmd_name("close_tab");
+                      uishell_cmd("close_tab");
                     }
                   }
                 }
@@ -5020,15 +5020,15 @@ rd_window_frame(void)
                   UI_Signal sig = ui_signal_from_box(add_new_box);
                   if(ui_pressed(sig))
                   {
-                    rd_cmd_name("focus_panel", .panel = panel->cfg->id);
+                    uishell_cmd("focus_panel", .panel = panel->cfg->id);
                     if(ws->query_is_active &&
                        ui_key_match(add_new_box->key, ws->query_regs->ui_key))
                     {
-                      rd_cmd_name("cancel_query");
+                      uishell_cmd("cancel_query");
                     }
                     else
                     {
-                      rd_cmd_name("push_query",
+                      uishell_cmd("push_query",
                              .expr = str8_lit("query:tab_commands"),
                              .panel = panel->cfg->id,
                              .do_implicit_root = 1,
@@ -5049,7 +5049,7 @@ rd_window_frame(void)
           //
           if(tab_drop_is_active && rd_drag_drop() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View)
           {
-            rd_cmd_name("move_view",
+            uishell_cmd("move_view",
                    .dst_panel = panel->cfg->id,
                    .panel     = rd_state->drag_drop_regs->panel,
                    .view     = rd_state->drag_drop_regs->view,
@@ -5086,7 +5086,7 @@ rd_window_frame(void)
                   }
                   else
                   {
-                    rd_cmd_name("open", .file_path = path, .panel = panel->cfg->id);
+                    uishell_cmd("open", .file_path = path, .panel = panel->cfg->id);
                   }
                   scratch_end(scratch);
                 }
@@ -5135,11 +5135,11 @@ rd_window_frame(void)
         ui_eat_event(evt);
         if(evt->delta_2f32.y < 0)
         {
-          rd_cmd_name("inc_window_font_size");
+          uishell_cmd("inc_window_font_size");
         }
         else if(evt->delta_2f32.y > 0)
         {
-          rd_cmd_name("dec_window_font_size");
+          uishell_cmd("dec_window_font_size");
         }
       }
     }
@@ -6334,21 +6334,21 @@ uishell_app_cmd_info_from_string(String8 string)
 //- rjf: pushing
 
 internal void
-rd_push_stored_cmd(String8 name, UIShell_Regs *regs)
+uishell_push_stored_cmd(String8 name, UIShell_Regs *regs)
 {
-  rd_cmd_list_push_new(rd_state->cmds_arenas[0], &rd_state->cmds[0], name, regs);
+  uishell_cmd_list_push_new(rd_state->cmds_arenas[0], &rd_state->cmds[0], name, regs);
 }
 
 //- rjf: iterating
 
 internal B32
-rd_next_cmd(RD_Cmd **cmd)
+uishell_next_cmd(UIShell_Cmd **cmd)
 {
   U64 slot = rd_state->cmds_gen%ArrayCount(rd_state->cmds);
-  RD_CmdNode *start_node = rd_state->cmds[slot].first;
+  UIShell_CmdNode *start_node = rd_state->cmds[slot].first;
   if(cmd[0] != 0)
   {
-    start_node = CastFromMember(RD_CmdNode, cmd, cmd[0]);
+    start_node = CastFromMember(UIShell_CmdNode, cmd, cmd[0]);
     start_node = start_node->next;
   }
   cmd[0] = 0;
@@ -6360,9 +6360,9 @@ rd_next_cmd(RD_Cmd **cmd)
 }
 
 internal B32
-rd_next_view_cmd(RD_Cmd **cmd)
+uishell_next_view_cmd(UIShell_Cmd **cmd)
 {
-  for(;rd_next_cmd(cmd);)
+  for(;uishell_next_cmd(cmd);)
   {
     if(uishell_regs()->view == cmd[0]->regs->view)
     {
@@ -6730,14 +6730,14 @@ rd_init(CmdLine *cmdln)
     }
     
     // rjf: do initial load of user/project
-    rd_cmd_name("open_user", .file_path = user_path, .non_graphical = 1);
+    uishell_cmd("open_user", .file_path = user_path, .non_graphical = 1);
     if(project_path.size != 0)
     {
-      rd_cmd_name("open_project", .file_path = project_path);
+      uishell_cmd("open_project", .file_path = project_path);
     }
     if(initial_open_file_path.size != 0)
     {
-      rd_cmd_name("open", .file_path = initial_open_file_path);
+      uishell_cmd("open", .file_path = initial_open_file_path);
     }
     
     scratch_end(scratch2);
@@ -6939,7 +6939,7 @@ rd_frame(void)
         }
         if(p->selected_tab == &cfg_nil_node && first_unfiltered_tab != &cfg_nil_node)
         {
-          rd_cmd_name("focus_tab", .panel = p->cfg->id, .tab = first_unfiltered_tab->id);
+          uishell_cmd("focus_tab", .panel = p->cfg->id, .tab = first_unfiltered_tab->id);
         }
       }
     }
@@ -7287,7 +7287,7 @@ rd_frame(void)
       if(!take && event->kind == WM_EventKind_WindowClose && ws != 0)
       {
         take = 1;
-        rd_cmd_name("exit");
+        uishell_cmd("exit");
       }
 
       if(!take && event->kind == WM_EventKind_MenuCommand && event->string.size != 0)
@@ -7295,11 +7295,11 @@ rd_frame(void)
         take = 1;
         if(ws != &rd_nil_window_state && str8_match(event->string, str8_lit("window_close_menu"), 0))
         {
-          rd_cmd_name("close_window");
+          uishell_cmd("close_window");
         }
         else
         {
-          rd_cmd_name("run_command", .cmd_name = event->string);
+          uishell_cmd("run_command", .cmd_name = event->string);
         }
         rd_request_frame();
       }
@@ -7360,7 +7360,7 @@ rd_frame(void)
                 cmd_name = RD_APP_BINDING_VERSION_REMAP_NEW_NAME_TABLE[idx];
               }
             }
-            rd_cmd_name("run_command", .cmd_name = cmd_name);
+            uishell_cmd("run_command", .cmd_name = cmd_name);
             if(allow_text_hotkeys)
             {
               wm_text(&events, event->window, hit_char);
@@ -7385,7 +7385,7 @@ rd_frame(void)
       {
         String32 insertion32 = str32(&event->character, 1);
         String8 insertion8 = str8_from_32(scratch.arena, insertion32);
-        rd_cmd_name("insert_text", .string = insertion8);
+        uishell_cmd("insert_text", .string = insertion8);
         rd_request_frame();
         take = 1;
         if(event->modifiers & WM_Modifier_Alt)
@@ -7398,7 +7398,7 @@ rd_frame(void)
       if(!take)
       {
         take = 1;
-        rd_cmd_name("wm_event", .wm_event = event);
+        uishell_cmd("wm_event", .wm_event = event);
       }
       
       //- rjf: take
@@ -7412,7 +7412,7 @@ rd_frame(void)
   //////////////////////////////
   //- rjf: loop - consume events in core, tick engine, and repeat
   //
-  RD_Cmd *cmd = 0;
+  UIShell_Cmd *cmd = 0;
   ProfScope("loop - consume events in core, tick engine, and repeat") for(U64 cmd_process_loop_idx = 0; cmd_process_loop_idx < 3; cmd_process_loop_idx += 1)
   {
     ////////////////////////////
@@ -7736,8 +7736,8 @@ rd_frame(void)
       rd_state->seconds_until_autosave -= rd_state->frame_dt;
       if(rd_state->seconds_until_autosave <= 0.f)
       {
-        rd_cmd_name("write_user_data");
-        rd_cmd_name("write_project_data");
+        uishell_cmd("write_user_data");
+        uishell_cmd("write_project_data");
         rd_state->seconds_until_autosave = 5.f;
       }
     }
@@ -7747,7 +7747,7 @@ rd_frame(void)
     //
     if(rd_state->frame_depth == 1) ProfScope("process top-level graphical commands")
     {
-      for(;rd_next_cmd(&cmd);) UIShell_RegsScope()
+      for(;uishell_next_cmd(&cmd);) UIShell_RegsScope()
       {
         // rjf: unpack command
         MemoryCopyStruct(uishell_regs(), cmd->regs);
@@ -7865,7 +7865,7 @@ rd_frame(void)
     // rjf: rotate
     {
       Arena *first_arena = rd_state->cmds_arenas[0];
-      RD_CmdList first_cmds = rd_state->cmds[0];
+      UIShell_CmdList first_cmds = rd_state->cmds[0];
       MemoryCopy(rd_state->cmds_arenas,
                  rd_state->cmds_arenas+1,
                  sizeof(rd_state->cmds_arenas[0])*(ArrayCount(rd_state->cmds_arenas)-1));

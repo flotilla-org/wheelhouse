@@ -732,7 +732,7 @@ rd_cmd_list_menu_buttons(U64 count, String8 *cmd_names, U32 *fastpath_codepoints
       UI_Signal sig = rd_cmd_spec_button(cmd_names[idx]);
       if(ui_clicked(sig))
       {
-        rd_cmd_name("run_command", .cmd_name = cmd_names[idx]);
+        uishell_cmd("run_command", .cmd_name = cmd_names[idx]);
         ui_ctx_menu_close();
         CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
         RD_WindowState *ws = rd_window_state_from_cfg(window);
@@ -1216,8 +1216,8 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
       {
         vaddr = params->line_vaddrs[cursor->line - params->line_num_range.min];
       }
-      rd_cmd_name("focus_panel");
-      rd_cmd_name("push_query",
+      uishell_cmd("focus_panel");
+      uishell_cmd("push_query",
              .expr = txt_pt_match(*cursor, *mark) ? s("query:text_pt_commands") : s("query:text_range_commands"),
              .do_implicit_root = 1,
              .do_lister = 1,
