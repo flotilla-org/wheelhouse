@@ -35,7 +35,7 @@ internal B32
 uishell_dispatch_app_command(String8 name)
 {
   B32 result = 1;
-  
+
   if(str8_match(name, str8_lit("exit"), 0))
   {
     uishell_push_cmd_current(str8_lit("write_user_data"));
@@ -85,7 +85,7 @@ uishell_dispatch_app_command(String8 name)
   {
     result = 0;
   }
-  
+
   return result;
 }
 
@@ -420,7 +420,7 @@ internal B32
 uishell_dispatch_command_palette_command(String8 name)
 {
   B32 result = 1;
-  
+
   if(str8_match(name, str8_lit("open_palette"), 0))
   {
     Temp scratch = scratch_begin(0, 0);
@@ -495,25 +495,11 @@ uishell_dispatch_command_palette_command(String8 name)
     }
     scratch_end(scratch);
   }
-  else if(str8_match(name, str8_lit("output"), 0))
-  {
-    UIShell_RegsScope(.string = str8_lit("text"), .expr = str8_lit("query:output"))
-    {
-      uishell_push_cmd_current(str8_lit("build_tab"));
-    }
-  }
-  else if(str8_match(name, str8_lit("text"), 0))
-  {
-    UIShell_RegsScope(.string = str8_lit("text"), .expr = str8_zero())
-    {
-      uishell_push_cmd_current(str8_lit("build_tab"));
-    }
-  }
   else
   {
     result = 0;
   }
-  
+
   return result;
 }
 
@@ -1551,7 +1537,16 @@ uishell_dispatch_config_command(String8 name)
 {
   B32 result = 1;
   
-  if(str8_match(name, str8_lit("open_recent_project"), 0))
+  if(str8_match(name, str8_lit("user_settings"), 0) ||
+     str8_match(name, str8_lit("project_settings"), 0))
+  {
+    String8 expr = str8_match(name, str8_lit("user_settings"), 0) ? str8_lit("query:user_settings") : str8_lit("query:project_settings");
+    UIShell_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
+    {
+      uishell_push_cmd_current(str8_lit("push_query"));
+    }
+  }
+  else if(str8_match(name, str8_lit("open_recent_project"), 0))
   {
     CFG_Node *cfg = cfg_node_from_id(uishell_regs()->cfg);
     CFG_Node *path = cfg_node_child_from_string(cfg, str8_lit("path"));
@@ -2046,20 +2041,11 @@ uishell_dispatch_query_command(String8 name)
 }
 
 internal B32
-uishell_dispatch_file_query_command(String8 name)
+uishell_dispatch_file_command(String8 name)
 {
   B32 result = 1;
   
-  if(str8_match(name, str8_lit("user_settings"), 0) ||
-     str8_match(name, str8_lit("project_settings"), 0))
-  {
-    String8 expr = str8_match(name, str8_lit("user_settings"), 0) ? str8_lit("query:user_settings") : str8_lit("query:project_settings");
-    UIShell_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
-    {
-      uishell_push_cmd_current(str8_lit("push_query"));
-    }
-  }
-  else if(str8_match(name, str8_lit("set_current_path"), 0))
+  if(str8_match(name, str8_lit("set_current_path"), 0))
   {
     CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
     CFG_Node *current_path = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, str8_lit("current_path"));
@@ -2100,40 +2086,166 @@ uishell_dispatch_file_query_command(String8 name)
 }
 
 internal B32
-uishell_cmd_pack_dispatch(String8 name)
+uishell_dispatch_viewer_command(String8 name)
 {
-  B32 result = 0;
-  if(uishell_dispatch_app_command(name) ||
-     uishell_dispatch_ui_event_command(name) ||
-     uishell_dispatch_command_palette_command(name) ||
-     uishell_dispatch_tab_command(name) ||
-     uishell_dispatch_panel_command(name) ||
-     uishell_dispatch_font_command(name) ||
-     uishell_dispatch_window_command(name) ||
-     uishell_dispatch_config_command(name) ||
-     uishell_dispatch_query_command(name) ||
-     uishell_dispatch_file_query_command(name))
+  B32 result = 1;
+
+  if(str8_match(name, str8_lit("output"), 0))
   {
-    result = 1;
+    UIShell_RegsScope(.string = str8_lit("text"), .expr = str8_lit("query:output"))
+    {
+      uishell_push_cmd_current(str8_lit("build_tab"));
+    }
   }
+  else if(str8_match(name, str8_lit("text"), 0))
+  {
+    UIShell_RegsScope(.string = str8_lit("text"), .expr = str8_zero())
+    {
+      uishell_push_cmd_current(str8_lit("build_tab"));
+    }
+  }
+  else if(str8_match(name, str8_lit("binary"), 0))
+  {
+    UIShell_RegsScope(.string = str8_lit("binary"), .expr = str8_zero())
+    {
+      uishell_push_cmd_current(str8_lit("build_tab"));
+    }
+  }
+  else
+  {
+    result = 0;
+  }
+
+  return result;
+}
+
+internal B32
+uishell_shell_query_cmd_pack_dispatch(String8 name)
+{
+  B32 result = (uishell_dispatch_command_palette_command(name) ||
+                uishell_dispatch_query_command(name));
   return result;
 }
 
 internal void
 uishell_register_app_cmd_packs(void)
 {
-  local_persist UIShell_CmdPack pack =
+  local_persist UIShell_CmdPack app_file_pack =
   {
-    .name = str8_lit_comp("uishell"),
-    .cmd_count = uishell_cmd_pack_cmd_count,
-    .cmd_info_from_index = uishell_cmd_pack_cmd_info_from_index,
-    .cmd_info_from_string = uishell_cmd_pack_cmd_info_from_string,
-    .binding_count = uishell_cmd_pack_binding_count,
-    .binding_from_index = uishell_cmd_pack_binding_from_index,
-    .menu_specs = uishell_app_menu_specs,
-    .dispatch = uishell_cmd_pack_dispatch,
+    .name = str8_lit_comp("app_file"),
+    .cmd_count = uishell_app_file_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_app_file_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_app_file_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_app_file_cmd_pack_binding_count,
+    .binding_from_index = uishell_app_file_cmd_pack_binding_from_index,
+    .menu_specs = uishell_app_file_menu_specs,
+    .dispatch = uishell_dispatch_file_command,
   };
-  uishell_register_cmd_pack(&pack);
+  local_persist UIShell_CmdPack app_config_pack =
+  {
+    .name = str8_lit_comp("app_config"),
+    .cmd_count = uishell_app_config_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_app_config_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_app_config_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_app_config_cmd_pack_binding_count,
+    .binding_from_index = uishell_app_config_cmd_pack_binding_from_index,
+    .dispatch = uishell_dispatch_config_command,
+  };
+  local_persist UIShell_CmdPack app_viewer_pack =
+  {
+    .name = str8_lit_comp("app_viewer"),
+    .cmd_count = uishell_app_viewer_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_app_viewer_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_app_viewer_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_app_viewer_cmd_pack_binding_count,
+    .binding_from_index = uishell_app_viewer_cmd_pack_binding_from_index,
+    .dispatch = uishell_dispatch_viewer_command,
+  };
+  local_persist UIShell_CmdPack shell_window_pack =
+  {
+    .name = str8_lit_comp("shell_window"),
+    .cmd_count = uishell_shell_window_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_window_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_window_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_window_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_window_cmd_pack_binding_from_index,
+    .menu_specs = uishell_shell_window_menu_specs,
+    .dispatch = uishell_dispatch_window_command,
+  };
+  local_persist UIShell_CmdPack shell_panel_pack =
+  {
+    .name = str8_lit_comp("shell_panel"),
+    .cmd_count = uishell_shell_panel_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_panel_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_panel_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_panel_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_panel_cmd_pack_binding_from_index,
+    .menu_specs = uishell_shell_panel_menu_specs,
+    .dispatch = uishell_dispatch_panel_command,
+  };
+  local_persist UIShell_CmdPack shell_tab_pack =
+  {
+    .name = str8_lit_comp("shell_tab"),
+    .cmd_count = uishell_shell_tab_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_tab_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_tab_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_tab_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_tab_cmd_pack_binding_from_index,
+    .menu_specs = uishell_shell_tab_menu_specs,
+    .dispatch = uishell_dispatch_tab_command,
+  };
+  local_persist UIShell_CmdPack shell_app_pack =
+  {
+    .name = str8_lit_comp("shell_app"),
+    .cmd_count = uishell_shell_app_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_app_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_app_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_app_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_app_cmd_pack_binding_from_index,
+    .menu_specs = uishell_shell_help_menu_specs,
+    .dispatch = uishell_dispatch_app_command,
+  };
+  local_persist UIShell_CmdPack shell_query_pack =
+  {
+    .name = str8_lit_comp("shell_query"),
+    .cmd_count = uishell_shell_query_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_query_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_query_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_query_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_query_cmd_pack_binding_from_index,
+    .dispatch = uishell_shell_query_cmd_pack_dispatch,
+  };
+  local_persist UIShell_CmdPack shell_ui_event_pack =
+  {
+    .name = str8_lit_comp("shell_ui_event"),
+    .cmd_count = uishell_shell_ui_event_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_ui_event_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_ui_event_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_ui_event_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_ui_event_cmd_pack_binding_from_index,
+    .dispatch = uishell_dispatch_ui_event_command,
+  };
+  local_persist UIShell_CmdPack shell_font_pack =
+  {
+    .name = str8_lit_comp("shell_font"),
+    .cmd_count = uishell_shell_font_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_font_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_font_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_font_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_font_cmd_pack_binding_from_index,
+    .dispatch = uishell_dispatch_font_command,
+  };
+
+  uishell_register_cmd_pack(&app_file_pack);
+  uishell_register_cmd_pack(&shell_window_pack);
+  uishell_register_cmd_pack(&shell_panel_pack);
+  uishell_register_cmd_pack(&shell_tab_pack);
+  uishell_register_cmd_pack(&shell_app_pack);
+  uishell_register_cmd_pack(&app_config_pack);
+  uishell_register_cmd_pack(&app_viewer_pack);
+  uishell_register_cmd_pack(&shell_query_pack);
+  uishell_register_cmd_pack(&shell_ui_event_pack);
+  uishell_register_cmd_pack(&shell_font_pack);
 }
 
 #define UISHELL_APP_REGISTER_CMD_PACKS() uishell_register_app_cmd_packs()

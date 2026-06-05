@@ -57,27 +57,45 @@ read_only global UIShell_CmdInfo uishell_nil_cmd_info = {0};
 #define UISHELL_Q_ADDR       {UIShell_QueryFlag_CodeInput|UIShell_QueryFlag_Required, UIShell_RegSlot_Vaddr, {0}, {0}}
 #define UISHELL_CMD(name, display, icon, desc, tags, flags, query) {str8_lit_comp(name), str8_lit_comp(display), RD_IconKind_##icon, str8_lit_comp(desc), str8_lit_comp(tags), {0}, flags, query}
 
-read_only global UIShell_CmdInfo uishell_cmd_info_table[] =
+read_only global UIShell_CmdInfo uishell_shell_app_cmd_info_table[] =
 {
   UISHELL_CMD("exit", "Exit", X, "Exits the app.", "quit,close", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD("undo", "Undo", Undo, "Undoes the last edit.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD("redo", "Redo", Redo, "Redoes the last edit.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD("go_back", "Go Back", LeftArrow, "Moves backward in focus history.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD("go_forward", "Go Forward", RightArrow, "Moves forward in focus history.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+};
+
+read_only global UIShell_CmdInfo uishell_shell_query_cmd_info_table[] =
+{
   UISHELL_CMD("open_palette", "Open Palette", List, "Opens the palette.", "help,cmd,lister", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("run_command", "Run Command", Null, "Runs a command from the command palette.", "help,cmd", UISHELL_CMD_FLAG_UI, UISHELL_Q_COMMANDS),
-  
+  UISHELL_CMD("open_tab", "Open New Tab", Null, "Opens a new tab.", "tab,view", UISHELL_CMD_FLAG_UI, UISHELL_Q_TABS),
+};
+
+read_only global UIShell_CmdInfo uishell_shell_font_cmd_info_table[] =
+{
   UISHELL_CMD("inc_window_font_size", "Increase Window Font Size", Null, "Increases the window font size.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("dec_window_font_size", "Decrease Window Font Size", Null, "Decreases the window font size.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("inc_view_font_size", "Increase View Font Size", Null, "Increases the view font size.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("dec_view_font_size", "Decrease View Font Size", Null, "Decreases the view font size.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  
+};
+
+read_only global UIShell_CmdInfo uishell_shell_window_cmd_info_table[] =
+{
   UISHELL_CMD("open_window", "Open New Window", Window, "Opens a new window.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("window_settings", "Window Settings", Gear, "Opens settings for a window.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("close_window", "Close Window", Window, "Closes the current window.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("window_close_menu", "Window Close Menu", Null, "Closes the current window.", "", 0, UISHELL_Q_NONE),
   UISHELL_CMD("toggle_fullscreen", "Toggle Fullscreen", Window, "Toggles fullscreen view.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("reset_to_default_bindings", "Reset To Default Bindings", Null, "Resets all keybindings to their defaults.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+};
+
+read_only global UIShell_CmdInfo uishell_shell_panel_cmd_info_table[] =
+{
   UISHELL_CMD("reset_to_default_panels", "Reset To Default Panel Layout", Window, "Resets the window to the default panel layout.", "panel", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("reset_to_compact_panels", "Reset To Compact Panel Layout", Window, "Resets the window to the compact panel layout.", "panel", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("reset_to_simple_panels", "Reset To Simple Panel Layout", Window, "Resets the window to the simple panel layout.", "panel", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  
   UISHELL_CMD("new_panel_left", "Split Panel Left", XSplit, "Creates a new panel to the left.", "panel", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("new_panel_up", "Split Panel Up", YSplit, "Creates a new panel above.", "panel", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("new_panel_right", "Split Panel Right", XSplit, "Creates a new panel to the right.", "panel", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
@@ -92,13 +110,15 @@ read_only global UIShell_CmdInfo uishell_cmd_info_table[] =
   UISHELL_CMD("focus_panel_up", "Focus Panel Up", UpArrow, "Focuses the panel above.", "panel", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("focus_panel_down", "Focus Panel Down", DownArrow, "Focuses the panel below.", "panel", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("close_panel", "Close Panel", ClosePanel, "Closes the current panel.", "panel", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  
+};
+
+read_only global UIShell_CmdInfo uishell_shell_tab_cmd_info_table[] =
+{
   UISHELL_CMD("focus_tab", "Focus Tab", Null, "Focuses a tab.", "tab", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("next_tab", "Focus Next Tab", RightArrow, "Focuses the next tab.", "tab", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("prev_tab", "Focus Previous Tab", LeftArrow, "Focuses the previous tab.", "tab", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("move_tab_right", "Move Tab Right", RightArrow, "Moves the current tab right.", "tab", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("move_tab_left", "Move Tab Left", LeftArrow, "Moves the current tab left.", "tab", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("open_tab", "Open New Tab", Null, "Opens a new tab.", "tab,view", UISHELL_CMD_FLAG_UI, UISHELL_Q_TABS),
   UISHELL_CMD("duplicate_tab", "Duplicate Tab", Duplicate, "Duplicates the current tab.", "tab", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("copy_tab_full_path", "Copy Full Path", Clipboard, "Copies the current tab path.", "tab,path", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("close_tab", "Close Tab", X, "Closes the current tab.", "tab", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
@@ -106,10 +126,10 @@ read_only global UIShell_CmdInfo uishell_cmd_info_table[] =
   UISHELL_CMD("tab_bar_top", "Anchor Tab Bar To Top", UpArrow, "Moves tab bars to the top.", "tab", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("tab_bar_bottom", "Anchor Tab Bar To Bottom", DownArrow, "Moves tab bars to the bottom.", "tab", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("tab_settings", "Selected Tab Settings", Gear, "Opens settings for a tab.", "tab,view,options", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  
-  UISHELL_CMD("set_current_path", "Set Current Path", FileOutline, "Sets the current file browsing path.", "path", 0, UISHELL_Q_NONE),
-  UISHELL_CMD("open", "Open", FileOutline, "Opens a file.", "file,open", UISHELL_CMD_FLAG_UI, UISHELL_Q_FILE),
-  UISHELL_CMD("show_file_in_explorer", "Show File In Explorer", FolderClosedFilled, "Shows a file in the system file explorer.", "file,path", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+};
+
+read_only global UIShell_CmdInfo uishell_app_config_cmd_info_table[] =
+{
   UISHELL_CMD("new_user", "New User", Add, "Creates a new user file.", "user,config", UISHELL_CMD_FLAG_UI, UISHELL_Q_FILE_OPT),
   UISHELL_CMD("new_project", "New Project", Add, "Creates a new project file.", "project,config", UISHELL_CMD_FLAG_UI, UISHELL_Q_FILE_OPT),
   UISHELL_CMD("open_user", "Open User", Person, "Opens a user file.", "user,config", UISHELL_CMD_FLAG_UI, UISHELL_Q_FILE),
@@ -119,11 +139,10 @@ read_only global UIShell_CmdInfo uishell_cmd_info_table[] =
   UISHELL_CMD("save_project", "Save Project", Save, "Saves project data to a file.", "project,config", UISHELL_CMD_FLAG_UI, UISHELL_Q_FILE),
   UISHELL_CMD("user_settings", "User Settings", Gear, "Opens user settings.", "settings", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("project_settings", "Project Settings", Gear, "Opens project settings.", "settings", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  
-  UISHELL_CMD("undo", "Undo", Undo, "Undoes the last edit.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("redo", "Redo", Redo, "Redoes the last edit.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("go_back", "Go Back", LeftArrow, "Moves backward in focus history.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("go_forward", "Go Forward", RightArrow, "Moves forward in focus history.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+};
+
+read_only global UIShell_CmdInfo uishell_shell_ui_event_cmd_info_table[] =
+{
   UISHELL_CMD("edit", "Edit", Pencil, "Begins editing.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("accept", "Accept", CheckFilled, "Accepts the active interaction.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("cancel", "Cancel", X, "Cancels the active interaction.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
@@ -168,6 +187,17 @@ read_only global UIShell_CmdInfo uishell_cmd_info_table[] =
   UISHELL_CMD("paste", "Paste", Clipboard, "Pastes clipboard contents.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("move_next", "Move Next", Null, "Moves to the next item.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("move_prev", "Move Previous", Null, "Moves to the previous item.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+};
+
+read_only global UIShell_CmdInfo uishell_app_file_cmd_info_table[] =
+{
+  UISHELL_CMD("set_current_path", "Set Current Path", FileOutline, "Sets the current file browsing path.", "path", 0, UISHELL_Q_NONE),
+  UISHELL_CMD("open", "Open", FileOutline, "Opens a file.", "file,open", UISHELL_CMD_FLAG_UI, UISHELL_Q_FILE),
+  UISHELL_CMD("show_file_in_explorer", "Show File In Explorer", FolderClosedFilled, "Shows a file in the system file explorer.", "file,path", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+};
+
+read_only global UIShell_CmdInfo uishell_app_viewer_cmd_info_table[] =
+{
   UISHELL_CMD("goto_line", "Go To Line", Null, "Jumps to a line number.", "line", UISHELL_CMD_FLAG_UI, UISHELL_Q_CURSOR),
   UISHELL_CMD("center_cursor", "Center Cursor", Null, "Centers the cursor.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("contain_cursor", "Contain Cursor", Null, "Scrolls to contain the cursor.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
@@ -182,18 +212,46 @@ read_only global UIShell_CmdInfo uishell_cmd_info_table[] =
   UISHELL_CMD("binary", "Binary", Grid, "Opens a Binary tab.", "tab,file,hex", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
 };
 
+typedef struct UIShell_CmdInfoArray UIShell_CmdInfoArray;
+struct UIShell_CmdInfoArray
+{
+  UIShell_CmdInfo *v;
+  U64 count;
+};
+
+#define UISHELL_CMD_INFO_ARRAY(table) {table, ArrayCount(table)}
+read_only global UIShell_CmdInfoArray uishell_cmd_info_arrays[] =
+{
+  UISHELL_CMD_INFO_ARRAY(uishell_shell_app_cmd_info_table),
+  UISHELL_CMD_INFO_ARRAY(uishell_shell_query_cmd_info_table),
+  UISHELL_CMD_INFO_ARRAY(uishell_shell_font_cmd_info_table),
+  UISHELL_CMD_INFO_ARRAY(uishell_shell_window_cmd_info_table),
+  UISHELL_CMD_INFO_ARRAY(uishell_shell_panel_cmd_info_table),
+  UISHELL_CMD_INFO_ARRAY(uishell_shell_tab_cmd_info_table),
+  UISHELL_CMD_INFO_ARRAY(uishell_shell_ui_event_cmd_info_table),
+  UISHELL_CMD_INFO_ARRAY(uishell_app_config_cmd_info_table),
+  UISHELL_CMD_INFO_ARRAY(uishell_app_file_cmd_info_table),
+  UISHELL_CMD_INFO_ARRAY(uishell_app_viewer_cmd_info_table),
+};
+#undef UISHELL_CMD_INFO_ARRAY
+
 internal UIShell_CmdInfo *
 uishell_cmd_info_from_name(String8 name)
 {
   UIShell_CmdInfo *result = &uishell_nil_cmd_info;
-  for EachElement(idx, uishell_cmd_info_table)
+  for EachElement(array_idx, uishell_cmd_info_arrays)
   {
-    if(str8_match(name, uishell_cmd_info_table[idx].string, 0))
+    UIShell_CmdInfoArray *array = &uishell_cmd_info_arrays[array_idx];
+    for(U64 idx = 0; idx < array->count; idx += 1)
     {
-      result = &uishell_cmd_info_table[idx];
-      break;
+      if(str8_match(name, array->v[idx].string, 0))
+      {
+        result = &array->v[idx];
+        goto done;
+      }
     }
   }
+  done:;
   return result;
 }
 
@@ -220,29 +278,49 @@ uishell_app_cmd_info_from_cmd_info(UIShell_CmdInfo *info)
   return result;
 }
 
-internal U64
-uishell_cmd_pack_cmd_count(void)
-{
-  return ArrayCount(uishell_cmd_info_table);
+#define UISHELL_CMD_PACK_INFO_FUNCTIONS(prefix, table) \
+internal U64 \
+prefix##_cmd_count(void) \
+{ \
+  return ArrayCount(table); \
+} \
+internal UIShell_AppCmdInfo \
+prefix##_cmd_info_from_index(U64 idx) \
+{ \
+  UIShell_AppCmdInfo result = {0}; \
+  if(idx < ArrayCount(table)) \
+  { \
+    result = uishell_app_cmd_info_from_cmd_info(&table[idx]); \
+  } \
+  return result; \
+} \
+internal UIShell_AppCmdInfo \
+prefix##_cmd_info_from_string(String8 string) \
+{ \
+  UIShell_AppCmdInfo result = {0}; \
+  for EachElement(idx, table) \
+  { \
+    if(str8_match(string, table[idx].string, 0)) \
+    { \
+      result = uishell_app_cmd_info_from_cmd_info(&table[idx]); \
+      break; \
+    } \
+  } \
+  return result; \
 }
 
-internal UIShell_AppCmdInfo
-uishell_cmd_pack_cmd_info_from_index(U64 idx)
-{
-  UIShell_AppCmdInfo result = {0};
-  if(idx < ArrayCount(uishell_cmd_info_table))
-  {
-    result = uishell_app_cmd_info_from_cmd_info(&uishell_cmd_info_table[idx]);
-  }
-  return result;
-}
+UISHELL_CMD_PACK_INFO_FUNCTIONS(uishell_shell_app_cmd_pack, uishell_shell_app_cmd_info_table)
+UISHELL_CMD_PACK_INFO_FUNCTIONS(uishell_shell_query_cmd_pack, uishell_shell_query_cmd_info_table)
+UISHELL_CMD_PACK_INFO_FUNCTIONS(uishell_shell_font_cmd_pack, uishell_shell_font_cmd_info_table)
+UISHELL_CMD_PACK_INFO_FUNCTIONS(uishell_shell_window_cmd_pack, uishell_shell_window_cmd_info_table)
+UISHELL_CMD_PACK_INFO_FUNCTIONS(uishell_shell_panel_cmd_pack, uishell_shell_panel_cmd_info_table)
+UISHELL_CMD_PACK_INFO_FUNCTIONS(uishell_shell_tab_cmd_pack, uishell_shell_tab_cmd_info_table)
+UISHELL_CMD_PACK_INFO_FUNCTIONS(uishell_shell_ui_event_cmd_pack, uishell_shell_ui_event_cmd_info_table)
+UISHELL_CMD_PACK_INFO_FUNCTIONS(uishell_app_config_cmd_pack, uishell_app_config_cmd_info_table)
+UISHELL_CMD_PACK_INFO_FUNCTIONS(uishell_app_file_cmd_pack, uishell_app_file_cmd_info_table)
+UISHELL_CMD_PACK_INFO_FUNCTIONS(uishell_app_viewer_cmd_pack, uishell_app_viewer_cmd_info_table)
 
-internal UIShell_AppCmdInfo
-uishell_cmd_pack_cmd_info_from_string(String8 string)
-{
-  UIShell_AppCmdInfo result = uishell_app_cmd_info_from_cmd_info(uishell_cmd_info_from_name(string));
-  return result;
-}
+#undef UISHELL_CMD_PACK_INFO_FUNCTIONS
 
 internal UIShell_AppRegSlot
 uishell_app_reg_slot_from_query_reg_slot(UIShell_RegSlot slot)
@@ -303,12 +381,19 @@ uishell_cmd_name_is_tab_fast_path(String8 name)
 
 #define UISHELL_BIND(name, key, mods) {str8_lit_comp(name), {WM_Key_##key, mods}}
 
-read_only global UIShell_DefaultBinding uishell_default_binding_table[] =
+read_only global UIShell_DefaultBinding uishell_shell_font_default_binding_table[] =
 {
   UISHELL_BIND("inc_window_font_size", Equal, WM_Modifier_Alt),
   UISHELL_BIND("dec_window_font_size", Minus, WM_Modifier_Alt),
+};
+
+read_only global UIShell_DefaultBinding uishell_shell_window_default_binding_table[] =
+{
   UISHELL_BIND("toggle_fullscreen", Return, WM_Modifier_Ctrl),
-  
+};
+
+read_only global UIShell_DefaultBinding uishell_shell_panel_default_binding_table[] =
+{
   UISHELL_BIND("new_panel_right", P, WM_Modifier_Ctrl),
   UISHELL_BIND("new_panel_down", Minus, WM_Modifier_Ctrl),
   UISHELL_BIND("rotate_panel_columns", 2, WM_Modifier_Ctrl),
@@ -318,13 +403,19 @@ read_only global UIShell_DefaultBinding uishell_default_binding_table[] =
   UISHELL_BIND("focus_panel_left", Left, WM_Modifier_Ctrl|WM_Modifier_Alt),
   UISHELL_BIND("focus_panel_up", Up, WM_Modifier_Ctrl|WM_Modifier_Alt),
   UISHELL_BIND("focus_panel_down", Down, WM_Modifier_Ctrl|WM_Modifier_Alt),
-  
+  UISHELL_BIND("close_panel", P, WM_Modifier_Ctrl|WM_Modifier_Shift|WM_Modifier_Alt),
+};
+
+read_only global UIShell_DefaultBinding uishell_shell_app_default_binding_table[] =
+{
   UISHELL_BIND("undo", Z, WM_Modifier_Ctrl),
   UISHELL_BIND("redo", Y, WM_Modifier_Ctrl),
   UISHELL_BIND("go_back", Left, WM_Modifier_Alt),
   UISHELL_BIND("go_forward", Right, WM_Modifier_Alt),
-  
-  UISHELL_BIND("close_panel", P, WM_Modifier_Ctrl|WM_Modifier_Shift|WM_Modifier_Alt),
+};
+
+read_only global UIShell_DefaultBinding uishell_shell_tab_default_binding_table[] =
+{
   UISHELL_BIND("next_tab", PageDown, WM_Modifier_Ctrl),
   UISHELL_BIND("prev_tab", PageUp, WM_Modifier_Ctrl),
   UISHELL_BIND("next_tab", Tab, WM_Modifier_Ctrl),
@@ -336,12 +427,22 @@ read_only global UIShell_DefaultBinding uishell_default_binding_table[] =
   UISHELL_BIND("tab_bar_bottom", Down, WM_Modifier_Ctrl|WM_Modifier_Shift|WM_Modifier_Alt),
   UISHELL_BIND("open_tab", T, WM_Modifier_Ctrl),
   UISHELL_BIND("tab_settings", T, WM_Modifier_Ctrl|WM_Modifier_Alt),
-  
-  UISHELL_BIND("open", O, WM_Modifier_Ctrl),
+};
+
+read_only global UIShell_DefaultBinding uishell_app_config_default_binding_table[] =
+{
   UISHELL_BIND("new_project", N, WM_Modifier_Ctrl|WM_Modifier_Shift),
   UISHELL_BIND("open_project", O, WM_Modifier_Ctrl|WM_Modifier_Shift),
   UISHELL_BIND("save_project", S, WM_Modifier_Ctrl|WM_Modifier_Shift),
-  
+};
+
+read_only global UIShell_DefaultBinding uishell_app_file_default_binding_table[] =
+{
+  UISHELL_BIND("open", O, WM_Modifier_Ctrl),
+};
+
+read_only global UIShell_DefaultBinding uishell_shell_ui_event_default_binding_table[] =
+{
   UISHELL_BIND("edit", F2, 0),
   UISHELL_BIND("accept", Return, 0),
   UISHELL_BIND("accept", Space, 0),
@@ -389,36 +490,55 @@ read_only global UIShell_DefaultBinding uishell_default_binding_table[] =
   UISHELL_BIND("paste", V, WM_Modifier_Ctrl),
   UISHELL_BIND("paste", Insert, WM_Modifier_Shift),
   UISHELL_BIND("insert_text", Null, 0),
-  
   UISHELL_BIND("move_next", Tab, 0),
   UISHELL_BIND("move_prev", Tab, WM_Modifier_Shift),
+};
+
+read_only global UIShell_DefaultBinding uishell_app_viewer_default_binding_table[] =
+{
   UISHELL_BIND("goto_line", G, WM_Modifier_Ctrl),
   UISHELL_BIND("goto_address", G, WM_Modifier_Alt),
   UISHELL_BIND("search", F, WM_Modifier_Ctrl),
   UISHELL_BIND("search_backwards", R, WM_Modifier_Ctrl),
   UISHELL_BIND("find_next", F3, 0),
   UISHELL_BIND("find_prev", F3, WM_Modifier_Ctrl),
-  
+};
+
+read_only global UIShell_DefaultBinding uishell_shell_query_default_binding_table[] =
+{
   UISHELL_BIND("open_palette", F1, 0),
   UISHELL_BIND("open_palette", P, WM_Modifier_Ctrl|WM_Modifier_Shift),
 };
 
-internal U64
-uishell_cmd_pack_binding_count(void)
-{
-  return ArrayCount(uishell_default_binding_table);
+#define UISHELL_CMD_PACK_BINDING_FUNCTIONS(prefix, table) \
+internal U64 \
+prefix##_binding_count(void) \
+{ \
+  return ArrayCount(table); \
+} \
+internal UIShell_DefaultBinding \
+prefix##_binding_from_index(U64 idx) \
+{ \
+  UIShell_DefaultBinding result = {0}; \
+  if(idx < ArrayCount(table)) \
+  { \
+    result = table[idx]; \
+  } \
+  return result; \
 }
 
-internal UIShell_DefaultBinding
-uishell_cmd_pack_binding_from_index(U64 idx)
-{
-  UIShell_DefaultBinding result = {0};
-  if(idx < ArrayCount(uishell_default_binding_table))
-  {
-    result = uishell_default_binding_table[idx];
-  }
-  return result;
-}
+UISHELL_CMD_PACK_BINDING_FUNCTIONS(uishell_shell_app_cmd_pack, uishell_shell_app_default_binding_table)
+UISHELL_CMD_PACK_BINDING_FUNCTIONS(uishell_shell_query_cmd_pack, uishell_shell_query_default_binding_table)
+UISHELL_CMD_PACK_BINDING_FUNCTIONS(uishell_shell_font_cmd_pack, uishell_shell_font_default_binding_table)
+UISHELL_CMD_PACK_BINDING_FUNCTIONS(uishell_shell_window_cmd_pack, uishell_shell_window_default_binding_table)
+UISHELL_CMD_PACK_BINDING_FUNCTIONS(uishell_shell_panel_cmd_pack, uishell_shell_panel_default_binding_table)
+UISHELL_CMD_PACK_BINDING_FUNCTIONS(uishell_shell_tab_cmd_pack, uishell_shell_tab_default_binding_table)
+UISHELL_CMD_PACK_BINDING_FUNCTIONS(uishell_shell_ui_event_cmd_pack, uishell_shell_ui_event_default_binding_table)
+UISHELL_CMD_PACK_BINDING_FUNCTIONS(uishell_app_config_cmd_pack, uishell_app_config_default_binding_table)
+UISHELL_CMD_PACK_BINDING_FUNCTIONS(uishell_app_file_cmd_pack, uishell_app_file_default_binding_table)
+UISHELL_CMD_PACK_BINDING_FUNCTIONS(uishell_app_viewer_cmd_pack, uishell_app_viewer_default_binding_table)
+
+#undef UISHELL_CMD_PACK_BINDING_FUNCTIONS
 
 #undef UISHELL_BIND
 

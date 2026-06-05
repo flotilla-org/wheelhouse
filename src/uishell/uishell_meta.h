@@ -297,7 +297,7 @@ uishell_build_help_menu(void)
 //~ rjf: Shell App Menu Metadata
 
 internal RD_AppMenuSpecList
-uishell_app_menu_specs(void)
+uishell_app_file_menu_specs(void)
 {
 #define UIShell_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
 #define UIShell_MenuSep()        {1, {0}, 0}
@@ -318,6 +318,21 @@ uishell_app_menu_specs(void)
     UIShell_MenuSep(),
     UIShell_MenuCmd("exit", 'x'),
   };
+  local_persist RD_AppMenuSpec specs[] =
+  {
+    {str8_lit_comp("File"), 'f', WM_Key_F, ArrayCount(file_items), file_items},
+  };
+  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
+#undef UIShell_MenuSep
+#undef UIShell_MenuCmd
+  return result;
+}
+
+internal RD_AppMenuSpecList
+uishell_shell_window_menu_specs(void)
+{
+#define UIShell_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
+#define UIShell_MenuSep()        {1, {0}, 0}
   local_persist RD_AppMenuItemSpec window_items[] =
   {
     UIShell_MenuCmd("open_window", 'w'),
@@ -326,6 +341,21 @@ uishell_app_menu_specs(void)
     UIShell_MenuSep(),
     UIShell_MenuCmd("window_settings", 's'),
   };
+  local_persist RD_AppMenuSpec specs[] =
+  {
+    {str8_lit_comp("Window"), 'w', WM_Key_W, ArrayCount(window_items), window_items},
+  };
+  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
+#undef UIShell_MenuSep
+#undef UIShell_MenuCmd
+  return result;
+}
+
+internal RD_AppMenuSpecList
+uishell_shell_panel_menu_specs(void)
+{
+#define UIShell_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
+#define UIShell_MenuSep()        {1, {0}, 0}
   local_persist RD_AppMenuItemSpec panel_items[] =
   {
     UIShell_MenuCmd("new_panel_up", 'u'),
@@ -340,6 +370,21 @@ uishell_app_menu_specs(void)
     UIShell_MenuCmd("tab_bar_top", 0),
     UIShell_MenuCmd("tab_bar_bottom", 0),
   };
+  local_persist RD_AppMenuSpec specs[] =
+  {
+    {str8_lit_comp("Panel"), 'p', WM_Key_P, ArrayCount(panel_items), panel_items},
+  };
+  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
+#undef UIShell_MenuSep
+#undef UIShell_MenuCmd
+  return result;
+}
+
+internal RD_AppMenuSpecList
+uishell_shell_tab_menu_specs(void)
+{
+#define UIShell_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
+#define UIShell_MenuSep()        {1, {0}, 0}
   local_persist RD_AppMenuItemSpec tab_items[] =
   {
     UIShell_MenuCmd("close_tab", 'c'),
@@ -353,15 +398,22 @@ uishell_app_menu_specs(void)
   };
   local_persist RD_AppMenuSpec specs[] =
   {
-    {str8_lit_comp("File"),   'f', WM_Key_F, ArrayCount(file_items),   file_items},
-    {str8_lit_comp("Window"), 'w', WM_Key_W, ArrayCount(window_items), window_items},
-    {str8_lit_comp("Panel"),  'p', WM_Key_P, ArrayCount(panel_items),  panel_items},
-    {str8_lit_comp("Tab"),    'b', WM_Key_V, ArrayCount(tab_items),    tab_items},
-    {str8_lit_comp("Help"),   'h', WM_Key_H, 0,                        0},
+    {str8_lit_comp("Tab"), 'b', WM_Key_V, ArrayCount(tab_items), tab_items},
   };
   RD_AppMenuSpecList result = {ArrayCount(specs), specs};
 #undef UIShell_MenuSep
 #undef UIShell_MenuCmd
+  return result;
+}
+
+internal RD_AppMenuSpecList
+uishell_shell_help_menu_specs(void)
+{
+  local_persist RD_AppMenuSpec specs[] =
+  {
+    {str8_lit_comp("Help"), 'h', WM_Key_H, 0, 0},
+  };
+  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
   return result;
 }
 
