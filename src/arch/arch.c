@@ -136,25 +136,6 @@ arch_software_breakpoint_pc_offset(OperatingSystem os, Arch arch)
   return result;
 }
 
-internal ARCH_RegCode
-arch_reg_code_from_rdi(Arch arch, RDI_RegCode code)
-{
-  ARCH_RegCode result = 0;
-  {
-    ARCH_Info *arch_info = arch_info_from_arch(arch);
-    U8 *rdi_from_reg_code_table = arch_rdi_from_reg_code_table_from_arch(arch);
-    for EachIndex(c, arch_info->reg_code_count)
-    {
-      if(rdi_from_reg_code_table[c] == code)
-      {
-        result = c;
-        break;
-      }
-    }
-  }
-  return result;
-}
-
 internal B32
 arch_reg_block_read_range(ARCH_Info *arch_info, void *block, Rng1U16 range, void *dst)
 {

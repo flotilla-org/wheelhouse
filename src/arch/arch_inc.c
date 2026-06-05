@@ -3,6 +3,3 @@
 
 #include "arch/arch.c"
 #include "arch/os/arch_os.c"
-#if defined(RDI_H)
-# include "arch/rdi/arch_rdi.c"
-#endif

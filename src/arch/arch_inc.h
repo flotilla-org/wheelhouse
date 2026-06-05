@@ -6,8 +6,5 @@
 
 #include "arch/arch.h"
 #include "arch/os/arch_os.h"
-#if defined(RDI_H)
-# include "arch/rdi/arch_rdi.h"
-#endif
 
 #endif // ARCH_INC_H
