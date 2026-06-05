@@ -56,6 +56,7 @@
 #include "uishell/uishell_meta.h"
 #include "uishell/uishell_eval.h"
 #include "uishell/uishell_dispatch.h"
+#include "uishell/uishell_terminal_provider.h"
 #include "uishell/uishell_views.h"
 
 //- rjf: [c]
@@ -77,6 +78,7 @@
 #include "draw/draw.c"
 #include "ui/ui_inc.c"
 #include "uishell/uishell_eval.c"
+#include "uishell/uishell_terminal_provider.c"
 #include "uishell/uishell_views.c"
 #include "shell/shell_inc.c"
 
