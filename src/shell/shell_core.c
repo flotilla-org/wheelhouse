@@ -7812,6 +7812,19 @@ rd_frame(void)
         uishell_regs()->view   = panel_tree.focused->selected_tab->id;
         scratch_end(scratch);
       }
+      CFG_Node *focused_view = cfg_node_from_id(uishell_regs()->view);
+      // Terminal views get physical keyboard input before command bindings; Super stays available for app shortcuts.
+      B32 terminal_input_is_focused = (ws != 0 &&
+                                       ws != &rd_nil_window_state &&
+                                       !rd_state->popup_active &&
+                                       !ws->query_is_active &&
+                                       !ws->menu_bar_focused &&
+                                       str8_match(focused_view->string, str8_lit("terminal"), 0));
+      B32 terminal_claims_keyboard_input = (terminal_input_is_focused &&
+                                            !(event->modifiers & WM_Modifier_Super) &&
+                                            (event->kind == WM_EventKind_Press ||
+                                             event->kind == WM_EventKind_Release ||
+                                             event->kind == WM_EventKind_Text));
       B32 take = 0;
       
       //- rjf: try drag/drop drop-kickoff
@@ -7880,7 +7893,7 @@ rd_frame(void)
       }
       
       //- rjf: try hotkey presses
-      if(!take && event->kind == WM_EventKind_Press)
+      if(!take && event->kind == WM_EventKind_Press && !terminal_claims_keyboard_input)
       {
         CFG_Binding binding = {event->key, event->modifiers};
         CFG_KeyMapNodePtrList key_map_nodes = cfg_key_map_node_ptr_list_from_binding(scratch.arena, rd_state->key_map, binding);
@@ -7918,7 +7931,11 @@ rd_frame(void)
       }
       
       //- rjf: try text events
-      if(!take && event->kind == WM_EventKind_Text)
+      if(!take && event->kind == WM_EventKind_Text && (event->modifiers & WM_Modifier_Super))
+      {
+        take = 1;
+      }
+      if(!take && event->kind == WM_EventKind_Text && !terminal_claims_keyboard_input)
       {
         String32 insertion32 = str32(&event->character, 1);
         String8 insertion8 = str8_from_32(scratch.arena, insertion32);
