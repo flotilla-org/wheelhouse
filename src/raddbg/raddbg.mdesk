@@ -165,11 +165,6 @@ RD_ThemePresetTable:
       theme_color:{tags: line_info_5, value: 0x3c3925ff}
       theme_color:{tags: line_info_6, value: 0x2e4837ff}
       theme_color:{tags: line_info_7, value: 0x2e3d48ff}
-      theme_color:{tags: thread_0, value: 0xebb624ff}
-      theme_color:{tags: thread_1, value: 0x26d0d2ff}
-      theme_color:{tags: thread_unwound, value: 0xb2ccd8ff}
-      theme_color:{tags: thread_error, value: 0xb23219ff}
-      theme_color:{tags: breakpoint, value: 0xa72911ff}
       theme_color:{tags: "floating background", value: 0x1b1b1baf}
       theme_color:{tags: "floating background alt", value: 0x0000005f}
       theme_color:{tags: "floating background fresh", value: 0x31393d5f}
@@ -245,17 +240,6 @@ RD_ThemePresetTable:
       theme_color:{  tags: line_info_2  , value: 0xddeac1ff }
       theme_color:{  tags: line_info_3  , value: 0xddc4bdff }
       theme_color:{  tags: line_info_4  , value: 0xba917eff }
-      theme_color:{  tags: thread_0  , value: 0xffa700ff }
-      theme_color:{  tags: thread_1  , value: 0xb41fff }
-      theme_color:{  tags: thread_2  , value: 0xff99e5ff }
-      theme_color:{  tags: thread_3  , value: 0x6598ffff }
-      theme_color:{  tags: thread_4  , value: 0x65ffcbff }
-      theme_color:{  tags: thread_5  , value: 0xff9819ff }
-      theme_color:{  tags: thread_6  , value: 0x9932ffff }
-      theme_color:{  tags: thread_7  , value: 0x65ff4cff }
-      theme_color:{  tags: thread_unwound  , value: 0xb2ccd8ff }
-      theme_color:{  tags: thread_error  , value: 0xb23219ff }
-      theme_color:{  tags: breakpoint  , value: 0xff2800ff }
       theme_color:{  tags: "floating background"  , value: 0xffffffc7 }
       theme_color:{  tags: "floating background alt"  , value: 0x23 }
       theme_color:{  tags: "floating background fresh"  , value: 0xeaddceff }
@@ -340,17 +324,6 @@ RD_ThemePresetTable:
       theme_color:{  tags: line_info_5  , value: 0x4f3e15ff }
       theme_color:{  tags: line_info_6  , value: 0x434e2aff }
       theme_color:{  tags: line_info_7  , value: 0x36241fff }
-      theme_color:{  tags: thread_0  , value: 0xffdc48ff }
-      theme_color:{  tags: thread_1  , value: 0xb2ff65ff }
-      theme_color:{  tags: thread_2  , value: 0xff99e5ff }
-      theme_color:{  tags: thread_3  , value: 0x6598ffff }
-      theme_color:{  tags: thread_4  , value: 0x65ffcbff }
-      theme_color:{  tags: thread_5  , value: 0xff9819ff }
-      theme_color:{  tags: thread_6  , value: 0x9932ffff }
-      theme_color:{  tags: thread_7  , value: 0x65ff4cff }
-      theme_color:{  tags: thread_unwound  , value: 0xb2ccd8ff }
-      theme_color:{  tags: thread_error  , value: 0xb23219ff }
-      theme_color:{  tags: breakpoint  , value: 0xa72911ff }
       theme_color:{  tags: "floating background"  , value: 0x1b1b1baf }
       theme_color:{  tags: "floating background alt"  , value: 0x0000005f }
       theme_color:{  tags: "floating background fresh"  , value: 0x31393d5f }
@@ -424,11 +397,6 @@ RD_ThemePresetTable:
       theme_color:{tags: line_info_1, value: 0xa9c1d0ff}
       theme_color:{tags: line_info_2, value: 0x99abc5ff}
       theme_color:{tags: line_info_3, value: 0xc6bcd5ff}
-      theme_color:{tags: thread_0, value: 0xffb141ff}
-      theme_color:{tags: thread_1, value: 0x66c407ff}
-      theme_color:{tags: thread_unwound, value: 0x67b3d7ff}
-      theme_color:{tags: thread_error, value: 0xff2900ff}
-      theme_color:{tags: breakpoint, value: 0xff2800ff}
       theme_color:{tags: "floating background", value: 0xffffffff}
       theme_color:{tags: "floating background alt", value: 0x11}
       theme_color:{tags: "floating background fresh", value: 0xa0c2d318}
@@ -498,11 +466,6 @@ RD_ThemePresetTable:
       theme_color:{tags: line_info_1, value: 0x4f3e15ff}
       theme_color:{tags: line_info_2, value: 0x434e2aff}
       theme_color:{tags: line_info_3, value: 0x36241fff}
-      theme_color:{tags: thread_0, value: 0xffcb7fff}
-      theme_color:{tags: thread_1, value: 0xb2ff65ff}
-      theme_color:{tags: thread_unwound, value: 0xb2ccd8ff}
-      theme_color:{tags: thread_error, value: 0xb23219ff}
-      theme_color:{tags: breakpoint, value: 0xa72911ff}
       theme_color:{tags: "floating background", value: 0x2a3574}
       theme_color:{tags: "floating background alt", value: 0x4f}
       theme_color:{tags: "floating background fresh", value: 0x31393d5f}
@@ -570,11 +533,6 @@ RD_ThemePresetTable:
       theme_color:{tags: line_info_1, value: 0xe5d5b1ff}
       theme_color:{tags: line_info_2, value: 0xd9e8b6ff}
       theme_color:{tags: line_info_3, value: 0xf5d5ccff}
-      theme_color:{tags: thread_0, value: 0xffa100ff}
-      theme_color:{tags: thread_1, value: 0x6edd00ff}
-      theme_color:{tags: thread_unwound, value: 0x708f9eff}
-      theme_color:{tags: thread_error, value: 0xff5231ff}
-      theme_color:{tags: breakpoint, value: 0xff411dff}
       theme_color:{tags: "floating background", value: 0xfdf6e3b1}
       theme_color:{tags: "floating background alt", value: 0x22}
       theme_color:{tags: "floating background fresh", value: 0xf7d38dff}
@@ -640,11 +598,6 @@ RD_ThemePresetTable:
       theme_color:{tags: line_info_1, value: 0x4f3e15ff}
       theme_color:{tags: line_info_2, value: 0x434e2aff}
       theme_color:{tags: line_info_3, value: 0x36241fff}
-      theme_color:{tags: thread_0, value: 0xffcb7fff}
-      theme_color:{tags: thread_1, value: 0xb2ff65ff}
-      theme_color:{tags: thread_unwound, value: 0xb2ccd8ff}
-      theme_color:{tags: thread_error, value: 0xb23219ff}
-      theme_color:{tags: breakpoint, value: 0xa72911ff}
       theme_color:{tags: "floating background", value: 0x18181980}
       theme_color:{tags: "floating background alt", value: 0x0000005f}
       theme_color:{tags: "floating background fresh", value: 0x31393d5f}
@@ -725,11 +678,6 @@ RD_ThemePresetTable:
       theme_color:{tags: line_info_1, value: 0x4f3e15ff}
       theme_color:{tags: line_info_2, value: 0x434e2aff}
       theme_color:{tags: line_info_3, value: 0x36241fff}
-      theme_color:{tags: thread_0, value: 0xffcb7fff}
-      theme_color:{tags: thread_1, value: 0xb2ff65ff}
-      theme_color:{tags: thread_unwound, value: 0xb2ccd8ff}
-      theme_color:{tags: thread_error, value: 0xb23219ff}
-      theme_color:{tags: breakpoint, value: 0xa72911ff}
       theme_color:{tags: "floating background", value: 0x3232792}
       theme_color:{tags: "floating background alt", value: 0x0000005f}
       theme_color:{tags: "floating background fresh", value: 0x31393d5f}
@@ -800,11 +748,6 @@ RD_ThemePresetTable:
       theme_color:{tags: line_info_1, value: 0x9103dff}
       theme_color:{tags: line_info_2, value: 0x1e083dff}
       theme_color:{tags: line_info_3, value: 0x1e083dff}
-      theme_color:{tags: thread_0, value: 0xd08f1fff}
-      theme_color:{tags: thread_1, value: 0x1ea5d0ff}
-      theme_color:{tags: thread_unwound, value: 0xb2ccd8ff}
-      theme_color:{tags: thread_error, value: 0xb23219ff}
-      theme_color:{tags: breakpoint, value: 0xa72911ff}
       theme_color:{tags: "scroll_bar background", value: 0x1d1d1dff}
       theme_color:{tags: "implicit background", value: 0x00000000}
       theme_color:{tags: "implicit border", value: 0x00000000}
@@ -874,17 +817,6 @@ RD_ThemePresetTable:
       theme_color:{  tags: line_info_5  , value: 0x4f3e15ff }
       theme_color:{  tags: line_info_6  , value: 0x434e2aff }
       theme_color:{  tags: line_info_7  , value: 0x36241fff }
-      theme_color:{  tags: thread_0  , value: 0xffc258ff }
-      theme_color:{  tags: thread_1  , value: 0x82d331ff }
-      theme_color:{  tags: thread_2  , value: 0xff99e5ff }
-      theme_color:{  tags: thread_3  , value: 0x6598ffff }
-      theme_color:{  tags: thread_4  , value: 0x65ffcbff }
-      theme_color:{  tags: thread_5  , value: 0xff9819ff }
-      theme_color:{  tags: thread_6  , value: 0x9932ffff }
-      theme_color:{  tags: thread_7  , value: 0x65ff4cff }
-      theme_color:{  tags: thread_unwound  , value: 0xb2ccd8ff }
-      theme_color:{  tags: thread_error  , value: 0xb23219ff }
-      theme_color:{  tags: breakpoint  , value: 0xa72911ff }
       theme_color:{  tags: "floating background"  , value: 0x1b1f2276 }
       theme_color:{  tags: "floating background alt"  , value: 0x0000005f }
       theme_color:{  tags: "floating background fresh"  , value: 0x31393d5f }
@@ -953,11 +885,6 @@ RD_ThemePresetTable:
       theme_color:{tags: line_info_1, value: 0x800080ff}
       theme_color:{tags: line_info_2, value: 0x800000ff}
       theme_color:{tags: line_info_3, value: 0x08000ff}
-      theme_color:{tags: thread_0, value: 0xffff00ff}
-      theme_color:{tags: thread_1, value: 0x00ff00ff}
-      theme_color:{tags: thread_unwound, value: 0x00ffffff}
-      theme_color:{tags: thread_error, value: 0xff0000ff}
-      theme_color:{tags: breakpoint, value: 0xff0000ff}
       theme_color:{tags: "menu_bar background", value: 0x008080ff}
       theme_color:{tags: "menu_bar border", value: 0x8080ff}
       theme_color:{tags: "scroll_bar background", value: 0x008080ff}

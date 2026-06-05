@@ -47,7 +47,7 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@default(1) @display_name('Drop Shadows') @description(\"Controls whether or not drop shadows are drawn.\") 'drop_shadows': bool,"
     "@default(1.f) @display_name('Rounded Corner Amount') @description(\"Controls the degree to which UI corners are rounded.\") 'rounded_corner_amount': @range[0, 1] f32,"
     "@default(1) @display_name('Native Window Decorations') @description(\"Shows native traffic lights in custom window title bars.\") 'mac_window_decorations': bool,"
-    "@default(0) @display_name('Native Menu Bar') @description(\"Uses the macOS menu bar instead of RAD's per-window menu.\") 'mac_native_menu_bar': bool,"
+    "@default(0) @display_name('Native Menu Bar') @description(\"Uses the macOS menu bar instead of the in-window menu.\") 'mac_native_menu_bar': bool,"
     "@default(2) @display_name('User Tab Width') 'tab_width': @range[1, 32] u64,"
     "@default(1) @display_name('Focus Menu Bar With Alt') @description(\"Mimics standard Windows behavior of focusing the menu bar using the Alt key.\") 'focus_menu_bar_with_alt': bool,"
     "@default(0) @display_name('Use Native File System Dialog') @description(\"Uses the operating system's file system dialog box.\") 'use_native_file_system_dialog': bool,"
