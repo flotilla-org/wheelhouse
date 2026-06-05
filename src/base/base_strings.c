@@ -3196,3 +3196,39 @@ u128_hash_from_str8(String8 string)
   U128 result = u128_hash_from_seed_str8(5381, string);
   return result;
 }
+
+internal U64
+u64_djb2_hash_from_seed_str8(U64 seed, String8 string)
+{
+  U64 result = seed;
+  for(U64 idx = 0; idx < string.size; idx += 1)
+  {
+    result = ((result << 5) + result) + string.str[idx];
+  }
+  return result;
+}
+
+internal U64
+u64_djb2_hash_from_str8(String8 string)
+{
+  U64 result = u64_djb2_hash_from_seed_str8(5381, string);
+  return result;
+}
+
+internal U64
+u64_djb2_hash_from_seed_str8__case_insensitive(U64 seed, String8 string)
+{
+  U64 result = seed;
+  for(U64 idx = 0; idx < string.size; idx += 1)
+  {
+    result = ((result << 5) + result) + lower_from_char(string.str[idx]);
+  }
+  return result;
+}
+
+internal U64
+u64_djb2_hash_from_str8__case_insensitive(String8 string)
+{
+  U64 result = u64_djb2_hash_from_seed_str8__case_insensitive(5381, string);
+  return result;
+}

@@ -46,7 +46,7 @@ rd_view_ui_rule_map_make(Arena *arena, U64 slots_count)
 internal void
 rd_view_ui_rule_map_insert(Arena *arena, RD_ViewUIRuleMap *map, String8 string, RD_ViewUIFunctionType *ui)
 {
-  U64 hash = d_hash_from_string(string);
+  U64 hash = u64_djb2_hash_from_str8(string);
   U64 slot_idx = hash%map->slots_count;
   RD_ViewUIRuleNode *n = push_array(arena, RD_ViewUIRuleNode, 1);
   n->v.name = push_str8_copy(arena, string);
@@ -60,7 +60,7 @@ rd_view_ui_rule_from_string(String8 string)
   RD_ViewUIRule *rule = &rd_nil_view_ui_rule;
   {
     RD_ViewUIRuleMap *map = rd_state->view_ui_rule_map;
-    U64 hash = d_hash_from_string(string);
+    U64 hash = u64_djb2_hash_from_str8(string);
     U64 slot_idx = hash%map->slots_count;
     for(RD_ViewUIRuleNode *n = map->slots[slot_idx].first; n != 0; n = n->next)
     {
@@ -1125,7 +1125,7 @@ rd_view_state_from_cfg(CFG_Node *cfg)
   }
   else
   {
-    U64 hash = d_hash_from_string(str8_struct(&id));
+    U64 hash = u64_djb2_hash_from_str8(str8_struct(&id));
     U64 slot_idx = hash%rd_state->view_state_slots_count;
     RD_ViewStateSlot *slot = &rd_state->view_state_slots[slot_idx];
     for(RD_ViewState *v = slot->first; v != 0; v = v->hash_next)
@@ -1149,7 +1149,7 @@ rd_view_state_from_cfg(CFG_Node *cfg)
       view_state = push_array(rd_state->arena, RD_ViewState, 1);
     }
     MemoryCopyStruct(view_state, &rd_nil_view_state);
-    U64 hash = d_hash_from_string(str8_struct(&id));
+    U64 hash = u64_djb2_hash_from_str8(str8_struct(&id));
     U64 slot_idx = hash%rd_state->view_state_slots_count;
     RD_ViewStateSlot *slot = &rd_state->view_state_slots[slot_idx];
     DLLPushBack_NP(slot->first, slot->last, view_state, hash_next, hash_prev);
@@ -1916,7 +1916,7 @@ rd_window_state_from_cfg(CFG_Node *cfg)
   }
   else
   {
-    U64 hash = d_hash_from_string(str8_struct(&id));
+    U64 hash = u64_djb2_hash_from_str8(str8_struct(&id));
     U64 slot_idx = hash%rd_state->window_state_slots_count;
     RD_WindowStateSlot *slot = &rd_state->window_state_slots[slot_idx];
     for(RD_WindowState *w = slot->first; w != 0; w = w->hash_next)
@@ -2002,7 +2002,7 @@ rd_window_state_from_cfg(CFG_Node *cfg)
     }
     
     // rjf: hook up window links
-    U64 hash = d_hash_from_string(str8_struct(&id));
+    U64 hash = u64_djb2_hash_from_str8(str8_struct(&id));
     U64 slot_idx = hash%rd_state->window_state_slots_count;
     RD_WindowStateSlot *slot = &rd_state->window_state_slots[slot_idx];
     DLLPushBack_NPZ(&rd_nil_window_state, rd_state->first_window_state, rd_state->last_window_state, ws, order_next, order_prev);
@@ -6099,7 +6099,7 @@ rd_vocab_info_from_code_name(String8 code_name)
   RD_VocabInfo *result = &rd_nil_vocab_info;
   if(code_name.size != 0)
   {
-    U64 hash = d_hash_from_string(code_name);
+    U64 hash = u64_djb2_hash_from_str8(code_name);
     U64 slot_idx = hash%rd_state->vocab_info_map.single_slots_count;
     for(RD_VocabInfoMapNode *n = rd_state->vocab_info_map.single_slots[slot_idx].first;
         n != 0;
@@ -6121,7 +6121,7 @@ rd_vocab_info_from_code_name_plural(String8 code_name_plural)
   RD_VocabInfo *result = &rd_nil_vocab_info;
   if(code_name_plural.size != 0)
   {
-    U64 hash = d_hash_from_string(code_name_plural);
+    U64 hash = u64_djb2_hash_from_str8(code_name_plural);
     U64 slot_idx = hash%rd_state->vocab_info_map.plural_slots_count;
     for(RD_VocabInfoMapNode *n = rd_state->vocab_info_map.plural_slots[slot_idx].first;
         n != 0;
@@ -6473,8 +6473,8 @@ rd_vocab_info_map_insert(Arena *arena, RD_VocabInfoMap *map, RD_VocabInfo *info)
 {
   RD_VocabInfoMapNode *n = push_array(arena, RD_VocabInfoMapNode, 1);
   MemoryCopyStruct(&n->v, info);
-  U64 single_hash = d_hash_from_string(n->v.code_name);
-  U64 plural_hash = d_hash_from_string(n->v.code_name_plural);
+  U64 single_hash = u64_djb2_hash_from_str8(n->v.code_name);
+  U64 plural_hash = u64_djb2_hash_from_str8(n->v.code_name_plural);
   U64 single_slot_idx = single_hash%map->single_slots_count;
   U64 plural_slot_idx = plural_hash%map->plural_slots_count;
   if(n->v.code_name.size != 0)
@@ -7916,7 +7916,7 @@ rd_frame(void)
             if(file_path.size != 0)
             {
               String8 name = str8_skip_last_slash(file_path);
-              U64 hash = d_hash_from_string__case_insensitive(name);
+              U64 hash = u64_djb2_hash_from_str8__case_insensitive(name);
               U64 slot_idx = hash%rd_state->ambiguous_path_slots_count;
               RD_AmbiguousPathNode *node = 0;
               for(RD_AmbiguousPathNode *n = rd_state->ambiguous_path_slots[slot_idx];

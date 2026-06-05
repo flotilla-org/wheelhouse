@@ -76,3 +76,33 @@ UIShell_BindingVersionRemapTable:
 {
   @expand(UIShell_BindingVersionRemapTable a) `str8_lit_comp("$(a.new_name)")`
 }
+
+////////////////////////////////
+//~ rjf: Developer Toggles
+
+@table(name)
+UIShell_DevToggleTable:
+{
+  {always_refresh}
+  {simulate_lag}
+  {draw_ui_text_pos}
+  {draw_ui_focus_debug}
+  {draw_ui_box_heatmap}
+  {eval_compiler_tooltips}
+  {eval_watch_key_tooltips}
+  {cmd_context_tooltips}
+  {updating_indicator}
+}
+
+@gen @c_file
+{
+  @expand(UIShell_DevToggleTable a) `global B32 DEV_$(a.name) = 0;`
+}
+
+@gen @c_file
+{
+  `struct {B32 *value_ptr; String8 name;} DEV_toggle_table[] =`;
+  `{`;
+    @expand(UIShell_DevToggleTable a) `{&DEV_$(a.name), str8_lit_comp("$(a.name)")},`
+  `};`;
+}

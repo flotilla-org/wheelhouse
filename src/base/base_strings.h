@@ -471,5 +471,9 @@ internal U64 u64_hash_from_seed_str8(U64 seed, String8 string);
 internal U64 u64_hash_from_str8(String8 string);
 internal U128 u128_hash_from_seed_str8(U64 seed, String8 string);
 internal U128 u128_hash_from_str8(String8 string);
+internal U64 u64_djb2_hash_from_seed_str8(U64 seed, String8 string);
+internal U64 u64_djb2_hash_from_str8(String8 string);
+internal U64 u64_djb2_hash_from_seed_str8__case_insensitive(U64 seed, String8 string);
+internal U64 u64_djb2_hash_from_str8__case_insensitive(String8 string);
 
 #endif // BASE_STRINGS_H

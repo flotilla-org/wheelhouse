@@ -174,7 +174,7 @@ rd_title_fstrs_from_cfg(Arena *arena, CFG_Node *cfg, B32 include_extras)
       String8 file_name = str8_skip_last_slash(file_path);
       if(rd_state->ambiguous_path_slots_count != 0)
       {
-        U64 hash = d_hash_from_string__case_insensitive(file_name);
+        U64 hash = u64_djb2_hash_from_str8__case_insensitive(file_name);
         U64 slot_idx = hash%rd_state->ambiguous_path_slots_count;
         RD_AmbiguousPathNode *node = 0;
         {
