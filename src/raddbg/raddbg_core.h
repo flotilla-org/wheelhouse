@@ -855,7 +855,6 @@ internal U64 rd_view_setting_addr_from_name(String8 string);
 //- rjf: evaluation & tag (a view's 'call') parameter extraction
 internal Rng1U64 rd_space_range_from_eval(E_Eval eval);
 internal TXT_LangKind rd_lang_kind_from_eval(E_Eval eval);
-internal Arch rd_arch_from_eval(E_Eval eval);
 
 //- rjf: pushing/attaching view resources
 internal void *rd_view_state_by_size(U64 size);

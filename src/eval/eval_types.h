@@ -68,7 +68,6 @@ internal E_EnumValArray e_enum_val_array_from_list(Arena *arena, E_EnumValList *
 //- rjf: basic key constructors
 internal E_TypeKey e_type_key_zero(void);
 internal E_TypeKey e_type_key_basic(E_TypeKind kind);
-internal E_TypeKey e_type_key_reg(Arch arch, ARCH_RegCode code);
 
 //- rjf: constructed type construction
 internal U64 e_hash_from_cons_type_params(E_ConsTypeParams *params);

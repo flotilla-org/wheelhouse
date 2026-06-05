@@ -34,19 +34,6 @@ txt_extension_from_lang_kind(TXT_LangKind kind)
   return result;
 }
 
-internal TXT_LangKind
-txt_lang_kind_from_arch(Arch arch)
-{
-  TXT_LangKind kind = TXT_LangKind_Null;
-  switch(arch)
-  {
-    default:{}break;
-    case Arch_x64:{kind = TXT_LangKind_DisasmX64Intel;}break;
-    case Arch_arm64:{kind = TXT_LangKind_DisasmARM64;}break;
-  }
-  return kind;
-}
-
 internal TXT_LangLexFunctionType *
 txt_lex_function_from_lang_kind(TXT_LangKind kind)
 {

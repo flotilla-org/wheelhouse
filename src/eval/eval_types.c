@@ -185,15 +185,6 @@ e_type_key_basic(E_TypeKind kind)
   return key;
 }
 
-internal E_TypeKey
-e_type_key_reg(Arch arch, ARCH_RegCode code)
-{
-  E_TypeKey key = {E_TypeKeyKind_Reg};
-  key.u32[0] = (U32)arch;
-  key.u32[1] = (U32)code;
-  return key;
-}
-
 //- rjf: constructed type construction
 
 internal U64
@@ -512,7 +503,6 @@ e_type_kind_from_key(E_TypeKey key)
     default:{}break;
     case E_TypeKeyKind_Basic:   {kind = (E_TypeKind)key.u32[0];}break;
     case E_TypeKeyKind_Cons:    {kind = (E_TypeKind)key.u32[0];}break;
-    case E_TypeKeyKind_Reg:     {kind = E_TypeKind_Union;}break;
   }
   return kind;
 }
@@ -556,7 +546,6 @@ e_push_type_from_key(Arena *arena, E_TypeKey key)
 {
   ProfBeginFunction();
   E_Type *type = &e_type_nil;
-  U64 reg_byte_count = 0;
   {
     switch(key.kind)
     {
@@ -631,168 +620,6 @@ e_push_type_from_key(Arena *arena, E_TypeKey key)
             }
           }
         }
-      }break;
-      
-      //- rjf: reg type keys
-      case E_TypeKeyKind_Reg:
-      {
-        Arch arch = (Arch)key.u32[0];
-        ARCH_Info *arch_info = arch_info_from_arch(arch);
-        ARCH_RegCode code = (ARCH_RegCode)key.u32[1];
-        Rng1U16 rng = arch_info->reg_code_rng_table[code];
-        reg_byte_count = (U64)dim_1u16(rng);
-      }goto build_reg_type;
-      build_reg_type:
-      {
-        Temp scratch = scratch_begin(&arena, 1);
-        type = push_array(arena, E_Type, 1);
-        type->kind       = E_TypeKind_Union;
-        type->name       = push_str8f(arena, "reg_%I64u_bit", reg_byte_count*8);
-        type->byte_size  = (U64)reg_byte_count;
-        type->arch       = (Arch)key.u32[0];
-        
-        // rjf: build register type members
-        E_MemberList members = {0};
-        {
-          // rjf: build exact-sized members
-          {
-            if(type->byte_size == 16)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("u128");
-              mem->type_key = e_type_key_basic(E_TypeKind_U128);
-            }
-            if(type->byte_size == 8)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("u64");
-              mem->type_key = e_type_key_basic(E_TypeKind_U64);
-            }
-            if(type->byte_size == 4)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("u32");
-              mem->type_key = e_type_key_basic(E_TypeKind_U32);
-            }
-            if(type->byte_size == 2)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("u16");
-              mem->type_key = e_type_key_basic(E_TypeKind_U16);
-            }
-            if(type->byte_size == 1)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("u8");
-              mem->type_key = e_type_key_basic(E_TypeKind_U8);
-            }
-          }
-          
-          // rjf: build arrays for subdivisions
-          {
-            if(type->byte_size > 16 && type->byte_size%16 == 0)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("u128s");
-              mem->type_key = e_type_key_cons_array(e_type_key_basic(E_TypeKind_U128), reg_byte_count/16, 0);
-            }
-            if(type->byte_size > 8 && type->byte_size%8 == 0)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("u64s");
-              mem->type_key = e_type_key_cons_array(e_type_key_basic(E_TypeKind_U64), reg_byte_count/8, 0);
-            }
-            if(type->byte_size > 4 && type->byte_size%4 == 0)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("u32s");
-              mem->type_key = e_type_key_cons_array(e_type_key_basic(E_TypeKind_U32), reg_byte_count/4, 0);
-            }
-            if(type->byte_size > 2 && type->byte_size%2 == 0)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("u16s");
-              mem->type_key = e_type_key_cons_array(e_type_key_basic(E_TypeKind_U16), reg_byte_count/2, 0);
-            }
-            if(type->byte_size > 1)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("u8s");
-              mem->type_key = e_type_key_cons_array(e_type_key_basic(E_TypeKind_U8), reg_byte_count, E_TypeFlag_IsNotText);
-            }
-            if(type->byte_size > 4 && type->byte_size%4 == 0)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("f32s");
-              mem->type_key = e_type_key_cons_array(e_type_key_basic(E_TypeKind_F32), reg_byte_count/4, 0);
-            }
-            if(type->byte_size > 8 && type->byte_size%8 == 0)
-            {
-              E_MemberNode *n = push_array(scratch.arena, E_MemberNode, 1);
-              SLLQueuePush(members.first, members.last, n);
-              members.count += 1;
-              E_Member *mem = &n->v;
-              mem->kind = E_MemberKind_DataField;
-              mem->name = str8_lit("f64s");
-              mem->type_key = e_type_key_cons_array(e_type_key_basic(E_TypeKind_F64), reg_byte_count/8, 0);
-            }
-          }
-        }
-        
-        // rjf: commit members
-        type->count = members.count;
-        type->members = push_array_no_zero(arena, E_Member, members.count);
-        U64 idx = 0;
-        for(E_MemberNode *n = members.first; n != 0; n = n->next, idx += 1)
-        {
-          MemoryCopyStruct(&type->members[idx], &n->v);
-        }
-        
-        scratch_end(scratch);
       }break;
     }
   }

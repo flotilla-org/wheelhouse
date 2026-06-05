@@ -1735,57 +1735,6 @@ rd_lang_kind_from_eval(E_Eval eval)
   return lang_kind;
 }
 
-internal Arch
-rd_arch_from_eval(E_Eval eval)
-{
-  Arch arch = Arch_CURRENT;
-  
-  // rjf: try arch arguments
-  E_Type *type = e_type_from_key(eval.irtree.type_key);
-  if(type->kind == E_TypeKind_Lens)
-  {
-    for EachIndex(idx, type->count)
-    {
-      E_Expr *arg = type->args[idx];
-      {
-        String8 arg_arch_string = arg->string;
-        if(arg->kind == E_ExprKind_Define && str8_match(arg->first->string, str8_lit("arch"), 0))
-        {
-          arg_arch_string = arg->first->next->string;
-        }
-        if(str8_match(arg->first->next->string, str8_lit("x64"), 0))
-        {
-          arch = Arch_x64;
-          break;
-        }
-      }
-    }
-  }
-  
-  return arch;
-}
-
-internal String8
-rd_ip_register_name_from_arch(Arch arch)
-{
-  if(arch == Arch_Null)
-  {
-    arch = Arch_CURRENT;
-  }
-  String8 result = str8_lit("rip");
-  ARCH_Info *arch_info = arch_info_from_arch(arch);
-  if(arch_info != &arch_info_nil &&
-     arch_info->instruction_pointer_reg_code < arch_info->reg_code_count)
-  {
-    String8 name = arch_info->reg_code_name_table[arch_info->instruction_pointer_reg_code];
-    if(name.size != 0)
-    {
-      result = name;
-    }
-  }
-  return result;
-}
-
 //- rjf: pushing/attaching view resources
 
 internal void *

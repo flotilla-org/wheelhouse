@@ -183,7 +183,6 @@ read_only global TXT_ScopeNode txt_scope_node_nil = {0};
 
 internal TXT_LangKind txt_lang_kind_from_extension(String8 extension);
 internal String8 txt_extension_from_lang_kind(TXT_LangKind kind);
-internal TXT_LangKind txt_lang_kind_from_arch(Arch arch);
 internal TXT_LangLexFunctionType *txt_lex_function_from_lang_kind(TXT_LangKind kind);
 
 ////////////////////////////////

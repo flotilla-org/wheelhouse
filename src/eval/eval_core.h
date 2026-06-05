@@ -162,7 +162,6 @@ typedef enum E_TypeKeyKind
   E_TypeKeyKind_Null,
   E_TypeKeyKind_Basic,
   E_TypeKeyKind_Cons,
-  E_TypeKeyKind_Reg,
 }
 E_TypeKeyKind;
 
@@ -171,9 +170,8 @@ struct E_TypeKey
 {
   E_TypeKeyKind kind;
   U32 u32[3];
-  // [0] -> E_TypeKind (Basic, Cons, Ext); Arch (Reg, RegAlias)
-  // [1] -> Type Index In Debug Info (Ext); Code (Reg, RegAlias); Type Index In Constructed (Cons)
-  // [2] -> Debug Info Number (Ext)
+  // [0] -> E_TypeKind (Basic, Cons)
+  // [1] -> Type Index In Constructed (Cons)
 };
 
 typedef struct E_TypeKeyNode E_TypeKeyNode;

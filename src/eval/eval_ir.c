@@ -1104,17 +1104,6 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
           r_type_kind = e_type_kind_from_key(r_type);
           r_tree.mode = E_Mode_Value;
         }
-        if(l_type.kind == E_TypeKeyKind_Reg)
-        {
-          l_type_kind = E_TypeKind_U64;
-          l_type = e_type_key_basic(l_type_kind);
-        }
-        if(r_type.kind == E_TypeKeyKind_Reg)
-        {
-          r_type_kind = E_TypeKind_U64;
-          r_type = e_type_key_basic(r_type_kind);
-        }
-        
         // rjf: unpack info about resolved types
         B32 l_is_pointer      = (l_type_kind == E_TypeKind_Ptr);
         B32 l_is_decay        = (l_type_kind == E_TypeKind_Array && l_tree.mode == E_Mode_Offset);
