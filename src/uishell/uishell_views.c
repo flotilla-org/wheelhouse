@@ -22,6 +22,11 @@ struct UIShell_TerminalViewState
   cleat_session *session;
   U16 cols;
   U16 rows;
+  F32 cell_width_px;
+  F32 cell_height_px;
+  B32 focus_active;
+  UIShell_TerminalGlyphCache glyph_cache;
+  UIShell_TerminalCellCache cell_cache;
 };
 
 internal B32
@@ -1790,6 +1795,7 @@ uishell_register_view_ui_rules(Arena *arena, RD_ViewUIRuleMap *map)
 {
   rd_view_ui_rule_map_insert(arena, map, str8_lit("text"), RD_VIEW_UI_FUNCTION_NAME(shell_text));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("terminal"), RD_VIEW_UI_FUNCTION_NAME(terminal));
+  rd_view_ui_rule_map_insert(arena, map, str8_lit("terminal_fixture"), RD_VIEW_UI_FUNCTION_NAME(terminal));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("binary"), RD_VIEW_UI_FUNCTION_NAME(binary));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("bitmap"), RD_VIEW_UI_FUNCTION_NAME(bitmap));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("color"), RD_VIEW_UI_FUNCTION_NAME(color));
@@ -2612,288 +2618,25 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
 ////////////////////////////////
 //~ rjf: Terminal View
 
-internal Vec4F32
-uishell_terminal_rgba_from_rgb(cleat_rgb rgb)
+internal U16
+uishell_terminal_cleat_modifiers_from_wm(WM_Modifiers modifiers)
 {
-  Vec4F32 result = linear_from_srgba(v4f32((F32)rgb.r/255.f, (F32)rgb.g/255.f, (F32)rgb.b/255.f, 1.f));
-  return result;
-}
-
-internal B32
-uishell_terminal_rgb_match(cleat_rgb a, cleat_rgb b)
-{
-  B32 result = (a.r == b.r && a.g == b.g && a.b == b.b);
-  return result;
-}
-
-internal String8
-uishell_terminal_string_from_cell(Arena *arena, cleat_cell const *cell)
-{
-  U8 *buffer = push_array(arena, U8, cell->grapheme_count*4 + 1);
-  U64 size = 0;
-  for(U64 idx = 0; idx < cell->grapheme_count; idx += 1)
-  {
-    size += utf8_encode(buffer + size, cell->graphemes[idx]);
-  }
-  String8 result = str8(buffer, size);
-  return result;
-}
-
-internal cleat_rgb
-uishell_terminal_cell_fg(cleat_cell const *cell)
-{
-  cleat_rgb result = (cell->flags & CLEAT_CELL_FLAG_INVERSE) ? cell->bg : cell->fg;
-  return result;
-}
-
-internal cleat_rgb
-uishell_terminal_cell_bg(cleat_cell const *cell)
-{
-  cleat_rgb result = (cell->flags & CLEAT_CELL_FLAG_INVERSE) ? cell->fg : cell->bg;
-  return result;
-}
-
-internal Vec4F32
-uishell_terminal_text_color_from_cell(cleat_cell const *cell)
-{
-  Vec4F32 result = uishell_terminal_rgba_from_rgb(uishell_terminal_cell_fg(cell));
-  if(cell->flags & CLEAT_CELL_FLAG_FAINT)
-  {
-    result.w *= 0.55f;
-  }
-  return result;
-}
-
-internal B32
-uishell_terminal_cell_is_spacer(cleat_cell const *cell)
-{
-  B32 result = (cell->width == CLEAT_CELL_WIDTH_SPACER_HEAD ||
-                cell->width == CLEAT_CELL_WIDTH_SPACER_TAIL);
-  return result;
-}
-
-internal U64
-uishell_terminal_cell_display_cols(cleat_cell const *cell)
-{
-  U64 result = 1;
-  if(cell->width == CLEAT_CELL_WIDTH_WIDE)
-  {
-    result = 2;
-  }
-  return result;
-}
-
-internal B32
-uishell_terminal_cursor_is_filled_block(cleat_cursor cursor)
-{
-  B32 result = (cursor.visible && cursor.style == CLEAT_CURSOR_STYLE_BLOCK);
-  return result;
-}
-
-internal U64
-uishell_terminal_snapshot_cursor_cols(cleat_snapshot const *snapshot, U64 cell_count)
-{
-  U64 result = 1;
-  if(snapshot->cursor.visible &&
-     snapshot->cursor.row < snapshot->rows &&
-     snapshot->cursor.col < snapshot->cols)
-  {
-    U64 cell_idx = (U64)snapshot->cursor.row*(U64)snapshot->cols + snapshot->cursor.col;
-    if(cell_idx < cell_count)
-    {
-      cleat_cell const *cell = &snapshot->cells[cell_idx];
-      result = uishell_terminal_cell_display_cols(cell);
-      if(snapshot->cursor.wide_tail || cell->width == CLEAT_CELL_WIDTH_SPACER_TAIL)
-      {
-        result = 1;
-      }
-      result = Min(result, (U64)snapshot->cols - (U64)snapshot->cursor.col);
-    }
-  }
-  return result;
-}
-
-internal B32
-uishell_terminal_snapshot_cell_is_filled_cursor(cleat_snapshot const *snapshot, U64 cell_count, U64 row, U64 col)
-{
-  U64 cursor_cols = uishell_terminal_snapshot_cursor_cols(snapshot, cell_count);
-  B32 result = (uishell_terminal_cursor_is_filled_block(snapshot->cursor) &&
-                snapshot->cursor.row == row &&
-                (U64)snapshot->cursor.col <= col &&
-                col < (U64)snapshot->cursor.col + cursor_cols);
+  U16 result = 0;
+  if(modifiers & WM_Modifier_Shift) { result |= CLEAT_MOD_SHIFT; }
+  if(modifiers & WM_Modifier_Ctrl)  { result |= CLEAT_MOD_CTRL; }
+  if(modifiers & WM_Modifier_Alt)   { result |= CLEAT_MOD_ALT; }
+  if(modifiers & WM_Modifier_Super) { result |= CLEAT_MOD_SUPER; }
   return result;
 }
 
 internal void
-uishell_terminal_draw_cursor_overlay(cleat_snapshot const *snapshot, U64 cell_count, Rng2F32 canvas_rect, F32 cell_width_px, F32 cell_height_px)
+uishell_terminal_provider_wake(void *user_data)
 {
-  if(snapshot->cursor.visible &&
-     snapshot->cursor.row < snapshot->rows &&
-     snapshot->cursor.col < snapshot->cols)
-  {
-    U64 cell_idx = (U64)snapshot->cursor.row*(U64)snapshot->cols + snapshot->cursor.col;
-    if(cell_idx < cell_count)
-    {
-      cleat_cell const *cell = &snapshot->cells[cell_idx];
-      Vec4F32 cursor_color = uishell_terminal_text_color_from_cell(cell);
-      U64 cursor_cols = uishell_terminal_snapshot_cursor_cols(snapshot, cell_count);
-      Rng2F32 cell_rect =
-      {
-        floor_f32(canvas_rect.x0 + (F32)snapshot->cursor.col*cell_width_px),
-        floor_f32(canvas_rect.y0 + (F32)snapshot->cursor.row*cell_height_px),
-        ceil_f32(canvas_rect.x0 + (F32)(snapshot->cursor.col + cursor_cols)*cell_width_px),
-        ceil_f32(canvas_rect.y0 + (F32)(snapshot->cursor.row + 1)*cell_height_px),
-      };
-      switch(snapshot->cursor.style)
-      {
-        default:
-        case CLEAT_CURSOR_STYLE_BLOCK:
-        {
-          // Filled block is drawn by swapping the cursor cell foreground/background.
-        }break;
-        case CLEAT_CURSOR_STYLE_BAR:
-        {
-          F32 thickness = Clamp(1.f, floor_f32(cell_width_px*0.16f), 3.f);
-          dr_rect(r2f32p(cell_rect.x0, cell_rect.y0, cell_rect.x0 + thickness, cell_rect.y1), cursor_color, 0, 0, 0);
-        }break;
-        case CLEAT_CURSOR_STYLE_UNDERLINE:
-        {
-          F32 thickness = Clamp(1.f, floor_f32(cell_height_px*0.14f), 3.f);
-          dr_rect(r2f32p(cell_rect.x0, cell_rect.y1 - thickness, cell_rect.x1, cell_rect.y1), cursor_color, 0, 0, 0);
-        }break;
-        case CLEAT_CURSOR_STYLE_BLOCK_HOLLOW:
-        {
-          F32 thickness = 1.f;
-          dr_rect(r2f32p(cell_rect.x0, cell_rect.y0, cell_rect.x1, cell_rect.y0 + thickness), cursor_color, 0, 0, 0);
-          dr_rect(r2f32p(cell_rect.x0, cell_rect.y1 - thickness, cell_rect.x1, cell_rect.y1), cursor_color, 0, 0, 0);
-          dr_rect(r2f32p(cell_rect.x0, cell_rect.y0, cell_rect.x0 + thickness, cell_rect.y1), cursor_color, 0, 0, 0);
-          dr_rect(r2f32p(cell_rect.x1 - thickness, cell_rect.y0, cell_rect.x1, cell_rect.y1), cursor_color, 0, 0, 0);
-        }break;
-      }
-    }
-  }
+  (void)user_data;
+  wm_send_wakeup_event();
 }
 
-internal void
-uishell_terminal_draw_snapshot(Arena *arena, UI_Box *box, cleat_snapshot const *snapshot, FNT_Tag font, FNT_RasterFlags raster_flags, F32 font_size, F32 cell_width_px, F32 cell_height_px)
-{
-  if(snapshot->cells != 0 && snapshot->cols != 0 && snapshot->rows != 0)
-  {
-    FNT_Metrics font_metrics = fnt_metrics_from_tag_size(font, font_size);
-    U64 expected_cell_count = (U64)snapshot->cols*(U64)snapshot->rows;
-    U64 cell_count = Min(snapshot->cell_count, expected_cell_count);
-    Rng2F32 canvas_rect = box->rect;
-    dr_rect(canvas_rect, v4f32(0.015f, 0.015f, 0.014f, 1.f), 0, 0, 0);
-
-    for(U64 row_idx = 0; row_idx < snapshot->rows; row_idx += 1)
-    {
-      F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
-      F32 row_y1 = ceil_f32(canvas_rect.y0 + (F32)(row_idx + 1)*cell_height_px);
-      if(row_y0 >= canvas_rect.y1 || row_y1 <= canvas_rect.y0)
-      {
-        continue;
-      }
-
-      for(U64 col_start = 0; col_start < snapshot->cols;)
-      {
-        U64 cell_idx = row_idx*(U64)snapshot->cols + col_start;
-        if(cell_idx >= cell_count)
-        {
-          break;
-        }
-        cleat_cell const *cell = &snapshot->cells[cell_idx];
-        cleat_rgb bg = uishell_terminal_cell_bg(cell);
-        if(uishell_terminal_snapshot_cell_is_filled_cursor(snapshot, cell_count, row_idx, col_start))
-        {
-          bg = uishell_terminal_cell_fg(cell);
-        }
-        U64 col_opl = col_start + 1;
-        for(; col_opl < snapshot->cols; col_opl += 1)
-        {
-          U64 run_cell_idx = row_idx*(U64)snapshot->cols + col_opl;
-          if(run_cell_idx >= cell_count)
-          {
-            break;
-          }
-          cleat_cell const *run_cell = &snapshot->cells[run_cell_idx];
-          cleat_rgb run_bg = uishell_terminal_cell_bg(run_cell);
-          if(uishell_terminal_snapshot_cell_is_filled_cursor(snapshot, cell_count, row_idx, col_opl))
-          {
-            run_bg = uishell_terminal_cell_fg(run_cell);
-          }
-          if(!uishell_terminal_rgb_match(run_bg, bg))
-          {
-            break;
-          }
-        }
-
-        F32 x0 = floor_f32(canvas_rect.x0 + (F32)col_start*cell_width_px);
-        F32 x1 = ceil_f32(canvas_rect.x0 + (F32)col_opl*cell_width_px);
-        dr_rect(r2f32p(x0, row_y0, x1, row_y1), uishell_terminal_rgba_from_rgb(bg), 0, 0, 0);
-        col_start = col_opl;
-      }
-
-      F32 text_y = floor_f32((row_y0 + row_y1)/2.f + font_metrics.ascent/2.f - font_metrics.descent/2.f);
-      for(U64 col_idx = 0; col_idx < snapshot->cols; col_idx += 1)
-      {
-        U64 cell_idx = row_idx*(U64)snapshot->cols + col_idx;
-        if(cell_idx >= cell_count)
-        {
-          break;
-        }
-        cleat_cell const *cell = &snapshot->cells[cell_idx];
-        U64 cell_cols = uishell_terminal_cell_display_cols(cell);
-        cell_cols = Min(cell_cols, (U64)snapshot->cols - col_idx);
-        if(cell->grapheme_count != 0 &&
-           !uishell_terminal_cell_is_spacer(cell) &&
-           !(cell->flags & CLEAT_CELL_FLAG_INVISIBLE))
-        {
-          String8 string = uishell_terminal_string_from_cell(arena, cell);
-          if(!(string.size == 1 && string.str[0] == ' '))
-          {
-            Vec4F32 fg = uishell_terminal_text_color_from_cell(cell);
-            if(uishell_terminal_snapshot_cell_is_filled_cursor(snapshot, cell_count, row_idx, col_idx))
-            {
-              fg = uishell_terminal_rgba_from_rgb(uishell_terminal_cell_bg(cell));
-            }
-            Vec2F32 text_pos =
-            {
-              floor_f32(canvas_rect.x0 + (F32)col_idx*cell_width_px),
-              text_y,
-            };
-            dr_text(font, font_size, 0, 0, raster_flags, text_pos, fg, string);
-            if(cell->flags & CLEAT_CELL_FLAG_BOLD)
-            {
-              dr_text(font, font_size, 0, 0, raster_flags, v2f32(text_pos.x + 1.f, text_pos.y), fg, string);
-            }
-          }
-
-          if(cell->flags & (CLEAT_CELL_FLAG_UNDERLINE|CLEAT_CELL_FLAG_STRIKETHROUGH|CLEAT_CELL_FLAG_OVERLINE))
-          {
-            Vec4F32 line_color = uishell_terminal_text_color_from_cell(cell);
-            F32 x0 = floor_f32(canvas_rect.x0 + (F32)col_idx*cell_width_px);
-            F32 x1 = ceil_f32(canvas_rect.x0 + (F32)(col_idx + cell_cols)*cell_width_px);
-            F32 thickness = Clamp(1.f, floor_f32(cell_height_px*0.08f), 2.f);
-            if(cell->flags & CLEAT_CELL_FLAG_UNDERLINE)
-            {
-              dr_rect(r2f32p(x0, row_y1 - thickness, x1, row_y1), line_color, 0, 0, 0);
-            }
-            if(cell->flags & CLEAT_CELL_FLAG_STRIKETHROUGH)
-            {
-              F32 y = floor_f32((row_y0 + row_y1)*0.5f);
-              dr_rect(r2f32p(x0, y, x1, y + thickness), line_color, 0, 0, 0);
-            }
-            if(cell->flags & CLEAT_CELL_FLAG_OVERLINE)
-            {
-              dr_rect(r2f32p(x0, row_y0, x1, row_y0 + thickness), line_color, 0, 0, 0);
-            }
-          }
-        }
-      }
-    }
-    uishell_terminal_draw_cursor_overlay(snapshot, cell_count, canvas_rect, cell_width_px, cell_height_px);
-  }
-}
+internal WM_Key uishell_terminal_key_from_ui_event(UI_Event *evt);
 
 internal B32
 uishell_terminal_cleat_key_from_wm_key(WM_Key key, U32 *kind_out, U32 *code_out)
@@ -2909,15 +2652,60 @@ uishell_terminal_cleat_key_from_wm_key(WM_Key key, U32 *kind_out, U32 *code_out)
     case WM_Key_Backspace:{code = CLEAT_KEY_BACKSPACE;}break;
     case WM_Key_Tab:{code = CLEAT_KEY_TAB;}break;
     case WM_Key_Delete:{code = CLEAT_KEY_DELETE;}break;
+    case WM_Key_Insert:{code = CLEAT_KEY_INSERT;}break;
+    case WM_Key_Home:{code = CLEAT_KEY_HOME;}break;
+    case WM_Key_End:{code = CLEAT_KEY_END;}break;
+    case WM_Key_PageUp:{code = CLEAT_KEY_PAGE_UP;}break;
+    case WM_Key_PageDown:{code = CLEAT_KEY_PAGE_DOWN;}break;
     case WM_Key_Up:{code = CLEAT_KEY_ARROW_UP;}break;
     case WM_Key_Down:{code = CLEAT_KEY_ARROW_DOWN;}break;
     case WM_Key_Left:{code = CLEAT_KEY_ARROW_LEFT;}break;
     case WM_Key_Right:{code = CLEAT_KEY_ARROW_RIGHT;}break;
+    case WM_Key_F1:
+    case WM_Key_F2:
+    case WM_Key_F3:
+    case WM_Key_F4:
+    case WM_Key_F5:
+    case WM_Key_F6:
+    case WM_Key_F7:
+    case WM_Key_F8:
+    case WM_Key_F9:
+    case WM_Key_F10:
+    case WM_Key_F11:
+    case WM_Key_F12:
+    {
+      code = CLEAT_KEY_FUNCTION_BASE + (U32)(key - WM_Key_F1 + 1);
+    }break;
   }
   if(result)
   {
     *kind_out = kind;
     *code_out = code;
+  }
+  return result;
+}
+
+internal B32
+uishell_terminal_cleat_key_from_ui_event(UI_Event *evt, U32 *kind_out, U32 *code_out)
+{
+  B32 result = 0;
+  WM_Key key = uishell_terminal_key_from_ui_event(evt);
+  if(uishell_terminal_cleat_key_from_wm_key(key, kind_out, code_out))
+  {
+    result = 1;
+  }
+  else if(evt->kind == UI_EventKind_Press &&
+          evt->key != WM_Key_Null &&
+          (evt->modifiers & (WM_Modifier_Ctrl|WM_Modifier_Alt)) != 0)
+  {
+    WM_Modifiers text_modifiers = evt->modifiers & WM_Modifier_Shift;
+    U32 codepoint = wm_codepoint_from_modifiers_and_key(text_modifiers, evt->key);
+    if(codepoint != 0)
+    {
+      *kind_out = CLEAT_KEY_UNICODE_SCALAR;
+      *code_out = codepoint;
+      result = 1;
+    }
   }
   return result;
 }
@@ -2982,6 +2770,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   (void)eval;
   Temp scratch = scratch_begin(0, 0);
   UIShell_TerminalViewState *tv = rd_view_state(UIShell_TerminalViewState);
+  CFG_Node *view_cfg = cfg_node_from_id(uishell_regs()->view);
+  B32 fixture_mode = str8_match(view_cfg->string, str8_lit("terminal_fixture"), 0);
   F32 main_font_size = rd_font_size();
   FNT_Tag cell_font = rd_font_from_slot(RD_FontSlot_Code);
   FNT_RasterFlags cell_font_raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Code);
@@ -2989,60 +2779,129 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   F32 cell_width_px = ClampBot(1.f, fnt_dim_from_tag_size_string(cell_font, cell_font_size, 0, 0, str8_lit("W")).x);
   FNT_Metrics cell_font_metrics = fnt_metrics_from_tag_size(cell_font, cell_font_size);
   F32 cell_height_px = ceil_f32(ClampBot(1.f, fnt_line_height_from_metrics(&cell_font_metrics)*1.2f));
+  F32 scroll_bar_dim = floor_f32(ui_bottom_font_size()*1.5f);
+  Vec4F32 terminal_background_color = ui_color_from_name(str8_lit("background"));
+  String8 *embedded_terminal_fallbacks[] =
+  {
+    &rd_terminal_noto_emoji_font_bytes,
+    &rd_terminal_noto_symbols_font_bytes,
+    &rd_terminal_noto_symbols_2_font_bytes,
+    &rd_terminal_noto_math_font_bytes,
+  };
+  UIShell_TerminalFontSet terminal_font_set = uishell_terminal_font_set_from_fonts(scratch.arena,
+                                                                                    cell_font,
+                                                                                    cell_font_raster_flags,
+                                                                                    cell_font_size,
+                                                                                    rd_font_from_slot(RD_FontSlot_Main),
+                                                                                    rd_setting_from_name(str8_lit("terminal_fallback_fonts")),
+                                                                                    embedded_terminal_fallbacks,
+                                                                                    ArrayCount(embedded_terminal_fallbacks));
+  uishell_terminal_sync_font_cache(&tv->glyph_cache, &terminal_font_set);
+  UIShell_TerminalGlyphRenderer glyph_renderer =
+  {
+    .font_set = terminal_font_set,
+    .cache = &tv->glyph_cache,
+  };
   Vec2F32 view_dim = dim_2f32(rect);
-  U64 cols64 = ClampBot(1, (U64)(view_dim.x/cell_width_px));
-  U64 rows64 = ClampBot(1, (U64)(view_dim.y/cell_height_px));
+  Vec2F32 canvas_dim_target =
+  {
+    ClampBot(1.f, view_dim.x - scroll_bar_dim),
+    ClampBot(1.f, view_dim.y),
+  };
+  U64 cols64 = ClampBot(1, (U64)(canvas_dim_target.x/cell_width_px));
+  U64 rows64 = ClampBot(1, (U64)(canvas_dim_target.y/cell_height_px));
   U16 cols = (U16)Min(cols64, 4096);
   U16 rows = (U16)Min(rows64, 4096);
-  if(!tv->initialized)
+  if(!fixture_mode && !tv->initialized)
   {
     tv->initialized = 1;
     cleat_provider_desc provider_desc =
     {
       .abi_version = CLEAT_PROVIDER_ABI_VERSION,
-#if UISHELL_USE_CLEAT_PROVIDER
-      .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT,
+      .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|CLEAT_PROVIDER_FEATURE_RENDER_UPDATES,
       .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS,
-#else
-      .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS,
-      .backend = CLEAT_PROVIDER_BACKEND_MOCK,
-#endif
     };
     tv->provider = cleat_provider_open(&provider_desc);
+    cleat_provider_set_wake_callback(tv->provider, uishell_terminal_provider_wake, tv);
     cleat_session_desc session_desc =
     {
       .cols = cols,
       .rows = rows,
       .cell_width_px = cell_width_px,
       .cell_height_px = cell_height_px,
-#if UISHELL_USE_CLEAT_PROVIDER
       .vt_engine = CLEAT_PROVIDER_VT_GHOSTTY,
-#else
-      .vt_engine = CLEAT_PROVIDER_VT_DEFAULT,
-#endif
     };
     tv->session = cleat_session_create(tv->provider, &session_desc);
   }
-  B32 session_ready = (tv->provider != 0 && tv->session != 0);
+  B32 session_ready = (!fixture_mode && tv->provider != 0 && tv->session != 0);
   if(session_ready && (tv->cols != cols || tv->rows != rows))
   {
     tv->cols = cols;
     tv->rows = rows;
     cleat_session_resize(tv->session, cols, rows);
   }
-  
+  UI_Box *terminal_root_box = &ui_nil_box;
+  {
+    ui_set_next_fixed_width(view_dim.x);
+    ui_set_next_fixed_height(view_dim.y);
+    terminal_root_box = ui_build_box_from_string(0, str8_lit("terminal_root"));
+  }
+
+  UI_Key canvas_key = ui_key_from_string(ui_active_seed_key(), str8_lit("terminal_canvas"));
   UI_Box *canvas_box = &ui_nil_box;
-  UI_BackgroundColor(v4f32(0.015f, 0.015f, 0.014f, 1.f))
+  UI_Parent(terminal_root_box)
+  UI_BackgroundColor(terminal_background_color)
     UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f))
     RD_Font(RD_FontSlot_Code)
     UI_FontSize(cell_font_size)
     UI_TextRasterFlags(cell_font_raster_flags)
   {
-    ui_set_next_pref_width(ui_pct(1.f, 0.f));
-    ui_set_next_pref_height(ui_pct(1.f, 0.f));
-    canvas_box = ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground, str8_lit("terminal_canvas"));
+    if(ui_is_focus_active())
+    {
+      ui_set_auto_focus_active_key(canvas_key);
+    }
+    ui_set_next_fixed_x(0);
+    ui_set_next_fixed_y(0);
+    ui_set_next_fixed_width(canvas_dim_target.x);
+    ui_set_next_fixed_height(canvas_dim_target.y);
+    canvas_box = ui_build_box_from_key(UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Scroll|UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground, canvas_key);
   }
   UI_Signal canvas_sig = ui_signal_from_box(canvas_box);
+  if(session_ready && (canvas_sig.scroll.x != 0 || canvas_sig.scroll.y != 0))
+  {
+    Vec2F32 mouse = ui_mouse();
+    cleat_input_event input =
+    {
+      .kind = CLEAT_INPUT_MOUSE,
+      .modifiers = uishell_terminal_cleat_modifiers_from_wm(canvas_sig.event_flags),
+      .mouse_kind = CLEAT_MOUSE_WHEEL,
+      .mouse_button = CLEAT_MOUSE_BUTTON_NONE,
+      .cell_col = (U16)Clamp(0, (S32)((mouse.x-canvas_box->rect.x0)/cell_width_px), (S32)(cols-1)),
+      .cell_row = (U16)Clamp(0, (S32)((mouse.y-canvas_box->rect.y0)/cell_height_px), (S32)(rows-1)),
+      .x_px = mouse.x-canvas_box->rect.x0,
+      .y_px = mouse.y-canvas_box->rect.y0,
+      .wheel_delta_x = -(F32)canvas_sig.scroll.x,
+      .wheel_delta_y = -(F32)canvas_sig.scroll.y,
+    };
+    cleat_session_send_input(tv->session, &input);
+    rd_request_frame();
+  }
+  if(session_ready)
+  {
+    Vec2F32 canvas_dim = dim_2f32(canvas_box->rect);
+    cleat_terminal_geometry geometry =
+    {
+      .cell_width_px = cell_width_px,
+      .cell_height_px = cell_height_px,
+      .content_x_px = canvas_box->rect.x0,
+      .content_y_px = canvas_box->rect.y0,
+      .content_width_px = canvas_dim.x,
+      .content_height_px = canvas_dim.y,
+    };
+    cleat_session_update_geometry(tv->session, &geometry);
+    tv->cell_width_px = cell_width_px;
+    tv->cell_height_px = cell_height_px;
+  }
   if(session_ready && ui_pressed(canvas_sig))
   {
     uishell_cmd("focus_panel");
@@ -3050,6 +2909,9 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     cleat_input_event input =
     {
       .kind = CLEAT_INPUT_MOUSE,
+      .mouse_kind = CLEAT_MOUSE_PRESS,
+      .mouse_button = CLEAT_MOUSE_BUTTON_LEFT,
+      .mouse_buttons = CLEAT_MOUSE_BUTTON_FLAG_LEFT,
       .cell_col = (U16)Clamp(0, (S32)((mouse.x-canvas_box->rect.x0)/cell_width_px), (S32)(cols-1)),
       .cell_row = (U16)Clamp(0, (S32)((mouse.y-canvas_box->rect.y0)/cell_height_px), (S32)(rows-1)),
       .x_px = mouse.x-canvas_box->rect.x0,
@@ -3059,14 +2921,25 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   }
   
   UI_Parent(canvas_box)
-    UI_BackgroundColor(v4f32(0.015f, 0.015f, 0.014f, 1.f))
+    UI_BackgroundColor(terminal_background_color)
     UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f))
     RD_Font(RD_FontSlot_Code)
     UI_FontSize(cell_font_size)
     UI_TextRasterFlags(cell_font_raster_flags)
     UI_Focus(UI_FocusKind_On)
   {
-    if(ui_is_focus_active())
+    B32 focus_active = ui_is_focus_active();
+    if(session_ready && tv->focus_active != focus_active)
+    {
+      tv->focus_active = focus_active;
+      cleat_input_event input =
+      {
+        .kind = CLEAT_INPUT_FOCUS,
+        .focused = focus_active,
+      };
+      cleat_session_send_input(tv->session, &input);
+    }
+    if(focus_active)
     {
       for(UI_Event *evt = 0; ui_next_event(&evt);)
       {
@@ -3074,37 +2947,62 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         if(session_ready &&
            (evt->kind == UI_EventKind_Edit ||
             evt->kind == UI_EventKind_Navigate ||
-            evt->kind == UI_EventKind_Text))
+           evt->kind == UI_EventKind_Text))
         {
           if(evt->kind == UI_EventKind_Text || evt->flags & UI_EventFlag_Paste)
           {
-            String8 text = (evt->flags & UI_EventFlag_Paste) ? wm_get_clipboard_text(scratch.arena) : evt->string;
-            cleat_input_event input =
+            if((evt->flags & UI_EventFlag_Paste) || (evt->modifiers & (WM_Modifier_Ctrl|WM_Modifier_Alt)) == 0)
             {
-              .kind = (evt->flags & UI_EventFlag_Paste) ? CLEAT_INPUT_PASTE : CLEAT_INPUT_TEXT,
-              .modifiers = (U16)evt->modifiers,
-              .text = text.str,
-              .text_len = text.size,
-            };
-            cleat_session_send_input(tv->session, &input);
-            taken = 1;
-          }
-          else if(evt->kind == UI_EventKind_Edit || evt->kind == UI_EventKind_Navigate)
-          {
-            WM_Key key = uishell_terminal_key_from_ui_event(evt);
-            U32 key_kind = 0;
-            U32 key_code = 0;
-            if(uishell_terminal_cleat_key_from_wm_key(key, &key_kind, &key_code))
-            {
+              String8 text = (evt->flags & UI_EventFlag_Paste) ? wm_get_clipboard_text(scratch.arena) : evt->string;
               cleat_input_event input =
               {
-                .kind = CLEAT_INPUT_KEY,
-                .modifiers = (U16)evt->modifiers,
-                .key_kind = key_kind,
-                .key_code = key_code,
+                .kind = (evt->flags & UI_EventFlag_Paste) ? CLEAT_INPUT_PASTE : CLEAT_INPUT_TEXT,
+                .modifiers = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers),
+                .text = text.str,
+                .text_len = text.size,
               };
               cleat_session_send_input(tv->session, &input);
               taken = 1;
+            }
+            else
+            {
+              taken = 1;
+            }
+          }
+          else if(evt->kind == UI_EventKind_Edit || evt->kind == UI_EventKind_Navigate)
+          {
+            B32 sent_viewport_command = 0;
+            if(evt->kind == UI_EventKind_Navigate &&
+               evt->delta_unit == UI_EventDeltaUnit_Page &&
+               evt->modifiers & WM_Modifier_Shift)
+            {
+              cleat_viewport_command command =
+              {
+                .kind = CLEAT_VIEWPORT_COMMAND_DELTA_ROWS,
+                .delta_rows = evt->delta_2s32.y < 0 ? -(S64)rows : (S64)rows,
+              };
+              cleat_viewport_command_result command_result = {0};
+              cleat_session_scroll_viewport(tv->session, &command, &command_result);
+              sent_viewport_command = 1;
+              taken = 1;
+            }
+            if(!sent_viewport_command)
+            {
+              U32 key_kind = 0;
+              U32 key_code = 0;
+              if(uishell_terminal_cleat_key_from_ui_event(evt, &key_kind, &key_code))
+              {
+                cleat_input_event input =
+                {
+                  .kind = CLEAT_INPUT_KEY,
+                  .modifiers = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers),
+                  .key_action = CLEAT_KEY_ACTION_PRESS,
+                  .key_kind = key_kind,
+                  .key_code = key_code,
+                };
+                cleat_session_send_input(tv->session, &input);
+                taken = 1;
+              }
             }
           }
         }
@@ -3114,33 +3012,21 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
                 evt->key != WM_Key_MiddleMouseButton &&
                 evt->key != WM_Key_RightMouseButton)
         {
-          WM_Key key = uishell_terminal_key_from_ui_event(evt);
           U32 key_kind = 0;
           U32 key_code = 0;
-          if(uishell_terminal_cleat_key_from_wm_key(key, &key_kind, &key_code))
+          if(uishell_terminal_cleat_key_from_ui_event(evt, &key_kind, &key_code))
           {
             cleat_input_event input =
             {
               .kind = CLEAT_INPUT_KEY,
-              .modifiers = (U16)evt->modifiers,
+              .modifiers = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers),
+              .key_action = CLEAT_KEY_ACTION_PRESS,
               .key_kind = key_kind,
               .key_code = key_code,
             };
             cleat_session_send_input(tv->session, &input);
             taken = 1;
           }
-        }
-        else if(session_ready && evt->kind == UI_EventKind_Scroll)
-        {
-          cleat_input_event input =
-          {
-            .kind = CLEAT_INPUT_MOUSE,
-            .modifiers = (U16)evt->modifiers,
-            .wheel_delta_x = evt->delta_2f32.x,
-            .wheel_delta_y = evt->delta_2f32.y,
-          };
-          cleat_session_send_input(tv->session, &input);
-          taken = 1;
         }
         if(taken)
         {
@@ -3150,22 +3036,89 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       }
     }
 
-    if(!session_ready)
+    if(fixture_mode)
+    {
+      cleat_snapshot snapshot = uishell_terminal_fixture_snapshot(scratch.arena, cols, rows);
+      UIShell_TerminalCellFeed feed = uishell_terminal_cell_feed_from_cleat_snapshot(&snapshot);
+      UIShell_TerminalCursorArray cursors = uishell_terminal_fixture_cursor_array(scratch.arena, cols, rows);
+      UIShell_TerminalDrawParams draw_params =
+      {
+        .canvas_rect = canvas_box->rect,
+        .background_color = terminal_background_color,
+        .cell_width_px = cell_width_px,
+        .cell_height_px = cell_height_px,
+      };
+      DR_Bucket *terminal_bucket = dr_bucket_make();
+      DR_BucketScope(terminal_bucket)
+      {
+        uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(scratch.arena, &glyph_renderer, &draw_params, &feed, cursors);
+      }
+      ui_box_equip_draw_bucket(canvas_box, terminal_bucket);
+    }
+    else if(!session_ready)
     {
       UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f)) ui_label(str8_lit("terminal provider unavailable"));
     }
     else
     {
-      cleat_snapshot snapshot = {0};
-      if(cleat_session_snapshot(tv->session, &snapshot))
+      cleat_dirty_state dirty = cleat_session_poll(tv->session);
+      if(dirty != CLEAT_DIRTY_CLEAN || tv->cell_cache.cells == 0)
       {
+        cleat_render_update update = {0};
+        if(cleat_session_render_update(tv->session, &update))
+        {
+          uishell_terminal_cell_cache_apply_render_update(&tv->cell_cache, &update);
+          cleat_session_mark_observed(tv->session, update.render_generation);
+          cleat_session_release_render_update(tv->session, &update);
+        }
+      }
+      if(tv->cell_cache.cells != 0)
+      {
+        UIShell_TerminalCellFeed feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
+        UIShell_TerminalDrawParams draw_params =
+        {
+          .canvas_rect = canvas_box->rect,
+          .background_color = terminal_background_color,
+          .cell_width_px = cell_width_px,
+          .cell_height_px = cell_height_px,
+        };
         DR_Bucket *terminal_bucket = dr_bucket_make();
         DR_BucketScope(terminal_bucket)
         {
-          uishell_terminal_draw_snapshot(scratch.arena, canvas_box, &snapshot, cell_font, cell_font_raster_flags, cell_font_size, cell_width_px, cell_height_px);
+          uishell_terminal_glyph_renderer_draw_cell_feed(scratch.arena, &glyph_renderer, &draw_params, &feed);
         }
         ui_box_equip_draw_bucket(canvas_box, terminal_bucket);
-        cleat_session_release_snapshot(tv->session, &snapshot);
+        if(tv->cell_cache.scrollbar.viewport_rows != 0)
+        {
+          U64 max_top_row_u64 = tv->cell_cache.scrollbar.total_rows > tv->cell_cache.scrollbar.viewport_rows ? tv->cell_cache.scrollbar.total_rows - tv->cell_cache.scrollbar.viewport_rows : 0;
+          S64 max_top_row = (S64)Min(max_top_row_u64, (U64)max_S64);
+          S64 top_row = (S64)Min(tv->cell_cache.scrollbar.viewport_top_row, (U64)max_S64);
+          UI_ScrollPt scrollbar_pt = ui_scroll_pt(top_row, 0);
+          UI_Parent(terminal_root_box) UI_Focus(UI_FocusKind_Off)
+          {
+            ui_set_next_fixed_x(canvas_dim_target.x);
+            ui_set_next_fixed_y(0);
+            ui_set_next_fixed_width(scroll_bar_dim);
+            ui_set_next_fixed_height(canvas_dim_target.y);
+            scrollbar_pt = ui_scroll_bar(Axis2_Y,
+                                         ui_px(scroll_bar_dim, 1.f),
+                                         scrollbar_pt,
+                                         r1s64(0, max_top_row),
+                                         tv->cell_cache.scrollbar.viewport_rows);
+          }
+          S64 delta_rows = scrollbar_pt.idx - top_row;
+          if(delta_rows != 0)
+          {
+            cleat_viewport_command command =
+            {
+              .kind = CLEAT_VIEWPORT_COMMAND_DELTA_ROWS,
+              .delta_rows = delta_rows,
+            };
+            cleat_viewport_command_result command_result = {0};
+            cleat_session_scroll_viewport(tv->session, &command, &command_result);
+            rd_request_frame();
+          }
+        }
       }
     }
   }

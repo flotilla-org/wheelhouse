@@ -41,6 +41,7 @@ UIShell_VocabTable:
   {offset              _                      "Offset"                           _                         Null}
   {text                ""                     "Text"                             ""                        FileOutline}
   {terminal            ""                     "Terminal"                         ""                        Machine}
+  {terminal_fixture    ""                     "Terminal Fixture"                 ""                        Machine}
   {binary              ""                     "Binary"                           ""                        Grid}
   {output              _                      "Output"                           _                         List}
   {command             _                      "Command"                          _                         Palette}

@@ -14,6 +14,7 @@ uishell_view_name_is_listed(String8 name)
 {
   B32 result = (str8_match(name, str8_lit("text"), 0) ||
                 str8_match(name, str8_lit("terminal"), 0) ||
+                str8_match(name, str8_lit("terminal_fixture"), 0) ||
                 str8_match(name, str8_lit("binary"), 0));
   return result;
 }
@@ -34,8 +35,9 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@display_name('Scrolling Animations') @description(\"Enables scrolling animations.\") @expand_if(\"$.animations\") @default(1) 'scrolling_animations': bool,"
     "@display_name('Tooltip Animations') @description(\"Enables tooltip animations.\") @expand_if(\"$.animations\") @default(1) 'tooltip_animations': bool,"
     "@display_name('Menu Animations') @description(\"Enables menu animations.\") @expand_if(\"$.animations\") @default(1) 'menu_animations': bool,"
-    "@display_name('UI Font') @description(\"The name of, or path to, the font used when displaying non-code UI elements.\") @default('') 'main_font': string,"
-    "@display_name('Code Font') @description(\"The name of, or path to, the font used when displaying code.\") @default('') 'code_font': string,"
+    "@display_name('UI Font') @description(\"Path to the font used when displaying non-code UI elements. Empty uses the embedded default.\") @default('') 'main_font': string,"
+    "@display_name('Code Font') @description(\"Path to the font used when displaying code and terminal cells. Empty uses the embedded default.\") @default('') 'code_font': string,"
+    "@display_name('Terminal Fallback Fonts') @description(\"Comma, semicolon, or newline separated font paths used as terminal glyph fallbacks before embedded terminal fallback fonts.\") @default('') 'terminal_fallback_fonts': string,"
     "@default(\"Default (Dark)\") @display_name('User Theme') @description(\"The user's theme, which describes all colors used throughout the UI.\") 'theme': string,"
     "@no_expand @display_name('User Theme') 'theme_colors': set,"
     "@display_name('Autocompletion Lister') @description(\"Enables the autocompletion lister while typing expressions.\") @default(1) 'autocompletion_lister': bool,"
@@ -113,6 +115,10 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@optional @description(\"The command to run when a provider is attached.\") 'command': string,"
     "@optional @description(\"The working directory to use when a provider is attached.\") 'cwd': path,"
     "}"
+  )},
+  {str8_lit_comp("terminal_fixture"), 1, str8_lit_comp(
+    "@inherit(terminal)"
+    "x:{}"
   )},
   {str8_lit_comp("recent_project"), 0, str8_lit_comp("x:{'path':path, 'name':string}")},
 };
