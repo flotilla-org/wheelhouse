@@ -922,18 +922,34 @@ ui_begin_build(WM_Window window, UI_EventList *events, UI_IconInfo *icon_info, U
             B32 nav_next = 0;
             B32 nav_prev = 0;
             Axis2 axis_lock = Axis2_Invalid;
-            if(ui_key_press(0, WM_Key_Tab))
+            for(UI_Event *evt = 0; ui_next_event(&evt);)
             {
-              nav_next = 1;
-            }
-            if(ui_key_press(WM_Modifier_Shift, WM_Key_Tab))
-            {
-              nav_prev = 1;
+              if(!(evt->flags & UI_EventFlag_SkipDefaultFocusNav) &&
+                 evt->kind == UI_EventKind_Press &&
+                 evt->key == WM_Key_Tab)
+              {
+                if(evt->modifiers == 0)
+                {
+                  nav_next = 1;
+                  ui_eat_event(evt);
+                  break;
+                }
+                if(evt->modifiers == WM_Modifier_Shift)
+                {
+                  nav_prev = 1;
+                  ui_eat_event(evt);
+                  break;
+                }
+              }
             }
             for(UI_EventNode *node = events->first, *next = 0; node != 0; node = next)
             {
               next = node->next;
               B32 taken = 0;
+              if(node->v.flags & UI_EventFlag_SkipDefaultFocusNav)
+              {
+                continue;
+              }
               if(node->v.delta_2s32.x == 0 && node->v.delta_2s32.y == 0)
               {
                 continue;

@@ -160,6 +160,19 @@ uishell_dispatch_app_command(String8 name)
         ui_event.pos          = wm_event->pos;
         ui_event.delta_2f32   = wm_event->delta;
         ui_event.timestamp_us = wm_event->timestamp_us;
+        CFG_Node *focused_view = cfg_node_from_id(uishell_regs()->view);
+        B32 terminal_claims_keyboard_input = (!rd_state->popup_active &&
+                                              !ws->query_is_active &&
+                                              !ws->menu_bar_focused &&
+                                              str8_match(focused_view->string, str8_lit("terminal"), 0) &&
+                                              !(wm_event->modifiers & WM_Modifier_Super) &&
+                                              (wm_event->kind == WM_EventKind_Press ||
+                                               wm_event->kind == WM_EventKind_Release ||
+                                               wm_event->kind == WM_EventKind_Text));
+        if(terminal_claims_keyboard_input)
+        {
+          ui_event.flags |= UI_EventFlag_SkipDefaultFocusNav;
+        }
         ui_event_list_push(rd_frame_arena(), &ws->ui_events, &ui_event);
       }
     }

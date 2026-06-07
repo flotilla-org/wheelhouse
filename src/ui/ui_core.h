@@ -121,6 +121,7 @@ enum
   UI_EventFlag_ExplicitDirectional = (1<<7),
   UI_EventFlag_Reorder             = (1<<8),
   UI_EventFlag_Secondary           = (1<<9),
+  UI_EventFlag_SkipDefaultFocusNav = (1<<10),
 };
 
 typedef enum UI_EventDeltaUnit
