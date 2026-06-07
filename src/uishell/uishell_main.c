@@ -127,9 +127,52 @@ entry_point(CmdLine *cmd_line)
       fnt_init();
       rd_init(cmd_line);
 
+      B32 run_terminal_glyph_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("terminal_glyph_diagnostics"));
+      String8 terminal_glyph_fixture_ppm_path = cmd_line_string(cmd_line, str8_lit("terminal_glyph_fixture_ppm"));
       for(B32 quit = 0; !quit;)
       {
         quit = update();
+        if(run_terminal_glyph_diagnostics || terminal_glyph_fixture_ppm_path.size != 0)
+        {
+          FNT_Tag primary_font = fnt_tag_from_static_data_string(&rd_default_code_font_bytes);
+          FNT_Tag main_fallback_font = fnt_tag_from_static_data_string(&rd_default_main_font_bytes);
+          String8 *embedded_terminal_color_emoji_fallbacks[] =
+          {
+            &rd_terminal_noto_color_emoji_font_bytes,
+          };
+          String8 *embedded_terminal_fallbacks[] =
+          {
+            &rd_terminal_noto_emoji_font_bytes,
+            &rd_terminal_noto_symbols_font_bytes,
+            &rd_terminal_noto_symbols_2_font_bytes,
+            &rd_terminal_noto_math_font_bytes,
+          };
+          B32 ok = 1;
+          if(run_terminal_glyph_diagnostics)
+          {
+            ok = ok && uishell_terminal_glyph_diagnostics(primary_font,
+                                                          main_fallback_font,
+                                                          16.f,
+                                                          FNT_RasterFlag_Smooth|FNT_RasterFlag_Hinted,
+                                                          embedded_terminal_color_emoji_fallbacks,
+                                                          ArrayCount(embedded_terminal_color_emoji_fallbacks),
+                                                          embedded_terminal_fallbacks,
+                                                          ArrayCount(embedded_terminal_fallbacks));
+          }
+          if(terminal_glyph_fixture_ppm_path.size != 0)
+          {
+            ok = ok && uishell_terminal_write_fixture_ppm(terminal_glyph_fixture_ppm_path,
+                                                          primary_font,
+                                                          main_fallback_font,
+                                                          16.f,
+                                                          FNT_RasterFlag_Smooth|FNT_RasterFlag_Hinted,
+                                                          embedded_terminal_color_emoji_fallbacks,
+                                                          ArrayCount(embedded_terminal_color_emoji_fallbacks),
+                                                          embedded_terminal_fallbacks,
+                                                          ArrayCount(embedded_terminal_fallbacks));
+          }
+          abort_self(ok ? 0 : 1);
+        }
       }
     }break;
 
@@ -141,7 +184,17 @@ entry_point(CmdLine *cmd_line)
                                     "--user:<path>\n"
                                     "Use to specify the location of a user file for window, panel, keybinding, theme, and visual settings.\n\n"
                                     "--project:<path>\n"
-                                    "Use to specify the location of a project file for app-specific settings.\n\n"));
+                                    "Use to specify the location of a project file for app-specific settings.\n\n"
+                                    "--terminal_fixture\n"
+                                    "Open the deterministic terminal glyph fixture on startup.\n\n"
+                                    "--terminal_glyph_diagnostics\n"
+                                    "Run terminal glyph placement diagnostics and exit.\n\n"
+                                    "--terminal_glyph_fixture_ppm:<path>\n"
+                                    "Render the deterministic terminal glyph fixture through backend readback and write a PPM image.\n\n"
+                                    "--terminal_glyph_trace\n"
+                                    "Log live terminal glyph placement when terminal render generations update. Defaults to all rows.\n\n"
+                                    "--terminal_glyph_trace_row:<n|all>\n"
+                                    "Limit --terminal_glyph_trace to one visible row, or use all rows.\n\n"));
     }break;
   }
 }

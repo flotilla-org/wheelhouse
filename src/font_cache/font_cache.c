@@ -631,9 +631,22 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
     for(U64 idx = 0; idx <= string.size;)
     {
       //- rjf: decode next codepoint & get piece substring, or continuation rule
+      B32 single_piece = !!(flags & FNT_RasterFlag_SinglePiece);
       U8 byte = (idx < string.size ? string.str[idx] : 0);
       B32 need_another_codepoint = 0;
-      if(byte == 0)
+      if(single_piece)
+      {
+        if(idx == 0 && string.size != 0)
+        {
+          idx = string.size;
+          piece_substring_end_idx = string.size;
+        }
+        else
+        {
+          idx += 1;
+        }
+      }
+      else if(byte == 0)
       {
         idx += 1;
       }
@@ -740,6 +753,7 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
           FP_RasterFlags fp_flags = 0;
           if(flags & FNT_RasterFlag_Smooth) { fp_flags |= FP_RasterFlag_Smooth; }
           if(flags & FNT_RasterFlag_Hinted) { fp_flags |= FP_RasterFlag_Hinted; }
+          if(flags & FNT_RasterFlag_TightBounds) { fp_flags |= FP_RasterFlag_TightBounds; }
           raster = fp_raster(scratch.arena, font_handle, floor_f32(size*raster_scale), fp_flags, piece_substring);
         }
         
@@ -816,11 +830,25 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
           }
           if(info != 0)
           {
+            B32 tight_bounds = !!(flags & FNT_RasterFlag_TightBounds);
             info->subrect    = chosen_atlas_region;
             info->atlas_num  = chosen_atlas_num;
             info->raster_dim = raster.atlas_dim;
             info->draw_dim   = v2f32((F32)raster.atlas_dim.x*inv_raster_scale, (F32)raster.atlas_dim.y*inv_raster_scale);
             info->advance    = raster.advance*inv_raster_scale;
+            if(tight_bounds)
+            {
+              F32 crop_offset_x = (raster.face_box_origin_from_left - raster.origin_from_left)*inv_raster_scale;
+              F32 crop_offset_y = (raster.face_box_baseline_from_top - raster.baseline_from_top)*inv_raster_scale;
+              info->origin_from_left = -crop_offset_x;
+              info->baseline_from_top = hash2style_node->ascent - crop_offset_y;
+            }
+            else
+            {
+              info->origin_from_left = 0;
+              info->baseline_from_top = hash2style_node->ascent;
+            }
+            info->kind       = (raster.kind == FP_RasterKind_RGBA ? FNT_RasterKind_RGBA : FNT_RasterKind_Mask);
           }
         }
         
@@ -865,8 +893,12 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
                                     info->subrect.y0 + info->raster_dim.y);
             piece->advance = advance;
             piece->draw_dim = info->draw_dim;
+            piece->origin_from_left = info->origin_from_left;
+            piece->baseline_from_top = info->baseline_from_top;
             piece->decode_size = piece_substring.size;
-            piece->offset = v2f32(0, -(hash2style_node->ascent + hash2style_node->descent));
+            piece->kind = info->kind;
+            piece->offset = v2f32(-info->origin_from_left,
+                                  -hash2style_node->descent - info->baseline_from_top);
           }
           base_align_px += advance;
           dim.x += piece->advance;
@@ -1091,6 +1123,14 @@ fnt_metrics_from_tag_size(FNT_Tag tag, F32 size)
 {
   FP_Metrics metrics = fnt_fp_metrics_from_tag(tag);
   FNT_Metrics result = {0};
+  if(metrics.design_units_per_em <= 0)
+  {
+    metrics.design_units_per_em = 1000.f;
+    metrics.ascent = 800.f;
+    metrics.descent = 200.f;
+    metrics.line_gap = 0.f;
+    metrics.capital_height = 800.f;
+  }
   {
     result.ascent   = floor_f32(size) * metrics.ascent / metrics.design_units_per_em;
     result.descent  = floor_f32(size) * metrics.descent / metrics.design_units_per_em;

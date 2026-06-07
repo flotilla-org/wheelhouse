@@ -1543,3 +1543,255 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
   }
   ProfEnd();
 }
+
+r_hook R_Readback
+r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
+{
+  R_Readback result = {0};
+  MutexScopeW(r_d3d11_state->device_rw_mutex)
+  {
+    size.x = Max(size.x, 1);
+    size.y = Max(size.y, 1);
+    ID3D11Device1 *device = r_d3d11_state->device;
+    ID3D11DeviceContext1 *d_ctx = r_d3d11_state->device_ctx;
+    if(device != 0 && d_ctx != 0)
+    {
+      ID3D11Texture2D *stage_color = 0;
+      ID3D11RenderTargetView *stage_color_rtv = 0;
+      ID3D11ShaderResourceView *stage_color_srv = 0;
+      ID3D11Texture2D *final_color = 0;
+      ID3D11RenderTargetView *final_color_rtv = 0;
+      ID3D11Texture2D *readback_texture = 0;
+
+      D3D11_TEXTURE2D_DESC stage_desc = {0};
+      stage_desc.Width = (UINT)size.x;
+      stage_desc.Height = (UINT)size.y;
+      stage_desc.MipLevels = 1;
+      stage_desc.ArraySize = 1;
+      stage_desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+      stage_desc.SampleDesc.Count = 1;
+      stage_desc.Usage = D3D11_USAGE_DEFAULT;
+      stage_desc.BindFlags = D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+
+      D3D11_RENDER_TARGET_VIEW_DESC stage_rtv_desc = {0};
+      stage_rtv_desc.Format = stage_desc.Format;
+      stage_rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+
+      D3D11_SHADER_RESOURCE_VIEW_DESC stage_srv_desc = {0};
+      stage_srv_desc.Format = stage_desc.Format;
+      stage_srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+      stage_srv_desc.Texture2D.MipLevels = 1;
+
+      D3D11_TEXTURE2D_DESC final_desc = {0};
+      final_desc.Width = (UINT)size.x;
+      final_desc.Height = (UINT)size.y;
+      final_desc.MipLevels = 1;
+      final_desc.ArraySize = 1;
+      final_desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+      final_desc.SampleDesc.Count = 1;
+      final_desc.Usage = D3D11_USAGE_DEFAULT;
+      final_desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+
+      D3D11_RENDER_TARGET_VIEW_DESC final_rtv_desc = {0};
+      final_rtv_desc.Format = final_desc.Format;
+      final_rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+
+      D3D11_TEXTURE2D_DESC readback_desc = final_desc;
+      readback_desc.Usage = D3D11_USAGE_STAGING;
+      readback_desc.BindFlags = 0;
+      readback_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+      device->lpVtbl->CreateTexture2D(device, &stage_desc, 0, &stage_color);
+      if(stage_color != 0)
+      {
+        device->lpVtbl->CreateRenderTargetView(device, (ID3D11Resource *)stage_color, &stage_rtv_desc, &stage_color_rtv);
+        device->lpVtbl->CreateShaderResourceView(device, (ID3D11Resource *)stage_color, &stage_srv_desc, &stage_color_srv);
+      }
+      device->lpVtbl->CreateTexture2D(device, &final_desc, 0, &final_color);
+      if(final_color != 0)
+      {
+        device->lpVtbl->CreateRenderTargetView(device, (ID3D11Resource *)final_color, &final_rtv_desc, &final_color_rtv);
+      }
+      device->lpVtbl->CreateTexture2D(device, &readback_desc, 0, &readback_texture);
+
+      if(stage_color != 0 && stage_color_rtv != 0 && stage_color_srv != 0 &&
+         final_color != 0 && final_color_rtv != 0 && readback_texture != 0)
+      {
+        Vec4F32 clear_color = v4f32(0.06f, 0.06f, 0.065f, 1.f);
+        d_ctx->lpVtbl->ClearRenderTargetView(d_ctx, stage_color_rtv, clear_color.v);
+
+        for(R_PassNode *pass_n = passes->first; pass_n != 0; pass_n = pass_n->next)
+        {
+          R_Pass *pass = &pass_n->v;
+          if(pass->kind == R_PassKind_UI && pass->params_ui != 0)
+          {
+            R_PassParams_UI *params = pass->params_ui;
+            R_BatchGroup2DList *rect_batch_groups = &params->rects;
+
+            Vec2S32 resolution = size;
+            D3D11_VIEWPORT viewport = {0.0f, 0.0f, (F32)resolution.x, (F32)resolution.y, 0.0f, 1.0f};
+            d_ctx->lpVtbl->RSSetViewports(d_ctx, 1, &viewport);
+            d_ctx->lpVtbl->RSSetState(d_ctx, (ID3D11RasterizerState *)r_d3d11_state->main_rasterizer);
+
+            for(R_BatchGroup2DNode *group_n = rect_batch_groups->first; group_n != 0; group_n = group_n->next)
+            {
+              R_BatchList *batches = &group_n->batches;
+              R_BatchGroup2DParams *group_params = &group_n->params;
+              if(batches->byte_count == 0 || batches->bytes_per_inst == 0)
+              {
+                continue;
+              }
+
+              ID3D11SamplerState *sampler   = r_d3d11_state->samplers[group_params->tex_sample_kind];
+              ID3D11VertexShader *vshad     = r_d3d11_state->vshads[R_D3D11_VShadKind_Rect];
+              ID3D11InputLayout *ilay       = r_d3d11_state->ilays[R_D3D11_VShadKind_Rect];
+              ID3D11PixelShader *pshad      = r_d3d11_state->pshads[R_D3D11_PShadKind_Rect];
+              ID3D11Buffer *uniforms_buffer = r_d3d11_state->uniform_type_kind_buffers[R_D3D11_UniformTypeKind_Rect];
+
+              ID3D11Buffer *buffer = r_d3d11_instance_buffer_from_size(batches->byte_count);
+              D3D11_MAPPED_SUBRESOURCE sub_rsrc = {0};
+              d_ctx->lpVtbl->Map(d_ctx, (ID3D11Resource *)buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub_rsrc);
+              U8 *dst_ptr = (U8 *)sub_rsrc.pData;
+              U64 off = 0;
+              for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
+              {
+                MemoryCopy(dst_ptr+off, batch_n->v.v, batch_n->v.byte_count);
+                off += batch_n->v.byte_count;
+              }
+              d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)buffer, 0);
+
+              R_Handle texture_handle = group_params->tex;
+              if(r_handle_match(texture_handle, r_handle_zero()))
+              {
+                texture_handle = r_d3d11_state->backup_texture;
+              }
+              R_D3D11_Tex2D *texture = r_d3d11_tex2d_from_handle(texture_handle);
+              Mat4x4F32 texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture->format);
+
+              R_D3D11_Uniforms_Rect uniforms = {0};
+              uniforms.viewport_size = v2f32(resolution.x, resolution.y);
+              uniforms.opacity = 1-group_params->transparency;
+              uniforms.texture_sample_channel_map = texture_sample_channel_map;
+              uniforms.texture_t2d_size = v2f32(texture->size.x, texture->size.y);
+              uniforms.xform[0] = v4f32(group_params->xform.v[0][0], group_params->xform.v[1][0], group_params->xform.v[2][0], 0);
+              uniforms.xform[1] = v4f32(group_params->xform.v[0][1], group_params->xform.v[1][1], group_params->xform.v[2][1], 0);
+              uniforms.xform[2] = v4f32(group_params->xform.v[0][2], group_params->xform.v[1][2], group_params->xform.v[2][2], 0);
+              Vec2F32 xform_2x2_col0 = v2f32(uniforms.xform[0].x, uniforms.xform[1].x);
+              Vec2F32 xform_2x2_col1 = v2f32(uniforms.xform[0].y, uniforms.xform[1].y);
+              uniforms.xform_scale.x = length_2f32(xform_2x2_col0);
+              uniforms.xform_scale.y = length_2f32(xform_2x2_col1);
+
+              d_ctx->lpVtbl->Map(d_ctx, (ID3D11Resource *)uniforms_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub_rsrc);
+              MemoryCopy((U8 *)sub_rsrc.pData, &uniforms, sizeof(uniforms));
+              d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)uniforms_buffer, 0);
+
+              d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, &stage_color_rtv, 0);
+              d_ctx->lpVtbl->OMSetDepthStencilState(d_ctx, r_d3d11_state->noop_depth_stencil, 0);
+              d_ctx->lpVtbl->OMSetBlendState(d_ctx, r_d3d11_state->main_blend_state, 0, 0xffffffff);
+
+              U32 stride = batches->bytes_per_inst;
+              U32 offset = 0;
+              d_ctx->lpVtbl->IASetPrimitiveTopology(d_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+              d_ctx->lpVtbl->IASetInputLayout(d_ctx, ilay);
+              d_ctx->lpVtbl->IASetVertexBuffers(d_ctx, 0, 1, &buffer, &stride, &offset);
+
+              d_ctx->lpVtbl->VSSetShader(d_ctx, vshad, 0, 0);
+              d_ctx->lpVtbl->VSSetConstantBuffers(d_ctx, 0, 1, &uniforms_buffer);
+              d_ctx->lpVtbl->PSSetShader(d_ctx, pshad, 0, 0);
+              d_ctx->lpVtbl->PSSetConstantBuffers(d_ctx, 0, 1, &uniforms_buffer);
+              d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &texture->view);
+              d_ctx->lpVtbl->PSSetSamplers(d_ctx, 0, 1, &sampler);
+
+              D3D11_RECT rect = {0};
+              Rng2F32 clip = group_params->clip;
+              if(clip.x0 == 0 && clip.y0 == 0 && clip.x1 == 0 && clip.y1 == 0)
+              {
+                rect.left = 0;
+                rect.right = (LONG)resolution.x;
+                rect.top = 0;
+                rect.bottom = (LONG)resolution.y;
+              }
+              else if(clip.x0 > clip.x1 || clip.y0 > clip.y1)
+              {
+                rect.left = 0;
+                rect.right = 0;
+                rect.top = 0;
+                rect.bottom = 0;
+              }
+              else
+              {
+                rect.left = (LONG)clip.x0;
+                rect.right = (LONG)clip.x1;
+                rect.top = (LONG)clip.y0;
+                rect.bottom = (LONG)clip.y1;
+              }
+              d_ctx->lpVtbl->RSSetScissorRects(d_ctx, 1, &rect);
+
+              d_ctx->lpVtbl->DrawInstanced(d_ctx, 4, batches->byte_count / batches->bytes_per_inst, 0, 0);
+            }
+          }
+        }
+
+        {
+          ID3D11SamplerState *sampler   = r_d3d11_state->samplers[R_Tex2DSampleKind_Nearest];
+          ID3D11VertexShader *vshad     = r_d3d11_state->vshads[R_D3D11_VShadKind_Finalize];
+          ID3D11PixelShader *pshad      = r_d3d11_state->pshads[R_D3D11_PShadKind_Finalize];
+
+          d_ctx->lpVtbl->ClearRenderTargetView(d_ctx, final_color_rtv, clear_color.v);
+          d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, &final_color_rtv, 0);
+          d_ctx->lpVtbl->OMSetDepthStencilState(d_ctx, r_d3d11_state->noop_depth_stencil, 0);
+          d_ctx->lpVtbl->OMSetBlendState(d_ctx, r_d3d11_state->main_blend_state, 0, 0xffffffff);
+
+          D3D11_VIEWPORT viewport = {0.0f, 0.0f, (F32)size.x, (F32)size.y, 0.0f, 1.0f};
+          d_ctx->lpVtbl->RSSetViewports(d_ctx, 1, &viewport);
+          d_ctx->lpVtbl->RSSetState(d_ctx, (ID3D11RasterizerState *)r_d3d11_state->main_rasterizer);
+
+          d_ctx->lpVtbl->IASetPrimitiveTopology(d_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+          d_ctx->lpVtbl->IASetInputLayout(d_ctx, 0);
+          d_ctx->lpVtbl->VSSetShader(d_ctx, vshad, 0, 0);
+          d_ctx->lpVtbl->PSSetShader(d_ctx, pshad, 0, 0);
+          d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &stage_color_srv);
+          d_ctx->lpVtbl->PSSetSamplers(d_ctx, 0, 1, &sampler);
+          D3D11_RECT rect = {0, 0, (LONG)size.x, (LONG)size.y};
+          d_ctx->lpVtbl->RSSetScissorRects(d_ctx, 1, &rect);
+          d_ctx->lpVtbl->Draw(d_ctx, 4, 0);
+
+          ID3D11ShaderResourceView *null_srv = 0;
+          d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &null_srv);
+        }
+
+        d_ctx->lpVtbl->CopyResource(d_ctx, (ID3D11Resource *)readback_texture, (ID3D11Resource *)final_color);
+        D3D11_MAPPED_SUBRESOURCE mapped = {0};
+        if(SUCCEEDED(d_ctx->lpVtbl->Map(d_ctx, (ID3D11Resource *)readback_texture, 0, D3D11_MAP_READ, 0, &mapped)))
+        {
+          U64 row_bytes = (U64)size.x*4;
+          U64 data_size = row_bytes*(U64)size.y;
+          U8 *data = push_array_no_zero(arena, U8, data_size);
+          for(S32 y = 0; y < size.y; y += 1)
+          {
+            MemoryCopy(data + (U64)y*row_bytes, (U8 *)mapped.pData + (U64)y*mapped.RowPitch, row_bytes);
+          }
+          d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)readback_texture, 0);
+          result.size = size;
+          result.format = R_Tex2DFormat_BGRA8;
+          result.data = str8(data, data_size);
+        }
+      }
+
+      {
+        ID3D11RenderTargetView *null_rtv = 0;
+        ID3D11ShaderResourceView *null_srv = 0;
+        d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, &null_rtv, 0);
+        d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &null_srv);
+      }
+
+      if(readback_texture != 0) { readback_texture->lpVtbl->Release(readback_texture); }
+      if(final_color_rtv != 0)  { final_color_rtv->lpVtbl->Release(final_color_rtv); }
+      if(final_color != 0)      { final_color->lpVtbl->Release(final_color); }
+      if(stage_color_srv != 0)  { stage_color_srv->lpVtbl->Release(stage_color_srv); }
+      if(stage_color_rtv != 0)  { stage_color_rtv->lpVtbl->Release(stage_color_rtv); }
+      if(stage_color != 0)      { stage_color->lpVtbl->Release(stage_color); }
+    }
+  }
+  return result;
+}

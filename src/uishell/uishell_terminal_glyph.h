@@ -41,6 +41,9 @@ struct UIShell_TerminalFontSet
   FNT_Tag *fallback_fonts;
   U64 fallback_font_count;
   U64 fallback_font_cap;
+  FNT_Tag *color_emoji_fonts;
+  U64 color_emoji_font_count;
+  U64 color_emoji_font_cap;
   FNT_RasterFlags raster_flags;
   F32 font_size;
 };
@@ -50,6 +53,10 @@ struct UIShell_TerminalGlyphRenderer
 {
   UIShell_TerminalFontSet font_set;
   UIShell_TerminalGlyphCache *cache;
+  B32 trace_enabled;
+  B32 trace_all_rows;
+  U64 trace_row;
+  U64 trace_generation;
 };
 
 typedef struct UIShell_TerminalDrawParams UIShell_TerminalDrawParams;
@@ -92,15 +99,19 @@ struct UIShell_TerminalCursorArray
 };
 
 internal void uishell_terminal_font_set_push_fallback(UIShell_TerminalFontSet *font_set, FNT_Tag font);
+internal void uishell_terminal_font_set_push_color_emoji(UIShell_TerminalFontSet *font_set, FNT_Tag font);
 internal void uishell_terminal_font_set_push_fallback_static_data(UIShell_TerminalFontSet *font_set, String8 *data_ptr);
+internal void uishell_terminal_font_set_push_color_emoji_static_data(UIShell_TerminalFontSet *font_set, String8 *data_ptr);
 internal void uishell_terminal_font_set_push_fallback_paths(Arena *scratch_arena, UIShell_TerminalFontSet *font_set, String8 fallback_setting);
-internal UIShell_TerminalFontSet uishell_terminal_font_set_from_fonts(Arena *scratch_arena, FNT_Tag primary_font, FNT_RasterFlags raster_flags, F32 font_size, FNT_Tag main_fallback_font, String8 fallback_setting, String8 **embedded_fallback_data, U64 embedded_fallback_count);
+internal UIShell_TerminalFontSet uishell_terminal_font_set_from_fonts(Arena *scratch_arena, FNT_Tag primary_font, FNT_RasterFlags raster_flags, F32 font_size, FNT_Tag main_fallback_font, String8 fallback_setting, String8 **embedded_color_emoji_data, U64 embedded_color_emoji_count, String8 **embedded_fallback_data, U64 embedded_fallback_count);
 internal void uishell_terminal_sync_font_cache(UIShell_TerminalGlyphCache *cache, UIShell_TerminalFontSet *font_set);
 internal cleat_snapshot uishell_terminal_fixture_snapshot(Arena *arena, U16 cols, U16 rows);
 internal UIShell_TerminalCursorArray uishell_terminal_fixture_cursor_array(Arena *arena, U16 cols, U16 rows);
 internal UIShell_TerminalCellFeed uishell_terminal_cell_feed_from_cleat_snapshot(cleat_snapshot const *snapshot);
 internal UIShell_TerminalCellFeed uishell_terminal_cell_feed_from_cache(UIShell_TerminalCellCache *cache);
 internal void uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache, cleat_render_update const *update);
+internal B32 uishell_terminal_write_fixture_ppm(String8 path, FNT_Tag primary_font, FNT_Tag main_fallback_font, F32 font_size, FNT_RasterFlags raster_flags, String8 **embedded_color_emoji_data, U64 embedded_color_emoji_count, String8 **embedded_fallback_data, U64 embedded_fallback_count);
+internal B32 uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_font, F32 font_size, FNT_RasterFlags raster_flags, String8 **embedded_color_emoji_data, U64 embedded_color_emoji_count, String8 **embedded_fallback_data, U64 embedded_fallback_count);
 internal void uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, UIShell_TerminalCellFeed const *feed, UIShell_TerminalCursorArray cursors);
 internal void uishell_terminal_glyph_renderer_draw_cell_feed(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, UIShell_TerminalCellFeed const *feed);
 internal void uishell_terminal_glyph_renderer_draw_snapshot_with_cursors(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, cleat_snapshot const *snapshot, UIShell_TerminalCursorArray cursors);

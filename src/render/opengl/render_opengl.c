@@ -696,3 +696,172 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
     }
   }
 }
+
+r_hook R_Readback
+r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
+{
+  R_Readback result = {0};
+  size.x = Max(size.x, 1);
+  size.y = Max(size.y, 1);
+  if(r_ogl_state != 0 &&
+     r_ogl_state->shaders[R_OGL_ShaderKind_Rect] != 0 &&
+     r_ogl_state->all_purpose_vao != 0)
+  {
+    GLuint fbo = 0;
+    GLuint color_texture = 0;
+    glGenFramebuffers(1, &fbo);
+    glGenTextures(1, &color_texture);
+    if(fbo != 0 && color_texture != 0)
+    {
+      glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+      glBindTexture(GL_TEXTURE_2D, color_texture);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size.x, size.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color_texture, 0);
+      if(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE)
+      {
+        Vec2F32 viewport_dim = v2f32((F32)size.x, (F32)size.y);
+        glViewport(0, 0, size.x, size.y);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDisable(GL_SCISSOR_TEST);
+        glClearColor(0.06f, 0.06f, 0.065f, 1.f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        GLuint shader = r_ogl_state->shaders[R_OGL_ShaderKind_Rect];
+        glUseProgramScope(shader)
+          glBindVertexArrayScope(r_ogl_state->all_purpose_vao)
+          glBindFramebufferScope(GL_FRAMEBUFFER, fbo)
+        {
+          for(R_PassNode *pass_n = passes->first; pass_n != 0; pass_n = pass_n->next)
+          {
+            R_Pass *pass = &pass_n->v;
+            if(pass->kind == R_PassKind_UI && pass->params_ui != 0)
+            {
+              R_PassParams_UI *params = pass->params_ui;
+              R_BatchGroup2DList *rect_batch_groups = &params->rects;
+              for(R_BatchGroup2DNode *group_n = rect_batch_groups->first; group_n != 0; group_n = group_n->next)
+              {
+                R_BatchList *batches = &group_n->batches;
+                R_BatchGroup2DParams *group_params = &group_n->params;
+                if(batches->byte_count == 0 || batches->bytes_per_inst == 0)
+                {
+                  continue;
+                }
+
+                R_Tex2DFormat texture_fmt = R_Tex2DFormat_RGBA8;
+                GLuint texture_id = r_ogl_state->white_texture;
+                {
+                  R_OGL_Tex2D *tex = r_ogl_tex2d_from_handle(group_params->tex);
+                  if(tex != 0)
+                  {
+                    texture_id = tex->id;
+                    texture_fmt = tex->fmt;
+                  }
+                }
+
+                GLuint buffer = r_ogl_instance_buffer_from_size(batches->byte_count);
+                glBindBuffer(GL_ARRAY_BUFFER, buffer);
+                U64 off = 0;
+                for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
+                {
+                  glBufferSubData(GL_ARRAY_BUFFER, off, batch_n->v.byte_count, batch_n->v.v);
+                  off += batch_n->v.byte_count;
+                }
+
+                R_OGL_AttributeArray inputs = r_ogl_shader_kind_input_attributes_table[R_OGL_ShaderKind_Rect];
+                off = 0;
+                for EachIndex(idx, inputs.count)
+                {
+                  glEnableVertexAttribArray(inputs.v[idx].index);
+                  glVertexAttribDivisor(inputs.v[idx].index, 1);
+                  glVertexAttribPointer(inputs.v[idx].index, inputs.v[idx].count, inputs.v[idx].type, GL_FALSE, sizeof(R_Rect2DInst), (void *)(off));
+                  off += inputs.v[idx].count*sizeof(F32);
+                }
+
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, texture_id);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+                switch(group_params->tex_sample_kind)
+                {
+                  default:
+                  case R_Tex2DSampleKind_Nearest:
+                  {
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                  }break;
+                  case R_Tex2DSampleKind_Linear:
+                  {
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                  }break;
+                }
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+                glUniform1i(glGetUniformLocation(shader, "u_tex_color"), 0);
+
+                Mat4x4F32 texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture_fmt);
+                glUniformMatrix4fv(glGetUniformLocation(shader, "u_texture_sample_channel_map"), 1, 0, &texture_sample_channel_map.v[0][0]);
+                glUniform2f(glGetUniformLocation(shader, "u_viewport_size_px"), viewport_dim.x, viewport_dim.y);
+                glUniform1f(glGetUniformLocation(shader, "u_opacity"), 1.f - group_params->transparency);
+                glUniformMatrix3fv(glGetUniformLocation(shader, "u_xform"), 1, 0, &group_params->xform.v[0][0]);
+
+                if(group_params->clip.x0 != 0 ||
+                   group_params->clip.x1 != 0 ||
+                   group_params->clip.y0 != 0 ||
+                   group_params->clip.y1 != 0)
+                {
+                  Rng2F32 clip = group_params->clip;
+                  glScissor(clip.x0, viewport_dim.y - clip.y1, (clip.x1-clip.x0) + 1, (clip.y1-clip.y0)+1);
+                  glEnable(GL_SCISSOR_TEST);
+                }
+                else
+                {
+                  glDisable(GL_SCISSOR_TEST);
+                }
+
+                glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, batches->byte_count / batches->bytes_per_inst);
+                glDisable(GL_SCISSOR_TEST);
+              }
+            }
+          }
+        }
+
+        U64 data_size = (U64)size.x*(U64)size.y*4;
+        U8 *rgba_data = push_array_no_zero(arena, U8, data_size);
+        U8 *bgra_data = push_array_no_zero(arena, U8, data_size);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glReadPixels(0, 0, size.x, size.y, GL_RGBA, GL_UNSIGNED_BYTE, rgba_data);
+        for(S32 y = 0; y < size.y; y += 1)
+        {
+          U64 src_row_offset = (U64)y*(U64)size.x*4;
+          U64 dst_row_offset = (U64)(size.y - 1 - y)*(U64)size.x*4;
+          for(S32 x = 0; x < size.x; x += 1)
+          {
+            U64 src_idx = src_row_offset + (U64)x*4;
+            U64 dst_idx = dst_row_offset + (U64)x*4;
+            bgra_data[dst_idx + 0] = rgba_data[src_idx + 2];
+            bgra_data[dst_idx + 1] = rgba_data[src_idx + 1];
+            bgra_data[dst_idx + 2] = rgba_data[src_idx + 0];
+            bgra_data[dst_idx + 3] = rgba_data[src_idx + 3];
+          }
+        }
+        result.size = size;
+        result.format = R_Tex2DFormat_BGRA8;
+        result.data = str8(bgra_data, data_size);
+      }
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    if(color_texture != 0)
+    {
+      glDeleteTextures(1, &color_texture);
+    }
+    if(fbo != 0)
+    {
+      glDeleteFramebuffers(1, &fbo);
+    }
+  }
+  return result;
+}

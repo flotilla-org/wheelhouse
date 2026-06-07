@@ -601,6 +601,9 @@ struct RD_State
   Arena *arena;
   B32 quit;
   B32 quit_after_success;
+  B32 terminal_glyph_trace_enabled;
+  B32 terminal_glyph_trace_all_rows;
+  U64 terminal_glyph_trace_row;
   S32 frame_depth;
   U64 frame_eval_memread_endt_us;
 

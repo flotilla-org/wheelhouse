@@ -12,6 +12,7 @@ typedef ptrdiff_t GLsizeiptr;
 typedef ptrdiff_t GLintptr;
 
 #define GL_FRAMEBUFFER                    0x8D40
+#define GL_FRAMEBUFFER_COMPLETE           0x8CD5
 #define GL_FRAMEBUFFER_SRGB               0x8DB9
 #define GL_TEXTURE_MAX_LEVEL              0x813D
 
@@ -195,6 +196,7 @@ X(glVertexAttribDivisor, void, (GLuint index, GLuint divisor))\
 X(glDrawArraysInstanced, void, (GLenum mode, GLint first, GLsizei count, GLsizei instancecount))\
 X(glDebugMessageCallback, void, (void (*)(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *userParam), void *user_data))\
 X(glFramebufferTexture2D, void, (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level))\
+X(glCheckFramebufferStatus, GLenum, (GLenum target))\
 X(glBlitFramebuffer, void, (GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter))\
 
 #define X(name, r, p) typedef r name##_FunctionType p;

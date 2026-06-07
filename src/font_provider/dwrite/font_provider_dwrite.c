@@ -47,6 +47,74 @@ fp_dwrite_handle_from_font(FP_DWrite_Font font)
   return result;
 }
 
+internal void
+fp_dwrite_bitmap_render_target_clear(IDWriteBitmapRenderTarget *render_target, Vec2S16 dim, COLORREF color)
+{
+  HDC dc = IDWriteBitmapRenderTarget_GetMemoryDC(render_target);
+  HGDIOBJ original_pen = SelectObject(dc, GetStockObject(DC_PEN));
+  SetDCPenColor(dc, color);
+  HGDIOBJ original_brush = SelectObject(dc, GetStockObject(DC_BRUSH));
+  SetDCBrushColor(dc, color);
+  Rectangle(dc, 0, 0, dim.x, dim.y);
+  SelectObject(dc, original_brush);
+  SelectObject(dc, original_pen);
+}
+
+internal DIBSECTION
+fp_dwrite_dib_from_bitmap_render_target(IDWriteBitmapRenderTarget *render_target)
+{
+  HDC dc = IDWriteBitmapRenderTarget_GetMemoryDC(render_target);
+  HBITMAP bitmap = (HBITMAP)GetCurrentObject(dc, OBJ_BITMAP);
+  DIBSECTION result = {0};
+  GetObject(bitmap, sizeof(result), &result);
+  return result;
+}
+
+internal Vec4F32
+fp_dwrite_rgba_from_color_glyph_run(DWRITE_COLOR_GLYPH_RUN const *run)
+{
+  Vec4F32 result = v4f32(1, 1, 1, 1);
+  if(run->paletteIndex != 0xffff ||
+     run->runColor.r != 0 ||
+     run->runColor.g != 0 ||
+     run->runColor.b != 0 ||
+     run->runColor.a != 0)
+  {
+    result = v4f32(Clamp(0.f, run->runColor.r, 1.f),
+                   Clamp(0.f, run->runColor.g, 1.f),
+                   Clamp(0.f, run->runColor.b, 1.f),
+                   Clamp(0.f, run->runColor.a, 1.f));
+  }
+  return result;
+}
+
+internal void
+fp_dwrite_composite_straight_rgba(U8 *dst_pixel, Vec4F32 color, F32 coverage)
+{
+  F32 src_a = Clamp(0.f, color.w*coverage, 1.f);
+  if(src_a > 0)
+  {
+    F32 dst_r = (F32)dst_pixel[0]/255.f;
+    F32 dst_g = (F32)dst_pixel[1]/255.f;
+    F32 dst_b = (F32)dst_pixel[2]/255.f;
+    F32 dst_a = (F32)dst_pixel[3]/255.f;
+    F32 out_a = src_a + dst_a*(1.f - src_a);
+    F32 out_r = 0;
+    F32 out_g = 0;
+    F32 out_b = 0;
+    if(out_a > 0)
+    {
+      out_r = (color.x*src_a + dst_r*dst_a*(1.f - src_a))/out_a;
+      out_g = (color.y*src_a + dst_g*dst_a*(1.f - src_a))/out_a;
+      out_b = (color.z*src_a + dst_b*dst_a*(1.f - src_a))/out_a;
+    }
+    dst_pixel[0] = (U8)Clamp(0, (S32)round_f32(out_r*255.f), 255);
+    dst_pixel[1] = (U8)Clamp(0, (S32)round_f32(out_g*255.f), 255);
+    dst_pixel[2] = (U8)Clamp(0, (S32)round_f32(out_b*255.f), 255);
+    dst_pixel[3] = (U8)Clamp(0, (S32)round_f32(out_a*255.f), 255);
+  }
+}
+
 //- rjf: file stream allocator
 
 internal FP_DWrite_FontFileStreamNode *
@@ -470,6 +538,7 @@ fp_raster(Arena *arena, FP_Handle font_handle, F32 size, FP_RasterFlags flags, S
   HRESULT error = 0;
   String32 string32 = str32_from_8(scratch.arena, string);
   FP_DWrite_Font font = fp_dwrite_font_from_handle(font_handle);
+  B32 tight_bounds = !!(flags & FP_RasterFlag_TightBounds);
   COLORREF bg_color = RGB(0,   0,   0);
   COLORREF fg_color = RGB(255, 255, 255);
   
@@ -534,16 +603,9 @@ fp_raster(Arena *arena, FP_Handle font_handle, F32 size, FP_RasterFlags flags, S
   }
   
   //- rjf: get bitmap & clear
-  HDC dc = 0;
   if(font.face != 0)
   {
-    dc = IDWriteBitmapRenderTarget_GetMemoryDC(render_target);
-    HGDIOBJ original = SelectObject(dc, GetStockObject(DC_PEN));
-    SetDCPenColor(dc, bg_color);
-    SelectObject(dc, GetStockObject(DC_BRUSH));
-    SetDCBrushColor(dc, bg_color);
-    Rectangle(dc, 0, 0, atlas_dim.x, atlas_dim.y);
-    SelectObject(dc, original);
+    fp_dwrite_bitmap_render_target_clear(render_target, atlas_dim, bg_color);
   }
   
   //- rjf: draw glyph run
@@ -563,18 +625,122 @@ fp_raster(Arena *arena, FP_Handle font_handle, F32 size, FP_RasterFlags flags, S
     glyph_run.glyphCount = string32.size;
     glyph_run.glyphIndices = glyph_indices;
   }
-  RECT bounding_box = {0};
-  if(font.face != 0)
+
+  //- rjf: pick rendering params
+  IDWriteRenderingParams *rendering_params = fp_dwrite_state->rendering_params_sharp_hinted;
+  switch(flags & (FP_RasterFlag_Smooth|FP_RasterFlag_Hinted))
   {
-    IDWriteRenderingParams *rendering_params = fp_dwrite_state->rendering_params_sharp_hinted;
-    switch(flags)
+    default:{}break;
+    case 0:{rendering_params = fp_dwrite_state->rendering_params_sharp_unhinted;}break;
+    case FP_RasterFlag_Hinted:{rendering_params = fp_dwrite_state->rendering_params_sharp_hinted;}break;
+    case FP_RasterFlag_Smooth:{rendering_params = fp_dwrite_state->rendering_params_smooth_unhinted;}break;
+    case FP_RasterFlag_Smooth|FP_RasterFlag_Hinted:{rendering_params = fp_dwrite_state->rendering_params_smooth_hinted;}break;
+  }
+
+  //- rjf: try color layers first
+  B32 drew_color_layers = 0;
+  U8 *color_atlas = 0;
+  RECT color_bounding_box = {0};
+  if(font.face != 0 && fp_dwrite_state->dwrite2_is_supported)
+  {
+    IDWriteColorGlyphRunEnumerator *color_layers = 0;
+    HRESULT color_error = IDWriteFactory2_TranslateColorGlyphRun((IDWriteFactory2 *)fp_dwrite_state->factory,
+                                                                 draw_p.x,
+                                                                 draw_p.y,
+                                                                 &glyph_run,
+                                                                 0,
+                                                                 DWRITE_MEASURING_MODE_NATURAL,
+                                                                 0,
+                                                                 0,
+                                                                 &color_layers);
+    if(SUCCEEDED(color_error) && color_layers != 0)
     {
-      default:{}break;
-      case 0:{rendering_params = fp_dwrite_state->rendering_params_sharp_unhinted;}break;
-      case FP_RasterFlag_Hinted:{rendering_params = fp_dwrite_state->rendering_params_sharp_hinted;}break;
-      case FP_RasterFlag_Smooth:{rendering_params = fp_dwrite_state->rendering_params_smooth_unhinted;}break;
-      case FP_RasterFlag_Smooth|FP_RasterFlag_Hinted:{rendering_params = fp_dwrite_state->rendering_params_smooth_hinted;}break;
+      U64 color_atlas_size = (U64)atlas_dim.x*(U64)atlas_dim.y*4;
+      color_atlas = push_array(scratch.arena, U8, color_atlas_size);
+      color_bounding_box.left = atlas_dim.x;
+      color_bounding_box.top = atlas_dim.y;
+      color_bounding_box.right = 0;
+      color_bounding_box.bottom = 0;
+      for(;;)
+      {
+        BOOL has_run = 0;
+        HRESULT move_error = IDWriteColorGlyphRunEnumerator_MoveNext(color_layers, &has_run);
+        if(FAILED(move_error) || !has_run)
+        {
+          break;
+        }
+        DWRITE_COLOR_GLYPH_RUN const *color_run = 0;
+        HRESULT run_error = IDWriteColorGlyphRunEnumerator_GetCurrentRun(color_layers, &color_run);
+        if(FAILED(run_error) || color_run == 0)
+        {
+          break;
+        }
+
+        fp_dwrite_bitmap_render_target_clear(render_target, atlas_dim, bg_color);
+        RECT layer_box = {0};
+        HRESULT layer_error = IDWriteBitmapRenderTarget_DrawGlyphRun(render_target,
+                                                                     color_run->baselineOriginX,
+                                                                     color_run->baselineOriginY,
+                                                                     DWRITE_MEASURING_MODE_NATURAL,
+                                                                     &color_run->glyphRun,
+                                                                     rendering_params,
+                                                                     fg_color,
+                                                                     &layer_box);
+        if(FAILED(layer_error))
+        {
+          continue;
+        }
+
+        DIBSECTION layer_dib = fp_dwrite_dib_from_bitmap_render_target(render_target);
+        U8 *in_data = (U8 *)layer_dib.dsBm.bmBits;
+        if(in_data == 0)
+        {
+          continue;
+        }
+
+        S32 src_x0 = 0;
+        S32 src_y0 = 0;
+        S32 src_x1 = atlas_dim.x;
+        S32 src_y1 = atlas_dim.y;
+        if(layer_box.left < layer_box.right && layer_box.top < layer_box.bottom)
+        {
+          src_x0 = Clamp(0, layer_box.left, atlas_dim.x);
+          src_y0 = Clamp(0, layer_box.top, atlas_dim.y);
+          src_x1 = Clamp(0, layer_box.right, atlas_dim.x);
+          src_y1 = Clamp(0, layer_box.bottom, atlas_dim.y);
+        }
+
+        Vec4F32 layer_color = fp_dwrite_rgba_from_color_glyph_run(color_run);
+        U64 in_pitch = (U64)layer_dib.dsBm.bmWidthBytes;
+        for(S32 y = src_y0; y < src_y1; y += 1)
+        {
+          U8 *in_pixel = in_data + (U64)y*in_pitch + (U64)src_x0*4;
+          U8 *out_pixel = color_atlas + (((U64)y*(U64)atlas_dim.x + (U64)src_x0)*4);
+          for(S32 x = src_x0; x < src_x1; x += 1)
+          {
+            U8 mask = Max(in_pixel[0], Max(in_pixel[1], in_pixel[2]));
+            if(mask != 0)
+            {
+              fp_dwrite_composite_straight_rgba(out_pixel, layer_color, (F32)mask/255.f);
+              color_bounding_box.left = Min(color_bounding_box.left, x);
+              color_bounding_box.top = Min(color_bounding_box.top, y);
+              color_bounding_box.right = Max(color_bounding_box.right, x + 1);
+              color_bounding_box.bottom = Max(color_bounding_box.bottom, y + 1);
+              drew_color_layers = 1;
+            }
+            in_pixel += 4;
+            out_pixel += 4;
+          }
+        }
+      }
+      IDWriteColorGlyphRunEnumerator_Release(color_layers);
     }
+  }
+
+  RECT bounding_box = {0};
+  if(font.face != 0 && !drew_color_layers)
+  {
+    fp_dwrite_bitmap_render_target_clear(render_target, atlas_dim, bg_color);
     error = IDWriteBitmapRenderTarget_DrawGlyphRun(render_target, draw_p.x, draw_p.y,
                                                    DWRITE_MEASURING_MODE_NATURAL,
                                                    &glyph_run,
@@ -585,10 +751,9 @@ fp_raster(Arena *arena, FP_Handle font_handle, F32 size, FP_RasterFlags flags, S
   
   //- rjf: get bitmap
   DIBSECTION dib = {0};
-  if(font.face != 0)
+  if(font.face != 0 && !drew_color_layers)
   {
-    HBITMAP bitmap = (HBITMAP)GetCurrentObject(dc, OBJ_BITMAP);
-    GetObject(bitmap, sizeof(dib), &dib);
+    dib = fp_dwrite_dib_from_bitmap_render_target(render_target);
   }
   
   //- rjf: fill & return
@@ -596,24 +761,85 @@ fp_raster(Arena *arena, FP_Handle font_handle, F32 size, FP_RasterFlags flags, S
   if(font.face != 0)
   {
     // rjf: fill basics
-    result.atlas_dim    = atlas_dim;
-    result.atlas        = push_array_no_zero(arena, U8, atlas_dim.x*atlas_dim.y*4);
+    S32 src_x0 = 0;
+    S32 src_y0 = 0;
+    S32 src_x1 = atlas_dim.x;
+    S32 src_y1 = atlas_dim.y;
+    if(drew_color_layers && tight_bounds && color_bounding_box.left < color_bounding_box.right && color_bounding_box.top < color_bounding_box.bottom)
+    {
+      src_x0 = Clamp(0, color_bounding_box.left,  atlas_dim.x);
+      src_y0 = Clamp(0, color_bounding_box.top,   atlas_dim.y);
+      src_x1 = Clamp(0, color_bounding_box.right, atlas_dim.x);
+      src_y1 = Clamp(0, color_bounding_box.bottom, atlas_dim.y);
+      if(src_x0 >= src_x1 || src_y0 >= src_y1)
+      {
+        src_x0 = 0;
+        src_y0 = 0;
+        src_x1 = atlas_dim.x;
+        src_y1 = atlas_dim.y;
+      }
+    }
+    else if(!drew_color_layers && tight_bounds && SUCCEEDED(error) && bounding_box.left < bounding_box.right && bounding_box.top < bounding_box.bottom)
+    {
+      src_x0 = Clamp(0, bounding_box.left,  atlas_dim.x);
+      src_y0 = Clamp(0, bounding_box.top,   atlas_dim.y);
+      src_x1 = Clamp(0, bounding_box.right, atlas_dim.x);
+      src_y1 = Clamp(0, bounding_box.bottom, atlas_dim.y);
+      if(src_x0 >= src_x1 || src_y0 >= src_y1)
+      {
+        src_x0 = 0;
+        src_y0 = 0;
+        src_x1 = atlas_dim.x;
+        src_y1 = atlas_dim.y;
+      }
+    }
+    result.atlas_dim    = v2s16((S16)(src_x1 - src_x0), (S16)(src_y1 - src_y0));
+    result.atlas        = push_array_no_zero(arena, U8, result.atlas_dim.x*result.atlas_dim.y*4);
     result.advance      = round_f32(advance);
-    
+    result.origin_from_left = draw_p.x - (F32)src_x0;
+    result.baseline_from_top = draw_p.y - (F32)src_y0;
+    result.face_box_origin_from_left = draw_p.x;
+    result.face_box_baseline_from_top = draw_p.y;
+
     // rjf: fill atlas
+    if(drew_color_layers)
+    {
+      U8 *out_data  = (U8 *)result.atlas;
+      U64 out_pitch = result.atlas_dim.x * 4;
+      U64 color_sum = 0;
+      for(U64 y = 0; y < result.atlas_dim.y; y += 1)
+      {
+        U8 *in_line = color_atlas + (((U64)src_y0 + y)*(U64)atlas_dim.x + (U64)src_x0)*4;
+        U8 *out_line = out_data + y*out_pitch;
+        MemoryCopy(out_line, in_line, out_pitch);
+        for(U64 x = 0; x < result.atlas_dim.x; x += 1)
+        {
+          color_sum += out_line[x*4 + 3];
+        }
+      }
+      if(color_sum == 0)
+      {
+        result.atlas_dim = v2s16(0, 0);
+      }
+      else
+      {
+        result.kind = FP_RasterKind_RGBA;
+      }
+    }
+    else
     {
       U8 *in_data   = (U8 *)dib.dsBm.bmBits;
       U64 in_pitch  = (U64)dib.dsBm.bmWidthBytes;
       U8 *out_data  = (U8 *)result.atlas;
-      U64 out_pitch = atlas_dim.x * 4;
+      U64 out_pitch = result.atlas_dim.x * 4;
       U64 color_sum = 0;
-      U8 *in_line = (U8 *)in_data;
+      U8 *in_line = (U8 *)in_data + (U64)src_y0*in_pitch;
       U8 *out_line = out_data;
-      for(U64 y = 0; y < atlas_dim.y; y += 1)
+      for(U64 y = 0; y < result.atlas_dim.y; y += 1)
       {
-        U8 *in_pixel = in_line;
+        U8 *in_pixel = in_line + (U64)src_x0*4;
         U8 *out_pixel = out_line;
-        for(U64 x = 0; x < atlas_dim.x; x += 1)
+        for(U64 x = 0; x < result.atlas_dim.x; x += 1)
         {
           U8 in_pixel_byte = in_pixel[0];
           out_pixel[0] = 255;

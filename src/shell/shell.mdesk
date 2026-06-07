@@ -15,6 +15,7 @@
 @embed_file rd_default_code_font_bytes: "../data/JetBrainsMonoNerdFont-Regular.ttf"
 
 @embed_file rd_terminal_noto_emoji_font_bytes: "../data/NotoEmoji-Regular.ttf"
+@embed_file rd_terminal_noto_color_emoji_font_bytes: "../data/NotoColorEmoji.ttf"
 @embed_file rd_terminal_noto_symbols_font_bytes: "../data/NotoSansSymbols.ttf"
 @embed_file rd_terminal_noto_symbols_2_font_bytes: "../data/NotoSansSymbols2-Regular.ttf"
 @embed_file rd_terminal_noto_math_font_bytes: "../data/NotoSansMath-Regular.ttf"

@@ -18,6 +18,107 @@ fp_ft_handle_from_font(FP_FT_Font font)
   return result;
 }
 
+internal F32
+fp_ft_select_size(FT_Face face, F32 size)
+{
+  F32 result = 1.f;
+  FT_UInt pixel_size = (FT_UInt)((96.f/72.f) * size);
+  if(face->num_fixed_sizes > 0 && face->available_sizes != 0)
+  {
+    FT_Int best_idx = 0;
+    S64 best_delta = max_S64;
+    S64 requested_26_6 = (S64)pixel_size << 6;
+    for(FT_Int idx = 0; idx < face->num_fixed_sizes; idx += 1)
+    {
+      FT_Bitmap_Size *strike = &face->available_sizes[idx];
+      S64 strike_26_6 = (S64)(strike->y_ppem ? strike->y_ppem : ((S64)strike->height << 6));
+      S64 delta = abs_s64(strike_26_6 - requested_26_6);
+      if(delta < best_delta)
+      {
+        best_delta = delta;
+        best_idx = idx;
+      }
+    }
+    FT_Select_Size(face, best_idx);
+    FT_Bitmap_Size *strike = &face->available_sizes[best_idx];
+    S64 strike_26_6 = (S64)(strike->y_ppem ? strike->y_ppem : ((S64)strike->height << 6));
+    if(strike_26_6 != 0)
+    {
+      result = (F32)requested_26_6/(F32)strike_26_6;
+    }
+  }
+  else
+  {
+    FT_Set_Pixel_Sizes(face, 0, pixel_size);
+  }
+  return result;
+}
+
+internal U8
+fp_ft_u8_from_unit_f32(F32 x)
+{
+  U8 result = (U8)Clamp(0, (S32)round_f32(Clamp(0.f, x, 1.f)*255.f), 255);
+  return result;
+}
+
+internal U8
+fp_ft_unpremultiply_u8(U8 c, U8 a)
+{
+  U8 result = 0;
+  if(a != 0)
+  {
+    result = (U8)Clamp(0, ((S32)c*255 + (S32)a/2)/(S32)a, 255);
+  }
+  return result;
+}
+
+internal void
+fp_ft_sample_straight_rgba_scaled(U8 *src_atlas, Vec2S16 src_dim, F32 src_x, F32 src_y, U8 *dst)
+{
+  S32 x0 = Clamp(0, (S32)floor_f32(src_x), src_dim.x - 1);
+  S32 y0 = Clamp(0, (S32)floor_f32(src_y), src_dim.y - 1);
+  S32 x1 = Clamp(0, x0 + 1, src_dim.x - 1);
+  S32 y1 = Clamp(0, y0 + 1, src_dim.y - 1);
+  F32 tx = Clamp(0.f, src_x - (F32)x0, 1.f);
+  F32 ty = Clamp(0.f, src_y - (F32)y0, 1.f);
+  F32 weights[4] =
+  {
+    (1.f - tx)*(1.f - ty),
+    tx*(1.f - ty),
+    (1.f - tx)*ty,
+    tx*ty,
+  };
+  S32 xs[4] = {x0, x1, x0, x1};
+  S32 ys[4] = {y0, y0, y1, y1};
+  F32 premul_r = 0;
+  F32 premul_g = 0;
+  F32 premul_b = 0;
+  F32 alpha = 0;
+  for(U64 idx = 0; idx < ArrayCount(weights); idx += 1)
+  {
+    U8 *px = src_atlas + ((U64)ys[idx]*(U64)src_dim.x + (U64)xs[idx])*4;
+    F32 a = (F32)px[3]/255.f;
+    F32 w = weights[idx];
+    premul_r += ((F32)px[0]/255.f)*a*w;
+    premul_g += ((F32)px[1]/255.f)*a*w;
+    premul_b += ((F32)px[2]/255.f)*a*w;
+    alpha += a*w;
+  }
+  F32 r = 0;
+  F32 g = 0;
+  F32 b = 0;
+  if(alpha > 0)
+  {
+    r = premul_r/alpha;
+    g = premul_g/alpha;
+    b = premul_b/alpha;
+  }
+  dst[0] = fp_ft_u8_from_unit_f32(r);
+  dst[1] = fp_ft_u8_from_unit_f32(g);
+  dst[2] = fp_ft_u8_from_unit_f32(b);
+  dst[3] = fp_ft_u8_from_unit_f32(alpha);
+}
+
 ////////////////////////////////
 //~ rjf: Backend Implementations
 
@@ -73,6 +174,17 @@ fp_metrics_from_font(FP_Handle handle)
     result.descent             = -(F32)font.face->descender;
     result.line_gap            = (F32)(font.face->height - font.face->ascender + font.face->descender);
     result.capital_height      = (F32)(font.face->ascender);
+    if(result.design_units_per_em <= 0)
+    {
+      result.design_units_per_em = 1000.f;
+      if(result.ascent == 0 && result.descent == 0)
+      {
+        result.ascent = 800.f;
+        result.descent = 200.f;
+        result.line_gap = 0.f;
+        result.capital_height = result.ascent;
+      }
+    }
   }
   return result;
 }
@@ -101,7 +213,8 @@ fp_raster(Arena *arena, FP_Handle handle, F32 size, FP_RasterFlags flags, String
     
     //- rjf: unpack font
     FT_Face face = font.face;
-    FT_Set_Pixel_Sizes(face, 0, (FT_UInt)((96.f/72.f) * size));
+    F32 fixed_size_scale = fp_ft_select_size(face, size);
+    B32 tight_bounds = !!(flags & FP_RasterFlag_TightBounds);
     S64 ascent  = face->size->metrics.ascender >> 6;
     S64 descent = abs_s64(face->size->metrics.descender >> 6);
     S64 height  = face->size->metrics.height >> 6;
@@ -111,47 +224,118 @@ fp_raster(Arena *arena, FP_Handle handle, F32 size, FP_RasterFlags flags, String
     
     //- rjf: measure
     S32 total_width = 0;
+    S32 min_x = max_S32;
+    S32 min_y = max_S32;
+    S32 max_x = min_S32;
+    S32 max_y = min_S32;
+    S32 baseline = ascent;
+    FT_Int32 load_flags = FT_LOAD_RENDER|FT_LOAD_COLOR;
     for EachIndex(idx, string32.size)
     {
-      FT_Load_Char(face, string32.str[idx], FT_LOAD_RENDER);
+      FT_Load_Char(face, string32.str[idx], load_flags);
+      S32 left = face->glyph->bitmap_left;
+      S32 top = face->glyph->bitmap_top;
+      S32 x0 = total_width + left;
+      S32 y0 = baseline - top;
+      S32 x1 = x0 + (S32)face->glyph->bitmap.width;
+      S32 y1 = y0 + (S32)face->glyph->bitmap.rows;
+      if(x0 < x1 && y0 < y1)
+      {
+        min_x = Min(min_x, x0);
+        min_y = Min(min_y, y0);
+        max_x = Max(max_x, x1);
+        max_y = Max(max_y, y1);
+      }
       total_width += (face->glyph->advance.x >> 6);
     }
-    
+
     //- rjf: allocate & fill atlas w/ rasterization
-    Vec2S16 dim = {(S16)total_width+1, height+1};
+    if(!tight_bounds || min_x >= max_x || min_y >= max_y)
+    {
+      min_x = 0;
+      min_y = 0;
+      max_x = total_width + 1;
+      max_y = height + 1;
+    }
+    Vec2S16 dim = {(S16)(max_x - min_x), (S16)(max_y - min_y)};
     U64 atlas_size = dim.x * dim.y * 4;
     U8 *atlas = push_array(arena, U8, atlas_size);
-    S32 baseline = ascent;
     S32 atlas_write_x = 0;
+    B32 has_source_color = 0;
     for EachIndex(idx, string32.size)
     {
-      FT_Load_Char(face, string32.str[idx], FT_LOAD_RENDER);
+      FT_Load_Char(face, string32.str[idx], load_flags);
       FT_Bitmap *bmp = &face->glyph->bitmap;
       S32 top = face->glyph->bitmap_top;
       S32 left = face->glyph->bitmap_left;
       for(S32 row = 0; row < (S32)bmp->rows; row += 1)
       {
-        S32 y = baseline - top + row;
+        S32 y = baseline - top + row - min_y;
         for(S32 col = 0; col < (S32)bmp->width; col += 1)
         {
-          S32 x = atlas_write_x + left + col;
+          S32 x = atlas_write_x + left + col - min_x;
           U64 off = (y*dim.x + x)*4;
           if(off+4 <= atlas_size)
           {
-            atlas[off+0] = 255;
-            atlas[off+1] = 255;
-            atlas[off+2] = 255;
-            atlas[off+3] = bmp->buffer[row*bmp->pitch + col];
+            S64 pitch = bmp->pitch;
+            U8 *src = (pitch >= 0 ?
+                       bmp->buffer + row*pitch :
+                       bmp->buffer + ((S32)bmp->rows - 1 - row)*-pitch);
+            if(bmp->pixel_mode == FT_PIXEL_MODE_BGRA)
+            {
+              U8 *px = src + col*4;
+              atlas[off+0] = fp_ft_unpremultiply_u8(px[2], px[3]);
+              atlas[off+1] = fp_ft_unpremultiply_u8(px[1], px[3]);
+              atlas[off+2] = fp_ft_unpremultiply_u8(px[0], px[3]);
+              atlas[off+3] = px[3];
+              has_source_color = 1;
+            }
+            else
+            {
+              atlas[off+0] = 255;
+              atlas[off+1] = 255;
+              atlas[off+2] = 255;
+              atlas[off+3] = src[col];
+            }
           }
         }
       }
       atlas_write_x += (face->glyph->advance.x >> 6);
     }
     
+    //- rjf: scale fixed-strike bitmap output back to the requested size
+    if(abs_f32(fixed_size_scale - 1.f) > 0.001f && dim.x > 0 && dim.y > 0)
+    {
+      Vec2S16 scaled_dim =
+      {
+        (S16)ClampBot(1, (S32)ceil_f32((F32)dim.x*fixed_size_scale)),
+        (S16)ClampBot(1, (S32)ceil_f32((F32)dim.y*fixed_size_scale)),
+      };
+      U64 scaled_size = (U64)scaled_dim.x*(U64)scaled_dim.y*4;
+      U8 *scaled_atlas = push_array(arena, U8, scaled_size);
+      for(S32 y = 0; y < scaled_dim.y; y += 1)
+      {
+        F32 src_y = ((F32)y + 0.5f)/fixed_size_scale - 0.5f;
+        for(S32 x = 0; x < scaled_dim.x; x += 1)
+        {
+          F32 src_x = ((F32)x + 0.5f)/fixed_size_scale - 0.5f;
+          U8 *dst = scaled_atlas + ((U64)y*(U64)scaled_dim.x + (U64)x)*4;
+          fp_ft_sample_straight_rgba_scaled(atlas, dim, src_x, src_y, dst);
+        }
+      }
+      dim = scaled_dim;
+      atlas = scaled_atlas;
+    }
+
     //- rjf: fill result
     result.atlas_dim = dim;
-    result.advance   = (F32)total_width;
+    result.advance   = (F32)total_width*fixed_size_scale;
+    result.origin_from_left = (F32)(-min_x)*fixed_size_scale;
+    result.baseline_from_top = (F32)(baseline - min_y)*fixed_size_scale;
+    result.face_box_origin_from_left = 0;
+    result.face_box_baseline_from_top = (F32)baseline*fixed_size_scale;
     result.atlas     = atlas;
+    result.kind      = has_source_color ? FP_RasterKind_RGBA : FP_RasterKind_Mask;
     scratch_end(scratch);
   }
   ProfEnd();

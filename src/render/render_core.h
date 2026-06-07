@@ -250,6 +250,14 @@ struct R_PassList
   U64 count;
 };
 
+typedef struct R_Readback R_Readback;
+struct R_Readback
+{
+  Vec2S32 size;
+  R_Tex2DFormat format;
+  String8 data;
+};
+
 ////////////////////////////////
 //~ rjf: Helpers
 
@@ -304,5 +312,6 @@ r_hook void              r_window_end_frame(WM_Window window, R_Handle window_eq
 
 //- rjf: render pass submission
 r_hook void              r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes);
+r_hook R_Readback        r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes);
 
 #endif // RENDER_CORE_H

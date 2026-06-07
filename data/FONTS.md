@@ -18,4 +18,4 @@ These fill non-color symbol ranges that terminal UI examples often use, includin
 
 JetBrains Mono and Noto fonts are distributed under the SIL Open Font License 1.1. A copy is included in `OFL.txt`.
 
-`NotoColorEmoji.ttf` is available for future color glyph work, but the current font renderer still treats normal text glyphs as tintable atlas entries.
+`NotoColorEmoji.ttf` is included in the terminal fallback list before the monochrome Noto Emoji face. On macOS, UIShell also prefers the system Apple Color Emoji face because CoreText does not accept the bundled CBDT/CBLC Noto color font through `CGFontCreateWithDataProvider`, font descriptors, or process-scope registration. Color glyphs require the font renderer's source-color raster path; monochrome glyphs remain tintable atlas entries.

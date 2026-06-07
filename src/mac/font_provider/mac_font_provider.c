@@ -49,6 +49,61 @@ mac_fp_font_release(MAC_FP_Font *font)
   }
 }
 
+internal U32
+mac_fp_table_tag_from_bytes(char a, char b, char c, char d)
+{
+  U32 result = ((U32)(U8)a << 24) | ((U32)(U8)b << 16) | ((U32)(U8)c << 8) | (U32)(U8)d;
+  return result;
+}
+
+internal B32
+mac_fp_cg_font_has_color_tables(CGFontRef cg_font)
+{
+  B32 result = 0;
+  if(cg_font != 0)
+  {
+    U32 color_tags[] =
+    {
+      mac_fp_table_tag_from_bytes('s', 'b', 'i', 'x'),
+      mac_fp_table_tag_from_bytes('C', 'O', 'L', 'R'),
+      mac_fp_table_tag_from_bytes('C', 'P', 'A', 'L'),
+      mac_fp_table_tag_from_bytes('C', 'B', 'D', 'T'),
+      mac_fp_table_tag_from_bytes('C', 'B', 'L', 'C'),
+      mac_fp_table_tag_from_bytes('S', 'V', 'G', ' '),
+    };
+    CFArrayRef tags = CGFontCopyTableTags(cg_font);
+    if(tags != 0)
+    {
+      CFIndex tag_count = CFArrayGetCount(tags);
+      for(CFIndex idx = 0; idx < tag_count && !result; idx += 1)
+      {
+        U32 tag = (U32)(uintptr_t)CFArrayGetValueAtIndex(tags, idx);
+        for(U64 color_tag_idx = 0; color_tag_idx < ArrayCount(color_tags); color_tag_idx += 1)
+        {
+          if(tag == color_tags[color_tag_idx])
+          {
+            result = 1;
+            break;
+          }
+        }
+      }
+      CFRelease(tags);
+    }
+  }
+  return result;
+}
+
+internal U8
+mac_fp_unpremultiply_u8(U8 c, U8 a)
+{
+  U8 result = 0;
+  if(a != 0)
+  {
+    result = (U8)Clamp(0, ((S32)c*255 + (S32)a/2)/(S32)a, 255);
+  }
+  return result;
+}
+
 fp_hook void
 fp_init(void)
 {
@@ -67,6 +122,7 @@ fp_font_open(String8 path)
   if(font->provider != 0)
   {
     font->cg_font = CGFontCreateWithDataProvider(font->provider);
+    font->has_color_tables = mac_fp_cg_font_has_color_tables(font->cg_font);
   }
   if(font->cg_font == 0)
   {
@@ -88,6 +144,7 @@ fp_font_open_from_static_data_string(String8 *data_ptr)
     if(font->provider != 0)
     {
       font->cg_font = CGFontCreateWithDataProvider(font->provider);
+      font->has_color_tables = mac_fp_cg_font_has_color_tables(font->cg_font);
     }
   }
   if(font->cg_font == 0)
@@ -158,77 +215,172 @@ fp_raster(Arena *arena, FP_Handle handle, F32 size, FP_RasterFlags flags, String
     CTFontRef ct_font = CTFontCreateWithGraphicsFont(font->cg_font, pixel_size, 0, 0);
     if(ct_font != 0)
     {
-      String32 string32 = str32_from_8(scratch.arena, string);
-      U64 glyph_count = string32.size;
-      UniChar *characters = push_array_no_zero(scratch.arena, UniChar, glyph_count);
-      CGGlyph *glyphs = push_array_no_zero(scratch.arena, CGGlyph, glyph_count);
-      CGSize *advances = push_array_no_zero(scratch.arena, CGSize, glyph_count);
-      CGPoint *positions = push_array_no_zero(scratch.arena, CGPoint, glyph_count);
-      for(U64 idx = 0; idx < glyph_count; idx += 1)
+      B32 tight_bounds = !!(flags & FP_RasterFlag_TightBounds);
+      CFStringRef cf_string = CFStringCreateWithBytes(kCFAllocatorDefault, string.str, (CFIndex)string.size, kCFStringEncodingUTF8, false);
+      if(cf_string != 0)
       {
-        U32 cp = string32.str[idx];
-        characters[idx] = (UniChar)(cp <= 0xffff ? cp : '?');
-      }
-
-      B32 got_glyphs = CTFontGetGlyphsForCharacters(ct_font, characters, glyphs, glyph_count);
-      if(got_glyphs)
-      {
-        CTFontGetAdvancesForGlyphs(ct_font, kCTFontOrientationDefault, glyphs, advances, glyph_count);
-
-        F32 ascent = (F32)ceil_f64(CTFontGetAscent(ct_font));
-        F32 descent = (F32)ceil_f64(CTFontGetDescent(ct_font));
-        F32 line_gap = (F32)ceil_f64(CTFontGetLeading(ct_font));
-        F32 advance = 0;
-        for(U64 idx = 0; idx < glyph_count; idx += 1)
+        CGColorSpaceRef attr_color_space = CGColorSpaceCreateDeviceRGB();
+        CGFloat white_components[] = {1.f, 1.f, 1.f, 1.f};
+        CGColorRef white_color = (attr_color_space != 0 ? CGColorCreate(attr_color_space, white_components) : 0);
+        CFTypeRef keys[] = {kCTFontAttributeName, kCTForegroundColorAttributeName};
+        CFTypeRef values[] = {ct_font, white_color};
+        U64 attr_count = (white_color != 0 ? ArrayCount(keys) : 1);
+        CFDictionaryRef attrs = CFDictionaryCreate(kCFAllocatorDefault, keys, values, attr_count, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        if(attrs != 0)
         {
-          positions[idx] = CGPointMake(advance, descent + line_gap);
-          advance += (F32)advances[idx].width;
-        }
+          CFAttributedStringRef attr_string = CFAttributedStringCreate(kCFAllocatorDefault, cf_string, attrs);
+          if(attr_string != 0)
+          {
+            CTLineRef line = CTLineCreateWithAttributedString(attr_string);
+            if(line != 0)
+            {
+              CGFloat advance = CTLineGetTypographicBounds(line, 0, 0, 0);
+              CGFloat ascent = ceil_f64(CTFontGetAscent(ct_font));
+              CGFloat descent = ceil_f64(CTFontGetDescent(ct_font));
+              CGFloat leading = ceil_f64(CTFontGetLeading(ct_font));
+              CGFloat baseline_from_bottom = ceil_f64(descent + leading);
+              CGFloat origin_from_left = (tight_bounds ? ceil_f64(pixel_size) : 0);
+              Vec2S16 atlas_dim =
+              {
+                (S16)ceil_f64(Max(advance + origin_from_left*2.0 + 2.0, 1.0)),
+                (S16)ceil_f64(Max(ascent + descent + leading + 2.0, 1.0)),
+              };
+              if(atlas_dim.x > 0 && atlas_dim.y > 0)
+              {
+                U64 atlas_size = (U64)atlas_dim.x * (U64)atlas_dim.y * 4;
+                U8 *atlas = push_array(arena, U8, atlas_size);
+                CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
+                CGContextRef ctx = CGBitmapContextCreate(atlas, atlas_dim.x, atlas_dim.y, 8,
+                                                         (size_t)atlas_dim.x*4, color_space,
+                                                         kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);
+                if(ctx != 0)
+                {
+                  B32 smooth = !!(flags & FP_RasterFlag_Smooth);
+                  B32 hinted = !!(flags & FP_RasterFlag_Hinted);
+                  CGContextSetTextMatrix(ctx, CGAffineTransformIdentity);
+                  CGContextSetTextPosition(ctx, origin_from_left, baseline_from_bottom);
+                  CGContextSetRGBFillColor(ctx, 1.f, 1.f, 1.f, 1.f);
+                  CGContextSetAllowsAntialiasing(ctx, 1);
+                  CGContextSetShouldAntialias(ctx, 1);
+                  CGContextSetAllowsFontSmoothing(ctx, 1);
+                  CGContextSetShouldSmoothFonts(ctx, smooth);
+                  CGContextSetAllowsFontSubpixelPositioning(ctx, 1);
+                  CGContextSetShouldSubpixelPositionFonts(ctx, !hinted);
+                  CGContextSetAllowsFontSubpixelQuantization(ctx, 1);
+                  CGContextSetShouldSubpixelQuantizeFonts(ctx, hinted);
+                  CTLineDraw(line, ctx);
 
-        Vec2S16 atlas_dim = {(S16)ceil_f32(advance + 2.f), (S16)ceil_f32(ascent + descent + line_gap + 2.f)};
-        if(atlas_dim.x > 0 && atlas_dim.y > 0)
+                  U64 alpha_sum = 0;
+                  B32 has_source_color = 0;
+                  S64 min_x = atlas_dim.x;
+                  S64 min_y = atlas_dim.y;
+                  S64 max_x = -1;
+                  S64 max_y = -1;
+                  for(S64 y = 0; y < atlas_dim.y; y += 1)
+                  {
+                    for(S64 x = 0; x < atlas_dim.x; x += 1)
+                    {
+                      U64 idx = ((U64)y*(U64)atlas_dim.x + (U64)x)*4;
+                      U8 r = atlas[idx+0];
+                      U8 g = atlas[idx+1];
+                      U8 b = atlas[idx+2];
+                      U8 a = atlas[idx+3];
+                      alpha_sum += a;
+                      if(a != 0)
+                      {
+                        min_x = Min(min_x, x);
+                        min_y = Min(min_y, y);
+                        max_x = Max(max_x, x);
+                        max_y = Max(max_y, y);
+                        U8 min_c = Min(r, Min(g, b));
+                        U8 max_c = Max(r, Max(g, b));
+                        if(max_c > min_c + 4)
+                        {
+                          has_source_color = 1;
+                        }
+                      }
+                    }
+                  }
+                  if(alpha_sum != 0)
+                  {
+                    B32 is_source_color = (font->has_color_tables && has_source_color);
+                    for(S64 y = 0; y < atlas_dim.y; y += 1)
+                    {
+                      for(S64 x = 0; x < atlas_dim.x; x += 1)
+                      {
+                        U8 *px = atlas + ((U64)y*(U64)atlas_dim.x + (U64)x)*4;
+                        if(is_source_color)
+                        {
+                          px[0] = mac_fp_unpremultiply_u8(px[0], px[3]);
+                          px[1] = mac_fp_unpremultiply_u8(px[1], px[3]);
+                          px[2] = mac_fp_unpremultiply_u8(px[2], px[3]);
+                        }
+                        else
+                        {
+                          U8 coverage = Max(px[3], Max(px[0], Max(px[1], px[2])));
+                          px[0] = 255;
+                          px[1] = 255;
+                          px[2] = 255;
+                          px[3] = coverage;
+                        }
+                      }
+                    }
+                    F32 baseline_from_top = (F32)((CGFloat)atlas_dim.y - baseline_from_bottom);
+                    if(tight_bounds && min_x <= max_x && min_y <= max_y)
+                    {
+                      Vec2S16 tight_dim =
+                      {
+                        (S16)(max_x - min_x + 1),
+                        (S16)(max_y - min_y + 1),
+                      };
+                      U64 tight_size = (U64)tight_dim.x*(U64)tight_dim.y*4;
+                      U8 *tight_atlas = push_array(arena, U8, tight_size);
+                      for(S64 y = 0; y < tight_dim.y; y += 1)
+                      {
+                        U8 *src = atlas + (((U64)(min_y + y)*(U64)atlas_dim.x + (U64)min_x)*4);
+                        U8 *dst = tight_atlas + ((U64)y*(U64)tight_dim.x*4);
+                        MemoryCopy(dst, src, (U64)tight_dim.x*4);
+                      }
+                      result.atlas_dim = tight_dim;
+                      result.atlas = tight_atlas;
+                      result.origin_from_left = (F32)(origin_from_left - (CGFloat)min_x);
+                      result.baseline_from_top = baseline_from_top - (F32)min_y;
+                    }
+                    else
+                    {
+                      result.atlas_dim = atlas_dim;
+                      result.atlas = atlas;
+                      result.origin_from_left = (F32)origin_from_left;
+                      result.baseline_from_top = baseline_from_top;
+                    }
+                    result.kind = is_source_color ? FP_RasterKind_RGBA : FP_RasterKind_Mask;
+                  }
+                  result.advance = ceil_f64(advance);
+                  result.face_box_origin_from_left = (F32)origin_from_left;
+                  result.face_box_baseline_from_top = (F32)((CGFloat)atlas_dim.y - baseline_from_bottom);
+
+                  CGContextRelease(ctx);
+                }
+                if(color_space != 0)
+                {
+                  CGColorSpaceRelease(color_space);
+                }
+              }
+              CFRelease(line);
+            }
+            CFRelease(attr_string);
+          }
+          CFRelease(attrs);
+        }
+        if(white_color != 0)
         {
-          U64 atlas_size = (U64)atlas_dim.x * (U64)atlas_dim.y * 4;
-          U8 *atlas = push_array(arena, U8, atlas_size);
-          CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
-          CGContextRef ctx = CGBitmapContextCreate(atlas, atlas_dim.x, atlas_dim.y, 8,
-                                                   (size_t)atlas_dim.x*4, color_space,
-                                                   kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);
-          if(ctx != 0)
-          {
-            B32 smooth = !!(flags & FP_RasterFlag_Smooth);
-            B32 hinted = !!(flags & FP_RasterFlag_Hinted);
-            CGContextSetTextMatrix(ctx, CGAffineTransformIdentity);
-            CGContextSetRGBFillColor(ctx, 1.f, 1.f, 1.f, 1.f);
-            CGContextSetAllowsAntialiasing(ctx, 1);
-            CGContextSetShouldAntialias(ctx, 1);
-            CGContextSetAllowsFontSmoothing(ctx, 1);
-            CGContextSetShouldSmoothFonts(ctx, smooth);
-            CGContextSetAllowsFontSubpixelPositioning(ctx, 1);
-            CGContextSetShouldSubpixelPositionFonts(ctx, !hinted);
-            CGContextSetAllowsFontSubpixelQuantization(ctx, 1);
-            CGContextSetShouldSubpixelQuantizeFonts(ctx, hinted);
-            CTFontDrawGlyphs(ct_font, glyphs, positions, glyph_count, ctx);
-
-            U64 alpha_sum = 0;
-            for(U64 idx = 3; idx < atlas_size; idx += 4)
-            {
-              alpha_sum += atlas[idx];
-            }
-            if(alpha_sum != 0)
-            {
-              result.atlas_dim = atlas_dim;
-              result.atlas = atlas;
-            }
-            result.advance = ceil_f32(advance);
-
-            CGContextRelease(ctx);
-          }
-          if(color_space != 0)
-          {
-            CGColorSpaceRelease(color_space);
-          }
+          CGColorRelease(white_color);
         }
+        if(attr_color_space != 0)
+        {
+          CGColorSpaceRelease(attr_color_space);
+        }
+        CFRelease(cf_string);
       }
       CFRelease(ct_font);
     }

@@ -27,6 +27,9 @@ struct UIShell_TerminalViewState
   B32 focus_active;
   UIShell_TerminalGlyphCache glyph_cache;
   UIShell_TerminalCellCache cell_cache;
+  B32 glyph_trace_fixture_emitted;
+  B32 glyph_trace_live_emitted;
+  U64 glyph_trace_last_render_generation;
 };
 
 internal B32
@@ -2765,6 +2768,19 @@ uishell_terminal_key_from_ui_event(UI_Event *evt)
   return result;
 }
 
+internal cleat_rgb
+uishell_terminal_rgb_from_linear_rgba(Vec4F32 linear)
+{
+  Vec4F32 srgba = srgba_from_linear(linear);
+  cleat_rgb result =
+  {
+    (U8)round_f32(Clamp(0.f, srgba.x, 1.f)*255.f),
+    (U8)round_f32(Clamp(0.f, srgba.y, 1.f)*255.f),
+    (U8)round_f32(Clamp(0.f, srgba.z, 1.f)*255.f),
+  };
+  return result;
+}
+
 RD_VIEW_UI_FUNCTION_DEF(terminal)
 {
   (void)eval;
@@ -2781,6 +2797,12 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   F32 cell_height_px = ceil_f32(ClampBot(1.f, fnt_line_height_from_metrics(&cell_font_metrics)*1.2f));
   F32 scroll_bar_dim = floor_f32(ui_bottom_font_size()*1.5f);
   Vec4F32 terminal_background_color = ui_color_from_name(str8_lit("background"));
+  Vec4F32 terminal_foreground_color = ui_color_from_name(str8_lit("text"));
+  Vec4F32 terminal_cursor_color = ui_color_from_name(str8_lit("cursor"));
+  String8 *embedded_terminal_color_emoji_fallbacks[] =
+  {
+    &rd_terminal_noto_color_emoji_font_bytes,
+  };
   String8 *embedded_terminal_fallbacks[] =
   {
     &rd_terminal_noto_emoji_font_bytes,
@@ -2794,6 +2816,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
                                                                                     cell_font_size,
                                                                                     rd_font_from_slot(RD_FontSlot_Main),
                                                                                     rd_setting_from_name(str8_lit("terminal_fallback_fonts")),
+                                                                                    embedded_terminal_color_emoji_fallbacks,
+                                                                                    ArrayCount(embedded_terminal_color_emoji_fallbacks),
                                                                                     embedded_terminal_fallbacks,
                                                                                     ArrayCount(embedded_terminal_fallbacks));
   uishell_terminal_sync_font_cache(&tv->glyph_cache, &terminal_font_set);
@@ -2823,6 +2847,16 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     };
     tv->provider = cleat_provider_open(&provider_desc);
     cleat_provider_set_wake_callback(tv->provider, uishell_terminal_provider_wake, tv);
+    cleat_session_colors session_colors =
+    {
+      .size = sizeof(session_colors),
+      .has_foreground = 1,
+      .foreground = uishell_terminal_rgb_from_linear_rgba(terminal_foreground_color),
+      .has_background = 1,
+      .background = uishell_terminal_rgb_from_linear_rgba(terminal_background_color),
+      .has_cursor = 1,
+      .cursor = uishell_terminal_rgb_from_linear_rgba(terminal_cursor_color),
+    };
     cleat_session_desc session_desc =
     {
       .cols = cols,
@@ -2830,6 +2864,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       .cell_width_px = cell_width_px,
       .cell_height_px = cell_height_px,
       .vt_engine = CLEAT_PROVIDER_VT_GHOSTTY,
+      .colors = &session_colors,
     };
     tv->session = cleat_session_create(tv->provider, &session_desc);
   }
@@ -3051,7 +3086,13 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       DR_Bucket *terminal_bucket = dr_bucket_make();
       DR_BucketScope(terminal_bucket)
       {
+        B32 trace_this_draw = (rd_state->terminal_glyph_trace_enabled && !tv->glyph_trace_fixture_emitted);
+        glyph_renderer.trace_enabled = trace_this_draw;
+        glyph_renderer.trace_all_rows = rd_state->terminal_glyph_trace_all_rows;
+        glyph_renderer.trace_row = rd_state->terminal_glyph_trace_row;
+        glyph_renderer.trace_generation = 0;
         uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(scratch.arena, &glyph_renderer, &draw_params, &feed, cursors);
+        tv->glyph_trace_fixture_emitted = tv->glyph_trace_fixture_emitted || trace_this_draw;
       }
       ui_box_equip_draw_bucket(canvas_box, terminal_bucket);
     }
@@ -3085,7 +3126,20 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         DR_Bucket *terminal_bucket = dr_bucket_make();
         DR_BucketScope(terminal_bucket)
         {
+          B32 trace_this_draw = (rd_state->terminal_glyph_trace_enabled &&
+                                 feed.cell_count != 0 &&
+                                 (!tv->glyph_trace_live_emitted ||
+                                  tv->glyph_trace_last_render_generation != tv->cell_cache.render_generation));
+          glyph_renderer.trace_enabled = trace_this_draw;
+          glyph_renderer.trace_all_rows = rd_state->terminal_glyph_trace_all_rows;
+          glyph_renderer.trace_row = rd_state->terminal_glyph_trace_row;
+          glyph_renderer.trace_generation = tv->cell_cache.render_generation;
           uishell_terminal_glyph_renderer_draw_cell_feed(scratch.arena, &glyph_renderer, &draw_params, &feed);
+          tv->glyph_trace_live_emitted = tv->glyph_trace_live_emitted || trace_this_draw;
+          if(trace_this_draw)
+          {
+            tv->glyph_trace_last_render_generation = tv->cell_cache.render_generation;
+          }
         }
         ui_box_equip_draw_bucket(canvas_box, terminal_bucket);
         if(tv->cell_cache.scrollbar.viewport_rows != 0)

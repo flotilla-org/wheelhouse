@@ -613,7 +613,8 @@ dr_truncated_fancy_run_list(Vec2F32 p, DR_FRunList *list, F32 max_x, FNT_Run tra
                            p.y + piece->offset.y + size.y);
       if(!r_handle_match(texture, r_handle_zero()))
       {
-        dr_img(dst, src, texture, fr->color, 0, 0, 0);
+        Vec4F32 piece_color = (piece->kind == FNT_RasterKind_RGBA ? v4f32(1, 1, 1, fr->color.w) : fr->color);
+        dr_img(dst, src, texture, piece_color, 0, 0, 0);
         // dr_rect(dst, v4f32(0, 1, 0, 0.5f), 0, 1.f, 0.f);
       }
       advance += piece->advance;
@@ -659,7 +660,8 @@ dr_truncated_fancy_run_list(Vec2F32 p, DR_FRunList *list, F32 max_x, FNT_Run tra
                            p.y + piece->offset.y + size.y);
       if(!r_handle_match(texture, r_handle_zero()))
       {
-        dr_img(dst, src, texture, trailer_piece_color, 0, 0, 0);
+        Vec4F32 piece_color = (piece->kind == FNT_RasterKind_RGBA ? v4f32(1, 1, 1, trailer_piece_color.w) : trailer_piece_color);
+        dr_img(dst, src, texture, piece_color, 0, 0, 0);
         trailer_piece_color.w *= 0.5f;
       }
       advance += piece->advance;
@@ -738,7 +740,8 @@ dr_text_run(Vec2F32 p, Vec4F32 color, FNT_Run run)
                          p.y + piece->offset.y + size.y);
     if(size.x != 0 && size.y != 0 && !r_handle_match(texture, r_handle_zero()))
     {
-      dr_img(dst, src, texture, color, 0, 0, 0);
+      Vec4F32 piece_color = (piece->kind == FNT_RasterKind_RGBA ? v4f32(1, 1, 1, color.w) : color);
+      dr_img(dst, src, texture, piece_color, 0, 0, 0);
     }
     advance += piece->advance;
   }

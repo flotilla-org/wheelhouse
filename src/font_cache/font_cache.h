@@ -12,6 +12,15 @@ enum
 {
   FNT_RasterFlag_Smooth  = (1<<0),
   FNT_RasterFlag_Hinted  = (1<<1),
+  FNT_RasterFlag_SinglePiece = (1<<2),
+  FNT_RasterFlag_TightBounds = (1<<3),
+};
+
+typedef U32 FNT_RasterKind;
+enum
+{
+  FNT_RasterKind_Mask,
+  FNT_RasterKind_RGBA,
 };
 
 ////////////////////////////////
@@ -34,7 +43,10 @@ struct FNT_Piece
   Vec2F32 offset;
   Vec2F32 draw_dim;
   F32 advance;
+  F32 origin_from_left;
+  F32 baseline_from_top;
   U16 decode_size;
+  FNT_RasterKind kind;
 };
 
 typedef struct FNT_PieceChunkNode FNT_PieceChunkNode;
@@ -104,6 +116,9 @@ struct FNT_RasterCacheInfo
   Vec2F32 draw_dim;
   S16 atlas_num;
   F32 advance;
+  F32 origin_from_left;
+  F32 baseline_from_top;
+  FNT_RasterKind kind;
 };
 
 typedef struct FNT_Hash2InfoRasterCacheNode FNT_Hash2InfoRasterCacheNode;

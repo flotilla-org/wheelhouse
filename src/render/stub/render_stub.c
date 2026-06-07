@@ -104,3 +104,10 @@ r_hook void
 r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
 {
 }
+
+r_hook R_Readback
+r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
+{
+  R_Readback result = {0};
+  return result;
+}

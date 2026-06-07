@@ -14,6 +14,14 @@ enum
 {
   FP_RasterFlag_Smooth  = (1<<0),
   FP_RasterFlag_Hinted  = (1<<1),
+  FP_RasterFlag_TightBounds = (1<<2),
+};
+
+typedef U32 FP_RasterKind;
+enum
+{
+  FP_RasterKind_Mask,
+  FP_RasterKind_RGBA,
 };
 
 typedef struct FP_Handle FP_Handle;
@@ -38,6 +46,11 @@ struct FP_RasterResult
   Vec2S16 atlas_dim;
   void *atlas;
   F32 advance;
+  F32 origin_from_left;
+  F32 baseline_from_top;
+  F32 face_box_origin_from_left;
+  F32 face_box_baseline_from_top;
+  FP_RasterKind kind;
 };
 
 ////////////////////////////////

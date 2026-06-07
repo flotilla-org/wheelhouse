@@ -1121,3 +1121,165 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
     }
   }
 }
+
+r_hook R_Readback
+r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
+{
+  R_Readback result = {0};
+  MutexScopeW(r_mtl_state->device_rw_mutex)
+  {
+    size.x = Max(size.x, 1);
+    size.y = Max(size.y, 1);
+    if(r_mtl_state->device != 0 &&
+       r_mtl_state->command_queue != 0 &&
+       r_mtl_state->rect_pipeline != 0 &&
+       r_mtl_state->finalize_pipeline != 0)
+    {
+      MTLTextureDescriptor *stage_descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float
+                                                                                                  width:(NSUInteger)size.x
+                                                                                                 height:(NSUInteger)size.y
+                                                                                              mipmapped:NO];
+      stage_descriptor.usage = MTLTextureUsageRenderTarget|MTLTextureUsageShaderRead;
+      stage_descriptor.storageMode = MTLStorageModePrivate;
+      id<MTLTexture> stage_color = [r_mtl_state->device newTextureWithDescriptor:stage_descriptor];
+      [stage_color setLabel:@"RAD readback stage color"];
+
+      MTLTextureDescriptor *final_descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm_sRGB
+                                                                                                  width:(NSUInteger)size.x
+                                                                                                 height:(NSUInteger)size.y
+                                                                                              mipmapped:NO];
+      final_descriptor.usage = MTLTextureUsageRenderTarget|MTLTextureUsageShaderRead;
+      final_descriptor.storageMode = MTLStorageModeShared;
+      id<MTLTexture> final_color = [r_mtl_state->device newTextureWithDescriptor:final_descriptor];
+      [final_color setLabel:@"RAD readback final color"];
+
+      if(stage_color != 0 && final_color != 0)
+      {
+        id<MTLCommandBuffer> command_buffer = [r_mtl_state->command_queue commandBuffer];
+        Vec2F32 viewport_dim = v2f32((F32)size.x, (F32)size.y);
+
+        MTLRenderPassDescriptor *stage_clear_pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        stage_clear_pass.colorAttachments[0].texture = stage_color;
+        stage_clear_pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+        stage_clear_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        stage_clear_pass.colorAttachments[0].clearColor = MTLClearColorMake(0.06, 0.06, 0.065, 1.0);
+        id<MTLRenderCommandEncoder> clear_encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_clear_pass];
+        [clear_encoder endEncoding];
+
+        for(R_PassNode *pass_n = passes->first; pass_n != 0; pass_n = pass_n->next)
+        {
+          R_Pass *render_pass = &pass_n->v;
+          if(render_pass->kind == R_PassKind_UI)
+          {
+            MTLRenderPassDescriptor *stage_pass = [MTLRenderPassDescriptor renderPassDescriptor];
+            stage_pass.colorAttachments[0].texture = stage_color;
+            stage_pass.colorAttachments[0].loadAction = MTLLoadActionLoad;
+            stage_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+            id<MTLRenderCommandEncoder> encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_pass];
+            [encoder setRenderPipelineState:r_mtl_state->rect_pipeline];
+
+            R_PassParams_UI *params = render_pass->params_ui;
+            for(R_BatchGroup2DNode *group_n = params->rects.first; group_n != 0; group_n = group_n->next)
+            {
+              R_BatchList *batches = &group_n->batches;
+              R_BatchGroup2DParams *group_params = &group_n->params;
+              R_MTL_Tex2D *texture = r_mtl_tex2d_from_handle(group_params->tex);
+              if(texture == 0 || texture->texture == 0)
+              {
+                texture = r_mtl_state->white_texture;
+              }
+              if(texture != 0 && texture->texture != 0 && batches->byte_count != 0)
+              {
+                U64 inst_count = batches->byte_count / batches->bytes_per_inst;
+                U64 insts_offset = 0;
+                void *insts_ptr = 0;
+                id<MTLBuffer> insts_buffer = r_mtl_upload_buffer_reserve(batches->byte_count, 16, &insts_offset, &insts_ptr);
+                U8 *insts = (U8 *)insts_ptr;
+                for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
+                {
+                  MemoryCopy(insts, batch_n->v.v, batch_n->v.byte_count);
+                  insts += batch_n->v.byte_count;
+                }
+
+                R_MTL_RectUniforms group_uniforms = {0};
+                group_uniforms.viewport_size = viewport_dim;
+                group_uniforms.opacity = 1.f - group_params->transparency;
+                group_uniforms.texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture->format);
+                group_uniforms.texture_size = v2f32((F32)Max(texture->size.x, 1), (F32)Max(texture->size.y, 1));
+                Vec2F32 xform_2x2_col0 = v2f32(group_params->xform.v[0][0], group_params->xform.v[0][1]);
+                Vec2F32 xform_2x2_col1 = v2f32(group_params->xform.v[1][0], group_params->xform.v[1][1]);
+                group_uniforms.xform_scale = v2f32(length_2f32(xform_2x2_col0), length_2f32(xform_2x2_col1));
+                group_uniforms.xform[0] = v4f32(group_params->xform.v[0][0], group_params->xform.v[1][0], group_params->xform.v[2][0], 0);
+                group_uniforms.xform[1] = v4f32(group_params->xform.v[0][1], group_params->xform.v[1][1], group_params->xform.v[2][1], 0);
+                group_uniforms.xform[2] = v4f32(group_params->xform.v[0][2], group_params->xform.v[1][2], group_params->xform.v[2][2], 0);
+                U64 uniform_offset = 0;
+                id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&group_uniforms, sizeof(group_uniforms), 256, &uniform_offset);
+
+                if(group_params->clip.x0 != 0 ||
+                   group_params->clip.y0 != 0 ||
+                   group_params->clip.x1 != 0 ||
+                   group_params->clip.y1 != 0)
+                {
+                  MTLScissorRect scissor = {0};
+                  if(!r_mtl_scissor_from_clip(group_params->clip, size, 1.f, &scissor))
+                  {
+                    continue;
+                  }
+                  else
+                  {
+                    [encoder setScissorRect:scissor];
+                  }
+                }
+                else
+                {
+                  MTLScissorRect scissor = {0, 0, (NSUInteger)size.x, (NSUInteger)size.y};
+                  [encoder setScissorRect:scissor];
+                }
+                [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:0];
+                [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:1];
+                [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:1];
+                [encoder setFragmentTexture:texture->texture atIndex:0];
+                [encoder setFragmentSamplerState:r_mtl_state->samplers[group_params->tex_sample_kind] atIndex:0];
+                [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:inst_count];
+              }
+            }
+            [encoder endEncoding];
+          }
+        }
+
+        R_MTL_FinalizeUniforms final_uniforms = {viewport_dim};
+        U64 final_uniform_offset = 0;
+        id<MTLBuffer> final_uniform_buffer = r_mtl_upload_buffer(&final_uniforms, sizeof(final_uniforms), 256, &final_uniform_offset);
+        MTLRenderPassDescriptor *final_pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        final_pass.colorAttachments[0].texture = final_color;
+        final_pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+        final_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        final_pass.colorAttachments[0].clearColor = MTLClearColorMake(0.06, 0.06, 0.065, 1.0);
+        id<MTLRenderCommandEncoder> final_encoder = [command_buffer renderCommandEncoderWithDescriptor:final_pass];
+        [final_encoder setRenderPipelineState:r_mtl_state->finalize_pipeline];
+        [final_encoder setVertexBuffer:final_uniform_buffer offset:final_uniform_offset atIndex:0];
+        [final_encoder setFragmentTexture:stage_color atIndex:0];
+        [final_encoder setFragmentSamplerState:r_mtl_state->samplers[R_Tex2DSampleKind_Nearest] atIndex:0];
+        [final_encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+        [final_encoder endEncoding];
+
+        [command_buffer commit];
+        [command_buffer waitUntilCompleted];
+        r_mtl_log_command_buffer_error(command_buffer);
+
+        U64 row_bytes = (U64)size.x*4;
+        U64 data_size = row_bytes*(U64)size.y;
+        U8 *data = push_array_no_zero(arena, U8, data_size);
+        MTLRegion region = MTLRegionMake2D(0, 0, (NSUInteger)size.x, (NSUInteger)size.y);
+        [final_color getBytes:data bytesPerRow:row_bytes fromRegion:region mipmapLevel:0];
+        result.size = size;
+        result.format = R_Tex2DFormat_BGRA8;
+        result.data = str8(data, data_size);
+      }
+
+      [stage_color release];
+      [final_color release];
+    }
+  }
+  return result;
+}

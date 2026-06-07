@@ -7025,6 +7025,26 @@ rd_init(CmdLine *cmdln)
   rd_state->arena = arena;
   rd_state->quit_after_success = (cmd_line_has_flag(cmdln, str8_lit("quit_after_success")) ||
                                   cmd_line_has_flag(cmdln, str8_lit("q")));
+  rd_state->terminal_glyph_trace_enabled = (cmd_line_has_flag(cmdln, str8_lit("terminal_glyph_trace")) ||
+                                            cmd_line_has_flag(cmdln, str8_lit("terminal-glyph-trace")));
+  rd_state->terminal_glyph_trace_all_rows = 1;
+  rd_state->terminal_glyph_trace_row = 0;
+  {
+    String8 trace_row_string = cmd_line_string(cmdln, str8_lit("terminal_glyph_trace_row"));
+    if(trace_row_string.size == 0)
+    {
+      trace_row_string = cmd_line_string(cmdln, str8_lit("terminal-glyph-trace-row"));
+    }
+    if(trace_row_string.size != 0 && !str8_match(trace_row_string, str8_lit("all"), 0))
+    {
+      U64 trace_row = 0;
+      if(try_u64_from_str8_c_rules(trace_row_string, &trace_row))
+      {
+        rd_state->terminal_glyph_trace_all_rows = 0;
+        rd_state->terminal_glyph_trace_row = trace_row;
+      }
+    }
+  }
   rd_state->user_path_arena = arena_alloc();
   rd_state->project_path_arena = arena_alloc();
   rd_state->theme_path_arena = arena_alloc();
@@ -7261,6 +7281,11 @@ rd_init(CmdLine *cmdln)
     
     // rjf: do initial app load
     UISHELL_APP_INITIAL_LOAD(user_path, project_path);
+    if(cmd_line_has_flag(cmdln, str8_lit("terminal_fixture")) ||
+       cmd_line_has_flag(cmdln, str8_lit("terminal-fixture")))
+    {
+      uishell_cmd("terminal_fixture");
+    }
     if(initial_open_file_path.size != 0)
     {
       uishell_cmd("open", .file_path = initial_open_file_path);
@@ -7479,7 +7504,7 @@ rd_frame(void)
     }
     scratch_end(scratch);
   }
-  
+
   //////////////////////////////
   //- rjf: garbage collect untouched immediate cfg trees
   //

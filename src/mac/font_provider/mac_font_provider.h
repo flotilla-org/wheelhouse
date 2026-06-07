@@ -27,6 +27,7 @@ struct MAC_FP_Font
   MAC_FP_Font *next;
   CGDataProviderRef provider;
   CGFontRef cg_font;
+  B32 has_color_tables;
 };
 
 typedef struct MAC_FP_State MAC_FP_State;
@@ -42,5 +43,6 @@ internal MAC_FP_Font *mac_fp_font_from_handle(FP_Handle handle);
 internal FP_Handle mac_fp_handle_from_font(MAC_FP_Font *font);
 internal MAC_FP_Font *mac_fp_font_alloc(void);
 internal void mac_fp_font_release(MAC_FP_Font *font);
+internal B32 mac_fp_cg_font_has_color_tables(CGFontRef cg_font);
 
 #endif // MAC_FONT_PROVIDER_H
