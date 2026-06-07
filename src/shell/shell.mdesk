@@ -12,7 +12,12 @@
 //@embed_file rd_default_main_font_bytes: "../data/seguisb.ttf"
 //@embed_file rd_default_code_font_bytes: "../data/liberation-.ttf"
 //@embed_file rd_default_code_font_bytes: "../data/Inconsolata-Regular.ttf"
-@embed_file rd_default_code_font_bytes: "../data/JetBrainsMono-Regular.ttf"
+@embed_file rd_default_code_font_bytes: "../data/JetBrainsMonoNerdFont-Regular.ttf"
+
+@embed_file rd_terminal_noto_emoji_font_bytes: "../data/NotoEmoji-Regular.ttf"
+@embed_file rd_terminal_noto_symbols_font_bytes: "../data/NotoSansSymbols.ttf"
+@embed_file rd_terminal_noto_symbols_2_font_bytes: "../data/NotoSansSymbols2-Regular.ttf"
+@embed_file rd_terminal_noto_math_font_bytes: "../data/NotoSansMath-Regular.ttf"
 
 @embed_file rd_icon_file_bytes:         "../data/logo.ico"
 
