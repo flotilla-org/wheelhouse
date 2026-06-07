@@ -22,17 +22,26 @@ if [ -n "${uishell+x}" ] || [ -n "${bundle+x}" ]; then needs_cleat=1; fi
 
 if [ "$needs_cleat" = "1" ]; then
   cleat_dir="${UISHELL_CLEAT_DIR:-$repo_root/../cleat}"
-  cleat_features="${UISHELL_CLEAT_FEATURES:-ghostty-vt}"
+  cleat_features="${UISHELL_CLEAT_FEATURES-ghostty-vt}"
+  cleat_feature_flags=()
+  if [ -n "$cleat_features" ] && [ "$cleat_features" != "none" ]; then
+    cleat_feature_flags=(--features "$cleat_features")
+  fi
   cleat_profile="debug"
   cleat_profile_flags=""
   if [ -n "${release+x}" ]; then
     cleat_profile="release"
     cleat_profile_flags="--release"
   fi
-  cleat_target_dir="${UISHELL_CLEAT_TARGET_DIR:-$cleat_dir/target}"
+  cleat_target_dir="${UISHELL_CLEAT_TARGET_DIR:-${CARGO_TARGET_DIR:-$cleat_dir/target}}"
   cleat_lib_dir="$cleat_target_dir/$cleat_profile"
   echo "[cleat provider: $cleat_dir]"
-  (cd "$cleat_dir" && cargo build -p cleat --locked $cleat_profile_flags --features "$cleat_features")
+  if [ -n "$cleat_features" ] && [ "$cleat_features" != "none" ]; then
+    echo "[cleat features: $cleat_features]"
+  else
+    echo "[cleat features: none]"
+  fi
+  (cd "$cleat_dir" && CARGO_TARGET_DIR="$cleat_target_dir" cargo build -p cleat --locked $cleat_profile_flags "${cleat_feature_flags[@]}")
   auto_compile_flags="$auto_compile_flags -I$cleat_dir/crates/cleat/include"
   cleat_link="-L$cleat_lib_dir -lcleat -Wl,-rpath,$cleat_lib_dir"
 fi
