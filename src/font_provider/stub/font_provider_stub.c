@@ -33,6 +33,13 @@ fp_metrics_from_font(FP_Handle font)
   return result;
 }
 
+fp_hook B32
+fp_font_has_codepoint(FP_Handle font, U32 codepoint)
+{
+  B32 result = 0;
+  return result;
+}
+
 fp_hook ASAN_NO_ADDR FP_RasterResult
 fp_raster(Arena *arena, FP_Handle font, F32 size, FP_RasterFlags flags, String8 string)
 {

@@ -250,6 +250,7 @@ internal FNT_Tag fnt_tag_zero(void);
 internal B32 fnt_tag_match(FNT_Tag a, FNT_Tag b);
 internal FP_Handle fnt_handle_from_tag(FNT_Tag tag);
 internal FP_Metrics fnt_fp_metrics_from_tag(FNT_Tag tag);
+internal B32 fnt_tag_has_codepoint(FNT_Tag tag, U32 codepoint);
 internal FNT_Tag fnt_tag_from_path(String8 path);
 internal FNT_Tag fnt_tag_from_static_data_string(String8 *data_ptr);
 internal String8 fnt_path_from_tag(FNT_Tag tag);

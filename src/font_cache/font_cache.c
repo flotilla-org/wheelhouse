@@ -111,6 +111,14 @@ fnt_fp_metrics_from_tag(FNT_Tag tag)
   return result;
 }
 
+internal B32
+fnt_tag_has_codepoint(FNT_Tag tag, U32 codepoint)
+{
+  FP_Handle handle = fnt_handle_from_tag(tag);
+  B32 result = fp_font_has_codepoint(handle, codepoint);
+  return result;
+}
+
 internal FNT_Tag
 fnt_tag_from_path(String8 path)
 {

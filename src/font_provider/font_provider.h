@@ -54,6 +54,7 @@ fp_hook FP_Handle fp_font_open(String8 path);
 fp_hook FP_Handle fp_font_open_from_static_data_string(String8 *data_ptr);
 fp_hook void fp_font_close(FP_Handle handle);
 fp_hook FP_Metrics fp_metrics_from_font(FP_Handle font);
+fp_hook B32 fp_font_has_codepoint(FP_Handle font, U32 codepoint);
 fp_hook ASAN_NO_ADDR FP_RasterResult fp_raster(Arena *arena, FP_Handle font, F32 size, FP_RasterFlags flags, String8 string);
 
 #endif // FONT_PROVIDER_H

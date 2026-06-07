@@ -77,6 +77,18 @@ fp_metrics_from_font(FP_Handle handle)
   return result;
 }
 
+fp_hook B32
+fp_font_has_codepoint(FP_Handle handle, U32 codepoint)
+{
+  FP_FT_Font font = fp_ft_font_from_handle(handle);
+  B32 result = 0;
+  if(font.face != 0)
+  {
+    result = (FT_Get_Char_Index(font.face, codepoint) != 0);
+  }
+  return result;
+}
+
 fp_hook FP_RasterResult
 fp_raster(Arena *arena, FP_Handle handle, F32 size, FP_RasterFlags flags, String8 string)
 {

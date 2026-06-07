@@ -447,6 +447,21 @@ fp_metrics_from_font(FP_Handle handle)
   return result;
 }
 
+fp_hook B32
+fp_font_has_codepoint(FP_Handle font_handle, U32 codepoint)
+{
+  FP_DWrite_Font font = fp_dwrite_font_from_handle(font_handle);
+  B32 result = 0;
+  if(font.face != 0)
+  {
+    U16 glyph_index = 0;
+    UINT32 cp = codepoint;
+    HRESULT error = IDWriteFontFace_GetGlyphIndices(font.face, &cp, 1, &glyph_index);
+    result = (SUCCEEDED(error) && glyph_index != 0);
+  }
+  return result;
+}
+
 fp_hook ASAN_NO_ADDR FP_RasterResult
 fp_raster(Arena *arena, FP_Handle font_handle, F32 size, FP_RasterFlags flags, String8 string)
 {

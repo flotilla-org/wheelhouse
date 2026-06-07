@@ -122,6 +122,29 @@ fp_metrics_from_font(FP_Handle handle)
   return result;
 }
 
+fp_hook B32
+fp_font_has_codepoint(FP_Handle handle, U32 codepoint)
+{
+  MAC_FP_Font *font = mac_fp_font_from_handle(handle);
+  B32 result = 0;
+  if(font != 0 && font->cg_font != 0)
+  {
+    CTFontRef ct_font = CTFontCreateWithGraphicsFont(font->cg_font, 12.f, 0, 0);
+    if(ct_font != 0)
+    {
+      U16 buffer[2] = {0};
+      U16 encoded_size = utf16_encode(buffer, codepoint);
+      if(encoded_size != 0)
+      {
+        CGGlyph glyphs[2] = {0};
+        result = CTFontGetGlyphsForCharacters(ct_font, (UniChar *)buffer, glyphs, encoded_size);
+      }
+      CFRelease(ct_font);
+    }
+  }
+  return result;
+}
+
 fp_hook ASAN_NO_ADDR FP_RasterResult
 fp_raster(Arena *arena, FP_Handle handle, F32 size, FP_RasterFlags flags, String8 string)
 {
