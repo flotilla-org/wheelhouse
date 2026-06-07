@@ -16,7 +16,11 @@ if [ -n "${gcc+x}" ];     then compiler="${CC:-gcc}"; echo "[gcc compile]"; fi
 auto_compile_flags=''
 cleat_link=''
 
-if [ -n "${cleat+x}" ]; then
+needs_cleat=0
+if [ -n "${cleat+x}" ]; then needs_cleat=1; fi
+if [ -n "${uishell+x}" ] || [ -n "${bundle+x}" ]; then needs_cleat=1; fi
+
+if [ "$needs_cleat" = "1" ]; then
   cleat_dir="${UISHELL_CLEAT_DIR:-$repo_root/../cleat}"
   cleat_features="${UISHELL_CLEAT_FEATURES:-ghostty-vt}"
   cleat_profile="debug"
@@ -29,7 +33,7 @@ if [ -n "${cleat+x}" ]; then
   cleat_lib_dir="$cleat_target_dir/$cleat_profile"
   echo "[cleat provider: $cleat_dir]"
   (cd "$cleat_dir" && cargo build -p cleat --locked $cleat_profile_flags --features "$cleat_features")
-  auto_compile_flags="$auto_compile_flags -DUISHELL_USE_CLEAT_PROVIDER=1 -I$cleat_dir/crates/cleat/include"
+  auto_compile_flags="$auto_compile_flags -I$cleat_dir/crates/cleat/include"
   cleat_link="-L$cleat_lib_dir -lcleat -Wl,-rpath,$cleat_lib_dir"
 fi
 

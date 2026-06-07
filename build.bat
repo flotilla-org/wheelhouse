@@ -39,6 +39,7 @@ if "%~1"=="release" if "%~2"=="" echo [default mode, assuming `uishell` build] &
 
 :: --- Unpack Command Line Build Arguments ------------------------------------
 set auto_compile_flags=
+set cleat_link=
 if "%telemetry%"=="1"               set auto_compile_flags=%auto_compile_flags% -DPROFILE_TELEMETRY=1 && echo [telemetry profiling enabled]
 if "%spall%"=="1"                   set auto_compile_flags=%auto_compile_flags% -DPROFILE_SPALL=1 && echo [spall profiling enabled]
 if "%asan%"=="1"                    set auto_compile_flags=%auto_compile_flags% -fsanitize=address && echo [asan enabled]
@@ -64,10 +65,25 @@ if "%pgo%"=="1" (
     exit /b 1
   )
 )
+if "%uishell%"=="1" set cleat=1
+if "%cleat%"=="1" (
+  if "%UISHELL_CLEAT_DIR%"=="" (set cleat_dir=%~dp0..\cleat) else (set cleat_dir=%UISHELL_CLEAT_DIR%)
+  if "%UISHELL_CLEAT_FEATURES%"=="" (set cleat_features=ghostty-vt) else (set cleat_features=%UISHELL_CLEAT_FEATURES%)
+  set cleat_profile=debug
+  set cleat_profile_flags=
+  if "%release%"=="1" set cleat_profile=release && set cleat_profile_flags=--release
+  if "%UISHELL_CLEAT_TARGET_DIR%"=="" (set cleat_target_dir=!cleat_dir!\target) else (set cleat_target_dir=%UISHELL_CLEAT_TARGET_DIR%)
+  set cleat_include_dir=!cleat_dir!\crates\cleat\include
+  set cleat_lib_dir=!cleat_target_dir!\!cleat_profile!
+  echo [cleat provider: !cleat_dir!]
+  pushd "!cleat_dir!" || exit /b 1
+  cargo build -p cleat --locked !cleat_profile_flags! --features "!cleat_features!" || exit /b 1
+  popd
+)
 
 :: --- Compile/Link Line Definitions ------------------------------------------
 set cl_common=     /I..\src\ /I..\local\ /nologo /FC /Z7 /Zc:preprocessor
-set cl_debug=      call cl /Od /Ob1 /DBUILD_DEBUG=1 %cl_common% %auto_compile_flags% 
+set cl_debug=      call cl /Od /Ob1 /DBUILD_DEBUG=1 %cl_common% %auto_compile_flags%
 set cl_release=    call cl /O2 /DBUILD_DEBUG=0 %cl_common% %auto_compile_flags%
 set cl_link=       /link /MANIFEST:EMBED /INCREMENTAL:NO /pdbaltpath:%%%%_PDB%%%% /NATVIS:"%~dp0\src\natvis\base.natvis" /noexp /nocoffgrpinfo /opt:ref /opt:icf
 set cl_out=        /out:
@@ -80,6 +96,10 @@ set clang_link=    -fuse-ld=lld -Xlinker /MANIFEST:EMBED -Xlinker /pdbaltpath:%%
 set clang_out=     -o
 set clang_obj_out= -o
 set clang_linker=  -Xlinker
+if "%cleat%"=="1" set cl_common=%cl_common% /I"!cleat_include_dir!"
+if "%cleat%"=="1" set clang_common=%clang_common% -I"!cleat_include_dir!"
+if "%cleat%"=="1" if "%msvc%"=="1"  set cleat_link=/LIBPATH:"!cleat_lib_dir!" cleat.lib
+if "%cleat%"=="1" if "%clang%"=="1" set cleat_link=-L"!cleat_lib_dir!" -lcleat
 
 :: --- Per-Build Settings -----------------------------------------------------
 set link_icon=logo.res
@@ -137,7 +157,7 @@ popd
 
 :: --- Build Everything (@build_targets) --------------------------------------
 pushd build
-if "%uishell%"=="1"                    set didbuild=1 && %compile% ..\src\uishell\uishell_main.c                            %compile_link% %link_icon% %out%uishell.exe || exit /b 1
+if "%uishell%"=="1"                    set didbuild=1 && %compile% ..\src\uishell\uishell_main.c                            %compile_link% %link_icon% %cleat_link% %out%uishell.exe || exit /b 1
 popd
 
 :: --- Warn On No Builds ------------------------------------------------------

@@ -3028,7 +3028,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   {
     tv->cols = cols;
     tv->rows = rows;
-    cleat_session_resize(tv->session, cols, rows, cell_width_px, cell_height_px);
+    cleat_session_resize(tv->session, cols, rows);
   }
   
   UI_Box *canvas_box = &ui_nil_box;
