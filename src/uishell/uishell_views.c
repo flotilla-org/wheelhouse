@@ -27,6 +27,7 @@ struct UIShell_TerminalViewState
   B32 focus_active;
   UIShell_TerminalGlyphCache glyph_cache;
   UIShell_TerminalCellCache cell_cache;
+  UIShell_TerminalImageCache image_cache;
   B32 glyph_trace_fixture_emitted;
   B32 glyph_trace_live_emitted;
   U64 glyph_trace_last_render_generation;
@@ -2842,7 +2843,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     cleat_provider_desc provider_desc =
     {
       .abi_version = CLEAT_PROVIDER_ABI_VERSION,
-      .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|CLEAT_PROVIDER_FEATURE_RENDER_UPDATES,
+      .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE,
       .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS,
     };
     tv->provider = cleat_provider_open(&provider_desc);
@@ -3109,6 +3110,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         if(cleat_session_render_update(tv->session, &update))
         {
           uishell_terminal_cell_cache_apply_render_update(&tv->cell_cache, &update);
+          uishell_terminal_image_cache_apply_render_update(&tv->image_cache, tv->session, &update);
           cleat_session_mark_observed(tv->session, update.render_generation);
           cleat_session_release_render_update(tv->session, &update);
         }
@@ -3122,6 +3124,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           .background_color = terminal_background_color,
           .cell_width_px = cell_width_px,
           .cell_height_px = cell_height_px,
+          .image_cache = &tv->image_cache,
         };
         DR_Bucket *terminal_bucket = dr_bucket_make();
         DR_BucketScope(terminal_bucket)
