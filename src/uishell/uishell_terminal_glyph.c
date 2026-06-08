@@ -5246,6 +5246,241 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
   }
 }
 
+////////////////////////////////
+//~ terminal image cache (Kitty images)
+
+typedef struct UIShell_TerminalImageBytes UIShell_TerminalImageBytes;
+struct UIShell_TerminalImageBytes
+{
+  Arena *arena;
+  U8 *data;
+  U64 size;
+};
+
+internal bool
+uishell_terminal_image_resource_data_copy(void *user_data, const uint8_t *data, size_t data_len)
+{
+  UIShell_TerminalImageBytes *out = (UIShell_TerminalImageBytes *)user_data;
+  // Copy bytes out during the synchronous borrow; decode happens after the
+  // callback returns so we never hold the session across a decode.
+  if(data != 0 && data_len != 0)
+  {
+    out->data = push_array_no_zero(out->arena, U8, data_len);
+    MemoryCopy(out->data, data, data_len);
+    out->size = (U64)data_len;
+  }
+  return 1;
+}
+
+internal UIShell_TerminalImageResource *
+uishell_terminal_image_cache_resource_from_id(UIShell_TerminalImageCache *cache, U32 image_id)
+{
+  UIShell_TerminalImageResource *result = 0;
+  for(UIShell_TerminalImageResource *r = cache->first_resource; r != 0; r = r->next)
+  {
+    if(r->image_id == image_id)
+    {
+      result = r;
+      break;
+    }
+  }
+  return result;
+}
+
+// Decode an image resource payload into a freshly-allocated straight-alpha RGBA8
+// buffer (alloc'd from `arena`). Returns 0 on any malformed/unsupported input.
+// First slice supports uncompressed RGB/RGBA and PNG only.
+internal U8 *
+uishell_terminal_image_decode_rgba8(Arena *arena, cleat_image_resource const *meta, U8 const *bytes, U64 byte_count, U32 *out_w, U32 *out_h)
+{
+  U8 *result = 0;
+  U32 w = meta->width_px;
+  U32 h = meta->height_px;
+  if(meta->compression != CLEAT_IMAGE_COMPRESSION_NONE)
+  {
+    // zlib deflate deferred to a later slice.
+    return 0;
+  }
+  switch(meta->format)
+  {
+    case CLEAT_IMAGE_FORMAT_RGBA:
+    {
+      if(w != 0 && h != 0 && byte_count >= (U64)w*(U64)h*4)
+      {
+        result = push_array_no_zero(arena, U8, (U64)w*(U64)h*4);
+        MemoryCopy(result, bytes, (U64)w*(U64)h*4);
+        *out_w = w;
+        *out_h = h;
+      }
+    }break;
+    case CLEAT_IMAGE_FORMAT_RGB:
+    {
+      if(w != 0 && h != 0 && byte_count >= (U64)w*(U64)h*3)
+      {
+        U64 px = (U64)w*(U64)h;
+        result = push_array_no_zero(arena, U8, px*4);
+        for(U64 i = 0; i < px; i += 1)
+        {
+          result[i*4 + 0] = bytes[i*3 + 0];
+          result[i*4 + 1] = bytes[i*3 + 1];
+          result[i*4 + 2] = bytes[i*3 + 2];
+          result[i*4 + 3] = 255;
+        }
+        *out_w = w;
+        *out_h = h;
+      }
+    }break;
+    case CLEAT_IMAGE_FORMAT_PNG:
+    {
+      int dw = 0;
+      int dh = 0;
+      int comp = 0;
+      stbi_uc *decoded = stbi_load_from_memory(bytes, (int)byte_count, &dw, &dh, &comp, 4);
+      if(decoded != 0 && dw > 0 && dh > 0)
+      {
+        U64 size = (U64)dw*(U64)dh*4;
+        result = push_array_no_zero(arena, U8, size);
+        MemoryCopy(result, decoded, size);
+        *out_w = (U32)dw;
+        *out_h = (U32)dh;
+      }
+      if(decoded != 0)
+      {
+        stbi_image_free(decoded);
+      }
+    }break;
+    default:
+    {
+      // GRAY / GRAY_ALPHA deferred to a later slice.
+    }break;
+  }
+  return result;
+}
+
+internal void
+uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cache, cleat_session *session, cleat_render_update const *update)
+{
+  if(cache == 0 || update == 0)
+  {
+    return;
+  }
+  if(cache->arena == 0)
+  {
+    cache->arena = arena_alloc(.name = "terminal image resources");
+  }
+
+  // Upload any resources we have not yet seen, or whose generation changed.
+  // Resources are kept for session lifetime; placements reference them by
+  // (image_id, generation), and a placement may name a resource we never
+  // uploaded, which the draw path skips.
+  if(session != 0)
+  {
+    for(U64 i = 0; i < update->image_resource_count; i += 1)
+    {
+      cleat_image_resource const *meta = &update->image_resources[i];
+      UIShell_TerminalImageResource *res = uishell_terminal_image_cache_resource_from_id(cache, meta->image_id);
+      if(res != 0 && res->valid && res->generation == meta->generation)
+      {
+        continue; // already resident
+      }
+
+      Temp scratch = scratch_begin(0, 0);
+      UIShell_TerminalImageBytes bytes = { .arena = scratch.arena };
+      R_Handle texture = r_handle_zero();
+      U32 tex_w = 0;
+      U32 tex_h = 0;
+      if(cleat_session_with_image_resource_data(session, meta->image_id, meta->generation, uishell_terminal_image_resource_data_copy, &bytes) &&
+         bytes.data != 0 && bytes.size != 0)
+      {
+        U8 *rgba = uishell_terminal_image_decode_rgba8(scratch.arena, meta, bytes.data, bytes.size, &tex_w, &tex_h);
+        if(rgba != 0 && tex_w != 0 && tex_h != 0)
+        {
+          texture = r_tex2d_alloc(R_ResourceKind_Static, v2s32((S32)tex_w, (S32)tex_h), R_Tex2DFormat_RGBA8, rgba);
+        }
+      }
+      scratch_end(scratch);
+
+      B32 uploaded = !r_handle_match(texture, r_handle_zero());
+      if(res == 0)
+      {
+        res = cache->free_resource;
+        if(res != 0)
+        {
+          SLLStackPop(cache->free_resource);
+          MemoryZeroStruct(res);
+        }
+        else
+        {
+          res = push_array(cache->arena, UIShell_TerminalImageResource, 1);
+        }
+        res->image_id = meta->image_id;
+        SLLQueuePush(cache->first_resource, cache->last_resource, res);
+      }
+      else if(!r_handle_match(res->texture, r_handle_zero()))
+      {
+        // Superseded generation: release the old texture before replacing.
+        r_tex2d_release(res->texture);
+        res->texture = r_handle_zero();
+      }
+      res->generation = meta->generation;
+      res->width_px = tex_w;
+      res->height_px = tex_h;
+      res->texture = texture;
+      res->valid = uploaded;
+    }
+  }
+
+  // Copy placements out of the update (pointers are invalid after release).
+  // Honor each struct's `size` ABI guard rather than assuming our layout.
+  if(cache->placement_arena != 0)
+  {
+    arena_clear(cache->placement_arena);
+  }
+  else
+  {
+    cache->placement_arena = arena_alloc(.name = "terminal image placements");
+  }
+  cache->placements = 0;
+  cache->placement_count = 0;
+  if(update->image_placement_count != 0 && update->image_placements != 0)
+  {
+    cache->placements = push_array(cache->placement_arena, UIShell_TerminalImagePlacement, update->image_placement_count);
+    U8 const *base = (U8 const *)update->image_placements;
+    // Stride by the provider's reported element size (ABI guard), not our
+    // compile-time sizeof: a newer Cleat may grow the struct, in which case we
+    // still read only the prefix fields we know.
+    U64 stride = update->image_placements[0].size;
+    if(stride < sizeof(cleat_image_placement))
+    {
+      stride = sizeof(cleat_image_placement);
+    }
+    for(U64 i = 0; i < update->image_placement_count; i += 1)
+    {
+      cleat_image_placement const *src = (cleat_image_placement const *)(base + i*stride);
+      UIShell_TerminalImagePlacement *dst = &cache->placements[i];
+      dst->image_id = src->image_id;
+      dst->generation = src->generation;
+      dst->placement_id = src->placement_id;
+      dst->z = src->z;
+      dst->viewport_col = src->viewport_col;
+      dst->viewport_row = src->viewport_row;
+      dst->grid_cols = src->grid_cols;
+      dst->grid_rows = src->grid_rows;
+      dst->pixel_width = src->pixel_width;
+      dst->pixel_height = src->pixel_height;
+      dst->source_x = src->source_x;
+      dst->source_y = src->source_y;
+      dst->source_width = src->source_width;
+      dst->source_height = src->source_height;
+      dst->x_offset_px = src->x_offset_px;
+      dst->y_offset_px = src->y_offset_px;
+      dst->order = i;
+    }
+    cache->placement_count = update->image_placement_count;
+  }
+  cache->render_generation = update->render_generation;
+}
+
 internal U64
 uishell_terminal_cursor_cols(UIShell_TerminalCellFeed const *feed, U64 cell_count, cleat_cursor cursor)
 {
@@ -8492,6 +8727,124 @@ uishell_terminal_fixture_snapshot(Arena *arena, U16 cols, U16 rows)
   return snapshot;
 }
 
+// Draw order: lower z first; ties broken by lower image_id, then stable
+// submission order (Kitty: equal-z overlap resolves to the lower image id).
+internal int
+uishell_terminal_image_placement_compare(UIShell_TerminalImagePlacement const *a, UIShell_TerminalImagePlacement const *b)
+{
+  if(a->z != b->z) { return a->z < b->z ? -1 : 1; }
+  if(a->image_id != b->image_id) { return a->image_id < b->image_id ? -1 : 1; }
+  if(a->order != b->order) { return a->order < b->order ? -1 : 1; }
+  return 0;
+}
+
+// Draw one z-plane of image placements. First-slice two-plane split: below_text
+// covers z<0 (above backgrounds, below text); !below_text covers z>=0 (over
+// text). The z<INT32_MIN/2 under-background plane is deferred.
+internal void
+uishell_terminal_draw_image_plane(Arena *arena, UIShell_TerminalDrawParams const *params, B32 below_text)
+{
+  UIShell_TerminalImageCache const *cache = params->image_cache;
+  if(cache == 0 || cache->placement_count == 0)
+  {
+    return;
+  }
+  Rng2F32 canvas = params->canvas_rect;
+  F32 cw = params->cell_width_px;
+  F32 ch = params->cell_height_px;
+
+  Temp scratch = scratch_begin(&arena, 1);
+  UIShell_TerminalImagePlacement **list = push_array(scratch.arena, UIShell_TerminalImagePlacement *, cache->placement_count);
+  U64 count = 0;
+  for(U64 i = 0; i < cache->placement_count; i += 1)
+  {
+    UIShell_TerminalImagePlacement *p = &cache->placements[i];
+    B32 in_plane = below_text ? (p->z < 0) : (p->z >= 0);
+    if(in_plane)
+    {
+      list[count] = p;
+      count += 1;
+    }
+  }
+  // Insertion sort: placement counts are small; keeps this dependency-free.
+  for(U64 i = 1; i < count; i += 1)
+  {
+    UIShell_TerminalImagePlacement *key = list[i];
+    U64 j = i;
+    while(j > 0 && uishell_terminal_image_placement_compare(list[j-1], key) > 0)
+    {
+      list[j] = list[j-1];
+      j -= 1;
+    }
+    list[j] = key;
+  }
+
+  for(U64 i = 0; i < count; i += 1)
+  {
+    UIShell_TerminalImagePlacement *p = list[i];
+    UIShell_TerminalImageResource *res = uishell_terminal_image_cache_resource_from_id((UIShell_TerminalImageCache *)cache, p->image_id);
+    // Skip cleanly if the resource is not resident at this generation.
+    if(res == 0 || !res->valid || res->generation != p->generation ||
+       res->width_px == 0 || res->height_px == 0 ||
+       r_handle_match(res->texture, r_handle_zero()))
+    {
+      continue;
+    }
+
+    F32 dst_w = p->pixel_width != 0 ? (F32)p->pixel_width : (F32)p->grid_cols*cw;
+    F32 dst_h = p->pixel_height != 0 ? (F32)p->pixel_height : (F32)p->grid_rows*ch;
+    if(dst_w <= 0 || dst_h <= 0)
+    {
+      continue;
+    }
+    F32 dx0 = canvas.x0 + (F32)p->viewport_col*cw + (F32)p->x_offset_px;
+    F32 dy0 = canvas.y0 + (F32)p->viewport_row*ch + (F32)p->y_offset_px;
+    Rng2F32 dst = r2f32p(dx0, dy0, dx0 + dst_w, dy0 + dst_h);
+
+    // Source rect in texel space. Cleat reports the already-clamped crop (the
+    // intersection of the requested source rectangle with the image); an
+    // uncropped placement reports the full image extent, never zero. So a zero
+    // source width/height means the crop is entirely outside the image and
+    // nothing should be drawn (matching Kitty/Ghostty clamping semantics).
+    if(p->source_width == 0 || p->source_height == 0)
+    {
+      continue;
+    }
+    F32 sx0 = (F32)p->source_x;
+    F32 sy0 = (F32)p->source_y;
+    F32 sx1 = sx0 + (F32)p->source_width;
+    F32 sy1 = sy0 + (F32)p->source_height;
+    Rng2F32 src = r2f32p(sx0, sy0, sx1, sy1);
+
+    // Clip the destination to the content canvas, cropping the source rect
+    // proportionally so partially-offscreen placements render correctly.
+    Rng2F32 vis = intersect_2f32(dst, canvas);
+    if(vis.x1 <= vis.x0 || vis.y1 <= vis.y0)
+    {
+      continue;
+    }
+    F32 dwid = dst.x1 - dst.x0;
+    F32 dhei = dst.y1 - dst.y0;
+    F32 fx0 = (vis.x0 - dst.x0)/dwid;
+    F32 fx1 = (vis.x1 - dst.x0)/dwid;
+    F32 fy0 = (vis.y0 - dst.y0)/dhei;
+    F32 fy1 = (vis.y1 - dst.y0)/dhei;
+    F32 swid = src.x1 - src.x0;
+    F32 shei = src.y1 - src.y0;
+    Rng2F32 src_c = r2f32p(src.x0 + fx0*swid, src.y0 + fy0*shei,
+                           src.x0 + fx1*swid, src.y0 + fy1*shei);
+    // Straight-alpha sRGB texture, opaque white tint preserves source colour.
+    // Sample linearly so scaled images (Kitty placements are usually upscaled
+    // from a smaller source) interpolate smoothly instead of showing texel
+    // banding; the terminal's default sample kind is Nearest for crisp glyphs.
+    DR_Tex2DSampleKindScope(R_Tex2DSampleKind_Linear)
+    {
+      dr_img(vis, src_c, res->texture, v4f32(1, 1, 1, 1), 0, 0, 0);
+    }
+  }
+  scratch_end(scratch);
+}
+
 internal void
 uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, UIShell_TerminalCellFeed const *feed, UIShell_TerminalCursorArray cursors)
 {
@@ -8555,6 +8908,20 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
         F32 x1 = ceil_f32(canvas_rect.x0 + (F32)col_opl*cell_width_px);
         dr_rect(r2f32p(x0, row_y0, x1, row_y1), uishell_terminal_rgba_from_rgb(bg), 0, 0, 0);
         col_start = col_opl;
+      }
+    }
+
+    // Image plane below text (z < 0), drawn above cell backgrounds. The loop is
+    // split into a background pass and a text pass precisely so this seam exists.
+    uishell_terminal_draw_image_plane(arena, params, 1);
+
+    for(U64 row_idx = 0; row_idx < feed->rows; row_idx += 1)
+    {
+      F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
+      F32 row_y1 = ceil_f32(canvas_rect.y0 + (F32)(row_idx + 1)*cell_height_px);
+      if(row_y0 >= canvas_rect.y1 || row_y1 <= canvas_rect.y0)
+      {
+        continue;
       }
 
       F32 text_y = floor_f32((row_y0 + row_y1)/2.f + font_metrics.ascent/2.f - font_metrics.descent/2.f);
@@ -8677,6 +9044,10 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
         col_idx += 1;
       }
     }
+
+    // Image plane over text (z >= 0).
+    uishell_terminal_draw_image_plane(arena, params, 0);
+
     uishell_terminal_draw_cursor_overlay(feed, cell_count, cursors, canvas_rect, cell_width_px, cell_height_px);
   }
 }
