@@ -119,7 +119,31 @@ sign_app_debug()
     codesign --force --sign "$codesign_identity" --entitlements "$codesign_entitlements" "$1"
   fi
 }
-if [ -n "${uishell+x}" ];             then didbuild=1 && $compile ../src/uishell/uishell_main.c                                  $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $out uishell; sign_app_debug uishell; fi
+if [ -n "${uishell+x}" ]
+then
+  didbuild=1
+  # Compile to a persistent object first so dsymutil can collect DWARF: a single
+  # compile+link invocation uses a temp .o that clang deletes, leaving a broken
+  # debug map. Then link, then produce a co-located .dSYM (and the linked cleat
+  # dylib's) for profiling/debugging across the uishell+cleat+ghostty stack.
+  $compile -c ../src/uishell/uishell_main.c $out uishell_main.o && \
+  $compile -x none uishell_main.o $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $out uishell
+  if [ "$host_os" = "Darwin" ]; then
+    dsymutil uishell && rm -f uishell_main.o
+    [ -f "$cleat_lib_dir/libcleat.dylib" ] && dsymutil "$cleat_lib_dir/libcleat.dylib"
+    # The ghostty dSYM lives under cleat's .tools/ dot-dir, which Spotlight
+    # never indexes, so Instruments can't find it by UUID. Copy it into an
+    # indexed location and force-index all three dSYMs so attaching symbolicates
+    # the whole uishell+cleat+ghostty stack.
+    mkdir -p dsyms
+    ghostty_dsym=$(ls -d "$cleat_dir"/.tools/ghostty-install/lib/libghostty-vt*.dylib.dSYM 2>/dev/null | head -1)
+    [ -n "$ghostty_dsym" ] && rm -rf "dsyms/$(basename "$ghostty_dsym")" && cp -R "$ghostty_dsym" dsyms/
+    if command -v mdimport >/dev/null 2>&1; then
+      mdimport uishell.dSYM "$cleat_lib_dir/libcleat.dylib.dSYM" dsyms/*.dSYM >/dev/null 2>&1
+    fi
+  fi
+  sign_app_debug uishell
+fi
 if [ -n "${bundle+x}" ];              then didbuild=1; if [ "$host_os" != "Darwin" ]; then echo "[ERROR] bundle target is only supported on Darwin."; exit 1; fi; $compile ../src/uishell/uishell_main.c $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $out uishell; sign_app_debug uishell; rm -rf "UI Shell.app"; mkdir -p "UI Shell.app/Contents/MacOS" "UI Shell.app/Contents/Resources"; cp ../src/mac/uishell_Info.plist "UI Shell.app/Contents/Info.plist"; cp ../src/mac/uishell.icns "UI Shell.app/Contents/Resources/uishell.icns"; cp uishell "UI Shell.app/Contents/MacOS/uishell"; chmod +x "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app"; fi
 cd ..
 
