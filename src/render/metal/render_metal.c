@@ -470,8 +470,13 @@ r_init(CmdLine *cmdln)
     for EachIndex(idx, R_Tex2DSampleKind_COUNT)
     {
       MTLSamplerDescriptor *sampler_descriptor = [MTLSamplerDescriptor new];
-      sampler_descriptor.sAddressMode = MTLSamplerAddressModeRepeat;
-      sampler_descriptor.tAddressMode = MTLSamplerAddressModeRepeat;
+      // Linear sampling clamps to edge so scaled images (e.g. Kitty terminal
+      // images) don't wrap the opposite edge in at their borders; Nearest keeps
+      // the inherited Repeat. Nothing in the renderer tiles, so this only
+      // affects sampling at a texture's outer edge.
+      MTLSamplerAddressMode address_mode = (idx == R_Tex2DSampleKind_Linear ? MTLSamplerAddressModeClampToEdge : MTLSamplerAddressModeRepeat);
+      sampler_descriptor.sAddressMode = address_mode;
+      sampler_descriptor.tAddressMode = address_mode;
       sampler_descriptor.minFilter = (idx == R_Tex2DSampleKind_Linear ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest);
       sampler_descriptor.magFilter = (idx == R_Tex2DSampleKind_Linear ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest);
       r_mtl_state->samplers[idx] = [r_mtl_state->device newSamplerStateWithDescriptor:sampler_descriptor];

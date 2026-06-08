@@ -525,8 +525,10 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
             {
               glActiveTexture(GL_TEXTURE0);
               glBindTexture(GL_TEXTURE_2D, texture_id);
-              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+              // Linear clamps to edge so scaled images don't wrap; nearest keeps repeat. Nothing tiles.
+              GLint wrap_mode = (group_params->tex_sample_kind == R_Tex2DSampleKind_Linear) ? GL_CLAMP_TO_EDGE : GL_REPEAT;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_mode);
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_mode);
               switch(group_params->tex_sample_kind)
               {
                 default:
@@ -782,8 +784,10 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
 
                 glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D, texture_id);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+                // Linear clamps to edge so scaled images don't wrap; nearest keeps repeat. Nothing tiles.
+                GLint wrap_mode = (group_params->tex_sample_kind == R_Tex2DSampleKind_Linear) ? GL_CLAMP_TO_EDGE : GL_REPEAT;
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_mode);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_mode);
                 switch(group_params->tex_sample_kind)
                 {
                   default:

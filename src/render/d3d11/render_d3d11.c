@@ -292,9 +292,11 @@ r_init(CmdLine *cmdln)
     D3D11_SAMPLER_DESC desc = zero_struct;
     {
       desc.Filter         = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-      desc.AddressU       = D3D11_TEXTURE_ADDRESS_WRAP;
-      desc.AddressV       = D3D11_TEXTURE_ADDRESS_WRAP;
-      desc.AddressW       = D3D11_TEXTURE_ADDRESS_WRAP;
+      // Clamp to edge so scaled images don't wrap the opposite edge in at their
+      // borders (the nearest sampler keeps the inherited wrap). Nothing tiles.
+      desc.AddressU       = D3D11_TEXTURE_ADDRESS_CLAMP;
+      desc.AddressV       = D3D11_TEXTURE_ADDRESS_CLAMP;
+      desc.AddressW       = D3D11_TEXTURE_ADDRESS_CLAMP;
       desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
     }
     error = r_d3d11_state->device->lpVtbl->CreateSamplerState(r_d3d11_state->device, &desc, &r_d3d11_state->samplers[R_Tex2DSampleKind_Linear]);
