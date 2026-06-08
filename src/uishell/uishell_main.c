@@ -79,6 +79,15 @@
 #include "draw/draw.c"
 #include "ui/ui_inc.c"
 #include "uishell/uishell_eval.c"
+// stb_image is needed by the terminal glyph layer (Kitty PNG images). Pull the
+// implementation in here, before that layer; shell_core.c's identical guarded
+// block then becomes a no-op so there is still exactly one implementation.
+#if !defined(STBI_INCLUDE_STB_IMAGE_H)
+# define STB_IMAGE_IMPLEMENTATION
+# define STBI_ONLY_PNG
+# define STBI_ONLY_BMP
+# include "third_party/stb/stb_image.h"
+#endif
 #include "uishell/uishell_terminal_glyph.c"
 #include "uishell/uishell_views.c"
 #include "shell/shell_inc.c"
