@@ -61,6 +61,19 @@ uishell_terminal_cell_is_spacer(cleat_cell const *cell)
   return result;
 }
 
+// Kitty Unicode placeholder (U+10EEEE): marks a cell whose content is a slice of
+// a virtual image placement, not a glyph. The image is drawn by the placement
+// path; the cell itself must render nothing (no glyph, no missing-glyph box),
+// otherwise the placeholder tofu draws over the image.
+#define UISHELL_TERMINAL_KITTY_PLACEHOLDER_CODEPOINT 0x10EEEE
+internal B32
+uishell_terminal_cell_is_kitty_placeholder(cleat_cell const *cell)
+{
+  B32 result = (cell->grapheme_count >= 1 &&
+                cell->graphemes[0] == UISHELL_TERMINAL_KITTY_PLACEHOLDER_CODEPOINT);
+  return result;
+}
+
 internal U64
 uishell_terminal_cell_display_cols(cleat_cell const *cell)
 {
@@ -8978,6 +8991,7 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
 
         if(cell->grapheme_count != 0 &&
            !uishell_terminal_cell_is_spacer(cell) &&
+           !uishell_terminal_cell_is_kitty_placeholder(cell) &&
            !(cell->flags & CLEAT_CELL_FLAG_INVISIBLE))
         {
           String8 string = uishell_terminal_string_from_cell(arena, cell);
