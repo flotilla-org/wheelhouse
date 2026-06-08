@@ -25,6 +25,10 @@ struct UIShell_TerminalViewState
   F32 cell_width_px;
   F32 cell_height_px;
   B32 focus_active;
+  U16 mouse_buttons_held;
+  F32 last_mouse_x_px;
+  F32 last_mouse_y_px;
+  B32 mouse_pos_valid;
   UIShell_TerminalGlyphCache glyph_cache;
   UIShell_TerminalCellCache cell_cache;
   UIShell_TerminalImageCache image_cache;
@@ -2938,22 +2942,84 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     tv->cell_width_px = cell_width_px;
     tv->cell_height_px = cell_height_px;
   }
-  if(session_ready && ui_pressed(canvas_sig))
+  if(session_ready)
   {
-    uishell_cmd("focus_panel");
     Vec2F32 mouse = ui_mouse();
-    cleat_input_event input =
+    F32 lx = mouse.x - canvas_box->rect.x0;
+    F32 ly = mouse.y - canvas_box->rect.y0;
+    U16 mods = uishell_terminal_cleat_modifiers_from_wm(canvas_sig.event_flags);
+    U16 cell_col = (U16)Clamp(0, (S32)(lx/cell_width_px), (S32)(cols-1));
+    U16 cell_row = (U16)Clamp(0, (S32)(ly/cell_height_px), (S32)(rows-1));
+
+    // Press / release for each button. These route through Cleat → libghostty's
+    // mouse encoder, which gates them against the program's tracking mode and
+    // emits the format (SGR / SGR-pixels / X10) the program requested.
+    struct { UI_SignalFlags press; UI_SignalFlags release; U32 button; U16 flag; } mouse_buttons[] =
     {
-      .kind = CLEAT_INPUT_MOUSE,
-      .mouse_kind = CLEAT_MOUSE_PRESS,
-      .mouse_button = CLEAT_MOUSE_BUTTON_LEFT,
-      .mouse_buttons = CLEAT_MOUSE_BUTTON_FLAG_LEFT,
-      .cell_col = (U16)Clamp(0, (S32)((mouse.x-canvas_box->rect.x0)/cell_width_px), (S32)(cols-1)),
-      .cell_row = (U16)Clamp(0, (S32)((mouse.y-canvas_box->rect.y0)/cell_height_px), (S32)(rows-1)),
-      .x_px = mouse.x-canvas_box->rect.x0,
-      .y_px = mouse.y-canvas_box->rect.y0,
+      { UI_SignalFlag_LeftPressed,   UI_SignalFlag_LeftReleased,   CLEAT_MOUSE_BUTTON_LEFT,   CLEAT_MOUSE_BUTTON_FLAG_LEFT },
+      { UI_SignalFlag_MiddlePressed, UI_SignalFlag_MiddleReleased, CLEAT_MOUSE_BUTTON_MIDDLE, CLEAT_MOUSE_BUTTON_FLAG_MIDDLE },
+      { UI_SignalFlag_RightPressed,  UI_SignalFlag_RightReleased,  CLEAT_MOUSE_BUTTON_RIGHT,  CLEAT_MOUSE_BUTTON_FLAG_RIGHT },
     };
-    cleat_session_send_input(tv->session, &input);
+    for(U64 i = 0; i < ArrayCount(mouse_buttons); i += 1)
+    {
+      B32 is_press = !!(canvas_sig.f & mouse_buttons[i].press);
+      B32 is_release = !!(canvas_sig.f & mouse_buttons[i].release);
+      if(is_press)
+      {
+        tv->mouse_buttons_held |= mouse_buttons[i].flag;
+        if(mouse_buttons[i].button == CLEAT_MOUSE_BUTTON_LEFT) { uishell_cmd("focus_panel"); }
+      }
+      if(is_press || is_release)
+      {
+        cleat_input_event input =
+        {
+          .kind = CLEAT_INPUT_MOUSE,
+          .modifiers = mods,
+          .mouse_kind = is_press ? CLEAT_MOUSE_PRESS : CLEAT_MOUSE_RELEASE,
+          .mouse_button = mouse_buttons[i].button,
+          .mouse_buttons = tv->mouse_buttons_held,
+          .cell_col = cell_col,
+          .cell_row = cell_row,
+          .x_px = lx,
+          .y_px = ly,
+        };
+        cleat_session_send_input(tv->session, &input);
+      }
+      if(is_release) { tv->mouse_buttons_held &= ~mouse_buttons[i].flag; }
+    }
+
+    // Motion: forward when the pointer moved while either a button is held
+    // (drag) or it is hovering this terminal (bare mouse-move, e.g. game
+    // mouse-look). The encoder drops moves unless the program is in a
+    // motion-tracking mode, so hover only reaches any-event apps. (Gating this
+    // on the actual tracking mode — once surfaced to uishell — would avoid the
+    // dropped round-trips, and is the same hook needed for local-selection vs
+    // forwarding.)
+    B32 moved = (!tv->mouse_pos_valid || lx != tv->last_mouse_x_px || ly != tv->last_mouse_y_px);
+    B32 over_canvas = !!(canvas_sig.f & UI_SignalFlag_Hovering);
+    if(moved && (tv->mouse_buttons_held != 0 || over_canvas))
+    {
+      U32 move_button = CLEAT_MOUSE_BUTTON_NONE;
+      if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_LEFT) { move_button = CLEAT_MOUSE_BUTTON_LEFT; }
+      else if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_MIDDLE) { move_button = CLEAT_MOUSE_BUTTON_MIDDLE; }
+      else if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_RIGHT) { move_button = CLEAT_MOUSE_BUTTON_RIGHT; }
+      cleat_input_event input =
+      {
+        .kind = CLEAT_INPUT_MOUSE,
+        .modifiers = mods,
+        .mouse_kind = CLEAT_MOUSE_MOVE,
+        .mouse_button = move_button,
+        .mouse_buttons = tv->mouse_buttons_held,
+        .cell_col = cell_col,
+        .cell_row = cell_row,
+        .x_px = lx,
+        .y_px = ly,
+      };
+      cleat_session_send_input(tv->session, &input);
+    }
+    tv->last_mouse_x_px = lx;
+    tv->last_mouse_y_px = ly;
+    tv->mouse_pos_valid = 1;
   }
   
   UI_Parent(canvas_box)
