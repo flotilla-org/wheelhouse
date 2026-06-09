@@ -29,6 +29,15 @@ struct UIShell_TerminalViewState
   F32 last_mouse_x_px;
   F32 last_mouse_y_px;
   B32 mouse_pos_valid;
+  // Mouse tracking mode cached from the last render update (advisory: the mouse
+  // block runs before this frame's update is fetched, and the encoder re-gates
+  // authoritatively). Drives local-selection-vs-forward.
+  U32 mouse_tracking_mode;
+  // Local text selection (cursor/mark over grid cells, line=row column=col).
+  B32 selecting;        // left button down, driving a selection this drag
+  B32 has_selection;    // a non-empty selection exists
+  TxtPt sel_mark;       // anchor (fixed end)
+  TxtPt sel_cursor;     // active end (follows the pointer)
   UIShell_TerminalGlyphCache glyph_cache;
   UIShell_TerminalCellCache cell_cache;
   UIShell_TerminalImageCache image_cache;
@@ -2950,6 +2959,57 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     U16 mods = uishell_terminal_cleat_modifiers_from_wm(canvas_sig.event_flags);
     U16 cell_col = (U16)Clamp(0, (S32)(lx/cell_width_px), (S32)(cols-1));
     U16 cell_row = (U16)Clamp(0, (S32)(ly/cell_height_px), (S32)(rows-1));
+    B32 shift_held = !!(canvas_sig.event_flags & WM_Modifier_Shift);
+
+    // Local text selection: left-drag selects locally when no program is
+    // tracking the mouse, or when Shift overrides an app that is (Ghostty
+    // behavior). While selecting, the left button + motion are consumed here and
+    // not forwarded to the program.
+    B32 left_pressed = !!(canvas_sig.f & UI_SignalFlag_LeftPressed);
+    B32 left_released = !!(canvas_sig.f & UI_SignalFlag_LeftReleased);
+    if(left_pressed) { uishell_cmd("focus_panel"); }
+    B32 local_select = (tv->mouse_tracking_mode == CLEAT_MOUSE_TRACKING_NONE) || shift_held;
+    B32 was_selecting = tv->selecting;
+    if(left_pressed && local_select && !was_selecting)
+    {
+      tv->selecting = 1;
+      tv->sel_mark = txt_pt((S64)cell_row, (S64)cell_col);
+      tv->sel_cursor = tv->sel_mark;
+      tv->has_selection = 0;
+    }
+    if(tv->selecting)
+    {
+      tv->sel_cursor = txt_pt((S64)cell_row, (S64)cell_col);
+      tv->has_selection = !txt_pt_match(tv->sel_mark, tv->sel_cursor);
+      if(left_released)
+      {
+        tv->selecting = 0;
+        // Copy-on-select: write the selection to the shared selection pasteboard
+        // (for middle-click paste), leaving the standard clipboard untouched.
+        if(tv->has_selection && tv->cell_cache.cells != 0)
+        {
+          Temp sel_scratch = scratch_begin(0, 0);
+          UIShell_TerminalCellFeed sel_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
+          String8 sel_text = uishell_terminal_selection_text_from_feed(sel_scratch.arena, &sel_feed,
+                                                                       txt_pt_min(tv->sel_mark, tv->sel_cursor),
+                                                                       txt_pt_max(tv->sel_mark, tv->sel_cursor));
+          if(sel_text.size != 0) { wm_set_selection_text(sel_text); }
+          scratch_end(sel_scratch);
+        }
+      }
+    }
+    B32 selection_consumes_left = was_selecting || (left_pressed && local_select);
+
+    // Middle-click pastes the selection buffer when no program is grabbing the
+    // mouse (otherwise the button is forwarded below).
+    B32 paste_middle = !!(canvas_sig.f & UI_SignalFlag_MiddlePressed) && (tv->mouse_tracking_mode == CLEAT_MOUSE_TRACKING_NONE);
+    if(paste_middle)
+    {
+      Temp paste_scratch = scratch_begin(0, 0);
+      String8 paste_text = wm_get_selection_text(paste_scratch.arena);
+      if(paste_text.size != 0) { cleat_session_write_bytes(tv->session, paste_text.str, paste_text.size); }
+      scratch_end(paste_scratch);
+    }
 
     // Press / release for each button. These route through Cleat → libghostty's
     // mouse encoder, which gates them against the program's tracking mode and
@@ -2962,12 +3022,13 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     };
     for(U64 i = 0; i < ArrayCount(mouse_buttons); i += 1)
     {
+      if(mouse_buttons[i].button == CLEAT_MOUSE_BUTTON_LEFT && selection_consumes_left) { continue; }
+      if(mouse_buttons[i].button == CLEAT_MOUSE_BUTTON_MIDDLE && paste_middle) { continue; }
       B32 is_press = !!(canvas_sig.f & mouse_buttons[i].press);
       B32 is_release = !!(canvas_sig.f & mouse_buttons[i].release);
       if(is_press)
       {
         tv->mouse_buttons_held |= mouse_buttons[i].flag;
-        if(mouse_buttons[i].button == CLEAT_MOUSE_BUTTON_LEFT) { uishell_cmd("focus_panel"); }
       }
       if(is_press || is_release)
       {
@@ -2997,7 +3058,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     // forwarding.)
     B32 moved = (!tv->mouse_pos_valid || lx != tv->last_mouse_x_px || ly != tv->last_mouse_y_px);
     B32 over_canvas = !!(canvas_sig.f & UI_SignalFlag_Hovering);
-    if(moved && (tv->mouse_buttons_held != 0 || over_canvas))
+    if(!was_selecting && !tv->selecting && moved && (tv->mouse_buttons_held != 0 || over_canvas))
     {
       U32 move_button = CLEAT_MOUSE_BUTTON_NONE;
       if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_LEFT) { move_button = CLEAT_MOUSE_BUTTON_LEFT; }
@@ -3046,12 +3107,65 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       for(UI_Event *evt = 0; ui_next_event(&evt);)
       {
         B32 taken = 0;
-        if(session_ready &&
+        // INTERIM: terminal clipboard chords detected inline — Cmd-C/Cmd-V on
+        // macOS, Ctrl-Shift-C/V elsewhere (plain Ctrl-C/V must still reach the
+        // program). This duplicates platform Cmd/Ctrl logic that belongs in the
+        // keybinding system; once the RAD keymap rework (sane mac Cmd/Ctrl
+        // handling) lands, replace this with terminal copy/paste *commands* bound
+        // per-platform by the keymap.
+        if(session_ready && evt->kind == UI_EventKind_Press &&
+           (evt->key == WM_Key_C || evt->key == WM_Key_V))
+        {
+#if OS_MAC
+          B32 clip_chord = (evt->modifiers & WM_Modifier_Super) && !(evt->modifiers & (WM_Modifier_Ctrl|WM_Modifier_Alt));
+#else
+          B32 clip_chord = (evt->modifiers & WM_Modifier_Ctrl) && (evt->modifiers & WM_Modifier_Shift) && !(evt->modifiers & WM_Modifier_Super);
+#endif
+          if(clip_chord && evt->key == WM_Key_C)
+          {
+            if(tv->has_selection && tv->cell_cache.cells != 0)
+            {
+              Temp clip_scratch = scratch_begin(0, 0);
+              UIShell_TerminalCellFeed clip_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
+              String8 clip_text = uishell_terminal_selection_text_from_feed(clip_scratch.arena, &clip_feed,
+                                                                            txt_pt_min(tv->sel_mark, tv->sel_cursor),
+                                                                            txt_pt_max(tv->sel_mark, tv->sel_cursor));
+              if(clip_text.size != 0) { wm_set_clipboard_text(clip_text); }
+              scratch_end(clip_scratch);
+            }
+            taken = 1;
+          }
+          else if(clip_chord && evt->key == WM_Key_V)
+          {
+            Temp clip_scratch = scratch_begin(0, 0);
+            String8 clip_text = wm_get_clipboard_text(clip_scratch.arena);
+            if(clip_text.size != 0) { cleat_session_write_bytes(tv->session, clip_text.str, clip_text.size); }
+            scratch_end(clip_scratch);
+            taken = 1;
+          }
+        }
+        if(!taken && session_ready &&
            (evt->kind == UI_EventKind_Edit ||
             evt->kind == UI_EventKind_Navigate ||
            evt->kind == UI_EventKind_Text))
         {
-          if(evt->kind == UI_EventKind_Text || evt->flags & UI_EventFlag_Paste)
+          if(evt->flags & UI_EventFlag_Copy)
+          {
+            // Copy the terminal selection to the standard clipboard (Cmd-C on
+            // macOS / Ctrl-Shift-C elsewhere, mapped to this flag by the WM).
+            if(tv->has_selection && tv->cell_cache.cells != 0)
+            {
+              Temp copy_scratch = scratch_begin(0, 0);
+              UIShell_TerminalCellFeed copy_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
+              String8 copy_text = uishell_terminal_selection_text_from_feed(copy_scratch.arena, &copy_feed,
+                                                                            txt_pt_min(tv->sel_mark, tv->sel_cursor),
+                                                                            txt_pt_max(tv->sel_mark, tv->sel_cursor));
+              if(copy_text.size != 0) { wm_set_clipboard_text(copy_text); }
+              scratch_end(copy_scratch);
+            }
+            taken = 1;
+          }
+          else if(evt->kind == UI_EventKind_Text || evt->flags & UI_EventFlag_Paste)
           {
             if((evt->flags & UI_EventFlag_Paste) || (evt->modifiers & (WM_Modifier_Ctrl|WM_Modifier_Alt)) == 0)
             {
@@ -3108,7 +3222,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
             }
           }
         }
-        else if(session_ready &&
+        else if(!taken && session_ready &&
                 evt->kind == UI_EventKind_Press &&
                 evt->key != WM_Key_LeftMouseButton &&
                 evt->key != WM_Key_MiddleMouseButton &&
@@ -3177,6 +3291,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         {
           uishell_terminal_cell_cache_apply_render_update(&tv->cell_cache, &update);
           uishell_terminal_image_cache_apply_render_update(&tv->image_cache, tv->session, &update);
+          tv->mouse_tracking_mode = update.terminal_modes.mouse_tracking_mode;
           cleat_session_mark_observed(tv->session, update.render_generation);
           cleat_session_release_render_update(tv->session, &update);
         }
@@ -3204,6 +3319,27 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           glyph_renderer.trace_row = rd_state->terminal_glyph_trace_row;
           glyph_renderer.trace_generation = tv->cell_cache.render_generation;
           uishell_terminal_glyph_renderer_draw_cell_feed(scratch.arena, &glyph_renderer, &draw_params, &feed);
+          // Local selection highlight: a translucent stream-selection overlay
+          // (first row from the anchor column, last row to the cursor column,
+          // full width in between), composited over the just-drawn cells.
+          if(tv->has_selection || tv->selecting)
+          {
+            TxtPt sel_min = txt_pt_min(tv->sel_mark, tv->sel_cursor);
+            TxtPt sel_max = txt_pt_max(tv->sel_mark, tv->sel_cursor);
+            Vec4F32 sel_color = v4f32(0.30f, 0.55f, 0.95f, 0.33f);
+            for(S64 r = sel_min.line; r <= sel_max.line; r += 1)
+            {
+              if(r < 0 || r >= (S64)feed.rows) { continue; }
+              S64 start_col = (r == sel_min.line) ? sel_min.column : 0;
+              S64 end_col = (r == sel_max.line) ? sel_max.column : (S64)feed.cols - 1;
+              if(end_col < start_col) { continue; }
+              F32 x0 = floor_f32(canvas_box->rect.x0 + (F32)start_col*cell_width_px);
+              F32 x1 = ceil_f32(canvas_box->rect.x0 + (F32)(end_col + 1)*cell_width_px);
+              F32 y0 = floor_f32(canvas_box->rect.y0 + (F32)r*cell_height_px);
+              F32 y1 = ceil_f32(canvas_box->rect.y0 + (F32)(r + 1)*cell_height_px);
+              dr_rect(r2f32p(x0, y0, x1, y1), sel_color, 0, 0, 0);
+            }
+          }
           tv->glyph_trace_live_emitted = tv->glyph_trace_live_emitted || trace_this_draw;
           if(trace_this_draw)
           {

@@ -74,6 +74,44 @@ uishell_terminal_cell_is_kitty_placeholder(cleat_cell const *cell)
   return result;
 }
 
+// Extract the text of a stream selection (sel_min..sel_max inclusive, line=row
+// column=col over the feed grid): each row's selected columns joined, trailing
+// whitespace trimmed (terminal rows are space-padded), rows joined with '\n'.
+internal String8
+uishell_terminal_selection_text_from_feed(Arena *arena, UIShell_TerminalCellFeed const *feed, TxtPt sel_min, TxtPt sel_max)
+{
+  Temp scratch = scratch_begin(&arena, 1);
+  String8List lines = {0};
+  for(S64 r = sel_min.line; r <= sel_max.line; r += 1)
+  {
+    if(r < 0 || r >= (S64)feed->rows) { continue; }
+    S64 start_col = (r == sel_min.line) ? sel_min.column : 0;
+    S64 end_col = (r == sel_max.line) ? sel_max.column : (S64)feed->cols - 1;
+    String8List cells = {0};
+    for(S64 c = start_col; c <= end_col && c < (S64)feed->cols; c += 1)
+    {
+      cleat_cell const *cell = &feed->cells[r*(S64)feed->cols + c];
+      if(uishell_terminal_cell_is_spacer(cell) || uishell_terminal_cell_is_kitty_placeholder(cell))
+      {
+        continue;
+      }
+      String8 cell_string = (cell->grapheme_count == 0) ? str8_lit(" ") : uishell_terminal_string_from_cell(scratch.arena, cell);
+      str8_list_push(scratch.arena, &cells, cell_string);
+    }
+    String8 line = str8_list_join(scratch.arena, &cells, 0);
+    while(line.size > 0 && (line.str[line.size-1] == ' ' || line.str[line.size-1] == '\t'))
+    {
+      line.size -= 1;
+    }
+    str8_list_push(arena, &lines, push_str8_copy(arena, line));
+  }
+  StringJoin join = {0};
+  join.sep = str8_lit("\n");
+  String8 result = str8_list_join(arena, &lines, &join);
+  scratch_end(scratch);
+  return result;
+}
+
 internal U64
 uishell_terminal_cell_display_cols(cleat_cell const *cell)
 {
