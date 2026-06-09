@@ -3007,7 +3007,17 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     {
       Temp paste_scratch = scratch_begin(0, 0);
       String8 paste_text = wm_get_selection_text(paste_scratch.arena);
-      if(paste_text.size != 0) { cleat_session_write_bytes(tv->session, paste_text.str, paste_text.size); }
+      if(paste_text.size != 0)
+      {
+        // Route through Cleat's paste path so bracketed-paste mode wraps it.
+        cleat_input_event input =
+        {
+          .kind = CLEAT_INPUT_PASTE,
+          .text = paste_text.str,
+          .text_len = paste_text.size,
+        };
+        cleat_session_send_input(tv->session, &input);
+      }
       scratch_end(paste_scratch);
     }
 
@@ -3139,7 +3149,17 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           {
             Temp clip_scratch = scratch_begin(0, 0);
             String8 clip_text = wm_get_clipboard_text(clip_scratch.arena);
-            if(clip_text.size != 0) { cleat_session_write_bytes(tv->session, clip_text.str, clip_text.size); }
+            if(clip_text.size != 0)
+            {
+              // Route through Cleat's paste path so bracketed-paste mode wraps it.
+              cleat_input_event input =
+              {
+                .kind = CLEAT_INPUT_PASTE,
+                .text = clip_text.str,
+                .text_len = clip_text.size,
+              };
+              cleat_session_send_input(tv->session, &input);
+            }
             scratch_end(clip_scratch);
             taken = 1;
           }
