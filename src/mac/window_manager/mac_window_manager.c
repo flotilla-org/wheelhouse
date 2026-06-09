@@ -780,6 +780,39 @@ wm_get_clipboard_text(Arena *arena)
   return result;
 }
 
+// Shared selection pasteboard, interoperable with Ghostty and cmux (which use
+// this same named pasteboard on macOS for the middle-click selection buffer).
+internal NSPasteboard *
+mac_wm_selection_pasteboard(void)
+{
+  return [NSPasteboard pasteboardWithName:@"com.mitchellh.ghostty.selection"];
+}
+
+internal void
+wm_set_selection_text(String8 string)
+{
+  Temp scratch = scratch_begin(0, 0);
+  NSString *ns_string = mac_wm_ns_string_from_string8(scratch.arena, string);
+  NSPasteboard *pasteboard = mac_wm_selection_pasteboard();
+  [pasteboard clearContents];
+  [pasteboard setString:ns_string forType:NSPasteboardTypeString];
+  scratch_end(scratch);
+}
+
+internal String8
+wm_get_selection_text(Arena *arena)
+{
+  NSPasteboard *pasteboard = mac_wm_selection_pasteboard();
+  NSString *ns_string = [pasteboard stringForType:NSPasteboardTypeString];
+  String8 result = {0};
+  if(ns_string != 0)
+  {
+    char const *utf8 = [ns_string UTF8String];
+    result = push_str8_copy(arena, str8_cstring((char *)utf8));
+  }
+  return result;
+}
+
 ////////////////////////////////
 //~ @os_hooks Windows (Implemented Per-OS)
 

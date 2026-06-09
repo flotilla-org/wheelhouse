@@ -30,6 +30,17 @@ wm_get_clipboard_text(Arena *arena)
   return str8_zero();
 }
 
+internal void
+wm_set_selection_text(String8 string)
+{
+}
+
+internal String8
+wm_get_selection_text(Arena *arena)
+{
+  return str8_zero();
+}
+
 ////////////////////////////////
 //~ rjf: @os_hooks Windows (Implemented Per-OS)
 

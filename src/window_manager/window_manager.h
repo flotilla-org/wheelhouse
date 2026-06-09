@@ -215,6 +215,12 @@ internal WM_SystemInfo *wm_get_system_info(void);
 
 internal void    wm_set_clipboard_text(String8 string);
 internal String8 wm_get_clipboard_text(Arena *arena);
+// Selection ("primary") buffer, distinct from the standard clipboard: set on
+// text selection, pasted by middle-click. On macOS this is the shared named
+// pasteboard `com.mitchellh.ghostty.selection` so selections interoperate with
+// Ghostty and cmux.
+internal void    wm_set_selection_text(String8 string);
+internal String8 wm_get_selection_text(Arena *arena);
 
 ////////////////////////////////
 //~ rjf: @os_hooks Windows (Implemented Per-OS)
