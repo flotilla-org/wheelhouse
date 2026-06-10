@@ -496,6 +496,7 @@ struct RD_WorkspaceSurfaceEntry
   U64 box_key;
   U64 workspace_id;
   B32 composite; // visible workspace composites to the stage; preview-scale ones render offscreen only
+  B32 full_res;  // non-composite, but rendered at full resolution (the selected child in the zoom view, for seamless open/close)
   U64 content_version_accum; // versions declared by the views built inside this workspace (terminal generations, text content hashes)
   B32 has_unversioned_views; // a view without a declared version was built -> shape-only preservation is unsafe; keep byte hashing
 };
@@ -620,8 +621,11 @@ struct RD_WindowState
   U64 workspace_surface_entry_count;
   RD_WorkspaceSurfaceEntry *active_workspace_surface_entry; // entry being built right now; views declare versions into it
 
-  // workspace zoom view: the controlled split presenting all children as tiles
+  // workspace zoom view: the controlled split presenting all children as tiles.
+  // zoom_t animates open/close; the selected child's composite interpolates
+  // between the full workspace presentation & its tile
   B32 workspace_zoom_open;
+  F32 workspace_zoom_t;
 
   // preview size demands: consumers register the size they show a workspace
   // preview at; the preview surface is allocated for the largest demand

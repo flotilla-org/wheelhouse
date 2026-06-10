@@ -5936,7 +5936,22 @@ rd_window_frame(void)
     }
     Rng2F32 workspace_rect = uishell_controlled_split_workspace_rect(&root_controlled_split, content_rect);
     ws->workspace_surface_entry_count = 0;
-    B32 workspace_zoom_open = ws->workspace_zoom_open;
+    //- animate the zoom transition; while open *or* in flight, children build
+    // as zoom-mode surfaces & the composites interpolate
+    {
+      F32 zoom_target = (F32)!!ws->workspace_zoom_open;
+      ws->workspace_zoom_t += rd_state->menu_animation_rate*(zoom_target - ws->workspace_zoom_t);
+      if(abs_f32(ws->workspace_zoom_t - zoom_target) < 0.005f)
+      {
+        ws->workspace_zoom_t = zoom_target;
+      }
+      else
+      {
+        rd_request_frame();
+      }
+    }
+    F32 workspace_zoom_t = ws->workspace_zoom_t;
+    B32 workspace_zoom_open = (ws->workspace_zoom_open || workspace_zoom_t > 0.f);
     // workspace surfaces build whenever something demands the previews: the
     // zoom view, or any consumer that registered a preview demand recently
     // (the control surface rows do, every frame they're visible) - no toggle
@@ -5991,7 +6006,11 @@ rd_window_frame(void)
         UI_Key child_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", child->id);
         ui_set_next_rect(window_rect);
         UI_Box *child_wrapper = ui_build_box_from_key(UI_BoxFlag_RenderToSurface|UI_BoxFlag_IgnoreInteraction, child_key);
-        ws->workspace_surface_entries[ws->workspace_surface_entry_count] = (RD_WorkspaceSurfaceEntry){child_key.u64[0], child->id, 0};
+        // the zoom view's selected child renders at full resolution: its
+        // composite interpolates to/from the full workspace presentation, &
+        // sharing the normal wrapper's texture size makes the handoff seamless
+        B32 child_full_res = (workspace_zoom_open && child->mount.owner_cfg == workspace_mount->owner_cfg);
+        ws->workspace_surface_entries[ws->workspace_surface_entry_count] = (RD_WorkspaceSurfaceEntry){child_key.u64[0], child->id, 0, child_full_res};
         ws->active_workspace_surface_entry = &ws->workspace_surface_entries[ws->workspace_surface_entry_count];
         ws->workspace_surface_entry_count += 1;
         UI_Parent(child_wrapper) UI_Focus(UI_FocusKind_Off)
@@ -6022,63 +6041,80 @@ rd_window_frame(void)
           F32 cell_h = (region_dim.y - pad*(grid_rows+1))/(F32)grid_rows;
           Vec2F32 window_dim = dim_2f32(window_rect);
           F32 aspect = (window_dim.y > 0 ? window_dim.x/window_dim.y : 1.6f);
-          U64 tile_idx = 0;
-          for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
+          //- two passes for z-order during the transition: the selected child's
+          // composite interpolates between the full window & its tile, & must
+          // draw over the others, which fade with zoom_t
+          for(U64 tile_pass = 0; tile_pass < 2; tile_pass += 1)
           {
-            if(child->mount.owner_cfg == &cfg_nil_node)
+            U64 tile_idx = 0;
+            for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
             {
-              continue;
-            }
-            U64 col = tile_idx%grid_cols;
-            U64 row = tile_idx/grid_cols;
-            tile_idx += 1;
-            Vec2F32 cell_p0 =
-            {
-              workspace_rect.x0 + pad + (F32)col*(cell_w + pad),
-              workspace_rect.y0 + pad + (F32)row*(cell_h + pad),
-            };
-            F32 img_w = cell_w;
-            F32 img_h = floor_f32(img_w/aspect);
-            if(img_h > cell_h - label_h)
-            {
-              img_h = cell_h - label_h;
-              img_w = floor_f32(img_h*aspect);
-            }
-            Rng2F32 img_rect = r2f32p(cell_p0.x + floor_f32((cell_w - img_w)*0.5f),
-                                      cell_p0.y,
-                                      cell_p0.x + floor_f32((cell_w - img_w)*0.5f) + img_w,
-                                      cell_p0.y + img_h);
-            Rng2F32 label_rect = r2f32p(img_rect.x0, img_rect.y1, img_rect.x1, img_rect.y1 + label_h);
-            B32 selected = (child->mount.owner_cfg == workspace_mount->owner_cfg);
-            rd_workspace_preview_demand_push(ws, child->id, img_w);
-            UI_TagF("tab") UI_TagF(!selected ? "inactive" : "")
-            {
-              ui_set_next_rect(img_rect);
-              UI_Box *tile_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
-                                                           UI_BoxFlag_DrawBackground|
-                                                           UI_BoxFlag_DrawBorder|
-                                                           UI_BoxFlag_DrawHotEffects,
-                                                           "###workspace_tile_%I64u", child->id);
-              UI_Key wrapper_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", child->id);
-              RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, wrapper_key.u64[0]);
-              if(node != 0)
+              if(child->mount.owner_cfg == &cfg_nil_node)
               {
-                ui_box_equip_custom_draw(tile_box, rd_workspace_preview_box_draw, node);
+                continue;
               }
-              UI_Signal tile_sig = ui_signal_from_box(tile_box);
-              if(ui_clicked(tile_sig))
+              U64 col = tile_idx%grid_cols;
+              U64 row = tile_idx/grid_cols;
+              tile_idx += 1;
+              B32 selected = (child->mount.owner_cfg == workspace_mount->owner_cfg);
+              if((tile_pass == 1) != (selected != 0))
               {
-                if(!selected)
+                continue;
+              }
+              Vec2F32 cell_p0 =
+              {
+                workspace_rect.x0 + pad + (F32)col*(cell_w + pad),
+                workspace_rect.y0 + pad + (F32)row*(cell_h + pad),
+              };
+              F32 img_w = cell_w;
+              F32 img_h = floor_f32(img_w/aspect);
+              if(img_h > cell_h - label_h)
+              {
+                img_h = cell_h - label_h;
+                img_w = floor_f32(img_h*aspect);
+              }
+              Rng2F32 img_rect = r2f32p(cell_p0.x + floor_f32((cell_w - img_w)*0.5f),
+                                        cell_p0.y,
+                                        cell_p0.x + floor_f32((cell_w - img_w)*0.5f) + img_w,
+                                        cell_p0.y + img_h);
+              Rng2F32 tile_rect = img_rect;
+              if(selected && workspace_zoom_t < 1.f)
+              {
+                tile_rect.p0 = mix_2f32(window_rect.p0, img_rect.p0, workspace_zoom_t);
+                tile_rect.p1 = mix_2f32(window_rect.p1, img_rect.p1, workspace_zoom_t);
+              }
+              Rng2F32 label_rect = r2f32p(img_rect.x0, img_rect.y1, img_rect.x1, img_rect.y1 + label_h);
+              rd_workspace_preview_demand_push(ws, child->id, img_w);
+              F32 tile_transparency = (selected ? 0.f : 1.f - workspace_zoom_t);
+              UI_TagF("tab") UI_TagF(!selected ? "inactive" : "") UI_Transparency(tile_transparency)
+              {
+                ui_set_next_rect(tile_rect);
+                UI_Box *tile_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                                             UI_BoxFlag_DrawBackground|
+                                                             UI_BoxFlag_DrawBorder|
+                                                             UI_BoxFlag_DrawHotEffects,
+                                                             "###workspace_tile_%I64u", child->id);
+                UI_Key wrapper_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", child->id);
+                RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, wrapper_key.u64[0]);
+                if(node != 0)
                 {
-                  uishell_cmd("select_workspace", .window = root_controlled_split.owner_cfg->id, .cfg = child->id);
+                  ui_box_equip_custom_draw(tile_box, rd_workspace_preview_box_draw, node);
                 }
-                ws->workspace_zoom_open = 0;
-              }
-              ui_set_next_rect(label_rect);
-              UI_TextAlignment(UI_TextAlign_Center)
-              {
-                UI_Box *label_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText, "###workspace_tile_label_%I64u", child->id);
-                ui_box_equip_display_string(label_box, child->display_name);
+                UI_Signal tile_sig = ui_signal_from_box(tile_box);
+                if(ui_clicked(tile_sig))
+                {
+                  if(!selected)
+                  {
+                    uishell_cmd("select_workspace", .window = root_controlled_split.owner_cfg->id, .cfg = child->id);
+                  }
+                  ws->workspace_zoom_open = 0;
+                }
+                ui_set_next_rect(label_rect);
+                UI_TextAlignment(UI_TextAlign_Center) UI_Transparency(1.f - workspace_zoom_t)
+                {
+                  UI_Box *label_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText, "###workspace_tile_label_%I64u", child->id);
+                  ui_box_equip_display_string(label_box, child->display_name);
+                }
               }
             }
           }
@@ -6291,7 +6327,7 @@ rd_window_frame(void)
         // non-visible workspace surfaces render at reduced resolution: they're
         // only ever consumed as previews, & this quarters their memory
         RD_WorkspaceSurfaceEntry *ws_entry = rd_workspace_surface_entry_from_box_key(ws, box->key.u64[0]);
-        if(ws_entry != 0 && !ws_entry->composite)
+        if(ws_entry != 0 && !ws_entry->composite && !ws_entry->full_res)
         {
           backing_scale *= 0.5f;
         }
