@@ -148,6 +148,7 @@ struct R_BatchGroup2DParams
   Mat3x3F32 xform;
   Rng2F32 clip;
   F32 transparency;
+  B32 tex_sample_is_surface; // tex holds premultiplied linear color (a surface), not sRGB image data
 };
 
 typedef struct R_BatchGroup2DNode R_BatchGroup2DNode;
@@ -201,6 +202,8 @@ typedef struct R_PassParams_UI R_PassParams_UI;
 struct R_PassParams_UI
 {
   R_BatchGroup2DList rects;
+  R_Handle target;      // zero -> render to the window's stage; nonzero -> render-target texture
+  Rng2F32 target_rect;  // window-space rect the target covers, when target is nonzero
 };
 
 typedef struct R_PassParams_Blur R_PassParams_Blur;
@@ -280,6 +283,7 @@ internal void *r_batch_list_push_inst(Arena *arena, R_BatchList *list, U64 batch
 ////////////////////////////////
 //~ rjf: Pass Type Functions
 
+internal R_Pass *r_pass_push(Arena *arena, R_PassList *list, R_PassKind kind);
 internal R_Pass *r_pass_from_kind(Arena *arena, R_PassList *list, R_PassKind kind);
 
 ////////////////////////////////
@@ -294,6 +298,7 @@ r_hook void              r_window_unequip(WM_Window window, R_Handle window_equi
 
 //- rjf: textures
 r_hook R_Handle          r_tex2d_alloc(R_ResourceKind kind, Vec2S32 size, R_Tex2DFormat format, void *data);
+r_hook R_Handle          r_tex2d_alloc_render_target(Vec2S32 size);
 r_hook void              r_tex2d_release(R_Handle texture);
 r_hook R_ResourceKind    r_kind_from_tex2d(R_Handle texture);
 r_hook Vec2S32           r_size_from_tex2d(R_Handle texture);

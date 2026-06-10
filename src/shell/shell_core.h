@@ -574,6 +574,10 @@ struct RD_WindowState
 
   // rjf: per-frame drawing state
   DR_Bucket *draw_bucket;
+
+  // rjf: cached panel surface render target (DEV draw_panel_surface tracer)
+  R_Handle panel_surface;
+  Vec2S32 panel_surface_size;
 };
 
 typedef struct RD_WindowStateSlot RD_WindowStateSlot;

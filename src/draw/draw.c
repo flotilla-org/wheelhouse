@@ -563,6 +563,48 @@ dr_sub_bucket(DR_Bucket *bucket)
   }
 }
 
+//- rjf: surfaces (redirecting draws into a render-target texture, then compositing it back)
+
+internal void
+dr_surface_begin(R_Handle target, Rng2F32 target_rect)
+{
+  Arena *arena = dr_thread_ctx->arena;
+  DR_Bucket *bucket = dr_top_bucket();
+  R_Pass *pass = r_pass_push(arena, &bucket->passes, R_PassKind_UI);
+  pass->params_ui->target = target;
+  pass->params_ui->target_rect = target_rect;
+  bucket->surface_target = target;
+  bucket->surface_rect = target_rect;
+}
+
+internal void
+dr_surface_end_composite(void)
+{
+  Arena *arena = dr_thread_ctx->arena;
+  DR_Bucket *bucket = dr_top_bucket();
+  R_Handle target = bucket->surface_target;
+  Rng2F32 target_rect = bucket->surface_rect;
+  bucket->surface_target = r_handle_zero();
+  MemoryZeroStruct(&bucket->surface_rect);
+  if(!r_handle_match(target, r_handle_zero()))
+  {
+    // rjf: resume drawing to the stage, & composite the surface where it would have drawn
+    r_pass_push(arena, &bucket->passes, R_PassKind_UI);
+    Vec2S32 size_px = r_size_from_tex2d(target);
+    dr_img(target_rect, r2f32p(0, 0, (F32)size_px.x, (F32)size_px.y), target, v4f32(1, 1, 1, 1), 0, 0, 0);
+    R_PassParams_UI *params = bucket->passes.last->v.params_ui;
+    params->rects.last->params.tex_sample_is_surface = 1;
+    bucket->stack_gen += 1; // sequester the composite in its own batch group
+  }
+}
+
+internal B32
+dr_surface_is_active(void)
+{
+  DR_Bucket *bucket = dr_top_bucket();
+  return !r_handle_match(bucket->surface_target, r_handle_zero());
+}
+
 ////////////////////////////////
 //~ rjf: Draw Call Helpers
 

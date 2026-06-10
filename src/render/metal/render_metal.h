@@ -73,7 +73,7 @@ struct R_MTL_RectUniforms
 {
   Vec2F32 viewport_size;
   F32 opacity;
-  F32 _padding0_;
+  F32 sample_is_surface;
   Mat4x4F32 texture_sample_channel_map;
   Vec2F32 texture_size;
   Vec2F32 xform_scale;
@@ -113,6 +113,7 @@ struct R_MTL_State
   id<MTLCommandQueue> command_queue;
   void (^command_buffer_completion_handler)(id<MTLCommandBuffer>);
   id<MTLRenderPipelineState> rect_pipeline;
+  id<MTLRenderPipelineState> rect_surface_pipeline;
   id<MTLRenderPipelineState> blur_pipeline;
   id<MTLRenderPipelineState> mesh_pipeline;
   id<MTLRenderPipelineState> geo3d_composite_pipeline;
@@ -152,7 +153,7 @@ internal U64 r_mtl_blit_texture_bytes_per_row(U64 row_bytes);
 internal id<MTLBuffer> r_mtl_static_upload_buffer_from_size(U64 size);
 internal void r_mtl_log_ns_error(char *context, NSError *error);
 internal id<MTLRenderPipelineState> r_mtl_render_pipeline_from_library(id<MTLLibrary> library, NSString *vertex_name, NSString *fragment_name, MTLPixelFormat pixel_format);
-internal id<MTLRenderPipelineState> r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_name, NSString *fragment_name, MTLPixelFormat color_pixel_format, MTLPixelFormat depth_pixel_format, B32 blend);
+internal id<MTLRenderPipelineState> r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_name, NSString *fragment_name, MTLPixelFormat color_pixel_format, MTLPixelFormat depth_pixel_format, B32 blend, B32 coverage_alpha);
 internal void r_mtl_retire_object(id object);
 internal void r_mtl_drain_retired_slot(U64 slot_idx);
 internal void r_mtl_window_resize_targets(R_MTL_Window *window);

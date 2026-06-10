@@ -125,6 +125,17 @@ r_batch_list_push_inst(Arena *arena, R_BatchList *list, U64 batch_inst_cap)
 //~ rjf: Pass Type Functions
 
 internal R_Pass *
+r_pass_push(Arena *arena, R_PassList *list, R_PassKind kind)
+{
+  R_PassNode *n = push_array(arena, R_PassNode, 1);
+  SLLQueuePush(list->first, list->last, n);
+  list->count += 1;
+  n->v.kind = kind;
+  n->v.params = push_array(arena, U8, r_pass_kind_params_size_table[kind]);
+  return &n->v;
+}
+
+internal R_Pass *
 r_pass_from_kind(Arena *arena, R_PassList *list, R_PassKind kind)
 {
   R_PassNode *n = list->last;
@@ -134,11 +145,7 @@ r_pass_from_kind(Arena *arena, R_PassList *list, R_PassKind kind)
   }
   if(n == 0 || n->v.kind != kind)
   {
-    n = push_array(arena, R_PassNode, 1);
-    SLLQueuePush(list->first, list->last, n);
-    list->count += 1;
-    n->v.kind = kind;
-    n->v.params = push_array(arena, U8, r_pass_kind_params_size_table[kind]);
+    return r_pass_push(arena, list, kind);
   }
   return &n->v;
 }

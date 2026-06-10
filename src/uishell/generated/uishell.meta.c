@@ -8,6 +8,7 @@ global B32 DEV_simulate_lag = 0;
 global B32 DEV_draw_ui_text_pos = 0;
 global B32 DEV_draw_ui_focus_debug = 0;
 global B32 DEV_draw_ui_box_heatmap = 0;
+global B32 DEV_draw_panel_surface = 0;
 global B32 DEV_eval_compiler_tooltips = 0;
 global B32 DEV_eval_watch_key_tooltips = 0;
 global B32 DEV_cmd_context_tooltips = 0;
@@ -19,6 +20,7 @@ struct {B32 *value_ptr; String8 name;} DEV_toggle_table[] =
 {&DEV_draw_ui_text_pos, str8_lit_comp("draw_ui_text_pos")},
 {&DEV_draw_ui_focus_debug, str8_lit_comp("draw_ui_focus_debug")},
 {&DEV_draw_ui_box_heatmap, str8_lit_comp("draw_ui_box_heatmap")},
+{&DEV_draw_panel_surface, str8_lit_comp("draw_panel_surface")},
 {&DEV_eval_compiler_tooltips, str8_lit_comp("eval_compiler_tooltips")},
 {&DEV_eval_watch_key_tooltips, str8_lit_comp("eval_watch_key_tooltips")},
 {&DEV_cmd_context_tooltips, str8_lit_comp("cmd_context_tooltips")},

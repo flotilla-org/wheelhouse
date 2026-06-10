@@ -81,6 +81,8 @@ struct DR_Bucket
   R_PassList passes;
   U64 stack_gen;
   U64 last_cmd_stack_gen;
+  R_Handle surface_target; // nonzero while bracketed by dr_surface_begin/dr_surface_end_composite
+  Rng2F32 surface_rect;
   DR_BucketStackDecls;
 };
 
@@ -196,6 +198,11 @@ internal R_Mesh3DInst *dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_
 
 //- rjf: collating one pre-prepped bucket into parent bucket
 internal void dr_sub_bucket(DR_Bucket *bucket);
+
+//- rjf: surfaces (redirecting draws into a render-target texture, then compositing it back)
+internal void dr_surface_begin(R_Handle target, Rng2F32 target_rect);
+internal void dr_surface_end_composite(void);
+internal B32 dr_surface_is_active(void);
 
 ////////////////////////////////
 //~ rjf: Draw Call Helpers

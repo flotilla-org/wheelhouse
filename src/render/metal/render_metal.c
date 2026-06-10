@@ -160,7 +160,7 @@ r_mtl_log_command_buffer_error(id<MTLCommandBuffer> command_buffer)
 }
 
 internal id<MTLRenderPipelineState>
-r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_name, NSString *fragment_name, MTLPixelFormat color_pixel_format, MTLPixelFormat depth_pixel_format, B32 blend)
+r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_name, NSString *fragment_name, MTLPixelFormat color_pixel_format, MTLPixelFormat depth_pixel_format, B32 blend, B32 coverage_alpha)
 {
   id<MTLRenderPipelineState> result = 0;
   id<MTLFunction> vertex_function = [library newFunctionWithName:vertex_name];
@@ -180,7 +180,10 @@ r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_n
       descriptor.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
       descriptor.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
       descriptor.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
-      descriptor.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorZero;
+      // rjf: coverage_alpha accumulates source-over coverage in dst alpha, which renders
+      // into transparent-cleared surfaces as premultiplied color + coverage; the default
+      // replaces dst alpha (the stage's alpha is never read again, so it doesn't matter there)
+      descriptor.colorAttachments[0].destinationAlphaBlendFactor = (coverage_alpha ? MTLBlendFactorOneMinusSourceAlpha : MTLBlendFactorZero);
     }
     NSError *error = 0;
     result = [r_mtl_state->device newRenderPipelineStateWithDescriptor:descriptor error:&error];
@@ -199,7 +202,7 @@ r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_n
 internal id<MTLRenderPipelineState>
 r_mtl_render_pipeline_from_library(id<MTLLibrary> library, NSString *vertex_name, NSString *fragment_name, MTLPixelFormat pixel_format)
 {
-  id<MTLRenderPipelineState> result = r_mtl_render_pipeline_from_library_ex(library, vertex_name, fragment_name, pixel_format, MTLPixelFormatInvalid, 1);
+  id<MTLRenderPipelineState> result = r_mtl_render_pipeline_from_library_ex(library, vertex_name, fragment_name, pixel_format, MTLPixelFormatInvalid, 1, 0);
   return result;
 }
 
@@ -454,8 +457,9 @@ r_init(CmdLine *cmdln)
       if(library != 0)
       {
         r_mtl_state->rect_pipeline = r_mtl_render_pipeline_from_library(library, @"rect_vertex", @"rect_fragment", MTLPixelFormatRGBA16Float);
+        r_mtl_state->rect_surface_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"rect_vertex", @"rect_fragment", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 1);
         r_mtl_state->blur_pipeline = r_mtl_render_pipeline_from_library(library, @"blur_vertex", @"blur_fragment", MTLPixelFormatRGBA16Float);
-        r_mtl_state->mesh_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"mesh_vertex", @"mesh_fragment", MTLPixelFormatRGBA8Unorm, MTLPixelFormatDepth32Float, 1);
+        r_mtl_state->mesh_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"mesh_vertex", @"mesh_fragment", MTLPixelFormatRGBA8Unorm, MTLPixelFormatDepth32Float, 1, 0);
         r_mtl_state->geo3d_composite_pipeline = r_mtl_render_pipeline_from_library(library, @"fullscreen_vertex", @"composite_fragment", MTLPixelFormatRGBA16Float);
         r_mtl_state->finalize_pipeline = r_mtl_render_pipeline_from_library(library, @"fullscreen_vertex", @"finalize_fragment", MTLPixelFormatBGRA8Unorm_sRGB);
         [library release];
@@ -644,6 +648,39 @@ r_tex2d_alloc(R_ResourceKind kind, Vec2S32 size, R_Tex2DFormat format, void *dat
                              bytesPerRow:size.x*bytes_per_pixel];
       }
     }
+    result = r_mtl_handle_from_tex2d(texture);
+  }
+  return result;
+}
+
+r_hook R_Handle
+r_tex2d_alloc_render_target(Vec2S32 size)
+{
+  R_Handle result = {0};
+  MutexScopeW(r_mtl_state->device_rw_mutex)
+  {
+    R_MTL_Tex2D *texture = r_mtl_state->free_tex2d;
+    if(texture != 0)
+    {
+      SLLStackPop(r_mtl_state->free_tex2d);
+    }
+    else
+    {
+      texture = push_array_no_zero(r_mtl_state->arena, R_MTL_Tex2D, 1);
+    }
+    MemoryZeroStruct(texture);
+    texture->kind = R_ResourceKind_Static;
+    // NOTE(rjf): render targets share the stage's pixel format (RGBA16Float), which has no
+    // R_Tex2DFormat; RGBA16 gives the identity sample channel map & correct bytes-per-pixel
+    texture->format = R_Tex2DFormat_RGBA16;
+    texture->size = size;
+    MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float
+                                                                                         width:Max(size.x, 1)
+                                                                                        height:Max(size.y, 1)
+                                                                                     mipmapped:NO];
+    descriptor.usage = MTLTextureUsageShaderRead|MTLTextureUsageRenderTarget;
+    descriptor.storageMode = MTLStorageModePrivate;
+    texture->texture = [r_mtl_state->device newTextureWithDescriptor:descriptor];
     result = r_mtl_handle_from_tex2d(texture);
   }
   return result;
@@ -871,14 +908,30 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
           {
             if(r_mtl_state->rect_pipeline != 0)
             {
+              R_PassParams_UI *params = render_pass->params_ui;
+
+              //- rjf: unpack optional render target; surface passes draw into their own
+              // texture (cleared to transparent), in coordinates relative to target_rect
+              R_MTL_Tex2D *target = r_mtl_tex2d_from_handle(params->target);
+              B32 to_surface = (target != 0 && target->texture != 0);
+              Vec2F32 pass_viewport_dim = viewport_dim;
+              Vec2S32 pass_attachment_size = mtl_window->drawable_size;
+              Vec2F32 target_origin = v2f32(0, 0);
+              if(to_surface)
+              {
+                pass_viewport_dim = dim_2f32(params->target_rect);
+                pass_attachment_size = target->size;
+                target_origin = params->target_rect.p0;
+              }
+
               MTLRenderPassDescriptor *stage_pass = mtl_window->stage_pass;
-              stage_pass.colorAttachments[0].texture = mtl_window->stage_color;
-              stage_pass.colorAttachments[0].loadAction = MTLLoadActionLoad;
+              stage_pass.colorAttachments[0].texture = (to_surface ? target->texture : mtl_window->stage_color);
+              stage_pass.colorAttachments[0].loadAction = (to_surface ? MTLLoadActionClear : MTLLoadActionLoad);
+              stage_pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
               stage_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
               id<MTLRenderCommandEncoder> encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_pass];
-              [encoder setRenderPipelineState:r_mtl_state->rect_pipeline];
+              [encoder setRenderPipelineState:(to_surface ? r_mtl_state->rect_surface_pipeline : r_mtl_state->rect_pipeline)];
 
-              R_PassParams_UI *params = render_pass->params_ui;
               for(R_BatchGroup2DNode *group_n = params->rects.first; group_n != 0; group_n = group_n->next)
               {
                 R_BatchList *batches = &group_n->batches;
@@ -900,17 +953,23 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                     MemoryCopy(insts, batch_n->v.v, batch_n->v.byte_count);
                     insts += batch_n->v.byte_count;
                   }
+                  Mat3x3F32 group_xform = group_params->xform;
+                  if(to_surface)
+                  {
+                    group_xform = mul_3x3f32(make_translate_3x3f32(v2f32(-target_origin.x, -target_origin.y)), group_xform);
+                  }
                   R_MTL_RectUniforms group_uniforms = {0};
-                  group_uniforms.viewport_size = viewport_dim;
+                  group_uniforms.viewport_size = pass_viewport_dim;
                   group_uniforms.opacity = 1.f - group_params->transparency;
+                  group_uniforms.sample_is_surface = (F32)!!group_params->tex_sample_is_surface;
                   group_uniforms.texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture->format);
                   group_uniforms.texture_size = v2f32((F32)Max(texture->size.x, 1), (F32)Max(texture->size.y, 1));
-                  Vec2F32 xform_2x2_col0 = v2f32(group_params->xform.v[0][0], group_params->xform.v[0][1]);
-                  Vec2F32 xform_2x2_col1 = v2f32(group_params->xform.v[1][0], group_params->xform.v[1][1]);
+                  Vec2F32 xform_2x2_col0 = v2f32(group_xform.v[0][0], group_xform.v[0][1]);
+                  Vec2F32 xform_2x2_col1 = v2f32(group_xform.v[1][0], group_xform.v[1][1]);
                   group_uniforms.xform_scale = v2f32(length_2f32(xform_2x2_col0), length_2f32(xform_2x2_col1));
-                  group_uniforms.xform[0] = v4f32(group_params->xform.v[0][0], group_params->xform.v[1][0], group_params->xform.v[2][0], 0);
-                  group_uniforms.xform[1] = v4f32(group_params->xform.v[0][1], group_params->xform.v[1][1], group_params->xform.v[2][1], 0);
-                  group_uniforms.xform[2] = v4f32(group_params->xform.v[0][2], group_params->xform.v[1][2], group_params->xform.v[2][2], 0);
+                  group_uniforms.xform[0] = v4f32(group_xform.v[0][0], group_xform.v[1][0], group_xform.v[2][0], 0);
+                  group_uniforms.xform[1] = v4f32(group_xform.v[0][1], group_xform.v[1][1], group_xform.v[2][1], 0);
+                  group_uniforms.xform[2] = v4f32(group_xform.v[0][2], group_xform.v[1][2], group_xform.v[2][2], 0);
                   U64 uniform_offset = 0;
                   id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&group_uniforms, sizeof(group_uniforms), 256, &uniform_offset);
                   if(group_params->clip.x0 != 0 ||
@@ -918,8 +977,13 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                      group_params->clip.x1 != 0 ||
                      group_params->clip.y1 != 0)
                   {
+                    Rng2F32 clip = group_params->clip;
+                    if(to_surface)
+                    {
+                      clip = shift_2f32(clip, v2f32(-target_origin.x, -target_origin.y));
+                    }
                     MTLScissorRect scissor = {0};
-                    if(!r_mtl_scissor_from_clip(group_params->clip, mtl_window->drawable_size, scale, &scissor))
+                    if(!r_mtl_scissor_from_clip(clip, pass_attachment_size, scale, &scissor))
                     {
                       continue;
                     }
@@ -930,7 +994,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                   }
                   else
                   {
-                    MTLScissorRect scissor = {0, 0, (NSUInteger)mtl_window->drawable_size.x, (NSUInteger)mtl_window->drawable_size.y};
+                    MTLScissorRect scissor = {0, 0, (NSUInteger)pass_attachment_size.x, (NSUInteger)pass_attachment_size.y};
                     [encoder setScissorRect:scissor];
                   }
                   [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:0];

@@ -24,7 +24,7 @@ struct MeshVertex {
 struct RectUniforms {
   packed_float2 viewport_size;
   float opacity;
-  float _padding0;
+  float sample_is_surface;
   float4x4 texture_sample_channel_map;
   packed_float2 texture_size;
   packed_float2 xform_scale;
@@ -134,7 +134,15 @@ fragment float4 rect_fragment(VertexOut in [[stage_in]],
   float4 sample_color = float4(1.0f);
   if(in.omit_texture < 0.5f) {
     sample_color = uniforms.texture_sample_channel_map * tex.sample(tex_sampler, in.texcoord);
-    sample_color = linear_from_srgba(sample_color);
+    if(uniforms.sample_is_surface > 0.5f) {
+      // surface textures hold premultiplied linear color; un-premultiply so that
+      // the standard source-alpha blend reproduces premultiplied source-over exactly
+      if(sample_color.a > 0.0001f) {
+        sample_color.rgb /= sample_color.a;
+      }
+    } else {
+      sample_color = linear_from_srgba(sample_color);
+    }
   }
   float soft_span = max(2.0f*in.softness, 0.001f);
   float border_sdf_t = 1.0f;

@@ -3103,7 +3103,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                               UI_BoxFlag_Clip|
                                               UI_BoxFlag_DrawBorder|
                                               UI_BoxFlag_DisableFocusOverlay|
-                                              ((panel_tree.focused != panel)*UI_BoxFlag_DisableFocusBorder),
+                                              ((panel_tree.focused != panel)*UI_BoxFlag_DisableFocusBorder)|
+                                              ((DEV_draw_panel_surface && panel_tree.focused == panel)*UI_BoxFlag_RenderToSurface),
                                               panel_key);
           }
           
@@ -5708,6 +5709,7 @@ rd_window_frame(void)
     //- rjf: recurse & draw
     U64 total_heatmap_sum_count = 0;
     UI_Box *hover_debug_box = &ui_nil_box;
+    UI_Box *surface_box = &ui_nil_box;
     for(UI_Box *box = ui_root_from_state(ws->ui); !ui_box_is_nil(box);)
     {
       // rjf: get corner radii
@@ -5776,11 +5778,39 @@ rd_window_frame(void)
         MemoryCopyArray(inst->corner_radii, box_corner_radii);
       }
       
-      // rjf: blur background
-      if(do_background_blur && box->flags & UI_BoxFlag_DrawBackgroundBlur)
+      // rjf: blur background (skipped inside a surface bracket - a blur pass would
+      // sever the surface's UI pass & its result would composite under, not into, the surface)
+      if(do_background_blur && box->flags & UI_BoxFlag_DrawBackgroundBlur && ui_box_is_nil(surface_box))
       {
         R_PassParams_Blur *params = dr_blur(pad_2f32(box->rect, 1.f), box->blur_size*(1-box->transparency), 0);
         MemoryCopyArray(params->corner_radii, box_corner_radii);
+      }
+
+      // rjf: begin offscreen surface -> this box & its subtree draw into a render-target
+      // texture, composited back at its rect on pop (View Surface tracer; no nesting)
+      if(box->flags & UI_BoxFlag_RenderToSurface && ui_box_is_nil(surface_box))
+      {
+        Rng2F32 surface_rect = pad_2f32(box->rect, 2.f);
+        F32 backing_scale = wm_backing_scale_from_window(ws->os);
+        Vec2F32 surface_dim = dim_2f32(surface_rect);
+        Vec2S32 size_px = v2s32((S32)ceil_f32(surface_dim.x*backing_scale),
+                                (S32)ceil_f32(surface_dim.y*backing_scale));
+        if(ws->panel_surface_size.x != size_px.x ||
+           ws->panel_surface_size.y != size_px.y ||
+           r_handle_match(ws->panel_surface, r_handle_zero()))
+        {
+          if(!r_handle_match(ws->panel_surface, r_handle_zero()))
+          {
+            r_tex2d_release(ws->panel_surface);
+          }
+          ws->panel_surface = r_tex2d_alloc_render_target(size_px);
+          ws->panel_surface_size = size_px;
+        }
+        if(!r_handle_match(ws->panel_surface, r_handle_zero()))
+        {
+          surface_box = box;
+          dr_surface_begin(ws->panel_surface, surface_rect);
+        }
       }
       
       // rjf: compute effective active t
@@ -6015,7 +6045,14 @@ rd_window_frame(void)
           {
             dr_pop_clip();
           }
-          
+
+          // rjf: end offscreen surface -> composite it where the subtree would have drawn
+          if(b == surface_box)
+          {
+            surface_box = &ui_nil_box;
+            dr_surface_end_composite();
+          }
+
           // rjf: get corner radii
           F32 b_corner_radii[Corner_COUNT] =
           {
@@ -6133,7 +6170,14 @@ rd_window_frame(void)
       // rjf: next
       box = rec.next;
     }
-    
+
+    //- rjf: safety: never leave a surface bracket dangling past the walk
+    if(!ui_box_is_nil(surface_box))
+    {
+      surface_box = &ui_nil_box;
+      dr_surface_end_composite();
+    }
+
     //- rjf: draw heatmap
     if(DEV_draw_ui_box_heatmap)
     {
