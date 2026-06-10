@@ -490,6 +490,16 @@ struct RD_DropCompletionTask
   String8List paths;
 };
 
+typedef struct RD_SurfaceCacheNode RD_SurfaceCacheNode;
+struct RD_SurfaceCacheNode
+{
+  RD_SurfaceCacheNode *next;
+  U64 key;
+  R_Handle texture;
+  Vec2S32 size;
+  U64 last_use_frame_index;
+};
+
 typedef struct RD_WindowState RD_WindowState;
 struct RD_WindowState
 {
@@ -575,9 +585,10 @@ struct RD_WindowState
   // rjf: per-frame drawing state
   DR_Bucket *draw_bucket;
 
-  // rjf: cached panel surface render target (DEV draw_panel_surface tracer)
-  R_Handle panel_surface;
-  Vec2S32 panel_surface_size;
+  // rjf: surface render-target cache, keyed by content (box key); see
+  // UI_BoxFlag_RenderToSurface & the draw-walk surface bracketing
+  RD_SurfaceCacheNode *first_surface_cache_node;
+  RD_SurfaceCacheNode *free_surface_cache_node;
 };
 
 typedef struct RD_WindowStateSlot RD_WindowStateSlot;
@@ -968,6 +979,8 @@ internal String8 rd_push_window_title(Arena *arena);
 internal CFG_Node *rd_window_from_cfg(CFG_Node *cfg);
 internal RD_WindowState *rd_window_state_from_cfg__existing(CFG_Node *cfg);
 internal RD_WindowState *rd_window_state_from_cfg(CFG_Node *cfg);
+internal R_Handle rd_window_surface_from_key(RD_WindowState *ws, U64 key, Vec2S32 size);
+internal void rd_window_surface_cache_evict(RD_WindowState *ws);
 internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);
 internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner);

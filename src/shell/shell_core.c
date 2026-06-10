@@ -1304,7 +1304,14 @@ rd_view_ui(Rng2F32 rect)
   UI_Box *view_container = &ui_nil_box;
   UI_WidthFill UI_HeightFill
   {
-    view_container = ui_build_box_from_key(0, ui_key_zero());
+    UI_BoxFlags container_flags = 0;
+    UI_Key container_key = ui_key_zero();
+    if(DEV_draw_view_surfaces)
+    {
+      container_flags |= UI_BoxFlag_RenderToSurface;
+      container_key = ui_key_from_stringf(ui_key_zero(), "###view_surface_%I64u", uishell_regs()->view);
+    }
+    view_container = ui_build_box_from_key(container_flags, container_key);
   }
   
   //////////////////////////////
@@ -1879,6 +1886,65 @@ rd_window_state_from_cfg__existing(CFG_Node *cfg)
     }
   }
   return ws;
+}
+
+internal R_Handle
+rd_window_surface_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
+{
+  RD_SurfaceCacheNode *node = 0;
+  for(RD_SurfaceCacheNode *n = ws->first_surface_cache_node; n != 0; n = n->next)
+  {
+    if(n->key == key)
+    {
+      node = n;
+      break;
+    }
+  }
+  if(node != 0 && (node->size.x != size.x || node->size.y != size.y))
+  {
+    r_tex2d_release(node->texture);
+    node->texture = r_tex2d_alloc_render_target(size);
+    node->size = size;
+  }
+  if(node == 0)
+  {
+    node = ws->free_surface_cache_node;
+    if(node != 0)
+    {
+      SLLStackPop(ws->free_surface_cache_node);
+    }
+    else
+    {
+      node = push_array(ws->arena, RD_SurfaceCacheNode, 1);
+    }
+    node->key = key;
+    node->texture = r_tex2d_alloc_render_target(size);
+    node->size = size;
+    SLLStackPush(ws->first_surface_cache_node, node);
+  }
+  node->last_use_frame_index = rd_state->frame_index;
+  return node->texture;
+}
+
+internal void
+rd_window_surface_cache_evict(RD_WindowState *ws)
+{
+  for(RD_SurfaceCacheNode *n = ws->first_surface_cache_node, *next = 0, **prev_next = &ws->first_surface_cache_node;
+      n != 0;
+      n = next)
+  {
+    next = n->next;
+    if(n->last_use_frame_index < rd_state->frame_index)
+    {
+      r_tex2d_release(n->texture);
+      *prev_next = n->next;
+      SLLStackPush(ws->free_surface_cache_node, n);
+    }
+    else
+    {
+      prev_next = &n->next;
+    }
+  }
 }
 
 internal RD_WindowState *
@@ -5715,7 +5781,8 @@ rd_window_frame(void)
     //- rjf: recurse & draw
     U64 total_heatmap_sum_count = 0;
     UI_Box *hover_debug_box = &ui_nil_box;
-    UI_Box *surface_box = &ui_nil_box;
+    UI_Box *surface_box_stack[8] = {0};
+    U64 surface_box_count = 0;
     for(UI_Box *box = ui_root_from_state(ws->ui); !ui_box_is_nil(box);)
     {
       // rjf: get corner radii
@@ -5786,36 +5853,29 @@ rd_window_frame(void)
       
       // rjf: blur background (skipped inside a surface bracket - a blur pass would
       // sever the surface's UI pass & its result would composite under, not into, the surface)
-      if(do_background_blur && box->flags & UI_BoxFlag_DrawBackgroundBlur && ui_box_is_nil(surface_box))
+      if(do_background_blur && box->flags & UI_BoxFlag_DrawBackgroundBlur && surface_box_count == 0)
       {
         R_PassParams_Blur *params = dr_blur(pad_2f32(box->rect, 1.f), box->blur_size*(1-box->transparency), 0);
         MemoryCopyArray(params->corner_radii, box_corner_radii);
       }
 
-      // rjf: begin offscreen surface -> this box & its subtree draw into a render-target
-      // texture, composited back at its rect on pop (View Surface tracer; no nesting)
-      if(box->flags & UI_BoxFlag_RenderToSurface && ui_box_is_nil(surface_box))
+      // rjf: begin offscreen surface -> this box & its subtree draw into a cached
+      // render-target texture keyed by the box's key, composited back at its rect on pop
+      if(box->flags & UI_BoxFlag_RenderToSurface &&
+         !ui_key_match(box->key, ui_key_zero()) &&
+         surface_box_count < ArrayCount(surface_box_stack))
       {
         Rng2F32 surface_rect = pad_2f32(box->rect, 2.f);
         F32 backing_scale = wm_backing_scale_from_window(ws->os);
         Vec2F32 surface_dim = dim_2f32(surface_rect);
         Vec2S32 size_px = v2s32((S32)ceil_f32(surface_dim.x*backing_scale),
                                 (S32)ceil_f32(surface_dim.y*backing_scale));
-        if(ws->panel_surface_size.x != size_px.x ||
-           ws->panel_surface_size.y != size_px.y ||
-           r_handle_match(ws->panel_surface, r_handle_zero()))
+        R_Handle surface = rd_window_surface_from_key(ws, box->key.u64[0], size_px);
+        if(!r_handle_match(surface, r_handle_zero()))
         {
-          if(!r_handle_match(ws->panel_surface, r_handle_zero()))
-          {
-            r_tex2d_release(ws->panel_surface);
-          }
-          ws->panel_surface = r_tex2d_alloc_render_target(size_px);
-          ws->panel_surface_size = size_px;
-        }
-        if(!r_handle_match(ws->panel_surface, r_handle_zero()))
-        {
-          surface_box = box;
-          dr_surface_begin(ws->panel_surface, surface_rect);
+          surface_box_stack[surface_box_count] = box;
+          surface_box_count += 1;
+          dr_surface_begin(surface, surface_rect);
         }
       }
       
@@ -6053,9 +6113,9 @@ rd_window_frame(void)
           }
 
           // rjf: end offscreen surface -> composite it where the subtree would have drawn
-          if(b == surface_box)
+          if(surface_box_count != 0 && b == surface_box_stack[surface_box_count-1])
           {
-            surface_box = &ui_nil_box;
+            surface_box_count -= 1;
             dr_surface_end_composite();
           }
 
@@ -6177,12 +6237,14 @@ rd_window_frame(void)
       box = rec.next;
     }
 
-    //- rjf: safety: never leave a surface bracket dangling past the walk
-    if(!ui_box_is_nil(surface_box))
+    //- rjf: safety: never leave surface brackets dangling past the walk
+    for(; surface_box_count != 0; surface_box_count -= 1)
     {
-      surface_box = &ui_nil_box;
       dr_surface_end_composite();
     }
+
+    //- rjf: release cached surfaces that nothing demanded this frame
+    rd_window_surface_cache_evict(ws);
 
     //- rjf: draw heatmap
     if(DEV_draw_ui_box_heatmap)

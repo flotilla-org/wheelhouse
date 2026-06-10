@@ -75,14 +75,22 @@ struct DR_FRunList
 ////////////////////////////////
 //~ rjf: Draw Bucket Types
 
+typedef struct DR_SurfaceNode DR_SurfaceNode;
+struct DR_SurfaceNode
+{
+  DR_SurfaceNode *next;
+  R_Handle target;
+  Rng2F32 rect;
+};
+
 typedef struct DR_Bucket DR_Bucket;
 struct DR_Bucket
 {
   R_PassList passes;
   U64 stack_gen;
   U64 last_cmd_stack_gen;
-  R_Handle surface_target; // nonzero while bracketed by dr_surface_begin/dr_surface_end_composite
-  Rng2F32 surface_rect;
+  DR_SurfaceNode *top_surface;  // stack of open dr_surface_begin/dr_surface_end_composite brackets
+  DR_SurfaceNode *free_surface;
   DR_BucketStackDecls;
 };
 

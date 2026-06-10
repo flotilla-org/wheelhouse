@@ -570,11 +570,21 @@ dr_surface_begin(R_Handle target, Rng2F32 target_rect)
 {
   Arena *arena = dr_thread_ctx->arena;
   DR_Bucket *bucket = dr_top_bucket();
+  DR_SurfaceNode *node = bucket->free_surface;
+  if(node != 0)
+  {
+    SLLStackPop(bucket->free_surface);
+  }
+  else
+  {
+    node = push_array(arena, DR_SurfaceNode, 1);
+  }
+  node->target = target;
+  node->rect = target_rect;
+  SLLStackPush(bucket->top_surface, node);
   R_Pass *pass = r_pass_push(arena, &bucket->passes, R_PassKind_UI);
   pass->params_ui->target = target;
   pass->params_ui->target_rect = target_rect;
-  bucket->surface_target = target;
-  bucket->surface_rect = target_rect;
 }
 
 internal void
@@ -582,14 +592,23 @@ dr_surface_end_composite(void)
 {
   Arena *arena = dr_thread_ctx->arena;
   DR_Bucket *bucket = dr_top_bucket();
-  R_Handle target = bucket->surface_target;
-  Rng2F32 target_rect = bucket->surface_rect;
-  bucket->surface_target = r_handle_zero();
-  MemoryZeroStruct(&bucket->surface_rect);
-  if(!r_handle_match(target, r_handle_zero()))
+  DR_SurfaceNode *node = bucket->top_surface;
+  if(node != 0)
   {
-    // rjf: resume drawing to the stage, & composite the surface where it would have drawn
-    r_pass_push(arena, &bucket->passes, R_PassKind_UI);
+    R_Handle target = node->target;
+    Rng2F32 target_rect = node->rect;
+    SLLStackPop(bucket->top_surface);
+    SLLStackPush(bucket->free_surface, node);
+
+    // rjf: resume drawing to the parent target (the stage if the stack is now
+    // empty), & composite the surface where its content would have drawn
+    DR_SurfaceNode *parent = bucket->top_surface;
+    R_Pass *pass = r_pass_push(arena, &bucket->passes, R_PassKind_UI);
+    if(parent != 0)
+    {
+      pass->params_ui->target = parent->target;
+      pass->params_ui->target_rect = parent->rect;
+    }
     Vec2S32 size_px = r_size_from_tex2d(target);
     dr_img(target_rect, r2f32p(0, 0, (F32)size_px.x, (F32)size_px.y), target, v4f32(1, 1, 1, 1), 0, 0, 0);
     R_PassParams_UI *params = bucket->passes.last->v.params_ui;
@@ -602,7 +621,7 @@ internal B32
 dr_surface_is_active(void)
 {
   DR_Bucket *bucket = dr_top_bucket();
-  return !r_handle_match(bucket->surface_target, r_handle_zero());
+  return bucket->top_surface != 0;
 }
 
 ////////////////////////////////

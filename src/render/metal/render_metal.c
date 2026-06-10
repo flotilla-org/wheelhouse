@@ -898,6 +898,11 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
       id<MTLRenderCommandEncoder> clear_encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_clear_pass];
       [clear_encoder endEncoding];
 
+      // rjf: a surface target's first pass this submit clears it; later passes
+      // (e.g. a parent surface resuming after a nested child's bracket) load
+      id<MTLTexture> touched_targets[64];
+      U64 touched_target_count = 0;
+
       for(R_PassNode *pass_n = passes->first; pass_n != 0; pass_n = pass_n->next)
       {
         R_Pass *render_pass = &pass_n->v;
@@ -924,9 +929,28 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                 target_origin = params->target_rect.p0;
               }
 
+              B32 target_first_touch = 0;
+              if(to_surface)
+              {
+                target_first_touch = 1;
+                for(U64 idx = 0; idx < touched_target_count; idx += 1)
+                {
+                  if(touched_targets[idx] == target->texture)
+                  {
+                    target_first_touch = 0;
+                    break;
+                  }
+                }
+                if(target_first_touch && touched_target_count < ArrayCount(touched_targets))
+                {
+                  touched_targets[touched_target_count] = target->texture;
+                  touched_target_count += 1;
+                }
+              }
+
               MTLRenderPassDescriptor *stage_pass = mtl_window->stage_pass;
               stage_pass.colorAttachments[0].texture = (to_surface ? target->texture : mtl_window->stage_color);
-              stage_pass.colorAttachments[0].loadAction = (to_surface ? MTLLoadActionClear : MTLLoadActionLoad);
+              stage_pass.colorAttachments[0].loadAction = ((to_surface && target_first_touch) ? MTLLoadActionClear : MTLLoadActionLoad);
               stage_pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
               stage_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
               id<MTLRenderCommandEncoder> encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_pass];
