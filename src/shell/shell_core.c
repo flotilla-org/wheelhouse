@@ -1967,31 +1967,26 @@ internal void
 rd_workspace_preview_demand_push(RD_WindowState *ws, U64 workspace_id, F32 width_pt)
 {
   RD_WorkspacePreviewDemand *demand = 0;
-  for(U64 i = 0; i < ws->workspace_preview_demand_count; i += 1)
+  for(RD_WorkspacePreviewDemand *d = ws->first_workspace_preview_demand; d != 0; d = d->next)
   {
-    if(ws->workspace_preview_demands[i].workspace_id == workspace_id)
+    if(d->workspace_id == workspace_id)
     {
-      demand = &ws->workspace_preview_demands[i];
+      demand = d;
       break;
     }
   }
-  if(demand == 0 && ws->workspace_preview_demand_count < ArrayCount(ws->workspace_preview_demands))
+  if(demand == 0)
   {
-    demand = &ws->workspace_preview_demands[ws->workspace_preview_demand_count];
-    ws->workspace_preview_demand_count += 1;
+    demand = push_array(ws->arena, RD_WorkspacePreviewDemand, 1);
     demand->workspace_id = workspace_id;
-    demand->width_pt = 0;
-    demand->frame_index = 0;
+    SLLStackPush(ws->first_workspace_preview_demand, demand);
   }
-  if(demand != 0)
+  if(demand->frame_index != rd_state->frame_index)
   {
-    if(demand->frame_index != rd_state->frame_index)
-    {
-      demand->width_pt = 0;
-      demand->frame_index = rd_state->frame_index;
-    }
-    demand->width_pt = Max(demand->width_pt, width_pt);
+    demand->width_pt = 0;
+    demand->frame_index = rd_state->frame_index;
   }
+  demand->width_pt = Max(demand->width_pt, width_pt);
 }
 
 internal F32
@@ -2000,14 +1995,13 @@ rd_workspace_preview_demand_width(RD_WindowState *ws, U64 workspace_id)
   // default when nothing registered recently; demands registered during build
   // are read at draw time the same frame, & last frame's demand bridges gaps
   F32 width_pt = 256.f;
-  for(U64 i = 0; i < ws->workspace_preview_demand_count; i += 1)
+  for(RD_WorkspacePreviewDemand *d = ws->first_workspace_preview_demand; d != 0; d = d->next)
   {
-    RD_WorkspacePreviewDemand *demand = &ws->workspace_preview_demands[i];
-    if(demand->workspace_id == workspace_id &&
-       demand->width_pt > 0 &&
-       demand->frame_index + 2 >= rd_state->frame_index)
+    if(d->workspace_id == workspace_id &&
+       d->width_pt > 0 &&
+       d->frame_index + 2 >= rd_state->frame_index)
     {
-      width_pt = demand->width_pt;
+      width_pt = d->width_pt;
       break;
     }
   }
@@ -2535,6 +2529,28 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       UI_Parent(control_box)
       {
         F32 panel_frame_inset_px = -floor_f32(-ui_top_font_size()*0.15f);
+
+        //- scrollable workspace list region: the rows scroll; the action row
+        // below stays pinned. the bar shows only when content overflows.
+        UI_Key list_key = ui_key_from_string(ui_key_zero(), str8_lit("###workspace_list"));
+        UI_Box *list_prev = ui_box_from_key(list_key);
+        F32 list_view_h = (list_prev != &ui_nil_box ? list_prev->fixed_size.y : 0);
+        F32 list_content_h = (list_prev != &ui_nil_box ? list_prev->view_bounds.y : 0);
+        B32 list_can_scroll = (list_prev != &ui_nil_box && list_content_h > list_view_h + 1.f);
+        F32 scroll_bar_w = floor_f32(ui_top_font_size()*1.2f);
+        UI_Box *list_box = &ui_nil_box;
+        UI_PrefWidth(ui_pct(1.f, 0.f)) UI_PrefHeight(ui_pct(1.f, 0.f)) UI_Row
+        {
+          ui_set_next_pref_width(ui_pct(1.f, 0.f));
+          ui_set_next_pref_height(ui_pct(1.f, 0.f));
+          ui_set_next_child_layout_axis(Axis2_Y);
+          list_box = ui_build_box_from_key(UI_BoxFlag_ViewScrollY|
+                                           UI_BoxFlag_AllowOverflowY|
+                                           UI_BoxFlag_ViewClamp|
+                                           UI_BoxFlag_Clip,
+                                           list_key);
+          UI_Parent(list_box)
+          {
         ui_spacer(ui_px(panel_frame_inset_px+1.f, 1.f));
         for(UIShell_MaterializedWorkspace *workspace = split->inventory.first;
             workspace != 0;
@@ -2633,9 +2649,16 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               // row interaction, after children - presses inside the close
               // button (or other clickable children) must be claimed there first
               UI_Signal row_sig = ui_signal_from_box(row_box);
-              if(ui_clicked(row_sig) && !selected)
+              if(ui_clicked(row_sig))
               {
-                uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
+                if(!selected)
+                {
+                  uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
+                }
+                if(ws != &rd_nil_window_state)
+                {
+                  ws->workspace_zoom_open = 0;
+                }
               }
               if(ui_double_clicked(row_sig) && workspace->mount.workspace_cfg != &cfg_nil_node && ws != &rd_nil_window_state)
               {
@@ -2688,9 +2711,16 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                                                                   "###workspace_preview_%I64u", workspace->id);
                   ui_box_equip_custom_draw(preview_box, rd_workspace_preview_box_draw, preview);
                   UI_Signal preview_sig = ui_signal_from_box(preview_box);
-                  if(ui_clicked(preview_sig) && !selected)
+                  if(ui_clicked(preview_sig))
                   {
-                    uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
+                    if(!selected)
+                    {
+                      uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
+                    }
+                    if(ws != &rd_nil_window_state)
+                    {
+                      ws->workspace_zoom_open = 0;
+                    }
                   }
                 }
                 ui_spacer(ui_em(0.5f, 1.f));
@@ -2699,8 +2729,34 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           }
           ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.4f), 1.f));
         }
+          }
 
-        ui_spacer(ui_pct(1.f, 0.f));
+          //- consume wheel events over the list (scroll handling lives in
+          // ui_signal_from_box; nothing else signals this box)
+          ui_signal_from_box(list_box);
+
+          //- scroll bar, when the list overflows; pixel-indexed against the
+          // list box's view offset, so wheel & bar stay in sync
+          if(list_can_scroll)
+          {
+            S64 max_off = (S64)ClampBot(0.f, list_content_h - list_view_h);
+            UI_ScrollPt scroll_pt = ui_scroll_pt((S64)list_box->view_off_target.y, 0);
+            UI_PrefHeight(ui_pct(1.f, 0.f))
+            {
+              scroll_pt = ui_scroll_bar(Axis2_Y,
+                                        ui_px(scroll_bar_w, 1.f),
+                                        scroll_pt,
+                                        r1s64(0, max_off),
+                                        (S64)list_view_h);
+            }
+            if(scroll_pt.idx != (S64)list_box->view_off_target.y)
+            {
+              list_box->view_off_target.y = (F32)scroll_pt.idx;
+            }
+          }
+        }
+
+        ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.25f), 1.f));
         UI_PrefWidth(ui_pct(1.f, 0.f))
           UI_PrefHeight(ui_em(2.25f, 1.f))
           UI_Row
@@ -2731,6 +2787,7 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           }
           ui_spacer(ui_em(0.5f, 1.f));
         }
+        ui_spacer(ui_px(panel_frame_inset_px+1.f, 1.f));
       }
     }
   }
@@ -5853,16 +5910,16 @@ rd_window_frame(void)
     // zoom view, or any consumer that registered a preview demand recently
     // (the control surface rows do, every frame they're visible) - no toggle
     B32 workspace_previews_demanded = 0;
-    for(U64 i = 0; i < ws->workspace_preview_demand_count; i += 1)
+    for(RD_WorkspacePreviewDemand *d = ws->first_workspace_preview_demand; d != 0; d = d->next)
     {
-      if(ws->workspace_preview_demands[i].width_pt > 0 &&
-         ws->workspace_preview_demands[i].frame_index + 2 >= rd_state->frame_index)
+      if(d->width_pt > 0 && d->frame_index + 2 >= rd_state->frame_index)
       {
         workspace_previews_demanded = 1;
         break;
       }
     }
     B32 want_workspace_surfaces = (workspace_zoom_open || workspace_previews_demanded);
+    ws->workspace_surface_entries = push_array(rd_frame_arena(), RD_WorkspaceSurfaceEntry, root_controlled_split.inventory.count + 1);
     if(want_workspace_surfaces && workspace_mount->owner_cfg != &cfg_nil_node)
     {
       //- visible workspace: builds through its surface & composites to the
@@ -5890,7 +5947,7 @@ rd_window_frame(void)
       // reduced-res surfaces (never composited to the stage), input-inert &
       // focus-off - not hidden, visible at preview scale (sidebar rows, zoom)
       for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first;
-          child != 0 && ws->workspace_surface_entry_count < ArrayCount(ws->workspace_surface_entries);
+          child != 0 && ws->workspace_surface_entry_count < root_controlled_split.inventory.count + 1;
           child = child->next)
       {
         if(child->mount.owner_cfg == &cfg_nil_node ||

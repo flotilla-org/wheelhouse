@@ -501,6 +501,7 @@ struct RD_WorkspaceSurfaceEntry
 typedef struct RD_WorkspacePreviewDemand RD_WorkspacePreviewDemand;
 struct RD_WorkspacePreviewDemand
 {
+  RD_WorkspacePreviewDemand *next;
   U64 workspace_id;
   F32 width_pt;          // largest width any consumer wants this preview at
   U64 frame_index;
@@ -609,10 +610,11 @@ struct RD_WindowState
   RD_SurfaceCacheNode *first_surface_cache_node;
   RD_SurfaceCacheNode *free_surface_cache_node;
 
-  // workspace surfaces: one entry per workspace built this frame - the visible
-  // child composites to the stage; the others build offscreen at reduced
-  // resolution & are visible at preview scale (sidebar rows, zoom view)
-  RD_WorkspaceSurfaceEntry workspace_surface_entries[16];
+  // workspace surfaces: one entry per workspace built this frame (frame-arena
+  // array, sized to the inventory) - the visible child composites to the
+  // stage; the others build offscreen at reduced resolution & are visible at
+  // preview scale (sidebar rows, zoom view)
+  RD_WorkspaceSurfaceEntry *workspace_surface_entries;
   U64 workspace_surface_entry_count;
 
   // workspace zoom view: the controlled split presenting all children as tiles
@@ -620,8 +622,7 @@ struct RD_WindowState
 
   // preview size demands: consumers register the size they show a workspace
   // preview at; the preview surface is allocated for the largest demand
-  RD_WorkspacePreviewDemand workspace_preview_demands[16];
-  U64 workspace_preview_demand_count;
+  RD_WorkspacePreviewDemand *first_workspace_preview_demand;
 };
 
 typedef struct RD_WindowStateSlot RD_WindowStateSlot;
