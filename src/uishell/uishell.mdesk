@@ -92,6 +92,7 @@ UIShell_DevToggleTable:
   {draw_ui_box_heatmap}
   {draw_panel_surface}
   {draw_view_surfaces}
+  {draw_surface_previews}
   {eval_compiler_tooltips}
   {eval_watch_key_tooltips}
   {cmd_context_tooltips}

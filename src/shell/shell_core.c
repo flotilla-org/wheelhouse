@@ -6245,6 +6245,38 @@ rd_window_frame(void)
       dr_surface_end_composite();
     }
 
+    //- rjf: (DEV) draw a thumbnail strip of all live surfaces - second consumers
+    // of the same textures, sampled linearly at reduced scale
+    if(DEV_draw_surface_previews)
+    {
+      F32 thumb_height = floor_f32(rd_font_size()*8.f);
+      F32 pad = floor_f32(rd_font_size()*0.5f);
+      F32 x = window_rect.x1 - pad;
+      F32 y = window_rect.y1 - pad - thumb_height;
+      DR_Tex2DSampleKindScope(R_Tex2DSampleKind_Linear)
+      {
+        for(RD_SurfaceCacheNode *n = ws->first_surface_cache_node; n != 0; n = n->next)
+        {
+          if(n->last_use_frame_index < rd_state->frame_index)
+          {
+            continue;
+          }
+          F32 aspect = (n->size.y > 0 ? (F32)n->size.x/(F32)n->size.y : 1.f);
+          F32 thumb_width = floor_f32(thumb_height*aspect);
+          Rng2F32 dst = r2f32p(x - thumb_width, y, x, y + thumb_height);
+          if(dst.x0 < window_rect.x0 + pad)
+          {
+            break;
+          }
+          dr_rect(pad_2f32(dst, 6.f), drop_shadow_color, 4.f, 0, 8.f);
+          dr_rect(pad_2f32(dst, 1.f), base_background_color, 0, 0, 1.f);
+          dr_surface_img(n->texture, dst, v4f32(1, 1, 1, 1), 0, 0, 0);
+          dr_rect(pad_2f32(dst, 1.f), base_border_color, 0, 1.f, 1.f);
+          x -= thumb_width + pad;
+        }
+      }
+    }
+
     //- rjf: release cached surfaces that nothing demanded this frame
     rd_window_surface_cache_evict(ws);
 

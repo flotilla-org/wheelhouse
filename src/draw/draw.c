@@ -609,11 +609,7 @@ dr_surface_end_composite(void)
       pass->params_ui->target = parent->target;
       pass->params_ui->target_rect = parent->rect;
     }
-    Vec2S32 size_px = r_size_from_tex2d(target);
-    dr_img(target_rect, r2f32p(0, 0, (F32)size_px.x, (F32)size_px.y), target, v4f32(1, 1, 1, 1), 0, 0, 0);
-    R_PassParams_UI *params = bucket->passes.last->v.params_ui;
-    params->rects.last->params.tex_sample_is_surface = 1;
-    bucket->stack_gen += 1; // sequester the composite in its own batch group
+    dr_surface_img(target, target_rect, v4f32(1, 1, 1, 1), 0, 0, 0);
   }
 }
 
@@ -622,6 +618,19 @@ dr_surface_is_active(void)
 {
   DR_Bucket *bucket = dr_top_bucket();
   return bucket->top_surface != 0;
+}
+
+internal R_Rect2DInst *
+dr_surface_img(R_Handle target, Rng2F32 dst, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32 edge_softness)
+{
+  DR_Bucket *bucket = dr_top_bucket();
+  bucket->stack_gen += 1; // sequester the surface sample in its own batch group
+  Vec2S32 size_px = r_size_from_tex2d(target);
+  R_Rect2DInst *inst = dr_img(dst, r2f32p(0, 0, (F32)size_px.x, (F32)size_px.y), target, color, corner_radius, border_thickness, edge_softness);
+  R_PassParams_UI *params = bucket->passes.last->v.params_ui;
+  params->rects.last->params.tex_sample_is_surface = 1;
+  bucket->stack_gen += 1;
+  return inst;
 }
 
 ////////////////////////////////

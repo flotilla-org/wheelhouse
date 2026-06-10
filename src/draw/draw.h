@@ -211,6 +211,7 @@ internal void dr_sub_bucket(DR_Bucket *bucket);
 internal void dr_surface_begin(R_Handle target, Rng2F32 target_rect);
 internal void dr_surface_end_composite(void);
 internal B32 dr_surface_is_active(void);
+internal R_Rect2DInst *dr_surface_img(R_Handle target, Rng2F32 dst, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32 edge_softness);
 
 ////////////////////////////////
 //~ rjf: Draw Call Helpers
