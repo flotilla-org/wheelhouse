@@ -95,6 +95,8 @@ global WM_EventList w32_wm_event_list = {0};
 global Arena *w32_wm_event_arena = 0;
 global B32 w32_wm_resizing = 0;
 global B32 w32_wm_new_window_custom_border = 0;
+global Arena *w32_wm_selection_arena = 0;
+global String8 w32_wm_selection_text = {0};
 
 ////////////////////////////////
 //~ rjf: Basic Helpers

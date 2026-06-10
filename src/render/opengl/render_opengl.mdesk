@@ -71,6 +71,7 @@ out float v2p_omit_texture;
 uniform mat3 u_xform;
 uniform sampler2D u_tex_color;
 uniform vec2 u_viewport_size_px;
+uniform float u_sample_is_surface;
 
 void main(void)
 {
@@ -111,6 +112,12 @@ void main(void)
                        0.0, 1.0);
     v2p_sdf_sample_pos    = (2.f * dst_verts_pct - 1.f) * dst_half_size;
     v2p_texcoord_pct      = src_position / u_tex_color_size;
+    if(u_sample_is_surface > 0.5f)
+    {
+      // surface textures are rendered through the y-flipped projection above, so
+      // their rows are bottom-up relative to uploaded textures; flip the sample
+      v2p_texcoord_pct.y = 1.f - v2p_texcoord_pct.y;
+    }
     v2p_rect_half_size_px = dst_half_size;
     v2p_tint              = color;
     v2p_corner_radius     = corner_radius;
@@ -138,6 +145,7 @@ in float v2p_omit_texture;
 out vec4 final_color;
 
 uniform float u_opacity;
+uniform float u_sample_is_surface;
 uniform sampler2D u_tex_color;
 uniform mat4 u_texture_sample_channel_map;
 
@@ -167,7 +175,19 @@ void main(void)
   if(v2p_omit_texture < 1)
   {
     albedo_sample = u_texture_sample_channel_map * texture(u_tex_color, v2p_texcoord_pct);
-    albedo_sample = linear_from_srgba(albedo_sample);
+    if(u_sample_is_surface > 0.5f)
+    {
+      // surface textures hold premultiplied linear color; un-premultiply so that
+      // the standard source-alpha blend reproduces premultiplied source-over exactly
+      if(albedo_sample.a > 0.0001f)
+      {
+        albedo_sample.rgb /= albedo_sample.a;
+      }
+    }
+    else
+    {
+      albedo_sample = linear_from_srgba(albedo_sample);
+    }
   }
   
   // rjf: sample for borders

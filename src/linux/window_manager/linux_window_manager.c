@@ -95,6 +95,25 @@ wm_get_clipboard_text(Arena *arena)
   return result;
 }
 
+// NOTE: process-local selection buffer; X11 PRIMARY selection integration
+// belongs with the (also unimplemented) clipboard above
+internal void
+wm_set_selection_text(String8 string)
+{
+  if(lnx_wm_state->selection_arena == 0)
+  {
+    lnx_wm_state->selection_arena = arena_alloc();
+  }
+  arena_clear(lnx_wm_state->selection_arena);
+  lnx_wm_state->selection_text = push_str8_copy(lnx_wm_state->selection_arena, string);
+}
+
+internal String8
+wm_get_selection_text(Arena *arena)
+{
+  return push_str8_copy(arena, lnx_wm_state->selection_text);
+}
+
 ////////////////////////////////
 //~ rjf: @os_hooks Windows (Implemented Per-OS)
 

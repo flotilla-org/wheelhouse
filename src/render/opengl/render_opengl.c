@@ -276,6 +276,33 @@ r_tex2d_alloc(R_ResourceKind kind, Vec2S32 size, R_Tex2DFormat format, void *dat
   return result;
 }
 
+r_hook R_Handle
+r_tex2d_alloc_render_target(Vec2S32 size)
+{
+  R_OGL_Tex2D *tex2d = r_ogl_state->free_tex2d;
+  if(tex2d)
+  {
+    SLLStackPop(r_ogl_state->free_tex2d);
+  }
+  else
+  {
+    tex2d = push_array(r_ogl_state->arena, R_OGL_Tex2D, 1);
+  }
+  {
+    glGenTextures(1, &tex2d->id);
+    glBindTexture(GL_TEXTURE_2D, tex2d->id);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, Max(size.x, 1), Max(size.y, 1), 0, GL_RGBA, GL_HALF_FLOAT, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+  }
+  tex2d->resource_kind = R_ResourceKind_Static;
+  // NOTE: render targets share the stage's float pixel format, which has no
+  // R_Tex2DFormat; RGBA16 gives the identity sample channel map
+  tex2d->fmt = R_Tex2DFormat_RGBA16;
+  tex2d->size = size;
+  R_Handle result = r_ogl_handle_from_tex2d(tex2d);
+  return result;
+}
+
 r_hook void
 r_tex2d_release(R_Handle texture)
 {
@@ -456,6 +483,10 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
   R_OGL_Window *w = (R_OGL_Window *)window_equip.u64[0];
   Rng2F32 viewport_rect = wm_client_rect_from_window(window);
   Vec2F32 viewport_dim = dim_2f32(viewport_rect);
+  // NOTE: a surface target's first pass this submit clears it; later passes
+  // (e.g. a parent surface resuming after a nested child's bracket) load
+  GLuint touched_targets[64];
+  U64 touched_target_count = 0;
   for(R_PassNode *pass_n = passes->first; pass_n != 0; pass_n = pass_n->next)
   {
     R_Pass *pass = &pass_n->v;
@@ -471,13 +502,76 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
         //- rjf: unpack params
         R_PassParams_UI *params = pass->params_ui;
         R_BatchGroup2DList *rect_batch_groups = &params->rects;
-        
+
+        //- rjf: unpack optional render target; surface passes draw into their own
+        // texture (cleared to transparent), in coordinates relative to target_rect
+        R_OGL_Tex2D *target = r_ogl_tex2d_from_handle(params->target);
+        B32 to_surface = (target != 0 && target->id != 0);
+        if(to_surface && params->preserve)
+        {
+          // surface content is up-to-date; skip the render & keep the texture
+          break;
+        }
+        Vec2F32 pass_viewport_dim = viewport_dim;
+        Vec2S32 pass_attachment_size = v2s32((S32)viewport_dim.x, (S32)viewport_dim.y);
+        Vec2F32 target_origin = v2f32(0, 0);
+        F32 pass_scale = 1.f;
+        if(to_surface)
+        {
+          pass_viewport_dim = dim_2f32(params->target_rect);
+          pass_attachment_size = target->size;
+          target_origin = params->target_rect.p0;
+          // surfaces may be allocated at any resolution (e.g. reduced-res
+          // previews); derive the point->pixel scale from the target itself
+          if(pass_viewport_dim.x > 0)
+          {
+            pass_scale = (F32)target->size.x/pass_viewport_dim.x;
+          }
+        }
+        B32 target_first_touch = 0;
+        if(to_surface)
+        {
+          target_first_touch = 1;
+          for(U64 idx = 0; idx < touched_target_count; idx += 1)
+          {
+            if(touched_targets[idx] == target->id)
+            {
+              target_first_touch = 0;
+              break;
+            }
+          }
+          if(target_first_touch && touched_target_count < ArrayCount(touched_targets))
+          {
+            touched_targets[touched_target_count] = target->id;
+            touched_target_count += 1;
+          }
+          if(r_ogl_state->surface_fbo == 0)
+          {
+            glGenFramebuffers(1, &r_ogl_state->surface_fbo);
+          }
+        }
+
         //- rjf: draw each batch group
         GLuint shader = r_ogl_state->shaders[R_OGL_ShaderKind_Rect];
         glUseProgramScope(shader)
           glBindVertexArrayScope(r_ogl_state->all_purpose_vao)
-          glBindFramebufferScope(GL_FRAMEBUFFER, w->stage_target.fbo)
+          glBindFramebufferScope(GL_FRAMEBUFFER, to_surface ? r_ogl_state->surface_fbo : w->stage_target.fbo)
         {
+          if(to_surface)
+          {
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target->id, 0);
+            if(target_first_touch)
+            {
+              glDisable(GL_SCISSOR_TEST);
+              glClearColor(0, 0, 0, 0);
+              glClear(GL_COLOR_BUFFER_BIT);
+            }
+            // NOTE: accumulate source-over coverage in dst alpha, so transparent-cleared
+            // surfaces end up holding premultiplied color + coverage; the stage's alpha
+            // is never read again, so the plain blend func is fine there
+            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+          }
+          glViewport(0, 0, pass_attachment_size.x, pass_attachment_size.y);
           for(R_BatchGroup2DNode *group_n = rect_batch_groups->first; group_n != 0; group_n = group_n->next)
           {
             R_BatchList *batches = &group_n->batches;
@@ -549,13 +643,19 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
             
             //- rjf: upload misc. uniforms
             {
+              Mat3x3F32 group_xform = group_params->xform;
+              if(to_surface)
+              {
+                group_xform = mul_3x3f32(make_translate_3x3f32(v2f32(-target_origin.x, -target_origin.y)), group_xform);
+              }
               Mat4x4F32 texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture_fmt);
               glUniformMatrix4fv(glGetUniformLocation(shader, "u_texture_sample_channel_map"), 1, 0, &texture_sample_channel_map.v[0][0]);
-              glUniform2f(glGetUniformLocation(shader, "u_viewport_size_px"), viewport_dim.x, viewport_dim.y);
+              glUniform2f(glGetUniformLocation(shader, "u_viewport_size_px"), pass_viewport_dim.x, pass_viewport_dim.y);
               glUniform1f(glGetUniformLocation(shader, "u_opacity"), 1.f - group_params->transparency);
-              glUniformMatrix3fv(glGetUniformLocation(shader, "u_xform"), 1, 0, &group_params->xform.v[0][0]);
+              glUniform1f(glGetUniformLocation(shader, "u_sample_is_surface"), (F32)!!group_params->tex_sample_is_surface);
+              glUniformMatrix3fv(glGetUniformLocation(shader, "u_xform"), 1, 0, &group_xform.v[0][0]);
             }
-            
+
             //- rjf: set up scissor
             if(group_params->clip.x0 != 0 ||
                group_params->clip.x1 != 0 ||
@@ -563,18 +663,39 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                group_params->clip.y1 != 0)
             {
               Rng2F32 clip = group_params->clip;
-              glScissor(clip.x0, viewport_dim.y - clip.y1, (clip.x1-clip.x0) + 1, (clip.y1-clip.y0)+1);
+              if(to_surface)
+              {
+                clip = shift_2f32(clip, v2f32(-target_origin.x, -target_origin.y));
+              }
+              S32 sci_x0 = (S32)(clip.x0*pass_scale);
+              S32 sci_y0 = (S32)(clip.y0*pass_scale);
+              S32 sci_x1 = (S32)(clip.x1*pass_scale) + 1;
+              S32 sci_y1 = (S32)(clip.y1*pass_scale) + 1;
+              if(sci_x0 < 0) { sci_x0 = 0; }
+              if(sci_y0 < 0) { sci_y0 = 0; }
+              if(sci_x1 > pass_attachment_size.x) { sci_x1 = pass_attachment_size.x; }
+              if(sci_y1 > pass_attachment_size.y) { sci_y1 = pass_attachment_size.y; }
+              if(sci_x1 <= sci_x0 || sci_y1 <= sci_y0)
+              {
+                continue;
+              }
+              glScissor(sci_x0, pass_attachment_size.y - sci_y1, sci_x1 - sci_x0, sci_y1 - sci_y0);
               glEnable(GL_SCISSOR_TEST);
             }
-            
+
             //- rjf: draw
             {
               glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, batches->byte_count / batches->bytes_per_inst);
             }
-            
+
             //- rjf: unset scissor
             glDisable(GL_SCISSOR_TEST);
           }
+        }
+        if(to_surface)
+        {
+          glViewport(0, 0, (S32)viewport_dim.x, (S32)viewport_dim.y);
+          glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         }
       }break;
       
@@ -742,6 +863,11 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
             if(pass->kind == R_PassKind_UI && pass->params_ui != 0)
             {
               R_PassParams_UI *params = pass->params_ui;
+              if(r_ogl_tex2d_from_handle(params->target) != 0)
+              {
+                // surface-targeted passes draw offscreen; readback wants the stage only
+                continue;
+              }
               R_BatchGroup2DList *rect_batch_groups = &params->rects;
               for(R_BatchGroup2DNode *group_n = rect_batch_groups->first; group_n != 0; group_n = group_n->next)
               {
@@ -809,6 +935,7 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
                 glUniformMatrix4fv(glGetUniformLocation(shader, "u_texture_sample_channel_map"), 1, 0, &texture_sample_channel_map.v[0][0]);
                 glUniform2f(glGetUniformLocation(shader, "u_viewport_size_px"), viewport_dim.x, viewport_dim.y);
                 glUniform1f(glGetUniformLocation(shader, "u_opacity"), 1.f - group_params->transparency);
+                glUniform1f(glGetUniformLocation(shader, "u_sample_is_surface"), (F32)!!group_params->tex_sample_is_surface);
                 glUniformMatrix3fv(glGetUniformLocation(shader, "u_xform"), 1, 0, &group_params->xform.v[0][0]);
 
                 if(group_params->clip.x0 != 0 ||

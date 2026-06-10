@@ -53,6 +53,8 @@ typedef ptrdiff_t GLintptr;
 #define GL_COLOR_ATTACHMENT31             0x8CFF
 
 #define GL_R8                             0x8229
+#define GL_RGBA16F                        0x881A
+#define GL_HALF_FLOAT                     0x140B
 
 #define GL_ARRAY_BUFFER                   0x8892
 #define GL_STREAM_DRAW                    0x88E0
@@ -261,6 +263,7 @@ struct R_OGL_State
   GLuint all_purpose_vao;
   GLuint scratch_buffer_64kb;
   GLuint white_texture;
+  GLuint surface_fbo; // shared fbo for surface render targets; the target texture is attached per-pass
   Arena *buffer_flush_arena;
   R_OGL_FlushBuffer *first_buffer_to_flush;
   R_OGL_FlushBuffer *last_buffer_to_flush;

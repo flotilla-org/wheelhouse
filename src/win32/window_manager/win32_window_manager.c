@@ -1052,6 +1052,25 @@ wm_get_clipboard_text(Arena *arena)
   return result;
 }
 
+// NOTE: windows has no primary-selection concept; process-local buffer gives
+// in-app middle-click-paste semantics (mac emulates with a custom pasteboard)
+internal void
+wm_set_selection_text(String8 string)
+{
+  if(w32_wm_selection_arena == 0)
+  {
+    w32_wm_selection_arena = arena_alloc();
+  }
+  arena_clear(w32_wm_selection_arena);
+  w32_wm_selection_text = push_str8_copy(w32_wm_selection_arena, string);
+}
+
+internal String8
+wm_get_selection_text(Arena *arena)
+{
+  return push_str8_copy(arena, w32_wm_selection_text);
+}
+
 ////////////////////////////////
 //~ rjf: @os_hooks Windows (Implemented Per-OS)
 
