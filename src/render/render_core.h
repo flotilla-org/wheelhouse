@@ -149,6 +149,7 @@ struct R_BatchGroup2DParams
   Rng2F32 clip;
   F32 transparency;
   B32 tex_sample_is_surface; // tex holds premultiplied linear color (a surface), not sRGB image data
+  U64 content_version;       // nonzero -> instance bytes are a pure function of this version (see dr_surface_end_cached)
 };
 
 typedef struct R_BatchGroup2DNode R_BatchGroup2DNode;

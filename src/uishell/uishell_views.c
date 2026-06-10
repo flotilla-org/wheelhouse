@@ -20,6 +20,12 @@ struct UIShell_TerminalViewState
   B32 initialized;
   cleat_provider *provider;
   cleat_session *session;
+
+  // retained terminal draw bucket: the cell feed's draw output, rebuilt only
+  // when its inputs (render generation, rect, colors, fonts, selection) change
+  Arena *retained_bucket_arena;
+  DR_Bucket *retained_bucket;
+  U64 retained_bucket_key;
   U16 cols;
   U16 rows;
   F32 cell_width_px;
@@ -3327,13 +3333,61 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           .cell_height_px = cell_height_px,
           .image_cache = &tv->image_cache,
         };
-        DR_Bucket *terminal_bucket = dr_bucket_make();
-        DR_BucketScope(terminal_bucket)
+        B32 trace_this_draw = (rd_state->terminal_glyph_trace_enabled &&
+                               feed.cell_count != 0 &&
+                               (!tv->glyph_trace_live_emitted ||
+                                tv->glyph_trace_last_render_generation != tv->cell_cache.render_generation));
+
+        //- retained terminal bucket: the cell feed's draw output is a pure
+        // function of these inputs; skip the whole glyph pipeline when they're
+        // unchanged & re-equip last build's bucket
+        struct
         {
-          B32 trace_this_draw = (rd_state->terminal_glyph_trace_enabled &&
-                                 feed.cell_count != 0 &&
-                                 (!tv->glyph_trace_live_emitted ||
-                                  tv->glyph_trace_last_render_generation != tv->cell_cache.render_generation));
+          U64 render_generation;
+          U64 image_generation;
+          Rng2F32 canvas_rect;
+          F32 cell_width_px;
+          F32 cell_height_px;
+          F32 font_size;
+          F32 raster_scale;
+          Vec4F32 background_color;
+          FNT_Tag font;
+          U32 raster_flags;
+          B32 has_selection;
+          B32 selecting;
+          TxtPt sel_mark;
+          TxtPt sel_cursor;
+        } bucket_key_data;
+        MemoryZeroStruct(&bucket_key_data);
+        bucket_key_data.render_generation = tv->cell_cache.render_generation;
+        bucket_key_data.image_generation = tv->image_cache.render_generation;
+        bucket_key_data.canvas_rect = canvas_box->rect;
+        bucket_key_data.cell_width_px = cell_width_px;
+        bucket_key_data.cell_height_px = cell_height_px;
+        bucket_key_data.font_size = cell_font_size;
+        bucket_key_data.raster_scale = dr_raster_scale();
+        bucket_key_data.background_color = terminal_background_color;
+        bucket_key_data.font = cell_font;
+        bucket_key_data.raster_flags = cell_font_raster_flags;
+        bucket_key_data.has_selection = tv->has_selection;
+        bucket_key_data.selecting = tv->selecting;
+        bucket_key_data.sel_mark = tv->sel_mark;
+        bucket_key_data.sel_cursor = tv->sel_cursor;
+        U64 bucket_key = (u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1);
+        if(tv->retained_bucket == 0 || tv->retained_bucket_key != bucket_key || trace_this_draw)
+        {
+          if(tv->retained_bucket_arena == 0)
+          {
+            tv->retained_bucket_arena = arena_alloc(.name = "terminal retained draw bucket");
+          }
+          else
+          {
+            arena_clear(tv->retained_bucket_arena);
+          }
+          DR_Bucket *terminal_bucket = dr_bucket_make_on(tv->retained_bucket_arena);
+          terminal_bucket->content_version = bucket_key;
+          DR_BucketScope(terminal_bucket)
+          {
           glyph_renderer.trace_enabled = trace_this_draw;
           glyph_renderer.trace_all_rows = rd_state->terminal_glyph_trace_all_rows;
           glyph_renderer.trace_row = rd_state->terminal_glyph_trace_row;
@@ -3365,8 +3419,11 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           {
             tv->glyph_trace_last_render_generation = tv->cell_cache.render_generation;
           }
+          }
+          tv->retained_bucket = terminal_bucket;
+          tv->retained_bucket_key = (trace_this_draw ? 0 : bucket_key);
         }
-        ui_box_equip_draw_bucket(canvas_box, terminal_bucket);
+        ui_box_equip_draw_bucket(canvas_box, tv->retained_bucket);
         if(tv->cell_cache.scrollbar.viewport_rows != 0)
         {
           U64 max_top_row_u64 = tv->cell_cache.scrollbar.total_rows > tv->cell_cache.scrollbar.viewport_rows ? tv->cell_cache.scrollbar.total_rows - tv->cell_cache.scrollbar.viewport_rows : 0;

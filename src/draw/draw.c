@@ -269,6 +269,15 @@ dr_bucket_make(void)
   return bucket;
 }
 
+internal DR_Bucket *
+dr_bucket_make_on(Arena *arena)
+{
+  DR_Bucket *bucket = push_array(arena, DR_Bucket, 1);
+  bucket->arena = arena;
+  DR_BucketStackInits(bucket);
+  return bucket;
+}
+
 internal void
 dr_push_bucket(DR_Bucket *bucket)
 {
@@ -321,8 +330,8 @@ dr_top_bucket(void)
 internal inline R_Rect2DInst *
 dr_rect(Rng2F32 dst, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32 edge_softness)
 {
-  Arena *arena = dr_thread_ctx->arena;
   DR_Bucket *bucket = dr_top_bucket();
+  Arena *arena = (bucket->arena != 0 ? bucket->arena : dr_thread_ctx->arena);
   R_Pass *pass = r_pass_from_kind(arena, &bucket->passes, R_PassKind_UI);
   R_PassParams_UI *params = pass->params_ui;
   R_BatchGroup2DList *rects = &params->rects;
@@ -338,6 +347,7 @@ dr_rect(Rng2F32 dst, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32
     node->params.xform           = bucket->top_xform2d->v;
     node->params.clip            = bucket->top_clip->v;
     node->params.transparency    = bucket->top_transparency->v;
+    node->params.content_version = bucket->content_version;
   }
   R_Rect2DInst *inst = (R_Rect2DInst *)r_batch_list_push_inst(arena, &node->batches, 256);
   inst->dst = dst;
@@ -363,8 +373,8 @@ dr_rect(Rng2F32 dst, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32
 internal inline R_Rect2DInst *
 dr_img(Rng2F32 dst, Rng2F32 src, R_Handle texture, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32 edge_softness)
 {
-  Arena *arena = dr_thread_ctx->arena;
   DR_Bucket *bucket = dr_top_bucket();
+  Arena *arena = (bucket->arena != 0 ? bucket->arena : dr_thread_ctx->arena);
   R_Pass *pass = r_pass_from_kind(arena, &bucket->passes, R_PassKind_UI);
   R_PassParams_UI *params = pass->params_ui;
   R_BatchGroup2DList *rects = &params->rects;
@@ -384,6 +394,7 @@ dr_img(Rng2F32 dst, Rng2F32 src, R_Handle texture, Vec4F32 color, F32 corner_rad
     node->params.xform           = bucket->top_xform2d->v;
     node->params.clip            = bucket->top_clip->v;
     node->params.transparency    = bucket->top_transparency->v;
+    node->params.content_version = bucket->content_version;
   }
   R_Rect2DInst *inst = (R_Rect2DInst *)r_batch_list_push_inst(arena, &node->batches, 256);
   inst->dst = dst;
@@ -409,8 +420,8 @@ dr_img(Rng2F32 dst, Rng2F32 src, R_Handle texture, Vec4F32 color, F32 corner_rad
 internal R_PassParams_Blur *
 dr_blur(Rng2F32 rect, F32 blur_size, F32 corner_radius)
 {
-  Arena *arena = dr_thread_ctx->arena;
   DR_Bucket *bucket = dr_top_bucket();
+  Arena *arena = (bucket->arena != 0 ? bucket->arena : dr_thread_ctx->arena);
   R_Pass *pass = r_pass_from_kind(arena, &bucket->passes, R_PassKind_Blur);
   R_PassParams_Blur *params = pass->params_blur;
   params->rect = rect;
@@ -428,8 +439,8 @@ dr_blur(Rng2F32 rect, F32 blur_size, F32 corner_radius)
 internal R_PassParams_Geo3D *
 dr_geo3d_begin(Rng2F32 viewport, Mat4x4F32 view, Mat4x4F32 projection)
 {
-  Arena *arena = dr_thread_ctx->arena;
   DR_Bucket *bucket = dr_top_bucket();
+  Arena *arena = (bucket->arena != 0 ? bucket->arena : dr_thread_ctx->arena);
   R_Pass *pass = r_pass_from_kind(arena, &bucket->passes, R_PassKind_Geo3D);
   R_PassParams_Geo3D *params = pass->params_geo3d;
   params->viewport = viewport;
@@ -443,8 +454,8 @@ dr_geo3d_begin(Rng2F32 viewport, Mat4x4F32 view, Mat4x4F32 projection)
 internal R_Mesh3DInst *
 dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_GeoTopologyKind mesh_geo_topology, R_GeoVertexFlags mesh_geo_vertex_flags, R_Handle albedo_tex, Mat4x4F32 inst_xform)
 {
-  Arena *arena = dr_thread_ctx->arena;
   DR_Bucket *bucket = dr_top_bucket();
+  Arena *arena = (bucket->arena != 0 ? bucket->arena : dr_thread_ctx->arena);
   R_Pass *pass = r_pass_from_kind(arena, &bucket->passes, R_PassKind_Geo3D);
   R_PassParams_Geo3D *params = pass->params_geo3d;
   
@@ -515,9 +526,9 @@ dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_GeoTopologyKind mesh_ge
 internal void
 dr_sub_bucket(DR_Bucket *bucket)
 {
-  Arena *arena = dr_thread_ctx->arena;
   DR_Bucket *src = bucket;
   DR_Bucket *dst = dr_top_bucket();
+  Arena *arena = (dst->arena != 0 ? dst->arena : dr_thread_ctx->arena);
   Rng2F32 dst_clip = dr_top_clip();
   B32 dst_clip_is_set = !(dst_clip.x0 == 0 && dst_clip.x1 == 0 &&
                           dst_clip.y0 == 0 && dst_clip.y1 == 0);
@@ -568,8 +579,8 @@ dr_sub_bucket(DR_Bucket *bucket)
 internal void
 dr_surface_begin(R_Handle target, Rng2F32 target_rect)
 {
-  Arena *arena = dr_thread_ctx->arena;
   DR_Bucket *bucket = dr_top_bucket();
+  Arena *arena = (bucket->arena != 0 ? bucket->arena : dr_thread_ctx->arena);
   DR_SurfaceNode *node = bucket->free_surface;
   if(node != 0)
   {
@@ -591,8 +602,8 @@ dr_surface_begin(R_Handle target, Rng2F32 target_rect)
 internal void
 dr_surface_end(void)
 {
-  Arena *arena = dr_thread_ctx->arena;
   DR_Bucket *bucket = dr_top_bucket();
+  Arena *arena = (bucket->arena != 0 ? bucket->arena : dr_thread_ctx->arena);
   DR_SurfaceNode *node = bucket->top_surface;
   if(node != 0)
   {
@@ -662,9 +673,24 @@ dr_surface_end_cached(U64 *io_content_hash, B32 force_render)
           has_mutable_tex = 1;
         }
         hash = u64_hash_from_seed_str8(hash, str8_struct(&group_n->params));
-        for(R_BatchNode *batch_n = group_n->batches.first; batch_n != 0; batch_n = batch_n->next)
+        if(group_n->params.content_version != 0)
         {
-          hash = u64_hash_from_seed_str8(hash, str8(batch_n->v.v, batch_n->v.byte_count));
+          // producer-versioned content: instance bytes are a pure function of
+          // the version (already mixed in via params above), so skip hashing
+          // them; byte count + first-instance bytes cheaply catch repositioning
+          hash = u64_hash_from_seed_str8(hash, str8_struct(&group_n->batches.byte_count));
+          if(group_n->batches.first != 0 && group_n->batches.first->v.byte_count != 0)
+          {
+            U64 first_size = Min(group_n->batches.first->v.byte_count, (U64)group_n->batches.bytes_per_inst);
+            hash = u64_hash_from_seed_str8(hash, str8(group_n->batches.first->v.v, first_size));
+          }
+        }
+        else
+        {
+          for(R_BatchNode *batch_n = group_n->batches.first; batch_n != 0; batch_n = batch_n->next)
+          {
+            hash = u64_hash_from_seed_str8(hash, str8(batch_n->v.v, batch_n->v.byte_count));
+          }
         }
       }
     }

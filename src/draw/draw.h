@@ -88,6 +88,8 @@ typedef struct DR_Bucket DR_Bucket;
 struct DR_Bucket
 {
   R_PassList passes;
+  Arena *arena;                 // nonzero -> draw calls allocate here (retained buckets); zero -> per-frame thread arena
+  U64 content_version;          // nonzero -> stamped onto batch groups; content is producer-versioned (see dr_surface_end_cached)
   U64 stack_gen;
   U64 last_cmd_stack_gen;
   DR_SurfaceNode *top_surface;  // stack of open dr_surface_begin/dr_surface_end_composite brackets
@@ -157,6 +159,7 @@ internal void dr_submit_bucket(WM_Window os_window, R_Handle r_window, DR_Bucket
 // (Bucket: Handle to sequence of many render passes, constructed by this layer)
 
 internal DR_Bucket *dr_bucket_make(void);
+internal DR_Bucket *dr_bucket_make_on(Arena *arena); // retained bucket: outlives the frame, owned by the caller's arena
 internal void dr_push_bucket(DR_Bucket *bucket);
 internal void dr_pop_bucket(void);
 internal DR_Bucket *dr_top_bucket(void);
