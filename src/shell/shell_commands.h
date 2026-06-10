@@ -47,6 +47,7 @@ read_only global UIShell_AppCmdInfo uishell_shell_window_cmd_info_table[] =
   UISHELL_SHELL_CMD("close_window", "Close Window", Window, "Closes the current window.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("window_close_menu", "Window Close Menu", Null, "Closes the current window.", "", 0, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("toggle_fullscreen", "Toggle Fullscreen", Window, "Toggles fullscreen view.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
+  UISHELL_SHELL_CMD("toggle_dev_menu", "Toggle Developer Menu", Gear, "Toggles the developer menu, containing developer settings & toggles.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("reset_to_default_bindings", "Reset To Default Bindings", Null, "Resets all keybindings to their defaults.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
 };
 
@@ -196,6 +197,7 @@ read_only global UIShell_DefaultBinding uishell_shell_font_default_binding_table
 read_only global UIShell_DefaultBinding uishell_shell_window_default_binding_table[] =
 {
   UISHELL_BIND("toggle_fullscreen", Return, WM_Modifier_Accel),
+  UISHELL_BIND("toggle_dev_menu", Tick, WM_Modifier_Accel|WM_Modifier_Shift),
 };
 
 read_only global UIShell_DefaultBinding uishell_shell_panel_default_binding_table[] =

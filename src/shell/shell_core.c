@@ -4270,6 +4270,12 @@ rd_window_frame(void)
       ui_set_next_flags(UI_BoxFlag_ViewScrollY|UI_BoxFlag_AllowOverflowY|UI_BoxFlag_ViewClamp);
       UI_PaneF(r2f32p(30, 30, 30+ui_top_font_size()*100, ui_top_font_size()*60), "###dev_ctx_menu")
       {
+        //- rjf: close
+        if(ui_clicked(ui_buttonf("Close###dev_menu_close")) || ui_slot_press(UI_EventActionSlot_Cancel))
+        {
+          ws->dev_menu_is_open = 0;
+        }
+
         //- rjf: capture
         if(!ProfIsCapturing() && ui_clicked(ui_buttonf("Begin Profiler Capture###prof_cap")))
         {

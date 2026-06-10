@@ -1634,6 +1634,15 @@ uishell_dispatch_window_command(String8 name)
       wm_window_set_fullscreen(ws->os, !wm_window_is_fullscreen(ws->os));
     }
   }
+  else if(str8_match(name, str8_lit("toggle_dev_menu"), 0))
+  {
+    CFG_Node *wcfg = cfg_node_from_id(uishell_regs()->window);
+    RD_WindowState *ws = rd_window_state_from_cfg(wcfg);
+    if(ws != &rd_nil_window_state)
+    {
+      ws->dev_menu_is_open ^= 1;
+    }
+  }
   else if(str8_match(name, str8_lit("bring_to_front"), 0))
   {
     CFG_Node *last_focused_wcfg = cfg_node_from_id(rd_state->last_focused_window);
