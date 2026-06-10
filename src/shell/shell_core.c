@@ -1888,8 +1888,8 @@ rd_window_state_from_cfg__existing(CFG_Node *cfg)
   return ws;
 }
 
-internal R_Handle
-rd_window_surface_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
+internal RD_SurfaceCacheNode *
+rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
 {
   RD_SurfaceCacheNode *node = 0;
   for(RD_SurfaceCacheNode *n = ws->first_surface_cache_node; n != 0; n = n->next)
@@ -1905,6 +1905,7 @@ rd_window_surface_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
     r_tex2d_release(node->texture);
     node->texture = r_tex2d_alloc_render_target(size);
     node->size = size;
+    node->rendered_hash = 0;
   }
   if(node == 0)
   {
@@ -1920,10 +1921,12 @@ rd_window_surface_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
     node->key = key;
     node->texture = r_tex2d_alloc_render_target(size);
     node->size = size;
+    node->rendered_hash = 0;
+    node->last_was_preserved = 0;
     SLLStackPush(ws->first_surface_cache_node, node);
   }
   node->last_use_frame_index = rd_state->frame_index;
-  return node->texture;
+  return node;
 }
 
 internal void
@@ -2517,7 +2520,7 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 }
               }
 
-              // rjf: row interaction, after children - presses inside the close
+              // row interaction, after children - presses inside the close
               // button (or other clickable children) must be claimed there first
               UI_Signal row_sig = ui_signal_from_box(row_box);
               if(ui_clicked(row_sig) && !selected)
@@ -4338,7 +4341,7 @@ rd_window_frame(void)
       ui_set_next_flags(UI_BoxFlag_ViewScrollY|UI_BoxFlag_AllowOverflowY|UI_BoxFlag_ViewClamp);
       UI_PaneF(r2f32p(30, 30, 30+ui_top_font_size()*100, ui_top_font_size()*60), "###dev_ctx_menu")
       {
-        //- rjf: close
+        //- close
         if(ui_clicked(ui_buttonf("Close###dev_menu_close")) || ui_slot_press(UI_EventActionSlot_Cancel))
         {
           ws->dev_menu_is_open = 0;
@@ -5784,6 +5787,8 @@ rd_window_frame(void)
     U64 total_heatmap_sum_count = 0;
     UI_Box *hover_debug_box = &ui_nil_box;
     UI_Box *surface_box_stack[8] = {0};
+    RD_SurfaceCacheNode *surface_node_stack[8] = {0};
+    B32 surface_child_changed_stack[8] = {0};
     U64 surface_box_count = 0;
     for(UI_Box *box = ui_root_from_state(ws->ui); !ui_box_is_nil(box);)
     {
@@ -5853,15 +5858,16 @@ rd_window_frame(void)
         MemoryCopyArray(inst->corner_radii, box_corner_radii);
       }
       
-      // rjf: blur background (skipped inside a surface bracket - a blur pass would
-      // sever the surface's UI pass & its result would composite under, not into, the surface)
+      // rjf: blur background
+      // (skipped inside a surface bracket - a blur pass would sever the surface's
+      // UI pass & its result would composite under, not into, the surface)
       if(do_background_blur && box->flags & UI_BoxFlag_DrawBackgroundBlur && surface_box_count == 0)
       {
         R_PassParams_Blur *params = dr_blur(pad_2f32(box->rect, 1.f), box->blur_size*(1-box->transparency), 0);
         MemoryCopyArray(params->corner_radii, box_corner_radii);
       }
 
-      // rjf: begin offscreen surface -> this box & its subtree draw into a cached
+      // begin offscreen surface -> this box & its subtree draw into a cached
       // render-target texture keyed by the box's key, composited back at its rect on pop
       if(box->flags & UI_BoxFlag_RenderToSurface &&
          !ui_key_match(box->key, ui_key_zero()) &&
@@ -5872,12 +5878,14 @@ rd_window_frame(void)
         Vec2F32 surface_dim = dim_2f32(surface_rect);
         Vec2S32 size_px = v2s32((S32)ceil_f32(surface_dim.x*backing_scale),
                                 (S32)ceil_f32(surface_dim.y*backing_scale));
-        R_Handle surface = rd_window_surface_from_key(ws, box->key.u64[0], size_px);
-        if(!r_handle_match(surface, r_handle_zero()))
+        RD_SurfaceCacheNode *node = rd_window_surface_node_from_key(ws, box->key.u64[0], size_px);
+        if(node != 0 && !r_handle_match(node->texture, r_handle_zero()))
         {
           surface_box_stack[surface_box_count] = box;
+          surface_node_stack[surface_box_count] = node;
+          surface_child_changed_stack[surface_box_count] = 0;
           surface_box_count += 1;
-          dr_surface_begin(surface, surface_rect);
+          dr_surface_begin(node->texture, surface_rect);
         }
       }
       
@@ -6114,11 +6122,20 @@ rd_window_frame(void)
             dr_pop_clip();
           }
 
-          // rjf: end offscreen surface -> composite it where the subtree would have drawn
+          // end offscreen surface -> composite it where the subtree would have
+          // drawn; skip the render when content is unchanged, & propagate "changed"
+          // to the enclosing surface (its composite bytes don't reflect our content)
           if(surface_box_count != 0 && b == surface_box_stack[surface_box_count-1])
           {
             surface_box_count -= 1;
-            dr_surface_end_composite();
+            RD_SurfaceCacheNode *node = surface_node_stack[surface_box_count];
+            B32 force_render = surface_child_changed_stack[surface_box_count];
+            B32 changed = dr_surface_end_composite_cached(&node->rendered_hash, force_render);
+            node->last_was_preserved = !changed;
+            if(changed && surface_box_count != 0)
+            {
+              surface_child_changed_stack[surface_box_count-1] = 1;
+            }
           }
 
           // rjf: get corner radii
@@ -6239,13 +6256,13 @@ rd_window_frame(void)
       box = rec.next;
     }
 
-    //- rjf: safety: never leave surface brackets dangling past the walk
+    //- safety: never leave surface brackets dangling past the walk
     for(; surface_box_count != 0; surface_box_count -= 1)
     {
       dr_surface_end_composite();
     }
 
-    //- rjf: (DEV) draw a thumbnail strip of all live surfaces - second consumers
+    //- (DEV) draw a thumbnail strip of all live surfaces - second consumers
     // of the same textures, sampled linearly at reduced scale
     if(DEV_draw_surface_previews)
     {
@@ -6271,13 +6288,14 @@ rd_window_frame(void)
           dr_rect(pad_2f32(dst, 6.f), drop_shadow_color, 4.f, 0, 8.f);
           dr_rect(pad_2f32(dst, 1.f), base_background_color, 0, 0, 1.f);
           dr_surface_img(n->texture, dst, v4f32(1, 1, 1, 1), 0, 0, 0);
-          dr_rect(pad_2f32(dst, 1.f), base_border_color, 0, 1.f, 1.f);
+          Vec4F32 thumb_border_color = (n->last_was_preserved ? v4f32(0.3f, 0.9f, 0.4f, 1.f) : base_border_color);
+          dr_rect(pad_2f32(dst, 1.f), thumb_border_color, 0, 1.f, 1.f);
           x -= thumb_width + pad;
         }
       }
     }
 
-    //- rjf: release cached surfaces that nothing demanded this frame
+    //- release cached surfaces that nothing demanded this frame
     rd_window_surface_cache_evict(ws);
 
     //- rjf: draw heatmap

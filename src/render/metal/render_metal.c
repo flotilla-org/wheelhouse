@@ -180,7 +180,7 @@ r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_n
       descriptor.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
       descriptor.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
       descriptor.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
-      // rjf: coverage_alpha accumulates source-over coverage in dst alpha, which renders
+      // NOTE: coverage_alpha accumulates source-over coverage in dst alpha, which renders
       // into transparent-cleared surfaces as premultiplied color + coverage; the default
       // replaces dst alpha (the stage's alpha is never read again, so it doesn't matter there)
       descriptor.colorAttachments[0].destinationAlphaBlendFactor = (coverage_alpha ? MTLBlendFactorOneMinusSourceAlpha : MTLBlendFactorZero);
@@ -670,7 +670,7 @@ r_tex2d_alloc_render_target(Vec2S32 size)
     }
     MemoryZeroStruct(texture);
     texture->kind = R_ResourceKind_Static;
-    // NOTE(rjf): render targets share the stage's pixel format (RGBA16Float), which has no
+    // NOTE: render targets share the stage's pixel format (RGBA16Float), which has no
     // R_Tex2DFormat; RGBA16 gives the identity sample channel map & correct bytes-per-pixel
     texture->format = R_Tex2DFormat_RGBA16;
     texture->size = size;
@@ -898,7 +898,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
       id<MTLRenderCommandEncoder> clear_encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_clear_pass];
       [clear_encoder endEncoding];
 
-      // rjf: a surface target's first pass this submit clears it; later passes
+      // NOTE: a surface target's first pass this submit clears it; later passes
       // (e.g. a parent surface resuming after a nested child's bracket) load
       id<MTLTexture> touched_targets[64];
       U64 touched_target_count = 0;
@@ -915,10 +915,15 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
             {
               R_PassParams_UI *params = render_pass->params_ui;
 
-              //- rjf: unpack optional render target; surface passes draw into their own
+              //- unpack optional render target; surface passes draw into their own
               // texture (cleared to transparent), in coordinates relative to target_rect
               R_MTL_Tex2D *target = r_mtl_tex2d_from_handle(params->target);
               B32 to_surface = (target != 0 && target->texture != 0);
+              if(to_surface && params->preserve)
+              {
+                // surface content is up-to-date; skip the render & keep the texture
+                break;
+              }
               Vec2F32 pass_viewport_dim = viewport_dim;
               Vec2S32 pass_attachment_size = mtl_window->drawable_size;
               Vec2F32 target_origin = v2f32(0, 0);

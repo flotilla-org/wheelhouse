@@ -498,6 +498,8 @@ struct RD_SurfaceCacheNode
   R_Handle texture;
   Vec2S32 size;
   U64 last_use_frame_index;
+  U64 rendered_hash;       // content hash of what's in the texture (0 = invalid, must render)
+  B32 last_was_preserved;  // dev visibility: last frame skipped the render
 };
 
 typedef struct RD_WindowState RD_WindowState;
@@ -585,7 +587,7 @@ struct RD_WindowState
   // rjf: per-frame drawing state
   DR_Bucket *draw_bucket;
 
-  // rjf: surface render-target cache, keyed by content (box key); see
+  // surface render-target cache, keyed by content (box key); see
   // UI_BoxFlag_RenderToSurface & the draw-walk surface bracketing
   RD_SurfaceCacheNode *first_surface_cache_node;
   RD_SurfaceCacheNode *free_surface_cache_node;
@@ -979,7 +981,7 @@ internal String8 rd_push_window_title(Arena *arena);
 internal CFG_Node *rd_window_from_cfg(CFG_Node *cfg);
 internal RD_WindowState *rd_window_state_from_cfg__existing(CFG_Node *cfg);
 internal RD_WindowState *rd_window_state_from_cfg(CFG_Node *cfg);
-internal R_Handle rd_window_surface_from_key(RD_WindowState *ws, U64 key, Vec2S32 size);
+internal RD_SurfaceCacheNode *rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size);
 internal void rd_window_surface_cache_evict(RD_WindowState *ws);
 internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);
 internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);

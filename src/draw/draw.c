@@ -563,7 +563,7 @@ dr_sub_bucket(DR_Bucket *bucket)
   }
 }
 
-//- rjf: surfaces (redirecting draws into a render-target texture, then compositing it back)
+//- surfaces (redirecting draws into a render-target texture, then compositing it back)
 
 internal void
 dr_surface_begin(R_Handle target, Rng2F32 target_rect)
@@ -585,6 +585,7 @@ dr_surface_begin(R_Handle target, Rng2F32 target_rect)
   R_Pass *pass = r_pass_push(arena, &bucket->passes, R_PassKind_UI);
   pass->params_ui->target = target;
   pass->params_ui->target_rect = target_rect;
+  node->first_pass = bucket->passes.last;
 }
 
 internal void
@@ -600,7 +601,7 @@ dr_surface_end_composite(void)
     SLLStackPop(bucket->top_surface);
     SLLStackPush(bucket->free_surface, node);
 
-    // rjf: resume drawing to the parent target (the stage if the stack is now
+    //- resume drawing to the parent target (the stage if the stack is now
     // empty), & composite the surface where its content would have drawn
     DR_SurfaceNode *parent = bucket->top_surface;
     R_Pass *pass = r_pass_push(arena, &bucket->passes, R_PassKind_UI);
@@ -611,6 +612,73 @@ dr_surface_end_composite(void)
     }
     dr_surface_img(target, target_rect, v4f32(1, 1, 1, 1), 0, 0, 0);
   }
+}
+
+internal B32
+dr_surface_end_composite_cached(U64 *io_content_hash, B32 force_render)
+{
+  DR_Bucket *bucket = dr_top_bucket();
+  DR_SurfaceNode *node = bucket->top_surface;
+  B32 changed = 1;
+  if(node != 0)
+  {
+    //- hash this bracket's content: every pass part targeting this surface,
+    // group params + raw instance bytes. textures that can mutate behind a stable
+    // handle (non-static kinds) force a render, as do re-rendered child surfaces
+    // (their composite bytes don't change when their content does) via force_render.
+    B32 has_mutable_tex = 0;
+    U64 hash = 5381;
+    for(R_PassNode *pass_n = node->first_pass; pass_n != 0; pass_n = pass_n->next)
+    {
+      if(pass_n->v.kind != R_PassKind_UI)
+      {
+        continue;
+      }
+      R_PassParams_UI *params = pass_n->v.params_ui;
+      if(!r_handle_match(params->target, node->target))
+      {
+        continue;
+      }
+      for(R_BatchGroup2DNode *group_n = params->rects.first; group_n != 0; group_n = group_n->next)
+      {
+        // NOTE: only Stream textures mutate in place behind a stable handle.
+        // Dynamic covers incremental-append atlases (e.g. the glyph atlas), whose
+        // already-referenced subrects are content-stable: changed subrect assignments
+        // show up in the instance bytes, so the hash catches them.
+        if(!r_handle_match(group_n->params.tex, r_handle_zero()) &&
+           !group_n->params.tex_sample_is_surface &&
+           r_kind_from_tex2d(group_n->params.tex) == R_ResourceKind_Stream)
+        {
+          has_mutable_tex = 1;
+        }
+        hash = u64_hash_from_seed_str8(hash, str8_struct(&group_n->params));
+        for(R_BatchNode *batch_n = group_n->batches.first; batch_n != 0; batch_n = batch_n->next)
+        {
+          hash = u64_hash_from_seed_str8(hash, str8(batch_n->v.v, batch_n->v.byte_count));
+        }
+      }
+    }
+
+    //- unchanged -> mark all of this bracket's pass parts preserved, so the
+    // backend skips rendering them & the target keeps its prior contents
+    changed = (force_render || has_mutable_tex || io_content_hash == 0 || hash != *io_content_hash);
+    if(!changed)
+    {
+      for(R_PassNode *pass_n = node->first_pass; pass_n != 0; pass_n = pass_n->next)
+      {
+        if(pass_n->v.kind == R_PassKind_UI && r_handle_match(pass_n->v.params_ui->target, node->target))
+        {
+          pass_n->v.params_ui->preserve = 1;
+        }
+      }
+    }
+    if(io_content_hash != 0)
+    {
+      *io_content_hash = hash;
+    }
+  }
+  dr_surface_end_composite();
+  return changed;
 }
 
 internal B32

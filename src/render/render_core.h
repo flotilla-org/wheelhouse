@@ -204,6 +204,7 @@ struct R_PassParams_UI
   R_BatchGroup2DList rects;
   R_Handle target;      // zero -> render to the window's stage; nonzero -> render-target texture
   Rng2F32 target_rect;  // window-space rect the target covers, when target is nonzero
+  B32 preserve;         // target content is up-to-date; skip rendering this pass entirely
 };
 
 typedef struct R_PassParams_Blur R_PassParams_Blur;
