@@ -927,11 +927,18 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
               Vec2F32 pass_viewport_dim = viewport_dim;
               Vec2S32 pass_attachment_size = mtl_window->drawable_size;
               Vec2F32 target_origin = v2f32(0, 0);
+              F32 pass_scale = scale;
               if(to_surface)
               {
                 pass_viewport_dim = dim_2f32(params->target_rect);
                 pass_attachment_size = target->size;
                 target_origin = params->target_rect.p0;
+                // surfaces may be allocated at any resolution (e.g. reduced-res
+                // previews); derive the point->pixel scale from the target itself
+                if(pass_viewport_dim.x > 0)
+                {
+                  pass_scale = (F32)target->size.x/pass_viewport_dim.x;
+                }
               }
 
               B32 target_first_touch = 0;
@@ -1012,7 +1019,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                       clip = shift_2f32(clip, v2f32(-target_origin.x, -target_origin.y));
                     }
                     MTLScissorRect scissor = {0};
-                    if(!r_mtl_scissor_from_clip(clip, pass_attachment_size, scale, &scissor))
+                    if(!r_mtl_scissor_from_clip(clip, pass_attachment_size, pass_scale, &scissor))
                     {
                       continue;
                     }

@@ -212,7 +212,8 @@ internal void dr_sub_bucket(DR_Bucket *bucket);
 internal void dr_surface_begin(R_Handle target, Rng2F32 target_rect);
 internal void dr_surface_end(void);
 internal void dr_surface_end_composite(void);
-internal B32 dr_surface_end_composite_cached(U64 *io_content_hash, B32 force_render); // returns 1 if content changed (rendered), 0 if preserved
+internal B32 dr_surface_end_cached(U64 *io_content_hash, B32 force_render); // returns 1 if content changed (rendered), 0 if preserved
+internal B32 dr_surface_end_composite_cached(U64 *io_content_hash, B32 force_render); // ditto, & composites the surface at its rect
 internal B32 dr_surface_is_active(void);
 internal R_Rect2DInst *dr_surface_img(R_Handle target, Rng2F32 dst, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32 edge_softness);
 

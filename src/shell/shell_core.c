@@ -1945,6 +1945,24 @@ rd_window_surface_node_lookup(RD_WindowState *ws, U64 key)
   return node;
 }
 
+internal RD_WorkspaceSurfaceEntry *
+rd_workspace_surface_entry_from_box_key(RD_WindowState *ws, U64 box_key)
+{
+  RD_WorkspaceSurfaceEntry *entry = 0;
+  if(box_key != 0)
+  {
+    for(U64 i = 0; i < ws->workspace_surface_entry_count; i += 1)
+    {
+      if(ws->workspace_surface_entries[i].box_key == box_key)
+      {
+        entry = &ws->workspace_surface_entries[i];
+        break;
+      }
+    }
+  }
+  return entry;
+}
+
 internal U64
 rd_workspace_preview_surface_key(U64 workspace_id)
 {
@@ -5759,7 +5777,7 @@ rd_window_frame(void)
       ws->window_layout_reset = 1;
     }
     Rng2F32 workspace_rect = uishell_controlled_split_workspace_rect(&root_controlled_split, content_rect);
-    ws->workspace_surface_box_key = 0;
+    ws->workspace_surface_entry_count = 0;
     if(DEV_draw_workspace_surfaces && workspace_mount->owner_cfg != &cfg_nil_node)
     {
       // workspace surface wrapper: the whole panel area renders through one
@@ -5771,11 +5789,35 @@ rd_window_frame(void)
       UI_Key wrapper_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", workspace_id);
       ui_set_next_rect(window_rect);
       UI_Box *wrapper = ui_build_box_from_key(UI_BoxFlag_RenderToSurface, wrapper_key);
-      ws->workspace_surface_box_key = wrapper_key.u64[0];
-      ws->workspace_surface_workspace_id = workspace_id;
+      ws->workspace_surface_entries[ws->workspace_surface_entry_count] = (RD_WorkspaceSurfaceEntry){wrapper_key.u64[0], workspace_id, 1};
+      ws->workspace_surface_entry_count += 1;
       UI_Parent(wrapper)
       {
         rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open);
+      }
+
+      //- build non-visible Materialized children as ordinary container children
+      // (per ADR-0005): everything in them runs; they render into their own
+      // reduced-res surfaces (never composited to the stage), input-inert &
+      // focus-off, so their previews are live
+      for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first;
+          child != 0 && ws->workspace_surface_entry_count < ArrayCount(ws->workspace_surface_entries);
+          child = child->next)
+      {
+        if(child->mount.owner_cfg == workspace_mount->owner_cfg ||
+           child->mount.owner_cfg == &cfg_nil_node)
+        {
+          continue;
+        }
+        UI_Key child_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", child->id);
+        ui_set_next_rect(window_rect);
+        UI_Box *child_wrapper = ui_build_box_from_key(UI_BoxFlag_RenderToSurface|UI_BoxFlag_IgnoreInteraction, child_key);
+        ws->workspace_surface_entries[ws->workspace_surface_entry_count] = (RD_WorkspaceSurfaceEntry){child_key.u64[0], child->id, 0};
+        ws->workspace_surface_entry_count += 1;
+        UI_Parent(child_wrapper) UI_Focus(UI_FocusKind_Off)
+        {
+          rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, &child->mount, 0, 0);
+        }
       }
     }
     else
@@ -5972,6 +6014,13 @@ rd_window_frame(void)
       {
         Rng2F32 surface_rect = pad_2f32(box->rect, 2.f);
         F32 backing_scale = wm_backing_scale_from_window(ws->os);
+        // non-visible workspace surfaces render at reduced resolution: they're
+        // only ever consumed as previews, & this quarters their memory
+        RD_WorkspaceSurfaceEntry *ws_entry = rd_workspace_surface_entry_from_box_key(ws, box->key.u64[0]);
+        if(ws_entry != 0 && !ws_entry->composite)
+        {
+          backing_scale *= 0.5f;
+        }
         Vec2F32 surface_dim = dim_2f32(surface_rect);
         Vec2S32 size_px = v2s32((S32)ceil_f32(surface_dim.x*backing_scale),
                                 (S32)ceil_f32(surface_dim.y*backing_scale));
@@ -6227,7 +6276,17 @@ rd_window_frame(void)
             surface_box_count -= 1;
             RD_SurfaceCacheNode *node = surface_node_stack[surface_box_count];
             B32 force_render = surface_child_changed_stack[surface_box_count];
-            B32 changed = dr_surface_end_composite_cached(&node->rendered_hash, force_render);
+            RD_WorkspaceSurfaceEntry *ws_entry = rd_workspace_surface_entry_from_box_key(ws, b->key.u64[0]);
+            B32 changed = 0;
+            if(ws_entry != 0 && !ws_entry->composite)
+            {
+              // non-visible workspace: render offscreen only; nothing composites
+              changed = dr_surface_end_cached(&node->rendered_hash, force_render);
+            }
+            else
+            {
+              changed = dr_surface_end_composite_cached(&node->rendered_hash, force_render);
+            }
             node->last_was_preserved = !changed;
             if(changed && surface_box_count != 0)
             {
@@ -6235,11 +6294,9 @@ rd_window_frame(void)
             }
 
             // workspace surface re-rendered -> refresh its retained preview, a
-            // small downsampled texture that survives this workspace going
-            // non-visible (shown stale in the strip; later, in the switcher)
-            if(changed &&
-               ws->workspace_surface_box_key != 0 &&
-               b->key.u64[0] == ws->workspace_surface_box_key)
+            // small downsampled texture shown in the control surface rows (&,
+            // for non-visible workspaces, the only consumer of the surface)
+            if(changed && ws_entry != 0)
             {
               Vec2F32 full_dim = dim_2f32(b->rect);
               if(full_dim.x > 1 && full_dim.y > 1)
@@ -6249,7 +6306,7 @@ rd_window_frame(void)
                 F32 mini_h_pt = floor_f32(mini_w_pt*full_dim.y/full_dim.x);
                 Vec2S32 mini_px = v2s32((S32)ceil_f32(mini_w_pt*backing_scale),
                                         (S32)ceil_f32(mini_h_pt*backing_scale));
-                U64 mini_key = rd_workspace_preview_surface_key(ws->workspace_surface_workspace_id);
+                U64 mini_key = rd_workspace_preview_surface_key(ws_entry->workspace_id);
                 RD_SurfaceCacheNode *mini = rd_window_surface_node_from_key(ws, mini_key, mini_px);
                 if(mini != 0 && !r_handle_match(mini->texture, r_handle_zero()))
                 {
@@ -6407,10 +6464,11 @@ rd_window_frame(void)
           {
             continue;
           }
-          if(n->key == ws->workspace_surface_box_key)
+          if(rd_workspace_surface_entry_from_box_key(ws, n->key) != 0)
           {
-            // the full-res workspace wrapper is the screen itself; its preview
-            // is the retained mini, so showing both just reads as a duplicate
+            // workspace wrapper surfaces are the screen itself / offscreen
+            // child builds; their previews are the retained minis, so showing
+            // both just reads as duplicates
             continue;
           }
           F32 aspect = (n->size.y > 0 ? (F32)n->size.x/(F32)n->size.y : 1.f);

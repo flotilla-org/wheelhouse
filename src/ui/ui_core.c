@@ -2832,12 +2832,22 @@ ui_signal_from_box(UI_Box *box)
   //- rjf: calculate possibly-clipped box rectangle
   //
   Rng2F32 rect = box->rect;
+  B32 interaction_ignored = !!(box->flags & UI_BoxFlag_IgnoreInteraction);
   for(UI_Box *b = box->parent; !ui_box_is_nil(b); b = b->parent)
   {
     if(b->flags & UI_BoxFlag_Clip)
     {
       rect = intersect_2f32(rect, b->rect);
     }
+    if(b->flags & UI_BoxFlag_IgnoreInteraction)
+    {
+      interaction_ignored = 1;
+    }
+  }
+  if(interaction_ignored)
+  {
+    // inert subtree: no event consumption, no hot/active participation
+    return sig;
   }
   
   //////////////////////////////

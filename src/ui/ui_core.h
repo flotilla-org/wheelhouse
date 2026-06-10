@@ -349,6 +349,7 @@ typedef U64 UI_BoxFlags;
 # define UI_BoxFlag_RoundChildrenByParent     (UI_BoxFlags)(1ull<<51)
 # define UI_BoxFlag_SquishAnchored            (UI_BoxFlags)(1ull<<52)
 # define UI_BoxFlag_RenderToSurface           (UI_BoxFlags)(1ull<<54) //- this box & its subtree draw into an offscreen surface, composited back at its rect
+# define UI_BoxFlag_IgnoreInteraction         (UI_BoxFlags)(1ull<<55) //- this box & its subtree are inert: signals are empty & they never become hot/active (e.g. non-visible workspace builds)
 
 //- rjf: debug
 # define UI_BoxFlag_Debug                     (UI_BoxFlags)(1ull<<53)

@@ -490,6 +490,14 @@ struct RD_DropCompletionTask
   String8List paths;
 };
 
+typedef struct RD_WorkspaceSurfaceEntry RD_WorkspaceSurfaceEntry;
+struct RD_WorkspaceSurfaceEntry
+{
+  U64 box_key;
+  U64 workspace_id;
+  B32 composite; // visible workspace composites to the stage; hidden ones render offscreen only
+};
+
 typedef struct RD_SurfaceCacheNode RD_SurfaceCacheNode;
 struct RD_SurfaceCacheNode
 {
@@ -593,10 +601,11 @@ struct RD_WindowState
   RD_SurfaceCacheNode *first_surface_cache_node;
   RD_SurfaceCacheNode *free_surface_cache_node;
 
-  // workspace surface (DEV draw_workspace_surfaces): box key of this frame's
-  // workspace wrapper & the workspace id, for retained-preview downsampling
-  U64 workspace_surface_box_key;
-  U64 workspace_surface_workspace_id;
+  // workspace surfaces (DEV draw_workspace_surfaces): one entry per workspace
+  // built this frame - the visible child composites to the stage; non-visible
+  // children render offscreen only, at reduced resolution, for live previews
+  RD_WorkspaceSurfaceEntry workspace_surface_entries[16];
+  U64 workspace_surface_entry_count;
 };
 
 typedef struct RD_WindowStateSlot RD_WindowStateSlot;
@@ -990,6 +999,7 @@ internal RD_WindowState *rd_window_state_from_cfg(CFG_Node *cfg);
 internal RD_SurfaceCacheNode *rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size);
 internal RD_SurfaceCacheNode *rd_window_surface_node_lookup(RD_WindowState *ws, U64 key);
 internal U64 rd_workspace_preview_surface_key(U64 workspace_id);
+internal RD_WorkspaceSurfaceEntry *rd_workspace_surface_entry_from_box_key(RD_WindowState *ws, U64 box_key);
 internal void rd_window_surface_cache_evict(RD_WindowState *ws);
 internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);
 internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);

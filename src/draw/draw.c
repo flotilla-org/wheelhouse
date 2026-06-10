@@ -625,7 +625,7 @@ dr_surface_end_composite(void)
 }
 
 internal B32
-dr_surface_end_composite_cached(U64 *io_content_hash, B32 force_render)
+dr_surface_end_cached(U64 *io_content_hash, B32 force_render)
 {
   DR_Bucket *bucket = dr_top_bucket();
   DR_SurfaceNode *node = bucket->top_surface;
@@ -687,7 +687,27 @@ dr_surface_end_composite_cached(U64 *io_content_hash, B32 force_render)
       *io_content_hash = hash;
     }
   }
-  dr_surface_end_composite();
+  dr_surface_end();
+  return changed;
+}
+
+internal B32
+dr_surface_end_composite_cached(U64 *io_content_hash, B32 force_render)
+{
+  DR_Bucket *bucket = dr_top_bucket();
+  DR_SurfaceNode *node = bucket->top_surface;
+  R_Handle target = r_handle_zero();
+  Rng2F32 target_rect = {0};
+  if(node != 0)
+  {
+    target = node->target;
+    target_rect = node->rect;
+  }
+  B32 changed = dr_surface_end_cached(io_content_hash, force_render);
+  if(node != 0)
+  {
+    dr_surface_img(target, target_rect, v4f32(1, 1, 1, 1), 0, 0, 0);
+  }
   return changed;
 }
 
