@@ -144,7 +144,11 @@ then
   fi
   sign_app_debug uishell
 fi
-if [ -n "${bundle+x}" ];              then didbuild=1; if [ "$host_os" != "Darwin" ]; then echo "[ERROR] bundle target is only supported on Darwin."; exit 1; fi; $compile ../src/uishell/uishell_main.c $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $out uishell; sign_app_debug uishell; rm -rf "UI Shell.app"; mkdir -p "UI Shell.app/Contents/MacOS" "UI Shell.app/Contents/Resources"; cp ../src/mac/uishell_Info.plist "UI Shell.app/Contents/Info.plist"; cp ../src/mac/uishell.icns "UI Shell.app/Contents/Resources/uishell.icns"; cp uishell "UI Shell.app/Contents/MacOS/uishell"; chmod +x "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app"; fi
+# The bundle wraps the uishell target's binary (built above with a persistent
+# object + co-located dSYM) rather than one-shot compiling its own: a separate
+# compile gets a different UUID with a broken debug map, so app-bundle launches
+# would profile/debug an unsymbolicatable (& possibly stale) binary.
+if [ -n "${bundle+x}" ];              then didbuild=1; if [ "$host_os" != "Darwin" ]; then echo "[ERROR] bundle target is only supported on Darwin."; exit 1; fi; if [ ! -f uishell ]; then echo "[ERROR] bundle requires the uishell target (./build.sh uishell bundle)."; exit 1; fi; rm -rf "UI Shell.app"; mkdir -p "UI Shell.app/Contents/MacOS" "UI Shell.app/Contents/Resources"; cp ../src/mac/uishell_Info.plist "UI Shell.app/Contents/Info.plist"; cp ../src/mac/uishell.icns "UI Shell.app/Contents/Resources/uishell.icns"; cp uishell "UI Shell.app/Contents/MacOS/uishell"; chmod +x "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app"; fi
 cd ..
 
 # --- Warn On No Builds -------------------------------------------------------
