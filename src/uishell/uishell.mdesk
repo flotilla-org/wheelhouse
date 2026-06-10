@@ -93,6 +93,7 @@ UIShell_DevToggleTable:
   {draw_panel_surface}
   {draw_view_surfaces}
   {draw_surface_previews}
+  {draw_workspace_surfaces}
   {eval_compiler_tooltips}
   {eval_watch_key_tooltips}
   {cmd_context_tooltips}

@@ -589,20 +589,17 @@ dr_surface_begin(R_Handle target, Rng2F32 target_rect)
 }
 
 internal void
-dr_surface_end_composite(void)
+dr_surface_end(void)
 {
   Arena *arena = dr_thread_ctx->arena;
   DR_Bucket *bucket = dr_top_bucket();
   DR_SurfaceNode *node = bucket->top_surface;
   if(node != 0)
   {
-    R_Handle target = node->target;
-    Rng2F32 target_rect = node->rect;
     SLLStackPop(bucket->top_surface);
     SLLStackPush(bucket->free_surface, node);
 
-    //- resume drawing to the parent target (the stage if the stack is now
-    // empty), & composite the surface where its content would have drawn
+    //- resume drawing to the parent target (the stage if the stack is now empty)
     DR_SurfaceNode *parent = bucket->top_surface;
     R_Pass *pass = r_pass_push(arena, &bucket->passes, R_PassKind_UI);
     if(parent != 0)
@@ -610,6 +607,19 @@ dr_surface_end_composite(void)
       pass->params_ui->target = parent->target;
       pass->params_ui->target_rect = parent->rect;
     }
+  }
+}
+
+internal void
+dr_surface_end_composite(void)
+{
+  DR_Bucket *bucket = dr_top_bucket();
+  DR_SurfaceNode *node = bucket->top_surface;
+  if(node != 0)
+  {
+    R_Handle target = node->target;
+    Rng2F32 target_rect = node->rect;
+    dr_surface_end();
     dr_surface_img(target, target_rect, v4f32(1, 1, 1, 1), 0, 0, 0);
   }
 }
@@ -624,7 +634,7 @@ dr_surface_end_composite_cached(U64 *io_content_hash, B32 force_render)
   {
     //- hash this bracket's content: every pass part targeting this surface,
     // group params + raw instance bytes. textures that can mutate behind a stable
-    // handle (non-static kinds) force a render, as do re-rendered child surfaces
+    // handle (Stream kind) force a render, as do re-rendered child surfaces
     // (their composite bytes don't change when their content does) via force_render.
     B32 has_mutable_tex = 0;
     U64 hash = 5381;

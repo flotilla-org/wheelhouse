@@ -1923,10 +1923,48 @@ rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
     node->size = size;
     node->rendered_hash = 0;
     node->last_was_preserved = 0;
+    node->retained = 0;
     SLLStackPush(ws->first_surface_cache_node, node);
   }
   node->last_use_frame_index = rd_state->frame_index;
   return node;
+}
+
+internal RD_SurfaceCacheNode *
+rd_window_surface_node_lookup(RD_WindowState *ws, U64 key)
+{
+  RD_SurfaceCacheNode *node = 0;
+  for(RD_SurfaceCacheNode *n = ws->first_surface_cache_node; n != 0; n = n->next)
+  {
+    if(n->key == key)
+    {
+      node = n;
+      break;
+    }
+  }
+  return node;
+}
+
+internal U64
+rd_workspace_preview_surface_key(U64 workspace_id)
+{
+  // surface cache keys are usually box keys; previews are cached per workspace
+  // rather than per box, so derive the key the same way box keys are made, from
+  // a namespacing key string
+  return ui_key_from_stringf(ui_key_zero(), "workspace_preview_surface_%I64u", workspace_id).u64[0];
+}
+
+internal UI_BOX_CUSTOM_DRAW(rd_workspace_preview_box_draw)
+{
+  RD_SurfaceCacheNode *node = (RD_SurfaceCacheNode *)user_data;
+  if(node != 0 && !r_handle_match(node->texture, r_handle_zero()))
+  {
+    Rng2F32 dst = pad_2f32(box->rect, -1.f);
+    DR_Tex2DSampleKindScope(R_Tex2DSampleKind_Linear)
+    {
+      dr_surface_img(node->texture, dst, v4f32(1, 1, 1, 1), 0, 0, 0);
+    }
+  }
 }
 
 internal void
@@ -1937,7 +1975,7 @@ rd_window_surface_cache_evict(RD_WindowState *ws)
       n = next)
   {
     next = n->next;
-    if(n->last_use_frame_index < rd_state->frame_index)
+    if(!n->retained && n->last_use_frame_index < rd_state->frame_index)
     {
       r_tex2d_release(n->texture);
       *prev_next = n->next;
@@ -2545,6 +2583,43 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               }
             }
             ui_spacer(ui_em(0.5f, 1.f));
+          }
+
+          //- workspace preview row: shows the retained preview surface when one
+          // exists (live-ish for the selected workspace, last-seen for others)
+          if(ws != &rd_nil_window_state)
+          {
+            RD_SurfaceCacheNode *preview = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(workspace->id));
+            F32 preview_margin = ui_top_font_size()*0.5f;
+            F32 preview_avail_w = dim_2f32(rect).x - preview_margin*2.f;
+            if(preview != 0 && preview->size.x > 0 && preview->size.y > 0 && preview_avail_w > 16.f)
+            {
+              F32 preview_aspect = (F32)preview->size.x/(F32)preview->size.y;
+              F32 preview_h = floor_f32(preview_avail_w/preview_aspect);
+              ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.2f), 1.f));
+              UI_PrefWidth(ui_pct(1.f, 0.f))
+                UI_PrefHeight(ui_px(preview_h, 1.f))
+                UI_Row
+              {
+                ui_spacer(ui_em(0.5f, 1.f));
+                UI_PrefWidth(ui_pct(1.f, 0.f))
+                  UI_PrefHeight(ui_pct(1.f, 0.f))
+                  UI_TagF("tab")
+                  UI_TagF(!selected ? "inactive" : "")
+                {
+                  UI_Box *preview_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                                                  UI_BoxFlag_DrawBorder,
+                                                                  "###workspace_preview_%I64u", workspace->id);
+                  ui_box_equip_custom_draw(preview_box, rd_workspace_preview_box_draw, preview);
+                  UI_Signal preview_sig = ui_signal_from_box(preview_box);
+                  if(ui_clicked(preview_sig) && !selected)
+                  {
+                    uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
+                  }
+                }
+                ui_spacer(ui_em(0.5f, 1.f));
+              }
+            }
           }
           ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.4f), 1.f));
         }
@@ -5684,7 +5759,29 @@ rd_window_frame(void)
       ws->window_layout_reset = 1;
     }
     Rng2F32 workspace_rect = uishell_controlled_split_workspace_rect(&root_controlled_split, content_rect);
-    rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open);
+    ws->workspace_surface_box_key = 0;
+    if(DEV_draw_workspace_surfaces && workspace_mount->owner_cfg != &cfg_nil_node)
+    {
+      // workspace surface wrapper: the whole panel area renders through one
+      // surface, keyed by the mount's owner id (a workspace cfg, or the window
+      // itself for the implicit workspace - matching inventory identity); it
+      // spans the window origin so that the absolutely-positioned panel boxes
+      // inside keep their coordinates
+      U64 workspace_id = workspace_mount->owner_cfg->id;
+      UI_Key wrapper_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", workspace_id);
+      ui_set_next_rect(window_rect);
+      UI_Box *wrapper = ui_build_box_from_key(UI_BoxFlag_RenderToSurface, wrapper_key);
+      ws->workspace_surface_box_key = wrapper_key.u64[0];
+      ws->workspace_surface_workspace_id = workspace_id;
+      UI_Parent(wrapper)
+      {
+        rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open);
+      }
+    }
+    else
+    {
+      rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open);
+    }
     
     ////////////////////////////
     //- rjf: @window_ui_part drag/drop cancelling
@@ -6136,6 +6233,37 @@ rd_window_frame(void)
             {
               surface_child_changed_stack[surface_box_count-1] = 1;
             }
+
+            // workspace surface re-rendered -> refresh its retained preview, a
+            // small downsampled texture that survives this workspace going
+            // non-visible (shown stale in the strip; later, in the switcher)
+            if(changed &&
+               ws->workspace_surface_box_key != 0 &&
+               b->key.u64[0] == ws->workspace_surface_box_key)
+            {
+              Vec2F32 full_dim = dim_2f32(b->rect);
+              if(full_dim.x > 1 && full_dim.y > 1)
+              {
+                F32 backing_scale = wm_backing_scale_from_window(ws->os);
+                F32 mini_w_pt = 256.f;
+                F32 mini_h_pt = floor_f32(mini_w_pt*full_dim.y/full_dim.x);
+                Vec2S32 mini_px = v2s32((S32)ceil_f32(mini_w_pt*backing_scale),
+                                        (S32)ceil_f32(mini_h_pt*backing_scale));
+                U64 mini_key = rd_workspace_preview_surface_key(ws->workspace_surface_workspace_id);
+                RD_SurfaceCacheNode *mini = rd_window_surface_node_from_key(ws, mini_key, mini_px);
+                if(mini != 0 && !r_handle_match(mini->texture, r_handle_zero()))
+                {
+                  mini->retained = 1;
+                  Rng2F32 mini_rect = r2f32p(0, 0, mini_w_pt, mini_h_pt);
+                  dr_surface_begin(mini->texture, mini_rect);
+                  DR_Tex2DSampleKindScope(R_Tex2DSampleKind_Linear)
+                  {
+                    dr_surface_img(node->texture, mini_rect, v4f32(1, 1, 1, 1), 0, 0, 0);
+                  }
+                  dr_surface_end();
+                }
+              }
+            }
           }
 
           // rjf: get corner radii
@@ -6274,8 +6402,15 @@ rd_window_frame(void)
       {
         for(RD_SurfaceCacheNode *n = ws->first_surface_cache_node; n != 0; n = n->next)
         {
-          if(n->last_use_frame_index < rd_state->frame_index)
+          B32 stale = (n->last_use_frame_index < rd_state->frame_index);
+          if(stale && !n->retained)
           {
+            continue;
+          }
+          if(n->key == ws->workspace_surface_box_key)
+          {
+            // the full-res workspace wrapper is the screen itself; its preview
+            // is the retained mini, so showing both just reads as a duplicate
             continue;
           }
           F32 aspect = (n->size.y > 0 ? (F32)n->size.x/(F32)n->size.y : 1.f);
@@ -6288,7 +6423,9 @@ rd_window_frame(void)
           dr_rect(pad_2f32(dst, 6.f), drop_shadow_color, 4.f, 0, 8.f);
           dr_rect(pad_2f32(dst, 1.f), base_background_color, 0, 0, 1.f);
           dr_surface_img(n->texture, dst, v4f32(1, 1, 1, 1), 0, 0, 0);
-          Vec4F32 thumb_border_color = (n->last_was_preserved ? v4f32(0.3f, 0.9f, 0.4f, 1.f) : base_border_color);
+          Vec4F32 thumb_border_color = (stale ? v4f32(0.95f, 0.7f, 0.2f, 1.f) :
+                                        n->last_was_preserved ? v4f32(0.3f, 0.9f, 0.4f, 1.f) :
+                                        base_border_color);
           dr_rect(pad_2f32(dst, 1.f), thumb_border_color, 0, 1.f, 1.f);
           x -= thumb_width + pad;
         }

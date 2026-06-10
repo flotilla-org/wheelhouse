@@ -210,6 +210,7 @@ internal void dr_sub_bucket(DR_Bucket *bucket);
 
 //- surfaces (redirecting draws into a render-target texture, then compositing it back)
 internal void dr_surface_begin(R_Handle target, Rng2F32 target_rect);
+internal void dr_surface_end(void);
 internal void dr_surface_end_composite(void);
 internal B32 dr_surface_end_composite_cached(U64 *io_content_hash, B32 force_render); // returns 1 if content changed (rendered), 0 if preserved
 internal B32 dr_surface_is_active(void);

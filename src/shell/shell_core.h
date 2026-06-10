@@ -500,6 +500,7 @@ struct RD_SurfaceCacheNode
   U64 last_use_frame_index;
   U64 rendered_hash;       // content hash of what's in the texture (0 = invalid, must render)
   B32 last_was_preserved;  // dev visibility: last frame skipped the render
+  B32 retained;            // survives eviction when undemanded; shows stale content (e.g. workspace previews)
 };
 
 typedef struct RD_WindowState RD_WindowState;
@@ -591,6 +592,11 @@ struct RD_WindowState
   // UI_BoxFlag_RenderToSurface & the draw-walk surface bracketing
   RD_SurfaceCacheNode *first_surface_cache_node;
   RD_SurfaceCacheNode *free_surface_cache_node;
+
+  // workspace surface (DEV draw_workspace_surfaces): box key of this frame's
+  // workspace wrapper & the workspace id, for retained-preview downsampling
+  U64 workspace_surface_box_key;
+  U64 workspace_surface_workspace_id;
 };
 
 typedef struct RD_WindowStateSlot RD_WindowStateSlot;
@@ -982,6 +988,8 @@ internal CFG_Node *rd_window_from_cfg(CFG_Node *cfg);
 internal RD_WindowState *rd_window_state_from_cfg__existing(CFG_Node *cfg);
 internal RD_WindowState *rd_window_state_from_cfg(CFG_Node *cfg);
 internal RD_SurfaceCacheNode *rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size);
+internal RD_SurfaceCacheNode *rd_window_surface_node_lookup(RD_WindowState *ws, U64 key);
+internal U64 rd_workspace_preview_surface_key(U64 workspace_id);
 internal void rd_window_surface_cache_evict(RD_WindowState *ws);
 internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);
 internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);

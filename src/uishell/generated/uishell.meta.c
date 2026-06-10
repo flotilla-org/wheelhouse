@@ -11,6 +11,7 @@ global B32 DEV_draw_ui_box_heatmap = 0;
 global B32 DEV_draw_panel_surface = 0;
 global B32 DEV_draw_view_surfaces = 0;
 global B32 DEV_draw_surface_previews = 0;
+global B32 DEV_draw_workspace_surfaces = 0;
 global B32 DEV_eval_compiler_tooltips = 0;
 global B32 DEV_eval_watch_key_tooltips = 0;
 global B32 DEV_cmd_context_tooltips = 0;
@@ -25,6 +26,7 @@ struct {B32 *value_ptr; String8 name;} DEV_toggle_table[] =
 {&DEV_draw_panel_surface, str8_lit_comp("draw_panel_surface")},
 {&DEV_draw_view_surfaces, str8_lit_comp("draw_view_surfaces")},
 {&DEV_draw_surface_previews, str8_lit_comp("draw_surface_previews")},
+{&DEV_draw_workspace_surfaces, str8_lit_comp("draw_workspace_surfaces")},
 {&DEV_eval_compiler_tooltips, str8_lit_comp("eval_compiler_tooltips")},
 {&DEV_eval_watch_key_tooltips, str8_lit_comp("eval_watch_key_tooltips")},
 {&DEV_cmd_context_tooltips, str8_lit_comp("cmd_context_tooltips")},
