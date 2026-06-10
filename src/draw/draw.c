@@ -636,7 +636,7 @@ dr_surface_end_composite(void)
 }
 
 internal B32
-dr_surface_end_cached(U64 *io_content_hash, B32 force_render)
+dr_surface_end_cached(U64 *io_content_hash, B32 force_render, B32 shape_only, U64 extra_version)
 {
   DR_Bucket *bucket = dr_top_bucket();
   DR_SurfaceNode *node = bucket->top_surface;
@@ -648,7 +648,7 @@ dr_surface_end_cached(U64 *io_content_hash, B32 force_render)
     // handle (Stream kind) force a render, as do re-rendered child surfaces
     // (their composite bytes don't change when their content does) via force_render.
     B32 has_mutable_tex = 0;
-    U64 hash = 5381;
+    U64 hash = u64_hash_from_seed_str8(5381, str8_struct(&extra_version));
     for(R_PassNode *pass_n = node->first_pass; pass_n != 0; pass_n = pass_n->next)
     {
       if(pass_n->v.kind != R_PassKind_UI)
@@ -673,11 +673,12 @@ dr_surface_end_cached(U64 *io_content_hash, B32 force_render)
           has_mutable_tex = 1;
         }
         hash = u64_hash_from_seed_str8(hash, str8_struct(&group_n->params));
-        if(group_n->params.content_version != 0)
+        if(group_n->params.content_version != 0 || shape_only)
         {
-          // producer-versioned content: instance bytes are a pure function of
-          // the version (already mixed in via params above), so skip hashing
-          // them; byte count + first-instance bytes cheaply catch repositioning
+          // producer-versioned (or declared-version, shape_only) content:
+          // instance bytes are a pure function of versions already mixed in,
+          // so skip hashing them; byte count + first-instance bytes cheaply
+          // catch repositioning & restructuring
           hash = u64_hash_from_seed_str8(hash, str8_struct(&group_n->batches.byte_count));
           if(group_n->batches.first != 0 && group_n->batches.first->v.byte_count != 0)
           {
@@ -729,7 +730,7 @@ dr_surface_end_composite_cached(U64 *io_content_hash, B32 force_render)
     target = node->target;
     target_rect = node->rect;
   }
-  B32 changed = dr_surface_end_cached(io_content_hash, force_render);
+  B32 changed = dr_surface_end_cached(io_content_hash, force_render, 0, 0);
   if(node != 0)
   {
     dr_surface_img(target, target_rect, v4f32(1, 1, 1, 1), 0, 0, 0);

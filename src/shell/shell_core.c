@@ -1183,6 +1183,16 @@ rd_view_ui(Rng2F32 rect)
   RD_ViewState *vs = rd_view_state_from_cfg(view);
   String8 view_name = view->string;
   String8 expr_string = rd_expr_from_cfg(view);
+
+  // only views that declare a producer version (terminal: render generation,
+  // text: content hash) are safe for shape-only workspace preservation; any
+  // other view kind keeps its workspace on full byte hashing
+  if(!str8_match(view_name, str8_lit("terminal"), 0) &&
+     !str8_match(view_name, str8_lit("terminal_fixture"), 0) &&
+     !str8_match(view_name, str8_lit("text"), 0))
+  {
+    rd_workspace_surface_mark_unversioned_view();
+  }
   B32 view_is_floating = 0;
   for(CFG_Node *p = view->parent; p != &cfg_nil_node; p = p->parent)
   {
@@ -1961,6 +1971,27 @@ rd_workspace_surface_entry_from_box_key(RD_WindowState *ws, U64 box_key)
     }
   }
   return entry;
+}
+
+internal void
+rd_workspace_surface_contribute_version(U64 version)
+{
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(cfg_node_from_id(uishell_regs()->window));
+  if(ws != &rd_nil_window_state && ws->active_workspace_surface_entry != 0)
+  {
+    U64 buffer[2] = {ws->active_workspace_surface_entry->content_version_accum, version};
+    ws->active_workspace_surface_entry->content_version_accum = u64_hash_from_str8(str8((U8 *)buffer, sizeof(buffer)));
+  }
+}
+
+internal void
+rd_workspace_surface_mark_unversioned_view(void)
+{
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(cfg_node_from_id(uishell_regs()->window));
+  if(ws != &rd_nil_window_state && ws->active_workspace_surface_entry != 0)
+  {
+    ws->active_workspace_surface_entry->has_unversioned_views = 1;
+  }
 }
 
 internal void
@@ -5935,11 +5966,13 @@ rd_window_frame(void)
         ui_set_next_rect(window_rect);
         UI_Box *wrapper = ui_build_box_from_key(UI_BoxFlag_RenderToSurface, wrapper_key);
         ws->workspace_surface_entries[ws->workspace_surface_entry_count] = (RD_WorkspaceSurfaceEntry){wrapper_key.u64[0], workspace_id, 1};
+        ws->active_workspace_surface_entry = &ws->workspace_surface_entries[ws->workspace_surface_entry_count];
         ws->workspace_surface_entry_count += 1;
         UI_Parent(wrapper)
         {
           rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open);
         }
+        ws->active_workspace_surface_entry = 0;
       }
 
       //- build the other Materialized children as ordinary container children
@@ -5959,11 +5992,13 @@ rd_window_frame(void)
         ui_set_next_rect(window_rect);
         UI_Box *child_wrapper = ui_build_box_from_key(UI_BoxFlag_RenderToSurface|UI_BoxFlag_IgnoreInteraction, child_key);
         ws->workspace_surface_entries[ws->workspace_surface_entry_count] = (RD_WorkspaceSurfaceEntry){child_key.u64[0], child->id, 0};
+        ws->active_workspace_surface_entry = &ws->workspace_surface_entries[ws->workspace_surface_entry_count];
         ws->workspace_surface_entry_count += 1;
         UI_Parent(child_wrapper) UI_Focus(UI_FocusKind_Off)
         {
           rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, &child->mount, 0, 0);
         }
+        ws->active_workspace_surface_entry = 0;
       }
 
       //- zoom view: present every child as a clickable tile in the workspace
@@ -6519,8 +6554,12 @@ rd_window_frame(void)
             B32 changed = 0;
             if(ws_entry != 0 && !ws_entry->composite)
             {
-              // non-visible workspace: render offscreen only; nothing composites
-              changed = dr_surface_end_cached(&node->rendered_hash, force_render);
+              // non-visible workspace: render offscreen only; nothing composites.
+              // when every view inside declared a producer version, those + the
+              // group shapes carry content identity - no instance bytes are read;
+              // a single unversioned view keeps the workspace on byte hashing
+              B32 shape_only = !ws_entry->has_unversioned_views;
+              changed = dr_surface_end_cached(&node->rendered_hash, force_render, shape_only, ws_entry->content_version_accum);
             }
             else
             {

@@ -496,6 +496,8 @@ struct RD_WorkspaceSurfaceEntry
   U64 box_key;
   U64 workspace_id;
   B32 composite; // visible workspace composites to the stage; preview-scale ones render offscreen only
+  U64 content_version_accum; // versions declared by the views built inside this workspace (terminal generations, text content hashes)
+  B32 has_unversioned_views; // a view without a declared version was built -> shape-only preservation is unsafe; keep byte hashing
 };
 
 typedef struct RD_WorkspacePreviewDemand RD_WorkspacePreviewDemand;
@@ -616,6 +618,7 @@ struct RD_WindowState
   // preview scale (sidebar rows, zoom view)
   RD_WorkspaceSurfaceEntry *workspace_surface_entries;
   U64 workspace_surface_entry_count;
+  RD_WorkspaceSurfaceEntry *active_workspace_surface_entry; // entry being built right now; views declare versions into it
 
   // workspace zoom view: the controlled split presenting all children as tiles
   B32 workspace_zoom_open;
@@ -1018,6 +1021,8 @@ internal RD_SurfaceCacheNode *rd_window_surface_node_lookup(RD_WindowState *ws, 
 internal U64 rd_workspace_preview_surface_key(U64 workspace_id);
 internal RD_WorkspaceSurfaceEntry *rd_workspace_surface_entry_from_box_key(RD_WindowState *ws, U64 box_key);
 internal void rd_workspace_preview_demand_push(RD_WindowState *ws, U64 workspace_id, F32 width_pt);
+internal void rd_workspace_surface_contribute_version(U64 version);
+internal void rd_workspace_surface_mark_unversioned_view(void);
 internal F32 rd_workspace_preview_demand_width(RD_WindowState *ws, U64 workspace_id);
 internal void rd_window_surface_cache_evict(RD_WindowState *ws);
 internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);

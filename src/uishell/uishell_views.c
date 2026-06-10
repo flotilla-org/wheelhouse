@@ -2378,6 +2378,9 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
   TXT_TextInfo info = txt_text_info_from_key_lang(access, text_key, lang_kind, &hash);
   String8 data = c_data_from_hash(access, hash);
   S64 line_count = (S64)info.lines_count;
+  // the content hash is this view's producer version: workspace previews
+  // preserve until it (or any sibling view's version) changes
+  rd_workspace_surface_contribute_version(hash.u64[0] ^ hash.u64[1] ^ (U64)info.lines_count);
   UI_ScrollPt2 scroll_pos = rd_view_scroll_pos();
   F32 main_font_size = rd_font_size();
   F32 row_height_px = main_font_size*1.45f;
@@ -3374,6 +3377,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         bucket_key_data.sel_mark = tv->sel_mark;
         bucket_key_data.sel_cursor = tv->sel_cursor;
         U64 bucket_key = (u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1);
+        rd_workspace_surface_contribute_version(bucket_key);
         if(tv->retained_bucket == 0 || tv->retained_bucket_key != bucket_key || trace_this_draw)
         {
           if(tv->retained_bucket_arena == 0)
