@@ -2880,6 +2880,10 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       .has_cursor = 1,
       .cursor = uishell_terminal_rgb_from_linear_rgba(terminal_cursor_color),
     };
+    // the terminal view's expression is the command its session runs (empty ->
+    // the default shell), which makes commands part of the workspace config:
+    // reproducible layouts (e.g. perf workloads) & a step toward recreation
+    String8 session_command = rd_expr_from_cfg(view_cfg);
     cleat_session_desc session_desc =
     {
       .cols = cols,
@@ -2887,6 +2891,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       .cell_width_px = cell_width_px,
       .cell_height_px = cell_height_px,
       .vt_engine = CLEAT_PROVIDER_VT_GHOSTTY,
+      .command = (session_command.size != 0 ? session_command.str : 0),
+      .command_len = session_command.size,
       .colors = &session_colors,
     };
     tv->session = cleat_session_create(tv->provider, &session_desc);
