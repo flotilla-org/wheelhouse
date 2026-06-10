@@ -1963,6 +1963,60 @@ rd_workspace_surface_entry_from_box_key(RD_WindowState *ws, U64 box_key)
   return entry;
 }
 
+internal void
+rd_workspace_preview_demand_push(RD_WindowState *ws, U64 workspace_id, F32 width_pt)
+{
+  RD_WorkspacePreviewDemand *demand = 0;
+  for(U64 i = 0; i < ws->workspace_preview_demand_count; i += 1)
+  {
+    if(ws->workspace_preview_demands[i].workspace_id == workspace_id)
+    {
+      demand = &ws->workspace_preview_demands[i];
+      break;
+    }
+  }
+  if(demand == 0 && ws->workspace_preview_demand_count < ArrayCount(ws->workspace_preview_demands))
+  {
+    demand = &ws->workspace_preview_demands[ws->workspace_preview_demand_count];
+    ws->workspace_preview_demand_count += 1;
+    demand->workspace_id = workspace_id;
+    demand->width_pt = 0;
+    demand->frame_index = 0;
+  }
+  if(demand != 0)
+  {
+    if(demand->frame_index != rd_state->frame_index)
+    {
+      demand->width_pt = 0;
+      demand->frame_index = rd_state->frame_index;
+    }
+    demand->width_pt = Max(demand->width_pt, width_pt);
+  }
+}
+
+internal F32
+rd_workspace_preview_demand_width(RD_WindowState *ws, U64 workspace_id)
+{
+  // default when nothing registered recently; demands registered during build
+  // are read at draw time the same frame, & last frame's demand bridges gaps
+  F32 width_pt = 256.f;
+  for(U64 i = 0; i < ws->workspace_preview_demand_count; i += 1)
+  {
+    RD_WorkspacePreviewDemand *demand = &ws->workspace_preview_demands[i];
+    if(demand->workspace_id == workspace_id &&
+       demand->width_pt > 0 &&
+       demand->frame_index + 2 >= rd_state->frame_index)
+    {
+      width_pt = demand->width_pt;
+      break;
+    }
+  }
+  // quantize to avoid realloc churn while e.g. dragging the sidebar boundary
+  width_pt = ceil_f32(width_pt/64.f)*64.f;
+  width_pt = Clamp(128.f, width_pt, 1024.f);
+  return width_pt;
+}
+
 internal U64
 rd_workspace_preview_surface_key(U64 workspace_id)
 {
@@ -2610,6 +2664,10 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             RD_SurfaceCacheNode *preview = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(workspace->id));
             F32 preview_margin = ui_top_font_size()*0.5f;
             F32 preview_avail_w = dim_2f32(rect).x - preview_margin*2.f;
+            if(preview_avail_w > 16.f)
+            {
+              rd_workspace_preview_demand_push(ws, workspace->id, preview_avail_w);
+            }
             if(preview != 0 && preview->size.x > 0 && preview->size.y > 0 && preview_avail_w > 16.f)
             {
               F32 preview_aspect = (F32)preview->size.x/(F32)preview->size.y;
@@ -2657,6 +2715,18 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             if(ui_clicked(sig))
             {
               uishell_cmd("new_workspace", .window = split->owner_cfg->id);
+            }
+          }
+          ui_spacer(ui_em(0.25f, 1.f));
+          UI_TextAlignment(UI_TextAlign_Center)
+            UI_PrefWidth(ui_em(2.25f, 1.f))
+            UI_PrefHeight(ui_pct(1.f, 0.f))
+            UI_TagF(ws != &rd_nil_window_state && ws->workspace_zoom_open ? "" : "weak")
+          {
+            UI_Signal sig = rd_icon_button(RD_IconKind_Grid, 0, str8_lit("###workspace_zoom_toggle"));
+            if(ui_clicked(sig) && ws != &rd_nil_window_state)
+            {
+              ws->workspace_zoom_open ^= 1;
             }
           }
           ui_spacer(ui_em(0.5f, 1.f));
@@ -5778,34 +5848,53 @@ rd_window_frame(void)
     }
     Rng2F32 workspace_rect = uishell_controlled_split_workspace_rect(&root_controlled_split, content_rect);
     ws->workspace_surface_entry_count = 0;
-    if(DEV_draw_workspace_surfaces && workspace_mount->owner_cfg != &cfg_nil_node)
+    B32 workspace_zoom_open = ws->workspace_zoom_open;
+    // workspace surfaces build whenever something demands the previews: the
+    // zoom view, or any consumer that registered a preview demand recently
+    // (the control surface rows do, every frame they're visible) - no toggle
+    B32 workspace_previews_demanded = 0;
+    for(U64 i = 0; i < ws->workspace_preview_demand_count; i += 1)
     {
-      // workspace surface wrapper: the whole panel area renders through one
-      // surface, keyed by the mount's owner id (a workspace cfg, or the window
-      // itself for the implicit workspace - matching inventory identity); it
-      // spans the window origin so that the absolutely-positioned panel boxes
-      // inside keep their coordinates
-      U64 workspace_id = workspace_mount->owner_cfg->id;
-      UI_Key wrapper_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", workspace_id);
-      ui_set_next_rect(window_rect);
-      UI_Box *wrapper = ui_build_box_from_key(UI_BoxFlag_RenderToSurface, wrapper_key);
-      ws->workspace_surface_entries[ws->workspace_surface_entry_count] = (RD_WorkspaceSurfaceEntry){wrapper_key.u64[0], workspace_id, 1};
-      ws->workspace_surface_entry_count += 1;
-      UI_Parent(wrapper)
+      if(ws->workspace_preview_demands[i].width_pt > 0 &&
+         ws->workspace_preview_demands[i].frame_index + 2 >= rd_state->frame_index)
       {
-        rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open);
+        workspace_previews_demanded = 1;
+        break;
+      }
+    }
+    B32 want_workspace_surfaces = (workspace_zoom_open || workspace_previews_demanded);
+    if(want_workspace_surfaces && workspace_mount->owner_cfg != &cfg_nil_node)
+    {
+      //- visible workspace: builds through its surface & composites to the
+      // stage as the normal UI. in the zoom view it instead becomes one
+      // preview-scale child among the others below. wrappers are keyed by the
+      // mount's owner id (a workspace cfg, or the window itself for the
+      // implicit workspace) & span the window origin so the absolutely-
+      // positioned panel boxes inside keep their coordinates
+      if(!workspace_zoom_open)
+      {
+        U64 workspace_id = workspace_mount->owner_cfg->id;
+        UI_Key wrapper_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", workspace_id);
+        ui_set_next_rect(window_rect);
+        UI_Box *wrapper = ui_build_box_from_key(UI_BoxFlag_RenderToSurface, wrapper_key);
+        ws->workspace_surface_entries[ws->workspace_surface_entry_count] = (RD_WorkspaceSurfaceEntry){wrapper_key.u64[0], workspace_id, 1};
+        ws->workspace_surface_entry_count += 1;
+        UI_Parent(wrapper)
+        {
+          rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open);
+        }
       }
 
-      //- build non-visible Materialized children as ordinary container children
+      //- build the other Materialized children as ordinary container children
       // (per ADR-0005): everything in them runs; they render into their own
       // reduced-res surfaces (never composited to the stage), input-inert &
-      // focus-off, so their previews are live
+      // focus-off - not hidden, visible at preview scale (sidebar rows, zoom)
       for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first;
           child != 0 && ws->workspace_surface_entry_count < ArrayCount(ws->workspace_surface_entries);
           child = child->next)
       {
-        if(child->mount.owner_cfg == workspace_mount->owner_cfg ||
-           child->mount.owner_cfg == &cfg_nil_node)
+        if(child->mount.owner_cfg == &cfg_nil_node ||
+           (!workspace_zoom_open && child->mount.owner_cfg == workspace_mount->owner_cfg))
         {
           continue;
         }
@@ -5817,6 +5906,90 @@ rd_window_frame(void)
         UI_Parent(child_wrapper) UI_Focus(UI_FocusKind_Off)
         {
           rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, &child->mount, 0, 0);
+        }
+      }
+
+      //- zoom view: present every child as a clickable tile in the workspace
+      // region; clicking a tile selects that workspace & zooms back in
+      if(workspace_zoom_open)
+      {
+        U64 tile_count = 0;
+        for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
+        {
+          tile_count += (child->mount.owner_cfg != &cfg_nil_node);
+        }
+        if(tile_count != 0)
+        {
+          F32 pad = floor_f32(ui_top_font_size()*1.f);
+          F32 label_h = floor_f32(ui_top_font_size()*1.5f);
+          U64 grid_cols = 1;
+          for(; grid_cols*grid_cols < tile_count; grid_cols += 1) {}
+          U64 grid_rows = (tile_count + grid_cols - 1)/grid_cols;
+          Vec2F32 region_dim = dim_2f32(workspace_rect);
+          F32 cell_w = (region_dim.x - pad*(grid_cols+1))/(F32)grid_cols;
+          F32 cell_h = (region_dim.y - pad*(grid_rows+1))/(F32)grid_rows;
+          Vec2F32 window_dim = dim_2f32(window_rect);
+          F32 aspect = (window_dim.y > 0 ? window_dim.x/window_dim.y : 1.6f);
+          U64 tile_idx = 0;
+          for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
+          {
+            if(child->mount.owner_cfg == &cfg_nil_node)
+            {
+              continue;
+            }
+            U64 col = tile_idx%grid_cols;
+            U64 row = tile_idx/grid_cols;
+            tile_idx += 1;
+            Vec2F32 cell_p0 =
+            {
+              workspace_rect.x0 + pad + (F32)col*(cell_w + pad),
+              workspace_rect.y0 + pad + (F32)row*(cell_h + pad),
+            };
+            F32 img_w = cell_w;
+            F32 img_h = floor_f32(img_w/aspect);
+            if(img_h > cell_h - label_h)
+            {
+              img_h = cell_h - label_h;
+              img_w = floor_f32(img_h*aspect);
+            }
+            Rng2F32 img_rect = r2f32p(cell_p0.x + floor_f32((cell_w - img_w)*0.5f),
+                                      cell_p0.y,
+                                      cell_p0.x + floor_f32((cell_w - img_w)*0.5f) + img_w,
+                                      cell_p0.y + img_h);
+            Rng2F32 label_rect = r2f32p(img_rect.x0, img_rect.y1, img_rect.x1, img_rect.y1 + label_h);
+            B32 selected = (child->mount.owner_cfg == workspace_mount->owner_cfg);
+            rd_workspace_preview_demand_push(ws, child->id, img_w);
+            UI_TagF("tab") UI_TagF(!selected ? "inactive" : "")
+            {
+              ui_set_next_rect(img_rect);
+              UI_Box *tile_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                                           UI_BoxFlag_DrawBackground|
+                                                           UI_BoxFlag_DrawBorder|
+                                                           UI_BoxFlag_DrawHotEffects,
+                                                           "###workspace_tile_%I64u", child->id);
+              UI_Key wrapper_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", child->id);
+              RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, wrapper_key.u64[0]);
+              if(node != 0)
+              {
+                ui_box_equip_custom_draw(tile_box, rd_workspace_preview_box_draw, node);
+              }
+              UI_Signal tile_sig = ui_signal_from_box(tile_box);
+              if(ui_clicked(tile_sig))
+              {
+                if(!selected)
+                {
+                  uishell_cmd("select_workspace", .window = root_controlled_split.owner_cfg->id, .cfg = child->id);
+                }
+                ws->workspace_zoom_open = 0;
+              }
+              ui_set_next_rect(label_rect);
+              UI_TextAlignment(UI_TextAlign_Center)
+              {
+                UI_Box *label_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText, "###workspace_tile_label_%I64u", child->id);
+                ui_box_equip_display_string(label_box, child->display_name);
+              }
+            }
+          }
         }
       }
     }
@@ -5832,6 +6005,15 @@ rd_window_frame(void)
     {
       rd_drag_kill();
       ui_kill_action();
+    }
+
+    ////////////////////////////
+    //- @window_ui_part workspace zoom view cancelling
+    //
+    if(ws->workspace_zoom_open && ui_slot_press(UI_EventActionSlot_Cancel))
+    {
+      ws->workspace_zoom_open = 0;
+      rd_request_frame();
     }
     
     ////////////////////////////
@@ -6302,7 +6484,7 @@ rd_window_frame(void)
               if(full_dim.x > 1 && full_dim.y > 1)
               {
                 F32 backing_scale = wm_backing_scale_from_window(ws->os);
-                F32 mini_w_pt = 256.f;
+                F32 mini_w_pt = rd_workspace_preview_demand_width(ws, ws_entry->workspace_id);
                 F32 mini_h_pt = floor_f32(mini_w_pt*full_dim.y/full_dim.x);
                 Vec2S32 mini_px = v2s32((S32)ceil_f32(mini_w_pt*backing_scale),
                                         (S32)ceil_f32(mini_h_pt*backing_scale));

@@ -495,7 +495,15 @@ struct RD_WorkspaceSurfaceEntry
 {
   U64 box_key;
   U64 workspace_id;
-  B32 composite; // visible workspace composites to the stage; hidden ones render offscreen only
+  B32 composite; // visible workspace composites to the stage; preview-scale ones render offscreen only
+};
+
+typedef struct RD_WorkspacePreviewDemand RD_WorkspacePreviewDemand;
+struct RD_WorkspacePreviewDemand
+{
+  U64 workspace_id;
+  F32 width_pt;          // largest width any consumer wants this preview at
+  U64 frame_index;
 };
 
 typedef struct RD_SurfaceCacheNode RD_SurfaceCacheNode;
@@ -601,11 +609,19 @@ struct RD_WindowState
   RD_SurfaceCacheNode *first_surface_cache_node;
   RD_SurfaceCacheNode *free_surface_cache_node;
 
-  // workspace surfaces (DEV draw_workspace_surfaces): one entry per workspace
-  // built this frame - the visible child composites to the stage; non-visible
-  // children render offscreen only, at reduced resolution, for live previews
+  // workspace surfaces: one entry per workspace built this frame - the visible
+  // child composites to the stage; the others build offscreen at reduced
+  // resolution & are visible at preview scale (sidebar rows, zoom view)
   RD_WorkspaceSurfaceEntry workspace_surface_entries[16];
   U64 workspace_surface_entry_count;
+
+  // workspace zoom view: the controlled split presenting all children as tiles
+  B32 workspace_zoom_open;
+
+  // preview size demands: consumers register the size they show a workspace
+  // preview at; the preview surface is allocated for the largest demand
+  RD_WorkspacePreviewDemand workspace_preview_demands[16];
+  U64 workspace_preview_demand_count;
 };
 
 typedef struct RD_WindowStateSlot RD_WindowStateSlot;
@@ -1000,6 +1016,8 @@ internal RD_SurfaceCacheNode *rd_window_surface_node_from_key(RD_WindowState *ws
 internal RD_SurfaceCacheNode *rd_window_surface_node_lookup(RD_WindowState *ws, U64 key);
 internal U64 rd_workspace_preview_surface_key(U64 workspace_id);
 internal RD_WorkspaceSurfaceEntry *rd_workspace_surface_entry_from_box_key(RD_WindowState *ws, U64 box_key);
+internal void rd_workspace_preview_demand_push(RD_WindowState *ws, U64 workspace_id, F32 width_pt);
+internal F32 rd_workspace_preview_demand_width(RD_WindowState *ws, U64 workspace_id);
 internal void rd_window_surface_cache_evict(RD_WindowState *ws);
 internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);
 internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);
