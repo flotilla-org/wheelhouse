@@ -2447,28 +2447,6 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                                                            (UI_BoxFlag_DrawDropShadow*selected)|
                                                            UI_BoxFlag_Clickable,
                                                            "workspace_%I64u", workspace->id);
-              UI_Signal row_sig = ui_signal_from_box(row_box);
-              if(ui_clicked(row_sig) && !selected)
-              {
-                uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
-              }
-              if(ui_double_clicked(row_sig) && workspace->mount.workspace_cfg != &cfg_nil_node && ws != &rd_nil_window_state)
-              {
-                String8 edit_string = workspace->display_name;
-                edit_string.size = Min(sizeof(ws->root_controlled_split_rename_buffer), edit_string.size);
-                MemoryCopy(ws->root_controlled_split_rename_buffer, edit_string.str, edit_string.size);
-                ws->root_controlled_split_rename_size = edit_string.size;
-                TxtPt rename_pt = txt_pt(1, edit_string.size+1);
-                ws->root_controlled_split_rename_cursor = rename_pt;
-                ws->root_controlled_split_rename_mark = txt_pt(1, 1);
-                ws->root_controlled_split_renaming_workspace_id = workspace->id;
-                ui_kill_action();
-              }
-              if(!selected && ui_right_clicked(row_sig))
-              {
-                uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
-              }
-
               UI_Parent(row_box)
               {
                 UI_WidthFill UI_Row
@@ -2537,6 +2515,30 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                     }
                   }
                 }
+              }
+
+              // rjf: row interaction, after children - presses inside the close
+              // button (or other clickable children) must be claimed there first
+              UI_Signal row_sig = ui_signal_from_box(row_box);
+              if(ui_clicked(row_sig) && !selected)
+              {
+                uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
+              }
+              if(ui_double_clicked(row_sig) && workspace->mount.workspace_cfg != &cfg_nil_node && ws != &rd_nil_window_state)
+              {
+                String8 edit_string = workspace->display_name;
+                edit_string.size = Min(sizeof(ws->root_controlled_split_rename_buffer), edit_string.size);
+                MemoryCopy(ws->root_controlled_split_rename_buffer, edit_string.str, edit_string.size);
+                ws->root_controlled_split_rename_size = edit_string.size;
+                TxtPt rename_pt = txt_pt(1, edit_string.size+1);
+                ws->root_controlled_split_rename_cursor = rename_pt;
+                ws->root_controlled_split_rename_mark = txt_pt(1, 1);
+                ws->root_controlled_split_renaming_workspace_id = workspace->id;
+                ui_kill_action();
+              }
+              if(!selected && ui_right_clicked(row_sig))
+              {
+                uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
               }
             }
             ui_spacer(ui_em(0.5f, 1.f));
