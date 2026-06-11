@@ -102,8 +102,9 @@ set clang_link=    -fuse-ld=lld -Xlinker /MANIFEST:EMBED -Xlinker /pdbaltpath:%%
 set clang_out=     -o
 set clang_obj_out= -o
 set clang_linker=  -Xlinker
-if "%cleat%"=="1" if "%msvc%"=="1"  set cleat_link=/LIBPATH:"!cleat_lib_dir!" cleat.lib
-if "%cleat%"=="1" if "%clang%"=="1" set cleat_link=-L"!cleat_lib_dir!" -lcleat
+rem rust cdylibs on windows produce cleat.dll + import lib cleat.dll.lib
+if "%cleat%"=="1" if "%msvc%"=="1"  set cleat_link=/LIBPATH:"!cleat_lib_dir!" cleat.dll.lib
+if "%cleat%"=="1" if "%clang%"=="1" set cleat_link=-L"!cleat_lib_dir!" -lcleat.dll
 
 :: --- Per-Build Settings -----------------------------------------------------
 set link_icon=logo.res
@@ -162,6 +163,7 @@ popd
 :: --- Build Everything (@build_targets) --------------------------------------
 pushd build
 if "%uishell%"=="1"                    set didbuild=1 && %compile% ..\src\uishell\uishell_main.c                            %compile_link% %link_icon% %cleat_link% %out%uishell.exe || exit /b 1
+if "%uishell%"=="1" if "%cleat%"=="1"  copy /y "!cleat_lib_dir!\cleat.dll" . >nul
 popd
 
 :: --- Warn On No Builds ------------------------------------------------------
