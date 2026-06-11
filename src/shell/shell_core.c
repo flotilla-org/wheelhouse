@@ -6205,7 +6205,7 @@ rd_window_frame(void)
           Vec2F32 window_dim = dim_2f32(window_rect);
           F32 card_aspect = (window_dim.y > 0 ? window_dim.x/window_dim.y : 1.6f);
           F32 cw = card_aspect;
-          F32 fov = 0.62f;
+          F32 fov = 0.10f; // NOTE: trig here is in TURNS (base_math convention): 0.10 = 36 degrees
           F32 region_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
           F32 eye_z = (cw*0.80f)/tan_f32(fov*0.5f);
           F32 row_y = 0.55f;
@@ -6232,16 +6232,22 @@ rd_window_frame(void)
               if(child->mount.owner_cfg == &cfg_nil_node) { continue; }
               UI_Key wrapper_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", child->id);
               RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, wrapper_key.u64[0]);
+              //- apple-style layout (ratios from surveyed implementations): rotation
+              // completes by half a step then clamps, so every side card shares one
+              // tilt; x has a wide center gap then a tight deck; z dips in the center
+              // zone & recedes slightly per deck card so the depth buffer reproduces
+              // the center-on-top stacking css implementations fake with z-index
               F32 p = (F32)card_idx - ws->workspace_coverflow_t;
               F32 pc = Clamp(-1.f, p, 1.f);
-              F32 x = pc*(cw*0.60f + 0.10f) + p*cw*0.26f;
-              F32 z = abs_f32(pc)*1.05f; // recede from the camera (+z is deeper)
-              F32 ry = -pc*1.02f;
+              F32 rot_t = Clamp(-1.f, p*2.f, 1.f);
+              F32 x = pc*cw*0.62f + (abs_f32(p) > 1.f ? (p - pc)*cw*0.25f : 0.f);
+              F32 z = abs_f32(pc)*1.0f + (abs_f32(p) > 1.f ? (abs_f32(p) - 1.f)*0.06f : 0.f);
+              F32 ry = -rot_t*0.14f; // turns: ~50 degrees at full tilt
               Mat4x4F32 xform = mul_4x4f32(make_translate_4x4f32(v3f32(x, row_y, z)),
                                            mul_4x4f32(make_rotate_4x4f32(v3f32(0, 1, 0), ry),
                                                       make_scale_4x4f32(v3f32(cw, 1.f, 1.f))));
               Mat4x4F32 refl_xform = mul_4x4f32(xform, make_translate_4x4f32(v3f32(0, -1.02f, 0)));
-              rd_workspace_preview_demand_push(ws, child->id, region_dim.x*(abs_f32(p) < 0.5f ? 0.55f : 0.32f));
+              rd_workspace_preview_demand_push(ws, child->id, region_dim.x*(abs_f32(p) < 0.5f ? 0.55f : 0.25f));
               cf_data->cards[card_idx].workspace_id = child->id;
               cf_data->cards[card_idx].texture = (node != 0 ? node->texture : r_handle_zero());
               cf_data->cards[card_idx].xform = xform;
