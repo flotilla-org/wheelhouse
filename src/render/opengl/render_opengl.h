@@ -55,6 +55,9 @@ typedef ptrdiff_t GLintptr;
 #define GL_R8                             0x8229
 #define GL_RGBA16F                        0x881A
 #define GL_HALF_FLOAT                     0x140B
+#define GL_UNIFORM_BUFFER                 0x8A11
+#define GL_INVALID_INDEX                  0xFFFFFFFFu
+#define GL_LINK_STATUS                    0x8B82
 
 #define GL_ARRAY_BUFFER                   0x8892
 #define GL_STREAM_DRAW                    0x88E0
@@ -200,6 +203,9 @@ X(glDebugMessageCallback, void, (void (*)(GLenum source, GLenum type, GLuint id,
 X(glFramebufferTexture2D, void, (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level))\
 X(glCheckFramebufferStatus, GLenum, (GLenum target))\
 X(glBlitFramebuffer, void, (GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter))\
+X(glGetUniformBlockIndex, GLuint, (GLuint program, const GLchar *uniformBlockName))\
+X(glUniformBlockBinding, void, (GLuint program, GLuint uniformBlockIndex, GLuint uniformBlockBinding))\
+X(glBindBufferBase, void, (GLenum target, GLuint index, GLuint buffer))\
 
 #define X(name, r, p) typedef r name##_FunctionType p;
 R_OGL_ProcedureXList
@@ -243,6 +249,23 @@ struct R_OGL_RenderTarget
   GLuint color_texture;
 };
 
+// a runtime-compiled effect program (one fullscreen texture->texture link)
+typedef struct R_OGL_Effect R_OGL_Effect;
+struct R_OGL_Effect
+{
+  GLuint program;
+};
+
+// mirrors EffectUniforms in src/effects/effect_prelude.wgsl (std140)
+typedef struct R_OGL_EffectUniforms R_OGL_EffectUniforms;
+struct R_OGL_EffectUniforms
+{
+  Vec2F32 source_size_px;
+  Vec2F32 output_size_px;
+  Vec4F32 params0;
+  Vec4F32 params1;
+};
+
 typedef struct R_OGL_Window R_OGL_Window;
 struct R_OGL_Window
 {
@@ -264,6 +287,7 @@ struct R_OGL_State
   GLuint scratch_buffer_64kb;
   GLuint white_texture;
   GLuint surface_fbo; // shared fbo for surface render targets; the target texture is attached per-pass
+  GLuint effect_ubo;  // scratch uniform buffer for effect passes
   Arena *buffer_flush_arena;
   R_OGL_FlushBuffer *first_buffer_to_flush;
   R_OGL_FlushBuffer *last_buffer_to_flush;

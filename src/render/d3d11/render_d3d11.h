@@ -64,6 +64,24 @@ struct R_D3D11_Uniforms_Mesh
 ////////////////////////////////
 //~ rjf: Main State Types
 
+// mirrors EffectUniforms in src/effects/effect_prelude.wgsl
+typedef struct R_D3D11_EffectUniforms R_D3D11_EffectUniforms;
+struct R_D3D11_EffectUniforms
+{
+  Vec2F32 source_size_px;
+  Vec2F32 output_size_px;
+  Vec4F32 params0;
+  Vec4F32 params1;
+};
+
+// a runtime-compiled effect pipeline (one fullscreen texture->texture link)
+typedef struct R_D3D11_Effect R_D3D11_Effect;
+struct R_D3D11_Effect
+{
+  ID3D11VertexShader *vshad;
+  ID3D11PixelShader *pshad;
+};
+
 typedef struct R_D3D11_Tex2D R_D3D11_Tex2D;
 struct R_D3D11_Tex2D
 {
@@ -149,6 +167,7 @@ struct R_D3D11_State
   ID3D11RasterizerState1  *main_rasterizer;
   ID3D11BlendState        *main_blend_state;
   ID3D11BlendState        *surface_blend_state;
+  ID3D11Buffer            *effect_uniforms_buffer;
   ID3D11BlendState        *no_blend_state;
   ID3D11SamplerState      *samplers[R_Tex2DSampleKind_COUNT];
   ID3D11DepthStencilState *noop_depth_stencil;

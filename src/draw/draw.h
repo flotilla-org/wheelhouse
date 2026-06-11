@@ -223,6 +223,9 @@ internal B32 dr_surface_end_composite_cached(U64 *io_content_hash, B32 force_ren
 internal B32 dr_surface_is_active(void);
 internal R_Rect2DInst *dr_surface_img(R_Handle target, Rng2F32 dst, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32 edge_softness);
 
+//- effect passes (fullscreen texture->texture links of a surface's effect chain)
+internal R_PassParams_Effect *dr_effect(R_Handle effect, R_Handle source, R_Handle target, Vec4F32 params0, Vec4F32 params1);
+
 ////////////////////////////////
 //~ rjf: Draw Call Helpers
 

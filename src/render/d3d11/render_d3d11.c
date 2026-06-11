@@ -691,6 +691,67 @@ r_tex2d_alloc(R_ResourceKind kind, Vec2S32 size, R_Tex2DFormat format, void *dat
 }
 
 r_hook R_Handle
+r_effect_alloc(String8 name, R_EffectSources *sources)
+{
+  R_Handle result = {0};
+  MutexScopeW(r_d3d11_state->device_rw_mutex)
+  {
+    HRESULT error = 0;
+    ID3D11VertexShader *vshad = 0;
+    ID3D11PixelShader *pshad = 0;
+
+    // rjf: compile vertex shader (spirv-cross entry point is "main"; no input
+    // layout - the fullscreen triangle reads only SV_VertexID)
+    {
+      ID3DBlob *blob = 0;
+      ID3DBlob *errors_blob = 0;
+      error = D3DCompile(sources->hlsl_vs.str, sources->hlsl_vs.size, (char *)name.str, 0, 0, "main", "vs_5_0", 0, 0, &blob, &errors_blob);
+      if(FAILED(error))
+      {
+        String8 errors = str8((U8 *)errors_blob->lpVtbl->GetBufferPointer(errors_blob), (U64)errors_blob->lpVtbl->GetBufferSize(errors_blob));
+        wm_graphical_message(1, str8_lit("Effect Vertex Shader Compilation Failure"), errors);
+      }
+      else
+      {
+        r_d3d11_state->device->lpVtbl->CreateVertexShader(r_d3d11_state->device, blob->lpVtbl->GetBufferPointer(blob), blob->lpVtbl->GetBufferSize(blob), 0, &vshad);
+        blob->lpVtbl->Release(blob);
+      }
+    }
+
+    // rjf: compile pixel shader
+    {
+      ID3DBlob *blob = 0;
+      ID3DBlob *errors_blob = 0;
+      error = D3DCompile(sources->hlsl_fs.str, sources->hlsl_fs.size, (char *)name.str, 0, 0, "main", "ps_5_0", 0, 0, &blob, &errors_blob);
+      if(FAILED(error))
+      {
+        String8 errors = str8((U8 *)errors_blob->lpVtbl->GetBufferPointer(errors_blob), (U64)errors_blob->lpVtbl->GetBufferSize(errors_blob));
+        wm_graphical_message(1, str8_lit("Effect Pixel Shader Compilation Failure"), errors);
+      }
+      else
+      {
+        r_d3d11_state->device->lpVtbl->CreatePixelShader(r_d3d11_state->device, blob->lpVtbl->GetBufferPointer(blob), blob->lpVtbl->GetBufferSize(blob), 0, &pshad);
+        blob->lpVtbl->Release(blob);
+      }
+    }
+
+    if(vshad != 0 && pshad != 0)
+    {
+      R_D3D11_Effect *effect = push_array(r_d3d11_state->arena, R_D3D11_Effect, 1);
+      effect->vshad = vshad;
+      effect->pshad = pshad;
+      result.u64[0] = (U64)effect;
+    }
+    else
+    {
+      if(vshad != 0) { vshad->lpVtbl->Release(vshad); }
+      if(pshad != 0) { pshad->lpVtbl->Release(pshad); }
+    }
+  }
+  return result;
+}
+
+r_hook R_Handle
 r_tex2d_alloc_render_target(Vec2S32 size)
 {
   ProfBeginFunction();
@@ -1367,6 +1428,69 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
           }
         }break;
         
+        ////////////////////////
+        //- rjf: effect pass (fullscreen texture->texture link of an effect chain)
+        //
+        case R_PassKind_Effect:
+        {
+          R_PassParams_Effect *params = pass->params_effect;
+          R_D3D11_Effect *effect = (R_D3D11_Effect *)params->effect.u64[0];
+          R_D3D11_Tex2D *source = r_d3d11_tex2d_from_handle(params->source);
+          R_D3D11_Tex2D *target = r_d3d11_tex2d_from_handle(params->target);
+          if(effect != 0 && effect->vshad != 0 && effect->pshad != 0 &&
+             source != &r_d3d11_tex2d_nil && source->view != 0 &&
+             target != &r_d3d11_tex2d_nil && target->rtv != 0)
+          {
+            // rjf: lazily create the effect uniforms buffer
+            if(r_d3d11_state->effect_uniforms_buffer == 0)
+            {
+              D3D11_BUFFER_DESC desc = {0};
+              desc.ByteWidth = sizeof(R_D3D11_EffectUniforms);
+              desc.Usage = D3D11_USAGE_DYNAMIC;
+              desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+              desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+              r_d3d11_state->device->lpVtbl->CreateBuffer(r_d3d11_state->device, &desc, 0, &r_d3d11_state->effect_uniforms_buffer);
+            }
+            if(r_d3d11_state->effect_uniforms_buffer != 0)
+            {
+              // rjf: upload uniforms
+              {
+                R_D3D11_EffectUniforms uniforms = {0};
+                uniforms.source_size_px = v2f32((F32)Max(source->size.x, 1), (F32)Max(source->size.y, 1));
+                uniforms.output_size_px = v2f32((F32)Max(target->size.x, 1), (F32)Max(target->size.y, 1));
+                uniforms.params0 = params->params[0];
+                uniforms.params1 = params->params[1];
+                D3D11_MAPPED_SUBRESOURCE sub_rsrc = {0};
+                d_ctx->lpVtbl->Map(d_ctx, (ID3D11Resource *)r_d3d11_state->effect_uniforms_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub_rsrc);
+                MemoryCopy((U8 *)sub_rsrc.pData, &uniforms, sizeof(uniforms));
+                d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)r_d3d11_state->effect_uniforms_buffer, 0);
+              }
+
+              // rjf: draw the fullscreen triangle into the target
+              Vec4F32 clear_color = {0};
+              d_ctx->lpVtbl->ClearRenderTargetView(d_ctx, target->rtv, clear_color.v);
+              d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, &target->rtv, 0);
+              d_ctx->lpVtbl->OMSetDepthStencilState(d_ctx, r_d3d11_state->noop_depth_stencil, 0);
+              d_ctx->lpVtbl->OMSetBlendState(d_ctx, r_d3d11_state->no_blend_state, 0, 0xffffffff);
+              D3D11_VIEWPORT viewport = { 0.0f, 0.0f, (F32)Max(target->size.x, 1), (F32)Max(target->size.y, 1), 0.0f, 1.0f };
+              d_ctx->lpVtbl->RSSetViewports(d_ctx, 1, &viewport);
+              d_ctx->lpVtbl->RSSetState(d_ctx, (ID3D11RasterizerState *)r_d3d11_state->main_rasterizer);
+              D3D11_RECT scissor = {0, 0, (LONG)Max(target->size.x, 1), (LONG)Max(target->size.y, 1)};
+              d_ctx->lpVtbl->RSSetScissorRects(d_ctx, 1, &scissor);
+              d_ctx->lpVtbl->IASetPrimitiveTopology(d_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+              d_ctx->lpVtbl->IASetInputLayout(d_ctx, 0);
+              d_ctx->lpVtbl->VSSetShader(d_ctx, effect->vshad, 0, 0);
+              d_ctx->lpVtbl->PSSetShader(d_ctx, effect->pshad, 0, 0);
+              d_ctx->lpVtbl->PSSetConstantBuffers(d_ctx, 0, 1, &r_d3d11_state->effect_uniforms_buffer);
+              d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 1, 1, &source->view);
+              d_ctx->lpVtbl->PSSetSamplers(d_ctx, 2, 1, &r_d3d11_state->samplers[R_Tex2DSampleKind_Linear]);
+              d_ctx->lpVtbl->Draw(d_ctx, 3, 0);
+              ID3D11ShaderResourceView *null_srv = 0;
+              d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 1, 1, &null_srv);
+            }
+          }
+        }break;
+
         ////////////////////////
         //- rjf: blur rendering pass
         //

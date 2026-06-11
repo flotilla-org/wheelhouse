@@ -227,6 +227,17 @@ struct R_PassParams_Geo3D
   R_BatchGroup3DMap mesh_batches;
 };
 
+// effect contract v1 (src/effects/effect_prelude.wgsl): one fullscreen-triangle
+// fragment pass, source texture -> target, premultiplied in & out, no blending
+typedef struct R_PassParams_Effect R_PassParams_Effect;
+struct R_PassParams_Effect
+{
+  R_Handle effect;  // from r_effect_alloc
+  R_Handle source;  // input texture (a surface or a prior chain link's target)
+  R_Handle target;  // output render-target texture
+  Vec4F32 params[2];
+};
+
 typedef struct R_Pass R_Pass;
 struct R_Pass
 {
@@ -237,6 +248,7 @@ struct R_Pass
     R_PassParams_UI *params_ui;
     R_PassParams_Blur *params_blur;
     R_PassParams_Geo3D *params_geo3d;
+    R_PassParams_Effect *params_effect;
   };
 };
 
@@ -261,6 +273,21 @@ struct R_Readback
   Vec2S32 size;
   R_Tex2DFormat format;
   String8 data;
+};
+
+////////////////////////////////
+//~ rjf: Effect Types
+
+// all backends' translations of one effect; each backend picks its own pair
+typedef struct R_EffectSources R_EffectSources;
+struct R_EffectSources
+{
+  String8 msl_vs;
+  String8 msl_fs;
+  String8 glsl_vs;
+  String8 glsl_fs;
+  String8 hlsl_vs;
+  String8 hlsl_fs;
 };
 
 ////////////////////////////////
@@ -297,6 +324,10 @@ r_hook void              r_init(CmdLine *cmdln);
 //- rjf: window setup/teardown
 r_hook R_Handle          r_window_equip(WM_Window window);
 r_hook void              r_window_unequip(WM_Window window, R_Handle window_equip);
+
+//- rjf: effects (runtime-compiled fullscreen passes; sources are the
+// per-backend translations of one WGSL effect - see `build.sh effects`)
+r_hook R_Handle          r_effect_alloc(String8 name, R_EffectSources *sources);
 
 //- rjf: textures
 r_hook R_Handle          r_tex2d_alloc(R_ResourceKind kind, Vec2S32 size, R_Tex2DFormat format, void *data);

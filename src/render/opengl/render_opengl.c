@@ -277,6 +277,74 @@ r_tex2d_alloc(R_ResourceKind kind, Vec2S32 size, R_Tex2DFormat format, void *dat
 }
 
 r_hook R_Handle
+r_effect_alloc(String8 name, R_EffectSources *sources)
+{
+  R_Handle result = {0};
+  struct {GLenum type; String8 src; GLuint id;} stages[] =
+  {
+    {GL_VERTEX_SHADER,   sources->glsl_vs},
+    {GL_FRAGMENT_SHADER, sources->glsl_fs},
+  };
+  B32 good = 1;
+  for EachElement(idx, stages)
+  {
+    stages[idx].id = glCreateShader(stages[idx].type);
+    GLint src_size = (GLint)stages[idx].src.size;
+    char *src_ptr = (char *)stages[idx].src.str;
+    glShaderSource(stages[idx].id, 1, &src_ptr, &src_size);
+    glCompileShader(stages[idx].id);
+    GLint status = 0;
+    glGetShaderiv(stages[idx].id, GL_COMPILE_STATUS, &status);
+    if(status == 0)
+    {
+      good = 0;
+      GLint info_log_length = 0;
+      glGetShaderiv(stages[idx].id, GL_INFO_LOG_LENGTH, &info_log_length);
+      if(info_log_length != 0)
+      {
+        Temp scratch = scratch_begin(0, 0);
+        char *log_buffer = push_array(scratch.arena, char, info_log_length+1);
+        glGetShaderInfoLog(stages[idx].id, info_log_length, 0, log_buffer);
+        fprintf(stderr, "[OpenGL effect %.*s] %s\n", (int)name.size, name.str, log_buffer);
+        scratch_end(scratch);
+      }
+    }
+  }
+  if(good)
+  {
+    GLuint program = glCreateProgram();
+    for EachElement(idx, stages)
+    {
+      glAttachShader(program, stages[idx].id);
+    }
+    glLinkProgram(program);
+    GLint link_status = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &link_status);
+    if(link_status != 0)
+    {
+      // route the (sole) uniform block to binding point 0; spirv-cross names it "u"
+      GLuint block_idx = glGetUniformBlockIndex(program, "u");
+      if(block_idx != GL_INVALID_INDEX)
+      {
+        glUniformBlockBinding(program, block_idx, 0);
+      }
+      R_OGL_Effect *effect = push_array(r_ogl_state->arena, R_OGL_Effect, 1);
+      effect->program = program;
+      result.u64[0] = (U64)effect;
+    }
+    else
+    {
+      fprintf(stderr, "[OpenGL effect %.*s] link failed\n", (int)name.size, name.str);
+    }
+  }
+  for EachElement(idx, stages)
+  {
+    glDeleteShader(stages[idx].id);
+  }
+  return result;
+}
+
+r_hook R_Handle
 r_tex2d_alloc_render_target(Vec2S32 size)
 {
   R_OGL_Tex2D *tex2d = r_ogl_state->free_tex2d;
@@ -699,6 +767,58 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
         }
       }break;
       
+      ////////////////////////
+      //- rjf: effect pass (fullscreen texture->texture link of an effect chain)
+      //
+      case R_PassKind_Effect:
+      {
+        R_PassParams_Effect *params = pass->params_effect;
+        R_OGL_Effect *effect = (R_OGL_Effect *)params->effect.u64[0];
+        R_OGL_Tex2D *source = r_ogl_tex2d_from_handle(params->source);
+        R_OGL_Tex2D *target = r_ogl_tex2d_from_handle(params->target);
+        if(effect != 0 && effect->program != 0 &&
+           source != 0 && source->id != 0 &&
+           target != 0 && target->id != 0)
+        {
+          if(r_ogl_state->surface_fbo == 0)
+          {
+            glGenFramebuffers(1, &r_ogl_state->surface_fbo);
+          }
+          if(r_ogl_state->effect_ubo == 0)
+          {
+            glGenBuffers(1, &r_ogl_state->effect_ubo);
+          }
+          R_OGL_EffectUniforms uniforms = {0};
+          uniforms.source_size_px = v2f32((F32)Max(source->size.x, 1), (F32)Max(source->size.y, 1));
+          uniforms.output_size_px = v2f32((F32)Max(target->size.x, 1), (F32)Max(target->size.y, 1));
+          uniforms.params0 = params->params[0];
+          uniforms.params1 = params->params[1];
+          glBindBuffer(GL_UNIFORM_BUFFER, r_ogl_state->effect_ubo);
+          glBufferData(GL_UNIFORM_BUFFER, sizeof(uniforms), &uniforms, GL_STREAM_DRAW);
+          glBindBuffer(GL_UNIFORM_BUFFER, 0);
+          glUseProgramScope(effect->program)
+            glBindVertexArrayScope(r_ogl_state->all_purpose_vao)
+            glBindFramebufferScope(GL_FRAMEBUFFER, r_ogl_state->surface_fbo)
+          {
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target->id, 0);
+            glViewport(0, 0, target->size.x, target->size.y);
+            glDisable(GL_BLEND);
+            glDisable(GL_SCISSOR_TEST);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 0, r_ogl_state->effect_ubo);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, source->id);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glBindTexture(GL_TEXTURE_2D, 0);
+          }
+          glEnable(GL_BLEND);
+          glViewport(0, 0, (S32)viewport_dim.x, (S32)viewport_dim.y);
+        }
+      }break;
+
       ////////////////////////
       //- rjf: blur rendering pass
       //

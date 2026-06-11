@@ -410,6 +410,8 @@ struct UI_Box
   F32 transparency;
   F32 squish;
   F32 text_padding;
+  String8 surface_effect; // effect chain on this box's surface (RenderToSurface only); name resolved at draw time
+  Vec4F32 surface_effect_params[2];
   
   //- rjf: per-build artifacts
   DR_FStrList display_fstrs;

@@ -33,5 +33,6 @@ void main()
     _out.uv = vec2((_220 + 1.0) * 0.5, 1.0 - ((_225 + 1.0) * 0.5));
     gl_Position = _out.position;
     uv = _out.uv;
+    gl_Position.y = -gl_Position.y;
 }
 

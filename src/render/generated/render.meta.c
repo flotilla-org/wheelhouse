@@ -43,25 +43,28 @@ str8_lit_comp("Nearest"),
 str8_lit_comp("Linear"),
 };
 
-String8 r_pass_kind_display_string_table[3] =
+String8 r_pass_kind_display_string_table[4] =
 {
 str8_lit_comp("UI"),
 str8_lit_comp("Blur"),
 str8_lit_comp("Geo3D"),
+str8_lit_comp("Effect"),
 };
 
-U8 r_pass_kind_batch_table[3] =
+U8 r_pass_kind_batch_table[4] =
 {
 1,
 0,
 1,
+0,
 };
 
-U64 r_pass_kind_params_size_table[3] =
+U64 r_pass_kind_params_size_table[4] =
 {
 sizeof(R_PassParams_UI),
 sizeof(R_PassParams_Blur),
 sizeof(R_PassParams_Geo3D),
+sizeof(R_PassParams_Effect),
 };
 
 C_LINKAGE_END

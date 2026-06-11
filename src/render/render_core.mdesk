@@ -60,6 +60,7 @@ R_PassKindTable:
   {UI          1      "UI"    }
   {Blur        0      "Blur"  }
   {Geo3D       1      "Geo3D" }
+  {Effect      0      "Effect"}
 }
 
 ////////////////////////////////

@@ -686,6 +686,54 @@ r_tex2d_alloc_render_target(Vec2S32 size)
   return result;
 }
 
+r_hook R_Handle
+r_effect_alloc(String8 name, R_EffectSources *sources)
+{
+  R_Handle result = {0};
+  MutexScopeW(r_mtl_state->device_rw_mutex)
+  {
+    NSString *vs_src = [[NSString alloc] initWithBytes:sources->msl_vs.str length:sources->msl_vs.size encoding:NSUTF8StringEncoding];
+    NSString *fs_src = [[NSString alloc] initWithBytes:sources->msl_fs.str length:sources->msl_fs.size encoding:NSUTF8StringEncoding];
+    NSError *error = 0;
+    id<MTLLibrary> vs_lib = [r_mtl_state->device newLibraryWithSource:vs_src options:0 error:&error];
+    r_mtl_log_ns_error((char *)[[NSString stringWithFormat:@"effect %.*s vs", (int)name.size, name.str] UTF8String], error);
+    error = 0;
+    id<MTLLibrary> fs_lib = [r_mtl_state->device newLibraryWithSource:fs_src options:0 error:&error];
+    r_mtl_log_ns_error((char *)[[NSString stringWithFormat:@"effect %.*s fs", (int)name.size, name.str] UTF8String], error);
+    if(vs_lib != 0 && fs_lib != 0)
+    {
+      id<MTLFunction> vs_function = [vs_lib newFunctionWithName:@"vs_main"];
+      id<MTLFunction> fs_function = [fs_lib newFunctionWithName:@"fs_main"];
+      if(vs_function != 0 && fs_function != 0)
+      {
+        MTLRenderPipelineDescriptor *descriptor = [MTLRenderPipelineDescriptor new];
+        descriptor.vertexFunction = vs_function;
+        descriptor.fragmentFunction = fs_function;
+        descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA16Float;
+        // premultiplied texture->texture: the fullscreen pass replaces every pixel
+        descriptor.colorAttachments[0].blendingEnabled = NO;
+        error = 0;
+        id<MTLRenderPipelineState> pipeline = [r_mtl_state->device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+        r_mtl_log_ns_error((char *)[[NSString stringWithFormat:@"effect %.*s pipeline", (int)name.size, name.str] UTF8String], error);
+        if(pipeline != 0)
+        {
+          R_MTL_Effect *effect = push_array(r_mtl_state->arena, R_MTL_Effect, 1);
+          effect->pipeline = pipeline;
+          result.u64[0] = (U64)effect;
+        }
+        [descriptor release];
+      }
+      [vs_function release];
+      [fs_function release];
+    }
+    [vs_lib release];
+    [fs_lib release];
+    [vs_src release];
+    [fs_src release];
+  }
+  return result;
+}
+
 r_hook void
 r_tex2d_release(R_Handle handle)
 {
@@ -1044,6 +1092,39 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
               [encoder endEncoding];
             }
           }break;
+          case R_PassKind_Effect:
+          {
+            R_PassParams_Effect *params = render_pass->params_effect;
+            R_MTL_Effect *effect = (R_MTL_Effect *)params->effect.u64[0];
+            R_MTL_Tex2D *source = r_mtl_tex2d_from_handle(params->source);
+            R_MTL_Tex2D *target = r_mtl_tex2d_from_handle(params->target);
+            if(effect != 0 && effect->pipeline != 0 &&
+               source != 0 && source->texture != 0 &&
+               target != 0 && target->texture != 0)
+            {
+              R_MTL_EffectUniforms uniforms = {0};
+              uniforms.source_size_px = v2f32((F32)Max(source->size.x, 1), (F32)Max(source->size.y, 1));
+              uniforms.output_size_px = v2f32((F32)Max(target->size.x, 1), (F32)Max(target->size.y, 1));
+              uniforms.params0 = params->params[0];
+              uniforms.params1 = params->params[1];
+              U64 uniform_offset = 0;
+              id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&uniforms, sizeof(uniforms), 256, &uniform_offset);
+
+              MTLRenderPassDescriptor *stage_pass = mtl_window->stage_pass;
+              stage_pass.colorAttachments[0].texture = target->texture;
+              stage_pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+              stage_pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
+              stage_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+              id<MTLRenderCommandEncoder> encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_pass];
+              [encoder setRenderPipelineState:effect->pipeline];
+              [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:0];
+              [encoder setFragmentTexture:source->texture atIndex:0];
+              [encoder setFragmentSamplerState:r_mtl_state->samplers[R_Tex2DSampleKind_Linear] atIndex:0];
+              [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+              [encoder endEncoding];
+            }
+          }break;
+
           case R_PassKind_Blur:
           {
             if(r_mtl_state->blur_pipeline != 0)

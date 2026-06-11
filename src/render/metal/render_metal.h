@@ -98,6 +98,23 @@ struct R_MTL_FinalizeUniforms
   Vec2F32 viewport_size;
 };
 
+// mirrors EffectUniforms in src/effects/effect_prelude.wgsl
+typedef struct R_MTL_EffectUniforms R_MTL_EffectUniforms;
+struct R_MTL_EffectUniforms
+{
+  Vec2F32 source_size_px;
+  Vec2F32 output_size_px;
+  Vec4F32 params0;
+  Vec4F32 params1;
+};
+
+// a runtime-compiled effect pipeline (one fullscreen texture->texture link)
+typedef struct R_MTL_Effect R_MTL_Effect;
+struct R_MTL_Effect
+{
+  id<MTLRenderPipelineState> pipeline;
+};
+
 typedef struct R_MTL_MeshUniforms R_MTL_MeshUniforms;
 struct R_MTL_MeshUniforms
 {

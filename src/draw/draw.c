@@ -327,12 +327,28 @@ dr_top_bucket(void)
 
 //- rjf: rectangles
 
+// NOTE: a fresh UI pass minted mid-surface-bracket (after a non-UI pass like a
+// blur or an effect link) must inherit the open surface's target, or its draws
+// would escape to the stage
+internal R_Pass *
+dr_ui_pass(DR_Bucket *bucket, Arena *arena)
+{
+  B32 was_last_ui = (bucket->passes.last != 0 && bucket->passes.last->v.kind == R_PassKind_UI);
+  R_Pass *pass = r_pass_from_kind(arena, &bucket->passes, R_PassKind_UI);
+  if(!was_last_ui && bucket->top_surface != 0)
+  {
+    pass->params_ui->target = bucket->top_surface->target;
+    pass->params_ui->target_rect = bucket->top_surface->rect;
+  }
+  return pass;
+}
+
 internal inline R_Rect2DInst *
 dr_rect(Rng2F32 dst, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32 edge_softness)
 {
   DR_Bucket *bucket = dr_top_bucket();
   Arena *arena = (bucket->arena != 0 ? bucket->arena : dr_thread_ctx->arena);
-  R_Pass *pass = r_pass_from_kind(arena, &bucket->passes, R_PassKind_UI);
+  R_Pass *pass = dr_ui_pass(bucket, arena);
   R_PassParams_UI *params = pass->params_ui;
   R_BatchGroup2DList *rects = &params->rects;
   R_BatchGroup2DNode *node = rects->last;
@@ -375,7 +391,7 @@ dr_img(Rng2F32 dst, Rng2F32 src, R_Handle texture, Vec4F32 color, F32 corner_rad
 {
   DR_Bucket *bucket = dr_top_bucket();
   Arena *arena = (bucket->arena != 0 ? bucket->arena : dr_thread_ctx->arena);
-  R_Pass *pass = r_pass_from_kind(arena, &bucket->passes, R_PassKind_UI);
+  R_Pass *pass = dr_ui_pass(bucket, arena);
   R_PassParams_UI *params = pass->params_ui;
   R_BatchGroup2DList *rects = &params->rects;
   R_BatchGroup2DNode *node = rects->last;
@@ -413,6 +429,23 @@ dr_img(Rng2F32 dst, Rng2F32 src, R_Handle texture, Vec4F32 color, F32 corner_rad
   inst->shear = 0.f;
   bucket->last_cmd_stack_gen = bucket->stack_gen;
   return inst;
+}
+
+//- rjf: effect passes
+
+internal R_PassParams_Effect *
+dr_effect(R_Handle effect, R_Handle source, R_Handle target, Vec4F32 params0, Vec4F32 params1)
+{
+  DR_Bucket *bucket = dr_top_bucket();
+  Arena *arena = (bucket->arena != 0 ? bucket->arena : dr_thread_ctx->arena);
+  R_Pass *pass = r_pass_push(arena, &bucket->passes, R_PassKind_Effect);
+  R_PassParams_Effect *params = pass->params_effect;
+  params->effect = effect;
+  params->source = source;
+  params->target = target;
+  params->params[0] = params0;
+  params->params[1] = params1;
+  return params;
 }
 
 //- rjf: blurs

@@ -2471,6 +2471,8 @@ ui_build_box_from_key(UI_BoxFlags flags, UI_Key key)
     box->hover_cursor = WM_Cursor_Pointer;
     MemoryZeroArray(box->pref_size);
     MemoryZeroStruct(&box->draw_bucket);
+    MemoryZeroStruct(&box->surface_effect); // set conditionally; a stale string would dangle into a dead arena
+    MemoryZeroArray(box->surface_effect_params);
   }
   
   //- rjf: hook into persistent state table
