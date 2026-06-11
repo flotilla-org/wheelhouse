@@ -260,7 +260,27 @@ r_init(CmdLine *cmdln)
     }
     error = r_d3d11_state->device->lpVtbl->CreateBlendState(r_d3d11_state->device, &desc, &r_d3d11_state->main_blend_state);
   }
-  
+
+  //- rjf: create surface blend state
+  ProfScope("create surface blend state")
+  {
+    // NOTE: accumulates source-over coverage in dst alpha, which renders into
+    // transparent-cleared surfaces as premultiplied color + coverage; the main
+    // blend state replaces dst alpha (the stage's alpha is never read again)
+    D3D11_BLEND_DESC desc = {0};
+    {
+      desc.RenderTarget[0].BlendEnable            = 1;
+      desc.RenderTarget[0].SrcBlend               = D3D11_BLEND_SRC_ALPHA;
+      desc.RenderTarget[0].DestBlend              = D3D11_BLEND_INV_SRC_ALPHA;
+      desc.RenderTarget[0].BlendOp                = D3D11_BLEND_OP_ADD;
+      desc.RenderTarget[0].SrcBlendAlpha          = D3D11_BLEND_ONE;
+      desc.RenderTarget[0].DestBlendAlpha         = D3D11_BLEND_INV_SRC_ALPHA;
+      desc.RenderTarget[0].BlendOpAlpha           = D3D11_BLEND_OP_ADD;
+      desc.RenderTarget[0].RenderTargetWriteMask  = D3D11_COLOR_WRITE_ENABLE_ALL;
+    }
+    error = r_d3d11_state->device->lpVtbl->CreateBlendState(r_d3d11_state->device, &desc, &r_d3d11_state->surface_blend_state);
+  }
+
   //- rjf: create empty blend state
   ProfScope("create empty blend state")
   {
@@ -670,6 +690,62 @@ r_tex2d_alloc(R_ResourceKind kind, Vec2S32 size, R_Tex2DFormat format, void *dat
   return result;
 }
 
+r_hook R_Handle
+r_tex2d_alloc_render_target(Vec2S32 size)
+{
+  ProfBeginFunction();
+
+  //- rjf: allocate
+  R_D3D11_Tex2D *texture = 0;
+  MutexScopeW(r_d3d11_state->device_rw_mutex)
+  {
+    texture = r_d3d11_state->first_free_tex2d;
+    if(texture == 0)
+    {
+      texture = push_array(r_d3d11_state->arena, R_D3D11_Tex2D, 1);
+    }
+    else
+    {
+      U64 gen = texture->generation;
+      SLLStackPop(r_d3d11_state->first_free_tex2d);
+      MemoryZeroStruct(texture);
+      texture->generation = gen;
+    }
+    texture->generation += 1;
+  }
+
+  //- rjf: create texture
+  D3D11_TEXTURE2D_DESC texture_desc = {0};
+  {
+    texture_desc.Width              = (UINT)Max(size.x, 1);
+    texture_desc.Height             = (UINT)Max(size.y, 1);
+    texture_desc.MipLevels          = 1;
+    texture_desc.ArraySize          = 1;
+    texture_desc.Format             = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    texture_desc.SampleDesc.Count   = 1;
+    texture_desc.Usage              = D3D11_USAGE_DEFAULT;
+    texture_desc.BindFlags          = D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_RENDER_TARGET;
+  }
+  r_d3d11_state->device->lpVtbl->CreateTexture2D(r_d3d11_state->device, &texture_desc, 0, &texture->texture);
+
+  //- rjf: create views
+  r_d3d11_state->device->lpVtbl->CreateShaderResourceView(r_d3d11_state->device, (ID3D11Resource *)texture->texture, 0, &texture->view);
+  r_d3d11_state->device->lpVtbl->CreateRenderTargetView(r_d3d11_state->device, (ID3D11Resource *)texture->texture, 0, &texture->rtv);
+
+  //- rjf: fill basics
+  {
+    texture->kind = R_ResourceKind_Static;
+    texture->size = size;
+    // NOTE: render targets share the stage's pixel format (RGBA16F), which has no
+    // R_Tex2DFormat; RGBA16 gives the identity sample channel map
+    texture->format = R_Tex2DFormat_RGBA16;
+  }
+
+  R_Handle result = r_d3d11_handle_from_tex2d(texture);
+  ProfEnd();
+  return result;
+}
+
 r_hook void
 r_tex2d_release(R_Handle handle)
 {
@@ -832,6 +908,10 @@ r_end_frame(void)
       if(tex->view != 0)
       {
         tex->view->lpVtbl->Release(tex->view);
+      }
+      if(tex->rtv != 0)
+      {
+        tex->rtv->lpVtbl->Release(tex->rtv);
       }
       if(tex->texture != 0)
       {
@@ -1075,7 +1155,12 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
     //
     R_D3D11_Window *wnd = r_d3d11_window_from_handle(window_equip);
     ID3D11DeviceContext1 *d_ctx = r_d3d11_state->device_ctx;
-    
+
+    // NOTE: a surface target's first pass this submit clears it; later passes
+    // (e.g. a parent surface resuming after a nested child's bracket) load
+    ID3D11RenderTargetView *touched_targets[64];
+    U64 touched_target_count = 0;
+
     ////////////////////////////
     //- rjf: do passes
     //
@@ -1094,10 +1179,59 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
           //- rjf: unpack params
           R_PassParams_UI *params = pass->params_ui;
           R_BatchGroup2DList *rect_batch_groups = &params->rects;
-          
-          //- rjf: set up rasterizer
+
+          //- rjf: unpack optional render target; surface passes draw into their own
+          // texture (cleared to transparent), in coordinates relative to target_rect
+          R_D3D11_Tex2D *target = r_d3d11_tex2d_from_handle(params->target);
+          B32 to_surface = (target != &r_d3d11_tex2d_nil && target->rtv != 0);
+          if(to_surface && params->preserve)
+          {
+            // surface content is up-to-date; skip the render & keep the texture
+            break;
+          }
           Vec2S32 resolution = wnd->last_resolution;
-          D3D11_VIEWPORT viewport = { 0.0f, 0.0f, (F32)resolution.x, (F32)resolution.y, 0.0f, 1.0f };
+          Vec2F32 pass_viewport_dim = v2f32((F32)resolution.x, (F32)resolution.y);
+          Vec2S32 pass_attachment_size = resolution;
+          Vec2F32 target_origin = v2f32(0, 0);
+          F32 pass_scale = 1.f;
+          if(to_surface)
+          {
+            pass_viewport_dim = dim_2f32(params->target_rect);
+            pass_attachment_size = target->size;
+            target_origin = params->target_rect.p0;
+            // surfaces may be allocated at any resolution (e.g. reduced-res
+            // previews); derive the point->pixel scale from the target itself
+            if(pass_viewport_dim.x > 0)
+            {
+              pass_scale = (F32)target->size.x/pass_viewport_dim.x;
+            }
+          }
+          B32 target_first_touch = 0;
+          if(to_surface)
+          {
+            target_first_touch = 1;
+            for(U64 idx = 0; idx < touched_target_count; idx += 1)
+            {
+              if(touched_targets[idx] == target->rtv)
+              {
+                target_first_touch = 0;
+                break;
+              }
+            }
+            if(target_first_touch && touched_target_count < ArrayCount(touched_targets))
+            {
+              touched_targets[touched_target_count] = target->rtv;
+              touched_target_count += 1;
+            }
+            if(target_first_touch)
+            {
+              Vec4F32 clear_color = {0};
+              d_ctx->lpVtbl->ClearRenderTargetView(d_ctx, target->rtv, clear_color.v);
+            }
+          }
+
+          //- rjf: set up rasterizer
+          D3D11_VIEWPORT viewport = { 0.0f, 0.0f, (F32)pass_attachment_size.x, (F32)pass_attachment_size.y, 0.0f, 1.0f };
           d_ctx->lpVtbl->RSSetViewports(d_ctx, 1, &viewport);
           d_ctx->lpVtbl->RSSetState(d_ctx, (ID3D11RasterizerState *)r_d3d11_state->main_rasterizer);
           
@@ -1143,13 +1277,19 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
             // rjf: upload uniforms
             R_D3D11_Uniforms_Rect uniforms = {0};
             {
-              uniforms.viewport_size             = v2f32(resolution.x, resolution.y);
+              Mat3x3F32 group_xform = group_params->xform;
+              if(to_surface)
+              {
+                group_xform = mul_3x3f32(make_translate_3x3f32(v2f32(-target_origin.x, -target_origin.y)), group_xform);
+              }
+              uniforms.viewport_size             = pass_viewport_dim;
               uniforms.opacity                   = 1-group_params->transparency;
+              uniforms.sample_is_surface         = (F32)!!group_params->tex_sample_is_surface;
               uniforms.texture_sample_channel_map = texture_sample_channel_map;
               uniforms.texture_t2d_size          = v2f32(texture->size.x, texture->size.y);
-              uniforms.xform[0] = v4f32(group_params->xform.v[0][0], group_params->xform.v[1][0], group_params->xform.v[2][0], 0);
-              uniforms.xform[1] = v4f32(group_params->xform.v[0][1], group_params->xform.v[1][1], group_params->xform.v[2][1], 0);
-              uniforms.xform[2] = v4f32(group_params->xform.v[0][2], group_params->xform.v[1][2], group_params->xform.v[2][2], 0);
+              uniforms.xform[0] = v4f32(group_xform.v[0][0], group_xform.v[1][0], group_xform.v[2][0], 0);
+              uniforms.xform[1] = v4f32(group_xform.v[0][1], group_xform.v[1][1], group_xform.v[2][1], 0);
+              uniforms.xform[2] = v4f32(group_xform.v[0][2], group_xform.v[1][2], group_xform.v[2][2], 0);
               Vec2F32 xform_2x2_col0 = v2f32(uniforms.xform[0].x, uniforms.xform[1].x);
               Vec2F32 xform_2x2_col1 = v2f32(uniforms.xform[0].y, uniforms.xform[1].y);
               uniforms.xform_scale.x = length_2f32(xform_2x2_col0);
@@ -1161,12 +1301,12 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
               MemoryCopy((U8 *)sub_rsrc.pData, &uniforms, sizeof(uniforms));
               d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)uniforms_buffer, 0);
             }
-            
+
             // rjf: setup output merger
-            d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, &wnd->stage_color_rtv, 0);
+            d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, to_surface ? &target->rtv : &wnd->stage_color_rtv, 0);
             d_ctx->lpVtbl->OMSetDepthStencilState(d_ctx, r_d3d11_state->noop_depth_stencil, 0);
-            d_ctx->lpVtbl->OMSetBlendState(d_ctx, r_d3d11_state->main_blend_state, 0, 0xffffffff);
-            
+            d_ctx->lpVtbl->OMSetBlendState(d_ctx, to_surface ? r_d3d11_state->surface_blend_state : r_d3d11_state->main_blend_state, 0, 0xffffffff);
+
             // rjf: setup input assembly
             U32 stride = batches->bytes_per_inst;
             U32 offset = 0;
@@ -1190,9 +1330,9 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                 if(clip.x0 == 0 && clip.y0 == 0 && clip.x1 == 0 && clip.y1 == 0)
                 {
                   rect.left = 0;
-                  rect.right = (LONG)wnd->last_resolution.x;
+                  rect.right = (LONG)pass_attachment_size.x;
                   rect.top = 0;
-                  rect.bottom = (LONG)wnd->last_resolution.y;
+                  rect.bottom = (LONG)pass_attachment_size.y;
                 }
                 else if(clip.x0 > clip.x1 || clip.y0 > clip.y1)
                 {
@@ -1203,10 +1343,20 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                 }
                 else
                 {
-                  rect.left = (LONG)clip.x0;
-                  rect.right = (LONG)clip.x1;
-                  rect.top = (LONG)clip.y0;
-                  rect.bottom = (LONG)clip.y1;
+                  if(to_surface)
+                  {
+                    clip = shift_2f32(clip, v2f32(-target_origin.x, -target_origin.y));
+                  }
+                  rect.left = (LONG)(clip.x0*pass_scale);
+                  rect.right = (LONG)(clip.x1*pass_scale);
+                  rect.top = (LONG)(clip.y0*pass_scale);
+                  rect.bottom = (LONG)(clip.y1*pass_scale);
+                  if(rect.left < 0)                              { rect.left = 0; }
+                  if(rect.top < 0)                               { rect.top = 0; }
+                  if(rect.right > (LONG)pass_attachment_size.x)  { rect.right = (LONG)pass_attachment_size.x; }
+                  if(rect.bottom > (LONG)pass_attachment_size.y) { rect.bottom = (LONG)pass_attachment_size.y; }
+                  if(rect.right < rect.left)                     { rect.right = rect.left; }
+                  if(rect.bottom < rect.top)                     { rect.bottom = rect.top; }
                 }
               }
               d_ctx->lpVtbl->RSSetScissorRects(d_ctx, 1, &rect);
@@ -1628,6 +1778,11 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
           if(pass->kind == R_PassKind_UI && pass->params_ui != 0)
           {
             R_PassParams_UI *params = pass->params_ui;
+            if(r_d3d11_tex2d_from_handle(params->target) != &r_d3d11_tex2d_nil)
+            {
+              // surface-targeted passes draw offscreen; readback wants the stage only
+              continue;
+            }
             R_BatchGroup2DList *rect_batch_groups = &params->rects;
 
             Vec2S32 resolution = size;

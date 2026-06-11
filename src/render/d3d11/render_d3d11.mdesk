@@ -41,6 +41,7 @@ cbuffer Globals : register(b0)
 {
   float2 viewport_size_px;
   float opacity;
+  float sample_is_surface;
   row_major float4x4 texture_sample_channel_map;
   float2 texture_t2d_size_px;
   row_major float3x3 xform;
@@ -178,7 +179,19 @@ ps_main(Vertex2Pixel vertex2pixel) : SV_TARGET
   if(vertex2pixel.omit_texture < 1)
   {
     albedo_sample = mul(main_t2d.Sample(main_sampler, vertex2pixel.texcoord_pct), texture_sample_channel_map);
-    albedo_sample = linear_from_srgba(albedo_sample);
+    if(sample_is_surface > 0.5f)
+    {
+      // surface textures hold premultiplied linear color; un-premultiply so that
+      // the standard source-alpha blend reproduces premultiplied source-over exactly
+      if(albedo_sample.a > 0.0001f)
+      {
+        albedo_sample.rgb /= albedo_sample.a;
+      }
+    }
+    else
+    {
+      albedo_sample = linear_from_srgba(albedo_sample);
+    }
   }
   
   // rjf: determine SDF sample position

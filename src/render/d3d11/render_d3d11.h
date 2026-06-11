@@ -28,7 +28,7 @@ struct R_D3D11_Uniforms_Rect
 {
   Vec2F32 viewport_size;
   F32 opacity;
-  F32 _padding0_;
+  F32 sample_is_surface;
   Mat4x4F32 texture_sample_channel_map;
   Vec2F32 texture_t2d_size;
   Vec2F32 translate;
@@ -71,6 +71,7 @@ struct R_D3D11_Tex2D
   U64 generation;
   ID3D11Texture2D *texture;
   ID3D11ShaderResourceView *view;
+  ID3D11RenderTargetView *rtv; // non-zero only for render-target textures (surfaces)
   R_ResourceKind kind;
   Vec2S32 size;
   R_Tex2DFormat format;
@@ -147,6 +148,7 @@ struct R_D3D11_State
   IDXGIFactory2           *dxgi_factory;
   ID3D11RasterizerState1  *main_rasterizer;
   ID3D11BlendState        *main_blend_state;
+  ID3D11BlendState        *surface_blend_state;
   ID3D11BlendState        *no_blend_state;
   ID3D11SamplerState      *samplers[R_Tex2DSampleKind_COUNT];
   ID3D11DepthStencilState *noop_depth_stencil;
