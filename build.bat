@@ -81,6 +81,10 @@ if "%cleat%"=="1" (
   pushd "!cleat_dir!" || exit /b 1
   cargo build -p cleat --locked !cleat_profile_flags! !cleat_feature_flags! || exit /b 1
   popd
+  rem cl accepts -I as well as /I, so one spelling serves both compilers; this must
+  rem land in auto_compile_flags (not cl_common/clang_common) because the compile
+  rem lines below snapshot those via immediate expansion
+  set auto_compile_flags=!auto_compile_flags! -I"!cleat_include_dir!"
 )
 
 :: --- Compile/Link Line Definitions ------------------------------------------
@@ -98,8 +102,6 @@ set clang_link=    -fuse-ld=lld -Xlinker /MANIFEST:EMBED -Xlinker /pdbaltpath:%%
 set clang_out=     -o
 set clang_obj_out= -o
 set clang_linker=  -Xlinker
-if "%cleat%"=="1" set cl_common=%cl_common% /I"!cleat_include_dir!"
-if "%cleat%"=="1" set clang_common=%clang_common% -I"!cleat_include_dir!"
 if "%cleat%"=="1" if "%msvc%"=="1"  set cleat_link=/LIBPATH:"!cleat_lib_dir!" cleat.lib
 if "%cleat%"=="1" if "%clang%"=="1" set cleat_link=-L"!cleat_lib_dir!" -lcleat
 
