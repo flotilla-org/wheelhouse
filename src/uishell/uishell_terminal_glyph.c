@@ -5422,12 +5422,13 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
   cache->update_counter += 1;
 
   // Upload any resources we have not yet seen, or whose generation changed.
-  // Placements reference resources by (image_id, generation); a placement may
-  // name a resource we never uploaded, which the draw path skips. Resources no
-  // placement (or re-transmission) has named for a grace window are evicted
-  // below - streaming producers (e.g. katzensteg frames as fresh image ids)
-  // would otherwise accumulate one texture per frame for the session lifetime
-  // (observed: 46GB / 12k textures of graphics footprint -> jetsam kill).
+  // The update's image_resources is the FULL live set each time (cleat derives
+  // it from ghostty's placement iterator), so eviction is mirroring: any cached
+  // resource absent from the current update is gone from ghostty's store -
+  // deleted by the producer (katzensteg deletes per frame swap) or evicted by
+  // ghostty's own kitty quota policy. uishell adds no policy of its own.
+  // (Pre-mirror, resources were kept for the session lifetime: 46GB / 12k
+  // textures of graphics footprint under streaming producers -> jetsam kill.)
   if(session != 0)
   {
     for(U64 i = 0; i < update->image_resource_count; i += 1)
@@ -5537,9 +5538,8 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
   }
   cache->render_generation = update->render_generation;
 
-  // Mark every placement-referenced resource live, then evict resources
-  // unreferenced for the grace window (transmit-then-place-later flows survive
-  // because uploads mark too). ~4s at 60 updates/s.
+  // Drop every cached resource the current update no longer lists - an exact
+  // mirror of ghostty's image store (its quota/deletes are the only policy).
   {
     for(U64 i = 0; i < cache->placement_count; i += 1)
     {
@@ -5549,7 +5549,7 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
         res->last_referenced_update = cache->update_counter;
       }
     }
-    U64 grace = 240;
+    U64 grace = 0;
     UIShell_TerminalImageResource *prev = 0;
     for(UIShell_TerminalImageResource *r = cache->first_resource, *next = 0; r != 0; r = next)
     {

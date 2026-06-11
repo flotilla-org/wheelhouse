@@ -113,7 +113,7 @@ struct UIShell_TerminalImageResource
   U32 height_px;
   R_Handle texture; // R_Tex2DFormat_RGBA8, straight (non-premultiplied) sRGB alpha
   B32 valid;        // decode + upload succeeded
-  U64 last_referenced_update; // update counter when a placement or transmission last named this id; drives eviction
+  U64 last_referenced_update; // update counter when the live set last named this id; absence from an update evicts (mirror of ghostty's store)
 };
 
 typedef struct UIShell_TerminalImagePlacement UIShell_TerminalImagePlacement;
