@@ -5422,13 +5422,17 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
   cache->update_counter += 1;
 
   // Upload any resources we have not yet seen, or whose generation changed.
-  // The update's image_resources is the FULL live set each time (cleat derives
-  // it from ghostty's placement iterator), so eviction is mirroring: any cached
-  // resource absent from the current update is gone from ghostty's store -
-  // deleted by the producer (katzensteg deletes per frame swap) or evicted by
-  // ghostty's own kitty quota policy. uishell adds no policy of its own.
-  // (Pre-mirror, resources were kept for the session lifetime: 46GB / 12k
-  // textures of graphics footprint under streaming producers -> jetsam kill.)
+  // Lifetime policy (kitty spec, ~/dev/kitty/docs/graphics-protocol.rst):
+  // images legitimately live with no placements (lowercase deletes keep data
+  // for cheap re-display), and the terminal's quota evicts unplaced images
+  // preferentially under pressure. The cleat ABI currently exposes only
+  // placement-derived resources (no image-store iterator in the ghostty FFI),
+  // so uishell cannot see true deletions; interim policy below is the same
+  // shape as kitty's own: LRU beyond a byte quota, never evicting resources
+  // referenced by the current update. When the ABI grows the image store's
+  // live set, this collapses to exact mirroring with no local policy.
+  // (Original bug: resources kept for session lifetime -> 46GB / 12k textures
+  // of graphics footprint under streaming producers -> jetsam kill.)
   if(session != 0)
   {
     for(U64 i = 0; i < update->image_resource_count; i += 1)
@@ -5538,8 +5542,9 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
   }
   cache->render_generation = update->render_generation;
 
-  // Drop every cached resource the current update no longer lists - an exact
-  // mirror of ghostty's image store (its quota/deletes are the only policy).
+  // Mark placement-referenced resources recently-used, then evict least-
+  // recently-referenced resources beyond the byte quota. Resources named by
+  // the current update are exempt (the visible set always fits).
   {
     for(U64 i = 0; i < cache->placement_count; i += 1)
     {
@@ -5549,27 +5554,42 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
         res->last_referenced_update = cache->update_counter;
       }
     }
-    U64 grace = 0;
-    UIShell_TerminalImageResource *prev = 0;
-    for(UIShell_TerminalImageResource *r = cache->first_resource, *next = 0; r != 0; r = next)
+    U64 quota_bytes = MB(320); // kitty's default image storage quota; revisit as a setting/tweak
+    U64 total_bytes = 0;
+    for(UIShell_TerminalImageResource *r = cache->first_resource; r != 0; r = r->next)
     {
-      next = r->next;
-      if(cache->update_counter - r->last_referenced_update > grace)
+      total_bytes += (U64)r->width_px*(U64)r->height_px*4;
+    }
+    for(;total_bytes > quota_bytes;)
+    {
+      UIShell_TerminalImageResource *oldest = 0;
+      UIShell_TerminalImageResource *oldest_prev = 0;
       {
-        if(!r_handle_match(r->texture, r_handle_zero()))
+        UIShell_TerminalImageResource *prev = 0;
+        for(UIShell_TerminalImageResource *r = cache->first_resource; r != 0; prev = r, r = r->next)
         {
-          r_tex2d_release(r->texture);
+          if(r->last_referenced_update != cache->update_counter &&
+             (oldest == 0 || r->last_referenced_update < oldest->last_referenced_update))
+          {
+            oldest = r;
+            oldest_prev = prev;
+          }
         }
-        if(prev != 0) { prev->next = next; }
-        else          { cache->first_resource = next; }
-        if(cache->last_resource == r) { cache->last_resource = prev; }
-        MemoryZeroStruct(r);
-        SLLStackPush(cache->free_resource, r);
       }
-      else
+      if(oldest == 0)
       {
-        prev = r;
+        break; // everything left is referenced by the current update
       }
+      total_bytes -= (U64)oldest->width_px*(U64)oldest->height_px*4;
+      if(!r_handle_match(oldest->texture, r_handle_zero()))
+      {
+        r_tex2d_release(oldest->texture);
+      }
+      if(oldest_prev != 0) { oldest_prev->next = oldest->next; }
+      else                 { cache->first_resource = oldest->next; }
+      if(cache->last_resource == oldest) { cache->last_resource = oldest_prev; }
+      MemoryZeroStruct(oldest);
+      SLLStackPush(cache->free_resource, oldest);
     }
   }
 }
