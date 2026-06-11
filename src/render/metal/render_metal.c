@@ -1226,9 +1226,10 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
               id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&uniforms, sizeof(uniforms), 256, &uniform_offset);
               [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:1];
 
-              for(U64 slot_idx = 0; slot_idx < mesh_group_map->slots_count; slot_idx += 1)
+              // groups draw in submission order - alpha blending over the depth
+              // buffer needs determinism, & callers submit far-to-near
+              for(R_BatchGroup3DMapNode *n = mesh_group_map->insert_first; n != 0; n = n->insert_next)
               {
-                for(R_BatchGroup3DMapNode *n = mesh_group_map->slots[slot_idx]; n != 0; n = n->next)
                 {
                   R_BatchGroup3DParams *group_params = &n->params;
                   R_MTL_Buffer *mesh_vertices = r_mtl_buffer_from_handle(group_params->mesh_vertices);

@@ -47,6 +47,7 @@ struct MeshUniforms {
 };
 struct MeshInst {
   float4x4 xform;
+  float4 albedo_tex_remap; // uv' = xy + uv*zw
 };
 struct MeshGroupUniforms {
   float has_albedo;
@@ -252,7 +253,7 @@ vertex MeshOut mesh_vertex(uint vertex_id [[vertex_id]],
   MeshVertex in_vertex = vertices[vertex_id];
   MeshOut out;
   out.position = uniforms.xform * (insts[instance_id].xform * float4(in_vertex.position, 1.0f));
-  out.texcoord = in_vertex.texcoord;
+  out.texcoord = insts[instance_id].albedo_tex_remap.xy + float2(in_vertex.texcoord) * insts[instance_id].albedo_tex_remap.zw;
   out.color = float4(in_vertex.color, 1.0f);
   return out;
 }

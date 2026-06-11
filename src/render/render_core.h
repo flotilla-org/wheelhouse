@@ -110,6 +110,7 @@ typedef struct R_Mesh3DInst R_Mesh3DInst;
 struct R_Mesh3DInst
 {
   Mat4x4F32 xform;
+  Vec4F32 albedo_tex_remap; // uv' = xy + uv*zw; (0,0,1,1) = whole texture
 };
 
 ////////////////////////////////
@@ -185,6 +186,7 @@ typedef struct R_BatchGroup3DMapNode R_BatchGroup3DMapNode;
 struct R_BatchGroup3DMapNode
 {
   R_BatchGroup3DMapNode *next;
+  R_BatchGroup3DMapNode *insert_next; // submission order; backends draw in this order (blending needs determinism)
   U64 hash;
   R_BatchList batches;
   R_BatchGroup3DParams params;
@@ -195,6 +197,8 @@ struct R_BatchGroup3DMap
 {
   R_BatchGroup3DMapNode **slots;
   U64 slots_count;
+  R_BatchGroup3DMapNode *insert_first;
+  R_BatchGroup3DMapNode *insert_last;
 };
 
 ////////////////////////////////

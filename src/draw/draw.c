@@ -544,6 +544,7 @@ dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_GeoTopologyKind mesh_ge
   {
     node = push_array(arena, R_BatchGroup3DMapNode, 1);
     SLLStackPush(params->mesh_batches.slots[slot_idx], node);
+    SLLQueuePush_N(params->mesh_batches.insert_first, params->mesh_batches.insert_last, node, insert_next);
     node->hash = hash;
     node->batches = r_batch_list_make(sizeof(R_Mesh3DInst));
     node->params.mesh_vertices = mesh_vertices;
@@ -559,6 +560,7 @@ dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_GeoTopologyKind mesh_ge
   // rjf: push new instance to batch group
   R_Mesh3DInst *inst = (R_Mesh3DInst *)r_batch_list_push_inst(arena, &node->batches, 256);
   inst->xform = inst_xform;
+  inst->albedo_tex_remap = v4f32(0, 0, 1, 1);
   return inst;
 }
 

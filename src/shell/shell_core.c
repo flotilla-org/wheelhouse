@@ -2120,6 +2120,7 @@ struct RD_CoverFlowCard
   R_Handle texture;
   Mat4x4F32 xform;
   Mat4x4F32 refl_xform;
+  F32 row_p;
 };
 
 typedef struct RD_CoverFlowDrawData RD_CoverFlowDrawData;
@@ -2130,7 +2131,9 @@ struct RD_CoverFlowDrawData
   R_Handle card_vertices;
   R_Handle refl_vertices;
   R_Handle quad_indices;
+  Vec4F32 tex_remap; // workspace-content subrect of the wrapper surface
   RD_CoverFlowCard *cards;
+  U64 *draw_order;   // far-to-near, for deterministic blending
   U64 card_count;
 };
 
@@ -2169,8 +2172,8 @@ rd_coverflow_meshes(R_Handle *card_vertices_out, R_Handle *refl_vertices_out, R_
        0.5f, -0.5f, 0.f,  0, 0, 1,   1, 1,  1.f, 1.f, 1.f,
       -0.5f, -0.5f, 0.f,  0, 0, 1,   0, 1,  1.f, 1.f, 1.f,
     };
-    F32 refl_top = 0.30f;
-    F32 refl_bot = 0.02f;
+    F32 refl_top = 0.16f;
+    F32 refl_bot = 0.0f;
     F32 refl[] =
     {
       -0.5f,  0.5f, 0.f,  0, 0, 1,   0, 1,  refl_top, refl_top, refl_top,
@@ -2195,11 +2198,19 @@ internal UI_BOX_CUSTOM_DRAW(rd_workspace_coverflow_box_draw)
   pass->clip = box->rect;
   DR_Tex2DSampleKindScope(R_Tex2DSampleKind_Linear)
   {
-    for(U64 idx = 0; idx < data->card_count; idx += 1)
+    // far-to-near so alpha blending composites correctly: all reflections
+    // first (they sit behind the row), then cards, outermost deck inward
+    for(U64 order_idx = 0; order_idx < data->card_count; order_idx += 1)
     {
-      RD_CoverFlowCard *card = &data->cards[idx];
-      dr_mesh(data->card_vertices, data->quad_indices, R_GeoTopologyKind_Triangles, R_GeoVertexFlag_TexCoord|R_GeoVertexFlag_RGB, card->texture, 1, card->xform);
-      dr_mesh(data->refl_vertices, data->quad_indices, R_GeoTopologyKind_Triangles, R_GeoVertexFlag_TexCoord|R_GeoVertexFlag_RGB, card->texture, 1, card->refl_xform);
+      RD_CoverFlowCard *card = &data->cards[data->draw_order[order_idx]];
+      R_Mesh3DInst *inst = dr_mesh(data->refl_vertices, data->quad_indices, R_GeoTopologyKind_Triangles, R_GeoVertexFlag_TexCoord|R_GeoVertexFlag_RGB, card->texture, 1, card->refl_xform);
+      inst->albedo_tex_remap = data->tex_remap;
+    }
+    for(U64 order_idx = 0; order_idx < data->card_count; order_idx += 1)
+    {
+      RD_CoverFlowCard *card = &data->cards[data->draw_order[order_idx]];
+      R_Mesh3DInst *inst = dr_mesh(data->card_vertices, data->quad_indices, R_GeoTopologyKind_Triangles, R_GeoVertexFlag_TexCoord|R_GeoVertexFlag_RGB, card->texture, 1, card->xform);
+      inst->albedo_tex_remap = data->tex_remap;
     }
   }
 }
@@ -6202,8 +6213,13 @@ rd_window_frame(void)
           //- camera: distance fits the centered card; cards are unit-height,
           // window-aspect-width quads at the origin row
           Vec2F32 region_dim = dim_2f32(workspace_rect);
-          Vec2F32 window_dim = dim_2f32(window_rect);
-          F32 card_aspect = (window_dim.y > 0 ? window_dim.x/window_dim.y : 1.6f);
+          // cards show the workspace-content subrect of the (window-sized) wrapper
+          // surfaces; the card aspect & texcoords both come from that subrect, so
+          // no transparent sidebar/padding band rides along (it depth-killed
+          // whatever stacked behind it)
+          Rng2F32 wrapper_surf_rect = pad_2f32(window_rect, 2.f);
+          Vec2F32 wrapper_surf_dim = dim_2f32(wrapper_surf_rect);
+          F32 card_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
           F32 cw = card_aspect;
           F32 fov = 0.10f; // NOTE: trig here is in TURNS (base_math convention): 0.10 = 36 degrees
           F32 region_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
@@ -6224,6 +6240,10 @@ rd_window_frame(void)
           cf_data->view = view;
           cf_data->projection = projection;
           rd_coverflow_meshes(&cf_data->card_vertices, &cf_data->refl_vertices, &cf_data->quad_indices);
+          cf_data->tex_remap = v4f32((workspace_rect.x0 - wrapper_surf_rect.x0)/wrapper_surf_dim.x,
+                                     (workspace_rect.y0 - wrapper_surf_rect.y0)/wrapper_surf_dim.y,
+                                     region_dim.x/wrapper_surf_dim.x,
+                                     region_dim.y/wrapper_surf_dim.y);
           cf_data->cards = push_array(ui_build_arena(), RD_CoverFlowCard, tile_count);
           {
             U64 card_idx = 0;
@@ -6252,9 +6272,31 @@ rd_window_frame(void)
               cf_data->cards[card_idx].texture = (node != 0 ? node->texture : r_handle_zero());
               cf_data->cards[card_idx].xform = xform;
               cf_data->cards[card_idx].refl_xform = refl_xform;
+              cf_data->cards[card_idx].row_p = p;
               card_idx += 1;
             }
             cf_data->card_count = card_idx;
+          }
+
+          //- far-to-near draw order: row_p is monotonic across the cards array, so
+          // |p|-descending order is a two-pointer walk in from both ends
+          cf_data->draw_order = push_array(ui_build_arena(), U64, cf_data->card_count);
+          {
+            U64 lo = 0;
+            U64 hi = (cf_data->card_count > 0 ? cf_data->card_count - 1 : 0);
+            for(U64 order_idx = 0; order_idx < cf_data->card_count; order_idx += 1)
+            {
+              if(abs_f32(cf_data->cards[lo].row_p) >= abs_f32(cf_data->cards[hi].row_p))
+              {
+                cf_data->draw_order[order_idx] = lo;
+                lo += 1;
+              }
+              else
+              {
+                cf_data->draw_order[order_idx] = hi;
+                hi -= 1;
+              }
+            }
           }
 
           //- the scene box: backdrop + custom draw + input
