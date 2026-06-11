@@ -6287,7 +6287,7 @@ rd_window_frame(void)
               F32 rot_t = Clamp(-1.f, p*2.f, 1.f);
               F32 x = pc*cw*0.62f + (abs_f32(p) > 1.f ? (p - pc)*cw*0.25f : 0.f);
               F32 z = abs_f32(pc)*1.0f + (abs_f32(p) > 1.f ? (abs_f32(p) - 1.f)*0.06f : 0.f);
-              F32 ry = -rot_t*0.14f; // turns: ~50 degrees at full tilt
+              F32 ry = rot_t*0.14f; // turns, ~50 degrees: outer edge toward the camera, inner edge tucking behind the next card inward (the classic stack)
               Mat4x4F32 xform = mul_4x4f32(make_translate_4x4f32(v3f32(x, row_y, z)),
                                            mul_4x4f32(make_rotate_4x4f32(v3f32(0, 1, 0), ry),
                                                       make_scale_4x4f32(v3f32(cw, 1.f, 1.f))));
