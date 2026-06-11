@@ -2097,15 +2097,22 @@ rd_workspace_preview_surface_key(U64 workspace_id)
   return ui_key_from_stringf(ui_key_zero(), "workspace_preview_surface_%I64u", workspace_id).u64[0];
 }
 
+typedef struct RD_WorkspacePreviewDraw RD_WorkspacePreviewDraw;
+struct RD_WorkspacePreviewDraw
+{
+  RD_SurfaceCacheNode *node;
+  Rng2F32 src_uv; // subrect of the surface to show ({0,0,1,1} = whole)
+};
+
 internal UI_BOX_CUSTOM_DRAW(rd_workspace_preview_box_draw)
 {
-  RD_SurfaceCacheNode *node = (RD_SurfaceCacheNode *)user_data;
-  if(node != 0 && !r_handle_match(node->texture, r_handle_zero()))
+  RD_WorkspacePreviewDraw *draw = (RD_WorkspacePreviewDraw *)user_data;
+  if(draw != 0 && draw->node != 0 && !r_handle_match(draw->node->texture, r_handle_zero()))
   {
     Rng2F32 dst = pad_2f32(box->rect, -1.f);
     DR_Tex2DSampleKindScope(R_Tex2DSampleKind_Linear)
     {
-      dr_surface_img(node->texture, dst, v4f32(1, 1, 1, 1), 0, 0, 0);
+      dr_surface_img_sub(draw->node->texture, dst, draw->src_uv, v4f32(1, 1, 1, 1), 0, 0, 0);
     }
   }
 }
@@ -2866,16 +2873,23 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           // exists (live-ish for the selected workspace, last-seen for others)
           if(ws != &rd_nil_window_state)
           {
-            RD_SurfaceCacheNode *preview = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(workspace->id));
+            RD_SurfaceCacheNode *preview_node = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(workspace->id));
+            RD_WorkspacePreviewDraw *preview = 0;
+            if(preview_node != 0)
+            {
+              preview = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
+              preview->node = preview_node;
+              preview->src_uv = r2f32p(0, 0, 1, 1); // minis are already content-cropped
+            }
             F32 preview_margin = ui_top_font_size()*0.5f;
             F32 preview_avail_w = dim_2f32(rect).x - preview_margin*2.f;
             if(preview_avail_w > 16.f)
             {
               rd_workspace_preview_demand_push(ws, workspace->id, preview_avail_w);
             }
-            if(preview != 0 && preview->size.x > 0 && preview->size.y > 0 && preview_avail_w > 16.f)
+            if(preview != 0 && preview->node->size.x > 0 && preview->node->size.y > 0 && preview_avail_w > 16.f)
             {
-              F32 preview_aspect = (F32)preview->size.x/(F32)preview->size.y;
+              F32 preview_aspect = (F32)preview->node->size.x/(F32)preview->node->size.y;
               F32 preview_h = floor_f32(preview_avail_w/preview_aspect);
               ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.2f), 1.f));
               UI_PrefWidth(ui_pct(1.f, 0.f))
@@ -6103,6 +6117,21 @@ rd_window_frame(void)
     }
     F32 workspace_zoom_t = ws->workspace_zoom_t;
     B32 workspace_zoom_open = (ws->workspace_zoom_open || workspace_zoom_t > 0.f);
+
+    //- the workspace-content subrect of the (window-sized, padded) wrapper
+    // surfaces; every consumer that presents a workspace preview crops with it,
+    // so the transparent sidebar strip never rides along
+    {
+      Rng2F32 wrapper_surf_rect = pad_2f32(window_rect, 2.f);
+      Vec2F32 wrapper_surf_dim = dim_2f32(wrapper_surf_rect);
+      if(wrapper_surf_dim.x > 0 && wrapper_surf_dim.y > 0)
+      {
+        ws->workspace_content_uv = r2f32p((workspace_rect.x0 - wrapper_surf_rect.x0)/wrapper_surf_dim.x,
+                                          (workspace_rect.y0 - wrapper_surf_rect.y0)/wrapper_surf_dim.y,
+                                          (workspace_rect.x1 - wrapper_surf_rect.x0)/wrapper_surf_dim.x,
+                                          (workspace_rect.y1 - wrapper_surf_rect.y0)/wrapper_surf_dim.y);
+      }
+    }
     // workspace surfaces build whenever something demands the previews: the
     // zoom view, or any consumer that registered a preview demand recently
     // (the control surface rows do, every frame they're visible) - no toggle
@@ -6213,12 +6242,10 @@ rd_window_frame(void)
           //- camera: distance fits the centered card; cards are unit-height,
           // window-aspect-width quads at the origin row
           Vec2F32 region_dim = dim_2f32(workspace_rect);
-          // cards show the workspace-content subrect of the (window-sized) wrapper
-          // surfaces; the card aspect & texcoords both come from that subrect, so
-          // no transparent sidebar/padding band rides along (it depth-killed
-          // whatever stacked behind it)
-          Rng2F32 wrapper_surf_rect = pad_2f32(window_rect, 2.f);
-          Vec2F32 wrapper_surf_dim = dim_2f32(wrapper_surf_rect);
+          // cards show the workspace-content subrect of the wrapper surfaces; the
+          // card aspect & texcoords both come from it, so no transparent sidebar/
+          // padding band rides along (it depth-killed whatever stacked behind it)
+          Rng2F32 content_uv = ws->workspace_content_uv;
           F32 card_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
           F32 cw = card_aspect;
           F32 fov = 0.10f; // NOTE: trig here is in TURNS (base_math convention): 0.10 = 36 degrees
@@ -6240,10 +6267,8 @@ rd_window_frame(void)
           cf_data->view = view;
           cf_data->projection = projection;
           rd_coverflow_meshes(&cf_data->card_vertices, &cf_data->refl_vertices, &cf_data->quad_indices);
-          cf_data->tex_remap = v4f32((workspace_rect.x0 - wrapper_surf_rect.x0)/wrapper_surf_dim.x,
-                                     (workspace_rect.y0 - wrapper_surf_rect.y0)/wrapper_surf_dim.y,
-                                     region_dim.x/wrapper_surf_dim.x,
-                                     region_dim.y/wrapper_surf_dim.y);
+          cf_data->tex_remap = v4f32(content_uv.x0, content_uv.y0,
+                                     content_uv.x1 - content_uv.x0, content_uv.y1 - content_uv.y0);
           cf_data->cards = push_array(ui_build_arena(), RD_CoverFlowCard, tile_count);
           {
             U64 card_idx = 0;
@@ -6402,8 +6427,7 @@ rd_window_frame(void)
           Vec2F32 region_dim = dim_2f32(workspace_rect);
           F32 cell_w = (region_dim.x - pad*(grid_cols+1))/(F32)grid_cols;
           F32 cell_h = (region_dim.y - pad*(grid_rows+1))/(F32)grid_rows;
-          Vec2F32 window_dim = dim_2f32(window_rect);
-          F32 aspect = (window_dim.y > 0 ? window_dim.x/window_dim.y : 1.6f);
+          F32 aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
           //- two passes for z-order during the transition: the selected child's
           // composite interpolates between the full window & its tile, & must
           // draw over the others, which fade with zoom_t
@@ -6443,8 +6467,10 @@ rd_window_frame(void)
               Rng2F32 tile_rect = img_rect;
               if(selected && workspace_zoom_t < 1.f)
               {
-                tile_rect.p0 = mix_2f32(window_rect.p0, img_rect.p0, workspace_zoom_t);
-                tile_rect.p1 = mix_2f32(window_rect.p1, img_rect.p1, workspace_zoom_t);
+                // tiles show the cropped workspace content, so the transition
+                // anchors to the workspace region, not the whole window
+                tile_rect.p0 = mix_2f32(workspace_rect.p0, img_rect.p0, workspace_zoom_t);
+                tile_rect.p1 = mix_2f32(workspace_rect.p1, img_rect.p1, workspace_zoom_t);
               }
               Rng2F32 label_rect = r2f32p(img_rect.x0, img_rect.y1, img_rect.x1, img_rect.y1 + label_h);
               rd_workspace_preview_demand_push(ws, child->id, img_w);
@@ -6461,7 +6487,10 @@ rd_window_frame(void)
                 RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, wrapper_key.u64[0]);
                 if(node != 0)
                 {
-                  ui_box_equip_custom_draw(tile_box, rd_workspace_preview_box_draw, node);
+                  RD_WorkspacePreviewDraw *tile_draw = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
+                  tile_draw->node = node;
+                  tile_draw->src_uv = ws->workspace_content_uv; // crop the transparent sidebar band
+                  ui_box_equip_custom_draw(tile_box, rd_workspace_preview_box_draw, tile_draw);
                 }
                 UI_Signal tile_sig = ui_signal_from_box(tile_box);
                 if(ui_clicked(tile_sig))
@@ -7005,12 +7034,17 @@ rd_window_frame(void)
             // for non-visible workspaces, the only consumer of the surface)
             if(changed && ws_entry != 0)
             {
+              // minis hold only the workspace-content subrect of the wrapper (no
+              // transparent sidebar band), at the content's aspect
+              Rng2F32 content_uv = ws->workspace_content_uv;
               Vec2F32 full_dim = dim_2f32(b->rect);
-              if(full_dim.x > 1 && full_dim.y > 1)
+              Vec2F32 content_dim = v2f32(full_dim.x*(content_uv.x1 - content_uv.x0),
+                                          full_dim.y*(content_uv.y1 - content_uv.y0));
+              if(content_dim.x > 1 && content_dim.y > 1)
               {
                 F32 backing_scale = wm_backing_scale_from_window(ws->os);
                 F32 mini_w_pt = rd_workspace_preview_demand_width(ws, ws_entry->workspace_id);
-                F32 mini_h_pt = floor_f32(mini_w_pt*full_dim.y/full_dim.x);
+                F32 mini_h_pt = floor_f32(mini_w_pt*content_dim.y/content_dim.x);
                 Vec2S32 mini_px = v2s32((S32)ceil_f32(mini_w_pt*backing_scale),
                                         (S32)ceil_f32(mini_h_pt*backing_scale));
                 U64 mini_key = rd_workspace_preview_surface_key(ws_entry->workspace_id);
@@ -7022,7 +7056,7 @@ rd_window_frame(void)
                   dr_surface_begin(mini->texture, mini_rect);
                   DR_Tex2DSampleKindScope(R_Tex2DSampleKind_Linear)
                   {
-                    dr_surface_img(node->texture, mini_rect, v4f32(1, 1, 1, 1), 0, 0, 0);
+                    dr_surface_img_sub(node->texture, mini_rect, content_uv, v4f32(1, 1, 1, 1), 0, 0, 0);
                   }
                   dr_surface_end();
                 }

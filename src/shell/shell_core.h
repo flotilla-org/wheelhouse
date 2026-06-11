@@ -627,6 +627,7 @@ struct RD_WindowState
   B32 workspace_zoom_open;
   F32 workspace_zoom_t;
   F32 workspace_coverflow_t; // cover flow row position, eased toward the selected child's index
+  Rng2F32 workspace_content_uv; // workspace-region subrect of the wrapper surfaces, uv space; consumers crop with it
 
   // preview size demands: consumers register the size they show a workspace
   // preview at; the preview surface is allocated for the largest demand
