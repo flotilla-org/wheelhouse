@@ -75,9 +75,11 @@ if "%cleat%"=="1" (
   if "%UISHELL_CLEAT_TARGET_DIR%"=="" (set cleat_target_dir=!cleat_dir!\target) else (set cleat_target_dir=%UISHELL_CLEAT_TARGET_DIR%)
   set cleat_include_dir=!cleat_dir!\crates\cleat\include
   set cleat_lib_dir=!cleat_target_dir!\!cleat_profile!
+  set cleat_feature_flags=
+  if not "!cleat_features!"=="none" set cleat_feature_flags=--features "!cleat_features!"
   echo [cleat provider: !cleat_dir!]
   pushd "!cleat_dir!" || exit /b 1
-  cargo build -p cleat --locked !cleat_profile_flags! --features "!cleat_features!" || exit /b 1
+  cargo build -p cleat --locked !cleat_profile_flags! !cleat_feature_flags! || exit /b 1
   popd
 )
 
