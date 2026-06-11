@@ -6209,7 +6209,13 @@ rd_window_frame(void)
           F32 region_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
           F32 eye_z = (cw*0.80f)/tan_f32(fov*0.5f);
           F32 row_y = 0.55f;
-          Mat4x4F32 view = make_look_at_4x4f32(v3f32(0, row_y - 0.14f, eye_z), v3f32(0, row_y - 0.14f, 0), v3f32(0, 1, 0));
+          // NOTE: the view is a bare translation - camera on the -z side at
+          // (0, cam_y, -eye_z), +x right, +y up, scene receding toward +z, which
+          // is what make_perspective_4x4f32 expects (w' = +z). the inherited
+          // make_look_at_4x4f32 builds its basis from eye-minus-center & rotates
+          // the scene 180 degrees; an axis-aligned camera needs none of it
+          F32 cam_y = row_y - 0.14f;
+          Mat4x4F32 view = make_translate_4x4f32(v3f32(0, -cam_y, eye_z));
           Mat4x4F32 projection = make_perspective_4x4f32(fov, region_aspect, 0.1f, 100.f);
           Mat4x4F32 proj_view = mul_4x4f32(projection, view);
 
@@ -6229,7 +6235,7 @@ rd_window_frame(void)
               F32 p = (F32)card_idx - ws->workspace_coverflow_t;
               F32 pc = Clamp(-1.f, p, 1.f);
               F32 x = pc*(cw*0.60f + 0.10f) + p*cw*0.26f;
-              F32 z = -abs_f32(pc)*1.05f;
+              F32 z = abs_f32(pc)*1.05f; // recede from the camera (+z is deeper)
               F32 ry = -pc*1.02f;
               Mat4x4F32 xform = mul_4x4f32(make_translate_4x4f32(v3f32(x, row_y, z)),
                                            mul_4x4f32(make_rotate_4x4f32(v3f32(0, 1, 0), ry),
@@ -6247,7 +6253,7 @@ rd_window_frame(void)
 
           //- the scene box: backdrop + custom draw + input
           ui_set_next_rect(workspace_rect);
-          UI_Box *cf_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawBackground, "###workspace_coverflow");
+          UI_Box *cf_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_DrawBackground, "###workspace_coverflow");
           ui_box_equip_custom_draw(cf_box, rd_workspace_coverflow_box_draw, cf_data);
           UI_Signal cf_sig = ui_signal_from_box(cf_box);
           S64 step = 0;
@@ -6317,6 +6323,8 @@ rd_window_frame(void)
             S16 scroll_amt = (cf_sig.scroll.x != 0 ? cf_sig.scroll.x : cf_sig.scroll.y);
             step += (scroll_amt > 0 ? +1 : -1);
           }
+          if(ui_key_press(0, WM_Key_Left))  { step -= 1; }
+          if(ui_key_press(0, WM_Key_Right)) { step += 1; }
           if(step != 0)
           {
             S64 next_idx = Clamp(0, (S64)selected_idx + step, (S64)tile_count - 1);
