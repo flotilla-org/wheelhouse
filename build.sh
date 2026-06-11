@@ -110,36 +110,33 @@ then
 fi
 
 # --- Translate Effect Shaders -------------------------------------------------
-# effects are authored once in WGSL (src/effects/*.wgsl) & translated per
-# backend by naga (`cargo install naga-cli`); generated outputs are committed,
-# so this step only runs on demand: `./build.sh effects`
+# effects are authored once in WGSL as a single fragment function (see
+# src/effects/effect_prelude.wgsl for the contract) & translated per backend:
+# prelude+effect -> naga -> SPIR-V -> spirv-cross -> MSL / HLSL SM5.0 / GLSL 330.
+# (`cargo install naga-cli`, `brew install spirv-cross` or distro equivalent.)
+# generated outputs are committed, so this only runs on demand: `./build.sh effects`
 if [ -n "${effects+x}" ]
 then
   echo "[translating effect shaders]"
-  command -v naga >/dev/null || { echo "naga not found; cargo install naga-cli"; exit 1; }
+  command -v naga >/dev/null        || { echo "naga not found; cargo install naga-cli"; exit 1; }
+  command -v spirv-cross >/dev/null || { echo "spirv-cross not found; brew install spirv-cross"; exit 1; }
+  gen=src/effects/generated
+  mkdir -p "$gen"
   for wgsl in src/effects/*.wgsl; do
     name=$(basename "$wgsl" .wgsl)
-    gen=src/effects/generated
-    mkdir -p "$gen"
-    naga "$wgsl" "$gen/$name.metal"
-    # naga-cli emits placeholder [[user(fakeN)]] msl bindings; pin them to the
-    # effect contract: uniforms buffer(1), surface texture(0), sampler(0)
-    # (instances ride the stage_in vertex descriptor on buffer 0)
-    python3 - "$gen/$name.metal" <<'PYEOF'
-import sys, re
-p = sys.argv[1]
-src = open(p).read()
-src = src.replace("constant Uniforms& u [[user(fake0)]]", "constant Uniforms& u [[buffer(1)]]")
-src = re.sub(r"metal::texture2d<float, metal::access::sample> (\w+) \[\[user\(fake0\)\]\]", r"metal::texture2d<float, metal::access::sample> \1 [[texture(0)]]", src)
-src = re.sub(r"metal::sampler (\w+) \[\[user\(fake0\)\]\]", r"metal::sampler \1 [[sampler(0)]]", src)
-assert "fake" not in src, "unpatched naga placeholder binding remains"
-open(p, "w").write(src)
-PYEOF
-    naga "$wgsl" "$gen/$name.vert" --entry-point vs_main --profile core330 --keep-coordinate-space
-    naga "$wgsl" "$gen/$name.frag" --entry-point fs_main --profile core330 --keep-coordinate-space
-    # hlsl: naga emits d3d12-style dynamic sampler heaps even at sm5.0, which
-    # d3d11 can't consume; revisit with the #19 translator decision
-    echo "  [$name: metal, vert, frag]"
+    if [ "$name" = "effect_prelude" ]; then continue; fi
+    cat src/effects/effect_prelude.wgsl "$wgsl" > "$gen/$name.full.wgsl"
+    # --keep-coordinate-space: the prelude's NDC math already matches every
+    # backend's hand-written shaders; nobody gets an injected y-flip
+    naga -g --keep-coordinate-space "$gen/$name.full.wgsl" "$gen/$name.spv"
+    spirv-cross --msl                      "$gen/$name.spv" --entry vs_main --stage vert --output "$gen/$name.vs.metal"
+    spirv-cross --msl                      "$gen/$name.spv" --entry fs_main --stage frag --output "$gen/$name.fs.metal"
+    spirv-cross --version 330              "$gen/$name.spv" --entry vs_main --stage vert --output "$gen/$name.vert"
+    spirv-cross --version 330              "$gen/$name.spv" --entry fs_main --stage frag --output "$gen/$name.frag"
+    spirv-cross --hlsl --shader-model 50   "$gen/$name.spv" --entry vs_main --stage vert --output "$gen/$name.vs.hlsl"
+    spirv-cross --hlsl --shader-model 50   "$gen/$name.spv" --entry fs_main --stage frag --output "$gen/$name.fs.hlsl"
+    rm "$gen/$name.full.wgsl" "$gen/$name.spv"
+    echo "  [$name: msl, glsl330, hlsl-sm5]"
   done
 fi
 

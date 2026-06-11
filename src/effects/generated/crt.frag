@@ -1,125 +1,117 @@
-#version 330 core
-struct Uniforms {
-    vec2 viewport_size;
-    float opacity;
-    float _pad0_;
-    vec2 texture_size;
-    vec2 _pad1_;
-    vec4 xform0_;
-    vec4 xform1_;
-    vec4 xform2_;
-    vec4 params0_;
-    vec4 params1_;
+#version 330
+#ifdef GL_ARB_shading_language_420pack
+#extension GL_ARB_shading_language_420pack : require
+#endif
+
+struct EffectUniforms
+{
+    vec2 source_size_px;
+    vec2 output_size_px;
+    vec4 params0;
+    vec4 params1;
 };
-struct Inst {
-    vec4 dst_rect_px;
-    vec4 src_rect_px;
-    vec4 color00_;
-};
-struct V2P {
+
+struct V2P
+{
     vec4 position;
-    vec2 uv01_;
-    vec4 src_rect_px;
-    vec4 tint;
+    vec2 uv;
 };
-layout(std140) uniform Uniforms_block_0Fragment { Uniforms _group_0_binding_0_fs; };
 
-uniform sampler2D _group_0_binding_1_fs;
+layout(binding = 0, std140) uniform u
+{
+    EffectUniforms _m0;
+} u_1;
 
-smooth in vec2 _vs2fs_location0;
-flat in vec4 _vs2fs_location1;
-flat in vec4 _vs2fs_location2;
-layout(location = 0) out vec4 _fs2p_location0;
+uniform sampler2D SPIRV_Cross_Combinedt_sources_source;
 
-vec4 sample_src(vec2 uv01_, vec4 src_rect_px) {
-    vec2 src_px = mix(src_rect_px.xy, src_rect_px.zw, uv01_);
-    vec2 _e9 = _group_0_binding_0_fs.texture_size;
-    vec4 _e11 = texture(_group_0_binding_1_fs, vec2((src_px / _e9)));
-    return _e11;
+in vec2 uv;
+layout(location = 0) out vec4 _247;
+
+vec4 src(vec2 uv_1)
+{
+    return texture(SPIRV_Cross_Combinedt_sources_source, uv_1);
 }
 
-void main() {
-    V2P in_ = V2P(gl_FragCoord, _vs2fs_location0, _vs2fs_location1, _vs2fs_location2);
-    vec2 uv = vec2(0.0);
-    bool local = false;
-    bool local_1 = false;
-    bool local_2 = false;
-    vec4 color = vec4(0.0);
+vec4 src_at(vec2 uv_1, vec2 offset_px)
+{
+    return texture(SPIRV_Cross_Combinedt_sources_source, uv_1 + (offset_px / u_1._m0.source_size_px));
+}
+
+uint naga_mod(uint lhs, uint rhs)
+{
+    return lhs % ((rhs == 0u) ? 1u : rhs);
+}
+
+vec4 effect(vec2 uv01, vec2 frag_px)
+{
     vec3 mask_mul = vec3(0.0);
-    vec3 rgb = vec3(0.0);
-    float a = 0.0;
-    float scanline_intensity = _group_0_binding_0_fs.params0_.x;
-    float curvature = _group_0_binding_0_fs.params0_.y;
-    float vignette_strength = _group_0_binding_0_fs.params0_.z;
-    float mask_strength = _group_0_binding_0_fs.params0_.w;
-    float rgb_shift_px = _group_0_binding_0_fs.params1_.x;
-    float brightness = _group_0_binding_0_fs.params1_.y;
-    vec2 centered = (in_.uv01_ - vec2(0.5, 0.5));
-    float r2_ = dot(centered, centered);
-    uv = (in_.uv01_ + (centered * ((r2_ * curvature) * 2.0)));
-    float _e39 = uv.x;
-    if (!((_e39 < 0.0))) {
-        float _e46 = uv.x;
-        local = (_e46 > 1.0);
-    } else {
-        local = true;
+    bool _82 = false;
+    vec4 color = vec4(0.0);
+    bool _79 = false;
+    bool _84 = false;
+    vec2 _108 = uv01 - vec2(0.5);
+    float _109 = dot(_108, _108);
+    vec2 _113 = uv01 + (_108 * ((_109 * u_1._m0.params0.y) * 2.0));
+    if (!(_113.x < 0.0))
+    {
+        _79 = _113.x > 1.0;
     }
-    bool _e50 = local;
-    if (!(_e50)) {
-        float _e55 = uv.y;
-        local_1 = (_e55 < 0.0);
-    } else {
-        local_1 = true;
+    else
+    {
+        _79 = true;
     }
-    bool _e59 = local_1;
-    if (!(_e59)) {
-        float _e64 = uv.y;
-        local_2 = (_e64 > 1.0);
-    } else {
-        local_2 = true;
+    if (!_79)
+    {
+        _82 = _113.y < 0.0;
     }
-    bool _e68 = local_2;
-    if (_e68) {
-        _fs2p_location0 = vec4(0.0);
-        return;
+    else
+    {
+        _82 = true;
     }
-    vec2 shift01_ = vec2((rgb_shift_px / max((in_.src_rect_px.z - in_.src_rect_px.x), 1.0)), 0.0);
-    vec2 _e81 = uv;
-    vec4 _e83 = sample_src(_e81, in_.src_rect_px);
-    color = _e83;
-    if ((rgb_shift_px > 0.001)) {
-        vec2 _e88 = uv;
-        vec4 _e91 = sample_src((_e88 + shift01_), in_.src_rect_px);
-        color.x = _e91.x;
-        vec2 _e94 = uv;
-        vec4 _e97 = sample_src((_e94 - shift01_), in_.src_rect_px);
-        color.z = _e97.z;
+    if (!_82)
+    {
+        _84 = _113.y > 1.0;
     }
-    float src_rows = (in_.src_rect_px.w - in_.src_rect_px.y);
-    float _e105 = uv.y;
-    float scan_phase = ((_e105 * src_rows) * 3.1415927);
-    float scan = (1.0 - (scanline_intensity * (0.35 + ((0.65 * sin(scan_phase)) * sin(scan_phase)))));
-    uint mask_sel = (uint(in_.position.x) % 3u);
-    mask_mul = (vec3(1.0, 1.0, 1.0) - vec3((mask_strength * 0.45)));
-    if ((mask_sel == 0u)) {
+    else
+    {
+        _84 = true;
+    }
+    if (_84)
+    {
+        return vec4(0.0);
+    }
+    color = src(_113);
+    if (u_1._m0.params1.x > 0.001000000047497451305389404296875)
+    {
+        color.x = src_at(_113, vec2(u_1._m0.params1.x, 0.0)).x;
+        color.z = src_at(_113, vec2(-u_1._m0.params1.x, 0.0)).z;
+    }
+    float _158 = sin((_113.y * u_1._m0.source_size_px.y) * 3.1415927410125732421875);
+    float _163 = 1.0 - (u_1._m0.params0.x * (0.3499999940395355224609375 + ((0.64999997615814208984375 * _158) * _158)));
+    uint _168 = naga_mod(uint(clamp(frag_px.x, 0.0, 4294967040.0)), 3u);
+    mask_mul = vec3(1.0 - (u_1._m0.params0.w * 0.449999988079071044921875));
+    if (_168 == 0u)
+    {
         mask_mul.x = 1.0;
-    } else {
-        if ((mask_sel == 1u)) {
+    }
+    else
+    {
+        if (_168 == 1u)
+        {
             mask_mul.y = 1.0;
-        } else {
+        }
+        else
+        {
             mask_mul.z = 1.0;
         }
     }
-    float vig = (1.0 - ((vignette_strength * r2_) * 1.5));
-    vec4 _e148 = color;
-    vec3 _e150 = mask_mul;
-    rgb = ((((_e148.xyz * _e150) * brightness) * scan) * max(vig, 0.0));
-    float _e159 = color.w;
-    a = ((_e159 * scan) * max(vig, 0.0));
-    vec3 _e165 = rgb;
-    float _e166 = a;
-    float _e172 = _group_0_binding_0_fs.opacity;
-    _fs2p_location0 = ((vec4(_e165, _e166) * in_.tint) * _e172);
-    return;
+    float _186 = max(1.0 - ((u_1._m0.params0.z * _109) * 1.5), 0.0);
+    return vec4((((color.xyz * mask_mul) * u_1._m0.params1.y) * _163) * _186, (color.w * _163) * _186);
+}
+
+void main()
+{
+    V2P _240 = V2P(gl_FragCoord, uv);
+    _247 = effect(_240.uv, _240.position.xy);
 }
 
