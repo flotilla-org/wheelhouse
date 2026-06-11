@@ -113,6 +113,7 @@ struct UIShell_TerminalImageResource
   U32 height_px;
   R_Handle texture; // R_Tex2DFormat_RGBA8, straight (non-premultiplied) sRGB alpha
   B32 valid;        // decode + upload succeeded
+  U64 last_referenced_update; // update counter when a placement or transmission last named this id; drives eviction
 };
 
 typedef struct UIShell_TerminalImagePlacement UIShell_TerminalImagePlacement;
@@ -148,6 +149,7 @@ struct UIShell_TerminalImageCache
   UIShell_TerminalImagePlacement *placements;
   U64 placement_count;
   U64 render_generation;
+  U64 update_counter;                      // bumps per applied render update; eviction grace is measured in these
 };
 
 internal void uishell_terminal_font_set_push_fallback(UIShell_TerminalFontSet *font_set, FNT_Tag font);

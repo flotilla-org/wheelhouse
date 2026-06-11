@@ -5419,11 +5419,15 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
   {
     cache->arena = arena_alloc(.name = "terminal image resources");
   }
+  cache->update_counter += 1;
 
   // Upload any resources we have not yet seen, or whose generation changed.
-  // Resources are kept for session lifetime; placements reference them by
-  // (image_id, generation), and a placement may name a resource we never
-  // uploaded, which the draw path skips.
+  // Placements reference resources by (image_id, generation); a placement may
+  // name a resource we never uploaded, which the draw path skips. Resources no
+  // placement (or re-transmission) has named for a grace window are evicted
+  // below - streaming producers (e.g. katzensteg frames as fresh image ids)
+  // would otherwise accumulate one texture per frame for the session lifetime
+  // (observed: 46GB / 12k textures of graphics footprint -> jetsam kill).
   if(session != 0)
   {
     for(U64 i = 0; i < update->image_resource_count; i += 1)
@@ -5432,6 +5436,7 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
       UIShell_TerminalImageResource *res = uishell_terminal_image_cache_resource_from_id(cache, meta->image_id);
       if(res != 0 && res->valid && res->generation == meta->generation)
       {
+        res->last_referenced_update = cache->update_counter;
         continue; // already resident
       }
 
@@ -5478,6 +5483,7 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
       res->height_px = tex_h;
       res->texture = texture;
       res->valid = uploaded;
+      res->last_referenced_update = cache->update_counter;
     }
   }
 
@@ -5530,6 +5536,42 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
     cache->placement_count = update->image_placement_count;
   }
   cache->render_generation = update->render_generation;
+
+  // Mark every placement-referenced resource live, then evict resources
+  // unreferenced for the grace window (transmit-then-place-later flows survive
+  // because uploads mark too). ~4s at 60 updates/s.
+  {
+    for(U64 i = 0; i < cache->placement_count; i += 1)
+    {
+      UIShell_TerminalImageResource *res = uishell_terminal_image_cache_resource_from_id(cache, cache->placements[i].image_id);
+      if(res != 0)
+      {
+        res->last_referenced_update = cache->update_counter;
+      }
+    }
+    U64 grace = 240;
+    UIShell_TerminalImageResource *prev = 0;
+    for(UIShell_TerminalImageResource *r = cache->first_resource, *next = 0; r != 0; r = next)
+    {
+      next = r->next;
+      if(cache->update_counter - r->last_referenced_update > grace)
+      {
+        if(!r_handle_match(r->texture, r_handle_zero()))
+        {
+          r_tex2d_release(r->texture);
+        }
+        if(prev != 0) { prev->next = next; }
+        else          { cache->first_resource = next; }
+        if(cache->last_resource == r) { cache->last_resource = prev; }
+        MemoryZeroStruct(r);
+        SLLStackPush(cache->free_resource, r);
+      }
+      else
+      {
+        prev = r;
+      }
+    }
+  }
 }
 
 internal U64
