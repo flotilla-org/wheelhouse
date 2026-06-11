@@ -460,7 +460,8 @@ r_init(CmdLine *cmdln)
         r_mtl_state->rect_surface_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"rect_vertex", @"rect_fragment", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 1);
         r_mtl_state->blur_pipeline = r_mtl_render_pipeline_from_library(library, @"blur_vertex", @"blur_fragment", MTLPixelFormatRGBA16Float);
         r_mtl_state->mesh_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"mesh_vertex", @"mesh_fragment", MTLPixelFormatRGBA8Unorm, MTLPixelFormatDepth32Float, 1, 0);
-        r_mtl_state->geo3d_composite_pipeline = r_mtl_render_pipeline_from_library(library, @"fullscreen_vertex", @"composite_fragment", MTLPixelFormatRGBA16Float);
+        r_mtl_state->geo3d_composite_pipeline = r_mtl_render_pipeline_from_library(library, @"geo3d_composite_vertex", @"composite_fragment", MTLPixelFormatRGBA16Float);
+        r_mtl_state->geo3d_composite_surface_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"geo3d_composite_vertex", @"composite_fragment", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 1);
         r_mtl_state->finalize_pipeline = r_mtl_render_pipeline_from_library(library, @"fullscreen_vertex", @"finalize_fragment", MTLPixelFormatBGRA8Unorm_sRGB);
         [library release];
       }
@@ -1182,6 +1183,16 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
               R_PassParams_Geo3D *params = render_pass->params_geo3d;
               R_BatchGroup3DMap *mesh_group_map = &params->mesh_batches;
 
+              //- unpack optional composite target; like UI passes, geo3d content
+              // inside a surface bracket composites into the surface's texture
+              R_MTL_Tex2D *target = r_mtl_tex2d_from_handle(params->target);
+              B32 to_surface = (target != 0 && target->texture != 0);
+              if(to_surface && params->preserve)
+              {
+                // surface content is up-to-date; skip the render & keep the texture
+                break;
+              }
+
               MTLRenderPassDescriptor *geo_pass = mtl_window->geo_pass;
               geo_pass.colorAttachments[0].texture = mtl_window->geo3d_color;
               geo_pass.colorAttachments[0].loadAction = MTLLoadActionClear;
@@ -1224,18 +1235,61 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                   R_MTL_Buffer *mesh_indices = r_mtl_buffer_from_handle(group_params->mesh_indices);
                   if(group_params->mesh_geo_topology == R_GeoTopologyKind_Triangles &&
                      mesh_vertices != 0 && mesh_vertices->buffer != 0 &&
-                     mesh_indices != 0 && mesh_indices->buffer != 0)
+                     mesh_indices != 0 && mesh_indices->buffer != 0 &&
+                     n->batches.byte_count != 0)
                   {
+                    // rjf: upload instance transforms
+                    U64 inst_count = n->batches.byte_count / n->batches.bytes_per_inst;
+                    U64 insts_offset = 0;
+                    void *insts_ptr = 0;
+                    id<MTLBuffer> insts_buffer = r_mtl_upload_buffer_reserve(n->batches.byte_count, 16, &insts_offset, &insts_ptr);
+                    U8 *insts = (U8 *)insts_ptr;
+                    for(R_BatchNode *batch_n = n->batches.first; batch_n != 0; batch_n = batch_n->next)
+                    {
+                      MemoryCopy(insts, batch_n->v.v, batch_n->v.byte_count);
+                      insts += batch_n->v.byte_count;
+                    }
+
+                    // rjf: bind albedo (white texture when absent)
+                    R_MTL_Tex2D *albedo = r_mtl_tex2d_from_handle(group_params->albedo_tex);
+                    B32 has_albedo = (albedo != 0 && albedo->texture != 0);
+                    R_MTL_MeshGroupUniforms group_uniforms = {0};
+                    group_uniforms.has_albedo = (F32)!!has_albedo;
+                    group_uniforms.albedo_sample_is_surface = (F32)!!group_params->albedo_tex_sample_is_surface;
+                    U64 group_uniform_offset = 0;
+                    id<MTLBuffer> group_uniform_buffer = r_mtl_upload_buffer(&group_uniforms, sizeof(group_uniforms), 256, &group_uniform_offset);
+
                     [encoder setVertexBuffer:mesh_vertices->buffer offset:0 atIndex:0];
+                    [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:2];
+                    [encoder setFragmentBuffer:group_uniform_buffer offset:group_uniform_offset atIndex:0];
+                    [encoder setFragmentTexture:(has_albedo ? albedo->texture : r_mtl_state->white_texture->texture) atIndex:0];
+                    [encoder setFragmentSamplerState:r_mtl_state->samplers[group_params->albedo_tex_sample_kind] atIndex:0];
                     [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                                         indexCount:mesh_indices->size/sizeof(U32)
                                          indexType:MTLIndexTypeUInt32
                                        indexBuffer:mesh_indices->buffer
-                                 indexBufferOffset:0];
+                                 indexBufferOffset:0
+                                     instanceCount:inst_count];
                   }
                 }
               }
               [encoder endEncoding];
+
+              //- composite the rendered viewport region of geo3d_color into the
+              // target (the stage, or the open surface's texture)
+              Vec2S32 composite_attachment_size = mtl_window->drawable_size;
+              Vec2F32 target_origin = v2f32(0, 0);
+              F32 composite_scale = scale;
+              if(to_surface)
+              {
+                composite_attachment_size = target->size;
+                target_origin = params->target_rect.p0;
+                Vec2F32 target_rect_dim = dim_2f32(params->target_rect);
+                if(target_rect_dim.x > 0)
+                {
+                  composite_scale = (F32)target->size.x/target_rect_dim.x;
+                }
+              }
 
               MTLScissorRect composite_scissor = {0};
               B32 has_composite_scissor = 0;
@@ -1244,29 +1298,47 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                  params->clip.x1 != 0 ||
                  params->clip.y1 != 0)
               {
-                has_composite_scissor = r_mtl_scissor_from_clip(params->clip, mtl_window->drawable_size, scale, &composite_scissor);
+                Rng2F32 composite_clip = params->clip;
+                if(to_surface)
+                {
+                  composite_clip = shift_2f32(composite_clip, v2f32(-target_origin.x, -target_origin.y));
+                }
+                has_composite_scissor = r_mtl_scissor_from_clip(composite_clip, composite_attachment_size, composite_scale, &composite_scissor);
               }
               else
               {
-                composite_scissor = full_scissor;
+                composite_scissor = (MTLScissorRect){0, 0, (NSUInteger)composite_attachment_size.x, (NSUInteger)composite_attachment_size.y};
                 has_composite_scissor = 1;
               }
               if(has_composite_scissor)
               {
-                R_MTL_FinalizeUniforms composite_uniforms = {viewport_dim};
+                // dst: the pass viewport in the target's clip space; src: the
+                // same region of the window-sized geo3d color texture
+                Rng2F32 dst_px = shift_2f32(params->viewport, v2f32(-target_origin.x, -target_origin.y));
+                dst_px.x0 *= composite_scale; dst_px.y0 *= composite_scale;
+                dst_px.x1 *= composite_scale; dst_px.y1 *= composite_scale;
+                R_MTL_Geo3DCompositeUniforms composite_uniforms = {0};
+                composite_uniforms.dst_ndc = v4f32(2.f*dst_px.x0/(F32)composite_attachment_size.x - 1.f,
+                                                   1.f - 2.f*dst_px.y0/(F32)composite_attachment_size.y,
+                                                   2.f*dst_px.x1/(F32)composite_attachment_size.x - 1.f,
+                                                   1.f - 2.f*dst_px.y1/(F32)composite_attachment_size.y);
+                composite_uniforms.src_uv = v4f32(params->viewport.x0*scale/(F32)mtl_window->drawable_size.x,
+                                                  params->viewport.y0*scale/(F32)mtl_window->drawable_size.y,
+                                                  params->viewport.x1*scale/(F32)mtl_window->drawable_size.x,
+                                                  params->viewport.y1*scale/(F32)mtl_window->drawable_size.y);
                 U64 composite_uniform_offset = 0;
                 id<MTLBuffer> composite_uniform_buffer = r_mtl_upload_buffer(&composite_uniforms, sizeof(composite_uniforms), 256, &composite_uniform_offset);
 
                 MTLRenderPassDescriptor *composite_pass = mtl_window->composite_pass;
-                composite_pass.colorAttachments[0].texture = mtl_window->stage_color;
+                composite_pass.colorAttachments[0].texture = (to_surface ? target->texture : mtl_window->stage_color);
                 composite_pass.colorAttachments[0].loadAction = MTLLoadActionLoad;
                 composite_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
                 encoder = [command_buffer renderCommandEncoderWithDescriptor:composite_pass];
-                [encoder setRenderPipelineState:r_mtl_state->geo3d_composite_pipeline];
+                [encoder setRenderPipelineState:(to_surface ? r_mtl_state->geo3d_composite_surface_pipeline : r_mtl_state->geo3d_composite_pipeline)];
                 [encoder setScissorRect:composite_scissor];
                 [encoder setVertexBuffer:composite_uniform_buffer offset:composite_uniform_offset atIndex:0];
                 [encoder setFragmentTexture:mtl_window->geo3d_color atIndex:0];
-                [encoder setFragmentSamplerState:r_mtl_state->samplers[R_Tex2DSampleKind_Nearest] atIndex:0];
+                [encoder setFragmentSamplerState:r_mtl_state->samplers[R_Tex2DSampleKind_Linear] atIndex:0];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
                 [encoder endEncoding];
               }

@@ -45,6 +45,19 @@ struct FinalizeUniforms {
 struct MeshUniforms {
   float4x4 xform;
 };
+struct MeshInst {
+  float4x4 xform;
+};
+struct MeshGroupUniforms {
+  float has_albedo;
+  float albedo_sample_is_surface;
+  float _padding0;
+  float _padding1;
+};
+struct Geo3DCompositeUniforms {
+  float4 dst_ndc; // x0 y0 x1 y1, clip space
+  float4 src_uv;  // x0 y0 x1 y1, geo3d color texture uv
+};
 struct VertexOut {
   float4 position [[position]];
   float2 texcoord;
@@ -232,16 +245,48 @@ fragment float4 blur_fragment(VertexOut in [[stage_in]],
   return float4(color, 1.0f);
 }
 vertex MeshOut mesh_vertex(uint vertex_id [[vertex_id]],
+                           uint instance_id [[instance_id]],
                            const device MeshVertex *vertices [[buffer(0)]],
-                           constant MeshUniforms &uniforms [[buffer(1)]]) {
+                           constant MeshUniforms &uniforms [[buffer(1)]],
+                           const device MeshInst *insts [[buffer(2)]]) {
   MeshVertex in_vertex = vertices[vertex_id];
   MeshOut out;
-  out.position = uniforms.xform * float4(in_vertex.position, 1.0f);
+  out.position = uniforms.xform * (insts[instance_id].xform * float4(in_vertex.position, 1.0f));
   out.texcoord = in_vertex.texcoord;
   out.color = float4(in_vertex.color, 1.0f);
   return out;
 }
-fragment float4 mesh_fragment(MeshOut in [[stage_in]]) {
-  return in.color;
+fragment float4 mesh_fragment(MeshOut in [[stage_in]],
+                              constant MeshGroupUniforms &group [[buffer(0)]],
+                              texture2d<float> albedo [[texture(0)]],
+                              sampler albedo_sampler [[sampler(0)]]) {
+  float4 albedo_sample = float4(1.0f);
+  if(group.has_albedo > 0.5f) {
+    albedo_sample = albedo.sample(albedo_sampler, in.texcoord);
+    if(group.albedo_sample_is_surface > 0.5f) {
+      // surface textures hold premultiplied linear color; un-premultiply so the
+      // composite's source-alpha blend reproduces premultiplied source-over
+      if(albedo_sample.a > 0.0001f) {
+        albedo_sample.rgb /= albedo_sample.a;
+      }
+    }
+  }
+  return albedo_sample * in.color;
+}
+vertex VertexOut geo3d_composite_vertex(uint vertex_id [[vertex_id]],
+                                        constant Geo3DCompositeUniforms &uniforms [[buffer(0)]]) {
+  float2 dst[] = { uniforms.dst_ndc.xw, uniforms.dst_ndc.xy, uniforms.dst_ndc.zw, uniforms.dst_ndc.zy };
+  float2 src[] = { uniforms.src_uv.xw, uniforms.src_uv.xy, uniforms.src_uv.zw, uniforms.src_uv.zy };
+  VertexOut out;
+  out.position = float4(dst[vertex_id], 0.0f, 1.0f);
+  out.texcoord = src[vertex_id];
+  out.color = float4(1.0f);
+  out.sdf_sample_pos = float2(0.0f);
+  out.rect_half_size = float2(0.0f);
+  out.corner_radius = 0.0f;
+  out.border_thickness = 0.0f;
+  out.softness = 0.0f;
+  out.omit_texture = 0.0f;
+  return out;
 }
 ```

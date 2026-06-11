@@ -479,13 +479,19 @@ dr_geo3d_begin(Rng2F32 viewport, Mat4x4F32 view, Mat4x4F32 projection)
   params->viewport = viewport;
   params->view = view;
   params->projection = projection;
+  // composite into the open surface, if any (otherwise the window's stage)
+  if(bucket->top_surface != 0)
+  {
+    params->target = bucket->top_surface->target;
+    params->target_rect = bucket->top_surface->rect;
+  }
   return params;
 }
 
 //- rjf: meshes
 
 internal R_Mesh3DInst *
-dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_GeoTopologyKind mesh_geo_topology, R_GeoVertexFlags mesh_geo_vertex_flags, R_Handle albedo_tex, Mat4x4F32 inst_xform)
+dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_GeoTopologyKind mesh_geo_topology, R_GeoVertexFlags mesh_geo_vertex_flags, R_Handle albedo_tex, B32 albedo_tex_sample_is_surface, Mat4x4F32 inst_xform)
 {
   DR_Bucket *bucket = dr_top_bucket();
   Arena *arena = (bucket->arena != 0 ? bucket->arena : dr_thread_ctx->arena);
@@ -514,6 +520,7 @@ dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_GeoTopologyKind mesh_ge
       albedo_tex.u64[0],
       albedo_tex.u64[1],
       (U64)dr_top_tex2d_sample_kind(),
+      (U64)albedo_tex_sample_is_surface,
     };
     hash = dr_hash_from_string(str8((U8 *)buffer, sizeof(buffer)));
     slot_idx = hash%params->mesh_batches.slots_count;
@@ -545,6 +552,7 @@ dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_GeoTopologyKind mesh_ge
     node->params.mesh_geo_vertex_flags = mesh_geo_vertex_flags;
     node->params.albedo_tex = albedo_tex;
     node->params.albedo_tex_sample_kind = dr_top_tex2d_sample_kind();
+    node->params.albedo_tex_sample_is_surface = albedo_tex_sample_is_surface;
     node->params.xform = mat_4x4f32(1.f);
   }
   
@@ -684,6 +692,34 @@ dr_surface_end_cached(U64 *io_content_hash, B32 force_render, B32 shape_only, U6
     U64 hash = u64_hash_from_seed_str8(5381, str8_struct(&extra_version));
     for(R_PassNode *pass_n = node->first_pass; pass_n != 0; pass_n = pass_n->next)
     {
+      //- geo3d passes compositing into this surface: hash camera/viewport +
+      // group params + instance transforms; surface-sampling albedos mutate
+      // behind stable handles, so they always render (like Stream textures)
+      if(pass_n->v.kind == R_PassKind_Geo3D &&
+         r_handle_match(pass_n->v.params_geo3d->target, node->target))
+      {
+        R_PassParams_Geo3D *geo_params = pass_n->v.params_geo3d;
+        hash = u64_hash_from_seed_str8(hash, str8_struct(&geo_params->viewport));
+        hash = u64_hash_from_seed_str8(hash, str8_struct(&geo_params->clip));
+        hash = u64_hash_from_seed_str8(hash, str8_struct(&geo_params->view));
+        hash = u64_hash_from_seed_str8(hash, str8_struct(&geo_params->projection));
+        for(U64 geo_slot_idx = 0; geo_slot_idx < geo_params->mesh_batches.slots_count; geo_slot_idx += 1)
+        {
+          for(R_BatchGroup3DMapNode *group_n = geo_params->mesh_batches.slots[geo_slot_idx]; group_n != 0; group_n = group_n->next)
+          {
+            if(group_n->params.albedo_tex_sample_is_surface)
+            {
+              has_mutable_tex = 1;
+            }
+            hash = u64_hash_from_seed_str8(hash, str8_struct(&group_n->params));
+            for(R_BatchNode *batch_n = group_n->batches.first; batch_n != 0; batch_n = batch_n->next)
+            {
+              hash = u64_hash_from_seed_str8(hash, str8(batch_n->v.v, batch_n->v.byte_count));
+            }
+          }
+        }
+        continue;
+      }
       if(pass_n->v.kind != R_PassKind_UI)
       {
         continue;
@@ -739,6 +775,10 @@ dr_surface_end_cached(U64 *io_content_hash, B32 force_render, B32 shape_only, U6
         if(pass_n->v.kind == R_PassKind_UI && r_handle_match(pass_n->v.params_ui->target, node->target))
         {
           pass_n->v.params_ui->preserve = 1;
+        }
+        if(pass_n->v.kind == R_PassKind_Geo3D && r_handle_match(pass_n->v.params_geo3d->target, node->target))
+        {
+          pass_n->v.params_geo3d->preserve = 1;
         }
       }
     }

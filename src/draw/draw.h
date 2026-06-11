@@ -206,7 +206,7 @@ internal R_PassParams_Blur *dr_blur(Rng2F32 rect, F32 blur_size, F32 corner_radi
 internal R_PassParams_Geo3D *dr_geo3d_begin(Rng2F32 viewport, Mat4x4F32 view, Mat4x4F32 projection);
 
 //- rjf: meshes
-internal R_Mesh3DInst *dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_GeoTopologyKind mesh_geo_topology, R_GeoVertexFlags mesh_geo_vertex_flags, R_Handle albedo_tex, Mat4x4F32 inst_xform);
+internal R_Mesh3DInst *dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_GeoTopologyKind mesh_geo_topology, R_GeoVertexFlags mesh_geo_vertex_flags, R_Handle albedo_tex, B32 albedo_tex_sample_is_surface, Mat4x4F32 inst_xform);
 
 //- rjf: collating one pre-prepped bucket into parent bucket
 internal void dr_sub_bucket(DR_Bucket *bucket);

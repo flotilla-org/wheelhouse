@@ -4757,7 +4757,7 @@ internal UI_BOX_CUSTOM_DRAW(uishell_geo3d_box_draw)
                                             make_look_at_4x4f32(eye, target, v3f32(0, 0, 1)),
                                             make_perspective_4x4f32(0.25f, box_dim.x/box_dim.y, 0.1f, 500.f));
   pass->clip = clip;
-  dr_mesh(draw_data->vertex_buffer, draw_data->index_buffer, R_GeoTopologyKind_Triangles, R_GeoVertexFlag_TexCoord|R_GeoVertexFlag_Normals|R_GeoVertexFlag_RGB, r_handle_zero(), mat_4x4f32(1.f));
+  dr_mesh(draw_data->vertex_buffer, draw_data->index_buffer, R_GeoTopologyKind_Triangles, R_GeoVertexFlag_TexCoord|R_GeoVertexFlag_Normals|R_GeoVertexFlag_RGB, r_handle_zero(), 0, mat_4x4f32(1.f));
 }
 
 EV_EXPAND_RULE_INFO_FUNCTION_DEF(geo3d)

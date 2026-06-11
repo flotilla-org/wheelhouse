@@ -121,6 +121,21 @@ struct R_MTL_MeshUniforms
   Mat4x4F32 xform;
 };
 
+typedef struct R_MTL_MeshGroupUniforms R_MTL_MeshGroupUniforms;
+struct R_MTL_MeshGroupUniforms
+{
+  F32 has_albedo;
+  F32 albedo_sample_is_surface;
+  F32 _padding0_[2];
+};
+
+typedef struct R_MTL_Geo3DCompositeUniforms R_MTL_Geo3DCompositeUniforms;
+struct R_MTL_Geo3DCompositeUniforms
+{
+  Vec4F32 dst_ndc; // x0 y0 x1 y1, clip space
+  Vec4F32 src_uv;  // x0 y0 x1 y1, geo3d color texture uv
+};
+
 typedef struct R_MTL_State R_MTL_State;
 struct R_MTL_State
 {
@@ -134,6 +149,7 @@ struct R_MTL_State
   id<MTLRenderPipelineState> blur_pipeline;
   id<MTLRenderPipelineState> mesh_pipeline;
   id<MTLRenderPipelineState> geo3d_composite_pipeline;
+  id<MTLRenderPipelineState> geo3d_composite_surface_pipeline;
   id<MTLRenderPipelineState> finalize_pipeline;
   id<MTLDepthStencilState> mesh_depth_stencil;
   id<MTLSamplerState> samplers[R_Tex2DSampleKind_COUNT];

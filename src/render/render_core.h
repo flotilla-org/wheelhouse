@@ -177,6 +177,7 @@ struct R_BatchGroup3DParams
   R_GeoVertexFlags mesh_geo_vertex_flags;
   R_Handle albedo_tex;
   R_Tex2DSampleKind albedo_tex_sample_kind;
+  B32 albedo_tex_sample_is_surface; // albedo holds premultiplied linear color + coverage (a view surface)
   Mat4x4F32 xform;
 };
 
@@ -225,6 +226,9 @@ struct R_PassParams_Geo3D
   Mat4x4F32 view;
   Mat4x4F32 projection;
   R_BatchGroup3DMap mesh_batches;
+  R_Handle target;      // zero -> composite to the window's stage; nonzero -> the open surface's texture
+  Rng2F32 target_rect;  // window-space rect the target covers, when target is nonzero
+  B32 preserve;         // target content is up-to-date; skip rendering this pass entirely
 };
 
 // effect contract v1 (src/effects/effect_prelude.wgsl): one fullscreen-triangle
