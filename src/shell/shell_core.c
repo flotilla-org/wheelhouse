@@ -2110,6 +2110,100 @@ internal UI_BOX_CUSTOM_DRAW(rd_workspace_preview_box_draw)
   }
 }
 
+////////////////////////////////
+//~ rjf: Workspace Cover Flow
+
+typedef struct RD_CoverFlowCard RD_CoverFlowCard;
+struct RD_CoverFlowCard
+{
+  U64 workspace_id;
+  R_Handle texture;
+  Mat4x4F32 xform;
+  Mat4x4F32 refl_xform;
+};
+
+typedef struct RD_CoverFlowDrawData RD_CoverFlowDrawData;
+struct RD_CoverFlowDrawData
+{
+  Mat4x4F32 view;
+  Mat4x4F32 projection;
+  R_Handle card_vertices;
+  R_Handle refl_vertices;
+  R_Handle quad_indices;
+  RD_CoverFlowCard *cards;
+  U64 card_count;
+};
+
+// transform a point by a column-major-stored matrix, exactly as the mesh
+// vertex shader does (clip = (P*V) * (inst * v))
+internal Vec4F32
+rd_coverflow_transform(Mat4x4F32 *m, Vec4F32 v)
+{
+  Vec4F32 result;
+  result.x = m->v[0][0]*v.x + m->v[1][0]*v.y + m->v[2][0]*v.z + m->v[3][0]*v.w;
+  result.y = m->v[0][1]*v.x + m->v[1][1]*v.y + m->v[2][1]*v.z + m->v[3][1]*v.w;
+  result.z = m->v[0][2]*v.x + m->v[1][2]*v.y + m->v[2][2]*v.z + m->v[3][2]*v.w;
+  result.w = m->v[0][3]*v.x + m->v[1][3]*v.y + m->v[2][3]*v.z + m->v[3][3]*v.w;
+  return result;
+}
+
+// lazily-built shared card geometry. MeshVertex layout: pos3, normal3, tex2, col3.
+// the card quad is a unit square centered on the origin (y up, texcoord v=0 at the
+// top); the reflection quad shares positions but flips v & fades its vertex colors
+// toward black, so it reads as a mirror on a dark floor with no shader support
+internal void
+rd_coverflow_meshes(R_Handle *card_vertices_out, R_Handle *refl_vertices_out, R_Handle *quad_indices_out)
+{
+  local_persist B32 made = 0;
+  local_persist R_Handle card_vertices = {0};
+  local_persist R_Handle refl_vertices = {0};
+  local_persist R_Handle quad_indices = {0};
+  if(!made)
+  {
+    made = 1;
+    F32 card[] =
+    {
+      // x      y     z    nx ny nz   u  v    r    g    b
+      -0.5f,  0.5f, 0.f,  0, 0, 1,   0, 0,  1.f, 1.f, 1.f,
+       0.5f,  0.5f, 0.f,  0, 0, 1,   1, 0,  1.f, 1.f, 1.f,
+       0.5f, -0.5f, 0.f,  0, 0, 1,   1, 1,  1.f, 1.f, 1.f,
+      -0.5f, -0.5f, 0.f,  0, 0, 1,   0, 1,  1.f, 1.f, 1.f,
+    };
+    F32 refl_top = 0.30f;
+    F32 refl_bot = 0.02f;
+    F32 refl[] =
+    {
+      -0.5f,  0.5f, 0.f,  0, 0, 1,   0, 1,  refl_top, refl_top, refl_top,
+       0.5f,  0.5f, 0.f,  0, 0, 1,   1, 1,  refl_top, refl_top, refl_top,
+       0.5f, -0.5f, 0.f,  0, 0, 1,   1, 0,  refl_bot, refl_bot, refl_bot,
+      -0.5f, -0.5f, 0.f,  0, 0, 1,   0, 0,  refl_bot, refl_bot, refl_bot,
+    };
+    U32 indices[] = {0, 1, 2, 0, 2, 3};
+    card_vertices = r_buffer_alloc(R_ResourceKind_Static, sizeof(card), card);
+    refl_vertices = r_buffer_alloc(R_ResourceKind_Static, sizeof(refl), refl);
+    quad_indices = r_buffer_alloc(R_ResourceKind_Static, sizeof(indices), indices);
+  }
+  *card_vertices_out = card_vertices;
+  *refl_vertices_out = refl_vertices;
+  *quad_indices_out = quad_indices;
+}
+
+internal UI_BOX_CUSTOM_DRAW(rd_workspace_coverflow_box_draw)
+{
+  RD_CoverFlowDrawData *data = (RD_CoverFlowDrawData *)user_data;
+  R_PassParams_Geo3D *pass = dr_geo3d_begin(box->rect, data->view, data->projection);
+  pass->clip = box->rect;
+  DR_Tex2DSampleKindScope(R_Tex2DSampleKind_Linear)
+  {
+    for(U64 idx = 0; idx < data->card_count; idx += 1)
+    {
+      RD_CoverFlowCard *card = &data->cards[idx];
+      dr_mesh(data->card_vertices, data->quad_indices, R_GeoTopologyKind_Triangles, R_GeoVertexFlag_TexCoord|R_GeoVertexFlag_RGB, card->texture, 1, card->xform);
+      dr_mesh(data->refl_vertices, data->quad_indices, R_GeoTopologyKind_Triangles, R_GeoVertexFlag_TexCoord|R_GeoVertexFlag_RGB, card->texture, 1, card->refl_xform);
+    }
+  }
+}
+
 internal void
 rd_window_surface_cache_evict(RD_WindowState *ws)
 {
@@ -6075,7 +6169,174 @@ rd_window_frame(void)
         {
           tile_count += (child->mount.owner_cfg != &cfg_nil_node);
         }
-        if(tile_count != 0)
+        if(tile_count != 0 && DEV_coverflow_overview)
+        {
+          //- cover flow: the same overview, projected as a row of 3d cards;
+          // workspace surfaces are the card faces, a faded mirrored quad per
+          // card reads as a floor reflection. row position eases toward the
+          // selected child's index, so selecting a side card slides the row.
+          U64 selected_idx = 0;
+          {
+            U64 idx_iter = 0;
+            for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
+            {
+              if(child->mount.owner_cfg == &cfg_nil_node) { continue; }
+              if(child->mount.owner_cfg == workspace_mount->owner_cfg)
+              {
+                selected_idx = idx_iter;
+              }
+              idx_iter += 1;
+            }
+          }
+          F32 cf_target = (F32)selected_idx;
+          ws->workspace_coverflow_t += rd_state->menu_animation_rate*(cf_target - ws->workspace_coverflow_t);
+          if(abs_f32(ws->workspace_coverflow_t - cf_target) < 0.005f)
+          {
+            ws->workspace_coverflow_t = cf_target;
+          }
+          else
+          {
+            rd_request_frame();
+          }
+
+          //- camera: distance fits the centered card; cards are unit-height,
+          // window-aspect-width quads at the origin row
+          Vec2F32 region_dim = dim_2f32(workspace_rect);
+          Vec2F32 window_dim = dim_2f32(window_rect);
+          F32 card_aspect = (window_dim.y > 0 ? window_dim.x/window_dim.y : 1.6f);
+          F32 cw = card_aspect;
+          F32 fov = 0.62f;
+          F32 region_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
+          F32 eye_z = (cw*0.80f)/tan_f32(fov*0.5f);
+          F32 row_y = 0.55f;
+          Mat4x4F32 view = make_look_at_4x4f32(v3f32(0, row_y - 0.14f, eye_z), v3f32(0, row_y - 0.14f, 0), v3f32(0, 1, 0));
+          Mat4x4F32 projection = make_perspective_4x4f32(fov, region_aspect, 0.1f, 100.f);
+          Mat4x4F32 proj_view = mul_4x4f32(projection, view);
+
+          //- collect cards & their transforms
+          RD_CoverFlowDrawData *cf_data = push_array(ui_build_arena(), RD_CoverFlowDrawData, 1);
+          cf_data->view = view;
+          cf_data->projection = projection;
+          rd_coverflow_meshes(&cf_data->card_vertices, &cf_data->refl_vertices, &cf_data->quad_indices);
+          cf_data->cards = push_array(ui_build_arena(), RD_CoverFlowCard, tile_count);
+          {
+            U64 card_idx = 0;
+            for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
+            {
+              if(child->mount.owner_cfg == &cfg_nil_node) { continue; }
+              UI_Key wrapper_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", child->id);
+              RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, wrapper_key.u64[0]);
+              F32 p = (F32)card_idx - ws->workspace_coverflow_t;
+              F32 pc = Clamp(-1.f, p, 1.f);
+              F32 x = pc*(cw*0.60f + 0.10f) + p*cw*0.26f;
+              F32 z = -abs_f32(pc)*1.05f;
+              F32 ry = -pc*1.02f;
+              Mat4x4F32 xform = mul_4x4f32(make_translate_4x4f32(v3f32(x, row_y, z)),
+                                           mul_4x4f32(make_rotate_4x4f32(v3f32(0, 1, 0), ry),
+                                                      make_scale_4x4f32(v3f32(cw, 1.f, 1.f))));
+              Mat4x4F32 refl_xform = mul_4x4f32(xform, make_translate_4x4f32(v3f32(0, -1.02f, 0)));
+              rd_workspace_preview_demand_push(ws, child->id, region_dim.x*(abs_f32(p) < 0.5f ? 0.55f : 0.32f));
+              cf_data->cards[card_idx].workspace_id = child->id;
+              cf_data->cards[card_idx].texture = (node != 0 ? node->texture : r_handle_zero());
+              cf_data->cards[card_idx].xform = xform;
+              cf_data->cards[card_idx].refl_xform = refl_xform;
+              card_idx += 1;
+            }
+            cf_data->card_count = card_idx;
+          }
+
+          //- the scene box: backdrop + custom draw + input
+          ui_set_next_rect(workspace_rect);
+          UI_Box *cf_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawBackground, "###workspace_coverflow");
+          ui_box_equip_custom_draw(cf_box, rd_workspace_coverflow_box_draw, cf_data);
+          UI_Signal cf_sig = ui_signal_from_box(cf_box);
+          S64 step = 0;
+          if(ui_clicked(cf_sig))
+          {
+            //- hit test: project each card's corners through the same matrices the
+            // mesh shader uses; among hits, the center-most card wins (matches the
+            // visual stacking, where side cards tuck behind)
+            Vec2F32 mouse = ui_mouse();
+            U64 best_idx = max_U64;
+            F32 best_abs_p = 0;
+            for(U64 idx = 0; idx < cf_data->card_count; idx += 1)
+            {
+              Vec2F32 corners_screen[4];
+              B32 in_front = 1;
+              Vec4F32 corners_local[4] =
+              {
+                v4f32(-0.5f,  0.5f, 0, 1),
+                v4f32( 0.5f,  0.5f, 0, 1),
+                v4f32( 0.5f, -0.5f, 0, 1),
+                v4f32(-0.5f, -0.5f, 0, 1),
+              };
+              for(U64 corner_idx = 0; corner_idx < 4; corner_idx += 1)
+              {
+                Vec4F32 world = rd_coverflow_transform(&cf_data->cards[idx].xform, corners_local[corner_idx]);
+                Vec4F32 clip = rd_coverflow_transform(&proj_view, world);
+                if(clip.w <= 0.001f) { in_front = 0; break; }
+                Vec2F32 ndc = v2f32(clip.x/clip.w, clip.y/clip.w);
+                corners_screen[corner_idx] = v2f32(workspace_rect.x0 + (ndc.x*0.5f + 0.5f)*region_dim.x,
+                                                   workspace_rect.y0 + (0.5f - ndc.y*0.5f)*region_dim.y);
+              }
+              if(!in_front) { continue; }
+              B32 hit = 1;
+              F32 sign_ref = 0;
+              for(U64 edge_idx = 0; edge_idx < 4; edge_idx += 1)
+              {
+                Vec2F32 a = corners_screen[edge_idx];
+                Vec2F32 b = corners_screen[(edge_idx + 1)%4];
+                F32 cross = (b.x - a.x)*(mouse.y - a.y) - (b.y - a.y)*(mouse.x - a.x);
+                if(edge_idx == 0) { sign_ref = cross; }
+                else if(cross*sign_ref < 0) { hit = 0; break; }
+              }
+              if(hit)
+              {
+                F32 abs_p = abs_f32((F32)idx - ws->workspace_coverflow_t);
+                if(best_idx == max_U64 || abs_p < best_abs_p)
+                {
+                  best_idx = idx;
+                  best_abs_p = abs_p;
+                }
+              }
+            }
+            if(best_idx != max_U64)
+            {
+              if(best_idx == selected_idx)
+              {
+                ws->workspace_zoom_open = 0;
+              }
+              else
+              {
+                step = (S64)best_idx - (S64)selected_idx;
+              }
+            }
+          }
+          if(cf_sig.scroll.y != 0 || cf_sig.scroll.x != 0)
+          {
+            S16 scroll_amt = (cf_sig.scroll.x != 0 ? cf_sig.scroll.x : cf_sig.scroll.y);
+            step += (scroll_amt > 0 ? +1 : -1);
+          }
+          if(step != 0)
+          {
+            S64 next_idx = Clamp(0, (S64)selected_idx + step, (S64)tile_count - 1);
+            U64 idx_iter = 0;
+            for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
+            {
+              if(child->mount.owner_cfg == &cfg_nil_node) { continue; }
+              if(idx_iter == (U64)next_idx)
+              {
+                if(child->mount.owner_cfg != workspace_mount->owner_cfg)
+                {
+                  uishell_cmd("select_workspace", .window = root_controlled_split.owner_cfg->id, .cfg = child->id);
+                }
+                break;
+              }
+              idx_iter += 1;
+            }
+          }
+        }
+        else if(tile_count != 0)
         {
           F32 pad = floor_f32(ui_top_font_size()*1.f);
           F32 label_h = floor_f32(ui_top_font_size()*1.5f);

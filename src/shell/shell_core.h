@@ -626,6 +626,7 @@ struct RD_WindowState
   // between the full workspace presentation & its tile
   B32 workspace_zoom_open;
   F32 workspace_zoom_t;
+  F32 workspace_coverflow_t; // cover flow row position, eased toward the selected child's index
 
   // preview size demands: consumers register the size they show a workspace
   // preview at; the preview surface is allocated for the largest demand

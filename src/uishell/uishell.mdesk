@@ -94,6 +94,7 @@ UIShell_DevToggleTable:
   {draw_view_surfaces}
   {draw_surface_previews}
   {crt_views}
+  {coverflow_overview}
   {eval_compiler_tooltips}
   {eval_watch_key_tooltips}
   {cmd_context_tooltips}
