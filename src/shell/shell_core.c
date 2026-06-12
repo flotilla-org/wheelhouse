@@ -9364,7 +9364,9 @@ rd_frame(void)
         str8_list_pushf(scratch.arena, &parts, "@default(%g) @code_default '%S': f32,", t->default_value, t->name);
       }
       str8_list_push(scratch.arena, &parts, str8_lit("}"));
-      String8 schema_string = str8_list_join(scratch.arena, &parts, 0);
+      // NOTE: md trees keep string slices into their source text, so the
+      // generated schema string must share the tree's lifetime
+      String8 schema_string = str8_list_join(rd_state->tweak_schema_arena, &parts, 0);
       rd_state->tweak_schema_node->schema = md_tree_from_string(rd_state->tweak_schema_arena, schema_string)->first;
     }
 
