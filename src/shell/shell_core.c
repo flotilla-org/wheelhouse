@@ -478,6 +478,45 @@ rd_setting_f32_from_name(String8 name)
   return result;
 }
 
+////////////////////////////////
+//~ rjf: Tweaks
+
+internal RD_TweakNode *
+rd_tweak_node_from_name(String8 name, F32 default_value, String8 file)
+{
+  U64 hash = u64_djb2_hash_from_str8(name);
+  U64 slot_idx = hash%ArrayCount(rd_state->tweak_slots);
+  RD_TweakNode *node = 0;
+  for(RD_TweakNode *n = rd_state->tweak_slots[slot_idx]; n != 0; n = n->hash_next)
+  {
+    if(str8_match(n->name, name, 0))
+    {
+      node = n;
+      break;
+    }
+  }
+  if(node == 0)
+  {
+    node = push_array(rd_state->arena, RD_TweakNode, 1);
+    node->name = push_str8_copy(rd_state->arena, name);
+    node->file = push_str8_copy(rd_state->arena, file);
+    node->default_value = default_value;
+    node->value = default_value;
+    node->hash_next = rd_state->tweak_slots[slot_idx];
+    rd_state->tweak_slots[slot_idx] = node;
+    SLLQueuePush_N(rd_state->first_tweak, rd_state->last_tweak, node, order_next);
+  }
+  node->last_use_frame_index = rd_state->frame_index;
+  return node;
+}
+
+internal F32
+rd_tweak_f32_value(String8 name, F32 default_value, String8 file)
+{
+  RD_TweakNode *node = rd_tweak_node_from_name(name, default_value, file);
+  return node->value;
+}
+
 internal CFG_Node *
 rd_immediate_cfg_from_key(String8 string)
 {
@@ -1325,8 +1364,13 @@ rd_view_ui(Rng2F32 rect)
     if(DEV_crt_views)
     {
       view_container->surface_effect = str8_lit("crt");
-      view_container->surface_effect_params[0] = v4f32(0.4f, 0.08f, 0.35f, 0.5f);
-      view_container->surface_effect_params[1] = v4f32(0.75f, 1.15f, 0, 0);
+      view_container->surface_effect_params[0] = v4f32(rd_tweak_f32("crt.scanline_intensity", 0.4f),
+                                                       rd_tweak_f32("crt.curvature", 0.08f),
+                                                       rd_tweak_f32("crt.vignette", 0.35f),
+                                                       rd_tweak_f32("crt.aperture_mask", 0.5f));
+      view_container->surface_effect_params[1] = v4f32(rd_tweak_f32("crt.rgb_shift_px", 0.75f),
+                                                       rd_tweak_f32("crt.brightness", 1.15f),
+                                                       0, 0);
     }
   }
   
@@ -6248,16 +6292,16 @@ rd_window_frame(void)
           Rng2F32 content_uv = ws->workspace_content_uv;
           F32 card_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
           F32 cw = card_aspect;
-          F32 fov = 0.10f; // NOTE: trig here is in TURNS (base_math convention): 0.10 = 36 degrees
+          F32 fov = rd_tweak_f32("coverflow.fov", 0.10f); // NOTE: trig here is in TURNS (base_math convention): 0.10 = 36 degrees
           F32 region_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
-          F32 eye_z = (cw*0.80f)/tan_f32(fov*0.5f);
-          F32 row_y = 0.55f;
+          F32 eye_z = (cw*rd_tweak_f32("coverflow.zoom_fit", 0.80f))/tan_f32(fov*0.5f);
+          F32 row_y = rd_tweak_f32("coverflow.row_y", 0.55f);
           // NOTE: the view is a bare translation - camera on the -z side at
           // (0, cam_y, -eye_z), +x right, +y up, scene receding toward +z, which
           // is what make_perspective_4x4f32 expects (w' = +z). the inherited
           // make_look_at_4x4f32 builds its basis from eye-minus-center & rotates
           // the scene 180 degrees; an axis-aligned camera needs none of it
-          F32 cam_y = row_y - 0.14f;
+          F32 cam_y = row_y - rd_tweak_f32("coverflow.cam_y_offset", 0.14f);
           Mat4x4F32 view = make_translate_4x4f32(v3f32(0, -cam_y, eye_z));
           Mat4x4F32 projection = make_perspective_4x4f32(fov, region_aspect, 0.1f, 100.f);
           Mat4x4F32 proj_view = mul_4x4f32(projection, view);
@@ -6270,6 +6314,12 @@ rd_window_frame(void)
           cf_data->tex_remap = v4f32(content_uv.x0, content_uv.y0,
                                      content_uv.x1 - content_uv.x0, content_uv.y1 - content_uv.y0);
           cf_data->cards = push_array(ui_build_arena(), RD_CoverFlowCard, tile_count);
+          F32 cf_center_gap = rd_tweak_f32("coverflow.center_gap", 0.62f);
+          F32 cf_deck_gap   = rd_tweak_f32("coverflow.deck_gap", 0.25f);
+          F32 cf_center_z   = rd_tweak_f32("coverflow.center_z", 1.0f);
+          F32 cf_deck_z     = rd_tweak_f32("coverflow.deck_z", 0.06f);
+          F32 cf_tilt       = rd_tweak_f32("coverflow.tilt", 0.14f);
+          F32 cf_refl_gap   = rd_tweak_f32("coverflow.refl_gap", 0.02f);
           {
             U64 card_idx = 0;
             for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
@@ -6285,13 +6335,13 @@ rd_window_frame(void)
               F32 p = (F32)card_idx - ws->workspace_coverflow_t;
               F32 pc = Clamp(-1.f, p, 1.f);
               F32 rot_t = Clamp(-1.f, p*2.f, 1.f);
-              F32 x = pc*cw*0.62f + (abs_f32(p) > 1.f ? (p - pc)*cw*0.25f : 0.f);
-              F32 z = abs_f32(pc)*1.0f + (abs_f32(p) > 1.f ? (abs_f32(p) - 1.f)*0.06f : 0.f);
-              F32 ry = rot_t*0.14f; // turns, ~50 degrees: outer edge toward the camera, inner edge tucking behind the next card inward (the classic stack)
+              F32 x = pc*cw*cf_center_gap + (abs_f32(p) > 1.f ? (p - pc)*cw*cf_deck_gap : 0.f);
+              F32 z = abs_f32(pc)*cf_center_z + (abs_f32(p) > 1.f ? (abs_f32(p) - 1.f)*cf_deck_z : 0.f);
+              F32 ry = rot_t*cf_tilt; // turns, ~50 degrees: outer edge toward the camera, inner edge tucking behind the next card inward (the classic stack)
               Mat4x4F32 xform = mul_4x4f32(make_translate_4x4f32(v3f32(x, row_y, z)),
                                            mul_4x4f32(make_rotate_4x4f32(v3f32(0, 1, 0), ry),
                                                       make_scale_4x4f32(v3f32(cw, 1.f, 1.f))));
-              Mat4x4F32 refl_xform = mul_4x4f32(xform, make_translate_4x4f32(v3f32(0, -1.02f, 0)));
+              Mat4x4F32 refl_xform = mul_4x4f32(xform, make_translate_4x4f32(v3f32(0, -1.f - cf_refl_gap, 0)));
               rd_workspace_preview_demand_push(ws, child->id, region_dim.x*(abs_f32(p) < 0.5f ? 0.55f : 0.25f));
               cf_data->cards[card_idx].workspace_id = child->id;
               cf_data->cards[card_idx].texture = (node != 0 ? node->texture : r_handle_zero());

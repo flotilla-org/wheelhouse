@@ -35,7 +35,7 @@ struct {B32 *value_ptr; String8 name;} DEV_toggle_table[] =
 {&DEV_updating_indicator, str8_lit_comp("updating_indicator")},
 };
 C_LINKAGE_BEGIN
-RD_VocabInfo uishell_vocab_info_table[42] =
+RD_VocabInfo uishell_vocab_info_table[43] =
 {
 {str8_lit_comp("view"), str8_lit_comp("views"), str8_lit_comp("View"), str8_lit_comp("Views"), RD_IconKind_Binoculars},
 {str8_lit_comp("window"), str8_lit_comp("windows"), str8_lit_comp("Window"), str8_lit_comp("Windows"), RD_IconKind_Window},
@@ -73,6 +73,7 @@ RD_VocabInfo uishell_vocab_info_table[42] =
 {str8_lit_comp("terminal"), str8_lit_comp(""), str8_lit_comp("Terminal"), str8_lit_comp(""), RD_IconKind_Machine},
 {str8_lit_comp("terminal_fixture"), str8_lit_comp(""), str8_lit_comp("Terminal Fixture"), str8_lit_comp(""), RD_IconKind_Machine},
 {str8_lit_comp("binary"), str8_lit_comp(""), str8_lit_comp("Binary"), str8_lit_comp(""), RD_IconKind_Grid},
+{str8_lit_comp("tweaks"), str8_lit_comp(""), str8_lit_comp("Tweaks"), str8_lit_comp(""), RD_IconKind_Gear},
 {str8_lit_comp("output"), str8_lit_comp("outputs"), str8_lit_comp("Output"), str8_lit_comp("Outputs"), RD_IconKind_List},
 {str8_lit_comp("command"), str8_lit_comp("commands"), str8_lit_comp("Command"), str8_lit_comp("Commands"), RD_IconKind_Palette},
 {str8_lit_comp("tab_command"), str8_lit_comp("tab_commands"), str8_lit_comp("Tab Command"), str8_lit_comp("Tab Commands"), RD_IconKind_Palette},

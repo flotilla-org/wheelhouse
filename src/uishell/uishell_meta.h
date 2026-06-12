@@ -15,7 +15,8 @@ uishell_view_name_is_listed(String8 name)
   B32 result = (str8_match(name, str8_lit("text"), 0) ||
                 str8_match(name, str8_lit("terminal"), 0) ||
                 str8_match(name, str8_lit("terminal_fixture"), 0) ||
-                str8_match(name, str8_lit("binary"), 0));
+                str8_match(name, str8_lit("binary"), 0) ||
+                str8_match(name, str8_lit("tweaks"), 0));
   return result;
 }
 
@@ -118,6 +119,10 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
   )},
   {str8_lit_comp("terminal_fixture"), 1, str8_lit_comp(
     "@inherit(terminal)"
+    "x:{}"
+  )},
+  {str8_lit_comp("tweaks"), 1, str8_lit_comp(
+    "@inherit(tab)"
     "x:{}"
   )},
   {str8_lit_comp("recent_project"), 0, str8_lit_comp("x:{'path':path, 'name':string}")},

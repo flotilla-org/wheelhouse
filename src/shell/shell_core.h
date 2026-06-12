@@ -642,6 +642,25 @@ struct RD_WindowStateSlot
 };
 
 ////////////////////////////////
+//~ rjf: Tweaks
+
+// live-tunable constants, registered at their use site via rd_tweak_f32("name", default);
+// the unique name string anchors the call site (panel display, & later: source
+// write-back + config/theme resolution), the file records where the literal lives
+
+typedef struct RD_TweakNode RD_TweakNode;
+struct RD_TweakNode
+{
+  RD_TweakNode *hash_next;
+  RD_TweakNode *order_next;   // registration order; stable panel listing
+  String8 name;
+  String8 file;               // __FILE__ of the call site
+  F32 default_value;          // the literal at the call site, as-compiled
+  F32 value;                  // current live value
+  U64 last_use_frame_index;   // panel dims rows whose call site didn't run this frame
+};
+
+////////////////////////////////
 //~ rjf: Main Per-Process Graphical State
 
 typedef struct RD_AmbiguousPathNode RD_AmbiguousPathNode;
@@ -699,6 +718,11 @@ struct RD_State
 
   // rjf: vocab table
   RD_VocabInfoMap vocab_info_map;
+
+  // rjf: tweak registry
+  RD_TweakNode *tweak_slots[64];
+  RD_TweakNode *first_tweak;
+  RD_TweakNode *last_tweak;
 
   // rjf: log
   Log *log;
@@ -934,6 +958,10 @@ internal String8 rd_setting_from_name(String8 name);
 internal B32 rd_setting_b32_from_name(String8 name);
 internal U64 rd_setting_u64_from_name(String8 name);
 internal F32 rd_setting_f32_from_name(String8 name);
+
+internal RD_TweakNode *rd_tweak_node_from_name(String8 name, F32 default_value, String8 file);
+internal F32 rd_tweak_f32_value(String8 name, F32 default_value, String8 file);
+#define rd_tweak_f32(name, default_value) rd_tweak_f32_value(str8_lit(name), (default_value), str8_lit(__FILE__))
 
 internal CFG_Node *rd_immediate_cfg_from_key(String8 string);
 internal CFG_Node *rd_immediate_cfg_from_keyf(char *fmt, ...);
