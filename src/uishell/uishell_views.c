@@ -4958,9 +4958,22 @@ RD_VIEW_UI_FUNCTION_DEF(tweaks)
           if(has_override) UI_PrefWidth(ui_em(2.5f, 1.f)) RD_Font(RD_FontSlot_Icons)
           {
             UI_Signal revert_sig = ui_buttonf("%S###tweak_revert_%S", rd_icon_kind_text_table[RD_IconKind_Undo], t->name);
+            if(ui_hovering(revert_sig)) UI_Tooltip RD_Font(RD_FontSlot_Main) UI_PrefWidth(ui_text_dim(8, 1.f))
+            {
+              ui_labelf("Revert to the compiled default (%g)", t->default_value);
+            }
             if(ui_clicked(revert_sig))
             {
               rd_tweak_clear(t->name);
+            }
+            UI_Signal write_sig = ui_buttonf("%S###tweak_write_%S", rd_icon_kind_text_table[RD_IconKind_Save], t->name);
+            if(ui_hovering(write_sig)) UI_Tooltip RD_Font(RD_FontSlot_Main) UI_PrefWidth(ui_text_dim(8, 1.f))
+            {
+              ui_labelf("Write %g into %S as the new default", value, t->file);
+            }
+            if(ui_clicked(write_sig))
+            {
+              rd_tweak_write_default_to_source(t, value);
             }
           }
           UI_PrefWidth(ui_em(9.f, 1.f)) UI_CornerRadius(2.f) RD_Font(RD_FontSlot_Code) UI_TextAlignment(UI_TextAlign_Center)

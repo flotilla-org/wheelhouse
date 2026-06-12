@@ -966,6 +966,7 @@ internal CFG_Node *rd_tweak_override_from_name(String8 name);
 internal void rd_tweak_set_f32(String8 name, F32 value);
 internal void rd_tweak_clear(String8 name);
 internal F32 rd_tweak_f32_value(String8 name, F32 default_value, String8 file);
+internal B32 rd_tweak_write_default_to_source(RD_TweakNode *tweak, F32 value);
 #define rd_tweak_f32(name, default_value) rd_tweak_f32_value(str8_lit(name), (default_value), str8_lit(__FILE__))
 
 internal CFG_Node *rd_immediate_cfg_from_key(String8 string);

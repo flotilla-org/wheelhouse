@@ -569,6 +569,148 @@ rd_tweak_f32_value(String8 name, F32 default_value, String8 file)
   return result;
 }
 
+internal B32
+rd_tweak_write_default_to_source(RD_TweakNode *tweak, F32 value)
+{
+  // rewrites the default literal at the tweak's call site, making `value` the
+  // new compiled default. the unique name string anchors the site (not
+  // file:line, so the file may have shifted around it); the current literal
+  // must still parse to the running build's default, otherwise the file has
+  // diverged from this binary & we refuse rather than clobber.
+  Temp scratch = scratch_begin(0, 0);
+  B32 good = 0;
+  String8 error = {0};
+
+  //- resolve the recorded __FILE__ against the working directory: the unity
+  // build compiles from <repo>/build, so recorded paths look like
+  // "../src/..."; probe as-is, then the "src/..." tail walking upward, so
+  // launching from the repo root, build/, or a subdirectory all resolve
+  String8 resolved = {0};
+  String8 data = {0};
+  {
+    String8 tail = tweak->file;
+    while(str8_match(str8_prefix(tail, 3), str8_lit("../"), 0))
+    {
+      tail = str8_skip(tail, 3);
+    }
+    String8 candidates[6];
+    U64 candidate_count = 0;
+    candidates[candidate_count] = tweak->file;
+    candidate_count += 1;
+    String8 up = str8_lit("");
+    for(U64 idx = 0; idx < 5; idx += 1)
+    {
+      candidates[candidate_count] = push_str8f(scratch.arena, "%S%S", up, tail);
+      candidate_count += 1;
+      up = push_str8f(scratch.arena, "%S../", up);
+    }
+    for(U64 idx = 0; idx < candidate_count; idx += 1)
+    {
+      data = data_from_file_path(scratch.arena, candidates[idx]);
+      if(data.size != 0)
+      {
+        resolved = candidates[idx];
+        break;
+      }
+    }
+    if(resolved.size == 0)
+    {
+      error = push_str8f(scratch.arena, "Could not locate source file \"%S\" from the current directory.", tweak->file);
+    }
+  }
+
+  //- find the unique call site & the extent of its default literal
+  U64 lit_off = 0;
+  U64 lit_opl = 0;
+  if(error.size == 0)
+  {
+    String8 marker = push_str8f(scratch.arena, "rd_tweak_f32(\"%S\"", tweak->name);
+    U64 match_count = 0;
+    U64 match_off = 0;
+    for(U64 off = 0; off < data.size;)
+    {
+      U64 pos = str8_find_needle(data, off, marker, 0);
+      if(pos >= data.size) { break; }
+      match_off = pos;
+      match_count += 1;
+      off = pos + marker.size;
+    }
+    if(match_count != 1)
+    {
+      error = push_str8f(scratch.arena, "%s call site%s for \"%S\" in %S.",
+                         match_count == 0 ? "No" : "Multiple", match_count == 0 ? "" : "s",
+                         tweak->name, resolved);
+    }
+    else
+    {
+      U64 comma = str8_find_needle(data, match_off + marker.size, str8_lit(","), 0);
+      U64 close = str8_find_needle(data, match_off + marker.size, str8_lit(")"), 0);
+      if(comma >= data.size || close >= data.size || close < comma)
+      {
+        error = push_str8f(scratch.arena, "Could not parse the call site for \"%S\" in %S.", tweak->name, resolved);
+      }
+      else
+      {
+        lit_off = comma + 1;
+        for(;lit_off < close && char_is_space(data.str[lit_off]); lit_off += 1) {}
+        lit_opl = close;
+        for(;lit_opl > lit_off && char_is_space(data.str[lit_opl-1]); lit_opl -= 1) {}
+      }
+    }
+  }
+
+  //- the literal in the file must still match this binary's compiled default
+  if(error.size == 0)
+  {
+    String8 old_literal = str8_substr(data, r1u64(lit_off, lit_opl));
+    F32 parsed = (F32)f64_from_str8(old_literal);
+    F32 eps = 1e-5f*ClampBot(abs_f32(tweak->default_value), 1.f);
+    if(abs_f32(parsed - tweak->default_value) > eps)
+    {
+      error = push_str8f(scratch.arena,
+                         "Default for \"%S\" in %S is \"%S\", but this build compiled %g — the file changed since this build; rebuild first.",
+                         tweak->name, resolved, old_literal, tweak->default_value);
+    }
+  }
+
+  //- splice the new literal in & write back
+  if(error.size == 0)
+  {
+    String8 num = push_str8f(scratch.arena, "%g", value);
+    B32 has_point = 0;
+    for(U64 idx = 0; idx < num.size; idx += 1)
+    {
+      if(num.str[idx] == '.' || num.str[idx] == 'e' || num.str[idx] == 'E')
+      {
+        has_point = 1;
+        break;
+      }
+    }
+    String8 new_literal = push_str8f(scratch.arena, "%S%sf", num, has_point ? "" : ".");
+    String8List parts = {0};
+    str8_list_push(scratch.arena, &parts, str8_prefix(data, lit_off));
+    str8_list_push(scratch.arena, &parts, new_literal);
+    str8_list_push(scratch.arena, &parts, str8_skip(data, lit_opl));
+    if(write_data_list_to_file_path(resolved, parts))
+    {
+      tweak->default_value = value;
+      rd_tweak_clear(tweak->name);
+      good = 1;
+    }
+    else
+    {
+      error = push_str8f(scratch.arena, "Could not write %S.", resolved);
+    }
+  }
+
+  if(error.size != 0)
+  {
+    log_user_error(error);
+  }
+  scratch_end(scratch);
+  return good;
+}
+
 internal CFG_Node *
 rd_immediate_cfg_from_key(String8 string)
 {
