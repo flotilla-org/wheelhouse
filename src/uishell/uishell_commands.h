@@ -91,6 +91,7 @@ read_only global UIShell_CmdInfo uishell_app_viewer_cmd_info_table[] =
   UISHELL_CMD("terminal", "Terminal", Machine, "Opens a Terminal tab.", "tab,terminal,shell", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("terminal_fixture", "Terminal Fixture", Machine, "Opens a deterministic terminal glyph fixture tab.", "tab,terminal,glyph,fixture", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("binary", "Binary", Grid, "Opens a Binary tab.", "tab,file,hex", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
+  UISHELL_CMD("tweaks", "Tweaks", Gear, "Opens a Tweaks tab, for live-tuning registered constants.", "tab,tweaks,tuning,dev", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
 };
 
 internal UIShell_AppRegSlot uishell_app_reg_slot_from_query_reg_slot(UIShell_RegSlot slot);
