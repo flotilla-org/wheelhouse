@@ -544,6 +544,20 @@ rd_tweak_f32_value(String8 name, F32 default_value, String8 file)
   return result;
 }
 
+internal F32
+rd_tweak_f32_range_value(String8 name, F32 default_value, F32 range_min, F32 range_max, String8 file)
+{
+  RD_TweakNode *node = rd_tweak_node_from_name(name, default_value, file);
+  if(!node->has_range)
+  {
+    node->has_range = 1;
+    node->range_min = range_min;
+    node->range_max = range_max;
+    rd_state->tweak_schema_gen += 1;
+  }
+  return rd_tweak_f32_value(name, default_value, file);
+}
+
 internal B32
 rd_tweak_write_default_to_source(RD_TweakNode *tweak, F32 value)
 {
@@ -594,21 +608,33 @@ rd_tweak_write_default_to_source(RD_TweakNode *tweak, F32 value)
     }
   }
 
-  //- find the unique call site & the extent of its default literal
+  //- find the unique call site & the extent of its default literal (the
+  // second argument: comma -> next comma for the ranged variant, else the
+  // closing paren)
   U64 lit_off = 0;
   U64 lit_opl = 0;
   if(error.size == 0)
   {
-    String8 marker = push_str8f(scratch.arena, "rd_tweak_f32(\"%S\"", tweak->name);
+    String8 markers[] =
+    {
+      push_str8f(scratch.arena, "rd_tweak_f32(\"%S\"", tweak->name),
+      push_str8f(scratch.arena, "rd_tweak_f32_range(\"%S\"", tweak->name),
+    };
     U64 match_count = 0;
     U64 match_off = 0;
-    for(U64 off = 0; off < data.size;)
+    U64 match_marker_size = 0;
+    for EachElement(marker_idx, markers)
     {
-      U64 pos = str8_find_needle(data, off, marker, 0);
-      if(pos >= data.size) { break; }
-      match_off = pos;
-      match_count += 1;
-      off = pos + marker.size;
+      String8 marker = markers[marker_idx];
+      for(U64 off = 0; off < data.size;)
+      {
+        U64 pos = str8_find_needle(data, off, marker, 0);
+        if(pos >= data.size) { break; }
+        match_off = pos;
+        match_marker_size = marker.size;
+        match_count += 1;
+        off = pos + marker.size;
+      }
     }
     if(match_count != 1)
     {
@@ -618,8 +644,10 @@ rd_tweak_write_default_to_source(RD_TweakNode *tweak, F32 value)
     }
     else
     {
-      U64 comma = str8_find_needle(data, match_off + marker.size, str8_lit(","), 0);
-      U64 close = str8_find_needle(data, match_off + marker.size, str8_lit(")"), 0);
+      U64 comma = str8_find_needle(data, match_off + match_marker_size, str8_lit(","), 0);
+      U64 close = str8_find_needle(data, match_off + match_marker_size, str8_lit(")"), 0);
+      U64 next_comma = (comma < data.size ? str8_find_needle(data, comma+1, str8_lit(","), 0) : data.size);
+      if(next_comma < close) { close = next_comma; }
       if(comma >= data.size || close >= data.size || close < comma)
       {
         error = push_str8f(scratch.arena, "Could not parse the call site for \"%S\" in %S.", tweak->name, resolved);
@@ -1533,12 +1561,12 @@ rd_view_ui(Rng2F32 rect)
     if(DEV_crt_views)
     {
       view_container->surface_effect = str8_lit("crt");
-      view_container->surface_effect_params[0] = v4f32(rd_tweak_f32("crt_scanline_intensity", 0.4f),
-                                                       rd_tweak_f32("crt_curvature", 0.08f),
-                                                       rd_tweak_f32("crt_vignette", 0.35f),
-                                                       rd_tweak_f32("crt_aperture_mask", 0.5f));
-      view_container->surface_effect_params[1] = v4f32(rd_tweak_f32("crt_rgb_shift_px", 0.75f),
-                                                       rd_tweak_f32("crt_brightness", 1.15f),
+      view_container->surface_effect_params[0] = v4f32(rd_tweak_f32_range("crt_scanline_intensity", 0.4f, 0.f, 1.f),
+                                                       rd_tweak_f32_range("crt_curvature", 0.08f, 0.f, 0.5f),
+                                                       rd_tweak_f32_range("crt_vignette", 0.35f, 0.f, 2.f),
+                                                       rd_tweak_f32_range("crt_aperture_mask", 0.5f, 0.f, 1.f));
+      view_container->surface_effect_params[1] = v4f32(rd_tweak_f32_range("crt_rgb_shift_px", 0.75f, 0.f, 2.f),
+                                                       rd_tweak_f32_range("crt_brightness", 1.15f, 0.5f, 1.8f),
                                                        0, 0);
     }
   }
@@ -6461,16 +6489,16 @@ rd_window_frame(void)
           Rng2F32 content_uv = ws->workspace_content_uv;
           F32 card_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
           F32 cw = card_aspect;
-          F32 fov = rd_tweak_f32("coverflow_fov", 0.10f); // NOTE: trig here is in TURNS (base_math convention): 0.10 = 36 degrees
+          F32 fov = rd_tweak_f32_range("coverflow_fov", 0.10f, 0.02f, 0.2f); // NOTE: trig here is in TURNS (base_math convention): 0.10 = 36 degrees
           F32 region_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
-          F32 eye_z = (cw*rd_tweak_f32("coverflow_zoom_fit", 0.80f))/tan_f32(fov*0.5f);
-          F32 row_y = rd_tweak_f32("coverflow_row_y", 0.55f);
+          F32 eye_z = (cw*rd_tweak_f32_range("coverflow_zoom_fit", 0.80f, 0.3f, 2.f))/tan_f32(fov*0.5f);
+          F32 row_y = rd_tweak_f32_range("coverflow_row_y", 0.55f, 0.f, 1.5f);
           // NOTE: the view is a bare translation - camera on the -z side at
           // (0, cam_y, -eye_z), +x right, +y up, scene receding toward +z, which
           // is what make_perspective_4x4f32 expects (w' = +z). the inherited
           // make_look_at_4x4f32 builds its basis from eye-minus-center & rotates
           // the scene 180 degrees; an axis-aligned camera needs none of it
-          F32 cam_y = row_y - rd_tweak_f32("coverflow_cam_y_offset", 0.14f);
+          F32 cam_y = row_y - rd_tweak_f32_range("coverflow_cam_y_offset", 0.14f, -0.5f, 0.5f);
           Mat4x4F32 view = make_translate_4x4f32(v3f32(0, -cam_y, eye_z));
           Mat4x4F32 projection = make_perspective_4x4f32(fov, region_aspect, 0.1f, 100.f);
           Mat4x4F32 proj_view = mul_4x4f32(projection, view);
@@ -6483,12 +6511,12 @@ rd_window_frame(void)
           cf_data->tex_remap = v4f32(content_uv.x0, content_uv.y0,
                                      content_uv.x1 - content_uv.x0, content_uv.y1 - content_uv.y0);
           cf_data->cards = push_array(ui_build_arena(), RD_CoverFlowCard, tile_count);
-          F32 cf_center_gap = rd_tweak_f32("coverflow_center_gap", 0.62f);
-          F32 cf_deck_gap   = rd_tweak_f32("coverflow_deck_gap", 0.25f);
-          F32 cf_center_z   = rd_tweak_f32("coverflow_center_z", 1.0f);
-          F32 cf_deck_z     = rd_tweak_f32("coverflow_deck_z", 0.06f);
-          F32 cf_tilt       = rd_tweak_f32("coverflow_tilt", 0.14f);
-          F32 cf_refl_gap   = rd_tweak_f32("coverflow_refl_gap", 0.02f);
+          F32 cf_center_gap = rd_tweak_f32_range("coverflow_center_gap", 0.62f, 0.2f, 1.2f);
+          F32 cf_deck_gap   = rd_tweak_f32_range("coverflow_deck_gap", 0.25f, 0.05f, 0.8f);
+          F32 cf_center_z   = rd_tweak_f32_range("coverflow_center_z", 1.0f, 0.f, 3.f);
+          F32 cf_deck_z     = rd_tweak_f32_range("coverflow_deck_z", 0.06f, 0.f, 0.5f);
+          F32 cf_tilt       = rd_tweak_f32_range("coverflow_tilt", 0.14f, 0.f, 0.25f);
+          F32 cf_refl_gap   = rd_tweak_f32_range("coverflow_refl_gap", 0.02f, 0.f, 0.2f);
           {
             U64 card_idx = 0;
             for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
@@ -9361,7 +9389,14 @@ rd_frame(void)
       str8_list_push(scratch.arena, &parts, str8_lit("x:{"));
       for(RD_TweakNode *t = rd_state->first_tweak; t != 0; t = t->order_next)
       {
-        str8_list_pushf(scratch.arena, &parts, "@default(%g) @code_default '%S': f32,", t->default_value, t->name);
+        if(t->has_range)
+        {
+          str8_list_pushf(scratch.arena, &parts, "@default(%g) @code_default '%S': @range[%g, %g] f32,", t->default_value, t->name, t->range_min, t->range_max);
+        }
+        else
+        {
+          str8_list_pushf(scratch.arena, &parts, "@default(%g) @code_default '%S': f32,", t->default_value, t->name);
+        }
       }
       str8_list_push(scratch.arena, &parts, str8_lit("}"));
       // NOTE: md trees keep string slices into their source text, so the

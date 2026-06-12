@@ -662,6 +662,9 @@ struct RD_TweakNode
   String8 name;
   String8 file;               // __FILE__ of the call site
   F32 default_value;          // the literal at the call site, as-compiled
+  B32 has_range;              // declared range -> @range in the schema -> slider editor
+  F32 range_min;
+  F32 range_max;
   U64 last_use_frame_index;   // stamped when the call site runs
 };
 
@@ -971,8 +974,10 @@ internal F32 rd_setting_f32_from_name(String8 name);
 internal RD_TweakNode *rd_tweak_node_from_name(String8 name, F32 default_value, String8 file);
 internal RD_TweakNode *rd_tweak_node_lookup(String8 name);
 internal F32 rd_tweak_f32_value(String8 name, F32 default_value, String8 file);
+internal F32 rd_tweak_f32_range_value(String8 name, F32 default_value, F32 range_min, F32 range_max, String8 file);
 internal B32 rd_tweak_write_default_to_source(RD_TweakNode *tweak, F32 value);
 #define rd_tweak_f32(name, default_value) rd_tweak_f32_value(str8_lit(name), (default_value), str8_lit(__FILE__))
+#define rd_tweak_f32_range(name, default_value, range_min, range_max) rd_tweak_f32_range_value(str8_lit(name), (default_value), (range_min), (range_max), str8_lit(__FILE__))
 
 internal CFG_Node *rd_immediate_cfg_from_key(String8 string);
 internal CFG_Node *rd_immediate_cfg_from_keyf(char *fmt, ...);
