@@ -504,56 +504,27 @@ rd_tweak_node_from_name(String8 name, F32 default_value, String8 file)
     node->hash_next = rd_state->tweak_slots[slot_idx];
     rd_state->tweak_slots[slot_idx] = node;
     SLLQueuePush_N(rd_state->first_tweak, rd_state->last_tweak, node, order_next);
+    rd_state->tweak_schema_gen += 1;
   }
   node->last_use_frame_index = rd_state->frame_index;
   return node;
 }
 
-internal CFG_Node *
-rd_tweak_override_from_name(String8 name)
+internal RD_TweakNode *
+rd_tweak_node_lookup(String8 name)
 {
-  CFG_Node *result = &cfg_nil_node;
-  String8 buckets[] =
+  U64 hash = u64_djb2_hash_from_str8(name);
+  U64 slot_idx = hash%ArrayCount(rd_state->tweak_slots);
+  RD_TweakNode *node = 0;
+  for(RD_TweakNode *n = rd_state->tweak_slots[slot_idx]; n != 0; n = n->hash_next)
   {
-    str8_lit("transient"),
-    str8_lit("project"),
-    str8_lit("user"),
-  };
-  for EachElement(idx, buckets)
-  {
-    CFG_Node *bucket = cfg_node_child_from_string(cfg_node_root(), buckets[idx]);
-    CFG_Node *tweaks = cfg_node_child_from_string(bucket, str8_lit("tweaks"));
-    CFG_Node *node = cfg_node_child_from_string(tweaks, name);
-    if(node != &cfg_nil_node)
+    if(str8_match(n->name, name, 0))
     {
-      result = node;
+      node = n;
       break;
     }
   }
-  return result;
-}
-
-internal void
-rd_tweak_set_f32(String8 name, F32 value)
-{
-  CFG_Node *override = rd_tweak_override_from_name(name);
-  if(override == &cfg_nil_node)
-  {
-    CFG_Node *transient = cfg_node_child_from_string_or_alloc(rd_state->cfg, cfg_node_root(), str8_lit("transient"));
-    CFG_Node *tweaks = cfg_node_child_from_string_or_alloc(rd_state->cfg, transient, str8_lit("tweaks"));
-    override = cfg_node_child_from_string_or_alloc(rd_state->cfg, tweaks, name);
-  }
-  cfg_node_new_replacef(rd_state->cfg, override, "%f", value);
-}
-
-internal void
-rd_tweak_clear(String8 name)
-{
-  CFG_Node *override = rd_tweak_override_from_name(name);
-  if(override != &cfg_nil_node)
-  {
-    cfg_node_release(rd_state->cfg, override);
-  }
+  return node;
 }
 
 internal F32
@@ -561,10 +532,14 @@ rd_tweak_f32_value(String8 name, F32 default_value, String8 file)
 {
   rd_tweak_node_from_name(name, default_value, file);
   F32 result = default_value;
-  CFG_Node *override = rd_tweak_override_from_name(name);
-  if(override->first != &cfg_nil_node && override->first->string.size != 0)
+  String8 value = rd_setting_from_name(name);
+  if(value.size != 0)
   {
-    result = (F32)f64_from_str8(override->first->string);
+    Temp scratch = scratch_begin(0, 0);
+    String8 expr = push_str8f(scratch.arena, "raw((float32)(%S))", value);
+    E_Eval eval = e_eval_from_string(expr);
+    result = e_value_eval_from_eval(eval).value.f32;
+    scratch_end(scratch);
   }
   return result;
 }
@@ -694,7 +669,7 @@ rd_tweak_write_default_to_source(RD_TweakNode *tweak, F32 value)
     if(write_data_list_to_file_path(resolved, parts))
     {
       tweak->default_value = value;
-      rd_tweak_clear(tweak->name);
+      rd_state->tweak_schema_gen += 1; // dynamic schema's @default must refresh
       good = 1;
     }
     else
@@ -1558,12 +1533,12 @@ rd_view_ui(Rng2F32 rect)
     if(DEV_crt_views)
     {
       view_container->surface_effect = str8_lit("crt");
-      view_container->surface_effect_params[0] = v4f32(rd_tweak_f32("crt.scanline_intensity", 0.4f),
-                                                       rd_tweak_f32("crt.curvature", 0.08f),
-                                                       rd_tweak_f32("crt.vignette", 0.35f),
-                                                       rd_tweak_f32("crt.aperture_mask", 0.5f));
-      view_container->surface_effect_params[1] = v4f32(rd_tweak_f32("crt.rgb_shift_px", 0.75f),
-                                                       rd_tweak_f32("crt.brightness", 1.15f),
+      view_container->surface_effect_params[0] = v4f32(rd_tweak_f32("crt_scanline_intensity", 0.4f),
+                                                       rd_tweak_f32("crt_curvature", 0.08f),
+                                                       rd_tweak_f32("crt_vignette", 0.35f),
+                                                       rd_tweak_f32("crt_aperture_mask", 0.5f));
+      view_container->surface_effect_params[1] = v4f32(rd_tweak_f32("crt_rgb_shift_px", 0.75f),
+                                                       rd_tweak_f32("crt_brightness", 1.15f),
                                                        0, 0);
     }
   }
@@ -6486,16 +6461,16 @@ rd_window_frame(void)
           Rng2F32 content_uv = ws->workspace_content_uv;
           F32 card_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
           F32 cw = card_aspect;
-          F32 fov = rd_tweak_f32("coverflow.fov", 0.10f); // NOTE: trig here is in TURNS (base_math convention): 0.10 = 36 degrees
+          F32 fov = rd_tweak_f32("coverflow_fov", 0.10f); // NOTE: trig here is in TURNS (base_math convention): 0.10 = 36 degrees
           F32 region_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
-          F32 eye_z = (cw*rd_tweak_f32("coverflow.zoom_fit", 0.80f))/tan_f32(fov*0.5f);
-          F32 row_y = rd_tweak_f32("coverflow.row_y", 0.55f);
+          F32 eye_z = (cw*rd_tweak_f32("coverflow_zoom_fit", 0.80f))/tan_f32(fov*0.5f);
+          F32 row_y = rd_tweak_f32("coverflow_row_y", 0.55f);
           // NOTE: the view is a bare translation - camera on the -z side at
           // (0, cam_y, -eye_z), +x right, +y up, scene receding toward +z, which
           // is what make_perspective_4x4f32 expects (w' = +z). the inherited
           // make_look_at_4x4f32 builds its basis from eye-minus-center & rotates
           // the scene 180 degrees; an axis-aligned camera needs none of it
-          F32 cam_y = row_y - rd_tweak_f32("coverflow.cam_y_offset", 0.14f);
+          F32 cam_y = row_y - rd_tweak_f32("coverflow_cam_y_offset", 0.14f);
           Mat4x4F32 view = make_translate_4x4f32(v3f32(0, -cam_y, eye_z));
           Mat4x4F32 projection = make_perspective_4x4f32(fov, region_aspect, 0.1f, 100.f);
           Mat4x4F32 proj_view = mul_4x4f32(projection, view);
@@ -6508,12 +6483,12 @@ rd_window_frame(void)
           cf_data->tex_remap = v4f32(content_uv.x0, content_uv.y0,
                                      content_uv.x1 - content_uv.x0, content_uv.y1 - content_uv.y0);
           cf_data->cards = push_array(ui_build_arena(), RD_CoverFlowCard, tile_count);
-          F32 cf_center_gap = rd_tweak_f32("coverflow.center_gap", 0.62f);
-          F32 cf_deck_gap   = rd_tweak_f32("coverflow.deck_gap", 0.25f);
-          F32 cf_center_z   = rd_tweak_f32("coverflow.center_z", 1.0f);
-          F32 cf_deck_z     = rd_tweak_f32("coverflow.deck_z", 0.06f);
-          F32 cf_tilt       = rd_tweak_f32("coverflow.tilt", 0.14f);
-          F32 cf_refl_gap   = rd_tweak_f32("coverflow.refl_gap", 0.02f);
+          F32 cf_center_gap = rd_tweak_f32("coverflow_center_gap", 0.62f);
+          F32 cf_deck_gap   = rd_tweak_f32("coverflow_deck_gap", 0.25f);
+          F32 cf_center_z   = rd_tweak_f32("coverflow_center_z", 1.0f);
+          F32 cf_deck_z     = rd_tweak_f32("coverflow_deck_z", 0.06f);
+          F32 cf_tilt       = rd_tweak_f32("coverflow_tilt", 0.14f);
+          F32 cf_refl_gap   = rd_tweak_f32("coverflow_refl_gap", 0.02f);
           {
             U64 card_idx = 0;
             for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
@@ -8447,6 +8422,13 @@ rd_init(CmdLine *cmdln)
       MD_Node *schema = md_tree_from_string(rd_state->arena, RD_APP_NAME_SCHEMA_INFO_TABLE[idx].schema)->first;
       cfg_schema_table_insert(rd_state->arena, rd_state->cfg_schema_table, name, schema);
     }
+
+    // rjf: the `code_defaults` schema (inherited by `user`) is dynamic — it's
+    // regenerated from the code-declared-settings registry each time a new
+    // call site registers; insert its (initially empty) slot now
+    rd_state->tweak_schema_arena = arena_alloc();
+    rd_state->tweak_schema_node = cfg_schema_table_insert(rd_state->arena, rd_state->cfg_schema_table, str8_lit("code_defaults"),
+                                                          md_tree_from_string(rd_state->arena, str8_lit("x:{}"))->first);
   }
   
   // rjf: set up theme presets
@@ -9365,6 +9347,27 @@ rd_frame(void)
     }
     e_select_base_ctx(eval_base_ctx);
     
+    ////////////////////////////
+    //- rjf: project the code-declared-settings registry into the
+    // `code_defaults` schema (inherited by `user`), if it changed. old trees
+    // are intentionally not freed — regens are rare (new call-site
+    // registration, write-back) & interned eval types may reference strings
+    // in prior trees
+    //
+    if(rd_state->tweak_schema_built_gen != rd_state->tweak_schema_gen)
+    {
+      rd_state->tweak_schema_built_gen = rd_state->tweak_schema_gen;
+      String8List parts = {0};
+      str8_list_push(scratch.arena, &parts, str8_lit("x:{"));
+      for(RD_TweakNode *t = rd_state->first_tweak; t != 0; t = t->order_next)
+      {
+        str8_list_pushf(scratch.arena, &parts, "@default(%g) @code_default '%S': f32,", t->default_value, t->name);
+      }
+      str8_list_push(scratch.arena, &parts, str8_lit("}"));
+      String8 schema_string = str8_list_join(scratch.arena, &parts, 0);
+      rd_state->tweak_schema_node->schema = md_tree_from_string(rd_state->tweak_schema_arena, schema_string)->first;
+    }
+
     ////////////////////////////
     //- rjf: build extra types & maps
     //

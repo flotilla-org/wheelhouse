@@ -43,7 +43,6 @@ UIShell_VocabTable:
   {terminal            ""                     "Terminal"                         ""                        Machine}
   {terminal_fixture    ""                     "Terminal Fixture"                 ""                        Machine}
   {binary              ""                     "Binary"                           ""                        Grid}
-  {tweaks              ""                     "Tweaks"                           ""                        Gear}
   {output              _                      "Output"                           _                         List}
   {command             _                      "Command"                          _                         Palette}
   {tab_command         _                      "Tab Command"                      _                         Palette}

@@ -174,7 +174,7 @@ internal CFG_NodePtrArray cfg_node_ptr_array_from_list(Arena *arena, CFG_NodePtr
 ////////////////////////////////
 //~ rjf: Schema Data Structure Functions
 
-internal void cfg_schema_table_insert(Arena *arena, CFG_SchemaTable *table, String8 name, MD_Node *schema);
+internal CFG_SchemaNode *cfg_schema_table_insert(Arena *arena, CFG_SchemaTable *table, String8 name, MD_Node *schema);
 internal MD_Node *cfg_schema_from_name(CFG_SchemaTable *table, String8 name);
 internal MD_NodePtrList cfg_schemas_from_name(Arena *arena, CFG_SchemaTable *table, String8 name);
 

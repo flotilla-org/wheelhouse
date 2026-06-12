@@ -1542,6 +1542,7 @@ uishell_watch_view_ui(Rng2F32 rect)
               }
               
               B32 revert_cell = 0;
+              B32 write_code_default_cell = 0;
               UI_Signal sig = {0};
               UI_Parent(cell_box)
                 UI_FocusHot(cell_selected ? UI_FocusKind_On : UI_FocusKind_Off)
@@ -1601,6 +1602,7 @@ uishell_watch_view_ui(Rng2F32 rect)
                     cell_params.description = cell_info.description;
                   }
                   cell_params.revert_out = &revert_cell;
+                  cell_params.write_code_default_out = &write_code_default_cell;
                   if(cell_selected && wv->text_editing && cell->flags & UIShell_WatchCellFlag_NoEval)
                   {
                     MemoryZeroStruct(&cell_params.meta_fstrs);
@@ -1630,6 +1632,10 @@ uishell_watch_view_ui(Rng2F32 rect)
                            !md_node_has_tag(child_schema, str8_lit("no_revert"), 0))
                         {
                           cell_params.flags |= RD_CellFlag_RevertButton;
+                        }
+                        if(md_node_has_tag(child_schema, str8_lit("code_default"), 0))
+                        {
+                          cell_params.flags |= RD_CellFlag_WriteCodeDefaultButton;
                         }
                       }
                     }
@@ -1691,6 +1697,29 @@ uishell_watch_view_ui(Rng2F32 rect)
                   CFG_Node *cfg = rd_cfg_from_eval_space(cell->eval.space);
                   String8 child_key = e_string_from_id(cell->eval.space.u64s[1]);
                   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(cfg, child_key));
+                }
+                if(write_code_default_cell && cell->eval.space.kind == RD_EvalSpaceKind_MetaCfg)
+                {
+                  CFG_Node *cfg = rd_cfg_from_eval_space(cell->eval.space);
+                  String8 child_key = e_string_from_id(cell->eval.space.u64s[1]);
+                  CFG_Node *child_cfg = cfg_node_child_from_string(cfg, child_key);
+                  RD_TweakNode *tweak = rd_tweak_node_lookup(child_key);
+                  if(tweak != 0)
+                  {
+                    // resolve the value the same way the cell displays it (the
+                    // committed string may be an expression), write it to the
+                    // call site, & drop the now-redundant override on success
+                    F32 value = tweak->default_value;
+                    if(child_cfg != &cfg_nil_node && child_cfg->first->string.size != 0)
+                    {
+                      E_Eval value_eval = e_eval_from_stringf("raw((float32)(%S))", child_cfg->first->string);
+                      value = e_value_eval_from_eval(value_eval).value.f32;
+                    }
+                    if(rd_tweak_write_default_to_source(tweak, value) && child_cfg != &cfg_nil_node)
+                    {
+                      cfg_node_release(rd_state->cfg, child_cfg);
+                    }
+                  }
                 }
                 if((!(cell_info.flags & UIShell_WatchCellFlag_ActivateWithSingleClick) && ui_double_clicked(sig)) ||
                    ((cell_info.flags & UIShell_WatchCellFlag_ActivateWithSingleClick) && ui_clicked(sig)) ||
@@ -1823,7 +1852,6 @@ uishell_register_view_ui_rules(Arena *arena, RD_ViewUIRuleMap *map)
   rd_view_ui_rule_map_insert(arena, map, str8_lit("bitmap"), RD_VIEW_UI_FUNCTION_NAME(bitmap));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("color"), RD_VIEW_UI_FUNCTION_NAME(color));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("geo3d"), RD_VIEW_UI_FUNCTION_NAME(geo3d));
-  rd_view_ui_rule_map_insert(arena, map, str8_lit("tweaks"), RD_VIEW_UI_FUNCTION_NAME(tweaks));
 }
 
 internal void
@@ -4859,147 +4887,5 @@ RD_VIEW_UI_FUNCTION_DEF(geo3d)
   rd_store_view_param_f32(str8_lit("zoom"),  zoom_target);
 
   access_close(access);
-  scratch_end(scratch);
-}
-
-////////////////////////////////
-//~ rjf: Tweaks View
-
-RD_VIEW_UI_FUNCTION_DEF(tweaks)
-{
-  Temp scratch = scratch_begin(0, 0);
-
-  //- flatten the registry into rows: a header per name-prefix group (prefix =
-  // text up to the first '.', groups in first-registration order), then that
-  // group's tweaks in registration order
-  typedef struct UIShell_TweakRow UIShell_TweakRow;
-  struct UIShell_TweakRow
-  {
-    String8 group;       // header rows only
-    RD_TweakNode *tweak; // value rows only
-  };
-  U64 tweak_count = 0;
-  for(RD_TweakNode *n = rd_state->first_tweak; n != 0; n = n->order_next) { tweak_count += 1; }
-  UIShell_TweakRow *rows = push_array(scratch.arena, UIShell_TweakRow, tweak_count*2);
-  U64 row_count = 0;
-  for(RD_TweakNode *group_rep = rd_state->first_tweak; group_rep != 0; group_rep = group_rep->order_next)
-  {
-    String8 group = str8_prefix(group_rep->name, str8_find_needle(group_rep->name, 0, str8_lit("."), 0));
-    B32 group_is_done = 0;
-    for(RD_TweakNode *prev = rd_state->first_tweak; prev != group_rep; prev = prev->order_next)
-    {
-      if(str8_match(str8_prefix(prev->name, str8_find_needle(prev->name, 0, str8_lit("."), 0)), group, 0))
-      {
-        group_is_done = 1;
-        break;
-      }
-    }
-    if(group_is_done) { continue; }
-    rows[row_count].group = group;
-    row_count += 1;
-    for(RD_TweakNode *n = group_rep; n != 0; n = n->order_next)
-    {
-      if(str8_match(str8_prefix(n->name, str8_find_needle(n->name, 0, str8_lit("."), 0)), group, 0))
-      {
-        rows[row_count].tweak = n;
-        row_count += 1;
-      }
-    }
-  }
-
-  //- build the rows as a scroll list
-  F32 row_height_px = floor_f32(ui_top_font_size()*2.5f);
-  UI_ScrollPt2 scroll_pos = rd_view_scroll_pos();
-  Rng1S64 visible_row_rng = {0};
-  UI_ScrollListParams scroll_list_params = {0};
-  scroll_list_params.flags = UI_ScrollListFlag_All;
-  scroll_list_params.row_height_px = row_height_px;
-  scroll_list_params.dim_px = dim_2f32(rect);
-  scroll_list_params.item_range = r1s64(0, (S64)row_count);
-  UI_ScrollListSignal scroll_list_sig = {0};
-  UI_ScrollList(&scroll_list_params, &scroll_pos.y, 0, 0, &visible_row_rng, &scroll_list_sig)
-    UI_PrefHeight(ui_px(row_height_px, 1.f))
-    UI_Focus(UI_FocusKind_Null)
-  {
-    for(S64 row_idx = ClampBot(0, visible_row_rng.min);
-        row_idx <= visible_row_rng.max && row_idx < (S64)row_count;
-        row_idx += 1)
-    {
-      UIShell_TweakRow *row = &rows[row_idx];
-      if(row->tweak == 0)
-      {
-        //- group header
-        UI_Row UI_TagF("weak") UI_PrefWidth(ui_text_dim(10, 1.f))
-        {
-          ui_spacer(ui_em(0.5f, 1.f));
-          ui_label(row->group.size != 0 ? row->group : str8_lit("(ungrouped)"));
-        }
-      }
-      else
-      {
-        //- tweak row: leaf name, draggable value, revert button when an
-        // override exists. the value is an ordinary cfg setting: scrubbing
-        // writes an override into the transient bucket, revert deletes it.
-        // rows whose call site didn't run this frame are dimmed: the value is
-        // still live, but nothing currently consumes it
-        RD_TweakNode *t = row->tweak;
-        U64 dot_pos = str8_find_needle(t->name, 0, str8_lit("."), 0);
-        String8 leaf = (dot_pos < t->name.size ? str8_skip(t->name, dot_pos+1) : t->name);
-        B32 stale = (t->last_use_frame_index+2 < rd_state->frame_index);
-        CFG_Node *override = rd_tweak_override_from_name(t->name);
-        B32 has_override = (override->first != &cfg_nil_node && override->first->string.size != 0);
-        F32 value = has_override ? (F32)f64_from_str8(override->first->string) : t->default_value;
-        if(stale) { ui_push_tagf("weak"); }
-        UI_Row
-        {
-          ui_spacer(ui_em(2.f, 1.f));
-          UI_PrefWidth(ui_text_dim(2, 1.f)) ui_label(leaf);
-          ui_spacer(ui_pct(1.f, 0.f));
-          if(has_override) UI_PrefWidth(ui_em(2.5f, 1.f)) RD_Font(RD_FontSlot_Icons)
-          {
-            UI_Signal revert_sig = ui_buttonf("%S###tweak_revert_%S", rd_icon_kind_text_table[RD_IconKind_Undo], t->name);
-            if(ui_hovering(revert_sig)) UI_Tooltip RD_Font(RD_FontSlot_Main) UI_PrefWidth(ui_text_dim(8, 1.f))
-            {
-              ui_labelf("Revert to the compiled default (%g)", t->default_value);
-            }
-            if(ui_clicked(revert_sig))
-            {
-              rd_tweak_clear(t->name);
-            }
-            UI_Signal write_sig = ui_buttonf("%S###tweak_write_%S", rd_icon_kind_text_table[RD_IconKind_Save], t->name);
-            if(ui_hovering(write_sig)) UI_Tooltip RD_Font(RD_FontSlot_Main) UI_PrefWidth(ui_text_dim(8, 1.f))
-            {
-              ui_labelf("Write %g into %S as the new default", value, t->file);
-            }
-            if(ui_clicked(write_sig))
-            {
-              rd_tweak_write_default_to_source(t, value);
-            }
-          }
-          UI_PrefWidth(ui_em(9.f, 1.f)) UI_CornerRadius(2.f) RD_Font(RD_FontSlot_Code) UI_TextAlignment(UI_TextAlign_Center)
-          {
-            ui_set_next_hover_cursor(WM_Cursor_LeftRight);
-            UI_Box *val_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawText,
-                                                        "%g###tweak_val_%S", value, t->name);
-            UI_Signal val_sig = ui_signal_from_box(val_box);
-            if(ui_dragging(val_sig))
-            {
-              if(ui_pressed(val_sig))
-              {
-                ui_store_drag_struct(&value);
-              }
-              F32 drag_base = *ui_get_drag_struct(F32);
-              F32 px_per_default = ClampBot(abs_f32(t->default_value), 0.1f)/200.f;
-              rd_tweak_set_f32(t->name, drag_base + ui_drag_delta().x*px_per_default);
-            }
-          }
-          ui_spacer(ui_em(1.f, 1.f));
-        }
-        if(stale) { ui_pop_tag(); }
-      }
-    }
-  }
-  rd_store_view_scroll_pos(scroll_pos);
-
   scratch_end(scratch);
 }

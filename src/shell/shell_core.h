@@ -644,22 +644,25 @@ struct RD_WindowStateSlot
 ////////////////////////////////
 //~ rjf: Tweaks
 
-// a tweak is an ordinary setting declared from a C call site instead of an
-// mdesk schema string: rd_tweak_f32("name", default) registers the dynamic
-// schema half (name, default, __FILE__ for later source write-back) & returns
-// the live value. values are NOT stored here — they're cfg overrides (written
-// to the transient bucket by the tweaks view, so tuning never dirties
-// serialized config; promotion = moving the node to user/project/theme)
+// a code-declared setting: rd_tweak_f32("name", default) is an ordinary
+// setting whose default (& metadata) come from the C call site instead of an
+// mdesk schema string. this registry is only the dynamic half of the schema
+// table — each frame it's projected into the `code_defaults` schema (which
+// the `user` schema @inherits), so the rows surface in the standard settings
+// UI with the standard editors/revert; values are ordinary cfg settings,
+// written wherever the hosting settings UI writes. the one extra affordance
+// is write-back: a diverged value can be written to the call site as the new
+// compiled default (the unique name string anchors the site)
 
 typedef struct RD_TweakNode RD_TweakNode;
 struct RD_TweakNode
 {
   RD_TweakNode *hash_next;
-  RD_TweakNode *order_next;   // registration order; stable panel listing
+  RD_TweakNode *order_next;   // registration order; stable schema ordering
   String8 name;
   String8 file;               // __FILE__ of the call site
   F32 default_value;          // the literal at the call site, as-compiled
-  U64 last_use_frame_index;   // panel dims rows whose call site didn't run this frame
+  U64 last_use_frame_index;   // stamped when the call site runs
 };
 
 ////////////////////////////////
@@ -721,10 +724,14 @@ struct RD_State
   // rjf: vocab table
   RD_VocabInfoMap vocab_info_map;
 
-  // rjf: tweak registry
+  // rjf: code-declared settings registry (projected into the `code_defaults` schema)
   RD_TweakNode *tweak_slots[64];
   RD_TweakNode *first_tweak;
   RD_TweakNode *last_tweak;
+  Arena *tweak_schema_arena;
+  CFG_SchemaNode *tweak_schema_node;
+  U64 tweak_schema_gen;
+  U64 tweak_schema_built_gen;
 
   // rjf: log
   Log *log;
@@ -962,9 +969,7 @@ internal U64 rd_setting_u64_from_name(String8 name);
 internal F32 rd_setting_f32_from_name(String8 name);
 
 internal RD_TweakNode *rd_tweak_node_from_name(String8 name, F32 default_value, String8 file);
-internal CFG_Node *rd_tweak_override_from_name(String8 name);
-internal void rd_tweak_set_f32(String8 name, F32 value);
-internal void rd_tweak_clear(String8 name);
+internal RD_TweakNode *rd_tweak_node_lookup(String8 name);
 internal F32 rd_tweak_f32_value(String8 name, F32 default_value, String8 file);
 internal B32 rd_tweak_write_default_to_source(RD_TweakNode *tweak, F32 value);
 #define rd_tweak_f32(name, default_value) rd_tweak_f32_value(str8_lit(name), (default_value), str8_lit(__FILE__))
