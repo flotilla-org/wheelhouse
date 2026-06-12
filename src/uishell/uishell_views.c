@@ -4937,42 +4937,47 @@ RD_VIEW_UI_FUNCTION_DEF(tweaks)
       }
       else
       {
-        //- tweak row: leaf name, draggable value, revert button when off-default.
+        //- tweak row: leaf name, draggable value, revert button when an
+        // override exists. the value is an ordinary cfg setting: scrubbing
+        // writes an override into the transient bucket, revert deletes it.
         // rows whose call site didn't run this frame are dimmed: the value is
         // still live, but nothing currently consumes it
         RD_TweakNode *t = row->tweak;
         U64 dot_pos = str8_find_needle(t->name, 0, str8_lit("."), 0);
         String8 leaf = (dot_pos < t->name.size ? str8_skip(t->name, dot_pos+1) : t->name);
         B32 stale = (t->last_use_frame_index+2 < rd_state->frame_index);
+        CFG_Node *override = rd_tweak_override_from_name(t->name);
+        B32 has_override = (override->first != &cfg_nil_node && override->first->string.size != 0);
+        F32 value = has_override ? (F32)f64_from_str8(override->first->string) : t->default_value;
         if(stale) { ui_push_tagf("weak"); }
         UI_Row
         {
           ui_spacer(ui_em(2.f, 1.f));
           UI_PrefWidth(ui_text_dim(2, 1.f)) ui_label(leaf);
           ui_spacer(ui_pct(1.f, 0.f));
-          if(t->value != t->default_value) UI_PrefWidth(ui_em(2.5f, 1.f)) RD_Font(RD_FontSlot_Icons)
+          if(has_override) UI_PrefWidth(ui_em(2.5f, 1.f)) RD_Font(RD_FontSlot_Icons)
           {
             UI_Signal revert_sig = ui_buttonf("%S###tweak_revert_%S", rd_icon_kind_text_table[RD_IconKind_Undo], t->name);
             if(ui_clicked(revert_sig))
             {
-              t->value = t->default_value;
+              rd_tweak_clear(t->name);
             }
           }
           UI_PrefWidth(ui_em(9.f, 1.f)) UI_CornerRadius(2.f) RD_Font(RD_FontSlot_Code) UI_TextAlignment(UI_TextAlign_Center)
           {
             ui_set_next_hover_cursor(WM_Cursor_LeftRight);
             UI_Box *val_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawText,
-                                                        "%g###tweak_val_%S", t->value, t->name);
+                                                        "%g###tweak_val_%S", value, t->name);
             UI_Signal val_sig = ui_signal_from_box(val_box);
             if(ui_dragging(val_sig))
             {
               if(ui_pressed(val_sig))
               {
-                ui_store_drag_struct(&t->value);
+                ui_store_drag_struct(&value);
               }
               F32 drag_base = *ui_get_drag_struct(F32);
               F32 px_per_default = ClampBot(abs_f32(t->default_value), 0.1f)/200.f;
-              t->value = drag_base + ui_drag_delta().x*px_per_default;
+              rd_tweak_set_f32(t->name, drag_base + ui_drag_delta().x*px_per_default);
             }
           }
           ui_spacer(ui_em(1.f, 1.f));

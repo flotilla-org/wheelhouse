@@ -501,7 +501,6 @@ rd_tweak_node_from_name(String8 name, F32 default_value, String8 file)
     node->name = push_str8_copy(rd_state->arena, name);
     node->file = push_str8_copy(rd_state->arena, file);
     node->default_value = default_value;
-    node->value = default_value;
     node->hash_next = rd_state->tweak_slots[slot_idx];
     rd_state->tweak_slots[slot_idx] = node;
     SLLQueuePush_N(rd_state->first_tweak, rd_state->last_tweak, node, order_next);
@@ -510,11 +509,64 @@ rd_tweak_node_from_name(String8 name, F32 default_value, String8 file)
   return node;
 }
 
+internal CFG_Node *
+rd_tweak_override_from_name(String8 name)
+{
+  CFG_Node *result = &cfg_nil_node;
+  String8 buckets[] =
+  {
+    str8_lit("transient"),
+    str8_lit("project"),
+    str8_lit("user"),
+  };
+  for EachElement(idx, buckets)
+  {
+    CFG_Node *bucket = cfg_node_child_from_string(cfg_node_root(), buckets[idx]);
+    CFG_Node *tweaks = cfg_node_child_from_string(bucket, str8_lit("tweaks"));
+    CFG_Node *node = cfg_node_child_from_string(tweaks, name);
+    if(node != &cfg_nil_node)
+    {
+      result = node;
+      break;
+    }
+  }
+  return result;
+}
+
+internal void
+rd_tweak_set_f32(String8 name, F32 value)
+{
+  CFG_Node *override = rd_tweak_override_from_name(name);
+  if(override == &cfg_nil_node)
+  {
+    CFG_Node *transient = cfg_node_child_from_string_or_alloc(rd_state->cfg, cfg_node_root(), str8_lit("transient"));
+    CFG_Node *tweaks = cfg_node_child_from_string_or_alloc(rd_state->cfg, transient, str8_lit("tweaks"));
+    override = cfg_node_child_from_string_or_alloc(rd_state->cfg, tweaks, name);
+  }
+  cfg_node_new_replacef(rd_state->cfg, override, "%f", value);
+}
+
+internal void
+rd_tweak_clear(String8 name)
+{
+  CFG_Node *override = rd_tweak_override_from_name(name);
+  if(override != &cfg_nil_node)
+  {
+    cfg_node_release(rd_state->cfg, override);
+  }
+}
+
 internal F32
 rd_tweak_f32_value(String8 name, F32 default_value, String8 file)
 {
-  RD_TweakNode *node = rd_tweak_node_from_name(name, default_value, file);
-  return node->value;
+  rd_tweak_node_from_name(name, default_value, file);
+  F32 result = default_value;
+  CFG_Node *override = rd_tweak_override_from_name(name);
+  if(override->first != &cfg_nil_node && override->first->string.size != 0)
+  {
+    result = (F32)f64_from_str8(override->first->string);
+  }
+  return result;
 }
 
 internal CFG_Node *

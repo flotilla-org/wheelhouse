@@ -644,9 +644,12 @@ struct RD_WindowStateSlot
 ////////////////////////////////
 //~ rjf: Tweaks
 
-// live-tunable constants, registered at their use site via rd_tweak_f32("name", default);
-// the unique name string anchors the call site (panel display, & later: source
-// write-back + config/theme resolution), the file records where the literal lives
+// a tweak is an ordinary setting declared from a C call site instead of an
+// mdesk schema string: rd_tweak_f32("name", default) registers the dynamic
+// schema half (name, default, __FILE__ for later source write-back) & returns
+// the live value. values are NOT stored here — they're cfg overrides (written
+// to the transient bucket by the tweaks view, so tuning never dirties
+// serialized config; promotion = moving the node to user/project/theme)
 
 typedef struct RD_TweakNode RD_TweakNode;
 struct RD_TweakNode
@@ -656,7 +659,6 @@ struct RD_TweakNode
   String8 name;
   String8 file;               // __FILE__ of the call site
   F32 default_value;          // the literal at the call site, as-compiled
-  F32 value;                  // current live value
   U64 last_use_frame_index;   // panel dims rows whose call site didn't run this frame
 };
 
@@ -960,6 +962,9 @@ internal U64 rd_setting_u64_from_name(String8 name);
 internal F32 rd_setting_f32_from_name(String8 name);
 
 internal RD_TweakNode *rd_tweak_node_from_name(String8 name, F32 default_value, String8 file);
+internal CFG_Node *rd_tweak_override_from_name(String8 name);
+internal void rd_tweak_set_f32(String8 name, F32 value);
+internal void rd_tweak_clear(String8 name);
 internal F32 rd_tweak_f32_value(String8 name, F32 default_value, String8 file);
 #define rd_tweak_f32(name, default_value) rd_tweak_f32_value(str8_lit(name), (default_value), str8_lit(__FILE__))
 
