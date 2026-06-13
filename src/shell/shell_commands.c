@@ -443,31 +443,35 @@ uishell_dispatch_ui_event_command(String8 name)
     uishell_push_window_ui_event(&event2);
     push_event = 0;
   }
+  // NOTE: deletion edits carry a delta describing text direction, NOT
+  // navigation intent — without SkipDefaultFocusNav, a default-focus-nav
+  // root that builds before the focused text field (the sidebar) consumes
+  // them as widget cycling & the field never sees the deletion
   else if(str8_match(name, str8_lit("delete_single"), 0))
   {
     event.kind = UI_EventKind_Edit;
-    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect;
+    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect|UI_EventFlag_SkipDefaultFocusNav;
     event.delta_unit = UI_EventDeltaUnit_Char;
     event.delta_2s32 = v2s32(+1, +0);
   }
   else if(str8_match(name, str8_lit("delete_chunk"), 0))
   {
     event.kind = UI_EventKind_Edit;
-    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect;
+    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect|UI_EventFlag_SkipDefaultFocusNav;
     event.delta_unit = UI_EventDeltaUnit_Word;
     event.delta_2s32 = v2s32(+1, +0);
   }
   else if(str8_match(name, str8_lit("backspace_single"), 0))
   {
     event.kind = UI_EventKind_Edit;
-    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect;
+    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect|UI_EventFlag_SkipDefaultFocusNav;
     event.delta_unit = UI_EventDeltaUnit_Char;
     event.delta_2s32 = v2s32(-1, +0);
   }
   else if(str8_match(name, str8_lit("backspace_chunk"), 0))
   {
     event.kind = UI_EventKind_Edit;
-    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect;
+    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect|UI_EventFlag_SkipDefaultFocusNav;
     event.delta_unit = UI_EventDeltaUnit_Word;
     event.delta_2s32 = v2s32(-1, +0);
   }

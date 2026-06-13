@@ -2506,6 +2506,52 @@ rd_cell(RD_CellParams *params, String8 string)
       }
     }
   }
+
+  //////////////////////////////
+  //- rjf: build write-as-code-default button (settings whose default is a C
+  // call-site literal; writes the current value back as the new compiled default)
+  //
+  if(params->flags & RD_CellFlag_WriteCodeDefaultButton && !is_focus_active && !is_focus_active_disabled)
+  {
+    UI_Parent(edit_box)
+      UI_PrefWidth(ui_em(2.f, 1.f))
+    {
+      UI_TagF(".")
+        UI_TagF("weak")
+        UI_TagF("implicit")
+        UI_Column
+        UI_Padding(ui_pct(1, 0))
+        UI_PrefHeight(ui_em(2.f, 1.f))
+        UI_CornerRadius(ui_top_font_size()*0.5f)
+        RD_Font(RD_FontSlot_Icons)
+        UI_TextAlignment(UI_TextAlign_Center)
+      {
+        UI_Box *write_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|
+                                                      UI_BoxFlag_DrawHotEffects|
+                                                      UI_BoxFlag_DrawBorder|
+                                                      UI_BoxFlag_DrawBackground|
+                                                      UI_BoxFlag_DisableFocusOverlay|
+                                                      UI_BoxFlag_DisableFocusBorder|
+                                                      UI_BoxFlag_Clickable,
+                                                      "%S##write_code_default", rd_icon_kind_text_table[RD_IconKind_Save]);
+        UI_Signal sig = ui_signal_from_box(write_box);
+        if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+        {
+          ui_state->tooltip_anchor_key = write_box->key;
+          ui_label(str8_lit("Write To Source As New Default"));
+        }
+        if(ui_pressed(sig) && params->write_code_default_out)
+        {
+          params->write_code_default_out[0] = 1;
+        }
+      }
+      // TODO(rjf): @hack
+      if(build_toggle_switch || build_slider)
+      {
+        ui_spacer(ui_em(1.f, 1.f));
+      }
+    }
+  }
   
   //////////////////////////////
   //- rjf: build toggle-switch

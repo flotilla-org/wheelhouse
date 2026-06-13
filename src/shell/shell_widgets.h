@@ -27,6 +27,7 @@ enum
   //- rjf: extra button extensions
   RD_CellFlag_EmptyEditButton     = (1<<6),
   RD_CellFlag_RevertButton        = (1<<7),
+  RD_CellFlag_WriteCodeDefaultButton = (1<<15),
 
   //- rjf: behavior
   RD_CellFlag_DisableEdit         = (1<<8),
@@ -70,6 +71,9 @@ struct RD_CellParams
 
   //- rjf: revert out
   B32 *revert_out;
+
+  //- rjf: write-as-code-default out
+  B32 *write_code_default_out;
 
   //- rjf: text editing r/w info
   TxtPt *cursor;

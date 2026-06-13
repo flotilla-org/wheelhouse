@@ -1542,6 +1542,7 @@ uishell_watch_view_ui(Rng2F32 rect)
               }
               
               B32 revert_cell = 0;
+              B32 write_code_default_cell = 0;
               UI_Signal sig = {0};
               UI_Parent(cell_box)
                 UI_FocusHot(cell_selected ? UI_FocusKind_On : UI_FocusKind_Off)
@@ -1601,6 +1602,7 @@ uishell_watch_view_ui(Rng2F32 rect)
                     cell_params.description = cell_info.description;
                   }
                   cell_params.revert_out = &revert_cell;
+                  cell_params.write_code_default_out = &write_code_default_cell;
                   if(cell_selected && wv->text_editing && cell->flags & UIShell_WatchCellFlag_NoEval)
                   {
                     MemoryZeroStruct(&cell_params.meta_fstrs);
@@ -1630,6 +1632,10 @@ uishell_watch_view_ui(Rng2F32 rect)
                            !md_node_has_tag(child_schema, str8_lit("no_revert"), 0))
                         {
                           cell_params.flags |= RD_CellFlag_RevertButton;
+                        }
+                        if(md_node_has_tag(child_schema, str8_lit("code_default"), 0))
+                        {
+                          cell_params.flags |= RD_CellFlag_WriteCodeDefaultButton;
                         }
                       }
                     }
@@ -1691,6 +1697,29 @@ uishell_watch_view_ui(Rng2F32 rect)
                   CFG_Node *cfg = rd_cfg_from_eval_space(cell->eval.space);
                   String8 child_key = e_string_from_id(cell->eval.space.u64s[1]);
                   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(cfg, child_key));
+                }
+                if(write_code_default_cell && cell->eval.space.kind == RD_EvalSpaceKind_MetaCfg)
+                {
+                  CFG_Node *cfg = rd_cfg_from_eval_space(cell->eval.space);
+                  String8 child_key = e_string_from_id(cell->eval.space.u64s[1]);
+                  CFG_Node *child_cfg = cfg_node_child_from_string(cfg, child_key);
+                  RD_TweakNode *tweak = rd_tweak_node_lookup(child_key);
+                  if(tweak != 0)
+                  {
+                    // resolve the value the same way the cell displays it (the
+                    // committed string may be an expression), write it to the
+                    // call site, & drop the now-redundant override on success
+                    F32 value = tweak->default_value;
+                    if(child_cfg != &cfg_nil_node && child_cfg->first->string.size != 0)
+                    {
+                      E_Eval value_eval = e_eval_from_stringf("raw((float32)(%S))", child_cfg->first->string);
+                      value = e_value_eval_from_eval(value_eval).value.f32;
+                    }
+                    if(rd_tweak_write_default_to_source(tweak, value) && child_cfg != &cfg_nil_node)
+                    {
+                      cfg_node_release(rd_state->cfg, child_cfg);
+                    }
+                  }
                 }
                 if((!(cell_info.flags & UIShell_WatchCellFlag_ActivateWithSingleClick) && ui_double_clicked(sig)) ||
                    ((cell_info.flags & UIShell_WatchCellFlag_ActivateWithSingleClick) && ui_clicked(sig)) ||
@@ -4856,7 +4885,7 @@ RD_VIEW_UI_FUNCTION_DEF(geo3d)
   rd_store_view_param_f32(str8_lit("yaw"),   yaw_target);
   rd_store_view_param_f32(str8_lit("pitch"), pitch_target);
   rd_store_view_param_f32(str8_lit("zoom"),  zoom_target);
-  
+
   access_close(access);
   scratch_end(scratch);
 }

@@ -65,7 +65,7 @@ cfg_node_ptr_array_from_list(Arena *arena, CFG_NodePtrList *list)
 ////////////////////////////////
 //~ rjf: Schema Data Structure Functions
 
-internal void
+internal CFG_SchemaNode *
 cfg_schema_table_insert(Arena *arena, CFG_SchemaTable *table, String8 name, MD_Node *schema)
 {
   U64 hash = u64_hash_from_str8(name);
@@ -86,6 +86,7 @@ cfg_schema_table_insert(Arena *arena, CFG_SchemaTable *table, String8 name, MD_N
     node->schema = schema;
     SLLStackPush(table->slots[slot_idx], node);
   }
+  return node;
 }
 
 internal MD_Node *
