@@ -1562,7 +1562,7 @@ rd_view_ui(Rng2F32 rect)
     {
       view_container->surface_effect = str8_lit("crt");
       view_container->surface_effect_params[0] = v4f32(rd_tweak_f32_range("crt_scanline_intensity", 0.4f, 0.f, 1.f),
-                                                       rd_tweak_f32_range("crt_curvature", 0.08f, 0.f, 0.5f),
+                                                       rd_tweak_f32_range("crt_curvature", 0.016981f, 0.f, 0.5f),
                                                        rd_tweak_f32_range("crt_vignette", 0.35f, 0.f, 2.f),
                                                        rd_tweak_f32_range("crt_aperture_mask", 0.5f, 0.f, 1.f));
       view_container->surface_effect_params[1] = v4f32(rd_tweak_f32_range("crt_rgb_shift_px", 0.75f, 0.f, 2.f),
@@ -6489,16 +6489,16 @@ rd_window_frame(void)
           Rng2F32 content_uv = ws->workspace_content_uv;
           F32 card_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
           F32 cw = card_aspect;
-          F32 fov = rd_tweak_f32_range("coverflow_fov", 0.10f, 0.02f, 0.2f); // NOTE: trig here is in TURNS (base_math convention): 0.10 = 36 degrees
+          F32 fov = rd_tweak_f32_range("coverflow_fov", 0.098558f, 0.02f, 0.2f); // NOTE: trig here is in TURNS (base_math convention): 0.10 = 36 degrees
           F32 region_aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
-          F32 eye_z = (cw*rd_tweak_f32_range("coverflow_zoom_fit", 0.80f, 0.3f, 2.f))/tan_f32(fov*0.5f);
-          F32 row_y = rd_tweak_f32_range("coverflow_row_y", 0.55f, 0.f, 1.5f);
+          F32 eye_z = (cw*rd_tweak_f32_range("coverflow_zoom_fit", 1.2239f, 0.3f, 2.f))/tan_f32(fov*0.5f);
+          F32 row_y = rd_tweak_f32_range("coverflow_row_y", 0.494243f, 0.f, 1.5f);
           // NOTE: the view is a bare translation - camera on the -z side at
           // (0, cam_y, -eye_z), +x right, +y up, scene receding toward +z, which
           // is what make_perspective_4x4f32 expects (w' = +z). the inherited
           // make_look_at_4x4f32 builds its basis from eye-minus-center & rotates
           // the scene 180 degrees; an axis-aligned camera needs none of it
-          F32 cam_y = row_y - rd_tweak_f32_range("coverflow_cam_y_offset", 0.14f, -0.5f, 0.5f);
+          F32 cam_y = row_y - rd_tweak_f32_range("coverflow_cam_y_offset", 0.027191f, -0.5f, 0.5f);
           Mat4x4F32 view = make_translate_4x4f32(v3f32(0, -cam_y, eye_z));
           Mat4x4F32 projection = make_perspective_4x4f32(fov, region_aspect, 0.1f, 100.f);
           Mat4x4F32 proj_view = mul_4x4f32(projection, view);
@@ -6512,11 +6512,11 @@ rd_window_frame(void)
                                      content_uv.x1 - content_uv.x0, content_uv.y1 - content_uv.y0);
           cf_data->cards = push_array(ui_build_arena(), RD_CoverFlowCard, tile_count);
           F32 cf_center_gap = rd_tweak_f32_range("coverflow_center_gap", 0.62f, 0.2f, 1.2f);
-          F32 cf_deck_gap   = rd_tweak_f32_range("coverflow_deck_gap", 0.25f, 0.05f, 0.8f);
+          F32 cf_deck_gap   = rd_tweak_f32_range("coverflow_deck_gap", 0.262894f, 0.05f, 0.8f);
           F32 cf_center_z   = rd_tweak_f32_range("coverflow_center_z", 1.0f, 0.f, 3.f);
-          F32 cf_deck_z     = rd_tweak_f32_range("coverflow_deck_z", 0.06f, 0.f, 0.5f);
-          F32 cf_tilt       = rd_tweak_f32_range("coverflow_tilt", 0.14f, 0.f, 0.25f);
-          F32 cf_refl_gap   = rd_tweak_f32_range("coverflow_refl_gap", 0.02f, 0.f, 0.2f);
+          F32 cf_deck_z     = rd_tweak_f32_range("coverflow_deck_z", 0.322589f, 0.f, 0.5f);
+          F32 cf_tilt       = rd_tweak_f32_range("coverflow_tilt", 0.11125f, 0.f, 0.25f);
+          F32 cf_refl_gap   = rd_tweak_f32_range("coverflow_refl_gap", 0.2f, 0.f, 0.5f);
           {
             U64 card_idx = 0;
             for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
