@@ -3236,7 +3236,7 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 }
 
 internal void
-rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right)
+rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right, B32 tabs_in_title_bar)
 {
   CFG_PanelTree panel_tree = mount->panel_tree;
   B32 window_layout_reset = ws->window_layout_reset;
@@ -3630,11 +3630,15 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           // tab strip touches the workspace edge yields that end to the title-bar
           // chrome overlaid there. only the edge-touching strips inset; interior
           // top panels are untouched.
-          if(panel->tab_side == Side_Min && panel_rect.p0.y <= panel_area_rect.p0.y + 1.f)
+          if(tabs_in_title_bar && panel->tab_side == Side_Min && panel_rect.p0.y <= panel_area_rect.p0.y + 1.f)
           {
             if(tab_strip_inset_left  > 0 && panel_rect.p0.x <= panel_area_rect.p0.x + 1.f) { tab_bar_rect.p0.x += tab_strip_inset_left;  }
             if(tab_strip_inset_right > 0 && panel_rect.p1.x >= panel_area_rect.p1.x - 1.f) { tab_bar_rect.p1.x -= tab_strip_inset_right; }
             tab_bar_rect.p0.x = Min(tab_bar_rect.p0.x, tab_bar_rect.p1.x);
+            // this strip lives in the title-bar band: register it as custom
+            // title-bar client area so the WM treats it as interactive UI &
+            // doesn't consume clicks on tabs as window drags.
+            wm_window_push_custom_title_bar_client_area(ws->os, tab_bar_rect);
           }
           
           //////////////////////////
@@ -6053,6 +6057,11 @@ rd_window_frame(void)
     ////////////////////////////
     //- rjf: @window_ui_part top bar
     //
+    // tabs-in-title-bar (ADR-0006): gated on a free title-bar row (native menu)
+    // + dev toggle. when on, the top bar yields its middle band so the
+    // workspace's top-row tab strips render there; see the top-bar container
+    // flags below & the panel-area raise/insets further down.
+    B32 tabs_in_title_bar = (DEV_tabs_in_title_bar && wm_application_menu_bar_is_native());
     ProfScope("build top bar")
     {
       B32 draw_custom_title_bar_controls = wm_window_should_draw_custom_title_bar_controls(ws->os);
@@ -6153,12 +6162,20 @@ rd_window_frame(void)
       wm_window_clear_custom_border_data(ws->os);
       wm_window_push_custom_edges(ws->os, window_edge_px);
       wm_window_push_custom_title_bar(ws->os, dim_2f32(top_bar_rect).y);
-      ui_set_next_flags(UI_BoxFlag_DefaultFocusNav|UI_BoxFlag_DisableFocusOverlay);
       UI_Focus((ws->menu_bar_focused && window_is_focused && !ui_any_ctx_menu_is_open()) ? UI_FocusKind_On : UI_FocusKind_Null)
         UI_TagF("menu_bar")
-        UI_Pane(top_bar_rect, str8_lit("###top_bar"))
-        UI_WidthFill UI_Row
-        UI_Focus(UI_FocusKind_Null)
+      {
+        // when tabs are in the title bar, the top bar must not cover or capture
+        // the middle band — the workspace's top-row tab strips render there & the
+        // reverse-order draw puts the (earlier-built) top bar on top, so drop its
+        // background/border/click-capture and keep only the end-zone clusters.
+        // window drag in the bare band rides the WM custom title bar.
+        UI_BoxFlags top_bar_flags = UI_BoxFlag_Clip|UI_BoxFlag_DefaultFocusNav|UI_BoxFlag_DisableFocusOverlay;
+        if(!tabs_in_title_bar) { top_bar_flags |= UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground; }
+        ui_set_next_child_layout_axis(Axis2_Y);
+        ui_set_next_rect(top_bar_rect);
+        UI_Box *top_bar_pane = ui_build_box_from_string(top_bar_flags, str8_lit("###top_bar"));
+        UI_Parent(top_bar_pane) UI_PrefWidth(ui_pct(1, 0)) UI_WidthFill UI_Row UI_Focus(UI_FocusKind_Null)
       {
         UI_Key menu_bar_group_key = ui_key_from_string(ui_key_zero(), str8_lit("###top_bar_group"));
         MemoryZeroArray(ui_top_parent()->parent->corner_radii);
@@ -6486,8 +6503,9 @@ rd_window_frame(void)
           }
         }
       }
+      }
     }
-    
+
     ////////////////////////////
     //- rjf: @window_ui_part bottom bar
     //
@@ -6609,8 +6627,7 @@ rd_window_frame(void)
     // top-row tab strips are inset by the chrome end-zones — right always (the
     // workspace touches the window's right edge), left only when the sidebar is
     // collapsed (otherwise the leading buttons sit over the sidebar). previews &
-    // zoom builds are unaffected.
-    B32 tabs_in_title_bar = (DEV_tabs_in_title_bar && wm_application_menu_bar_is_native());
+    // zoom builds are unaffected. (tabs_in_title_bar computed up at the top bar.)
     Rng2F32 main_workspace_rect = workspace_rect;
     F32 main_tab_inset_left = 0.f;
     F32 main_tab_inset_right = 0.f;
@@ -6687,7 +6704,7 @@ rd_window_frame(void)
         ws->workspace_surface_entry_count += 1;
         UI_Parent(wrapper)
         {
-          rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open, main_tab_inset_left, main_tab_inset_right);
+          rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open, main_tab_inset_left, main_tab_inset_right, tabs_in_title_bar);
         }
         ws->active_workspace_surface_entry = 0;
       }
@@ -6717,7 +6734,7 @@ rd_window_frame(void)
         ws->workspace_surface_entry_count += 1;
         UI_Parent(child_wrapper) UI_Focus(UI_FocusKind_Off)
         {
-          rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, &child->mount, 0, 0, 0.f, 0.f);
+          rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, &child->mount, 0, 0, 0.f, 0.f, 0);
         }
         ws->active_workspace_surface_entry = 0;
       }
@@ -7045,7 +7062,7 @@ rd_window_frame(void)
     {
       // direct build (no preview surfaces demanded — e.g. sidebar collapsed):
       // gets the same tabs-in-title-bar raise/insets as the surface path above
-      rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open, main_tab_inset_left, main_tab_inset_right);
+      rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open, main_tab_inset_left, main_tab_inset_right, tabs_in_title_bar);
     }
     
     ////////////////////////////
