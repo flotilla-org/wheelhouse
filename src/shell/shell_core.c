@@ -2825,6 +2825,12 @@ uishell_controlled_split_control_width_range_px(UIShell_ControlledSplit *split, 
 internal F32
 uishell_controlled_split_control_width_px(UIShell_ControlledSplit *split, Rng2F32 rect)
 {
+  // collapsed (sidebar-collapse chrome element): the control surface is hidden &
+  // the workspace takes the full width. persisted next to control_split_pct.
+  if(cfg_node_child_from_string(split->owner_cfg, str8_lit("control_split_collapsed")) != &cfg_nil_node)
+  {
+    return 0;
+  }
   F32 rect_width = dim_2f32(rect).x;
   Rng1F32 width_range = uishell_controlled_split_control_width_range_px(split, rect);
   F32 width = 0;
@@ -3193,48 +3199,48 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           }
         }
 
-        ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.25f), 1.f));
-        UI_PrefWidth(ui_pct(1.f, 0.f))
-          UI_PrefHeight(ui_em(2.25f, 1.f))
-          UI_Row
+        //- rjf: the action row is the sidebar's chrome host (ADR-0006): it
+        // builds the new-workspace / overview elements only when chrome
+        // placement relocated them here (the title bar couldn't fit them);
+        // by default they live in the title bar & this row is absent.
+        B32 new_workspace_here = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions);
+        B32 overview_here      = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions);
+        if(new_workspace_here || overview_here)
         {
-          ui_spacer(ui_em(0.5f, 1.f));
-          UI_TextAlignment(UI_TextAlign_Center)
-            UI_PrefWidth(ui_pct(1.f, 0.f))
-            UI_PrefHeight(ui_pct(1.f, 0.f))
-            UI_TagF("weak")
+          ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.25f), 1.f));
+          UI_PrefWidth(ui_pct(1.f, 0.f))
+            UI_PrefHeight(ui_em(2.25f, 1.f))
+            UI_Row
           {
-            UI_Signal sig = ui_buttonf("New Workspace###new_workspace");
-            if(ui_clicked(sig))
+            ui_spacer(ui_em(0.5f, 1.f));
+            UI_TextAlignment(UI_TextAlign_Center)
+              UI_PrefWidth(ui_em(2.25f, 1.f))
+              UI_PrefHeight(ui_pct(1.f, 0.f))
             {
-              uishell_cmd("new_workspace", .window = split->owner_cfg->id);
+              if(new_workspace_here) { rd_chrome_build_new_workspace(split->owner_cfg); }
             }
-          }
-          ui_spacer(ui_em(0.25f, 1.f));
-          UI_TextAlignment(UI_TextAlign_Center)
-            UI_PrefWidth(ui_em(2.25f, 1.f))
-            UI_PrefHeight(ui_pct(1.f, 0.f))
-            UI_TagF(ws != &rd_nil_window_state && ws->workspace_zoom_open ? "" : "weak")
-          {
-            UI_Signal sig = rd_icon_button(RD_IconKind_Grid, 0, str8_lit("###workspace_zoom_toggle"));
-            if(ui_clicked(sig) && ws != &rd_nil_window_state)
+            ui_spacer(ui_em(0.25f, 1.f));
+            UI_TextAlignment(UI_TextAlign_Center)
+              UI_PrefWidth(ui_em(2.25f, 1.f))
+              UI_PrefHeight(ui_pct(1.f, 0.f))
             {
-              ws->workspace_zoom_open ^= 1;
+              if(overview_here) { rd_chrome_build_overview_toggle(ws); }
             }
+            ui_spacer(ui_pct(1.f, 0.f));
           }
-          ui_spacer(ui_em(0.5f, 1.f));
+          ui_spacer(ui_px(panel_frame_inset_px+1.f, 1.f));
         }
-        ui_spacer(ui_px(panel_frame_inset_px+1.f, 1.f));
       }
     }
   }
 }
 
 internal void
-rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open)
+rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right, B32 tabs_in_title_bar)
 {
   CFG_PanelTree panel_tree = mount->panel_tree;
   B32 window_layout_reset = ws->window_layout_reset;
+  Rng2F32 panel_area_rect = content_rect; // captured before the per-panel `content_rect` shadows it (for tabs-in-title-bar edge detection)
   
     ////////////////////////////
     //- rjf: @window_ui_part panel non-leaf UI (drag boundaries, drag/drop sites)
@@ -3619,6 +3625,28 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
           tab_bar_rect = intersect_2f32(tab_bar_rect, panel_rect);
           content_rect = intersect_2f32(content_rect, panel_rect);
+
+          // tabs-in-title-bar (ADR-0006): a top-tabbed panel in the top row whose
+          // tab strip touches the workspace edge yields that end to the title-bar
+          // chrome overlaid there. only the edge-touching strips inset; interior
+          // top panels are untouched.
+          // edge-touch tolerance must clear the panel's inward pad (above:
+          // pad_2f32 by ~0.15em + rounding), else every top-row/edge check fails.
+          F32 edge_tol = ui_top_font_size()*0.5f;
+          B32 register_title_bar_tab_strip = 0;
+          if(tabs_in_title_bar && panel->tab_side == Side_Min && panel_rect.p0.y <= panel_area_rect.p0.y + edge_tol)
+          {
+            if(tab_strip_inset_left  > 0 && panel_rect.p0.x <= panel_area_rect.p0.x + edge_tol) { tab_bar_rect.p0.x += tab_strip_inset_left;  }
+            if(tab_strip_inset_right > 0 && panel_rect.p1.x >= panel_area_rect.p1.x - edge_tol) { tab_bar_rect.p1.x -= tab_strip_inset_right; }
+            tab_bar_rect.p0.x = Min(tab_bar_rect.p0.x, tab_bar_rect.p1.x);
+            // this strip lives in the title-bar band: register it as custom
+            // title-bar client area so the WM treats it as interactive UI &
+            // doesn't consume clicks on tabs as window drags. registered below
+            // (after the strip is built) covering only the occupied extent (up
+            // to the add-tab button) — the empty space past the last tab stays
+            // a window-drag handle, like a browser tab strip.
+            register_title_bar_tab_strip = 1;
+          }
           
           //////////////////////////
           //- rjf: decide to skip this panel (e.g. if it is too small
@@ -4018,6 +4046,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //- rjf: build tab bar container
           //
           UI_Box *tab_bar_box = &ui_nil_box;
+          UI_Box *tab_strip_add_button_box = &ui_nil_box;
           if(build_panel) UI_CornerRadius(0) UI_Rect(tab_bar_rect)
           {
             tab_bar_box = ui_build_box_from_stringf(UI_BoxFlag_Clip|
@@ -4282,6 +4311,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             {
               ui_set_next_child_layout_axis(Axis2_Y);
               UI_Box *container = ui_build_box_from_stringf(!is_changing_panel_boundaries*UI_BoxFlag_AnimatePosX, "###add_new_tab");
+              tab_strip_add_button_box = container;
               UI_Parent(container)
               {
                 if(panel->tab_side == Side_Max)
@@ -4336,6 +4366,23 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             
             // rjf: interact with tab bar
             ui_signal_from_box(tab_bar_box);
+
+            // register the title-bar tab strip's interactive extent as custom
+            // client area: from the strip's left edge out to the right edge of
+            // the add-tab button. the empty space past it stays a window-drag
+            // handle (like a browser tab strip). only the visible workspace (or
+            // the direct, non-surface render) owns the real title bar — preview
+            // children render the same layout but must NOT register on the OS
+            // window, or their (differing) strips would blanket the drag space.
+            B32 render_is_title_bar_host = (ws->active_workspace_surface_entry == 0 ||
+                                            ws->active_workspace_surface_entry->composite);
+            if(register_title_bar_tab_strip && render_is_title_bar_host)
+            {
+              F32 occupied_x1 = tab_strip_add_button_box->rect.x1;
+              occupied_x1 = Clamp(tab_bar_rect.x0, occupied_x1, tab_bar_rect.x1);
+              Rng2F32 strip_client_rect = r2f32p(tab_bar_rect.x0, tab_bar_rect.y0, occupied_x1, tab_bar_rect.y1);
+              wm_window_push_custom_title_bar_client_area(ws->os, strip_client_rect);
+            }
           }
           
           //////////////////////////
@@ -4412,6 +4459,139 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
     
     ws->window_layout_reset = 0;
     
+}
+
+////////////////////////////////
+//~ rjf: Chrome Placement (ADR-0006)
+//
+// Measured placement resolution: shell controls (Chrome Elements) compete for a
+// chrome host's width. Each starts at its placement chain's first niche; when a
+// host overflows, its lowest-priority element advances down its chain to the
+// next niche — another (roomier) host, or Hidden — replacing the hardcoded
+// 60em/80em title-bar gates. Widths are measured analytically before the build,
+// because in this immediate-mode UI layout runs after the build, so which-niche
+// (which parent to build an element under) must be decided up front (ADR-0006).
+//
+// Only the title bar is a constrained host today; the sidebar action row is the
+// roomy fallback (treated as effectively unbounded) and Hidden absorbs the rest.
+// When a second constrained host appears, give it a real budget here.
+
+internal RD_ChromeNiche
+rd_chrome_niche_host_is_title_bar(RD_ChromeNiche niche)
+{
+  return (niche == RD_ChromeNiche_TitleBarMenu ||
+          niche == RD_ChromeNiche_TitleBarLeading ||
+          niche == RD_ChromeNiche_TitleBarTrailing);
+}
+
+internal void
+rd_chrome_resolve(RD_ChromeElement *elements, U64 count, F32 title_bar_budget_px, RD_ChromeNiche *niche_out)
+{
+  // rjf: every element starts at the head of its chain
+  U64 chain_pos[RD_ChromeElementKind_COUNT] = {0};
+  for(U64 idx = 0; idx < count; idx += 1)
+  {
+    chain_pos[idx] = 0;
+    niche_out[elements[idx].kind] = (elements[idx].chain_count > 0 ? elements[idx].chain[0] : RD_ChromeNiche_Hidden);
+  }
+
+  // rjf: while the title bar (the only bounded host) overflows, advance its
+  // lowest-priority *advanceable* element down its chain. an element whose chain
+  // terminates in a representation (no further link) is never a victim, so it
+  // stays in its terminal niche (clipped if it must) rather than vanishing —
+  // this is how a must-always-be-reachable control (the sidebar re-open button)
+  // is kept on screen. terminates: every advance is monotonic & only taken when
+  // a next link exists; the loop breaks when nothing advanceable remains.
+  for(;;)
+  {
+    F32 title_bar_used = 0;
+    U64 victim = max_U64;
+    S32 victim_priority = 0;
+    for(U64 idx = 0; idx < count; idx += 1)
+    {
+      if(rd_chrome_niche_host_is_title_bar(niche_out[elements[idx].kind]))
+      {
+        title_bar_used += elements[idx].width_px;
+        B32 can_advance = (chain_pos[idx] + 1 < elements[idx].chain_count);
+        if(can_advance && (victim == max_U64 || elements[idx].priority < victim_priority))
+        {
+          victim = idx;
+          victim_priority = elements[idx].priority;
+        }
+      }
+    }
+    if(title_bar_used <= title_bar_budget_px || victim == max_U64) { break; }
+    chain_pos[victim] += 1;
+    niche_out[elements[victim].kind] = elements[victim].chain[chain_pos[victim]];
+  }
+}
+
+// element build callbacks: each emits its control under the current UI parent,
+// so the same element can be built in whichever niche resolution chose for it
+// (a title-bar niche, or the sidebar action row).
+
+internal UI_Signal
+rd_chrome_build_new_workspace(CFG_Node *owner_cfg)
+{
+  UI_Signal sig = rd_icon_button(RD_IconKind_Add, 0, str8_lit("###new_workspace"));
+  if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  {
+    ui_state->tooltip_anchor_key = sig.box->key;
+    ui_label(str8_lit("New Workspace"));
+  }
+  if(ui_clicked(sig))
+  {
+    uishell_cmd("new_workspace", .window = owner_cfg->id);
+  }
+  return sig;
+}
+
+internal UI_Signal
+rd_chrome_build_overview_toggle(RD_WindowState *ws)
+{
+  UI_Signal sig = {0};
+  UI_TagF(ws != &rd_nil_window_state && ws->workspace_zoom_open ? "" : "weak")
+  {
+    sig = rd_icon_button(RD_IconKind_Grid, 0, str8_lit("###workspace_zoom_toggle"));
+    if(ui_clicked(sig) && ws != &rd_nil_window_state)
+    {
+      ws->workspace_zoom_open ^= 1;
+    }
+  }
+  if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  {
+    ui_state->tooltip_anchor_key = sig.box->key;
+    ui_label(str8_lit("Workspace Overview"));
+  }
+  return sig;
+}
+
+internal UI_Signal
+rd_chrome_build_sidebar_collapse(CFG_Node *owner_cfg)
+{
+  B32 collapsed = (cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed")) != &cfg_nil_node);
+  UI_Signal sig = {0};
+  UI_TagF(collapsed ? "" : "weak")
+  {
+    sig = rd_icon_button(RD_IconKind_List, 0, str8_lit("###sidebar_collapse"));
+  }
+  if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  {
+    ui_state->tooltip_anchor_key = sig.box->key;
+    ui_label(collapsed ? str8_lit("Show Sidebar") : str8_lit("Hide Sidebar"));
+  }
+  if(ui_clicked(sig))
+  {
+    CFG_Node *node = cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed"));
+    if(node != &cfg_nil_node) { cfg_node_release(rd_state->cfg, node); }
+    else                      { cfg_node_new(rd_state->cfg, owner_cfg, str8_lit("control_split_collapsed")); }
+    // this is a layout-changing cfg mutation with no command or animation behind
+    // it, so under frame-on-demand nothing would re-render it until the next
+    // incidental wake — request the frame ourselves (the drag path gets this via
+    // continuous motion events).
+    rd_request_frame();
+  }
+  return sig;
 }
 
 #if COMPILER_MSVC && !BUILD_DEBUG
@@ -5906,20 +6086,154 @@ rd_window_frame(void)
     ////////////////////////////
     //- rjf: @window_ui_part top bar
     //
+    // tabs-in-title-bar (ADR-0006): gated on a free title-bar row (native menu)
+    // + dev toggle. when on, the top bar yields its middle band so the
+    // workspace's top-row tab strips render there; see the top-bar container
+    // flags below & the panel-area raise/insets further down.
+    // tabs in the title bar share the row with whatever menu form is present:
+    // the native menu bar (mac — row is free), the compact kebab (trailing
+    // niche), or the full owner-drawn menu bar (leading niche — tabs inset past
+    // it). overflow when the bar + tabs are both wide is a future concern.
+    B32 compact_menu_bar = rd_setting_b32_from_name(str8_lit("compact_menu_bar"));
+    B32 tabs_in_title_bar = rd_setting_b32_from_name(str8_lit("tabs_in_title_bar"));
     ProfScope("build top bar")
     {
       B32 draw_custom_title_bar_controls = wm_window_should_draw_custom_title_bar_controls(ws->os);
       F32 native_title_bar_left_padding = wm_window_native_title_bar_left_padding(ws->os);
       B32 draw_self_menu_bar = !wm_application_menu_bar_is_native();
+
+      //- rjf: chrome placement resolution (ADR-0006). resolves the title-bar &
+      // sidebar-action chrome elements into niches, stored on ws so both the
+      // title bar (below) and the control surface (later this frame) read the
+      // same result. replaces the former 60em/80em gates. widths are measured
+      // analytically & deliberately over-estimated, so resolution errs toward
+      // shedding an element early rather than overlapping.
+      {
+        F32 font_size = ui_top_font_size();
+        FNT_Tag ui_font  = rd_font_from_slot(RD_FontSlot_Main);
+        FNT_Tag icon_font = rd_font_from_slot(RD_FontSlot_Icons);
+        F32 bar_h = dim_2f32(top_bar_rect).y;
+        F32 icon_button_w = font_size*2.25f; // flat icon buttons (new-workspace, overview)
+
+        // menu bar: compact = a single kebab button; full = sum of menu-title
+        // button widths. each button is sized by ui_text_dim(20,1), which
+        // resolves to 20 + text_size + text_padding*2 (see UI_SizeKind_TextContent
+        // in ui_core.c) — match that exactly so the tabs-in-title-bar leading
+        // inset clears the bar (text_padding was previously omitted, so the
+        // estimate ran short and tabs drew under the menu).
+        F32 menu_button_pad = 20.f + ui_top_text_padding()*2.f;
+        F32 menu_w = 0;
+        if(compact_menu_bar)
+        {
+          menu_w = icon_button_w;
+        }
+        else
+        {
+          RD_AppMenuSpecList app_menus = rd_app_menu_specs();
+          for(U64 idx = 0; idx < app_menus.count; idx += 1)
+          {
+            menu_w += fnt_dim_from_tag_size_string(ui_font, font_size, 0, 0, app_menus.v[idx].label).x;
+            menu_w += menu_button_pad;
+          }
+        }
+
+        // project selector: briefcase icon + project name + padding
+        String8 project_name = {0};
+        {
+          CFG_Node *project = cfg_node_child_from_string(cfg_node_root(), str8_lit("project"));
+          CFG_Node *name = cfg_node_child_from_string(project, str8_lit("name"));
+          project_name = name->first->string;
+          if(project_name.size == 0) { project_name = str8_skip_last_slash(str8_chop_last_dot(rd_state->project_path)); }
+          if(project_name.size == 0) { project_name = str8_lit("Untitled Project"); }
+        }
+        F32 project_w = (fnt_dim_from_tag_size_string(icon_font, font_size, 0, 0, rd_icon_kind_text_table[RD_IconKind_Briefcase]).x +
+                         fnt_dim_from_tag_size_string(ui_font, font_size, 0, 0, project_name).x +
+                         font_size*2.f);
+
+        // available title-bar width = bar width minus the platform-reserved ends
+        // (leading traffic-lights / app icon, trailing window controls) & a margin
+        F32 leading  = (native_title_bar_left_padding > 0 ? native_title_bar_left_padding : bar_h);
+        F32 trailing = (draw_custom_title_bar_controls ? bar_h*3.f : 0.f);
+        F32 title_bar_budget = dim_2f32(top_bar_rect).x - leading - trailing - font_size*2.f;
+
+        // elements & chains. menu/project hide when they don't fit; the action
+        // buttons relocate to the sidebar action row instead (never hidden).
+        // priority = shed order when the title bar overflows (lowest first):
+        // project hides, then overview & new-workspace relocate, then menu hides.
+        RD_ChromeElement chrome_elements[RD_ChromeElementKind_COUNT];
+        U64 chrome_element_count = 0;
+        if(draw_self_menu_bar)
+        {
+          chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+            RD_ChromeElementKind_Menu, menu_w, 3,
+            {RD_ChromeNiche_TitleBarMenu, RD_ChromeNiche_Hidden}, 2};
+        }
+        else
+        {
+          ws->chrome_niche[RD_ChromeElementKind_Menu] = RD_ChromeNiche_Hidden; // native menu bar
+        }
+        if(rd_setting_b32_from_name(str8_lit("show_project_selector")))
+        {
+          chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+            RD_ChromeElementKind_ProjectSelector, project_w, 0,
+            {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_Hidden}, 2};
+        }
+        else
+        {
+          ws->chrome_niche[RD_ChromeElementKind_ProjectSelector] = RD_ChromeNiche_Hidden;
+        }
+        // sidebar-collapse lives only in the title bar — it can't sit in a
+        // collapsed sidebar — & is the stickiest element (sheds last). its chain
+        // terminates in its representation (TitleBarLeading), never Hidden, so it
+        // can never be shed: the sidebar always stays re-openable, even when the
+        // title bar is too narrow for everything (it clips rather than vanishes).
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+          RD_ChromeElementKind_SidebarCollapse, icon_button_w, 5,
+          {RD_ChromeNiche_TitleBarLeading}, 1};
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+          RD_ChromeElementKind_NewWorkspace, icon_button_w, 2,
+          {RD_ChromeNiche_TitleBarLeading, RD_ChromeNiche_SidebarActions}, 2};
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+          RD_ChromeElementKind_OverviewToggle, icon_button_w, 1,
+          {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_SidebarActions}, 2};
+        rd_chrome_resolve(chrome_elements, chrome_element_count, title_bar_budget, ws->chrome_niche);
+
+        // pixel extent actually occupied at each end of the title bar, for the
+        // tabs-in-title-bar inset (below): leading = decorations/icon + leading
+        // buttons; trailing = trailing buttons + project selector + window
+        // controls. a small gap keeps tabs off the buttons.
+        F32 gap = font_size*0.5f;
+        ws->chrome_leading_px = leading +
+          (ws->chrome_niche[RD_ChromeElementKind_SidebarCollapse] == RD_ChromeNiche_TitleBarLeading ? icon_button_w : 0) +
+          (ws->chrome_niche[RD_ChromeElementKind_NewWorkspace]    == RD_ChromeNiche_TitleBarLeading ? icon_button_w : 0) +
+          // the full (owner-drawn) menu bar sits in the leading area; tabs inset past it
+          (!compact_menu_bar && ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu ? menu_w : 0) +
+          gap;
+        ws->chrome_trailing_px = trailing +
+          (ws->chrome_niche[RD_ChromeElementKind_OverviewToggle]  == RD_ChromeNiche_TitleBarTrailing ? icon_button_w : 0) +
+          (ws->chrome_niche[RD_ChromeElementKind_ProjectSelector] == RD_ChromeNiche_TitleBarTrailing ? project_w : 0) +
+          // the compact (kebab) menu renders as the rightmost trailing element
+          (compact_menu_bar && ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu ? icon_button_w : 0) +
+          gap;
+      }
+
       wm_window_clear_custom_border_data(ws->os);
       wm_window_push_custom_edges(ws->os, window_edge_px);
       wm_window_push_custom_title_bar(ws->os, dim_2f32(top_bar_rect).y);
-      ui_set_next_flags(UI_BoxFlag_DefaultFocusNav|UI_BoxFlag_DisableFocusOverlay);
       UI_Focus((ws->menu_bar_focused && window_is_focused && !ui_any_ctx_menu_is_open()) ? UI_FocusKind_On : UI_FocusKind_Null)
         UI_TagF("menu_bar")
-        UI_Pane(top_bar_rect, str8_lit("###top_bar"))
-        UI_WidthFill UI_Row
-        UI_Focus(UI_FocusKind_Null)
+      {
+        // when tabs are in the title bar, the top bar must not cover or capture
+        // the middle band — the workspace's top-row tab strips render there & the
+        // reverse-order draw puts the (earlier-built) top bar on top, so drop its
+        // background/border/click-capture and keep only the end-zone clusters.
+        // window drag in the bare band rides the WM custom title bar.
+        UI_BoxFlags top_bar_flags = UI_BoxFlag_Clip|UI_BoxFlag_DefaultFocusNav|UI_BoxFlag_DisableFocusOverlay;
+        if(!tabs_in_title_bar) { top_bar_flags |= UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground; }
+        ui_set_next_child_layout_axis(Axis2_Y);
+        ui_set_next_rect(top_bar_rect);
+        UI_Box *top_bar_pane = ui_build_box_from_string(top_bar_flags, str8_lit("###top_bar"));
+        UI_Parent(top_bar_pane) UI_PrefWidth(ui_pct(1, 0)) UI_WidthFill UI_Row UI_Focus(UI_FocusKind_Null)
       {
         UI_Key menu_bar_group_key = ui_key_from_string(ui_key_zero(), str8_lit("###top_bar_group"));
         MemoryZeroArray(ui_top_parent()->parent->corner_radii);
@@ -5948,8 +6262,22 @@ rd_window_frame(void)
               }
             }
 
-            //- menu items
-            if(draw_self_menu_bar && dim_2f32(top_bar_rect).x > ui_top_font_size()*60)
+            //- rjf: leading buttons ("a") niche — elements resolved here (ADR-0006)
+            if(ws->chrome_niche[RD_ChromeElementKind_SidebarCollapse] == RD_ChromeNiche_TitleBarLeading)
+              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+            {
+              UI_Signal sig = rd_chrome_build_sidebar_collapse(root_controlled_split.owner_cfg);
+              wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+            }
+            if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_TitleBarLeading)
+              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+            {
+              UI_Signal sig = rd_chrome_build_new_workspace(root_controlled_split.owner_cfg);
+              wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+            }
+
+            //- menu items (full bar)
+            if(ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu && !compact_menu_bar)
             {
               ui_set_next_flags(UI_BoxFlag_DrawBackground);
               UI_PrefWidth(ui_children_sum(1)) UI_Row UI_PrefWidth(ui_text_dim(20, 1)) UI_GroupKey(menu_bar_group_key)
@@ -5964,27 +6292,7 @@ rd_window_frame(void)
                   menu_keys[menu_idx] = menu_key;
                   UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
                   {
-                    if(spec->item_count != 0)
-                    {
-                      rd_app_menu_buttons(spec);
-                    }
-                    if(str8_match(spec->label, str8_lit("Help"), 0))
-                    {
-                      UI_Row UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
-                        ui_label(str8_lit(BUILD_TITLE_STRING_LITERAL));
-                      ui_spacer(ui_em(1.f, 1.f));
-                      UI_PrefHeight(ui_children_sum(1)) UI_Row UI_Padding(ui_pct(1, 0))
-                      {
-                        R_Handle texture = rd_state->icon_texture;
-                        Vec2S32 texture_dim = r_size_from_tex2d(texture);
-                        UI_PrefWidth(ui_px(ui_top_font_size()*10.f, 1.f))
-                          UI_PrefHeight(ui_px(ui_top_font_size()*10.f, 1.f))
-                          ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
-                      }
-                      ui_spacer(ui_em(1.f, 1.f));
-                      UISHELL_APP_BUILD_HELP_MENU();
-                      ui_spacer(ui_em(0.5f, 1.f));
-                    }
+                    rd_app_menu_spec_content(spec);
                   }
                 }
                 
@@ -6067,6 +6375,7 @@ rd_window_frame(void)
                 }
               }
             }
+
           }
         }
         
@@ -6074,10 +6383,18 @@ rd_window_frame(void)
         //- rjf: right column
         UI_WidthFill UI_Row
         {
-          B32 do_user_prof = (dim_2f32(top_bar_rect).x > ui_top_font_size()*80);
-          
+          B32 do_user_prof = (ws->chrome_niche[RD_ChromeElementKind_ProjectSelector] == RD_ChromeNiche_TitleBarTrailing);
+
           ui_spacer(ui_pct(1, 0));
-          
+
+          //- rjf: trailing buttons ("b") niche — elements resolved here (ADR-0006)
+          if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_TitleBarTrailing)
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+          {
+            UI_Signal sig = rd_chrome_build_overview_toggle(ws);
+            wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+          }
+
           // rjf: loaded user viz
           if(0)
           {
@@ -6165,7 +6482,63 @@ rd_window_frame(void)
           {
             // ui_spacer(ui_em(2.f, 0));
           }
-          
+
+          // rjf: compact (kebab) app menu — rightmost shell chrome element. one
+          // button opening a single drop-down that stacks every app menu as a
+          // section (the UI has one ctx-menu slot, so it's flat, not nested).
+          // composed from three drawn dots (the icon font has no kebab glyph).
+          if(ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu && compact_menu_bar)
+          {
+            UI_Key kebab_key = ui_key_from_string(ui_key_zero(), str8_lit("###app_menu_kebab"));
+            UI_CtxMenu(kebab_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+            {
+              RD_AppMenuSpecList app_menus = rd_app_menu_specs();
+              for(U64 menu_idx = 0; menu_idx < app_menus.count; menu_idx += 1)
+              {
+                RD_AppMenuSpec *spec = &app_menus.v[menu_idx];
+                if(menu_idx != 0) { ui_spacer(ui_em(0.5f, 1.f)); }
+                UI_TagF("weak") UI_TextAlignment(UI_TextAlign_Left) ui_label(spec->label);
+                rd_app_menu_spec_content(spec);
+              }
+            }
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+            {
+              ui_set_next_child_layout_axis(Axis2_Y);
+              UI_Box *kebab_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                                           UI_BoxFlag_DrawHotEffects|
+                                                           UI_BoxFlag_DrawActiveEffects,
+                                                           "###app_menu_kebab_button");
+              UI_Parent(kebab_box)
+              {
+                F32 dot = floor_f32(ui_top_font_size()*0.24f);
+                F32 gap = floor_f32(ui_top_font_size()*0.2f);
+                Vec4F32 dot_color = ui_color_from_name(str8_lit("text"));
+                ui_spacer(ui_pct(1, 0));
+                for(S32 dot_idx = 0; dot_idx < 3; dot_idx += 1)
+                {
+                  if(dot_idx != 0) { ui_spacer(ui_px(gap, 1.f)); }
+                  UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(dot, 1.f)) UI_Row
+                  {
+                    ui_spacer(ui_pct(1, 0));
+                    ui_set_next_pref_width(ui_px(dot, 1.f));
+                    ui_set_next_pref_height(ui_px(dot, 1.f));
+                    ui_set_next_background_color(dot_color);
+                    UI_CornerRadius(dot*0.5f) ui_build_box_from_stringf(UI_BoxFlag_DrawBackground, "###kebab_dot_%i", dot_idx);
+                    ui_spacer(ui_pct(1, 0));
+                  }
+                }
+                ui_spacer(ui_pct(1, 0));
+              }
+              UI_Signal sig = ui_signal_from_box(kebab_box);
+              wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+              if(ui_pressed(sig))
+              {
+                if(ui_ctx_menu_is_open(kebab_key)) { ui_ctx_menu_close(); }
+                else { ui_ctx_menu_open(kebab_key, kebab_box->key, v2f32(0, dim_2f32(kebab_box->rect).y)); }
+              }
+            }
+          }
+
           // rjf: close dropdown
           UI_Key close_ctx_menu_key = ui_key_from_stringf(ui_key_zero(), "###close_ctx_menu");
           UI_CtxMenu(close_ctx_menu_key) UI_TagF("implicit")
@@ -6225,8 +6598,9 @@ rd_window_frame(void)
           }
         }
       }
+      }
     }
-    
+
     ////////////////////////////
     //- rjf: @window_ui_part bottom bar
     //
@@ -6341,7 +6715,29 @@ rd_window_frame(void)
       ws->window_layout_reset = 1;
     }
     Rng2F32 workspace_rect = uishell_controlled_split_workspace_rect(&root_controlled_split, content_rect);
+
+    //- rjf: tabs-in-title-bar (ADR-0006, gated on a free title-bar row = native
+    // menu). the *main* workspace's top extends up into the title-bar band so its
+    // top-row tab strips render there; the sidebar stays below the chrome. the
+    // top-row tab strips are inset by the chrome end-zones — right always (the
+    // workspace touches the window's right edge), left by however much the
+    // leading chrome (decorations + leading buttons) overhangs the sidebar.
+    // when the sidebar is wider than the leading chrome the strip already clears
+    // it (inset 0); when collapsed the sidebar is 0-wide so the inset is the
+    // full leading extent. previews & zoom builds are unaffected.
+    // (tabs_in_title_bar computed up at the top bar.)
+    Rng2F32 main_workspace_rect = workspace_rect;
+    F32 main_tab_inset_left = 0.f;
+    F32 main_tab_inset_right = 0.f;
+    if(tabs_in_title_bar)
+    {
+      main_workspace_rect.p0.y = top_bar_rect.p0.y;
+      main_tab_inset_right = ws->chrome_trailing_px;
+      main_tab_inset_left = Max(0.f, ws->chrome_leading_px - main_workspace_rect.p0.x);
+    }
+
     ws->workspace_surface_entry_count = 0;
+    ws->active_workspace_surface_entry = 0; // 0 = direct (non-surface) render; set per-entry below
     //- animate the zoom transition; while open *or* in flight, children build
     // as zoom-mode surfaces & the composites interpolate
     {
@@ -6361,16 +6757,20 @@ rd_window_frame(void)
 
     //- the workspace-content subrect of the (window-sized, padded) wrapper
     // surfaces; every consumer that presents a workspace preview crops with it,
-    // so the transparent sidebar strip never rides along
+    // so the transparent sidebar strip never rides along. main_workspace_rect is
+    // the content region: it equals workspace_rect, except its top is raised into
+    // the title-bar band when tabs-in-title-bar — so the crop includes the raised
+    // tab strip (the tab strip is workspace content; window chrome that impinges
+    // on the band is a separate composited layer & legitimately not in here).
     {
       Rng2F32 wrapper_surf_rect = pad_2f32(window_rect, 2.f);
       Vec2F32 wrapper_surf_dim = dim_2f32(wrapper_surf_rect);
       if(wrapper_surf_dim.x > 0 && wrapper_surf_dim.y > 0)
       {
-        ws->workspace_content_uv = r2f32p((workspace_rect.x0 - wrapper_surf_rect.x0)/wrapper_surf_dim.x,
-                                          (workspace_rect.y0 - wrapper_surf_rect.y0)/wrapper_surf_dim.y,
-                                          (workspace_rect.x1 - wrapper_surf_rect.x0)/wrapper_surf_dim.x,
-                                          (workspace_rect.y1 - wrapper_surf_rect.y0)/wrapper_surf_dim.y);
+        ws->workspace_content_uv = r2f32p((main_workspace_rect.x0 - wrapper_surf_rect.x0)/wrapper_surf_dim.x,
+                                          (main_workspace_rect.y0 - wrapper_surf_rect.y0)/wrapper_surf_dim.y,
+                                          (main_workspace_rect.x1 - wrapper_surf_rect.x0)/wrapper_surf_dim.x,
+                                          (main_workspace_rect.y1 - wrapper_surf_rect.y0)/wrapper_surf_dim.y);
       }
     }
     // workspace surfaces build whenever something demands the previews: the
@@ -6406,7 +6806,7 @@ rd_window_frame(void)
         ws->workspace_surface_entry_count += 1;
         UI_Parent(wrapper)
         {
-          rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open);
+          rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open, main_tab_inset_left, main_tab_inset_right, tabs_in_title_bar);
         }
         ws->active_workspace_surface_entry = 0;
       }
@@ -6436,7 +6836,12 @@ rd_window_frame(void)
         ws->workspace_surface_entry_count += 1;
         UI_Parent(child_wrapper) UI_Focus(UI_FocusKind_Off)
         {
-          rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, &child->mount, 0, 0);
+          // render the same layout as the visible workspace (raised tab strip +
+          // insets when tabs-in-title-bar) so every workspace's preview matches
+          // how it presents when active. degrades to the plain workspace_rect
+          // layout when the setting is off (main_workspace_rect == workspace_rect,
+          // insets 0). the content_uv crop (below) follows the same rect.
+          rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, &child->mount, 0, 0, main_tab_inset_left, main_tab_inset_right, tabs_in_title_bar);
         }
         ws->active_workspace_surface_entry = 0;
       }
@@ -6762,7 +7167,9 @@ rd_window_frame(void)
     }
     else
     {
-      rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open);
+      // direct build (no preview surfaces demanded — e.g. sidebar collapsed):
+      // gets the same tabs-in-title-bar raise/insets as the surface path above
+      rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open, main_tab_inset_left, main_tab_inset_right, tabs_in_title_bar);
     }
     
     ////////////////////////////
@@ -8266,6 +8673,35 @@ rd_app_menu_buttons(RD_AppMenuSpec *spec)
   }
   rd_cmd_list_menu_buttons(spec->item_count, cmds, codepoints);
   scratch_end(scratch);
+}
+
+internal void
+rd_app_menu_spec_content(RD_AppMenuSpec *spec)
+{
+  if(spec->item_count != 0)
+  {
+    rd_app_menu_buttons(spec);
+  }
+  // the Help menu spec carries no command items; its content is the build
+  // string, logo, and app-provided help entries. shared by both menu
+  // presentations (full bar & compact kebab) so neither shows an empty Help.
+  if(str8_match(spec->label, str8_lit("Help"), 0))
+  {
+    UI_Row UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
+      ui_label(str8_lit(BUILD_TITLE_STRING_LITERAL));
+    ui_spacer(ui_em(1.f, 1.f));
+    UI_PrefHeight(ui_children_sum(1)) UI_Row UI_Padding(ui_pct(1, 0))
+    {
+      R_Handle texture = rd_state->icon_texture;
+      Vec2S32 texture_dim = r_size_from_tex2d(texture);
+      UI_PrefWidth(ui_px(ui_top_font_size()*10.f, 1.f))
+        UI_PrefHeight(ui_px(ui_top_font_size()*10.f, 1.f))
+        ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
+    }
+    ui_spacer(ui_em(1.f, 1.f));
+    UISHELL_APP_BUILD_HELP_MENU();
+    ui_spacer(ui_em(0.5f, 1.f));
+  }
 }
 
 internal void

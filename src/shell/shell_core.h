@@ -523,7 +523,61 @@ struct RD_SurfaceCacheNode
   B32 retained;            // survives eviction when undemanded; shows stale content (e.g. workspace previews)
 };
 
+////////////////////////////////
+//~ rjf: Chrome Placement (ADR-0006)
+
 typedef struct RD_WindowState RD_WindowState;
+
+// Chrome niches: anchored slots across the chrome hosts an element may land in.
+// Each belongs to a host (title bar, or the sidebar/control-surface). Hidden is
+// the terminal placement.
+typedef enum RD_ChromeNiche
+{
+  RD_ChromeNiche_Hidden,
+  RD_ChromeNiche_TitleBarMenu,      // owner-drawn menu bar
+  RD_ChromeNiche_TitleBarLeading,   // leading buttons ("a")
+  RD_ChromeNiche_TitleBarTrailing,  // trailing buttons ("b")
+  RD_ChromeNiche_SidebarActions,    // the control surface's action row (relocation fallback)
+  RD_ChromeNiche_COUNT
+}
+RD_ChromeNiche;
+
+typedef enum RD_ChromeElementKind
+{
+  RD_ChromeElementKind_Menu,
+  RD_ChromeElementKind_ProjectSelector,
+  RD_ChromeElementKind_SidebarCollapse,
+  RD_ChromeElementKind_NewWorkspace,
+  RD_ChromeElementKind_OverviewToggle,
+  RD_ChromeElementKind_COUNT
+}
+RD_ChromeElementKind;
+
+// a chrome element as fed to resolution: its measured width, its priority
+// (lowest sheds first when a host overflows), and its placement chain (ordered
+// candidate niches, walked on overflow; the last should be a terminal the host
+// can always accept — a roomy host like the sidebar, or Hidden).
+typedef struct RD_ChromeElement RD_ChromeElement;
+struct RD_ChromeElement
+{
+  RD_ChromeElementKind kind;
+  F32 width_px;
+  S32 priority;
+  RD_ChromeNiche chain[RD_ChromeNiche_COUNT];
+  U64 chain_count;
+};
+
+internal RD_ChromeNiche rd_chrome_niche_host_is_title_bar(RD_ChromeNiche niche);
+// resolves elements into niches (written to niche_out, indexed by element kind),
+// given each host's width budget (indexed by a host id derived from niche).
+internal void rd_chrome_resolve(RD_ChromeElement *elements, U64 count, F32 title_bar_budget_px, RD_ChromeNiche *niche_out);
+// element build callbacks — emit the control under the current UI parent &
+// return its signal (title-bar callers register the rect as custom-title-bar
+// client area so the window manager doesn't eat clicks as window drags)
+internal UI_Signal rd_chrome_build_new_workspace(CFG_Node *owner_cfg);
+internal UI_Signal rd_chrome_build_overview_toggle(RD_WindowState *ws);
+internal UI_Signal rd_chrome_build_sidebar_collapse(CFG_Node *owner_cfg);
+
 struct RD_WindowState
 {
   // rjf: links & metadata
@@ -555,6 +609,12 @@ struct RD_WindowState
 
   // rjf: dev interface state
   B32 dev_menu_is_open;
+
+  // rjf: chrome placement (recomputed each frame, before the title bar & the
+  // control surface build, so both read the same resolution) — ADR-0006
+  RD_ChromeNiche chrome_niche[RD_ChromeElementKind_COUNT];
+  F32 chrome_leading_px;  // pixel extent of the title bar's left zone (decorations + leading buttons)
+  F32 chrome_trailing_px; // pixel extent of the right zone (trailing buttons + window controls)
 
   // rjf: menu bar state
   B32 menu_bar_focused;
@@ -1174,6 +1234,7 @@ internal B32 uishell_next_view_cmd(UIShell_Cmd **cmd);
 //- rjf: app menus
 internal RD_AppMenuSpecList rd_app_menu_specs(void);
 internal void rd_app_menu_buttons(RD_AppMenuSpec *spec);
+internal void rd_app_menu_spec_content(RD_AppMenuSpec *spec);
 internal String8 rd_app_data_folder(Arena *arena);
 internal CFG_Node *rd_cfg_new_view_tab(CFG_Node *parent, String8 view, String8 expr, B32 selected);
 
