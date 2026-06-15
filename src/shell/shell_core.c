@@ -6108,7 +6108,12 @@ rd_window_frame(void)
         F32 icon_button_w = font_size*2.25f; // flat icon buttons (new-workspace, overview)
 
         // menu bar: compact = a single kebab button; full = sum of menu-title
-        // widths + generous per-button padding.
+        // button widths. each button is sized by ui_text_dim(20,1), which
+        // resolves to 20 + text_size + text_padding*2 (see UI_SizeKind_TextContent
+        // in ui_core.c) — match that exactly so the tabs-in-title-bar leading
+        // inset clears the bar (text_padding was previously omitted, so the
+        // estimate ran short and tabs drew under the menu).
+        F32 menu_button_pad = 20.f + ui_top_text_padding()*2.f;
         F32 menu_w = 0;
         if(compact_menu_bar)
         {
@@ -6120,7 +6125,7 @@ rd_window_frame(void)
           for(U64 idx = 0; idx < app_menus.count; idx += 1)
           {
             menu_w += fnt_dim_from_tag_size_string(ui_font, font_size, 0, 0, app_menus.v[idx].label).x;
-            menu_w += font_size*2.f; // ui_text_dim(20) padding + margins, over-estimated
+            menu_w += menu_button_pad;
           }
         }
 
