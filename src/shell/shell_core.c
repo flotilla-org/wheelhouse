@@ -5017,8 +5017,12 @@ rd_window_frame(void)
     Rng2F32 window_rect = wm_client_rect_from_window(ws->os);
     Vec2F32 window_rect_dim = dim_2f32(window_rect);
     F32 top_bar_dim_px = floor_f32(ui_top_font_size()*3.f);
+    // status bar is optional (default off): when hidden it occupies no height &
+    // the content area extends to the window bottom.
+    B32 show_status_bar = rd_setting_b32_from_name(str8_lit("show_status_bar"));
+    F32 bottom_bar_dim_px = show_status_bar ? top_bar_dim_px : 0.f;
     Rng2F32 top_bar_rect = r2f32p(window_rect.x0, window_rect.y0, window_rect.x0+window_rect_dim.x+1, window_rect.y0+top_bar_dim_px);
-    Rng2F32 bottom_bar_rect = r2f32p(window_rect.x0, window_rect_dim.y - top_bar_dim_px, window_rect.x0+window_rect_dim.x, window_rect.y0+window_rect_dim.y);
+    Rng2F32 bottom_bar_rect = r2f32p(window_rect.x0, window_rect_dim.y - bottom_bar_dim_px, window_rect.x0+window_rect_dim.x, window_rect.y0+window_rect_dim.y);
     Rng2F32 content_rect = r2f32p(window_rect.x0, top_bar_rect.y1, window_rect.x0+window_rect_dim.x, bottom_bar_rect.y0);
     F32 window_edge_px = 96.f*wm_layout_scale_from_window(ws->os)*0.035f;
     content_rect = pad_2f32(content_rect, -window_edge_px);
@@ -6624,7 +6628,7 @@ rd_window_frame(void)
     ////////////////////////////
     //- rjf: @window_ui_part bottom bar
     //
-    ProfScope("build bottom bar")
+    if(show_status_bar) ProfScope("build bottom bar")
     {
       String8 tag = str8_lit("pop");
       CFG_NodePtrList tasks = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("conversion_task"));
