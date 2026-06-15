@@ -83,14 +83,6 @@
 @end
 
 @implementation MAC_WM_ContentView
-// AppKit auto-moves a titled window when dragging its titlebar region; with a
-// full-size content view that steals drags from custom title-bar UI (e.g. tabs
-// in the title bar). Decline the automatic move so our own client-area-aware
-// performWindowDragWithEvent (in the mouse-down handler) is the sole drag path.
-- (BOOL)mouseDownCanMoveWindow
-{
-  return NO;
-}
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender
 {
   NSDragOperation result = NSDragOperationNone;
@@ -857,13 +849,6 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
   [window->ns_window setDelegate:window->delegate];
   [window->ns_window setReleasedWhenClosed:NO];
   [window->ns_window setAcceptsMouseMovedEvents:YES];
-  if(custom_border)
-  {
-    // a movable titled window auto-moves on any titlebar-region drag, which
-    // steals drags from custom title-bar UI (tabs). make it non-movable & let
-    // our client-area-aware performWindowDragWithEvent be the sole drag path.
-    [window->ns_window setMovable:NO];
-  }
   mac_wm_apply_chrome_mode_to_window(window, chrome_mode);
   wm_window_set_title(mac_wm_handle_from_window(window), title);
   return mac_wm_handle_from_window(window);
@@ -1357,6 +1342,20 @@ wm_get_events(Arena *arena, B32 wait)
         {
           [window->ns_window performWindowDragWithEvent:event];
           handled_by_chrome = 1;
+          send_to_nsapp = 0;
+        }
+        else if(window != 0 &&
+                window->custom_border &&
+                (type == NSEventTypeLeftMouseDown || type == NSEventTypeRightMouseDown || type == NSEventTypeOtherMouseDown) &&
+                pos.y <= window->custom_border_title_thickness &&
+                !mac_wm_window_pos_is_native_title_bar_control_area(window, pos) &&
+                mac_wm_window_pos_is_title_bar_client_area(window, pos))
+        {
+          // interactive title-bar UI (tabs in the title bar, chrome buttons):
+          // the in-process UI handles this via the WM_Event pushed below — do
+          // NOT forward to AppKit, which would auto-move the (movable) window on
+          // a titlebar-region press/drag. handled_by_chrome stays 0 so the
+          // WM_Event is still pushed.
           send_to_nsapp = 0;
         }
         if(!handled_by_chrome && !handled_by_native_title_bar_control)
