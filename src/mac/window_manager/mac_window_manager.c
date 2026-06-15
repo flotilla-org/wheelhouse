@@ -857,6 +857,13 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
   [window->ns_window setDelegate:window->delegate];
   [window->ns_window setReleasedWhenClosed:NO];
   [window->ns_window setAcceptsMouseMovedEvents:YES];
+  if(custom_border)
+  {
+    // a movable titled window auto-moves on any titlebar-region drag, which
+    // steals drags from custom title-bar UI (tabs). make it non-movable & let
+    // our client-area-aware performWindowDragWithEvent be the sole drag path.
+    [window->ns_window setMovable:NO];
+  }
   mac_wm_apply_chrome_mode_to_window(window, chrome_mode);
   wm_window_set_title(mac_wm_handle_from_window(window), title);
   return mac_wm_handle_from_window(window);
