@@ -523,7 +523,57 @@ struct RD_SurfaceCacheNode
   B32 retained;            // survives eviction when undemanded; shows stale content (e.g. workspace previews)
 };
 
+////////////////////////////////
+//~ rjf: Chrome Placement (ADR-0006)
+
 typedef struct RD_WindowState RD_WindowState;
+
+// Chrome niches: anchored slots across the chrome hosts an element may land in.
+// Each belongs to a host (title bar, or the sidebar/control-surface). Hidden is
+// the terminal placement.
+typedef enum RD_ChromeNiche
+{
+  RD_ChromeNiche_Hidden,
+  RD_ChromeNiche_TitleBarMenu,      // owner-drawn menu bar
+  RD_ChromeNiche_TitleBarLeading,   // leading buttons ("a")
+  RD_ChromeNiche_TitleBarTrailing,  // trailing buttons ("b")
+  RD_ChromeNiche_SidebarActions,    // the control surface's action row (relocation fallback)
+  RD_ChromeNiche_COUNT
+}
+RD_ChromeNiche;
+
+typedef enum RD_ChromeElementKind
+{
+  RD_ChromeElementKind_Menu,
+  RD_ChromeElementKind_ProjectSelector,
+  RD_ChromeElementKind_NewWorkspace,
+  RD_ChromeElementKind_OverviewToggle,
+  RD_ChromeElementKind_COUNT
+}
+RD_ChromeElementKind;
+
+// a chrome element as fed to resolution: its measured width, its priority
+// (lowest sheds first when a host overflows), and its placement chain (ordered
+// candidate niches, walked on overflow; the last should be a terminal the host
+// can always accept — a roomy host like the sidebar, or Hidden).
+typedef struct RD_ChromeElement RD_ChromeElement;
+struct RD_ChromeElement
+{
+  RD_ChromeElementKind kind;
+  F32 width_px;
+  S32 priority;
+  RD_ChromeNiche chain[RD_ChromeNiche_COUNT];
+  U64 chain_count;
+};
+
+internal RD_ChromeNiche rd_chrome_niche_host_is_title_bar(RD_ChromeNiche niche);
+// resolves elements into niches (written to niche_out, indexed by element kind),
+// given each host's width budget (indexed by a host id derived from niche).
+internal void rd_chrome_resolve(RD_ChromeElement *elements, U64 count, F32 title_bar_budget_px, RD_ChromeNiche *niche_out);
+// element build callbacks — emit the control under the current UI parent
+internal void rd_chrome_build_new_workspace(CFG_Node *owner_cfg);
+internal void rd_chrome_build_overview_toggle(RD_WindowState *ws);
+
 struct RD_WindowState
 {
   // rjf: links & metadata
@@ -555,6 +605,10 @@ struct RD_WindowState
 
   // rjf: dev interface state
   B32 dev_menu_is_open;
+
+  // rjf: chrome placement (recomputed each frame, before the title bar & the
+  // control surface build, so both read the same resolution) — ADR-0006
+  RD_ChromeNiche chrome_niche[RD_ChromeElementKind_COUNT];
 
   // rjf: menu bar state
   B32 menu_bar_focused;

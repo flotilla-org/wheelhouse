@@ -3193,38 +3193,37 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           }
         }
 
-        ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.25f), 1.f));
-        UI_PrefWidth(ui_pct(1.f, 0.f))
-          UI_PrefHeight(ui_em(2.25f, 1.f))
-          UI_Row
+        //- rjf: the action row is the sidebar's chrome host (ADR-0006): it
+        // builds the new-workspace / overview elements only when chrome
+        // placement relocated them here (the title bar couldn't fit them);
+        // by default they live in the title bar & this row is absent.
+        B32 new_workspace_here = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions);
+        B32 overview_here      = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions);
+        if(new_workspace_here || overview_here)
         {
-          ui_spacer(ui_em(0.5f, 1.f));
-          UI_TextAlignment(UI_TextAlign_Center)
-            UI_PrefWidth(ui_pct(1.f, 0.f))
-            UI_PrefHeight(ui_pct(1.f, 0.f))
-            UI_TagF("weak")
+          ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.25f), 1.f));
+          UI_PrefWidth(ui_pct(1.f, 0.f))
+            UI_PrefHeight(ui_em(2.25f, 1.f))
+            UI_Row
           {
-            UI_Signal sig = ui_buttonf("New Workspace###new_workspace");
-            if(ui_clicked(sig))
+            ui_spacer(ui_em(0.5f, 1.f));
+            UI_TextAlignment(UI_TextAlign_Center)
+              UI_PrefWidth(ui_em(2.25f, 1.f))
+              UI_PrefHeight(ui_pct(1.f, 0.f))
             {
-              uishell_cmd("new_workspace", .window = split->owner_cfg->id);
+              if(new_workspace_here) { rd_chrome_build_new_workspace(split->owner_cfg); }
             }
-          }
-          ui_spacer(ui_em(0.25f, 1.f));
-          UI_TextAlignment(UI_TextAlign_Center)
-            UI_PrefWidth(ui_em(2.25f, 1.f))
-            UI_PrefHeight(ui_pct(1.f, 0.f))
-            UI_TagF(ws != &rd_nil_window_state && ws->workspace_zoom_open ? "" : "weak")
-          {
-            UI_Signal sig = rd_icon_button(RD_IconKind_Grid, 0, str8_lit("###workspace_zoom_toggle"));
-            if(ui_clicked(sig) && ws != &rd_nil_window_state)
+            ui_spacer(ui_em(0.25f, 1.f));
+            UI_TextAlignment(UI_TextAlign_Center)
+              UI_PrefWidth(ui_em(2.25f, 1.f))
+              UI_PrefHeight(ui_pct(1.f, 0.f))
             {
-              ws->workspace_zoom_open ^= 1;
+              if(overview_here) { rd_chrome_build_overview_toggle(ws); }
             }
+            ui_spacer(ui_pct(1.f, 0.f));
           }
-          ui_spacer(ui_em(0.5f, 1.f));
+          ui_spacer(ui_px(panel_frame_inset_px+1.f, 1.f));
         }
-        ui_spacer(ui_px(panel_frame_inset_px+1.f, 1.f));
       }
     }
   }
@@ -4417,50 +4416,89 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
 ////////////////////////////////
 //~ rjf: Chrome Placement (ADR-0006)
 //
-// Measured placement resolution: shell controls compete for a chrome host's
-// width, and when they overflow the lowest-priority element drops out —
-// replacing the hardcoded width breakpoints (the 60em/80em title-bar gates).
-// This is slice 1: the title-bar host with placement chains that terminate in
-// hidden. Cross-host relocation (to the sidebar), the niche enumeration, and
-// the Tab Strip element arrive with their own consumers; resolution is kept to
-// what those would extend, not pre-generalized. Widths are measured
-// analytically before the build, because in this immediate-mode UI layout runs
-// after the build, so which-niche (which parent to build under, here just
-// shown-or-hidden) must be decided up front (ADR-0006).
+// Measured placement resolution: shell controls (Chrome Elements) compete for a
+// chrome host's width. Each starts at its placement chain's first niche; when a
+// host overflows, its lowest-priority element advances down its chain to the
+// next niche — another (roomier) host, or Hidden — replacing the hardcoded
+// 60em/80em title-bar gates. Widths are measured analytically before the build,
+// because in this immediate-mode UI layout runs after the build, so which-niche
+// (which parent to build an element under) must be decided up front (ADR-0006).
+//
+// Only the title bar is a constrained host today; the sidebar action row is the
+// roomy fallback (treated as effectively unbounded) and Hidden absorbs the rest.
+// When a second constrained host appears, give it a real budget here.
 
-typedef struct RD_ChromeElement RD_ChromeElement;
-struct RD_ChromeElement
+internal RD_ChromeNiche
+rd_chrome_niche_host_is_title_bar(RD_ChromeNiche niche)
 {
-  F32 width_px;     // measured width: fnt_dim for labels, fixed for icons
-  S32 priority;     // higher survives longer; the lowest-priority visible element drops first
-  B32 *visible_out; // resolution writes survival here
-};
+  return (niche == RD_ChromeNiche_TitleBarMenu ||
+          niche == RD_ChromeNiche_TitleBarLeading ||
+          niche == RD_ChromeNiche_TitleBarTrailing);
+}
 
 internal void
-rd_chrome_resolve(RD_ChromeElement *elements, U64 count, F32 available_px)
+rd_chrome_resolve(RD_ChromeElement *elements, U64 count, F32 title_bar_budget_px, RD_ChromeNiche *niche_out)
 {
-  F32 used = 0;
+  // rjf: every element starts at the head of its chain
+  U64 chain_pos[RD_ChromeElementKind_COUNT] = {0};
   for(U64 idx = 0; idx < count; idx += 1)
   {
-    elements[idx].visible_out[0] = 1;
-    used += elements[idx].width_px;
+    chain_pos[idx] = 0;
+    niche_out[elements[idx].kind] = (elements[idx].chain_count > 0 ? elements[idx].chain[0] : RD_ChromeNiche_Hidden);
   }
-  for(;used > available_px;)
+
+  // rjf: while the title bar (the only bounded host) overflows, advance its
+  // lowest-priority element down its chain. terminates: every advance either
+  // leaves the title bar or reaches a chain end (Hidden), monotonically.
+  for(;;)
   {
+    F32 title_bar_used = 0;
     U64 victim = max_U64;
     S32 victim_priority = 0;
     for(U64 idx = 0; idx < count; idx += 1)
     {
-      if(elements[idx].visible_out[0] &&
-         (victim == max_U64 || elements[idx].priority < victim_priority))
+      if(rd_chrome_niche_host_is_title_bar(niche_out[elements[idx].kind]))
       {
-        victim = idx;
-        victim_priority = elements[idx].priority;
+        title_bar_used += elements[idx].width_px;
+        if(victim == max_U64 || elements[idx].priority < victim_priority)
+        {
+          victim = idx;
+          victim_priority = elements[idx].priority;
+        }
       }
     }
-    if(victim == max_U64) { break; }
-    elements[victim].visible_out[0] = 0;
-    used -= elements[victim].width_px;
+    if(title_bar_used <= title_bar_budget_px || victim == max_U64) { break; }
+    chain_pos[victim] += 1;
+    niche_out[elements[victim].kind] = (chain_pos[victim] < elements[victim].chain_count
+                                        ? elements[victim].chain[chain_pos[victim]]
+                                        : RD_ChromeNiche_Hidden);
+  }
+}
+
+// element build callbacks: each emits its control under the current UI parent,
+// so the same element can be built in whichever niche resolution chose for it
+// (a title-bar niche, or the sidebar action row).
+
+internal void
+rd_chrome_build_new_workspace(CFG_Node *owner_cfg)
+{
+  UI_Signal sig = rd_icon_button(RD_IconKind_Add, 0, str8_lit("###new_workspace"));
+  if(ui_clicked(sig))
+  {
+    uishell_cmd("new_workspace", .window = owner_cfg->id);
+  }
+}
+
+internal void
+rd_chrome_build_overview_toggle(RD_WindowState *ws)
+{
+  UI_TagF(ws != &rd_nil_window_state && ws->workspace_zoom_open ? "" : "weak")
+  {
+    UI_Signal sig = rd_icon_button(RD_IconKind_Grid, 0, str8_lit("###workspace_zoom_toggle"));
+    if(ui_clicked(sig) && ws != &rd_nil_window_state)
+    {
+      ws->workspace_zoom_open ^= 1;
+    }
   }
 }
 
@@ -5962,21 +6000,21 @@ rd_window_frame(void)
       F32 native_title_bar_left_padding = wm_window_native_title_bar_left_padding(ws->os);
       B32 draw_self_menu_bar = !wm_application_menu_bar_is_native();
 
-      //- rjf: chrome placement resolution for the title bar (ADR-0006), replacing
-      // the former 60em/80em gates on the menu bar and project selector. widths
-      // are measured analytically & deliberately over-estimated, so resolution
-      // errs toward dropping an element early rather than overlapping.
-      B32 menu_visible = draw_self_menu_bar;
-      B32 project_visible = 1;
+      //- rjf: chrome placement resolution (ADR-0006). resolves the title-bar &
+      // sidebar-action chrome elements into niches, stored on ws so both the
+      // title bar (below) and the control surface (later this frame) read the
+      // same result. replaces the former 60em/80em gates. widths are measured
+      // analytically & deliberately over-estimated, so resolution errs toward
+      // shedding an element early rather than overlapping.
       {
         F32 font_size = ui_top_font_size();
         FNT_Tag ui_font  = rd_font_from_slot(RD_FontSlot_Main);
         FNT_Tag icon_font = rd_font_from_slot(RD_FontSlot_Icons);
         F32 bar_h = dim_2f32(top_bar_rect).y;
+        F32 icon_button_w = font_size*2.25f; // flat icon buttons (new-workspace, overview)
 
         // menu bar: sum of menu-title widths + generous per-button padding
         F32 menu_w = 0;
-        if(draw_self_menu_bar)
         {
           RD_AppMenuSpecList app_menus = rd_app_menu_specs();
           for(U64 idx = 0; idx < app_menus.count; idx += 1)
@@ -5999,22 +6037,38 @@ rd_window_frame(void)
                          fnt_dim_from_tag_size_string(ui_font, font_size, 0, 0, project_name).x +
                          font_size*2.f);
 
-        // available = title bar width minus the platform-reserved ends (leading
-        // traffic-lights / app icon, trailing window controls) and a margin
+        // available title-bar width = bar width minus the platform-reserved ends
+        // (leading traffic-lights / app icon, trailing window controls) & a margin
         F32 leading  = (native_title_bar_left_padding > 0 ? native_title_bar_left_padding : bar_h);
         F32 trailing = (draw_custom_title_bar_controls ? bar_h*3.f : 0.f);
-        F32 available = dim_2f32(top_bar_rect).x - leading - trailing - font_size*2.f;
+        F32 title_bar_budget = dim_2f32(top_bar_rect).x - leading - trailing - font_size*2.f;
 
-        // menu outranks the project selector (matching the old gates: project
-        // dropped at the wider 80em, menu at 60em -> project drops first)
-        RD_ChromeElement chrome_elements[2];
+        // elements & chains. menu/project hide when they don't fit; the action
+        // buttons relocate to the sidebar action row instead (never hidden).
+        // priority = shed order when the title bar overflows (lowest first):
+        // project hides, then overview & new-workspace relocate, then menu hides.
+        RD_ChromeElement chrome_elements[RD_ChromeElementKind_COUNT];
         U64 chrome_element_count = 0;
         if(draw_self_menu_bar)
         {
-          chrome_elements[chrome_element_count++] = (RD_ChromeElement){menu_w, 1, &menu_visible};
+          chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+            RD_ChromeElementKind_Menu, menu_w, 3,
+            {RD_ChromeNiche_TitleBarMenu, RD_ChromeNiche_Hidden}, 2};
         }
-        chrome_elements[chrome_element_count++] = (RD_ChromeElement){project_w, 0, &project_visible};
-        rd_chrome_resolve(chrome_elements, chrome_element_count, available);
+        else
+        {
+          ws->chrome_niche[RD_ChromeElementKind_Menu] = RD_ChromeNiche_Hidden; // native menu bar
+        }
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+          RD_ChromeElementKind_ProjectSelector, project_w, 0,
+          {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_Hidden}, 2};
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+          RD_ChromeElementKind_NewWorkspace, icon_button_w, 2,
+          {RD_ChromeNiche_TitleBarLeading, RD_ChromeNiche_SidebarActions}, 2};
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+          RD_ChromeElementKind_OverviewToggle, icon_button_w, 1,
+          {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_SidebarActions}, 2};
+        rd_chrome_resolve(chrome_elements, chrome_element_count, title_bar_budget, ws->chrome_niche);
       }
 
       wm_window_clear_custom_border_data(ws->os);
@@ -6054,8 +6108,17 @@ rd_window_frame(void)
               }
             }
 
+            //- rjf: leading buttons ("a") niche — elements resolved here (ADR-0006)
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+            {
+              if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_TitleBarLeading)
+              {
+                rd_chrome_build_new_workspace(root_controlled_split.owner_cfg);
+              }
+            }
+
             //- menu items
-            if(menu_visible)
+            if(ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu)
             {
               ui_set_next_flags(UI_BoxFlag_DrawBackground);
               UI_PrefWidth(ui_children_sum(1)) UI_Row UI_PrefWidth(ui_text_dim(20, 1)) UI_GroupKey(menu_bar_group_key)
@@ -6180,10 +6243,17 @@ rd_window_frame(void)
         //- rjf: right column
         UI_WidthFill UI_Row
         {
-          B32 do_user_prof = project_visible;
-          
+          B32 do_user_prof = (ws->chrome_niche[RD_ChromeElementKind_ProjectSelector] == RD_ChromeNiche_TitleBarTrailing);
+
           ui_spacer(ui_pct(1, 0));
-          
+
+          //- rjf: trailing buttons ("b") niche — elements resolved here (ADR-0006)
+          if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_TitleBarTrailing)
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+          {
+            rd_chrome_build_overview_toggle(ws);
+          }
+
           // rjf: loaded user viz
           if(0)
           {
