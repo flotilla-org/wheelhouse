@@ -4414,6 +4414,56 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
     
 }
 
+////////////////////////////////
+//~ rjf: Chrome Placement (ADR-0006)
+//
+// Measured placement resolution: shell controls compete for a chrome host's
+// width, and when they overflow the lowest-priority element drops out —
+// replacing the hardcoded width breakpoints (the 60em/80em title-bar gates).
+// This is slice 1: the title-bar host with placement chains that terminate in
+// hidden. Cross-host relocation (to the sidebar), the niche enumeration, and
+// the Tab Strip element arrive with their own consumers; resolution is kept to
+// what those would extend, not pre-generalized. Widths are measured
+// analytically before the build, because in this immediate-mode UI layout runs
+// after the build, so which-niche (which parent to build under, here just
+// shown-or-hidden) must be decided up front (ADR-0006).
+
+typedef struct RD_ChromeElement RD_ChromeElement;
+struct RD_ChromeElement
+{
+  F32 width_px;     // measured width: fnt_dim for labels, fixed for icons
+  S32 priority;     // higher survives longer; the lowest-priority visible element drops first
+  B32 *visible_out; // resolution writes survival here
+};
+
+internal void
+rd_chrome_resolve(RD_ChromeElement *elements, U64 count, F32 available_px)
+{
+  F32 used = 0;
+  for(U64 idx = 0; idx < count; idx += 1)
+  {
+    elements[idx].visible_out[0] = 1;
+    used += elements[idx].width_px;
+  }
+  for(;used > available_px;)
+  {
+    U64 victim = max_U64;
+    S32 victim_priority = 0;
+    for(U64 idx = 0; idx < count; idx += 1)
+    {
+      if(elements[idx].visible_out[0] &&
+         (victim == max_U64 || elements[idx].priority < victim_priority))
+      {
+        victim = idx;
+        victim_priority = elements[idx].priority;
+      }
+    }
+    if(victim == max_U64) { break; }
+    elements[victim].visible_out[0] = 0;
+    used -= elements[victim].width_px;
+  }
+}
+
 #if COMPILER_MSVC && !BUILD_DEBUG
 NO_OPTIMIZE_BEGIN
 #endif
@@ -5911,6 +5961,62 @@ rd_window_frame(void)
       B32 draw_custom_title_bar_controls = wm_window_should_draw_custom_title_bar_controls(ws->os);
       F32 native_title_bar_left_padding = wm_window_native_title_bar_left_padding(ws->os);
       B32 draw_self_menu_bar = !wm_application_menu_bar_is_native();
+
+      //- rjf: chrome placement resolution for the title bar (ADR-0006), replacing
+      // the former 60em/80em gates on the menu bar and project selector. widths
+      // are measured analytically & deliberately over-estimated, so resolution
+      // errs toward dropping an element early rather than overlapping.
+      B32 menu_visible = draw_self_menu_bar;
+      B32 project_visible = 1;
+      {
+        F32 font_size = ui_top_font_size();
+        FNT_Tag ui_font  = rd_font_from_slot(RD_FontSlot_Main);
+        FNT_Tag icon_font = rd_font_from_slot(RD_FontSlot_Icons);
+        F32 bar_h = dim_2f32(top_bar_rect).y;
+
+        // menu bar: sum of menu-title widths + generous per-button padding
+        F32 menu_w = 0;
+        if(draw_self_menu_bar)
+        {
+          RD_AppMenuSpecList app_menus = rd_app_menu_specs();
+          for(U64 idx = 0; idx < app_menus.count; idx += 1)
+          {
+            menu_w += fnt_dim_from_tag_size_string(ui_font, font_size, 0, 0, app_menus.v[idx].label).x;
+            menu_w += font_size*2.f; // ui_text_dim(20) padding + margins, over-estimated
+          }
+        }
+
+        // project selector: briefcase icon + project name + padding
+        String8 project_name = {0};
+        {
+          CFG_Node *project = cfg_node_child_from_string(cfg_node_root(), str8_lit("project"));
+          CFG_Node *name = cfg_node_child_from_string(project, str8_lit("name"));
+          project_name = name->first->string;
+          if(project_name.size == 0) { project_name = str8_skip_last_slash(str8_chop_last_dot(rd_state->project_path)); }
+          if(project_name.size == 0) { project_name = str8_lit("Untitled Project"); }
+        }
+        F32 project_w = (fnt_dim_from_tag_size_string(icon_font, font_size, 0, 0, rd_icon_kind_text_table[RD_IconKind_Briefcase]).x +
+                         fnt_dim_from_tag_size_string(ui_font, font_size, 0, 0, project_name).x +
+                         font_size*2.f);
+
+        // available = title bar width minus the platform-reserved ends (leading
+        // traffic-lights / app icon, trailing window controls) and a margin
+        F32 leading  = (native_title_bar_left_padding > 0 ? native_title_bar_left_padding : bar_h);
+        F32 trailing = (draw_custom_title_bar_controls ? bar_h*3.f : 0.f);
+        F32 available = dim_2f32(top_bar_rect).x - leading - trailing - font_size*2.f;
+
+        // menu outranks the project selector (matching the old gates: project
+        // dropped at the wider 80em, menu at 60em -> project drops first)
+        RD_ChromeElement chrome_elements[2];
+        U64 chrome_element_count = 0;
+        if(draw_self_menu_bar)
+        {
+          chrome_elements[chrome_element_count++] = (RD_ChromeElement){menu_w, 1, &menu_visible};
+        }
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){project_w, 0, &project_visible};
+        rd_chrome_resolve(chrome_elements, chrome_element_count, available);
+      }
+
       wm_window_clear_custom_border_data(ws->os);
       wm_window_push_custom_edges(ws->os, window_edge_px);
       wm_window_push_custom_title_bar(ws->os, dim_2f32(top_bar_rect).y);
@@ -5949,7 +6055,7 @@ rd_window_frame(void)
             }
 
             //- menu items
-            if(draw_self_menu_bar && dim_2f32(top_bar_rect).x > ui_top_font_size()*60)
+            if(menu_visible)
             {
               ui_set_next_flags(UI_BoxFlag_DrawBackground);
               UI_PrefWidth(ui_children_sum(1)) UI_Row UI_PrefWidth(ui_text_dim(20, 1)) UI_GroupKey(menu_bar_group_key)
@@ -6074,7 +6180,7 @@ rd_window_frame(void)
         //- rjf: right column
         UI_WidthFill UI_Row
         {
-          B32 do_user_prof = (dim_2f32(top_bar_rect).x > ui_top_font_size()*80);
+          B32 do_user_prof = project_visible;
           
           ui_spacer(ui_pct(1, 0));
           
