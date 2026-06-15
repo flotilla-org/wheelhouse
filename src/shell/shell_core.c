@@ -6082,7 +6082,7 @@ rd_window_frame(void)
     // + dev toggle. when on, the top bar yields its middle band so the
     // workspace's top-row tab strips render there; see the top-bar container
     // flags below & the panel-area raise/insets further down.
-    B32 tabs_in_title_bar = (DEV_tabs_in_title_bar && wm_application_menu_bar_is_native());
+    B32 tabs_in_title_bar = (rd_setting_b32_from_name(str8_lit("tabs_in_title_bar")) && wm_application_menu_bar_is_native());
     ProfScope("build top bar")
     {
       B32 draw_custom_title_bar_controls = wm_window_should_draw_custom_title_bar_controls(ws->os);

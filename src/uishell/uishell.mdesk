@@ -95,7 +95,6 @@ UIShell_DevToggleTable:
   {draw_surface_previews}
   {crt_views}
   {coverflow_overview}
-  {tabs_in_title_bar}
   {eval_compiler_tooltips}
   {eval_watch_key_tooltips}
   {cmd_context_tooltips}
