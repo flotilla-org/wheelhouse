@@ -6082,13 +6082,12 @@ rd_window_frame(void)
     // + dev toggle. when on, the top bar yields its middle band so the
     // workspace's top-row tab strips render there; see the top-bar container
     // flags below & the panel-area raise/insets further down.
-    // a compact (kebab) in-window menu bar collapses to a single button, which
-    // — like the native menu bar — frees the title-bar row for tabs. tabs in the
-    // title bar need that free row on any platform, hence the OR (not a mac-only
-    // native-menu gate).
+    // tabs in the title bar share the row with whatever menu form is present:
+    // the native menu bar (mac — row is free), the compact kebab (trailing
+    // niche), or the full owner-drawn menu bar (leading niche — tabs inset past
+    // it). overflow when the bar + tabs are both wide is a future concern.
     B32 compact_menu_bar = rd_setting_b32_from_name(str8_lit("compact_menu_bar"));
-    B32 tabs_in_title_bar = (rd_setting_b32_from_name(str8_lit("tabs_in_title_bar")) &&
-                             (wm_application_menu_bar_is_native() || compact_menu_bar));
+    B32 tabs_in_title_bar = rd_setting_b32_from_name(str8_lit("tabs_in_title_bar"));
     ProfScope("build top bar")
     {
       B32 draw_custom_title_bar_controls = wm_window_should_draw_custom_title_bar_controls(ws->os);
@@ -6192,6 +6191,8 @@ rd_window_frame(void)
         ws->chrome_leading_px = leading +
           (ws->chrome_niche[RD_ChromeElementKind_SidebarCollapse] == RD_ChromeNiche_TitleBarLeading ? icon_button_w : 0) +
           (ws->chrome_niche[RD_ChromeElementKind_NewWorkspace]    == RD_ChromeNiche_TitleBarLeading ? icon_button_w : 0) +
+          // the full (owner-drawn) menu bar sits in the leading area; tabs inset past it
+          (!compact_menu_bar && ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu ? menu_w : 0) +
           gap;
         ws->chrome_trailing_px = trailing +
           (ws->chrome_niche[RD_ChromeElementKind_OverviewToggle]  == RD_ChromeNiche_TitleBarTrailing ? icon_button_w : 0) +

@@ -54,7 +54,7 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@default(0) @display_name('Native Menu Bar') @description(\"Uses the macOS menu bar instead of the in-window menu.\") 'mac_native_menu_bar': bool,"
     "@default(0) @display_name('Compact Menu Bar') @description(\"Collapses the in-window menu bar into a single drop-down button, freeing the title-bar row.\") 'compact_menu_bar': bool,"
     "@default(0) @display_name('Show Project Selector') @description(\"Shows the project selector (project name) in the title bar.\") 'show_project_selector': bool,"
-    "@default(0) @display_name('Tabs In Title Bar') @description(\"Renders the main workspace's top-row panel tabs in the window title bar. Requires a free title-bar row (the native menu bar, or the compact menu bar).\") 'tabs_in_title_bar': bool,"
+    "@default(0) @display_name('Tabs In Title Bar') @description(\"Renders the main workspace's top-row panel tabs in the window title bar, alongside whatever menu form is shown.\") 'tabs_in_title_bar': bool,"
     "@default(2) @display_name('User Tab Width') 'tab_width': @range[1, 32] u64,"
     "@default(1) @display_name('Focus Menu Bar With Alt') @description(\"Mimics standard Windows behavior of focusing the menu bar using the Alt key.\") 'focus_menu_bar_with_alt': bool,"
     "@default(0) @display_name('Use Native File System Dialog') @description(\"Uses the operating system's file system dialog box.\") 'use_native_file_system_dialog': bool,"
