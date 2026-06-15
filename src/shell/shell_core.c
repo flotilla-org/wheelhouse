@@ -7043,7 +7043,9 @@ rd_window_frame(void)
     }
     else
     {
-      rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open, 0.f, 0.f);
+      // direct build (no preview surfaces demanded — e.g. sidebar collapsed):
+      // gets the same tabs-in-title-bar raise/insets as the surface path above
+      rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open, main_tab_inset_left, main_tab_inset_right);
     }
     
     ////////////////////////////
