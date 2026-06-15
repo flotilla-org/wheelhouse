@@ -2986,6 +2986,8 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         {
           S64 max_off = (S64)ClampBot(0.f, list_content_h - list_view_h);
           UI_ScrollPt scroll_pt = ui_scroll_pt((S64)list_prev->view_off_target.y, 0);
+          // list_prev is the persistent list box (keyed by ###workspace_list), so
+          // it is the stable per-region identity used to seed the fade animation.
           Rng2F32 list_local = r2f32p(list_prev->rect.x0 - control_box->rect.x0, list_prev->rect.y0 - control_box->rect.y0,
                                       list_prev->rect.x1 - control_box->rect.x0, list_prev->rect.y1 - control_box->rect.y0);
           scroll_pt = ui_docked_scroll_bar(control_box, list_local, scroll_bar_w, list_prev,

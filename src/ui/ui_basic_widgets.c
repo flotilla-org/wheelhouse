@@ -1270,6 +1270,8 @@ ui_scroll_list_item_from_row(UI_ScrollListRowBlockArray *blocks, U64 row)
 // and the overlay style. The vertical-movement math is written exactly once
 // here; the only style differences are the arrow buttons + bordered gutter
 // (classic only) and the thumb's rendering (a button vs. a faded pill).
+// vis_t is a normalized [0,1] visibility used only by the overlay thumb's
+// opacity; classic callers pass 1.f.
 internal UI_ScrollPt
 ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style, F32 vis_t, UI_ScrollPt pt, Rng1S64 idx_range, S64 view_num_indices)
 {
@@ -1444,8 +1446,11 @@ ui_active_scroll_bar_style(void)
 // uishell: shared overlay placement for the auto-hiding scroll bar. Computes the
 // fade/expand from the pointer's position over region_rect (absolute coords) and,
 // when visible, builds the floating styled bar at the right edge of place_rect
-// (coordinates local to parent_box). key_ptr seeds the per-region animation and
-// must be stable across frames. Returns the (possibly updated) scroll point.
+// (coordinates local to parent_box). key_ptr seeds the per-region animation: it
+// must be a pointer that stably identifies this scroll region across frames —
+// a long-lived view-state struct, a persistent UI box, or the scroll-point
+// storage. A transient/per-frame pointer would reset or collide the fade state.
+// Returns the (possibly updated) scroll point.
 internal UI_ScrollPt
 ui_scroll_bar_overlay_floating(UI_Box *parent_box, Rng2F32 region_rect, Rng2F32 place_rect, void *key_ptr, UI_ScrollPt pt, Rng1S64 idx_range, S64 view_num_indices)
 {
@@ -1465,7 +1470,7 @@ ui_scroll_bar_overlay_floating(UI_Box *parent_box, Rng2F32 region_rect, Rng2F32 
   {
     // inset from the edges so the bar floats clear of the panel border
     F32 edge_pad = floor_f32(ui_bottom_font_size()*0.2f);
-    UI_Parent(parent_box) UI_Focus(UI_FocusKind_Null)
+    UI_Parent(parent_box) UI_Focus(UI_FocusKind_Off)
     {
       ui_set_next_fixed_x(place_rect.x1 - thickness - edge_pad);
       ui_set_next_fixed_y(place_rect.y0 + edge_pad);
@@ -1501,7 +1506,7 @@ ui_docked_scroll_bar(UI_Box *parent_box, Rng2F32 content_rect, F32 classic_gutte
     Rng2F32 region_rect = shift_2f32(content_rect, parent_box->rect.p0);
     new_pt = ui_scroll_bar_overlay_floating(parent_box, region_rect, content_rect, key, pt, idx_range, view_num_indices);
   }
-  else UI_Parent(parent_box) UI_Focus(UI_FocusKind_Null)
+  else UI_Parent(parent_box) UI_Focus(UI_FocusKind_Off)
   {
     ui_set_next_fixed_x(content_rect.x1);
     ui_set_next_fixed_y(content_rect.y0);

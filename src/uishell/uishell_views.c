@@ -2424,7 +2424,7 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
   B32 do_wrap = rd_view_setting_b32_from_name(str8_lit("line_wrapping"));
   // uishell: the overlay scroll bar floats over the content and reserves no
   // gutter, so the text should use the full width (it auto-hides when idle).
-  F32 scroll_bar_dim = (ui_active_scroll_bar_style() == UI_ScrollBarStyle_Overlay) ? 0.f : floor_f32(main_font_size*1.5f);
+  F32 scroll_bar_dim = ui_scroll_bar_gutter_px(floor_f32(main_font_size*1.5f));
   F32 line_num_width_px = do_line_numbers ? floor_f32(code_glyph_advance*(log10(ClampBot(1, line_count))+3)) : 0;
   // uishell: classic keeps a generous right margin beyond its gutter; the overlay
   // style reserves no gutter, so use only a thin margin and let wrapped text reach
