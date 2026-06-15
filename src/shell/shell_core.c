@@ -3872,8 +3872,23 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //
           if(build_panel) if(panel != panel_tree.focused)
           {
-            UI_Rect(content_rect) UI_TagF("inactive")
-              ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero());
+            // uishell: dim panels other than the Active Panel as a subtractive focus
+            // cue. The scrim blends the whole panel (tabs + body) *toward the window
+            // background*, so inactive content fades into the backdrop and loses
+            // contrast (recedes) rather than just darkening at constant contrast (a
+            // black multiply preserves the fg/bg ratio). Strength is a user setting
+            // (a Theme metric later). Built before panel_box so it draws in front
+            // (reverse-order sibling painting); non-clickable, so clicks still reach
+            // the panel to focus it.
+            F32 inactive_dim = Clamp(0.f, rd_setting_f32_from_name(str8_lit("inactive_panel_dim")), 0.85f);
+            if(inactive_dim > 0.001f)
+            {
+              Vec4F32 dim_color = ui_color_from_name(str8_lit("background"));
+              dim_color.w = inactive_dim;
+              ui_set_next_background_color(dim_color);
+              UI_Rect(panel_rect)
+                ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero());
+            }
           }
           
           //////////////////////////
