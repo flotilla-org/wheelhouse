@@ -3633,6 +3633,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           // edge-touch tolerance must clear the panel's inward pad (above:
           // pad_2f32 by ~0.15em + rounding), else every top-row/edge check fails.
           F32 edge_tol = ui_top_font_size()*0.5f;
+          B32 register_title_bar_tab_strip = 0;
           if(tabs_in_title_bar && panel->tab_side == Side_Min && panel_rect.p0.y <= panel_area_rect.p0.y + edge_tol)
           {
             if(tab_strip_inset_left  > 0 && panel_rect.p0.x <= panel_area_rect.p0.x + edge_tol) { tab_bar_rect.p0.x += tab_strip_inset_left;  }
@@ -3640,8 +3641,11 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             tab_bar_rect.p0.x = Min(tab_bar_rect.p0.x, tab_bar_rect.p1.x);
             // this strip lives in the title-bar band: register it as custom
             // title-bar client area so the WM treats it as interactive UI &
-            // doesn't consume clicks on tabs as window drags.
-            wm_window_push_custom_title_bar_client_area(ws->os, tab_bar_rect);
+            // doesn't consume clicks on tabs as window drags. registered below
+            // (after the strip is built) covering only the occupied extent (up
+            // to the add-tab button) — the empty space past the last tab stays
+            // a window-drag handle, like a browser tab strip.
+            register_title_bar_tab_strip = 1;
           }
           
           //////////////////////////
@@ -4042,6 +4046,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //- rjf: build tab bar container
           //
           UI_Box *tab_bar_box = &ui_nil_box;
+          UI_Box *tab_strip_add_button_box = &ui_nil_box;
           if(build_panel) UI_CornerRadius(0) UI_Rect(tab_bar_rect)
           {
             tab_bar_box = ui_build_box_from_stringf(UI_BoxFlag_Clip|
@@ -4306,6 +4311,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             {
               ui_set_next_child_layout_axis(Axis2_Y);
               UI_Box *container = ui_build_box_from_stringf(!is_changing_panel_boundaries*UI_BoxFlag_AnimatePosX, "###add_new_tab");
+              tab_strip_add_button_box = container;
               UI_Parent(container)
               {
                 if(panel->tab_side == Side_Max)
@@ -4360,6 +4366,18 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             
             // rjf: interact with tab bar
             ui_signal_from_box(tab_bar_box);
+
+            // register the title-bar tab strip's interactive extent as custom
+            // client area: from the strip's left edge out to the right edge of
+            // the add-tab button. the empty space past it stays a window-drag
+            // handle (like a browser tab strip).
+            if(register_title_bar_tab_strip)
+            {
+              F32 occupied_x1 = tab_strip_add_button_box->rect.x1;
+              occupied_x1 = Clamp(tab_bar_rect.x0, occupied_x1, tab_bar_rect.x1);
+              Rng2F32 strip_client_rect = r2f32p(tab_bar_rect.x0, tab_bar_rect.y0, occupied_x1, tab_bar_rect.y1);
+              wm_window_push_custom_title_bar_client_area(ws->os, strip_client_rect);
+            }
           }
           
           //////////////////////////
@@ -6628,18 +6646,20 @@ rd_window_frame(void)
     // menu). the *main* workspace's top extends up into the title-bar band so its
     // top-row tab strips render there; the sidebar stays below the chrome. the
     // top-row tab strips are inset by the chrome end-zones — right always (the
-    // workspace touches the window's right edge), left only when the sidebar is
-    // collapsed (otherwise the leading buttons sit over the sidebar). previews &
-    // zoom builds are unaffected. (tabs_in_title_bar computed up at the top bar.)
+    // workspace touches the window's right edge), left by however much the
+    // leading chrome (decorations + leading buttons) overhangs the sidebar.
+    // when the sidebar is wider than the leading chrome the strip already clears
+    // it (inset 0); when collapsed the sidebar is 0-wide so the inset is the
+    // full leading extent. previews & zoom builds are unaffected.
+    // (tabs_in_title_bar computed up at the top bar.)
     Rng2F32 main_workspace_rect = workspace_rect;
     F32 main_tab_inset_left = 0.f;
     F32 main_tab_inset_right = 0.f;
     if(tabs_in_title_bar)
     {
-      B32 sidebar_collapsed = (dim_2f32(control_surface_rect).x <= 0.f);
       main_workspace_rect.p0.y = top_bar_rect.p0.y;
       main_tab_inset_right = ws->chrome_trailing_px;
-      if(sidebar_collapsed) { main_tab_inset_left = ws->chrome_leading_px; }
+      main_tab_inset_left = Max(0.f, ws->chrome_leading_px - main_workspace_rect.p0.x);
     }
 
     ws->workspace_surface_entry_count = 0;
