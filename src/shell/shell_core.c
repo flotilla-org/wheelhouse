@@ -4540,6 +4540,11 @@ rd_chrome_build_sidebar_collapse(CFG_Node *owner_cfg)
     CFG_Node *node = cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed"));
     if(node != &cfg_nil_node) { cfg_node_release(rd_state->cfg, node); }
     else                      { cfg_node_new(rd_state->cfg, owner_cfg, str8_lit("control_split_collapsed")); }
+    // this is a layout-changing cfg mutation with no command or animation behind
+    // it, so under frame-on-demand nothing would re-render it until the next
+    // incidental wake — request the frame ourselves (the drag path gets this via
+    // continuous motion events).
+    rd_request_frame();
   }
   return sig;
 }
