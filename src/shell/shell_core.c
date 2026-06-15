@@ -4479,7 +4479,7 @@ rd_chrome_resolve(RD_ChromeElement *elements, U64 count, F32 title_bar_budget_px
 // so the same element can be built in whichever niche resolution chose for it
 // (a title-bar niche, or the sidebar action row).
 
-internal void
+internal UI_Signal
 rd_chrome_build_new_workspace(CFG_Node *owner_cfg)
 {
   UI_Signal sig = rd_icon_button(RD_IconKind_Add, 0, str8_lit("###new_workspace"));
@@ -4487,19 +4487,22 @@ rd_chrome_build_new_workspace(CFG_Node *owner_cfg)
   {
     uishell_cmd("new_workspace", .window = owner_cfg->id);
   }
+  return sig;
 }
 
-internal void
+internal UI_Signal
 rd_chrome_build_overview_toggle(RD_WindowState *ws)
 {
+  UI_Signal sig = {0};
   UI_TagF(ws != &rd_nil_window_state && ws->workspace_zoom_open ? "" : "weak")
   {
-    UI_Signal sig = rd_icon_button(RD_IconKind_Grid, 0, str8_lit("###workspace_zoom_toggle"));
+    sig = rd_icon_button(RD_IconKind_Grid, 0, str8_lit("###workspace_zoom_toggle"));
     if(ui_clicked(sig) && ws != &rd_nil_window_state)
     {
       ws->workspace_zoom_open ^= 1;
     }
   }
+  return sig;
 }
 
 #if COMPILER_MSVC && !BUILD_DEBUG
@@ -6113,7 +6116,8 @@ rd_window_frame(void)
             {
               if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_TitleBarLeading)
               {
-                rd_chrome_build_new_workspace(root_controlled_split.owner_cfg);
+                UI_Signal sig = rd_chrome_build_new_workspace(root_controlled_split.owner_cfg);
+                wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
               }
             }
 
@@ -6251,7 +6255,8 @@ rd_window_frame(void)
           if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_TitleBarTrailing)
             UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
           {
-            rd_chrome_build_overview_toggle(ws);
+            UI_Signal sig = rd_chrome_build_overview_toggle(ws);
+            wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
           }
 
           // rjf: loaded user viz

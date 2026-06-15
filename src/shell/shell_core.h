@@ -570,9 +570,11 @@ internal RD_ChromeNiche rd_chrome_niche_host_is_title_bar(RD_ChromeNiche niche);
 // resolves elements into niches (written to niche_out, indexed by element kind),
 // given each host's width budget (indexed by a host id derived from niche).
 internal void rd_chrome_resolve(RD_ChromeElement *elements, U64 count, F32 title_bar_budget_px, RD_ChromeNiche *niche_out);
-// element build callbacks — emit the control under the current UI parent
-internal void rd_chrome_build_new_workspace(CFG_Node *owner_cfg);
-internal void rd_chrome_build_overview_toggle(RD_WindowState *ws);
+// element build callbacks — emit the control under the current UI parent &
+// return its signal (title-bar callers register the rect as custom-title-bar
+// client area so the window manager doesn't eat clicks as window drags)
+internal UI_Signal rd_chrome_build_new_workspace(CFG_Node *owner_cfg);
+internal UI_Signal rd_chrome_build_overview_toggle(RD_WindowState *ws);
 
 struct RD_WindowState
 {
