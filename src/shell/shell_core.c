@@ -6196,6 +6196,8 @@ rd_window_frame(void)
         ws->chrome_trailing_px = trailing +
           (ws->chrome_niche[RD_ChromeElementKind_OverviewToggle]  == RD_ChromeNiche_TitleBarTrailing ? icon_button_w : 0) +
           (ws->chrome_niche[RD_ChromeElementKind_ProjectSelector] == RD_ChromeNiche_TitleBarTrailing ? project_w : 0) +
+          // the compact (kebab) menu renders as the rightmost trailing element
+          (compact_menu_bar && ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu ? icon_button_w : 0) +
           gap;
       }
 
@@ -6378,56 +6380,6 @@ rd_window_frame(void)
               }
             }
 
-            //- menu items (compact "kebab" bar): a single button opening one
-            // drop-down that stacks every app menu as a section. the UI has a
-            // single ctx-menu slot (no nested submenus), so this is flat. the
-            // icon font has no kebab glyph, so it's composed from three dots.
-            if(ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu && compact_menu_bar)
-            {
-              UI_Key kebab_key = ui_key_from_string(ui_key_zero(), str8_lit("###app_menu_kebab"));
-              UI_CtxMenu(kebab_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
-              {
-                RD_AppMenuSpecList app_menus = rd_app_menu_specs();
-                for(U64 menu_idx = 0; menu_idx < app_menus.count; menu_idx += 1)
-                {
-                  RD_AppMenuSpec *spec = &app_menus.v[menu_idx];
-                  if(menu_idx != 0) { ui_spacer(ui_em(0.5f, 1.f)); }
-                  UI_TagF("weak") UI_TextAlignment(UI_TextAlign_Left) ui_label(spec->label);
-                  if(spec->item_count != 0)
-                  {
-                    rd_app_menu_buttons(spec);
-                  }
-                }
-              }
-              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
-              {
-                ui_set_next_child_layout_axis(Axis2_Y);
-                UI_Box *kebab_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
-                                                             UI_BoxFlag_DrawHotEffects|
-                                                             UI_BoxFlag_DrawActiveEffects,
-                                                             "###app_menu_kebab_button");
-                UI_Parent(kebab_box)
-                  RD_Font(RD_FontSlot_Icons)
-                  UI_FontSize(ui_top_font_size()*0.42f)
-                  UI_TextAlignment(UI_TextAlign_Center)
-                  UI_PrefWidth(ui_pct(1, 0))
-                  UI_PrefHeight(ui_px(floor_f32(ui_top_font_size()*0.5f), 1.f))
-                {
-                  ui_spacer(ui_pct(1, 0));
-                  ui_label(rd_icon_kind_text_table[RD_IconKind_CircleFilled]);
-                  ui_label(rd_icon_kind_text_table[RD_IconKind_CircleFilled]);
-                  ui_label(rd_icon_kind_text_table[RD_IconKind_CircleFilled]);
-                  ui_spacer(ui_pct(1, 0));
-                }
-                UI_Signal sig = ui_signal_from_box(kebab_box);
-                wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
-                if(ui_pressed(sig))
-                {
-                  if(ui_ctx_menu_is_open(kebab_key)) { ui_ctx_menu_close(); }
-                  else { ui_ctx_menu_open(kebab_key, kebab_box->key, v2f32(0, dim_2f32(kebab_box->rect).y)); }
-                }
-              }
-            }
           }
         }
         
@@ -6534,7 +6486,66 @@ rd_window_frame(void)
           {
             // ui_spacer(ui_em(2.f, 0));
           }
-          
+
+          // rjf: compact (kebab) app menu — rightmost shell chrome element. one
+          // button opening a single drop-down that stacks every app menu as a
+          // section (the UI has one ctx-menu slot, so it's flat, not nested).
+          // composed from three drawn dots (the icon font has no kebab glyph).
+          if(ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu && compact_menu_bar)
+          {
+            UI_Key kebab_key = ui_key_from_string(ui_key_zero(), str8_lit("###app_menu_kebab"));
+            UI_CtxMenu(kebab_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+            {
+              RD_AppMenuSpecList app_menus = rd_app_menu_specs();
+              for(U64 menu_idx = 0; menu_idx < app_menus.count; menu_idx += 1)
+              {
+                RD_AppMenuSpec *spec = &app_menus.v[menu_idx];
+                if(menu_idx != 0) { ui_spacer(ui_em(0.5f, 1.f)); }
+                UI_TagF("weak") UI_TextAlignment(UI_TextAlign_Left) ui_label(spec->label);
+                if(spec->item_count != 0)
+                {
+                  rd_app_menu_buttons(spec);
+                }
+              }
+            }
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+            {
+              ui_set_next_child_layout_axis(Axis2_Y);
+              UI_Box *kebab_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                                           UI_BoxFlag_DrawHotEffects|
+                                                           UI_BoxFlag_DrawActiveEffects,
+                                                           "###app_menu_kebab_button");
+              UI_Parent(kebab_box)
+              {
+                F32 dot = floor_f32(ui_top_font_size()*0.24f);
+                F32 gap = floor_f32(ui_top_font_size()*0.2f);
+                Vec4F32 dot_color = ui_color_from_name(str8_lit("text"));
+                ui_spacer(ui_pct(1, 0));
+                for(S32 dot_idx = 0; dot_idx < 3; dot_idx += 1)
+                {
+                  if(dot_idx != 0) { ui_spacer(ui_px(gap, 1.f)); }
+                  UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(dot, 1.f)) UI_Row
+                  {
+                    ui_spacer(ui_pct(1, 0));
+                    ui_set_next_pref_width(ui_px(dot, 1.f));
+                    ui_set_next_pref_height(ui_px(dot, 1.f));
+                    ui_set_next_background_color(dot_color);
+                    UI_CornerRadius(dot*0.5f) ui_build_box_from_stringf(UI_BoxFlag_DrawBackground, "###kebab_dot_%i", dot_idx);
+                    ui_spacer(ui_pct(1, 0));
+                  }
+                }
+                ui_spacer(ui_pct(1, 0));
+              }
+              UI_Signal sig = ui_signal_from_box(kebab_box);
+              wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+              if(ui_pressed(sig))
+              {
+                if(ui_ctx_menu_is_open(kebab_key)) { ui_ctx_menu_close(); }
+                else { ui_ctx_menu_open(kebab_key, kebab_box->key, v2f32(0, dim_2f32(kebab_box->rect).y)); }
+              }
+            }
+          }
+
           // rjf: close dropdown
           UI_Key close_ctx_menu_key = ui_key_from_stringf(ui_key_zero(), "###close_ctx_menu");
           UI_CtxMenu(close_ctx_menu_key) UI_TagF("implicit")
