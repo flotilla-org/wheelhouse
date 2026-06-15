@@ -4483,6 +4483,11 @@ internal UI_Signal
 rd_chrome_build_new_workspace(CFG_Node *owner_cfg)
 {
   UI_Signal sig = rd_icon_button(RD_IconKind_Add, 0, str8_lit("###new_workspace"));
+  if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  {
+    ui_state->tooltip_anchor_key = sig.box->key;
+    ui_label(str8_lit("New Workspace"));
+  }
   if(ui_clicked(sig))
   {
     uishell_cmd("new_workspace", .window = owner_cfg->id);
@@ -4501,6 +4506,11 @@ rd_chrome_build_overview_toggle(RD_WindowState *ws)
     {
       ws->workspace_zoom_open ^= 1;
     }
+  }
+  if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  {
+    ui_state->tooltip_anchor_key = sig.box->key;
+    ui_label(str8_lit("Workspace Overview"));
   }
   return sig;
 }
