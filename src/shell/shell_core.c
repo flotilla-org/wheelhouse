@@ -3630,10 +3630,13 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           // tab strip touches the workspace edge yields that end to the title-bar
           // chrome overlaid there. only the edge-touching strips inset; interior
           // top panels are untouched.
-          if(tabs_in_title_bar && panel->tab_side == Side_Min && panel_rect.p0.y <= panel_area_rect.p0.y + 1.f)
+          // edge-touch tolerance must clear the panel's inward pad (above:
+          // pad_2f32 by ~0.15em + rounding), else every top-row/edge check fails.
+          F32 edge_tol = ui_top_font_size()*0.5f;
+          if(tabs_in_title_bar && panel->tab_side == Side_Min && panel_rect.p0.y <= panel_area_rect.p0.y + edge_tol)
           {
-            if(tab_strip_inset_left  > 0 && panel_rect.p0.x <= panel_area_rect.p0.x + 1.f) { tab_bar_rect.p0.x += tab_strip_inset_left;  }
-            if(tab_strip_inset_right > 0 && panel_rect.p1.x >= panel_area_rect.p1.x - 1.f) { tab_bar_rect.p1.x -= tab_strip_inset_right; }
+            if(tab_strip_inset_left  > 0 && panel_rect.p0.x <= panel_area_rect.p0.x + edge_tol) { tab_bar_rect.p0.x += tab_strip_inset_left;  }
+            if(tab_strip_inset_right > 0 && panel_rect.p1.x >= panel_area_rect.p1.x - edge_tol) { tab_bar_rect.p1.x -= tab_strip_inset_right; }
             tab_bar_rect.p0.x = Min(tab_bar_rect.p0.x, tab_bar_rect.p1.x);
             // this strip lives in the title-bar band: register it as custom
             // title-bar client area so the WM treats it as interactive UI &
