@@ -1452,6 +1452,7 @@ ui_active_scroll_bar_style(void)
 // must be a pointer that stably identifies this scroll region across frames —
 // a long-lived view-state struct, a persistent UI box, or the scroll-point
 // storage. A transient/per-frame pointer would reset or collide the fade state.
+// Vertical only (right-edge placement); there is no horizontal overlay yet.
 // Returns the (possibly updated) scroll point.
 internal UI_ScrollPt
 ui_scroll_bar_overlay_floating(UI_Box *parent_box, Rng2F32 region_rect, Rng2F32 place_rect, void *key_ptr, UI_ScrollPt pt, Rng1S64 idx_range, S64 view_num_indices)
@@ -1475,7 +1476,11 @@ ui_scroll_bar_overlay_floating(UI_Box *parent_box, Rng2F32 region_rect, Rng2F32 
                          .rate = ui_state->animation_info.hot_animation_rate);
   F32 thickness = mix_1f32(rest_thickness, hover_thickness, expand_t);
   UI_ScrollPt new_pt = pt;
-  if(vis_t > 0.001f)
+  // keep the bar built while a press is active even if vis_t has faded past the
+  // threshold (pointer left the region mid-drag) — otherwise the dragged thumb's
+  // box would stop being built and the drag would be dropped.
+  B32 press_active = !ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Left], ui_key_zero());
+  if(vis_t > 0.001f || press_active)
   {
     // inset from the edges so the bar floats clear of the panel border
     F32 edge_pad = floor_f32(ui_bottom_font_size()*0.2f);
@@ -1505,7 +1510,7 @@ ui_scroll_bar_gutter_px(F32 classic_px)
 // parent_box), picking the placement for the active style: classic fills the
 // reserved gutter just past content_rect.x1; overlay floats over the content's
 // right edge with auto-hide. Call sites do not branch on style. key seeds the
-// overlay's per-region animation and must be stable across frames.
+// overlay's per-region animation and must be stable across frames. Vertical only.
 internal UI_ScrollPt
 ui_docked_scroll_bar(UI_Box *parent_box, Rng2F32 content_rect, F32 classic_gutter_px, void *key, UI_ScrollPt pt, Rng1S64 idx_range, S64 view_num_indices)
 {

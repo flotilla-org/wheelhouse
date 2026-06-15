@@ -2430,7 +2430,7 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
   // style reserves no gutter, so use only a thin margin and let wrapped text reach
   // the edge (the floating bar auto-hides and overlaps only momentarily).
   // overlay margin reserves the resting thumb (~0.45em) + content padding + border.
-  F32 text_right_margin_px = (ui_active_scroll_bar_style() == UI_ScrollBarStyle_Overlay) ? main_font_size*1.f : main_font_size*2.5f;
+  F32 text_right_margin_px = (ui_active_scroll_bar_style() == UI_ScrollBarStyle_Overlay) ? main_font_size : main_font_size*2.5f;
   F32 text_area_width_px = ClampBot(code_glyph_advance*16, list_dim.x-scroll_bar_dim-line_num_width_px-text_right_margin_px);
   U64 max_bytes_per_visual_line = ClampBot(8, (U64)(text_area_width_px/ClampBot(1, code_glyph_advance)));
   
