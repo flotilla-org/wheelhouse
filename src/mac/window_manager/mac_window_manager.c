@@ -1230,6 +1230,11 @@ wm_send_wakeup_event(void)
   [NSApp postEvent:event atStart:NO];
 }
 
+// set while a left-drag that began on a title-bar client area (tabs/buttons) is
+// in progress, so its drag events aren't forwarded to AppKit (which would
+// auto-move the movable window on a titlebar-region drag).
+global B32 mac_wm_title_bar_client_drag = 0;
+
 internal WM_EventList
 wm_get_events(Arena *arena, B32 wait)
 {
@@ -1355,9 +1360,13 @@ wm_get_events(Arena *arena, B32 wait)
           // the in-process UI handles this via the WM_Event pushed below — do
           // NOT forward to AppKit, which would auto-move the (movable) window on
           // a titlebar-region press/drag. handled_by_chrome stays 0 so the
-          // WM_Event is still pushed.
+          // WM_Event is still pushed. mark the drag so its drag events are
+          // suppressed too (the press alone isn't enough — AppKit moves on the
+          // forwarded LeftMouseDragged events).
           send_to_nsapp = 0;
+          if(type == NSEventTypeLeftMouseDown) { mac_wm_title_bar_client_drag = 1; }
         }
+        if(type == NSEventTypeLeftMouseUp) { mac_wm_title_bar_client_drag = 0; }
         if(!handled_by_chrome && !handled_by_native_title_bar_control)
         {
           WM_Event *wm_event = mac_wm_push_event(arena, &result, is_release ? WM_EventKind_Release : WM_EventKind_Press, window);
@@ -1375,6 +1384,12 @@ wm_get_events(Arena *arena, B32 wait)
         WM_Event *wm_event = mac_wm_push_event(arena, &result, WM_EventKind_MouseMove, window);
         wm_event->modifiers = mac_wm_modifiers_from_ns_flags([event modifierFlags]);
         wm_event->pos = mac_wm_client_pos_from_ns_point(window, [event locationInWindow]);
+        // a drag that began on a title-bar client area is the UI's (tab reorder
+        // etc.) — don't forward to AppKit, which would auto-move the window.
+        if(type == NSEventTypeLeftMouseDragged && mac_wm_title_bar_client_drag)
+        {
+          send_to_nsapp = 0;
+        }
       }break;
       case NSEventTypeScrollWheel:
       {
