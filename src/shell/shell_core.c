@@ -2827,10 +2827,7 @@ uishell_controlled_split_control_width_px(UIShell_ControlledSplit *split, Rng2F3
 {
   // collapsed (sidebar-collapse chrome element): the control surface is hidden &
   // the workspace takes the full width. persisted next to control_split_pct.
-  if(cfg_node_child_from_string(split->owner_cfg, str8_lit("control_split_collapsed")) != &cfg_nil_node)
-  {
-    return 0;
-  }
+  B32 collapsed = (cfg_node_child_from_string(split->owner_cfg, str8_lit("control_split_collapsed")) != &cfg_nil_node);
   F32 rect_width = dim_2f32(rect).x;
   Rng1F32 width_range = uishell_controlled_split_control_width_range_px(split, rect);
   F32 width = 0;
@@ -2845,7 +2842,13 @@ uishell_controlled_split_control_width_px(UIShell_ControlledSplit *split, Rng2F3
     }
     width = Clamp(width_range.min, rect_width*pct, width_range.max);
   }
-  return width;
+  // animate collapse/expand: the open width above is instant (so divider drags
+  // don't lag), and a separate 0..1 factor slides the sidebar in/out from the
+  // left. downstream the workspace edge (main_workspace_rect.p0.x) follows this,
+  // so the title-bar tab strip glides with it rather than snapping.
+  F32 collapse_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "control_split_collapse_t_%p", split->owner_cfg),
+                           collapsed ? 0.f : 1.f, .initial = collapsed ? 0.f : 1.f, .rate = rd_state->menu_animation_rate);
+  return width*collapse_t;
 }
 
 internal Rng2F32
@@ -3610,6 +3613,17 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                       panel_rect_pct.y1*content_rect_dim.y);
           panel_rect = pad_2f32(panel_rect, floor_f32(-ui_top_font_size()*0.15f));
           panel_rect = r2f32p(round_f32(panel_rect.x0), round_f32(panel_rect.y0), round_f32(panel_rect.x1), round_f32(panel_rect.y1));
+          // the *settled* panel rect (target layout, no docking animation) —
+          // same transform as panel_rect but from the un-animated target. used to
+          // anchor the title-bar tab strip below so a sidebar toggle doesn't drag
+          // it through the title-bar chrome (the strip is a chrome-row resident:
+          // it stays at its inset location while the panel content animates).
+          Rng2F32 settled_panel_rect = r2f32p(target_rect_pct.x0*content_rect_dim.x,
+                                              target_rect_pct.y0*content_rect_dim.y,
+                                              target_rect_pct.x1*content_rect_dim.x,
+                                              target_rect_pct.y1*content_rect_dim.y);
+          settled_panel_rect = pad_2f32(settled_panel_rect, floor_f32(-ui_top_font_size()*0.15f));
+          settled_panel_rect = r2f32p(round_f32(settled_panel_rect.x0), round_f32(settled_panel_rect.y0), round_f32(settled_panel_rect.x1), round_f32(settled_panel_rect.y1));
           F32 tab_bar_rheight = floor_f32(ui_top_font_size()*3.5f);
           F32 tab_bar_vheight = floor_f32(ui_top_font_size()*rd_setting_f32_from_name(str8_lit("tab_height")));
           F32 tab_bar_rv_diff = tab_bar_rheight - tab_bar_vheight;
@@ -3634,10 +3648,16 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           // pad_2f32 by ~0.15em + rounding), else every top-row/edge check fails.
           F32 edge_tol = ui_top_font_size()*0.5f;
           B32 register_title_bar_tab_strip = 0;
-          if(tabs_in_title_bar && panel->tab_side == Side_Min && panel_rect.p0.y <= panel_area_rect.p0.y + edge_tol)
+          if(tabs_in_title_bar && panel->tab_side == Side_Min && settled_panel_rect.p0.y <= panel_area_rect.p0.y + edge_tol)
           {
-            if(tab_strip_inset_left  > 0 && panel_rect.p0.x <= panel_area_rect.p0.x + edge_tol) { tab_bar_rect.p0.x += tab_strip_inset_left;  }
-            if(tab_strip_inset_right > 0 && panel_rect.p1.x >= panel_area_rect.p1.x - edge_tol) { tab_bar_rect.p1.x -= tab_strip_inset_right; }
+            // anchor the strip's horizontal extent to the settled layout (+inset),
+            // not the animated panel_rect — gated on the settled position too so
+            // the inset doesn't blink on/off mid-animation. the strip stays put
+            // (moving only by the inset delta) while the content below animates.
+            tab_bar_rect.p0.x = settled_panel_rect.p0.x;
+            tab_bar_rect.p1.x = settled_panel_rect.p1.x;
+            if(tab_strip_inset_left  > 0 && settled_panel_rect.p0.x <= panel_area_rect.p0.x + edge_tol) { tab_bar_rect.p0.x += tab_strip_inset_left;  }
+            if(tab_strip_inset_right > 0 && settled_panel_rect.p1.x >= panel_area_rect.p1.x - edge_tol) { tab_bar_rect.p1.x -= tab_strip_inset_right; }
             tab_bar_rect.p0.x = Min(tab_bar_rect.p0.x, tab_bar_rect.p1.x);
             // this strip lives in the title-bar band: register it as custom
             // title-bar client area so the WM treats it as interactive UI &
@@ -7119,10 +7139,15 @@ rd_window_frame(void)
               Rng2F32 tile_rect = img_rect;
               if(selected && workspace_zoom_t < 1.f)
               {
-                // tiles show the cropped workspace content, so the transition
-                // anchors to the workspace region, not the whole window
-                tile_rect.p0 = mix_2f32(workspace_rect.p0, img_rect.p0, workspace_zoom_t);
-                tile_rect.p1 = mix_2f32(workspace_rect.p1, img_rect.p1, workspace_zoom_t);
+                // tiles show the cropped workspace content (workspace_content_uv =
+                // main_workspace_rect), so the transition's full-zoom anchor must
+                // be that same region — which includes the raised tab band under
+                // tabs-in-title-bar. anchoring to workspace_rect (no band) drew the
+                // band tabs into the client area mid-zoom, momentarily reverting
+                // out of tabs-in-title-bar. (main_workspace_rect == workspace_rect
+                // when tabs-in-title-bar is off, so this degrades cleanly.)
+                tile_rect.p0 = mix_2f32(main_workspace_rect.p0, img_rect.p0, workspace_zoom_t);
+                tile_rect.p1 = mix_2f32(main_workspace_rect.p1, img_rect.p1, workspace_zoom_t);
               }
               Rng2F32 label_rect = r2f32p(img_rect.x0, img_rect.y1, img_rect.x1, img_rect.y1 + label_h);
               rd_workspace_preview_demand_push(ws, child->id, img_w);
@@ -10308,13 +10333,16 @@ rd_frame(void)
     F32 scrolling_animations_f = (F32)!!rd_setting_b32_from_name(str8_lit("scrolling_animations"));
     F32 tooltip_animations_f   = (F32)!!rd_setting_b32_from_name(str8_lit("tooltip_animations"));
     F32 menu_animations_f      = (F32)!!rd_setting_b32_from_name(str8_lit("menu_animations"));
-    rd_state->catchall_animation_rate     = 1 - master_animations_f*pow_f32(2, (-60.f * rd_state->frame_dt));
-    rd_state->menu_animation_rate         = 1 - master_animations_f*menu_animations_f*pow_f32(2, (-70.f * rd_state->frame_dt));
-    rd_state->menu_animation_rate__slow   = 1 - master_animations_f*menu_animations_f*pow_f32(2, (-50.f * rd_state->frame_dt));
-    rd_state->entity_alive_animation_rate = 1 - master_animations_f*menu_animations_f*pow_f32(2, (-30.f * rd_state->frame_dt));
-    rd_state->rich_hover_animation_rate   = 1 - master_animations_f*menu_animations_f*pow_f32(2, (-50.f * rd_state->frame_dt));
-    rd_state->scrolling_animation_rate    = 1 - master_animations_f*scrolling_animations_f*pow_f32(2, (-60.f * rd_state->frame_dt));
-    rd_state->tooltip_animation_rate      = 1 - master_animations_f*tooltip_animations_f*pow_f32(2, (-60.f * rd_state->frame_dt));
+    // animation-speed multiplier scales every decay constant (lower = slower);
+    // clamped off zero so animations never freeze mid-transition.
+    F32 anim_speed = Clamp(0.1f, rd_setting_f32_from_name(str8_lit("animation_speed")), 8.f);
+    rd_state->catchall_animation_rate     = 1 - master_animations_f*pow_f32(2, (-60.f * anim_speed * rd_state->frame_dt));
+    rd_state->menu_animation_rate         = 1 - master_animations_f*menu_animations_f*pow_f32(2, (-70.f * anim_speed * rd_state->frame_dt));
+    rd_state->menu_animation_rate__slow   = 1 - master_animations_f*menu_animations_f*pow_f32(2, (-50.f * anim_speed * rd_state->frame_dt));
+    rd_state->entity_alive_animation_rate = 1 - master_animations_f*menu_animations_f*pow_f32(2, (-30.f * anim_speed * rd_state->frame_dt));
+    rd_state->rich_hover_animation_rate   = 1 - master_animations_f*menu_animations_f*pow_f32(2, (-50.f * anim_speed * rd_state->frame_dt));
+    rd_state->scrolling_animation_rate    = 1 - master_animations_f*scrolling_animations_f*pow_f32(2, (-60.f * anim_speed * rd_state->frame_dt));
+    rd_state->tooltip_animation_rate      = 1 - master_animations_f*tooltip_animations_f*pow_f32(2, (-60.f * anim_speed * rd_state->frame_dt));
   }
   
   //////////////////////////////

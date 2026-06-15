@@ -36,6 +36,7 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@display_name('Scrolling Animations') @description(\"Enables scrolling animations.\") @expand_if(\"$.animations\") @default(1) 'scrolling_animations': bool,"
     "@display_name('Tooltip Animations') @description(\"Enables tooltip animations.\") @expand_if(\"$.animations\") @default(1) 'tooltip_animations': bool,"
     "@display_name('Menu Animations') @description(\"Enables menu animations.\") @expand_if(\"$.animations\") @default(1) 'menu_animations': bool,"
+    "@display_name('Animation Speed') @description(\"Multiplies UI animation speed; lower is slower, useful for inspecting transitions.\") @expand_if(\"$.animations\") @default(1.f) 'animation_speed': @range[0.1f, 3.f] f32,"
     "@display_name('UI Font') @description(\"Path to the font used when displaying non-code UI elements. Empty uses the embedded default.\") @default('') 'main_font': string,"
     "@display_name('Code Font') @description(\"Path to the font used when displaying code and terminal cells. Empty uses the embedded default.\") @default('') 'code_font': string,"
     "@display_name('Terminal Fallback Fonts') @description(\"Comma, semicolon, or newline separated font paths used as terminal glyph fallbacks before embedded terminal fallback fonts.\") @default('') 'terminal_fallback_fonts': string,"
