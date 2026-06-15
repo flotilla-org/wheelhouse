@@ -6082,7 +6082,13 @@ rd_window_frame(void)
     // + dev toggle. when on, the top bar yields its middle band so the
     // workspace's top-row tab strips render there; see the top-bar container
     // flags below & the panel-area raise/insets further down.
-    B32 tabs_in_title_bar = (rd_setting_b32_from_name(str8_lit("tabs_in_title_bar")) && wm_application_menu_bar_is_native());
+    // a compact (kebab) in-window menu bar collapses to a single button, which
+    // — like the native menu bar — frees the title-bar row for tabs. tabs in the
+    // title bar need that free row on any platform, hence the OR (not a mac-only
+    // native-menu gate).
+    B32 compact_menu_bar = rd_setting_b32_from_name(str8_lit("compact_menu_bar"));
+    B32 tabs_in_title_bar = (rd_setting_b32_from_name(str8_lit("tabs_in_title_bar")) &&
+                             (wm_application_menu_bar_is_native() || compact_menu_bar));
     ProfScope("build top bar")
     {
       B32 draw_custom_title_bar_controls = wm_window_should_draw_custom_title_bar_controls(ws->os);
@@ -6102,8 +6108,14 @@ rd_window_frame(void)
         F32 bar_h = dim_2f32(top_bar_rect).y;
         F32 icon_button_w = font_size*2.25f; // flat icon buttons (new-workspace, overview)
 
-        // menu bar: sum of menu-title widths + generous per-button padding
+        // menu bar: compact = a single kebab button; full = sum of menu-title
+        // widths + generous per-button padding.
         F32 menu_w = 0;
+        if(compact_menu_bar)
+        {
+          menu_w = icon_button_w;
+        }
+        else
         {
           RD_AppMenuSpecList app_menus = rd_app_menu_specs();
           for(U64 idx = 0; idx < app_menus.count; idx += 1)
@@ -6148,9 +6160,16 @@ rd_window_frame(void)
         {
           ws->chrome_niche[RD_ChromeElementKind_Menu] = RD_ChromeNiche_Hidden; // native menu bar
         }
-        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
-          RD_ChromeElementKind_ProjectSelector, project_w, 0,
-          {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_Hidden}, 2};
+        if(rd_setting_b32_from_name(str8_lit("show_project_selector")))
+        {
+          chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+            RD_ChromeElementKind_ProjectSelector, project_w, 0,
+            {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_Hidden}, 2};
+        }
+        else
+        {
+          ws->chrome_niche[RD_ChromeElementKind_ProjectSelector] = RD_ChromeNiche_Hidden;
+        }
         // sidebar-collapse lives only in the title bar — it can't sit in a
         // collapsed sidebar — & is the stickiest element (sheds last) so the
         // sidebar is always re-openable.
@@ -6239,8 +6258,8 @@ rd_window_frame(void)
               wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
             }
 
-            //- menu items
-            if(ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu)
+            //- menu items (full bar)
+            if(ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu && !compact_menu_bar)
             {
               ui_set_next_flags(UI_BoxFlag_DrawBackground);
               UI_PrefWidth(ui_children_sum(1)) UI_Row UI_PrefWidth(ui_text_dim(20, 1)) UI_GroupKey(menu_bar_group_key)
@@ -6355,6 +6374,57 @@ rd_window_frame(void)
                       }
                     }
                   }
+                }
+              }
+            }
+
+            //- menu items (compact "kebab" bar): a single button opening one
+            // drop-down that stacks every app menu as a section. the UI has a
+            // single ctx-menu slot (no nested submenus), so this is flat. the
+            // icon font has no kebab glyph, so it's composed from three dots.
+            if(ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu && compact_menu_bar)
+            {
+              UI_Key kebab_key = ui_key_from_string(ui_key_zero(), str8_lit("###app_menu_kebab"));
+              UI_CtxMenu(kebab_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+              {
+                RD_AppMenuSpecList app_menus = rd_app_menu_specs();
+                for(U64 menu_idx = 0; menu_idx < app_menus.count; menu_idx += 1)
+                {
+                  RD_AppMenuSpec *spec = &app_menus.v[menu_idx];
+                  if(menu_idx != 0) { ui_spacer(ui_em(0.5f, 1.f)); }
+                  UI_TagF("weak") UI_TextAlignment(UI_TextAlign_Left) ui_label(spec->label);
+                  if(spec->item_count != 0)
+                  {
+                    rd_app_menu_buttons(spec);
+                  }
+                }
+              }
+              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+              {
+                ui_set_next_child_layout_axis(Axis2_Y);
+                UI_Box *kebab_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                                             UI_BoxFlag_DrawHotEffects|
+                                                             UI_BoxFlag_DrawActiveEffects,
+                                                             "###app_menu_kebab_button");
+                UI_Parent(kebab_box)
+                  RD_Font(RD_FontSlot_Icons)
+                  UI_FontSize(ui_top_font_size()*0.42f)
+                  UI_TextAlignment(UI_TextAlign_Center)
+                  UI_PrefWidth(ui_pct(1, 0))
+                  UI_PrefHeight(ui_px(floor_f32(ui_top_font_size()*0.5f), 1.f))
+                {
+                  ui_spacer(ui_pct(1, 0));
+                  ui_label(rd_icon_kind_text_table[RD_IconKind_CircleFilled]);
+                  ui_label(rd_icon_kind_text_table[RD_IconKind_CircleFilled]);
+                  ui_label(rd_icon_kind_text_table[RD_IconKind_CircleFilled]);
+                  ui_spacer(ui_pct(1, 0));
+                }
+                UI_Signal sig = ui_signal_from_box(kebab_box);
+                wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+                if(ui_pressed(sig))
+                {
+                  if(ui_ctx_menu_is_open(kebab_key)) { ui_ctx_menu_close(); }
+                  else { ui_ctx_menu_open(kebab_key, kebab_box->key, v2f32(0, dim_2f32(kebab_box->rect).y)); }
                 }
               }
             }
