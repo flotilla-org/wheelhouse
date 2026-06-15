@@ -83,6 +83,14 @@
 @end
 
 @implementation MAC_WM_ContentView
+// AppKit auto-moves a titled window when dragging its titlebar region; with a
+// full-size content view that steals drags from custom title-bar UI (e.g. tabs
+// in the title bar). Decline the automatic move so our own client-area-aware
+// performWindowDragWithEvent (in the mouse-down handler) is the sole drag path.
+- (BOOL)mouseDownCanMoveWindow
+{
+  return NO;
+}
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender
 {
   NSDragOperation result = NSDragOperationNone;
