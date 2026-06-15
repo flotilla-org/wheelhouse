@@ -3236,10 +3236,11 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 }
 
 internal void
-rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open)
+rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right)
 {
   CFG_PanelTree panel_tree = mount->panel_tree;
   B32 window_layout_reset = ws->window_layout_reset;
+  Rng2F32 panel_area_rect = content_rect; // captured before the per-panel `content_rect` shadows it (for tabs-in-title-bar edge detection)
   
     ////////////////////////////
     //- rjf: @window_ui_part panel non-leaf UI (drag boundaries, drag/drop sites)
@@ -3624,6 +3625,17 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
           tab_bar_rect = intersect_2f32(tab_bar_rect, panel_rect);
           content_rect = intersect_2f32(content_rect, panel_rect);
+
+          // tabs-in-title-bar (ADR-0006): a top-tabbed panel in the top row whose
+          // tab strip touches the workspace edge yields that end to the title-bar
+          // chrome overlaid there. only the edge-touching strips inset; interior
+          // top panels are untouched.
+          if(panel->tab_side == Side_Min && panel_rect.p0.y <= panel_area_rect.p0.y + 1.f)
+          {
+            if(tab_strip_inset_left  > 0 && panel_rect.p0.x <= panel_area_rect.p0.x + 1.f) { tab_bar_rect.p0.x += tab_strip_inset_left;  }
+            if(tab_strip_inset_right > 0 && panel_rect.p1.x >= panel_area_rect.p1.x - 1.f) { tab_bar_rect.p1.x -= tab_strip_inset_right; }
+            tab_bar_rect.p0.x = Min(tab_bar_rect.p0.x, tab_bar_rect.p1.x);
+          }
           
           //////////////////////////
           //- rjf: decide to skip this panel (e.g. if it is too small
@@ -6122,6 +6134,20 @@ rd_window_frame(void)
           RD_ChromeElementKind_OverviewToggle, icon_button_w, 1,
           {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_SidebarActions}, 2};
         rd_chrome_resolve(chrome_elements, chrome_element_count, title_bar_budget, ws->chrome_niche);
+
+        // pixel extent actually occupied at each end of the title bar, for the
+        // tabs-in-title-bar inset (below): leading = decorations/icon + leading
+        // buttons; trailing = trailing buttons + project selector + window
+        // controls. a small gap keeps tabs off the buttons.
+        F32 gap = font_size*0.5f;
+        ws->chrome_leading_px = leading +
+          (ws->chrome_niche[RD_ChromeElementKind_SidebarCollapse] == RD_ChromeNiche_TitleBarLeading ? icon_button_w : 0) +
+          (ws->chrome_niche[RD_ChromeElementKind_NewWorkspace]    == RD_ChromeNiche_TitleBarLeading ? icon_button_w : 0) +
+          gap;
+        ws->chrome_trailing_px = trailing +
+          (ws->chrome_niche[RD_ChromeElementKind_OverviewToggle]  == RD_ChromeNiche_TitleBarTrailing ? icon_button_w : 0) +
+          (ws->chrome_niche[RD_ChromeElementKind_ProjectSelector] == RD_ChromeNiche_TitleBarTrailing ? project_w : 0) +
+          gap;
       }
 
       wm_window_clear_custom_border_data(ws->os);
@@ -6576,6 +6602,26 @@ rd_window_frame(void)
       ws->window_layout_reset = 1;
     }
     Rng2F32 workspace_rect = uishell_controlled_split_workspace_rect(&root_controlled_split, content_rect);
+
+    //- rjf: tabs-in-title-bar (ADR-0006, gated on a free title-bar row = native
+    // menu). the *main* workspace's top extends up into the title-bar band so its
+    // top-row tab strips render there; the sidebar stays below the chrome. the
+    // top-row tab strips are inset by the chrome end-zones — right always (the
+    // workspace touches the window's right edge), left only when the sidebar is
+    // collapsed (otherwise the leading buttons sit over the sidebar). previews &
+    // zoom builds are unaffected.
+    B32 tabs_in_title_bar = (DEV_tabs_in_title_bar && wm_application_menu_bar_is_native());
+    Rng2F32 main_workspace_rect = workspace_rect;
+    F32 main_tab_inset_left = 0.f;
+    F32 main_tab_inset_right = 0.f;
+    if(tabs_in_title_bar)
+    {
+      B32 sidebar_collapsed = (dim_2f32(control_surface_rect).x <= 0.f);
+      main_workspace_rect.p0.y = top_bar_rect.p0.y;
+      main_tab_inset_right = ws->chrome_trailing_px;
+      if(sidebar_collapsed) { main_tab_inset_left = ws->chrome_leading_px; }
+    }
+
     ws->workspace_surface_entry_count = 0;
     //- animate the zoom transition; while open *or* in flight, children build
     // as zoom-mode surfaces & the composites interpolate
@@ -6641,7 +6687,7 @@ rd_window_frame(void)
         ws->workspace_surface_entry_count += 1;
         UI_Parent(wrapper)
         {
-          rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open);
+          rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open, main_tab_inset_left, main_tab_inset_right);
         }
         ws->active_workspace_surface_entry = 0;
       }
@@ -6671,7 +6717,7 @@ rd_window_frame(void)
         ws->workspace_surface_entry_count += 1;
         UI_Parent(child_wrapper) UI_Focus(UI_FocusKind_Off)
         {
-          rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, &child->mount, 0, 0);
+          rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, &child->mount, 0, 0, 0.f, 0.f);
         }
         ws->active_workspace_surface_entry = 0;
       }
@@ -6997,7 +7043,7 @@ rd_window_frame(void)
     }
     else
     {
-      rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open);
+      rd_panel_area_ui(scratch, workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open, 0.f, 0.f);
     }
     
     ////////////////////////////

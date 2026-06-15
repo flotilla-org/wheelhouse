@@ -13,6 +13,7 @@ global B32 DEV_draw_view_surfaces = 0;
 global B32 DEV_draw_surface_previews = 0;
 global B32 DEV_crt_views = 0;
 global B32 DEV_coverflow_overview = 0;
+global B32 DEV_tabs_in_title_bar = 0;
 global B32 DEV_eval_compiler_tooltips = 0;
 global B32 DEV_eval_watch_key_tooltips = 0;
 global B32 DEV_cmd_context_tooltips = 0;
@@ -29,6 +30,7 @@ struct {B32 *value_ptr; String8 name;} DEV_toggle_table[] =
 {&DEV_draw_surface_previews, str8_lit_comp("draw_surface_previews")},
 {&DEV_crt_views, str8_lit_comp("crt_views")},
 {&DEV_coverflow_overview, str8_lit_comp("coverflow_overview")},
+{&DEV_tabs_in_title_bar, str8_lit_comp("tabs_in_title_bar")},
 {&DEV_eval_compiler_tooltips, str8_lit_comp("eval_compiler_tooltips")},
 {&DEV_eval_watch_key_tooltips, str8_lit_comp("eval_watch_key_tooltips")},
 {&DEV_cmd_context_tooltips, str8_lit_comp("cmd_context_tooltips")},
