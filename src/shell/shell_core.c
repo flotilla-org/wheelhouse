@@ -6628,7 +6628,7 @@ rd_window_frame(void)
     ////////////////////////////
     //- rjf: @window_ui_part bottom bar
     //
-    if(show_status_bar) ProfScope("build bottom bar")
+    ProfScope("build bottom bar") if(show_status_bar)
     {
       String8 tag = str8_lit("pop");
       CFG_NodePtrList tasks = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("conversion_task"));
@@ -10337,8 +10337,10 @@ rd_frame(void)
     F32 scrolling_animations_f = (F32)!!rd_setting_b32_from_name(str8_lit("scrolling_animations"));
     F32 tooltip_animations_f   = (F32)!!rd_setting_b32_from_name(str8_lit("tooltip_animations"));
     F32 menu_animations_f      = (F32)!!rd_setting_b32_from_name(str8_lit("menu_animations"));
-    // animation-speed multiplier scales every decay constant (lower = slower);
-    // clamped off zero so animations never freeze mid-transition.
+    // animation-speed multiplier scales every decay constant (lower = slower).
+    // the schema surfaces [0.1, 3.0] in the UI; this clamp is just a defensive
+    // floor/ceiling for hand-edited configs — off zero so animations never
+    // freeze, and a sane ceiling above the surfaced range.
     F32 anim_speed = Clamp(0.1f, rd_setting_f32_from_name(str8_lit("animation_speed")), 8.f);
     rd_state->catchall_animation_rate     = 1 - master_animations_f*pow_f32(2, (-60.f * anim_speed * rd_state->frame_dt));
     rd_state->menu_animation_rate         = 1 - master_animations_f*menu_animations_f*pow_f32(2, (-70.f * anim_speed * rd_state->frame_dt));
