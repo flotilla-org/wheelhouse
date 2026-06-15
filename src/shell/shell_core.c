@@ -2825,6 +2825,12 @@ uishell_controlled_split_control_width_range_px(UIShell_ControlledSplit *split, 
 internal F32
 uishell_controlled_split_control_width_px(UIShell_ControlledSplit *split, Rng2F32 rect)
 {
+  // collapsed (sidebar-collapse chrome element): the control surface is hidden &
+  // the workspace takes the full width. persisted next to control_split_pct.
+  if(cfg_node_child_from_string(split->owner_cfg, str8_lit("control_split_collapsed")) != &cfg_nil_node)
+  {
+    return 0;
+  }
   F32 rect_width = dim_2f32(rect).x;
   Rng1F32 width_range = uishell_controlled_split_control_width_range_px(split, rect);
   F32 width = 0;
@@ -4515,6 +4521,29 @@ rd_chrome_build_overview_toggle(RD_WindowState *ws)
   return sig;
 }
 
+internal UI_Signal
+rd_chrome_build_sidebar_collapse(CFG_Node *owner_cfg)
+{
+  B32 collapsed = (cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed")) != &cfg_nil_node);
+  UI_Signal sig = {0};
+  UI_TagF(collapsed ? "" : "weak")
+  {
+    sig = rd_icon_button(RD_IconKind_List, 0, str8_lit("###sidebar_collapse"));
+  }
+  if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  {
+    ui_state->tooltip_anchor_key = sig.box->key;
+    ui_label(collapsed ? str8_lit("Show Sidebar") : str8_lit("Hide Sidebar"));
+  }
+  if(ui_clicked(sig))
+  {
+    CFG_Node *node = cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed"));
+    if(node != &cfg_nil_node) { cfg_node_release(rd_state->cfg, node); }
+    else                      { cfg_node_new(rd_state->cfg, owner_cfg, str8_lit("control_split_collapsed")); }
+  }
+  return sig;
+}
+
 #if COMPILER_MSVC && !BUILD_DEBUG
 NO_OPTIMIZE_BEGIN
 #endif
@@ -6075,6 +6104,12 @@ rd_window_frame(void)
         chrome_elements[chrome_element_count++] = (RD_ChromeElement){
           RD_ChromeElementKind_ProjectSelector, project_w, 0,
           {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_Hidden}, 2};
+        // sidebar-collapse lives only in the title bar — it can't sit in a
+        // collapsed sidebar — & is the stickiest element (sheds last) so the
+        // sidebar is always re-openable.
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+          RD_ChromeElementKind_SidebarCollapse, icon_button_w, 5,
+          {RD_ChromeNiche_TitleBarLeading, RD_ChromeNiche_Hidden}, 2};
         chrome_elements[chrome_element_count++] = (RD_ChromeElement){
           RD_ChromeElementKind_NewWorkspace, icon_button_w, 2,
           {RD_ChromeNiche_TitleBarLeading, RD_ChromeNiche_SidebarActions}, 2};
@@ -6122,13 +6157,17 @@ rd_window_frame(void)
             }
 
             //- rjf: leading buttons ("a") niche — elements resolved here (ADR-0006)
-            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+            if(ws->chrome_niche[RD_ChromeElementKind_SidebarCollapse] == RD_ChromeNiche_TitleBarLeading)
+              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
             {
-              if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_TitleBarLeading)
-              {
-                UI_Signal sig = rd_chrome_build_new_workspace(root_controlled_split.owner_cfg);
-                wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
-              }
+              UI_Signal sig = rd_chrome_build_sidebar_collapse(root_controlled_split.owner_cfg);
+              wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+            }
+            if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_TitleBarLeading)
+              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+            {
+              UI_Signal sig = rd_chrome_build_new_workspace(root_controlled_split.owner_cfg);
+              wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
             }
 
             //- menu items

@@ -546,6 +546,7 @@ typedef enum RD_ChromeElementKind
 {
   RD_ChromeElementKind_Menu,
   RD_ChromeElementKind_ProjectSelector,
+  RD_ChromeElementKind_SidebarCollapse,
   RD_ChromeElementKind_NewWorkspace,
   RD_ChromeElementKind_OverviewToggle,
   RD_ChromeElementKind_COUNT
@@ -575,6 +576,7 @@ internal void rd_chrome_resolve(RD_ChromeElement *elements, U64 count, F32 title
 // client area so the window manager doesn't eat clicks as window drags)
 internal UI_Signal rd_chrome_build_new_workspace(CFG_Node *owner_cfg);
 internal UI_Signal rd_chrome_build_overview_toggle(RD_WindowState *ws);
+internal UI_Signal rd_chrome_build_sidebar_collapse(CFG_Node *owner_cfg);
 
 struct RD_WindowState
 {
