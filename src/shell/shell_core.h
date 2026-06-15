@@ -1234,6 +1234,7 @@ internal B32 uishell_next_view_cmd(UIShell_Cmd **cmd);
 //- rjf: app menus
 internal RD_AppMenuSpecList rd_app_menu_specs(void);
 internal void rd_app_menu_buttons(RD_AppMenuSpec *spec);
+internal void rd_app_menu_spec_content(RD_AppMenuSpec *spec);
 internal String8 rd_app_data_folder(Arena *arena);
 internal CFG_Node *rd_cfg_new_view_tab(CFG_Node *parent, String8 view, String8 expr, B32 selected);
 
