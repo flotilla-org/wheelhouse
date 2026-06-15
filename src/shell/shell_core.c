@@ -2977,6 +2977,25 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         F32 list_content_h = (list_prev != &ui_nil_box ? list_prev->view_bounds.y : 0);
         B32 list_can_scroll = (list_prev != &ui_nil_box && list_content_h > list_view_h + 1.f);
         F32 scroll_bar_w = floor_f32(ui_top_font_size()*1.2f);
+
+        //- scroll bar (overlay or classic), built BEFORE the list row so it is an
+        // earlier sibling and draws on top of (and is hit-testable above) the list
+        // — RAD paints siblings back-to-front in reverse build order. Pixel-indexed
+        // against the list box's view offset; geometry comes from last frame's box.
+        if(list_can_scroll)
+        {
+          S64 max_off = (S64)ClampBot(0.f, list_content_h - list_view_h);
+          UI_ScrollPt scroll_pt = ui_scroll_pt((S64)list_prev->view_off_target.y, 0);
+          Rng2F32 list_local = r2f32p(list_prev->rect.x0 - control_box->rect.x0, list_prev->rect.y0 - control_box->rect.y0,
+                                      list_prev->rect.x1 - control_box->rect.x0, list_prev->rect.y1 - control_box->rect.y0);
+          scroll_pt = ui_docked_scroll_bar(control_box, list_local, scroll_bar_w, list_prev,
+                                           scroll_pt, r1s64(0, max_off), (S64)list_view_h);
+          if(scroll_pt.idx != (S64)list_prev->view_off_target.y)
+          {
+            list_prev->view_off_target.y = (F32)scroll_pt.idx;
+          }
+        }
+
         UI_Box *list_box = &ui_nil_box;
         UI_PrefWidth(ui_pct(1.f, 0.f)) UI_PrefHeight(ui_pct(1.f, 0.f)) UI_Row
         {
@@ -3181,24 +3200,11 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           // ui_signal_from_box; nothing else signals this box)
           ui_signal_from_box(list_box);
 
-          //- scroll bar, when the list overflows; pixel-indexed against the
-          // list box's view offset, so wheel & bar stay in sync
+          //- reserve the classic gutter beside the list (overlay reserves 0). The
+          // bar itself is built before this row (above) so it draws on top.
           if(list_can_scroll)
           {
-            S64 max_off = (S64)ClampBot(0.f, list_content_h - list_view_h);
-            UI_ScrollPt scroll_pt = ui_scroll_pt((S64)list_box->view_off_target.y, 0);
-            UI_PrefHeight(ui_pct(1.f, 0.f))
-            {
-              scroll_pt = ui_scroll_bar(Axis2_Y,
-                                        ui_px(scroll_bar_w, 1.f),
-                                        scroll_pt,
-                                        r1s64(0, max_off),
-                                        (S64)list_view_h);
-            }
-            if(scroll_pt.idx != (S64)list_box->view_off_target.y)
-            {
-              list_box->view_off_target.y = (F32)scroll_pt.idx;
-            }
+            ui_spacer(ui_px(ui_scroll_bar_gutter_px(scroll_bar_w), 1.f));
           }
         }
 
@@ -4989,6 +4995,10 @@ rd_window_frame(void)
         animation_info.scroll_animation_rate   = rd_state->scrolling_animation_rate;
       }
       
+      // uishell: select the scroll-bar rendering style for this frame. Global
+      // setting for now; a candidate to become workspace/theme-scoped later.
+      ui_set_active_scroll_bar_style(rd_setting_b32_from_name(str8_lit("overlay_scrollbars")) ? UI_ScrollBarStyle_Overlay : UI_ScrollBarStyle_Classic);
+
       // rjf: begin & push initial stack values
       ui_begin_build(ws->os, &ws->ui_events, &icon_info, ws->theme, &animation_info, rd_state->frame_dt, rd_state->frame_dt);
       ui_push_font(rd_font_from_slot(RD_FontSlot_Main));
