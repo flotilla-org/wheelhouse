@@ -2733,7 +2733,11 @@ uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window)
   {
     UIShell_MaterializedWorkspace *workspace = push_array(arena, UIShell_MaterializedWorkspace, 1);
     workspace->id = window->id;
-    workspace->display_name = str8_lit("Workspace");
+    workspace->display_name = rd_label_from_cfg(window);
+    if(workspace->display_name.size == 0)
+    {
+      workspace->display_name = str8_lit("Workspace");
+    }
     workspace->mount = uishell_workspace_mount_from_owner_cfg(arena, window, window);
     DLLPushBack(inventory.first, inventory.last, workspace);
     inventory.count += 1;
@@ -2778,6 +2782,17 @@ uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window)
     inventory,
   };
   return split;
+}
+
+internal B32
+uishell_controlled_split_workspace_can_close(UIShell_ControlledSplit *split, UIShell_MaterializedWorkspace *workspace)
+{
+  B32 result = (split != 0 &&
+                workspace != 0 &&
+                split->inventory.count > 1 &&
+                (workspace->mount.workspace_cfg != &cfg_nil_node ||
+                 workspace->mount.owner_cfg == split->owner_cfg));
+  return result;
 }
 
 internal UIShell_WorkspaceMount *
@@ -2916,14 +2931,14 @@ uishell_controlled_split_boundary_ui(UIShell_ControlledSplit *split, Rng2F32 rec
 }
 
 internal void
-uishell_controlled_split_commit_workspace_rename(RD_WindowState *ws, CFG_Node *workspace_cfg)
+uishell_controlled_split_commit_workspace_rename(RD_WindowState *ws, CFG_Node *workspace_owner_cfg)
 {
   if(ws != &rd_nil_window_state)
   {
     String8 new_label = str8(ws->root_controlled_split_rename_buffer, ws->root_controlled_split_rename_size);
-    if(new_label.size != 0 && workspace_cfg != &cfg_nil_node)
+    if(new_label.size != 0 && workspace_owner_cfg != &cfg_nil_node)
     {
-      CFG_Node *label = cfg_node_child_from_string_or_alloc(rd_state->cfg, workspace_cfg, str8_lit("label"));
+      CFG_Node *label = cfg_node_child_from_string_or_alloc(rd_state->cfg, workspace_owner_cfg, str8_lit("label"));
       cfg_node_new_replace(rd_state->cfg, label, new_label);
     }
     ws->root_controlled_split_renaming_workspace_id = 0;
@@ -2947,7 +2962,7 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       {
         if(workspace->id == ws->root_controlled_split_renaming_workspace_id)
         {
-          uishell_controlled_split_commit_workspace_rename(ws, workspace->mount.workspace_cfg);
+          uishell_controlled_split_commit_workspace_rename(ws, workspace->mount.owner_cfg);
           break;
         }
       }
@@ -3011,174 +3026,139 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                                            list_key);
           UI_Parent(list_box)
           {
-        ui_spacer(ui_px(panel_frame_inset_px+1.f, 1.f));
-        for(UIShell_MaterializedWorkspace *workspace = split->inventory.first;
-            workspace != 0;
-            workspace = workspace->next)
-        {
-          B32 selected = (workspace == split->inventory.selected);
-          F32 row_height_px = floor_f32(ui_top_font_size()*rd_setting_f32_from_name(str8_lit("tab_height")));
-          F32 close_width_px = ui_top_font_size()*2.5f;
-          UI_PrefWidth(ui_pct(1.f, 0.f))
-            UI_PrefHeight(ui_px(row_height_px, 1.f))
-            UI_Row
-          {
-            ui_spacer(ui_em(0.5f, 1.f));
-            UI_PrefWidth(ui_pct(1.f, 0.f))
-              UI_PrefHeight(ui_pct(1.f, 0.f))
-              UI_TagF("tab")
-              UI_TagF(!selected ? "inactive" : "")
-              UI_CornerRadius(ui_top_font_size()*0.6f)
+            F32 entry_margin_px = floor_f32(ui_top_font_size()*0.5f);
+            ui_spacer(ui_px(panel_frame_inset_px+1.f, 1.f));
+            for(UIShell_MaterializedWorkspace *workspace = split->inventory.first;
+                workspace != 0;
+                workspace = workspace->next)
             {
-              UI_Box *row_box = ui_build_box_from_stringf(UI_BoxFlag_DrawHotEffects|
-                                                           UI_BoxFlag_DrawBackground|
-                                                           UI_BoxFlag_DrawBorder|
-                                                           (UI_BoxFlag_DrawDropShadow*selected)|
-                                                           UI_BoxFlag_Clickable,
-                                                           "workspace_%I64u", workspace->id);
-              UI_Parent(row_box)
+              B32 selected = (workspace == split->inventory.selected);
+              F32 row_height_px = floor_f32(ui_top_font_size()*rd_setting_f32_from_name(str8_lit("tab_height")));
+              F32 close_width_px = ui_top_font_size()*2.5f;
+              B32 can_close_workspace = uishell_controlled_split_workspace_can_close(split, workspace);
+              F32 entry_border_allowance_px = 2.f;
+              F32 preview_avail_w = Max(0.f, dim_2f32(rect).x - entry_margin_px - entry_border_allowance_px);
+              RD_WorkspacePreviewDraw *preview = 0;
+              F32 preview_h = 0;
+              if(ws != &rd_nil_window_state && preview_avail_w > 16.f)
               {
-                UI_WidthFill UI_Row
+                rd_workspace_preview_demand_push(ws, workspace->id, preview_avail_w);
+                RD_SurfaceCacheNode *preview_node = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(workspace->id));
+                if(preview_node != 0 && preview_node->size.x > 0 && preview_node->size.y > 0)
                 {
-                  ui_spacer(ui_em(0.5f, 1.f));
-                  UI_PrefWidth(ui_pct(1.f, 0.f))
-                  {
-                    if(ws != &rd_nil_window_state && ws->root_controlled_split_renaming_workspace_id == workspace->id)
-                    {
-                      String8 rename_key_string = push_str8f(rd_frame_arena(), "###workspace_rename_%I64u", workspace->id);
-                      UI_Key rename_key = ui_key_from_string(ui_active_seed_key(), rename_key_string);
-                      ui_set_auto_focus_active_key(rename_key);
-                      UI_Signal edit_sig = ui_line_edit(&ws->root_controlled_split_rename_cursor,
-                                                        &ws->root_controlled_split_rename_mark,
-                                                        ws->root_controlled_split_rename_buffer,
-                                                        sizeof(ws->root_controlled_split_rename_buffer),
-                                                        &ws->root_controlled_split_rename_size,
-                                                        workspace->display_name,
-                                                        rename_key_string);
-                      B32 commit_rename = ui_committed(edit_sig);
-                      for(UI_Event *evt = 0; ui_next_event(&evt);)
-                      {
-                        if(evt->kind == UI_EventKind_Press &&
-                           (evt->key == WM_Key_LeftMouseButton ||
-                            evt->key == WM_Key_MiddleMouseButton ||
-                            evt->key == WM_Key_RightMouseButton) &&
-                           !contains_2f32(edit_sig.box->rect, evt->pos))
-                        {
-                          commit_rename = 1;
-                          break;
-                        }
-                      }
-                      if(commit_rename)
-                      {
-                        uishell_controlled_split_commit_workspace_rename(ws, workspace->mount.workspace_cfg);
-                      }
-                    }
-                    else
-                    {
-                      UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
-                      ui_box_equip_display_string(name_box, workspace->display_name);
-                    }
-                  }
-                  if(workspace->mount.workspace_cfg != &cfg_nil_node && split->inventory.count > 1)
-                  {
-                    UI_PrefWidth(ui_px(close_width_px, 1.f))
-                      UI_TextAlignment(UI_TextAlign_Center)
-                      RD_Font(RD_FontSlot_Icons)
-                      UI_FontSize(ui_top_font_size()*0.75f)
-                      UI_TagF(".") UI_TagF("tab") UI_TagF("weak") UI_TagF("implicit")
-                      UI_CornerRadius00(0)
-                      UI_CornerRadius01(0)
-                    {
-                      UI_Box *close_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
-                                                                    UI_BoxFlag_DrawBorder|
-                                                                    UI_BoxFlag_DrawBackground|
-                                                                    UI_BoxFlag_DrawText|
-                                                                    UI_BoxFlag_DrawHotEffects|
-                                                                    UI_BoxFlag_DrawActiveEffects,
-                                                                    "%S###close_workspace_%I64u", rd_icon_kind_text_table[RD_IconKind_X], workspace->id);
-                      UI_Signal sig = ui_signal_from_box(close_box);
-                      if(ui_clicked(sig) || ui_middle_clicked(sig))
-                      {
-                        uishell_cmd("close_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
-                      }
-                    }
-                  }
+                  preview = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
+                  preview->node = preview_node;
+                  preview->src_uv = r2f32p(0, 0, 1, 1); // minis are already content-cropped
+                  F32 preview_aspect = (F32)preview_node->size.x/(F32)preview_node->size.y;
+                  preview_h = floor_f32(preview_avail_w/preview_aspect);
                 }
               }
 
-              // row interaction, after children - presses inside the close
-              // button (or other clickable children) must be claimed there first
-              UI_Signal row_sig = ui_signal_from_box(row_box);
-              if(ui_clicked(row_sig))
-              {
-                if(!selected)
-                {
-                  uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
-                }
-                if(ws != &rd_nil_window_state)
-                {
-                  ws->workspace_zoom_open = 0;
-                }
-              }
-              if(ui_double_clicked(row_sig) && workspace->mount.workspace_cfg != &cfg_nil_node && ws != &rd_nil_window_state)
-              {
-                String8 edit_string = workspace->display_name;
-                edit_string.size = Min(sizeof(ws->root_controlled_split_rename_buffer), edit_string.size);
-                MemoryCopy(ws->root_controlled_split_rename_buffer, edit_string.str, edit_string.size);
-                ws->root_controlled_split_rename_size = edit_string.size;
-                TxtPt rename_pt = txt_pt(1, edit_string.size+1);
-                ws->root_controlled_split_rename_cursor = rename_pt;
-                ws->root_controlled_split_rename_mark = txt_pt(1, 1);
-                ws->root_controlled_split_renaming_workspace_id = workspace->id;
-                ui_kill_action();
-              }
-              if(!selected && ui_right_clicked(row_sig))
-              {
-                uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
-              }
-            }
-            ui_spacer(ui_em(0.5f, 1.f));
-          }
-
-          //- workspace preview row: shows the retained preview surface when one
-          // exists (live-ish for the selected workspace, last-seen for others)
-          if(ws != &rd_nil_window_state)
-          {
-            RD_SurfaceCacheNode *preview_node = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(workspace->id));
-            RD_WorkspacePreviewDraw *preview = 0;
-            if(preview_node != 0)
-            {
-              preview = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
-              preview->node = preview_node;
-              preview->src_uv = r2f32p(0, 0, 1, 1); // minis are already content-cropped
-            }
-            F32 preview_margin = ui_top_font_size()*0.5f;
-            F32 preview_avail_w = dim_2f32(rect).x - preview_margin*2.f;
-            if(preview_avail_w > 16.f)
-            {
-              rd_workspace_preview_demand_push(ws, workspace->id, preview_avail_w);
-            }
-            if(preview != 0 && preview->node->size.x > 0 && preview->node->size.y > 0 && preview_avail_w > 16.f)
-            {
-              F32 preview_aspect = (F32)preview->node->size.x/(F32)preview->node->size.y;
-              F32 preview_h = floor_f32(preview_avail_w/preview_aspect);
-              ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.2f), 1.f));
               UI_PrefWidth(ui_pct(1.f, 0.f))
-                UI_PrefHeight(ui_px(preview_h, 1.f))
+                UI_PrefHeight(ui_children_sum(1.f))
                 UI_Row
               {
-                ui_spacer(ui_em(0.5f, 1.f));
+                ui_spacer(ui_px(entry_margin_px, 1.f));
                 UI_PrefWidth(ui_pct(1.f, 0.f))
-                  UI_PrefHeight(ui_pct(1.f, 0.f))
+                  UI_PrefHeight(ui_children_sum(1.f))
+                  UI_CornerRadius00(ui_top_font_size()*0.6f)
+                  UI_CornerRadius01(ui_top_font_size()*0.6f)
+                  UI_CornerRadius10(0)
+                  UI_CornerRadius11(0)
                   UI_TagF("tab")
                   UI_TagF(!selected ? "inactive" : "")
                 {
-                  UI_Box *preview_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
-                                                                  UI_BoxFlag_DrawBorder,
-                                                                  "###workspace_preview_%I64u", workspace->id);
-                  ui_box_equip_custom_draw(preview_box, rd_workspace_preview_box_draw, preview);
-                  UI_Signal preview_sig = ui_signal_from_box(preview_box);
-                  if(ui_clicked(preview_sig))
+                  UI_Box *entry_box = ui_build_box_from_stringf(UI_BoxFlag_DrawHotEffects|
+                                                                UI_BoxFlag_DrawBackground|
+                                                                UI_BoxFlag_DrawBorder|
+                                                                (UI_BoxFlag_DrawDropShadow*selected)|
+                                                                UI_BoxFlag_Clickable,
+                                                                "workspace_%I64u", workspace->id);
+                  UI_Parent(entry_box)
+                  {
+                    UI_PrefWidth(ui_pct(1.f, 0.f))
+                      UI_PrefHeight(ui_px(row_height_px, 1.f))
+                      UI_Row
+                    {
+                      ui_spacer(ui_em(0.5f, 1.f));
+                      UI_PrefWidth(ui_pct(1.f, 0.f))
+                        UI_PrefHeight(ui_pct(1.f, 0.f))
+                      {
+                        if(ws != &rd_nil_window_state && ws->root_controlled_split_renaming_workspace_id == workspace->id)
+                        {
+                          String8 rename_key_string = push_str8f(rd_frame_arena(), "###workspace_rename_%I64u", workspace->id);
+                          UI_Key rename_key = ui_key_from_string(ui_active_seed_key(), rename_key_string);
+                          ui_set_auto_focus_active_key(rename_key);
+                          UI_Signal edit_sig = ui_line_edit(&ws->root_controlled_split_rename_cursor,
+                                                            &ws->root_controlled_split_rename_mark,
+                                                            ws->root_controlled_split_rename_buffer,
+                                                            sizeof(ws->root_controlled_split_rename_buffer),
+                                                            &ws->root_controlled_split_rename_size,
+                                                            workspace->display_name,
+                                                            rename_key_string);
+                          B32 commit_rename = ui_committed(edit_sig);
+                          for(UI_Event *evt = 0; ui_next_event(&evt);)
+                          {
+                            if(evt->kind == UI_EventKind_Press &&
+                               (evt->key == WM_Key_LeftMouseButton ||
+                                evt->key == WM_Key_MiddleMouseButton ||
+                                evt->key == WM_Key_RightMouseButton) &&
+                               !contains_2f32(edit_sig.box->rect, evt->pos))
+                            {
+                              commit_rename = 1;
+                              break;
+                            }
+                          }
+                          if(commit_rename)
+                          {
+                            uishell_controlled_split_commit_workspace_rename(ws, workspace->mount.owner_cfg);
+                          }
+                        }
+                        else
+                        {
+                          UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
+                          ui_box_equip_display_string(name_box, workspace->display_name);
+                        }
+                      }
+                      if(can_close_workspace)
+                      {
+                        UI_PrefWidth(ui_px(close_width_px, 1.f))
+                          UI_TextAlignment(UI_TextAlign_Center)
+                          RD_Font(RD_FontSlot_Icons)
+                          UI_FontSize(ui_top_font_size()*0.75f)
+                          UI_TagF(".") UI_TagF("tab") UI_TagF("weak") UI_TagF("implicit")
+                          UI_CornerRadius00(0)
+                          UI_CornerRadius01(0)
+                        {
+                          UI_Box *close_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                                                        UI_BoxFlag_DrawText|
+                                                                        UI_BoxFlag_DrawHotEffects|
+                                                                        UI_BoxFlag_DrawActiveEffects,
+                                                                        "%S###close_workspace_%I64u", rd_icon_kind_text_table[RD_IconKind_X], workspace->id);
+                          UI_Signal sig = ui_signal_from_box(close_box);
+                          if(ui_clicked(sig) || ui_middle_clicked(sig))
+                          {
+                            uishell_cmd("close_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
+                          }
+                        }
+                      }
+                    }
+
+                    if(preview != 0 && preview_h > 0)
+                    {
+                      UI_PrefWidth(ui_pct(1.f, 0.f))
+                        UI_PrefHeight(ui_px(preview_h, 1.f))
+                      {
+                        UI_Box *preview_box = ui_build_box_from_stringf(0, "###workspace_preview_%I64u", workspace->id);
+                        ui_box_equip_custom_draw(preview_box, rd_workspace_preview_box_draw, preview);
+                      }
+                    }
+                  }
+
+                  // Entry interaction, after children - presses inside the close
+                  // button (or other clickable children) must be claimed there first.
+                  UI_Signal entry_sig = ui_signal_from_box(entry_box);
+                  if(ui_clicked(entry_sig))
                   {
                     if(!selected)
                     {
@@ -3189,13 +3169,26 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                       ws->workspace_zoom_open = 0;
                     }
                   }
+                  if(ui_double_clicked(entry_sig) && ws != &rd_nil_window_state)
+                  {
+                    String8 edit_string = workspace->display_name;
+                    edit_string.size = Min(sizeof(ws->root_controlled_split_rename_buffer), edit_string.size);
+                    MemoryCopy(ws->root_controlled_split_rename_buffer, edit_string.str, edit_string.size);
+                    ws->root_controlled_split_rename_size = edit_string.size;
+                    TxtPt rename_pt = txt_pt(1, edit_string.size+1);
+                    ws->root_controlled_split_rename_cursor = rename_pt;
+                    ws->root_controlled_split_rename_mark = txt_pt(1, 1);
+                    ws->root_controlled_split_renaming_workspace_id = workspace->id;
+                    ui_kill_action();
+                  }
+                  if(!selected && ui_right_clicked(entry_sig))
+                  {
+                    uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
+                  }
                 }
-                ui_spacer(ui_em(0.5f, 1.f));
               }
+              ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.4f), 1.f));
             }
-          }
-          ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.4f), 1.f));
-        }
           }
 
           //- consume wheel events over the list (scroll handling lives in
