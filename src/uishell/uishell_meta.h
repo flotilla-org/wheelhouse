@@ -58,6 +58,8 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@default(0) @display_name('Show Status Bar') @description(\"Shows the bottom status bar (build/version, task and error status).\") 'show_status_bar': bool,"
     "@default(1) @display_name('Overlay Scroll Bars') @description(\"Draws thin scroll bars that float over content and fade out when idle, instead of the classic gutter scroll bars.\") 'overlay_scrollbars': bool,"
     "@default(0.55f) @display_name('Inactive Panel Dim') @description(\"Fades panels other than the keyboard-focused one toward the background, as a subtractive focus cue. 0 disables.\") 'inactive_panel_dim': @range[0.f, 0.8f] f32,"
+    "@default(0.f) @display_name('Panel Gap') @description(\"Space between adjacent panels, in ems. 0 = flush (panels share a single seam); a larger value separates them as cards.\") 'panel_gap': @range[0.f, 1.f] f32,"
+    "@default(1.f) @display_name('Panel Border') @description(\"Thickness of panel frame borders, in pixels. 0 hides them.\") 'panel_border_px': @range[0.f, 4.f] f32,"
     "@default(0) @display_name('Tabs In Title Bar') @description(\"Renders the main workspace's top-row panel tabs in the window title bar, alongside whatever menu form is shown.\") 'tabs_in_title_bar': bool,"
     "@default(2) @display_name('User Tab Width') 'tab_width': @range[1, 32] u64,"
     "@default(1) @display_name('Focus Menu Bar With Alt') @description(\"Mimics standard Windows behavior of focusing the menu bar using the Alt key.\") 'focus_menu_bar_with_alt': bool,"
