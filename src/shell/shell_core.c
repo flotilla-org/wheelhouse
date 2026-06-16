@@ -3297,6 +3297,7 @@ internal UI_BOX_CUSTOM_DRAW(rd_selected_tab_frame_draw)
   }
   if(top_clip.x1 != 0 || top_clip.y1 != 0)
   {
+    // `dr_top_clip` uses a zero rect as the no-active-clip sentinel.
     clip = intersect_2f32(clip, top_clip);
     cap_clip = intersect_2f32(cap_clip, top_clip);
   }
@@ -3393,6 +3394,10 @@ rd_panel_frame_segment_list_push_unique(Arena *arena, RD_PanelFrameSegmentList *
           {
             next_remaining[next_remaining_count++] = r;
           }
+          else
+          {
+            Assert(!"too many frame segment fragments");
+          }
         }
         else
         {
@@ -3400,9 +3405,17 @@ rd_panel_frame_segment_list_push_unique(Arena *arena, RD_PanelFrameSegmentList *
           {
             next_remaining[next_remaining_count++] = r1f32(r.min, overlap_min);
           }
+          else if(r.min < overlap_min)
+          {
+            Assert(!"too many frame segment fragments");
+          }
           if(overlap_max < r.max && next_remaining_count < ArrayCount(next_remaining))
           {
             next_remaining[next_remaining_count++] = r1f32(overlap_max, r.max);
+          }
+          else if(overlap_max < r.max)
+          {
+            Assert(!"too many frame segment fragments");
           }
         }
       }
@@ -3979,7 +3992,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
         }
 
-	      }
+        }
 
       for(RD_PanelFrameSegment *seg = raw_frame_segments.first; seg != 0; seg = seg->next)
       {
@@ -3992,6 +4005,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
     //
     if(content_rect.x1 > content_rect.x0 && content_rect.y1 > content_rect.y0)
     {
+      RD_PanelChromePlan *chrome_plan_cursor = first_chrome_plan;
       ProfScope("leaf panel UI")
         for(CFG_PanelNode *panel = panel_tree.root;
             panel != &cfg_nil_panel_node;
@@ -4012,13 +4026,22 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //////////////////////////
           //- rjf: unpack planned UI rectangles
           //
-          RD_PanelChromePlan *chrome_plan = 0;
-          for(RD_PanelChromePlan *p = first_chrome_plan; p != 0; p = p->next)
+          RD_PanelChromePlan *chrome_plan = chrome_plan_cursor;
+          if(chrome_plan != 0 && chrome_plan->panel == panel)
           {
-            if(p->panel == panel)
+            chrome_plan_cursor = chrome_plan_cursor->next;
+          }
+          else
+          {
+            Assert(chrome_plan == 0 || chrome_plan->panel == panel);
+            chrome_plan = 0;
+            for(RD_PanelChromePlan *p = first_chrome_plan; p != 0; p = p->next)
             {
-              chrome_plan = p;
-              break;
+              if(p->panel == panel)
+              {
+                chrome_plan = p;
+                break;
+              }
             }
           }
           if(chrome_plan == 0) { continue; }
@@ -4246,6 +4269,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           // frame-bearing regions (body + selected tab handle), not from whole
           // panel rectangles. This removes tab-strip|tab-strip dividers while
           // preserving one owned border for content-bearing boundaries.
+          // Emitted here, rather than in one global pass, to preserve the current
+          // sibling paint order: inactive-panel scrim below, frame segments above,
+          // and panel contents clipped by panel_box.
           //
           if(build_panel)
           {
@@ -4546,8 +4572,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                   }
                   else if(!omit_name)
                   {
+                    F32 inactive_tab_bg_dim = 0.7f; // TODO(rjf): theme metric.
                     Vec4F32 recessed = panel_body_bg;
-                    recessed.x *= 0.7f; recessed.y *= 0.7f; recessed.z *= 0.7f;
+                    recessed.x *= inactive_tab_bg_dim; recessed.y *= inactive_tab_bg_dim; recessed.z *= inactive_tab_bg_dim;
                     ui_set_next_background_color(recessed);
                   }
                   UI_Box *tab_box = ui_build_box_from_stringf(UI_BoxFlag_DrawHotEffects|
