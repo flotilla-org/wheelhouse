@@ -4033,7 +4033,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
           else
           {
-            Assert(chrome_plan == 0 || chrome_plan->panel == panel);
+            // If the cursor is non-null but points at another panel, the prepass
+            // and build loop no longer share their expected leaf-panel order.
+            Assert(chrome_plan == 0 && "chrome plan cursor order mismatch");
             chrome_plan = 0;
             for(RD_PanelChromePlan *p = first_chrome_plan; p != 0; p = p->next)
             {
