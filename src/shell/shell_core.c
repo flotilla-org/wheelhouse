@@ -3246,12 +3246,212 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   }
 }
 
+////////////////////////////////
+//~ rjf: Panel Chrome Frame Segments
+
+typedef struct RD_PanelFrameSegment RD_PanelFrameSegment;
+struct RD_PanelFrameSegment
+{
+  RD_PanelFrameSegment *next;
+  CFG_PanelNode *panel;
+  Axis2 axis;
+  Side side;
+  F32 p;
+  Rng1F32 span;
+  Rng2F32 rect;
+};
+
+typedef struct RD_PanelFrameSegmentList RD_PanelFrameSegmentList;
+struct RD_PanelFrameSegmentList
+{
+  RD_PanelFrameSegment *first;
+  RD_PanelFrameSegment *last;
+  U64 count;
+};
+
+typedef struct RD_SelectedTabFrameDrawData RD_SelectedTabFrameDrawData;
+struct RD_SelectedTabFrameDrawData
+{
+  Rng2F32 clip_rect;
+  Vec4F32 color;
+  F32 border_thickness;
+  F32 edge_softness;
+  Side tab_side;
+  F32 body_edge_p;
+};
+
+internal UI_BOX_CUSTOM_DRAW(rd_selected_tab_frame_draw)
+{
+  RD_SelectedTabFrameDrawData *data = (RD_SelectedTabFrameDrawData *)user_data;
+  Rng2F32 top_clip = dr_top_clip();
+  Rng2F32 clip = data->clip_rect;
+  Rng2F32 cap_clip = clip;
+  F32 thickness = data->border_thickness;
+  if(data->tab_side == Side_Max)
+  {
+    cap_clip.y0 = Max(cap_clip.y0, data->body_edge_p + thickness);
+  }
+  else
+  {
+    cap_clip.y1 = Min(cap_clip.y1, data->body_edge_p - thickness);
+  }
+  if(top_clip.x1 != 0 || top_clip.y1 != 0)
+  {
+    clip = intersect_2f32(clip, top_clip);
+    cap_clip = intersect_2f32(cap_clip, top_clip);
+  }
+  Rng2F32 draw_rect = pad_2f32(box->rect, 1.f);
+  DR_ClipScope(cap_clip)
+  {
+    F32 rounded_corner_amount = rd_setting_f32_from_name(str8_lit("rounded_corner_amount"));
+    R_Rect2DInst *inst = dr_rect(draw_rect, data->color, 0, thickness, data->edge_softness);
+    for EachIndex(idx, Corner_COUNT)
+    {
+      inst->corner_radii[idx] = box->corner_radii[idx]*rounded_corner_amount;
+    }
+  }
+  DR_ClipScope(clip)
+  {
+    Rng1F32 join_span = r1f32(data->body_edge_p - thickness, data->body_edge_p + thickness);
+    dr_rect(r2f32p(box->rect.x0, join_span.min, box->rect.x0 + thickness, join_span.max), data->color, 0, 0, 0);
+    dr_rect(r2f32p(box->rect.x1 - thickness, join_span.min, box->rect.x1, join_span.max), data->color, 0, 0, 0);
+  }
+}
+
+internal Rng2F32
+rd_panel_frame_segment_rect(Axis2 axis, Side side, F32 p, Rng1F32 span, F32 thickness)
+{
+  Rng2F32 rect = {0};
+  if(axis == Axis2_X)
+  {
+    rect.x0 = (side == Side_Min ? p : p - thickness);
+    rect.x1 = (side == Side_Min ? p + thickness : p);
+    rect.y0 = span.min;
+    rect.y1 = span.max;
+  }
+  else
+  {
+    rect.x0 = span.min;
+    rect.x1 = span.max;
+    rect.y0 = (side == Side_Min ? p : p - thickness);
+    rect.y1 = (side == Side_Min ? p + thickness : p);
+  }
+  return rect;
+}
+
+internal void
+rd_panel_frame_segment_list_push(Arena *arena, RD_PanelFrameSegmentList *list, CFG_PanelNode *panel, Axis2 axis, Side side, F32 p, Rng1F32 span, F32 thickness)
+{
+  span.min = round_f32(span.min);
+  span.max = round_f32(span.max);
+  p = round_f32(p);
+  if(span.max - span.min >= 0.5f && thickness >= 0.5f)
+  {
+    RD_PanelFrameSegment *n = push_array(arena, RD_PanelFrameSegment, 1);
+    n->panel = panel;
+    n->axis = axis;
+    n->side = side;
+    n->p = p;
+    n->span = span;
+    n->rect = rd_panel_frame_segment_rect(axis, side, p, span, thickness);
+    SLLQueuePush(list->first, list->last, n);
+    list->count += 1;
+  }
+}
+
+internal void
+rd_panel_frame_segment_list_push_edge(Arena *arena, RD_PanelFrameSegmentList *list, CFG_PanelNode *panel, Axis2 axis, Side side, F32 p, Rng1F32 span, F32 thickness, Rng2F32 panel_area_rect, F32 edge_tol, B32 omit_workspace_edges)
+{
+  B32 on_workspace_edge = (abs_f32(p - panel_area_rect.p0.v[axis]) <= edge_tol ||
+                           abs_f32(p - panel_area_rect.p1.v[axis]) <= edge_tol);
+  if(!omit_workspace_edges || !on_workspace_edge)
+  {
+    rd_panel_frame_segment_list_push(arena, list, panel, axis, side, p, span, thickness);
+  }
+}
+
+internal void
+rd_panel_frame_segment_list_push_unique(Arena *arena, RD_PanelFrameSegmentList *dst, RD_PanelFrameSegment *src, F32 thickness)
+{
+  Rng1F32 remaining[16] = {0};
+  U64 remaining_count = 1;
+  remaining[0] = src->span;
+  for(RD_PanelFrameSegment *accepted = dst->first; accepted != 0 && remaining_count != 0; accepted = accepted->next)
+  {
+    if(accepted->axis == src->axis && abs_f32(accepted->p - src->p) < 0.5f)
+    {
+      Rng1F32 next_remaining[16] = {0};
+      U64 next_remaining_count = 0;
+      for(U64 idx = 0; idx < remaining_count; idx += 1)
+      {
+        Rng1F32 r = remaining[idx];
+        F32 overlap_min = Max(r.min, accepted->span.min);
+        F32 overlap_max = Min(r.max, accepted->span.max);
+        if(overlap_max <= overlap_min)
+        {
+          if(next_remaining_count < ArrayCount(next_remaining))
+          {
+            next_remaining[next_remaining_count++] = r;
+          }
+        }
+        else
+        {
+          if(r.min < overlap_min && next_remaining_count < ArrayCount(next_remaining))
+          {
+            next_remaining[next_remaining_count++] = r1f32(r.min, overlap_min);
+          }
+          if(overlap_max < r.max && next_remaining_count < ArrayCount(next_remaining))
+          {
+            next_remaining[next_remaining_count++] = r1f32(overlap_max, r.max);
+          }
+        }
+      }
+      MemoryCopyArray(remaining, next_remaining);
+      remaining_count = next_remaining_count;
+    }
+  }
+  for(U64 idx = 0; idx < remaining_count; idx += 1)
+  {
+    rd_panel_frame_segment_list_push(arena, dst, src->panel, src->axis, src->side, src->p, remaining[idx], thickness);
+  }
+}
+
 internal void
 rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right, B32 tabs_in_title_bar)
 {
   CFG_PanelTree panel_tree = mount->panel_tree;
   B32 window_layout_reset = ws->window_layout_reset;
   Rng2F32 panel_area_rect = content_rect; // captured before the per-panel `content_rect` shadows it (for tabs-in-title-bar edge detection)
+
+  typedef struct TabTask TabTask;
+  struct TabTask
+  {
+    TabTask *next;
+    CFG_Node *tab;
+    DR_FStrList fstrs;
+    F32 tab_width;
+  };
+
+  typedef struct RD_PanelChromePlan RD_PanelChromePlan;
+  struct RD_PanelChromePlan
+  {
+    RD_PanelChromePlan *next;
+    CFG_PanelNode *panel;
+    Rng2F32 panel_rect;
+    Rng2F32 settled_panel_rect;
+    Rng2F32 tab_bar_rect;
+    Rng2F32 content_rect;
+    Rng2F32 selected_tab_rect;
+    B32 selected_tab_visible;
+    B32 register_title_bar_tab_strip;
+    F32 panel_inset_px;
+    F32 tab_bar_rheight;
+    F32 tab_bar_vheight;
+    F32 tab_bar_rv_diff;
+    TabTask *first_tab_task;
+    TabTask *last_tab_task;
+    U64 tab_task_count;
+  };
   
     ////////////////////////////
     //- rjf: @window_ui_part panel non-leaf UI (drag boundaries, drag/drop sites)
@@ -3579,6 +3779,213 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
         }
       }
     }
+
+    ////////////////////////////
+    //- uishell: plan leaf-panel chrome & resolve frame segments
+    //
+    RD_PanelChromePlan *first_chrome_plan = 0;
+    RD_PanelChromePlan *last_chrome_plan = 0;
+    RD_PanelFrameSegmentList raw_frame_segments = {0};
+    RD_PanelFrameSegmentList frame_segments = {0};
+    F32 panel_border_px = floor_f32(Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_border_px")), 4.f));
+    F32 edge_tol = ui_top_font_size()*0.5f;
+    Vec4F32 panel_body_bg     = ui_color_from_name(str8_lit("background"));
+    Vec4F32 panel_frame_color = ui_color_from_name(str8_lit("border"));
+    F32 panel_inset_px = floor_f32(ui_top_font_size()*Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_gap")), 1.f)*0.5f);
+    F32 tab_gap_px = floor_f32(ui_top_font_size()*Clamp(0.f, rd_setting_f32_from_name(str8_lit("tab_gap")), 1.f));
+    F32 selected_tab_edge_softness = 1.f;
+    if(content_rect.x1 > content_rect.x0 && content_rect.y1 > content_rect.y0)
+    {
+      Vec2F32 content_rect_dim = dim_2f32(content_rect);
+      for(CFG_PanelNode *panel = panel_tree.root;
+          panel != &cfg_nil_panel_node;
+          panel = cfg_panel_node_rec__depth_first_pre(panel_tree.root, panel).next)
+      {
+        if(panel->first != &cfg_nil_panel_node)
+        {
+          continue;
+        }
+
+        RD_PanelChromePlan *plan = push_array(scratch.arena, RD_PanelChromePlan, 1);
+        plan->panel = panel;
+        SLLQueuePush(first_chrome_plan, last_chrome_plan, plan);
+
+        Rng2F32 target_rect_px = cfg_target_rect_from_panel_node(content_rect, panel_tree.root, panel);
+        Rng2F32 target_rect_pct = r2f32p(target_rect_px.x0 / content_rect_dim.x,
+                                         target_rect_px.y0 / content_rect_dim.y,
+                                         target_rect_px.x1 / content_rect_dim.x,
+                                         target_rect_px.y1 / content_rect_dim.y);
+        Rng2F32 panel_rect_pct = r2f32p(ui_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_x0", panel->cfg), target_rect_pct.x0, .initial = target_rect_pct.x0, .rate = rd_state->menu_animation_rate),
+                                        ui_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_y0", panel->cfg), target_rect_pct.y0, .initial = target_rect_pct.y0, .rate = rd_state->menu_animation_rate),
+                                        ui_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_x1", panel->cfg), target_rect_pct.x1, .initial = target_rect_pct.x1, .rate = rd_state->menu_animation_rate),
+                                        ui_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_y1", panel->cfg), target_rect_pct.y1, .initial = target_rect_pct.y1, .rate = rd_state->menu_animation_rate));
+        plan->panel_rect = r2f32p(panel_rect_pct.x0*content_rect_dim.x,
+                                  panel_rect_pct.y0*content_rect_dim.y,
+                                  panel_rect_pct.x1*content_rect_dim.x,
+                                  panel_rect_pct.y1*content_rect_dim.y);
+        plan->panel_rect = pad_2f32(plan->panel_rect, -panel_inset_px);
+        plan->panel_rect = r2f32p(round_f32(plan->panel_rect.x0), round_f32(plan->panel_rect.y0), round_f32(plan->panel_rect.x1), round_f32(plan->panel_rect.y1));
+
+        plan->settled_panel_rect = r2f32p(target_rect_pct.x0*content_rect_dim.x,
+                                          target_rect_pct.y0*content_rect_dim.y,
+                                          target_rect_pct.x1*content_rect_dim.x,
+                                          target_rect_pct.y1*content_rect_dim.y);
+        plan->settled_panel_rect = pad_2f32(plan->settled_panel_rect, -panel_inset_px);
+        plan->settled_panel_rect = r2f32p(round_f32(plan->settled_panel_rect.x0), round_f32(plan->settled_panel_rect.y0), round_f32(plan->settled_panel_rect.x1), round_f32(plan->settled_panel_rect.y1));
+
+        plan->panel_inset_px = panel_inset_px;
+        plan->tab_bar_rheight = floor_f32(ui_top_font_size()*3.5f);
+        plan->tab_bar_vheight = floor_f32(ui_top_font_size()*rd_setting_f32_from_name(str8_lit("tab_height")));
+        plan->tab_bar_rv_diff = plan->tab_bar_rheight - plan->tab_bar_vheight;
+        plan->tab_bar_rect = r2f32p(plan->panel_rect.x0, plan->panel_rect.y0, plan->panel_rect.x1, plan->panel_rect.y0 + plan->tab_bar_vheight);
+        plan->content_rect = r2f32p(plan->panel_rect.x0, plan->panel_rect.y0+plan->tab_bar_vheight, plan->panel_rect.x1, plan->panel_rect.y1);
+        if(panel->tab_side == Side_Max)
+        {
+          plan->tab_bar_rect.y0 = plan->panel_rect.y1 - plan->tab_bar_vheight;
+          plan->tab_bar_rect.y1 = plan->panel_rect.y1;
+          plan->content_rect.y0 = plan->panel_rect.y0;
+          plan->content_rect.y1 = plan->panel_rect.y1 - plan->tab_bar_vheight;
+        }
+        plan->tab_bar_rect = intersect_2f32(plan->tab_bar_rect, plan->panel_rect);
+        plan->content_rect = intersect_2f32(plan->content_rect, plan->panel_rect);
+
+        if(tabs_in_title_bar && panel->tab_side == Side_Min && plan->settled_panel_rect.p0.y <= panel_area_rect.p0.y + edge_tol)
+        {
+          plan->tab_bar_rect.p0.x = plan->settled_panel_rect.p0.x;
+          plan->tab_bar_rect.p1.x = plan->settled_panel_rect.p1.x;
+          if(tab_strip_inset_left  > 0 && plan->settled_panel_rect.p0.x <= panel_area_rect.p0.x + edge_tol) { plan->tab_bar_rect.p0.x += tab_strip_inset_left;  }
+          if(tab_strip_inset_right > 0 && plan->settled_panel_rect.p1.x >= panel_area_rect.p1.x - edge_tol) { plan->tab_bar_rect.p1.x -= tab_strip_inset_right; }
+          plan->tab_bar_rect.p0.x = Min(plan->tab_bar_rect.p0.x, plan->tab_bar_rect.p1.x);
+          plan->register_title_bar_tab_strip = 1;
+        }
+
+        if(plan->content_rect.x1 > plan->content_rect.x0 && plan->content_rect.y1 > plan->content_rect.y0) UI_TagF("tab")
+        {
+          B32 reset = (window_layout_reset || ws->frames_alive < 5 || is_changing_panel_boundaries);
+          F32 tab_close_width_px = ui_top_font_size()*2.5f;
+          F32 max_tab_width_px = ui_top_font_size()*20.f;
+          for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next)
+          {
+            CFG_Node *tab = n->v;
+            if(rd_cfg_is_project_filtered(tab))
+            {
+              continue;
+            }
+            UI_TagF(tab != panel->selected_tab ? "inactive" : "")
+            {
+              TabTask *t = push_array(scratch.arena, TabTask, 1);
+              t->tab = tab;
+              t->fstrs = rd_title_fstrs_from_cfg(scratch.arena, tab, 0);
+              F32 tab_width_target = dr_dim_from_fstrs(ui_top_tab_size(), &t->fstrs).x + tab_close_width_px + ui_top_font_size()*1.f;
+              B32 tab_is_selected = (tab == panel->selected_tab);
+              if(tab_is_selected && panel_tree.focused == panel)
+              {
+                tab_width_target += tab_close_width_px;
+              }
+              tab_width_target = Min(max_tab_width_px, tab_width_target);
+              t->tab_width = floor_f32(ui_anim(ui_key_from_stringf(ui_key_zero(), "tab_width_%p", tab), tab_width_target, .initial = reset ? tab_width_target : 0, .rate = rd_state->menu_animation_rate));
+              SLLQueuePush(plan->first_tab_task, plan->last_tab_task, t);
+              plan->tab_task_count += 1;
+            }
+          }
+        }
+
+        if(panel_border_px >= 1.f && plan->tab_task_count != 0)
+        {
+          UI_Key tab_bar_key = ui_key_from_stringf(ui_key_zero(), "tab_bar_%p", panel->cfg);
+          UI_Box *prev_tab_bar_box = ui_box_from_key(tab_bar_key);
+          F32 tab_bar_view_off_x = ui_box_is_nil(prev_tab_bar_box) ? 0.f : floor_f32(prev_tab_bar_box->view_off.x);
+          F32 tab_x = plan->tab_bar_rect.x0 + tab_gap_px - tab_bar_view_off_x;
+          for(TabTask *task = plan->first_tab_task; task != 0; task = task->next)
+          {
+            F32 tab_x0 = tab_x;
+            F32 tab_x1 = tab_x + task->tab_width;
+            if(task->tab == panel->selected_tab)
+            {
+              F32 visible_x0 = Max(tab_x0, plan->tab_bar_rect.x0);
+              F32 visible_x1 = Min(tab_x1, plan->tab_bar_rect.x1);
+              UI_Key tab_column_key = ui_key_from_stringf(tab_bar_key, "tab_column_%p", task->tab);
+              UI_Key tab_box_key = ui_key_from_stringf(tab_column_key, "tab_%p", task->tab);
+              UI_Box *prev_tab_box = ui_box_from_key(tab_box_key);
+              if(!ui_box_is_nil(prev_tab_box))
+              {
+                visible_x0 = Max(prev_tab_box->rect.x0, plan->tab_bar_rect.x0);
+                visible_x1 = Min(prev_tab_box->rect.x1, plan->tab_bar_rect.x1);
+              }
+              if(visible_x1 > visible_x0)
+              {
+                F32 notch_x0 = Max(visible_x0 + panel_border_px, plan->content_rect.x0);
+                F32 notch_x1 = Min(visible_x1 - panel_border_px, plan->content_rect.x1);
+                if(notch_x1 < notch_x0)
+                {
+                  F32 notch_center = (notch_x0 + notch_x1)*0.5f;
+                  notch_x0 = notch_center;
+                  notch_x1 = notch_center;
+                }
+                if(panel->tab_side == Side_Max)
+                {
+                  plan->selected_tab_rect = r2f32p(notch_x0, plan->content_rect.y1 - panel_border_px, notch_x1, plan->tab_bar_rect.y1 - 1.f);
+                }
+                else
+                {
+                  plan->selected_tab_rect = r2f32p(notch_x0, plan->tab_bar_rect.y0 + 1.f, notch_x1, plan->content_rect.y0 + panel_border_px);
+                }
+                plan->selected_tab_visible = 1;
+              }
+              break;
+            }
+            tab_x = tab_x1 + tab_gap_px;
+          }
+        }
+      }
+
+      for(RD_PanelChromePlan *plan = first_chrome_plan; plan != 0; plan = plan->next)
+      {
+        CFG_PanelNode *panel = plan->panel;
+        Rng2F32 body = plan->content_rect;
+        if(panel_border_px < 1.f || body.x1 <= body.x0 || body.y1 <= body.y0)
+        {
+          continue;
+        }
+
+        B32 top_tabbed = (panel->tab_side != Side_Max);
+        B32 omit_workspace_edges = (panel_inset_px < 0.5f);
+        rd_panel_frame_segment_list_push_edge(scratch.arena, &raw_frame_segments, panel, Axis2_X, Side_Min, body.x0, r1f32(body.y0, body.y1), panel_border_px, panel_area_rect, edge_tol, omit_workspace_edges);
+        rd_panel_frame_segment_list_push_edge(scratch.arena, &raw_frame_segments, panel, Axis2_X, Side_Max, body.x1, r1f32(body.y0, body.y1), panel_border_px, panel_area_rect, edge_tol, omit_workspace_edges);
+        if(top_tabbed)
+        {
+          rd_panel_frame_segment_list_push_edge(scratch.arena, &raw_frame_segments, panel, Axis2_Y, Side_Max, body.y1, r1f32(body.x0, body.x1), panel_border_px, panel_area_rect, edge_tol, omit_workspace_edges);
+          if(plan->selected_tab_visible)
+          {
+            rd_panel_frame_segment_list_push_edge(scratch.arena, &raw_frame_segments, panel, Axis2_Y, Side_Min, body.y0, r1f32(body.x0, plan->selected_tab_rect.x0), panel_border_px, panel_area_rect, edge_tol, omit_workspace_edges);
+            rd_panel_frame_segment_list_push_edge(scratch.arena, &raw_frame_segments, panel, Axis2_Y, Side_Min, body.y0, r1f32(plan->selected_tab_rect.x1, body.x1), panel_border_px, panel_area_rect, edge_tol, omit_workspace_edges);
+          }
+          else
+          {
+            rd_panel_frame_segment_list_push_edge(scratch.arena, &raw_frame_segments, panel, Axis2_Y, Side_Min, body.y0, r1f32(body.x0, body.x1), panel_border_px, panel_area_rect, edge_tol, omit_workspace_edges);
+          }
+        }
+        else
+        {
+          rd_panel_frame_segment_list_push_edge(scratch.arena, &raw_frame_segments, panel, Axis2_Y, Side_Min, body.y0, r1f32(body.x0, body.x1), panel_border_px, panel_area_rect, edge_tol, omit_workspace_edges);
+          if(plan->selected_tab_visible)
+          {
+            rd_panel_frame_segment_list_push_edge(scratch.arena, &raw_frame_segments, panel, Axis2_Y, Side_Max, body.y1, r1f32(body.x0, plan->selected_tab_rect.x0), panel_border_px, panel_area_rect, edge_tol, omit_workspace_edges);
+            rd_panel_frame_segment_list_push_edge(scratch.arena, &raw_frame_segments, panel, Axis2_Y, Side_Max, body.y1, r1f32(plan->selected_tab_rect.x1, body.x1), panel_border_px, panel_area_rect, edge_tol, omit_workspace_edges);
+          }
+          else
+          {
+            rd_panel_frame_segment_list_push_edge(scratch.arena, &raw_frame_segments, panel, Axis2_Y, Side_Max, body.y1, r1f32(body.x0, body.x1), panel_border_px, panel_area_rect, edge_tol, omit_workspace_edges);
+          }
+        }
+
+	      }
+
+      for(RD_PanelFrameSegment *seg = raw_frame_segments.first; seg != 0; seg = seg->next)
+      {
+        rd_panel_frame_segment_list_push_unique(scratch.arena, &frame_segments, seg, panel_border_px);
+      }
+    }
     
     ////////////////////////////
     //- rjf: @window_ui_part panel leaf UI
@@ -3603,82 +4010,25 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           UI_Focus(panel_is_focused ? UI_FocusKind_Null : UI_FocusKind_Off)
         {
           //////////////////////////
-          //- rjf: calculate UI rectangles
+          //- rjf: unpack planned UI rectangles
           //
-          Vec2F32 content_rect_dim = dim_2f32(content_rect);
-          Rng2F32 target_rect_px = cfg_target_rect_from_panel_node(content_rect, panel_tree.root, panel);
-          Rng2F32 target_rect_pct = r2f32p(target_rect_px.x0 / content_rect_dim.x,
-                                           target_rect_px.y0 / content_rect_dim.y,
-                                           target_rect_px.x1 / content_rect_dim.x,
-                                           target_rect_px.y1 / content_rect_dim.y);
-          Rng2F32 panel_rect_pct = r2f32p(ui_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_x0", panel->cfg), target_rect_pct.x0, .initial = target_rect_pct.x0, .rate = rd_state->menu_animation_rate),
-                                          ui_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_y0", panel->cfg), target_rect_pct.y0, .initial = target_rect_pct.y0, .rate = rd_state->menu_animation_rate),
-                                          ui_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_x1", panel->cfg), target_rect_pct.x1, .initial = target_rect_pct.x1, .rate = rd_state->menu_animation_rate),
-                                          ui_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_y1", panel->cfg), target_rect_pct.y1, .initial = target_rect_pct.y1, .rate = rd_state->menu_animation_rate));
-          Rng2F32 panel_rect = r2f32p(panel_rect_pct.x0*content_rect_dim.x,
-                                      panel_rect_pct.y0*content_rect_dim.y,
-                                      panel_rect_pct.x1*content_rect_dim.x,
-                                      panel_rect_pct.y1*content_rect_dim.y);
-          // uishell: per-panel self-inset = half the configurable panel gap (em);
-          // 0 = flush (adjacent panels share a seam). Applied identically to the
-          // animated panel_rect and the settled rect below.
-          F32 panel_inset_px = floor_f32(ui_top_font_size()*Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_gap")), 1.f)*0.5f);
-          panel_rect = pad_2f32(panel_rect, -panel_inset_px);
-          panel_rect = r2f32p(round_f32(panel_rect.x0), round_f32(panel_rect.y0), round_f32(panel_rect.x1), round_f32(panel_rect.y1));
-          // the *settled* panel rect (target layout, no docking animation) —
-          // same transform as panel_rect but from the un-animated target. used to
-          // anchor the title-bar tab strip below so a sidebar toggle doesn't drag
-          // it through the title-bar chrome (the strip is a chrome-row resident:
-          // it stays at its inset location while the panel content animates).
-          Rng2F32 settled_panel_rect = r2f32p(target_rect_pct.x0*content_rect_dim.x,
-                                              target_rect_pct.y0*content_rect_dim.y,
-                                              target_rect_pct.x1*content_rect_dim.x,
-                                              target_rect_pct.y1*content_rect_dim.y);
-          settled_panel_rect = pad_2f32(settled_panel_rect, -panel_inset_px);
-          settled_panel_rect = r2f32p(round_f32(settled_panel_rect.x0), round_f32(settled_panel_rect.y0), round_f32(settled_panel_rect.x1), round_f32(settled_panel_rect.y1));
-          F32 tab_bar_rheight = floor_f32(ui_top_font_size()*3.5f);
-          F32 tab_bar_vheight = floor_f32(ui_top_font_size()*rd_setting_f32_from_name(str8_lit("tab_height")));
-          F32 tab_bar_rv_diff = tab_bar_rheight - tab_bar_vheight;
-          F32 tab_spacing = floor_f32(ui_top_font_size()*0.4f);
-          Rng2F32 tab_bar_rect = r2f32p(panel_rect.x0, panel_rect.y0, panel_rect.x1, panel_rect.y0 + tab_bar_vheight);
-          Rng2F32 content_rect = r2f32p(panel_rect.x0, panel_rect.y0+tab_bar_vheight, panel_rect.x1, panel_rect.y1);
-          if(panel->tab_side == Side_Max)
+          RD_PanelChromePlan *chrome_plan = 0;
+          for(RD_PanelChromePlan *p = first_chrome_plan; p != 0; p = p->next)
           {
-            tab_bar_rect.y0 = panel_rect.y1 - tab_bar_vheight;
-            tab_bar_rect.y1 = panel_rect.y1;
-            content_rect.y0 = panel_rect.y0;
-            content_rect.y1 = panel_rect.y1 - tab_bar_vheight;
+            if(p->panel == panel)
+            {
+              chrome_plan = p;
+              break;
+            }
           }
-          tab_bar_rect = intersect_2f32(tab_bar_rect, panel_rect);
-          content_rect = intersect_2f32(content_rect, panel_rect);
-
-          // tabs-in-title-bar (ADR-0006): a top-tabbed panel in the top row whose
-          // tab strip touches the workspace edge yields that end to the title-bar
-          // chrome overlaid there. only the edge-touching strips inset; interior
-          // top panels are untouched.
-          // edge-touch tolerance must clear the panel's inward pad (above:
-          // pad_2f32 by ~0.15em + rounding), else every top-row/edge check fails.
-          F32 edge_tol = ui_top_font_size()*0.5f;
-          B32 register_title_bar_tab_strip = 0;
-          if(tabs_in_title_bar && panel->tab_side == Side_Min && settled_panel_rect.p0.y <= panel_area_rect.p0.y + edge_tol)
-          {
-            // anchor the strip's horizontal extent to the settled layout (+inset),
-            // not the animated panel_rect — gated on the settled position too so
-            // the inset doesn't blink on/off mid-animation. the strip stays put
-            // (moving only by the inset delta) while the content below animates.
-            tab_bar_rect.p0.x = settled_panel_rect.p0.x;
-            tab_bar_rect.p1.x = settled_panel_rect.p1.x;
-            if(tab_strip_inset_left  > 0 && settled_panel_rect.p0.x <= panel_area_rect.p0.x + edge_tol) { tab_bar_rect.p0.x += tab_strip_inset_left;  }
-            if(tab_strip_inset_right > 0 && settled_panel_rect.p1.x >= panel_area_rect.p1.x - edge_tol) { tab_bar_rect.p1.x -= tab_strip_inset_right; }
-            tab_bar_rect.p0.x = Min(tab_bar_rect.p0.x, tab_bar_rect.p1.x);
-            // this strip lives in the title-bar band: register it as custom
-            // title-bar client area so the WM treats it as interactive UI &
-            // doesn't consume clicks on tabs as window drags. registered below
-            // (after the strip is built) covering only the occupied extent (up
-            // to the add-tab button) — the empty space past the last tab stays
-            // a window-drag handle, like a browser tab strip.
-            register_title_bar_tab_strip = 1;
-          }
+          if(chrome_plan == 0) { continue; }
+          Rng2F32 panel_rect = chrome_plan->panel_rect;
+          Rng2F32 tab_bar_rect = chrome_plan->tab_bar_rect;
+          Rng2F32 content_rect = chrome_plan->content_rect;
+          F32 tab_bar_rheight = chrome_plan->tab_bar_rheight;
+          F32 tab_bar_vheight = chrome_plan->tab_bar_vheight;
+          F32 tab_bar_rv_diff = chrome_plan->tab_bar_rv_diff;
+          B32 register_title_bar_tab_strip = chrome_plan->register_title_bar_tab_strip;
           
           //////////////////////////
           //- rjf: decide to skip this panel (e.g. if it is too small
@@ -3892,41 +4242,19 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
           
           //////////////////////////
-          //- uishell: dock-drawn panel frame (ADR-0007) — thin crisp edge segments
-          // instead of a per-box outline. Skip the LEFT edge (it's a neighbour's
-          // RIGHT, or the window edge) and skip any side lying on the workspace
-          // boundary, so interior seams are drawn exactly once and the window edge
-          // has no border. The TOP segment is the tab/content separator. Built
-          // before panel_box so it draws in front of the content; built after the
-          // dim scrim so inactive panels' frames dim with them.
+          //- uishell: dock-drawn panel frame (ADR-0007) — resolved from the
+          // frame-bearing regions (body + selected tab handle), not from whole
+          // panel rectangles. This removes tab-strip|tab-strip dividers while
+          // preserving one owned border for content-bearing boundaries.
           //
           if(build_panel)
           {
-            F32 panel_border_px = floor_f32(Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_border_px")), 4.f));
-            if(panel_border_px >= 1.f)
+            for(RD_PanelFrameSegment *seg = frame_segments.first; seg != 0; seg = seg->next)
             {
-              F32 t = panel_border_px;
-              // Frame sides use panel_rect, so a seam spans the tab strip as well as
-              // the content. At flush (gap 0) adjacent panels share seams, so we
-              // dedup — skip LEFT and the panel TOP (a neighbour, or the window edge,
-              // owns them) and omit the window-edge RIGHT/BOTTOM — yielding single
-              // seams and no border against the window. With a gap each panel is a
-              // separate card and gets a full four-sided frame. The separator is the
-              // tab/content line drawn inside, off content_rect.
-              B32 flush     = (panel_inset_px < 0.5f);
-              B32 at_right  = (panel_rect.x1 >= panel_area_rect.p1.x - edge_tol);
-              B32 at_bottom = (panel_rect.y1 >= panel_area_rect.p1.y - edge_tol);
-              F32 sep_y0 = (panel->tab_side == Side_Max) ? content_rect.y1 - t : content_rect.y0;
-              Rng2F32 segs[5]; B32 draw[5];
-              segs[0] = r2f32p(panel_rect.x0,   panel_rect.y0,   panel_rect.x1,   panel_rect.y0+t); draw[0] = !flush;                // top frame (cards only)
-              segs[1] = r2f32p(panel_rect.x0,   panel_rect.y0,   panel_rect.x0+t, panel_rect.y1);   draw[1] = !flush;                // left frame (cards only)
-              segs[2] = r2f32p(panel_rect.x1-t, panel_rect.y0,   panel_rect.x1,   panel_rect.y1);   draw[2] = !(flush && at_right);  // right seam / card edge
-              segs[3] = r2f32p(panel_rect.x0,   panel_rect.y1-t, panel_rect.x1,   panel_rect.y1);   draw[3] = !(flush && at_bottom); // bottom seam / card edge
-              segs[4] = r2f32p(content_rect.x0, sep_y0,          content_rect.x1, sep_y0+t);        draw[4] = 1;                     // tab/content separator
-              for(U64 seg_idx = 0; seg_idx < 5; seg_idx += 1) if(draw[seg_idx])
+              if(seg->panel == panel)
               {
-                ui_set_next_background_color(ui_color_from_name(str8_lit("border")));
-                UI_Rect(segs[seg_idx]) ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero());
+                ui_set_next_background_color(panel_frame_color);
+                UI_Rect(seg->rect) ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero());
               }
             }
           }
@@ -4083,49 +4411,10 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
           
           //////////////////////////
-          //- rjf: compute tab build tasks
+          //- rjf: unpack tab build tasks
           //
-          typedef struct TabTask TabTask;
-          struct TabTask
-          {
-            TabTask *next;
-            CFG_Node *tab;
-            DR_FStrList fstrs;
-            F32 tab_width;
-          };
-          TabTask *first_tab_task = 0;
-          TabTask *last_tab_task = 0;
-          U64 tab_task_count = 0;
+          TabTask *first_tab_task = chrome_plan->first_tab_task;
           F32 tab_close_width_px = ui_top_font_size()*2.5f;
-          F32 max_tab_width_px = ui_top_font_size()*20.f;
-          if(build_panel) UI_TagF("tab")
-          {
-            B32 reset = (window_layout_reset || ws->frames_alive < 5 || is_changing_panel_boundaries);
-            for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next)
-            {
-              CFG_Node *tab = n->v;
-              if(rd_cfg_is_project_filtered(tab))
-              {
-                continue;
-              }
-              UI_TagF(tab != panel->selected_tab ? "inactive" : "")
-              {
-                TabTask *t = push_array(scratch.arena, TabTask, 1);
-                t->tab = tab;
-                t->fstrs = rd_title_fstrs_from_cfg(scratch.arena, tab, 0);
-                F32 tab_width_target = dr_dim_from_fstrs(ui_top_tab_size(), &t->fstrs).x + tab_close_width_px + ui_top_font_size()*1.f;
-                B32 tab_is_selected = (tab == panel->selected_tab);
-                if(tab_is_selected && panel_tree.focused == panel)
-                {
-                  tab_width_target += tab_close_width_px;
-                }
-                tab_width_target = Min(max_tab_width_px, tab_width_target);
-                t->tab_width = floor_f32(ui_anim(ui_key_from_stringf(ui_key_zero(), "tab_width_%p", tab), tab_width_target, .initial = reset ? tab_width_target : 0, .rate = rd_state->menu_animation_rate));
-                SLLQueuePush(first_tab_task, last_tab_task, t);
-                tab_task_count += 1;
-              }
-            }
-          }
           
           //////////////////////////
           //- rjf: build tab bar container
@@ -4159,9 +4448,13 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           {
             F32 best_prev_distance_px = 1000000.f;
             TabTask start_boundary_tab_task = {first_tab_task, &cfg_nil_node};
-            F32 off = 0;
+            F32 off = tab_gap_px;
             for(TabTask *task = &start_boundary_tab_task; task != 0; task = task->next)
             {
+              if(task->tab != &cfg_nil_node && task != first_tab_task)
+              {
+                off += tab_gap_px;
+              }
               off += task->tab_width;
               Vec2F32 anchor_pt = v2f32(tab_bar_box->rect.x0 + off, tab_bar_box->rect.y1);
               F32 distance = length_2f32(sub_2f32(ui_mouse(), anchor_pt));
@@ -4196,7 +4489,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //////////////////////////
           //- rjf: build tab bar contents
           //
-          if(build_panel) UI_Focus(UI_FocusKind_Off) UI_Parent(tab_bar_box) UI_Padding(ui_em(0.5f, 1.f)) UI_PrefHeight(ui_pct(1, 0)) UI_TagF("tab")
+          if(build_panel) UI_Focus(UI_FocusKind_Off) UI_Parent(tab_bar_box) UI_Padding(ui_px(tab_gap_px, 1.f)) UI_PrefHeight(ui_pct(1, 0)) UI_TagF("tab")
           {
             F32 corner_radius = ui_top_font_size()*0.6f;
             TabTask start_boundary_tab_task = {first_tab_task, &cfg_nil_node};
@@ -4244,13 +4537,46 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                   {
                     ui_spacer(ui_px(1.f, 1.f));
                   }
+                  // uishell: selected tab takes the body background and a custom
+                  // rounded open outline. The panel frame pass owns the notched body
+                  // edge and adjacency dedupe; inactive tab boundaries stay theme-driven.
+                  if(tab_is_selected)
+                  {
+                    ui_set_next_background_color(panel_body_bg);
+                  }
+                  else if(!omit_name)
+                  {
+                    Vec4F32 recessed = panel_body_bg;
+                    recessed.x *= 0.7f; recessed.y *= 0.7f; recessed.z *= 0.7f;
+                    ui_set_next_background_color(recessed);
+                  }
                   UI_Box *tab_box = ui_build_box_from_stringf(UI_BoxFlag_DrawHotEffects|
                                                               UI_BoxFlag_DrawBackground|
-                                                              UI_BoxFlag_DrawBorder|
-                                                              (UI_BoxFlag_DrawDropShadow*tab_is_selected)|
+                                                              (UI_BoxFlag_DrawBorder * (!tab_is_selected && !omit_name))|
+                                                              UI_BoxFlag_DisableFocusBorder|
                                                               UI_BoxFlag_Clickable,
                                                               "tab_%p", tab);
-                  
+                  if(tab_is_selected && panel_border_px >= 1.f && !omit_name)
+                  {
+                    RD_SelectedTabFrameDrawData *frame_draw = push_array(ui_build_arena(), RD_SelectedTabFrameDrawData, 1);
+                    frame_draw->clip_rect = tab_bar_rect;
+                    frame_draw->color = panel_frame_color;
+                    frame_draw->border_thickness = panel_border_px;
+                    frame_draw->edge_softness = selected_tab_edge_softness;
+                    frame_draw->tab_side = panel->tab_side;
+                    if(panel->tab_side == Side_Max)
+                    {
+                      frame_draw->body_edge_p = content_rect.y1;
+                      frame_draw->clip_rect.y0 = content_rect.y1 - panel_border_px;
+                    }
+                    else
+                    {
+                      frame_draw->body_edge_p = content_rect.y0;
+                      frame_draw->clip_rect.y1 = content_rect.y0 + panel_border_px;
+                    }
+                    ui_box_equip_custom_draw(tab_box, rd_selected_tab_frame_draw, frame_draw);
+                  }
+
                   // rjf: build tab contents
                   if(!omit_name) UI_Parent(tab_box)
                   {
@@ -4343,8 +4669,10 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 }
                 
                 // rjf: space for next tab
+                // uishell: this is the single source of inter-tab spacing. The
+                // chrome prepass and tab drop-site math use the same `tab_gap_px`.
                 {
-                  ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.4f), 1.f));
+                  ui_spacer(ui_px(tab_gap_px, 1.f));
                 }
               }
               
@@ -4383,7 +4711,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 
                 // rjf: space for next tab
                 {
-                  ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.4f), 1.f));
+                  ui_spacer(ui_px(tab_gap_px, 1.f));
                 }
               }
             }
