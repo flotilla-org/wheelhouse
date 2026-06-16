@@ -3619,7 +3619,11 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                       panel_rect_pct.y0*content_rect_dim.y,
                                       panel_rect_pct.x1*content_rect_dim.x,
                                       panel_rect_pct.y1*content_rect_dim.y);
-          panel_rect = pad_2f32(panel_rect, floor_f32(-ui_top_font_size()*0.15f));
+          // uishell: per-panel self-inset = half the configurable panel gap (em);
+          // 0 = flush (adjacent panels share a seam). Applied identically to the
+          // animated panel_rect and the settled rect below.
+          F32 panel_inset_px = floor_f32(ui_top_font_size()*Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_gap")), 1.f)*0.5f);
+          panel_rect = pad_2f32(panel_rect, -panel_inset_px);
           panel_rect = r2f32p(round_f32(panel_rect.x0), round_f32(panel_rect.y0), round_f32(panel_rect.x1), round_f32(panel_rect.y1));
           // the *settled* panel rect (target layout, no docking animation) —
           // same transform as panel_rect but from the un-animated target. used to
@@ -3630,7 +3634,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                               target_rect_pct.y0*content_rect_dim.y,
                                               target_rect_pct.x1*content_rect_dim.x,
                                               target_rect_pct.y1*content_rect_dim.y);
-          settled_panel_rect = pad_2f32(settled_panel_rect, floor_f32(-ui_top_font_size()*0.15f));
+          settled_panel_rect = pad_2f32(settled_panel_rect, -panel_inset_px);
           settled_panel_rect = r2f32p(round_f32(settled_panel_rect.x0), round_f32(settled_panel_rect.y0), round_f32(settled_panel_rect.x1), round_f32(settled_panel_rect.y1));
           F32 tab_bar_rheight = floor_f32(ui_top_font_size()*3.5f);
           F32 tab_bar_vheight = floor_f32(ui_top_font_size()*rd_setting_f32_from_name(str8_lit("tab_height")));
@@ -3888,17 +3892,59 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
           
           //////////////////////////
+          //- uishell: dock-drawn panel frame (ADR-0007) — thin crisp edge segments
+          // instead of a per-box outline. Skip the LEFT edge (it's a neighbour's
+          // RIGHT, or the window edge) and skip any side lying on the workspace
+          // boundary, so interior seams are drawn exactly once and the window edge
+          // has no border. The TOP segment is the tab/content separator. Built
+          // before panel_box so it draws in front of the content; built after the
+          // dim scrim so inactive panels' frames dim with them.
+          //
+          if(build_panel)
+          {
+            F32 panel_border_px = floor_f32(Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_border_px")), 4.f));
+            if(panel_border_px >= 1.f)
+            {
+              F32 t = panel_border_px;
+              // Frame sides use panel_rect, so a seam spans the tab strip as well as
+              // the content. At flush (gap 0) adjacent panels share seams, so we
+              // dedup — skip LEFT and the panel TOP (a neighbour, or the window edge,
+              // owns them) and omit the window-edge RIGHT/BOTTOM — yielding single
+              // seams and no border against the window. With a gap each panel is a
+              // separate card and gets a full four-sided frame. The separator is the
+              // tab/content line drawn inside, off content_rect.
+              B32 flush     = (panel_inset_px < 0.5f);
+              B32 at_right  = (panel_rect.x1 >= panel_area_rect.p1.x - edge_tol);
+              B32 at_bottom = (panel_rect.y1 >= panel_area_rect.p1.y - edge_tol);
+              F32 sep_y0 = (panel->tab_side == Side_Max) ? content_rect.y1 - t : content_rect.y0;
+              Rng2F32 segs[5]; B32 draw[5];
+              segs[0] = r2f32p(panel_rect.x0,   panel_rect.y0,   panel_rect.x1,   panel_rect.y0+t); draw[0] = !flush;                // top frame (cards only)
+              segs[1] = r2f32p(panel_rect.x0,   panel_rect.y0,   panel_rect.x0+t, panel_rect.y1);   draw[1] = !flush;                // left frame (cards only)
+              segs[2] = r2f32p(panel_rect.x1-t, panel_rect.y0,   panel_rect.x1,   panel_rect.y1);   draw[2] = !(flush && at_right);  // right seam / card edge
+              segs[3] = r2f32p(panel_rect.x0,   panel_rect.y1-t, panel_rect.x1,   panel_rect.y1);   draw[3] = !(flush && at_bottom); // bottom seam / card edge
+              segs[4] = r2f32p(content_rect.x0, sep_y0,          content_rect.x1, sep_y0+t);        draw[4] = 1;                     // tab/content separator
+              for(U64 seg_idx = 0; seg_idx < 5; seg_idx += 1) if(draw[seg_idx])
+              {
+                ui_set_next_background_color(ui_color_from_name(str8_lit("border")));
+                UI_Rect(segs[seg_idx]) ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero());
+              }
+            }
+          }
+
+          //////////////////////////
           //- rjf: build panel container box
           //
           UI_Box *panel_box = &ui_nil_box;
           if(build_panel) UI_Rect(content_rect) UI_ChildLayoutAxis(Axis2_Y) UI_CornerRadius(0) UI_Focus(UI_FocusKind_On)
           {
             UI_Key panel_key = ui_key_from_stringf(ui_key_zero(), "panel_box_%p", panel->cfg);
+            // uishell: panel frame is now drawn by the dock as thin edge segments
+            // (above), so the box no longer draws its own border; the focus accent
+            // is retired in favour of inactive-panel dimming (always DisableFocusBorder).
             panel_box = ui_build_box_from_key(UI_BoxFlag_MouseClickable|
                                               UI_BoxFlag_Clip|
-                                              UI_BoxFlag_DrawBorder|
                                               UI_BoxFlag_DisableFocusOverlay|
-                                              ((panel_tree.focused != panel)*UI_BoxFlag_DisableFocusBorder)|
+                                              UI_BoxFlag_DisableFocusBorder|
                                               ((DEV_draw_panel_surface && panel_tree.focused == panel)*UI_BoxFlag_RenderToSurface),
                                               panel_key);
           }
