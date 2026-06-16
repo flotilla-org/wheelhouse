@@ -35,7 +35,7 @@ struct {B32 *value_ptr; String8 name;} DEV_toggle_table[] =
 {&DEV_updating_indicator, str8_lit_comp("updating_indicator")},
 };
 C_LINKAGE_BEGIN
-RD_VocabInfo uishell_vocab_info_table[42] =
+RD_VocabInfo uishell_vocab_info_table[43] =
 {
 {str8_lit_comp("view"), str8_lit_comp("views"), str8_lit_comp("View"), str8_lit_comp("Views"), RD_IconKind_Binoculars},
 {str8_lit_comp("window"), str8_lit_comp("windows"), str8_lit_comp("Window"), str8_lit_comp("Windows"), RD_IconKind_Window},
@@ -61,6 +61,7 @@ RD_VocabInfo uishell_vocab_info_table[42] =
 {str8_lit_comp("font_size"), str8_lit_comp(""), str8_lit_comp("Font Size"), str8_lit_comp(""), RD_IconKind_Null},
 {str8_lit_comp("row_height"), str8_lit_comp(""), str8_lit_comp("Row Height"), str8_lit_comp(""), RD_IconKind_Null},
 {str8_lit_comp("tab_height"), str8_lit_comp(""), str8_lit_comp("Tab Height"), str8_lit_comp(""), RD_IconKind_Null},
+{str8_lit_comp("tab_gap"), str8_lit_comp(""), str8_lit_comp("Tab Gap"), str8_lit_comp(""), RD_IconKind_Null},
 {str8_lit_comp("show_line_numbers"), str8_lit_comp(""), str8_lit_comp("Show Line Numbers"), str8_lit_comp(""), RD_IconKind_Null},
 {str8_lit_comp("line_wrapping"), str8_lit_comp(""), str8_lit_comp("Line Wrapping"), str8_lit_comp(""), RD_IconKind_Null},
 {str8_lit_comp("scroll_to_bottom_on_change"), str8_lit_comp(""), str8_lit_comp("Scroll To Bottom On Change"), str8_lit_comp(""), RD_IconKind_Null},
