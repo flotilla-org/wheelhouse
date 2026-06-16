@@ -1566,7 +1566,8 @@ uishell_dispatch_window_command(String8 name)
     CFG_Node *window = workspace != &cfg_nil_node ? rd_window_from_cfg(workspace) : cfg_node_from_id(uishell_regs()->window);
     if(window != &cfg_nil_node &&
        workspace != &cfg_nil_node &&
-       str8_match(workspace->string, str8_lit("workspace"), 0))
+       (str8_match(workspace->string, str8_lit("workspace"), 0) ||
+        workspace == window))
     {
       UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
       if(split.inventory.count > 1)
@@ -1580,16 +1581,27 @@ uishell_dispatch_window_command(String8 name)
             break;
           }
         }
-        if(closing != 0)
+        if(uishell_controlled_split_workspace_can_close(&split, closing))
         {
-          UIShell_MaterializedWorkspace *next_selected = closing->next;
-          if(next_selected == 0)
+          UIShell_MaterializedWorkspace *next_selected = split.inventory.selected;
+          if(next_selected == 0 || next_selected == closing)
           {
-            next_selected = closing->prev;
+            next_selected = closing->next;
+            if(next_selected == 0)
+            {
+              next_selected = closing->prev;
+            }
           }
           if(next_selected == 0 || next_selected == closing)
           {
-            next_selected = split.inventory.first;
+            for(UIShell_MaterializedWorkspace *w = split.inventory.first; w != 0; w = w->next)
+            {
+              if(w != closing)
+              {
+                next_selected = w;
+                break;
+              }
+            }
           }
           RD_WindowState *ws = rd_window_state_from_cfg(window);
           if(ws != &rd_nil_window_state)
@@ -1599,7 +1611,18 @@ uishell_dispatch_window_command(String8 name)
             ws->root_controlled_split_renaming_workspace_id = 0;
             ws->window_layout_reset = 1;
           }
-          cfg_node_release(rd_state->cfg, workspace);
+          if(workspace == window)
+          {
+            // The window-backed workspace is the window's legacy layout payload.
+            // Closing it removes that payload; window-level metadata such as
+            // `label` intentionally remains attached to the window node.
+            cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
+            cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
+          }
+          else
+          {
+            cfg_node_release(rd_state->cfg, workspace);
+          }
         }
       }
     }

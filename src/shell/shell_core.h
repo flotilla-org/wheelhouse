@@ -1142,6 +1142,7 @@ internal UIShell_WorkspaceMount uishell_workspace_mount_from_window(Arena *arena
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_current_regs(Arena *arena);
 internal UIShell_ControlledSplit uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window);
+internal B32 uishell_controlled_split_workspace_can_close(UIShell_ControlledSplit *split, UIShell_MaterializedWorkspace *workspace);
 internal UIShell_WorkspaceMount *uishell_controlled_split_selected_mount(UIShell_ControlledSplit *split);
 internal Rng2F32 uishell_controlled_split_control_rect(UIShell_ControlledSplit *split, Rng2F32 rect);
 internal Rng2F32 uishell_controlled_split_workspace_rect(UIShell_ControlledSplit *split, Rng2F32 rect);
