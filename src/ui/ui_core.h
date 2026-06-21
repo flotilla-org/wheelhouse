@@ -235,6 +235,14 @@ struct UI_Theme
 {
   UI_ThemePattern *patterns;
   U64 patterns_count;
+  U64 hash;
+};
+
+typedef struct UI_ThemeScopeNode UI_ThemeScopeNode;
+struct UI_ThemeScopeNode
+{
+  UI_ThemeScopeNode *next;
+  UI_Theme *theme;
 };
 
 ////////////////////////////////
@@ -709,6 +717,8 @@ struct UI_State
   //- rjf: build parameters
   UI_IconInfo icon_info;
   UI_Theme *theme;
+  UI_ThemeScopeNode *theme_scope_top;
+  UI_ThemeScopeNode *theme_scope_free;
   UI_AnimationInfo animation_info;
   WM_Window window;
   UI_EventList *events;
@@ -919,6 +929,10 @@ internal void              ui_set_auto_focus_hot_key(UI_Key key);
 
 //- rjf: current style tags key
 internal UI_Key            ui_top_tags_key(void);
+
+//- rjf: theme scopes
+internal UI_Theme *        ui_push_theme(UI_Theme *theme);
+internal UI_Theme *        ui_pop_theme(void);
 
 //- rjf: theme color lookups
 internal Vec4F32           ui_color_from_name(String8 name);
@@ -1205,6 +1219,7 @@ internal F32      ui_top_px_height(void);
 #define UI_Focus(kind)       DeferLoop((ui_push_focus_hot(kind), ui_push_focus_active(kind)), (ui_pop_focus_hot(), ui_pop_focus_active()))
 #define UI_FlagsAdd(v)       DeferLoop(ui_push_flags(ui_top_flags()|(v)), ui_pop_flags())
 #define UI_TagF(...)         DeferLoop(ui_push_tagf(__VA_ARGS__), ui_pop_tag())
+#define UI_ThemeScope(v)     DeferLoop(ui_push_theme(v), ui_pop_theme())
 
 //- rjf: tooltip
 #define UI_TooltipBase DeferLoop(ui_tooltip_begin_base(), ui_tooltip_end_base())

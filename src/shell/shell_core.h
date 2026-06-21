@@ -602,7 +602,6 @@ struct RD_WindowState
 
   // rjf: theme (recomputed each frame)
   UI_Theme *theme;
-  Vec4F32 theme_code_colors[RD_CodeColorSlot_COUNT];
 
   // rjf: font raster flags (recomputed each frame)
   FNT_RasterFlags font_slot_raster_flags[RD_FontSlot_COUNT];
@@ -1169,6 +1168,10 @@ internal void rd_set_autocomp_regs_(E_Eval dst_eval, UIShell_Regs *regs);
 
 //- rjf: colors
 internal MD_Node *rd_theme_tree_from_name(Arena *arena, Access *access, String8 theme_name);
+internal CFG_NodePtrList rd_theme_color_cfgs_from_user_project(Arena *arena);
+internal String8 rd_window_theme_name_from_settings(void);
+internal UI_Theme *rd_theme_from_name_and_colors(Arena *arena, Access *access, String8 theme_name, CFG_NodePtrList colors_cfgs, B32 fallback_to_default);
+internal UI_Theme *rd_workspace_theme_from_cfg(Arena *arena, Access *access, CFG_Node *workspace_cfg, CFG_NodePtrList colors_cfgs, UI_Theme *fallback_theme);
 internal Vec4F32 rd_rgba_from_code_color_slot(RD_CodeColorSlot slot);
 internal RD_CodeColorSlot rd_code_color_slot_from_txt_token_kind(TXT_TokenKind kind);
 internal RD_CodeColorSlot rd_code_color_slot_from_txt_token_kind_lookup_string(TXT_TokenKind kind, String8 string, B32 allow_macros, B32 is_called);
