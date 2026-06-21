@@ -3882,6 +3882,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
               continue;
             }
             B32 tab_is_selected = (tab == panel->selected_tab);
+            // Selected tabs are integrated with the panel body, so title text
+            // resolves from body text rather than tab text.
             UI_TagF(tab_is_selected ? "." : "inactive")
             {
               TabTask *t = push_array(scratch.arena, TabTask, 1);
@@ -5066,6 +5068,7 @@ rd_window_frame(void)
   }
   ws->window_temporarily_focused_ipc = 0;
   ui_select_state(ws->ui);
+  CFG_NodePtrList theme_color_cfgs = rd_theme_color_cfgs_from_user_project(scratch.arena);
   
   //////////////////////////////
   //- rjf: @window_frame_part fill panel/view interaction registers
@@ -5079,9 +5082,8 @@ rd_window_frame(void)
   //
   {
     Access *access = access_open();
-    CFG_NodePtrList colors_cfgs = rd_theme_color_cfgs_from_user_project(scratch.arena);
     String8 theme_name = rd_window_theme_name_from_settings();
-    ws->theme = rd_theme_from_name_and_colors(scratch.arena, access, theme_name, colors_cfgs, 1);
+    ws->theme = rd_theme_from_name_and_colors(scratch.arena, access, theme_name, theme_color_cfgs, 1);
     access_close(access);
   }
   
@@ -7034,12 +7036,12 @@ rd_window_frame(void)
     //- rjf: @window_ui_part panel area
     //
     Access *workspace_theme_access = access_open();
-    CFG_NodePtrList workspace_theme_color_cfgs = rd_theme_color_cfgs_from_user_project(scratch.arena);
     UI_Theme *selected_workspace_theme = rd_workspace_theme_from_cfg(scratch.arena,
                                                                      workspace_theme_access,
                                                                      workspace_mount->workspace_cfg,
-                                                                     workspace_theme_color_cfgs,
+                                                                     theme_color_cfgs,
                                                                      ws->theme);
+    access_close(workspace_theme_access);
 
     Rng2F32 control_surface_rect = uishell_controlled_split_control_rect(&root_controlled_split, content_rect);
     uishell_control_surface_ui(control_surface_rect, &root_controlled_split, selected_workspace_theme);
@@ -7169,11 +7171,13 @@ rd_window_frame(void)
         ws->workspace_surface_entries[ws->workspace_surface_entry_count] = (RD_WorkspaceSurfaceEntry){child_key.u64[0], child->id, 0, child_full_res};
         ws->active_workspace_surface_entry = &ws->workspace_surface_entries[ws->workspace_surface_entry_count];
         ws->workspace_surface_entry_count += 1;
+        Access *child_workspace_theme_access = access_open();
         UI_Theme *child_workspace_theme = rd_workspace_theme_from_cfg(scratch.arena,
-                                                                      workspace_theme_access,
+                                                                      child_workspace_theme_access,
                                                                       child->mount.workspace_cfg,
-                                                                      workspace_theme_color_cfgs,
+                                                                      theme_color_cfgs,
                                                                       ws->theme);
+        access_close(child_workspace_theme_access);
         rd_workspace_surface_contribute_version(child_workspace_theme != 0 ? child_workspace_theme->hash : 0);
         UI_ThemeScope(child_workspace_theme) UI_Parent(child_wrapper) UI_Focus(UI_FocusKind_Off)
         {
@@ -7520,7 +7524,6 @@ rd_window_frame(void)
         rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, workspace_mount, window_is_focused, query_is_open, main_tab_inset_left, main_tab_inset_right, tabs_in_title_bar);
       }
     }
-    access_close(workspace_theme_access);
     
     ////////////////////////////
     //- rjf: @window_ui_part drag/drop cancelling
@@ -8642,9 +8645,9 @@ rd_window_theme_name_from_settings(void)
 }
 
 internal UI_Theme *
-rd_theme_from_name_and_colors(Arena *arena, Access *access, String8 theme_name, CFG_NodePtrList colors_cfgs, B32 fallback_to_default)
+rd_theme_from_name_and_colors(Arena *scratch_arena, Access *access, String8 theme_name, CFG_NodePtrList colors_cfgs, B32 fallback_to_default)
 {
-  MD_Node *theme_tree = rd_theme_tree_from_name(arena, access, theme_name);
+  MD_Node *theme_tree = rd_theme_tree_from_name(scratch_arena, access, theme_name);
   if(theme_tree == &md_nil_node)
   {
     if(fallback_to_default)
@@ -8669,11 +8672,11 @@ rd_theme_from_name_and_colors(Arena *arena, Access *access, String8 theme_name, 
   U64 theme_hash = u64_hash_from_seed_str8(5381, theme_name);
   for(CFG_NodePtrNode *n = colors_cfgs.first; n != 0; n = n->next)
   {
-    String8 color_cfg_string = cfg_string_from_tree(arena, rd_state->cfg_schema_table, str8_zero(), n->v);
+    String8 color_cfg_string = cfg_string_from_tree(scratch_arena, rd_state->cfg_schema_table, str8_zero(), n->v);
     theme_hash = u64_hash_from_seed_str8(theme_hash, color_cfg_string);
-    ThemeTask *t = push_array(arena, ThemeTask, 1);
+    ThemeTask *t = push_array(scratch_arena, ThemeTask, 1);
     SLLQueuePushFront(first_task, last_task, t);
-    t->tree = md_tree_from_string(arena, color_cfg_string);
+    t->tree = md_tree_from_string(scratch_arena, color_cfg_string);
   }
 
   typedef struct ThemePatternNode ThemePatternNode;
@@ -8695,10 +8698,10 @@ rd_theme_from_name_and_colors(Arena *arena, Access *access, String8 theme_name, 
         MD_Node *tags_child = md_child_from_string(n, str8_lit("tags"), 0);
         MD_Node *value_child = md_child_from_string(n, str8_lit("value"), 0);
         U8 split_char = ' ';
-        String8List tags = str8_split(arena, tags_child->first->string, &split_char, 1, 0);
+        String8List tags = str8_split(scratch_arena, tags_child->first->string, &split_char, 1, 0);
         U32 color_u32 = e_value_from_stringf("raw(%S)", value_child->first->string).u32;
         Vec4F32 color_linear = linear_from_srgba(rgba_from_u32(color_u32));
-        ThemePatternNode *node = push_array(arena, ThemePatternNode, 1);
+        ThemePatternNode *node = push_array(scratch_arena, ThemePatternNode, 1);
         node->pattern.tags = str8_array_from_list(rd_frame_arena(), &tags);
         node->pattern.linear = color_linear;
         SLLQueuePush(first_pattern, last_pattern, node);
@@ -8707,6 +8710,7 @@ rd_theme_from_name_and_colors(Arena *arena, Access *access, String8 theme_name, 
     }
   }
 
+  // Theme results are frame-scoped; scratch_arena is only for parsing and task lists.
   UI_Theme *theme = push_array(rd_frame_arena(), UI_Theme, 1);
   theme->patterns_count = pattern_count;
   theme->patterns = push_array(rd_frame_arena(), UI_ThemePattern, theme->patterns_count);
@@ -8720,7 +8724,7 @@ rd_theme_from_name_and_colors(Arena *arena, Access *access, String8 theme_name, 
 }
 
 internal UI_Theme *
-rd_workspace_theme_from_cfg(Arena *arena, Access *access, CFG_Node *workspace_cfg, CFG_NodePtrList colors_cfgs, UI_Theme *fallback_theme)
+rd_workspace_theme_from_cfg(Arena *scratch_arena, Access *access, CFG_Node *workspace_cfg, CFG_NodePtrList colors_cfgs, UI_Theme *fallback_theme)
 {
   UI_Theme *theme = fallback_theme;
   if(workspace_cfg != &cfg_nil_node)
@@ -8728,7 +8732,7 @@ rd_workspace_theme_from_cfg(Arena *arena, Access *access, CFG_Node *workspace_cf
     CFG_Node *theme_cfg = cfg_node_child_from_string(workspace_cfg, str8_lit("theme"));
     if(theme_cfg != &cfg_nil_node && theme_cfg->first != &cfg_nil_node && theme_cfg->first->string.size != 0)
     {
-      UI_Theme *workspace_theme = rd_theme_from_name_and_colors(arena, access, theme_cfg->first->string, colors_cfgs, 0);
+      UI_Theme *workspace_theme = rd_theme_from_name_and_colors(scratch_arena, access, theme_cfg->first->string, colors_cfgs, 0);
       if(workspace_theme != 0)
       {
         theme = workspace_theme;

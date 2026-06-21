@@ -2294,16 +2294,16 @@ ui_push_theme(UI_Theme *theme)
 internal UI_Theme *
 ui_pop_theme(void)
 {
-  UI_Theme *result = ui_state->theme;
   UI_ThemeScopeNode *node = ui_state->theme_scope_top;
   if(node != 0)
   {
-    result = node->theme;
+    UI_Theme *result = node->theme;
     ui_state->theme = node->theme;
     SLLStackPop(ui_state->theme_scope_top);
     SLLStackPush(ui_state->theme_scope_free, node);
+    return result;
   }
-  return result;
+  return ui_state->theme;
 }
 
 //- rjf: theme color lookups
