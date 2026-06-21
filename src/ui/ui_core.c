@@ -813,6 +813,7 @@ ui_begin_build(WM_Window window, UI_EventList *events, UI_IconInfo *icon_info, U
     ui_state->tooltip_can_overflow_window = 0;
     ui_state->tooltip_anchor_key = ui_key_zero();
     ui_state->tags_key_stack_top = ui_state->tags_key_stack_free = 0;
+    ui_state->theme_scope_top = ui_state->theme_scope_free = 0;
     ui_state->tags_cache_slots_count = 512;
     ui_state->tags_cache_slots = push_array(ui_build_arena(), UI_TagsCacheSlot, ui_state->tags_cache_slots_count);
     ui_state->autocomplete_string = str8_zero();
@@ -2267,6 +2268,44 @@ ui_top_tags_key(void)
   return key;
 }
 
+//- rjf: theme scopes
+
+internal UI_Theme *
+ui_push_theme(UI_Theme *theme)
+{
+  UI_ThemeScopeNode *node = ui_state->theme_scope_free;
+  if(node != 0)
+  {
+    SLLStackPop(ui_state->theme_scope_free);
+  }
+  else
+  {
+    node = push_array(ui_build_arena(), UI_ThemeScopeNode, 1);
+  }
+  node->theme = ui_state->theme;
+  SLLStackPush(ui_state->theme_scope_top, node);
+  if(theme != 0)
+  {
+    ui_state->theme = theme;
+  }
+  return node->theme;
+}
+
+internal UI_Theme *
+ui_pop_theme(void)
+{
+  UI_ThemeScopeNode *node = ui_state->theme_scope_top;
+  if(node != 0)
+  {
+    UI_Theme *result = node->theme;
+    ui_state->theme = node->theme;
+    SLLStackPop(ui_state->theme_scope_top);
+    SLLStackPush(ui_state->theme_scope_free, node);
+    return result;
+  }
+  return ui_state->theme;
+}
+
 //- rjf: theme color lookups
 
 internal Vec4F32
@@ -2282,8 +2321,10 @@ ui_color_from_tags_key_extras(UI_Key key, String8Array extras)
   Vec4F32 result = {0};
   if(ui_state->theme_pattern_cache_slots_count && extras.count > 0)
   {
-    //- rjf: compute final key, mixing (tags_key, extras)
-    UI_Key final_key = key;
+    //- rjf: compute final key, mixing (active theme, tags_key, extras)
+    U64 theme_hash = ui_state->theme != 0 ? ui_state->theme->hash : 0;
+    UI_Key final_key = ui_key_make(theme_hash);
+    final_key = ui_key_make(u64_hash_from_seed_str8(final_key.u64[0], str8_struct(&key)));
     for EachIndex(idx, extras.count)
     {
       final_key = ui_key_from_string(final_key, extras.v[idx]);

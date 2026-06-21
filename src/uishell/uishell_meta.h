@@ -95,6 +95,12 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@default(1) @display_name('Use Project Theme') @description(\"Prefer using the project theme for this window, if any.\") 'use_project_theme': bool,"
     "}"
   )},
+  {str8_lit_comp("workspace"), 0, str8_lit_comp(
+    "x:{"
+    "@display_name('Workspace Name') 'label': string,"
+    "@optional @display_name('Workspace Theme') @description(\"Theme preset or theme file used when rendering this workspace. Empty inherits the window/default theme.\") 'theme': string,"
+    "}"
+  )},
   {str8_lit_comp("tab"), 0, str8_lit_comp(
     "@row_commands(@file copy_tab_full_path, @file show_file_in_explorer, duplicate_tab, close_tab)"
     "x:{"
