@@ -3277,14 +3277,16 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     }
   }
 
-  // uishell: daemon transport status pill. Built before the canvas so it is an
-  // earlier sibling and draws on top. Streaming is the silent common case;
-  // connecting/disconnected/closed are worth a glance (the connection heals
-  // itself, so this is a status cue, not an error dialog).
+  // uishell: daemon transport/role status pill. Built before the canvas so it
+  // is an earlier sibling and draws on top. Streaming-as-controller is the
+  // silent common case; connecting/disconnected/closed are status cues (the
+  // connection heals itself), and streaming-as-watcher offers take-control.
   if(tv->daemon_backend && tv->session != 0)
   {
     U32 connection_state = cleat_session_connection_state(tv->session);
-    if(connection_state != CLEAT_SESSION_STREAMING)
+    U32 role = cleat_session_role(tv->session);
+    B32 watching = (connection_state == CLEAT_SESSION_STREAMING && role == CLEAT_ROLE_WATCHER);
+    if(connection_state != CLEAT_SESSION_STREAMING || watching)
     {
       String8 status_text = str8_lit("connecting…");
       switch(connection_state)
@@ -3292,6 +3294,10 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         default:{}break;
         case CLEAT_SESSION_DISCONNECTED:{status_text = str8_lit("reconnecting…");}break;
         case CLEAT_SESSION_CLOSED:      {status_text = str8_lit("session closed");}break;
+      }
+      if(watching)
+      {
+        status_text = str8_lit("watching — click to take control");
       }
       F32 status_height = floor_f32(ui_bottom_font_size()*1.8f);
       UI_Parent(terminal_root_box) UI_FontSize(ui_bottom_font_size()) UI_CornerRadius(status_height*0.5f)
@@ -3301,10 +3307,24 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         ui_set_next_fixed_y(ui_bottom_font_size()*0.5f);
         ui_set_next_fixed_width(status_width);
         ui_set_next_fixed_height(status_height);
-        UI_Box *status_box = ui_build_box_from_string(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawText|UI_BoxFlag_DrawDropShadow, str8_lit("terminal_connection_status"));
+        UI_BoxFlags status_flags = UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawText|UI_BoxFlag_DrawDropShadow;
+        if(watching)
+        {
+          status_flags |= UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects;
+        }
+        UI_Box *status_box = ui_build_box_from_string(status_flags, str8_lit("terminal_connection_status"));
         ui_box_equip_display_string(status_box, status_text);
+        if(watching && ui_clicked(ui_signal_from_box(status_box)))
+        {
+          cleat_session_take_control(tv->session);
+        }
       }
-      rd_request_frame();
+      if(!watching)
+      {
+        // transient transport states animate toward resolution; watching is
+        // stable and event-driven (role changes fire the provider wake)
+        rd_request_frame();
+      }
     }
   }
 
