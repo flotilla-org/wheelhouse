@@ -43,6 +43,7 @@ UIShell_VocabTable:
   {text                ""                     "Text"                             ""                        FileOutline}
   {terminal            ""                     "Terminal"                         ""                        Machine}
   {terminal_fixture    ""                     "Terminal Fixture"                 ""                        Machine}
+  {sessions            ""                     "Sessions"                         ""                        List}
   {binary              ""                     "Binary"                           ""                        Grid}
   {output              _                      "Output"                           _                         List}
   {command             _                      "Command"                          _                         Palette}

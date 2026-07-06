@@ -20,6 +20,9 @@ struct UIShell_TerminalViewState
   B32 initialized;
   cleat_provider *provider;
   cleat_session *session;
+  // daemon-backed session: provider is shared per-daemon (never closed by the
+  // view) and the session survives uishell; connection state is surfaced
+  B32 daemon_backend;
 
   // retained terminal draw bucket: the cell feed's draw output, rebuilt only
   // when its inputs (render generation, rect, colors, fonts, selection) change
@@ -1842,12 +1845,219 @@ uishell_watch_view_ui(Rng2F32 rect)
   scratch_end(scratch);
 }
 
+internal cleat_provider *uishell_cleat_daemon_provider_from_name(String8 daemon_name);
+
+////////////////////////////////
+//~ uishell: Sessions View
+//
+// Control Surface over a cleat daemon's directory subscription (the Workspace
+// Inventory feed): every session the daemon hosts, live-updating on create /
+// exit / retag deltas, grouped by a tag-driven projection. Tags are opaque
+// strings transport-side; the key=value convention and the grouping live here,
+// client-side.
+
+typedef struct UIShell_SessionsViewRow UIShell_SessionsViewRow;
+struct UIShell_SessionsViewRow
+{
+  UIShell_SessionsViewRow *next;
+  B32 is_group_header;
+  String8 group;         // group header rows: projected tag value
+  U64 group_count;       // group header rows: sessions in the group
+  String8 session_id;    // session rows
+  String8 state;
+  String8 tags;          // pre-joined for display
+  U32 controller_count;
+  U32 watcher_count;
+  U16 cols;
+  U16 rows;
+};
+
+RD_VIEW_UI_FUNCTION_DEF(sessions)
+{
+  (void)eval;
+  Temp scratch = scratch_begin(0, 0);
+  String8 daemon_name = rd_view_setting_from_name(str8_lit("daemon_name"));
+  String8 group_key = rd_view_setting_from_name(str8_lit("group_by"));
+  if(group_key.size == 0) { group_key = str8_lit("vessel"); }
+  cleat_provider *provider = uishell_cleat_daemon_provider_from_name(daemon_name);
+
+  //- flatten the directory into grouped display rows. entries arrive sorted by
+  // session id; group headers are emitted in first-appearance order after a
+  // sort of projected values, sessions without the key land in a trailing
+  // "(untagged)" group.
+  UIShell_SessionsViewRow *first_row = 0;
+  UIShell_SessionsViewRow *last_row = 0;
+  U64 row_count = 0;
+  U64 session_count = 0;
+  cleat_directory directory = {0};
+  if(provider != 0 && cleat_provider_directory_snapshot(provider, &directory))
+  {
+    session_count = directory.entry_count;
+    String8 group_prefix = push_str8f(scratch.arena, "%S=", group_key);
+    String8 *entry_groups = push_array(scratch.arena, String8, directory.entry_count);
+    String8List distinct_groups = {0};
+    for(U64 idx = 0; idx < directory.entry_count; idx += 1)
+    {
+      const cleat_directory_entry *entry = &directory.entries[idx];
+      String8 group = str8_zero();
+      for(U64 tag_idx = 0; tag_idx < entry->tag_count; tag_idx += 1)
+      {
+        String8 tag = str8((U8 *)entry->tags[tag_idx].ptr, entry->tags[tag_idx].len);
+        if(str8_match(str8_prefix(tag, group_prefix.size), group_prefix, 0))
+        {
+          // copy out of the directory's storage: it is released before the
+          // rows are drawn
+          group = push_str8_copy(scratch.arena, str8_skip(tag, group_prefix.size));
+          break;
+        }
+      }
+      entry_groups[idx] = group;
+      B32 seen = 0;
+      for(String8Node *n = distinct_groups.first; n != 0; n = n->next)
+      {
+        if(str8_match(n->string, group, 0)) { seen = 1; break; }
+      }
+      if(!seen) { str8_list_push(scratch.arena, &distinct_groups, group); }
+    }
+    for(String8Node *group_n = distinct_groups.first; group_n != 0; group_n = group_n->next)
+    {
+      UIShell_SessionsViewRow *header = push_array(scratch.arena, UIShell_SessionsViewRow, 1);
+      header->is_group_header = 1;
+      header->group = group_n->string;
+      SLLQueuePush(first_row, last_row, header);
+      row_count += 1;
+      for(U64 idx = 0; idx < directory.entry_count; idx += 1)
+      {
+        if(!str8_match(entry_groups[idx], group_n->string, 0)) { continue; }
+        const cleat_directory_entry *entry = &directory.entries[idx];
+        UIShell_SessionsViewRow *row = push_array(scratch.arena, UIShell_SessionsViewRow, 1);
+        row->session_id = push_str8_copy(scratch.arena, str8((U8 *)entry->session_id.ptr, entry->session_id.len));
+        row->state = push_str8_copy(scratch.arena, str8((U8 *)entry->state.ptr, entry->state.len));
+        String8List tag_list = {0};
+        for(U64 tag_idx = 0; tag_idx < entry->tag_count; tag_idx += 1)
+        {
+          str8_list_push(scratch.arena, &tag_list, str8((U8 *)entry->tags[tag_idx].ptr, entry->tags[tag_idx].len));
+        }
+        StringJoin join = {.sep = str8_lit("  ")};
+        row->tags = str8_list_join(scratch.arena, &tag_list, &join);
+        row->controller_count = entry->controller_count;
+        row->watcher_count = entry->watcher_count;
+        row->cols = entry->cols;
+        row->rows = entry->rows;
+        SLLQueuePush(first_row, last_row, row);
+        row_count += 1;
+        header->group_count += 1;
+      }
+    }
+    cleat_provider_directory_release(provider, &directory);
+  }
+
+  //- build the list ui
+  F32 row_height_px = floor_f32(ui_bottom_font_size()*2.4f);
+  Vec2F32 view_dim = dim_2f32(rect);
+  if(row_count == 0)
+  {
+    UI_WidthFill UI_HeightFill UI_Column UI_Padding(ui_pct(1, 0))
+      UI_PrefWidth(ui_text_dim(1, 1)) UI_PrefHeight(ui_em(2.f, 1.f)) UI_Padding(ui_pct(1, 0))
+      UI_TagF("weak")
+    {
+      ui_label(provider == 0 ? str8_lit("No daemon connection.") : str8_lit("No sessions."));
+    }
+  }
+  else
+  {
+    UI_ScrollPt2 scroll_pos = rd_view_scroll_pos();
+    Rng1S64 visible_row_rng = {0};
+    UI_ScrollListParams scroll_list_params = {0};
+    scroll_list_params.flags = UI_ScrollListFlag_All;
+    scroll_list_params.row_height_px = row_height_px;
+    scroll_list_params.dim_px = view_dim;
+    scroll_list_params.item_range = r1s64(0, (S64)row_count);
+    scroll_list_params.cursor_range = r2s64(v2s64(0, 0), v2s64(0, 0));
+    UI_ScrollListSignal scroll_list_sig = {0};
+    UI_ScrollList(&scroll_list_params, &scroll_pos.y, 0, 0, &visible_row_rng, &scroll_list_sig)
+    {
+      S64 row_idx = 0;
+      for(UIShell_SessionsViewRow *row = first_row; row != 0; row = row->next, row_idx += 1)
+      {
+        if(row_idx < visible_row_rng.min || visible_row_rng.max < row_idx) { continue; }
+        if(row->is_group_header)
+        {
+          UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(row_height_px, 1.f)) UI_Row UI_TagF("weak")
+          {
+            ui_spacer(ui_em(0.5f, 1.f));
+            UI_PrefWidth(ui_text_dim(1, 1))
+            {
+              if(row->group.size != 0)
+              {
+                ui_labelf("%S=%S", group_key, row->group);
+              }
+              else
+              {
+                ui_labelf("(no %S tag)", group_key);
+              }
+              UI_TagF("weak") ui_labelf("%I64u", row->group_count);
+            }
+          }
+        }
+        else
+        {
+          ui_set_next_pref_width(ui_pct(1, 0));
+          ui_set_next_pref_height(ui_px(row_height_px, 1.f));
+          UI_Box *row_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects, "session_row_%S", row->session_id);
+          UI_Parent(row_box) UI_Row
+          {
+            ui_spacer(ui_em(1.5f, 1.f));
+            UI_PrefWidth(ui_text_dim(1, 1)) ui_label(row->session_id);
+            ui_spacer(ui_em(1.f, 1.f));
+            UI_TagF("weak") UI_PrefWidth(ui_text_dim(1, 1))
+            {
+              ui_label(row->state);
+              ui_spacer(ui_em(1.f, 1.f));
+              ui_labelf("%ux%u", row->cols, row->rows);
+              ui_spacer(ui_em(1.f, 1.f));
+              if(row->controller_count != 0 || row->watcher_count != 0)
+              {
+                ui_labelf("%uc/%uw", row->controller_count, row->watcher_count);
+                ui_spacer(ui_em(1.f, 1.f));
+              }
+              if(row->tags.size != 0)
+              {
+                ui_label(row->tags);
+              }
+            }
+          }
+          UI_Signal row_sig = ui_signal_from_box(row_box);
+          if(ui_clicked(row_sig))
+          {
+            // open a Terminal View attached to this daemon session, in this
+            // panel; the tab persists in the workspace and reattaches by id
+            CFG_Node *panel = cfg_node_from_id(uishell_regs()->panel);
+            CFG_Node *tab = rd_cfg_new_view_tab(panel, str8_lit("terminal"), str8_zero(), 1);
+            CFG_Node *session_cfg = cfg_node_new(rd_state->cfg, tab, str8_lit("session"));
+            cfg_node_new(rd_state->cfg, session_cfg, row->session_id);
+            if(daemon_name.size != 0)
+            {
+              CFG_Node *daemon_cfg = cfg_node_new(rd_state->cfg, tab, str8_lit("daemon_name"));
+              cfg_node_new(rd_state->cfg, daemon_cfg, daemon_name);
+            }
+          }
+        }
+      }
+    }
+    rd_store_view_scroll_pos(scroll_pos);
+  }
+  (void)session_count;
+  scratch_end(scratch);
+}
+
 internal void
 uishell_register_view_ui_rules(Arena *arena, RD_ViewUIRuleMap *map)
 {
   rd_view_ui_rule_map_insert(arena, map, str8_lit("text"), RD_VIEW_UI_FUNCTION_NAME(shell_text));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("terminal"), RD_VIEW_UI_FUNCTION_NAME(terminal));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("terminal_fixture"), RD_VIEW_UI_FUNCTION_NAME(terminal));
+  rd_view_ui_rule_map_insert(arena, map, str8_lit("sessions"), RD_VIEW_UI_FUNCTION_NAME(sessions));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("binary"), RD_VIEW_UI_FUNCTION_NAME(binary));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("bitmap"), RD_VIEW_UI_FUNCTION_NAME(bitmap));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("color"), RD_VIEW_UI_FUNCTION_NAME(color));
@@ -2698,6 +2908,65 @@ uishell_terminal_provider_wake(void *user_data)
   wm_send_wakeup_event();
 }
 
+////////////////////////////////
+//~ uishell: shared cleat daemon providers
+//
+// One provider per named daemon, shared by every daemon-backed Terminal View
+// and by Control Surfaces reading the directory subscription. The provider
+// owns one multiplexed packet connection (channel 0 directory + per-session
+// channels), so per-view providers would mean per-view connections.
+
+typedef struct UIShell_CleatDaemonProviderNode UIShell_CleatDaemonProviderNode;
+struct UIShell_CleatDaemonProviderNode
+{
+  UIShell_CleatDaemonProviderNode *next;
+  String8 daemon_name;
+  cleat_provider *provider;
+};
+
+global Arena *uishell_cleat_daemon_provider_arena = 0;
+global UIShell_CleatDaemonProviderNode *uishell_cleat_daemon_provider_list = 0;
+
+internal cleat_provider *
+uishell_cleat_daemon_provider_from_name(String8 daemon_name)
+{
+  cleat_provider *result = 0;
+  for(UIShell_CleatDaemonProviderNode *n = uishell_cleat_daemon_provider_list; n != 0; n = n->next)
+  {
+    if(str8_match(n->daemon_name, daemon_name, 0))
+    {
+      result = n->provider;
+      break;
+    }
+  }
+  if(result == 0)
+  {
+    cleat_provider_desc provider_desc =
+    {
+      .abi_version = CLEAT_PROVIDER_ABI_VERSION,
+      .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE,
+      .backend = CLEAT_PROVIDER_BACKEND_DAEMON,
+      .daemon_name = (daemon_name.size != 0 ? daemon_name.str : 0),
+      .daemon_name_len = daemon_name.size,
+    };
+    result = cleat_provider_open(&provider_desc);
+    if(result != 0)
+    {
+      cleat_provider_set_wake_callback(result, uishell_terminal_provider_wake, 0);
+      if(uishell_cleat_daemon_provider_arena == 0)
+      {
+        uishell_cleat_daemon_provider_arena = arena_alloc();
+      }
+      UIShell_CleatDaemonProviderNode *n = push_array(uishell_cleat_daemon_provider_arena, UIShell_CleatDaemonProviderNode, 1);
+      n->daemon_name = push_str8_copy(uishell_cleat_daemon_provider_arena, daemon_name);
+      n->provider = result;
+      n->next = uishell_cleat_daemon_provider_list;
+      uishell_cleat_daemon_provider_list = n;
+    }
+  }
+  return result;
+}
+
 internal WM_Key uishell_terminal_key_from_ui_event(UI_Event *evt);
 
 internal B32
@@ -2899,14 +3168,28 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   if(!fixture_mode && !tv->initialized)
   {
     tv->initialized = 1;
-    cleat_provider_desc provider_desc =
+    // backend selection is per-view workspace config: `daemon:1` (optionally
+    // `daemon_name:"..."`) hosts the session in a cleat daemon so it survives
+    // uishell; `session:"<id>"` attaches to an existing daemon session.
+    String8 attach_session_id = rd_view_setting_from_name(str8_lit("session"));
+    String8 daemon_name = rd_view_setting_from_name(str8_lit("daemon_name"));
+    B32 daemon_backend = (attach_session_id.size != 0 || rd_view_setting_b32_from_name(str8_lit("daemon")));
+    tv->daemon_backend = daemon_backend;
+    if(daemon_backend)
     {
-      .abi_version = CLEAT_PROVIDER_ABI_VERSION,
-      .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE,
-      .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS,
-    };
-    tv->provider = cleat_provider_open(&provider_desc);
-    cleat_provider_set_wake_callback(tv->provider, uishell_terminal_provider_wake, tv);
+      tv->provider = uishell_cleat_daemon_provider_from_name(daemon_name);
+    }
+    else
+    {
+      cleat_provider_desc provider_desc =
+      {
+        .abi_version = CLEAT_PROVIDER_ABI_VERSION,
+        .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE,
+        .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS,
+      };
+      tv->provider = cleat_provider_open(&provider_desc);
+      cleat_provider_set_wake_callback(tv->provider, uishell_terminal_provider_wake, tv);
+    }
     cleat_session_colors session_colors =
     {
       .size = sizeof(session_colors),
@@ -2932,7 +3215,26 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       .command_len = session_command.size,
       .colors = &session_colors,
     };
-    tv->session = cleat_session_create(tv->provider, &session_desc);
+    if(tv->provider != 0 && attach_session_id.size != 0)
+    {
+      session_desc.id = attach_session_id.str;
+      session_desc.id_len = attach_session_id.size;
+      tv->session = cleat_session_attach(tv->provider, &session_desc);
+    }
+    else if(tv->provider != 0)
+    {
+      tv->session = cleat_session_create(tv->provider, &session_desc);
+      // persist the daemon session's identity so reopening this workspace
+      // reattaches to the still-running session instead of spawning a new one
+      if(daemon_backend && tv->session != 0)
+      {
+        cleat_str session_id = {0};
+        if(cleat_session_id(tv->session, &session_id) && session_id.len != 0)
+        {
+          rd_store_view_param(str8_lit("session"), str8((U8 *)session_id.ptr, session_id.len));
+        }
+      }
+    }
   }
   B32 session_ready = (!fixture_mode && tv->provider != 0 && tv->session != 0);
   if(session_ready && (tv->cols != cols || tv->rows != rows))
@@ -2971,6 +3273,37 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       };
       cleat_viewport_command_result command_result = {0};
       cleat_session_scroll_viewport(tv->session, &command, &command_result);
+      rd_request_frame();
+    }
+  }
+
+  // uishell: daemon transport status pill. Built before the canvas so it is an
+  // earlier sibling and draws on top. Streaming is the silent common case;
+  // connecting/disconnected/closed are worth a glance (the connection heals
+  // itself, so this is a status cue, not an error dialog).
+  if(tv->daemon_backend && tv->session != 0)
+  {
+    U32 connection_state = cleat_session_connection_state(tv->session);
+    if(connection_state != CLEAT_SESSION_STREAMING)
+    {
+      String8 status_text = str8_lit("connecting…");
+      switch(connection_state)
+      {
+        default:{}break;
+        case CLEAT_SESSION_DISCONNECTED:{status_text = str8_lit("reconnecting…");}break;
+        case CLEAT_SESSION_CLOSED:      {status_text = str8_lit("session closed");}break;
+      }
+      F32 status_height = floor_f32(ui_bottom_font_size()*1.8f);
+      UI_Parent(terminal_root_box) UI_FontSize(ui_bottom_font_size()) UI_CornerRadius(status_height*0.5f)
+      {
+        F32 status_width = fnt_dim_from_tag_size_string(ui_bottom_font(), ui_bottom_font_size(), 0, 0, status_text).x + ui_bottom_font_size()*2.f;
+        ui_set_next_fixed_x(canvas_dim_target.x*0.5f - status_width*0.5f);
+        ui_set_next_fixed_y(ui_bottom_font_size()*0.5f);
+        ui_set_next_fixed_width(status_width);
+        ui_set_next_fixed_height(status_height);
+        UI_Box *status_box = ui_build_box_from_string(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawText|UI_BoxFlag_DrawDropShadow, str8_lit("terminal_connection_status"));
+        ui_box_equip_display_string(status_box, status_text);
+      }
       rd_request_frame();
     }
   }
