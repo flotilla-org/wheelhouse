@@ -1,0 +1,8 @@
+name: wheelhouse
+members:
+  - alias: wheelhouse
+    url: https://github.com/rjwittams/ui-scratch
+    roles: [code, ops, knowledge]
+  - alias: cleat
+    url: https://github.com/flotilla-org/cleat
+    roles: [code]
