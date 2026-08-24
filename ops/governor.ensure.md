@@ -1,7 +1,7 @@
 ---
 kind: ensure
 role: governor
-repos: [wheelhouse]
+repos: [wheelhouse, cleat]
 driver: udder
 ---
 workflow: wheelhouse-governor

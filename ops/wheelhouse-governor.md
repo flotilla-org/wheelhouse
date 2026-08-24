@@ -1,7 +1,7 @@
 ---
 kind: workflow_template
 name: wheelhouse-governor
-repos: [wheelhouse]
+repos: [wheelhouse, cleat]
 ---
 vessels:
   - name: govern

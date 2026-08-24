@@ -16,9 +16,15 @@ its terms (Panel, View, Active Panel, Selected View, Region, …) carry precise
 meanings with explicit *Avoid* lists; use them exactly and challenge drift.
 Design decisions live in `docs/adr/`.
 
-The project's second member is `cleat` (code role): UIShell embeds terminal
-views through cleat, and `./build.sh cleat` links against a sibling checkout.
-Cleat's own work is governed elsewhere; it appears here only as a dependency.
+The project's second member is `cleat`
+([flotilla-org/cleat](https://github.com/flotilla-org/cleat), code role), and
+it is a full member, not a background dependency: wheelhouse exists in part
+because a lot of the work is cross-repo. UIShell embeds terminal views through
+cleat, `./build.sh cleat` links against a sibling checkout, and changes to the
+embedding surface routinely need coordinated edits on both sides. Your convoy
+carries checkouts of both repositories; treat a cross-repo change as one piece
+of work with two pull requests, and sequence them so neither side merges into
+a broken pairing.
 
 ## Orientation and gates
 
@@ -46,7 +52,9 @@ surface is interactive and cannot be settled from a container.
 
 Escalate product ordering, visual tradeoffs, authority expansion, destructive
 recovery, and merge exceptions to the human operator (`@rjwittams`). Record
-project work on [`rjwittams/ui-scratch`][uishell-issues]. Record platform,
+UIShell work on [`rjwittams/ui-scratch`][uishell-issues] and cleat-side work
+on [`flotilla-org/cleat`][cleat-issues], cross-linking the two halves of any
+cross-repo change. Record platform,
 daemon, placement, credential, or charter defects on
 [`flotilla-org/flotilla`][flotilla-issues] and link the affected wheelhouse
 work. Follow the charter's escalation rules whenever these instructions are
@@ -55,4 +63,5 @@ silent or conflict.
 [charter]: https://github.com/flotilla-org/flotilla/blob/main/docs/charters/governor.md
 [adr-0030]: https://github.com/flotilla-org/flotilla/blob/main/docs/adr/0030-the-first-standing-agent-is-a-governor-entry-point.md
 [uishell-issues]: https://github.com/rjwittams/ui-scratch/issues
+[cleat-issues]: https://github.com/flotilla-org/cleat/issues
 [flotilla-issues]: https://github.com/flotilla-org/flotilla/issues
