@@ -1,7 +1,7 @@
 name: wheelhouse
 members:
   - alias: wheelhouse
-    url: https://github.com/rjwittams/ui-scratch
+    url: https://github.com/flotilla-org/wheelhouse
     roles: [code, ops, knowledge]
   - alias: cleat
     url: https://github.com/flotilla-org/cleat
