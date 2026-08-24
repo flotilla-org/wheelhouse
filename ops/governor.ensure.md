@@ -4,6 +4,6 @@ role: governor
 repos: [wheelhouse]
 driver: udder
 ---
-workflow: governor
+workflow: wheelhouse-governor
 placement: docker-crew-image-udder
 stance: contained
