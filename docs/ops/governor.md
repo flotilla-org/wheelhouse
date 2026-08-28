@@ -52,9 +52,12 @@ surface is interactive and cannot be settled from a container.
 
 Escalate product ordering, visual tradeoffs, authority expansion, destructive
 recovery, and merge exceptions to the human operator (`@rjwittams`). Record
-UIShell work on [`rjwittams/ui-scratch`][uishell-issues] and cleat-side work
-on [`flotilla-org/cleat`][cleat-issues], cross-linking the two halves of any
-cross-repo change. Record platform,
+UIShell work on [`flotilla-org/wheelhouse`][uishell-issues] — the project
+tracker, where wayfinder maps and their tickets also live — and cleat-side
+work on [`flotilla-org/cleat`][cleat-issues], cross-linking the two halves of
+any cross-repo change. Older UIShell issues predating this move remain on
+[`rjwittams/ui-scratch`][ui-scratch-issues]; cross-link rather than duplicate
+when touching one. Record platform,
 daemon, placement, credential, or charter defects on
 [`flotilla-org/flotilla`][flotilla-issues] and link the affected wheelhouse
 work. Follow the charter's escalation rules whenever these instructions are
@@ -62,6 +65,7 @@ silent or conflict.
 
 [charter]: https://github.com/flotilla-org/flotilla/blob/main/docs/charters/governor.md
 [adr-0030]: https://github.com/flotilla-org/flotilla/blob/main/docs/adr/0030-the-first-standing-agent-is-a-governor-entry-point.md
-[uishell-issues]: https://github.com/rjwittams/ui-scratch/issues
+[uishell-issues]: https://github.com/flotilla-org/wheelhouse/issues
+[ui-scratch-issues]: https://github.com/rjwittams/ui-scratch/issues
 [cleat-issues]: https://github.com/flotilla-org/cleat/issues
 [flotilla-issues]: https://github.com/flotilla-org/flotilla/issues
