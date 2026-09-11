@@ -96,9 +96,8 @@ if "%wheelhouse%"=="1" (
   for /f "tokens=2" %%t in ('rustc -vV ^| findstr /b "host:"') do set andamento_target=%%t
   if "%WHEELHOUSE_ANDAMENTO_TARGET_DIR%"=="" (set andamento_target_dir=!andamento_dir!\target) else (set andamento_target_dir=%WHEELHOUSE_ANDAMENTO_TARGET_DIR%)
   set andamento_lib_dir=!andamento_target_dir!\!andamento_target!\!cargo_profile!
-  pushd "!andamento_dir!" || exit /b 1
-  cargo build -p andamento-ffi --locked --target !andamento_target! --target-dir "!andamento_target_dir!" !cargo_profile_flags! || exit /b 1
-  popd
+  python tools\prepare-andamento-build.py "!andamento_dir!" || exit /b 1
+  cargo build --manifest-path "%~dp0build\andamento\Cargo.toml" -p andamento-ffi --locked --target !andamento_target! --target-dir "!andamento_target_dir!" !cargo_profile_flags! || exit /b 1
   set auto_compile_flags=!auto_compile_flags! -I"!andamento_dir!\crates\andamento-ffi\include"
   set andamento_link="!andamento_lib_dir!\andamento_ffi.dll.lib"
   python tools\embed-sidebar-fixture.py || exit /b 1
