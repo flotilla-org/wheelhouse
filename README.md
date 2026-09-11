@@ -26,6 +26,8 @@ The executable is `build/wheelhouse` (`build/wheelhouse.exe` on Windows); the ma
 
 Internal source names and existing configuration storage still use `uishell`.
 
+The native-build CI workflow checks exact Cleat and Andamento revisions, recorded in `.github/workflows/build.yml`. It builds on macOS with Ghostty and on Linux/Windows with Cleat’s no-VT variant, and runs workspace bridge diagnostics on macOS and Linux. Windows runtime behavior and Ghostty on Linux/Windows are not covered by these jobs. Local builds continue to use the configured sibling checkouts.
+
 ## Sidebar fixture
 
 The control region has **Workspaces** and **Andamento** modes. The choice is saved per window. Workspaces keeps the preview selector; Andamento renders an embedded example project and terminal using the shared core. The same terminal appears under Projects and Attention, with independent collapse state.
