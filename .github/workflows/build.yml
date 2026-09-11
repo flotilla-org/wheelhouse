@@ -14,8 +14,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CLEAT_REV: dbeeca61148acf4dc13bf727c8e6ed54aa0aadbb
+  # Includes the portable Windows shutdown fix from cleat PR #204.
+  CLEAT_REV: 912a29bf2df4f019019a40678ab3ac0a0bad36ba
   ANDAMENTO_REV: ea9bf581add3111f6e70df7fff2059424419d57f
+  # Cargo resolves all workspace manifests, including Andamento's Zellij adapters.
+  ZELLIJ_REV: d262df58ebdea2549666a5060663d017545bb5cb
 
 jobs:
   native:
@@ -72,6 +75,11 @@ jobs:
           path: andamento
           token: ${{ steps.dependency-token.outputs.token }}
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: rjwittams/zellij
+          ref: ${{ env.ZELLIJ_REV }}
+          path: zellij
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
@@ -86,7 +94,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         if: matrix.vt == 'ghostty-vt'
         with:
-          version: 0.15.2
+          version: 0.16.0
       - name: Prepare Ghostty
         if: matrix.vt == 'ghostty-vt'
         run: bash ../cleat/tools/prepare-ghostty-vt.sh
