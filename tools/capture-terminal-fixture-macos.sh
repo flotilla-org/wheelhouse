@@ -12,7 +12,7 @@ mkdir -p "$out_dir"
 timestamp="$(date +%Y%m%d-%H%M%S)"
 out_path="$out_dir/terminal-fixture-$timestamp.png"
 
-echo "Open UI Shell with a Terminal Fixture tab visible, then click the window to capture."
+echo "Open Wheelhouse with a Terminal Fixture tab visible, then click the window to capture."
 screencapture -W -o -x "$out_path"
 
 if [[ ! -s "$out_path" ]]; then

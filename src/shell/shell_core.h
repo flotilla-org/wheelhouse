@@ -578,6 +578,8 @@ internal UI_Signal rd_chrome_build_new_workspace(CFG_Node *owner_cfg);
 internal UI_Signal rd_chrome_build_overview_toggle(RD_WindowState *ws);
 internal UI_Signal rd_chrome_build_sidebar_collapse(CFG_Node *owner_cfg);
 
+typedef struct UIShell_SidebarState UIShell_SidebarState;
+
 struct RD_WindowState
 {
   // rjf: links & metadata
@@ -622,6 +624,7 @@ struct RD_WindowState
   B32 menu_bar_focus_press_started;
 
   // rjf: root controlled split runtime state
+  UIShell_SidebarState *sidebar;
   B32 root_controlled_split_initialized;
   CFG_ID root_controlled_split_selected_workspace_id;
   CFG_ID root_controlled_split_renaming_workspace_id;

@@ -1,6 +1,6 @@
-# UIShell
+# Wheelhouse
 
-UIShell is a native application shell for composing interactive workspaces from reusable controls, tabbed panels, and embedded views.
+Wheelhouse is a native application shell for composing interactive workspaces from reusable controls, tabbed panels, and embedded views.
 
 ## Language
 

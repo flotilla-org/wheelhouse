@@ -4,12 +4,12 @@
 ////////////////////////////////
 //~ rjf: Build Options
 
-#define BUILD_TITLE "UI Shell"
+#define BUILD_TITLE "Wheelhouse"
 #define BUILD_VERSION_MAJOR 0
 #define BUILD_VERSION_MINOR 1
 #define BUILD_VERSION_PATCH 0
 #define BUILD_RELEASE_PHASE_STRING_LITERAL "EXPERIMENTAL"
-#define BUILD_ISSUES_LINK_STRING_LITERAL "the UI Shell project issue tracker"
+#define BUILD_ISSUES_LINK_STRING_LITERAL "the Wheelhouse project issue tracker"
 #define BUILD_IPC_NAME_PREFIX "uishell"
 #define BUILD_CRASH_DUMP_FILE_NAME_WIDE L"uishell_crash_dump.dmp"
 #define RD_APP_STORAGE_DIR "uishell"
@@ -136,11 +136,18 @@ entry_point(CmdLine *cmd_line)
       fnt_init();
       rd_init(cmd_line);
 
+      B32 run_sidebar_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
       B32 run_terminal_glyph_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("terminal_glyph_diagnostics"));
       String8 terminal_glyph_fixture_ppm_path = cmd_line_string(cmd_line, str8_lit("terminal_glyph_fixture_ppm"));
       for(B32 quit = 0; !quit;)
       {
         quit = update();
+        if(run_sidebar_diagnostics)
+        {
+          RD_WindowState *ws = rd_state->first_window_state;
+          B32 ok = ws != &rd_nil_window_state && uishell_sidebar_diagnostics(cfg_node_from_id(ws->cfg_id));
+          abort_self(ok ? 0 : 1);
+        }
         if(run_terminal_glyph_diagnostics || terminal_glyph_fixture_ppm_path.size != 0)
         {
           FNT_Tag primary_font = fnt_tag_from_static_data_string(&rd_default_code_font_bytes);
@@ -188,12 +195,14 @@ entry_point(CmdLine *cmd_line)
     case ExecMode_Help:
     {
       wm_graphical_message(0,
-                           str8_lit("UI Shell - Help"),
-                           str8_lit("UI Shell is a native app-shell experiment.\n\n"
+                           str8_lit("Wheelhouse - Help"),
+                           str8_lit("Wheelhouse composes workspaces from tabbed panels and embedded views.\n\n"
                                     "--user:<path>\n"
                                     "Use to specify the location of a user file for window, panel, keybinding, theme, and visual settings.\n\n"
                                     "--project:<path>\n"
                                     "Use to specify the location of a project file for app-specific settings.\n\n"
+                                    "--sidebar_diagnostics\n"
+                                    "Check the fixture sidebar workspace bridge and exit (use temporary user/project files).\n\n"
                                     "--terminal_fixture\n"
                                     "Open the deterministic terminal glyph fixture on startup.\n\n"
                                     "--terminal_glyph_diagnostics\n"

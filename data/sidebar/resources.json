@@ -1,0 +1,20 @@
+[
+  {
+    "id": "primary",
+    "label": "Primary",
+    "command": "printf 'Wheelhouse Primary terminal\\n'; exec /bin/sh",
+    "windows_command": "cmd.exe /K echo Wheelhouse Primary terminal"
+  },
+  {
+    "id": "shell",
+    "label": "Shell",
+    "command": "printf 'Wheelhouse Shell terminal\\n'; exec /bin/sh",
+    "windows_command": "cmd.exe /K echo Wheelhouse Shell terminal"
+  },
+  {
+    "id": "tools",
+    "label": "Tools",
+    "command": "printf 'Wheelhouse Tools terminal\\n'; exec /bin/sh",
+    "windows_command": "cmd.exe /K echo Wheelhouse Tools terminal"
+  }
+]

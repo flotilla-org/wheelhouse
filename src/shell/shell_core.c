@@ -2945,11 +2945,14 @@ uishell_controlled_split_commit_workspace_rename(RD_WindowState *ws, CFG_Node *w
   }
 }
 
+#include "uishell/uishell_sidebar.c"
+
 internal void
 uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split, UI_Theme *selected_workspace_theme)
 {
   if(rect.x1 > rect.x0 && rect.y1 > rect.y0)
   {
+    if(uishell_sidebar_choice_ui(&rect, split)) { return; }
     RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
     if(ws != &rd_nil_window_state &&
        ws->root_controlled_split_renaming_workspace_id != 0 &&
@@ -9352,7 +9355,7 @@ rd_init(CmdLine *cmdln)
   rd_state->shell_output_key         = c_key_make(c_root_alloc(), c_id_make(0, 0));
   {
     Arena *output_arena = arena_alloc();
-    String8 output = push_str8f(output_arena, "UI Shell output\n");
+    String8 output = push_str8f(output_arena, "Wheelhouse output\n");
     c_submit_data(rd_state->shell_output_key, &output_arena, output);
   }
   for(U64 idx = 0; idx < ArrayCount(rd_state->frame_arenas); idx += 1)
@@ -10888,6 +10891,7 @@ rd_frame(void)
         CFG_Node *cfg = cfg_node_from_id(ws->cfg_id);
         if(cfg == &cfg_nil_node || ws->last_frame_index_touched < rd_state->frame_index || rd_state->quit)
         {
+          uishell_sidebar_release(ws->sidebar);
           ui_state_release(ws->ui);
           r_window_unequip(ws->os, ws->r);
           wm_window_close(ws->os);

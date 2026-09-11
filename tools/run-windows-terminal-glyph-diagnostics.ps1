@@ -1,5 +1,5 @@
 param(
-  [string]$FixturePpm = $env:UISHELL_WINDOWS_D3D11_FIXTURE_PPM,
+  [string]$FixturePpm = $env:WHEELHOUSE_WINDOWS_D3D11_FIXTURE_PPM,
   [string[]]$BuildArgs = @(),
   [switch]$ValidateOnly
 )
@@ -308,12 +308,12 @@ if(-not [string]::IsNullOrWhiteSpace($FixtureDir)) {
 }
 
 $BuildScript = Join-Path $RepoRoot "build.bat"
-& $BuildScript "uishell" @BuildArgs
+& $BuildScript "wheelhouse" @BuildArgs
 if($LASTEXITCODE -ne 0) {
-  throw "build.bat uishell failed with exit code $LASTEXITCODE"
+  throw "build.bat wheelhouse failed with exit code $LASTEXITCODE"
 }
 
-$UIShellExe = Join-Path $RepoRoot "build\uishell.exe"
+$UIShellExe = Join-Path $RepoRoot "build\wheelhouse.exe"
 if(-not (Test-Path $UIShellExe)) {
   throw "Expected build output was not found: $UIShellExe"
 }
