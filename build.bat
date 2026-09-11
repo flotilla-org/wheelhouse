@@ -65,21 +65,24 @@ if "%pgo%"=="1" (
     exit /b 1
   )
 )
+set cargo_profile=debug
+set cargo_profile_flags=
+if "%release%"=="1" (
+  set cargo_profile=release
+  set cargo_profile_flags=--release
+)
 if "%wheelhouse%"=="1" set cleat=1
 if "%cleat%"=="1" (
   if "%WHEELHOUSE_CLEAT_DIR%"=="" (set cleat_dir=%~dp0..\cleat) else (set cleat_dir=%WHEELHOUSE_CLEAT_DIR%)
   if "%WHEELHOUSE_CLEAT_FEATURES%"=="" (set cleat_features=ghostty-vt) else (set cleat_features=%WHEELHOUSE_CLEAT_FEATURES%)
-  set cleat_profile=debug
-  set cleat_profile_flags=
-  if "%release%"=="1" set cleat_profile=release && set cleat_profile_flags=--release
   if "%WHEELHOUSE_CLEAT_TARGET_DIR%"=="" (set cleat_target_dir=!cleat_dir!\target) else (set cleat_target_dir=%WHEELHOUSE_CLEAT_TARGET_DIR%)
   set cleat_include_dir=!cleat_dir!\crates\cleat\include
-  set cleat_lib_dir=!cleat_target_dir!\!cleat_profile!
+  set cleat_lib_dir=!cleat_target_dir!\!cargo_profile!
   set cleat_feature_flags=
   if not "!cleat_features!"=="none" set cleat_feature_flags=--features "!cleat_features!"
   echo [cleat provider: !cleat_dir!]
   pushd "!cleat_dir!" || exit /b 1
-  cargo build -p cleat --locked --no-default-features !cleat_profile_flags! !cleat_feature_flags! || exit /b 1
+  cargo build -p cleat --locked --no-default-features !cargo_profile_flags! !cleat_feature_flags! || exit /b 1
   popd
   rem cl accepts -I as well as /I, so one spelling serves both compilers; this must
   rem land in auto_compile_flags (not cl_common/clang_common) because the compile
@@ -92,9 +95,9 @@ if "%wheelhouse%"=="1" (
   if "%WHEELHOUSE_ANDAMENTO_DIR%"=="" (set andamento_dir=%~dp0..\andamento) else (set andamento_dir=%WHEELHOUSE_ANDAMENTO_DIR%)
   for /f "tokens=2" %%t in ('rustc -vV ^| findstr /b "host:"') do set andamento_target=%%t
   if "%WHEELHOUSE_ANDAMENTO_TARGET_DIR%"=="" (set andamento_target_dir=!andamento_dir!\target) else (set andamento_target_dir=%WHEELHOUSE_ANDAMENTO_TARGET_DIR%)
-  set andamento_lib_dir=!andamento_target_dir!\!andamento_target!\!cleat_profile!
+  set andamento_lib_dir=!andamento_target_dir!\!andamento_target!\!cargo_profile!
   pushd "!andamento_dir!" || exit /b 1
-  cargo build -p andamento-ffi --locked --target !andamento_target! --target-dir "!andamento_target_dir!" !cleat_profile_flags! || exit /b 1
+  cargo build -p andamento-ffi --locked --target !andamento_target! --target-dir "!andamento_target_dir!" !cargo_profile_flags! || exit /b 1
   popd
   set auto_compile_flags=!auto_compile_flags! -I"!andamento_dir!\crates\andamento-ffi\include"
   set andamento_link="!andamento_lib_dir!\andamento_ffi.dll.lib"

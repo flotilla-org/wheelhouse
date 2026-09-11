@@ -452,6 +452,12 @@ uishell_sidebar_diagnostics(CFG_Node *window)
   Temp scratch = scratch_begin(0, 0);
   RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
+  if(state->core == 0 || state->snapshot == 0)
+  {
+    fprintf(stderr, "Sidebar host diagnostics: FAILED (initialization: %s)\n", state->error);
+    scratch_end(scratch);
+    return 0;
+  }
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   U64 before = split.inventory.count;
   size_t activate = ANDAMENTO_NONE;
