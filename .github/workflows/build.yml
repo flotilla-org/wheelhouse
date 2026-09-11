@@ -49,18 +49,28 @@ jobs:
       - name: Check private dependency access
         shell: bash
         env:
-          ANDAMENTO_DEPLOY_KEY: ${{ secrets.ANDAMENTO_DEPLOY_KEY }}
+          CI_APP_PRIVATE_KEY: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          CI_APP_ID: ${{ vars.CI_APP_ID }}
         run: |
-          if [ -z "$ANDAMENTO_DEPLOY_KEY" ]; then
-            echo '::error::Set ANDAMENTO_DEPLOY_KEY to a read-only deploy key for flotilla-org/andamento.'
+          if [ -z "$CI_APP_PRIVATE_KEY" ] || [ -z "$CI_APP_ID" ]; then
+            echo '::error::Configure CI_APP_ID and CI_APP_PRIVATE_KEY for the read-only CI App installed on andamento.'
             exit 1
           fi
+      - name: Create read-only dependency token
+        uses: actions/create-github-app-token@v2
+        id: dependency-token
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: flotilla-org
+          repositories: andamento
+          permission-contents: read
       - uses: actions/checkout@v4
         with:
           repository: flotilla-org/andamento
           ref: ${{ env.ANDAMENTO_REV }}
           path: andamento
-          ssh-key: ${{ secrets.ANDAMENTO_DEPLOY_KEY }}
+          token: ${{ steps.dependency-token.outputs.token }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
