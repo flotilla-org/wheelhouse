@@ -46,11 +46,22 @@ jobs:
           repository: flotilla-org/cleat
           ref: ${{ env.CLEAT_REV }}
           path: cleat
+      - name: Check private dependency access
+        shell: bash
+        env:
+          ANDAMENTO_DEPLOY_KEY: ${{ secrets.ANDAMENTO_DEPLOY_KEY }}
+        run: |
+          if [ -z "$ANDAMENTO_DEPLOY_KEY" ]; then
+            echo '::error::Set ANDAMENTO_DEPLOY_KEY to a read-only deploy key for flotilla-org/andamento.'
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           repository: flotilla-org/andamento
           ref: ${{ env.ANDAMENTO_REV }}
           path: andamento
+          ssh-key: ${{ secrets.ANDAMENTO_DEPLOY_KEY }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
