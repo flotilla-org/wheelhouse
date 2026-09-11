@@ -15,7 +15,7 @@ concurrency:
 
 env:
   # Includes the portable Windows shutdown fix from cleat PR #204.
-  CLEAT_REV: 912a29bf2df4f019019a40678ab3ac0a0bad36ba
+  CLEAT_REV: bf47bbb706226bcd9aafe7aa38f3e4b920448baa
   ANDAMENTO_REV: ea9bf581add3111f6e70df7fff2059424419d57f
 
 jobs:
@@ -47,6 +47,7 @@ jobs:
           repository: flotilla-org/cleat
           ref: ${{ env.CLEAT_REV }}
           path: cleat
+      # Fork PRs lack the App secret; fail explicitly because Andamento is private.
       - name: Check private dependency access
         shell: bash
         env:
