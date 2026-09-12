@@ -7,6 +7,10 @@
 ////////////////////////////////
 //~ rjf: Includes
 
+#include <poll.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/cursorfont.h>
@@ -36,6 +40,7 @@ struct LNX_WM_State
 {
   Arena *arena;
   Display *display;
+  int wake_pipe[2];
   XIM xim;
   LNX_WM_Window *first_window;
   LNX_WM_Window *last_window;
