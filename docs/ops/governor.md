@@ -9,7 +9,7 @@ memory.
 
 ## The project
 
-Wheelhouse's primary member is this repository: **UIShell**, a native
+Wheelhouse's primary member is this repository: **Wheelhouse**, a native
 application shell for composing interactive workspaces from reusable controls,
 tabbed panels, and embedded views. `CONTEXT.md` is the canonical vocabulary —
 its terms (Panel, View, Active Panel, Selected View, Region, …) carry precise
@@ -19,7 +19,7 @@ Design decisions live in `docs/adr/`.
 The project's second member is `cleat`
 ([flotilla-org/cleat](https://github.com/flotilla-org/cleat), code role), and
 it is a full member, not a background dependency: wheelhouse exists in part
-because a lot of the work is cross-repo. UIShell embeds terminal views through
+because a lot of the work is cross-repo. Wheelhouse embeds terminal views through
 cleat, `./build.sh cleat` links against a sibling checkout, and changes to the
 embedding surface routinely need coordinated edits on both sides. Your convoy
 carries checkouts of both repositories; treat a cross-repo change as one piece
@@ -52,7 +52,7 @@ surface is interactive and cannot be settled from a container.
 
 Escalate product ordering, visual tradeoffs, authority expansion, destructive
 recovery, and merge exceptions to the human operator (`@rjwittams`). Record
-UIShell work on [`flotilla-org/wheelhouse`][uishell-issues] — the project
+Wheelhouse work on [`flotilla-org/wheelhouse`][uishell-issues] — the project
 tracker, where wayfinder maps and their tickets also live — and cleat-side
 work on [`flotilla-org/cleat`][cleat-issues], cross-linking the two halves of
 any cross-repo change. Older UIShell issues predating this move remain on

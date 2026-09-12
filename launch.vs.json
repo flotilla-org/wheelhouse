@@ -4,10 +4,10 @@
   "configurations": [
     {
       "type": "cppdbg",
-      "name": "raddbg",
+      "name": "wheelhouse",
       "request": "launch",
       "project": "c://windows//system32//cmd.exe",
-      "program": "build/raddbg",
+      "program": "build/wheelhouse",
       "args": [ "-no_stdout_buffer" ],
       "stopAtEntry": false,
       "cwd": ".",

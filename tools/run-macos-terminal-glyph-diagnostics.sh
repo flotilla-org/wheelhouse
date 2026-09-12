@@ -8,12 +8,12 @@ fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-fixture_ppm="${UISHELL_MACOS_METAL_FIXTURE_PPM:-local/screenshots/macos-metal-terminal-fixture.ppm}"
+fixture_ppm="${WHEELHOUSE_MACOS_METAL_FIXTURE_PPM:-local/screenshots/macos-metal-terminal-fixture.ppm}"
 
 cd "$repo_root"
 mkdir -p "$(dirname "$fixture_ppm")"
-bash build.sh uishell
-./build/uishell --terminal_glyph_diagnostics --terminal_glyph_fixture_ppm:"$fixture_ppm"
+bash build.sh wheelhouse
+./build/wheelhouse --terminal_glyph_diagnostics --terminal_glyph_fixture_ppm:"$fixture_ppm"
 
 if [[ ! -s "$fixture_ppm" ]]; then
   echo "No terminal fixture PPM was written: $fixture_ppm" >&2

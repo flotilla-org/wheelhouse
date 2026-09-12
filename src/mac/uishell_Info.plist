@@ -5,17 +5,17 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>UI Shell</string>
+  <string>Wheelhouse</string>
   <key>CFBundleExecutable</key>
-  <string>uishell</string>
+  <string>wheelhouse</string>
   <key>CFBundleIdentifier</key>
-  <string>dev.ui-scratch.uishell</string>
+  <string>work.flotilla.wheelhouse</string>
   <key>CFBundleIconFile</key>
-  <string>uishell</string>
+  <string>wheelhouse</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>UI Shell</string>
+  <string>Wheelhouse</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

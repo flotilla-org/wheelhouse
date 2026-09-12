@@ -1,6 +1,6 @@
 # Bundled Fonts
 
-UI Shell currently bundles a small font set for default UI and terminal rendering.
+Wheelhouse currently bundles a small font set for default UI and terminal rendering.
 
 The terminal-oriented fonts copied from Ghostty's `src/font/res` are:
 

@@ -3204,6 +3204,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     // the default shell), which makes commands part of the workspace config:
     // reproducible layouts (e.g. perf workloads) & a step toward recreation
     String8 session_command = rd_expr_from_cfg(view_cfg);
+    String8 session_cwd = rd_view_setting_from_name(str8_lit("cwd"));
     cleat_session_desc session_desc =
     {
       .cols = cols,
@@ -3213,6 +3214,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       .vt_engine = CLEAT_PROVIDER_VT_GHOSTTY,
       .command = (session_command.size != 0 ? session_command.str : 0),
       .command_len = session_command.size,
+      .cwd = session_cwd.str,
+      .cwd_len = session_cwd.size,
       .colors = &session_colors,
     };
     if(tv->provider != 0 && attach_session_id.size != 0)

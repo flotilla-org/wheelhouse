@@ -1,0 +1,123 @@
+name: Native builds
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-builds-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Includes the portable Windows shutdown fix from cleat PR #204.
+  CLEAT_REV: bf47bbb706226bcd9aafe7aa38f3e4b920448baa
+  ANDAMENTO_REV: ea9bf581add3111f6e70df7fff2059424419d57f
+
+jobs:
+  native:
+    name: ${{ matrix.os }} / ${{ matrix.vt }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            vt: none
+          - os: windows-2022
+            vt: none
+          - os: macos-14
+            vt: ghostty-vt
+    env:
+      WHEELHOUSE_CLEAT_FEATURES: ${{ matrix.vt }}
+    defaults:
+      run:
+        working-directory: wheelhouse
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: wheelhouse
+      - uses: actions/checkout@v4
+        with:
+          repository: flotilla-org/cleat
+          ref: ${{ env.CLEAT_REV }}
+          path: cleat
+      # Fork PRs lack the App secret; fail explicitly because Andamento is private.
+      - name: Check private dependency access
+        shell: bash
+        env:
+          CI_APP_PRIVATE_KEY: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          CI_APP_ID: ${{ vars.CI_APP_ID }}
+        run: |
+          if [ -z "$CI_APP_PRIVATE_KEY" ] || [ -z "$CI_APP_ID" ]; then
+            echo '::error::Configure CI_APP_ID and CI_APP_PRIVATE_KEY for the read-only CI App installed on andamento.'
+            exit 1
+          fi
+      - name: Create read-only dependency token
+        uses: actions/create-github-app-token@v2
+        id: dependency-token
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: flotilla-org
+          repositories: andamento
+          permission-contents: read
+      - uses: actions/checkout@v4
+        with:
+          repository: flotilla-org/andamento
+          ref: ${{ env.ANDAMENTO_REV }}
+          path: andamento
+          token: ${{ steps.dependency-token.outputs.token }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux build and display dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang pkg-config libx11-dev libxext-dev libgl1-mesa-dev libegl1-mesa-dev libfreetype6-dev xvfb xauth
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - uses: mlugg/setup-zig@v2
+        if: matrix.vt == 'ghostty-vt'
+        with:
+          version: 0.16.0
+      - name: Prepare Ghostty
+        if: matrix.vt == 'ghostty-vt'
+        run: bash ../cleat/tools/prepare-ghostty-vt.sh
+      - name: Build on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: call build.bat wheelhouse
+      - name: Build on Linux
+        if: runner.os == 'Linux'
+        run: bash build.sh wheelhouse
+      - name: Build and verify macOS bundle
+        if: runner.os == 'macOS'
+        run: |
+          bash build.sh bundle
+          codesign --verify --deep --strict build/Wheelhouse.app
+      - name: Verify generated sidebar fixture
+        shell: bash
+        run: git diff --exit-code -- src/uishell/generated/sidebar_fixture.h
+      - name: Linux sidebar diagnostics
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          task_dir=$(mktemp -d)
+          trap 'rm -rf "$task_dir"' EXIT
+          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
+      - name: macOS sidebar diagnostics
+        if: runner.os == 'macOS'
+        run: |
+          task_dir=$(mktemp -d)
+          trap 'rm -rf "$task_dir"' EXIT
+          ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics

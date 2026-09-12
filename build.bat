@@ -5,16 +5,16 @@ cd /D "%~dp0"
 
 :: --- Usage Notes (2024/1/10) ------------------------------------------------
 ::
-:: This is the Windows build script for the UI Shell project. It takes a list
+:: This is the Windows build script for the Wheelhouse project. It takes a list
 :: of simple alphanumeric-only arguments which control (a) what is built,
 :: (b) which compiler & linker are used, and (c) extra high-level build options.
-:: By default, if no options are passed, then the "uishell" app is built.
+:: By default, if no options are passed, then the "wheelhouse" app is built.
 ::
 :: Below is a non-exhaustive list of possible ways to use the script:
-:: `build uishell`
-:: `build uishell clang`
-:: `build uishell release`
-:: `build uishell asan telemetry`
+:: `build wheelhouse`
+:: `build wheelhouse clang`
+:: `build wheelhouse release`
+:: `build wheelhouse asan telemetry`
 ::
 :: For a full list of possible build targets and their build command lines,
 :: search for @build_targets in this file.
@@ -34,8 +34,8 @@ if "%debug%"=="1"   set release=0 && echo [debug mode]
 if "%release%"=="1" set debug=0 && echo [release mode]
 if "%msvc%"=="1"    set clang=0 && echo [msvc compile]
 if "%clang%"=="1"   set msvc=0 && echo [clang compile]
-if "%~1"==""                     echo [default mode, assuming `uishell` build] && set uishell=1
-if "%~1"=="release" if "%~2"=="" echo [default mode, assuming `uishell` build] && set uishell=1
+if "%~1"==""                     echo [default mode, assuming `wheelhouse` build] && set wheelhouse=1
+if "%~1"=="release" if "%~2"=="" echo [default mode, assuming `wheelhouse` build] && set wheelhouse=1
 
 :: --- Unpack Command Line Build Arguments ------------------------------------
 set auto_compile_flags=
@@ -65,26 +65,42 @@ if "%pgo%"=="1" (
     exit /b 1
   )
 )
-if "%uishell%"=="1" set cleat=1
+set cargo_profile=debug
+set cargo_profile_flags=
+if "%release%"=="1" (
+  set cargo_profile=release
+  set cargo_profile_flags=--release
+)
+if "%wheelhouse%"=="1" set cleat=1
 if "%cleat%"=="1" (
-  if "%UISHELL_CLEAT_DIR%"=="" (set cleat_dir=%~dp0..\cleat) else (set cleat_dir=%UISHELL_CLEAT_DIR%)
-  if "%UISHELL_CLEAT_FEATURES%"=="" (set cleat_features=ghostty-vt) else (set cleat_features=%UISHELL_CLEAT_FEATURES%)
-  set cleat_profile=debug
-  set cleat_profile_flags=
-  if "%release%"=="1" set cleat_profile=release && set cleat_profile_flags=--release
-  if "%UISHELL_CLEAT_TARGET_DIR%"=="" (set cleat_target_dir=!cleat_dir!\target) else (set cleat_target_dir=%UISHELL_CLEAT_TARGET_DIR%)
+  if "%WHEELHOUSE_CLEAT_DIR%"=="" (set cleat_dir=%~dp0..\cleat) else (set cleat_dir=%WHEELHOUSE_CLEAT_DIR%)
+  if "%WHEELHOUSE_CLEAT_FEATURES%"=="" (set cleat_features=ghostty-vt) else (set cleat_features=%WHEELHOUSE_CLEAT_FEATURES%)
+  if "%WHEELHOUSE_CLEAT_TARGET_DIR%"=="" (set cleat_target_dir=!cleat_dir!\target) else (set cleat_target_dir=%WHEELHOUSE_CLEAT_TARGET_DIR%)
   set cleat_include_dir=!cleat_dir!\crates\cleat\include
-  set cleat_lib_dir=!cleat_target_dir!\!cleat_profile!
+  set cleat_lib_dir=!cleat_target_dir!\!cargo_profile!
   set cleat_feature_flags=
   if not "!cleat_features!"=="none" set cleat_feature_flags=--features "!cleat_features!"
   echo [cleat provider: !cleat_dir!]
   pushd "!cleat_dir!" || exit /b 1
-  cargo build -p cleat --locked !cleat_profile_flags! !cleat_feature_flags! || exit /b 1
+  cargo build -p cleat --locked --no-default-features !cargo_profile_flags! !cleat_feature_flags! || exit /b 1
   popd
   rem cl accepts -I as well as /I, so one spelling serves both compilers; this must
   rem land in auto_compile_flags (not cl_common/clang_common) because the compile
   rem lines below snapshot those via immediate expansion
   set auto_compile_flags=!auto_compile_flags! -I"!cleat_include_dir!"
+)
+
+set andamento_link=
+if "%wheelhouse%"=="1" (
+  if "%WHEELHOUSE_ANDAMENTO_DIR%"=="" (set andamento_dir=%~dp0..\andamento) else (set andamento_dir=%WHEELHOUSE_ANDAMENTO_DIR%)
+  for /f "tokens=2" %%t in ('rustc -vV ^| findstr /b "host:"') do set andamento_target=%%t
+  if "%WHEELHOUSE_ANDAMENTO_TARGET_DIR%"=="" (set andamento_target_dir=!andamento_dir!\target) else (set andamento_target_dir=%WHEELHOUSE_ANDAMENTO_TARGET_DIR%)
+  set andamento_lib_dir=!andamento_target_dir!\!andamento_target!\!cargo_profile!
+  python tools\prepare-andamento-build.py "!andamento_dir!" || exit /b 1
+  cargo build --manifest-path "%~dp0build\andamento\Cargo.toml" -p andamento-ffi --locked --target !andamento_target! --target-dir "!andamento_target_dir!" !cargo_profile_flags! || exit /b 1
+  set auto_compile_flags=!auto_compile_flags! -I"!andamento_dir!\crates\andamento-ffi\include"
+  set andamento_link="!andamento_lib_dir!\andamento_ffi.dll.lib"
+  python tools\embed-sidebar-fixture.py || exit /b 1
 )
 
 :: --- Compile/Link Line Definitions ------------------------------------------
@@ -162,12 +178,13 @@ popd
 
 :: --- Build Everything (@build_targets) --------------------------------------
 pushd build
-if "%uishell%"=="1"                    set didbuild=1 && %compile% ..\src\uishell\uishell_main.c                            %compile_link% %link_icon% %cleat_link% %out%uishell.exe || exit /b 1
-if "%uishell%"=="1" if "%cleat%"=="1"  copy /y "!cleat_lib_dir!\cleat.dll" . >nul
+if "%wheelhouse%"=="1"                    set didbuild=1 && %compile% ..\src\uishell\uishell_main.c                            %compile_link% %link_icon% %cleat_link% %andamento_link% %out%wheelhouse.exe || exit /b 1
+if "%wheelhouse%"=="1" if "%cleat%"=="1"  copy /y "!cleat_lib_dir!\cleat.dll" . >nul
+if "%wheelhouse%"=="1" copy /y "!andamento_lib_dir!\andamento_ffi.dll" . >nul
 popd
 
 :: --- Warn On No Builds ------------------------------------------------------
 if "%didbuild%"=="" (
-  echo [WARNING] no valid build target specified; must use build target names as arguments to this script, like `build uishell`.
+  echo [WARNING] no valid build target specified; must use build target names as arguments to this script, like `build wheelhouse`.
   exit /b 1
 )

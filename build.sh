@@ -5,6 +5,7 @@ repo_root="$(pwd)"
 
 # --- Unpack Arguments --------------------------------------------------------
 for arg in "$@"; do declare $arg='1'; done
+if [ -n "${bundle+x}" ]; then wheelhouse=1; fi
 if [ -z "${gcc+x}" ];     then clang=1; fi
 if [ -z "${release+x}" ]; then debug=1; fi
 if [ -n "${debug+x}" ];   then echo "[debug mode]"; fi
@@ -16,34 +17,50 @@ if [ -n "${gcc+x}" ];     then compiler="${CC:-gcc}"; echo "[gcc compile]"; fi
 auto_compile_flags=''
 cleat_link=''
 
+cargo_profile="debug"
+cargo_profile_flags=""
+if [ -n "${release+x}" ]; then
+  cargo_profile="release"
+  cargo_profile_flags="--release"
+fi
+
 needs_cleat=0
 if [ -n "${cleat+x}" ]; then needs_cleat=1; fi
-if [ -n "${uishell+x}" ] || [ -n "${bundle+x}" ]; then needs_cleat=1; fi
+if [ -n "${wheelhouse+x}" ] || [ -n "${bundle+x}" ]; then needs_cleat=1; fi
 
 if [ "$needs_cleat" = "1" ]; then
-  cleat_dir="${UISHELL_CLEAT_DIR:-$repo_root/../cleat}"
-  cleat_features="${UISHELL_CLEAT_FEATURES-ghostty-vt}"
+  cleat_dir="${WHEELHOUSE_CLEAT_DIR:-$repo_root/../cleat}"
+  cleat_features="${WHEELHOUSE_CLEAT_FEATURES-ghostty-vt}"
   cleat_feature_flags=()
   if [ -n "$cleat_features" ] && [ "$cleat_features" != "none" ]; then
     cleat_feature_flags=(--features "$cleat_features")
   fi
-  cleat_profile="debug"
-  cleat_profile_flags=""
-  if [ -n "${release+x}" ]; then
-    cleat_profile="release"
-    cleat_profile_flags="--release"
-  fi
-  cleat_target_dir="${UISHELL_CLEAT_TARGET_DIR:-${CARGO_TARGET_DIR:-$cleat_dir/target}}"
-  cleat_lib_dir="$cleat_target_dir/$cleat_profile"
+  cleat_target_dir="${WHEELHOUSE_CLEAT_TARGET_DIR:-${CARGO_TARGET_DIR:-$cleat_dir/target}}"
+  cleat_lib_dir="$cleat_target_dir/$cargo_profile"
   echo "[cleat provider: $cleat_dir]"
   if [ -n "$cleat_features" ] && [ "$cleat_features" != "none" ]; then
     echo "[cleat features: $cleat_features]"
   else
     echo "[cleat features: none]"
   fi
-  (cd "$cleat_dir" && CARGO_TARGET_DIR="$cleat_target_dir" cargo build -p cleat --locked $cleat_profile_flags "${cleat_feature_flags[@]}")
+  (cd "$cleat_dir" && CARGO_TARGET_DIR="$cleat_target_dir" cargo build -p cleat --locked --no-default-features $cargo_profile_flags "${cleat_feature_flags[@]}")
+  if [ -n "${cleat+x}" ]; then didbuild=1; fi
   auto_compile_flags="$auto_compile_flags -I$cleat_dir/crates/cleat/include"
   cleat_link="-L$cleat_lib_dir -lcleat -Wl,-rpath,$cleat_lib_dir"
+fi
+
+# --- Embedded sidebar core ---------------------------------------------------
+andamento_link=''
+if [ -n "${wheelhouse+x}" ]; then
+  andamento_dir="${WHEELHOUSE_ANDAMENTO_DIR:-$repo_root/../andamento}"
+  andamento_target=$(rustc -vV | sed -n 's/^host: //p')
+  andamento_target_dir="${WHEELHOUSE_ANDAMENTO_TARGET_DIR:-${CARGO_TARGET_DIR:-$andamento_dir/target}}"
+  python3 tools/prepare-andamento-build.py "$andamento_dir"
+  cargo build --manifest-path "$repo_root/build/andamento/Cargo.toml" -p andamento-ffi --locked --target "$andamento_target" --target-dir "$andamento_target_dir" $cargo_profile_flags
+  andamento_lib_dir="$andamento_target_dir/$andamento_target/$cargo_profile"
+  auto_compile_flags="$auto_compile_flags -I$andamento_dir/crates/andamento-ffi/include"
+  andamento_link="-L$andamento_lib_dir -landamento_ffi -Wl,-rpath,$andamento_lib_dir"
+  python3 tools/embed-sidebar-fixture.py
 fi
 
 # --- Get Current Git Commit Id -----------------------------------------------
@@ -173,46 +190,46 @@ cd build
 sign_app_debug()
 {
   if [ "$host_os" = "Darwin" ]; then
-    codesign_identity="${UISHELL_CODESIGN_IDENTITY:--}"
-    codesign_entitlements="${UISHELL_CODESIGN_ENTITLEMENTS:-../src/mac/uishell_debug.entitlements}"
+    codesign_identity="${WHEELHOUSE_CODESIGN_IDENTITY:--}"
+    codesign_entitlements="${WHEELHOUSE_CODESIGN_ENTITLEMENTS:-../src/mac/uishell_debug.entitlements}"
     codesign --force --sign "$codesign_identity" --entitlements "$codesign_entitlements" "$1"
   fi
 }
-if [ -n "${uishell+x}" ]
+if [ -n "${wheelhouse+x}" ]
 then
   didbuild=1
   # Compile to a persistent object first so dsymutil can collect DWARF: a single
   # compile+link invocation uses a temp .o that clang deletes, leaving a broken
   # debug map. Then link, then produce a co-located .dSYM (and the linked cleat
-  # dylib's) for profiling/debugging across the uishell+cleat+ghostty stack.
+  # dylib's) for profiling/debugging across the wheelhouse+cleat+ghostty stack.
   $compile -c ../src/uishell/uishell_main.c $out uishell_main.o && \
-  $compile -x none uishell_main.o $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $out uishell
+  $compile -x none uishell_main.o $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $andamento_link $out wheelhouse
   if [ "$host_os" = "Darwin" ]; then
-    dsymutil uishell && rm -f uishell_main.o
+    dsymutil wheelhouse && rm -f uishell_main.o
     [ -f "$cleat_lib_dir/libcleat.dylib" ] && dsymutil "$cleat_lib_dir/libcleat.dylib"
     # The ghostty dSYM lives under cleat's .tools/ dot-dir, which Spotlight
     # never indexes, so Instruments can't find it by UUID. Copy it into an
     # indexed location and force-index all three dSYMs so attaching symbolicates
-    # the whole uishell+cleat+ghostty stack.
+    # the whole wheelhouse+cleat+ghostty stack.
     mkdir -p dsyms
     ghostty_dsym=$(ls -d "$cleat_dir"/.tools/ghostty-install/lib/libghostty-vt*.dylib.dSYM 2>/dev/null | head -1)
     [ -n "$ghostty_dsym" ] && rm -rf "dsyms/$(basename "$ghostty_dsym")" && cp -R "$ghostty_dsym" dsyms/
     if command -v mdimport >/dev/null 2>&1; then
-      mdimport uishell.dSYM "$cleat_lib_dir/libcleat.dylib.dSYM" dsyms/*.dSYM >/dev/null 2>&1
+      mdimport wheelhouse.dSYM "$cleat_lib_dir/libcleat.dylib.dSYM" dsyms/*.dSYM >/dev/null 2>&1
     fi
   fi
-  sign_app_debug uishell
+  sign_app_debug wheelhouse
 fi
-# The bundle wraps the uishell target's binary (built above with a persistent
+# The bundle wraps the wheelhouse target's binary (built above with a persistent
 # object + co-located dSYM) rather than one-shot compiling its own: a separate
 # compile gets a different UUID with a broken debug map, so app-bundle launches
 # would profile/debug an unsymbolicatable (& possibly stale) binary.
-if [ -n "${bundle+x}" ];              then didbuild=1; if [ "$host_os" != "Darwin" ]; then echo "[ERROR] bundle target is only supported on Darwin."; exit 1; fi; if [ ! -f uishell ]; then echo "[ERROR] bundle requires the uishell target (./build.sh uishell bundle)."; exit 1; fi; rm -rf "UI Shell.app"; mkdir -p "UI Shell.app/Contents/MacOS" "UI Shell.app/Contents/Resources"; cp ../src/mac/uishell_Info.plist "UI Shell.app/Contents/Info.plist"; cp ../src/mac/uishell.icns "UI Shell.app/Contents/Resources/uishell.icns"; cp uishell "UI Shell.app/Contents/MacOS/uishell"; chmod +x "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app/Contents/MacOS/uishell"; sign_app_debug "UI Shell.app"; fi
+if [ -n "${bundle+x}" ];              then didbuild=1; if [ "$host_os" != "Darwin" ]; then echo "[ERROR] bundle target is only supported on Darwin."; exit 1; fi; if [ ! -f wheelhouse ]; then echo "[ERROR] bundle requires the wheelhouse target (./build.sh wheelhouse bundle)."; exit 1; fi; rm -rf "Wheelhouse.app"; mkdir -p "Wheelhouse.app/Contents/MacOS" "Wheelhouse.app/Contents/Resources"; cp ../src/mac/uishell_Info.plist "Wheelhouse.app/Contents/Info.plist"; cp ../src/mac/uishell.icns "Wheelhouse.app/Contents/Resources/wheelhouse.icns"; cp wheelhouse "Wheelhouse.app/Contents/MacOS/wheelhouse"; chmod +x "Wheelhouse.app/Contents/MacOS/wheelhouse"; sign_app_debug "Wheelhouse.app/Contents/MacOS/wheelhouse"; sign_app_debug "Wheelhouse.app"; fi
 cd ..
 
 # --- Warn On No Builds -------------------------------------------------------
 if [ -z "${didbuild+x}" ]
 then
-  echo "[WARNING] no valid build target specified; must use build target names as arguments to this script, like \`./build.sh uishell\` or \`./build.sh bundle\`."
+  echo "[WARNING] no valid build target specified; must use build target names as arguments to this script, like \`./build.sh wheelhouse\` or \`./build.sh bundle\`."
   exit 1
 fi

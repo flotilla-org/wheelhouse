@@ -39,10 +39,10 @@ else
   echo "Skipping Linux/OpenGL Docker runtime diagnostics: docker is not available." >&2
 fi
 
-mac_fixture_ppm="${UISHELL_MACOS_METAL_FIXTURE_PPM:-local/screenshots/macos-metal-terminal-fixture.ppm}"
-linux_fixture_ppm="${UISHELL_LINUX_OPENGL_FIXTURE_PPM:-local/screenshots/linux-opengl-terminal-fixture.ppm}"
-windows_fixture_ppm="${UISHELL_WINDOWS_D3D11_FIXTURE_PPM:-local/screenshots/windows-d3d11-terminal-fixture.ppm}"
-ghostty_reference_image="${UISHELL_GHOSTTY_REFERENCE_IMAGE:-}"
+mac_fixture_ppm="${WHEELHOUSE_MACOS_METAL_FIXTURE_PPM:-local/screenshots/macos-metal-terminal-fixture.ppm}"
+linux_fixture_ppm="${WHEELHOUSE_LINUX_OPENGL_FIXTURE_PPM:-local/screenshots/linux-opengl-terminal-fixture.ppm}"
+windows_fixture_ppm="${WHEELHOUSE_WINDOWS_D3D11_FIXTURE_PPM:-local/screenshots/windows-d3d11-terminal-fixture.ppm}"
+ghostty_reference_image="${WHEELHOUSE_GHOSTTY_REFERENCE_IMAGE:-}"
 fixture_semantic_ppms=()
 if [[ -s "$mac_fixture_ppm" ]]; then
   fixture_semantic_ppms+=("$mac_fixture_ppm")
@@ -57,9 +57,9 @@ if (( ${#fixture_semantic_ppms[@]} > 0 )); then
   tools/validate-terminal-fixture-ppm.py "${fixture_semantic_ppms[@]}"
 fi
 if [[ -s "$mac_fixture_ppm" && -s "$linux_fixture_ppm" ]]; then
-  diff_fixture_ppm="${UISHELL_METAL_OPENGL_DIFF_PPM:-local/screenshots/metal-opengl-terminal-fixture-diff.ppm}"
+  diff_fixture_ppm="${WHEELHOUSE_METAL_OPENGL_DIFF_PPM:-local/screenshots/metal-opengl-terminal-fixture-diff.ppm}"
   tools/compare-terminal-fixture-ppms.py --diff-out "$diff_fixture_ppm" "$mac_fixture_ppm" "$linux_fixture_ppm"
-  report_dir="${UISHELL_TERMINAL_FIXTURE_REPORT_DIR:-local/screenshots/terminal-fixture-report}"
+  report_dir="${WHEELHOUSE_TERMINAL_FIXTURE_REPORT_DIR:-local/screenshots/terminal-fixture-report}"
   report_args=(--mac "$mac_fixture_ppm" --linux "$linux_fixture_ppm" --out-dir "$report_dir")
   if [[ -s "$windows_fixture_ppm" ]]; then
     report_args+=(--windows "$windows_fixture_ppm")
@@ -77,7 +77,7 @@ else
 fi
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  bash build.sh uishell
+  bash build.sh wheelhouse
 fi
 
 git diff --check
