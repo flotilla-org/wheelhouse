@@ -418,6 +418,13 @@ uishell_dispatch_viewer_command(String8 name)
       uishell_push_cmd_current(str8_lit("build_tab"));
     }
   }
+  else if(str8_match(name, str8_lit("scroll_region_fixture"), 0))
+  {
+    UIShell_RegsScope(.string = str8_lit("scroll_region_fixture"), .expr = str8_zero())
+    {
+      uishell_push_cmd_current(str8_lit("build_tab"));
+    }
+  }
   else if(str8_match(name, str8_lit("terminal_fixture"), 0))
   {
     UIShell_RegsScope(.string = str8_lit("terminal_fixture"), .expr = str8_zero())

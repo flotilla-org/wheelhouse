@@ -1281,6 +1281,9 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
 
   //- rjf: unpack
   S64 idx_range_dim = Max(dim_1s64(idx_range), 1);
+  F32 thumb_fraction = Clamp(0.05f, (F32)((F64)Max(view_num_indices, 1)/((F64)idx_range_dim + Max(view_num_indices, 1))), 1.f);
+  if(idx_range.min == idx_range.max) { thumb_fraction = 1.f; }
+  F32 position_fraction = Clamp(0.f, (F32)((F64)(pt.idx-idx_range.min)/(F64)idx_range_dim), 1.f);
 
   //- rjf: produce extra flags for cases in which scrolling is disabled
   UI_BoxFlags disabled_flags = 0;
@@ -1323,7 +1326,7 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
       // rjf: space before
       if(idx_range.max != idx_range.min)
       {
-        ui_set_next_pref_size(axis, ui_pct((F32)((F64)(pt.idx-idx_range.min)/(F64)idx_range_dim), 0));
+        ui_set_next_pref_size(axis, ui_pct(position_fraction*(1.f-thumb_fraction), 0));
         // overlay floats over content, so its track is layout-only (non-clickable)
         // and passes clicks through; classic keeps click-to-page on the track.
         UI_Box *space_before_box = ui_build_box_from_stringf(overlay ? 0 : UI_BoxFlag_Clickable, "##scroll_area_before");
@@ -1331,7 +1334,7 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
       }
 
       // rjf: scroller
-      UI_Flags(disabled_flags) UI_PrefSize(axis, ui_pct(Clamp(0.05f, (F32)((F64)Max(view_num_indices, 1)/(F64)idx_range_dim), 1.f), 0.f))
+      UI_Flags(disabled_flags) UI_PrefSize(axis, ui_pct(thumb_fraction, 0.f))
       {
         if(overlay)
         {
@@ -1361,7 +1364,7 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
       // rjf: space after
       if(idx_range.max != idx_range.min)
       {
-        ui_set_next_pref_size(axis, ui_pct(1.f - (F32)((F64)(pt.idx-idx_range.min)/(F64)idx_range_dim), 0));
+        ui_set_next_pref_size(axis, ui_pct((1.f-position_fraction)*(1.f-thumb_fraction), 0));
         UI_Box *space_after_box = ui_build_box_from_stringf(overlay ? 0 : UI_BoxFlag_Clickable, "##scroll_area_after");
         space_after_sig = ui_signal_from_box(space_after_box);
       }
@@ -1399,7 +1402,7 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
       UI_ScrollBarDragData *drag_data = ui_get_drag_struct(UI_ScrollBarDragData);
       UI_ScrollPt original_pt = drag_data->start_pt;
       F32 drag_delta = ui_drag_delta().v[axis];
-      F32 drag_pct = drag_delta / drag_data->scroll_space_px;
+      F32 drag_pct = drag_data->scroll_space_px > 0 ? drag_delta / drag_data->scroll_space_px : 0;
       S64 new_idx = original_pt.idx + drag_pct*idx_range_dim;
       new_idx = Clamp(idx_range.min, new_idx, idx_range.max);
       ui_scroll_pt_target_idx(&new_pt, new_idx);
@@ -1424,12 +1427,6 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
   return new_pt;
 }
 
-internal UI_ScrollPt
-ui_scroll_bar(Axis2 axis, UI_Size off_axis_size, UI_ScrollPt pt, Rng1S64 idx_range, S64 view_num_indices)
-{
-  return ui_scroll_bar_styled(axis, off_axis_size, UI_ScrollBarStyle_Classic, 1.f, pt, idx_range, view_num_indices);
-}
-
 //- uishell: active scroll-bar style (set per-frame by the shell from settings)
 thread_static UI_ScrollBarStyle ui_active_scroll_bar_style_v = UI_ScrollBarStyle_Classic;
 
@@ -1445,96 +1442,7 @@ ui_active_scroll_bar_style(void)
   return ui_active_scroll_bar_style_v;
 }
 
-// uishell: shared overlay placement for the auto-hiding scroll bar. Computes the
-// fade/expand from the pointer's position over region_rect (absolute coords) and,
-// when visible, builds the floating styled bar at the right edge of place_rect
-// (coordinates local to parent_box). key_ptr seeds the per-region animation: it
-// must be a pointer that stably identifies this scroll region across frames —
-// a long-lived view-state struct, a persistent UI box, or the scroll-point
-// storage. A transient/per-frame pointer would reset or collide the fade state.
-// Vertical only (right-edge placement); there is no horizontal overlay yet.
-// Returns the (possibly updated) scroll point.
-internal UI_ScrollPt
-ui_scroll_bar_overlay_floating(UI_Box *parent_box, Rng2F32 region_rect, Rng2F32 place_rect, void *key_ptr, UI_ScrollPt pt, Rng1S64 idx_range, S64 view_num_indices)
-{
-  // nothing to scroll -> no overlay bar at all (unlike the classic style, which
-  // shows a disabled one). Covers a terminal with no scrollback or an
-  // alternate-screen app (top/btm) where a full-height handle would be bogus.
-  if(idx_range.max <= idx_range.min)
-  {
-    return pt;
-  }
-  F32 rest_thickness  = ui_bottom_font_size()*0.45f;
-  F32 hover_thickness = ui_bottom_font_size()*0.9f;
-  B32 region_hovered = contains_2f32(region_rect, ui_mouse());
-  B32 near_bar = (region_hovered && ui_mouse().x >= region_rect.x1 - hover_thickness);
-  F32 vis_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "###overlay_scrollbar_vis_%p", key_ptr),
-                      region_hovered ? 1.f : 0.f,
-                      .rate = ui_state->animation_info.scroll_animation_rate);
-  F32 expand_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "###overlay_scrollbar_expand_%p", key_ptr),
-                         near_bar ? 1.f : 0.f,
-                         .rate = ui_state->animation_info.hot_animation_rate);
-  F32 thickness = mix_1f32(rest_thickness, hover_thickness, expand_t);
-  UI_ScrollPt new_pt = pt;
-  // keep the bar built while a press is active even if vis_t has faded past the
-  // threshold (pointer left the region mid-drag) — otherwise the dragged thumb's
-  // box would stop being built and the drag would be dropped.
-  B32 press_active = !ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Left], ui_key_zero());
-  if(vis_t > 0.001f || press_active)
-  {
-    // inset from the edges so the bar floats clear of the panel border
-    F32 edge_pad = floor_f32(ui_bottom_font_size()*0.2f);
-    UI_Parent(parent_box) UI_Focus(UI_FocusKind_Off)
-    {
-      ui_set_next_fixed_x(place_rect.x1 - thickness - edge_pad);
-      ui_set_next_fixed_y(place_rect.y0 + edge_pad);
-      ui_set_next_fixed_width(thickness);
-      ui_set_next_fixed_height(dim_2f32(place_rect).y - edge_pad*2.f);
-      ui_set_next_flags(UI_BoxFlag_Floating);
-      new_pt = ui_scroll_bar_styled(Axis2_Y, ui_px(thickness, 1.f), UI_ScrollBarStyle_Overlay, vis_t, pt, idx_range, view_num_indices);
-    }
-  }
-  return new_pt;
-}
-
-// uishell: width a docked scroll bar reserves for the active style. classic_px
-// is the site's classic gutter; the overlay style reserves nothing (it floats).
-// One place maps style -> reserved width, so call sites never branch on style.
-internal F32
-ui_scroll_bar_gutter_px(F32 classic_px)
-{
-  return (ui_active_scroll_bar_style() == UI_ScrollBarStyle_Overlay) ? 0.f : classic_px;
-}
-
-// uishell: build a scroll bar docked to the right edge of content_rect (local to
-// parent_box), picking the placement for the active style: classic fills the
-// reserved gutter just past content_rect.x1; overlay floats over the content's
-// right edge with auto-hide. Call sites do not branch on style. key seeds the
-// overlay's per-region animation and must be stable across frames. Vertical only.
-internal UI_ScrollPt
-ui_docked_scroll_bar(UI_Box *parent_box, Rng2F32 content_rect, F32 classic_gutter_px, void *key, UI_ScrollPt pt, Rng1S64 idx_range, S64 view_num_indices)
-{
-  UI_ScrollPt new_pt = pt;
-  if(ui_active_scroll_bar_style() == UI_ScrollBarStyle_Overlay)
-  {
-    Rng2F32 region_rect = shift_2f32(content_rect, parent_box->rect.p0);
-    new_pt = ui_scroll_bar_overlay_floating(parent_box, region_rect, content_rect, key, pt, idx_range, view_num_indices);
-  }
-  else UI_Parent(parent_box) UI_Focus(UI_FocusKind_Off)
-  {
-    ui_set_next_fixed_x(content_rect.x1);
-    ui_set_next_fixed_y(content_rect.y0);
-    ui_set_next_fixed_width(classic_gutter_px);
-    ui_set_next_fixed_height(dim_2f32(content_rect).y);
-    ui_set_next_flags(UI_BoxFlag_Floating);
-    new_pt = ui_scroll_bar(Axis2_Y, ui_px(classic_gutter_px, 1.f), pt, idx_range, view_num_indices);
-  }
-  return new_pt;
-}
-
 thread_static UI_ScrollPt *ui_scroll_list_scroll_pt_ptr = 0;
-thread_static F32 ui_scroll_list_scroll_bar_dim_px = 0;
-thread_static Vec2F32 ui_scroll_list_dim_px = {0};
 thread_static Rng1S64 ui_scroll_list_scroll_idx_rng = {0};
 
 internal void
@@ -1646,65 +1554,31 @@ ui_scroll_list_begin(UI_ScrollListParams *params, UI_ScrollPt *scroll_pt, Vec2S6
     signal_out->cursor_moved = moved;
   }
   
-  //- rjf: determine ranges & limits
-  Rng1S64 visible_row_range = r1s64(scroll_pt->idx + (S64)(scroll_pt->off) + 0 - !!(scroll_pt->off < 0),
-                                    scroll_pt->idx + (S64)(scroll_pt->off) + 0 + num_possible_visible_rows + 1);
-  visible_row_range.min = clamp_1s64(params->item_range, visible_row_range.min);
-  visible_row_range.max = clamp_1s64(params->item_range, visible_row_range.max);
-  *visible_row_range_out = visible_row_range;
-  
-  //- rjf: store thread-locals
-  // uishell: the overlay style floats over the content, so it reserves no gutter
-  // (dim 0) and the scrollable region below takes the full width.
-  UI_ScrollBarStyle scroll_bar_style = ui_active_scroll_bar_style();
-  ui_scroll_list_scroll_bar_dim_px = ui_scroll_bar_gutter_px(ui_bottom_font_size()*1.5f);
+  // Lists keep row navigation and wheel handling; the region owns both styles.
   ui_scroll_list_scroll_pt_ptr = scroll_pt;
-  ui_scroll_list_dim_px = params->dim_px;
   ui_scroll_list_scroll_idx_rng = scroll_row_idx_range;
-  
-  //- rjf: build top-level container
-  UI_Box *container_box = &ui_nil_box;
-  UI_FixedWidth(params->dim_px.x) UI_FixedHeight(params->dim_px.y) UI_ChildLayoutAxis(Axis2_X)
+  UI_Box *container_box;
+  UI_FixedWidth(params->dim_px.x) UI_FixedHeight(params->dim_px.y) UI_ChildLayoutAxis(Axis2_Y)
   {
     container_box = ui_build_box_from_key(0, ui_key_zero());
   }
-  
-  //- rjf: build scrollable container
-  UI_Box *scrollable_container_box = &ui_nil_box;
-  UI_Parent(container_box) UI_ChildLayoutAxis(Axis2_Y) UI_FixedWidth(params->dim_px.x-ui_scroll_list_scroll_bar_dim_px) UI_FixedHeight(params->dim_px.y)
-  {
-    scrollable_container_box = ui_build_box_from_stringf(UI_BoxFlag_Clip|UI_BoxFlag_AllowOverflowY|UI_BoxFlag_Scroll, "###sp");
-    scrollable_container_box->view_off.y = scrollable_container_box->view_off_target.y = params->row_height_px*mod_f32(scroll_pt->off, 1.f) + params->row_height_px*(scroll_pt->off < 0) - params->row_height_px*(scroll_pt->off == -1.f && scroll_pt->idx == 1);
-  }
-  
-  //- rjf: build vertical scroll bar
-  if(scroll_bar_style == UI_ScrollBarStyle_Classic)
-  {
-    UI_Parent(container_box) UI_Focus(UI_FocusKind_Null)
-    {
-      ui_set_next_fixed_width(ui_scroll_list_scroll_bar_dim_px);
-      ui_set_next_fixed_height(ui_scroll_list_dim_px.y);
-      *ui_scroll_list_scroll_pt_ptr = ui_scroll_bar(Axis2_Y,
-                                                    ui_px(ui_scroll_list_scroll_bar_dim_px, 1.f),
-                                                    *ui_scroll_list_scroll_pt_ptr,
-                                                    scroll_row_idx_range,
-                                                    num_possible_visible_rows);
-    }
-  }
-  //- uishell: overlay scroll bar floats over the right edge of the content, fading
-  // in while the pointer is within the region and expanding when it nears the bar.
-  else
-  {
-    *ui_scroll_list_scroll_pt_ptr = ui_scroll_bar_overlay_floating(container_box,
-                                                                  scrollable_container_box->rect,
-                                                                  r2f32p(0, 0, params->dim_px.x, ui_scroll_list_dim_px.y),
-                                                                  scroll_pt,
-                                                                  *ui_scroll_list_scroll_pt_ptr,
-                                                                  scroll_row_idx_range,
-                                                                  num_possible_visible_rows);
-  }
-  
-  //- rjf: begin scrollable region
+  UI_ScrollRegion region = ui_scroll_region_layout(ui_scroll_region_params(r2f32p(0, 0, params->dim_px.x, params->dim_px.y),
+                                                                          UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always));
+  UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
+  axes[Axis2_Y] = (UI_ScrollRegionAxis){*scroll_pt, scroll_row_idx_range, num_possible_visible_rows};
+  UI_Key key = ui_key_from_string(ui_active_seed_key(), str8_lit("###sp"));
+  UI_ScrollRegionSignal region_sig = ui_scroll_region_build(container_box, key, &region, axes,
+                                                          UI_BoxFlag_AllowOverflowY|UI_BoxFlag_Scroll);
+  *scroll_pt = region_sig.position.y;
+  UI_Box *scrollable_container_box = region_sig.content_box;
+  scrollable_container_box->child_layout_axis = Axis2_Y;
+  scrollable_container_box->view_off.y = scrollable_container_box->view_off_target.y = params->row_height_px*mod_f32(scroll_pt->off, 1.f) + params->row_height_px*(scroll_pt->off < 0) - params->row_height_px*(scroll_pt->off == -1.f && scroll_pt->idx == 1);
+  // Thumb movement affects this frame's virtualized content too.
+  Rng1S64 visible_row_range = r1s64(scroll_pt->idx + (S64)scroll_pt->off - !!(scroll_pt->off < 0),
+                            scroll_pt->idx + (S64)scroll_pt->off + num_possible_visible_rows + 1);
+  visible_row_range.min = clamp_1s64(params->item_range, visible_row_range.min);
+  visible_row_range.max = clamp_1s64(params->item_range, visible_row_range.max);
+  *visible_row_range_out = visible_row_range;
   ui_push_parent(container_box);
   ui_push_parent(scrollable_container_box);
   ui_push_pref_height(ui_px(params->row_height_px, 1.f));
