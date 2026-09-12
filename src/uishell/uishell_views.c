@@ -5218,7 +5218,7 @@ RD_VIEW_UI_FUNCTION_DEF(geo3d)
 // routing. Resize the view or switch styles to exercise gutter interactions.
 RD_VIEW_UI_FUNCTION_DEF(scroll_region_fixture)
 {
-  typedef struct FixtureState { B32 classic; B32 small; UI_ScrollPt2 position; } FixtureState;
+  typedef struct FixtureState { B32 classic; B32 small_content; UI_ScrollPt2 position; } FixtureState;
   FixtureState *state = rd_view_state(FixtureState);
   Vec2F32 dim = dim_2f32(rect);
   F32 toolbar_height = ui_top_font_size()*2.f;
@@ -5232,11 +5232,11 @@ RD_VIEW_UI_FUNCTION_DEF(scroll_region_fixture)
     UI_PrefWidth(ui_em(10, 1))
     {
       if(ui_clicked(ui_buttonf("%s###style", state->classic ? "Classic" : "Overlay"))) { state->classic = !state->classic; }
-      if(ui_clicked(ui_buttonf("%s###extent", state->small ? "Small content" : "Large content"))) { state->small = !state->small; }
+      if(ui_clicked(ui_buttonf("%s###extent", state->small_content ? "Small content" : "Large content"))) { state->small_content = !state->small_content; }
     }
     ui_labelf("Drag either thumb; Shift-wheel scrolls horizontally.");
   }
-  Vec2F32 content_dim = state->small ? v2f32(160, 120) : v2f32(1600, 1200);
+  Vec2F32 content_dim = state->small_content ? v2f32(160, 120) : v2f32(1600, 1200);
   UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, toolbar_height, dim.x, dim.y),
                                                         UI_ScrollAxisPolicy_Auto, UI_ScrollAxisPolicy_Auto);
   params.style = state->classic ? UI_ScrollBarStyle_Classic : UI_ScrollBarStyle_Overlay;
