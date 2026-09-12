@@ -91,6 +91,7 @@
 #include "uishell/uishell_terminal_glyph.c"
 #include "uishell/uishell_views.c"
 #include "shell/shell_inc.c"
+#include "uishell/uishell_scroll_diagnostics.c"
 
 ////////////////////////////////
 //~ rjf: Top-Level Execution Types
@@ -162,12 +163,19 @@ entry_point(CmdLine *cmd_line)
         uishell_ingress = wheelhouse_ingress_start(socket_path.str, socket_path.size, wm_send_wakeup_event, error, sizeof(error));
         if(uishell_ingress == 0) { fprintf(stderr, "Sidebar ingress: %s\n", error); abort_self(1); }
       }
+      B32 run_scroll_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("scroll_region_diagnostics"));
       B32 run_sidebar_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
       B32 run_terminal_glyph_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("terminal_glyph_diagnostics"));
       String8 terminal_glyph_fixture_ppm_path = cmd_line_string(cmd_line, str8_lit("terminal_glyph_fixture_ppm"));
       for(B32 quit = 0; !quit;)
       {
         quit = update();
+        if(run_scroll_diagnostics)
+        {
+          RD_WindowState *ws = rd_state->first_window_state;
+          B32 ok = ws != &rd_nil_window_state && uishell_scroll_region_diagnostics(ws);
+          abort_self(ok ? 0 : 1);
+        }
         if(run_sidebar_diagnostics)
         {
           RD_WindowState *ws = rd_state->first_window_state;
@@ -231,6 +239,8 @@ entry_point(CmdLine *cmd_line)
                                     "Use to specify the location of a project file for app-specific settings.\n\n"
                                     "--andamento_socket:<path> --andamento_config:<KDL path>\n"
                                     "Accept live metadata over HTTP/UDS using the specified sidebar template.\n\n"
+                                    "--scroll_region_fixture\nOpen the two-axis scrollbar fixture.\n\n"
+                                    "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
                                     "--sidebar_diagnostics\n"
                                     "Check the fixture sidebar workspace bridge and exit (use temporary user/project files).\n\n"
                                     "--terminal_fixture\n"

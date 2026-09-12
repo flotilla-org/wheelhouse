@@ -44,6 +44,18 @@ bash tools/run-sidebar-diagnostics.sh
 
 These use temporary configuration files and exercise materialisation, focus, closure, failed focus, retry, and restoration. These fixture diagnostics do not exercise pane observations. Live HTTP/UDS ingress has separate producer tests below.
 
+## Scroll region fixture
+
+Run `./build/wheelhouse --scroll_region_fixture` to open a two-axis grid. Its
+buttons switch between classic and overlay bars and between large and fitting
+content. Drag either thumb, use Shift-wheel for horizontal scrolling, and resize
+the view to exercise automatic gutters. Use temporary `--user:<path>` and
+`--project:<path>` files to keep fixture tabs out of your usual workspace.
+
+`bash tools/run-scroll-region-diagnostics.sh` builds and checks viewport geometry,
+corner clearance, dragging outside the region, and wheel routing with synthetic
+UI events. These checks require a graphical session (Xvfb works on Linux).
+
 ## Scope
 
 The shell keeps the platform, windowing, renderer, font, UI, config, panel, tab, text, file-stream, and content-cache layers needed for an empty RAD-style window and file-backed text/binary views.

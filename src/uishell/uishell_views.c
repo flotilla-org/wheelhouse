@@ -2056,6 +2056,7 @@ uishell_register_view_ui_rules(Arena *arena, RD_ViewUIRuleMap *map)
 {
   rd_view_ui_rule_map_insert(arena, map, str8_lit("text"), RD_VIEW_UI_FUNCTION_NAME(shell_text));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("terminal"), RD_VIEW_UI_FUNCTION_NAME(terminal));
+  rd_view_ui_rule_map_insert(arena, map, str8_lit("scroll_region_fixture"), RD_VIEW_UI_FUNCTION_NAME(scroll_region_fixture));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("terminal_fixture"), RD_VIEW_UI_FUNCTION_NAME(terminal));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("sessions"), RD_VIEW_UI_FUNCTION_NAME(sessions));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("binary"), RD_VIEW_UI_FUNCTION_NAME(binary));
@@ -2632,16 +2633,11 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
   F32 code_glyph_advance = fnt_column_size_from_tag_size(code_font, code_font_size);
   B32 do_line_numbers = rd_view_setting_b32_from_name(str8_lit("show_line_numbers"));
   B32 do_wrap = rd_view_setting_b32_from_name(str8_lit("line_wrapping"));
-  // uishell: the overlay scroll bar floats over the content and reserves no
-  // gutter, so the text should use the full width (it auto-hides when idle).
-  F32 scroll_bar_dim = ui_scroll_bar_gutter_px(floor_f32(main_font_size*1.5f));
+  UI_ScrollRegion text_region = ui_scroll_region_layout(ui_scroll_region_params(r2f32p(0, 0, list_dim.x, list_dim.y),
+                                                                               UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always));
   F32 line_num_width_px = do_line_numbers ? floor_f32(code_glyph_advance*(log10(ClampBot(1, line_count))+3)) : 0;
-  // uishell: classic keeps a generous right margin beyond its gutter; the overlay
-  // style reserves no gutter, so use only a thin margin and let wrapped text reach
-  // the edge (the floating bar auto-hides and overlaps only momentarily).
-  // overlay margin reserves the resting thumb (~0.45em) + content padding + border.
-  F32 text_right_margin_px = (ui_active_scroll_bar_style() == UI_ScrollBarStyle_Overlay) ? main_font_size : main_font_size*2.5f;
-  F32 text_area_width_px = ClampBot(code_glyph_advance*16, list_dim.x-scroll_bar_dim-line_num_width_px-text_right_margin_px);
+  F32 text_right_margin_px = main_font_size;
+  F32 text_area_width_px = ClampBot(code_glyph_advance*16, dim_2f32(text_region.viewport).x-line_num_width_px-text_right_margin_px);
   U64 max_bytes_per_visual_line = ClampBot(8, (U64)(text_area_width_px/ClampBot(1, code_glyph_advance)));
   
   if(!tv->initialized)
@@ -2821,7 +2817,7 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
           slice_params.search_query           = rd_view_query_input();
           slice_params.line_height_px         = row_height_px;
           slice_params.line_num_width_px      = line_num_width_px;
-          slice_params.line_text_max_width_px = ClampBot(code_glyph_advance*32.f, list_dim.x-scroll_bar_dim);
+          slice_params.line_text_max_width_px = ClampBot(code_glyph_advance*32.f, dim_2f32(text_region.viewport).x);
           slice_params.show_line_numbers      = do_line_numbers;
           UI_Focus(UI_FocusKind_On)
           {
@@ -3123,8 +3119,6 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   F32 cell_width_px = ClampBot(1.f, fnt_dim_from_tag_size_string(cell_font, cell_font_size, 0, 0, str8_lit("W")).x);
   FNT_Metrics cell_font_metrics = fnt_metrics_from_tag_size(cell_font, cell_font_size);
   F32 cell_height_px = ceil_f32(ClampBot(1.f, fnt_line_height_from_metrics(&cell_font_metrics)*1.2f));
-  // uishell: classic reserves a gutter; the overlay style floats and reserves 0
-  F32 scroll_bar_dim = ui_scroll_bar_gutter_px(floor_f32(ui_bottom_font_size()*1.5f));
   Vec4F32 terminal_background_color = ui_color_from_name(str8_lit("background"));
   Vec4F32 terminal_foreground_color = ui_color_from_name(str8_lit("text"));
   Vec4F32 terminal_cursor_color = ui_color_from_name(str8_lit("cursor"));
@@ -3156,11 +3150,9 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     .cache = &tv->glyph_cache,
   };
   Vec2F32 view_dim = dim_2f32(rect);
-  Vec2F32 canvas_dim_target =
-  {
-    ClampBot(1.f, view_dim.x - scroll_bar_dim),
-    ClampBot(1.f, view_dim.y),
-  };
+  UI_ScrollRegion terminal_region = ui_scroll_region_layout(ui_scroll_region_params(r2f32p(0, 0, view_dim.x, view_dim.y),
+                                                                                   UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always));
+  Vec2F32 canvas_dim_target = dim_2f32(terminal_region.viewport);
   U64 cols64 = ClampBot(1, (U64)(canvas_dim_target.x/cell_width_px));
   U64 rows64 = ClampBot(1, (U64)(canvas_dim_target.y/cell_height_px));
   U16 cols = (U16)Min(cols64, 4096);
@@ -3253,33 +3245,6 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     terminal_root_box = ui_build_box_from_string(0, str8_lit("terminal_root"));
   }
 
-  // uishell: build the scroll bar BEFORE the canvas so it is an earlier sibling
-  // and therefore draws on top (RAD paints siblings back-to-front in reverse
-  // build order). Uses last frame's scrollbar metrics from the cell cache; a
-  // one-frame lag is imperceptible for a scroll bar.
-  if(tv->cell_cache.scrollbar.viewport_rows != 0)
-  {
-    U64 max_top_row_u64 = tv->cell_cache.scrollbar.total_rows > tv->cell_cache.scrollbar.viewport_rows ? tv->cell_cache.scrollbar.total_rows - tv->cell_cache.scrollbar.viewport_rows : 0;
-    S64 max_top_row = (S64)Min(max_top_row_u64, (U64)max_S64);
-    S64 top_row = (S64)Min(tv->cell_cache.scrollbar.viewport_top_row, (U64)max_S64);
-    UI_ScrollPt scrollbar_pt = ui_scroll_pt(top_row, 0);
-    Rng2F32 bar_content_rect = r2f32p(0, 0, canvas_dim_target.x, canvas_dim_target.y);
-    scrollbar_pt = ui_docked_scroll_bar(terminal_root_box, bar_content_rect, scroll_bar_dim, tv,
-                                        scrollbar_pt, r1s64(0, max_top_row), tv->cell_cache.scrollbar.viewport_rows);
-    S64 delta_rows = scrollbar_pt.idx - top_row;
-    if(delta_rows != 0)
-    {
-      cleat_viewport_command command =
-      {
-        .kind = CLEAT_VIEWPORT_COMMAND_DELTA_ROWS,
-        .delta_rows = delta_rows,
-      };
-      cleat_viewport_command_result command_result = {0};
-      cleat_session_scroll_viewport(tv->session, &command, &command_result);
-      rd_request_frame();
-    }
-  }
-
   // uishell: daemon transport/role status pill. Built before the canvas so it
   // is an earlier sibling and draws on top. Streaming-as-controller is the
   // silent common case; connecting/disconnected/closed are status cues (the
@@ -3344,11 +3309,23 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     {
       ui_set_auto_focus_active_key(canvas_key);
     }
-    ui_set_next_fixed_x(0);
-    ui_set_next_fixed_y(0);
-    ui_set_next_fixed_width(canvas_dim_target.x);
-    ui_set_next_fixed_height(canvas_dim_target.y);
-    canvas_box = ui_build_box_from_key(UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Scroll|UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground, canvas_key);
+    UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
+    S64 top_row = (S64)Min(tv->cell_cache.scrollbar.viewport_top_row, (U64)max_S64);
+    U64 total = tv->cell_cache.scrollbar.total_rows;
+    U64 visible = tv->cell_cache.scrollbar.viewport_rows;
+    axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt(top_row, 0),
+      r1s64(0, (S64)Min(total > visible ? total-visible : 0, (U64)max_S64)), (S64)Min(visible, (U64)max_S64)};
+    UI_ScrollRegionSignal region_sig = ui_scroll_region_build(terminal_root_box, canvas_key, &terminal_region, axes,
+      UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Scroll|UI_BoxFlag_DrawBackground);
+    canvas_box = region_sig.content_box;
+    S64 delta_rows = region_sig.position.y.idx - top_row;
+    if(session_ready && delta_rows != 0)
+    {
+      cleat_viewport_command command = {.kind = CLEAT_VIEWPORT_COMMAND_DELTA_ROWS, .delta_rows = delta_rows};
+      cleat_viewport_command_result command_result = {0};
+      cleat_session_scroll_viewport(tv->session, &command, &command_result);
+      rd_request_frame();
+    }
   }
   UI_Signal canvas_sig = ui_signal_from_box(canvas_box);
   if(session_ready && (canvas_sig.scroll.x != 0 || canvas_sig.scroll.y != 0))
@@ -3911,14 +3888,14 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
   F32 cell_big_glyph_advance = fnt_dim_from_tag_size_string(cell_font, cell_font_size, 0, 0, str8_lit("H")).x;
   F32 cell_width_px = floor_f32(cell_font_size*2.f);
   F32 address_margin_width_px = cell_big_glyph_advance*20.f;
-  // uishell: classic reserves a gutter; the overlay style floats and reserves 0
-  F32 scroll_bar_dim = ui_scroll_bar_gutter_px(floor_f32(main_font_size*1.5f));
   Vec2F32 panel_dim = dim_2f32(rect);
   F32 footer_dim = floor_f32(main_font_size*3.f);
   Rng2F32 addrbar_rect = r2f32p(0, 0, panel_dim.x, main_font_size*3.f);
   Rng2F32 header_rect = r2f32p(0, addrbar_rect.y1, panel_dim.x, addrbar_rect.y1 + row_height_px);
-  Rng2F32 footer_rect = r2f32p(0, panel_dim.y-footer_dim, panel_dim.x-scroll_bar_dim, panel_dim.y);
-  Rng2F32 content_rect = r2f32p(0, header_rect.y1, panel_dim.x-scroll_bar_dim, panel_dim.y);
+  UI_ScrollRegion binary_region = ui_scroll_region_layout(ui_scroll_region_params(r2f32p(0, header_rect.y1, panel_dim.x, panel_dim.y),
+                                                                                 UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always));
+  Rng2F32 content_rect = binary_region.viewport;
+  Rng2F32 footer_rect = r2f32p(0, panel_dim.y-footer_dim, content_rect.x1, panel_dim.y);
   U64 num_columns = rd_view_setting_u64_from_name(str8_lit("num_columns"));
   B32 auto_columns = rd_view_setting_b32_from_name(str8_lit("auto_columns"));
   if(num_columns == 0)
@@ -4162,15 +4139,6 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
           container_box = ui_build_box_from_stringf(0, "binary_view_container");
         }
         
-        UI_FontSize(ui_bottom_font_size())
-        {
-          // bar docks at the right edge of the content rows; classic fills the
-          // reserved gutter, overlay floats. style handled inside ui_docked_scroll_bar.
-          Rng2F32 bar_content_rect = r2f32p(0, header_rect.y0, content_rect.x1, panel_dim.y);
-          scroll_pos.y = ui_docked_scroll_bar(container_box, bar_content_rect, scroll_bar_dim, bv,
-                                              scroll_pos.y, scroll_idx_rng, num_possible_visible_rows);
-        }
-        
         UI_Parent(container_box) UI_TagF("floating")
         {
           UI_Box *cursor_bar_box = &ui_nil_box;
@@ -4280,14 +4248,13 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
         UI_Box *scrollable_box = &ui_nil_box;
         UI_Parent(container_box)
         {
-          ui_set_next_fixed_x(content_rect.x0);
-          ui_set_next_fixed_y(content_rect.y0);
-          ui_set_next_fixed_width(dim_2f32(content_rect).x);
-          ui_set_next_fixed_height(dim_2f32(content_rect).y);
-          scrollable_box = ui_build_box_from_string(UI_BoxFlag_Clip|
-                                                    UI_BoxFlag_Scroll|
-                                                    UI_BoxFlag_AllowOverflowY,
-                                                    str8_lit("scrollable_box"));
+          UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
+          axes[Axis2_Y] = (UI_ScrollRegionAxis){scroll_pos.y, scroll_idx_rng, num_possible_visible_rows};
+          UI_Key key = ui_key_from_string(ui_active_seed_key(), str8_lit("scrollable_box"));
+          UI_ScrollRegionSignal region_sig = ui_scroll_region_build(container_box, key, &binary_region, axes,
+                                                                    UI_BoxFlag_Scroll|UI_BoxFlag_AllowOverflowY);
+          scroll_pos.y = region_sig.position.y;
+          scrollable_box = region_sig.content_box;
           scrollable_box->view_off.y = scrollable_box->view_off_target.y = floor_f32(row_height_px*mod_f32(scroll_pos.y.off, 1.f) + row_height_px*(scroll_pos.y.off < 0));
         }
         
@@ -5245,4 +5212,65 @@ RD_VIEW_UI_FUNCTION_DEF(geo3d)
 
   access_close(access);
   scratch_end(scratch);
+}
+
+// A real two-axis consumer: fixed-size cells, pixel positions, normal wheel
+// routing. Resize the view or switch styles to exercise gutter interactions.
+RD_VIEW_UI_FUNCTION_DEF(scroll_region_fixture)
+{
+  typedef struct FixtureState { B32 classic; B32 small_content; UI_ScrollPt2 position; } FixtureState;
+  FixtureState *state = rd_view_state(FixtureState);
+  Vec2F32 dim = dim_2f32(rect);
+  F32 toolbar_height = ui_top_font_size()*2.f;
+  UI_Box *root;
+  UI_FixedWidth(dim.x) UI_FixedHeight(dim.y) UI_ChildLayoutAxis(Axis2_Y)
+  {
+    root = ui_build_box_from_string(0, str8_lit("scroll_fixture"));
+  }
+  UI_Parent(root) UI_PrefWidth(ui_px(dim.x, 1.f)) UI_PrefHeight(ui_px(toolbar_height, 1.f)) UI_Row
+  {
+    UI_PrefWidth(ui_em(10, 1))
+    {
+      if(ui_clicked(ui_buttonf("%s###style", state->classic ? "Classic" : "Overlay"))) { state->classic = !state->classic; }
+      if(ui_clicked(ui_buttonf("%s###extent", state->small_content ? "Small content" : "Large content"))) { state->small_content = !state->small_content; }
+    }
+    ui_labelf("Drag either thumb; Shift-wheel scrolls horizontally.");
+  }
+  Vec2F32 content_dim = state->small_content ? v2f32(160, 120) : v2f32(1600, 1200);
+  UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, toolbar_height, dim.x, dim.y),
+                                                        UI_ScrollAxisPolicy_Auto, UI_ScrollAxisPolicy_Auto);
+  params.style = state->classic ? UI_ScrollBarStyle_Classic : UI_ScrollBarStyle_Overlay;
+  params.content_dim_px = content_dim;
+  UI_ScrollRegion region = ui_scroll_region_layout(params);
+  UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
+  for EachEnumVal(Axis2, axis)
+  {
+    S64 visible = (S64)dim_2f32(region.viewport).v[axis];
+    Rng1S64 range = r1s64(0, Max(0, (S64)content_dim.v[axis]-visible));
+    state->position.v[axis].idx = clamp_1s64(range, state->position.v[axis].idx);
+    axes[axis] = (UI_ScrollRegionAxis){state->position.v[axis], range, visible};
+  }
+  UI_Key key = ui_key_from_string(root->key, str8_lit("grid"));
+  UI_ScrollRegionSignal region_sig = ui_scroll_region_build(root, key, &region, axes,
+    UI_BoxFlag_DrawBackground|UI_BoxFlag_Scroll|UI_BoxFlag_AllowOverflow);
+  state->position = region_sig.position;
+  UI_Signal sig = ui_signal_from_box(region_sig.content_box);
+  for EachEnumVal(Axis2, axis)
+  {
+    state->position.v[axis].idx = clamp_1s64(axes[axis].range, state->position.v[axis].idx + sig.scroll.v[axis]*30);
+    region_sig.content_box->view_off.v[axis] = region_sig.content_box->view_off_target.v[axis] = (F32)state->position.v[axis].idx;
+  }
+  UI_Parent(region_sig.content_box)
+  {
+    for(U32 y = 0; y < (U32)content_dim.y/60; y += 1)
+    {
+      for(U32 x = 0; x < (U32)content_dim.x/160; x += 1)
+      {
+        UI_Rect(r2f32p(x*160.f, y*60.f, (x+1)*160.f, (y+1)*60.f)) UI_Flags(UI_BoxFlag_DrawBorder)
+        {
+          ui_labelf("Column %u / Row %u", x+1, y+1);
+        }
+      }
+    }
+  }
 }
