@@ -108,6 +108,7 @@ ExecMode;
 internal B32
 frame(void)
 {
+  uishell_sidebar_poll_live();
   rd_frame();
   return rd_state->quit;
 }
@@ -136,6 +137,31 @@ entry_point(CmdLine *cmd_line)
       fnt_init();
       rd_init(cmd_line);
 
+      String8 socket_path = cmd_line_string(cmd_line, str8_lit("andamento_socket"));
+      if(socket_path.size != 0)
+      {
+        String8 config_path = cmd_line_string(cmd_line, str8_lit("andamento_config"));
+        uishell_sidebar_live_config = data_from_file_path(rd_state->arena, config_path);
+        uishell_sidebar_live = 1;
+        U8 error[512] = {0};
+        if(uishell_sidebar_live_config.size == 0)
+        {
+          fprintf(stderr, "Live sidebar requires --andamento_config:<KDL file>\n");
+          abort_self(1);
+        }
+        // Validate configuration before accepting producers, even before a window opens.
+        char *config_error = 0;
+        Andamento *probe = andamento_create(uishell_sidebar_live_config.str, uishell_sidebar_live_config.size, &config_error);
+        if(probe == 0)
+        {
+          fprintf(stderr, "Invalid live sidebar configuration: %s\n", config_error ? config_error : "unknown error");
+          andamento_string_free(config_error);
+          abort_self(1);
+        }
+        andamento_destroy(probe);
+        uishell_ingress = wheelhouse_ingress_start(socket_path.str, socket_path.size, wm_send_wakeup_event, error, sizeof(error));
+        if(uishell_ingress == 0) { fprintf(stderr, "Sidebar ingress: %s\n", error); abort_self(1); }
+      }
       B32 run_sidebar_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
       B32 run_terminal_glyph_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("terminal_glyph_diagnostics"));
       String8 terminal_glyph_fixture_ppm_path = cmd_line_string(cmd_line, str8_lit("terminal_glyph_fixture_ppm"));
@@ -190,6 +216,8 @@ entry_point(CmdLine *cmd_line)
           abort_self(ok ? 0 : 1);
         }
       }
+      wheelhouse_ingress_stop(uishell_ingress);
+      uishell_ingress = 0;
     }break;
 
     case ExecMode_Help:
@@ -201,6 +229,8 @@ entry_point(CmdLine *cmd_line)
                                     "Use to specify the location of a user file for window, panel, keybinding, theme, and visual settings.\n\n"
                                     "--project:<path>\n"
                                     "Use to specify the location of a project file for app-specific settings.\n\n"
+                                    "--andamento_socket:<path> --andamento_config:<KDL path>\n"
+                                    "Accept live metadata over HTTP/UDS using the specified sidebar template.\n\n"
                                     "--sidebar_diagnostics\n"
                                     "Check the fixture sidebar workspace bridge and exit (use temporary user/project files).\n\n"
                                     "--terminal_fixture\n"

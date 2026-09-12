@@ -1225,6 +1225,8 @@ wm_dpi_from_monitor(WM_Monitor monitor)
 internal void
 wm_send_wakeup_event(void)
 {
+  @autoreleasepool
+  {
   NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
                                       location:NSZeroPoint
                                  modifierFlags:0
@@ -1235,6 +1237,7 @@ wm_send_wakeup_event(void)
                                          data1:0
                                          data2:0];
   [NSApp postEvent:event atStart:NO];
+  }
 }
 
 // set while a left-drag that began on a title-bar client area (tabs/buttons) is

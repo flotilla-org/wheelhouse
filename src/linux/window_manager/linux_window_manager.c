@@ -30,6 +30,7 @@ wm_init(void)
   lnx_wm_state = push_array(arena, LNX_WM_State, 1);
   lnx_wm_state->arena = arena;
   lnx_wm_state->display = XOpenDisplay(0);
+  if(pipe2(lnx_wm_state->wake_pipe, O_NONBLOCK|O_CLOEXEC) != 0) { perror("window wake pipe"); abort(); }
   
   //- rjf: calculate atoms
   lnx_wm_state->wm_delete_window_atom        = XInternAtom(lnx_wm_state->display, "WM_DELETE_WINDOW", 0);
@@ -443,7 +444,13 @@ wm_dpi_from_monitor(WM_Monitor monitor)
 internal void
 wm_send_wakeup_event(void)
 {
-  // TODO(rjf)
+  // A full pipe already guarantees a wakeup. No Xlib calls from worker threads.
+  if(lnx_wm_state != 0)
+  {
+    char byte = 1;
+    ssize_t result;
+    do { result = write(lnx_wm_state->wake_pipe[1], &byte, 1); } while(result < 0 && errno == EINTR);
+  }
 }
 
 internal WM_EventList
@@ -452,6 +459,20 @@ wm_get_events(Arena *arena, B32 wait)
   WM_EventList evts = {0};
   for(;XPending(lnx_wm_state->display) > 0 || (wait && evts.count == 0);)
   {
+    if(XPending(lnx_wm_state->display) == 0)
+    {
+      struct pollfd fds[] = {{ConnectionNumber(lnx_wm_state->display), POLLIN, 0}, {lnx_wm_state->wake_pipe[0], POLLIN, 0}};
+      int result;
+      do { result = poll(fds, 2, -1); } while(result < 0 && errno == EINTR);
+      if(result < 0) { break; }
+      if(fds[1].revents & POLLIN)
+      {
+        char bytes[128];
+        while(read(lnx_wm_state->wake_pipe[0], bytes, sizeof(bytes)) > 0) {}
+        break;
+      }
+      if(XPending(lnx_wm_state->display) == 0) { continue; }
+    }
     XEvent evt = {0};
     XNextEvent(lnx_wm_state->display, &evt);
     B32 set_mouse_cursor = 0;

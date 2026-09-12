@@ -13,8 +13,7 @@ output = root / 'build' / 'andamento'
 output.mkdir(parents=True, exist_ok=True)
 (output / 'Cargo.toml').write_text(
     '[package]\nname = "wheelhouse-native-deps"\nversion = "0.1.0"\nedition = "2021"\n'
-    '[lib]\npath = "lib.rs"\n'
+    '[lib]\nname = "wheelhouse_ingress"\ncrate-type = ["cdylib", "rlib"]\npath = ' + json.dumps(str(root / 'src/ingress/lib.rs')) + '\n'
     '[dependencies]\nandamento-ffi = { path = ' + json.dumps(str(source)) + ' }\n'
-    '[workspace]\n', encoding='utf-8')
-(output / 'lib.rs').write_text('// Cargo consumer used to build the embedded FFI.\n', encoding='utf-8')
+    '[target.\'cfg(unix)\'.dependencies]\naxum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }\ntokio = { version = "1", features = ["rt", "net", "sync", "time", "macros"] }\nserde_json = "1"\nlibc = "0.2"\n[workspace]\n', encoding='utf-8')
 shutil.copyfile(root / 'tools' / 'andamento-build' / 'Cargo.lock', output / 'Cargo.lock')

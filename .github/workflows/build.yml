@@ -121,3 +121,16 @@ jobs:
           task_dir=$(mktemp -d)
           trap 'rm -rf "$task_dir"' EXIT
           ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
+      - name: HTTP ingress and native producer checks
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          WHEELHOUSE_TEST_BINARY: build/wheelhouse
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a python3 tools/test-andamento-ingress.py "../andamento/target/$host/debug"
+          else
+            python3 tools/test-andamento-ingress.py "../andamento/target/$host/debug"
+          fi

@@ -1,5 +1,10 @@
 // Native andamento control surface. Included after the workspace helpers.
 #include "andamento.h"
+#include "ingress/ingress.h"
+global WheelhouseIngress *uishell_ingress;
+global String8 uishell_sidebar_live_config;
+global B32 uishell_sidebar_live;
+global U64 uishell_sidebar_last_tick;
 // The first resource is primary. This descriptor is local fixture input, not
 // an andamento wire format. Persist IDs on tabs independently of their labels.
 typedef struct UIShell_SidebarResource UIShell_SidebarResource;
@@ -113,10 +118,11 @@ uishell_sidebar_init(RD_WindowState *ws)
       uishell_sidebar_result(state, 0, 0);
       return state;
     }
-    state->core = andamento_create((U8 *)uishell_sidebar_fixture_config, sizeof(uishell_sidebar_fixture_config)-1, &error);
+    String8 config = uishell_sidebar_live ? uishell_sidebar_live_config : str8_cstring((char *)uishell_sidebar_fixture_config);
+    state->core = andamento_create(config.str, config.size, &error);
     if(uishell_sidebar_result(state, state->core != 0, error))
     {
-      String8 patches = str8_cstring((char *)uishell_sidebar_fixture_patches);
+      String8 patches = uishell_sidebar_live ? str8_zero() : str8_cstring((char *)uishell_sidebar_fixture_patches);
       for(U64 start = 0; start < patches.size;)
       {
         U64 end = start;
@@ -130,6 +136,8 @@ uishell_sidebar_init(RD_WindowState *ws)
         start = end+1;
       }
 #if OS_WINDOWS
+      if(!uishell_sidebar_live)
+      {
       AndamentoFact recipe = {0};
       recipe.key = uishell_sidebar_text(str8_lit("action.primary.recipe"));
       recipe.kind = ANDAMENTO_FACT_TEXT;
@@ -137,6 +145,7 @@ uishell_sidebar_init(RD_WindowState *ws)
       error = 0;
       B32 ok = andamento_apply_entity(state->core, 0, uishell_sidebar_text(str8_lit("vessel")), uishell_sidebar_text(str8_lit("v")), uishell_sidebar_text(str8_lit("fixture")), &recipe, 1, &error);
       uishell_sidebar_result(state, ok, error);
+      }
 #endif
       uishell_sidebar_refresh(state);
     }
@@ -215,7 +224,7 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
         CFG_Node *id = cfg_node_new(rd_state->cfg, workspace, str8_lit("sidebar_entity_id"));
         cfg_node_new(rd_state->cfg, id, uishell_sidebar_string(effect.entity_id));
         String8 cwd = effect.has_cwd ? uishell_sidebar_string(effect.cwd) : str8_zero();
-        if(str8_match(uishell_sidebar_string(effect.entity_kind), str8_lit("vessel"), 0) &&
+        if(!uishell_sidebar_live && str8_match(uishell_sidebar_string(effect.entity_kind), str8_lit("vessel"), 0) &&
            str8_match(uishell_sidebar_string(effect.entity_id), str8_lit("multi"), 0))
         {
           uishell_sidebar_populate(workspace, uishell_sidebar_fixture_resources,
@@ -278,7 +287,7 @@ uishell_sidebar_restore(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
       AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
-      if(node.activate != ANDAMENTO_NONE &&
+      if(node.state != ANDAMENTO_LIVE && node.activate != ANDAMENTO_NONE &&
          str8_match(kind, uishell_sidebar_string(node.entity_kind), 0) &&
          str8_match(id, uishell_sidebar_string(node.entity_id), 0))
       {
@@ -309,7 +318,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   {
     UI_Parent(box) UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_em(1.8f, 1))
     {
-      UI_TagF("weak") ui_label(str8_lit("Example data / local workspaces"));
+      UI_TagF("weak") ui_label(uishell_sidebar_live ? str8_lit("Live metadata / local workspaces") : str8_lit("Example data / local workspaces"));
       if(state->error[0]) { ui_label(str8_cstring((char *)state->error)); }
       if(state->snapshot != 0)
       {
@@ -565,4 +574,45 @@ uishell_sidebar_diagnostics(CFG_Node *window)
   fprintf(stderr, "Sidebar host diagnostics: %s (split layout, overflow selection, focus, close, failure, retry, restore)\n", ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;
+}
+
+// Called between frames only: snapshots used by clicks have finished dispatch.
+internal U32
+uishell_sidebar_apply_live(void *unused, const U8 *data, size_t size)
+{
+  B32 ok = 1, applied = 0;
+  for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
+  {
+    UIShell_SidebarState *state = uishell_sidebar_init(ws);
+    if(state->core == 0) { ok = 0; continue; }
+    char *error = 0;
+    B32 accepted = andamento_apply_patch_json(state->core, wheelhouse_ingress_now_ms(), (AndamentoText){data, size}, &error);
+    ok = uishell_sidebar_result(state, accepted, error) && ok;
+    if(accepted) { state->restored = 0; state->error[0] = 0; uishell_sidebar_refresh(state); applied = 1; }
+  }
+  rd_request_frame();
+  return !applied ? 2 : ok;
+}
+
+internal void
+uishell_sidebar_poll_live(void)
+{
+  if(uishell_ingress == 0) { return; }
+  wheelhouse_ingress_poll(uishell_ingress, uishell_sidebar_apply_live, 0);
+  U64 now = wheelhouse_ingress_now_ms();
+  if(now - uishell_sidebar_last_tick >= 250)
+  {
+    uishell_sidebar_last_tick = now;
+    for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
+    {
+      UIShell_SidebarState *state = uishell_sidebar_init(ws);
+      if(state->core != 0)
+      {
+        char *error = 0;
+        B32 ok = andamento_tick(state->core, now, &error);
+        if(uishell_sidebar_result(state, ok, error)) { uishell_sidebar_refresh(state); }
+      }
+    }
+    rd_request_frame();
+  }
 }
