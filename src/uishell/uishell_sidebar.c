@@ -580,18 +580,18 @@ uishell_sidebar_diagnostics(CFG_Node *window)
 internal U32
 uishell_sidebar_apply_live(void *unused, const U8 *data, size_t size)
 {
-  B32 ok = 1, applied = 0;
+  B32 rejected = 0, unavailable = 0, applied = 0;
   for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
   {
     UIShell_SidebarState *state = uishell_sidebar_init(ws);
-    if(state->core == 0) { ok = 0; continue; }
+    if(state->core == 0) { unavailable = 1; continue; }
     char *error = 0;
     B32 accepted = andamento_apply_patch_json(state->core, wheelhouse_ingress_now_ms(), (AndamentoText){data, size}, &error);
-    ok = uishell_sidebar_result(state, accepted, error) && ok;
+    if(!uishell_sidebar_result(state, accepted, error)) { rejected = 1; }
     if(accepted) { state->restored = 0; state->error[0] = 0; uishell_sidebar_refresh(state); applied = 1; }
   }
   rd_request_frame();
-  return !applied ? 2 : ok;
+  return rejected ? 0 : (unavailable || !applied) ? 2 : 1;
 }
 
 internal void

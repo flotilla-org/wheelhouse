@@ -4,6 +4,8 @@
 #include <stdint.h>
 
 // start borrows a UTF-8 path and writes a NUL-terminated error on failure.
+// NULL/empty paths fail. Other pointers must be valid for their lengths;
+// the error buffer may be NULL only when its capacity is zero.
 // wake runs on the transport thread; it must only signal the UI event loop.
 // poll and stop run exclusively on the UI thread. poll borrows patch bytes
 // for each callback; return 1=applied, 0=invalid, 2=temporarily unavailable.

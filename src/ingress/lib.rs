@@ -161,7 +161,8 @@ pub struct Ingress;
 /// Start a Unix HTTP listener. Error is NUL-terminated on failure.
 ///
 /// # Safety
-/// Input/output pointers must be valid for their lengths. `wake` must be safe
+/// A null or empty path is rejected. Other input/output pointers must be valid
+/// for their lengths; `error` may be null only when capacity is zero. `wake` must be safe
 /// on a background thread and remain valid until stop returns.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_ingress_start(
@@ -172,9 +173,13 @@ pub unsafe extern "C" fn wheelhouse_ingress_start(
     capacity: usize,
 ) -> *mut Ingress {
     #[cfg(unix)]
-    let result = std::str::from_utf8(std::slice::from_raw_parts(path, len))
-        .map_err(|e| e.to_string())
-        .and_then(|p| Ingress::start(p.into(), wake));
+    let result = if path.is_null() || len == 0 {
+        Err("socket path must not be null or empty".into())
+    } else {
+        std::str::from_utf8(std::slice::from_raw_parts(path, len))
+            .map_err(|e| e.to_string())
+            .and_then(|p| Ingress::start(p.into(), wake))
+    };
     #[cfg(not(unix))]
     let result: Result<Ingress, String> = {
         let _ = (path, len, wake);

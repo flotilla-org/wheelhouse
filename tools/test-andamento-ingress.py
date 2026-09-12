@@ -140,6 +140,15 @@ class IngressTests(unittest.TestCase):
                     self.fail('native listener failed: ' + log.read().decode(errors='replace'))
                 publisher.publish(path, publisher.patch('project', 'native', {
                     'display.label': 'Native HTTP project', 'flotilla.project': 'native'}))
+                connection = publisher.UnixHTTPConnection(path)
+                try:
+                    connection.request('POST', '/v1/metadata/patch', b'{"type":"metadata-patch"}',
+                                       {'Content-Type': 'application/json'})
+                    response = connection.getresponse()
+                    response.read()
+                    self.assertEqual(response.status, 422)
+                finally:
+                    connection.close()
                 # Let the application become idle, then prove background wakeup.
                 time.sleep(1)
                 publisher.publish(path, publisher.patch('project', 'native', {
@@ -151,6 +160,12 @@ class IngressTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+
+    def test_null_and_empty_socket_paths_are_rejected(self):
+        for path, size in [(None, 0), (None, 1), (b"", 0)]:
+            error = C.create_string_buffer(512)
+            self.assertFalse(lib.wheelhouse_ingress_start(path, size, self.wake, error, len(error)))
+            self.assertIn(b"null or empty", error.value)
 
     def test_socket_ownership_restart_and_no_stealing(self):
         self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)

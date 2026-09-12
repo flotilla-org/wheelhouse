@@ -41,10 +41,13 @@ Producers serialize their patches and periodically reassert current facts,
 including after reconnect, because ingress is not durable storage. Unsets are
 also safe to repeat. A new native window receives the next reassertion; the
 endpoint broadcasts to existing windows without sharing their selection,
-collapse, or scroll state.
+collapse, or scroll state. A 204 means all existing windows accepted the patch.
+Broadcast application is not transactional: a 422 (a core rejected the patch)
+or 503 (a core was unavailable) can follow application to other windows.
+A rejection takes precedence over unavailability when both occur.
 
 The HTTP listener only queues bytes. The UI thread applies patches, advances
-expiry during quiet periods, and refreshes snapshots between frames. An HTTP
+expiry during quiet periods with a 250ms wake tick while ingress is enabled, and refreshes snapshots between frames. An HTTP
 acknowledgement means application, not merely queue acceptance. The bounded
 queue and a five-second application deadline prevent indefinite requests.
 A timeout may race with application; the same duplicate-delivery rule applies.
