@@ -2991,42 +2991,31 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split, UI_Them
         // below stays pinned. the bar shows only when content overflows.
         UI_Key list_key = ui_key_from_string(ui_key_zero(), str8_lit("###workspace_list"));
         UI_Box *list_prev = ui_box_from_key(list_key);
-        F32 list_view_h = (list_prev != &ui_nil_box ? list_prev->fixed_size.y : 0);
         F32 list_content_h = (list_prev != &ui_nil_box ? list_prev->view_bounds.y : 0);
-        B32 list_can_scroll = (list_prev != &ui_nil_box && list_content_h > list_view_h + 1.f);
-        F32 scroll_bar_w = floor_f32(ui_top_font_size()*1.2f);
-
-        //- scroll bar (overlay or classic), built BEFORE the list row so it is an
-        // earlier sibling and draws on top of (and is hit-testable above) the list
-        // — RAD paints siblings back-to-front in reverse build order. Pixel-indexed
-        // against the list box's view offset; geometry comes from last frame's box.
-        if(list_can_scroll)
-        {
-          S64 max_off = (S64)ClampBot(0.f, list_content_h - list_view_h);
-          UI_ScrollPt scroll_pt = ui_scroll_pt((S64)list_prev->view_off_target.y, 0);
-          // list_prev is the persistent list box (keyed by ###workspace_list), so
-          // it is the stable per-region identity used to seed the fade animation.
-          Rng2F32 list_local = r2f32p(list_prev->rect.x0 - control_box->rect.x0, list_prev->rect.y0 - control_box->rect.y0,
-                                      list_prev->rect.x1 - control_box->rect.x0, list_prev->rect.y1 - control_box->rect.y0);
-          scroll_pt = ui_docked_scroll_bar(control_box, list_local, scroll_bar_w, list_prev,
-                                           scroll_pt, r1s64(0, max_off), (S64)list_view_h);
-          if(scroll_pt.idx != (S64)list_prev->view_off_target.y)
-          {
-            list_prev->view_off_target.y = (F32)scroll_pt.idx;
-          }
-        }
-
+        B32 new_workspace_here = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions);
+        B32 overview_here = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions);
+        F32 action_height = (new_workspace_here || overview_here) ? floor_f32(ui_top_font_size()*0.25f) + ui_top_font_size()*2.25f + panel_frame_inset_px+1.f : 0.f;
+        Vec2F32 list_dim = v2f32(dim_2f32(rect).x, Max(0.f, dim_2f32(rect).y-action_height));
+        UI_ScrollRegionParams list_params = ui_scroll_region_params(r2f32p(0, 0, list_dim.x, list_dim.y),
+                                                                   UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);
+        list_params.gutter_px = floor_f32(ui_top_font_size()*1.2f);
+        list_params.content_dim_px.y = Max(0.f, list_content_h-1.f);
+        UI_ScrollRegion list_region = ui_scroll_region_layout(list_params);
         UI_Box *list_box = &ui_nil_box;
-        UI_PrefWidth(ui_pct(1.f, 0.f)) UI_PrefHeight(ui_pct(1.f, 0.f)) UI_Row
+        UI_PrefWidth(ui_pct(1.f, 0.f)) UI_PrefHeight(ui_px(list_dim.y, 1.f)) UI_Row
         {
-          ui_set_next_pref_width(ui_pct(1.f, 0.f));
-          ui_set_next_pref_height(ui_pct(1.f, 0.f));
-          ui_set_next_child_layout_axis(Axis2_Y);
-          list_box = ui_build_box_from_key(UI_BoxFlag_ViewScrollY|
-                                           UI_BoxFlag_AllowOverflowY|
-                                           UI_BoxFlag_ViewClamp|
-                                           UI_BoxFlag_Clip,
-                                           list_key);
+          S64 old_offset = list_prev != &ui_nil_box ? (S64)list_prev->view_off_target.y : 0;
+          UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
+          axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt(old_offset, 0),
+            r1s64(0, (S64)Max(0.f, list_content_h-dim_2f32(list_region.viewport).y)), (S64)dim_2f32(list_region.viewport).y};
+          UI_ScrollRegionSignal region_sig = ui_scroll_region_build(ui_top_parent(), list_key, &list_region, axes,
+            UI_BoxFlag_ViewScrollY|UI_BoxFlag_AllowOverflowY|UI_BoxFlag_ViewClamp);
+          list_box = region_sig.content_box;
+          list_box->child_layout_axis = Axis2_Y;
+          if(region_sig.position.y.idx != old_offset)
+          {
+            list_box->view_off_target.y = (F32)region_sig.position.y.idx;
+          }
           UI_Parent(list_box)
           {
             F32 entry_margin_px = floor_f32(ui_top_font_size()*0.5f);
@@ -3202,20 +3191,12 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split, UI_Them
           // ui_signal_from_box; nothing else signals this box)
           ui_signal_from_box(list_box);
 
-          //- reserve the classic gutter beside the list (overlay reserves 0). The
-          // bar itself is built before this row (above) so it draws on top.
-          if(list_can_scroll)
-          {
-            ui_spacer(ui_px(ui_scroll_bar_gutter_px(scroll_bar_w), 1.f));
-          }
         }
 
         //- rjf: the action row is the sidebar's chrome host (ADR-0006): it
         // builds the new-workspace / overview elements only when chrome
         // placement relocated them here (the title bar couldn't fit them);
         // by default they live in the title bar & this row is absent.
-        B32 new_workspace_here = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions);
-        B32 overview_here      = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions);
         if(new_workspace_here || overview_here)
         {
           ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.25f), 1.f));
@@ -9592,6 +9573,10 @@ rd_init(CmdLine *cmdln)
        cmd_line_has_flag(cmdln, str8_lit("terminal-fixture")))
     {
       uishell_cmd("terminal_fixture");
+    }
+    if(cmd_line_has_flag(cmdln, str8_lit("scroll_region_fixture")))
+    {
+      uishell_cmd("scroll_region_fixture");
     }
     if(initial_open_file_path.size != 0)
     {
