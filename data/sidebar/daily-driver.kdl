@@ -1,0 +1,96 @@
+version 1
+
+display-variable "show-issues" type="bool" default=true label="Issues" icon="I" persist=true
+
+// Native placements own the hierarchy. The current core still consults
+// presence/grouping for activation; a unique entity path avoids the legacy
+// single-member collapse that can make a vessel impossible to open.
+grouping "wheelhouse.activation" priority=1000 {
+  filter key="entity.kind"
+  presence kind="project" class="tab"
+  presence kind="checkout" class="tab"
+  presence kind="convoy" class="tab"
+  presence kind="vessel" class="tab"
+  presence kind="session" class="tab"
+  presence kind="repo" class="inline"
+  presence kind="issue" class="inline" visible-when="show-issues"
+  level key="entity.id"
+}
+
+region "tree" source="tree" root-template="wheelhouse/projects" form="compact" placement="tree"
+region "sessions" source="tree" root-template="wheelhouse/sessions" form="compact" placement="sessions"
+region "attention" source="attention" root-template="wheelhouse/attention" form="compact" placement="attention"
+
+template "wheelhouse/projects" slot="compact" node-kind="entity" {
+  field "label" source="literal" value="Projects"
+  control "display-variable" variable="show-issues"
+}
+template "wheelhouse/sessions" slot="compact" node-kind="entity" {
+  field "label" source="literal" value="Sessions"
+}
+template "wheelhouse/attention" slot="compact" node-kind="entity" {
+  field "label" source="literal" value="Attention"
+}
+
+placement "tree" {
+  for "project" kind="project" {
+    order "display.label"
+    apply-template "project/native"
+  }
+}
+template "project/native" {
+  field "label" key="display.label"
+  for "checkout" kind="checkout" {
+    match "flotilla.project" of="project"
+    order "display.label"
+    apply-template "wheelhouse/entry"
+  }
+  for "convoy" kind="convoy" {
+    match "flotilla.project" of="project"
+    order "display.label"
+    apply-template "convoy/native"
+  }
+  for "issue" kind="issue" {
+    match "flotilla.project" of="project"
+    order "display.label"
+    apply-template "wheelhouse/entry"
+  }
+}
+template "convoy/native" {
+  field "label" key="display.label"
+  field "kind" key="entity.kind"
+  field "status" key="status.state"
+  for "vessel" kind="vessel" {
+    match "flotilla.convoy" of="convoy"
+    order "display.label"
+    apply-template "wheelhouse/entry"
+  }
+}
+placement "sessions" {
+  for "session" kind="session" {
+    order "display.label"
+    apply-template "wheelhouse/entry"
+  }
+}
+placement "attention" {
+  for "attention" {
+    match "status.attention" value="true"
+    order "display.label"
+    apply-template "wheelhouse/attention-entry"
+  }
+}
+template "wheelhouse/entry" {
+  field "label" key="display.label"
+  field "kind" key="entity.kind"
+  field "status" key="status.state"
+}
+
+// Context travels with detached Attention entries; the native renderer resolves
+// these identities to labels when the corresponding project/convoy is present.
+template "wheelhouse/attention-entry" {
+  field "label" key="display.label"
+  field "kind" key="entity.kind"
+  field "status" key="status.state"
+  field "project" key="flotilla.project"
+  field "convoy" key="flotilla.convoy"
+}

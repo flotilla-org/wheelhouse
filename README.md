@@ -62,6 +62,64 @@ The shell keeps the platform, windowing, renderer, font, UI, config, panel, tab,
 
 Debugger app targets and local RAD utility/tool build targets have been removed from this tree. Do not reintroduce them as regression gates; use the original RAD Debugger checkout for debugger behavior comparisons.
 
+### Daily driver (macOS/Linux)
+
+```sh
+scripts/run-daily-driver.sh
+```
+
+This builds Wheelhouse, launches its live Andamento sidebar, watches the current
+checkout with the Python git producer, and runs `flotilla pm connect` against the
+local daemon. It uses Wheelhouse's native `data/sidebar/daily-driver.kdl` template.
+Projects contain checkouts, convoys/vessels, and issues; sessions have their own
+section. Attention is a second placement of the same entities. New live windows
+start in Andamento mode; an existing saved sidebar choice takes precedence.
+
+Use the disclosure arrow to expand a branch. Clicking an entry runs its supplied
+recipe in a native terminal workspace, or focuses its existing workspace, including
+when it was opened from Attention or an alias such as a one-vessel convoy.
+The current workspace has a highlighted row. Tooltips explain each entry's action;
+entries without a recipe show information inside the sidebar when clicked.
+Sections scroll independently, and display controls stay at the bottom.
+The native template gives checkouts workspace presence, so the git producer's
+shell recipe can open too. It does not use the legacy grouping tree in Andamento's
+Zellij template, which native snapshots deliberately omit.
+
+Build Flotilla with the HTTP/UDS sink first (Flotilla PR #1860 or newer). The
+launcher expects `../flotilla/target/debug/flotilla`, as the Zellij daily driver
+does, and does not rebuild Flotilla or start a Zellij session.
+
+```sh
+# Git facts only; no Flotilla binary or daemon needed.
+scripts/run-daily-driver.sh --git-only
+# Watch several checkouts and use an existing Wheelhouse build.
+scripts/run-daily-driver.sh --no-build --repo ~/dev/wheelhouse --repo ~/dev/flotilla
+# Use a particular Flotilla build.
+FLOTILLA_BIN=/path/to/flotilla scripts/run-daily-driver.sh
+```
+
+Settings and layouts persist in `${XDG_CONFIG_HOME:-~/.config}/wheelhouse/daily-driver`.
+Set `WHEELHOUSE_DAILY_DIR` to use a different profile. Only one launcher may use a
+profile at a time. Each launch gets a fresh private socket under `/tmp`, printed
+as `WHEELHOUSE_SOCKET` for additional producers and inherited by the app and its
+terminals. Closing Wheelhouse or pressing Ctrl-C stops the launcher-owned
+producers and removes that runtime directory. The Flotilla daemon follows its
+normal lifecycle. A producer exiting unexpectedly stops the daily driver and
+reports its log path. Logs for active components in the profile's `logs/`
+directory are replaced on the next launch; saved layouts are retained.
+
+`WHEELHOUSE_BIN` selects an existing binary and skips the build. `FLOTILLA_ROOT`
+overrides the sibling Flotilla checkout. `WHEELHOUSE_ANDAMENTO_DIR` (or
+`ANDAMENTO_ROOT`) selects Andamento; `WHEELHOUSE_ANDAMENTO_CONFIG` overrides the
+KDL template. Normal `WHEELHOUSE_CLEAT_*` build overrides also apply.
+
+`python3 tools/test-native-sidebar.py /path/to/libandamento_ffi.dylib` (or `.so`)
+checks the shipped hierarchy, opening capability, and shared Open/Focus identity
+through the real C ABI.
+
+`python3 tools/test-daily-driver.py` checks producer delivery, profile locking,
+startup failure, producer failure, restart, and process cleanup with a fake UI.
+
 ### Live Andamento facts (Unix)
 
 Launch a separate Wheelhouse instance with a socket in a private directory and
@@ -73,7 +131,7 @@ the workspace selector. This mode starts without the example facts.
 runtime_dir=$(mktemp -d /tmp/wheelhouse.XXXXXX)
 ./build/wheelhouse --user:"$runtime_dir/user" --project:"$runtime_dir/project" \
   --andamento_socket:"$runtime_dir/facts.sock" \
-  --andamento_config:../andamento/templates/flotilla-default.kdl
+  --andamento_config:data/sidebar/daily-driver.kdl
 ```
 
 From another terminal, publish real git facts without Flotilla:

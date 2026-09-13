@@ -16,9 +16,21 @@ concurrency:
 env:
   # Includes the portable Windows shutdown fix from cleat PR #204.
   CLEAT_REV: bf47bbb706226bcd9aafe7aa38f3e4b920448baa
-  ANDAMENTO_REV: ea9bf581add3111f6e70df7fff2059424419d57f
+  ANDAMENTO_REV: f8c63862e997f1e95fa80b264755e9ad270ab9ee
 
 jobs:
+  daily-driver:
+    name: Daily-driver lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 tools/test-daily-driver.py
+      - run: bash -n scripts/run-daily-driver.sh
+
   native:
     name: ${{ matrix.os }} / ${{ matrix.vt }}
     runs-on: ${{ matrix.os }}
@@ -132,7 +144,9 @@ jobs:
         run: |
           host=$(rustc -vV | sed -n 's/^host: //p')
           if [ "$RUNNER_OS" = Linux ]; then
+            python3 tools/test-native-sidebar.py "../andamento/target/$host/debug/libandamento_ffi.so"
             xvfb-run -a python3 tools/test-andamento-ingress.py "../andamento/target/$host/debug"
           else
+            python3 tools/test-native-sidebar.py "../andamento/target/$host/debug/libandamento_ffi.dylib"
             python3 tools/test-andamento-ingress.py "../andamento/target/$host/debug"
           fi

@@ -2806,13 +2806,14 @@ uishell_controlled_split_selected_mount(UIShell_ControlledSplit *split)
   return mount;
 }
 
+internal B32 uishell_sidebar_uses_andamento(CFG_Node *owner);
+
 internal F32
 uishell_controlled_split_default_control_width_px(UIShell_ControlledSplit *split, Rng2F32 rect)
 {
-  (void)split;
   F32 rect_width = dim_2f32(rect).x;
   F32 min_width = floor_f32(ui_top_font_size()*4.f);
-  F32 desired_width = floor_f32(ui_top_font_size()*13.f);
+  F32 desired_width = floor_f32(ui_top_font_size()*(uishell_sidebar_uses_andamento(split->owner_cfg) ? 32.f : 13.f));
   F32 max_width = floor_f32(rect_width*0.32f);
   F32 width = 0;
   if(rect_width >= min_width*2.f)
