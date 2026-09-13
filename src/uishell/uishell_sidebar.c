@@ -579,6 +579,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                     String8 detail = push_str8f(scratch.arena, "%S (%S) — no opening recipe", full_label, kind);
                     U64 size = Min(detail.size, sizeof(state->inspection)-1);
                     MemoryCopy(state->inspection, detail.str, size); state->inspection[size] = 0;
+                    rd_request_frame();
                   }
                 }
                 if(ui_hovering(sig))
@@ -666,7 +667,8 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       {
         if(state->error[0] || state->inspection[0])
         {
-          if(ui_clicked(uishell_sidebar_button(str8_lit("Dismiss###sidebar_dismiss")))) { state->inspection[0] = state->error[0] = 0; }
+          if(ui_clicked(uishell_sidebar_button(str8_lit("Dismiss###sidebar_dismiss"))))
+          { state->inspection[0] = state->error[0] = 0; rd_request_frame(); }
         }
         else { UI_TagF("weak") ui_label(str8_lit("Sidebar configuration diagnostic")); }
       }
