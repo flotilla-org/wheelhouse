@@ -7,6 +7,9 @@ Worktree: `wheelhouse-worktrees/cleat-image-readiness`, based on Wheelhouse
 branch add cache diagnostics and refresh CI's pin; the daily-driver edits in the
 original checkout are untouched.
 
+The final native executable and bundle were rebuilt from commit `454d41a812ed48045c395d591dfc7ad8f8c0abc0`.
+The subsequent probe-only change rejects closed sessions explicitly.
+
 - Cleat: `c5eaa36c2d1dfbe8d18f5fdf946bd279b384a8cc`, detached clean worktree
   `cleat-worktrees/wheelhouse-image-baseline`.
 - Ghostty: `c3dbb925e6cbcfceafba5749f81a486dd2275099`, built afresh with the
@@ -157,3 +160,5 @@ Local logs, screenshots and the glyph fixture are retained under
 Do not expand decoder/cache ownership policy until the delivery contract is agreed.
 After retained delivery lands, rerun these same stimuli plus the suite's source
 lifetime, late-attach and large-frame cases.
+
+Consumer findings were reported on [cleat #206](https://github.com/flotilla-org/cleat/issues/206#issuecomment-5720280520).

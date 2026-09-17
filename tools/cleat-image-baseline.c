@@ -66,7 +66,9 @@ int main(int argc,char **argv) {
   printf("scroll accepted=%d ",cleat_session_scroll_viewport(s,&cmd,&result));printf("outcome=%u\n",result.outcome);
   for(int i=0;i<100;i++){poll_view(s,&history);usleep(10000);}
   report("history/top",s,history);
-  int ok=a.updates>0 && (!daemon || (b.updates>0 && reconnected.updates>0));
+  int ok=a.updates>0 && cleat_session_connection_state(s)==CLEAT_SESSION_STREAMING &&
+    (!daemon || (b.updates>0 && reconnected.updates>0 && s2 &&
+                 cleat_session_connection_state(s2)==CLEAT_SESSION_STREAMING));
   if(getenv("WH_EXPECT_RECONNECT")) ok=ok && saw_disconnect && saw_recovery;
   if(s2){cleat_session_destroy(s2);cleat_provider_close(p2);}
   cleat_session_destroy(s);cleat_provider_close(p);
