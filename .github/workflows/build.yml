@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Includes the portable Windows shutdown fix from cleat PR #204.
-  CLEAT_REV: bf47bbb706226bcd9aafe7aa38f3e4b920448baa
+  # Includes attachment-local panning and shared PTY bounds from cleat PR #212.
+  CLEAT_REV: c5eaa36c2d1dfbe8d18f5fdf946bd279b384a8cc
   ANDAMENTO_REV: f8c63862e997f1e95fa80b264755e9ad270ab9ee
 
 jobs:
