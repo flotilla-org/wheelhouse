@@ -5408,8 +5408,38 @@ uishell_terminal_image_decode_rgba8(Arena *arena, cleat_image_resource const *me
   return result;
 }
 
+// Narrow collaborators keep cache residency tests independent of PTYs and GPU memory.
+typedef struct UIShell_TerminalImageOps UIShell_TerminalImageOps;
+struct UIShell_TerminalImageOps
+{
+  void *context;
+  B32 (*lookup)(void *, cleat_image_resource const *, UIShell_TerminalImageBytes *);
+  R_Handle (*upload)(void *, U32, U32, U8 *);
+  void (*release)(void *, R_Handle);
+  U64 quota_bytes;
+};
+
+internal B32
+uishell_terminal_image_lookup(void *context, cleat_image_resource const *meta, UIShell_TerminalImageBytes *bytes)
+{
+  return cleat_session_with_image_resource_data((cleat_session *)context, meta->image_id, meta->generation,
+                                               uishell_terminal_image_resource_data_copy, bytes);
+}
+
+internal R_Handle
+uishell_terminal_image_upload(void *context, U32 width, U32 height, U8 *rgba)
+{
+  return r_tex2d_alloc(R_ResourceKind_Static, v2s32((S32)width, (S32)height), R_Tex2DFormat_RGBA8, rgba);
+}
+
 internal void
-uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cache, cleat_session *session, cleat_render_update const *update)
+uishell_terminal_image_release(void *context, R_Handle texture)
+{
+  r_tex2d_release(texture);
+}
+
+internal void
+uishell_terminal_image_cache_apply_with_ops(UIShell_TerminalImageCache *cache, cleat_render_update const *update, UIShell_TerminalImageOps *ops)
 {
   if(cache == 0 || update == 0)
   {
@@ -5433,7 +5463,7 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
   // live set, this collapses to exact mirroring with no local policy.
   // (Original bug: resources kept for session lifetime -> 46GB / 12k textures
   // of graphics footprint under streaming producers -> jetsam kill.)
-  if(session != 0)
+  if(ops->lookup != 0)
   {
     for(U64 i = 0; i < update->image_resource_count; i += 1)
     {
@@ -5450,13 +5480,13 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
       R_Handle texture = r_handle_zero();
       U32 tex_w = 0;
       U32 tex_h = 0;
-      if(cleat_session_with_image_resource_data(session, meta->image_id, meta->generation, uishell_terminal_image_resource_data_copy, &bytes) &&
+      if(ops->lookup(ops->context, meta, &bytes) &&
          bytes.data != 0 && bytes.size != 0)
       {
         U8 *rgba = uishell_terminal_image_decode_rgba8(scratch.arena, meta, bytes.data, bytes.size, &tex_w, &tex_h);
         if(rgba != 0 && tex_w != 0 && tex_h != 0)
         {
-          texture = r_tex2d_alloc(R_ResourceKind_Static, v2s32((S32)tex_w, (S32)tex_h), R_Tex2DFormat_RGBA8, rgba);
+          texture = ops->upload(ops->context, tex_w, tex_h, rgba);
         }
       }
       scratch_end(scratch);
@@ -5480,7 +5510,7 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
       else if(!r_handle_match(res->texture, r_handle_zero()))
       {
         // Superseded generation: release the old texture before replacing.
-        r_tex2d_release(res->texture);
+        ops->release(ops->context, res->texture);
         res->texture = r_handle_zero();
       }
       res->generation = meta->generation;
@@ -5544,7 +5574,7 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
 
   // Mark placement-referenced resources recently-used, then evict least-
   // recently-referenced resources beyond the byte quota. Resources named by
-  // the current update are exempt (the visible set always fits).
+  // the current update are exempt, even when the visible set exceeds quota.
   {
     for(U64 i = 0; i < cache->placement_count; i += 1)
     {
@@ -5554,7 +5584,7 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
         res->last_referenced_update = cache->update_counter;
       }
     }
-    U64 quota_bytes = MB(320); // kitty's default image storage quota; revisit as a setting/tweak
+    U64 quota_bytes = ops->quota_bytes;
     U64 total_bytes = 0;
     for(UIShell_TerminalImageResource *r = cache->first_resource; r != 0; r = r->next)
     {
@@ -5583,7 +5613,7 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
       total_bytes -= (U64)oldest->width_px*(U64)oldest->height_px*4;
       if(!r_handle_match(oldest->texture, r_handle_zero()))
       {
-        r_tex2d_release(oldest->texture);
+        ops->release(ops->context, oldest->texture);
       }
       if(oldest_prev != 0) { oldest_prev->next = oldest->next; }
       else                 { cache->first_resource = oldest->next; }
@@ -5592,6 +5622,14 @@ uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cac
       SLLStackPush(cache->free_resource, oldest);
     }
   }
+}
+
+internal void
+uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cache, cleat_session *session, cleat_render_update const *update)
+{
+  UIShell_TerminalImageOps ops = {session, session ? uishell_terminal_image_lookup : 0,
+    uishell_terminal_image_upload, uishell_terminal_image_release, MB(320)};
+  uishell_terminal_image_cache_apply_with_ops(cache, update, &ops);
 }
 
 internal U64
@@ -7383,9 +7421,24 @@ uishell_terminal_diagnostic_check_draw_command_color(UIShell_TerminalCellTextDec
 }
 
 internal B32
+uishell_terminal_image_clip(Rng2F32 dst, Rng2F32 src, Rng2F32 canvas, Rng2F32 *visible, Rng2F32 *source)
+{
+  Rng2F32 vis = intersect_2f32(dst, canvas);
+  if(vis.x1 <= vis.x0 || vis.y1 <= vis.y0 || dst.x1 <= dst.x0 || dst.y1 <= dst.y0) { return 0; }
+  F32 sx = (src.x1-src.x0)/(dst.x1-dst.x0);
+  F32 sy = (src.y1-src.y0)/(dst.y1-dst.y0);
+  *visible = vis;
+  *source = r2f32p(src.x0+(vis.x0-dst.x0)*sx, src.y0+(vis.y0-dst.y0)*sy,
+                   src.x0+(vis.x1-dst.x0)*sx, src.y0+(vis.y1-dst.y0)*sy);
+  return 1;
+}
+
+#include "uishell_terminal_image_diagnostics.c"
+
+internal B32
 uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_font, F32 font_size, FNT_RasterFlags raster_flags, String8 **embedded_color_emoji_data, U64 embedded_color_emoji_count, String8 **embedded_fallback_data, U64 embedded_fallback_count)
 {
-  B32 result = 1;
+  B32 result = uishell_terminal_image_diagnostics();
   if(fnt_tag_match(primary_font, fnt_tag_zero()))
   {
     log_user_errorf("terminal glyph diagnostics failed: primary font did not open");
@@ -8931,21 +8984,8 @@ uishell_terminal_draw_image_plane(Arena *arena, UIShell_TerminalDrawParams const
 
     // Clip the destination to the content canvas, cropping the source rect
     // proportionally so partially-offscreen placements render correctly.
-    Rng2F32 vis = intersect_2f32(dst, canvas);
-    if(vis.x1 <= vis.x0 || vis.y1 <= vis.y0)
-    {
-      continue;
-    }
-    F32 dwid = dst.x1 - dst.x0;
-    F32 dhei = dst.y1 - dst.y0;
-    F32 fx0 = (vis.x0 - dst.x0)/dwid;
-    F32 fx1 = (vis.x1 - dst.x0)/dwid;
-    F32 fy0 = (vis.y0 - dst.y0)/dhei;
-    F32 fy1 = (vis.y1 - dst.y0)/dhei;
-    F32 swid = src.x1 - src.x0;
-    F32 shei = src.y1 - src.y0;
-    Rng2F32 src_c = r2f32p(src.x0 + fx0*swid, src.y0 + fy0*shei,
-                           src.x0 + fx1*swid, src.y0 + fy1*shei);
+    Rng2F32 vis, src_c;
+    if(!uishell_terminal_image_clip(dst, src, canvas, &vis, &src_c)) { continue; }
     // Straight-alpha sRGB texture, opaque white tint preserves source colour.
     // Sample linearly so scaled images (Kitty placements are usually upscaled
     // from a smaller source) interpolate smoothly instead of showing texel

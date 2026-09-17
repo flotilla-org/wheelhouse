@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Includes the portable Windows shutdown fix from cleat PR #204.
-  CLEAT_REV: bf47bbb706226bcd9aafe7aa38f3e4b920448baa
+  # Includes attachment-local panning and shared PTY bounds from cleat PR #212.
+  CLEAT_REV: c5eaa36c2d1dfbe8d18f5fdf946bd279b384a8cc
   ANDAMENTO_REV: f8c63862e997f1e95fa80b264755e9ad270ab9ee
 
 jobs:
@@ -135,6 +135,8 @@ jobs:
           trap 'rm -rf "$task_dir"' EXIT
           ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
+          ./build/wheelhouse --user:"$task_dir/glyph-user" --project:"$task_dir/glyph-project" --terminal_glyph_diagnostics --terminal_glyph_fixture_ppm:"$task_dir/terminal.ppm"
+          python3 tools/validate-terminal-fixture-ppm.py "$task_dir/terminal.ppm"
       - name: HTTP ingress and native producer checks
         if: runner.os != 'Windows'
         shell: bash
