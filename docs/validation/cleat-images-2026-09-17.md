@@ -81,12 +81,13 @@ is not a strict total-memory ceiling.
 
 ## Reproduction
 
-Set these to the exact checkouts above, then build:
+This is a dated validation record, not a continuously updated support matrix.
+For reproduction, set these paths to local checkouts at the revisions above, then build:
 
 ```sh
-export WHEELHOUSE_CLEAT_DIR=/Users/robert/dev/cleat-worktrees/wheelhouse-image-baseline
-export WHEELHOUSE_ANDAMENTO_DIR=/Users/robert/dev/andamento
-export IMAGE_SUITE=/Users/robert/dev/kitty-image-tests-worktrees/wheelhouse-baseline
+export WHEELHOUSE_CLEAT_DIR=/path/to/cleat
+export WHEELHOUSE_ANDAMENTO_DIR=/path/to/andamento
+export IMAGE_SUITE=/path/to/kitty-image-tests
 (cd "$WHEELHOUSE_CLEAT_DIR" && bash tools/prepare-ghostty-vt.sh)
 bash build.sh wheelhouse bundle
 bash tools/run-macos-terminal-glyph-diagnostics.sh
