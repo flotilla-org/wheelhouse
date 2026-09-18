@@ -90,6 +90,7 @@
 #endif
 #include "uishell/uishell_terminal_glyph.c"
 #include "uishell/uishell_views.c"
+#include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
 #include "uishell/uishell_scroll_diagnostics.c"
 
@@ -110,8 +111,10 @@ internal B32
 frame(void)
 {
   uishell_sidebar_poll_live();
+  uishell_jackstay_tick(1,0);
   rd_frame();
-  return rd_state->quit;
+  uishell_jackstay_tick(0,rd_state->quit);
+  return rd_state->quit && !uishell_jackstay_pending();
 }
 
 ////////////////////////////////

@@ -16,6 +16,7 @@ concurrency:
 env:
   # Includes attachment-local panning and shared PTY bounds from cleat PR #212.
   CLEAT_REV: c5eaa36c2d1dfbe8d18f5fdf946bd279b384a8cc
+  JACKSTAY_REV: 2be1314fd33c60bb4cf137dafe57f1a7fa823bc1
   ANDAMENTO_REV: f8c63862e997f1e95fa80b264755e9ad270ab9ee
 
 jobs:
@@ -59,6 +60,12 @@ jobs:
           repository: flotilla-org/cleat
           ref: ${{ env.CLEAT_REV }}
           path: cleat
+      - uses: actions/checkout@v4
+        if: runner.os != 'Windows'
+        with:
+          repository: flotilla-org/jackstay
+          ref: ${{ env.JACKSTAY_REV }}
+          path: jackstay
       # Fork PRs lack the App secret; fail explicitly because Andamento is private.
       - name: Check private dependency access
         shell: bash
@@ -137,6 +144,9 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
           ./build/wheelhouse --user:"$task_dir/glyph-user" --project:"$task_dir/glyph-project" --terminal_glyph_diagnostics --terminal_glyph_fixture_ppm:"$task_dir/terminal.ppm"
           python3 tools/validate-terminal-fixture-ppm.py "$task_dir/terminal.ppm"
+      - name: Jackstay media and input acceptance
+        if: runner.os != 'Windows'
+        run: python3 tools/test-jackstay.py
       - name: HTTP ingress and native producer checks
         if: runner.os != 'Windows'
         shell: bash

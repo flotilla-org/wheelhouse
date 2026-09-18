@@ -49,6 +49,16 @@ if [ "$needs_cleat" = "1" ]; then
   cleat_link="-L$cleat_lib_dir -lcleat -Wl,-rpath,$cleat_lib_dir"
 fi
 
+# --- Jackstay CPU stream consumer (Unix C ABI) --------------------------------
+jackstay_link=''
+if [ -n "${wheelhouse+x}" ]; then
+  jackstay_dir="${WHEELHOUSE_JACKSTAY_DIR:-$repo_root/../jackstay}"
+  jackstay_target_dir="${WHEELHOUSE_JACKSTAY_TARGET_DIR:-$jackstay_dir/target}"
+  cargo build --manifest-path "$jackstay_dir/Cargo.toml" -p jackstay --locked --target-dir "$jackstay_target_dir" $cargo_profile_flags
+  auto_compile_flags="$auto_compile_flags -DWHEELHOUSE_JACKSTAY=1 -I$jackstay_dir/crates/jackstay/include"
+  jackstay_link="-L$jackstay_target_dir/$cargo_profile -ljackstay -Wl,-rpath,$jackstay_target_dir/$cargo_profile"
+fi
+
 # --- Embedded sidebar core ---------------------------------------------------
 andamento_link=''
 if [ -n "${wheelhouse+x}" ]; then
@@ -203,7 +213,7 @@ then
   # debug map. Then link, then produce a co-located .dSYM (and the linked cleat
   # dylib's) for profiling/debugging across the wheelhouse+cleat+ghostty stack.
   $compile -c ../src/uishell/uishell_main.c $out uishell_main.o && \
-  $compile -x none uishell_main.o $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $andamento_link $out wheelhouse
+  $compile -x none uishell_main.o $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $andamento_link $jackstay_link $out wheelhouse
   if [ "$host_os" = "Darwin" ]; then
     dsymutil wheelhouse && rm -f uishell_main.o
     [ -f "$cleat_lib_dir/libcleat.dylib" ] && dsymutil "$cleat_lib_dir/libcleat.dylib"

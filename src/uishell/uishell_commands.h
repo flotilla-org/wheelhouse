@@ -88,6 +88,7 @@ read_only global UIShell_CmdInfo uishell_app_viewer_cmd_info_table[] =
   
   UISHELL_CMD("output", "Output", List, "Opens an Output tab.", "tab", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("text", "Text", FileOutline, "Opens a Text tab.", "tab,file", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
+  UISHELL_CMD("jackstay", "Open Jackstay Source", Machine, "Opens a Jackstay source connection view.", "tab,jackstay,stream", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("terminal", "Terminal", Machine, "Opens a Terminal tab.", "tab,terminal,shell", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("terminal_fixture", "Terminal Fixture", Machine, "Opens a deterministic terminal glyph fixture tab.", "tab,terminal,glyph,fixture", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("scroll_region_fixture", "Scroll Region Fixture", Grid, "Opens a two-axis scroll region fixture.", "tab,scroll,fixture", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),

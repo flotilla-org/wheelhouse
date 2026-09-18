@@ -9,6 +9,7 @@
 
 RD_VIEW_UI_FUNCTION_DEF(shell_text);
 RD_VIEW_UI_FUNCTION_DEF(terminal);
+RD_VIEW_UI_FUNCTION_DEF(jackstay);
 RD_VIEW_UI_FUNCTION_DEF(scroll_region_fixture);
 RD_VIEW_UI_FUNCTION_DEF(sessions);
 RD_VIEW_UI_FUNCTION_DEF(binary);
