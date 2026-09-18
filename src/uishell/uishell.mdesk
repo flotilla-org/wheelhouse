@@ -41,6 +41,7 @@ UIShell_VocabTable:
   {address             addresses              "Address"                          "Addresses"               Null}
   {offset              _                      "Offset"                           _                         Null}
   {text                ""                     "Text"                             ""                        FileOutline}
+  {jackstay            ""                     "Jackstay Source"                  ""                        Machine}
   {terminal            ""                     "Terminal"                         ""                        Machine}
   {terminal_fixture    ""                     "Terminal Fixture"                 ""                        Machine}
   {sessions            ""                     "Sessions"                         ""                        List}

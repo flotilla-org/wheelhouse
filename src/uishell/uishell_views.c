@@ -2055,6 +2055,7 @@ internal void
 uishell_register_view_ui_rules(Arena *arena, RD_ViewUIRuleMap *map)
 {
   rd_view_ui_rule_map_insert(arena, map, str8_lit("text"), RD_VIEW_UI_FUNCTION_NAME(shell_text));
+  rd_view_ui_rule_map_insert(arena, map, str8_lit("jackstay"), RD_VIEW_UI_FUNCTION_NAME(jackstay));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("terminal"), RD_VIEW_UI_FUNCTION_NAME(terminal));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("scroll_region_fixture"), RD_VIEW_UI_FUNCTION_NAME(scroll_region_fixture));
   rd_view_ui_rule_map_insert(arena, map, str8_lit("terminal_fixture"), RD_VIEW_UI_FUNCTION_NAME(terminal));
