@@ -11,7 +11,7 @@ struct UIShell_JackstayView
   U64 upload_frame, version, epoch, pointer_epoch, press_serial;
   U64 keys[WM_Key_COUNT][2];
   U32 width, height;
-  B32 touched, focus_requested, focused, content_focus, closing, disconnecting, initialized, bootstrap;
+  B32 focus_requested, focused, content_focus, closing, disconnecting, initialized, bootstrap;
   U8 paths[2][1024]; U64 sizes[2]; TxtPt cursor[2], mark[2];
   Rng2F32 image_rect;
   U32 buttons;
@@ -94,7 +94,7 @@ internal void uishell_jackstay_tick(B32 before,B32 quit)
   for(UIShell_JackstayView **link=&uishell_jackstay_views;*link;)
   {
     UIShell_JackstayView *v=*link;
-    if(before){v->touched=0;v->focus_requested=0;}
+    if(before){v->focus_requested=0;}
     else if(!v->focus_requested)uishell_jackstay_unfocus(v);
     CFG_Node *cfg=cfg_node_from_id(v->id);
     if(quit || cfg==&cfg_nil_node || !str8_match(cfg->string,str8_lit("jackstay"),0))
@@ -113,7 +113,6 @@ RD_VIEW_UI_FUNCTION_DEF(jackstay)
   CFG_ID id=uishell_regs()->view;
   UIShell_JackstayView *v=uishell_jackstay_find(id);
   if(!v) {v=calloc(1,sizeof(*v));v->id=id;v->next=uishell_jackstay_views;uishell_jackstay_views=v;}
-  v->touched=1;
   if(v->disconnecting && wh_js_destroy(&v->session)) {
     v->disconnecting=0;v->content_focus=0;uishell_jackstay_unfocus(v);
   }

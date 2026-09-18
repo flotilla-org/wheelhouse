@@ -10144,7 +10144,8 @@ rd_frame(void)
                                              event->kind == WM_EventKind_Release ||
                                              event->kind == WM_EventKind_Text));
       B32 take = 0;
-      if(ws != 0 && !rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused)
+      if(ws != 0 && ws != &rd_nil_window_state &&
+         !rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused)
         take = uishell_jackstay_event(focused_view->id,event);
       
       //- rjf: try drag/drop drop-kickoff
