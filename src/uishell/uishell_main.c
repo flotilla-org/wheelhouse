@@ -110,9 +110,14 @@ ExecMode;
 internal B32
 frame(void)
 {
-  uishell_sidebar_poll_live();
-  uishell_jackstay_tick(1,0);
-  rd_frame();
+  // rd_frame destroys window/UI state on quit. Keep pumping asynchronous
+  // session cleanup without building another frame from that retired state.
+  if(!rd_state->quit)
+  {
+    uishell_sidebar_poll_live();
+    uishell_jackstay_tick(1,0);
+    rd_frame();
+  }
   uishell_jackstay_tick(0,rd_state->quit);
   return rd_state->quit && !uishell_jackstay_pending();
 }
