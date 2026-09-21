@@ -4,6 +4,7 @@
 Build Wheelhouse first. This raises a temporary test window and sends native
 input only to that window. The source is a separate instrumented process.
 """
+from collections import namedtuple
 import os
 from pathlib import Path
 import queue
@@ -12,6 +13,13 @@ import sys
 import tempfile
 import threading
 import time
+
+# Shared state/snapshot field order emitted by jackstay-native-source.c.
+State = namedtuple('State', 'downs ups buttons held cleanup keys text')
+
+def parse_state(line):
+    return State(*map(int, line.split()[1:]))
+
 
 ROOT = Path(__file__).resolve().parent.parent
 JACKSTAY = Path(os.environ.get('WHEELHOUSE_JACKSTAY_DIR', ROOT.parent / 'jackstay')).resolve()
@@ -56,7 +64,7 @@ with tempfile.TemporaryDirectory(prefix='wh-js-native-', dir='/tmp') as temporar
 
     def snapshot():
         source.stdin.write('s');source.stdin.flush()
-        return list(map(int, until(lambda line: line.startswith('snapshot ')).split()[1:]))
+        return parse_state(until(lambda line: line.startswith('snapshot ')))
 
     try:
         until(lambda line: line == 'ready')
@@ -78,40 +86,41 @@ with tempfile.TemporaryDirectory(prefix='wh-js-native-', dir='/tmp') as temporar
             source.stdin.write('g');source.stdin.flush()
             until(lambda line: line == 'connected')
             time.sleep(.4)
-            assert snapshot()[0] == 0, 'connection-time click replayed'
+            assert snapshot().downs == 0, 'connection-time click replayed'
             print('PASS: connection-time click is not replayed', flush=True)
 
             drive('click',600,400)
-            until(lambda line: line.startswith('state ') and int(line.split()[2]) == 1)
-            assert snapshot()[:3] == [1,1,0], 'ready click did not deliver down and up'
+            until(lambda line: line.startswith('state ') and parse_state(line).ups == 1)
+            ready = snapshot()
+            assert ready.downs == 1 and ready.ups == 1 and ready.buttons == 0, 'ready click did not deliver down and up'
             drive('key',0)
-            until(lambda line: line.startswith('state ') and int(line.split()[6]) == 1 and int(line.split()[4]) == 0)
-            assert snapshot()[6] == 1, 'native text was not delivered'
+            until(lambda line: line.startswith('state ') and parse_state(line).keys == 1 and parse_state(line).held == 0)
+            assert snapshot().text == 1, 'native text was not delivered'
             print('PASS: ready click and physical key/text delivery', flush=True)
 
             drive('down',600,400)
-            until(lambda line: line.startswith('state ') and int(line.split()[3]) != 0)
+            until(lambda line: line.startswith('state ') and parse_state(line).buttons != 0)
             before = snapshot()
             drive('resize',950,650)
-            until(lambda line: line.startswith('state ') and int(line.split()[5]) > before[4])
+            until(lambda line: line.startswith('state ') and parse_state(line).cleanup > before.cleanup)
             after = snapshot()
-            assert after[2:4] == [0,0], 'resize left input held'
+            assert after.buttons == 0 and after.held == 0, 'resize left input held'
             drive('up',600,400);time.sleep(.2)
-            assert snapshot()[0] == before[0], 'resize replayed old press'
+            assert snapshot().downs == before.downs, 'resize replayed old press'
             print('PASS: resizing while held resets input without replay', flush=True)
 
             drive('click',600,350)
             time.sleep(.15)
-            keys = snapshot()[5]
+            keys = snapshot().keys
             drive('escape');drive('key',0);time.sleep(.15)
-            assert snapshot()[5] == keys, 'escape chord did not return keyboard ownership'
+            assert snapshot().keys == keys, 'escape chord did not return keyboard ownership'
             drive('click',600,350);drive('key',0)
-            until(lambda line: line.startswith('state ') and int(line.split()[6]) > keys)
+            until(lambda line: line.startswith('state ') and parse_state(line).keys > keys)
             print('PASS: escape releases focus and clicking restores input', flush=True)
-            cleanup = snapshot()[4]
+            cleanup = snapshot().cleanup
             drive('close')
-            until(lambda line: line.startswith('state ') and int(line.split()[5]) > cleanup
-                  and int(line.split()[3]) == 0 and int(line.split()[4]) == 0)
+            until(lambda line: line.startswith('state ') and parse_state(line).cleanup > cleanup
+                  and parse_state(line).buttons == 0 and parse_state(line).held == 0)
             app.wait(timeout=12);source.wait(timeout=12)
             assert app.returncode == 0 and source.returncode == 0
             print('PASS: clean native shutdown', flush=True)
