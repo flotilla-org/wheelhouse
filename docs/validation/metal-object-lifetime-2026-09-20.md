@@ -28,6 +28,7 @@ A heap capture before closing that process reported:
 
 `tools/check-metal-lifetime.py PID --samples 3 --interval 5` uses `lsmp` to count
 ports explicitly identified as `IOSurfaceSharedEventReference`.
+It requires `lsmp` on PATH (`/usr/bin/lsmp` on the macOS 26.6 test host).
 The processes were actively rendering during sampling; the first sample is not
 a startup count.
 
@@ -49,8 +50,15 @@ covers font work, event processing, rendering and updates invoked from native
 resize callbacks. Explicitly retained renderer resources remain owned across
 frames; the pool releases temporary factory results after each update.
 
-The checker detects growth, not correctness of rendered pixels or evidence that
-a workload is actually active. Run it against an advancing source. Short bounded
+The checker compares the sample range (`max - min`) with the allowed threshold;
+it does not establish a monotonic leak trend. Bounded fluctuations can exceed
+the threshold, and slow leaks can remain below it during a short run. It checks
+neither correctness of rendered pixels nor evidence that a workload is actually
+active. Run it against an advancing source. Short bounded
 samples establish the immediate ownership fix; they are not an overnight soak.
 No kernel event-table implementation or historical pre-September-12 failure was
 investigated here.
+
+The `/tmp` paths above identify local incident artifacts, not repository fixtures.
+They may disappear; the counts and conditions recorded here are the retained
+summary, not a substitute for independently rerunning the comparison.
