@@ -47,6 +47,8 @@ def load(path):
     signatures = {
         'create': (Ptr, [C.c_char_p, Size, Ptr]), 'destroy': (None, [Ptr]),
         'configure': (U32, [Ptr, Text, Ptr]),
+        'tick': (U32, [Ptr, U64, Ptr]),
+        'snapshot_is_current': (U32, [Ptr, Ptr, Ptr]),
         'snapshot_field': (U32, [Ptr, Size, C.POINTER(Field)]),
         'snapshot_node_loop_key': (U32, [Ptr, Size, C.POINTER(Text)]),
         'apply_patch_json': (U32, [Ptr, U64, Text, Ptr]),
@@ -91,6 +93,20 @@ class NativeSidebarTests(unittest.TestCase):
         for item in facts:
             self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
         self.snapshots = []
+
+    def test_snapshot_validity_tracks_core_changes(self):
+        displayed = lib.andamento_snapshot_acquire(self.core, None)
+        self.snapshots.append(displayed)
+        self.assertEqual(lib.andamento_snapshot_is_current(self.core, displayed, None), 1)
+        self.assertEqual(lib.andamento_tick(self.core, 100, None), 1)
+        self.assertEqual(lib.andamento_snapshot_is_current(self.core, displayed, None), 1)
+        update = patch('vessel', 'v', **{'action.primary.recipe': 'exec changed'})
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 100, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.andamento_snapshot_is_current(self.core, displayed, None), 0)
+        fresh = lib.andamento_snapshot_acquire(self.core, None)
+        self.snapshots.append(fresh)
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 200, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.andamento_snapshot_is_current(self.core, fresh, None), 1)
 
     def tearDown(self):
         for snapshot in self.snapshots:

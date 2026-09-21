@@ -87,6 +87,9 @@ internal void
 uishell_sidebar_refresh(UIShell_SidebarState *state)
 {
   char *error = 0;
+  B32 current = andamento_snapshot_is_current(state->core, state->snapshot, &error);
+  if(error != 0) { uishell_sidebar_result(state, 0, error); return; }
+  if(current) { return; }
   AndamentoSnapshot *next = andamento_snapshot_acquire(state->core, &error);
   if(uishell_sidebar_result(state, next != 0, error))
   {
@@ -895,7 +898,7 @@ uishell_sidebar_apply_live(void *unused, const U8 *data, size_t size)
     char *error = 0;
     B32 accepted = andamento_apply_patch_json(state->core, wheelhouse_ingress_now_ms(), (AndamentoText){data, size}, &error);
     if(!uishell_sidebar_result(state, accepted, error)) { rejected = 1; }
-    if(accepted) { state->restored = 0; state->error[0] = 0; uishell_sidebar_refresh(state); applied = 1; }
+    if(accepted) { state->restored = 0; state->error[0] = 0; applied = 1; }
   }
   rd_request_frame();
   return rejected ? 0 : (unavailable || !applied) ? 2 : 1;
@@ -917,9 +920,16 @@ uishell_sidebar_poll_live(void)
       {
         char *error = 0;
         B32 ok = andamento_tick(state->core, now, &error);
-        if(uishell_sidebar_result(state, ok, error)) { uishell_sidebar_refresh(state); }
+        uishell_sidebar_result(state, ok, error);
       }
     }
     rd_request_frame();
+  }
+  // Apply every queued patch and expiry tick before publishing one snapshot.
+  // Andamento owns change detection, including action-only changes and leases.
+  for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
+  {
+    UIShell_SidebarState *state = uishell_sidebar_init(ws);
+    if(state->core != 0) { uishell_sidebar_refresh(state); }
   }
 }
