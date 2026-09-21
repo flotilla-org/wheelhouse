@@ -2,6 +2,29 @@ version 1
 
 display-variable "show-issues" type="bool" default=true label="Issues" icon="I" persist=true
 
+display-variable "show-finished" type="bool" default=false label="Show finished" icon="F" persist=true
+
+grouping "wheelhouse.finished-landed" priority=1100 {
+  filter key="flotilla.convoy.phase" equals="landed"
+  presence kind="convoy" class="tab" visible-when="show-finished"
+  presence kind="vessel" class="tab" visible-when="show-finished"
+  level key="entity.id"
+}
+
+grouping "wheelhouse.finished-cancelled" priority=1100 {
+  filter key="flotilla.convoy.phase" equals="cancelled"
+  presence kind="convoy" class="tab" visible-when="show-finished"
+  presence kind="vessel" class="tab" visible-when="show-finished"
+  level key="entity.id"
+}
+
+grouping "wheelhouse.finished-abandoned" priority=1100 {
+  filter key="flotilla.convoy.phase" equals="abandoned"
+  presence kind="convoy" class="tab" visible-when="show-finished"
+  presence kind="vessel" class="tab" visible-when="show-finished"
+  level key="entity.id"
+}
+
 // Native placements own the hierarchy. The current core still consults
 // presence/grouping for activation; a unique entity path avoids the legacy
 // single-member collapse that can make a vessel impossible to open.
@@ -24,6 +47,7 @@ region "attention" source="attention" root-template="wheelhouse/attention" form=
 template "wheelhouse/projects" slot="compact" node-kind="entity" {
   field "label" source="literal" value="Projects"
   control "display-variable" variable="show-issues"
+  control "display-variable" variable="show-finished"
 }
 template "wheelhouse/sessions" slot="compact" node-kind="entity" {
   field "label" source="literal" value="Sessions"
