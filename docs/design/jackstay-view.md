@@ -116,6 +116,26 @@ captures of an advancing coherence source. Katzensteg's SDL2 input probe receive
 mouse down/up, physical key down/up and text through the native Wheelhouse view.
 The diagnostic is spatial only; display pacing/vsync remains unmeasured.
 
+### Native input regression checks
+
+On macOS, run `python3 tools/test-jackstay-native.py` after building Wheelhouse.
+Set `WHEELHOUSE_JACKSTAY_DIR` for a non-sibling dependency and `WHEELHOUSE_BIN`
+to test another build. The driver needs Accessibility permission and raises its
+own temporary window; avoid interacting with that window during the run.
+
+The test uses a separate instrumented source with gated admission. It verifies
+that an early click is not replayed, a ready click delivers both transitions,
+physical keys and text reach the source, resizing while a button is held resets
+input, and Ctrl+Shift+Escape releases keyboard ownership until another click.
+Shutdown must clear held input, retire both processes and exit successfully.
+These checks are opt-in and are not part of headless CI.
+
+The first native shutdown run reproduced a crash after the window/UI state had
+been destroyed: asynchronous Jackstay cleanup kept the frame loop alive, which
+re-entered `rd_frame` with retired UI state. The frame entry point now drains
+Jackstay owners without rebuilding the shell after quit. The same native test
+passes with that fix.
+
 ## Later stages
 
 Porthole publication browsing and registry discovery resolve endpoints before
