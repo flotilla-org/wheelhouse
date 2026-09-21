@@ -16,7 +16,7 @@ concurrency:
 env:
   # Includes attachment-local panning and shared PTY bounds from cleat PR #212.
   CLEAT_REV: c5eaa36c2d1dfbe8d18f5fdf946bd279b384a8cc
-  JACKSTAY_REV: 286762abd5dfe077b3d39b123868e4c4e843e08a
+  JACKSTAY_REV: b992ad28b2eb56b9b292570b2cfbed5b2beaeb0c
   ANDAMENTO_REV: f8c63862e997f1e95fa80b264755e9ad270ab9ee
 
 jobs:
