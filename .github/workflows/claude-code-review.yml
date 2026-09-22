@@ -66,13 +66,18 @@ jobs:
           import collections
           import json
           import os
+          import uuid
           from pathlib import Path
 
           messages = json.loads(Path(os.environ['REVIEW_EXECUTION_FILE']).read_text())
+          # Model-authored text must not be interpreted as workflow commands.
+          marker = uuid.uuid4().hex
+          print(f'::stop-commands::{marker}')
           for message in messages:
               if message.get('type') == 'result':
                   print(message.get('result', 'No final review text returned.'))
                   denied = collections.Counter(item.get('tool_name', 'unknown')
                       for item in message.get('permission_denials', []))
                   print('Denied tool counts:', dict(denied))
+          print(f'::{marker}::')
           PY
