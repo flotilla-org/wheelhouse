@@ -67,3 +67,41 @@ Template detail fields can populate hover cards before terminal previews exist.
 A terminal preview needs a host workspace/view binding and should only render
 an existing surface. Hovering a latent entity should show metadata without
 materializing a workspace. This can later be controlled by a display option.
+
+## Design direction and proposed follow-up, 22 September 2026
+
+Treat this as a workspace navigation panel whose default presentation is a tree.
+Do not constrain templates to one icon or one action per row. Role icons need
+semantic role identifiers, text fallbacks and individually labelled hit targets.
+Project identity should have a stable, overridable colour accent, independent of
+workspace selection and status. Avoid recolouring the entire workspace. Multiple
+inline actions must retain their own workspace bindings and selection feedback.
+Project hover details should include repository membership where the producer
+supplies it; missing facts must not be guessed from display names.
+
+Before retiring the Workspaces selector, enforce coverage of every materialized
+workspace. Reconcile the host inventory with visible placements after template
+filtering. Workspaces without a visible placement need a fallback in this panel,
+including local/ad hoc workspaces, restored bindings, and workspaces whose provider
+has disconnected or removed their entity. Multiple placements may reference one
+workspace; fallback membership must use stable workspace identity, not labels.
+Collapsed ancestors need a discoverable route to the selected workspace. Coverage
+and placement decisions belong in shared Andamento; Wheelhouse supplies inventory
+and executes host actions. Workspace creation and closing also need accessible
+controls before the old selector can go away.
+
+Reuse Wheelhouse's demand-driven workspace preview surfaces for hover cards.
+Metadata is available without opening a workspace; previews reference existing
+materialized workspaces and never activate or create one on hover. Initially this
+can be a native hover treatment. A later template preview reference should name
+the bound workspace, leaving surface handles, sizing and rendering in the host.
+Check preview cost before enabling many simultaneous inline previews.
+
+The daily driver can disable the separate local git producer with `--no-git`.
+This removes duplicate discovery for now; future merging needs explicit project
+and repository identity, rather than matching project titles.
+
+Suggested order: establish workspace coverage and fallback behavior; add metadata
+and preview hover cards; then compare project accents, role actions and compact
+row compositions using real data at narrow and wide sidebar widths. Keep fixed
+horizontal slots and stable status geometry throughout.
