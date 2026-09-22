@@ -212,10 +212,12 @@ then
   # compile+link invocation uses a temp .o that clang deletes, leaving a broken
   # debug map. Then link, then produce a co-located .dSYM (and the linked cleat
   # dylib's) for profiling/debugging across the wheelhouse+cleat+ghostty stack.
-  $compile -c ../src/uishell/uishell_main.c $out uishell_main.o && \
+  # Keep required steps separate: set -e ignores failures before &&.
+  $compile -c ../src/uishell/uishell_main.c $out uishell_main.o
   $compile -x none uishell_main.o $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $andamento_link $jackstay_link $out wheelhouse
   if [ "$host_os" = "Darwin" ]; then
-    dsymutil wheelhouse && rm -f uishell_main.o
+    dsymutil wheelhouse
+    rm -f uishell_main.o
     [ -f "$cleat_lib_dir/libcleat.dylib" ] && dsymutil "$cleat_lib_dir/libcleat.dylib"
     # The ghostty dSYM lives under cleat's .tools/ dot-dir, which Spotlight
     # never indexes, so Instruments can't find it by UUID. Copy it into an
@@ -223,7 +225,10 @@ then
     # the whole wheelhouse+cleat+ghostty stack.
     mkdir -p dsyms
     ghostty_dsym=$(ls -d "$cleat_dir"/.tools/ghostty-install/lib/libghostty-vt*.dylib.dSYM 2>/dev/null | head -1)
-    [ -n "$ghostty_dsym" ] && rm -rf "dsyms/$(basename "$ghostty_dsym")" && cp -R "$ghostty_dsym" dsyms/
+    if [ -n "$ghostty_dsym" ]; then
+      rm -rf "dsyms/$(basename "$ghostty_dsym")"
+      cp -R "$ghostty_dsym" dsyms/
+    fi
     if command -v mdimport >/dev/null 2>&1; then
       mdimport wheelhouse.dSYM "$cleat_lib_dir/libcleat.dylib.dSYM" dsyms/*.dSYM >/dev/null 2>&1
     fi

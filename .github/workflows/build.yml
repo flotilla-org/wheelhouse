@@ -30,6 +30,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python3 tools/test-daily-driver.py
+      - run: python3 tools/test-build-failures.py
       - run: bash -n scripts/run-daily-driver.sh
 
   native:
