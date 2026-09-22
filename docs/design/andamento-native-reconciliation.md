@@ -172,8 +172,8 @@ then apply local overrides ahead of defaults. Those visual choices must remain
 separate from entity role and grouping identity. No metadata format is introduced
 by this change. Standing-role actions on project headers still need explicit
 producer relationships; the renderer does not guess a governor from its name.
-Creation/closing and reveal-current controls remain prerequisites for retiring the
-old workspace selector. Other workspaces remains the coverage fallback.
+Creation is already available in the titlebar tools. Closing and reveal-current
+controls remain prerequisites for retiring the old workspace selector. Other workspaces remains the coverage fallback.
 
 Validation: the native macOS build and fourteen typed ABI tests pass, including
 independent inline sibling activation and focus after a parent collapse. A separate
@@ -224,3 +224,26 @@ Project rows reserve the same trailing status slot as convoy rows, keeping the
 workspace actions aligned. The project slot is currently blank; future aggregate
 working/waiting convoy or attention status can occupy it. Overview workspace
 state remains on its own action and is not duplicated as project-wide status.
+
+### Workspace toolbar and deferred preview ideas
+
+The titlebar already offers workspace creation. Add Close current workspace and
+Reveal current workspace as fixed toolbar actions, probably on the right, grouped
+with the existing zoom-out control. Close should use existing workspace-close
+semantics, including any applicable confirmation, and its tooltip should name the
+workspace. Keep close controls out of individual workspace buttons and do not grow
+the active button. Reveal should expose the current workspace when its placement
+is collapsed or outside the visible scroll area.
+
+The user observed workspace tooltips extending beyond the visible window. A
+follow-up should constrain their position and dimensions to the visible client
+area. Separate native windows for these cards remain a later option; bounding
+in-window cards is the nearer-term direction.
+
+Longer term, explore preview cards that remain open when the pointer moves into
+them and allow interaction. Cargo such as agent-produced artifacts and pull
+requests could make those cards useful beyond navigation. One proposed gesture
+is dragging a workspace preview card into a pinned sidebar area so its preview
+remains visible there. Interaction, pin persistence and preview update budgets
+still need design. These are recorded ideas, not part of the current sidebar
+parity work.
