@@ -7604,6 +7604,10 @@ rd_window_frame(void)
     //- rjf: unpack settings
     F32 rounded_corner_amount = rd_setting_f32_from_name(str8_lit("rounded_corner_amount"));
     F32 border_softness = 1.f;
+    // Thin outlines need a one-backing-pixel antialiasing transition. Keep
+    // background softness independent: using its two-point transition for a
+    // one-point stroke spreads both edges together and weakens the border.
+    F32 stroke_softness = 0.5f/Max(1.f, wm_backing_scale_from_window(ws->os));
     B32 do_background_blur = rd_setting_b32_from_name(str8_lit("background_blur"));
     B32 force_opaque_floating_backgrounds = rd_setting_b32_from_name(str8_lit("opaque_backgrounds"));
     B32 do_drop_shadows = 
@@ -8090,8 +8094,8 @@ rd_window_frame(void)
           if(b->flags & UI_BoxFlag_DrawBorder)
           {
             Vec4F32 border_color = b->border_color;
-            Rng2F32 b_border_rect = pad_2f32(b->rect, 1.f);
-            R_Rect2DInst *inst = dr_rect(b_border_rect, border_color, 0, 1.f, border_softness*1.f);
+            Rng2F32 b_border_rect = pad_2f32(b->rect, stroke_softness);
+            R_Rect2DInst *inst = dr_rect(b_border_rect, border_color, 0, 1.f, stroke_softness);
             MemoryCopyArray(inst->corner_radii, b_corner_radii);
             
             // rjf: hover effect
@@ -8103,7 +8107,7 @@ rd_window_frame(void)
                 color.w *= b->hot_t;
               }
               color.w *= 0.01f;
-              R_Rect2DInst *inst = dr_rect(b_border_rect, color, 0, 1.f, 1.f);
+              R_Rect2DInst *inst = dr_rect(b_border_rect, color, 0, 1.f, stroke_softness);
               MemoryCopyArray(inst->corner_radii, b_corner_radii);
             }
           }
