@@ -135,6 +135,29 @@ class NativeSidebarTests(unittest.TestCase):
             self.assertEqual(bool(controls[0].checked), show)
             self.assertTrue(lib.andamento_dispatch(self.core, snapshot, controls[0].action, None))
 
+    def test_superseded_failure_is_hidden_but_current_failure_remains(self):
+        for identity, superseded in [('old-governor', True), ('current-governor', False)]:
+            for kind, name in [('convoy', identity), ('vessel', identity + '-worker')]:
+                item = patch(kind, name, **{'flotilla.project': 'p', 'flotilla.convoy': identity,
+                             'flotilla.convoy.phase': 'failed', 'flotilla.convoy.superseded': superseded,
+                             'status.state': 'failed', 'status.attention': True})
+                self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+        snapshot, nodes = self.snapshot()
+        ids = {node.entity_id.string() for node in nodes}
+        self.assertNotIn('old-governor', ids)
+        self.assertNotIn('old-governor-worker', ids)
+        self.assertIn('current-governor', ids)
+        self.assertIn('current-governor-worker', ids)
+        for node in nodes:
+            for index in range(node.first_control, node.first_control + node.control_count):
+                control = Control()
+                self.assertTrue(lib.andamento_snapshot_control(snapshot, index, C.byref(control)))
+                if control.label.string() == 'Show finished':
+                    self.assertTrue(lib.andamento_dispatch(self.core, snapshot, control.action, None))
+        _, shown = self.snapshot()
+        self.assertIn('old-governor', {node.entity_id.string() for node in shown})
+        self.assertIn('old-governor-worker', {node.entity_id.string() for node in shown})
+
     def tearDown(self):
         for snapshot in self.snapshots:
             lib.andamento_snapshot_release(snapshot)

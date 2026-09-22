@@ -4,6 +4,14 @@ display-variable "show-issues" type="bool" default=true label="Issues" icon="I" 
 
 display-variable "show-finished" type="bool" default=false label="Show finished" icon="F" persist=true
 
+// Flotilla derives this from stable project/role identity and generations.
+grouping "wheelhouse.superseded" priority=1200 {
+  filter key="flotilla.convoy.superseded" equals=true
+  presence kind="convoy" class="tab" visible-when="show-finished"
+  presence kind="vessel" class="tab" visible-when="show-finished"
+  level key="entity.id"
+}
+
 grouping "wheelhouse.finished-landed" priority=1100 {
   filter key="flotilla.convoy.phase" equals="landed"
   presence kind="convoy" class="tab" visible-when="show-finished"
