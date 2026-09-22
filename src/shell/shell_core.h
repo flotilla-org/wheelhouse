@@ -549,6 +549,8 @@ typedef enum RD_ChromeElementKind
   RD_ChromeElementKind_SidebarCollapse,
   RD_ChromeElementKind_NewWorkspace,
   RD_ChromeElementKind_OverviewToggle,
+  RD_ChromeElementKind_RevealWorkspace,
+  RD_ChromeElementKind_CloseWorkspace,
   RD_ChromeElementKind_COUNT
 }
 RD_ChromeElementKind;
@@ -576,6 +578,7 @@ internal void rd_chrome_resolve(RD_ChromeElement *elements, U64 count, F32 title
 // client area so the window manager doesn't eat clicks as window drags)
 internal UI_Signal rd_chrome_build_new_workspace(CFG_Node *owner_cfg);
 internal UI_Signal rd_chrome_build_overview_toggle(RD_WindowState *ws);
+internal UI_Signal rd_chrome_build_workspace_action(CFG_Node *owner_cfg, B32 close);
 internal UI_Signal rd_chrome_build_sidebar_collapse(CFG_Node *owner_cfg);
 
 typedef struct UIShell_SidebarState UIShell_SidebarState;

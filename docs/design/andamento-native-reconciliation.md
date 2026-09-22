@@ -247,3 +247,29 @@ is dragging a workspace preview card into a pinned sidebar area so its preview
 remains visible there. Interaction, pin persistence and preview update budgets
 still need design. These are recorded ideas, not part of the current sidebar
 parity work.
+
+### Close and Reveal implemented
+
+Close current workspace and Reveal workspace in sidebar now sit to the right of
+Workspace Overview. Their measured widths participate in titlebar placement and
+tab-strip insets. If relocated into the sidebar, they use a fixed action row;
+the native sidebar keeps that row separate from template controls. Close and
+Reveal remain in the titlebar when the sidebar is hidden.
+
+Close sends the existing `close_workspace` command for the selected workspace.
+Its tooltip names that workspace; the existing last-workspace guard remains in
+force. Reveal opens the Andamento sidebar, exits workspace overview, expands the
+selected occurrence's ancestors using snapshot-owned core actions, opens its
+section, and scrolls its row into view. For inline vessels it reveals the parent
+row, where selection promotion exposes the vessel action if a slot fits. It
+prefers the deepest occurrence, then the first section on ties; unmatched host
+workspaces remain reachable through Other workspaces. Reveal never activates or
+materializes a workspace.
+
+Native host diagnostics cover ancestor expansion, preference for the tree over
+Attention, and absence of host effects during reveal. Manual native checks covered
+creating and closing a disposable workspace, reopening a hidden sidebar and a
+collapsed Projects section, and revealing a selected vessel after inserting forty
+projects before it. The macOS build and fourteen typed ABI tests pass. The old
+sidebar selector is still present; this change supplies its missing actions rather
+than removing it during validation.

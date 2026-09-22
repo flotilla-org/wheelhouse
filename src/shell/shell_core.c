@@ -3015,7 +3015,9 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split, UI_Them
         F32 list_content_h = (list_prev != &ui_nil_box ? list_prev->view_bounds.y : 0);
         B32 new_workspace_here = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions);
         B32 overview_here = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions);
-        F32 action_height = (new_workspace_here || overview_here) ? floor_f32(ui_top_font_size()*0.25f) + ui_top_font_size()*2.25f + panel_frame_inset_px+1.f : 0.f;
+        B32 reveal_here = ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions;
+        B32 close_here = ws->chrome_niche[RD_ChromeElementKind_CloseWorkspace] == RD_ChromeNiche_SidebarActions;
+        F32 action_height = (new_workspace_here || overview_here || reveal_here || close_here) ? floor_f32(ui_top_font_size()*0.25f) + ui_top_font_size()*2.25f + panel_frame_inset_px+1.f : 0.f;
         Vec2F32 list_dim = v2f32(dim_2f32(rect).x, Max(0.f, dim_2f32(rect).y-action_height));
         UI_ScrollRegionParams list_params = ui_scroll_region_params(r2f32p(0, 0, list_dim.x, list_dim.y),
                                                                    UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);
@@ -3218,7 +3220,7 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split, UI_Them
         // builds the new-workspace / overview elements only when chrome
         // placement relocated them here (the title bar couldn't fit them);
         // by default they live in the title bar & this row is absent.
-        if(new_workspace_here || overview_here)
+        if(new_workspace_here || overview_here || reveal_here || close_here)
         {
           ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.25f), 1.f));
           UI_PrefWidth(ui_pct(1.f, 0.f))
@@ -3238,6 +3240,8 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split, UI_Them
               UI_PrefHeight(ui_pct(1.f, 0.f))
             {
               if(overview_here) { rd_chrome_build_overview_toggle(ws); }
+              if(reveal_here) { rd_chrome_build_workspace_action(split->owner_cfg, 0); }
+              if(close_here) { rd_chrome_build_workspace_action(split->owner_cfg, 1); }
             }
             ui_spacer(ui_pct(1.f, 0.f));
           }
@@ -5013,6 +5017,45 @@ rd_chrome_build_overview_toggle(RD_WindowState *ws)
 }
 
 internal UI_Signal
+rd_chrome_build_workspace_action(CFG_Node *owner_cfg, B32 close)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, owner_cfg);
+  UIShell_MaterializedWorkspace *workspace = split.inventory.selected;
+  B32 enabled = workspace != 0 && (!close || uishell_controlled_split_workspace_can_close(&split, workspace));
+  UI_Signal sig = {0};
+  UI_TagF(enabled ? "" : "weak")
+  {
+    sig = rd_icon_button(close ? RD_IconKind_X : RD_IconKind_Target, 0,
+      close ? str8_lit("###toolbar_close_workspace") : str8_lit("###toolbar_reveal_workspace"));
+  }
+  if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  {
+    ui_state->tooltip_anchor_key = sig.box->key;
+    ui_labelf("%s: %S", close ? "Close workspace" : "Reveal workspace in sidebar", workspace ? workspace->display_name : str8_lit("None"));
+    if(close && !enabled) { ui_label(str8_lit("The last workspace cannot be closed")); }
+  }
+  if(enabled && ui_clicked(sig))
+  {
+    if(close) { uishell_cmd("close_workspace", .window = owner_cfg->id, .cfg = workspace->id); }
+    else
+    {
+      RD_WindowState *ws = rd_window_state_from_cfg(owner_cfg);
+      UIShell_SidebarState *sidebar = uishell_sidebar_init(ws);
+      sidebar->reveal_workspace_id = workspace->id;
+      CFG_Node *collapsed = cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed"));
+      if(collapsed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, collapsed); }
+      CFG_Node *setting = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner_cfg, str8_lit("sidebar_mode"));
+      cfg_node_new_replace(rd_state->cfg, setting, str8_lit("andamento"));
+      ws->workspace_zoom_open = 0;
+      rd_request_frame();
+    }
+  }
+  scratch_end(scratch);
+  return sig;
+}
+
+internal UI_Signal
 rd_chrome_build_sidebar_collapse(CFG_Node *owner_cfg)
 {
   B32 collapsed = (cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed")) != &cfg_nil_node);
@@ -6529,6 +6572,14 @@ rd_window_frame(void)
         chrome_elements[chrome_element_count++] = (RD_ChromeElement){
           RD_ChromeElementKind_OverviewToggle, icon_button_w, 1,
           {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_SidebarActions}, 2};
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+          RD_ChromeElementKind_RevealWorkspace, icon_button_w, 1,
+          {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_SidebarActions},
+          cfg_node_child_from_string(window, str8_lit("control_split_collapsed")) != &cfg_nil_node ? 1 : 2};
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+          RD_ChromeElementKind_CloseWorkspace, icon_button_w, 1,
+          {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_SidebarActions},
+          cfg_node_child_from_string(window, str8_lit("control_split_collapsed")) != &cfg_nil_node ? 1 : 2};
         rd_chrome_resolve(chrome_elements, chrome_element_count, title_bar_budget, ws->chrome_niche);
 
         // pixel extent actually occupied at each end of the title bar, for the
@@ -6544,6 +6595,8 @@ rd_window_frame(void)
           gap;
         ws->chrome_trailing_px = trailing +
           (ws->chrome_niche[RD_ChromeElementKind_OverviewToggle]  == RD_ChromeNiche_TitleBarTrailing ? icon_button_w : 0) +
+          (ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_TitleBarTrailing ? icon_button_w : 0) +
+          (ws->chrome_niche[RD_ChromeElementKind_CloseWorkspace] == RD_ChromeNiche_TitleBarTrailing ? icon_button_w : 0) +
           (ws->chrome_niche[RD_ChromeElementKind_ProjectSelector] == RD_ChromeNiche_TitleBarTrailing ? project_w : 0) +
           // the compact (kebab) menu renders as the rightmost trailing element
           (compact_menu_bar && ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu ? icon_button_w : 0) +
@@ -6726,6 +6779,17 @@ rd_window_frame(void)
           {
             UI_Signal sig = rd_chrome_build_overview_toggle(ws);
             wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+          }
+
+          for(B32 close = 0; close < 2; close++)
+          {
+            RD_ChromeElementKind kind = close ? RD_ChromeElementKind_CloseWorkspace : RD_ChromeElementKind_RevealWorkspace;
+            if(ws->chrome_niche[kind] == RD_ChromeNiche_TitleBarTrailing)
+              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+            {
+              UI_Signal sig = rd_chrome_build_workspace_action(window, close);
+              wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+            }
           }
 
           // rjf: loaded user viz
