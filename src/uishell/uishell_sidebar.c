@@ -434,6 +434,16 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   return action;
 }
 
+// Workspace controls need more contrast than passive container separators.
+internal Vec4F32
+uishell_sidebar_action_border(void)
+{
+  Vec4F32 color = mix_4f32(ui_color_from_name(str8_lit("border")),
+                           ui_color_from_name(str8_lit("text")), 0.20f);
+  color.w = 1.f;
+  return color;
+}
+
 internal size_t
 uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
                               AndamentoNode node, String8 context, B32 overview)
@@ -466,7 +476,7 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
     {
       UI_Box *slot = ui_build_box_from_stringf(0, "###action_slot_%S", uishell_sidebar_string(node.key));
       ui_push_parent(slot);
-      ui_spacer(ui_px(3.f, 1));
+      ui_spacer(ui_px(5.f, 1));
       UI_Box *column;
       UI_PrefWidth(ui_pct(1, 0)) UI_ChildLayoutAxis(Axis2_Y)
       { column = ui_build_box_from_stringf(0, "###action_column_%S", uishell_sidebar_string(node.key)); }
@@ -474,19 +484,20 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
       ui_spacer(ui_px(1.f, 1));
       ui_set_next_pref_width(ui_pct(1, 0));
       ui_set_next_pref_height(ui_pct(1, 0));
+      if(!node.selected) { ui_set_next_border_color(uishell_sidebar_action_border()); }
       UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|
         UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|
         (node.selected ? UI_BoxFlag_DrawBackground : 0), "###action_%S", uishell_sidebar_string(node.key));
-      UI_Parent(box) UI_PrefHeight(ui_pct(1, 1)) UI_TextPadding(ui_top_font_size()*0.2f)
+      UI_Parent(box) UI_PrefHeight(ui_pct(1, 1)) UI_TextPadding(ui_top_font_size()*0.4f)
       UI_FlagsAdd(UI_BoxFlag_DisableTruncatedHover)
       {
         UI_PrefWidth(ui_pct(1, 0))
         {
-          if(overview) RD_Font(RD_FontSlot_Icons) UI_TextAlignment(UI_TextAlign_Center)
+          if(overview) RD_Font(RD_FontSlot_Icons) UI_TextAlignment(UI_TextAlign_Center) UI_TextPadding(0)
           { ui_label(rd_icon_kind_text_table[RD_IconKind_Machine]); }
           else { ui_label(label); }
         }
-        UI_PrefWidth(ui_em(0.9f, 1)) UI_TextPadding(0)
+        UI_PrefWidth(ui_em(1.1f, 1)) UI_TextPadding(0)
         { ui_label(mark); }
       }
       sig = ui_signal_from_box(box);
@@ -508,8 +519,8 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   uishell_sidebar_restore(state, split);
   size_t action = ANDAMENTO_NONE;
   Temp scratch = scratch_begin(0, 0);
-  F32 em = ui_top_font_size(), row_height = floor_f32(em*2.f);
-  F32 project_gap = 6.f, project_padding = 3.f;
+  F32 em = ui_top_font_size(), row_height = floor_f32(em*2.2f);
+  F32 project_gap = 6.f, project_padding = 4.f;
   Vec2F32 dim = dim_2f32(rect);
   UI_Box *root;
   UI_Focus(UI_FocusKind_On) UI_Rect(rect)
@@ -805,7 +816,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               }
               if(project)
               {
-                UI_PrefWidth(ui_em(3.f, 1))
+                UI_PrefWidth(ui_em(3.8f, 1))
                 {
                   size_t requested = uishell_sidebar_inline_action(state, ws, node, str8_zero(), 1);
                   if(requested != ANDAMENTO_NONE) { action = requested; }
@@ -813,7 +824,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               }
               if(inline_count[i])
               {
-                F32 slot_width = em*6.f;
+                F32 slot_width = em*7.f;
                 F32 budget = dim.x*0.48f, overflow_width = em*2.5f;
                 U64 capacity = Max(0, (S64)(budget/slot_width));
                 U64 visible = inline_count[i] <= capacity ? inline_count[i] :
@@ -840,10 +851,11 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                       if(requested != ANDAMENTO_NONE) { action = requested; ui_ctx_menu_close(); }
                     }
                   }
-                  ui_spacer(ui_px(3.f, 1));
+                  ui_spacer(ui_px(5.f, 1));
                   UI_FixedY(1.f) UI_PrefHeight(ui_px(row_height-6.f, 1))
-                  UI_TagF(overflow_selected ? "tab" : "") UI_PrefWidth(ui_px(overflow_width-3.f, 1))
+                  UI_TagF(overflow_selected ? "tab" : "") UI_PrefWidth(ui_px(overflow_width-5.f, 1))
                   {
+                    if(!overflow_selected) { ui_set_next_border_color(uishell_sidebar_action_border()); }
                     UI_Signal sig = ui_button(push_str8f(scratch.arena, "+%I64u###overflow_%S", inline_count[i]-visible, node_key));
                     if(ui_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, row_height)); }
                   }
