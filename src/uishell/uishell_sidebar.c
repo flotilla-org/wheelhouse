@@ -603,6 +603,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size(), row_height = floor_f32(em*2.2f);
   F32 project_gap = 6.f, project_padding = 4.f;
+  F32 body_top_padding = 2.f; // Room for the first container's outward border stroke.
   Vec2F32 dim = dim_2f32(rect);
   UI_Box *root;
   UI_Focus(UI_FocusKind_On) UI_Rect(rect)
@@ -741,6 +742,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       }
       content_heights[n] += node_height;
     }
+    if(rows[n]) { content_heights[n] += body_top_padding; }
     if(!section->collapsed && rows[n] && flexible == section_count) { flexible = n; }
   }
   // Secondary sections have a bounded body; the first expanded section fills
@@ -828,7 +830,8 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         UI_Box *project_box = 0;
         U64 project_depth = 0, project_index = ANDAMENTO_NONE;
         F32 project_children_y = 0;
-        F32 row_y = 0;
+        ui_spacer(ui_px(body_top_padding, 1));
+        F32 row_y = body_top_padding;
         for(U64 i = sections[n]; i < end; i++)
         {
           if(project_box && depth[i] <= project_depth)
@@ -1257,6 +1260,11 @@ uishell_sidebar_motion_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
     child_heights[frame] = dim_2f32(children->rect).y;
     group_heights[frame] = dim_2f32(group->rect).y;
     content_heights[frame] = body->view_bounds.y;
+    if(frame == 0 && group->rect.y0-body->rect.y0 < 2.f)
+    {
+      ok = 0;
+      fprintf(stderr, "FAIL project border: first container has only %g points above its stroke before the scroll clip\n", group->rect.y0-body->rect.y0);
+    }
     if(frame == 2)
     {
       ok &= !!(children->flags & UI_BoxFlag_Clip);

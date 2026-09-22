@@ -312,6 +312,15 @@ header sizes, matching scroll extent, and inert closing controls.
 
 Project containers are inset two logical pixels from each side of the scroll
 viewport so their rounded border strokes remain inside its clip.
+The scroll body also starts with two pixels of top padding: the first project
+previously started exactly at the clip and lost the outer part of its top stroke.
+That padding participates in the content height and Reveal offsets. The native
+geometry diagnostic checks the first project's clearance from the scroll clip.
+
+The shell draws top and right frame edges around the sidebar using the panel
+border colour and `panel_border_px`, and keeps sidebar content inside them.
+Panel-gap integration and title-bar adjacency remain part of the broader frame
+work recorded in `docs/pane-focus-and-frame-spacing-notes.md`.
 
 ### One sidebar; next work
 

@@ -2954,7 +2954,25 @@ uishell_controlled_split_boundary_ui(UIShell_ControlledSplit *split, Rng2F32 rec
 internal void
 uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 {
-  if(rect.x1 > rect.x0 && rect.y1 > rect.y0) { uishell_sidebar_ui(rect, split); }
+  if(rect.x1 > rect.x0 && rect.y1 > rect.y0)
+  {
+    // The shell owns the control region's frame, with the same thickness and
+    // colour as panel frames. Keep scrolling content inside the top/right edges.
+    F32 thickness = floor_f32(Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_border_px")), 4.f));
+    thickness = Min(thickness, Min(dim_2f32(rect).x, dim_2f32(rect).y));
+    Rng2F32 inner = r2f32p(rect.x0, rect.y0+thickness, rect.x1-thickness, rect.y1);
+    if(inner.x1 > inner.x0 && inner.y1 > inner.y0) { uishell_sidebar_ui(inner, split); }
+    if(thickness > 0)
+    {
+      UI_BackgroundColor(ui_color_from_name(str8_lit("border"))) UI_CornerRadius(0)
+      {
+        UI_Rect(r2f32p(rect.x0, rect.y0, rect.x1, rect.y0+thickness))
+        { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
+        UI_Rect(r2f32p(rect.x1-thickness, rect.y0+thickness, rect.x1, rect.y1))
+        { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
+      }
+    }
+  }
 }
 
 ////////////////////////////////
