@@ -1152,7 +1152,27 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                 {
                   id<MTLTexture> src = (axis == Axis2_X ? mtl_window->stage_color : mtl_window->stage_scratch_color);
                   id<MTLTexture> dst = (axis == Axis2_X ? mtl_window->stage_scratch_color : mtl_window->stage_color);
+                  uniforms.rect = params->rect;
                   uniforms.direction = (axis == Axis2_X ? v2f32(1.f/(F32)Max(mtl_window->drawable_size.x, 1), 0) : v2f32(0, 1.f/(F32)Max(mtl_window->drawable_size.y, 1)));
+                  MTLScissorRect pass_scissor = scissor;
+                  if(axis == Axis2_X)
+                  {
+                    // The vertical pass samples above and below the final rect.
+                    // Write its entire input footprint, including bilinear neighbours,
+                    // before applying the final pass's clip and rounded-corner mask.
+                    F32 sample_radius = 0.f;
+                    for(U32 i = 1; i < uniforms.blur_count; i++)
+                    {
+                      sample_radius = Max(sample_radius, uniforms.kernel[i].y);
+                    }
+                    F32 pixel_width = viewport_dim.x/(F32)Max(mtl_window->drawable_size.x, 1);
+                    F32 pixel_height = viewport_dim.y/(F32)Max(mtl_window->drawable_size.y, 1);
+                    uniforms.rect.x0 -= pixel_width;
+                    uniforms.rect.x1 += pixel_width;
+                    uniforms.rect.y0 -= (ceil_f32(sample_radius)+1.f)*pixel_height;
+                    uniforms.rect.y1 += (ceil_f32(sample_radius)+1.f)*pixel_height;
+                    pass_scissor = (MTLScissorRect){0, 0, (NSUInteger)mtl_window->drawable_size.x, (NSUInteger)mtl_window->drawable_size.y};
+                  }
                   U64 uniform_offset = 0;
                   id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&uniforms, sizeof(uniforms), 256, &uniform_offset);
 
@@ -1162,7 +1182,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                   blur_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
                   id<MTLRenderCommandEncoder> encoder = [command_buffer renderCommandEncoderWithDescriptor:blur_pass];
                   [encoder setRenderPipelineState:r_mtl_state->blur_pipeline];
-                  [encoder setScissorRect:scissor];
+                  [encoder setScissorRect:pass_scissor];
                   [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:0];
                   [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:0];
                   [encoder setFragmentTexture:src atIndex:0];
