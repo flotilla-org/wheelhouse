@@ -44,13 +44,40 @@ jobs:
             - Test coverage
 
             Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
+            Use Read, Glob, and Grep to inspect local files. If CLAUDE.md is absent,
+            use CONTEXT.md and the relevant design notes. Local shell commands
+            are not allowed by this review workflow.
 
             AFTER reviewing, 
               * CHECK your findings against the existing comments and replies on the PR. e.g if followup issues are filed or the implementor pushed back, make sure that is 
               correct: drop issues that are already addressed, repeat issues that still need to be dealt with with an explanation.
               * ALWAYS Use `gh pr comment` with your Bash tool to leave your review as a SINGLE comment on the PR, properly formatted as markdown, even if just to say that you found no issues.
+              * Post with `gh pr comment ${{ github.event.pull_request.number }} --body-file -` and a quoted heredoc directly on that command. Do not use cat, command substitution, or a temporary file to construct the body.
 
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          claude_args: '--allowed-tools "Read,Glob,Grep,Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+      - name: Report review outcome
+        if: always() && steps.claude-review.outputs.execution_file != ''
+        env:
+          REVIEW_EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+        run: |
+          python3 - <<'PY'
+          import collections
+          import json
+          import os
+          import uuid
+          from pathlib import Path
 
+          messages = json.loads(Path(os.environ['REVIEW_EXECUTION_FILE']).read_text())
+          # Model-authored text must not be interpreted as workflow commands.
+          marker = uuid.uuid4().hex
+          print(f'::stop-commands::{marker}')
+          for message in messages:
+              if message.get('type') == 'result':
+                  print(message.get('result', 'No final review text returned.'))
+                  denied = collections.Counter(item.get('tool_name', 'unknown')
+                      for item in message.get('permission_denials', []))
+                  print('Denied tool counts:', dict(denied))
+          print(f'::{marker}::')
+          PY
