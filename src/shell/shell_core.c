@@ -2826,14 +2826,12 @@ uishell_controlled_split_selected_mount(UIShell_ControlledSplit *split)
   return mount;
 }
 
-internal B32 uishell_sidebar_uses_andamento(CFG_Node *owner);
-
 internal F32
 uishell_controlled_split_default_control_width_px(UIShell_ControlledSplit *split, Rng2F32 rect)
 {
   F32 rect_width = dim_2f32(rect).x;
   F32 min_width = floor_f32(ui_top_font_size()*4.f);
-  F32 desired_width = floor_f32(ui_top_font_size()*(uishell_sidebar_uses_andamento(split->owner_cfg) ? 32.f : 13.f));
+  F32 desired_width = floor_f32(ui_top_font_size()*32.f);
   F32 max_width = floor_f32(rect_width*0.32f);
   F32 width = 0;
   if(rect_width >= min_width*2.f)
@@ -2951,305 +2949,12 @@ uishell_controlled_split_boundary_ui(UIShell_ControlledSplit *split, Rng2F32 rec
   return is_changing;
 }
 
-internal void
-uishell_controlled_split_commit_workspace_rename(RD_WindowState *ws, CFG_Node *workspace_owner_cfg)
-{
-  if(ws != &rd_nil_window_state)
-  {
-    String8 new_label = str8(ws->root_controlled_split_rename_buffer, ws->root_controlled_split_rename_size);
-    if(new_label.size != 0 && workspace_owner_cfg != &cfg_nil_node)
-    {
-      CFG_Node *label = cfg_node_child_from_string_or_alloc(rd_state->cfg, workspace_owner_cfg, str8_lit("label"));
-      cfg_node_new_replace(rd_state->cfg, label, new_label);
-    }
-    ws->root_controlled_split_renaming_workspace_id = 0;
-  }
-}
-
 #include "uishell/uishell_sidebar.c"
 
 internal void
-uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split, UI_Theme *selected_workspace_theme)
+uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 {
-  if(rect.x1 > rect.x0 && rect.y1 > rect.y0)
-  {
-    if(uishell_sidebar_choice_ui(&rect, split)) { return; }
-    RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
-    if(ws != &rd_nil_window_state &&
-       ws->root_controlled_split_renaming_workspace_id != 0 &&
-       split->inventory.selected != 0 &&
-       split->inventory.selected->id != ws->root_controlled_split_renaming_workspace_id)
-    {
-      for(UIShell_MaterializedWorkspace *workspace = split->inventory.first;
-          workspace != 0;
-          workspace = workspace->next)
-      {
-        if(workspace->id == ws->root_controlled_split_renaming_workspace_id)
-        {
-          uishell_controlled_split_commit_workspace_rename(ws, workspace->mount.owner_cfg);
-          break;
-        }
-      }
-    }
-    UI_CornerRadius(0)
-      UI_ChildLayoutAxis(Axis2_Y)
-    {
-      UI_Box *control_box = &ui_nil_box;
-      UI_Focus(UI_FocusKind_On) UI_Rect(rect)
-      {
-        control_box = ui_build_box_from_string(UI_BoxFlag_Clickable|
-                                               UI_BoxFlag_DefaultFocusNav|
-                                               UI_BoxFlag_DisableFocusEffects|
-                                               UI_BoxFlag_Clip|
-                                               UI_BoxFlag_DrawBackground,
-                                               str8_lit("###workspace_control_surface"));
-      }
-      UI_Parent(control_box)
-      {
-        F32 panel_frame_inset_px = -floor_f32(-ui_top_font_size()*0.15f);
-
-        //- scrollable workspace list region: the rows scroll; the action row
-        // below stays pinned. the bar shows only when content overflows.
-        UI_Key list_key = ui_key_from_string(ui_key_zero(), str8_lit("###workspace_list"));
-        UI_Box *list_prev = ui_box_from_key(list_key);
-        F32 list_content_h = (list_prev != &ui_nil_box ? list_prev->view_bounds.y : 0);
-        B32 new_workspace_here = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions);
-        B32 overview_here = (ws != &rd_nil_window_state && ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions);
-        B32 reveal_here = ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions;
-        B32 close_here = ws->chrome_niche[RD_ChromeElementKind_CloseWorkspace] == RD_ChromeNiche_SidebarActions;
-        F32 action_height = (new_workspace_here || overview_here || reveal_here || close_here) ? floor_f32(ui_top_font_size()*0.25f) + ui_top_font_size()*2.25f + panel_frame_inset_px+1.f : 0.f;
-        Vec2F32 list_dim = v2f32(dim_2f32(rect).x, Max(0.f, dim_2f32(rect).y-action_height));
-        UI_ScrollRegionParams list_params = ui_scroll_region_params(r2f32p(0, 0, list_dim.x, list_dim.y),
-                                                                   UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);
-        list_params.gutter_px = floor_f32(ui_top_font_size()*1.2f);
-        list_params.content_dim_px.y = Max(0.f, list_content_h-1.f);
-        UI_ScrollRegion list_region = ui_scroll_region_layout(list_params);
-        UI_Box *list_box = &ui_nil_box;
-        UI_PrefWidth(ui_pct(1.f, 0.f)) UI_PrefHeight(ui_px(list_dim.y, 1.f)) UI_Row
-        {
-          S64 old_offset = list_prev != &ui_nil_box ? (S64)list_prev->view_off_target.y : 0;
-          UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
-          axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt(old_offset, 0),
-            r1s64(0, (S64)Max(0.f, list_content_h-dim_2f32(list_region.viewport).y)), (S64)dim_2f32(list_region.viewport).y};
-          UI_ScrollRegionSignal region_sig = ui_scroll_region_build(ui_top_parent(), list_key, &list_region, axes,
-            UI_BoxFlag_ViewScrollY|UI_BoxFlag_AllowOverflowY|UI_BoxFlag_ViewClamp);
-          list_box = region_sig.content_box;
-          list_box->child_layout_axis = Axis2_Y;
-          if(region_sig.position.y.idx != old_offset)
-          {
-            list_box->view_off_target.y = (F32)region_sig.position.y.idx;
-          }
-          UI_Parent(list_box)
-          {
-            F32 entry_margin_px = floor_f32(ui_top_font_size()*0.5f);
-            ui_spacer(ui_px(panel_frame_inset_px+1.f, 1.f));
-            for(UIShell_MaterializedWorkspace *workspace = split->inventory.first;
-                workspace != 0;
-                workspace = workspace->next)
-            {
-              B32 selected = (workspace == split->inventory.selected);
-              F32 row_height_px = floor_f32(ui_top_font_size()*rd_setting_f32_from_name(str8_lit("tab_height")));
-              F32 close_width_px = ui_top_font_size()*2.5f;
-              B32 can_close_workspace = uishell_controlled_split_workspace_can_close(split, workspace);
-              F32 entry_border_allowance_px = 2.f;
-              F32 preview_avail_w = Max(0.f, dim_2f32(rect).x - entry_margin_px - entry_border_allowance_px);
-              RD_WorkspacePreviewDraw *preview = 0;
-              F32 preview_h = 0;
-              if(ws != &rd_nil_window_state && preview_avail_w > 16.f)
-              {
-                rd_workspace_preview_demand_push(ws, workspace->id, preview_avail_w);
-                RD_SurfaceCacheNode *preview_node = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(workspace->id));
-                if(preview_node != 0 && preview_node->size.x > 0 && preview_node->size.y > 0)
-                {
-                  preview = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
-                  preview->node = preview_node;
-                  preview->src_uv = r2f32p(0, 0, 1, 1); // minis are already content-cropped
-                  F32 preview_aspect = (F32)preview_node->size.x/(F32)preview_node->size.y;
-                  preview_h = floor_f32(preview_avail_w/preview_aspect);
-                }
-              }
-
-              UI_PrefWidth(ui_pct(1.f, 0.f))
-                UI_PrefHeight(ui_children_sum(1.f))
-                UI_Row
-              {
-                ui_spacer(ui_px(entry_margin_px, 1.f));
-                UI_PrefWidth(ui_pct(1.f, 0.f))
-                  UI_PrefHeight(ui_children_sum(1.f))
-                {
-                  UI_Box *entry_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable,
-                                                                "workspace_%I64u", workspace->id);
-                  UI_Parent(entry_box)
-                  {
-                    UI_ThemeScope(selected ? selected_workspace_theme : 0)
-                      UI_PrefWidth(ui_pct(1.f, 0.f))
-                      UI_PrefHeight(ui_px(row_height_px, 1.f))
-                      UI_CornerRadius00(ui_top_font_size()*0.6f)
-                      UI_CornerRadius01(ui_top_font_size()*0.6f)
-                      UI_CornerRadius10(0)
-                      UI_CornerRadius11(0)
-                      UI_TagF("tab")
-                      UI_TagF(!selected ? "inactive" : "")
-                    {
-                      UI_Box *handle_box = ui_build_box_from_stringf(UI_BoxFlag_DrawHotEffects|
-                                                                     UI_BoxFlag_DrawBackground|
-                                                                     UI_BoxFlag_DrawBorder|
-                                                                     (UI_BoxFlag_DrawDropShadow*selected),
-                                                                     "workspace_handle_%I64u", workspace->id);
-                      UI_Parent(handle_box) UI_Row
-                      {
-                        ui_spacer(ui_em(0.5f, 1.f));
-                        UI_PrefWidth(ui_pct(1.f, 0.f))
-                          UI_PrefHeight(ui_pct(1.f, 0.f))
-                        {
-                          if(ws != &rd_nil_window_state && ws->root_controlled_split_renaming_workspace_id == workspace->id)
-                          {
-                            String8 rename_key_string = push_str8f(rd_frame_arena(), "###workspace_rename_%I64u", workspace->id);
-                            UI_Key rename_key = ui_key_from_string(ui_active_seed_key(), rename_key_string);
-                            ui_set_auto_focus_active_key(rename_key);
-                            UI_Signal edit_sig = ui_line_edit(&ws->root_controlled_split_rename_cursor,
-                                                              &ws->root_controlled_split_rename_mark,
-                                                              ws->root_controlled_split_rename_buffer,
-                                                              sizeof(ws->root_controlled_split_rename_buffer),
-                                                              &ws->root_controlled_split_rename_size,
-                                                              workspace->display_name,
-                                                              rename_key_string);
-                            B32 commit_rename = ui_committed(edit_sig);
-                            for(UI_Event *evt = 0; ui_next_event(&evt);)
-                            {
-                              if(evt->kind == UI_EventKind_Press &&
-                                 (evt->key == WM_Key_LeftMouseButton ||
-                                  evt->key == WM_Key_MiddleMouseButton ||
-                                  evt->key == WM_Key_RightMouseButton) &&
-                                 !contains_2f32(edit_sig.box->rect, evt->pos))
-                              {
-                                commit_rename = 1;
-                                break;
-                              }
-                            }
-                            if(commit_rename)
-                            {
-                              uishell_controlled_split_commit_workspace_rename(ws, workspace->mount.owner_cfg);
-                            }
-                          }
-                          else
-                          {
-                            UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
-                            ui_box_equip_display_string(name_box, workspace->display_name);
-                          }
-                        }
-                        if(can_close_workspace)
-                        {
-                          UI_PrefWidth(ui_px(close_width_px, 1.f))
-                            UI_TextAlignment(UI_TextAlign_Center)
-                            RD_Font(RD_FontSlot_Icons)
-                            UI_FontSize(ui_top_font_size()*0.75f)
-                            UI_TagF(".") UI_TagF("tab") UI_TagF("weak") UI_TagF("implicit")
-                            UI_CornerRadius00(0)
-                            UI_CornerRadius01(0)
-                          {
-                            UI_Box *close_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
-                                                                          UI_BoxFlag_DrawText|
-                                                                          UI_BoxFlag_DrawHotEffects|
-                                                                          UI_BoxFlag_DrawActiveEffects,
-                                                                          "%S###close_workspace_%I64u", rd_icon_kind_text_table[RD_IconKind_X], workspace->id);
-                            UI_Signal sig = ui_signal_from_box(close_box);
-                            if(ui_clicked(sig) || ui_middle_clicked(sig))
-                            {
-                              uishell_cmd("close_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
-                            }
-                          }
-                        }
-                      }
-                    }
-
-                    if(preview != 0 && preview_h > 0)
-                    {
-                      UI_PrefWidth(ui_pct(1.f, 0.f))
-                        UI_PrefHeight(ui_px(preview_h, 1.f))
-                      {
-                        UI_Box *preview_box = ui_build_box_from_stringf(0, "###workspace_preview_%I64u", workspace->id);
-                        ui_box_equip_custom_draw(preview_box, rd_workspace_preview_box_draw, preview);
-                      }
-                    }
-                  }
-
-                  // Entry interaction, after children - presses inside the close
-                  // button (or other clickable children) must be claimed there first.
-                  UI_Signal entry_sig = ui_signal_from_box(entry_box);
-                  if(ui_clicked(entry_sig))
-                  {
-                    if(!selected)
-                    {
-                      uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
-                    }
-                    if(ws != &rd_nil_window_state)
-                    {
-                      ws->workspace_zoom_open = 0;
-                    }
-                  }
-                  if(ui_double_clicked(entry_sig) && ws != &rd_nil_window_state)
-                  {
-                    String8 edit_string = workspace->display_name;
-                    edit_string.size = Min(sizeof(ws->root_controlled_split_rename_buffer), edit_string.size);
-                    MemoryCopy(ws->root_controlled_split_rename_buffer, edit_string.str, edit_string.size);
-                    ws->root_controlled_split_rename_size = edit_string.size;
-                    TxtPt rename_pt = txt_pt(1, edit_string.size+1);
-                    ws->root_controlled_split_rename_cursor = rename_pt;
-                    ws->root_controlled_split_rename_mark = txt_pt(1, 1);
-                    ws->root_controlled_split_renaming_workspace_id = workspace->id;
-                    ui_kill_action();
-                  }
-                  if(!selected && ui_right_clicked(entry_sig))
-                  {
-                    uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = workspace->id);
-                  }
-                }
-              }
-              ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.4f), 1.f));
-            }
-          }
-
-          //- consume wheel events over the list (scroll handling lives in
-          // ui_signal_from_box; nothing else signals this box)
-          ui_signal_from_box(list_box);
-
-        }
-
-        //- rjf: the action row is the sidebar's chrome host (ADR-0006): it
-        // builds the new-workspace / overview elements only when chrome
-        // placement relocated them here (the title bar couldn't fit them);
-        // by default they live in the title bar & this row is absent.
-        if(new_workspace_here || overview_here || reveal_here || close_here)
-        {
-          ui_spacer(ui_px(floor_f32(ui_top_font_size()*0.25f), 1.f));
-          UI_PrefWidth(ui_pct(1.f, 0.f))
-            UI_PrefHeight(ui_em(2.25f, 1.f))
-            UI_Row
-          {
-            ui_spacer(ui_em(0.5f, 1.f));
-            UI_TextAlignment(UI_TextAlign_Center)
-              UI_PrefWidth(ui_em(2.25f, 1.f))
-              UI_PrefHeight(ui_pct(1.f, 0.f))
-            {
-              if(new_workspace_here) { rd_chrome_build_new_workspace(split->owner_cfg); }
-            }
-            ui_spacer(ui_em(0.25f, 1.f));
-            UI_TextAlignment(UI_TextAlign_Center)
-              UI_PrefWidth(ui_em(2.25f, 1.f))
-              UI_PrefHeight(ui_pct(1.f, 0.f))
-            {
-              if(reveal_here) { rd_chrome_build_workspace_action(split->owner_cfg, 0); }
-              if(close_here) { rd_chrome_build_workspace_action(split->owner_cfg, 1); }
-              if(overview_here) { rd_chrome_build_overview_toggle(ws); }
-            }
-            ui_spacer(ui_pct(1.f, 0.f));
-          }
-          ui_spacer(ui_px(panel_frame_inset_px+1.f, 1.f));
-        }
-      }
-    }
-  }
+  if(rect.x1 > rect.x0 && rect.y1 > rect.y0) { uishell_sidebar_ui(rect, split); }
 }
 
 ////////////////////////////////
@@ -5066,8 +4771,6 @@ rd_chrome_build_workspace_action(CFG_Node *owner_cfg, B32 close)
       sidebar->reveal_workspace_id = workspace->id;
       CFG_Node *collapsed = cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed"));
       if(collapsed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, collapsed); }
-      CFG_Node *setting = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner_cfg, str8_lit("sidebar_mode"));
-      cfg_node_new_replace(rd_state->cfg, setting, str8_lit("andamento"));
       ws->workspace_zoom_open = 0;
       rd_request_frame();
     }
@@ -7135,7 +6838,7 @@ rd_window_frame(void)
     access_close(workspace_theme_access);
 
     Rng2F32 control_surface_rect = uishell_controlled_split_control_rect(&root_controlled_split, content_rect);
-    uishell_control_surface_ui(control_surface_rect, &root_controlled_split, selected_workspace_theme);
+    uishell_control_surface_ui(control_surface_rect, &root_controlled_split);
     B32 control_split_is_changing = uishell_controlled_split_boundary_ui(&root_controlled_split, content_rect);
     if(control_split_is_changing)
     {

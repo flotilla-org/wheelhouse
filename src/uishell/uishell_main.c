@@ -145,6 +145,8 @@ entry_point(CmdLine *cmd_line)
       r_init(cmd_line);
       fnt_init();
       rd_init(cmd_line);
+      uishell_sidebar_fixture = cmd_line_has_flag(cmd_line, str8_lit("sidebar_fixture")) ||
+        cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
 
       String8 socket_path = cmd_line_string(cmd_line, str8_lit("andamento_socket"));
       if(socket_path.size != 0)
@@ -249,6 +251,7 @@ entry_point(CmdLine *cmd_line)
                                     "Accept live metadata over HTTP/UDS using the specified sidebar template.\n\n"
                                     "--scroll_region_fixture\nOpen the two-axis scrollbar fixture.\n\n"
                                     "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
+                                    "--sidebar_fixture\nOpen the example project catalog instead of the local workspace sidebar.\n\n"
                                     "--sidebar_diagnostics\n"
                                     "Check the fixture sidebar workspace bridge and exit (use temporary user/project files).\n\n"
                                     "--terminal_fixture\n"

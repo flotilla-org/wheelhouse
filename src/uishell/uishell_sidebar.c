@@ -4,6 +4,7 @@
 global WheelhouseIngress *uishell_ingress;
 global String8 uishell_sidebar_live_config;
 global B32 uishell_sidebar_live;
+global B32 uishell_sidebar_fixture;
 global U64 uishell_sidebar_last_tick;
 // The first resource is primary. This descriptor is local fixture input, not
 // an andamento wire format. Persist IDs on tabs independently of their labels.
@@ -38,14 +39,6 @@ struct UIShell_SidebarState
   U8 error[512];
   U8 inspection[2048];
 };
-
-internal B32
-uishell_sidebar_uses_andamento(CFG_Node *owner)
-{
-  CFG_Node *setting = cfg_node_child_from_string(owner, str8_lit("sidebar_mode"));
-  return str8_match(setting->first->string, str8_lit("andamento"), 0) ||
-         (setting == &cfg_nil_node && uishell_sidebar_live);
-}
 
 internal AndamentoText
 uishell_sidebar_text(String8 s)
@@ -141,11 +134,12 @@ uishell_sidebar_init(RD_WindowState *ws)
       uishell_sidebar_result(state, 0, 0);
       return state;
     }
-    String8 config = uishell_sidebar_live ? uishell_sidebar_live_config : str8_cstring((char *)uishell_sidebar_fixture_config);
+    String8 config = uishell_sidebar_live ? uishell_sidebar_live_config :
+      str8_cstring((char *)(uishell_sidebar_fixture ? uishell_sidebar_fixture_config : uishell_sidebar_local_config));
     state->core = andamento_create(config.str, config.size, &error);
     if(uishell_sidebar_result(state, state->core != 0, error))
     {
-      String8 patches = uishell_sidebar_live ? str8_zero() : str8_cstring((char *)uishell_sidebar_fixture_patches);
+      String8 patches = uishell_sidebar_fixture && !uishell_sidebar_live ? str8_cstring((char *)uishell_sidebar_fixture_patches) : str8_zero();
       for(U64 start = 0; start < patches.size;)
       {
         U64 end = start;
@@ -159,7 +153,7 @@ uishell_sidebar_init(RD_WindowState *ws)
         start = end+1;
       }
 #if OS_WINDOWS
-      if(!uishell_sidebar_live)
+      if(uishell_sidebar_fixture && !uishell_sidebar_live)
       {
       AndamentoFact recipe = {0};
       recipe.key = uishell_sidebar_text(str8_lit("action.primary.recipe"));
@@ -247,7 +241,7 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
         CFG_Node *id = cfg_node_new(rd_state->cfg, workspace, str8_lit("sidebar_entity_id"));
         cfg_node_new(rd_state->cfg, id, uishell_sidebar_string(effect.entity_id));
         String8 cwd = effect.has_cwd ? uishell_sidebar_string(effect.cwd) : str8_zero();
-        if(!uishell_sidebar_live && str8_match(uishell_sidebar_string(effect.entity_kind), str8_lit("vessel"), 0) &&
+        if(uishell_sidebar_fixture && !uishell_sidebar_live && str8_match(uishell_sidebar_string(effect.entity_kind), str8_lit("vessel"), 0) &&
            str8_match(uishell_sidebar_string(effect.entity_id), str8_lit("multi"), 0))
         {
           uishell_sidebar_populate(workspace, uishell_sidebar_fixture_resources,
@@ -1169,41 +1163,6 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
     uishell_sidebar_observe(state, &current);
     scratch_end(scratch);
   }
-}
-
-internal B32
-uishell_sidebar_choice_ui(Rng2F32 *rect, UIShell_ControlledSplit *split)
-{
-  CFG_Node *setting = cfg_node_child_from_string(split->owner_cfg, str8_lit("sidebar_mode"));
-  B32 andamento = uishell_sidebar_uses_andamento(split->owner_cfg);
-  F32 height = ui_top_font_size()*2.2f;
-  Rng2F32 header = *rect;
-  header.y1 = Min(header.y1, header.y0+height);
-  UI_Box *box = &ui_nil_box;
-  UI_Rect(header) UI_ChildLayoutAxis(Axis2_X)
-  {
-    box = ui_build_box_from_string(UI_BoxFlag_DrawBackground, str8_lit("###sidebar_mode"));
-  }
-  {
-    UI_Parent(box) UI_PrefWidth(ui_pct(0.5f, 0)) UI_PrefHeight(ui_pct(1, 0))
-    {
-      B32 previews = 0, core = 0;
-      UI_TagF("tab") UI_TagF(andamento ? "inactive" : "")
-      { previews = ui_clicked(ui_button(str8_lit("Workspaces###sidebar_previews"))); }
-      UI_TagF("tab") UI_TagF(andamento ? "" : "inactive")
-      { core = ui_clicked(ui_button(str8_lit("Andamento###sidebar_andamento"))); }
-      if(previews || core)
-      {
-        setting = cfg_node_child_from_string_or_alloc(rd_state->cfg, split->owner_cfg, str8_lit("sidebar_mode"));
-        cfg_node_new_replace(rd_state->cfg, setting, core ? str8_lit("andamento") : str8_lit("previews"));
-        andamento = core;
-        rd_request_frame();
-      }
-    }
-  }
-  rect->y0 = header.y1;
-  if(andamento) { uishell_sidebar_ui(*rect, split); }
-  return andamento;
 }
 
 // Exercises the native host adapter, not just andamento's own C fixture.

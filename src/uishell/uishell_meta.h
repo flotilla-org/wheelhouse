@@ -86,6 +86,7 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
   )},
   {str8_lit_comp("window"), 0, str8_lit_comp(
     "x:{"
+    "@display_name('Workspace Name') @description(\"Name of the window-backed workspace.\") 'label': string,"
     "@default(1) @display_name('Smooth UI Text') @description(\"Controls whether or not UI text is fully anti-aliased.\") 'smooth_ui_text': bool,"
     "@default(1) @display_name('Hint UI Text') @description(\"Controls whether or not UI text is hinted.\") 'hint_ui_text': bool,"
     "@default(0) @display_name('Smooth Code Text') @description(\"Controls whether or not code text is fully anti-aliased.\") 'smooth_code_text': bool,"

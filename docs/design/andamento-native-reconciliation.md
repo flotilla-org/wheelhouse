@@ -312,3 +312,36 @@ header sizes, matching scroll extent, and inert closing controls.
 
 Project containers are inset two logical pixels from each side of the scroll
 viewport so their rounded border strokes remain inside its clip.
+
+### One sidebar; next work
+
+The old Workspaces preview list and Workspaces/Andamento selector are retired.
+The tree is always the control surface, including with old saved `sidebar_mode`
+values. Standalone launches use a local-only template and observed workspace
+coverage; example entities require `--sidebar_fixture`. Overview and hover
+previews remain available. Workspace Settings in the Window menu and command
+palette preserves access to workspace names and themes without inline editing
+on producer-owned entity labels.
+
+The immediate next step is to package this native composition branch for review
+and daily-driver acceptance. After that:
+
+1. Bound hover cards to the window (Wheelhouse #5), including long metadata and
+   preview cards near the bottom/right edges.
+2. Remove repeated sidebar context-name scans (Wheelhouse #29) and fix build
+   failure propagation (#14); the latter interfered with this work during disk
+   exhaustion.
+3. Add the toolbar breadcrumb using shared placement identity, with a local
+   workspace fallback. Keep it within the existing chrome placement system.
+4. Settle semantic standing-role/project relationships, then role actions/icons
+   and project summary status. Keep producer suggestions and local presentation
+   overrides separate.
+5. Consume complete project repository membership once Flotilla #1897 provides
+   it. Interactive/pinned preview cards and convoy overview workspaces remain
+   later design work.
+
+The broader roadmap still includes direct remote cleat render transport
+(Wheelhouse #21), richer Jackstay attachment/discovery and eventual Kitty stream
+placements. Those do not block sidebar retirement. Existing preview correctness
+issues #9/#11 need rechecking against the current implementation before expanding
+preview usage further.

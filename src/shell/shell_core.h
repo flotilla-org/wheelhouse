@@ -630,11 +630,7 @@ struct RD_WindowState
   UIShell_SidebarState *sidebar;
   B32 root_controlled_split_initialized;
   CFG_ID root_controlled_split_selected_workspace_id;
-  CFG_ID root_controlled_split_renaming_workspace_id;
-  U8 root_controlled_split_rename_buffer[256];
-  U64 root_controlled_split_rename_size;
-  TxtPt root_controlled_split_rename_cursor;
-  TxtPt root_controlled_split_rename_mark;
+
 
   // rjf: drop-completion state
   Arena *drop_completion_arena;

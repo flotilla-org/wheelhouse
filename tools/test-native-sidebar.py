@@ -186,6 +186,29 @@ class NativeSidebarTests(unittest.TestCase):
         lib.andamento_effects_release(batch)
         return result
 
+    def test_local_sidebar_has_only_observed_workspaces(self):
+        lib.andamento_destroy(self.core)
+        config = (ROOT / 'data/sidebar/local.kdl').read_bytes()
+        self.core = lib.andamento_create(config, len(config), None)
+        self.assertTrue(self.core)
+        _, nodes = self.snapshot()
+        self.assertFalse(any(not n.is_section or n.control_count for n in nodes))
+        workspaces = (Workspace * 2)(Workspace(70, 0, Text.of('local'), 0),
+                                     Workspace(71, 1, Text.of('local'), 1))
+        self.assertEqual(lib.andamento_observe(self.core, workspaces, 2, None, 0, None), 1)
+        snapshot, nodes = self.snapshot()
+        entries = [n for n in nodes if not n.is_section]
+        self.assertEqual([n.workspace_id for n in entries], [70, 71])
+        self.assertTrue(all(n.entity_kind.string() == 'andamento.workspace' for n in entries))
+        self.assertTrue(all(n.control_count == 0 for n in nodes))
+        kind, request, identity, _ = self.dispatch(snapshot, entries[1].activate)
+        self.assertEqual((kind, identity), (0, 71))
+        self.assertEqual(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None), 1)
+        workspaces[0].name = Text.of('Renamed')
+        self.assertEqual(lib.andamento_observe(self.core, workspaces, 1, None, 0, None), 1)
+        _, nodes = self.snapshot()
+        self.assertEqual([(n.workspace_id, n.label.string()) for n in nodes if not n.is_section], [(70, 'Renamed')])
+
     def test_unplaced_workspaces_focus_exact_ids_and_reject_stale_actions(self):
         workspaces = (Workspace * 2)(Workspace(70, 0, Text.of('local'), 0),
                                      Workspace(71, 1, Text.of('local'), 1))
