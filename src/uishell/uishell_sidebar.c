@@ -1045,9 +1045,9 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         {
           if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_new_workspace(split->owner_cfg); }
           ui_spacer(ui_pct(1, 0));
-          if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_overview_toggle(ws); }
           if(ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_workspace_action(split->owner_cfg, 0); }
           if(ws->chrome_niche[RD_ChromeElementKind_CloseWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_workspace_action(split->owner_cfg, 1); }
+          if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_overview_toggle(ws); }
         }
       }
     }

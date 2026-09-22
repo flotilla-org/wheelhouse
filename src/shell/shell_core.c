@@ -3239,9 +3239,9 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split, UI_Them
               UI_PrefWidth(ui_em(2.25f, 1.f))
               UI_PrefHeight(ui_pct(1.f, 0.f))
             {
-              if(overview_here) { rd_chrome_build_overview_toggle(ws); }
               if(reveal_here) { rd_chrome_build_workspace_action(split->owner_cfg, 0); }
               if(close_here) { rd_chrome_build_workspace_action(split->owner_cfg, 1); }
+              if(overview_here) { rd_chrome_build_overview_toggle(ws); }
             }
             ui_spacer(ui_pct(1.f, 0.f));
           }
@@ -5016,6 +5016,26 @@ rd_chrome_build_overview_toggle(RD_WindowState *ws)
   return sig;
 }
 
+// A separated plug/socket distinguishes workspace detachment from window close.
+internal UI_BOX_CUSTOM_DRAW(rd_workspace_detach_icon_draw)
+{
+  F32 unit = Max(1.f, floor_f32(box->font_size/12.f));
+  Vec2F32 origin = v2f32(floor_f32((box->rect.x0+box->rect.x1-18.f*unit)*0.5f),
+                         floor_f32((box->rect.y0+box->rect.y1-12.f*unit)*0.5f));
+  String8 color_tags[] = {str8_lit("weak"), str8_lit("text")};
+  Vec4F32 color = ui_color_from_tags_key_extras(box->tags_key, (String8Array){color_tags, ArrayCount(color_tags)});
+  Rng2F32 parts[] = {
+    {0, 5, 3, 7}, {3, 2, 7, 10}, {7, 3, 10, 4}, {7, 8, 10, 9},
+    {12, 2, 13, 10}, {13, 2, 15, 3}, {13, 9, 15, 10}, {15, 5, 18, 7},
+  };
+  for(U64 i = 0; i < ArrayCount(parts); i++)
+  {
+    Rng2F32 r = parts[i];
+    dr_rect(r2f32p(origin.x+r.x0*unit, origin.y+r.y0*unit,
+                  origin.x+r.x1*unit, origin.y+r.y1*unit), color, 0, 0, 0);
+  }
+}
+
 internal UI_Signal
 rd_chrome_build_workspace_action(CFG_Node *owner_cfg, B32 close)
 {
@@ -5026,8 +5046,9 @@ rd_chrome_build_workspace_action(CFG_Node *owner_cfg, B32 close)
   UI_Signal sig = {0};
   UI_TagF(enabled ? "" : "weak")
   {
-    sig = rd_icon_button(close ? RD_IconKind_X : RD_IconKind_Target, 0,
+    sig = rd_icon_button(close ? RD_IconKind_Null : RD_IconKind_Target, 0,
       close ? str8_lit("###toolbar_close_workspace") : str8_lit("###toolbar_reveal_workspace"));
+    if(close) { ui_box_equip_custom_draw(sig.box, rd_workspace_detach_icon_draw, 0); }
   }
   if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
   {
@@ -6774,12 +6795,6 @@ rd_window_frame(void)
           ui_spacer(ui_pct(1, 0));
 
           //- rjf: trailing buttons ("b") niche — elements resolved here (ADR-0006)
-          if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_TitleBarTrailing)
-            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
-          {
-            UI_Signal sig = rd_chrome_build_overview_toggle(ws);
-            wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
-          }
 
           for(B32 close = 0; close < 2; close++)
           {
@@ -6790,6 +6805,13 @@ rd_window_frame(void)
               UI_Signal sig = rd_chrome_build_workspace_action(window, close);
               wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
             }
+          }
+
+          if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_TitleBarTrailing)
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+          {
+            UI_Signal sig = rd_chrome_build_overview_toggle(ws);
+            wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
           }
 
           // rjf: loaded user viz

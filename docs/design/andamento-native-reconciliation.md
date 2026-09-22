@@ -250,8 +250,8 @@ parity work.
 
 ### Close and Reveal implemented
 
-Close current workspace and Reveal workspace in sidebar now sit to the right of
-Workspace Overview. Their measured widths participate in titlebar placement and
+Reveal workspace in sidebar, Close current workspace, and Workspace Overview
+form the trailing workspace control cluster. Their measured widths participate in titlebar placement and
 tab-strip insets. If relocated into the sidebar, they use a fixed action row;
 the native sidebar keeps that row separate from template controls. Close and
 Reveal remain in the titlebar when the sidebar is hidden.
@@ -273,3 +273,16 @@ collapsed Projects section, and revealing a selected vessel after inserting fort
 projects before it. The macOS build and fourteen typed ABI tests pass. The old
 sidebar selector is still present; this change supplies its missing actions rather
 than removing it during validation.
+
+A future breadcrumb control could show the selected workspace's semantic path,
+for example `katzensteg > capture-resize > work`, with the appropriate icons. The
+proposed home is after the expanded menu and New Workspace button in the toolbar.
+This is recorded for later; it needs shared placement identity rather than parsing
+workspace labels, plus a fallback for local/unplaced workspaces.
+
+The workspace control cluster is ordered Reveal, Close, Overview, putting
+Overview at its right edge. Close uses a disconnected plug/socket symbol rather
+than a far-right X that resembles window close. Its tooltip still names the
+operation and workspace. Closing a provider-backed workspace can leave a latent
+catalog entry; closing a local workspace need not do so. The icon does not change
+those existing close semantics.
