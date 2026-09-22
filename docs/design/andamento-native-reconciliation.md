@@ -146,3 +146,37 @@ Validation: independent core/frontend tests and C fixture, thirteen native sideb
 ABI tests, a native build, and live inspection of a project metadata card and a
 vessel terminal preview passed on 22 September 2026. The old Workspaces selector
 remains available; workspace creation/closing controls are still outstanding.
+
+### Native project composition, 22 September 2026
+
+The accepted browser study combines subtle project containers with inline workspace
+controls. The first native implementation uses Andamento's existing `layout="inline"`
+loop declaration for vessel children. Each placement retains its own key, action,
+workspace binding, selection and hover details. Wheelhouse measures the action
+budget and puts excess actions in a `+N` menu; the menu indicates a selected member.
+An inline leaf stays on its parent's row even if that parent has retained collapse
+state. Nodes with children or controls retain ordinary tree rows so their content
+remains reachable. Placement membership, filtering and workspace coverage remain
+in Andamento; the native index only arranges the returned nodes for drawing.
+
+Top-level projects receive a subtle rounded container and an identity-derived
+accent. The palette is a local default, independent of sort order, labels and
+workspace selection. It does not recolour terminal contents. A project overview
+button has a fixed slot even when no recipe is available or an opening is pending.
+Vessel controls currently use template-resolved text labels, with full labels in
+their hover cards. Open/pending/status marks reserve space; selecting a workspace
+does not insert another column. Diagnostics occupy one fixed bottom strip.
+
+Future presentation resolution should accept producer icon/colour suggestions,
+then apply local overrides ahead of defaults. Those visual choices must remain
+separate from entity role and grouping identity. No metadata format is introduced
+by this change. Standing-role actions on project headers still need explicit
+producer relationships; the renderer does not guess a governor from its name.
+Creation/closing and reveal-current controls remain prerequisites for retiring the
+old workspace selector. Other workspaces remains the coverage fallback.
+
+Validation: the native macOS build and fourteen typed ABI tests pass, including
+independent inline sibling activation and focus after a parent collapse. A separate
+native fixture window was used to open a workspace from overflow and check project
+spacing, status slots and selected-row treatment. This does not replace the live
+daily-driver configuration or validate future role metadata.

@@ -92,7 +92,7 @@ template "convoy/native" {
   field "label" key="display.label"
   field "kind" key="entity.kind"
   field "status" key="status.state"
-  for "vessel" kind="vessel" {
+  for "vessel" kind="vessel" layout="inline" {
     match "flotilla.convoy" of="convoy"
     order "display.label"
     apply-template "wheelhouse/entry"
