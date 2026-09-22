@@ -105,3 +105,18 @@ Suggested order: establish workspace coverage and fallback behavior; add metadat
 and preview hover cards; then compare project accents, role actions and compact
 row compositions using real data at narrow and wide sidebar widths. Keep fixed
 horizontal slots and stable status geometry throughout.
+
+
+### Workspace coverage implemented
+
+Andamento now appends “Other workspaces” for observed workspace IDs with no
+catalog placement after filtering. It removes that fallback when a normal
+placement returns, and keeps duplicate names distinct. Snapshot-owned activation
+focuses the exact workspace ID. The native renderer outlines collapsed ancestors
+(including section headers) containing the current workspace without changing
+row geometry or assigning the ancestor the child's activation target.
+
+The old selector remains available. Preview hover cards, creation/closing controls,
+and automatic scroll-to-current behavior are still separate follow-up work.
+Validation: independent core/frontends and C fixture, twelve native ABI tests,
+and a native Wheelhouse build passed on 22 September 2026.

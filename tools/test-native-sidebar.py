@@ -185,6 +185,42 @@ class NativeSidebarTests(unittest.TestCase):
         lib.andamento_effects_release(batch)
         return result
 
+    def test_unplaced_workspaces_focus_exact_ids_and_reject_stale_actions(self):
+        workspaces = (Workspace * 2)(Workspace(70, 0, Text.of('local'), 0),
+                                     Workspace(71, 1, Text.of('local'), 1))
+        self.assertEqual(lib.andamento_observe(self.core, workspaces, 2, None, 0, None), 1)
+        snapshot, nodes = self.snapshot()
+        fallback = [n for n in nodes if n.entity_kind.string() == 'andamento.workspace']
+        self.assertEqual([n.workspace_id for n in fallback], [70, 71])
+        self.assertEqual([n.selected for n in fallback], [0, 1])
+        self.assertNotEqual(fallback[0].key.string(), fallback[1].key.string())
+        kind, request, identity, _ = self.dispatch(snapshot, fallback[1].activate)
+        self.assertEqual((kind, identity), (0, 71))
+        self.assertEqual(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None), 1)
+        self.assertEqual(lib.andamento_observe(self.core, workspaces, 1, None, 0, None), 1)
+        self.assertEqual(lib.andamento_dispatch(self.core, snapshot, fallback[1].activate, None), 0)
+        _, nodes = self.snapshot()
+        self.assertEqual([n.workspace_id for n in nodes if n.entity_kind.string() == 'andamento.workspace'], [70])
+
+    def test_finished_open_workspace_moves_to_fallback_and_back(self):
+        snapshot, nodes = self.snapshot()
+        vessel = next(n for n in nodes if n.entity_id.string() == 'v')
+        _, request, _, _ = self.dispatch(snapshot, vessel.activate)
+        self.assertEqual(lib.andamento_complete(self.core, request, 1, 42, Text.of(''), None), 1)
+        workspace = Workspace(42, 0, Text.of('worker'), 1)
+        self.assertEqual(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None), 1)
+        for phase in ('landed', 'active'):
+            for kind, identity in [('convoy', 'c'), ('vessel', 'v')]:
+                update = patch(kind, identity, **{'flotilla.convoy.phase': phase})
+                self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+            snapshot, nodes = self.snapshot()
+            fallback = [n for n in nodes if n.entity_kind.string() == 'andamento.workspace']
+            self.assertEqual(len(fallback), 1 if phase == 'landed' else 0)
+            live = next(n for n in nodes if not n.is_section and n.workspace_id == 42 and n.state == 3)
+            kind, request, identity, _ = self.dispatch(snapshot, live.activate)
+            self.assertEqual((kind, identity), (0, 42))
+            self.assertEqual(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None), 1)
+
     def test_hierarchy_and_truthful_openability(self):
         _, nodes = self.snapshot()
         find = lambda identity: next(n for n in nodes if n.entity_id.string() == identity)
