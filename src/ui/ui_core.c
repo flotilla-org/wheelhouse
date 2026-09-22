@@ -1325,8 +1325,43 @@ ui_end_build(void)
     if(!ui_box_is_nil(root))
     {
       Rng2F32 window_rect = wm_client_rect_from_window(ui_window());
-      Vec2F32 window_dim = dim_2f32(window_rect);
       Rng2F32 root_rect = root->rect;
+      if(root == ui_state->tooltip_root && force_contain[idx])
+      {
+        // Leave room for the card's outward border stroke. Its measured root
+        // includes the card, so containment applies to the visible tooltip.
+        F32 inset = Min(2.f, Min(dim_2f32(window_rect).x, dim_2f32(window_rect).y)*0.5f);
+        window_rect = pad_2f32(window_rect, -inset);
+        Vec2F32 limit = dim_2f32(window_rect);
+        for(Axis2 axis = Axis2_X; axis < Axis2_COUNT; axis = (Axis2)(axis+1))
+        {
+          if(root->fixed_size.v[axis] > limit.v[axis])
+          {
+            root->pref_size[axis] = ui_px(limit.v[axis], 1);
+            root->fixed_size.v[axis] = limit.v[axis];
+            root_rect.p1.v[axis] = root_rect.p0.v[axis]+limit.v[axis];
+            F32 remaining = limit.v[axis];
+            for(UI_Box *card = root->first; !ui_box_is_nil(card); card = card->next)
+            {
+              F32 size = Min(card->fixed_size.v[axis], remaining);
+              if(size < card->fixed_size.v[axis])
+              {
+                card->pref_size[axis] = ui_px(size, 1);
+                card->flags |= UI_BoxFlag_Clip;
+              }
+              if(axis == root->child_layout_axis) { remaining -= size; }
+            }
+          }
+        }
+        if(root_rect.y1 > window_rect.y1)
+        {
+          UI_Box *anchor = ui_box_from_key(ui_state->tooltip_anchor_key);
+          F32 above = ui_box_is_nil(anchor) ? root_rect.y0-30.f : anchor->rect.y0-anchor->font_size*0.5f;
+          above -= dim_2f32(root_rect).y;
+          if(above >= window_rect.y0)
+          { root_rect = shift_2f32(root_rect, v2f32(0, above-root_rect.y0)); }
+        }
+      }
       Vec2F32 shift_down =
       {
         -ClampBot(0, root_rect.x1 - window_rect.x1) * (force_contain[idx]),
@@ -2024,7 +2059,7 @@ ui_tooltip_begin(void)
   ui_tooltip_begin_base();
   ui_set_next_squish(0.1f-ui_state->tooltip_open_t*0.1f);
   ui_set_next_transparency(1-ui_state->tooltip_open_t);
-  UI_Flags(UI_BoxFlag_Floating|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DrawDropShadow|UI_BoxFlag_SquishAnchored)
+  UI_Flags(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DrawDropShadow|UI_BoxFlag_SquishAnchored)
     UI_PrefWidth(ui_children_sum(1))
     UI_PrefHeight(ui_children_sum(1))
     UI_CornerRadius(ui_top_font_size()*0.25f)

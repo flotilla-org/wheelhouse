@@ -337,8 +337,9 @@ on producer-owned entity labels.
 The immediate next step is to package this native composition branch for review
 and daily-driver acceptance. After that:
 
-1. Bound hover cards to the window (Wheelhouse #5), including long metadata and
-   preview cards near the bottom/right edges.
+1. Hover cards are bounded in `fix/tooltip-window-bounds` (Wheelhouse #5), including
+   preview cards near the bottom/right edges. Oversized cards clip excess content;
+   interactive/scrollable cards remain later work. See the tooltip validation note.
 2. Remove repeated sidebar context-name scans (Wheelhouse #29) and fix build
    failure propagation (#14); the latter interfered with this work during disk
    exhaustion.
