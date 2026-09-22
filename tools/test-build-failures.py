@@ -19,7 +19,7 @@ class BuildFailures(unittest.TestCase):
             (root / 'build').mkdir()
             # A prior successful build must not make a failed rebuild look green.
             (root / 'build/wheelhouse').write_text('previous build')
-            (root / 'deps').mkdir()
+            (root / 'deps/.tools/ghostty-install/lib/libghostty-vt.dylib.dSYM').mkdir(parents=True)
             bin_dir = root / 'bin'
             bin_dir.mkdir()
             tool = bin_dir / 'tool'
@@ -29,7 +29,11 @@ from pathlib import Path
 import sys
 name = Path(sys.argv[0]).name
 stage = name
-if name == 'cc':
+if name == 'rm':
+    stage = 'cleanup-symbols' if '-rf' in sys.argv else 'remove-object'
+elif name == 'cp':
+    stage = 'copy-symbols'
+elif name == 'cc':
     stage = 'compile' if '-c' in sys.argv else 'link'
 with open(os.environ['BUILD_TEST_LOG'], 'a') as log:
     log.write(stage + '\\n')
@@ -47,7 +51,7 @@ elif name == 'cc':
 ''')
             tool.chmod(0o755)
             for name in ('cc', 'cargo', 'rustc', 'python3', 'uname', 'git',
-                         'dsymutil', 'codesign', 'mdimport'):
+                         'dsymutil', 'codesign', 'mdimport', 'rm', 'cp'):
                 (bin_dir / name).symlink_to(tool)
             log = root / 'calls'
             env = {key: value for key, value in os.environ.items()
@@ -67,7 +71,7 @@ elif name == 'cc':
     def test_failures_stop_the_build(self):
         for platform, stages in (
                 ('Linux', ('cargo', 'compile', 'link')),
-                ('Darwin', ('cargo', 'compile', 'link', 'dsymutil', 'codesign'))):
+                ('Darwin', ('cargo', 'compile', 'link', 'dsymutil', 'cleanup-symbols', 'copy-symbols', 'codesign'))):
             for stage in stages:
                 with self.subTest(platform=platform, stage=stage):
                     result, calls, artifact = self.run_build(platform, stage)

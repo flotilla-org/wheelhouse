@@ -225,7 +225,10 @@ then
     # the whole wheelhouse+cleat+ghostty stack.
     mkdir -p dsyms
     ghostty_dsym=$(ls -d "$cleat_dir"/.tools/ghostty-install/lib/libghostty-vt*.dylib.dSYM 2>/dev/null | head -1)
-    [ -n "$ghostty_dsym" ] && rm -rf "dsyms/$(basename "$ghostty_dsym")" && cp -R "$ghostty_dsym" dsyms/
+    if [ -n "$ghostty_dsym" ]; then
+      rm -rf "dsyms/$(basename "$ghostty_dsym")"
+      cp -R "$ghostty_dsym" dsyms/
+    fi
     if command -v mdimport >/dev/null 2>&1; then
       mdimport wheelhouse.dSYM "$cleat_lib_dir/libcleat.dylib.dSYM" dsyms/*.dSYM >/dev/null 2>&1
     fi
