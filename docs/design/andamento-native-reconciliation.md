@@ -180,3 +180,11 @@ independent inline sibling activation and focus after a parent collapse. A separ
 native fixture window was used to open a workspace from overflow and check project
 spacing, status slots and selected-row treatment. This does not replace the live
 daily-driver configuration or validate future role metadata.
+
+The native spacing follow-up insets selection outlines from project containers,
+separates adjacent action borders, and insets action outlines within selected rows.
+Project padding is included in scroll extents. Section headings use smaller muted
+uppercase text with a separate right-aligned count; project open indicators appear
+only in their overview control. This uses the existing configured font, with no
+new font dependency. Native screenshots at wide and narrow widths provide the
+visual check for these geometry changes.
