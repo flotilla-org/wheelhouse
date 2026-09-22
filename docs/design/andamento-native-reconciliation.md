@@ -211,3 +211,11 @@ state; Wheelhouse measures the available space. Such summaries must preserve
 primary controls and must not be inferred from currently visible or materialized
 workspaces. This change records that direction; it does not fabricate overview
 recipes, introduce a new expansion mode, or add producer summary facts.
+
+When a selected vessel would fall into overflow, the native renderer promotes it
+into the last available inline slot. Slot count and widths do not change. Other
+visible actions retain catalog order; the displaced action returns to the menu,
+whose remaining items also retain catalog order. This is a width-dependent display
+choice, not a change to Andamento placement order or identity. If no inline slot
+fits, the overflow control still carries selection. Its corner radius matches the
+other workspace actions.

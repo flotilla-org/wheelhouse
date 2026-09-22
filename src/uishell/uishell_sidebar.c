@@ -846,30 +846,45 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 U64 capacity = Max(0, (S64)(budget/slot_width));
                 U64 visible = inline_count[i] <= capacity ? inline_count[i] :
                   Max(0, (S64)((budget-overflow_width)/slot_width));
-                U64 child = inline_first[i];
-                for(U64 index = 0; index < visible; index++, child = inline_next[child])
+                // Keep the selected workspace visible without changing the slot
+                // budget. Replace the last visible item, retaining catalog order
+                // for the other visible items and for the overflow menu.
+                U64 *members = push_array(scratch.arena, U64, inline_count[i]);
+                U64 selected_index = ANDAMENTO_NONE;
+                for(U64 j = inline_first[i], index = 0; j != ANDAMENTO_NONE; j = inline_next[j], index++)
+                {
+                  members[index] = j;
+                  if(nodes[j].selected && selected_index == ANDAMENTO_NONE) { selected_index = index; }
+                }
+                if(visible && selected_index != ANDAMENTO_NONE && selected_index >= visible)
+                {
+                  U64 selected = members[selected_index];
+                  for(U64 index = selected_index; index >= visible; index--) { members[index] = members[index-1]; }
+                  members[visible-1] = selected;
+                }
+                for(U64 index = 0; index < visible; index++)
                 {
                   UI_PrefWidth(ui_px(slot_width, 1))
                   {
-                    size_t requested = uishell_sidebar_inline_action(state, ws, nodes[child], full_label, 0);
+                    size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[index]], full_label, 0);
                     if(requested != ANDAMENTO_NONE) { action = requested; }
                   }
                 }
-                if(child != ANDAMENTO_NONE)
+                if(visible < inline_count[i])
                 {
                   UI_Key menu_key = ui_key_from_stringf(root->key, "overflow_%S", node_key);
                   B32 overflow_selected = 0;
-                  for(U64 j = child; j != ANDAMENTO_NONE; j = inline_next[j]) { overflow_selected |= nodes[j].selected; }
+                  for(U64 index = visible; index < inline_count[i]; index++) { overflow_selected |= nodes[members[index]].selected; }
                   UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(24.f, 1)) UI_PrefHeight(ui_px(row_height, 1))
                   {
-                    for(U64 j = child; j != ANDAMENTO_NONE; j = inline_next[j])
+                    for(U64 index = visible; index < inline_count[i]; index++)
                     {
-                      size_t requested = uishell_sidebar_inline_action(state, ws, nodes[j], full_label, 0);
+                      size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[index]], full_label, 0);
                       if(requested != ANDAMENTO_NONE) { action = requested; ui_ctx_menu_close(); }
                     }
                   }
                   ui_spacer(ui_px(5.f, 1));
-                  UI_FixedY(1.f) UI_PrefHeight(ui_px(row_height-6.f, 1))
+                  UI_CornerRadius(3.f) UI_FixedY(1.f) UI_PrefHeight(ui_px(row_height-6.f, 1))
                   UI_PrefWidth(ui_px(overflow_width-5.f, 1))
                   {
                     ui_set_next_border_color(uishell_sidebar_action_border());
