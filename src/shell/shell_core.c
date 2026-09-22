@@ -3162,6 +3162,7 @@ internal void
 rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right, B32 tabs_in_title_bar)
 {
   CFG_PanelTree panel_tree = mount->panel_tree;
+  B32 is_preview = ws->active_workspace_surface_entry != 0 && !ws->active_workspace_surface_entry->composite;
   B32 window_layout_reset = ws->window_layout_reset;
   Rng2F32 panel_area_rect = content_rect; // captured before the per-panel `content_rect` shadows it (for tabs-in-title-bar edge detection)
 
@@ -3980,7 +3981,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //////////////////////////
           //- rjf: panel not selected? -> darken
           //
-          if(build_panel) if(panel != panel_tree.focused)
+          if(build_panel && !is_preview) if(panel != panel_tree.focused)
           {
             // uishell: dim non-Active panels — a scrim fading the whole panel toward
             // the window background, so inactive content loses contrast and recedes
@@ -10694,6 +10695,8 @@ rd_frame(void)
       uishell_push_regs();
       uishell_regs()->window = w->cfg_id;
       rd_window_frame();
+      if(rd_state->frame_diagnostic != 0)
+      { abort_self(rd_state->frame_diagnostic(w) ? 0 : 1); }
       MemoryZeroStruct(&w->ui_events);
       UIShell_Regs *window_regs = uishell_pop_regs();
       if(rd_state->last_focused_window == w->cfg_id)
