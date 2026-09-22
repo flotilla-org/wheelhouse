@@ -334,15 +334,18 @@ previews remain available. Workspace Settings in the Window menu and command
 palette preserves access to workspace names and themes without inline editing
 on producer-owned entity labels.
 
-The immediate next step is to package this native composition branch for review
-and daily-driver acceptance. After that:
+Native composition and bounded hover cards merged in Wheelhouse #39 and #42.
+The daily driver has been updated. Follow-up work:
 
-1. Hover cards are bounded in `fix/tooltip-window-bounds` (Wheelhouse #5), including
+1. Hover cards are bounded (Wheelhouse #5), including
    preview cards near the bottom/right edges. Oversized cards clip excess content;
    interactive/scrollable cards remain later work. See the tooltip validation note.
-2. Remove repeated sidebar context-name scans (Wheelhouse #29) and fix build
-   failure propagation (#14); the latter interfered with this work during disk
-   exhaustion.
+2. Remove repeated sidebar context-name scans (Wheelhouse #29). Build failure
+   propagation (#14) is fixed and regression-tested on `fix/build-failure-reporting`;
+   it still needs PR review. Preview investigation on `fix/preview-isolation`
+   fixes overlay scrollbar hover in inert preview trees. Image-only updates
+   passed a local visible/overview/hover probe; broader #9/#11 acceptance remains
+   open. See `docs/validation/preview-isolation-2026-09-22.md`.
 3. Add the toolbar breadcrumb using shared placement identity, with a local
    workspace fallback. Keep it within the existing chrome placement system.
 4. Settle semantic standing-role/project relationships, then role actions/icons

@@ -89,6 +89,11 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
 {
   UI_ScrollRegionSignal result = {0};
   B32 overlay = region->params.style == UI_ScrollBarStyle_Overlay;
+  B32 interactive = 1;
+  for(UI_Box *box = parent; !ui_box_is_nil(box); box = box->parent)
+  {
+    if(box->flags & UI_BoxFlag_IgnoreInteraction) { interactive = 0; break; }
+  }
   B32 visible[Axis2_COUNT] = {0};
   for EachEnumVal(Axis2, axis)
   {
@@ -101,7 +106,10 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
     // the content so their thumbs receive hits above that content.
     for EachEnumVal(Axis2, axis)
     {
-      if(!visible[axis]) { continue; }
+      // Preview trees share window coordinates with live content before their
+      // offscreen composite. Do not interpret the live pointer (or retained
+      // drag key) as hover on that preview, nor update its hover animations.
+      if(!visible[axis] || (overlay && !interactive)) { continue; }
       UI_Key bar_key = ui_key_from_stringf(key, "scroll_region_bar_%i", axis);
       UI_Box *previous_bar = ui_box_from_key(bar_key);
       B32 dragging = 0;

@@ -24,6 +24,56 @@ uishell_scroll_test_frame(RD_WindowState *ws, UI_ScrollRegion *region, UI_Scroll
   return result;
 }
 
+// A preview overlaps live content at full layout size before being composited.
+// Its IgnoreInteraction ancestor must also suppress pointer-driven decoration.
+internal B32
+uishell_scroll_preview_diagnostics(RD_WindowState *ws)
+{
+  UI_State *saved = ui_state, *test = ui_state_alloc();
+  ui_select_state(test);
+  U32 failures = 0;
+  for(U32 frame = 0; frame < 4; frame++)
+  {
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0};
+    animation.scroll_animation_rate = animation.hot_animation_rate = 1.f;
+    UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = v2f32(290, 180);
+    for(U32 preview = 0; preview < 2; preview++)
+    {
+      ui_set_next_rect(r2f32p(100, 100, 400, 300));
+      UI_Box *wrapper = ui_build_box_from_key(preview ? UI_BoxFlag_IgnoreInteraction : 0, ui_key_make(101+preview));
+      UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, 0, 300, 200), UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always);
+      params.style = UI_ScrollBarStyle_Overlay;
+      UI_ScrollRegion region = ui_scroll_region_layout(params);
+      UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
+      axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt(0, 0), r1s64(0, 600), 200};
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(16)
+      UI_Parent(wrapper) UI_Focus(preview ? UI_FocusKind_Off : UI_FocusKind_On)
+      {
+        UI_ScrollRegionSignal sig = ui_scroll_region_build(wrapper, ui_key_make(201+preview), &region, axes, UI_BoxFlag_Clickable|UI_BoxFlag_Scroll);
+        UI_Signal content = ui_signal_from_box(sig.content_box);
+        if(preview && (ui_mouse_over(content) || ui_hovering(content) || ui_dragging(content)))
+        { fprintf(stderr, "FAIL: preview content participates in input\n"); failures++; }
+      }
+    }
+    ui_end_build();
+    if(frame == 3)
+    {
+      UI_Key live_bar = ui_key_from_stringf(ui_key_make(201), "scroll_region_bar_%i", Axis2_Y);
+      UI_Key preview_bar = ui_key_from_stringf(ui_key_make(202), "scroll_region_bar_%i", Axis2_Y);
+      B32 live_visible = !ui_box_is_nil(ui_box_from_key(live_bar));
+      B32 preview_visible = !ui_box_is_nil(ui_box_from_key(preview_bar));
+      fprintf(stderr, "Overlay hover: live=%i preview=%i (expected 1,0)\n", live_visible, preview_visible);
+      failures += !live_visible || preview_visible;
+    }
+  }
+  ui_select_state(saved);
+  ui_state_release(test);
+  return failures == 0;
+}
+
 internal B32
 uishell_scroll_region_diagnostics(RD_WindowState *ws)
 {
@@ -144,6 +194,7 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
     ui_select_state(saved);
     ui_state_release(test_ui);
   }
+  failures += !uishell_scroll_preview_diagnostics(ws);
   fprintf(stderr, "Scroll region diagnostics: %u failures\n", failures);
 #undef ScrollCheck
   return failures == 0;
