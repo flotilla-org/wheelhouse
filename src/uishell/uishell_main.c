@@ -94,6 +94,7 @@
 #include "shell/shell_inc.c"
 #include "uishell/uishell_scroll_diagnostics.c"
 #include "uishell/uishell_tooltip_diagnostics.c"
+#include "uishell/uishell_preview_diagnostics.c"
 
 ////////////////////////////////
 //~ rjf: Top-Level Execution Types
@@ -174,6 +175,8 @@ entry_point(CmdLine *cmd_line)
         uishell_ingress = wheelhouse_ingress_start(socket_path.str, socket_path.size, wm_send_wakeup_event, error, sizeof(error));
         if(uishell_ingress == 0) { fprintf(stderr, "Sidebar ingress: %s\n", error); abort_self(1); }
       }
+      if(cmd_line_has_flag(cmd_line, str8_lit("preview_diagnostics")))
+      { rd_state->frame_diagnostic = uishell_preview_diagnostics; }
       B32 run_scroll_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("scroll_region_diagnostics"));
       B32 run_tooltip_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("tooltip_diagnostics"));
       B32 run_sidebar_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
@@ -259,6 +262,7 @@ entry_point(CmdLine *cmd_line)
                                     "Accept live metadata over HTTP/UDS using the specified sidebar template.\n\n"
                                     "--scroll_region_fixture\nOpen the two-axis scrollbar fixture.\n\n"
                                     "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
+                                    "--preview_diagnostics\nCheck workspace preview isolation and dimming and exit.\n\n"
                                     "--tooltip_diagnostics\nCheck tooltip sizing and window-edge placement and exit.\n\n"
                                     "--sidebar_fixture\nOpen the example project catalog instead of the local workspace sidebar.\n\n"
                                     "--sidebar_diagnostics\n"

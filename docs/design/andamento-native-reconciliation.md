@@ -343,7 +343,8 @@ The daily driver has been updated. Follow-up work:
 2. Remove repeated sidebar context-name scans (Wheelhouse #29). Build failure
    propagation (#14) is fixed and regression-tested on `fix/build-failure-reporting`;
    it still needs PR review. Preview investigation on `fix/preview-isolation`
-   fixes overlay scrollbar hover in inert preview trees. Image-only updates
+   fixes overlay scrollbar hover and inactive-panel dimming in preview trees,
+   with a panel-builder transition diagnostic. Image-only updates
    passed a local visible/overview/hover probe; broader #9/#11 acceptance remains
    open. See `docs/validation/preview-isolation-2026-09-22.md`.
 3. Add the toolbar breadcrumb using shared placement identity, with a local

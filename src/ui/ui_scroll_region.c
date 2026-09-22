@@ -90,7 +90,7 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
   UI_ScrollRegionSignal result = {0};
   B32 overlay = region->params.style == UI_ScrollBarStyle_Overlay;
   B32 interactive = 1;
-  for(UI_Box *box = parent; !ui_box_is_nil(box); box = box->parent)
+  if(overlay) for(UI_Box *box = parent; !ui_box_is_nil(box); box = box->parent)
   {
     if(box->flags & UI_BoxFlag_IgnoreInteraction) { interactive = 0; break; }
   }

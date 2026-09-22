@@ -747,6 +747,8 @@ struct RD_State
   Arena *arena;
   B32 quit;
   B32 quit_after_success;
+  // One-shot native diagnostics requiring the live frame evaluation context.
+  B32 (*frame_diagnostic)(RD_WindowState *ws);
   B32 terminal_glyph_trace_enabled;
   B32 terminal_glyph_trace_all_rows;
   U64 terminal_glyph_trace_row;

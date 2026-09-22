@@ -135,6 +135,7 @@ jobs:
           trap 'rm -rf "$task_dir"' EXIT
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
+          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
       - name: macOS UI diagnostics
         if: runner.os == 'macOS'
@@ -143,6 +144,7 @@ jobs:
           trap 'rm -rf "$task_dir"' EXIT
           ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
+          ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
           ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           ./build/wheelhouse --user:"$task_dir/glyph-user" --project:"$task_dir/glyph-project" --terminal_glyph_diagnostics --terminal_glyph_fixture_ppm:"$task_dir/terminal.ppm"
           python3 tools/validate-terminal-fixture-ppm.py "$task_dir/terminal.ppm"

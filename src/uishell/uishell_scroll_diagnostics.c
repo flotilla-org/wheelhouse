@@ -32,33 +32,55 @@ uishell_scroll_preview_diagnostics(RD_WindowState *ws)
   UI_State *saved = ui_state, *test = ui_state_alloc();
   ui_select_state(test);
   U32 failures = 0;
-  for(U32 frame = 0; frame < 4; frame++)
+  UI_Key live_bar_key = ui_key_from_stringf(ui_key_make(201), "scroll_region_bar_%i", Axis2_Y);
+  UI_Key track_key = ui_key_from_stringf(live_bar_key, "##_scroll_area_%i", Axis2_Y);
+  UI_Key thumb_key = ui_key_from_stringf(track_key, "##_scroller_%i", Axis2_Y);
+  Vec2F32 mouse = v2f32(290, 180);
+  for(U32 frame = 0; frame < 8; frame++)
   {
     UI_IconInfo icons = ws->ui->icon_info;
     UI_AnimationInfo animation = {0};
     animation.scroll_animation_rate = animation.hot_animation_rate = 1.f;
     UI_EventList events = {0};
+    UI_EventNode press = {.v = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton}};
+    if(frame == 4)
+    {
+      UI_Box *thumb = ui_box_from_key(thumb_key);
+      if(ui_box_is_nil(thumb)) { failures++; break; }
+      mouse = center_2f32(thumb->rect);
+      press.v.pos = mouse;
+      events.first = events.last = &press; events.count = 1;
+    }
+    if(frame >= 5) { mouse.y += 10; }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-    ui_state->mouse = v2f32(290, 180);
+    ui_state->mouse = mouse;
     for(U32 preview = 0; preview < 2; preview++)
     {
+      B32 inert = preview || frame >= 5;
       ui_set_next_rect(r2f32p(100, 100, 400, 300));
-      UI_Box *wrapper = ui_build_box_from_key(preview ? UI_BoxFlag_IgnoreInteraction : 0, ui_key_make(101+preview));
+      UI_Box *wrapper = ui_build_box_from_key(inert ? UI_BoxFlag_IgnoreInteraction : 0, ui_key_make(101+preview));
       UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, 0, 300, 200), UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always);
       params.style = UI_ScrollBarStyle_Overlay;
       UI_ScrollRegion region = ui_scroll_region_layout(params);
       UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
       axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt(0, 0), r1s64(0, 600), 200};
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(16)
-      UI_Parent(wrapper) UI_Focus(preview ? UI_FocusKind_Off : UI_FocusKind_On)
+      UI_Parent(wrapper) UI_Focus(inert ? UI_FocusKind_Off : UI_FocusKind_On)
       {
         UI_ScrollRegionSignal sig = ui_scroll_region_build(wrapper, ui_key_make(201+preview), &region, axes, UI_BoxFlag_Clickable|UI_BoxFlag_Scroll);
         UI_Signal content = ui_signal_from_box(sig.content_box);
-        if(preview && (ui_mouse_over(content) || ui_hovering(content) || ui_dragging(content)))
+        if(inert && (sig.position.y.idx != axes[Axis2_Y].position.idx || sig.position.y.off != axes[Axis2_Y].position.off))
+        { fprintf(stderr, "FAIL: inert scrollbar changes scroll position\n"); failures++; }
+        if(inert && (ui_mouse_over(content) || ui_hovering(content) || ui_dragging(content)))
         { fprintf(stderr, "FAIL: preview content participates in input\n"); failures++; }
       }
     }
     ui_end_build();
+    if(frame == 4 && !ui_key_match(ui_active_key(UI_MouseButtonKind_Left), thumb_key))
+    { fprintf(stderr, "FAIL: live scrollbar drag did not start\n"); failures++; }
+    // The omitted thumb is pruned at end-build; next begin-build clears its key.
+    if(frame == 7 && !ui_key_match(ui_active_key(UI_MouseButtonKind_Left), ui_key_zero()))
+    { fprintf(stderr, "FAIL: inert preview retained scrollbar drag\n"); failures++; }
     if(frame == 3)
     {
       UI_Key live_bar = ui_key_from_stringf(ui_key_make(201), "scroll_region_bar_%i", Axis2_Y);

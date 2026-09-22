@@ -19,6 +19,11 @@ fix it reported `live=1 preview=1`; afterward it reports `live=1 preview=0`.
 Preview content signals also remain inert. The diagnostic uses a separate UI
 state and sends no input to the OS.
 
+The review follow-up starts a real thumb drag with a synthetic press, makes that
+same region inert while moving the pointer, and checks that its scroll position
+does not change. Omitting the overlay prunes its thumb at end-build; the next
+begin-build clears the stale active key. The diagnostic verifies that cleanup.
+
 Run the regression with `build/wheelhouse --scroll_region_diagnostics`, supplying
 temporary `--user` and `--project` paths. Existing Linux and macOS CI jobs already
 run this diagnostic. The full diagnostic passes locally on macOS.
@@ -53,11 +58,27 @@ movement without replacing pixels, offscreen-to-visible transitions after long
 idle periods, or resizing. A retained preview with no active demand is allowed
 to remain stale; that is separate from a demanded preview failing to refresh.
 
-## Remaining work
+## Inactive-panel dimming and panel-builder isolation
 
-Issue #11 also records inactive-panel dimming in previews and changes to active
-workspace interaction state. The overlay regression proves one input-dependent
-preview effect; it does not prove cross-workspace scroll or focus mutation.
-Those need a full workspace/overview transition test before changing the broader
-render context or claiming the issue resolved. Inactive-panel scrims still run
-in `rd_panel_area_ui` for preview builds.
+The production panel builder applied inactive-panel scrims to offscreen workspace
+previews. It now checks the existing workspace surface's presentation role before
+drawing that focus cue. Live surfaces and direct rendering still dim inactive
+panels; overview tiles and hover previews do not.
+
+`--preview_diagnostics` builds two actual two-panel terminal-fixture workspaces
+through `rd_panel_area_ui`. It moves through live-plus-preview, overview, and
+direct-live-plus-preview presentation over twelve synthetic builds. It counts
+whole-panel scrims and checks that preview builds preserve the live panel/view
+command target, hot/active keys, and pending input. The initial regression found
+one scrim in each workspace, where the preview should have none. The fixed
+sequence is `(1,0)`, `(0,0)`, `(1,0)`, and the interaction checks pass.
+
+This diagnostic runs inside the frame evaluation context. Calling the panel
+builder after the frame returns is invalid because its evaluation maps have
+already been released. A one-shot diagnostic callback gives the test that
+lifetime without reconstructing the evaluator. Linux and macOS CI run the test.
+
+These checks use fixture terminal views and exercise panel construction, not the
+whole overview command and GPU-composition pipeline. They do not prove that every
+view type is free of side effects, or reproduce the historical cross-workspace
+scroll/focus mutation from #11. Keep that issue open pending broader evidence.
