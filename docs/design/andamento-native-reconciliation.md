@@ -286,3 +286,25 @@ than a far-right X that resembles window close. Its tooltip still names the
 operation and workspace. Closing a provider-backed workspace can leave a latent
 catalog entry; closing a local workspace need not do so. The icon does not change
 those existing close semantics.
+
+### Project header separation and collapse motion
+
+Expanded projects with child rows have a one-logical-pixel horizontal rule below
+the header, using the same accent colour as the vertical marker. The rule sits
+inside the existing row inset and adds no height. Collapsed and childless projects
+do not draw it.
+
+Collapse animation is feasible within the native renderer: Andamento snapshots
+retain children under collapsed nodes, and stable node keys can identify existing
+`ui_anim` state. The proposed motion keeps the header fixed and animates the
+height of a clipped child container using the shell's menu animation rate. Rows
+retain their normal height; only their visible area changes. Opening and closing
+should reverse smoothly, without replaying on initial load or ordinary fact
+updates.
+
+Before implementing it, give project child content an explicit container and use
+its animated height consistently for layout, scroll extent, and Reveal. Closing
+children must stop accepting input immediately, even while still drawing. Reveal
+should expose its target deterministically rather than scroll against an obsolete
+collapsed height. Semantic collapse state remains in Andamento; only transient
+animation progress belongs to Wheelhouse. Animation is not implemented yet.

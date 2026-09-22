@@ -413,6 +413,14 @@ uishell_sidebar_project_accent(String8 identity)
   return colors[u64_hash_from_str8(identity)%ArrayCount(colors)];
 }
 
+// Draw within the header's existing bottom inset, without changing row geometry.
+internal UI_BOX_CUSTOM_DRAW(uishell_sidebar_project_rule_draw)
+{
+  Vec4F32 *accent = (Vec4F32 *)user_data;
+  dr_rect(r2f32p(box->rect.x0+4.f, box->rect.y1-1.f,
+                box->rect.x1-4.f, box->rect.y1), *accent, 0, 0, 0);
+}
+
 internal size_t
 uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
                              AndamentoNode node, UI_Signal sig, String8 context,
@@ -857,6 +865,12 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             UI_Box *slot;
             UI_ChildLayoutAxis(Axis2_X)
             { slot = ui_build_box_from_stringf(0, "###row_slot_%S", node_key); }
+            if(project && children && !node.collapsed)
+            {
+              Vec4F32 *accent = push_array(ui_build_arena(), Vec4F32, 1);
+              *accent = uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
+              ui_box_equip_custom_draw(slot, uishell_sidebar_project_rule_draw, accent);
+            }
             ui_push_parent(slot);
             ui_spacer(ui_px(4.f, 1));
             UI_Box *column;
