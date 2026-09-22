@@ -120,3 +120,29 @@ The old selector remains available. Preview hover cards, creation/closing contro
 and automatic scroll-to-current behavior are still separate follow-up work.
 Validation: independent core/frontends and C fixture, twelve native ABI tests,
 and a native Wheelhouse build passed on 22 September 2026.
+
+
+### Hover cards implemented
+
+Native hover cards now consume the independent template detail fields, omit empty
+and duplicate lines, and wrap long values within a bounded width. The daily-driver
+templates select project counts and supplied status, phase, host, repository,
+branch and checkout-path facts. Compact placement templates preserve the separate
+detail template in Andamento.
+
+A live row requests its bound workspace's existing preview surface. The card
+reserves a fixed preview area and fits the image without changing its aspect.
+Latent rows do not request previews or materialize workspaces. Outside workspace
+zoom, only inactive workspaces with recent preview demand are built; hovering one
+row no longer asks every inactive workspace to render. Preview demand expires
+using the existing short frame grace period.
+
+Complete project repository membership is not inferred from activity. Flotilla
+issue https://github.com/flotilla-org/flotilla/issues/1897 specifies the missing
+producer contract, including shared repositories, subpaths and known-empty versus
+unavailable membership.
+
+Validation: independent core/frontend tests and C fixture, thirteen native sidebar
+ABI tests, a native build, and live inspection of a project metadata card and a
+vessel terminal preview passed on 22 September 2026. The old Workspaces selector
+remains available; workspace creation/closing controls are still outstanding.

@@ -17,7 +17,7 @@ env:
   # Includes attachment-local panning and shared PTY bounds from cleat PR #212.
   CLEAT_REV: c5eaa36c2d1dfbe8d18f5fdf946bd279b384a8cc
   JACKSTAY_REV: b992ad28b2eb56b9b292570b2cfbed5b2beaeb0c
-  ANDAMENTO_REV: 17f9c3a44ec1e39ad2aa4cf47420d273362d98ee
+  ANDAMENTO_REV: 05b2c3fbf2eeb4a68918987d47a87ad57de110ff
 
 jobs:
   daily-driver:

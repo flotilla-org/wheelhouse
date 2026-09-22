@@ -2307,6 +2307,17 @@ rd_workspace_preview_demand_push(RD_WindowState *ws, U64 workspace_id, F32 width
   demand->width_pt = Max(demand->width_pt, width_pt);
 }
 
+internal B32
+rd_workspace_preview_is_demanded(RD_WindowState *ws, U64 workspace_id)
+{
+  for(RD_WorkspacePreviewDemand *d = ws->first_workspace_preview_demand; d; d = d->next)
+  {
+    if(d->workspace_id == workspace_id && d->width_pt > 0 && d->frame_index + 2 >= rd_state->frame_index)
+    { return 1; }
+  }
+  return 0;
+}
+
 internal F32
 rd_workspace_preview_demand_width(RD_WindowState *ws, U64 workspace_id)
 {
@@ -2342,6 +2353,7 @@ typedef struct RD_WorkspacePreviewDraw RD_WorkspacePreviewDraw;
 struct RD_WorkspacePreviewDraw
 {
   RD_SurfaceCacheNode *node;
+  B32 keep_aspect;
   Rng2F32 src_uv; // subrect of the surface to show ({0,0,1,1} = whole)
 };
 
@@ -2351,6 +2363,14 @@ internal UI_BOX_CUSTOM_DRAW(rd_workspace_preview_box_draw)
   if(draw != 0 && draw->node != 0 && !r_handle_match(draw->node->texture, r_handle_zero()))
   {
     Rng2F32 dst = pad_2f32(box->rect, -1.f);
+    if(draw->keep_aspect && draw->node->size.x > 0 && draw->node->size.y > 0)
+    {
+      Vec2F32 available = dim_2f32(dst);
+      F32 aspect = (F32)draw->node->size.x/(F32)draw->node->size.y;
+      Vec2F32 size = v2f32(Min(available.x, available.y*aspect), Min(available.y, available.x/aspect));
+      dst.p0 = add_2f32(dst.p0, scale_2f32(sub_2f32(available, size), 0.5f));
+      dst.p1 = add_2f32(dst.p0, size);
+    }
     DR_Tex2DSampleKindScope(R_Tex2DSampleKind_Linear)
     {
       dr_surface_img_sub(draw->node->texture, dst, draw->src_uv, v4f32(1, 1, 1, 1), 0, 0, 0);
@@ -7142,7 +7162,8 @@ rd_window_frame(void)
           child = child->next)
       {
         if(child->mount.owner_cfg == &cfg_nil_node ||
-           (!workspace_zoom_open && child->mount.owner_cfg == workspace_mount->owner_cfg))
+           (!workspace_zoom_open && (child->mount.owner_cfg == workspace_mount->owner_cfg ||
+                                    !rd_workspace_preview_is_demanded(ws, child->id))))
         {
           continue;
         }

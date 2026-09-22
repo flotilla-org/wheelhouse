@@ -599,18 +599,45 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 }
                 if(ui_hovering(sig))
                 {
-                  UI_Tooltip UI_PrefWidth(ui_text_dim(1, 1)) UI_PrefHeight(ui_em(1.6f, 1))
+                  F32 card_width = Min(em*34.f, dim_2f32(wm_client_rect_from_window(ws->os)).x*0.6f);
+                  UI_Tooltip UI_PrefWidth(ui_px(card_width, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_TextAlignment(UI_TextAlign_Left)
                   {
-                    ui_labelf("%S · %S", full_label, kind);
-                    if(context.size) { ui_label(context); }
+                    ui_label_multiline(card_width, full_label);
+                    if(context.size) { ui_label_multiline(card_width, context); }
                     if(contains_current) { ui_label(str8_lit("Contains current workspace — expand to reveal")); }
-                    for(U64 f = 0; f < node.field_count; f++)
+                    for(U64 f = 0; f < node.detail_count; f++)
                     {
-                      AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field+f, &field);
+                      AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_detail+f, &field);
                       String8 value = uishell_sidebar_string(field.text);
-                      if(f < 3 && !str8_match(value, label, 0) && !str8_match(value, kind, 0)) { ui_label(value); }
+                      if(!value.size || str8_match(value, full_label, 0) || str8_match(value, kind, 0)) { continue; }
+                      B32 duplicate = 0;
+                      for(U64 previous = 0; previous < f; previous++)
+                      {
+                        AndamentoField other = {0}; andamento_snapshot_field(state->snapshot, node.first_detail+previous, &other);
+                        duplicate |= str8_match(value, uishell_sidebar_string(other.text), 0);
+                      }
+                      if(!duplicate) { ui_label_multiline(card_width, value); }
                     }
-                    ui_label(node.selected ? str8_lit("Current workspace") : can_activate ? (node.state == ANDAMENTO_LIVE ? str8_lit("Focus workspace") : str8_lit("Open workspace")) : str8_lit("No opening recipe available"));
+                    UI_TagF("weak")
+                    { ui_label(node.selected ? str8_lit("Current workspace") : can_activate ? (node.state == ANDAMENTO_LIVE ? str8_lit("Focus workspace") : str8_lit("Open workspace")) : str8_lit("No opening recipe available")); }
+                    if(node.state == ANDAMENTO_LIVE)
+                    {
+                      rd_workspace_preview_demand_push(ws, node.workspace_id, card_width);
+                      RD_SurfaceCacheNode *mini = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(node.workspace_id));
+                      UI_PrefHeight(ui_px(card_width*0.625f, 1))
+                      {
+                        UI_Box *preview_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder, "###sidebar_hover_preview_%I64u", node.workspace_id);
+                        if(mini != 0)
+                        {
+                          RD_WorkspacePreviewDraw *preview = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
+                          preview->node = mini;
+                          preview->src_uv = r2f32p(0, 0, 1, 1);
+                          preview->keep_aspect = 1;
+                          ui_box_equip_custom_draw(preview_box, rd_workspace_preview_box_draw, preview);
+                        }
+                        else { rd_request_frame(); }
+                      }
+                    }
                   }
                 }
               }

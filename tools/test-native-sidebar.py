@@ -221,6 +221,30 @@ class NativeSidebarTests(unittest.TestCase):
             self.assertEqual((kind, identity), (0, 42))
             self.assertEqual(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None), 1)
 
+    def test_hover_details_use_templates_without_changing_compact_rows(self):
+        update = patch('vessel', 'v', **{'flotilla.vessel.host': 'remote',
+                       'vcs.repo': 'github.com/example/repo', 'checkout.path': '/work/repo'})
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+        update = patch('project', 'p')
+        update['set']['count.convoys'] = {'value': {'type': 'integer', 'value': 3}}
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+        snapshot, nodes = self.snapshot()
+        def fields(start, count):
+            values = []
+            for index in range(start, start + count):
+                field = Field()
+                self.assertEqual(lib.andamento_snapshot_field(snapshot, index, C.byref(field)), 1)
+                values.append(field.text.string())
+            return values
+        for vessel in [n for n in nodes if n.entity_id.string() == 'v']:
+            detail = fields(vessel.first_detail, vessel.detail_count)
+            self.assertIn('Host: remote', detail)
+            self.assertIn('Repository: github.com/example/repo', detail)
+            self.assertIn('Path: /work/repo', detail)
+            self.assertNotIn('Host: remote', fields(vessel.first_field, vessel.field_count))
+        project = next(n for n in nodes if n.entity_id.string() == 'p')
+        self.assertIn('Convoys: 3', fields(project.first_detail, project.detail_count))
+
     def test_hierarchy_and_truthful_openability(self):
         _, nodes = self.snapshot()
         find = lambda identity: next(n for n in nodes if n.entity_id.string() == identity)

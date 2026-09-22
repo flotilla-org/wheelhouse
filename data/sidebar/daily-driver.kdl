@@ -126,3 +126,41 @@ template "wheelhouse/attention-entry" {
   field "project" key="flotilla.project"
   field "convoy" key="flotilla.convoy"
 }
+
+// Detail fields are independent of the compact row composition.
+fragment "wheelhouse/hover-details" {
+  field "status" key="status.state" prefix="Status: "
+  field "detail" key="status.detail"
+  field "phase" key="flotilla.convoy.phase" prefix="Phase: "
+  field "host" key="flotilla.vessel.host" prefix="Host: "
+  field "repo" key="vcs.repo" prefix="Repository: "
+  field "branch" key="checkout.branch" prefix="Branch: "
+  field "path" key="checkout.path" prefix="Path: "
+}
+template "project/detail" slot="detail" node-kind="entity" {
+  use "wheelhouse/hover-details"
+  field "convoys" source="metadata-display" key="count.convoys" prefix="Convoys: "
+  field "vessels" source="metadata-display" key="count.vessels" prefix="Vessels: "
+  field "issues" source="metadata-display" key="count.issues" prefix="Issues: "
+  field "checkouts" source="metadata-display" key="count.checkouts" prefix="Checkouts: "
+}
+template "convoy/detail" slot="detail" node-kind="entity" {
+  field "summary" key="summary.text"
+  use "wheelhouse/hover-details"
+}
+template "vessel/detail" slot="detail" node-kind="entity" {
+  field "summary" key="summary.text"
+  use "wheelhouse/hover-details"
+}
+template "checkout/detail" slot="detail" node-kind="entity" {
+  field "summary" key="summary.text"
+  use "wheelhouse/hover-details"
+}
+template "session/detail" slot="detail" node-kind="entity" {
+  field "summary" key="summary.text"
+  use "wheelhouse/hover-details"
+}
+template "issue/detail" slot="detail" node-kind="entity" {
+  field "summary" key="summary.text"
+  use "wheelhouse/hover-details"
+}
