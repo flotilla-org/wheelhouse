@@ -295,17 +295,20 @@ follows the laid-out project title text; its right edge retains the container
 inset. The rule sits inside the existing row inset and adds no height. Collapsed and childless projects
 do not draw it.
 
-Collapse animation is feasible within the native renderer: Andamento snapshots
-retain children under collapsed nodes, and stable node keys can identify existing
-`ui_anim` state. The proposed motion keeps the header fixed and animates the
-height of a clipped child container using the shell's menu animation rate. Rows
-retain their normal height; only their visible area changes. Opening and closing
-should reverse smoothly, without replaying on initial load or ordinary fact
-updates.
+Project collapse now uses the existing `ui_anim` system and menu animation rate,
+including the global animation and speed settings. The project header stays at
+full height while a clipped child container expands or contracts. Rows keep their
+normal height; the separator fades with the expansion. Stable snapshot node keys
+identify animation progress, so ordinary fact updates do not replay the opening
+animation. New projects start at their current collapse state.
 
-Before implementing it, give project child content an explicit container and use
-its animated height consistently for layout, scroll extent, and Reveal. Closing
-children must stop accepting input immediately, even while still drawing. Reveal
-should expose its target deterministically rather than scroll against an obsolete
-collapsed height. Semantic collapse state remains in Andamento; only transient
-animation progress belongs to Wheelhouse. Animation is not implemented yet.
+The section scroll extent uses the same animated child height as the layout.
+Closing children immediately ignore input. A reversal continues from the current
+height. Reveal settles project animations before calculating its scroll target.
+Semantic collapse remains in Andamento; Wheelhouse stores only transient motion.
+Native host diagnostics exercise the actual sidebar builder across opening,
+closing, reversal, Reveal, and disabled-animation frames, checking fixed row and
+header sizes, matching scroll extent, and inert closing controls.
+
+Project containers are inset two logical pixels from each side of the scroll
+viewport so their rounded border strokes remain inside its clip.

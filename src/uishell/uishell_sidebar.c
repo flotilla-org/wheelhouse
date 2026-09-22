@@ -627,17 +627,34 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   U64 *inline_count = push_array(scratch.arena, U64, count);
   B32 *inlined = push_array(scratch.arena, B32, count);
   B32 *row_children = push_array(scratch.arena, B32, count);
+  U64 *project_owner = push_array(scratch.arena, U64, count);
+  F32 *project_open = push_array(scratch.arena, F32, count);
+  F32 *project_child_heights = push_array(scratch.arena, F32, count);
   for(U64 i = 0; i < count; i++) { inline_first[i] = inline_last[i] = inline_next[i] = ANDAMENTO_NONE; }
   U64 section_count = 0;
   for(U64 i = 0; i < count; i++)
   {
     andamento_snapshot_node(state->snapshot, i, &nodes[i]);
     if(nodes[i].is_section) { sections[section_count++] = i; }
+    project_owner[i] = ANDAMENTO_NONE;
     if(nodes[i].parent != ANDAMENTO_NONE)
     {
       U64 parent = nodes[i].parent;
-      hidden[i] = hidden[parent] || (!nodes[parent].is_section && nodes[parent].collapsed);
+      project_owner[i] = project_owner[parent];
+      // A project's children remain available while its viewport closes.
+      // Nested collapse state still determines their full, unanimated layout.
+      hidden[i] = hidden[parent] || (!nodes[parent].is_section &&
+        project_owner[parent] != parent && nodes[parent].collapsed);
       depth[i] = depth[parent] + !nodes[parent].is_section;
+    }
+    if(!nodes[i].is_section && depth[i] == 0 &&
+       str8_match(uishell_sidebar_string(nodes[i].entity_kind), str8_lit("project"), 0))
+    {
+      project_owner[i] = i;
+      F32 target = nodes[i].collapsed ? 0.f : 1.f;
+      project_open[i] = ui_anim(ui_key_from_stringf(root->key, "project_open_%S", uishell_sidebar_string(nodes[i].key)),
+        target, .initial = target, .rate = rd_state->menu_animation_rate, .epsilon = 0.0001f,
+        .reset = state->reveal_workspace_id != 0);
     }
   }
   for(U64 i = 0; i < count; i++)
@@ -713,16 +730,23 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
     {
       if(nodes[i].parent == sections[n]) { entries[n]++; }
       if(hidden[i] || inlined[i]) { continue; }
-      rows[n] += !nodes[i].is_section;
-      if(depth[i] == 0 && str8_match(uishell_sidebar_string(nodes[i].entity_kind), str8_lit("project"), 0))
-      { content_heights[n] += project_gap+2*project_padding; }
+      U64 node_rows = !nodes[i].is_section;
+      if(project_owner[i] == i) { content_heights[n] += project_gap+2*project_padding; }
       for(U64 c = 0; !nodes[i].is_section && c < nodes[i].control_count; c++)
       {
         AndamentoControl control = {0};
-        if(andamento_snapshot_control(state->snapshot, nodes[i].first_control+c, &control) && control.action != ANDAMENTO_NONE) { rows[n]++; }
+        if(andamento_snapshot_control(state->snapshot, nodes[i].first_control+c, &control) && control.action != ANDAMENTO_NONE) { node_rows++; }
       }
+      rows[n] += node_rows;
+      F32 node_height = node_rows*row_height;
+      U64 owner = project_owner[i];
+      if(owner != ANDAMENTO_NONE && owner != i)
+      {
+        project_child_heights[owner] += node_height;
+        node_height *= project_open[owner];
+      }
+      content_heights[n] += node_height;
     }
-    content_heights[n] += rows[n]*row_height;
     if(!section->collapsed && rows[n] && flexible == section_count) { flexible = n; }
   }
   // Secondary sections have a bounded body; the first expanded section fills
@@ -734,7 +758,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   for(U64 n = 0; n < section_count; n++)
   {
     if(n == flexible || states[n]->collapsed || !rows[n]) { continue; }
-    F32 wanted = states[n]->height_px > 0 ? states[n]->height_px : Min(rows[n], 7)*row_height;
+    F32 wanted = states[n]->height_px > 0 ? states[n]->height_px : Min(content_heights[n], 7*row_height);
     heights[n] = Min(wanted, remaining*0.4f);
     remaining -= heights[n];
   }
@@ -808,13 +832,24 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       {
         U64 end = n+1 < section_count ? sections[n+1] : count;
         UI_Box *project_box = 0;
-        U64 project_depth = 0;
+        U64 project_depth = 0, project_index = ANDAMENTO_NONE;
+        F32 project_children_y = 0;
         F32 row_y = 0;
         for(U64 i = sections[n]; i < end; i++)
         {
           if(project_box && depth[i] <= project_depth)
-          { ui_spacer(ui_px(project_padding, 1)); ui_pop_parent(); ui_spacer(ui_px(project_gap, 1)); project_box = 0; row_y += project_padding+project_gap; }
-          if(hidden[i] || inlined[i]) { continue; }
+          {
+            ui_pop_flags();
+            ui_pop_parent(); // clipped project children
+            ui_spacer(ui_px(project_padding, 1));
+            ui_pop_parent();
+            ui_spacer(ui_px(project_gap, 1));
+            row_y = project_children_y + project_child_heights[project_index]*project_open[project_index] + project_padding+project_gap;
+            project_box = 0;
+          }
+          U64 owner = project_owner[i];
+          if(hidden[i] || inlined[i] ||
+             (owner != ANDAMENTO_NONE && owner != i && project_open[owner] == 0.f)) { continue; }
           AndamentoNode node = nodes[i];
           B32 children = row_children[i];
           String8 node_key = uishell_sidebar_string(node.key);
@@ -849,12 +884,15 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           if(project)
           {
             Vec4F32 accent = uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
+            // Keep rounded strokes and their antialiasing inside the viewport clip.
+            UI_FixedX(2.f) UI_PrefWidth(ui_px(Max(0.f, dim_2f32(region.viewport).x-4.f), 1))
             UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y) UI_CornerRadius(5.f)
             UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), accent, 0.035f))
             {
               project_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground, "###project_%S", node_key);
             }
             project_depth = depth[i];
+            project_index = i;
             ui_push_parent(project_box);
             ui_spacer(ui_px(project_padding, 1));
             row_y += project_padding;
@@ -919,11 +957,12 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 // selected/open workspaces from producer activity state.
                 String8 display = context.size ? push_str8f(scratch.arena, "%S · %S", label, context) : label;
                 UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###entry_%S", display, node_key));
-                if(project && children && !node.collapsed)
+                if(project && project_child_heights[i] > 0 && project_open[i] > 0)
                 {
                   UIShell_SidebarProjectRule *rule = push_array(ui_build_arena(), UIShell_SidebarProjectRule, 1);
                   rule->title = sig.box;
                   rule->accent = uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
+                  rule->accent.w *= project_open[i];
                   ui_box_equip_custom_draw(slot, uishell_sidebar_project_rule_draw, rule);
                 }
                 // The rich tooltip already includes the full label. Do not also
@@ -1021,8 +1060,29 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               if(ui_clicked(uishell_sidebar_button(push_str8f(scratch.arena, "%S###control_%S_%I64u", uishell_sidebar_string(control.label), node_key, c)))) { action = control.action; }
             }
           }
+          if(project)
+          {
+            UI_Box *children_box;
+            UI_PrefHeight(ui_px(project_child_heights[i]*project_open[i], 1)) UI_ChildLayoutAxis(Axis2_Y)
+            {
+              children_box = ui_build_box_from_stringf(UI_BoxFlag_Clip|UI_BoxFlag_AllowOverflowY,
+                "###project_children_%S", node_key);
+            }
+            project_children_y = row_y;
+            ui_push_parent(children_box);
+            // Semantic collapse disables input immediately, while the previous
+            // rows can still be drawn through the shrinking viewport.
+            ui_push_flags(ui_top_flags() | (node.collapsed ? UI_BoxFlag_Disabled|UI_BoxFlag_IgnoreInteraction : 0));
+          }
         }
-        if(project_box) { ui_spacer(ui_px(project_padding, 1)); ui_pop_parent(); ui_spacer(ui_px(project_gap, 1)); }
+        if(project_box)
+        {
+          ui_pop_flags();
+          ui_pop_parent();
+          ui_spacer(ui_px(project_padding, 1));
+          ui_pop_parent();
+          ui_spacer(ui_px(project_gap, 1));
+        }
       }
       // Children get first refusal; the viewport consumes the remaining wheel
       // input. Header and sibling viewport geometry are outside this box.
@@ -1179,6 +1239,111 @@ uishell_sidebar_disclosure_diagnostics(RD_WindowState *ws)
   return ok;
 }
 
+// Exercise the production sidebar builder across deterministic animation frames.
+internal B32
+uishell_sidebar_motion_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *split,
+                                   U64 project_index, CFG_ID workspace)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_SidebarState *state = uishell_sidebar_init(ws);
+  // The normal host fixture folds its vessels into inline header buttons.
+  // Use those same live entities as child rows for the motion/input exercise.
+  String8 config = str8_cstring((char *)uishell_sidebar_fixture_config);
+  String8 inline_layout = str8_lit(" layout=\"inline\"");
+  U64 at = str8_find_needle(config, 0, inline_layout, 0);
+  String8 tree_config = push_str8f(scratch.arena, "%S%S", str8_prefix(config, at), str8_skip(config, at+inline_layout.size));
+  char *config_error = 0;
+  B32 configured = andamento_configure(state->core, uishell_sidebar_text(tree_config), &config_error);
+  if(!uishell_sidebar_result(state, configured, config_error)) { scratch_end(scratch); return 0; }
+  uishell_sidebar_refresh(state);
+  AndamentoNode project = {0}, section = {0};
+  andamento_snapshot_node(state->snapshot, project_index, &project);
+  andamento_snapshot_node(state->snapshot, project.parent, &section);
+  String8 project_key = push_str8_copy(scratch.arena, uishell_sidebar_string(project.key));
+  String8 section_key = push_str8_copy(scratch.arena, uishell_sidebar_string(section.key));
+  UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc();
+  F32 saved_rate = rd_state->menu_animation_rate;
+  ui_select_state(test_ui);
+  F32 child_heights[8] = {0}, group_heights[8] = {0}, content_heights[8] = {0};
+  B32 ok = 1;
+  for(U64 frame = 0; frame < ArrayCount(child_heights); frame++)
+  {
+    // Start open, close for two frames, reverse, Reveal, then check no-animation.
+    if(frame == 1 || frame == 3 || frame == 6 || frame == 7)
+    {
+      andamento_snapshot_node(state->snapshot, project_index, &project);
+      char *error = 0;
+      B32 dispatched = andamento_dispatch(state->core, state->snapshot, project.toggle, &error);
+      ok &= uishell_sidebar_result(state, dispatched, error);
+      uishell_sidebar_refresh(state);
+    }
+    if(frame == 5) { state->reveal_workspace_id = workspace; }
+    rd_state->menu_animation_rate = frame >= 6 ? 1.f : 0.5f;
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0};
+    UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_Key root_key = ui_key_from_string(ui_active_seed_key(), str8_lit("###andamento_sidebar"));
+    UI_Key body_key = ui_key_from_stringf(root_key, "section_body_%S", section_key);
+    UI_Key group_key = ui_key_from_stringf(body_key, "###project_%S", project_key);
+    UI_Key children_key = ui_key_from_stringf(group_key, "###project_children_%S", project_key);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_sidebar_ui(r2f32p(0, 0, 320, 240), split); }
+    ui_end_build();
+    UI_Box *children = ui_box_from_key(children_key);
+    UI_Box *group = ui_box_from_key(group_key);
+    UI_Box *body = ui_box_from_key(body_key);
+    if(ui_box_is_nil(children) || ui_box_is_nil(group) || ui_box_is_nil(body))
+    { ok = 0; fprintf(stderr, "FAIL project motion: missing layout boxes at frame %llu\n", frame); break; }
+    child_heights[frame] = dim_2f32(children->rect).y;
+    group_heights[frame] = dim_2f32(group->rect).y;
+    content_heights[frame] = body->view_bounds.y;
+    if(frame == 2)
+    {
+      ok &= !!(children->flags & UI_BoxFlag_Clip);
+      ok &= !ui_box_is_nil(children->first) && dim_2f32(children->first->rect).y == floor_f32(11.f*2.2f);
+      U64 disabled_buttons = 0;
+      for(UI_Box *box = children->first; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, children).next)
+      {
+        if(box->flags & UI_BoxFlag_Clickable)
+        {
+          disabled_buttons++;
+          ok &= !!(box->flags & UI_BoxFlag_Disabled) && !!(box->flags & UI_BoxFlag_IgnoreInteraction);
+          UI_Event press = {0};
+          press.kind = UI_EventKind_Press;
+          press.key = WM_Key_LeftMouseButton;
+          press.pos = v2f32((box->rect.x0+box->rect.x1)*0.5f, box->rect.y0+0.5f);
+          ui_event_list_push(ui_build_arena(), &events, &press);
+          ok &= ui_signal_from_box(box).f == 0;
+        }
+      }
+      ok &= disabled_buttons > 0;
+    }
+  }
+  ok &= child_heights[0] > 0 && child_heights[2] > 0 && child_heights[2] < child_heights[0];
+  ok &= child_heights[3] > 0 && child_heights[3] < child_heights[2] && child_heights[4] > child_heights[3];
+  ok &= child_heights[5] == child_heights[0] && child_heights[6] == 0 && child_heights[7] == child_heights[0];
+  // The header does not shrink, and the section's scroll extent follows the clip.
+  ok &= abs_f32((group_heights[0]-child_heights[0])-(group_heights[2]-child_heights[2])) < 1.f;
+  ok &= abs_f32((content_heights[0]-content_heights[2])-(child_heights[0]-child_heights[2])) < 1.f;
+  if(!ok)
+  {
+    fprintf(stderr, "FAIL project motion: child heights");
+    for(U64 i = 0; i < ArrayCount(child_heights); i++) { fprintf(stderr, " %g", child_heights[i]); }
+    fprintf(stderr, "\n");
+  }
+  state->reveal_workspace_id = 0;
+  rd_state->menu_animation_rate = saved_rate;
+  ui_select_state(saved_ui);
+  ui_state_release(test_ui);
+  config_error = 0;
+  configured = andamento_configure(state->core, uishell_sidebar_text(config), &config_error);
+  ok &= uishell_sidebar_result(state, configured, config_error);
+  uishell_sidebar_refresh(state);
+  scratch_end(scratch);
+  return ok;
+}
+
 internal B32
 uishell_sidebar_diagnostics(CFG_Node *window)
 {
@@ -1264,6 +1429,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = ok && reveal_effects && andamento_effects_count(reveal_effects) == 0;
     andamento_effects_release(reveal_effects);
     state->reveal_workspace_id = 0;
+    ok = ok && uishell_sidebar_motion_diagnostics(ws, &split, reveal_node.parent, created);
     // A pending focus whose target disappears must be completed as a failure.
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
@@ -1317,7 +1483,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = ok && restored_live && tree.root->last->selected_tab->id == tools_id &&
          tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 2;
   }
-  fprintf(stderr, "Sidebar host diagnostics: %s (split layout, overflow selection, focus, close, failure, retry, restore)\n", ok ? "passed" : "FAILED");
+  fprintf(stderr, "Sidebar host diagnostics: %s (split layout, overflow selection, project motion, reveal, focus, close, failure, retry, restore)\n", ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;
 }
