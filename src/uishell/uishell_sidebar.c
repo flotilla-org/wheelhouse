@@ -413,12 +413,23 @@ uishell_sidebar_project_accent(String8 identity)
   return colors[u64_hash_from_str8(identity)%ArrayCount(colors)];
 }
 
-// Draw within the header's existing bottom inset, without changing row geometry.
+typedef struct UIShell_SidebarProjectRule UIShell_SidebarProjectRule;
+struct UIShell_SidebarProjectRule
+{
+  UI_Box *title;
+  Vec4F32 accent;
+};
+
+// Follow the laid-out title, including its text padding and font settings.
 internal UI_BOX_CUSTOM_DRAW(uishell_sidebar_project_rule_draw)
 {
-  Vec4F32 *accent = (Vec4F32 *)user_data;
-  dr_rect(r2f32p(box->rect.x0+4.f, box->rect.y1-1.f,
-                box->rect.x1-4.f, box->rect.y1), *accent, 0, 0, 0);
+  UIShell_SidebarProjectRule *data = (UIShell_SidebarProjectRule *)user_data;
+  F32 x0 = ui_box_text_position(data->title).x;
+  F32 x1 = box->rect.x1-4.f;
+  if(x0 < x1)
+  {
+    dr_rect(r2f32p(x0, box->rect.y1-1.f, x1, box->rect.y1), data->accent, 0, 0, 0);
+  }
 }
 
 internal size_t
@@ -865,12 +876,6 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             UI_Box *slot;
             UI_ChildLayoutAxis(Axis2_X)
             { slot = ui_build_box_from_stringf(0, "###row_slot_%S", node_key); }
-            if(project && children && !node.collapsed)
-            {
-              Vec4F32 *accent = push_array(ui_build_arena(), Vec4F32, 1);
-              *accent = uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
-              ui_box_equip_custom_draw(slot, uishell_sidebar_project_rule_draw, accent);
-            }
             ui_push_parent(slot);
             ui_spacer(ui_px(4.f, 1));
             UI_Box *column;
@@ -914,6 +919,13 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 // selected/open workspaces from producer activity state.
                 String8 display = context.size ? push_str8f(scratch.arena, "%S · %S", label, context) : label;
                 UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###entry_%S", display, node_key));
+                if(project && children && !node.collapsed)
+                {
+                  UIShell_SidebarProjectRule *rule = push_array(ui_build_arena(), UIShell_SidebarProjectRule, 1);
+                  rule->title = sig.box;
+                  rule->accent = uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
+                  ui_box_equip_custom_draw(slot, uishell_sidebar_project_rule_draw, rule);
+                }
                 // The rich tooltip already includes the full label. Do not also
                 // enroll this row in the shell's automatic truncated-text hover.
                 sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;

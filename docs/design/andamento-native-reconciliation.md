@@ -290,8 +290,9 @@ those existing close semantics.
 ### Project header separation and collapse motion
 
 Expanded projects with child rows have a one-logical-pixel horizontal rule below
-the header, using the same accent colour as the vertical marker. The rule sits
-inside the existing row inset and adds no height. Collapsed and childless projects
+the header, using the same accent colour as the vertical marker. Its left edge
+follows the laid-out project title text; its right edge retains the container
+inset. The rule sits inside the existing row inset and adds no height. Collapsed and childless projects
 do not draw it.
 
 Collapse animation is feasible within the native renderer: Andamento snapshots
