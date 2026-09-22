@@ -894,9 +894,13 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                   }
                 }
               }
-              if(!project) UI_TagF("weak") UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0)
+              // Reserve the same trailing slot at every level. Project-wide
+              // status belongs here once supplied; workspace state stays on
+              // the overview action rather than being duplicated in this slot.
+              UI_TagF("weak") UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0)
               {
-                if(node.state == ANDAMENTO_OPENING) { ui_label(str8_lit("…")); }
+                if(project) { ui_spacer(ui_em(1.2f, 1)); }
+                else if(node.state == ANDAMENTO_OPENING) { ui_label(str8_lit("…")); }
                 else if(str8_match(status, str8_lit("failed"), 0)) { ui_label(str8_lit("!")); }
                 else if(str8_match(status, str8_lit("waiting"), 0)) { ui_label(str8_lit("◷")); }
                 else { ui_label(node.state == ANDAMENTO_LIVE ? str8_lit("•") : str8_lit("")); }

@@ -219,3 +219,8 @@ whose remaining items also retain catalog order. This is a width-dependent displ
 choice, not a change to Andamento placement order or identity. If no inline slot
 fits, the overflow control still carries selection. Its corner radius matches the
 other workspace actions.
+
+Project rows reserve the same trailing status slot as convoy rows, keeping the
+workspace actions aligned. The project slot is currently blank; future aggregate
+working/waiting convoy or attention status can occupy it. Overview workspace
+state remains on its own action and is not duplicated as project-wide status.
