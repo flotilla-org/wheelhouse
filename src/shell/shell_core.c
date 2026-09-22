@@ -5120,6 +5120,9 @@ rd_window_frame(void)
     Rng2F32 content_rect = r2f32p(window_rect.x0, top_bar_rect.y1, window_rect.x0+window_rect_dim.x, bottom_bar_rect.y0);
     F32 window_edge_px = 96.f*wm_layout_scale_from_window(ws->os)*0.035f;
     content_rect = pad_2f32(content_rect, -window_edge_px);
+    // Window-edge padding belongs at the outer edges, not at the internal seam
+    // with title-bar chrome. Panel spacing is applied by the panel layout.
+    content_rect.y0 = top_bar_rect.y1;
     
     ////////////////////////////
     //- rjf: @window_ui_part truncated string hover

@@ -319,6 +319,8 @@ geometry diagnostic checks the first project's clearance from the scroll clip.
 
 The shell draws top and right frame edges around the sidebar using the panel
 border colour and `panel_border_px`, and keeps sidebar content inside them.
+The content area meets the title-bar bottom directly, without adding window-edge
+padding at that internal seam.
 Panel-gap integration and title-bar adjacency remain part of the broader frame
 work recorded in `docs/pane-focus-and-frame-spacing-notes.md`.
 
