@@ -1775,8 +1775,14 @@ rd_view_ui(Rng2F32 rect)
       RD_ViewUIRule *view_ui_rule = rd_view_ui_rule_from_string(view_name);
       E_Eval expr_eval = e_eval_from_string(expr_string);
       
-      // rjf: peek presses, steal focus from query bar
-      for(UI_Event *evt = 0; ui_next_event(&evt);)
+      // rjf: peek presses, steal focus from query bar. This reads events
+      // directly, so respect inert preview ancestors just as UI signals do.
+      B32 interaction_ignored = 0;
+      for(UI_Box *p = ui_top_parent(); !ui_box_is_nil(p); p = p->parent)
+      {
+        if(p->flags & UI_BoxFlag_IgnoreInteraction) { interaction_ignored = 1; break; }
+      }
+      for(UI_Event *evt = 0; !interaction_ignored && ui_next_event(&evt);)
       {
         if(evt->kind == UI_EventKind_Press && contains_2f32(rect, evt->pos))
         {
@@ -4572,8 +4578,10 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
           
           //////////////////////////
-          //- rjf: accept file drops
+          //- rjf: accept file drops only in the live workspace. Preview
+          // layouts overlap live coordinates and must not consume OS input.
           //
+          if(!is_preview)
           {
             for(UI_Event *evt = 0; ui_next_event(&evt);)
             {

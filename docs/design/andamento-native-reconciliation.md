@@ -341,12 +341,12 @@ The daily driver has been updated. Follow-up work:
    preview cards near the bottom/right edges. Oversized cards clip excess content;
    interactive/scrollable cards remain later work. See the tooltip validation note.
 2. Remove repeated sidebar context-name scans (Wheelhouse #29). Build failure
-   propagation (#14) is fixed and regression-tested on `fix/build-failure-reporting`;
-   it still needs PR review. Preview investigation on `fix/preview-isolation`
-   fixes overlay scrollbar hover and inactive-panel dimming in preview trees,
-   with a panel-builder transition diagnostic. Image-only updates
-   passed a local visible/overview/hover probe; broader #9/#11 acceptance remains
-   open. See `docs/validation/preview-isolation-2026-09-22.md`.
+   propagation (#14) merged in #43. Preview fixes for overlay scrollbar hover
+   and inactive-panel dimming merged in #44. A further #11 probe found that
+   direct press and file-drop handling still affected preview builds; see
+   `docs/validation/preview-isolation-2026-09-22.md`. Image-only updates
+   passed a local visible/overview/hover probe; broader #9/#11 acceptance
+   remains open.
 3. Add the toolbar breadcrumb using shared placement identity, with a local
    workspace fallback. Keep it within the existing chrome placement system.
 4. Settle semantic standing-role/project relationships, then role actions/icons

@@ -24,6 +24,7 @@ uishell_preview_diagnostics(RD_WindowState *ws)
   RD_WorkspaceSurfaceEntry *saved_entry = ws->active_workspace_surface_entry;
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   CFG_Node *owners[2];
+  CFG_Node *views[2];
   UIShell_WorkspaceMount mounts[2];
   for(U32 i = 0; i < 2; i++)
   {
@@ -34,7 +35,8 @@ uishell_preview_diagnostics(RD_WindowState *ws)
     {
       CFG_Node *panel = cfg_node_new(rd_state->cfg, panels, str8_lit("0.5"));
       if(p == 0) { cfg_node_new(rd_state->cfg, panel, str8_lit("selected")); }
-      rd_cfg_new_view_tab(panel, str8_lit("terminal_fixture"), str8_zero(), 1);
+      CFG_Node *view = rd_cfg_new_view_tab(panel, str8_lit("terminal_fixture"), str8_zero(), 1);
+      if(p == 0) { views[i] = view; }
     }
     mounts[i] = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, owners[i]);
   }
@@ -48,9 +50,19 @@ uishell_preview_diagnostics(RD_WindowState *ws)
     for(U32 frame = 0; frame < 12; frame++)
     {
       B32 overview = frame >= 4 && frame < 8;
+      B32 press = frame == 2 || frame == 6;
+      B32 file_drop = frame == 5 || frame == 9;
+      if(frame == 9) { ws->drop_completion_panel = 0; }
+      if(frame == 6)
+      {
+        for(U32 i = 0; i < 2; i++) { rd_view_state_from_cfg(views[i])->contents_are_focused = 0; }
+      }
       UI_IconInfo icons = ws->ui->icon_info;
       UI_AnimationInfo animation = {0};
-      UI_EventNode event = {.v = {.kind = UI_EventKind_Text, .string = str8_lit("x")}};
+      UI_EventNode event = {.v = press ?
+                            (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = v2f32(200, 150)} :
+                            file_drop ? (UI_Event){.kind = UI_EventKind_FileDrop, .pos = v2f32(200, 150)} :
+                                        (UI_Event){.kind = UI_EventKind_Text, .string = str8_lit("x")}};
       UI_EventList events = {.first = &event, .last = &event, .count = 1};
       ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       ui_state->mouse = v2f32(200, 150);
@@ -67,6 +79,7 @@ uishell_preview_diagnostics(RD_WindowState *ws)
         UIShell_Regs before = *uishell_regs();
         UI_Key hot = ui_hot_key(), active = ui_active_key(UI_MouseButtonKind_Left);
         U64 event_count = events.count;
+        CFG_ID drop_completion_panel = ws->drop_completion_panel;
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         UI_Parent(wrappers[i]) UI_Focus(preview ? UI_FocusKind_Off : UI_FocusKind_On)
         {
@@ -77,6 +90,14 @@ uishell_preview_diagnostics(RD_WindowState *ws)
           PreviewCheck(uishell_regs()->view == before.view && uishell_regs()->panel == before.panel, "preview preserves live command target");
           PreviewCheck(ui_key_match(hot, ui_hot_key()) && ui_key_match(active, ui_active_key(UI_MouseButtonKind_Left)), "preview preserves live hot/active keys");
           PreviewCheck(events.count == event_count, "preview does not consume remaining input");
+          if(press) { PreviewCheck(!rd_view_state_from_cfg(views[i])->contents_are_focused, "overlapping preview press does not focus view contents"); }
+          if(file_drop) { PreviewCheck(ws->drop_completion_panel == drop_completion_panel, "preview file drop does not retarget completion"); }
+        }
+        else if(press) { PreviewCheck(rd_view_state_from_cfg(views[i])->contents_are_focused, "live view accepts press focus"); }
+        else if(file_drop)
+        {
+          PreviewCheck(events.count == 0, "direct live workspace accepts file drop");
+          PreviewCheck(ws->drop_completion_panel != drop_completion_panel, "direct live file drop targets panel");
         }
       }
       ws->active_workspace_surface_entry = 0;

@@ -82,3 +82,25 @@ These checks use fixture terminal views and exercise panel construction, not the
 whole overview command and GPU-composition pipeline. They do not prove that every
 view type is free of side effects, or reproduce the historical cross-workspace
 scroll/focus mutation from #11. Keep that issue open pending broader evidence.
+
+## Direct input leaks during preview builds
+
+A follow-up to #11 added pending mouse-press and file-drop events to the panel
+diagnostic. It reproduced two effects that the original text-event fixture did
+not catch:
+
+- `rd_view_ui` inspected pending presses directly. Because preview and live
+  panels share full-window coordinates before composition, a press in the live
+  terminal also set the preview view's `contents_are_focused` state. The view
+  now skips that press check under an `IgnoreInteraction` ancestor. A live view
+  still accepts the press.
+- `rd_panel_area_ui` inspected file drops directly. During overview, the first
+  preview panel consumed a file drop and retargeted the window's drop-completion
+  state. Preview panels now skip file-drop handling. The diagnostic checks that
+  overview previews leave the event and drop target unchanged while a direct
+  live workspace still handles the drop.
+
+The same macOS diagnostic went red for each effect before its fix and passes
+afterward. The scrollbar diagnostic also passes. This exercises panel and view
+builders with synthetic input, not OS file delivery or every view type. #11
+remains open for wider input and focus isolation work.
