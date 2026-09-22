@@ -155,8 +155,9 @@ class NativeSidebarTests(unittest.TestCase):
                 if control.label.string() == 'Show finished':
                     self.assertTrue(lib.andamento_dispatch(self.core, snapshot, control.action, None))
         _, shown = self.snapshot()
-        self.assertIn('old-governor', {node.entity_id.string() for node in shown})
-        self.assertIn('old-governor-worker', {node.entity_id.string() for node in shown})
+        shown_ids = {node.entity_id.string() for node in shown}
+        for identity in ('old-governor', 'old-governor-worker', 'current-governor', 'current-governor-worker'):
+            self.assertIn(identity, shown_ids)
 
     def tearDown(self):
         for snapshot in self.snapshots:
