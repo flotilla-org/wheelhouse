@@ -93,6 +93,7 @@
 #include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
 #include "uishell/uishell_scroll_diagnostics.c"
+#include "uishell/uishell_tooltip_diagnostics.c"
 
 ////////////////////////////////
 //~ rjf: Top-Level Execution Types
@@ -174,12 +175,19 @@ entry_point(CmdLine *cmd_line)
         if(uishell_ingress == 0) { fprintf(stderr, "Sidebar ingress: %s\n", error); abort_self(1); }
       }
       B32 run_scroll_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("scroll_region_diagnostics"));
+      B32 run_tooltip_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("tooltip_diagnostics"));
       B32 run_sidebar_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
       B32 run_terminal_glyph_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("terminal_glyph_diagnostics"));
       String8 terminal_glyph_fixture_ppm_path = cmd_line_string(cmd_line, str8_lit("terminal_glyph_fixture_ppm"));
       for(B32 quit = 0; !quit;)
       {
         quit = update();
+        if(run_tooltip_diagnostics)
+        {
+          RD_WindowState *ws = rd_state->first_window_state;
+          B32 ok = ws != &rd_nil_window_state && uishell_tooltip_diagnostics(ws);
+          abort_self(ok ? 0 : 1);
+        }
         if(run_scroll_diagnostics)
         {
           RD_WindowState *ws = rd_state->first_window_state;
@@ -251,6 +259,7 @@ entry_point(CmdLine *cmd_line)
                                     "Accept live metadata over HTTP/UDS using the specified sidebar template.\n\n"
                                     "--scroll_region_fixture\nOpen the two-axis scrollbar fixture.\n\n"
                                     "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
+                                    "--tooltip_diagnostics\nCheck tooltip sizing and window-edge placement and exit.\n\n"
                                     "--sidebar_fixture\nOpen the example project catalog instead of the local workspace sidebar.\n\n"
                                     "--sidebar_diagnostics\n"
                                     "Check the fixture sidebar workspace bridge and exit (use temporary user/project files).\n\n"
