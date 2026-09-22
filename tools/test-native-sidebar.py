@@ -47,6 +47,8 @@ def load(path):
     signatures = {
         'create': (Ptr, [C.c_char_p, Size, Ptr]), 'destroy': (None, [Ptr]),
         'configure': (U32, [Ptr, Text, Ptr]),
+        'tick': (U32, [Ptr, U64, Ptr]),
+        'snapshot_is_current': (U32, [Ptr, Ptr, Ptr]),
         'snapshot_field': (U32, [Ptr, Size, C.POINTER(Field)]),
         'snapshot_node_loop_key': (U32, [Ptr, Size, C.POINTER(Text)]),
         'apply_patch_json': (U32, [Ptr, U64, Text, Ptr]),
@@ -92,6 +94,71 @@ class NativeSidebarTests(unittest.TestCase):
             self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
         self.snapshots = []
 
+    def test_snapshot_validity_tracks_core_changes(self):
+        displayed = lib.andamento_snapshot_acquire(self.core, None)
+        self.snapshots.append(displayed)
+        self.assertEqual(lib.andamento_snapshot_is_current(self.core, displayed, None), 1)
+        self.assertEqual(lib.andamento_tick(self.core, 100, None), 1)
+        self.assertEqual(lib.andamento_snapshot_is_current(self.core, displayed, None), 1)
+        update = patch('vessel', 'v', **{'action.primary.recipe': 'exec changed'})
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 100, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.andamento_snapshot_is_current(self.core, displayed, None), 0)
+        fresh = lib.andamento_snapshot_acquire(self.core, None)
+        self.snapshots.append(fresh)
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 200, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.andamento_snapshot_is_current(self.core, fresh, None), 1)
+
+    def test_finished_toggle_keeps_failures_and_active_entries(self):
+        for phase in ('active', 'landed', 'cancelled', 'abandoned', 'failed', 'pending'):
+            for item in [patch('convoy', phase, **{'flotilla.project': 'p', 'flotilla.convoy': phase,
+                                                  'flotilla.convoy.phase': phase, 'status.attention': True}),
+                         patch('vessel', phase + '-worker', **{'flotilla.convoy': phase,
+                                   'flotilla.convoy.phase': phase, 'status.attention': True})]:
+                self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+        for show in (False, True, False):
+            snapshot, nodes = self.snapshot()
+            ids = {node.entity_id.string() for node in nodes}
+            for phase in ('active', 'failed', 'pending'):
+                self.assertIn(phase, ids)
+                self.assertIn(phase + '-worker', ids)
+            for phase in ('landed', 'cancelled', 'abandoned'):
+                self.assertEqual(phase in ids, show)
+                self.assertEqual(phase + '-worker' in ids, show)
+            controls = []
+            for node in nodes:
+                for index in range(node.first_control, node.first_control + node.control_count):
+                    control = Control()
+                    self.assertTrue(lib.andamento_snapshot_control(snapshot, index, C.byref(control)))
+                    if control.label.string() == 'Show finished':
+                        controls.append(control)
+            self.assertEqual(len(controls), 1)
+            self.assertEqual(bool(controls[0].checked), show)
+            self.assertTrue(lib.andamento_dispatch(self.core, snapshot, controls[0].action, None))
+
+    def test_superseded_failure_is_hidden_but_current_failure_remains(self):
+        for identity, superseded in [('old-governor', True), ('current-governor', False)]:
+            for kind, name in [('convoy', identity), ('vessel', identity + '-worker')]:
+                item = patch(kind, name, **{'flotilla.project': 'p', 'flotilla.convoy': identity,
+                             'flotilla.convoy.phase': 'failed', 'flotilla.convoy.superseded': superseded,
+                             'status.state': 'failed', 'status.attention': True})
+                self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+        snapshot, nodes = self.snapshot()
+        ids = {node.entity_id.string() for node in nodes}
+        self.assertNotIn('old-governor', ids)
+        self.assertNotIn('old-governor-worker', ids)
+        self.assertIn('current-governor', ids)
+        self.assertIn('current-governor-worker', ids)
+        for node in nodes:
+            for index in range(node.first_control, node.first_control + node.control_count):
+                control = Control()
+                self.assertTrue(lib.andamento_snapshot_control(snapshot, index, C.byref(control)))
+                if control.label.string() == 'Show finished':
+                    self.assertTrue(lib.andamento_dispatch(self.core, snapshot, control.action, None))
+        _, shown = self.snapshot()
+        shown_ids = {node.entity_id.string() for node in shown}
+        for identity in ('old-governor', 'old-governor-worker', 'current-governor', 'current-governor-worker'):
+            self.assertIn(identity, shown_ids)
+
     def tearDown(self):
         for snapshot in self.snapshots:
             lib.andamento_snapshot_release(snapshot)
@@ -118,6 +185,66 @@ class NativeSidebarTests(unittest.TestCase):
         result = (effect.kind, effect.request_id, effect.workspace_id, effect.recipe.string())
         lib.andamento_effects_release(batch)
         return result
+
+    def test_unplaced_workspaces_focus_exact_ids_and_reject_stale_actions(self):
+        workspaces = (Workspace * 2)(Workspace(70, 0, Text.of('local'), 0),
+                                     Workspace(71, 1, Text.of('local'), 1))
+        self.assertEqual(lib.andamento_observe(self.core, workspaces, 2, None, 0, None), 1)
+        snapshot, nodes = self.snapshot()
+        fallback = [n for n in nodes if n.entity_kind.string() == 'andamento.workspace']
+        self.assertEqual([n.workspace_id for n in fallback], [70, 71])
+        self.assertEqual([n.selected for n in fallback], [0, 1])
+        self.assertNotEqual(fallback[0].key.string(), fallback[1].key.string())
+        kind, request, identity, _ = self.dispatch(snapshot, fallback[1].activate)
+        self.assertEqual((kind, identity), (0, 71))
+        self.assertEqual(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None), 1)
+        self.assertEqual(lib.andamento_observe(self.core, workspaces, 1, None, 0, None), 1)
+        self.assertEqual(lib.andamento_dispatch(self.core, snapshot, fallback[1].activate, None), 0)
+        _, nodes = self.snapshot()
+        self.assertEqual([n.workspace_id for n in nodes if n.entity_kind.string() == 'andamento.workspace'], [70])
+
+    def test_finished_open_workspace_moves_to_fallback_and_back(self):
+        snapshot, nodes = self.snapshot()
+        vessel = next(n for n in nodes if n.entity_id.string() == 'v')
+        _, request, _, _ = self.dispatch(snapshot, vessel.activate)
+        self.assertEqual(lib.andamento_complete(self.core, request, 1, 42, Text.of(''), None), 1)
+        workspace = Workspace(42, 0, Text.of('worker'), 1)
+        self.assertEqual(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None), 1)
+        for phase in ('landed', 'active'):
+            for kind, identity in [('convoy', 'c'), ('vessel', 'v')]:
+                update = patch(kind, identity, **{'flotilla.convoy.phase': phase})
+                self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+            snapshot, nodes = self.snapshot()
+            fallback = [n for n in nodes if n.entity_kind.string() == 'andamento.workspace']
+            self.assertEqual(len(fallback), 1 if phase == 'landed' else 0)
+            live = next(n for n in nodes if not n.is_section and n.workspace_id == 42 and n.state == 3)
+            kind, request, identity, _ = self.dispatch(snapshot, live.activate)
+            self.assertEqual((kind, identity), (0, 42))
+            self.assertEqual(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None), 1)
+
+    def test_hover_details_use_templates_without_changing_compact_rows(self):
+        update = patch('vessel', 'v', **{'flotilla.vessel.host': 'remote',
+                       'vcs.repo': 'github.com/example/repo', 'checkout.path': '/work/repo'})
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+        update = patch('project', 'p')
+        update['set']['count.convoys'] = {'value': {'type': 'integer', 'value': 3}}
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+        snapshot, nodes = self.snapshot()
+        def fields(start, count):
+            values = []
+            for index in range(start, start + count):
+                field = Field()
+                self.assertEqual(lib.andamento_snapshot_field(snapshot, index, C.byref(field)), 1)
+                values.append(field.text.string())
+            return values
+        for vessel in [n for n in nodes if n.entity_id.string() == 'v']:
+            detail = fields(vessel.first_detail, vessel.detail_count)
+            self.assertIn('Host: remote', detail)
+            self.assertIn('Repository: github.com/example/repo', detail)
+            self.assertIn('Path: /work/repo', detail)
+            self.assertNotIn('Host: remote', fields(vessel.first_field, vessel.field_count))
+        project = next(n for n in nodes if n.entity_id.string() == 'p')
+        self.assertIn('Convoys: 3', fields(project.first_detail, project.detail_count))
 
     def test_hierarchy_and_truthful_openability(self):
         _, nodes = self.snapshot()

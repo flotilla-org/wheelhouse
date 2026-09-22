@@ -2,6 +2,37 @@ version 1
 
 display-variable "show-issues" type="bool" default=true label="Issues" icon="I" persist=true
 
+display-variable "show-finished" type="bool" default=false label="Show finished" icon="F" persist=true
+
+// Flotilla derives this from stable project/role identity and generations.
+grouping "wheelhouse.superseded" priority=1200 {
+  filter key="flotilla.convoy.superseded" equals=true
+  presence kind="convoy" class="tab" visible-when="show-finished"
+  presence kind="vessel" class="tab" visible-when="show-finished"
+  level key="entity.id"
+}
+
+grouping "wheelhouse.finished-landed" priority=1100 {
+  filter key="flotilla.convoy.phase" equals="landed"
+  presence kind="convoy" class="tab" visible-when="show-finished"
+  presence kind="vessel" class="tab" visible-when="show-finished"
+  level key="entity.id"
+}
+
+grouping "wheelhouse.finished-cancelled" priority=1100 {
+  filter key="flotilla.convoy.phase" equals="cancelled"
+  presence kind="convoy" class="tab" visible-when="show-finished"
+  presence kind="vessel" class="tab" visible-when="show-finished"
+  level key="entity.id"
+}
+
+grouping "wheelhouse.finished-abandoned" priority=1100 {
+  filter key="flotilla.convoy.phase" equals="abandoned"
+  presence kind="convoy" class="tab" visible-when="show-finished"
+  presence kind="vessel" class="tab" visible-when="show-finished"
+  level key="entity.id"
+}
+
 // Native placements own the hierarchy. The current core still consults
 // presence/grouping for activation; a unique entity path avoids the legacy
 // single-member collapse that can make a vessel impossible to open.
@@ -24,6 +55,7 @@ region "attention" source="attention" root-template="wheelhouse/attention" form=
 template "wheelhouse/projects" slot="compact" node-kind="entity" {
   field "label" source="literal" value="Projects"
   control "display-variable" variable="show-issues"
+  control "display-variable" variable="show-finished"
 }
 template "wheelhouse/sessions" slot="compact" node-kind="entity" {
   field "label" source="literal" value="Sessions"
@@ -93,4 +125,42 @@ template "wheelhouse/attention-entry" {
   field "status" key="status.state"
   field "project" key="flotilla.project"
   field "convoy" key="flotilla.convoy"
+}
+
+// Detail fields are independent of the compact row composition.
+fragment "wheelhouse/hover-details" {
+  field "status" key="status.state" prefix="Status: "
+  field "detail" key="status.detail"
+  field "phase" key="flotilla.convoy.phase" prefix="Phase: "
+  field "host" key="flotilla.vessel.host" prefix="Host: "
+  field "repo" key="vcs.repo" prefix="Repository: "
+  field "branch" key="checkout.branch" prefix="Branch: "
+  field "path" key="checkout.path" prefix="Path: "
+}
+template "project/detail" slot="detail" node-kind="entity" {
+  use "wheelhouse/hover-details"
+  field "convoys" source="metadata-display" key="count.convoys" prefix="Convoys: "
+  field "vessels" source="metadata-display" key="count.vessels" prefix="Vessels: "
+  field "issues" source="metadata-display" key="count.issues" prefix="Issues: "
+  field "checkouts" source="metadata-display" key="count.checkouts" prefix="Checkouts: "
+}
+template "convoy/detail" slot="detail" node-kind="entity" {
+  field "summary" key="summary.text"
+  use "wheelhouse/hover-details"
+}
+template "vessel/detail" slot="detail" node-kind="entity" {
+  field "summary" key="summary.text"
+  use "wheelhouse/hover-details"
+}
+template "checkout/detail" slot="detail" node-kind="entity" {
+  field "summary" key="summary.text"
+  use "wheelhouse/hover-details"
+}
+template "session/detail" slot="detail" node-kind="entity" {
+  field "summary" key="summary.text"
+  use "wheelhouse/hover-details"
+}
+template "issue/detail" slot="detail" node-kind="entity" {
+  field "summary" key="summary.text"
+  use "wheelhouse/hover-details"
 }

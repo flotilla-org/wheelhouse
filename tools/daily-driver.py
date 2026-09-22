@@ -101,10 +101,13 @@ def run(args, binary, flotilla, template, state):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--no-build', action='store_true', help='use the existing Wheelhouse binary')
+    parser.add_argument('--no-git', action='store_true', help='omit local git discovery; use provider facts only')
     parser.add_argument('--git-only', action='store_true', help='omit Flotilla; publish only local git facts')
     parser.add_argument('--repo', type=Path, action='append', help='git checkout to watch; repeatable, defaults to current directory')
     args = parser.parse_args()
-    args.repo = [repo.resolve() for repo in (args.repo or [Path.cwd()])]
+    if args.no_git and (args.git_only or args.repo):
+        parser.error('--no-git cannot be combined with --git-only or --repo')
+    args.repo = [] if args.no_git else [repo.resolve() for repo in (args.repo or [Path.cwd()])]
     binary = Path(os.environ.get('WHEELHOUSE_BIN', ROOT / 'build/wheelhouse')).resolve()
     flotilla_root = Path(os.environ.get('FLOTILLA_ROOT', ROOT.parent / 'flotilla')).resolve()
     flotilla = Path(os.environ.get('FLOTILLA_BIN', flotilla_root / 'target/debug/flotilla')).resolve()
