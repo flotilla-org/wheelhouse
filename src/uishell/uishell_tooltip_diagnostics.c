@@ -25,7 +25,7 @@ uishell_tooltip_diagnostics(RD_WindowState *ws)
     ui_state->tooltip_anchor_key = anchor->key;
     if(scenario == 2)
     {
-      // The unanchored path starts at the cursor plus the ordinary offset.
+      // Simulate a cursor 5px from the bottom/right edge plus its 15px offset.
       ui_state->tooltip_anchor_key = ui_key_zero();
       ui_state->tooltip_root->fixed_position = v2f32(window.x1+10, window.y1+10);
     }
@@ -43,6 +43,8 @@ uishell_tooltip_diagnostics(RD_WindowState *ws)
         card->rect.x1 <= window.x1 && card->rect.y1 <= window.y1;
       if(scenario == 0) { ok &= card->rect.y1 <= anchor->rect.y0; }
       if(scenario == 1) { ok &= card->rect.y0 >= anchor->rect.y1; }
+      // Merely clamping to the bottom would fail this above-cursor assertion.
+      if(scenario == 2) { ok &= card->rect.y1 <= window.y1-20.f; }
       if(scenario == 3) { ok &= !!(card->flags & UI_BoxFlag_Clip); }
     }
     else { ok &= card->rect.x1 > window.x1 && card->rect.y1 > window.y1; }

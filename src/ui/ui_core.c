@@ -1356,6 +1356,8 @@ ui_end_build(void)
         if(root_rect.y1 > window_rect.y1)
         {
           UI_Box *anchor = ui_box_from_key(ui_state->tooltip_anchor_key);
+          // Cursor roots start 15px below the pointer (ui_begin_build);
+          // subtract twice that offset to leave the same gap above it.
           F32 above = ui_box_is_nil(anchor) ? root_rect.y0-30.f : anchor->rect.y0-anchor->font_size*0.5f;
           above -= dim_2f32(root_rect).y;
           if(above >= window_rect.y0)
