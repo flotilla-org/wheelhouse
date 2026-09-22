@@ -4,6 +4,7 @@
 global WheelhouseIngress *uishell_ingress;
 global String8 uishell_sidebar_live_config;
 global B32 uishell_sidebar_live;
+global B32 uishell_sidebar_fixture;
 global U64 uishell_sidebar_last_tick;
 // The first resource is primary. This descriptor is local fixture input, not
 // an andamento wire format. Persist IDs on tabs independently of their labels.
@@ -34,17 +35,10 @@ struct UIShell_SidebarState
   U64 topology_hash;
   B32 initialized;
   B32 restored;
+  U64 reveal_workspace_id;
   U8 error[512];
   U8 inspection[2048];
 };
-
-internal B32
-uishell_sidebar_uses_andamento(CFG_Node *owner)
-{
-  CFG_Node *setting = cfg_node_child_from_string(owner, str8_lit("sidebar_mode"));
-  return str8_match(setting->first->string, str8_lit("andamento"), 0) ||
-         (setting == &cfg_nil_node && uishell_sidebar_live);
-}
 
 internal AndamentoText
 uishell_sidebar_text(String8 s)
@@ -140,11 +134,12 @@ uishell_sidebar_init(RD_WindowState *ws)
       uishell_sidebar_result(state, 0, 0);
       return state;
     }
-    String8 config = uishell_sidebar_live ? uishell_sidebar_live_config : str8_cstring((char *)uishell_sidebar_fixture_config);
+    String8 config = uishell_sidebar_live ? uishell_sidebar_live_config :
+      str8_cstring((char *)(uishell_sidebar_fixture ? uishell_sidebar_fixture_config : uishell_sidebar_local_config));
     state->core = andamento_create(config.str, config.size, &error);
     if(uishell_sidebar_result(state, state->core != 0, error))
     {
-      String8 patches = uishell_sidebar_live ? str8_zero() : str8_cstring((char *)uishell_sidebar_fixture_patches);
+      String8 patches = uishell_sidebar_fixture && !uishell_sidebar_live ? str8_cstring((char *)uishell_sidebar_fixture_patches) : str8_zero();
       for(U64 start = 0; start < patches.size;)
       {
         U64 end = start;
@@ -158,7 +153,7 @@ uishell_sidebar_init(RD_WindowState *ws)
         start = end+1;
       }
 #if OS_WINDOWS
-      if(!uishell_sidebar_live)
+      if(uishell_sidebar_fixture && !uishell_sidebar_live)
       {
       AndamentoFact recipe = {0};
       recipe.key = uishell_sidebar_text(str8_lit("action.primary.recipe"));
@@ -246,7 +241,7 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
         CFG_Node *id = cfg_node_new(rd_state->cfg, workspace, str8_lit("sidebar_entity_id"));
         cfg_node_new(rd_state->cfg, id, uishell_sidebar_string(effect.entity_id));
         String8 cwd = effect.has_cwd ? uishell_sidebar_string(effect.cwd) : str8_zero();
-        if(!uishell_sidebar_live && str8_match(uishell_sidebar_string(effect.entity_kind), str8_lit("vessel"), 0) &&
+        if(uishell_sidebar_fixture && !uishell_sidebar_live && str8_match(uishell_sidebar_string(effect.entity_kind), str8_lit("vessel"), 0) &&
            str8_match(uishell_sidebar_string(effect.entity_id), str8_lit("multi"), 0))
         {
           uishell_sidebar_populate(workspace, uishell_sidebar_fixture_resources,
@@ -327,6 +322,54 @@ uishell_sidebar_restore(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
   uishell_sidebar_observe(state, split);
 }
 
+// Reveal is a navigation request, never an activation or materialization.
+// Choose the deepest occurrence, preferring the first section on equal depth.
+internal U64
+uishell_sidebar_reveal_target(UIShell_SidebarState *state, U64 workspace_id)
+{
+  U64 result = ANDAMENTO_NONE, best_depth = 0;
+  U64 count = andamento_snapshot_node_count(state->snapshot);
+  for(U64 i = 0; i < count; i++)
+  {
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    if(node.is_section || node.state != ANDAMENTO_LIVE || node.workspace_id != workspace_id) { continue; }
+    U64 depth = 0;
+    for(U64 parent = node.parent; parent != ANDAMENTO_NONE; depth++)
+    {
+      AndamentoNode ancestor = {0}; andamento_snapshot_node(state->snapshot, parent, &ancestor);
+      parent = ancestor.parent;
+    }
+    if(result == ANDAMENTO_NONE || depth > best_depth) { result = i; best_depth = depth; }
+  }
+  return result;
+}
+
+internal void
+uishell_sidebar_expand_reveal(UIShell_SidebarState *state)
+{
+  // Each toggle changes the snapshot generation. Acquire a fresh snapshot
+  // before choosing another ancestor action; never reuse a stale action ref.
+  U64 limit = andamento_snapshot_node_count(state->snapshot);
+  for(U64 step = 0; state->reveal_workspace_id && step < limit; step++)
+  {
+    U64 target = uishell_sidebar_reveal_target(state, state->reveal_workspace_id);
+    if(target == ANDAMENTO_NONE) { state->reveal_workspace_id = 0; break; }
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, target, &node);
+    size_t toggle = ANDAMENTO_NONE;
+    for(U64 parent = node.parent; parent != ANDAMENTO_NONE;)
+    {
+      AndamentoNode ancestor = {0}; andamento_snapshot_node(state->snapshot, parent, &ancestor);
+      if(!ancestor.is_section && ancestor.collapsed) { toggle = ancestor.toggle; break; }
+      parent = ancestor.parent;
+    }
+    if(toggle == ANDAMENTO_NONE) { break; }
+    char *error = 0;
+    B32 ok = andamento_dispatch(state->core, state->snapshot, toggle, &error);
+    if(!uishell_sidebar_result(state, ok, error)) { state->reveal_workspace_id = 0; break; }
+    uishell_sidebar_refresh(state);
+  }
+}
+
 // Interactive compact-sidebar prototype; see docs/design/andamento-sidebar-prototype.md.
 // Borderless controls retain the toolkit's keyboard activation and focus cues.
 internal UI_Signal
@@ -351,15 +394,216 @@ uishell_sidebar_disclosure(B32 expanded, String8 key)
   return result;
 }
 
+// Presentation defaults are local policy, independent of role/group identity.
+// A future metadata suggestion/local override can replace this resolver.
+internal Vec4F32
+uishell_sidebar_project_accent(String8 identity)
+{
+  Vec4F32 colors[] = {
+    {0.40f, 0.66f, 0.83f, 1.f}, {0.66f, 0.55f, 0.79f, 1.f},
+    {0.74f, 0.64f, 0.40f, 1.f}, {0.43f, 0.72f, 0.61f, 1.f},
+    {0.78f, 0.53f, 0.49f, 1.f}, {0.46f, 0.69f, 0.72f, 1.f},
+  };
+  return colors[u64_hash_from_str8(identity)%ArrayCount(colors)];
+}
+
+typedef struct UIShell_SidebarProjectRule UIShell_SidebarProjectRule;
+struct UIShell_SidebarProjectRule
+{
+  UI_Box *title;
+  Vec4F32 accent;
+};
+
+// Follow the laid-out title, including its text padding and font settings.
+internal UI_BOX_CUSTOM_DRAW(uishell_sidebar_project_rule_draw)
+{
+  UIShell_SidebarProjectRule *data = (UIShell_SidebarProjectRule *)user_data;
+  F32 x0 = ui_box_text_position(data->title).x;
+  F32 x1 = box->rect.x1-4.f;
+  if(x0 < x1)
+  {
+    dr_rect(r2f32p(x0, box->rect.y1-1.f, x1, box->rect.y1), data->accent, 0, 0, 0);
+  }
+}
+
+internal size_t
+uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
+                             AndamentoNode node, UI_Signal sig, String8 context,
+                             B32 contains_current)
+{
+  size_t action = ANDAMENTO_NONE;
+  F32 em = ui_top_font_size();
+  String8 full_label = uishell_sidebar_string(node.label);
+  String8 kind = uishell_sidebar_string(node.entity_kind);
+  B32 can_activate = node.activate != ANDAMENTO_NONE && (node.openable || node.state == ANDAMENTO_LIVE);
+  Temp scratch = scratch_begin(0, 0);
+  sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
+  if(ui_clicked(sig))
+  {
+    if(can_activate) { action = node.activate; }
+    else
+    {
+      String8 detail = push_str8f(scratch.arena, "%S (%S) — no opening recipe", full_label, kind);
+      U64 size = Min(detail.size, sizeof(state->inspection)-1);
+      MemoryCopy(state->inspection, detail.str, size); state->inspection[size] = 0;
+      rd_request_frame();
+    }
+  }
+  if(ui_hovering(sig))
+  {
+    F32 card_width = Min(em*34.f, dim_2f32(wm_client_rect_from_window(ws->os)).x*0.6f);
+    UI_Tooltip UI_PrefWidth(ui_px(card_width, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_TextAlignment(UI_TextAlign_Left)
+    {
+      ui_label_multiline(card_width, full_label);
+      if(context.size) { ui_label_multiline(card_width, context); }
+      if(contains_current) { ui_label(str8_lit("Contains current workspace")); }
+      for(U64 f = 0; f < node.detail_count; f++)
+      {
+        AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_detail+f, &field);
+        String8 value = uishell_sidebar_string(field.text);
+        if(!value.size || str8_match(value, full_label, 0) || str8_match(value, kind, 0)) { continue; }
+        B32 duplicate = 0;
+        for(U64 previous = 0; previous < f; previous++)
+        {
+          AndamentoField other = {0}; andamento_snapshot_field(state->snapshot, node.first_detail+previous, &other);
+          duplicate |= str8_match(value, uishell_sidebar_string(other.text), 0);
+        }
+        if(!duplicate) { ui_label_multiline(card_width, value); }
+      }
+      UI_TagF("weak")
+      { ui_label(node.selected ? str8_lit("Current workspace") : can_activate ? (node.state == ANDAMENTO_LIVE ? str8_lit("Focus workspace") : str8_lit("Open workspace")) : str8_lit("No opening recipe available")); }
+      if(node.state == ANDAMENTO_LIVE)
+      {
+        rd_workspace_preview_demand_push(ws, node.workspace_id, card_width);
+        RD_SurfaceCacheNode *mini = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(node.workspace_id));
+        UI_PrefHeight(ui_px(card_width*0.625f, 1))
+        {
+          UI_Box *preview_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder, "###sidebar_hover_preview_%I64u", node.workspace_id);
+          if(mini != 0)
+          {
+            RD_WorkspacePreviewDraw *preview = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
+            preview->node = mini;
+            preview->src_uv = r2f32p(0, 0, 1, 1);
+            preview->keep_aspect = 1;
+            ui_box_equip_custom_draw(preview_box, rd_workspace_preview_box_draw, preview);
+          }
+          else { rd_request_frame(); }
+        }
+      }
+    }
+  }
+  scratch_end(scratch);
+  return action;
+}
+
+// Current-workspace state is persistent navigation context, not keyboard focus.
+// Desaturate the theme selection colour toward normal text, then blend it into
+// the sidebar background. Exact actions use a stronger fill than containing rows.
+internal Vec4F32
+uishell_sidebar_selection_fill(B32 exact_action)
+{
+  Vec4F32 tint = mix_4f32(ui_color_from_name(str8_lit("selection")),
+                          ui_color_from_name(str8_lit("text")), 0.65f);
+  Vec4F32 color = mix_4f32(ui_color_from_name(str8_lit("background")), tint,
+                           exact_action ? 0.30f : 0.14f);
+  color.w = 1.f;
+  return color;
+}
+
+// Workspace controls need more contrast than passive container separators.
+internal Vec4F32
+uishell_sidebar_action_border(void)
+{
+  Vec4F32 color = mix_4f32(ui_color_from_name(str8_lit("border")),
+                           ui_color_from_name(str8_lit("text")), 0.20f);
+  color.w = 1.f;
+  return color;
+}
+
+internal size_t
+uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
+                              AndamentoNode node, String8 context, B32 overview)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UI_Signal sig = {0};
+  UI_CornerRadius(3.f)
+  {
+    String8 label = uishell_sidebar_string(node.label);
+    String8 status = str8_zero();
+    if(node.field_count)
+    {
+      AndamentoField field = {0};
+      andamento_snapshot_field(state->snapshot, node.first_field, &field);
+      if(field.text.len) { label = uishell_sidebar_string(field.text); }
+    }
+    // Native entry templates declare label/kind/status; metadata stays in the core.
+    if(node.field_count > 2)
+    {
+      AndamentoField field = {0};
+      andamento_snapshot_field(state->snapshot, node.first_field+2, &field);
+      status = uishell_sidebar_string(field.text);
+    }
+    String8 mark = node.state == ANDAMENTO_OPENING ? str8_lit("…") :
+      str8_match(status, str8_lit("failed"), 0) ? str8_lit("!") :
+      str8_match(status, str8_lit("waiting"), 0) ? str8_lit("◷") :
+      node.state == ANDAMENTO_LIVE ? str8_lit("•") : str8_zero();
+    // Fixed status slot: opening/focus transitions never move the label.
+    UI_ChildLayoutAxis(Axis2_X)
+    {
+      UI_Box *slot = ui_build_box_from_stringf(0, "###action_slot_%S", uishell_sidebar_string(node.key));
+      ui_push_parent(slot);
+      ui_spacer(ui_px(5.f, 1));
+      UI_Box *column;
+      UI_PrefWidth(ui_pct(1, 0)) UI_ChildLayoutAxis(Axis2_Y)
+      { column = ui_build_box_from_stringf(0, "###action_column_%S", uishell_sidebar_string(node.key)); }
+      ui_push_parent(column);
+      ui_spacer(ui_px(1.f, 1));
+      ui_set_next_pref_width(ui_pct(1, 0));
+      ui_set_next_pref_height(ui_pct(1, 0));
+      ui_set_next_border_color(uishell_sidebar_action_border());
+      if(node.selected) { ui_set_next_background_color(uishell_sidebar_selection_fill(1)); }
+      UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|
+        UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|
+        (node.selected ? UI_BoxFlag_DrawBackground : 0), "###action_%S", uishell_sidebar_string(node.key));
+      UI_Parent(box) UI_PrefHeight(ui_pct(1, 1)) UI_TextPadding(ui_top_font_size()*0.4f)
+      UI_FlagsAdd(UI_BoxFlag_DisableTruncatedHover)
+      {
+        UI_PrefWidth(ui_pct(1, 0))
+        {
+          if(overview) RD_Font(RD_FontSlot_Icons) UI_TextAlignment(UI_TextAlign_Center) UI_TextPadding(0)
+          { ui_label(rd_icon_kind_text_table[RD_IconKind_Machine]); }
+          else { ui_label(label); }
+        }
+        UI_PrefWidth(ui_em(1.1f, 1)) UI_TextPadding(0)
+        { ui_label(mark); }
+      }
+      sig = ui_signal_from_box(box);
+      ui_spacer(ui_px(1.f, 1));
+      ui_pop_parent();
+      ui_pop_parent();
+    }
+  }
+  size_t action = uishell_sidebar_entry_signal(state, ws, node, sig, context, 0);
+  scratch_end(scratch);
+  return action;
+}
+
 internal void
 uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 {
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
   uishell_sidebar_restore(state, split);
+  if(state->reveal_workspace_id)
+  {
+    uishell_sidebar_observe(state, split);
+    uishell_sidebar_expand_reveal(state);
+  }
   size_t action = ANDAMENTO_NONE;
   Temp scratch = scratch_begin(0, 0);
-  F32 em = ui_top_font_size(), row_height = floor_f32(em*1.65f);
+  F32 em = ui_top_font_size(), row_height = floor_f32(em*2.2f);
+  F32 project_gap = 6.f, project_padding = 4.f;
+  F32 body_top_padding = 2.f; // Room for the first container's outward border stroke.
   Vec2F32 dim = dim_2f32(rect);
   UI_Box *root;
   UI_Focus(UI_FocusKind_On) UI_Rect(rect)
@@ -372,20 +616,61 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   B32 *hidden = push_array(scratch.arena, B32, count);
   U64 *depth = push_array(scratch.arena, U64, count);
   U64 *sections = push_array(scratch.arena, U64, count);
+  U64 *inline_first = push_array(scratch.arena, U64, count);
+  U64 *inline_last = push_array(scratch.arena, U64, count);
+  U64 *inline_next = push_array(scratch.arena, U64, count);
+  U64 *inline_count = push_array(scratch.arena, U64, count);
+  B32 *inlined = push_array(scratch.arena, B32, count);
+  B32 *row_children = push_array(scratch.arena, B32, count);
+  U64 *project_owner = push_array(scratch.arena, U64, count);
+  F32 *project_open = push_array(scratch.arena, F32, count);
+  F32 *project_child_heights = push_array(scratch.arena, F32, count);
+  for(U64 i = 0; i < count; i++) { inline_first[i] = inline_last[i] = inline_next[i] = ANDAMENTO_NONE; }
   U64 section_count = 0;
   for(U64 i = 0; i < count; i++)
   {
     andamento_snapshot_node(state->snapshot, i, &nodes[i]);
     if(nodes[i].is_section) { sections[section_count++] = i; }
+    project_owner[i] = ANDAMENTO_NONE;
     if(nodes[i].parent != ANDAMENTO_NONE)
     {
       U64 parent = nodes[i].parent;
-      hidden[i] = hidden[parent] || (!nodes[parent].is_section && nodes[parent].collapsed);
+      project_owner[i] = project_owner[parent];
+      // A project's children remain available while its viewport closes.
+      // Nested collapse state still determines their full, unanimated layout.
+      hidden[i] = hidden[parent] || (!nodes[parent].is_section &&
+        project_owner[parent] != parent && nodes[parent].collapsed);
       depth[i] = depth[parent] + !nodes[parent].is_section;
     }
+    if(!nodes[i].is_section && depth[i] == 0 &&
+       str8_match(uishell_sidebar_string(nodes[i].entity_kind), str8_lit("project"), 0))
+    {
+      project_owner[i] = i;
+      F32 target = nodes[i].collapsed ? 0.f : 1.f;
+      project_open[i] = ui_anim(ui_key_from_stringf(root->key, "project_open_%S", uishell_sidebar_string(nodes[i].key)),
+        target, .initial = target, .rate = rd_state->menu_animation_rate, .epsilon = 0.0001f,
+        .reset = state->reveal_workspace_id != 0);
+    }
   }
-  // Propagate selection only for drawing a collapsed ancestor's outline. Its
-  // own action and selected state still belong to its exact workspace binding.
+  for(U64 i = 0; i < count; i++)
+  {
+    U64 parent = nodes[i].parent;
+    B32 leaf = i+1 == count || nodes[i+1].parent != i;
+    // Unsupported nested/control-bearing inline content stays in the tree,
+    // ensuring it remains reachable rather than silently losing descendants.
+    if(parent != ANDAMENTO_NONE && !nodes[parent].is_section && leaf &&
+       !nodes[i].control_count && str8_match(uishell_sidebar_string(nodes[i].layout), str8_lit("inline"), 0))
+    {
+      inlined[i] = 1;
+      if(inline_last[parent] != ANDAMENTO_NONE) { inline_next[inline_last[parent]] = i; }
+      else { inline_first[parent] = i; }
+      inline_last[parent] = i;
+      inline_count[parent]++;
+    }
+    else if(parent != ANDAMENTO_NONE) { row_children[parent] = 1; }
+  }
+  // Propagate selection for collapsed ancestors and rows with inline actions. Their
+  // own action and selected state still belong to their exact workspace binding.
   B32 *contains_selected = push_array(scratch.arena, B32, count);
   for(U64 i = count; i > 0; i--)
   {
@@ -394,20 +679,31 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
     if(nodes[idx].parent != ANDAMENTO_NONE)
     { contains_selected[nodes[idx].parent] |= contains_selected[idx]; }
   }
+  U64 reveal = state->reveal_workspace_id ? uishell_sidebar_reveal_target(state, state->reveal_workspace_id) : ANDAMENTO_NONE;
+  if(reveal != ANDAMENTO_NONE && inlined[reveal]) { reveal = nodes[reveal].parent; }
+  U64 reveal_section = reveal;
+  while(reveal_section != ANDAMENTO_NONE && !nodes[reveal_section].is_section)
+  { reveal_section = nodes[reveal_section].parent; }
   UIShell_SidebarSection **states = push_array(scratch.arena, UIShell_SidebarSection *, section_count);
   F32 *heights = push_array(scratch.arena, F32, section_count);
   U64 *rows = push_array(scratch.arena, U64, section_count);
+  F32 *content_heights = push_array(scratch.arena, F32, section_count);
   U64 *entries = push_array(scratch.arena, U64, section_count);
   AndamentoText diagnostic = {0};
   if(state->snapshot && andamento_snapshot_diagnostic_count(state->snapshot))
   { andamento_snapshot_diagnostic(state->snapshot, 0, &diagnostic); }
-  F32 footer = (state->error[0] || state->inspection[0] || diagnostic.len) ? row_height*2 : 0;
+  F32 footer = row_height; // Stable diagnostic strip, including when empty.
   F32 available = Max(0.f, dim.y-footer-section_count*row_height);
   // Template controls share one fixed row at the bottom of the sidebar.
   B32 has_controls = 0;
   for(U64 n = 0; n < section_count; n++)
   { has_controls |= nodes[sections[n]].control_count != 0; }
-  F32 controls_height = has_controls ? row_height : 0;
+  B32 chrome_controls = ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions ||
+    ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions ||
+    ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions ||
+    ws->chrome_niche[RD_ChromeElementKind_CloseWorkspace] == RD_ChromeNiche_SidebarActions;
+  F32 chrome_height = chrome_controls ? row_height : 0;
+  F32 controls_height = (has_controls ? row_height : 0)+chrome_height;
   available = Max(0.f, available-controls_height);
   U64 flexible = section_count;
   for(U64 n = 0; n < section_count; n++)
@@ -422,19 +718,31 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       section->next = state->sections;
       state->sections = section;
     }
+    if(sections[n] == reveal_section) { section->collapsed = 0; }
     states[n] = section;
     U64 end = n+1 < section_count ? sections[n+1] : count;
     for(U64 i = sections[n]; i < end; i++)
     {
       if(nodes[i].parent == sections[n]) { entries[n]++; }
-      if(hidden[i]) { continue; }
-      rows[n] += !nodes[i].is_section;
+      if(hidden[i] || inlined[i]) { continue; }
+      U64 node_rows = !nodes[i].is_section;
+      if(project_owner[i] == i) { content_heights[n] += project_gap+2*project_padding; }
       for(U64 c = 0; !nodes[i].is_section && c < nodes[i].control_count; c++)
       {
         AndamentoControl control = {0};
-        if(andamento_snapshot_control(state->snapshot, nodes[i].first_control+c, &control) && control.action != ANDAMENTO_NONE) { rows[n]++; }
+        if(andamento_snapshot_control(state->snapshot, nodes[i].first_control+c, &control) && control.action != ANDAMENTO_NONE) { node_rows++; }
       }
+      rows[n] += node_rows;
+      F32 node_height = node_rows*row_height;
+      U64 owner = project_owner[i];
+      if(owner != ANDAMENTO_NONE && owner != i)
+      {
+        project_child_heights[owner] += node_height;
+        node_height *= project_open[owner];
+      }
+      content_heights[n] += node_height;
     }
+    if(rows[n]) { content_heights[n] += body_top_padding; }
     if(!section->collapsed && rows[n] && flexible == section_count) { flexible = n; }
   }
   // Secondary sections have a bounded body; the first expanded section fills
@@ -446,7 +754,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   for(U64 n = 0; n < section_count; n++)
   {
     if(n == flexible || states[n]->collapsed || !rows[n]) { continue; }
-    F32 wanted = states[n]->height_px > 0 ? states[n]->height_px : Min(rows[n], 7)*row_height;
+    F32 wanted = states[n]->height_px > 0 ? states[n]->height_px : Min(content_heights[n], 7*row_height);
     heights[n] = Min(wanted, remaining*0.4f);
     remaining -= heights[n];
   }
@@ -467,16 +775,20 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         title = uishell_sidebar_string(field.text);
       }
       UI_Box *header;
-      UI_TagF(states[n]->collapsed && contains_selected[sections[n]] ? "tab" : "")
+      if(states[n]->collapsed && contains_selected[sections[n]])
+      { ui_set_next_background_color(uishell_sidebar_selection_fill(0)); }
       UI_Rect(r2f32p(0, y+(n != flexible && heights[n] > 0 ? 6.f : 0.f), dim.x, y+row_height)) UI_ChildLayoutAxis(Axis2_X)
-      { header = ui_build_box_from_stringf(states[n]->collapsed && contains_selected[sections[n]] ? UI_BoxFlag_DrawBorder : 0, "###section_header_%S", key); }
-      UI_Parent(header) UI_PrefHeight(ui_pct(1, 1))
+      { header = ui_build_box_from_stringf(states[n]->collapsed && contains_selected[sections[n]] ? UI_BoxFlag_DrawBackground : 0, "###section_header_%S", key); }
+      UI_Parent(header) UI_PrefHeight(ui_pct(1, 1)) UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak")
       {
         B32 toggle = 0;
         ui_spacer(ui_em(0.3f, 1));
         toggle |= ui_clicked(uishell_sidebar_disclosure(!states[n]->collapsed, push_str8f(scratch.arena, "###section_toggle_%S", key)));
         UI_PrefWidth(ui_pct(1, 0))
-        { toggle |= ui_clicked(uishell_sidebar_button(push_str8f(scratch.arena, "%S  (%I64u)###section_%S", title, entries[n], key))); }
+        { toggle |= ui_clicked(uishell_sidebar_button(push_str8f(scratch.arena, "%S###section_%S", upper_from_str8(scratch.arena, title), key))); }
+        UI_PrefWidth(ui_em(3.f, 1)) UI_TextAlignment(UI_TextAlign_Right)
+        { ui_label(push_str8f(scratch.arena, "%I64u", entries[n])); }
+        ui_spacer(ui_px(8.f, 1));
         if(toggle) { states[n]->collapsed = !states[n]->collapsed; }
       }
       y += row_height;
@@ -498,12 +810,12 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       }
       UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, y, dim.x, y+heights[n]),
         UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);
-      params.content_dim_px = v2f32(0, rows[n]*row_height);
+      params.content_dim_px = v2f32(0, content_heights[n]);
       UI_ScrollRegion region = ui_scroll_region_layout(params);
       UI_Key content_key = ui_key_from_stringf(root->key, "section_body_%S", key);
       UI_Box *previous = ui_box_from_key(content_key);
       UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
-      axes[Axis2_Y].range = r1s64(0, Max(0, (S64)(rows[n]*row_height-heights[n])));
+      axes[Axis2_Y].range = r1s64(0, Max(0, (S64)(content_heights[n]-heights[n])));
       axes[Axis2_Y].visible = (S64)heights[n];
       axes[Axis2_Y].position.idx = clamp_1s64(axes[Axis2_Y].range, (S64)previous->view_off_target.y);
       UI_ScrollRegionSignal scroll = ui_scroll_region_build(root, content_key, &region, axes,
@@ -515,12 +827,28 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       UI_Parent(body) UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(row_height, 1))
       {
         U64 end = n+1 < section_count ? sections[n+1] : count;
+        UI_Box *project_box = 0;
+        U64 project_depth = 0, project_index = ANDAMENTO_NONE;
+        F32 project_children_y = 0;
+        ui_spacer(ui_px(body_top_padding, 1));
+        F32 row_y = body_top_padding;
         for(U64 i = sections[n]; i < end; i++)
         {
-          if(hidden[i]) { continue; }
+          if(project_box && depth[i] <= project_depth)
+          {
+            ui_pop_flags();
+            ui_pop_parent(); // clipped project children
+            ui_spacer(ui_px(project_padding, 1));
+            ui_pop_parent();
+            ui_spacer(ui_px(project_gap, 1));
+            row_y = project_children_y + project_child_heights[project_index]*project_open[project_index] + project_padding+project_gap;
+            project_box = 0;
+          }
+          U64 owner = project_owner[i];
+          if(hidden[i] || inlined[i] ||
+             (owner != ANDAMENTO_NONE && owner != i && project_open[owner] == 0.f)) { continue; }
           AndamentoNode node = nodes[i];
-          B32 children = i+1 < count && nodes[i+1].parent == i;
-          B32 can_activate = node.activate != ANDAMENTO_NONE && (node.openable || node.state == ANDAMENTO_LIVE);
+          B32 children = row_children[i];
           String8 node_key = uishell_sidebar_string(node.key);
           String8 full_label = uishell_sidebar_string(node.label);
           String8 label = full_label;
@@ -549,17 +877,61 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               { context = context.size ? push_str8f(scratch.arena, "%S / %S", context, value) : value; }
             }
           }
-          B32 contains_current = node.collapsed && contains_selected[i] && !node.selected;
-          if(!node.is_section) UI_TagF(node.selected || contains_current ? "tab" : "")
+          B32 project = depth[i] == 0 && str8_match(kind, str8_lit("project"), 0);
+          if(project)
           {
-            // Supply drawing flags at construction so the toolkit resolves the
-            // selected row's theme colours, even while the terminal has focus.
-            UI_Box *row;
-            UI_ChildLayoutAxis(Axis2_X)
-            { row = ui_build_box_from_stringf(node.selected ? UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder : contains_current ? UI_BoxFlag_DrawBorder : 0, "###sidebar_row_%S", node_key); }
-            UI_Parent(row)
+            Vec4F32 accent = uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
+            // Keep rounded strokes and their antialiasing inside the viewport clip.
+            UI_FixedX(2.f) UI_PrefWidth(ui_px(Max(0.f, dim_2f32(region.viewport).x-4.f), 1))
+            UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y) UI_CornerRadius(5.f)
+            UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), accent, 0.035f))
             {
-              ui_spacer(ui_em(0.3f+depth[i]*0.8f, 1));
+              project_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground, "###project_%S", node_key);
+            }
+            project_depth = depth[i];
+            project_index = i;
+            ui_push_parent(project_box);
+            ui_spacer(ui_px(project_padding, 1));
+            row_y += project_padding;
+          }
+          B32 contains_current = (node.collapsed || inline_count[i]) && contains_selected[i] && !node.selected;
+          if(!node.is_section)
+          {
+            if(i == reveal)
+            {
+              body->view_off_target.y = Clamp(0.f, row_y-(heights[n]-row_height)*0.5f, (F32)axes[Axis2_Y].range.max);
+              body->view_off.y = body->view_off_target.y;
+              state->reveal_workspace_id = 0;
+              rd_request_frame();
+            }
+            row_y += row_height;
+            // Persistent workspace selection remains visible while the terminal
+            // has focus, without borrowing the keyboard-focus border.
+            // Insets keep row selection and action borders inside the container.
+            UI_Box *slot;
+            UI_ChildLayoutAxis(Axis2_X)
+            { slot = ui_build_box_from_stringf(0, "###row_slot_%S", node_key); }
+            ui_push_parent(slot);
+            ui_spacer(ui_px(4.f, 1));
+            UI_Box *column;
+            UI_ChildLayoutAxis(Axis2_Y) UI_PrefHeight(ui_pct(1, 1))
+            { column = ui_build_box_from_stringf(0, "###row_column_%S", node_key); }
+            ui_push_parent(column);
+            ui_spacer(ui_px(2.f, 1));
+            UI_Box *row;
+            if(node.selected || contains_current)
+            { ui_set_next_background_color(uishell_sidebar_selection_fill(0)); }
+            UI_PrefHeight(ui_px(row_height-4.f, 1)) UI_CornerRadius(3.f) UI_ChildLayoutAxis(Axis2_X)
+            { row = ui_build_box_from_stringf(node.selected || contains_current ? UI_BoxFlag_DrawBackground : 0, "###sidebar_row_%S", node_key); }
+            UI_Parent(row) UI_PrefHeight(ui_pct(1, 1))
+            {
+              if(project)
+              {
+                UI_BackgroundColor(uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id)))
+                UI_PrefWidth(ui_px(3.f, 1))
+                { ui_build_box_from_stringf(UI_BoxFlag_DrawBackground, "###accent_%S", node_key); }
+              }
+              ui_spacer(ui_em(0.3f+Min(depth[i], 1)*0.4f, 1));
               UI_PrefWidth(ui_em(1.5f, 1))
               {
                 if(children && node.toggle != ANDAMENTO_NONE)
@@ -568,7 +940,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 }
                 else { ui_spacer(ui_em(1.5f, 1)); }
               }
-              UI_TagF("weak") UI_PrefWidth(ui_em(1.5f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) RD_Font(RD_FontSlot_Icons)
+              if(!project && !inline_count[i]) UI_TagF("weak") UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) RD_Font(RD_FontSlot_Icons)
               {
                 RD_IconKind icon = RD_IconKind_FileOutline;
                 if(str8_match(kind, str8_lit("project"), 0)) { icon = RD_IconKind_FolderClosedOutline; }
@@ -580,86 +952,133 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               {
                 // Text remains available in the tooltip; terse marks distinguish
                 // selected/open workspaces from producer activity state.
-                String8 mark = node.state == ANDAMENTO_LIVE ? str8_lit("• ") : str8_zero();
                 String8 display = context.size ? push_str8f(scratch.arena, "%S · %S", label, context) : label;
-                UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S%S###entry_%S", mark, display, node_key));
+                UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###entry_%S", display, node_key));
+                if(project && project_child_heights[i] > 0 && project_open[i] > 0)
+                {
+                  UIShell_SidebarProjectRule *rule = push_array(ui_build_arena(), UIShell_SidebarProjectRule, 1);
+                  rule->title = sig.box;
+                  rule->accent = uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
+                  rule->accent.w *= project_open[i];
+                  ui_box_equip_custom_draw(slot, uishell_sidebar_project_rule_draw, rule);
+                }
                 // The rich tooltip already includes the full label. Do not also
                 // enroll this row in the shell's automatic truncated-text hover.
                 sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
-                if(ui_clicked(sig))
+                size_t requested = uishell_sidebar_entry_signal(state, ws, node, sig, context, contains_current);
+                if(requested != ANDAMENTO_NONE) { action = requested; }
+              }
+              if(project)
+              {
+                UI_PrefWidth(ui_em(3.8f, 1))
                 {
-                  if(can_activate) { action = node.activate; }
-                  else
+                  size_t requested = uishell_sidebar_inline_action(state, ws, node, str8_zero(), 1);
+                  if(requested != ANDAMENTO_NONE) { action = requested; }
+                }
+              }
+              if(inline_count[i])
+              {
+                F32 slot_width = em*7.f;
+                F32 budget = dim.x*0.48f, overflow_width = em*2.5f;
+                U64 capacity = Max(0, (S64)(budget/slot_width));
+                U64 visible = inline_count[i] <= capacity ? inline_count[i] :
+                  Max(0, (S64)((budget-overflow_width)/slot_width));
+                // Keep the selected workspace visible without changing the slot
+                // budget. Replace the last visible item, retaining catalog order
+                // for the other visible items and for the overflow menu.
+                U64 *members = push_array(scratch.arena, U64, inline_count[i]);
+                U64 selected_index = ANDAMENTO_NONE;
+                for(U64 j = inline_first[i], index = 0; j != ANDAMENTO_NONE; j = inline_next[j], index++)
+                {
+                  members[index] = j;
+                  if(nodes[j].selected && selected_index == ANDAMENTO_NONE) { selected_index = index; }
+                }
+                if(visible && selected_index != ANDAMENTO_NONE && selected_index >= visible)
+                {
+                  U64 selected = members[selected_index];
+                  for(U64 index = selected_index; index >= visible; index--) { members[index] = members[index-1]; }
+                  members[visible-1] = selected;
+                }
+                for(U64 index = 0; index < visible; index++)
+                {
+                  UI_PrefWidth(ui_px(slot_width, 1))
                   {
-                    String8 detail = push_str8f(scratch.arena, "%S (%S) — no opening recipe", full_label, kind);
-                    U64 size = Min(detail.size, sizeof(state->inspection)-1);
-                    MemoryCopy(state->inspection, detail.str, size); state->inspection[size] = 0;
-                    rd_request_frame();
+                    size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[index]], full_label, 0);
+                    if(requested != ANDAMENTO_NONE) { action = requested; }
                   }
                 }
-                if(ui_hovering(sig))
+                if(visible < inline_count[i])
                 {
-                  F32 card_width = Min(em*34.f, dim_2f32(wm_client_rect_from_window(ws->os)).x*0.6f);
-                  UI_Tooltip UI_PrefWidth(ui_px(card_width, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_TextAlignment(UI_TextAlign_Left)
+                  UI_Key menu_key = ui_key_from_stringf(root->key, "overflow_%S", node_key);
+                  B32 overflow_selected = 0;
+                  for(U64 index = visible; index < inline_count[i]; index++) { overflow_selected |= nodes[members[index]].selected; }
+                  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(24.f, 1)) UI_PrefHeight(ui_px(row_height, 1))
                   {
-                    ui_label_multiline(card_width, full_label);
-                    if(context.size) { ui_label_multiline(card_width, context); }
-                    if(contains_current) { ui_label(str8_lit("Contains current workspace — expand to reveal")); }
-                    for(U64 f = 0; f < node.detail_count; f++)
+                    for(U64 index = visible; index < inline_count[i]; index++)
                     {
-                      AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_detail+f, &field);
-                      String8 value = uishell_sidebar_string(field.text);
-                      if(!value.size || str8_match(value, full_label, 0) || str8_match(value, kind, 0)) { continue; }
-                      B32 duplicate = 0;
-                      for(U64 previous = 0; previous < f; previous++)
-                      {
-                        AndamentoField other = {0}; andamento_snapshot_field(state->snapshot, node.first_detail+previous, &other);
-                        duplicate |= str8_match(value, uishell_sidebar_string(other.text), 0);
-                      }
-                      if(!duplicate) { ui_label_multiline(card_width, value); }
+                      size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[index]], full_label, 0);
+                      if(requested != ANDAMENTO_NONE) { action = requested; ui_ctx_menu_close(); }
                     }
-                    UI_TagF("weak")
-                    { ui_label(node.selected ? str8_lit("Current workspace") : can_activate ? (node.state == ANDAMENTO_LIVE ? str8_lit("Focus workspace") : str8_lit("Open workspace")) : str8_lit("No opening recipe available")); }
-                    if(node.state == ANDAMENTO_LIVE)
-                    {
-                      rd_workspace_preview_demand_push(ws, node.workspace_id, card_width);
-                      RD_SurfaceCacheNode *mini = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(node.workspace_id));
-                      UI_PrefHeight(ui_px(card_width*0.625f, 1))
-                      {
-                        UI_Box *preview_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder, "###sidebar_hover_preview_%I64u", node.workspace_id);
-                        if(mini != 0)
-                        {
-                          RD_WorkspacePreviewDraw *preview = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
-                          preview->node = mini;
-                          preview->src_uv = r2f32p(0, 0, 1, 1);
-                          preview->keep_aspect = 1;
-                          ui_box_equip_custom_draw(preview_box, rd_workspace_preview_box_draw, preview);
-                        }
-                        else { rd_request_frame(); }
-                      }
-                    }
+                  }
+                  ui_spacer(ui_px(5.f, 1));
+                  UI_CornerRadius(3.f) UI_FixedY(1.f) UI_PrefHeight(ui_px(row_height-6.f, 1))
+                  UI_PrefWidth(ui_px(overflow_width-5.f, 1))
+                  {
+                    ui_set_next_border_color(uishell_sidebar_action_border());
+                    if(overflow_selected) { ui_set_next_background_color(uishell_sidebar_selection_fill(1)); }
+                    UI_Signal sig = ui_button(push_str8f(scratch.arena, "+%I64u###overflow_%S", inline_count[i]-visible, node_key));
+                    if(ui_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, row_height)); }
                   }
                 }
               }
-              if(node.selected) UI_PrefWidth(ui_em(1.5f, 1)) UI_TextPadding(0) RD_Font(RD_FontSlot_Icons)
-              { ui_label(rd_icon_kind_text_table[RD_IconKind_Check]); }
-              UI_TagF("weak") UI_PrefWidth(ui_text_dim(0.6f, 1))
+              // Reserve the same trailing slot at every level. Project-wide
+              // status belongs here once supplied; workspace state stays on
+              // the overview action rather than being duplicated in this slot.
+              UI_TagF("weak") UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0)
               {
-                if(node.state == ANDAMENTO_OPENING) { ui_label(str8_lit("…")); }
+                if(project) { ui_spacer(ui_em(1.2f, 1)); }
+                else if(node.state == ANDAMENTO_OPENING) { ui_label(str8_lit("…")); }
                 else if(str8_match(status, str8_lit("failed"), 0)) { ui_label(str8_lit("!")); }
                 else if(str8_match(status, str8_lit("waiting"), 0)) { ui_label(str8_lit("◷")); }
-                else if(str8_match(status, str8_lit("active"), 0)) { ui_label(str8_lit("●")); }
+                else { ui_label(node.state == ANDAMENTO_LIVE ? str8_lit("•") : str8_lit("")); }
               }
             }
+            ui_spacer(ui_px(2.f, 1));
+            ui_pop_parent();
+            ui_spacer(ui_px(4.f, 1));
+            ui_pop_parent();
           }
           for(U64 c = 0; !node.is_section && c < node.control_count; c++)
           {
             AndamentoControl control = {0};
             if(andamento_snapshot_control(state->snapshot, node.first_control+c, &control) && control.action != ANDAMENTO_NONE)
             {
+              row_y += row_height;
               if(ui_clicked(uishell_sidebar_button(push_str8f(scratch.arena, "%S###control_%S_%I64u", uishell_sidebar_string(control.label), node_key, c)))) { action = control.action; }
             }
           }
+          if(project)
+          {
+            UI_Box *children_box;
+            UI_PrefHeight(ui_px(project_child_heights[i]*project_open[i], 1)) UI_ChildLayoutAxis(Axis2_Y)
+            {
+              children_box = ui_build_box_from_stringf(UI_BoxFlag_Clip|UI_BoxFlag_AllowOverflowY,
+                "###project_children_%S", node_key);
+            }
+            project_children_y = row_y;
+            ui_push_parent(children_box);
+            // Semantic collapse disables input immediately, while the previous
+            // rows can still be drawn through the shrinking viewport.
+            ui_push_flags(ui_top_flags() | (node.collapsed ? UI_BoxFlag_Disabled|UI_BoxFlag_IgnoreInteraction : 0));
+          }
+        }
+        if(project_box)
+        {
+          ui_pop_flags();
+          ui_pop_parent();
+          ui_spacer(ui_px(project_padding, 1));
+          ui_pop_parent();
+          ui_spacer(ui_px(project_gap, 1));
         }
       }
       // Children get first refusal; the viewport consumes the remaining wheel
@@ -670,7 +1089,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
     if(has_controls)
     {
       UI_Box *toolbar;
-      UI_Rect(r2f32p(0, dim.y-controls_height, dim.x, dim.y)) UI_ChildLayoutAxis(Axis2_X)
+      UI_Rect(r2f32p(0, dim.y-controls_height, dim.x, dim.y-chrome_height)) UI_ChildLayoutAxis(Axis2_X)
       { toolbar = ui_build_box_from_string(UI_BoxFlag_Clip|UI_BoxFlag_DrawSideTop, str8_lit("###sidebar_controls")); }
       UI_Parent(toolbar) UI_PrefHeight(ui_pct(1, 1)) UI_PrefWidth(ui_text_dim(1.2f, 1))
       {
@@ -700,20 +1119,33 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         }
       }
     }
-    if(footer)
+    if(chrome_controls)
     {
-      UI_Rect(r2f32p(0, dim.y-controls_height-footer, dim.x, dim.y-controls_height-row_height))
+      UI_Rect(r2f32p(0, dim.y-chrome_height, dim.x, dim.y)) UI_ChildLayoutAxis(Axis2_X)
       {
-        ui_label(state->error[0] ? str8_cstring((char *)state->error) : state->inspection[0] ? str8_cstring((char *)state->inspection) : uishell_sidebar_string(diagnostic));
-      }
-      UI_Rect(r2f32p(0, dim.y-controls_height-row_height, dim.x, dim.y-controls_height))
-      {
-        if(state->error[0] || state->inspection[0])
+        UI_Box *bar = ui_build_box_from_string(UI_BoxFlag_DrawSideTop, str8_lit("###workspace_chrome"));
+        UI_Parent(bar) UI_PrefWidth(ui_em(2.25f, 1)) UI_PrefHeight(ui_pct(1, 1))
         {
-          if(ui_clicked(uishell_sidebar_button(str8_lit("Dismiss###sidebar_dismiss"))))
+          if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_new_workspace(split->owner_cfg); }
+          ui_spacer(ui_pct(1, 0));
+          if(ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_workspace_action(split->owner_cfg, 0); }
+          if(ws->chrome_niche[RD_ChromeElementKind_CloseWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_workspace_action(split->owner_cfg, 1); }
+          if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_overview_toggle(ws); }
+        }
+      }
+    }
+    UI_Rect(r2f32p(0, dim.y-controls_height-footer, dim.x, dim.y-controls_height)) UI_ChildLayoutAxis(Axis2_X)
+    {
+      UI_Box *notice = ui_build_box_from_string(UI_BoxFlag_DrawSideTop, str8_lit("###sidebar_notice"));
+      UI_Parent(notice) UI_PrefHeight(ui_pct(1, 1))
+      {
+        String8 message = state->error[0] ? str8_cstring((char *)state->error) : state->inspection[0] ? str8_cstring((char *)state->inspection) : uishell_sidebar_string(diagnostic);
+        UI_PrefWidth(ui_pct(1, 0)) { ui_label(message); }
+        UI_PrefWidth(ui_em(1.5f, 1))
+        {
+          if((state->error[0] || state->inspection[0]) && ui_clicked(uishell_sidebar_button(str8_lit("×###sidebar_dismiss"))))
           { state->inspection[0] = state->error[0] = 0; rd_request_frame(); }
         }
-        else { UI_TagF("weak") ui_label(str8_lit("Sidebar configuration diagnostic")); }
       }
     }
   }
@@ -734,41 +1166,6 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
     uishell_sidebar_observe(state, &current);
     scratch_end(scratch);
   }
-}
-
-internal B32
-uishell_sidebar_choice_ui(Rng2F32 *rect, UIShell_ControlledSplit *split)
-{
-  CFG_Node *setting = cfg_node_child_from_string(split->owner_cfg, str8_lit("sidebar_mode"));
-  B32 andamento = uishell_sidebar_uses_andamento(split->owner_cfg);
-  F32 height = ui_top_font_size()*2.2f;
-  Rng2F32 header = *rect;
-  header.y1 = Min(header.y1, header.y0+height);
-  UI_Box *box = &ui_nil_box;
-  UI_Rect(header) UI_ChildLayoutAxis(Axis2_X)
-  {
-    box = ui_build_box_from_string(UI_BoxFlag_DrawBackground, str8_lit("###sidebar_mode"));
-  }
-  {
-    UI_Parent(box) UI_PrefWidth(ui_pct(0.5f, 0)) UI_PrefHeight(ui_pct(1, 0))
-    {
-      B32 previews = 0, core = 0;
-      UI_TagF("tab") UI_TagF(andamento ? "inactive" : "")
-      { previews = ui_clicked(ui_button(str8_lit("Workspaces###sidebar_previews"))); }
-      UI_TagF("tab") UI_TagF(andamento ? "" : "inactive")
-      { core = ui_clicked(ui_button(str8_lit("Andamento###sidebar_andamento"))); }
-      if(previews || core)
-      {
-        setting = cfg_node_child_from_string_or_alloc(rd_state->cfg, split->owner_cfg, str8_lit("sidebar_mode"));
-        cfg_node_new_replace(rd_state->cfg, setting, core ? str8_lit("andamento") : str8_lit("previews"));
-        andamento = core;
-        rd_request_frame();
-      }
-    }
-  }
-  rect->y0 = header.y1;
-  if(andamento) { uishell_sidebar_ui(*rect, split); }
-  return andamento;
 }
 
 // Exercises the native host adapter, not just andamento's own C fixture.
@@ -801,6 +1198,116 @@ uishell_sidebar_disclosure_diagnostics(RD_WindowState *ws)
   }
   ui_select_state(saved);
   ui_state_release(test_ui);
+  return ok;
+}
+
+// Exercise the production sidebar builder across deterministic animation frames.
+internal B32
+uishell_sidebar_motion_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *split,
+                                   U64 project_index, CFG_ID workspace)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_SidebarState *state = uishell_sidebar_init(ws);
+  // The normal host fixture folds its vessels into inline header buttons.
+  // Use those same live entities as child rows for the motion/input exercise.
+  String8 config = str8_cstring((char *)uishell_sidebar_fixture_config);
+  String8 inline_layout = str8_lit(" layout=\"inline\"");
+  U64 at = str8_find_needle(config, 0, inline_layout, 0);
+  String8 tree_config = push_str8f(scratch.arena, "%S%S", str8_prefix(config, at), str8_skip(config, at+inline_layout.size));
+  char *config_error = 0;
+  B32 configured = andamento_configure(state->core, uishell_sidebar_text(tree_config), &config_error);
+  if(!uishell_sidebar_result(state, configured, config_error)) { scratch_end(scratch); return 0; }
+  uishell_sidebar_refresh(state);
+  AndamentoNode project = {0}, section = {0};
+  andamento_snapshot_node(state->snapshot, project_index, &project);
+  andamento_snapshot_node(state->snapshot, project.parent, &section);
+  String8 project_key = push_str8_copy(scratch.arena, uishell_sidebar_string(project.key));
+  String8 section_key = push_str8_copy(scratch.arena, uishell_sidebar_string(section.key));
+  UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc();
+  F32 saved_rate = rd_state->menu_animation_rate;
+  ui_select_state(test_ui);
+  F32 child_heights[8] = {0}, group_heights[8] = {0}, content_heights[8] = {0};
+  B32 ok = 1;
+  for(U64 frame = 0; frame < ArrayCount(child_heights); frame++)
+  {
+    // Start open, close for two frames, reverse, Reveal, then check no-animation.
+    if(frame == 1 || frame == 3 || frame == 6 || frame == 7)
+    {
+      andamento_snapshot_node(state->snapshot, project_index, &project);
+      char *error = 0;
+      B32 dispatched = andamento_dispatch(state->core, state->snapshot, project.toggle, &error);
+      ok &= uishell_sidebar_result(state, dispatched, error);
+      uishell_sidebar_refresh(state);
+    }
+    if(frame == 5) { state->reveal_workspace_id = workspace; }
+    rd_state->menu_animation_rate = frame >= 6 ? 1.f : 0.5f;
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0};
+    UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_Key root_key = ui_key_from_string(ui_active_seed_key(), str8_lit("###andamento_sidebar"));
+    UI_Key body_key = ui_key_from_stringf(root_key, "section_body_%S", section_key);
+    UI_Key group_key = ui_key_from_stringf(body_key, "###project_%S", project_key);
+    UI_Key children_key = ui_key_from_stringf(group_key, "###project_children_%S", project_key);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_sidebar_ui(r2f32p(0, 0, 320, 240), split); }
+    ui_end_build();
+    UI_Box *children = ui_box_from_key(children_key);
+    UI_Box *group = ui_box_from_key(group_key);
+    UI_Box *body = ui_box_from_key(body_key);
+    if(ui_box_is_nil(children) || ui_box_is_nil(group) || ui_box_is_nil(body))
+    { ok = 0; fprintf(stderr, "FAIL project motion: missing layout boxes at frame %llu\n", frame); break; }
+    child_heights[frame] = dim_2f32(children->rect).y;
+    group_heights[frame] = dim_2f32(group->rect).y;
+    content_heights[frame] = body->view_bounds.y;
+    if(frame == 0 && group->rect.y0-body->rect.y0 < 2.f)
+    {
+      ok = 0;
+      fprintf(stderr, "FAIL project border: first container has only %g points above its stroke before the scroll clip\n", group->rect.y0-body->rect.y0);
+    }
+    if(frame == 2)
+    {
+      ok &= !!(children->flags & UI_BoxFlag_Clip);
+      ok &= !ui_box_is_nil(children->first) && dim_2f32(children->first->rect).y == floor_f32(11.f*2.2f);
+      U64 disabled_buttons = 0;
+      for(UI_Box *box = children->first; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, children).next)
+      {
+        if(box->flags & UI_BoxFlag_Clickable)
+        {
+          disabled_buttons++;
+          ok &= !!(box->flags & UI_BoxFlag_Disabled) && !!(box->flags & UI_BoxFlag_IgnoreInteraction);
+          UI_Event press = {0};
+          press.kind = UI_EventKind_Press;
+          press.key = WM_Key_LeftMouseButton;
+          press.pos = v2f32((box->rect.x0+box->rect.x1)*0.5f, box->rect.y0+0.5f);
+          ui_event_list_push(ui_build_arena(), &events, &press);
+          ok &= ui_signal_from_box(box).f == 0;
+        }
+      }
+      ok &= disabled_buttons > 0;
+    }
+  }
+  ok &= child_heights[0] > 0 && child_heights[2] > 0 && child_heights[2] < child_heights[0];
+  ok &= child_heights[3] > 0 && child_heights[3] < child_heights[2] && child_heights[4] > child_heights[3];
+  ok &= child_heights[5] == child_heights[0] && child_heights[6] == 0 && child_heights[7] == child_heights[0];
+  // The header does not shrink, and the section's scroll extent follows the clip.
+  ok &= abs_f32((group_heights[0]-child_heights[0])-(group_heights[2]-child_heights[2])) < 1.f;
+  ok &= abs_f32((content_heights[0]-content_heights[2])-(child_heights[0]-child_heights[2])) < 1.f;
+  if(!ok)
+  {
+    fprintf(stderr, "FAIL project motion: child heights");
+    for(U64 i = 0; i < ArrayCount(child_heights); i++) { fprintf(stderr, " %g", child_heights[i]); }
+    fprintf(stderr, "\n");
+  }
+  state->reveal_workspace_id = 0;
+  rd_state->menu_animation_rate = saved_rate;
+  ui_select_state(saved_ui);
+  ui_state_release(test_ui);
+  config_error = 0;
+  configured = andamento_configure(state->core, uishell_sidebar_text(config), &config_error);
+  ok &= uishell_sidebar_result(state, configured, config_error);
+  uishell_sidebar_refresh(state);
+  scratch_end(scratch);
   return ok;
 }
 
@@ -868,6 +1375,28 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
     ok = ok && tree.root->last->selected_tab->id == tools_id;
     uishell_sidebar_refresh(state);
+    // Reveal prefers the nested tree occurrence over Attention, expands its
+    // ancestor through fresh snapshot actions, and emits no host effects.
+    U64 reveal_target = uishell_sidebar_reveal_target(state, created);
+    AndamentoNode reveal_node = {0}, reveal_parent = {0};
+    ok = ok && reveal_target != ANDAMENTO_NONE &&
+      andamento_snapshot_node(state->snapshot, reveal_target, &reveal_node) &&
+      andamento_snapshot_node(state->snapshot, reveal_node.parent, &reveal_parent) &&
+      str8_match(uishell_sidebar_string(reveal_parent.entity_kind), str8_lit("project"), 0);
+    error = 0;
+    ok = ok && andamento_dispatch(state->core, state->snapshot, reveal_parent.toggle, &error);
+    uishell_sidebar_result(state, ok, error);
+    uishell_sidebar_refresh(state);
+    state->reveal_workspace_id = created;
+    uishell_sidebar_expand_reveal(state);
+    reveal_target = uishell_sidebar_reveal_target(state, created);
+    ok = ok && andamento_snapshot_node(state->snapshot, reveal_target, &reveal_node) &&
+      andamento_snapshot_node(state->snapshot, reveal_node.parent, &reveal_parent) && !reveal_parent.collapsed;
+    AndamentoEffects *reveal_effects = andamento_effects_take(state->core, 0);
+    ok = ok && reveal_effects && andamento_effects_count(reveal_effects) == 0;
+    andamento_effects_release(reveal_effects);
+    state->reveal_workspace_id = 0;
+    ok = ok && uishell_sidebar_motion_diagnostics(ws, &split, reveal_node.parent, created);
     // A pending focus whose target disappears must be completed as a failure.
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
@@ -921,7 +1450,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = ok && restored_live && tree.root->last->selected_tab->id == tools_id &&
          tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 2;
   }
-  fprintf(stderr, "Sidebar host diagnostics: %s (split layout, overflow selection, focus, close, failure, retry, restore)\n", ok ? "passed" : "FAILED");
+  fprintf(stderr, "Sidebar host diagnostics: %s (split layout, overflow selection, project motion, reveal, focus, close, failure, retry, restore)\n", ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;
 }

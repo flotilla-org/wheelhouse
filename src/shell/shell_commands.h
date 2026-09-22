@@ -43,6 +43,7 @@ read_only global UIShell_AppCmdInfo uishell_shell_window_cmd_info_table[] =
   UISHELL_SHELL_CMD("new_workspace", "New Workspace", Add, "Creates a new workspace in the current window.", "workspace", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("select_workspace", "Select Workspace", Null, "Selects a workspace in the current window.", "workspace", 0, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("close_workspace", "Close Workspace", X, "Closes a workspace in the current window.", "workspace", 0, UISHELL_SHELL_Q_NONE),
+  UISHELL_SHELL_CMD("workspace_settings", "Workspace Settings", Gear, "Edits the current workspace's properties.", "workspace,rename", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("window_settings", "Window Settings", Gear, "Opens settings for a window.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("close_window", "Close Window", Window, "Closes the current window.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("window_close_menu", "Window Close Menu", Null, "Closes the current window.", "", 0, UISHELL_SHELL_Q_NONE),

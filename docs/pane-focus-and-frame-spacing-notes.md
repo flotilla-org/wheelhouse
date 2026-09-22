@@ -66,3 +66,24 @@ Chrome-style: one continuous frame around the **active tab + panel body**, the a
 All knobs (gap, thickness, inactive-dim strength, window-edge controls) are **user settings now** — code-declared, ranged → sliders, like `overlay_scrollbars`/`animation_speed`. They migrate to **Theme** parameters in the later theme pass ([theme-design-notes](theme-design-notes.md) thread B, "beyond colors → metrics/density"); the setting/theme duality is already the model, so this is not throwaway.
 
 **Deferred (noted, not now):** tab auto-hide / compact tab-strip layouts; attention blur/desaturate (surface-composite); the concave tab-base fillet (effects toolchain); the Selected-Workspace integration + the broader sidebar/preview selection restyle (andamento); migrating these metrics into Theme.
+
+## Native visual follow-up, 2026-09-22
+
+Observed during the project sidebar review; these remain to investigate:
+
+- The shell's outer border appears pinched at the Cocoa window corners. Compare
+  our radius and stroke placement with the actual native window mask, including
+  different display scales and fullscreen.
+- At `tab_gap = 0`, the left edge of a tab header appears almost clipped away.
+  Unless chrome pushes the tab along, its left border should align with the body
+  it selects. Check the selected-tab draw extent against the tab-strip clip.
+- Explore concave inner corners where the selected tab joins its panel, with
+  subtler treatment for inactive tabs. ADRs 0007/0008 describe the frame ownership
+  and possible rendering work; settle geometry before choosing a new primitive.
+- With a nonzero `panel_gap`, title-bar controls need a bottom edge wherever no
+  panel abuts them. Resolve this by adjacency, including partially uncovered
+  spans. Consider whether the same spacing setting should inset the sidebar.
+
+The first project's top-stroke clipping and missing sidebar top/right edges are
+addressed in the native composition branch. The sidebar frame uses the panel
+border setting; it does not yet participate in panel-gap/adjacency resolution.

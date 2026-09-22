@@ -17,6 +17,7 @@ uishell_shell_window_menu_specs(void)
     UIShell_MenuCmd("close_window", 'c'),
     UIShell_MenuCmd("toggle_fullscreen", 'f'),
     UIShell_MenuSep(),
+    UIShell_MenuCmd("workspace_settings", 'p'),
     UIShell_MenuCmd("window_settings", 's'),
   };
   local_persist RD_AppMenuSpec specs[] =
@@ -1608,7 +1609,6 @@ uishell_dispatch_window_command(String8 name)
           {
             ws->root_controlled_split_initialized = 1;
             ws->root_controlled_split_selected_workspace_id = next_selected != 0 ? next_selected->id : window->id;
-            ws->root_controlled_split_renaming_workspace_id = 0;
             ws->window_layout_reset = 1;
           }
           if(workspace == window)
@@ -1625,6 +1625,19 @@ uishell_dispatch_window_command(String8 name)
           }
         }
       }
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("workspace_settings"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    if(split.inventory.selected != 0)
+    {
+      String8 expr = push_str8f(rd_frame_arena(), "query:config.$%I64x", split.inventory.selected->id);
+      UIShell_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
+      { uishell_push_cmd_current(str8_lit("push_query")); }
     }
     scratch_end(scratch);
   }

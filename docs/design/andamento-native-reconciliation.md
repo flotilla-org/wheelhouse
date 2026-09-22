@@ -146,3 +146,213 @@ Validation: independent core/frontend tests and C fixture, thirteen native sideb
 ABI tests, a native build, and live inspection of a project metadata card and a
 vessel terminal preview passed on 22 September 2026. The old Workspaces selector
 remains available; workspace creation/closing controls are still outstanding.
+
+### Native project composition, 22 September 2026
+
+The accepted browser study combines subtle project containers with inline workspace
+controls. The first native implementation uses Andamento's existing `layout="inline"`
+loop declaration for vessel children. Each placement retains its own key, action,
+workspace binding, selection and hover details. Wheelhouse measures the action
+budget and puts excess actions in a `+N` menu; the menu indicates a selected member.
+An inline leaf stays on its parent's row even if that parent has retained collapse
+state. Nodes with children or controls retain ordinary tree rows so their content
+remains reachable. Placement membership, filtering and workspace coverage remain
+in Andamento; the native index only arranges the returned nodes for drawing.
+
+Top-level projects receive a subtle rounded container and an identity-derived
+accent. The palette is a local default, independent of sort order, labels and
+workspace selection. It does not recolour terminal contents. A project overview
+button has a fixed slot even when no recipe is available or an opening is pending.
+Vessel controls currently use template-resolved text labels, with full labels in
+their hover cards. Open/pending/status marks reserve space; selecting a workspace
+does not insert another column. Diagnostics occupy one fixed bottom strip.
+
+Future presentation resolution should accept producer icon/colour suggestions,
+then apply local overrides ahead of defaults. Those visual choices must remain
+separate from entity role and grouping identity. No metadata format is introduced
+by this change. Standing-role actions on project headers still need explicit
+producer relationships; the renderer does not guess a governor from its name.
+Creation is already available in the titlebar tools. Closing and reveal-current
+controls remain prerequisites for retiring the old workspace selector. Other workspaces remains the coverage fallback.
+
+Validation: the native macOS build and fourteen typed ABI tests pass, including
+independent inline sibling activation and focus after a parent collapse. A separate
+native fixture window was used to open a workspace from overflow and check project
+spacing, status slots and selected-row treatment. This does not replace the live
+daily-driver configuration or validate future role metadata.
+
+The native spacing follow-up insets selection outlines from project containers,
+separates adjacent action borders, and insets action outlines within selected rows.
+Project padding is included in scroll extents. Section headings use smaller muted
+uppercase text with a separate right-aligned count; project open indicators appear
+only in their overview control. This uses the existing configured font, with no
+new font dependency. Native screenshots at wide and narrow widths provide the
+visual check for these geometry changes.
+
+### Workspace selection and hierarchy direction
+
+Current-workspace indication uses a restrained theme-derived row fill and a
+stronger fill on the exact inline action (or overflow control containing it).
+The selection tint is blended toward normal text to reduce saturation, then into
+the sidebar background. Persistent selection no longer adds blue outlines around
+both rows and actions. The toolkit's keyboard-focus treatment remains independent.
+Collapsed project/section ancestors retain the containing-row indication.
+
+A convoy has its own state and may eventually offer an overview workspace for
+more involved, graph-shaped workflows. Its status slot remains distinct from
+vessel status. Inline vessels are the compact presentation; a future expansion
+mode may put them on individual rows. Opening the convoy overview and expanding
+its vessel presentation must be independent actions. Do not substitute a vessel
+binding for the convoy merely to simplify the native row.
+
+Collapsed projects may eventually show summaries of working/completed convoys
+when space permits. Andamento should provide the summary semantics and expansion
+state; Wheelhouse measures the available space. Such summaries must preserve
+primary controls and must not be inferred from currently visible or materialized
+workspaces. This change records that direction; it does not fabricate overview
+recipes, introduce a new expansion mode, or add producer summary facts.
+
+When a selected vessel would fall into overflow, the native renderer promotes it
+into the last available inline slot. Slot count and widths do not change. Other
+visible actions retain catalog order; the displaced action returns to the menu,
+whose remaining items also retain catalog order. This is a width-dependent display
+choice, not a change to Andamento placement order or identity. If no inline slot
+fits, the overflow control still carries selection. Its corner radius matches the
+other workspace actions.
+
+Project rows reserve the same trailing status slot as convoy rows, keeping the
+workspace actions aligned. The project slot is currently blank; future aggregate
+working/waiting convoy or attention status can occupy it. Overview workspace
+state remains on its own action and is not duplicated as project-wide status.
+
+### Workspace toolbar and deferred preview ideas
+
+The titlebar already offers workspace creation. Add Close current workspace and
+Reveal current workspace as fixed toolbar actions, probably on the right, grouped
+with the existing zoom-out control. Close should use existing workspace-close
+semantics, including any applicable confirmation, and its tooltip should name the
+workspace. Keep close controls out of individual workspace buttons and do not grow
+the active button. Reveal should expose the current workspace when its placement
+is collapsed or outside the visible scroll area.
+
+The user observed workspace tooltips extending beyond the visible window. A
+follow-up should constrain their position and dimensions to the visible client
+area. Separate native windows for these cards remain a later option; bounding
+in-window cards is the nearer-term direction.
+
+Longer term, explore preview cards that remain open when the pointer moves into
+them and allow interaction. Cargo such as agent-produced artifacts and pull
+requests could make those cards useful beyond navigation. One proposed gesture
+is dragging a workspace preview card into a pinned sidebar area so its preview
+remains visible there. Interaction, pin persistence and preview update budgets
+still need design. These are recorded ideas, not part of the current sidebar
+parity work.
+
+### Close and Reveal implemented
+
+Reveal workspace in sidebar, Close current workspace, and Workspace Overview
+form the trailing workspace control cluster. Their measured widths participate in titlebar placement and
+tab-strip insets. If relocated into the sidebar, they use a fixed action row;
+the native sidebar keeps that row separate from template controls. Close and
+Reveal remain in the titlebar when the sidebar is hidden.
+
+Close sends the existing `close_workspace` command for the selected workspace.
+Its tooltip names that workspace; the existing last-workspace guard remains in
+force. Reveal opens the Andamento sidebar, exits workspace overview, expands the
+selected occurrence's ancestors using snapshot-owned core actions, opens its
+section, and scrolls its row into view. For inline vessels it reveals the parent
+row, where selection promotion exposes the vessel action if a slot fits. It
+prefers the deepest occurrence, then the first section on ties; unmatched host
+workspaces remain reachable through Other workspaces. Reveal never activates or
+materializes a workspace.
+
+Native host diagnostics cover ancestor expansion, preference for the tree over
+Attention, and absence of host effects during reveal. Manual native checks covered
+creating and closing a disposable workspace, reopening a hidden sidebar and a
+collapsed Projects section, and revealing a selected vessel after inserting forty
+projects before it. The macOS build and fourteen typed ABI tests pass. The old
+sidebar selector is still present; this change supplies its missing actions rather
+than removing it during validation.
+
+A future breadcrumb control could show the selected workspace's semantic path,
+for example `katzensteg > capture-resize > work`, with the appropriate icons. The
+proposed home is after the expanded menu and New Workspace button in the toolbar.
+This is recorded for later; it needs shared placement identity rather than parsing
+workspace labels, plus a fallback for local/unplaced workspaces.
+
+The workspace control cluster is ordered Reveal, Close, Overview, putting
+Overview at its right edge. Close uses a disconnected plug/socket symbol rather
+than a far-right X that resembles window close. Its tooltip still names the
+operation and workspace. Closing a provider-backed workspace can leave a latent
+catalog entry; closing a local workspace need not do so. The icon does not change
+those existing close semantics.
+
+### Project header separation and collapse motion
+
+Expanded projects with child rows have a one-logical-pixel horizontal rule below
+the header, using the same accent colour as the vertical marker. Its left edge
+follows the laid-out project title text; its right edge retains the container
+inset. The rule sits inside the existing row inset and adds no height. Collapsed and childless projects
+do not draw it.
+
+Project collapse now uses the existing `ui_anim` system and menu animation rate,
+including the global animation and speed settings. The project header stays at
+full height while a clipped child container expands or contracts. Rows keep their
+normal height; the separator fades with the expansion. Stable snapshot node keys
+identify animation progress, so ordinary fact updates do not replay the opening
+animation. New projects start at their current collapse state.
+
+The section scroll extent uses the same animated child height as the layout.
+Closing children immediately ignore input. A reversal continues from the current
+height. Reveal settles project animations before calculating its scroll target.
+Semantic collapse remains in Andamento; Wheelhouse stores only transient motion.
+Native host diagnostics exercise the actual sidebar builder across opening,
+closing, reversal, Reveal, and disabled-animation frames, checking fixed row and
+header sizes, matching scroll extent, and inert closing controls.
+
+Project containers are inset two logical pixels from each side of the scroll
+viewport so their rounded border strokes remain inside its clip.
+The scroll body also starts with two pixels of top padding: the first project
+previously started exactly at the clip and lost the outer part of its top stroke.
+That padding participates in the content height and Reveal offsets. The native
+geometry diagnostic checks the first project's clearance from the scroll clip.
+
+The shell draws top and right frame edges around the sidebar using the panel
+border colour and `panel_border_px`, and keeps sidebar content inside them.
+The content area meets the title-bar bottom directly, without adding window-edge
+padding at that internal seam.
+Panel-gap integration and title-bar adjacency remain part of the broader frame
+work recorded in `docs/pane-focus-and-frame-spacing-notes.md`.
+
+### One sidebar; next work
+
+The old Workspaces preview list and Workspaces/Andamento selector are retired.
+The tree is always the control surface, including with old saved `sidebar_mode`
+values. Standalone launches use a local-only template and observed workspace
+coverage; example entities require `--sidebar_fixture`. Overview and hover
+previews remain available. Workspace Settings in the Window menu and command
+palette preserves access to workspace names and themes without inline editing
+on producer-owned entity labels.
+
+The immediate next step is to package this native composition branch for review
+and daily-driver acceptance. After that:
+
+1. Bound hover cards to the window (Wheelhouse #5), including long metadata and
+   preview cards near the bottom/right edges.
+2. Remove repeated sidebar context-name scans (Wheelhouse #29) and fix build
+   failure propagation (#14); the latter interfered with this work during disk
+   exhaustion.
+3. Add the toolbar breadcrumb using shared placement identity, with a local
+   workspace fallback. Keep it within the existing chrome placement system.
+4. Settle semantic standing-role/project relationships, then role actions/icons
+   and project summary status. Keep producer suggestions and local presentation
+   overrides separate.
+5. Consume complete project repository membership once Flotilla #1897 provides
+   it. Interactive/pinned preview cards and convoy overview workspaces remain
+   later design work.
+
+The broader roadmap still includes direct remote cleat render transport
+(Wheelhouse #21), richer Jackstay attachment/discovery and eventual Kitty stream
+placements. Those do not block sidebar retirement. Existing preview correctness
+issues #9/#11 need rechecking against the current implementation before expanding
+preview usage further.

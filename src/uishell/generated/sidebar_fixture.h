@@ -47,6 +47,20 @@ static const char uishell_sidebar_fixture_patches[] =
 "{\"target\": {\"kind\": \"entity\", \"value\": {\"kind\": \"project\", \"id\": \"p\"}}, \"source_id\": \"fixture\", \"set\": {\"flotilla.project\": {\"value\": {\"type\": \"text\", \"value\": \"p\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"display.label\": {\"value\": {\"type\": \"text\", \"value\": \"Example project\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}}, \"unset\": []}\n"
 "{\"target\": {\"kind\": \"entity\", \"value\": {\"kind\": \"vessel\", \"id\": \"v\"}}, \"source_id\": \"fixture\", \"set\": {\"flotilla.project\": {\"value\": {\"type\": \"text\", \"value\": \"p\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"flotilla.vessel\": {\"value\": {\"type\": \"text\", \"value\": \"v\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"display.label\": {\"value\": {\"type\": \"text\", \"value\": \"Example terminal\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"status.attention\": {\"value\": {\"type\": \"bool\", \"value\": true}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"status.state\": {\"value\": {\"type\": \"text\", \"value\": \"waiting\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"action.primary.target\": {\"value\": {\"type\": \"text\", \"value\": \"vessel:v\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"action.primary.recipe\": {\"value\": {\"type\": \"text\", \"value\": \"printf 'Wheelhouse sidebar fixture\\\\n'; exec /bin/sh\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}}, \"unset\": []}\n"
 "{\"target\": {\"kind\": \"entity\", \"value\": {\"kind\": \"vessel\", \"id\": \"multi\"}}, \"source_id\": \"fixture\", \"set\": {\"flotilla.project\": {\"value\": {\"type\": \"text\", \"value\": \"p\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"flotilla.vessel\": {\"value\": {\"type\": \"text\", \"value\": \"multi\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"display.label\": {\"value\": {\"type\": \"text\", \"value\": \"Example workspace\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"status.attention\": {\"value\": {\"type\": \"bool\", \"value\": true}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"status.state\": {\"value\": {\"type\": \"text\", \"value\": \"waiting\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"action.primary.target\": {\"value\": {\"type\": \"text\", \"value\": \"vessel:multi\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"action.primary.recipe\": {\"value\": {\"type\": \"text\", \"value\": \"printf 'Wheelhouse sidebar fixture\\\\n'; exec /bin/sh\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}}, \"unset\": []}\n";
+static const char uishell_sidebar_local_config[] =
+"// No producer catalog: Andamento supplies coverage for observed local workspaces.\n"
+"region \"tree\" source=\"tree\" root-template=\"tree/title\" form=\"compact\" placement=\"tree\"\n"
+"template \"tree/title\" slot=\"compact\" node-kind=\"entity\" {\n"
+"  field \"label\" source=\"literal\" value=\"Projects\"\n"
+"}\n"
+"placement \"tree\" {\n"
+"  for \"project\" kind=\"project\" {\n"
+"    apply-template\n"
+"  }\n"
+"}\n"
+"template \"project/line\" {\n"
+"  field \"label\" key=\"display.label\"\n"
+"}\n";
 static const UIShell_SidebarResource uishell_sidebar_fixture_resources[] = {
   {"primary", "Primary", "printf 'Wheelhouse Primary terminal\\n'; exec /bin/sh", "cmd.exe /K echo Wheelhouse Primary terminal"},
   {"shell", "Shell", "printf 'Wheelhouse Shell terminal\\n'; exec /bin/sh", "cmd.exe /K echo Wheelhouse Shell terminal"},

@@ -186,6 +186,29 @@ class NativeSidebarTests(unittest.TestCase):
         lib.andamento_effects_release(batch)
         return result
 
+    def test_local_sidebar_has_only_observed_workspaces(self):
+        lib.andamento_destroy(self.core)
+        config = (ROOT / 'data/sidebar/local.kdl').read_bytes()
+        self.core = lib.andamento_create(config, len(config), None)
+        self.assertTrue(self.core)
+        _, nodes = self.snapshot()
+        self.assertFalse(any(not n.is_section or n.control_count for n in nodes))
+        workspaces = (Workspace * 2)(Workspace(70, 0, Text.of('local'), 0),
+                                     Workspace(71, 1, Text.of('local'), 1))
+        self.assertEqual(lib.andamento_observe(self.core, workspaces, 2, None, 0, None), 1)
+        snapshot, nodes = self.snapshot()
+        entries = [n for n in nodes if not n.is_section]
+        self.assertEqual([n.workspace_id for n in entries], [70, 71])
+        self.assertTrue(all(n.entity_kind.string() == 'andamento.workspace' for n in entries))
+        self.assertTrue(all(n.control_count == 0 for n in nodes))
+        kind, request, identity, _ = self.dispatch(snapshot, entries[1].activate)
+        self.assertEqual((kind, identity), (0, 71))
+        self.assertEqual(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None), 1)
+        workspaces[0].name = Text.of('Renamed')
+        self.assertEqual(lib.andamento_observe(self.core, workspaces, 1, None, 0, None), 1)
+        _, nodes = self.snapshot()
+        self.assertEqual([(n.workspace_id, n.label.string()) for n in nodes if not n.is_section], [(70, 'Renamed')])
+
     def test_unplaced_workspaces_focus_exact_ids_and_reject_stale_actions(self):
         workspaces = (Workspace * 2)(Workspace(70, 0, Text.of('local'), 0),
                                      Workspace(71, 1, Text.of('local'), 1))
@@ -257,6 +280,36 @@ class NativeSidebarTests(unittest.TestCase):
         self.assertTrue(find('session').openable)
         self.assertFalse(find('unavailable').openable)
         self.assertFalse(find('issue').openable)
+
+    def test_inline_siblings_keep_independent_bindings_when_parent_collapses(self):
+        update = patch('vessel', 'review', **{'flotilla.convoy': 'c',
+                                             'action.primary.recipe': 'exec review'})
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+        snapshot, nodes = self.snapshot()
+        convoy = next(n for n in nodes if n.entity_id.string() == 'c')
+        children = [n for n in nodes if n.parent != Size(-1).value and
+                    nodes[n.parent].entity_id.string() == 'c']
+        self.assertEqual({n.entity_id.string() for n in children}, {'v', 'review'})
+        self.assertTrue(all(n.layout.string() == 'inline' for n in children))
+        original_keys = {n.entity_id.string(): n.key.string() for n in children}
+        self.assertEqual(lib.andamento_dispatch(self.core, snapshot, convoy.toggle, None), 1)
+        snapshot, nodes = self.snapshot()
+        review = next(n for n in nodes if n.entity_id.string() == 'review')
+        kind, request, _, recipe = self.dispatch(snapshot, review.activate)
+        self.assertEqual((kind, recipe), (1, 'exec review'))
+        self.assertEqual(lib.andamento_complete(self.core, request, 1, 43, Text.of(''), None), 1)
+        workspace = Workspace(43, 0, Text.of('review'), 1)
+        self.assertEqual(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None), 1)
+        snapshot, nodes = self.snapshot()
+        review = next(n for n in nodes if n.entity_id.string() == 'review')
+        worker = next(n for n in nodes if n.entity_id.string() == 'v')
+        self.assertEqual((review.workspace_id, review.selected), (43, 1))
+        self.assertFalse(worker.selected)
+        self.assertEqual(review.key.string(), original_keys['review'])
+        self.assertEqual(worker.key.string(), original_keys['v'])
+        self.assertTrue(next(n for n in nodes if n.entity_id.string() == 'c').collapsed)
+        kind, _, identity, _ = self.dispatch(snapshot, review.activate)
+        self.assertEqual((kind, identity), (0, 43))
 
     def test_open_from_attention_then_focus_from_tree(self):
         snapshot, nodes = self.snapshot()

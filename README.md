@@ -35,11 +35,21 @@ and pointer input. Builds require `../jackstay`, or `WHEELHOUSE_JACKSTAY_DIR`, a
 compile its C library with Cargo. See [Jackstay views](docs/design/jackstay-view.md)
 for endpoint configuration, focus behaviour and acceptance checks.
 
-## Sidebar fixture
+## Sidebar
 
-The control region has **Workspaces** and **Andamento** modes. The choice is saved per window. Workspaces keeps the preview selector; Andamento renders an embedded example project and terminal using the shared core. The same terminal appears under Projects and Attention, with independent collapse state.
+The Andamento tree is the workspace sidebar. Without a producer, it lists local
+workspaces under Other workspaces; live catalog entries appear when connected to
+`pm connect`. Workspace previews are available on hover, with the full overview
+in the toolbar. Creation, Reveal, and Close also live in the toolbar. **Window →
+Workspace Settings** edits the current workspace's properties, including its name.
+Old saved `sidebar_mode` values no longer select a different sidebar.
 
-Click **Example workspace** for a primary terminal on the left and Shell/Tools tabs on the right, split 60/40. **Example terminal** keeps the single-terminal layout. Each entry creates or focuses its own workspace. Switch to Workspaces to close it; the example then becomes available again. Existing fixture workspaces are rebound after restart without creating duplicates. The facts and status are examples, not live git or Flotilla information.
+Run `./build/wheelhouse --sidebar_fixture` with temporary user/project files to
+show the embedded example catalog. **Example workspace** opens a primary terminal
+on the left and Shell/Tools tabs on the right, split 60/40. **Example terminal**
+uses a single terminal. Each entry creates or focuses its own workspace. Close it
+with the toolbar control to make the example available again. The facts and
+status in this fixture are examples, not live git or Flotilla information.
 
 Builds require the sibling `../andamento` checkout with C ABI 2. Wheelhouse builds the FFI and core through a separate Cargo consumer workspace with a committed lockfile in `tools/andamento-build/`, so no Zellij checkout is needed. Override its location with `WHEELHOUSE_ANDAMENTO_DIR`, or its Cargo output directory with `WHEELHOUSE_ANDAMENTO_TARGET_DIR`. The build explicitly selects the native Rust target rather than Andamento's WASM default. The multi-terminal resource list lives in `data/sidebar/resources.json`, with the primary first. This is host-side fixture data; dynamic terminal resource discovery and updates are not implemented yet. Fixture inputs live in `data/sidebar/`; the build embeds them into the executable.
 
