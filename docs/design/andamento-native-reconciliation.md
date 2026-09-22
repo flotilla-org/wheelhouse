@@ -188,3 +188,26 @@ uppercase text with a separate right-aligned count; project open indicators appe
 only in their overview control. This uses the existing configured font, with no
 new font dependency. Native screenshots at wide and narrow widths provide the
 visual check for these geometry changes.
+
+### Workspace selection and hierarchy direction
+
+Current-workspace indication uses a restrained theme-derived row fill and a
+stronger fill on the exact inline action (or overflow control containing it).
+The selection tint is blended toward normal text to reduce saturation, then into
+the sidebar background. Persistent selection no longer adds blue outlines around
+both rows and actions. The toolkit's keyboard-focus treatment remains independent.
+Collapsed project/section ancestors retain the containing-row indication.
+
+A convoy has its own state and may eventually offer an overview workspace for
+more involved, graph-shaped workflows. Its status slot remains distinct from
+vessel status. Inline vessels are the compact presentation; a future expansion
+mode may put them on individual rows. Opening the convoy overview and expanding
+its vessel presentation must be independent actions. Do not substitute a vessel
+binding for the convoy merely to simplify the native row.
+
+Collapsed projects may eventually show summaries of working/completed convoys
+when space permits. Andamento should provide the summary semantics and expansion
+state; Wheelhouse measures the available space. Such summaries must preserve
+primary controls and must not be inferred from currently visible or materialized
+workspaces. This change records that direction; it does not fabricate overview
+recipes, introduce a new expansion mode, or add producer summary facts.

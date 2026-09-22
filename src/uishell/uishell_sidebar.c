@@ -434,6 +434,20 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   return action;
 }
 
+// Current-workspace state is persistent navigation context, not keyboard focus.
+// Desaturate the theme selection colour toward normal text, then blend it into
+// the sidebar background. Exact actions use a stronger fill than containing rows.
+internal Vec4F32
+uishell_sidebar_selection_fill(B32 exact_action)
+{
+  Vec4F32 tint = mix_4f32(ui_color_from_name(str8_lit("selection")),
+                          ui_color_from_name(str8_lit("text")), 0.65f);
+  Vec4F32 color = mix_4f32(ui_color_from_name(str8_lit("background")), tint,
+                           exact_action ? 0.30f : 0.14f);
+  color.w = 1.f;
+  return color;
+}
+
 // Workspace controls need more contrast than passive container separators.
 internal Vec4F32
 uishell_sidebar_action_border(void)
@@ -450,7 +464,7 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
 {
   Temp scratch = scratch_begin(0, 0);
   UI_Signal sig = {0};
-  UI_TagF(node.selected ? "tab" : "") UI_CornerRadius(3.f)
+  UI_CornerRadius(3.f)
   {
     String8 label = uishell_sidebar_string(node.label);
     String8 status = str8_zero();
@@ -484,7 +498,8 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
       ui_spacer(ui_px(1.f, 1));
       ui_set_next_pref_width(ui_pct(1, 0));
       ui_set_next_pref_height(ui_pct(1, 0));
-      if(!node.selected) { ui_set_next_border_color(uishell_sidebar_action_border()); }
+      ui_set_next_border_color(uishell_sidebar_action_border());
+      if(node.selected) { ui_set_next_background_color(uishell_sidebar_selection_fill(1)); }
       UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|
         UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|
         (node.selected ? UI_BoxFlag_DrawBackground : 0), "###action_%S", uishell_sidebar_string(node.key));
@@ -656,9 +671,10 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         title = uishell_sidebar_string(field.text);
       }
       UI_Box *header;
-      UI_TagF(states[n]->collapsed && contains_selected[sections[n]] ? "tab" : "")
+      if(states[n]->collapsed && contains_selected[sections[n]])
+      { ui_set_next_background_color(uishell_sidebar_selection_fill(0)); }
       UI_Rect(r2f32p(0, y+(n != flexible && heights[n] > 0 ? 6.f : 0.f), dim.x, y+row_height)) UI_ChildLayoutAxis(Axis2_X)
-      { header = ui_build_box_from_stringf(states[n]->collapsed && contains_selected[sections[n]] ? UI_BoxFlag_DrawBorder : 0, "###section_header_%S", key); }
+      { header = ui_build_box_from_stringf(states[n]->collapsed && contains_selected[sections[n]] ? UI_BoxFlag_DrawBackground : 0, "###section_header_%S", key); }
       UI_Parent(header) UI_PrefHeight(ui_pct(1, 1)) UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak")
       {
         B32 toggle = 0;
@@ -760,8 +776,8 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           B32 contains_current = (node.collapsed || inline_count[i]) && contains_selected[i] && !node.selected;
           if(!node.is_section)
           {
-            // Supply drawing flags at construction so the toolkit resolves the
-            // selected row's theme colours, even while the terminal has focus.
+            // Persistent workspace selection remains visible while the terminal
+            // has focus, without borrowing the keyboard-focus border.
             // Insets keep row selection and action borders inside the container.
             UI_Box *slot;
             UI_ChildLayoutAxis(Axis2_X)
@@ -774,9 +790,10 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             ui_push_parent(column);
             ui_spacer(ui_px(2.f, 1));
             UI_Box *row;
-            UI_PrefHeight(ui_px(row_height-4.f, 1)) UI_CornerRadius(3.f)
-            UI_TagF(node.selected || contains_current ? "tab" : "") UI_ChildLayoutAxis(Axis2_X)
-            { row = ui_build_box_from_stringf(node.selected ? UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder : contains_current ? UI_BoxFlag_DrawBorder : 0, "###sidebar_row_%S", node_key); }
+            if(node.selected || contains_current)
+            { ui_set_next_background_color(uishell_sidebar_selection_fill(0)); }
+            UI_PrefHeight(ui_px(row_height-4.f, 1)) UI_CornerRadius(3.f) UI_ChildLayoutAxis(Axis2_X)
+            { row = ui_build_box_from_stringf(node.selected || contains_current ? UI_BoxFlag_DrawBackground : 0, "###sidebar_row_%S", node_key); }
             UI_Parent(row) UI_PrefHeight(ui_pct(1, 1))
             {
               if(project)
@@ -853,9 +870,10 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                   }
                   ui_spacer(ui_px(5.f, 1));
                   UI_FixedY(1.f) UI_PrefHeight(ui_px(row_height-6.f, 1))
-                  UI_TagF(overflow_selected ? "tab" : "") UI_PrefWidth(ui_px(overflow_width-5.f, 1))
+                  UI_PrefWidth(ui_px(overflow_width-5.f, 1))
                   {
-                    if(!overflow_selected) { ui_set_next_border_color(uishell_sidebar_action_border()); }
+                    ui_set_next_border_color(uishell_sidebar_action_border());
+                    if(overflow_selected) { ui_set_next_background_color(uishell_sidebar_selection_fill(1)); }
                     UI_Signal sig = ui_button(push_str8f(scratch.arena, "+%I64u###overflow_%S", inline_count[i]-visible, node_key));
                     if(ui_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, row_height)); }
                   }
