@@ -19,6 +19,13 @@ static WH_JS_State wait_state(WH_Jackstay *session, int mode) {
           state.input_status, mode);
   abort();
 }
+// The harness acknowledges the independent source's state report. Queueing an
+// event locally does not prove it reached the source before reset or shutdown.
+static void wait_source(const char *marker) {
+  puts(marker);
+  fflush(stdout);
+  assert(getchar() == '\n');
+}
 int main(int argc, char **argv) {
   assert(argc >= 2);
   const char *mode = argc > 2 ? argv[2] : "input";
@@ -105,7 +112,7 @@ int main(int argc, char **argv) {
                            .x = 12,
                            .y = 14};
   assert(wh_js_send(session, &button));
-  usleep(250000);
+  wait_source("await-button-down");
   wh_js_focus(session, false);
   state = wait_state(session, 1);
   assert(state.control); // reset retains assignment
@@ -114,7 +121,7 @@ int main(int argc, char **argv) {
   key.action = FT_INPUT_DOWN;
   key.press = 2;
   assert(wh_js_send(session, &key));
-  usleep(100000);
+  wait_source("await-key-down");
   wh_js_stop(session);
   state = wait_state(session, 2);
   assert(state.cleanup_confirmed);
