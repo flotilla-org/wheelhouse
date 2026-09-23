@@ -6270,8 +6270,7 @@ rd_window_frame(void)
     B32 tabs_in_title_bar = rd_setting_b32_from_name(str8_lit("tabs_in_title_bar"));
     ProfScope("build top bar")
     {
-      F32 bar_width = dim_2f32(top_bar_rect).x;
-      F32 workspace_path_w = ui_top_font_size()*(bar_width >= 1200.f ? 30.f : bar_width >= 800.f ? 24.f : 11.f);
+      F32 workspace_path_w = 0;
       B32 draw_custom_title_bar_controls = wm_window_should_draw_custom_title_bar_controls(ws->os);
       F32 native_title_bar_left_padding = wm_window_native_title_bar_left_padding(ws->os);
       B32 draw_self_menu_bar = !wm_application_menu_bar_is_native();
@@ -6288,6 +6287,12 @@ rd_window_frame(void)
         FNT_Tag icon_font = rd_font_from_slot(RD_FontSlot_Icons);
         F32 bar_h = dim_2f32(top_bar_rect).y;
         F32 icon_button_w = font_size*2.25f; // flat icon buttons (new-workspace, overview)
+        // Place the breadcrumb's right edge at the sidebar divider. Keep a
+        // small readable slot when the sidebar is collapsed or very narrow.
+        F32 leading = (native_title_bar_left_padding > 0 ? native_title_bar_left_padding : bar_h);
+        F32 sidebar_right = content_rect.x0 + uishell_controlled_split_control_width_px(&root_controlled_split, content_rect);
+        workspace_path_w = Max(font_size*8.f,
+          floor_f32(sidebar_right - top_bar_rect.x0 - leading - icon_button_w*2.f));
 
         // menu bar: compact = a single kebab button; full = sum of menu-title
         // button widths. each button is sized by ui_text_dim(20,1), which
@@ -6326,7 +6331,6 @@ rd_window_frame(void)
 
         // available title-bar width = bar width minus the platform-reserved ends
         // (leading traffic-lights / app icon, trailing window controls) & a margin
-        F32 leading  = (native_title_bar_left_padding > 0 ? native_title_bar_left_padding : bar_h);
         F32 trailing = (draw_custom_title_bar_controls ? bar_h*3.f : 0.f);
         F32 title_bar_budget = dim_2f32(top_bar_rect).x - leading - trailing - font_size*2.f;
 
