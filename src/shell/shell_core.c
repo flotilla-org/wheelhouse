@@ -3868,7 +3868,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 Rng2F32 rect = sites[idx].rect;
                 Axis2 split_axis = axis2_from_dir2(dir);
                 Side split_side = side_from_dir2(dir);
-                if(dir != Dir2_Invalid && split_axis == panel->parent->split_axis)
+                if(dir != Dir2_Invalid && panel->parent != &cfg_nil_panel_node &&
+                   split_axis == panel->parent->split_axis)
                 {
                   continue;
                 }
