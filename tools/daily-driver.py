@@ -14,6 +14,8 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+CONNECTOR_STABLE_SECONDS = 30
+MAX_CONNECTOR_BACKOFF_SECONDS = 30
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -109,7 +111,7 @@ def run(args, binary, flotilla, template, state):
                     raise RuntimeError(f'{name} producer exited with status {process.returncode}; see {logs / (name + ".log")}')
             if connector is not None and connector.poll() is not None:
                 status = connector.returncode
-                if time.monotonic() - connector_started_at >= 30:
+                if time.monotonic() - connector_started_at >= CONNECTOR_STABLE_SECONDS:
                     backoff = 1
                 stop(connector)
                 connector = None
@@ -118,7 +120,7 @@ def run(args, binary, flotilla, template, state):
                 with (logs / 'flotilla.log').open('a') as output:
                     print(message, file=output, flush=True)
                 print(message, flush=True)
-                backoff = min(backoff * 2, 30)
+                backoff = min(backoff * 2, MAX_CONNECTOR_BACKOFF_SECONDS)
             if connector is None and not args.git_only and time.monotonic() >= restart_at:
                 try:
                     connector = launch('flotilla', connector_command, append=True)
@@ -129,7 +131,7 @@ def run(args, binary, flotilla, template, state):
                         print(message, file=output, flush=True)
                     print(message, flush=True)
                     restart_at = time.monotonic() + backoff
-                    backoff = min(backoff * 2, 30)
+                    backoff = min(backoff * 2, MAX_CONNECTOR_BACKOFF_SECONDS)
             time.sleep(.2)
         return app.returncode
 
