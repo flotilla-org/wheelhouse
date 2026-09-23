@@ -69,31 +69,67 @@ def run(args, binary, flotilla, template, state):
         logs = state / 'logs'
         logs.mkdir(exist_ok=True)
 
-        def launch(name, command):
-            output = stack.enter_context((logs / (name + '.log')).open('w'))
-            process = subprocess.Popen(command, env=env, stdout=output, stderr=subprocess.STDOUT,
-                                       start_new_session=True)
-            stack.callback(stop, process)
-            return process
+        def launch(name, command, append=False):
+            with (logs / (name + '.log')).open('a' if append else 'w') as output:
+                return subprocess.Popen(command, env=env, stdout=output, stderr=subprocess.STDOUT,
+                                        start_new_session=True)
 
         print(f'Daily-driver settings: {state}\nLogs: {logs}\nWHEELHOUSE_SOCKET={path}', flush=True)
         app = launch('wheelhouse', [str(binary), '--user:' + str(state / 'user'),
                                    '--project:' + str(state / 'project'),
                                    '--andamento_socket:' + path, '--andamento_config:' + str(template)])
+        stack.callback(stop, app)
         wait_ready(app, path)
         producers = []
         for index, repo in enumerate(args.repo):
             name = f'git-{index}'
-            producers.append((name, launch(name, [sys.executable, '-u', str(ROOT / 'tools/andamento-publish.py'),
-                                                 '--socket', path, '--repo', str(repo)])))
+            process = launch(name, [sys.executable, '-u', str(ROOT / 'tools/andamento-publish.py'),
+                                    '--socket', path, '--repo', str(repo)])
+            stack.callback(stop, process)
+            producers.append((name, process))
+        connector_command = [str(flotilla), 'pm', 'connect', '--wheelhouse-socket', path,
+                             '--flotilla-bin', str(flotilla)]
+        connector = None
+        connector_started_at = 0
+        restart_at = 0
+        backoff = 1
         if not args.git_only:
-            producers.append(('flotilla', launch('flotilla', [str(flotilla), 'pm', 'connect',
-                              '--wheelhouse-socket', path, '--flotilla-bin', str(flotilla)])))
+            connector = launch('flotilla', connector_command)
+            connector_started_at = time.monotonic()
+
+        def stop_connector():
+            if connector is not None:
+                stop(connector)
+
+        stack.callback(stop_connector)
         print('Wheelhouse is running. Close the app or press Ctrl-C to stop the daily driver.', flush=True)
         while app.poll() is None:
             for name, process in producers:
                 if process.poll() is not None:
                     raise RuntimeError(f'{name} producer exited with status {process.returncode}; see {logs / (name + ".log")}')
+            if connector is not None and connector.poll() is not None:
+                status = connector.returncode
+                if time.monotonic() - connector_started_at >= 30:
+                    backoff = 1
+                stop(connector)
+                connector = None
+                restart_at = time.monotonic() + backoff
+                message = f'Flotilla connector exited with status {status}; restarting in {backoff}s'
+                with (logs / 'flotilla.log').open('a') as output:
+                    print(message, file=output, flush=True)
+                print(message, flush=True)
+                backoff = min(backoff * 2, 30)
+            if connector is None and not args.git_only and time.monotonic() >= restart_at:
+                try:
+                    connector = launch('flotilla', connector_command, append=True)
+                    connector_started_at = time.monotonic()
+                except OSError as error:
+                    message = f'Flotilla connector could not start: {error}; retrying in {backoff}s'
+                    with (logs / 'flotilla.log').open('a') as output:
+                        print(message, file=output, flush=True)
+                    print(message, flush=True)
+                    restart_at = time.monotonic() + backoff
+                    backoff = min(backoff * 2, 30)
             time.sleep(.2)
         return app.returncode
 
