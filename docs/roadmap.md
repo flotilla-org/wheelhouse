@@ -69,5 +69,5 @@ The current sidebar reasoning and implementation history live in
 The [portfolio context](context/portfolio.md) is an August orientation snapshot;
 the [top-down cut plan](top-down-cut-plan.md) records the earlier RAD extraction.
 Neither is the current work queue. Cross-project portfolio history remains in
-`~/dev/project-map`; Wheelhouse's active decisions and work should be recorded
-here or on linked project issues.
+the separate project-map repository; Wheelhouse's active decisions and work
+should be recorded here or on linked project issues.
