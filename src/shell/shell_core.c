@@ -4769,18 +4769,6 @@ internal UI_BOX_CUSTOM_DRAW(rd_workspace_detach_icon_draw)
 }
 
 internal void
-rd_chrome_reveal_workspace(CFG_Node *owner_cfg, U64 workspace_id)
-{
-  RD_WindowState *ws = rd_window_state_from_cfg(owner_cfg);
-  UIShell_SidebarState *sidebar = uishell_sidebar_init(ws);
-  sidebar->reveal_workspace_id = workspace_id;
-  CFG_Node *collapsed = cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed"));
-  if(collapsed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, collapsed); }
-  ws->workspace_zoom_open = 0;
-  rd_request_frame();
-}
-
-internal void
 rd_chrome_build_workspace_path(CFG_Node *owner_cfg, F32 width_px)
 {
   Temp scratch = scratch_begin(0, 0);
@@ -4798,17 +4786,18 @@ rd_chrome_build_workspace_path(CFG_Node *owner_cfg, F32 width_px)
                                                             workspace->display_name, &leaf) : leaf;
   String8 display = path;
   F32 available = width_px - 16.f;
-  if(workspace && fnt_dim_from_tag_size_string(rd_font_from_slot(RD_FontSlot_Main),
-                                               ui_top_font_size(), 0, 0, path).x > available)
+  B32 shortened = (workspace && fnt_dim_from_tag_size_string(rd_font_from_slot(RD_FontSlot_Main),
+                                                              ui_top_font_size(), 0, 0, path).x > available);
+  if(shortened)
   { display = leaf; }
   UI_Signal sig = {0};
   UI_TagF("weak") UI_HeightFill UI_TextPadding(8.f) UI_TextAlignment(UI_TextAlign_Left)
   {
-    UI_Box *box = ui_build_box_from_string(UI_BoxFlag_DrawText,
+    UI_Box *box = ui_build_box_from_string(UI_BoxFlag_DrawText|UI_BoxFlag_DisableTruncatedHover,
       push_str8f(scratch.arena, "%S###workspace_path", display));
     sig = ui_signal_from_box(box);
   }
-  if(ui_mouse_over(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  if(shortened && ui_mouse_over(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
   {
     ui_state->tooltip_anchor_key = sig.box->key;
     ui_label(path);
@@ -4841,7 +4830,13 @@ rd_chrome_build_workspace_action(CFG_Node *owner_cfg, B32 close)
     if(close) { uishell_cmd("close_workspace", .window = owner_cfg->id, .cfg = workspace->id); }
     else
     {
-      rd_chrome_reveal_workspace(owner_cfg, workspace->id);
+      RD_WindowState *ws = rd_window_state_from_cfg(owner_cfg);
+      UIShell_SidebarState *sidebar = uishell_sidebar_init(ws);
+      sidebar->reveal_workspace_id = workspace->id;
+      CFG_Node *collapsed = cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed"));
+      if(collapsed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, collapsed); }
+      ws->workspace_zoom_open = 0;
+      rd_request_frame();
     }
   }
   scratch_end(scratch);
