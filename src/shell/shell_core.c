@@ -4780,7 +4780,7 @@ rd_chrome_reveal_workspace(CFG_Node *owner_cfg, U64 workspace_id)
   rd_request_frame();
 }
 
-internal UI_Signal
+internal void
 rd_chrome_build_workspace_path(CFG_Node *owner_cfg, F32 width_px)
 {
   Temp scratch = scratch_begin(0, 0);
@@ -4804,20 +4804,16 @@ rd_chrome_build_workspace_path(CFG_Node *owner_cfg, F32 width_px)
   UI_Signal sig = {0};
   UI_TagF("weak") UI_HeightFill UI_TextPadding(8.f) UI_TextAlignment(UI_TextAlign_Left)
   {
-    UI_Box *box = ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|
-      UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
+    UI_Box *box = ui_build_box_from_string(UI_BoxFlag_DrawText,
       push_str8f(scratch.arena, "%S###workspace_path", display));
     sig = ui_signal_from_box(box);
   }
-  if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  if(ui_mouse_over(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
   {
     ui_state->tooltip_anchor_key = sig.box->key;
     ui_label(path);
-    ui_label(str8_lit("Reveal workspace in sidebar"));
   }
-  if(workspace && ui_clicked(sig)) { rd_chrome_reveal_workspace(owner_cfg, workspace->id); }
   scratch_end(scratch);
-  return sig;
 }
 
 internal UI_Signal
@@ -6470,8 +6466,7 @@ rd_window_frame(void)
             if(ws->chrome_niche[RD_ChromeElementKind_WorkspacePath] == RD_ChromeNiche_TitleBarLeading)
               UI_PrefWidth(ui_px(workspace_path_w, 1.f)) UI_HeightFill
             {
-              UI_Signal sig = rd_chrome_build_workspace_path(root_controlled_split.owner_cfg, workspace_path_w);
-              wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+              rd_chrome_build_workspace_path(root_controlled_split.owner_cfg, workspace_path_w);
             }
             //- menu items (full bar)
             if(ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu && !compact_menu_bar)
