@@ -548,6 +548,7 @@ typedef enum RD_ChromeElementKind
   RD_ChromeElementKind_ProjectSelector,
   RD_ChromeElementKind_SidebarCollapse,
   RD_ChromeElementKind_NewWorkspace,
+  RD_ChromeElementKind_WorkspacePath,
   RD_ChromeElementKind_OverviewToggle,
   RD_ChromeElementKind_RevealWorkspace,
   RD_ChromeElementKind_CloseWorkspace,

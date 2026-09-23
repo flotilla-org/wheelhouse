@@ -327,6 +327,7 @@ uishell_sidebar_restore(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
 internal U64
 uishell_sidebar_reveal_target(UIShell_SidebarState *state, U64 workspace_id)
 {
+  if(state == 0 || state->snapshot == 0) { return ANDAMENTO_NONE; }
   U64 result = ANDAMENTO_NONE, best_depth = 0;
   U64 count = andamento_snapshot_node_count(state->snapshot);
   for(U64 i = 0; i < count; i++)
@@ -342,6 +343,37 @@ uishell_sidebar_reveal_target(UIShell_SidebarState *state, U64 workspace_id)
     if(result == ANDAMENTO_NONE || depth > best_depth) { result = i; best_depth = depth; }
   }
   return result;
+}
+
+// Use the same occurrence as Reveal. Snapshot labels belong to the placement,
+// not to the workspace title; the latter is only the unplaced fallback.
+internal String8
+uishell_sidebar_workspace_path(Arena *arena, UIShell_SidebarState *state,
+                               U64 workspace_id, String8 fallback, String8 *leaf_out)
+{
+  U64 target = uishell_sidebar_reveal_target(state, workspace_id);
+  if(leaf_out) { *leaf_out = fallback; }
+  if(target == ANDAMENTO_NONE) { return push_str8_copy(arena, fallback); }
+  U64 count = andamento_snapshot_node_count(state->snapshot);
+  U64 *path = push_array(arena, U64, count);
+  U64 length = 0;
+  for(U64 at = target; at != ANDAMENTO_NONE && length < count;)
+  {
+    AndamentoNode node = {0};
+    if(!andamento_snapshot_node(state->snapshot, at, &node)) { break; }
+    if(!node.is_section) { path[length++] = at; }
+    at = node.parent;
+  }
+  String8 result = str8_zero();
+  for(U64 i = length; i > 0; i--)
+  {
+    AndamentoNode node = {0};
+    andamento_snapshot_node(state->snapshot, path[i-1], &node);
+    String8 label = uishell_sidebar_string(node.label);
+    if(i == 1 && label.size && leaf_out) { *leaf_out = label; }
+    if(label.size) { result = result.size ? push_str8f(arena, "%S  ›  %S", result, label) : push_str8_copy(arena, label); }
+  }
+  return result.size ? result : push_str8_copy(arena, fallback);
 }
 
 internal void
@@ -1383,10 +1415,21 @@ uishell_sidebar_diagnostics(CFG_Node *window)
       andamento_snapshot_node(state->snapshot, reveal_target, &reveal_node) &&
       andamento_snapshot_node(state->snapshot, reveal_node.parent, &reveal_parent) &&
       str8_match(uishell_sidebar_string(reveal_parent.entity_kind), str8_lit("project"), 0);
+    String8 leaf = str8_zero();
+    String8 path = uishell_sidebar_workspace_path(scratch.arena, state, created, str8_lit("Local fallback"), &leaf);
+    ok = ok && str8_match(path, str8_lit("Example project  ›  Example workspace"), 0) &&
+         str8_match(leaf, str8_lit("Example workspace"), 0);
+    // The same placement is chosen while its ancestor is collapsed, and an
+    // unplaced workspace remains named without borrowing another path.
+    String8 unplaced = uishell_sidebar_workspace_path(scratch.arena, state, max_U64, str8_lit("Local fallback"), &leaf);
+    ok = ok && str8_match(unplaced, str8_lit("Local fallback"), 0) &&
+         str8_match(leaf, str8_lit("Local fallback"), 0);
     error = 0;
     ok = ok && andamento_dispatch(state->core, state->snapshot, reveal_parent.toggle, &error);
     uishell_sidebar_result(state, ok, error);
     uishell_sidebar_refresh(state);
+    path = uishell_sidebar_workspace_path(scratch.arena, state, created, str8_lit("Local fallback"), 0);
+    ok = ok && str8_match(path, str8_lit("Example project  ›  Example workspace"), 0);
     state->reveal_workspace_id = created;
     uishell_sidebar_expand_reveal(state);
     reveal_target = uishell_sidebar_reveal_target(state, created);
@@ -1410,6 +1453,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_effects(state, &split);
     uishell_sidebar_observe(state, &split);
+    path = uishell_sidebar_workspace_path(scratch.arena, state, created, str8_lit("Local fallback"), 0);
+    ok = ok && str8_match(path, str8_lit("Local fallback"), 0);
     ok = ok && andamento_snapshot_diagnostic_count(state->snapshot) > 0;
     B32 latent = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)

@@ -4768,6 +4768,58 @@ internal UI_BOX_CUSTOM_DRAW(rd_workspace_detach_icon_draw)
   }
 }
 
+internal void
+rd_chrome_reveal_workspace(CFG_Node *owner_cfg, U64 workspace_id)
+{
+  RD_WindowState *ws = rd_window_state_from_cfg(owner_cfg);
+  UIShell_SidebarState *sidebar = uishell_sidebar_init(ws);
+  sidebar->reveal_workspace_id = workspace_id;
+  CFG_Node *collapsed = cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed"));
+  if(collapsed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, collapsed); }
+  ws->workspace_zoom_open = 0;
+  rd_request_frame();
+}
+
+internal UI_Signal
+rd_chrome_build_workspace_path(CFG_Node *owner_cfg, F32 width_px)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, owner_cfg);
+  UIShell_MaterializedWorkspace *workspace = split.inventory.selected;
+  RD_WindowState *ws = rd_window_state_from_cfg(owner_cfg);
+  UIShell_SidebarState *sidebar = uishell_sidebar_init(ws);
+  if(sidebar->core)
+  {
+    uishell_sidebar_observe(sidebar, &split);
+    uishell_sidebar_refresh(sidebar);
+  }
+  String8 leaf = str8_lit("Workspace");
+  String8 path = workspace ? uishell_sidebar_workspace_path(scratch.arena, sidebar, workspace->id,
+                                                            workspace->display_name, &leaf) : leaf;
+  String8 display = path;
+  F32 available = width_px - 16.f;
+  if(workspace && fnt_dim_from_tag_size_string(rd_font_from_slot(RD_FontSlot_Main),
+                                               ui_top_font_size(), 0, 0, path).x > available)
+  { display = leaf; }
+  UI_Signal sig = {0};
+  UI_TagF("weak") UI_HeightFill UI_TextPadding(8.f) UI_TextAlignment(UI_TextAlign_Left)
+  {
+    UI_Box *box = ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|
+      UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
+      push_str8f(scratch.arena, "%S###workspace_path", display));
+    sig = ui_signal_from_box(box);
+  }
+  if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  {
+    ui_state->tooltip_anchor_key = sig.box->key;
+    ui_label(path);
+    ui_label(str8_lit("Reveal workspace in sidebar"));
+  }
+  if(workspace && ui_clicked(sig)) { rd_chrome_reveal_workspace(owner_cfg, workspace->id); }
+  scratch_end(scratch);
+  return sig;
+}
+
 internal UI_Signal
 rd_chrome_build_workspace_action(CFG_Node *owner_cfg, B32 close)
 {
@@ -4793,13 +4845,7 @@ rd_chrome_build_workspace_action(CFG_Node *owner_cfg, B32 close)
     if(close) { uishell_cmd("close_workspace", .window = owner_cfg->id, .cfg = workspace->id); }
     else
     {
-      RD_WindowState *ws = rd_window_state_from_cfg(owner_cfg);
-      UIShell_SidebarState *sidebar = uishell_sidebar_init(ws);
-      sidebar->reveal_workspace_id = workspace->id;
-      CFG_Node *collapsed = cfg_node_child_from_string(owner_cfg, str8_lit("control_split_collapsed"));
-      if(collapsed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, collapsed); }
-      ws->workspace_zoom_open = 0;
-      rd_request_frame();
+      rd_chrome_reveal_workspace(owner_cfg, workspace->id);
     }
   }
   scratch_end(scratch);
@@ -6228,6 +6274,8 @@ rd_window_frame(void)
     B32 tabs_in_title_bar = rd_setting_b32_from_name(str8_lit("tabs_in_title_bar"));
     ProfScope("build top bar")
     {
+      F32 bar_width = dim_2f32(top_bar_rect).x;
+      F32 workspace_path_w = ui_top_font_size()*(bar_width >= 1200.f ? 30.f : bar_width >= 800.f ? 24.f : 11.f);
       B32 draw_custom_title_bar_controls = wm_window_should_draw_custom_title_bar_controls(ws->os);
       F32 native_title_bar_left_padding = wm_window_native_title_bar_left_padding(ws->os);
       B32 draw_self_menu_bar = !wm_application_menu_bar_is_native();
@@ -6324,6 +6372,9 @@ rd_window_frame(void)
           RD_ChromeElementKind_NewWorkspace, icon_button_w, 2,
           {RD_ChromeNiche_TitleBarLeading, RD_ChromeNiche_SidebarActions}, 2};
         chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+          RD_ChromeElementKind_WorkspacePath, workspace_path_w, -1,
+          {RD_ChromeNiche_TitleBarLeading, RD_ChromeNiche_Hidden}, 2};
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
           RD_ChromeElementKind_OverviewToggle, icon_button_w, 1,
           {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_SidebarActions}, 2};
         chrome_elements[chrome_element_count++] = (RD_ChromeElement){
@@ -6344,6 +6395,7 @@ rd_window_frame(void)
         ws->chrome_leading_px = leading +
           (ws->chrome_niche[RD_ChromeElementKind_SidebarCollapse] == RD_ChromeNiche_TitleBarLeading ? icon_button_w : 0) +
           (ws->chrome_niche[RD_ChromeElementKind_NewWorkspace]    == RD_ChromeNiche_TitleBarLeading ? icon_button_w : 0) +
+          (ws->chrome_niche[RD_ChromeElementKind_WorkspacePath]    == RD_ChromeNiche_TitleBarLeading ? workspace_path_w : 0) +
           // the full (owner-drawn) menu bar sits in the leading area; tabs inset past it
           (!compact_menu_bar && ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu ? menu_w : 0) +
           gap;
@@ -6415,7 +6467,12 @@ rd_window_frame(void)
               UI_Signal sig = rd_chrome_build_new_workspace(root_controlled_split.owner_cfg);
               wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
             }
-
+            if(ws->chrome_niche[RD_ChromeElementKind_WorkspacePath] == RD_ChromeNiche_TitleBarLeading)
+              UI_PrefWidth(ui_px(workspace_path_w, 1.f)) UI_HeightFill
+            {
+              UI_Signal sig = rd_chrome_build_workspace_path(root_controlled_split.owner_cfg, workspace_path_w);
+              wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+            }
             //- menu items (full bar)
             if(ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu && !compact_menu_bar)
             {
