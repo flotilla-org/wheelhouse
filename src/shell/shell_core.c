@@ -4768,6 +4768,43 @@ internal UI_BOX_CUSTOM_DRAW(rd_workspace_detach_icon_draw)
   }
 }
 
+internal void
+rd_chrome_build_workspace_path(CFG_Node *owner_cfg, F32 width_px)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, owner_cfg);
+  UIShell_MaterializedWorkspace *workspace = split.inventory.selected;
+  RD_WindowState *ws = rd_window_state_from_cfg(owner_cfg);
+  UIShell_SidebarState *sidebar = uishell_sidebar_init(ws);
+  if(sidebar->core)
+  {
+    uishell_sidebar_observe(sidebar, &split);
+    uishell_sidebar_refresh(sidebar);
+  }
+  String8 leaf = str8_lit("Workspace");
+  String8 path = workspace ? uishell_sidebar_workspace_path(scratch.arena, sidebar, workspace->id,
+                                                            workspace->display_name, &leaf) : leaf;
+  String8 display = path;
+  F32 available = width_px - 16.f;
+  B32 shortened = (workspace && fnt_dim_from_tag_size_string(rd_font_from_slot(RD_FontSlot_Main),
+                                                              ui_top_font_size(), 0, 0, path).x > available);
+  if(shortened)
+  { display = leaf; }
+  UI_Signal sig = {0};
+  UI_TagF("weak") UI_HeightFill UI_TextPadding(8.f) UI_TextAlignment(UI_TextAlign_Left)
+  {
+    UI_Box *box = ui_build_box_from_string(UI_BoxFlag_DrawText|UI_BoxFlag_DisableTruncatedHover,
+      push_str8f(scratch.arena, "%S###workspace_path", display));
+    sig = ui_signal_from_box(box);
+  }
+  if(shortened && ui_mouse_over(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  {
+    ui_state->tooltip_anchor_key = sig.box->key;
+    ui_label(path);
+  }
+  scratch_end(scratch);
+}
+
 internal UI_Signal
 rd_chrome_build_workspace_action(CFG_Node *owner_cfg, B32 close)
 {
@@ -6228,6 +6265,7 @@ rd_window_frame(void)
     B32 tabs_in_title_bar = rd_setting_b32_from_name(str8_lit("tabs_in_title_bar"));
     ProfScope("build top bar")
     {
+      F32 workspace_path_w = 0;
       B32 draw_custom_title_bar_controls = wm_window_should_draw_custom_title_bar_controls(ws->os);
       F32 native_title_bar_left_padding = wm_window_native_title_bar_left_padding(ws->os);
       B32 draw_self_menu_bar = !wm_application_menu_bar_is_native();
@@ -6244,6 +6282,12 @@ rd_window_frame(void)
         FNT_Tag icon_font = rd_font_from_slot(RD_FontSlot_Icons);
         F32 bar_h = dim_2f32(top_bar_rect).y;
         F32 icon_button_w = font_size*2.25f; // flat icon buttons (new-workspace, overview)
+        // Place the breadcrumb's right edge at the sidebar divider. Keep a
+        // small readable slot when the sidebar is collapsed or very narrow.
+        F32 leading = (native_title_bar_left_padding > 0 ? native_title_bar_left_padding : bar_h);
+        F32 sidebar_right = content_rect.x0 + uishell_controlled_split_control_width_px(&root_controlled_split, content_rect);
+        workspace_path_w = Max(font_size*8.f,
+          floor_f32(sidebar_right - top_bar_rect.x0 - leading - icon_button_w*2.f));
 
         // menu bar: compact = a single kebab button; full = sum of menu-title
         // button widths. each button is sized by ui_text_dim(20,1), which
@@ -6282,7 +6326,6 @@ rd_window_frame(void)
 
         // available title-bar width = bar width minus the platform-reserved ends
         // (leading traffic-lights / app icon, trailing window controls) & a margin
-        F32 leading  = (native_title_bar_left_padding > 0 ? native_title_bar_left_padding : bar_h);
         F32 trailing = (draw_custom_title_bar_controls ? bar_h*3.f : 0.f);
         F32 title_bar_budget = dim_2f32(top_bar_rect).x - leading - trailing - font_size*2.f;
 
@@ -6324,6 +6367,9 @@ rd_window_frame(void)
           RD_ChromeElementKind_NewWorkspace, icon_button_w, 2,
           {RD_ChromeNiche_TitleBarLeading, RD_ChromeNiche_SidebarActions}, 2};
         chrome_elements[chrome_element_count++] = (RD_ChromeElement){
+          RD_ChromeElementKind_WorkspacePath, workspace_path_w, -1,
+          {RD_ChromeNiche_TitleBarLeading, RD_ChromeNiche_Hidden}, 2};
+        chrome_elements[chrome_element_count++] = (RD_ChromeElement){
           RD_ChromeElementKind_OverviewToggle, icon_button_w, 1,
           {RD_ChromeNiche_TitleBarTrailing, RD_ChromeNiche_SidebarActions}, 2};
         chrome_elements[chrome_element_count++] = (RD_ChromeElement){
@@ -6344,6 +6390,7 @@ rd_window_frame(void)
         ws->chrome_leading_px = leading +
           (ws->chrome_niche[RD_ChromeElementKind_SidebarCollapse] == RD_ChromeNiche_TitleBarLeading ? icon_button_w : 0) +
           (ws->chrome_niche[RD_ChromeElementKind_NewWorkspace]    == RD_ChromeNiche_TitleBarLeading ? icon_button_w : 0) +
+          (ws->chrome_niche[RD_ChromeElementKind_WorkspacePath]    == RD_ChromeNiche_TitleBarLeading ? workspace_path_w : 0) +
           // the full (owner-drawn) menu bar sits in the leading area; tabs inset past it
           (!compact_menu_bar && ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu ? menu_w : 0) +
           gap;
@@ -6415,7 +6462,11 @@ rd_window_frame(void)
               UI_Signal sig = rd_chrome_build_new_workspace(root_controlled_split.owner_cfg);
               wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
             }
-
+            if(ws->chrome_niche[RD_ChromeElementKind_WorkspacePath] == RD_ChromeNiche_TitleBarLeading)
+              UI_PrefWidth(ui_px(workspace_path_w, 1.f)) UI_HeightFill
+            {
+              rd_chrome_build_workspace_path(root_controlled_split.owner_cfg, workspace_path_w);
+            }
             //- menu items (full bar)
             if(ws->chrome_niche[RD_ChromeElementKind_Menu] == RD_ChromeNiche_TitleBarMenu && !compact_menu_bar)
             {
