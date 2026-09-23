@@ -1212,9 +1212,9 @@ uishell_dispatch_panel_command(String8 name)
 
         if(panel_tree.focused == discard_child)
         {
-          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, window);
+          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace_mount.owner_cfg);
           CFG_PanelTree new_panel_tree = new_workspace_mount.panel_tree;
-          CFG_PanelNode *new_focused = cfg_panel_node_from_tree_cfg(panel_tree.root, keep_child->cfg);
+          CFG_PanelNode *new_focused = cfg_panel_node_from_tree_cfg(new_panel_tree.root, keep_child->cfg);
           for(CFG_PanelNode *grandchild = new_focused; grandchild != &cfg_nil_panel_node; grandchild = grandchild->first)
           {
             new_focused = grandchild;
@@ -1235,7 +1235,7 @@ uishell_dispatch_panel_command(String8 name)
         cfg_node_release(rd_state->cfg, panel->cfg);
 
         {
-          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, window);
+          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace_mount.owner_cfg);
           CFG_PanelTree new_panel_tree = new_workspace_mount.panel_tree;
           CFG_PanelNode *new_parent = cfg_panel_node_from_tree_cfg(new_panel_tree.root, parent->cfg);
           for(CFG_PanelNode *child = new_parent->first; child != &cfg_nil_panel_node; child = child->next)
@@ -1249,9 +1249,9 @@ uishell_dispatch_panel_command(String8 name)
 
         if(panel_tree.focused == panel)
         {
-          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, window);
+          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace_mount.owner_cfg);
           CFG_PanelTree new_panel_tree = new_workspace_mount.panel_tree;
-          CFG_PanelNode *new_focused = cfg_panel_node_from_tree_cfg(panel_tree.root, next->cfg);
+          CFG_PanelNode *new_focused = cfg_panel_node_from_tree_cfg(new_panel_tree.root, next->cfg);
           for(CFG_PanelNode *grandchild = new_focused; grandchild != &cfg_nil_panel_node; grandchild = grandchild->first)
           {
             new_focused = grandchild;
