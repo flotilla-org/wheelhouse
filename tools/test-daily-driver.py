@@ -2,6 +2,7 @@
 """Exercise launcher lifecycle with a fake UI and the real git producer."""
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -32,7 +33,7 @@ import os, sys, time
 print('args=' + repr(sys.argv[1:]), flush=True)
 print('socket=' + os.environ['WHEELHOUSE_SOCKET'], flush=True)
 if os.environ.get('FAIL_PRODUCER') or (os.environ.get('FAIL_PRODUCER_UNTIL') and
-                                    not os.path.exists(os.environ['FAIL_PRODUCER_UNTIL'])):
+                                      not os.path.exists(os.environ['FAIL_PRODUCER_UNTIL'])):
     sys.exit(7)
 print('connector ready', flush=True)
 while True: time.sleep(1)
@@ -134,6 +135,19 @@ class DailyDriverTests(unittest.TestCase):
         pid = int(self.log('wheelhouse').split('pid=', 1)[1].splitlines()[0])
         os.kill(pid, signal.SIGUSR1)
         self.assertEqual(process.wait(timeout=10), 0)
+
+    def test_git_producer_failure_stops_app(self):
+        repo = self.directory / 'disappearing-repo'
+        repo.mkdir()
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+        process = self.start(['--git-only', '--repo', str(repo)])
+        self.ready(process)
+        pid = int(self.log('wheelhouse').split('pid=', 1)[1].splitlines()[0])
+        shutil.rmtree(repo)
+        self.assertEqual(process.wait(timeout=10), 1)
+        self.assertIn('git-1 producer exited with status', process.stdout.read())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
 
 
 if __name__ == '__main__':
