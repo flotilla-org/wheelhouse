@@ -1,6 +1,9 @@
 # Wheelhouse
 
 Wheelhouse is a native application shell for composing interactive workspaces from reusable controls, tabbed panels, and embedded views.
+This glossary retains some `UIShell` names from the original source and design
+work. The product and build target are Wheelhouse; current work order is in the
+[roadmap](docs/roadmap.md).
 
 ## Language
 

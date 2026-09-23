@@ -1,5 +1,10 @@
 # Top-Down UI Shell Cut Plan
 
+Historical RAD extraction plan. The commands and target names below describe
+the original cut and are not current build instructions. Use the
+[README](../README.md) to build Wheelhouse and the [roadmap](roadmap.md) for
+current priorities.
+
 ## Goal
 
 Build a new native app from the RAD Debugger UI shell while preserving the visual and layout behavior of an empty RAD window: window chrome, menu bar behavior, panels, tabs, widgets, fonts, renderer, and platform/windowing behavior.
