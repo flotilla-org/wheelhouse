@@ -2,6 +2,7 @@
 """Exercise launcher lifecycle with a fake UI and the real git producer."""
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -31,8 +32,10 @@ FAKE_FLOTILLA = '''#!/usr/bin/env python3
 import os, sys, time
 print('args=' + repr(sys.argv[1:]), flush=True)
 print('socket=' + os.environ['WHEELHOUSE_SOCKET'], flush=True)
-if os.environ.get('FAIL_PRODUCER'):
+if os.environ.get('FAIL_PRODUCER') or (os.environ.get('FAIL_PRODUCER_UNTIL') and
+                                      not os.path.exists(os.environ['FAIL_PRODUCER_UNTIL'])):
     sys.exit(7)
+print('connector ready', flush=True)
 while True: time.sleep(1)
 '''
 
@@ -89,7 +92,7 @@ class DailyDriverTests(unittest.TestCase):
         connector = self.log('flotilla')
         self.assertIn("'pm', 'connect', '--wheelhouse-socket'", connector)
         self.assertIn(str(self.flotilla), connector)
-        path = connector.split('socket=', 1)[1].strip()
+        path = connector.split('socket=', 1)[1].splitlines()[0]
         self.assertTrue(Path(path).is_socket())
         self.assertEqual(Path(path).parent.stat().st_mode & 0o777, 0o700)
         second = self.start()
@@ -114,11 +117,35 @@ class DailyDriverTests(unittest.TestCase):
         self.assertIn('before startup', process.stdout.read())
         self.assertFalse((self.state / 'logs/flotilla.log').exists())
 
-    def test_producer_failure_stops_app(self):
-        process = self.start(FAIL_PRODUCER='1')
-        self.assertEqual(process.wait(timeout=10), 1)
-        self.assertIn('flotilla producer exited with status 7', process.stdout.read())
+    def test_flotilla_failure_restarts_without_closing_app(self):
+        marker = self.directory / 'fleet-upgrade-complete'
+        process = self.start(FAIL_PRODUCER_UNTIL=str(marker))
+        deadline = time.monotonic() + 10
+        while 'status 7' not in self.log('flotilla') and time.monotonic() < deadline:
+            if process.poll() is not None:
+                self.assertIsNone(process.poll(), process.stdout.read())
+            time.sleep(.05)
+        self.assertIn('status 7', self.log('flotilla'))
+        self.assertIsNone(process.poll(), 'Wheelhouse should survive a connector failure')
+        marker.touch()
+        while 'connector ready' not in self.log('flotilla') and time.monotonic() < deadline:
+            time.sleep(.05)
+        self.assertIn('connector ready', self.log('flotilla'))
+        self.assertIsNone(process.poll())
         pid = int(self.log('wheelhouse').split('pid=', 1)[1].splitlines()[0])
+        os.kill(pid, signal.SIGUSR1)
+        self.assertEqual(process.wait(timeout=10), 0)
+
+    def test_git_producer_failure_stops_app(self):
+        repo = self.directory / 'disappearing-repo'
+        repo.mkdir()
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+        process = self.start(['--git-only', '--repo', str(repo)])
+        self.ready(process)
+        pid = int(self.log('wheelhouse').split('pid=', 1)[1].splitlines()[0])
+        shutil.rmtree(repo)
+        self.assertEqual(process.wait(timeout=10), 1)
+        self.assertIn('git-1 producer exited with status', process.stdout.read())
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
 
