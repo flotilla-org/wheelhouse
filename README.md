@@ -2,6 +2,10 @@
 
 Wheelhouse is a native application for composing workspaces from tabbed panels and embedded views, derived from the RAD Debugger UI stack. The product target is `wheelhouse`; the original debugger repository remains the reference/oracle at `/Users/robert/dev/raddebugger`.
 
+The [roadmap](docs/roadmap.md) records the current feature order, cross-repo
+dependencies, and open reliability work. [Map issue #17](https://github.com/flotilla-org/wheelhouse/issues/17)
+holds the broader destination.
+
 ## Build
 
 On macOS/Linux:
@@ -89,8 +93,8 @@ This builds Wheelhouse, launches its live Andamento sidebar, watches the current
 checkout with the Python git producer, and runs `flotilla pm connect` against the
 local daemon. It uses Wheelhouse's native `data/sidebar/daily-driver.kdl` template.
 Projects contain checkouts, convoys/vessels, and issues; sessions have their own
-section. Attention is a second placement of the same entities. New live windows
-start in Andamento mode; an existing saved sidebar choice takes precedence.
+section. Attention is a second placement of the same entities. The project tree
+is the only sidebar, including when an older saved `sidebar_mode` value exists.
 
 Use the disclosure arrow to expand a branch. Clicking an entry runs its supplied
 recipe in a native terminal workspace, or focuses its existing workspace, including
@@ -102,9 +106,10 @@ The native template gives checkouts workspace presence, so the git producer's
 shell recipe can open too. It does not use the legacy grouping tree in Andamento's
 Zellij template, which native snapshots deliberately omit.
 
-Build Flotilla with the HTTP/UDS sink first (Flotilla PR #1860 or newer). The
-launcher expects `../flotilla/target/debug/flotilla`, as the Zellij daily driver
-does, and does not rebuild Flotilla or start a Zellij session.
+Use a Flotilla binary with the HTTP/UDS `pm connect` sink. The launcher
+currently defaults to `../flotilla/target/debug/flotilla` and does not rebuild
+Flotilla or start a Zellij session. [Issue #30](https://github.com/flotilla-org/wheelhouse/issues/30)
+tracks changing that default to the installed fleet binary.
 
 ```sh
 # Git facts only; no Flotilla binary or daemon needed.
@@ -141,8 +146,8 @@ startup failure, producer failure, restart, and process cleanup with a fake UI.
 
 Launch a separate Wheelhouse instance with a socket in a private directory and
 an Andamento KDL template. The listener broadcasts facts to its windows;
-selection and collapse remain local to each window. Select **Andamento** in
-the workspace selector. This mode starts without the example facts.
+selection and collapse remain local to each window. The tree starts without
+example facts and shows local workspaces until a producer publishes entries.
 
 ```sh
 runtime_dir=$(mktemp -d /tmp/wheelhouse.XXXXXX)

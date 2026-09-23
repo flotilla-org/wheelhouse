@@ -1,5 +1,9 @@
 # Portfolio context for the wheelhouse governor
 
+This is an orientation snapshot from 26 August 2026, not the current work queue.
+For present Wheelhouse state and priorities, start with the
+[roadmap](../roadmap.md). Check linked project tickets for later changes.
+
 Curated orientation, written 2026-08-26 by the operator side. Your vessel can
 read the wheelhouse and cleat checkouts and their GitHub repos; everything
 else in the portfolio is *described here* because you cannot currently reach
@@ -25,11 +29,10 @@ prefer the primary source and flag the conflict.
   cleat *render output* natively (one VT engine, not two), locally first and
   remotely later.
 - **wheelhouse** (you) — native UI shell: C codebase, uishell + window
-  manager, builds via `./build.sh <target>` with a sibling cleat checkout
-  (`bundle` target is Darwin-only packaging; `uishell` is the Linux
-  acceptance target). Its trajectory: the fleet's visual surface — attaching
-  to cleat sessions, rendering fleet state, eventually rendering review
-  artifacts in-app (katzensteg/luchs direction).
+  manager, builds via `./build.sh wheelhouse` with sibling Cleat, Andamento,
+  and Jackstay checkouts (`bundle` packages the macOS app). It attaches to
+  Cleat sessions, renders fleet state through the Andamento sidebar, and can
+  host Jackstay video/input views. In-app review artifacts remain future work.
 - **andamento** — a terminal-first project/agent dashboard used daily inside
   a **zellij fork**: andamento runs as a zellij plugin surface (the fork
   carries the patches zellij needs for it). It consumes flotilla's control

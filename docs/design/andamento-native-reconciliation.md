@@ -326,6 +326,10 @@ work recorded in `docs/pane-focus-and-frame-spacing-notes.md`.
 
 ### One sidebar; next work
 
+The maintained priority order and linked implementation tickets are in the
+[Wheelhouse roadmap](../roadmap.md). This section records the state at the
+22 September 2026 sidebar cutover.
+
 The old Workspaces preview list and Workspaces/Andamento selector are retired.
 The tree is always the control surface, including with old saved `sidebar_mode`
 values. Standalone launches use a local-only template and observed workspace
