@@ -35,7 +35,7 @@ struct {B32 *value_ptr; String8 name;} DEV_toggle_table[] =
 {&DEV_updating_indicator, str8_lit_comp("updating_indicator")},
 };
 C_LINKAGE_BEGIN
-RD_VocabInfo uishell_vocab_info_table[44] =
+RD_VocabInfo uishell_vocab_info_table[45] =
 {
 {str8_lit_comp("view"), str8_lit_comp("views"), str8_lit_comp("View"), str8_lit_comp("Views"), RD_IconKind_Binoculars},
 {str8_lit_comp("window"), str8_lit_comp("windows"), str8_lit_comp("Window"), str8_lit_comp("Windows"), RD_IconKind_Window},
@@ -71,6 +71,7 @@ RD_VocabInfo uishell_vocab_info_table[44] =
 {str8_lit_comp("address"), str8_lit_comp("addresses"), str8_lit_comp("Address"), str8_lit_comp("Addresses"), RD_IconKind_Null},
 {str8_lit_comp("offset"), str8_lit_comp("offsets"), str8_lit_comp("Offset"), str8_lit_comp("Offsets"), RD_IconKind_Null},
 {str8_lit_comp("text"), str8_lit_comp(""), str8_lit_comp("Text"), str8_lit_comp(""), RD_IconKind_FileOutline},
+{str8_lit_comp("jackstay"), str8_lit_comp(""), str8_lit_comp("Jackstay Source"), str8_lit_comp(""), RD_IconKind_Machine},
 {str8_lit_comp("terminal"), str8_lit_comp(""), str8_lit_comp("Terminal"), str8_lit_comp(""), RD_IconKind_Machine},
 {str8_lit_comp("terminal_fixture"), str8_lit_comp(""), str8_lit_comp("Terminal Fixture"), str8_lit_comp(""), RD_IconKind_Machine},
 {str8_lit_comp("sessions"), str8_lit_comp(""), str8_lit_comp("Sessions"), str8_lit_comp(""), RD_IconKind_List},
