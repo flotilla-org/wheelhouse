@@ -1,8 +1,6 @@
 param(
   # Diagnostics to run, by the name in their --<name>_diagnostics flag.
-  # terminal_glyph is left out until colour emoji renders on Windows (issue #59);
-  # pass it explicitly to see the current failure.
-  [string[]]$Diagnostics = @("sidebar", "scroll_region", "preview", "tooltip", "panel"),
+  [string[]]$Diagnostics = @("sidebar", "scroll_region", "preview", "tooltip", "panel", "terminal_glyph"),
   [string]$Exe = "",
   [int]$TimeoutSeconds = 120
 )

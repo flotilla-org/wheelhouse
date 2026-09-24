@@ -113,7 +113,6 @@ jobs:
       - name: Windows UI diagnostics
         if: runner.os == 'Windows'
         shell: cmd
-        # terminal_glyph is excluded until colour emoji renders on Windows (#59).
         run: call run_tests.bat
       - name: Linux UI diagnostics
         if: runner.os == 'Linux'

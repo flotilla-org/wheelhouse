@@ -104,6 +104,40 @@ mac_fp_unpremultiply_u8(U8 c, U8 a)
   return result;
 }
 
+// Asks CoreText for a font whose family is exactly `family` and returns the
+// path of its file, or empty if this host does not have that family.
+internal String8
+mac_fp_system_font_path_from_family(Arena *arena, String8 family)
+{
+  String8 result = {0};
+  CFStringRef family_cf = CFStringCreateWithBytes(0, family.str, (CFIndex)family.size, kCFStringEncodingUTF8, 0);
+  if(family_cf != 0)
+  {
+    CFTypeRef keys[] = {kCTFontFamilyNameAttribute};
+    CFTypeRef values[] = {family_cf};
+    CFDictionaryRef attributes = CFDictionaryCreate(0, (const void **)keys, (const void **)values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFSetRef mandatory = CFSetCreate(0, (const void **)keys, 1, &kCFTypeSetCallBacks);
+    CTFontDescriptorRef descriptor = (attributes != 0) ? CTFontDescriptorCreateWithAttributes(attributes) : 0;
+    CTFontDescriptorRef match = (descriptor != 0) ? CTFontDescriptorCreateMatchingFontDescriptor(descriptor, mandatory) : 0;
+    CFURLRef url = (match != 0) ? (CFURLRef)CTFontDescriptorCopyAttribute(match, kCTFontURLAttribute) : 0;
+    if(url != 0)
+    {
+      U8 path[4096] = {0};
+      if(CFURLGetFileSystemRepresentation(url, 1, path, sizeof(path)))
+      {
+        result = push_str8_copy(arena, str8_cstring((char *)path));
+      }
+      CFRelease(url);
+    }
+    if(match != 0)      { CFRelease(match); }
+    if(descriptor != 0) { CFRelease(descriptor); }
+    if(mandatory != 0)  { CFRelease(mandatory); }
+    if(attributes != 0) { CFRelease(attributes); }
+    CFRelease(family_cf);
+  }
+  return result;
+}
+
 fp_hook void
 fp_init(void)
 {
@@ -388,4 +422,23 @@ fp_raster(Arena *arena, FP_Handle handle, F32 size, FP_RasterFlags flags, String
   scratch_end(scratch);
   ProfEnd();
   return result;
+}
+
+fp_hook FP_SystemFontArray
+fp_system_color_emoji_fonts(void)
+{
+  if(!mac_fp_state->system_color_emoji_fonts_resolved)
+  {
+    String8 families[] = {str8_lit_comp("Apple Color Emoji")};
+    FP_SystemFontArray *fonts = &mac_fp_state->system_color_emoji_fonts;
+    fonts->v = push_array(mac_fp_state->arena, FP_SystemFont, ArrayCount(families));
+    fonts->count = ArrayCount(families);
+    for EachElement(idx, families)
+    {
+      fonts->v[idx].family = families[idx];
+      fonts->v[idx].path = mac_fp_system_font_path_from_family(mac_fp_state->arena, families[idx]);
+    }
+    mac_fp_state->system_color_emoji_fonts_resolved = 1;
+  }
+  return mac_fp_state->system_color_emoji_fonts;
 }

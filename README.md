@@ -31,9 +31,9 @@ run_tests
 `WHEELHOUSE_CLEAT_DIR` / `WHEELHOUSE_ANDAMENTO_DIR`) and copies their DLLs, including
 `ghostty-vt.dll`, next to the executable. Cleat's default `ghostty-vt` feature needs
 `tools\prepare-ghostty-vt.ps1` run in the Cleat checkout first. `run_tests` runs the
-sidebar, scroll-region, preview, tooltip and panel diagnostics, each with throwaway
-`--user`/`--project` files; the terminal-glyph diagnostic is left out until colour emoji
-renders on Windows ([#59](https://github.com/flotilla-org/wheelhouse/issues/59)).
+sidebar, scroll-region, preview, tooltip, panel and terminal-glyph diagnostics, each with
+throwaway `--user`/`--project` files. Colour emoji come from Segoe UI Emoji; the
+terminal-glyph diagnostic fails, naming the missing family, on a host without it.
 After `build wheelhouse meta`, `python tools/check-generated.py` fails if committed
 metagen output is stale.
 

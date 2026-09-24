@@ -53,6 +53,22 @@ struct FP_RasterResult
   FP_RasterKind kind;
 };
 
+// A system font looked up by family name. `path` is the font file the provider
+// resolved for `family`, or empty when this host does not have that family.
+typedef struct FP_SystemFont FP_SystemFont;
+struct FP_SystemFont
+{
+  String8 family;
+  String8 path;
+};
+
+typedef struct FP_SystemFontArray FP_SystemFontArray;
+struct FP_SystemFontArray
+{
+  FP_SystemFont *v;
+  U64 count;
+};
+
 ////////////////////////////////
 //~ rjf: Basic Type Functions
 
@@ -69,5 +85,9 @@ fp_hook void fp_font_close(FP_Handle handle);
 fp_hook FP_Metrics fp_metrics_from_font(FP_Handle font);
 fp_hook B32 fp_font_has_codepoint(FP_Handle font, U32 codepoint);
 fp_hook ASAN_NO_ADDR FP_RasterResult fp_raster(Arena *arena, FP_Handle font, F32 size, FP_RasterFlags flags, String8 string);
+// The platform's colour emoji families, in preference order, each looked up by
+// family name and resolved to a font file this provider can open. Resolved once;
+// the provider owns the result, which stays valid for the life of the process.
+fp_hook FP_SystemFontArray fp_system_color_emoji_fonts(void);
 
 #endif // FONT_PROVIDER_H
