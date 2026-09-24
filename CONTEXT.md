@@ -263,6 +263,10 @@ _Avoid_: Breakpoint, responsive grid, docking (the content-layout system)
 The docking system's row of tabs for a **Panel**. As a **Chrome Element** it can be placed in the title-bar **Chrome Host**: the topmost docking row is then promoted to *be* the chrome row (tab baseline on the title-bar border, browser-style), and the title bar's resolved end-zone widths are handed to the docking layout as **edge insets** on the top-tabbed strips that touch a window edge. The single-panel case is inset on both ends; a split top row insets only the edge-touching strips.
 _Avoid_: Title bar tabs (the outcome, not the element), tab bar widget
 
+**Local Endpoint**:
+A logical local IPC address — scope, name and transport kind — that each platform renders directly: a Unix socket under the runtime directory, or a named pipe on Windows. Runtime-directory metadata may accompany it, but never determines the address. Accepting a connection reports the peer's identity. See ADR 0011.
+_Avoid_: Socket path (one platform's rendering), pipe name, marker file
+
 ## Relationships
 
 - A **Panel** hosts one or more **Views**.
