@@ -81,6 +81,11 @@ if "%cleat%"=="1" (
   set cleat_feature_flags=
   if not "!cleat_features!"=="none" set cleat_feature_flags=--features "!cleat_features!"
   echo [cleat provider: !cleat_dir!]
+  rem Cleat pins the bundled ConPTY (tools\conpty.toml, cleat ADR 0006). Its prepare
+  rem script fetches and verifies that package once, and cleat's build.rs then stages
+  rem conpty.dll, OpenConsole.exe and the licence beside cleat.dll for the copy below.
+  if not exist "!cleat_dir!\tools\prepare-conpty.ps1" (echo [ERROR] !cleat_dir! has no tools\prepare-conpty.ps1 ^(Wheelhouse needs cleat with the bundled ConPTY, cleat PR 235^) && exit /b 1)
+  powershell -NoProfile -ExecutionPolicy Bypass -File "!cleat_dir!\tools\prepare-conpty.ps1" >nul || (echo [ERROR] preparing the bundled ConPTY failed && exit /b 1)
   pushd "!cleat_dir!" || exit /b 1
   cargo build -p cleat --locked --no-default-features !cargo_profile_flags! !cleat_feature_flags! || exit /b 1
   popd
@@ -184,6 +189,14 @@ rem cleat.dll imports ghostty-vt.dll when built with the ghostty-vt feature; wit
 rem next to the exe the loader fails and the app hangs at start with no window
 if "%wheelhouse%"=="1" if "%cleat%"=="1" if not "!cleat_features:ghostty-vt=!"=="!cleat_features!" (
   copy /y "!cleat_lib_dir!\ghostty-vt.dll" . >nul || (echo [ERROR] missing !cleat_lib_dir!\ghostty-vt.dll ^(prepare Ghostty in the cleat checkout^) && exit /b 1)
+)
+rem Cleat loads conpty.dll only from the host exe's directory and only with
+rem OpenConsole.exe beside it; otherwise in-process panes fall back to the inbox
+rem ConPTY, which drops Kitty graphics. Identical files are left alone so a rebuild
+rem succeeds while a running wheelhouse.exe still holds them open.
+if "%wheelhouse%"=="1" if "%cleat%"=="1" for %%f in (conpty.dll OpenConsole.exe conpty-LICENSE.txt) do (
+  if not exist "!cleat_lib_dir!\%%f" (echo [ERROR] missing !cleat_lib_dir!\%%f ^(cleat did not stage the bundled ConPTY^) && exit /b 1)
+  fc /b "!cleat_lib_dir!\%%f" "%%f" >nul 2>&1 || copy /y "!cleat_lib_dir!\%%f" . >nul || (echo [ERROR] copying %%f failed && exit /b 1)
 )
 if "%wheelhouse%"=="1" copy /y "!andamento_lib_dir!\andamento_ffi.dll" . >nul
 if "%wheelhouse%"=="1" copy /y "!andamento_lib_dir!\wheelhouse_ingress.dll" . >nul

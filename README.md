@@ -37,11 +37,21 @@ renders on Windows ([#59](https://github.com/flotilla-org/wheelhouse/issues/59))
 After `build wheelhouse meta`, `python tools/check-generated.py` fails if committed
 metagen output is stale.
 
+Terminal panes on Windows need Cleat's bundled ConPTY: the inbox ConPTY drops Kitty
+graphics. `build.bat` runs the Cleat checkout's `tools\prepare-conpty.ps1`, which fetches
+and verifies the package pinned in Cleat's `tools\conpty.toml` on first use. It then copies
+`conpty.dll`, `OpenConsole.exe` and `conpty-LICENSE.txt` next to `wheelhouse.exe`. Cleat
+uses them only from the executable's directory, and only when both binaries are there.
+`tools\check-windows-conpty.ps1` opens an in-process pane and checks that it runs under
+that `OpenConsole.exe`. Pass `-Expect inbox` to run it with `CLEAT_CONPTY=inbox`, which
+forces the inbox fallback. Daemon-backed panes use the files beside `cleat.exe`, and
+`cleat inspect` reports the ConPTY each session uses.
+
 The executable is `build/wheelhouse` (`build/wheelhouse.exe` on Windows); the macOS bundle is `build/Wheelhouse.app`. Build and diagnostic overrides use the `WHEELHOUSE_` environment-variable prefix.
 
 Internal source names and existing configuration storage still use `uishell`.
 
-The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics on all three, and on Windows checks that committed metagen output is current. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. CI checks out the public Andamento repository without an App credential, including for fork PRs.
+The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. CI checks out the public Andamento repository without an App credential, including for fork PRs.
 
 ## Jackstay views
 
