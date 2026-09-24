@@ -44,7 +44,7 @@ jobs:
           - os: ubuntu-24.04
             vt: none
           - os: windows-2022
-            vt: none
+            vt: ghostty-vt
           - os: macos-14
             vt: ghostty-vt
     env:
@@ -89,12 +89,17 @@ jobs:
         with:
           version: 0.16.0
       - name: Prepare Ghostty
-        if: matrix.vt == 'ghostty-vt'
+        if: matrix.vt == 'ghostty-vt' && runner.os != 'Windows'
         run: bash ../cleat/tools/prepare-ghostty-vt.sh
+      - name: Prepare Ghostty on Windows
+        if: matrix.vt == 'ghostty-vt' && runner.os == 'Windows'
+        shell: pwsh
+        run: ../cleat/tools/prepare-ghostty-vt.ps1
       - name: Build on Windows
         if: runner.os == 'Windows'
         shell: cmd
-        run: call build.bat wheelhouse
+        # `meta` rebuilds metagen so the generated-sources check covers its output.
+        run: call build.bat wheelhouse meta
       - name: Build on Linux
         if: runner.os == 'Linux'
         run: bash build.sh wheelhouse
@@ -103,9 +108,13 @@ jobs:
         run: |
           bash build.sh bundle
           codesign --verify --deep --strict build/Wheelhouse.app
-      - name: Verify generated sidebar fixture
-        shell: bash
-        run: git diff --exit-code -- src/uishell/generated/sidebar_fixture.h
+      - name: Verify generated sources
+        run: python tools/check-generated.py
+      - name: Windows UI diagnostics
+        if: runner.os == 'Windows'
+        shell: cmd
+        # terminal_glyph is excluded until colour emoji renders on Windows (#59).
+        run: call run_tests.bat
       - name: Linux UI diagnostics
         if: runner.os == 'Linux'
         env:

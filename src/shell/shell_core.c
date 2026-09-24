@@ -9246,10 +9246,18 @@ rd_init(CmdLine *cmdln)
   log_select(rd_state->log);
   {
     Temp scratch = scratch_begin(0, 0);
-    String8 app_data_folder = rd_app_data_folder(scratch.arena);
-    String8 log_folder = push_str8f(scratch.arena, "%S/logs", app_data_folder);
+    // an explicit --user keeps the run's state (and logs) beside that file, so
+    // isolated runs such as the UI diagnostics never write the shared app data folder
+    String8 log_parent_folder = rd_app_data_folder(scratch.arena);
+    String8 explicit_user_path = cmd_line_string(cmdln, str8_lit("user"));
+    if(explicit_user_path.size != 0)
+    {
+      String8 abs_user_path = path_absolute_dst_from_relative_dst_src(scratch.arena, explicit_user_path, get_process_info()->initial_path);
+      log_parent_folder = str8_chop_last_slash(abs_user_path);
+    }
+    String8 log_folder = push_str8f(scratch.arena, "%S/logs", log_parent_folder);
     rd_state->log_path = push_str8f(rd_state->arena, "%S/%s", log_folder, RD_APP_LOG_FILE_NAME);
-    make_directory(app_data_folder);
+    make_directory(log_parent_folder);
     make_directory(log_folder);
     write_data_to_file_path(rd_state->log_path, str8_zero());
     scratch_end(scratch);
@@ -9439,10 +9447,13 @@ rd_init(CmdLine *cmdln)
     }
     {
       String8 app_data_folder = rd_app_data_folder(scratch2.arena);
-      make_directory(app_data_folder);
       if(user_path.size == 0)
       {
         user_path = implicit_user_arg;
+      }
+      if(user_path.size == 0)
+      {
+        make_directory(app_data_folder);
       }
       if(user_path.size == 0)
       {

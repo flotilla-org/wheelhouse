@@ -179,7 +179,12 @@ popd
 :: --- Build Everything (@build_targets) --------------------------------------
 pushd build
 if "%wheelhouse%"=="1"                    set didbuild=1 && %compile% ..\src\uishell\uishell_main.c                            %compile_link% %link_icon% %cleat_link% %andamento_link% %out%wheelhouse.exe || exit /b 1
-if "%wheelhouse%"=="1" if "%cleat%"=="1"  copy /y "!cleat_lib_dir!\cleat.dll" . >nul
+if "%wheelhouse%"=="1" if "%cleat%"=="1"  copy /y "!cleat_lib_dir!\cleat.dll" . >nul || exit /b 1
+rem cleat.dll imports ghostty-vt.dll when built with the ghostty-vt feature; without it
+rem next to the exe the loader fails and the app hangs at start with no window
+if "%wheelhouse%"=="1" if "%cleat%"=="1" if not "!cleat_features:ghostty-vt=!"=="!cleat_features!" (
+  copy /y "!cleat_lib_dir!\ghostty-vt.dll" . >nul || (echo [ERROR] missing !cleat_lib_dir!\ghostty-vt.dll ^(prepare Ghostty in the cleat checkout^) && exit /b 1)
+)
 if "%wheelhouse%"=="1" copy /y "!andamento_lib_dir!\andamento_ffi.dll" . >nul
 if "%wheelhouse%"=="1" copy /y "!andamento_lib_dir!\wheelhouse_ingress.dll" . >nul
 popd

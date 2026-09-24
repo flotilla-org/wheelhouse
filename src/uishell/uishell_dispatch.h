@@ -316,7 +316,11 @@ uishell_dispatch_config_command(String8 name)
   {
     Temp scratch = scratch_begin(0, 0);
     String8 file_path = uishell_regs()->file_path;
-    String8 last_user_path = str8f(scratch.arena, "%S/%s", rd_app_data_folder(scratch.arena), RD_APP_LAST_USER_FILE_NAME);
+    // an explicit --user skips creating the app data folder at startup, so make
+    // sure it exists before recording a later interactive open
+    String8 app_data_folder = rd_app_data_folder(scratch.arena);
+    make_directory(app_data_folder);
+    String8 last_user_path = str8f(scratch.arena, "%S/%s", app_data_folder, RD_APP_LAST_USER_FILE_NAME);
     write_data_to_file_path(last_user_path, file_path);
     scratch_end(scratch);
   }
