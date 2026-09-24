@@ -96,6 +96,7 @@
 #include "uishell/uishell_tooltip_diagnostics.c"
 #include "uishell/uishell_preview_diagnostics.c"
 #include "uishell/uishell_panel_diagnostics.c"
+#include "uishell/uishell_managed_content_diagnostics.c"
 
 ////////////////////////////////
 //~ rjf: Top-Level Execution Types
@@ -176,6 +177,10 @@ entry_point(CmdLine *cmd_line)
         uishell_ingress = wheelhouse_ingress_start(socket_path.str, socket_path.size, wm_send_wakeup_event, error, sizeof(error));
         if(uishell_ingress == 0) { fprintf(stderr, "Sidebar ingress: %s\n", error); abort_self(1); }
       }
+#if OS_MAC || OS_LINUX
+      if(cmd_line_has_flag(cmd_line, str8_lit("managed_content_diagnostics")))
+      { rd_state->frame_diagnostic = uishell_managed_content_diagnostics; }
+#endif
       if(cmd_line_has_flag(cmd_line, str8_lit("panel_diagnostics")))
       { rd_state->frame_diagnostic = uishell_panel_diagnostics; }
       if(cmd_line_has_flag(cmd_line, str8_lit("preview_diagnostics")))
@@ -273,6 +278,7 @@ entry_point(CmdLine *cmd_line)
                                     "--andamento_socket:<path> --andamento_config:<KDL path>\n"
                                     "Accept live metadata over HTTP/UDS using the specified sidebar template.\n\n"
                                     "--scroll_region_fixture\nOpen the two-axis scrollbar fixture.\n\n"
+                                    "--managed_content_diagnostics\nRun managed terminal reconciliation checks and exit (Unix).\n\n"
                                     "--panel_diagnostics\nRun panel drop and layout checks and exit.\n\n"
                                     "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
                                     "--preview_diagnostics\nCheck workspace preview isolation and dimming and exit.\n\n"

@@ -33,6 +33,9 @@ struct UIShell_SidebarState
   Andamento *core;
   AndamentoSnapshot *snapshot;
   U64 topology_hash;
+  U64 managed_cfg_generation;
+  B32 managed_dirty;
+  U64 managed_error_workspace;
   B32 initialized;
   B32 restored;
   U64 reveal_workspace_id;
@@ -67,6 +70,8 @@ uishell_sidebar_result(UIShell_SidebarState *state, B32 ok, char *error)
   return ok;
 }
 
+#include "uishell/uishell_managed_content.c"
+
 internal void
 uishell_sidebar_release(UIShell_SidebarState *state)
 {
@@ -89,6 +94,7 @@ uishell_sidebar_refresh(UIShell_SidebarState *state)
   {
     andamento_snapshot_release(state->snapshot);
     state->snapshot = next;
+    state->managed_dirty = 1;
   }
 }
 
@@ -265,7 +271,14 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     {
       for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
       { if(w->id == effect.workspace_id) { workspace = w->mount.owner_cfg; break; } }
-      if(workspace != &cfg_nil_node) { outcome = ANDAMENTO_COMPLETE_FOCUS; }
+      if(workspace != &cfg_nil_node)
+      {
+        outcome = ANDAMENTO_COMPLETE_FOCUS;
+        char *retry_error = 0;
+        andamento_content_retry(state->core, workspace->id, &retry_error);
+        state->managed_dirty = 1;
+        andamento_string_free(retry_error);
+      }
     }
     else if(effect.kind == ANDAMENTO_EFFECT_INSPECT)
     {
@@ -626,6 +639,13 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
   uishell_sidebar_restore(state, split);
+  if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
+  {
+    for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
+    { uishell_sidebar_reconcile_workspace(state, w->mount.owner_cfg); }
+    state->managed_cfg_generation = cfg_change_gen();
+    state->managed_dirty = 0;
+  }
   if(state->reveal_workspace_id)
   {
     uishell_sidebar_observe(state, split);
