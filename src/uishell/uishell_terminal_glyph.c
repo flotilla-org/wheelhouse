@@ -7851,7 +7851,7 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
         }
         else
         {
-          log_infof("terminal glyph diagnostics: system colour emoji font \"%S\" is not installed on this host", system_font->family);
+          log_infof("terminal glyph diagnostics: system colour emoji font \"%S\" is not installed on this host, or is not the first face in its file", system_font->family);
         }
       }
 #if OS_WINDOWS || OS_MAC

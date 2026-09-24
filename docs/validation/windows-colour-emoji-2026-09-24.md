@@ -46,7 +46,8 @@ Observed on Beaufort:
 - After the change, the diagnostic logs `system colour emoji font "Segoe UI Emoji" is
   C:\WINDOWS\FONTS\SEGUIEMJ.TTF` and passes. `run_tests` passes all six diagnostics.
 - In a build where the family name was temporarily changed to one that does not
-  exist, the diagnostic logged that the family `is not installed on this host`. It
+  exist, the diagnostic logged that the family `is not installed on this host`
+  (since extended to also cover a family that is not the first face in its file). It
   then failed with `this host has no system colour emoji font (looked for ...)`.
 - For the live check, I launched Wheelhouse with temporary `--user`/`--project` files.
   The window's only tab was an in-process terminal that ran a PowerShell script to
@@ -73,7 +74,10 @@ Glyphs that fall back:
 - No emoji I tried drew blank or in monochrome under emoji presentation. The run did
   not show glyphs that exist only as COLRv1.
 
-In CI, the Windows job runs `run_tests`, which now includes `terminal_glyph`. Its log
-shows whether the `windows-2022` image has Segoe UI Emoji.
+In CI (PR #64, run 36065264211), the `windows-2022` job ran `terminal_glyph` in
+`run_tests`. It logged `system colour emoji font "Segoe UI Emoji" is
+C:\WINDOWS\FONTS\SEGUIEMJ.TTF` and passed, with all six diagnostics. The
+`macos-14` job resolved `"Apple Color Emoji"` by family name to
+`/System/Library/Fonts/Apple Color Emoji.ttc`, and `terminal_glyph` passed.
 
 Screenshots were temporary local artifacts. They were not committed.
