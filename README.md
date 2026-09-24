@@ -24,13 +24,24 @@ On Windows:
 
 ```bat
 build wheelhouse
+run_tests
 ```
+
+`build.bat` builds the sibling `..\cleat` and `..\andamento` checkouts (override with
+`WHEELHOUSE_CLEAT_DIR` / `WHEELHOUSE_ANDAMENTO_DIR`) and copies their DLLs, including
+`ghostty-vt.dll`, next to the executable. Cleat's default `ghostty-vt` feature needs
+`tools\prepare-ghostty-vt.ps1` run in the Cleat checkout first. `run_tests` runs the
+sidebar, scroll-region, preview, tooltip and panel diagnostics, each with throwaway
+`--user`/`--project` files; the terminal-glyph diagnostic is left out until colour emoji
+renders on Windows ([#59](https://github.com/flotilla-org/wheelhouse/issues/59)).
+After `build wheelhouse meta`, `python tools/check-generated.py` fails if committed
+metagen output is stale.
 
 The executable is `build/wheelhouse` (`build/wheelhouse.exe` on Windows); the macOS bundle is `build/Wheelhouse.app`. Build and diagnostic overrides use the `WHEELHOUSE_` environment-variable prefix.
 
 Internal source names and existing configuration storage still use `uishell`.
 
-The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS with Ghostty and on Linux/Windows with Cleat’s no-VT variant, and runs workspace bridge diagnostics on macOS and Linux. Windows runtime behavior and Ghostty on Linux/Windows are not covered by these jobs. Local builds continue to use the configured sibling checkouts. CI checks out the public Andamento repository without an App credential, including for fork PRs.
+The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics on all three, and on Windows checks that committed metagen output is current. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. CI checks out the public Andamento repository without an App credential, including for fork PRs.
 
 ## Jackstay views
 
