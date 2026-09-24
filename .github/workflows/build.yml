@@ -14,8 +14,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Includes attachment-local panning and shared PTY bounds from cleat PR #212.
-  CLEAT_REV: c5eaa36c2d1dfbe8d18f5fdf946bd279b384a8cc
+  # Includes the bundled Windows ConPTY from cleat PR #235 (ADR 0006), which
+  # build.bat stages beside wheelhouse.exe so panes pass Kitty graphics through.
+  CLEAT_REV: adeb033cec5d001aaf4bc6f3f288dd24dbe892cc
   JACKSTAY_REV: b992ad28b2eb56b9b292570b2cfbed5b2beaeb0c
   ANDAMENTO_REV: 9eace9de10aa447cfbb0e67f14d7ddca98d17147
 
@@ -115,6 +116,16 @@ jobs:
         shell: cmd
         # terminal_glyph is excluded until colour emoji renders on Windows (#59).
         run: call run_tests.bat
+      - name: Windows ConPTY packaging
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # An in-process pane must run under the bundled OpenConsole.exe beside
+        # wheelhouse.exe; the inbox run shows the check tells the two apart.
+        run: |
+          ./tools/check-windows-conpty.ps1 -Expect bundled
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tools/check-windows-conpty.ps1 -Expect inbox
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Linux UI diagnostics
         if: runner.os == 'Linux'
         env:
