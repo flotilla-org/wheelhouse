@@ -222,6 +222,7 @@ entry_point(CmdLine *cmd_line)
             &rd_terminal_noto_math_font_bytes,
           };
           B32 ok = 1;
+          log_scope_begin();
           if(run_terminal_glyph_diagnostics)
           {
             ok = ok && uishell_terminal_glyph_diagnostics(primary_font,
@@ -244,6 +245,14 @@ entry_point(CmdLine *cmd_line)
                                                           ArrayCount(embedded_terminal_color_emoji_fallbacks),
                                                           embedded_terminal_fallbacks,
                                                           ArrayCount(embedded_terminal_fallbacks));
+          }
+          {
+            Temp log_scratch = scratch_begin(0, 0);
+            LogScopeResult log = log_scope_end(log_scratch.arena);
+            fprintf(stderr, "%.*s\n%.*s\n", (int)log.strings[LogMsgKind_Info].size, log.strings[LogMsgKind_Info].str,
+                    (int)log.strings[LogMsgKind_UserError].size, log.strings[LogMsgKind_UserError].str);
+            fflush(stderr);
+            scratch_end(log_scratch);
           }
           abort_self(ok ? 0 : 1);
         }
