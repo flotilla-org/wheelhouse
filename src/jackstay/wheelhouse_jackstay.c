@@ -217,7 +217,8 @@ static void wh_js_path_status(WH_Jackstay *s, const char *format, ...) {
 }
 static ft_status wh_js_porthole_open(WH_Jackstay *s, WH_JS_Link *link,
                                      WH_JS_Media *publication) {
-  char session[512], token[2048], request[3072];
+  // Each form field holds up to 1023 bytes; escaping can grow a byte to six.
+  char session[6 * 1024 + 8], token[6 * 1024 + 8], request[13 * 1024];
   if (!wh_js_json_string(session, sizeof(session), s->session_id) ||
       !wh_js_json_string(token, sizeof(token), s->token)) {
     wh_js_path_status(s, "Porthole session id or attach token is too long");
