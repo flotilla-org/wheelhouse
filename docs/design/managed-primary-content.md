@@ -62,7 +62,7 @@ The native managed-content diagnostic is added to macOS CI. Linux's current
 CI build omits Ghostty VT, so this real-terminal check is not enabled there.
 
 The Andamento dependency is local commit
-`2f8589aabb7b29bb20a45594f1ff7143fcd2bf50`. Publish that branch before opening a
+`d0cc0637dc5763d1d2ab2b1c4b3a9c9ac8e90062`. Publish that branch before opening a
 Wheelhouse PR so CI can fetch the pinned revision.
 
 ## Standing roles
@@ -89,3 +89,9 @@ one project, hidden attempts and the toggle, a task convoy sharing a role name,
 held roles, the recorded target, and declaration removal. The managed-content
 diagnostic opens a role through the production effect path and checks that its
 first plan is current. A live check needs a Flotilla release containing #1908.
+
+The same change folds in project repository membership (Flotilla #1897): the
+project hover card lists each `project_repository` relation through a loop in
+`project/detail`, which Andamento evaluates as related-entity detail rather than
+tree rows. `tools/test-native-sidebar.py` covers ordering, subpaths, exclusion of
+other projects' memberships, and that memberships are never placed.

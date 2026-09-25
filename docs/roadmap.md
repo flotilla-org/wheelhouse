@@ -34,11 +34,12 @@ presentation choices over stable entity and workspace identities.
    status. Role icons and ordering are presentation choices. Do not identify a
    governor from a convoy or vessel name.
 3. **Complete project repository membership:**
-   [Flotilla #1897](https://github.com/flotilla-org/flotilla/issues/1897) is
-   ready for implementation. It must represent shared repositories, subpaths,
-   removal, and known-empty versus unavailable membership. Wheelhouse can then
-   show the complete set in project hover details. Until then, hover details
-   only report facts the producer actually supplied.
+   [Flotilla #1897](https://github.com/flotilla-org/flotilla/issues/1897)
+   publishes `project_repository` relations from project definitions, including
+   shared repositories, subpaths and known-empty versus unavailable membership.
+   The project hover card lists them through a detail-template loop (Andamento's
+   related-entity details); the count shows zero for a known-empty project and is
+   absent while the definition is unavailable.
 
 The breadcrumb can proceed independently of the Flotilla changes. The standing
 role consumer follows the producer contract and any shared Andamento template

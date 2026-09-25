@@ -168,6 +168,15 @@ template "project/detail" slot="detail" node-kind="entity" {
   field "vessels" source="metadata-display" key="count.vessels" prefix="Vessels: "
   field "issues" source="metadata-display" key="count.issues" prefix="Issues: "
   field "checkouts" source="metadata-display" key="count.checkouts" prefix="Checkouts: "
+  // Complete membership from the project definition (flotilla#1897), not
+  // inferred from activity. Zero is known-empty; absence is unavailable.
+  field "repositories" source="metadata-display" key="flotilla.project.repository_count" prefix="Repositories: "
+  for "repository" kind="project_repository" {
+    match "flotilla.project" of="project"
+    order "display.label"
+    field "repository" key="display.label" prefix="  "
+    field "subpath" key="flotilla.membership.subpath" prefix="    path: "
+  }
 }
 template "role/detail" slot="detail" node-kind="entity" {
   field "summary" key="summary.text"

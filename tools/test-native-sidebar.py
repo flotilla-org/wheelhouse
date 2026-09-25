@@ -279,6 +279,30 @@ class NativeSidebarTests(unittest.TestCase):
         self.assertFalse(any(n.entity_id.string() == 'p/governor' for n in nodes))
         self.assertEqual([n.workspace_id for n in nodes if n.entity_kind.string() == 'andamento.workspace'], [44])
 
+    def test_project_hover_lists_repository_membership_without_placing_it(self):
+        # Facts shaped as flotilla pm connect publishes membership (flotilla#1897).
+        count = patch('project', 'p', **{'flotilla.project': 'p'})
+        count['set']['flotilla.project.repository_count'] = {'value': {'type': 'integer', 'value': 2}}
+        items = [count,
+                 patch('project_repository', 'm-web', **{'flotilla.project': 'p', 'display.label': 'org/web',
+                       'flotilla.membership.repository_key': 'repo-web'}),
+                 patch('project_repository', 'm-docs', **{'flotilla.project': 'p', 'display.label': 'org/docs',
+                       'flotilla.membership.repository_key': 'repo-docs', 'flotilla.membership.subpath': 'guide'}),
+                 patch('project', 'q', **{'flotilla.project': 'q'}),
+                 patch('project_repository', 'm-other', **{'flotilla.project': 'q', 'display.label': 'org/other'})]
+        for item in items:
+            self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+        snapshot, nodes = self.snapshot()
+        project = next(n for n in nodes if n.entity_id.string() == 'p' and not n.is_section)
+        detail = []
+        for index in range(project.first_detail, project.first_detail + project.detail_count):
+            field = Field()
+            self.assertEqual(lib.andamento_snapshot_field(snapshot, index, C.byref(field)), 1)
+            detail.append(field.text.string())
+        start = detail.index('Repositories: 2')
+        self.assertEqual(detail[start:], ['Repositories: 2', '  org/docs', '    path: guide', '  org/web'])
+        self.assertFalse(any(n.entity_kind.string() == 'project_repository' for n in nodes))
+
     def test_local_sidebar_has_only_observed_workspaces(self):
         lib.andamento_destroy(self.core)
         config = (ROOT / 'data/sidebar/local.kdl').read_bytes()
