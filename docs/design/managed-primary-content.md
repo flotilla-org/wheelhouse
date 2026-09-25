@@ -2,7 +2,8 @@
 
 Implemented first slice, 24 September 2026. This supplies the content-update
 mechanism needed by standing project-role workspaces (Wheelhouse #48 and
-Flotilla #1908); it does not yet publish or place those roles in the daily driver.
+Flotilla #1908). Flotilla now publishes the roles, and the daily-driver template
+places them on project rows; see [Standing roles](#standing-roles).
 
 Andamento resolves optional workspace.primary.state (ready/held) and
 workspace.primary.target facts, action.primary.recipe and checkout.path into
@@ -51,9 +52,7 @@ content, removal of an obsolete session ID, repeated observation and held/resume
 It does not alter the daily driver's configuration or contact Flotilla.
 
 The earlier standalone lifecycle and native prototypes have been absorbed into
-shared-core regression coverage and this native diagnostic. The next slice is
-publishing authoritative standing-role resolutions from Flotilla and placing
-those role entities on project rows through Andamento templates.
+shared-core regression coverage and this native diagnostic.
 
 Validation on macOS: the core/FFI suites passed 175 tests, the core/FFI WASM
 build passed, and native managed-content, panel, preview, scrolling and sidebar
@@ -63,5 +62,30 @@ The native managed-content diagnostic is added to macOS CI. Linux's current
 CI build omits Ghostty VT, so this real-terminal check is not enabled there.
 
 The Andamento dependency is local commit
-`c7a628dfad90c40bd6404e8cfd7943f30025233c`. Publish that branch before opening a
+`2f8589aabb7b29bb20a45594f1ff7143fcd2bf50`. Publish that branch before opening a
 Wheelhouse PR so CI can fetch the pinned revision.
+
+## Standing roles
+
+Flotilla #1908 publishes each declared standing role as a `role` entity; the
+fact contract is in Andamento's `docs/sidebar-design/managed-primary-content.md`.
+`data/sidebar/daily-driver.kdl` places roles as inline actions on their project
+row, ordered by role name and selected by entity kind, never by name. A held
+role stays visible but has no recipe to open.
+
+The role action is the current attempt. Entities grouped under a known role's
+attempt (its convoy and vessels) are hidden unless the **Role attempts** toggle
+is on, so the tree does not offer a second workspace for the same terminal.
+Superseded and finished attempts follow their existing rules. A task convoy
+that shares a role name is unaffected. When a declaration is removed, its open
+workspace moves to Other workspaces.
+
+Opening a role records the managed target its recipe resolves
+(`andamento_effects_primary_target`) on the new primary slot. Without it, the
+first reconciliation would restart the attachment that was just created.
+
+Validation: `tools/test-native-sidebar.py` covers inline placement, two roles on
+one project, hidden attempts and the toggle, a task convoy sharing a role name,
+held roles, the recorded target, and declaration removal. The managed-content
+diagnostic opens a role through the production effect path and checks that its
+first plan is current. A live check needs a Flotilla release containing #1908.

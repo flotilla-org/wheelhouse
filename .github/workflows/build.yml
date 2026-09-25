@@ -18,7 +18,7 @@ env:
   # build.bat stages beside wheelhouse.exe so panes pass Kitty graphics through.
   CLEAT_REV: adeb033cec5d001aaf4bc6f3f288dd24dbe892cc
   JACKSTAY_REV: b992ad28b2eb56b9b292570b2cfbed5b2beaeb0c
-  ANDAMENTO_REV: c7a628dfad90c40bd6404e8cfd7943f30025233c
+  ANDAMENTO_REV: 2f8589aabb7b29bb20a45594f1ff7143fcd2bf50
 
 jobs:
   daily-driver:

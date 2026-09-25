@@ -4,6 +4,8 @@ display-variable "show-issues" type="bool" default=true label="Issues" icon="I" 
 
 display-variable "show-finished" type="bool" default=false label="Show finished" icon="F" persist=true
 
+display-variable "show-role-attempts" type="bool" default=false label="Role attempts" icon="R" persist=true
+
 // Flotilla derives this from stable project/role identity and generations.
 grouping "wheelhouse.superseded" priority=1200 {
   filter key="flotilla.convoy.superseded" equals=true
@@ -33,12 +35,27 @@ grouping "wheelhouse.finished-abandoned" priority=1100 {
   level key="entity.id"
 }
 
+// A standing role's action on its project row is the current attempt. The
+// attempt's convoy and vessels are history-like detail; showing them too would
+// offer a second workspace for the same terminal. Flotilla puts flotilla.role on
+// every entity grouped under a known role's attempt, and on the role itself.
+grouping "wheelhouse.role-attempts" priority=1050 {
+  filter key="flotilla.role" exists=true
+  presence kind="role" class="tab"
+  presence kind="convoy" class="tab" visible-when="show-role-attempts"
+  presence kind="vessel" class="tab" visible-when="show-role-attempts"
+  presence kind="checkout" class="tab"
+  presence kind="issue" class="inline" visible-when="show-issues"
+  level key="entity.id"
+}
+
 // Native placements own the hierarchy. The current core still consults
 // presence/grouping for activation; a unique entity path avoids the legacy
 // single-member collapse that can make a vessel impossible to open.
 grouping "wheelhouse.activation" priority=1000 {
   filter key="entity.kind"
   presence kind="project" class="tab"
+  presence kind="role" class="tab"
   presence kind="checkout" class="tab"
   presence kind="convoy" class="tab"
   presence kind="vessel" class="tab"
@@ -56,6 +73,7 @@ template "wheelhouse/projects" slot="compact" node-kind="entity" {
   field "label" source="literal" value="Projects"
   control "display-variable" variable="show-issues"
   control "display-variable" variable="show-finished"
+  control "display-variable" variable="show-role-attempts"
 }
 template "wheelhouse/sessions" slot="compact" node-kind="entity" {
   field "label" source="literal" value="Sessions"
@@ -72,6 +90,13 @@ placement "tree" {
 }
 template "project/native" {
   field "label" key="display.label"
+  // Standing roles (flotilla#1908) are actions on the project row, selected by
+  // kind rather than by any convoy or role name.
+  for "role" kind="role" layout="inline" {
+    match "flotilla.project" of="project"
+    order "flotilla.role.name"
+    apply-template "wheelhouse/entry"
+  }
   for "checkout" kind="checkout" {
     match "flotilla.project" of="project"
     order "display.label"
@@ -143,6 +168,14 @@ template "project/detail" slot="detail" node-kind="entity" {
   field "vessels" source="metadata-display" key="count.vessels" prefix="Vessels: "
   field "issues" source="metadata-display" key="count.issues" prefix="Issues: "
   field "checkouts" source="metadata-display" key="count.checkouts" prefix="Checkouts: "
+}
+template "role/detail" slot="detail" node-kind="entity" {
+  field "summary" key="summary.text"
+  field "role" key="flotilla.role.name" prefix="Role: "
+  field "presents" key="flotilla.role.presents_as" prefix="Presents as: "
+  field "hold" key="flotilla.role.hold" prefix="Held: "
+  field "content" key="workspace.primary.state" prefix="Attachment: "
+  use "wheelhouse/hover-details"
 }
 template "convoy/detail" slot="detail" node-kind="entity" {
   field "summary" key="summary.text"

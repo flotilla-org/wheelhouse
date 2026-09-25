@@ -118,6 +118,63 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   uishell_sidebar_reconcile_workspace(&state, workspace);
   ManagedCheck(tv->session == unchanged, "unchanged resolution after held interval does not restart");
   andamento_destroy(state.core);
+
+  // Opening an entity from its current resolution through the production effect
+  // path records the managed target, so the first plan does not restart it.
+  {
+    String8 config = str8_lit(
+      "grouping \"roles\" { filter key=\"entity.kind\"; presence kind=\"role\" class=\"tab\"; level key=\"entity.id\"; }\n"
+      "region \"tree\" source=\"tree\" root-template=\"roles\" form=\"compact\" placement=\"tree\"\n"
+      "template \"roles\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Roles\"; }\n"
+      "placement \"tree\" { for \"role\" kind=\"role\" { apply-template \"role/entry\"; }; }\n"
+      "template \"role/entry\" { field \"label\" key=\"entity.id\"; }\n");
+    UIShell_SidebarState opened = {0};
+    error = 0;
+    opened.core = andamento_create(config.str, config.size, &error);
+    andamento_string_free(error);
+    ManagedCheck(opened.core != 0, "role sidebar core initializes");
+    values[2] = "printf C; read answer";
+    facts[0].text = uishell_sidebar_text(str8_lit("ready"));
+    for(U32 i = 1; i < 3; i++) { facts[i].text = uishell_sidebar_text(str8_cstring(values[i])); }
+    error = 0;
+    andamento_apply_entity(opened.core, 4, uishell_sidebar_text(str8_lit("role")),
+      uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
+    andamento_string_free(error);
+    error = 0;
+    AndamentoSnapshot *snapshot = andamento_snapshot_acquire(opened.core, &error);
+    andamento_string_free(error);
+    size_t activate = ANDAMENTO_NONE;
+    for(U64 i = 0; snapshot && i < andamento_snapshot_node_count(snapshot); i++)
+    {
+      AndamentoNode node = {0};
+      if(andamento_snapshot_node(snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("role"), 0))
+      { activate = node.activate; }
+    }
+    ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(opened.core, snapshot, activate, 0), "role entry dispatches its opening");
+    andamento_snapshot_release(snapshot);
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_effects(&opened, &split);
+    CFG_Node *role_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
+    CFG_Node *role_view = &cfg_nil_node;
+    CFG_Node *role_panels = cfg_node_child_from_string(role_workspace, str8_lit("panels"));
+    CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(scratch.arena, role_panels, Axis2_X);
+    if(tree.root != &cfg_nil_panel_node && tree.root->tabs.first) { role_view = tree.root->tabs.first->v; }
+    ManagedCheck(str8_match(cfg_node_child_from_string(role_workspace, str8_lit("sidebar_entity_kind"))->first->string, str8_lit("role"), 0) &&
+                 str8_match(cfg_node_child_from_string(role_view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0),
+                 "opened workspace records its current managed target");
+    error = 0;
+    AndamentoContentPlan *plan = andamento_content_plan(opened.core, role_workspace->id,
+      uishell_sidebar_text(str8_lit("role")), uishell_sidebar_text(str8_lit("p/governor")),
+      uishell_sidebar_text(cfg_node_child_from_string(role_view, str8_lit("managed_target"))->first->string),
+      uishell_sidebar_text(rd_expr_from_cfg(role_view)), 0, (AndamentoText){0}, &error);
+    andamento_string_free(error);
+    AndamentoContent content = {0};
+    ManagedCheck(plan && andamento_content_get(plan, &content) && content.state == ANDAMENTO_CONTENT_CURRENT,
+                 "first plan for freshly opened content is current");
+    andamento_content_release(plan);
+    andamento_destroy(opened.core);
+    cfg_node_release(rd_state->cfg, role_workspace);
+  }
   uishell_terminal_runtime_release(tv);
   cfg_node_release(rd_state->cfg, workspace);
   ui_select_state(saved);
