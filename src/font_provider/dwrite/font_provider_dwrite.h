@@ -94,6 +94,18 @@ typedef enum DWRITE_GRID_FIT_MODE {
   DWRITE_GRID_FIT_MODE_ENABLED  = 2,
 } DWRITE_GRID_FIT_MODE;
 
+typedef enum DWRITE_FONT_WEIGHT {
+  DWRITE_FONT_WEIGHT_NORMAL = 400,
+} DWRITE_FONT_WEIGHT;
+
+typedef enum DWRITE_FONT_STRETCH {
+  DWRITE_FONT_STRETCH_NORMAL = 5,
+} DWRITE_FONT_STRETCH;
+
+typedef enum DWRITE_FONT_STYLE {
+  DWRITE_FONT_STYLE_NORMAL = 0,
+} DWRITE_FONT_STYLE;
+
 //- rjf: interfaces
 
 typedef struct IDWriteFactory                  { struct { void* tbl[]; }* v; } IDWriteFactory;
@@ -112,6 +124,10 @@ typedef struct IDWriteGdiInterop               { struct { void* tbl[]; }* v; } I
 typedef struct IDWriteBitmapRenderTarget       { struct { void* tbl[]; }* v; } IDWriteBitmapRenderTarget;
 typedef struct IDWriteBitmapRenderTarget1      { struct { void* tbl[]; }* v; } IDWriteBitmapRenderTarget1;
 typedef struct IDWriteColorGlyphRunEnumerator  { struct { void* tbl[]; }* v; } IDWriteColorGlyphRunEnumerator;
+typedef struct IDWriteFontCollection           { struct { void* tbl[]; }* v; } IDWriteFontCollection;
+typedef struct IDWriteFontFamily               { struct { void* tbl[]; }* v; } IDWriteFontFamily;
+typedef struct IDWriteFont                     { struct { void* tbl[]; }* v; } IDWriteFont;
+typedef struct IDWriteLocalFontFileLoader      { struct { void* tbl[]; }* v; } IDWriteLocalFontFileLoader;
 
 //- rjf: structs
 
@@ -186,6 +202,7 @@ typedef struct DWRITE_MATRIX {
 DEFINE_GUID(IID_IDWriteFactory,                  0xb859ee5a, 0xd838, 0x4b5b, 0xa2, 0xe8, 0x1a, 0xdc, 0x7d, 0x93, 0xdb, 0x48);
 DEFINE_GUID(IID_IDWriteFactory1,                 0x30572f99, 0xdac6, 0x41db, 0xa1, 0x6e, 0x04, 0x86, 0x30, 0x7e, 0x60, 0x6a);
 DEFINE_GUID(IID_IDWriteFactory2,                 0x0439fc60, 0xca44, 0x4994, 0x8d, 0xee, 0x3a, 0x9a, 0xf7, 0xb7, 0x32, 0xec);
+DEFINE_GUID(IID_IDWriteLocalFontFileLoader,      0xb2d9f3ec, 0xc9fe, 0x4a11, 0xa2, 0xec, 0xd8, 0x62, 0x08, 0xf7, 0xc0, 0xa2);
 
 //- rjf: functions
 
@@ -216,6 +233,23 @@ static inline HRESULT                           IDWriteFontFace_GetGdiCompatible
 static inline UINT32                            IDWriteBitmapRenderTarget_Release                            (IDWriteBitmapRenderTarget* this_) { return ((UINT32 (WINAPI*)(IDWriteBitmapRenderTarget*))this_->v->tbl[2])(this_); }
 static inline UINT32                            IDWriteColorGlyphRunEnumerator_Release                       (IDWriteColorGlyphRunEnumerator* this_) { return ((UINT32 (WINAPI*)(IDWriteColorGlyphRunEnumerator*))this_->v->tbl[2])(this_); }
 static inline HRESULT                           IDWriteColorGlyphRunEnumerator_MoveNext                      (IDWriteColorGlyphRunEnumerator* this_, BOOL* hasRun) { return ((HRESULT (WINAPI*)(IDWriteColorGlyphRunEnumerator*, BOOL*))this_->v->tbl[3])(this_, hasRun); }
+static inline HRESULT                           IDWriteFactory_GetSystemFontCollection                       (IDWriteFactory* this_, IDWriteFontCollection** fontCollection, BOOL checkForUpdates) { return ((HRESULT (WINAPI*)(IDWriteFactory*, IDWriteFontCollection**, BOOL))this_->v->tbl[3])(this_, fontCollection, checkForUpdates); }
+static inline UINT32                            IDWriteFontCollection_Release                                (IDWriteFontCollection* this_) { return ((UINT32 (WINAPI*)(IDWriteFontCollection*))this_->v->tbl[2])(this_); }
+static inline HRESULT                           IDWriteFontCollection_GetFontFamily                          (IDWriteFontCollection* this_, UINT32 index, IDWriteFontFamily** fontFamily) { return ((HRESULT (WINAPI*)(IDWriteFontCollection*, UINT32, IDWriteFontFamily**))this_->v->tbl[4])(this_, index, fontFamily); }
+static inline HRESULT                           IDWriteFontCollection_FindFamilyName                         (IDWriteFontCollection* this_, const WCHAR* familyName, UINT32* index, BOOL* exists) { return ((HRESULT (WINAPI*)(IDWriteFontCollection*, const WCHAR*, UINT32*, BOOL*))this_->v->tbl[5])(this_, familyName, index, exists); }
+static inline UINT32                            IDWriteFontFamily_Release                                    (IDWriteFontFamily* this_) { return ((UINT32 (WINAPI*)(IDWriteFontFamily*))this_->v->tbl[2])(this_); }
+static inline HRESULT                           IDWriteFontFamily_GetFirstMatchingFont                       (IDWriteFontFamily* this_, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STRETCH stretch, DWRITE_FONT_STYLE style, IDWriteFont** matchingFont) { return ((HRESULT (WINAPI*)(IDWriteFontFamily*, DWRITE_FONT_WEIGHT, DWRITE_FONT_STRETCH, DWRITE_FONT_STYLE, IDWriteFont**))this_->v->tbl[7])(this_, weight, stretch, style, matchingFont); }
+static inline UINT32                            IDWriteFont_Release                                          (IDWriteFont* this_) { return ((UINT32 (WINAPI*)(IDWriteFont*))this_->v->tbl[2])(this_); }
+static inline HRESULT                           IDWriteFont_CreateFontFace                                   (IDWriteFont* this_, IDWriteFontFace** fontFace) { return ((HRESULT (WINAPI*)(IDWriteFont*, IDWriteFontFace**))this_->v->tbl[13])(this_, fontFace); }
+static inline HRESULT                           IDWriteFontFace_GetFiles                                     (IDWriteFontFace* this_, UINT32* numberOfFiles, IDWriteFontFile** fontFiles) { return ((HRESULT (WINAPI*)(IDWriteFontFace*, UINT32*, IDWriteFontFile**))this_->v->tbl[4])(this_, numberOfFiles, fontFiles); }
+static inline UINT32                            IDWriteFontFace_GetIndex                                     (IDWriteFontFace* this_) { return ((UINT32 (WINAPI*)(IDWriteFontFace*))this_->v->tbl[5])(this_); }
+static inline HRESULT                           IDWriteFontFile_GetReferenceKey                              (IDWriteFontFile* this_, const void** fontFileReferenceKey, UINT32* fontFileReferenceKeySize) { return ((HRESULT (WINAPI*)(IDWriteFontFile*, const void**, UINT32*))this_->v->tbl[3])(this_, fontFileReferenceKey, fontFileReferenceKeySize); }
+static inline HRESULT                           IDWriteFontFile_GetLoader                                    (IDWriteFontFile* this_, IDWriteFontFileLoader** fontFileLoader) { return ((HRESULT (WINAPI*)(IDWriteFontFile*, IDWriteFontFileLoader**))this_->v->tbl[4])(this_, fontFileLoader); }
+static inline HRESULT                           IDWriteFontFileLoader_QueryInterface                         (IDWriteFontFileLoader* this_, const GUID* riid, void** object) { return ((HRESULT (WINAPI*)(IDWriteFontFileLoader*, const GUID*, void**))this_->v->tbl[0])(this_, riid, object); }
+static inline UINT32                            IDWriteFontFileLoader_Release                                (IDWriteFontFileLoader* this_) { return ((UINT32 (WINAPI*)(IDWriteFontFileLoader*))this_->v->tbl[2])(this_); }
+static inline UINT32                            IDWriteLocalFontFileLoader_Release                           (IDWriteLocalFontFileLoader* this_) { return ((UINT32 (WINAPI*)(IDWriteLocalFontFileLoader*))this_->v->tbl[2])(this_); }
+static inline HRESULT                           IDWriteLocalFontFileLoader_GetFilePathLengthFromKey          (IDWriteLocalFontFileLoader* this_, const void* fontFileReferenceKey, UINT32 fontFileReferenceKeySize, UINT32* filePathLength) { return ((HRESULT (WINAPI*)(IDWriteLocalFontFileLoader*, const void*, UINT32, UINT32*))this_->v->tbl[4])(this_, fontFileReferenceKey, fontFileReferenceKeySize, filePathLength); }
+static inline HRESULT                           IDWriteLocalFontFileLoader_GetFilePathFromKey                (IDWriteLocalFontFileLoader* this_, const void* fontFileReferenceKey, UINT32 fontFileReferenceKeySize, WCHAR* filePath, UINT32 filePathSize) { return ((HRESULT (WINAPI*)(IDWriteLocalFontFileLoader*, const void*, UINT32, WCHAR*, UINT32))this_->v->tbl[5])(this_, fontFileReferenceKey, fontFileReferenceKeySize, filePath, filePathSize); }
 static inline HRESULT                           IDWriteColorGlyphRunEnumerator_GetCurrentRun                 (IDWriteColorGlyphRunEnumerator* this_, const DWRITE_COLOR_GLYPH_RUN** colorGlyphRun) { return ((HRESULT (WINAPI*)(IDWriteColorGlyphRunEnumerator*, const DWRITE_COLOR_GLYPH_RUN**))this_->v->tbl[4])(this_, colorGlyphRun); }
 
 ////////////////////////////////
@@ -288,6 +322,8 @@ struct FP_DWrite_State
   FP_DWrite_FontFileStreamNode *first_stream_node;
   FP_DWrite_FontFileStreamNode *last_stream_node;
   FP_DWrite_FontFileStreamNode *free_stream_node;
+  B32 system_color_emoji_fonts_resolved;
+  FP_SystemFontArray system_color_emoji_fonts;
 };
 
 typedef struct FP_DWrite_Font FP_DWrite_Font;
@@ -303,6 +339,9 @@ struct FP_DWrite_Font
 //- rjf: handle conversion functions
 internal FP_DWrite_Font fp_dwrite_font_from_handle(FP_Handle handle);
 internal FP_Handle fp_dwrite_handle_from_font(FP_DWrite_Font font);
+
+//- rjf: system font lookup
+internal String8 fp_dwrite_system_font_path_from_family(Arena *arena, String8 family);
 
 //- rjf: file stream allocator
 internal FP_DWrite_FontFileStreamNode *fp_dwrite_font_file_stream_node_alloc(String8 *data_ptr);

@@ -239,9 +239,15 @@ uishell_terminal_font_set_from_fonts(Arena *scratch_arena, FNT_Tag primary_font,
   result.fallback_fonts = push_array(scratch_arena, FNT_Tag, result.fallback_font_cap);
   result.color_emoji_fonts = push_array(scratch_arena, FNT_Tag, result.color_emoji_font_cap);
   uishell_terminal_font_set_push_fallback_paths(scratch_arena, &result, fallback_setting);
-#if OS_MAC
-  uishell_terminal_font_set_push_color_emoji(&result, fnt_tag_from_path(str8_lit("/System/Library/Fonts/Apple Color Emoji.ttc")));
-#endif
+  FP_SystemFontArray system_color_emoji_fonts = fp_system_color_emoji_fonts();
+  for(U64 idx = 0; idx < system_color_emoji_fonts.count; idx += 1)
+  {
+    String8 path = system_color_emoji_fonts.v[idx].path;
+    if(path.size != 0)
+    {
+      uishell_terminal_font_set_push_color_emoji(&result, fnt_tag_from_path(path));
+    }
+  }
   for(U64 idx = 0; idx < embedded_color_emoji_count; idx += 1)
   {
     uishell_terminal_font_set_push_color_emoji_static_data(&result, embedded_color_emoji_data[idx]);
@@ -7829,6 +7835,37 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
     }
 
     {
+      // Name the system colour emoji families this host has or lacks, so a
+      // host without them is reported rather than silently falling back.
+      FP_SystemFontArray system_color_emoji_fonts = fp_system_color_emoji_fonts();
+      B32 have_system_color_emoji_font = 0;
+      String8List families = {0};
+      for(U64 idx = 0; idx < system_color_emoji_fonts.count; idx += 1)
+      {
+        FP_SystemFont *system_font = &system_color_emoji_fonts.v[idx];
+        str8_list_pushf(scratch.arena, &families, "\"%S\"", system_font->family);
+        if(system_font->path.size != 0)
+        {
+          have_system_color_emoji_font = 1;
+          log_infof("terminal glyph diagnostics: system colour emoji font \"%S\" is %S", system_font->family, system_font->path);
+        }
+        else
+        {
+          log_infof("terminal glyph diagnostics: system colour emoji font \"%S\" is not installed on this host, or is not the first face in its file", system_font->family);
+        }
+      }
+#if OS_WINDOWS || OS_MAC
+      if(!have_system_color_emoji_font)
+      {
+        StringJoin join = {.sep = str8_lit_comp(", ")};
+        log_user_errorf("terminal glyph diagnostics failed: this host has no system colour emoji font (looked for %S)",
+                        str8_list_join(scratch.arena, &families, &join));
+        result = 0;
+      }
+#endif
+    }
+
+    {
       B32 color_emoji_can_raster_source_color = 0;
       U32 smile_codepoints[] = {0x1F642};
       String8 smile = uishell_terminal_diagnostic_string_from_codepoints(scratch.arena, smile_codepoints, ArrayCount(smile_codepoints));
@@ -7856,8 +7893,8 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
       }
       if(!color_emoji_can_raster_source_color)
       {
-#if OS_MAC
-        log_user_errorf("terminal glyph diagnostics failed: macOS did not raster U+1F642 through a configured source-color emoji font");
+#if OS_WINDOWS || OS_MAC
+        log_user_errorf("terminal glyph diagnostics failed: did not raster U+1F642 through a configured source-color emoji font");
         result = 0;
 #else
         log_infof("terminal glyph diagnostics: no configured color emoji font rastered U+1F642 as source-color on this platform");

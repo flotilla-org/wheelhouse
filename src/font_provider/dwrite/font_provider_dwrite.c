@@ -115,6 +115,62 @@ fp_dwrite_composite_straight_rgba(U8 *dst_pixel, Vec4F32 color, F32 coverage)
   }
 }
 
+//- rjf: system font lookup
+
+// Finds `family` in the DirectWrite system font collection and returns the path
+// of its regular face's file, or empty if the family is not installed or its
+// face is not the first in a local file (fp_font_open opens face 0 by path).
+internal String8
+fp_dwrite_system_font_path_from_family(Arena *arena, String8 family)
+{
+  String8 result = {0};
+  Temp scratch = scratch_begin(&arena, 1);
+  String16 family16 = str16_from_8(scratch.arena, family);
+  IDWriteFontCollection *collection = 0;
+  IDWriteFontFamily *font_family = 0;
+  IDWriteFont *font = 0;
+  IDWriteFontFace *face = 0;
+  IDWriteFontFile *file = 0;
+  IDWriteFontFileLoader *loader = 0;
+  IDWriteLocalFontFileLoader *local_loader = 0;
+  UINT32 family_idx = 0;
+  BOOL family_exists = 0;
+  UINT32 file_count = 1;
+  if(SUCCEEDED(IDWriteFactory_GetSystemFontCollection(fp_dwrite_state->factory, &collection, 0)) &&
+     SUCCEEDED(IDWriteFontCollection_FindFamilyName(collection, (WCHAR *)family16.str, &family_idx, &family_exists)) && family_exists &&
+     SUCCEEDED(IDWriteFontCollection_GetFontFamily(collection, family_idx, &font_family)) &&
+     SUCCEEDED(IDWriteFontFamily_GetFirstMatchingFont(font_family, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, &font)) &&
+     SUCCEEDED(IDWriteFont_CreateFontFace(font, &face)) &&
+     IDWriteFontFace_GetIndex(face) == 0 &&
+     SUCCEEDED(IDWriteFontFace_GetFiles(face, &file_count, &file)) && file != 0 &&
+     SUCCEEDED(IDWriteFontFile_GetLoader(file, &loader)) &&
+     SUCCEEDED(IDWriteFontFileLoader_QueryInterface(loader, &IID_IDWriteLocalFontFileLoader, (void **)&local_loader)))
+  {
+    void const *key = 0;
+    UINT32 key_size = 0;
+    UINT32 path_length = 0;
+    if(SUCCEEDED(IDWriteFontFile_GetReferenceKey(file, &key, &key_size)) &&
+       SUCCEEDED(IDWriteLocalFontFileLoader_GetFilePathLengthFromKey(local_loader, key, key_size, &path_length)) &&
+       path_length != 0)
+    {
+      WCHAR *path16 = push_array(scratch.arena, WCHAR, path_length + 1);
+      if(SUCCEEDED(IDWriteLocalFontFileLoader_GetFilePathFromKey(local_loader, key, key_size, path16, path_length + 1)))
+      {
+        result = str8_from_16(arena, str16((U16 *)path16, path_length));
+      }
+    }
+  }
+  if(local_loader != 0) { IDWriteLocalFontFileLoader_Release(local_loader); }
+  if(loader != 0)       { IDWriteFontFileLoader_Release(loader); }
+  if(file != 0)         { IDWriteFontFile_Release(file); }
+  if(face != 0)         { IDWriteFontFace_Release(face); }
+  if(font != 0)         { IDWriteFont_Release(font); }
+  if(font_family != 0)  { IDWriteFontFamily_Release(font_family); }
+  if(collection != 0)   { IDWriteFontCollection_Release(collection); }
+  scratch_end(scratch);
+  return result;
+}
+
 //- rjf: file stream allocator
 
 internal FP_DWrite_FontFileStreamNode *
@@ -863,4 +919,25 @@ fp_raster(Arena *arena, FP_Handle font_handle, F32 size, FP_RasterFlags flags, S
   scratch_end(scratch);
   ProfEnd();
   return result;
+}
+
+fp_hook FP_SystemFontArray
+fp_system_color_emoji_fonts(void)
+{
+  if(!fp_dwrite_state->system_color_emoji_fonts_resolved)
+  {
+    // Segoe UI Emoji is COLR, which fp_raster draws through its colour-layer
+    // path; DirectWrite here cannot draw CBDT/PNG emoji fonts.
+    String8 families[] = {str8_lit_comp("Segoe UI Emoji")};
+    FP_SystemFontArray *fonts = &fp_dwrite_state->system_color_emoji_fonts;
+    fonts->v = push_array(fp_dwrite_state->arena, FP_SystemFont, ArrayCount(families));
+    fonts->count = ArrayCount(families);
+    for EachElement(idx, families)
+    {
+      fonts->v[idx].family = families[idx];
+      fonts->v[idx].path = fp_dwrite_system_font_path_from_family(fp_dwrite_state->arena, families[idx]);
+    }
+    fp_dwrite_state->system_color_emoji_fonts_resolved = 1;
+  }
+  return fp_dwrite_state->system_color_emoji_fonts;
 }

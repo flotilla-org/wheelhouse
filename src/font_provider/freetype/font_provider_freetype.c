@@ -119,6 +119,80 @@ fp_ft_sample_straight_rgba_scaled(U8 *src_atlas, Vec2S16 src_dim, F32 src_x, F32
   dst[3] = fp_ft_u8_from_unit_f32(alpha);
 }
 
+//- system font lookup through fontconfig, loaded at runtime so builds and
+// hosts without it still work (the caller then falls back to embedded fonts)
+
+typedef struct FP_FT_FcPattern FP_FT_FcPattern;
+typedef struct FP_FT_FcConfig FP_FT_FcConfig;
+typedef FP_FT_FcConfig  *FP_FT_FcInitLoadConfigAndFontsFunction(void);
+typedef void             FP_FT_FcConfigDestroyFunction(FP_FT_FcConfig *config);
+typedef FP_FT_FcPattern *FP_FT_FcNameParseFunction(U8 const *name);
+typedef int              FP_FT_FcConfigSubstituteFunction(FP_FT_FcConfig *config, FP_FT_FcPattern *pattern, int kind);
+typedef void             FP_FT_FcDefaultSubstituteFunction(FP_FT_FcPattern *pattern);
+typedef FP_FT_FcPattern *FP_FT_FcFontMatchFunction(FP_FT_FcConfig *config, FP_FT_FcPattern *pattern, int *result);
+typedef int              FP_FT_FcPatternGetStringFunction(FP_FT_FcPattern const *pattern, char const *object, int n, U8 **value);
+typedef int              FP_FT_FcPatternGetIntegerFunction(FP_FT_FcPattern const *pattern, char const *object, int n, int *value);
+typedef int              FP_FT_FcPatternGetBoolFunction(FP_FT_FcPattern const *pattern, char const *object, int n, int *value);
+typedef void             FP_FT_FcPatternDestroyFunction(FP_FT_FcPattern *pattern);
+
+// Asks fontconfig for its best colour font for `family` and returns that file's
+// path, or empty if fontconfig is unavailable, the match is not a colour font,
+// or the match is not the file's first face (fp_font_open opens face 0).
+internal String8
+fp_ft_fontconfig_color_font_path_from_family(Arena *arena, String8 family)
+{
+  String8 result = {0};
+  Library fc = library_open(str8_lit("libfontconfig.so.1"));
+  if(fc.u64[0] != 0)
+  {
+    FP_FT_FcInitLoadConfigAndFontsFunction *FcInitLoadConfigAndFonts = (FP_FT_FcInitLoadConfigAndFontsFunction *)library_load_proc(fc, str8_lit("FcInitLoadConfigAndFonts"));
+    FP_FT_FcConfigDestroyFunction *FcConfigDestroy = (FP_FT_FcConfigDestroyFunction *)library_load_proc(fc, str8_lit("FcConfigDestroy"));
+    FP_FT_FcNameParseFunction *FcNameParse = (FP_FT_FcNameParseFunction *)library_load_proc(fc, str8_lit("FcNameParse"));
+    FP_FT_FcConfigSubstituteFunction *FcConfigSubstitute = (FP_FT_FcConfigSubstituteFunction *)library_load_proc(fc, str8_lit("FcConfigSubstitute"));
+    FP_FT_FcDefaultSubstituteFunction *FcDefaultSubstitute = (FP_FT_FcDefaultSubstituteFunction *)library_load_proc(fc, str8_lit("FcDefaultSubstitute"));
+    FP_FT_FcFontMatchFunction *FcFontMatch = (FP_FT_FcFontMatchFunction *)library_load_proc(fc, str8_lit("FcFontMatch"));
+    FP_FT_FcPatternGetStringFunction *FcPatternGetString = (FP_FT_FcPatternGetStringFunction *)library_load_proc(fc, str8_lit("FcPatternGetString"));
+    FP_FT_FcPatternGetIntegerFunction *FcPatternGetInteger = (FP_FT_FcPatternGetIntegerFunction *)library_load_proc(fc, str8_lit("FcPatternGetInteger"));
+    FP_FT_FcPatternGetBoolFunction *FcPatternGetBool = (FP_FT_FcPatternGetBoolFunction *)library_load_proc(fc, str8_lit("FcPatternGetBool"));
+    FP_FT_FcPatternDestroyFunction *FcPatternDestroy = (FP_FT_FcPatternDestroyFunction *)library_load_proc(fc, str8_lit("FcPatternDestroy"));
+    if(FcInitLoadConfigAndFonts && FcConfigDestroy && FcNameParse && FcConfigSubstitute && FcDefaultSubstitute &&
+       FcFontMatch && FcPatternGetString && FcPatternGetInteger && FcPatternGetBool && FcPatternDestroy)
+    {
+      Temp scratch = scratch_begin(&arena, 1);
+      FP_FT_FcConfig *config = FcInitLoadConfigAndFonts();
+      String8 name = push_str8f(scratch.arena, "%S:color=True", family);
+      FP_FT_FcPattern *pattern = FcNameParse(name.str);
+      if(config != 0 && pattern != 0)
+      {
+        int const fc_match_pattern = 0;
+        int const fc_result_match = 0;
+        int match_result = 0;
+        FcConfigSubstitute(config, pattern, fc_match_pattern);
+        FcDefaultSubstitute(pattern);
+        FP_FT_FcPattern *match = FcFontMatch(config, pattern, &match_result);
+        if(match != 0)
+        {
+          U8 *file = 0;
+          int index = 0;
+          int color = 0;
+          if(FcPatternGetBool(match, "color", 0, &color) == fc_result_match && color &&
+             FcPatternGetString(match, "file", 0, &file) == fc_result_match && file != 0 &&
+             (FcPatternGetInteger(match, "index", 0, &index) != fc_result_match || index == 0))
+          {
+            result = push_str8_copy(arena, str8_cstring((char *)file));
+          }
+          FcPatternDestroy(match);
+        }
+      }
+      if(pattern != 0) { FcPatternDestroy(pattern); }
+      if(config != 0)  { FcConfigDestroy(config); }
+      scratch_end(scratch);
+    }
+    library_close(fc);
+  }
+  return result;
+}
+
 ////////////////////////////////
 //~ rjf: Backend Implementations
 
@@ -340,4 +414,24 @@ fp_raster(Arena *arena, FP_Handle handle, F32 size, FP_RasterFlags flags, String
   }
   ProfEnd();
   return result;
+}
+
+fp_hook FP_SystemFontArray
+fp_system_color_emoji_fonts(void)
+{
+  if(!fp_ft_state->system_color_emoji_fonts_resolved)
+  {
+    // fontconfig's generic emoji family; callers fall back to embedded Noto.
+    String8 families[] = {str8_lit_comp("emoji")};
+    FP_SystemFontArray *fonts = &fp_ft_state->system_color_emoji_fonts;
+    fonts->v = push_array(fp_ft_state->arena, FP_SystemFont, ArrayCount(families));
+    fonts->count = ArrayCount(families);
+    for EachElement(idx, families)
+    {
+      fonts->v[idx].family = families[idx];
+      fonts->v[idx].path = fp_ft_fontconfig_color_font_path_from_family(fp_ft_state->arena, families[idx]);
+    }
+    fp_ft_state->system_color_emoji_fonts_resolved = 1;
+  }
+  return fp_ft_state->system_color_emoji_fonts;
 }

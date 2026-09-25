@@ -27,6 +27,8 @@ struct FP_FT_State
 {
   Arena *arena;
   FT_Library library;
+  B32 system_color_emoji_fonts_resolved;
+  FP_SystemFontArray system_color_emoji_fonts;
 };
 
 ////////////////////////////////
@@ -39,5 +41,6 @@ global FP_FT_State *fp_ft_state = 0;
 
 internal FP_FT_Font fp_ft_font_from_handle(FP_Handle handle);
 internal FP_Handle fp_ft_handle_from_font(FP_FT_Font font);
+internal String8 fp_ft_fontconfig_color_font_path_from_family(Arena *arena, String8 family);
 
 #endif // FONT_PROVIDER_FREETYPE_H

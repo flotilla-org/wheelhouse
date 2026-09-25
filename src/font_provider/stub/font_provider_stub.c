@@ -46,3 +46,10 @@ fp_raster(Arena *arena, FP_Handle font, F32 size, FP_RasterFlags flags, String8 
   FP_RasterResult result = {0};
   return result;
 }
+
+fp_hook FP_SystemFontArray
+fp_system_color_emoji_fonts(void)
+{
+  FP_SystemFontArray result = {0};
+  return result;
+}
