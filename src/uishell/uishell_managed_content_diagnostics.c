@@ -117,6 +117,23 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   andamento_string_free(error);
   uishell_sidebar_reconcile_workspace(&state, workspace);
   ManagedCheck(tv->session == unchanged, "unchanged resolution after held interval does not restart");
+  // Daemon-backed replacement is not supported in this slice; a new resolution
+  // must leave such a view's content and saved command untouched.
+  {
+    CFG_Node *daemon = cfg_node_new(rd_state->cfg, view, str8_lit("daemon"));
+    cfg_node_new(rd_state->cfg, daemon, str8_lit("1"));
+    facts[1].text = uishell_sidebar_text(str8_lit("three"));
+    facts[2].text = uishell_sidebar_text(str8_lit("printf D; read answer"));
+    error = 0;
+    andamento_apply_entity(state.core, 4, uishell_sidebar_text(str8_lit("project-role")),
+      uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
+    andamento_string_free(error);
+    uishell_sidebar_reconcile_workspace(&state, workspace);
+    ManagedCheck(tv->session == unchanged && str8_match(rd_expr_from_cfg(view), str8_lit("printf B; read answer"), 0) &&
+                 str8_match(cfg_node_child_from_string(view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0),
+                 "daemon-backed primary view is never replaced");
+    cfg_node_release(rd_state->cfg, daemon);
+  }
   andamento_destroy(state.core);
 
   // Opening an entity from its current resolution through the production effect

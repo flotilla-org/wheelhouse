@@ -6,8 +6,9 @@ Flotilla #1908). Flotilla now publishes the roles, and the daily-driver template
 places them on project rows; see [Standing roles](#standing-roles).
 
 Andamento resolves optional workspace.primary.state (ready/held) and
-workspace.primary.target facts, action.primary.recipe and checkout.path into
-one desired terminal descriptor. Intent identity remains the workspace's
+workspace.primary.target facts, action.primary.recipe and git.root (the
+working directory materialization also uses) into one desired terminal
+descriptor. Intent identity remains the workspace's
 sidebar_entity_kind/id; the resolved target identifies its changing backing
 instance. The primary resource_id remains stable as the user moves the view.
 
@@ -62,7 +63,7 @@ The native managed-content diagnostic is added to macOS CI. Linux's current
 CI build omits Ghostty VT, so this real-terminal check is not enabled there.
 
 The Andamento dependency is local commit
-`d0cc0637dc5763d1d2ab2b1c4b3a9c9ac8e90062`. Publish that branch before opening a
+`6b6435e40ccda2cd39f02847380875e7e21d1834`. Publish that branch before opening a
 Wheelhouse PR so CI can fetch the pinned revision.
 
 ## Standing roles
