@@ -192,10 +192,11 @@ static ft_status wh_js_link_input(WH_JS_Link *link, ft_input_client **out) {
 // Porthole's Windows native capture attach (porthole::native_capture::open):
 // one JSON request line with the session's attach token, then one reply line
 // naming the publication whose setup follows on the same connection.
-static void wh_js_json_string(char *out, size_t size, const char *text) {
+// False when text does not fit: never send a silently truncated value.
+static bool wh_js_json_string(char *out, size_t size, const char *text) {
   size_t used = 0;
-  for (const unsigned char *c = (const unsigned char *)text;
-       *c && used + 7 < size; ++c) {
+  const unsigned char *c = (const unsigned char *)text;
+  for (; *c && used + 7 < size; ++c) {
     if (*c == '"' || *c == '\\')
       used += snprintf(out + used, size - used, "\\%c", *c);
     else if (*c < 0x20)
@@ -204,6 +205,7 @@ static void wh_js_json_string(char *out, size_t size, const char *text) {
       out[used++] = (char)*c;
   }
   out[used] = 0;
+  return *c == 0;
 }
 static void wh_js_path_status(WH_Jackstay *s, const char *format, ...) {
   va_list args;
@@ -215,9 +217,12 @@ static void wh_js_path_status(WH_Jackstay *s, const char *format, ...) {
 }
 static ft_status wh_js_porthole_open(WH_Jackstay *s, WH_JS_Link *link,
                                      WH_JS_Media *publication) {
-  char session[256], token[512], request[1024];
-  wh_js_json_string(session, sizeof(session), s->session_id);
-  wh_js_json_string(token, sizeof(token), s->token);
+  char session[512], token[2048], request[3072];
+  if (!wh_js_json_string(session, sizeof(session), s->session_id) ||
+      !wh_js_json_string(token, sizeof(token), s->token)) {
+    wh_js_path_status(s, "Porthole session id or attach token is too long");
+    return FT_STATUS_INVALID_ARGUMENT;
+  }
   int size = snprintf(request, sizeof(request),
                       "{\"op\":\"open_native_capture\",\"session_id\":\"%s\","
                       "\"attach_token\":\"%s\"}\n",
