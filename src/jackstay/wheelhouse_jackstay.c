@@ -1,16 +1,17 @@
+// Requires RAD's base layer (base_inc.h/.c) earlier in the translation unit:
+// workers use base threads, mutexes, time and sleep on every platform.
 #include "wheelhouse_jackstay.h"
-#include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
-#include <pthread.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if OS_LINUX || OS_MAC
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <time.h>
 #include <unistd.h>
+#endif
 
 #define WH_JS_MAX_FRAME (64u * 1024u * 1024u)
 #define WH_JS_QUEUE 128
@@ -21,9 +22,9 @@ typedef struct {
   uint8_t *text;
 } WH_JS_Pending;
 struct WH_Jackstay {
-  pthread_mutex_t mutex;
-  pthread_t media_thread, input_thread;
-  char *media_path, *input_path;
+  Mutex mutex;
+  Thread media_thread, input_thread;
+  char *media_address, *input_address;
   bool bootstrap, stop, media_done, input_done, connect, want_input, focus,
       reset;
   bool input_close, peer_closed;
@@ -41,24 +42,41 @@ static void wh_js_wake(WH_Jackstay *s) {
   if (s->wake)
     s->wake(s->wake_context);
 }
-static void wh_js_pause(void) {
-  struct timespec delay = {0, 5000000};
-  nanosleep(&delay, 0);
-}
-static uint64_t wh_js_now(void) {
-  struct timespec t;
-  clock_gettime(CLOCK_MONOTONIC, &t);
-  return (uint64_t)t.tv_sec * 1000000000ull + t.tv_nsec;
-}
+static void wh_js_pause(void) { sleep_ms(5); }
 static void wh_js_clear(WH_Jackstay *s) {
   for (size_t i = 0; i < s->count; ++i)
     free(s->pending[i].text);
   s->count = 0;
   s->text_bytes = 0;
 }
+
+// An open setup connection. Jackstay connects Local Endpoints itself and
+// verifies the server (ADR 0011). POSIX also accepts an absolute socket path,
+// the form existing path-bound publications (e.g. Porthole's) still use.
+// Jackstay's setup calls null `local` (or set `fd` to -1) whenever they consume
+// it, on success or failure; bootstrap success hands it back unchanged for CPU
+// setup. wh_js_link_close therefore releases only what no call consumed.
+typedef struct {
+  ft_local_connection *local;
+  int fd;
+} WH_JS_Link;
+static bool wh_js_parse_endpoint(const char *address,
+                                 ft_local_endpoint *endpoint) {
+  endpoint->scope = FT_ENDPOINT_SCOPE_USER;
+  endpoint->transport = FT_ENDPOINT_TRANSPORT_LOCAL_STREAM;
+  endpoint->name = address;
+  // Names cannot contain ':', so the scope prefix is unambiguous.
+  if (!strncmp(address, "session:", 8)) {
+    endpoint->scope = FT_ENDPOINT_SCOPE_SESSION;
+    endpoint->name = address + 8;
+  } else if (!strncmp(address, "user:", 5))
+    endpoint->name = address + 5;
+  return endpoint->name[0] != 0;
+}
+#if OS_LINUX || OS_MAC
 static int wh_js_socket(const char *path) {
   struct sockaddr_un address = {.sun_family = AF_UNIX};
-  if (!path || path[0] != '/' || strlen(path) >= sizeof(address.sun_path))
+  if (strlen(path) >= sizeof(address.sun_path))
     return -1;
   memcpy(address.sun_path, path, strlen(path) + 1);
   int fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -85,13 +103,76 @@ static int wh_js_socket(const char *path) {
   fcntl(fd, F_SETFL, flags);
   return fd;
 }
+#endif
+static ft_status wh_js_link_open(const char *address, WH_JS_Link *link) {
+  link->local = 0;
+  link->fd = -1;
+  if (!address || !address[0])
+    return FT_STATUS_INVALID_ARGUMENT;
+#if OS_LINUX || OS_MAC
+  if (address[0] == '/') {
+    link->fd = wh_js_socket(address);
+    return link->fd < 0 ? FT_STATUS_ERROR : FT_STATUS_OK;
+  }
+#endif
+  ft_local_endpoint endpoint;
+  if (!wh_js_parse_endpoint(address, &endpoint))
+    return FT_STATUS_INVALID_ARGUMENT;
+  return ft_local_connect(&endpoint, &link->local);
+}
+static void wh_js_link_close(WH_JS_Link *link) {
+  ft_local_connection_destroy(&link->local);
+#if OS_LINUX || OS_MAC
+  if (link->fd >= 0)
+    close(link->fd);
+#endif
+  link->fd = -1;
+}
+// Each setup call consumes the link on failure and on success, except
+// bootstrap, which hands it back for CPU setup.
+static ft_status wh_js_link_bootstrap(WH_JS_Link *link, bool input,
+                                      ft_input_client **offered,
+                                      ft_status *input_status) {
+  uint32_t request = input ? FT_BOOTSTRAP_INPUT_OPTIONAL : FT_BOOTSTRAP_INPUT_NONE;
+  uint32_t mode = input ? FT_INPUT_MODE_COOPERATIVE : 0;
+  if (link->local)
+    return ft_source_bootstrap_connect_local(&link->local, request, mode,
+                                             offered, input_status);
+#if OS_LINUX || OS_MAC
+  return ft_source_bootstrap_connect(&link->fd, request, mode, offered,
+                                     input_status);
+#else
+  return FT_STATUS_INVALID_ARGUMENT;
+#endif
+}
+static ft_status wh_js_link_media(WH_JS_Link *link,
+                                  ft_cpu_acquisition_connection **out) {
+  if (link->local)
+    return ft_acquisition_cpu_connection_create_local(&link->local, out);
+#if OS_LINUX || OS_MAC
+  return ft_acquisition_cpu_connection_create(&link->fd, out);
+#else
+  return FT_STATUS_INVALID_ARGUMENT;
+#endif
+}
+static ft_status wh_js_link_input(WH_JS_Link *link, ft_input_client **out) {
+  if (link->local)
+    return ft_input_client_connect_local(&link->local,
+                                         FT_INPUT_MODE_COOPERATIVE, out);
+#if OS_LINUX || OS_MAC
+  return ft_input_client_connect(&link->fd, FT_INPUT_MODE_COOPERATIVE, out);
+#else
+  return FT_STATUS_INVALID_ARGUMENT;
+#endif
+}
+
 static void wh_js_close_input(ft_input_client **input, bool *confirmed) {
   if (!*input)
     return;
   *confirmed = false;
   ft_input_client_close(*input);
-  uint64_t end = wh_js_now() + 2000000000ull;
-  while (wh_js_now() < end) {
+  uint64_t end = now_time_us() + 2000000ull;
+  while (now_time_us() < end) {
     ft_input_status event = {0};
     ft_status result = ft_input_client_poll(*input, &event);
     if (result == FT_STATUS_OK && event.kind == FT_INPUT_CLOSED) {
@@ -104,16 +185,10 @@ static void wh_js_close_input(ft_input_client **input, bool *confirmed) {
   }
   ft_input_client_destroy(input);
 }
-static void *wh_js_media_worker(void *arg) {
-  // Rust executables ignore SIGPIPE, but a C host does not. Confine this to
-  // transport workers (including the library workers they spawn).
-  sigset_t blocked;
-  sigemptyset(&blocked);
-  sigaddset(&blocked, SIGPIPE);
-  pthread_sigmask(SIG_BLOCK, &blocked, 0);
+static void wh_js_media_worker(void *arg) {
   WH_Jackstay *s = arg;
   for (;;) {
-    pthread_mutex_lock(&s->mutex);
+    mutex_take(s->mutex);
     bool stop = s->stop, start = s->connect, input = s->want_input;
     unsigned request = s->request;
     if (start) {
@@ -121,7 +196,7 @@ static void *wh_js_media_worker(void *arg) {
       s->state.connecting = true;
       snprintf(s->state.media_status, 128, "Connecting");
     }
-    pthread_mutex_unlock(&s->mutex);
+    mutex_drop(s->mutex);
     if (stop)
       break;
     if (!start) {
@@ -129,31 +204,26 @@ static void *wh_js_media_worker(void *arg) {
       continue;
     }
     wh_js_wake(s);
-    int fd = wh_js_socket(s->media_path);
+    WH_JS_Link link;
     ft_input_client *offered = 0;
     ft_status input_status = FT_STATUS_EMPTY;
-    ft_status result = fd < 0 ? FT_STATUS_ERROR : FT_STATUS_OK;
+    ft_status result = wh_js_link_open(s->media_address, &link);
     if (result == FT_STATUS_OK && s->bootstrap)
-      result = ft_source_bootstrap_connect(
-          &fd, input ? FT_BOOTSTRAP_INPUT_OPTIONAL : FT_BOOTSTRAP_INPUT_NONE,
-          input ? FT_INPUT_MODE_COOPERATIVE : 0, &offered, &input_status);
-    // Borrow only for hangup polling; the connection exclusively owns this FD.
-    int setup_fd = fd;
+      result = wh_js_link_bootstrap(&link, input, &offered, &input_status);
     ft_cpu_acquisition_connection *connection = 0;
     ft_acquisition_consumer *consumer = 0;
     if (result == FT_STATUS_OK)
-      result = ft_acquisition_cpu_connection_create(&fd, &connection);
-    if (fd >= 0)
-      close(fd);
-    pthread_mutex_lock(&s->mutex);
+      result = wh_js_link_media(&link, &connection);
+    wh_js_link_close(&link);
+    mutex_take(s->mutex);
     s->connection = connection;
     stop = s->stop;
-    pthread_mutex_unlock(&s->mutex);
+    mutex_drop(s->mutex);
     if (stop && connection)
       ft_acquisition_cpu_connection_cancel(connection);
     if (result == FT_STATUS_OK)
       result = ft_acquisition_cpu_attach(connection, 1, &consumer);
-    pthread_mutex_lock(&s->mutex);
+    mutex_take(s->mutex);
     s->state.connecting = false;
     s->state.connected = result == FT_STATUS_OK;
     snprintf(s->state.media_status, 128,
@@ -173,31 +243,22 @@ static void *wh_js_media_worker(void *arg) {
       snprintf(s->state.input_status, 128,
                "Control unavailable (%d); retry explicitly", input_status);
     }
-    pthread_mutex_unlock(&s->mutex);
+    mutex_drop(s->mutex);
     bool ignored = false;
     wh_js_close_input(&offered, &ignored);
     wh_js_wake(s);
     uint64_t cursor = 0;
     while (result == FT_STATUS_OK) {
-      pthread_mutex_lock(&s->mutex);
+      mutex_take(s->mutex);
       stop = s->stop || s->request != request;
-      pthread_mutex_unlock(&s->mutex);
+      mutex_drop(s->mutex);
       if (stop)
         break;
-      struct pollfd setup_poll = {.fd = setup_fd, .events = POLLIN};
-      if (poll(&setup_poll, 1, 0) > 0 &&
-          (setup_poll.revents & (POLLHUP | POLLERR | POLLNVAL))) {
+      // A vanished producer closes setup; Jackstay reports that without
+      // consuming setup bytes, grants or frame storage.
+      if (ft_acquisition_cpu_connection_alive(connection) != FT_STATUS_OK) {
         result = FT_STATUS_CLOSED;
         break;
-      }
-      // As in KS, an EOF peek does not consume grants or retire frame storage.
-      // This runs only between serialized setup/configuration operations.
-      if (setup_poll.revents & POLLIN) {
-        unsigned char byte;
-        if (recv(setup_fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT) == 0) {
-          result = FT_STATUS_CLOSED;
-          break;
-        }
       }
       ft_acquisition_events observed = {0};
       result = ft_acquisition_snapshot(consumer, &observed);
@@ -249,16 +310,16 @@ static void *wh_js_media_worker(void *arg) {
         result = FT_STATUS_ERROR;
         break;
       }
-      pthread_mutex_lock(&s->mutex);
+      mutex_take(s->mutex);
       free(s->pixels);
       s->pixels = copy;
       s->state.width = desc.width;
       s->state.height = desc.height;
       s->state.frame_version++;
-      pthread_mutex_unlock(&s->mutex);
+      mutex_drop(s->mutex);
       wh_js_wake(s);
     }
-    pthread_mutex_lock(&s->mutex);
+    mutex_take(s->mutex);
     s->connection = 0;
     s->state.connected = false;
     if (!s->stop) {
@@ -271,50 +332,42 @@ static void *wh_js_media_worker(void *arg) {
         s->connect = true;
       }
     }
-    pthread_mutex_unlock(&s->mutex);
+    mutex_drop(s->mutex);
     ft_acquisition_consumer_destroy(&consumer);
     ft_acquisition_cpu_connection_destroy(&connection);
     wh_js_wake(s);
     for (int i = 0; i < 200; ++i) {
-      pthread_mutex_lock(&s->mutex);
+      mutex_take(s->mutex);
       stop = s->stop;
-      pthread_mutex_unlock(&s->mutex);
+      mutex_drop(s->mutex);
       if (stop)
         break;
       wh_js_pause();
     }
   }
-  pthread_mutex_lock(&s->mutex);
+  mutex_take(s->mutex);
   s->media_done = true;
-  pthread_mutex_unlock(&s->mutex);
+  mutex_drop(s->mutex);
   wh_js_wake(s);
-  return 0;
 }
-static void *wh_js_input_worker(void *arg) {
-  // Rust executables ignore SIGPIPE, but a C host does not. Confine this to
-  // transport workers (including the library workers they spawn).
-  sigset_t blocked;
-  sigemptyset(&blocked);
-  sigaddset(&blocked, SIGPIPE);
-  pthread_sigmask(SIG_BLOCK, &blocked, 0);
+static void wh_js_input_worker(void *arg) {
   WH_Jackstay *s = arg;
   uint64_t in_flight[32] = {0};
   uint32_t actions[32] = {0};
   size_t outstanding = 0;
   for (;;) {
-    pthread_mutex_lock(&s->mutex);
+    mutex_take(s->mutex);
     if (!s->bootstrap && s->want_input && !s->input && !s->stop &&
-        s->input_path[0]) {
+        s->input_address[0]) {
       s->want_input = false;
-      pthread_mutex_unlock(&s->mutex);
-      int fd = wh_js_socket(s->input_path);
+      mutex_drop(s->mutex);
+      WH_JS_Link link;
       ft_input_client *client = 0;
-      ft_status result = fd < 0 ? FT_STATUS_ERROR
-                                : ft_input_client_connect(
-                                      &fd, FT_INPUT_MODE_COOPERATIVE, &client);
-      if (fd >= 0)
-        close(fd);
-      pthread_mutex_lock(&s->mutex);
+      ft_status result = wh_js_link_open(s->input_address, &link);
+      if (result == FT_STATUS_OK)
+        result = wh_js_link_input(&link, &client);
+      wh_js_link_close(&link);
+      mutex_take(s->mutex);
       s->peer_closed = false;
       s->input = client;
       s->state.control = client != 0;
@@ -332,7 +385,7 @@ static void *wh_js_input_worker(void *arg) {
     }
     if (s->stop && s->media_done && !s->input) {
       s->input_done = true;
-      pthread_mutex_unlock(&s->mutex);
+      mutex_drop(s->mutex);
       break;
     }
     if ((s->stop && s->input) || s->input_close) {
@@ -345,12 +398,12 @@ static void *wh_js_input_worker(void *arg) {
       outstanding = 0;
       bool confirmed = s->state.cleanup_confirmed, peer_closed = s->peer_closed;
       s->peer_closed = false;
-      pthread_mutex_unlock(&s->mutex);
+      mutex_drop(s->mutex);
       if (peer_closed)
         ft_input_client_destroy(&client);
       else
         wh_js_close_input(&client, &confirmed);
-      pthread_mutex_lock(&s->mutex);
+      mutex_take(s->mutex);
       s->state.cleanup_confirmed = confirmed;
       s->state.resetting = false;
       s->state.input_epoch++;
@@ -360,7 +413,7 @@ static void *wh_js_input_worker(void *arg) {
       wh_js_wake(s);
       if (s->stop && s->media_done) {
         s->input_done = true;
-        pthread_mutex_unlock(&s->mutex);
+        mutex_drop(s->mutex);
         break;
       }
     }
@@ -443,11 +496,10 @@ static void *wh_js_input_worker(void *arg) {
         free(pending.text);
       }
     }
-    pthread_mutex_unlock(&s->mutex);
+    mutex_drop(s->mutex);
     wh_js_pause();
   }
   wh_js_wake(s);
-  return 0;
 }
 static char *wh_js_copy_string(const char *source) {
   size_t size = strlen(source) + 1;
@@ -456,50 +508,52 @@ static char *wh_js_copy_string(const char *source) {
     memcpy(copy, source, size);
   return copy;
 }
+static void wh_js_free(WH_Jackstay *s) {
+  if (!MemoryIsZeroStruct(&s->mutex))
+    mutex_release(s->mutex);
+  free(s->pixels);
+  free(s->media_address);
+  free(s->input_address);
+  free(s);
+}
 WH_Jackstay *wh_js_create(WH_JS_Endpoint endpoint, void (*wake)(void *),
                           void *context) {
-  if (ft_abi_version() != FT_ABI_VERSION || !endpoint.media_path)
+  if (ft_abi_version() != FT_ABI_VERSION || !endpoint.media)
     return 0;
   WH_Jackstay *s = calloc(1, sizeof(*s));
   if (!s)
     return 0;
-  s->media_path = wh_js_copy_string(endpoint.media_path);
-  s->input_path =
-      wh_js_copy_string(endpoint.input_path ? endpoint.input_path : "");
-  if (!s->media_path || !s->input_path) {
-    free(s->media_path);
-    free(s->input_path);
-    free(s);
+  s->mutex = mutex_alloc();
+  s->media_address = wh_js_copy_string(endpoint.media);
+  s->input_address = wh_js_copy_string(endpoint.input ? endpoint.input : "");
+  if (!s->media_address || !s->input_address ||
+      MemoryIsZeroStruct(&s->mutex)) {
+    wh_js_free(s);
     return 0;
   }
-  pthread_mutex_init(&s->mutex, 0);
   s->bootstrap = endpoint.bootstrap;
   s->wake = wake;
   s->wake_context = context;
   snprintf(s->state.media_status, 128, "Not connected");
   snprintf(s->state.input_status, 128, "Observation only");
-  if (pthread_create(&s->media_thread, 0, wh_js_media_worker, s) != 0) {
-    pthread_mutex_destroy(&s->mutex);
-    free(s->media_path);
-    free(s->input_path);
-    free(s);
+  s->media_thread = thread_launch(wh_js_media_worker, s);
+  if (MemoryIsZeroStruct(&s->media_thread)) {
+    wh_js_free(s);
     return 0;
   }
-  if (pthread_create(&s->input_thread, 0, wh_js_input_worker, s) != 0) {
-    pthread_mutex_lock(&s->mutex);
+  s->input_thread = thread_launch(wh_js_input_worker, s);
+  if (MemoryIsZeroStruct(&s->input_thread)) {
+    mutex_take(s->mutex);
     s->stop = true;
-    pthread_mutex_unlock(&s->mutex);
-    pthread_join(s->media_thread, 0);
-    pthread_mutex_destroy(&s->mutex);
-    free(s->media_path);
-    free(s->input_path);
-    free(s);
+    mutex_drop(s->mutex);
+    thread_join(s->media_thread, max_U64);
+    wh_js_free(s);
     return 0;
   }
   return s;
 }
 void wh_js_connect(WH_Jackstay *s, bool control) {
-  pthread_mutex_lock(&s->mutex);
+  mutex_take(s->mutex);
   s->want_input = control;
   if (!s->state.connected || (s->bootstrap && control && !s->input)) {
     s->request++;
@@ -507,21 +561,21 @@ void wh_js_connect(WH_Jackstay *s, bool control) {
     if (s->connection)
       ft_acquisition_cpu_connection_cancel(s->connection);
   }
-  pthread_mutex_unlock(&s->mutex);
+  mutex_drop(s->mutex);
   wh_js_wake(s);
 }
 void wh_js_focus(WH_Jackstay *s, bool focus) {
-  pthread_mutex_lock(&s->mutex);
+  mutex_take(s->mutex);
   if (s->focus && !focus) {
     s->reset = true;
     s->state.resetting = true;
     wh_js_clear(s);
   }
   s->focus = focus;
-  pthread_mutex_unlock(&s->mutex);
+  mutex_drop(s->mutex);
 }
 bool wh_js_send(WH_Jackstay *s, const ft_input_event *event) {
-  pthread_mutex_lock(&s->mutex);
+  mutex_take(s->mutex);
   bool ok = s->input && s->state.control && !s->state.resetting &&
             !s->input_close && s->focus && !s->stop;
   if (ok && (s->count == WH_JS_QUEUE || event->text_len > WH_JS_TEXT ||
@@ -545,12 +599,12 @@ bool wh_js_send(WH_Jackstay *s, const ft_input_event *event) {
       s->text_bytes += event->text_len;
     }
   }
-  pthread_mutex_unlock(&s->mutex);
+  mutex_drop(s->mutex);
   return ok;
 }
 void wh_js_snapshot(WH_Jackstay *s, WH_JS_State *state, WH_JS_Frame *frame,
                     uint64_t after) {
-  pthread_mutex_lock(&s->mutex);
+  mutex_take(s->mutex);
   *state = s->state;
   state->stopped = s->media_done && s->input_done;
   if (frame) {
@@ -566,33 +620,29 @@ void wh_js_snapshot(WH_Jackstay *s, WH_JS_State *state, WH_JS_Frame *frame,
       }
     }
   }
-  pthread_mutex_unlock(&s->mutex);
+  mutex_drop(s->mutex);
 }
 void wh_js_stop(WH_Jackstay *s) {
-  pthread_mutex_lock(&s->mutex);
+  mutex_take(s->mutex);
   s->stop = true;
   s->state.control = false;
   wh_js_clear(s);
   if (s->connection)
     ft_acquisition_cpu_connection_cancel(s->connection);
-  pthread_mutex_unlock(&s->mutex);
+  mutex_drop(s->mutex);
 }
 bool wh_js_destroy(WH_Jackstay **owner) {
   WH_Jackstay *s = *owner;
   if (!s)
     return true;
-  pthread_mutex_lock(&s->mutex);
+  mutex_take(s->mutex);
   bool done = s->media_done && s->input_done;
-  pthread_mutex_unlock(&s->mutex);
+  mutex_drop(s->mutex);
   if (!done)
     return false;
-  pthread_join(s->media_thread, 0);
-  pthread_join(s->input_thread, 0);
-  pthread_mutex_destroy(&s->mutex);
-  free(s->pixels);
-  free(s->media_path);
-  free(s->input_path);
-  free(s);
+  thread_join(s->media_thread, max_U64);
+  thread_join(s->input_thread, max_U64);
+  wh_js_free(s);
   *owner = 0;
   return true;
 }

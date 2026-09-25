@@ -29,6 +29,29 @@ internal void uishell_jackstay_unfocus(UIShell_JackstayView *v)
   if(v->session)wh_js_focus(v->session,false);
   MemoryZeroArray(v->keys);v->buttons=0;v->focused=0;
 }
+#if OS_WINDOWS
+#define UISHELL_JACKSTAY_ADDRESS_LABEL "Source endpoint name"
+#else
+#define UISHELL_JACKSTAY_ADDRESS_LABEL "Source endpoint name, or absolute socket path"
+#endif
+// An address is a Local Endpoint name (ADR 0011) or, on POSIX, a socket path.
+internal B32 uishell_jackstay_is_path(String8 address) {return OS_WINDOWS==0 && address.size && address.str[0]=='/';}
+internal String8 uishell_jackstay_address(String8 role)
+{
+  Temp scratch=scratch_begin(0,0);
+  String8 endpoint=rd_view_setting_from_name(push_str8f(scratch.arena,"%S_endpoint",role));
+  String8 socket=rd_view_setting_from_name(push_str8f(scratch.arena,"%S_socket",role));
+  scratch_end(scratch);
+  return endpoint.size?endpoint:socket;
+}
+internal void uishell_jackstay_store_address(String8 role,String8 address)
+{
+  Temp scratch=scratch_begin(0,0);
+  B32 path=uishell_jackstay_is_path(address);
+  rd_store_view_param(push_str8f(scratch.arena,"%S_endpoint",role),path?str8_zero():address);
+  rd_store_view_param(push_str8f(scratch.arena,"%S_socket",role),path?address:str8_zero());
+  scratch_end(scratch);
+}
 internal U32 uishell_jackstay_modifiers(WM_Modifiers flags)
 {
   return ((flags&WM_Modifier_Ctrl)?FT_INPUT_CONTROL:0)|((flags&WM_Modifier_Shift)?FT_INPUT_SHIFT:0)|
@@ -119,9 +142,11 @@ RD_VIEW_UI_FUNCTION_DEF(jackstay)
   if(!v->initialized)
   {
     v->initialized=1;
-    String8 paths[]={rd_view_setting_from_name(str8_lit("source_socket")),rd_view_setting_from_name(str8_lit("input_socket"))};
+    // Local Endpoint names are saved as *_endpoint; POSIX socket paths keep
+    // their original *_socket keys.
+    String8 paths[]={uishell_jackstay_address(str8_lit("source")),uishell_jackstay_address(str8_lit("input"))};
     v->bootstrap=paths[0].size!=0;
-    if(!v->bootstrap)paths[0]=rd_view_setting_from_name(str8_lit("media_socket"));
+    if(!v->bootstrap)paths[0]=uishell_jackstay_address(str8_lit("media"));
     for(int i=0;i<2;++i){v->sizes[i]=Min(paths[i].size,sizeof(v->paths[i])-1);MemoryCopy(v->paths[i],paths[i].str,v->sizes[i]);v->cursor[i]=v->mark[i]=txt_pt(1,1);}
   }
   ui_set_next_pref_width(ui_px(dim_2f32(rect).x,1));
@@ -132,16 +157,16 @@ RD_VIEW_UI_FUNCTION_DEF(jackstay)
     {
       UI_PrefHeight(ui_em(1.8f,1))
       {
-        ui_label(str8_lit("Source socket (absolute path)"));
+        ui_label(str8_lit(UISHELL_JACKSTAY_ADDRESS_LABEL));
         ui_line_edit(&v->cursor[0],&v->mark[0],v->paths[0],sizeof(v->paths[0])-1,&v->sizes[0],str8(v->paths[0],v->sizes[0]),str8_lit("###source"));
         if(ui_clicked(ui_button(v->bootstrap?str8_lit("Combined source endpoint###mode"):str8_lit("Separate media/input endpoints###mode"))))v->bootstrap=!v->bootstrap;
-        if(!v->bootstrap){ui_label(str8_lit("Input socket (optional)"));ui_line_edit(&v->cursor[1],&v->mark[1],v->paths[1],sizeof(v->paths[1])-1,&v->sizes[1],str8(v->paths[1],v->sizes[1]),str8_lit("###input"));}
+        if(!v->bootstrap){ui_label(str8_lit("Input endpoint (optional)"));ui_line_edit(&v->cursor[1],&v->mark[1],v->paths[1],sizeof(v->paths[1])-1,&v->sizes[1],str8(v->paths[1],v->sizes[1]),str8_lit("###input"));}
         if(ui_clicked(ui_button(str8_lit("Connect###connect"))) && v->sizes[0])
         {
           v->paths[0][v->sizes[0]]=0;v->paths[1][v->sizes[1]]=0;
-          rd_store_view_param(str8_lit("source_socket"),v->bootstrap?str8(v->paths[0],v->sizes[0]):str8_zero());
-          rd_store_view_param(str8_lit("media_socket"),!v->bootstrap?str8(v->paths[0],v->sizes[0]):str8_zero());
-          rd_store_view_param(str8_lit("input_socket"),str8(v->paths[1],v->sizes[1]));
+          uishell_jackstay_store_address(str8_lit("source"),v->bootstrap?str8(v->paths[0],v->sizes[0]):str8_zero());
+          uishell_jackstay_store_address(str8_lit("media"),!v->bootstrap?str8(v->paths[0],v->sizes[0]):str8_zero());
+          uishell_jackstay_store_address(str8_lit("input"),str8(v->paths[1],v->sizes[1]));
           v->session=wh_js_create((WH_JS_Endpoint){(char *)v->paths[0],(char *)v->paths[1],v->bootstrap},uishell_jackstay_wake,0);
           if(v->session)wh_js_connect(v->session,true);
         }
@@ -244,5 +269,5 @@ RD_VIEW_UI_FUNCTION_DEF(jackstay)
 internal B32 uishell_jackstay_pending(void){return 0;}
 internal B32 uishell_jackstay_event(CFG_ID id,WM_Event *event){(void)id;(void)event;return 0;}
 internal void uishell_jackstay_tick(B32 before,B32 quit){(void)before;(void)quit;}
-RD_VIEW_UI_FUNCTION_DEF(jackstay){(void)eval;(void)rect;ui_label(str8_lit("Jackstay requires a macOS or Linux build."));}
+RD_VIEW_UI_FUNCTION_DEF(jackstay){(void)eval;(void)rect;ui_label(str8_lit("This build does not include Jackstay."));}
 #endif

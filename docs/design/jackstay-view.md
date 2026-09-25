@@ -8,20 +8,31 @@ presentation, input focus and the association between a view and its endpoints.
 ## Opening and restoring
 
 Use **Open Jackstay Source** in the command menu. Choose a combined source
-endpoint, or separate media/input endpoints, enter absolute socket paths, and
+endpoint, or separate media/input endpoints, enter their addresses, and
 connect. Combined endpoints use ABI 0.8 shared bootstrap with optional input.
 Separate endpoints support existing CPU republications, including Porthole's.
 An absent or refused input channel leaves an observation view.
 
-The connection form saves `source_socket` (combined) or `media_socket` and
-`input_socket` (separate) in the view configuration. Restoring a saved layout
-shows the form again; it does not connect or acquire control automatically.
-Direct endpoint opening remains useful if discovery is added later.
+An address is a [Local Endpoint](../adr/0011-windows-local-ipc-uses-named-pipes-with-logical-endpoints.md)
+name, such as `my-source`, on every platform. Prefix it with `session:` for a
+session-scoped endpoint; `user:` names the default user scope explicitly.
+Jackstay renders the name itself (a named pipe on Windows, a socket under the
+runtime directory elsewhere), connects, and verifies
+that the server runs as the current user before any setup byte. On macOS/Linux an
+absolute socket path is also accepted, for publications that still bind a path.
+Windows has no path form; there is no mapping from a path to a pipe name.
+
+The connection form saves `source_endpoint` (combined) or `media_endpoint` and
+`input_endpoint` (separate) in the view configuration. Socket paths keep the
+original `source_socket`, `media_socket` and `input_socket` keys, so existing
+layouts restore unchanged. Restoring a saved layout shows the form again; it
+does not connect or acquire control automatically. Direct endpoint opening
+remains useful if discovery is added later.
 
 ```text
 panels: selected jackstay:
 {
-  source_socket: "/tmp/source.sock"
+  source_endpoint: "my-source"
   selected
 }
 ```
@@ -42,11 +53,17 @@ fixed height. Disconnect returns to the connection form after workers retire.
 ## Lifetime and rendering
 
 `src/jackstay/wheelhouse_jackstay.*` is independent of shell configuration and
-GPU objects. It has separate media and input workers. CPU setup can be cancelled;
-bootstrap and input admission retain Jackstay's bounded blocking setup contract.
-No connection setup runs on the GUI thread. SIGPIPE is blocked on transport
-workers, including the library workers they create, rather than changing the
-host application's signal disposition.
+GPU objects. It is built on RAD's base layer: its separate media and input
+workers are `base_threads` threads synchronised with a base mutex, on every
+platform. CPU setup can be cancelled; bootstrap and input admission retain
+Jackstay's bounded blocking setup contract. No connection setup runs on the GUI
+thread. Jackstay connects Local Endpoints itself (`ft_local_connect` and the
+`_local` setup calls); only the POSIX path form opens a socket in Wheelhouse. The
+media worker notices a vanished producer through
+`ft_acquisition_cpu_connection_alive`, which never consumes setup bytes, rather
+than peeking at a borrowed descriptor. Jackstay suppresses SIGPIPE on its own
+sockets ([jackstay#18](https://github.com/flotilla-org/jackstay/pull/18)), so
+the client changes no signal disposition or thread mask.
 
 The media worker acquires one lease, copies packed RGBA into a bounded latest
 frame mailbox, and releases the lease. BGRA and padded rows are converted there.
@@ -76,23 +93,34 @@ Resizing a panel does not request a source-window resize.
 
 ## Build and checks
 
-Unix builds require a sibling Jackstay checkout, or `WHEELHOUSE_JACKSTAY_DIR`.
-`WHEELHOUSE_JACKSTAY_TARGET_DIR` optionally selects its Cargo output directory.
-The build calls locked Cargo for the C library; runtime admission requires an
-exact ABI match. CI pins Jackstay in `.github/workflows/build.yml`. Windows keeps
-a buildable view with an unsupported-platform message; Unix transport is not
-implemented there.
+Builds on every platform require a sibling Jackstay checkout, or
+`WHEELHOUSE_JACKSTAY_DIR`. `WHEELHOUSE_JACKSTAY_TARGET_DIR` optionally selects its
+Cargo output directory. `build.sh` and `build.bat` call locked Cargo for the C
+library; `build.bat` links `jackstay.dll.lib` and copies `jackstay.dll` beside
+`wheelhouse.exe`. Runtime admission requires an exact ABI match. CI pins Jackstay
+in `.github/workflows/build.yml`.
 
 ```sh
 WHEELHOUSE_JACKSTAY_DIR=/path/to/jackstay bash build.sh wheelhouse
 WHEELHOUSE_JACKSTAY_DIR=/path/to/jackstay python3 tools/test-jackstay.py
 ```
 
-The session acceptance suite compiles Wheelhouse's actual module and Jackstay's
-independent reference source into separate processes. It checks frame delivery,
-key down/repeat/up, UTF-8 commits, pointer holds, focus cleanup, clean optional
-input refusal, observation, missing endpoints and source-death recovery without
+On Windows, run `python tools\test-jackstay.py` from a Visual Studio developer
+prompt after `build wheelhouse`; it compiles with `cl`.
+
+The session acceptance suite compiles Wheelhouse's actual module, on RAD's base
+layer, and Jackstay's independent reference source into separate processes. They
+meet by Local Endpoint name on every platform; on macOS/Linux the input and
+recovery cases also run against a socket path. It checks frame delivery, key
+down/repeat/up, UTF-8 commits, pointer holds, focus cleanup, clean optional input
+refusal, observation, missing endpoints and source-death recovery without
 reacquiring control. Source output verifies executed events and final held state.
+
+For a live source, run the reference with `--endpoint NAME --log-input` and add
+`--repeat --resize-every-ms 4000` to exercise reconnection and source resizes;
+[its README](https://github.com/flotilla-org/jackstay/blob/main/tools/capture-viewer-sdl/README.md)
+has the Windows build line. The first Windows run is recorded in
+[validation](../validation/jackstay-cpu-source-windows-2026-09-25.md).
 
 `tools/jackstay-frame-source.c` is a low-contrast coherence source. Compile it
 against the same Jackstay headers/library, run it on an unused socket, and open

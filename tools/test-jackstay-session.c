@@ -1,10 +1,22 @@
 // Separate-process acceptance against Jackstay's independent reference source.
+// Built like Wheelhouse itself, on RAD's base layer.
+#define BUILD_CONSOLE_INTERFACE 1
+#include "base/base_inc.h"
 #include "jackstay/wheelhouse_jackstay.h"
-#include <assert.h>
+#include "base/base_inc.c"
+#include "jackstay/wheelhouse_jackstay.c"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+// Checks run in every build and fail without a debugger or crash dialog.
+#define assert(x)                                                              \
+  do {                                                                         \
+    if (!(x)) {                                                                \
+      fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #x);   \
+      fflush(stderr);                                                          \
+      exit(1);                                                                 \
+    }                                                                          \
+  } while (0)
 static WH_JS_State wait_state(WH_Jackstay *session, int mode) {
   WH_JS_State state = {0};
   for (int i = 0; i < 2000; ++i) {
@@ -13,11 +25,11 @@ static WH_JS_State wait_state(WH_Jackstay *session, int mode) {
          state.control) ||
         (mode == 1 && !state.resetting) || (mode == 2 && state.stopped))
       return state;
-    usleep(5000);
+    sleep_ms(5);
   }
   fprintf(stderr, "timeout: %s / %s mode=%d\n", state.media_status,
           state.input_status, mode);
-  abort();
+  exit(1);
 }
 // The harness acknowledges the independent source's state report. Queueing an
 // event locally does not prove it reached the source before reset or shutdown.
@@ -26,7 +38,7 @@ static void wait_source(const char *marker) {
   fflush(stdout);
   assert(getchar() == '\n');
 }
-int main(int argc, char **argv) {
+static int session_main(int argc, char **argv) {
   assert(argc >= 2);
   const char *mode = argc > 2 ? argv[2] : "input";
   WH_Jackstay *session =
@@ -37,7 +49,7 @@ int main(int argc, char **argv) {
   assert(!state.connected && !state.control);
   if (!strcmp(mode, "missing")) {
     wh_js_connect(session, true);
-    usleep(200000);
+    sleep_ms(200);
     wh_js_stop(session);
     wait_state(session, 2);
     assert(wh_js_destroy(&session));
@@ -49,7 +61,7 @@ int main(int argc, char **argv) {
     WH_JS_Frame frame = {0};
     for (int i = 0; i < 2000 && !frame.pixels; ++i) {
       wh_js_snapshot(session, &state, &frame, 0);
-      usleep(5000);
+      sleep_ms(5);
     }
     assert(frame.pixels && !state.control);
     free(frame.pixels);
@@ -75,7 +87,7 @@ int main(int argc, char **argv) {
         recovered = 1;
         break;
       }
-      usleep(5000);
+      sleep_ms(5);
     }
     assert(recovered && !state.control);
     wh_js_stop(session);
@@ -128,4 +140,7 @@ int main(int argc, char **argv) {
   assert(wh_js_destroy(&session) && !session);
   puts("Jackstay media/input/reset/cleanup passed");
   return 0;
+}
+internal void entry_point(CmdLine *cmdline) {
+  exit(session_main((int)cmdline->argc, cmdline->argv));
 }
