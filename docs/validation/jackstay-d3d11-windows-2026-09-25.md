@@ -3,7 +3,7 @@
 Live run on Beaufort (Windows 11 Pro 10.0.26200, RDP session, unlocked
 throughout) for
 [Import Jackstay D3D11 frames on Windows](https://github.com/flotilla-org/wheelhouse/issues/68).
-Wheelhouse was built by `build.bat` against Jackstay `5f38b72` (the pin later moved to `dc70df7`, which only bounds the host exchange by one deadline)
+Wheelhouse was built by `build.bat` against Jackstay `5f38b72` (the pin later moved to `d8d0c14`, which only bounds the host exchange by one deadline and reports a closed peer on macOS)
 ([jackstay#48](https://github.com/flotilla-org/jackstay/pull/48), C ABI 0.11 on
 top of main's 0.10 D3D11 calls) with `backend-windows`, and Porthole main
 `7c46e02` (#188). Cleat and Andamento were at the revisions in `build.yml`;
