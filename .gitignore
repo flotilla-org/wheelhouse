@@ -4,3 +4,5 @@
 .vs
 tags
 sample*.txt
+__pycache__/
+*.pyc

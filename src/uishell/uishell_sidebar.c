@@ -33,6 +33,9 @@ struct UIShell_SidebarState
   Andamento *core;
   AndamentoSnapshot *snapshot;
   U64 topology_hash;
+  U64 managed_cfg_generation;
+  B32 managed_dirty;
+  U64 managed_error_workspace;
   B32 initialized;
   B32 restored;
   U64 reveal_workspace_id;
@@ -67,6 +70,8 @@ uishell_sidebar_result(UIShell_SidebarState *state, B32 ok, char *error)
   return ok;
 }
 
+#include "uishell/uishell_managed_content.c"
+
 internal void
 uishell_sidebar_release(UIShell_SidebarState *state)
 {
@@ -89,6 +94,7 @@ uishell_sidebar_refresh(UIShell_SidebarState *state)
   {
     andamento_snapshot_release(state->snapshot);
     state->snapshot = next;
+    state->managed_dirty = 1;
   }
 }
 
@@ -172,9 +178,11 @@ uishell_sidebar_init(RD_WindowState *ws)
 
 // Populate ordinary workspace configuration once. Focus and restoration reuse
 // that configuration, including any panel moves and tab selections by the user.
-internal void
+// Returns the primary resource's view tab.
+internal CFG_Node *
 uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *resources, U64 count, String8 cwd)
 {
+  CFG_Node *primary_tab = &cfg_nil_node;
   CFG_Node *panels = cfg_node_new(rd_state->cfg, workspace, str8_lit("panels"));
   CFG_Node *primary = panels, *overflow = panels;
   if(count > 1)
@@ -192,6 +200,7 @@ uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *res
     command = resource->windows_command;
 #endif
     CFG_Node *tab = rd_cfg_new_view_tab(i == 0 ? primary : overflow, str8_lit("terminal"), str8_cstring(command), i <= 1);
+    if(i == 0) { primary_tab = tab; }
     CFG_Node *id = cfg_node_new(rd_state->cfg, tab, str8_lit("resource_id"));
     cfg_node_new(rd_state->cfg, id, str8_cstring(resource->id));
     CFG_Node *label = cfg_node_new(rd_state->cfg, tab, str8_lit("label"));
@@ -202,6 +211,7 @@ uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *res
       cfg_node_new(rd_state->cfg, dir, cwd);
     }
   }
+  return primary_tab;
 }
 
 // Effects change the real config tree. Bind identity before the terminal view
@@ -254,7 +264,12 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
           U8 *command_z = push_array(scratch.arena, U8, command.size+1);
           MemoryCopy(command_z, command.str, command.size);
           UIShell_SidebarResource resource = {"primary", "Terminal", (char *)command_z, (char *)command_z};
-          uishell_sidebar_populate(workspace, &resource, 1, cwd);
+          CFG_Node *tab = uishell_sidebar_populate(workspace, &resource, 1, cwd);
+          // Content opened from the current managed resolution is already
+          // current; recording its target stops the first plan restarting it.
+          AndamentoText managed_target = {0};
+          if(andamento_effects_primary_target(effects, i, &managed_target))
+          { uishell_managed_set(tab, str8_lit("managed_target"), uishell_sidebar_string(managed_target)); }
           scratch_end(scratch);
         }
       }
@@ -265,7 +280,14 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     {
       for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
       { if(w->id == effect.workspace_id) { workspace = w->mount.owner_cfg; break; } }
-      if(workspace != &cfg_nil_node) { outcome = ANDAMENTO_COMPLETE_FOCUS; }
+      if(workspace != &cfg_nil_node)
+      {
+        outcome = ANDAMENTO_COMPLETE_FOCUS;
+        char *retry_error = 0;
+        andamento_content_retry(state->core, workspace->id, &retry_error);
+        state->managed_dirty = 1;
+        andamento_string_free(retry_error);
+      }
     }
     else if(effect.kind == ANDAMENTO_EFFECT_INSPECT)
     {
@@ -626,6 +648,13 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
   uishell_sidebar_restore(state, split);
+  if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
+  {
+    for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
+    { uishell_sidebar_reconcile_workspace(state, w->mount.owner_cfg); }
+    state->managed_cfg_generation = cfg_change_gen();
+    state->managed_dirty = 0;
+  }
   if(state->reveal_workspace_id)
   {
     uishell_sidebar_observe(state, split);

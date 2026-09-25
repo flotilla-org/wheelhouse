@@ -58,6 +58,7 @@ def load(path):
         'snapshot_diagnostic_count': (Size, [Ptr]),
         'dispatch': (U32, [Ptr, Ptr, Size, Ptr]), 'effects_take': (Ptr, [Ptr, Ptr]),
         'effects_count': (Size, [Ptr]), 'effects_get': (U32, [Ptr, Size, C.POINTER(Effect)]),
+        'effects_primary_target': (U32, [Ptr, Size, C.POINTER(Text)]),
         'effects_release': (None, [Ptr]), 'complete': (U32, [Ptr, U64, U32, U64, Text, Ptr]),
         'observe': (U32, [Ptr, C.POINTER(Workspace), Size, Ptr, Size, Ptr]),
     }
@@ -185,6 +186,122 @@ class NativeSidebarTests(unittest.TestCase):
         result = (effect.kind, effect.request_id, effect.workspace_id, effect.recipe.string())
         lib.andamento_effects_release(batch)
         return result
+
+    # Facts shaped as flotilla pm connect publishes standing roles (flotilla#1908).
+    def publish_role(self, name, ready=True, attempt=None, **extra):
+        identity = 'p/' + name
+        facts = {'flotilla.project': 'p', 'flotilla.role': identity, 'flotilla.role.name': name,
+                 'display.label': name, 'action.primary.target': 'role:' + identity,
+                 'workspace.primary.state': 'ready' if ready else 'held', **extra}
+        if ready:
+            facts['workspace.primary.target'] = 'vessel:' + attempt
+            facts['action.primary.recipe'] = 'flotilla attach --host test ' + attempt
+        item = patch('role', identity, **facts)
+        if not ready:
+            item['unset'] = ['workspace.primary.target', 'action.primary.recipe']
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+
+    def publish_attempt(self, convoy, role, **facts):
+        for kind, identity in [('convoy', convoy), ('vessel', convoy + '-v')]:
+            item = patch(kind, identity, **{'flotilla.project': 'p', 'flotilla.convoy': convoy,
+                         'flotilla.convoy.standing': True, **({'flotilla.role': 'p/' + role} if role else {}), **facts})
+            self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+
+    def toggle_variable(self, label):
+        snapshot, nodes = self.snapshot()
+        for node in nodes:
+            for index in range(node.first_control, node.first_control + node.control_count):
+                control = Control()
+                self.assertTrue(lib.andamento_snapshot_control(snapshot, index, C.byref(control)))
+                if control.label.string() == label:
+                    self.assertTrue(lib.andamento_dispatch(self.core, snapshot, control.action, None))
+                    return
+        self.fail('no control ' + label)
+
+    def test_standing_roles_are_inline_project_actions_and_replace_their_attempts(self):
+        self.publish_role('quartermaster', attempt='q-v')
+        self.publish_role('governor', attempt='g-v')
+        self.publish_attempt('g', 'governor', **{'status.attention': True})
+        self.publish_attempt('q', 'quartermaster')
+        # A task convoy that happens to share a role name is not a role attempt.
+        self.publish_attempt('task', None, **{'display.label': 'governor', 'flotilla.convoy.standing': False})
+        snapshot, nodes = self.snapshot()
+        project = next(i for i, n in enumerate(nodes) if n.entity_id.string() == 'p' and not n.is_section)
+        roles = [n for n in nodes if n.entity_kind.string() == 'role']
+        self.assertEqual([n.entity_id.string() for n in roles], ['p/governor', 'p/quartermaster'])
+        self.assertTrue(all(n.parent == project and n.layout.string() == 'inline' and n.openable for n in roles))
+        ids = {n.entity_id.string() for n in nodes}
+        for hidden in ('g', 'g-v', 'q', 'q-v'):
+            self.assertNotIn(hidden, ids)
+        self.assertIn('task', ids)
+        self.toggle_variable('Role attempts')
+        _, nodes = self.snapshot()
+        ids = {n.entity_id.string() for n in nodes}
+        for shown in ('g', 'g-v', 'q', 'q-v', 'task', 'p/governor'):
+            self.assertIn(shown, ids)
+
+    def test_opening_a_role_records_its_current_managed_target(self):
+        self.publish_role('governor', attempt='g-v')
+        snapshot, nodes = self.snapshot()
+        role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
+        self.assertEqual(lib.andamento_dispatch(self.core, snapshot, role.activate, None), 1)
+        batch = lib.andamento_effects_take(self.core, None)
+        effect, target = Effect(), Text()
+        self.assertEqual(lib.andamento_effects_get(batch, 0, C.byref(effect)), 1)
+        self.assertEqual((effect.kind, effect.recipe.string()), (1, 'flotilla attach --host test g-v'))
+        self.assertEqual(lib.andamento_effects_primary_target(batch, 0, C.byref(target)), 1)
+        self.assertEqual(target.string(), 'vessel:g-v')
+        lib.andamento_effects_release(batch)
+
+    def test_held_and_removed_roles(self):
+        self.publish_role('governor', ready=False)
+        _, nodes = self.snapshot()
+        held = next(n for n in nodes if n.entity_id.string() == 'p/governor')
+        self.assertFalse(held.openable)  # visible and inspectable, never a stale attachment
+        self.publish_role('governor', attempt='g-v')
+        snapshot, nodes = self.snapshot()
+        role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
+        _, request, _, _ = self.dispatch(snapshot, role.activate)
+        self.assertEqual(lib.andamento_complete(self.core, request, 1, 44, Text.of(''), None), 1)
+        workspace = Workspace(44, 0, Text.of('governor'), 1)
+        self.assertEqual(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None), 1)
+        _, nodes = self.snapshot()
+        role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
+        self.assertEqual((role.workspace_id, role.selected), (44, 1))
+        # A removed declaration retracts the action; its open workspace survives.
+        removed = patch('role', 'p/governor')
+        removed['set'] = {}
+        removed['unset'] = ['entity.kind', 'entity.id', 'display.label', 'flotilla.project', 'flotilla.role',
+                            'flotilla.role.name', 'action.primary.target', 'action.primary.recipe',
+                            'workspace.primary.state', 'workspace.primary.target']
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(removed)), None), 1)
+        _, nodes = self.snapshot()
+        self.assertFalse(any(n.entity_id.string() == 'p/governor' for n in nodes))
+        self.assertEqual([n.workspace_id for n in nodes if n.entity_kind.string() == 'andamento.workspace'], [44])
+
+    def test_project_hover_lists_repository_membership_without_placing_it(self):
+        # Facts shaped as flotilla pm connect publishes membership (flotilla#1897).
+        count = patch('project', 'p', **{'flotilla.project': 'p'})
+        count['set']['flotilla.project.repository_count'] = {'value': {'type': 'integer', 'value': 2}}
+        items = [count,
+                 patch('project_repository', 'm-web', **{'flotilla.project': 'p', 'display.label': 'org/web',
+                       'flotilla.membership.repository_key': 'repo-web'}),
+                 patch('project_repository', 'm-docs', **{'flotilla.project': 'p', 'display.label': 'org/docs',
+                       'flotilla.membership.repository_key': 'repo-docs', 'flotilla.membership.subpath': 'guide'}),
+                 patch('project', 'q', **{'flotilla.project': 'q'}),
+                 patch('project_repository', 'm-other', **{'flotilla.project': 'q', 'display.label': 'org/other'})]
+        for item in items:
+            self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+        snapshot, nodes = self.snapshot()
+        project = next(n for n in nodes if n.entity_id.string() == 'p' and not n.is_section)
+        detail = []
+        for index in range(project.first_detail, project.first_detail + project.detail_count):
+            field = Field()
+            self.assertEqual(lib.andamento_snapshot_field(snapshot, index, C.byref(field)), 1)
+            detail.append(field.text.string())
+        start = detail.index('Repositories: 2')
+        self.assertEqual(detail[start:], ['Repositories: 2', '  org/docs', '    path: guide', '  org/web'])
+        self.assertFalse(any(n.entity_kind.string() == 'project_repository' for n in nodes))
 
     def test_local_sidebar_has_only_observed_workspaces(self):
         lib.andamento_destroy(self.core)

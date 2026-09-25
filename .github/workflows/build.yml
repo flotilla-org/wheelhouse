@@ -18,7 +18,7 @@ env:
   # build.bat stages beside wheelhouse.exe so panes pass Kitty graphics through.
   CLEAT_REV: adeb033cec5d001aaf4bc6f3f288dd24dbe892cc
   JACKSTAY_REV: b992ad28b2eb56b9b292570b2cfbed5b2beaeb0c
-  ANDAMENTO_REV: 9eace9de10aa447cfbb0e67f14d7ddca98d17147
+  ANDAMENTO_REV: 6b6435e40ccda2cd39f02847380875e7e21d1834
 
 jobs:
   daily-driver:
@@ -147,6 +147,7 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
           ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
+          ./build/wheelhouse --user:"$task_dir/managed-user" --project:"$task_dir/managed-project" --managed_content_diagnostics
           ./build/wheelhouse --user:"$task_dir/glyph-user" --project:"$task_dir/glyph-project" --terminal_glyph_diagnostics --terminal_glyph_fixture_ppm:"$task_dir/terminal.ppm"
           python3 tools/validate-terminal-fixture-ppm.py "$task_dir/terminal.ppm"
       - name: Jackstay media and input acceptance

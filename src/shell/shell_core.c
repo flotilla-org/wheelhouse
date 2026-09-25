@@ -1742,6 +1742,7 @@ rd_view_ui(Rng2F32 rect)
         {
           arena_release(ext->arena);
         }
+        if(vs->release_user_data) { vs->release_user_data(vs->user_data); vs->release_user_data = 0; }
         arena_pop_to(vs->arena, vs->arena_reset_pos);
         vs->user_data = 0;
         vs->first_arena_ext = vs->last_arena_ext = 0;
@@ -9750,6 +9751,7 @@ rd_frame(void)
         next = vs->hash_next;
         if(vs->last_frame_index_touched+2 < rd_state->frame_index)
         {
+          if(vs->release_user_data) { vs->release_user_data(vs->user_data); }
           ev_view_release(vs->ev_view);
           for(RD_ArenaExt *ext = vs->first_arena_ext; ext != 0; ext = ext->next)
           {

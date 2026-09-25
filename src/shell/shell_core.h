@@ -326,6 +326,7 @@ struct RD_ViewState
   RD_ArenaExt *first_arena_ext;
   RD_ArenaExt *last_arena_ext;
   void *user_data;
+  void (*release_user_data)(void *);
 
   // rjf: query state
   B32 query_is_open;

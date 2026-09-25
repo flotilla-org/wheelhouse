@@ -23,6 +23,7 @@ struct UIShell_TerminalViewState
   // daemon-backed session: provider is shared per-daemon (never closed by the
   // view) and the session survives uishell; connection state is surfaced
   B32 daemon_backend;
+  cleat_session_colors session_colors;
 
   // retained terminal draw bucket: the cell feed's draw output, rebuilt only
   // when its inputs (render generation, rect, colors, fonts, selection) change
@@ -54,6 +55,24 @@ struct UIShell_TerminalViewState
   B32 glyph_trace_live_emitted;
   U64 glyph_trace_last_render_generation;
 };
+
+// Release only resources owned by this view. Daemon providers are shared;
+// destroying their session handle detaches this view without killing the session.
+internal void
+uishell_terminal_runtime_release(void *data)
+{
+  UIShell_TerminalViewState *tv = data;
+  if(tv == 0) { return; }
+  if(tv->provider && !tv->daemon_backend) { cleat_provider_set_wake_callback(tv->provider, 0, 0); }
+  if(tv->session) { cleat_session_destroy(tv->session); }
+  if(tv->provider && !tv->daemon_backend) { cleat_provider_close(tv->provider); }
+  for(UIShell_TerminalImageResource *r = tv->image_cache.first_resource; r; r = r->next)
+  { if(r->valid) { r_tex2d_release(r->texture); } }
+  Arena *arenas[] = {tv->retained_bucket_arena, tv->glyph_cache.arena, tv->cell_cache.arena,
+                    tv->image_cache.arena, tv->image_cache.placement_arena};
+  for(U64 i = 0; i < ArrayCount(arenas); i++) { if(arenas[i]) { arena_release(arenas[i]); } }
+  MemoryZeroStruct(tv);
+}
 
 internal B32
 uishell_byte_is_printable_ascii(U8 byte)
@@ -3111,6 +3130,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   (void)eval;
   Temp scratch = scratch_begin(0, 0);
   UIShell_TerminalViewState *tv = rd_view_state(UIShell_TerminalViewState);
+  rd_view_state_from_cfg(cfg_node_from_id(uishell_regs()->view))->release_user_data = uishell_terminal_runtime_release;
   CFG_Node *view_cfg = cfg_node_from_id(uishell_regs()->view);
   B32 fixture_mode = str8_match(view_cfg->string, str8_lit("terminal_fixture"), 0);
   F32 main_font_size = rd_font_size();
@@ -3193,6 +3213,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       .has_cursor = 1,
       .cursor = uishell_terminal_rgb_from_linear_rgba(terminal_cursor_color),
     };
+    tv->session_colors = session_colors;
     // the terminal view's expression is the command its session runs (empty ->
     // the default shell), which makes commands part of the workspace config:
     // reproducible layouts (e.g. perf workloads) & a step toward recreation
