@@ -19,7 +19,7 @@ env:
   CLEAT_REV: 081c566725771ae6bd64fdfc4da82683b85079e8
   # Local Endpoint setup on every platform (C ABI 0.9, jackstay#35 and #41) and the
   # reference source's --endpoint mode (jackstay#42).
-  JACKSTAY_REV: ad1e6c29b7fd2e73e7816d380fd185b781ac3e66
+  JACKSTAY_REV: f6a31068e1ef3db4453e72952e32446c4a0921ea
   ANDAMENTO_REV: 82b2f235f62a27521eece1f6bedba431feeeb6b3
 
 jobs:

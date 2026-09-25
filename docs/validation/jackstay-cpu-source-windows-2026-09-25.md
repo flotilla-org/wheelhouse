@@ -4,8 +4,9 @@ First Windows run of a Wheelhouse Jackstay view, on Beaufort (Windows 11), for
 [Show a Jackstay CPU source on Windows](https://github.com/flotilla-org/wheelhouse/issues/67).
 Wheelhouse was built by `build.bat` against Jackstay
 `ad1e6c29b7fd2e73e7816d380fd185b781ac3e66`
-([jackstay#42](https://github.com/flotilla-org/jackstay/pull/42), on C ABI 0.9),
-with Cleat and Andamento at the revisions in `build.yml`. Cleat was built without
+([jackstay#42](https://github.com/flotilla-org/jackstay/pull/42), on C ABI 0.9).
+The pin later moved to `f6a3106`, which only lets the reference source resume a
+growth that pauses for capacity. Cleat and Andamento at the revisions in `build.yml`. Cleat was built without
 Ghostty; no terminal pane was used. Dependencies and target directories were
 fresh worktrees used by nothing else.
 
