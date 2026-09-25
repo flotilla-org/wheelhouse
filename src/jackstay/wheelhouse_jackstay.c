@@ -53,6 +53,9 @@ static void wh_js_clear(WH_Jackstay *s) {
 // An open setup connection. Jackstay connects Local Endpoints itself and
 // verifies the server (ADR 0011). POSIX also accepts an absolute socket path,
 // the form existing path-bound publications (e.g. Porthole's) still use.
+// Jackstay's setup calls null `local` (or set `fd` to -1) whenever they consume
+// it, on success or failure; bootstrap success hands it back unchanged for CPU
+// setup. wh_js_link_close therefore releases only what no call consumed.
 typedef struct {
   ft_local_connection *local;
   int fd;

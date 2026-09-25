@@ -7,7 +7,8 @@
    Built on RAD's base layer: include base_inc.h before this header. */
 typedef struct WH_Jackstay WH_Jackstay;
 /* Addresses are Local Endpoint names (ADR 0011), optionally prefixed
-   "session:" for a session-scoped endpoint. On POSIX an absolute socket path
+   "session:" for a session-scoped endpoint ("user:", the default scope, is
+   also accepted). On POSIX an absolute socket path
    is also accepted for existing path-bound publications. */
 typedef struct {
   const char *media, *input;

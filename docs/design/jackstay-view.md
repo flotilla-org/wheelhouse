@@ -15,8 +15,9 @@ An absent or refused input channel leaves an observation view.
 
 An address is a [Local Endpoint](../adr/0011-windows-local-ipc-uses-named-pipes-with-logical-endpoints.md)
 name, such as `my-source`, on every platform. Prefix it with `session:` for a
-session-scoped endpoint. Jackstay renders the name itself (a named pipe on
-Windows, a socket under the runtime directory elsewhere), connects, and verifies
+session-scoped endpoint; `user:` names the default user scope explicitly.
+Jackstay renders the name itself (a named pipe on Windows, a socket under the
+runtime directory elsewhere), connects, and verifies
 that the server runs as the current user before any setup byte. On macOS/Linux an
 absolute socket path is also accepted, for publications that still bind a path.
 Windows has no path form; there is no mapping from a path to a pipe name.
