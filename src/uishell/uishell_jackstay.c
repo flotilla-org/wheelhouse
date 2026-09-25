@@ -2,20 +2,37 @@
 #if defined(WHEELHOUSE_JACKSTAY)
 #include "jackstay/wheelhouse_jackstay.c"
 typedef struct UIShell_JackstayView UIShell_JackstayView;
+// A D3D11 pool texture imported on the renderer's device.
+typedef struct UIShell_JackstayImport UIShell_JackstayImport;
+struct UIShell_JackstayImport
+{
+  U64 incarnation, pool_id;
+  U32 slot_id;
+  R_Handle texture;
+};
 struct UIShell_JackstayView
 {
   UIShell_JackstayView *next;
   CFG_ID id;
   WH_Jackstay *session;
-  R_Handle texture;
+  R_Handle texture; // shown: an owned upload, or an entry of imports
+  B32 texture_owned;
   U64 upload_frame, version, epoch, pointer_epoch, press_serial;
   U64 keys[WM_Key_COUNT][2];
   U32 width, height;
-  B32 focus_requested, focused, content_focus, closing, disconnecting, initialized, bootstrap;
-  U8 paths[2][1024]; U64 sizes[2]; TxtPt cursor[2], mark[2];
+  B32 focus_requested, focused, content_focus, closing, disconnecting, initialized;
+  U32 mode;
+  U8 paths[3][1024]; U64 sizes[3]; TxtPt cursor[3], mark[3];
   Rng2F32 image_rect;
   U32 buttons;
   Vec2F32 mouse;
+  // D3D11 import: the frame on screen, its imports, and the view's own
+  // release fence, signalled after the draws that sample a frame.
+  WH_JS_Frame shown;
+  UIShell_JackstayImport imports[16];
+  U64 readiness_incarnation, readiness_id;
+  R_Handle readiness, release;
+  U64 release_value;
 };
 global UIShell_JackstayView *uishell_jackstay_views;
 internal void uishell_jackstay_wake(void *unused) { (void)unused; wm_send_wakeup_event(); }
@@ -112,6 +129,104 @@ internal B32 uishell_jackstay_event(CFG_ID id,WM_Event *event)
   return 1;
 }
 internal B32 uishell_jackstay_pending(void) {return uishell_jackstay_views!=0;}
+// The renderer's device, when it can import shared frames. The release fence
+// belongs to the view and survives reconnects, so its values only increase.
+internal WH_JS_Gpu uishell_jackstay_gpu(UIShell_JackstayView *v)
+{
+  WH_JS_Gpu gpu={0};
+  R_AdapterInfo adapter=r_adapter_info();
+  if(adapter.shared_timelines && r_handle_match(v->release,r_handle_zero()))v->release=r_timeline_alloc_shared();
+  if(adapter.shared_timelines && !r_handle_match(v->release,r_handle_zero()))
+  {gpu.adapter=adapter.id;gpu.device=r_native_device();gpu.release_fence=r_native_timeline(v->release);}
+  return gpu;
+}
+// Release the shown import frame once the GPU has finished every draw queued
+// so far: the signal follows them on the same queue.
+internal void uishell_jackstay_retire(UIShell_JackstayView *v)
+{
+  if(!v->shown.native)return;
+  U64 value=++v->release_value;
+  // If the signal fails this value may never complete: the frame stays held,
+  // which is safe, until a later signal passes it.
+  r_queue_signal(v->release,value);
+  wh_js_frame_release(v->session,&v->shown,value);
+  MemoryZeroStruct(&v->shown);
+}
+// Drop imports that no held frame uses. D3D11 keeps a resource alive for GPU
+// work already queued on it; r_tex2d_release also defers to the frame's end.
+internal void uishell_jackstay_forget_imports(UIShell_JackstayView *v,B32 all)
+{
+  for(U64 i=0;i<ArrayCount(v->imports);++i)
+  {
+    UIShell_JackstayImport *import=&v->imports[i];
+    B32 in_use=!all && v->shown.native && import->incarnation==v->shown.incarnation && import->pool_id==v->shown.pool_id;
+    if(!r_handle_match(import->texture,r_handle_zero()) && !in_use){r_tex2d_release(import->texture);MemoryZeroStruct(import);}
+  }
+  if(all && !r_handle_match(v->readiness,r_handle_zero())){r_timeline_release(v->readiness);v->readiness=r_handle_zero();}
+}
+internal void uishell_jackstay_show_texture(UIShell_JackstayView *v,R_Handle texture,B32 owned,U32 width,U32 height,U64 version)
+{
+  if(v->texture_owned && !r_handle_match(v->texture,r_handle_zero()))r_tex2d_release(v->texture);
+  v->texture=texture;v->texture_owned=owned;v->width=width;v->height=height;v->version=version;
+}
+// Take a frame the worker handed over for import: import (cached by pool
+// slot and fence), skip it if its producer died, queue the GPU wait for its
+// copy, then retire the frame it replaces.
+internal void uishell_jackstay_take_import(UIShell_JackstayView *v,WH_JS_Frame *frame)
+{
+  R_Handle texture=r_handle_zero();
+  UIShell_JackstayImport *free_import=0;
+  for(U64 i=0;i<ArrayCount(v->imports);++i)
+  {
+    UIShell_JackstayImport *import=&v->imports[i];
+    if(r_handle_match(import->texture,r_handle_zero())){if(!free_import)free_import=import;continue;}
+    if(import->incarnation==frame->incarnation && import->pool_id==frame->pool_id && import->slot_id==frame->slot_id)texture=import->texture;
+  }
+  if(r_handle_match(texture,r_handle_zero()) && free_import)
+  {
+    texture=r_tex2d_open_shared(frame->texture);
+    if(!r_handle_match(texture,r_handle_zero()))
+    {free_import->texture=texture;free_import->incarnation=frame->incarnation;free_import->pool_id=frame->pool_id;free_import->slot_id=frame->slot_id;}
+  }
+  if(r_handle_match(v->readiness,r_handle_zero()) || v->readiness_incarnation!=frame->incarnation || v->readiness_id!=frame->fence_id)
+  {
+    if(!r_handle_match(v->readiness,r_handle_zero()))r_timeline_release(v->readiness);
+    v->readiness=r_timeline_open_shared(frame->readiness);
+    v->readiness_incarnation=frame->incarnation;v->readiness_id=frame->fence_id;
+  }
+  if(r_handle_match(texture,r_handle_zero()) || r_handle_match(v->readiness,r_handle_zero()))
+  {
+    wh_js_frame_release(v->session,frame,0);
+    wh_js_refuse_import(v->session,"the renderer could not open the shared texture or fence");
+    return;
+  }
+  if(!wh_js_readiness_alive(r_native_timeline(v->readiness)))
+  {
+    // The copy behind it may never have run; keep the last good frame.
+    wh_js_frame_release(v->session,frame,0);
+    return;
+  }
+  // The frame on screen was last sampled by work already queued; release it
+  // before this frame's wait so its release does not also wait on the copy.
+  uishell_jackstay_retire(v);
+  if(!r_queue_wait(v->readiness,frame->fence_value))
+  {
+    wh_js_frame_release(v->session,frame,0);
+    wh_js_refuse_import(v->session,"the renderer could not wait for the producer");
+    uishell_jackstay_show_texture(v,r_handle_zero(),0,0,0,0);
+    return;
+  }
+  v->shown=*frame;
+  uishell_jackstay_show_texture(v,texture,0,frame->width,frame->height,frame->version);
+  uishell_jackstay_forget_imports(v,0);
+}
+// Stop showing frames: release the held one and every import.
+internal void uishell_jackstay_drop_frames(UIShell_JackstayView *v)
+{
+  if(v->session)uishell_jackstay_retire(v);
+  uishell_jackstay_forget_imports(v,1);
+  uishell_jackstay_show_texture(v,r_handle_zero(),0,0,0,0);
+}
 internal void uishell_jackstay_tick(B32 before,B32 quit)
 {
   for(UIShell_JackstayView **link=&uishell_jackstay_views;*link;)
@@ -122,13 +237,64 @@ internal void uishell_jackstay_tick(B32 before,B32 quit)
     CFG_Node *cfg=cfg_node_from_id(v->id);
     if(quit || cfg==&cfg_nil_node || !str8_match(cfg->string,str8_lit("jackstay"),0))
     {
+      if(!v->closing)uishell_jackstay_drop_frames(v);
       v->closing=1;if(v->session)wh_js_stop(v->session);
     }
     if(v->closing && (!v->session || wh_js_destroy(&v->session)))
-    { if(!r_handle_match(v->texture,r_handle_zero()))r_tex2d_release(v->texture);*link=v->next;free(v);continue; }
+    {
+      // Jackstay holds its own reference to the release fence for releases
+      // still pending on the GPU.
+      if(!r_handle_match(v->release,r_handle_zero()))r_timeline_release(v->release);
+      *link=v->next;free(v);continue;
+    }
     if(v->closing)rd_request_frame();
     link=&v->next;
   }
+}
+// Connection forms, in the order the mode button cycles through them, and the
+// view settings each one saves.
+enum
+{
+  UISHELL_JACKSTAY_MODE_COMBINED,
+  UISHELL_JACKSTAY_MODE_SEPARATE,
+  UISHELL_JACKSTAY_MODE_D3D11,
+  UISHELL_JACKSTAY_MODE_PORTHOLE,
+  UISHELL_JACKSTAY_MODE_COUNT
+};
+internal String8 uishell_jackstay_mode_label(U32 mode)
+{
+  switch(mode)
+  {
+    case UISHELL_JACKSTAY_MODE_SEPARATE:return str8_lit("Separate media/input endpoints###mode");
+    case UISHELL_JACKSTAY_MODE_D3D11:return str8_lit("D3D11 source endpoint###mode");
+    case UISHELL_JACKSTAY_MODE_PORTHOLE:return str8_lit("Porthole capture session###mode");
+    default:return str8_lit("Combined source endpoint###mode");
+  }
+}
+// Remove a one-shot view setting so the layout never saves it back.
+internal void uishell_jackstay_forget_setting(String8 key)
+{
+  CFG_Node *setting=cfg_node_child_from_string(cfg_node_from_id(uishell_regs()->view),key);
+  if(setting!=&cfg_nil_node)cfg_node_release(rd_state->cfg,setting);
+}
+internal void uishell_jackstay_open(UIShell_JackstayView *v,B32 control)
+{
+  for(int i=0;i<3;++i)v->paths[i][v->sizes[i]]=0;
+  String8 first=str8(v->paths[0],v->sizes[0]),second=str8(v->paths[1],v->sizes[1]);
+  uishell_jackstay_store_address(str8_lit("source"),v->mode==UISHELL_JACKSTAY_MODE_COMBINED?first:str8_zero());
+  uishell_jackstay_store_address(str8_lit("media"),v->mode==UISHELL_JACKSTAY_MODE_SEPARATE?first:str8_zero());
+  uishell_jackstay_store_address(str8_lit("input"),v->mode==UISHELL_JACKSTAY_MODE_SEPARATE?second:str8_zero());
+  rd_store_view_param(str8_lit("d3d11_endpoint"),v->mode==UISHELL_JACKSTAY_MODE_D3D11?first:str8_zero());
+  rd_store_view_param(str8_lit("porthole_endpoint"),v->mode==UISHELL_JACKSTAY_MODE_PORTHOLE?first:str8_zero());
+  rd_store_view_param(str8_lit("porthole_session"),v->mode==UISHELL_JACKSTAY_MODE_PORTHOLE?second:str8_zero());
+  WH_JS_Endpoint endpoint={(char *)v->paths[0],(char *)v->paths[1],v->mode==UISHELL_JACKSTAY_MODE_COMBINED,WH_JS_MEDIA_CPU,0,0};
+  if(v->mode==UISHELL_JACKSTAY_MODE_D3D11){endpoint.kind=WH_JS_MEDIA_D3D11;endpoint.input="";}
+  if(v->mode==UISHELL_JACKSTAY_MODE_PORTHOLE)
+  {endpoint.kind=WH_JS_MEDIA_PORTHOLE;endpoint.input="";endpoint.session=(char *)v->paths[1];endpoint.token=(char *)v->paths[2];}
+  v->session=wh_js_create(endpoint,uishell_jackstay_gpu(v),uishell_jackstay_wake,0);
+  // The attach token lives only in the running session.
+  MemoryZeroArray(v->paths[2]);v->sizes[2]=0;
+  if(v->session)wh_js_connect(v->session,control);
 }
 RD_VIEW_UI_FUNCTION_DEF(jackstay)
 {
@@ -144,10 +310,29 @@ RD_VIEW_UI_FUNCTION_DEF(jackstay)
     v->initialized=1;
     // Local Endpoint names are saved as *_endpoint; POSIX socket paths keep
     // their original *_socket keys.
-    String8 paths[]={uishell_jackstay_address(str8_lit("source")),uishell_jackstay_address(str8_lit("input"))};
-    v->bootstrap=paths[0].size!=0;
-    if(!v->bootstrap)paths[0]=uishell_jackstay_address(str8_lit("media"));
-    for(int i=0;i<2;++i){v->sizes[i]=Min(paths[i].size,sizeof(v->paths[i])-1);MemoryCopy(v->paths[i],paths[i].str,v->sizes[i]);v->cursor[i]=v->mark[i]=txt_pt(1,1);}
+    String8 paths[3]={uishell_jackstay_address(str8_lit("source")),uishell_jackstay_address(str8_lit("input")),str8_zero()};
+    v->mode=UISHELL_JACKSTAY_MODE_COMBINED;
+    if(!paths[0].size)
+    {
+      String8 d3d11=rd_view_setting_from_name(str8_lit("d3d11_endpoint"));
+      String8 porthole=rd_view_setting_from_name(str8_lit("porthole_endpoint"));
+      if(d3d11.size){v->mode=UISHELL_JACKSTAY_MODE_D3D11;paths[0]=d3d11;paths[1]=str8_zero();}
+      else if(porthole.size)
+      {
+        v->mode=UISHELL_JACKSTAY_MODE_PORTHOLE;paths[0]=porthole;
+        paths[1]=rd_view_setting_from_name(str8_lit("porthole_session"));
+        paths[2]=rd_view_setting_from_name(str8_lit("attach_token"));
+      }
+      else{v->mode=UISHELL_JACKSTAY_MODE_SEPARATE;paths[0]=uishell_jackstay_address(str8_lit("media"));}
+    }
+    for(int i=0;i<3;++i){v->sizes[i]=Min(paths[i].size,sizeof(v->paths[i])-1);MemoryCopy(v->paths[i],paths[i].str,v->sizes[i]);v->cursor[i]=v->mark[i]=txt_pt(1,1);}
+    // A scripted layout may carry the attach token and a one-shot `connect`;
+    // both are consumed here and never saved back. Connecting this way
+    // observes only; control still needs an explicit click.
+    B32 connect=rd_view_setting_b32_from_name(str8_lit("connect"));
+    uishell_jackstay_forget_setting(str8_lit("attach_token"));
+    uishell_jackstay_forget_setting(str8_lit("connect"));
+    if(connect && v->sizes[0])uishell_jackstay_open(v,0);
   }
   ui_set_next_pref_width(ui_px(dim_2f32(rect).x,1));
   ui_set_next_pref_height(ui_px(dim_2f32(rect).y,1));
@@ -159,42 +344,48 @@ RD_VIEW_UI_FUNCTION_DEF(jackstay)
       {
         ui_label(str8_lit(UISHELL_JACKSTAY_ADDRESS_LABEL));
         ui_line_edit(&v->cursor[0],&v->mark[0],v->paths[0],sizeof(v->paths[0])-1,&v->sizes[0],str8(v->paths[0],v->sizes[0]),str8_lit("###source"));
-        if(ui_clicked(ui_button(v->bootstrap?str8_lit("Combined source endpoint###mode"):str8_lit("Separate media/input endpoints###mode"))))v->bootstrap=!v->bootstrap;
-        if(!v->bootstrap){ui_label(str8_lit("Input endpoint (optional)"));ui_line_edit(&v->cursor[1],&v->mark[1],v->paths[1],sizeof(v->paths[1])-1,&v->sizes[1],str8(v->paths[1],v->sizes[1]),str8_lit("###input"));}
-        if(ui_clicked(ui_button(str8_lit("Connect###connect"))) && v->sizes[0])
+        if(ui_clicked(ui_button(uishell_jackstay_mode_label(v->mode))))v->mode=(v->mode+1)%UISHELL_JACKSTAY_MODE_COUNT;
+        if(v->mode==UISHELL_JACKSTAY_MODE_SEPARATE){ui_label(str8_lit("Input endpoint (optional)"));ui_line_edit(&v->cursor[1],&v->mark[1],v->paths[1],sizeof(v->paths[1])-1,&v->sizes[1],str8(v->paths[1],v->sizes[1]),str8_lit("###input"));}
+        if(v->mode==UISHELL_JACKSTAY_MODE_PORTHOLE)
         {
-          v->paths[0][v->sizes[0]]=0;v->paths[1][v->sizes[1]]=0;
-          uishell_jackstay_store_address(str8_lit("source"),v->bootstrap?str8(v->paths[0],v->sizes[0]):str8_zero());
-          uishell_jackstay_store_address(str8_lit("media"),!v->bootstrap?str8(v->paths[0],v->sizes[0]):str8_zero());
-          uishell_jackstay_store_address(str8_lit("input"),str8(v->paths[1],v->sizes[1]));
-          v->session=wh_js_create((WH_JS_Endpoint){(char *)v->paths[0],(char *)v->paths[1],v->bootstrap},uishell_jackstay_wake,0);
-          if(v->session)wh_js_connect(v->session,true);
+          ui_label(str8_lit("Capture session id"));
+          ui_line_edit(&v->cursor[1],&v->mark[1],v->paths[1],sizeof(v->paths[1])-1,&v->sizes[1],str8(v->paths[1],v->sizes[1]),str8_lit("###session"));
+          ui_label(str8_lit("Attach token (not saved)"));
+          ui_line_edit(&v->cursor[2],&v->mark[2],v->paths[2],sizeof(v->paths[2])-1,&v->sizes[2],str8(v->paths[2],v->sizes[2]),str8_lit("###token"));
         }
+        B32 ready=v->sizes[0] && (v->mode!=UISHELL_JACKSTAY_MODE_PORTHOLE || (v->sizes[1] && v->sizes[2]));
+        if(ui_clicked(ui_button(str8_lit("Connect###connect"))) && ready)uishell_jackstay_open(v,1);
       }
     }
     else
     {
       WH_JS_State state;WH_JS_Frame frame={0};
-      // A view may be built for both a preview and its main panel. Publish one
-      // immutable texture per shell frame, never overwrite an in-flight GPU read.
+      // A view may be built for both a preview and its main panel. Take at
+      // most one frame per shell frame: an upload is an immutable texture, and
+      // an import frame is released only after the GPU is done with it.
       wh_js_snapshot(v->session,&state,v->upload_frame!=rd_state->frame_index?&frame:0,v->version);
       v->upload_frame=rd_state->frame_index;
-      if(frame.pixels)
+      if(frame.native)uishell_jackstay_take_import(v,&frame);
+      else if(frame.pixels)
       {
         R_Handle texture=r_tex2d_alloc(R_ResourceKind_Static,v2s32(frame.width,frame.height),R_Tex2DFormat_RGBA8,frame.pixels);
         if(!r_handle_match(texture,r_handle_zero())) {
-          if(!r_handle_match(v->texture,r_handle_zero()))r_tex2d_release(v->texture);
-          v->texture=texture;v->width=frame.width;v->height=frame.height;v->version=frame.version;
+          // A CPU frame replaces any shown import.
+          uishell_jackstay_retire(v);
+          uishell_jackstay_forget_imports(v,1);
+          uishell_jackstay_show_texture(v,texture,1,frame.width,frame.height,frame.version);
         }
         free(frame.pixels);
       }
       UI_PrefHeight(ui_em(1.8f,1)) UI_Row
       {
-        UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s | %s",state.media_status,state.input_status);
+        if(state.path_status[0] && state.width)UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s | %s | %ux%u %s",state.media_status,state.input_status,state.width,state.height,state.path_status);
+        else if(state.path_status[0])UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s | %s | %s",state.media_status,state.input_status,state.path_status);
+        else UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s | %s",state.media_status,state.input_status);
         UI_PrefWidth(ui_em(8,1))
         {
           if(ui_clicked(ui_button(str8_lit("Retry control###retry"))) && !v->disconnecting)wh_js_connect(v->session,true);
-          if(ui_clicked(ui_button(str8_lit("Disconnect###disconnect")))){wh_js_stop(v->session);v->disconnecting=1;}
+          if(ui_clicked(ui_button(str8_lit("Disconnect###disconnect")))){uishell_jackstay_drop_frames(v);wh_js_stop(v->session);v->disconnecting=1;}
         }
       }
       ui_set_next_pref_height(ui_px(Max(0,dim_2f32(rect).y-ui_top_font_size()*1.8f),1));

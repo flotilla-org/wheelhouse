@@ -4,6 +4,8 @@
 The consumer and source find each other by Local Endpoint name on every
 platform. On macOS/Linux the input and recovery checks also run against an
 absolute socket path, the form existing path-bound publications use.
+On Windows it also runs Jackstay's d3d11_source against the D3D11 paths
+(import, and read back on an adapter mismatch or without a renderer device).
 On Windows run this from a Visual Studio developer prompt (cl on PATH).
 """
 
@@ -169,6 +171,62 @@ def run(consumer, source, mode, address):
                 process.wait()
 
 
+def build_d3d11_source():
+    """Jackstay's D3D11 reference source, from the library's own build."""
+    subprocess.run(
+        ["cargo", "build", "--manifest-path", str(JACKSTAY / "Cargo.toml"),
+         "-p", "jackstay", "--features", "backend-windows", "--example",
+         "d3d11_source", "--locked", "--target-dir", str(LIB.parent)],
+        check=True,
+    )
+    return LIB / "examples" / "d3d11_source.exe"
+
+
+def launch_d3d11(source, name):
+    # Alternating sizes make every run install replacement pool generations.
+    process = subprocess.Popen(
+        [str(source), "--endpoint", name, "--resize-every-ms", "300",
+         "--fps", "30", "--seconds", "60"],
+        stdout=subprocess.PIPE,
+    )
+    process.lines = Lines(process)
+    try:
+        assert process.lines.next(30).startswith("ready ")
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
+    return process
+
+
+def run_d3d11(consumer, source, mode, name):
+    """D3D11 frames, imported or read back, through a producer restart."""
+    producer = launch_d3d11(source, name)
+    client = None
+    try:
+        client = subprocess.Popen(
+            [str(consumer), name, mode], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, text=True
+        )
+        while True:
+            line = client.stdout.readline()
+            assert line, f"{mode}: consumer exited before the restart"
+            print(line, end="")
+            if line.strip() == "restart-source":
+                break
+        producer.kill()
+        producer.wait()
+        producer = launch_d3d11(source, name)
+        output, _ = client.communicate(timeout=60)
+        print(output, end="")
+        assert client.returncode == 0, (mode, client.returncode)
+    finally:
+        for process in (client, producer):
+            if process and process.poll() is None:
+                process.kill()
+                process.wait()
+
+
 with tempfile.TemporaryDirectory(prefix="wh-js-", dir=None if WINDOWS else "/tmp") as temporary:
     work = Path(temporary)
     consumer, source = build(work)
@@ -177,4 +235,8 @@ with tempfile.TemporaryDirectory(prefix="wh-js-", dir=None if WINDOWS else "/tmp
     if not WINDOWS:
         for mode in ("input", "recovery"):
             run(consumer, source, mode, work / mode)
+    else:
+        d3d11_source = build_d3d11_source()
+        for mode in ("d3d11-import", "d3d11-mismatch", "d3d11-readback"):
+            run_d3d11(consumer, d3d11_source, mode, f"wh-js-{os.getpid()}-{mode}")
 print("All Jackstay session acceptance checks passed")

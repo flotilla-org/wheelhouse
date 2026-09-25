@@ -115,8 +115,9 @@ if "%wheelhouse%"=="1" (
   set jackstay_lib_dir=!jackstay_target_dir!\!cargo_profile!
   echo [jackstay: !jackstay_dir!]
   rem Jackstay views connect by Local Endpoint (ADR 0011): named pipes on Windows.
+  rem backend-windows adds the D3D11 frame calls (C ABI 0.10+) the view imports.
   if not exist "!jackstay_dir!\crates\jackstay\include\jackstay_bootstrap.h" (echo [ERROR] no Jackstay checkout at !jackstay_dir! ^(set WHEELHOUSE_JACKSTAY_DIR^) && exit /b 1)
-  cargo build --manifest-path "!jackstay_dir!\Cargo.toml" -p jackstay --locked --target-dir "!jackstay_target_dir!" !cargo_profile_flags! || exit /b 1
+  cargo build --manifest-path "!jackstay_dir!\Cargo.toml" -p jackstay --features backend-windows --locked --target-dir "!jackstay_target_dir!" !cargo_profile_flags! || exit /b 1
   set auto_compile_flags=!auto_compile_flags! -DWHEELHOUSE_JACKSTAY=1 -I"!jackstay_dir!\crates\jackstay\include"
   set jackstay_link="!jackstay_lib_dir!\jackstay.dll.lib"
 )
