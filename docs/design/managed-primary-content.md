@@ -38,11 +38,11 @@ expire; it does not destroy the existing content.
 
 ## Local build and validation
 
-This branch depends on the matching Andamento feature branch. Until the sibling
-checkout contains it, build with:
+Build against an Andamento checkout at or after the pinned revision (the
+sibling `../andamento` by default, or `WHEELHOUSE_ANDAMENTO_DIR`):
 
 ```sh
-WHEELHOUSE_ANDAMENTO_DIR=/Users/robert/dev/andamento-worktrees/governor-intent-prototype bash build.sh wheelhouse
+bash build.sh wheelhouse
 mkdir -p /tmp/wheelhouse-managed-check
 ./build/wheelhouse --user:/tmp/wheelhouse-managed-check/user --project:/tmp/wheelhouse-managed-check/project --managed_content_diagnostics
 ```
@@ -62,9 +62,8 @@ core code; a strict warnings-as-errors run is not clean on that baseline.
 The native managed-content diagnostic is added to macOS CI. Linux's current
 CI build omits Ghostty VT, so this real-terminal check is not enabled there.
 
-The Andamento dependency is local commit
-`6b6435e40ccda2cd39f02847380875e7e21d1834`. Publish that branch before opening a
-Wheelhouse PR so CI can fetch the pinned revision.
+CI pins Andamento `82b2f235f62a27521eece1f6bedba431feeeb6b3` (andamento#103 on
+main), which provides the managed-content and related-detail interfaces.
 
 ## Standing roles
 
