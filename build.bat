@@ -108,6 +108,19 @@ if "%wheelhouse%"=="1" (
   python tools\embed-sidebar-fixture.py || exit /b 1
 )
 
+set jackstay_link=
+if "%wheelhouse%"=="1" (
+  if "%WHEELHOUSE_JACKSTAY_DIR%"=="" (set jackstay_dir=%~dp0..\jackstay) else (set jackstay_dir=%WHEELHOUSE_JACKSTAY_DIR%)
+  if "%WHEELHOUSE_JACKSTAY_TARGET_DIR%"=="" (set jackstay_target_dir=!jackstay_dir!\target) else (set jackstay_target_dir=%WHEELHOUSE_JACKSTAY_TARGET_DIR%)
+  set jackstay_lib_dir=!jackstay_target_dir!\!cargo_profile!
+  echo [jackstay: !jackstay_dir!]
+  rem Jackstay views connect by Local Endpoint (ADR 0011): named pipes on Windows.
+  if not exist "!jackstay_dir!\crates\jackstay\include\jackstay_bootstrap.h" (echo [ERROR] no Jackstay checkout at !jackstay_dir! ^(set WHEELHOUSE_JACKSTAY_DIR^) && exit /b 1)
+  cargo build --manifest-path "!jackstay_dir!\Cargo.toml" -p jackstay --locked --target-dir "!jackstay_target_dir!" !cargo_profile_flags! || exit /b 1
+  set auto_compile_flags=!auto_compile_flags! -DWHEELHOUSE_JACKSTAY=1 -I"!jackstay_dir!\crates\jackstay\include"
+  set jackstay_link="!jackstay_lib_dir!\jackstay.dll.lib"
+)
+
 :: --- Compile/Link Line Definitions ------------------------------------------
 set cl_common=     /I..\src\ /I..\local\ /nologo /FC /Z7 /Zc:preprocessor
 set cl_debug=      call cl /Od /Ob1 /DBUILD_DEBUG=1 %cl_common% %auto_compile_flags%
@@ -183,7 +196,7 @@ popd
 
 :: --- Build Everything (@build_targets) --------------------------------------
 pushd build
-if "%wheelhouse%"=="1"                    set didbuild=1 && %compile% ..\src\uishell\uishell_main.c                            %compile_link% %link_icon% %cleat_link% %andamento_link% %out%wheelhouse.exe || exit /b 1
+if "%wheelhouse%"=="1"                    set didbuild=1 && %compile% ..\src\uishell\uishell_main.c                            %compile_link% %link_icon% %cleat_link% %andamento_link% %jackstay_link% %out%wheelhouse.exe || exit /b 1
 if "%wheelhouse%"=="1" if "%cleat%"=="1"  copy /y "!cleat_lib_dir!\cleat.dll" . >nul || exit /b 1
 rem cleat.dll imports ghostty-vt.dll when built with the ghostty-vt feature; without it
 rem next to the exe the loader fails and the app hangs at start with no window
@@ -200,6 +213,7 @@ if "%wheelhouse%"=="1" if "%cleat%"=="1" for %%f in (conpty.dll OpenConsole.exe 
 )
 if "%wheelhouse%"=="1" copy /y "!andamento_lib_dir!\andamento_ffi.dll" . >nul
 if "%wheelhouse%"=="1" copy /y "!andamento_lib_dir!\wheelhouse_ingress.dll" . >nul
+if "%wheelhouse%"=="1" copy /y "!jackstay_lib_dir!\jackstay.dll" . >nul || (echo [ERROR] copying jackstay.dll failed && exit /b 1)
 popd
 
 :: --- Warn On No Builds ------------------------------------------------------

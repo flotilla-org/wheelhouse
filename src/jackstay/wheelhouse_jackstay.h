@@ -3,10 +3,14 @@
 #include <jackstay_bootstrap.h>
 #include <stdbool.h>
 /* Thread-safe session owner. No GPU objects or shell configuration live here.
-   Returned pixels are caller-owned; all Jackstay leases stay on the worker. */
+   Returned pixels are caller-owned; all Jackstay leases stay on the worker.
+   Built on RAD's base layer: include base_inc.h before this header. */
 typedef struct WH_Jackstay WH_Jackstay;
+/* Addresses are Local Endpoint names (ADR 0011), optionally prefixed
+   "session:" for a session-scoped endpoint. On POSIX an absolute socket path
+   is also accepted for existing path-bound publications. */
 typedef struct {
-  const char *media_path, *input_path;
+  const char *media, *input;
   bool bootstrap;
 } WH_JS_Endpoint;
 typedef struct {

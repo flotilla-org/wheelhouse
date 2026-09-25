@@ -17,7 +17,9 @@ env:
   # Includes exited-session idle handling (#246), wake re-arming (#239),
   # and bundled Windows ConPTY (#235).
   CLEAT_REV: 081c566725771ae6bd64fdfc4da82683b85079e8
-  JACKSTAY_REV: b992ad28b2eb56b9b292570b2cfbed5b2beaeb0c
+  # Local Endpoint setup on every platform (C ABI 0.9, jackstay#35 and #41) and the
+  # reference source's --endpoint mode (jackstay#42).
+  JACKSTAY_REV: ad1e6c29b7fd2e73e7816d380fd185b781ac3e66
   ANDAMENTO_REV: 82b2f235f62a27521eece1f6bedba431feeeb6b3
 
 jobs:
@@ -63,7 +65,6 @@ jobs:
           ref: ${{ env.CLEAT_REV }}
           path: cleat
       - uses: actions/checkout@v4
-        if: runner.os != 'Windows'
         with:
           repository: flotilla-org/jackstay
           ref: ${{ env.JACKSTAY_REV }}
@@ -151,8 +152,8 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/glyph-user" --project:"$task_dir/glyph-project" --terminal_glyph_diagnostics --terminal_glyph_fixture_ppm:"$task_dir/terminal.ppm"
           python3 tools/validate-terminal-fixture-ppm.py "$task_dir/terminal.ppm"
       - name: Jackstay media and input acceptance
-        if: runner.os != 'Windows'
-        run: python3 tools/test-jackstay.py
+        # Local Endpoints: named pipes on Windows, Unix sockets elsewhere.
+        run: python tools/test-jackstay.py
       - name: HTTP ingress and native producer checks
         if: runner.os != 'Windows'
         shell: bash

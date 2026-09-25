@@ -1,6 +1,7 @@
 # Windows Local IPC Uses Named Pipes with Logical Endpoints
 
-**Status:** accepted; not yet implemented.
+**Status:** accepted. Implemented by Jackstay's setup channel (C ABI 0.9), which
+Wheelhouse's Jackstay views use; Wheelhouse itself has no `base_ipc` layer.
 
 Wheelhouse, Jackstay's setup channel and our Windows test tooling need one
 local transport on Windows. This record is the shared contract; other

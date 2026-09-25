@@ -27,8 +27,9 @@ build wheelhouse
 run_tests
 ```
 
-`build.bat` builds the sibling `..\cleat` and `..\andamento` checkouts (override with
-`WHEELHOUSE_CLEAT_DIR` / `WHEELHOUSE_ANDAMENTO_DIR`) and copies their DLLs, including
+`build.bat` builds the sibling `..\cleat`, `..\andamento` and `..\jackstay` checkouts
+(override with `WHEELHOUSE_CLEAT_DIR` / `WHEELHOUSE_ANDAMENTO_DIR` /
+`WHEELHOUSE_JACKSTAY_DIR`) and copies their DLLs, including
 `ghostty-vt.dll`, next to the executable. Cleat's default `ghostty-vt` feature needs
 `tools\prepare-ghostty-vt.ps1` run in the Cleat checkout first. `run_tests` runs the
 sidebar, scroll-region, preview, tooltip, panel and terminal-glyph diagnostics, each with
@@ -51,13 +52,15 @@ The executable is `build/wheelhouse` (`build/wheelhouse.exe` on Windows); the ma
 
 Internal source names and existing configuration storage still use `uishell`.
 
-The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. CI checks out the public Andamento repository without an App credential, including for fork PRs.
+The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. CI checks out the public Andamento repository without an App credential, including for fork PRs.
 
 ## Jackstay views
 
-On macOS/Linux, **Open Jackstay Source** opens a video panel with optional keyboard
-and pointer input. Builds require `../jackstay`, or `WHEELHOUSE_JACKSTAY_DIR`, and
-compile its C library with Cargo. See [Jackstay views](docs/design/jackstay-view.md)
+**Open Jackstay Source** opens a video panel with optional keyboard and pointer
+input, on Windows, macOS and Linux. Sources are named by Local Endpoint (ADR 0011):
+a named pipe on Windows, a Unix socket elsewhere. Builds require `../jackstay`, or
+`WHEELHOUSE_JACKSTAY_DIR`, and compile its C library with Cargo; `build.bat` copies
+`jackstay.dll` next to the executable. See [Jackstay views](docs/design/jackstay-view.md)
 for endpoint configuration, focus behaviour and acceptance checks.
 
 ## Sidebar
