@@ -1,6 +1,7 @@
 // Requires RAD's base layer (base_inc.h/.c) earlier in the translation unit:
 // workers use base threads, mutexes, time and sleep on every platform.
 #include "wheelhouse_jackstay.h"
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -253,6 +254,20 @@ static ft_status wh_js_porthole_open(WH_Jackstay *s, WH_JS_Link *link,
     for (message += 11; *message && *message != '"' &&
                         used + 1 < sizeof(reason);
          ++message) {
+      if (*message == '\\' && message[1] == 'u') {
+        // A JSON "backslash-u XXXX" escape: keep ASCII, show others as ?.
+        unsigned code = 0;
+        int digits = 0;
+        for (; digits < 4 && isxdigit((unsigned char)message[2 + digits]); ++digits)
+          code = code * 16 + (unsigned)(isdigit((unsigned char)message[2 + digits])
+                                             ? message[2 + digits] - '0'
+                                             : (tolower((unsigned char)message[2 + digits]) - 'a' + 10));
+        if (digits == 4) {
+          message += 5;
+          reason[used++] = code >= 0x20 && code < 0x7f ? (char)code : '?';
+          continue;
+        }
+      }
       if (*message == '\\' && message[1])
         ++message;
       reason[used++] = *message;

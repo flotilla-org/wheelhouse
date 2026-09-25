@@ -252,7 +252,8 @@ internal void uishell_jackstay_tick(B32 before,B32 quit)
   }
 }
 // Connection forms, in the order the mode button cycles through them, and the
-// view settings each one saves.
+// view settings each one saves. D3D11 and Porthole sessions exist on Windows
+// only, so the button stops before them elsewhere.
 enum
 {
   UISHELL_JACKSTAY_MODE_COMBINED,
@@ -344,7 +345,7 @@ RD_VIEW_UI_FUNCTION_DEF(jackstay)
       {
         ui_label(str8_lit(UISHELL_JACKSTAY_ADDRESS_LABEL));
         ui_line_edit(&v->cursor[0],&v->mark[0],v->paths[0],sizeof(v->paths[0])-1,&v->sizes[0],str8(v->paths[0],v->sizes[0]),str8_lit("###source"));
-        if(ui_clicked(ui_button(uishell_jackstay_mode_label(v->mode))))v->mode=(v->mode+1)%UISHELL_JACKSTAY_MODE_COUNT;
+        if(ui_clicked(ui_button(uishell_jackstay_mode_label(v->mode))))v->mode=(v->mode+1)%(OS_WINDOWS?UISHELL_JACKSTAY_MODE_COUNT:UISHELL_JACKSTAY_MODE_D3D11);
         if(v->mode==UISHELL_JACKSTAY_MODE_SEPARATE){ui_label(str8_lit("Input endpoint (optional)"));ui_line_edit(&v->cursor[1],&v->mark[1],v->paths[1],sizeof(v->paths[1])-1,&v->sizes[1],str8(v->paths[1],v->sizes[1]),str8_lit("###input"));}
         if(v->mode==UISHELL_JACKSTAY_MODE_PORTHOLE)
         {

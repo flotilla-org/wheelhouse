@@ -20,7 +20,7 @@ env:
   # D3D11 frames in the C ABI (0.10, jackstay#46) and a host's own exchange
   # before setup (0.11, jackstay#48, which Porthole capture sessions need).
   # Pinned to jackstay#48's branch commit until it merges; then its squash commit.
-  JACKSTAY_REV: 5f38b72cb954e8c48fec25b226eaada300c1e970
+  JACKSTAY_REV: dc70df7595784c118722a81a9dc99126b980b86a
   ANDAMENTO_REV: 82b2f235f62a27521eece1f6bedba431feeeb6b3
 
 jobs:

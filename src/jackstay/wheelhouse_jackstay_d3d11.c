@@ -295,8 +295,13 @@ static ft_status wh_js_d3d11_run(WH_Jackstay *s, WH_JS_Link *link,
       result = ft_acquisition_d3d11_register_release(
           connection, consumer, gpu.release_fence, &timeline);
       if (result != FT_STATUS_OK) {
+        // The consumer is already admitted on the renderer's device, so this
+        // connection cannot switch paths: the next connection reads back.
         mutex_take(s->mutex);
         s->import_refused = true;
+        snprintf(s->state.path_status, sizeof(s->state.path_status),
+                 "D3D11 on %s: release fence refused (%d); reconnecting to read back",
+                 producer, result);
         mutex_drop(s->mutex);
       }
     }
