@@ -8,11 +8,13 @@
 #include <dcommon.h>
 #include <initguid.h>
 #include <windows.h>
-#include <d3d11_1.h>
+#include <d3d11_4.h>
+#include <dxgi1_2.h>
 #include <d3dcompiler.h>
 
 #pragma comment(lib, "user32")
 #pragma comment(lib, "d3d11")
+#pragma comment(lib, "dxgi")
 #pragma comment(lib, "d3dcompiler")
 
 ////////////////////////////////
@@ -161,6 +163,9 @@ struct R_D3D11_State
   ID3D11DeviceContext     *base_device_ctx;
   ID3D11Device1           *device;
   ID3D11DeviceContext1    *device_ctx;
+  ID3D11Device5           *device5;     // zero without shared fence support
+  ID3D11DeviceContext4    *device_ctx4; // zero without shared fence support
+  R_AdapterInfo            adapter;
   IDXGIDevice1            *dxgi_device;
   IDXGIAdapter            *dxgi_adapter;
   IDXGIFactory2           *dxgi_factory;

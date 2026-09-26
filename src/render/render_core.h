@@ -324,6 +324,21 @@ internal R_Pass *r_pass_push(Arena *arena, R_PassList *list, R_PassKind kind);
 internal R_Pass *r_pass_from_kind(Arena *arena, R_PassList *list, R_PassKind kind);
 
 ////////////////////////////////
+//~ Adapter Identity
+
+// The adapter the renderer's one device runs on. Every window and texture of
+// the UI lives on that device, so another process's GPU frames import only
+// when they were produced on the same adapter.
+typedef struct R_AdapterInfo R_AdapterInfo;
+struct R_AdapterInfo
+{
+  U64 id;               // D3D11: DXGI adapter LUID, (HighPart << 32) | LowPart; 0 when unknown
+  B32 software;         // WARP / Basic Render Driver
+  B32 shared_timelines; // can import shared textures and wait/signal shared timelines
+  U8 description[128];  // UTF-8, NUL-terminated
+};
+
+////////////////////////////////
 //~ rjf: Backend Hooks
 
 //- rjf: top-level layer initialization
@@ -359,5 +374,21 @@ r_hook void              r_window_end_frame(WM_Window window, R_Handle window_eq
 //- rjf: render pass submission
 r_hook void              r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes);
 r_hook R_Readback        r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes);
+
+//- adapter identity and frames shared by other processes
+// The adapter is chosen once, at r_init (D3D11: --render_adapter:<LUID hex>,
+// warp or default). Shared textures and timelines are NT handles on D3D11;
+// backends without them return zero handles and zeroed info.
+r_hook R_AdapterInfo     r_adapter_info(void);
+r_hook void *            r_native_device(void);                      // borrowed (ID3D11Device*)
+r_hook R_Handle          r_tex2d_open_shared(void *os_handle);       // release with r_tex2d_release
+r_hook R_Handle          r_timeline_alloc_shared(void);
+r_hook R_Handle          r_timeline_open_shared(void *os_handle);
+r_hook void              r_timeline_release(R_Handle timeline);
+r_hook void *            r_native_timeline(R_Handle timeline);       // borrowed (ID3D11Fence*)
+// Queue-ordered: GPU work submitted after a wait starts once the timeline
+// reaches value; a signal completes once work submitted before it has.
+r_hook B32               r_queue_wait(R_Handle timeline, U64 value);
+r_hook B32               r_queue_signal(R_Handle timeline, U64 value);
 
 #endif // RENDER_CORE_H

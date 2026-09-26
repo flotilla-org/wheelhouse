@@ -1116,3 +1116,63 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
   }
   return result;
 }
+
+//- adapter identity and frames shared by other processes
+// Not implemented for OpenGL: frames take the CPU path.
+
+r_hook R_AdapterInfo
+r_adapter_info(void)
+{
+  R_AdapterInfo info = {0};
+  return info;
+}
+
+r_hook void *
+r_native_device(void)
+{
+  return 0;
+}
+
+r_hook R_Handle
+r_tex2d_open_shared(void *os_handle)
+{
+  R_Handle handle = {0};
+  return handle;
+}
+
+r_hook R_Handle
+r_timeline_alloc_shared(void)
+{
+  R_Handle handle = {0};
+  return handle;
+}
+
+r_hook R_Handle
+r_timeline_open_shared(void *os_handle)
+{
+  R_Handle handle = {0};
+  return handle;
+}
+
+r_hook void
+r_timeline_release(R_Handle timeline)
+{
+}
+
+r_hook void *
+r_native_timeline(R_Handle timeline)
+{
+  return 0;
+}
+
+r_hook B32
+r_queue_wait(R_Handle timeline, U64 value)
+{
+  return 0;
+}
+
+r_hook B32
+r_queue_signal(R_Handle timeline, U64 value)
+{
+  return 0;
+}

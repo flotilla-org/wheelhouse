@@ -17,9 +17,10 @@ env:
   # Includes exited-session idle handling (#246), wake re-arming (#239),
   # and bundled Windows ConPTY (#235).
   CLEAT_REV: 081c566725771ae6bd64fdfc4da82683b85079e8
-  # Local Endpoint setup on every platform (C ABI 0.9, jackstay#35 and #41) and the
-  # reference source's --endpoint mode (jackstay#42).
-  JACKSTAY_REV: 49badf3e784b782ef8a9e7e4ee48a6788aaec86f
+  # D3D11 frames in the C ABI (0.10, jackstay#46) and a host's own exchange
+  # before setup (0.11, jackstay#48, which Porthole capture sessions need).
+  # Pinned to jackstay#48's branch commit until it merges; then its squash commit.
+  JACKSTAY_REV: d8d0c14c4c1d5e5230bafdbcb3a0c8c0bb9d2c62
   ANDAMENTO_REV: 82b2f235f62a27521eece1f6bedba431feeeb6b3
 
 jobs:

@@ -147,6 +147,75 @@ r_usage_access_flags_from_resource_kind(R_ResourceKind kind, D3D11_USAGE *out_d3
 }
 
 ////////////////////////////////
+//~ Adapter Selection
+
+// --render_adapter:<LUID hex> puts the whole renderer on that adapter (the
+// LUID as Jackstay reports it, "00000000:00009fe5", or "9fe5"); "warp" asks
+// for the software rasterizer; "default" or nothing keeps the system's
+// choice. An unknown LUID keeps the default. Returns an owned adapter, or 0.
+internal IDXGIAdapter1 *
+r_d3d11_adapter_from_choice(String8 choice, D3D_DRIVER_TYPE *driver_type)
+{
+  IDXGIAdapter1 *result = 0;
+  if(str8_match(choice, str8_lit("warp"), StringMatchFlag_CaseInsensitive))
+  {
+    *driver_type = D3D_DRIVER_TYPE_WARP;
+    return 0;
+  }
+  if(choice.size == 0 || str8_match(choice, str8_lit("default"), StringMatchFlag_CaseInsensitive))
+  {
+    return 0;
+  }
+  U64 luid = 0;
+  B32 valid = 1;
+  U64 digits = 0;
+  if(str8_match(str8_prefix(choice, 2), str8_lit("0x"), StringMatchFlag_CaseInsensitive))
+  {
+    choice = str8_skip(choice, 2);
+  }
+  for(U64 idx = 0; idx < choice.size && valid; idx += 1)
+  {
+    U8 c = choice.str[idx];
+    U64 value = 0;
+    if(c == ':') { continue; }
+    else if('0' <= c && c <= '9') { value = c - '0'; }
+    else if('a' <= c && c <= 'f') { value = 10 + c - 'a'; }
+    else if('A' <= c && c <= 'F') { value = 10 + c - 'A'; }
+    else { valid = 0; }
+    luid = (luid << 4) | value;
+    digits += 1;
+  }
+  if(!valid || digits == 0 || digits > 16)
+  {
+    return 0;
+  }
+  IDXGIFactory1 *factory = 0;
+  if(SUCCEEDED(CreateDXGIFactory1(&IID_IDXGIFactory1, (void **)&factory)))
+  {
+    for(UINT idx = 0; result == 0; idx += 1)
+    {
+      IDXGIAdapter1 *adapter = 0;
+      if(FAILED(factory->lpVtbl->EnumAdapters1(factory, idx, &adapter)))
+      {
+        break;
+      }
+      DXGI_ADAPTER_DESC1 desc = {0};
+      if(SUCCEEDED(adapter->lpVtbl->GetDesc1(adapter, &desc)) &&
+         (((U64)(U32)desc.AdapterLuid.HighPart << 32) | desc.AdapterLuid.LowPart) == luid)
+      {
+        result = adapter;
+      }
+      else
+      {
+        adapter->lpVtbl->Release(adapter);
+      }
+    }
+    factory->lpVtbl->Release(factory);
+  }
+  return result;
+}
+
+////////////////////////////////
 //~ rjf: Backend Hook Implementations
 
 //- rjf: top-level layer initialization
@@ -176,13 +245,18 @@ r_init(CmdLine *cmdln)
   {
     driver_type = D3D_DRIVER_TYPE_WARP;
   }
-  error = D3D11CreateDevice(0,
-                            driver_type,
+  IDXGIAdapter1 *selected_adapter = r_d3d11_adapter_from_choice(cmd_line_string(cmdln, str8_lit("render_adapter")), &driver_type);
+  error = D3D11CreateDevice((IDXGIAdapter *)selected_adapter,
+                            selected_adapter ? D3D_DRIVER_TYPE_UNKNOWN : driver_type,
                             0,
                             creation_flags,
                             feature_levels, ArrayCount(feature_levels),
                             D3D11_SDK_VERSION,
                             &r_d3d11_state->base_device, 0, &r_d3d11_state->base_device_ctx);
+  if(selected_adapter != 0)
+  {
+    selected_adapter->lpVtbl->Release(selected_adapter);
+  }
   if(FAILED(error) && driver_type == D3D_DRIVER_TYPE_HARDWARE)
   {
     // try with WARP driver as backup solution in case HW device is not available
@@ -231,6 +305,32 @@ r_init(CmdLine *cmdln)
   error = r_d3d11_state->dxgi_adapter->lpVtbl->GetParent(r_d3d11_state->dxgi_adapter, &IID_IDXGIFactory2, (void **)(&r_d3d11_state->dxgi_factory));
   error = r_d3d11_state->dxgi_device->lpVtbl->SetMaximumFrameLatency(r_d3d11_state->dxgi_device, 1);
   ProfEnd();
+
+  //- record the adapter; shared fences need ID3D11Device5/ID3D11DeviceContext4
+  {
+    R_AdapterInfo *info = &r_d3d11_state->adapter;
+    IDXGIAdapter1 *adapter1 = 0;
+    if(SUCCEEDED(r_d3d11_state->dxgi_adapter->lpVtbl->QueryInterface(r_d3d11_state->dxgi_adapter, &IID_IDXGIAdapter1, (void **)&adapter1)))
+    {
+      DXGI_ADAPTER_DESC1 desc = {0};
+      if(SUCCEEDED(adapter1->lpVtbl->GetDesc1(adapter1, &desc)))
+      {
+        info->id = ((U64)(U32)desc.AdapterLuid.HighPart << 32) | desc.AdapterLuid.LowPart;
+        info->software = !!(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE);
+        WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, (char *)info->description, sizeof(info->description) - 1, 0, 0);
+      }
+      adapter1->lpVtbl->Release(adapter1);
+    }
+    if(FAILED(r_d3d11_state->base_device->lpVtbl->QueryInterface(r_d3d11_state->base_device, &IID_ID3D11Device5, (void **)&r_d3d11_state->device5)))
+    {
+      r_d3d11_state->device5 = 0;
+    }
+    if(FAILED(r_d3d11_state->base_device_ctx->lpVtbl->QueryInterface(r_d3d11_state->base_device_ctx, &IID_ID3D11DeviceContext4, (void **)&r_d3d11_state->device_ctx4)))
+    {
+      r_d3d11_state->device_ctx4 = 0;
+    }
+    info->shared_timelines = r_d3d11_state->device5 != 0 && r_d3d11_state->device_ctx4 != 0;
+  }
   
   //- rjf: create main rasterizer
   ProfScope("create main rasterizer")
@@ -2072,6 +2172,146 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
       if(stage_color_srv != 0)  { stage_color_srv->lpVtbl->Release(stage_color_srv); }
       if(stage_color_rtv != 0)  { stage_color_rtv->lpVtbl->Release(stage_color_rtv); }
       if(stage_color != 0)      { stage_color->lpVtbl->Release(stage_color); }
+    }
+  }
+  return result;
+}
+
+//- adapter identity and frames shared by other processes
+
+r_hook R_AdapterInfo
+r_adapter_info(void)
+{
+  return r_d3d11_state->adapter;
+}
+
+r_hook void *
+r_native_device(void)
+{
+  return r_d3d11_state->base_device;
+}
+
+r_hook R_Handle
+r_tex2d_open_shared(void *os_handle)
+{
+  R_Handle result = {0};
+  MutexScopeW(r_d3d11_state->device_rw_mutex)
+  {
+    ID3D11Texture2D *shared = 0;
+    ID3D11ShaderResourceView *view = 0;
+    D3D11_TEXTURE2D_DESC desc = {0};
+    R_Tex2DFormat format = R_Tex2DFormat_BGRA8;
+    B32 good = SUCCEEDED(r_d3d11_state->device->lpVtbl->OpenSharedResource1(r_d3d11_state->device, (HANDLE)os_handle, &IID_ID3D11Texture2D, (void **)&shared));
+    if(good)
+    {
+      shared->lpVtbl->GetDesc(shared, &desc);
+      switch(desc.Format)
+      {
+        case DXGI_FORMAT_B8G8R8A8_UNORM:{format = R_Tex2DFormat_BGRA8;}break;
+        case DXGI_FORMAT_R8G8B8A8_UNORM:{format = R_Tex2DFormat_RGBA8;}break;
+        default:{good = 0;}break;
+      }
+    }
+    good = good && SUCCEEDED(r_d3d11_state->device->lpVtbl->CreateShaderResourceView(r_d3d11_state->device, (ID3D11Resource *)shared, 0, &view));
+    if(good)
+    {
+      R_D3D11_Tex2D *texture = r_d3d11_state->first_free_tex2d;
+      if(texture == 0)
+      {
+        texture = push_array(r_d3d11_state->arena, R_D3D11_Tex2D, 1);
+      }
+      else
+      {
+        U64 gen = texture->generation;
+        SLLStackPop(r_d3d11_state->first_free_tex2d);
+        MemoryZeroStruct(texture);
+        texture->generation = gen;
+      }
+      texture->generation += 1;
+      texture->texture = shared;
+      texture->view = view;
+      texture->kind = R_ResourceKind_Static;
+      texture->size = v2s32((S32)desc.Width, (S32)desc.Height);
+      texture->format = format;
+      result = r_d3d11_handle_from_tex2d(texture);
+    }
+    else
+    {
+      if(view != 0) { view->lpVtbl->Release(view); }
+      if(shared != 0) { shared->lpVtbl->Release(shared); }
+    }
+  }
+  return result;
+}
+
+r_hook R_Handle
+r_timeline_alloc_shared(void)
+{
+  R_Handle result = {0};
+  ID3D11Fence *fence = 0;
+  if(r_d3d11_state->device5 != 0 &&
+     SUCCEEDED(r_d3d11_state->device5->lpVtbl->CreateFence(r_d3d11_state->device5, 0, D3D11_FENCE_FLAG_SHARED, &IID_ID3D11Fence, (void **)&fence)))
+  {
+    result.u64[0] = (U64)fence;
+  }
+  return result;
+}
+
+r_hook R_Handle
+r_timeline_open_shared(void *os_handle)
+{
+  R_Handle result = {0};
+  ID3D11Fence *fence = 0;
+  if(r_d3d11_state->device5 != 0 &&
+     SUCCEEDED(r_d3d11_state->device5->lpVtbl->OpenSharedFence(r_d3d11_state->device5, (HANDLE)os_handle, &IID_ID3D11Fence, (void **)&fence)))
+  {
+    result.u64[0] = (U64)fence;
+  }
+  return result;
+}
+
+r_hook void
+r_timeline_release(R_Handle timeline)
+{
+  // D3D11 keeps the fence alive for waits and signals already queued on it.
+  ID3D11Fence *fence = (ID3D11Fence *)timeline.u64[0];
+  if(fence != 0)
+  {
+    fence->lpVtbl->Release(fence);
+  }
+}
+
+r_hook void *
+r_native_timeline(R_Handle timeline)
+{
+  return (void *)timeline.u64[0];
+}
+
+r_hook B32
+r_queue_wait(R_Handle timeline, U64 value)
+{
+  B32 result = 0;
+  ID3D11Fence *fence = (ID3D11Fence *)timeline.u64[0];
+  MutexScopeW(r_d3d11_state->device_rw_mutex)
+  {
+    result = (fence != 0 && r_d3d11_state->device_ctx4 != 0 &&
+              SUCCEEDED(r_d3d11_state->device_ctx4->lpVtbl->Wait(r_d3d11_state->device_ctx4, fence, value)));
+  }
+  return result;
+}
+
+r_hook B32
+r_queue_signal(R_Handle timeline, U64 value)
+{
+  B32 result = 0;
+  ID3D11Fence *fence = (ID3D11Fence *)timeline.u64[0];
+  MutexScopeW(r_d3d11_state->device_rw_mutex)
+  {
+    result = (fence != 0 && r_d3d11_state->device_ctx4 != 0 &&
+              SUCCEEDED(r_d3d11_state->device_ctx4->lpVtbl->Signal(r_d3d11_state->device_ctx4, fence, value)));
+    if(result)
+    {
+      r_d3d11_state->device_ctx->lpVtbl->Flush(r_d3d11_state->device_ctx);
     }
   }
   return result;
