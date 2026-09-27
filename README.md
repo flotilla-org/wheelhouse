@@ -138,9 +138,12 @@ shell recipe can open too. It does not use the legacy grouping tree in Andamento
 Zellij template, which native snapshots deliberately omit.
 
 Use a Flotilla binary with the HTTP/UDS `pm connect` sink. The launcher
-currently defaults to `../flotilla/target/debug/flotilla` and does not rebuild
-Flotilla or start a Zellij session. [Issue #30](https://github.com/flotilla-org/wheelhouse/issues/30)
-tracks changing that default to the installed fleet binary.
+prefers `~/.local/opt/flotilla-fleet/current/bin/flotilla` when installed, following
+`current` to the fleet generation on launch and connector retries. Without a fleet
+install it uses `${FLOTILLA_ROOT:-../flotilla}/target/debug/flotilla`.
+`FLOTILLA_BIN` overrides both. It does not rebuild Flotilla or start a Zellij session.
+If the connector reports a wire build mismatch, the launcher prints both builds
+and a `FLOTILLA_BIN` hint; the full diagnostic remains in `logs/flotilla.log`.
 
 ```sh
 # Git facts only; no Flotilla binary or daemon needed.
@@ -206,3 +209,17 @@ adapter with a small C boundary. Andamento's core remains transport-independent.
 Ingress is opt-in; Windows builds retain the fixture sidebar but reject the
 Unix listener option. Clean application shutdown removes its socket. After a
 crash, remove the stale socket before restarting with the same path.
+
+### Terminal selection
+
+Shift-drag selects linear terminal text, even when the child application captures
+mouse input. Shift-Option-drag on macOS selects a rectangle; on Linux and Windows,
+use Shift-Alt-drag. The mode is fixed when the left button goes down and lasts
+through release, even if you release the modifiers first. Copy with Cmd-C on macOS
+or Ctrl-Shift-C elsewhere; releasing the drag also updates the middle-click
+selection buffer.
+
+Rectangles include both endpoint cells and preserve blank cells and trailing
+spaces, with one slice per physical screen row, including wrapped lines. A wide
+character is copied once when both its cells are inside the rectangle; a clipped
+half is copied as a space. Ordinary linear selection still trims trailing spaces.

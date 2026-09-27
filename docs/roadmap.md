@@ -37,8 +37,10 @@ implement. Later design items below are deferred, not blockers for current fixes
 1. **Finish terminal reliability follow-through.** [Cursor flicker #75](https://github.com/flotilla-org/wheelhouse/issues/75)
    needs the merged Cleat synchronized-output fix adopted and verified in the
    live attachment path. [Stopped-terminal lifecycle #88](https://github.com/flotilla-org/wheelhouse/issues/88)
-   defines retained content, resource release, and exited versus disconnected
-   behavior beyond the completed busy-loop fix.
+   is investigated in [Stopped and disconnected terminal lifecycles](design/stopped-and-disconnected-terminals.md).
+   The note defines retained content, resource release, and exited versus
+   disconnected behavior beyond the completed busy-loop fix; shared API work
+   is tracked in [Cleat #277](https://github.com/flotilla-org/cleat/issues/277).
    [Cleat admission adoption #97](https://github.com/flotilla-org/wheelhouse/issues/97)
    bumps the Cleat pin past output-cycle admission (Cleat #268), which is a
    restart boundary for daemons, Wheelhouse and containing sessions together.

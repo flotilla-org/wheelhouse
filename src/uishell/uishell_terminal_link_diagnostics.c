@@ -20,6 +20,7 @@ uishell_terminal_link_diagnostics(void)
   LinkCheck(!uishell_terminal_link_modifier(0));
   LinkCheck(!uishell_terminal_link_modifier(modifier|WM_Modifier_Shift));
   LinkCheck(!uishell_terminal_link_modifier(modifier|WM_Modifier_Alt));
+  LinkCheck(!uishell_terminal_link_modifier(modifier|WM_Modifier_Shift|WM_Modifier_Alt));
   B32 held = 0;
   LinkCheck(!uishell_terminal_link_claim(&held, 1, 0, 0)); // plain press belongs to selection/app
   LinkCheck(!uishell_terminal_link_claim(&held, 0, 1, 1)); // adding modifier on release cannot activate
