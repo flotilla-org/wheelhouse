@@ -14,9 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Includes exited-session idle handling (#246), wake re-arming (#239),
-  # and bundled Windows ConPTY (#235).
-  CLEAT_REV: 081c566725771ae6bd64fdfc4da82683b85079e8
+  # Frame-owned OSC 8 destinations and attach relay (cleat#276), ABI 10.
+  CLEAT_REV: c58f0222266f1a44639dd92c2c0733f9b1105d47
   # D3D11 frames in the C ABI (0.10, jackstay#46) and a host's own exchange
   # before setup (0.11, jackstay#48, which Porthole capture sessions need).
   # Pinned to jackstay#48's branch commit until it merges; then its squash commit.
@@ -137,6 +136,7 @@ jobs:
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
+          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
       - name: macOS UI diagnostics
@@ -147,6 +147,7 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
           ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
+          ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
           ./build/wheelhouse --user:"$task_dir/managed-user" --project:"$task_dir/managed-project" --managed_content_diagnostics

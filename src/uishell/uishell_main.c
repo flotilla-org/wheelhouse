@@ -94,6 +94,7 @@
 #include "shell/shell_inc.c"
 #include "uishell/uishell_scroll_diagnostics.c"
 #include "uishell/uishell_tooltip_diagnostics.c"
+#include "uishell/uishell_terminal_link_diagnostics.c"
 #include "uishell/uishell_preview_diagnostics.c"
 #include "uishell/uishell_panel_diagnostics.c"
 #include "uishell/uishell_managed_content_diagnostics.c"
@@ -132,6 +133,9 @@ frame(void)
 internal void
 entry_point(CmdLine *cmd_line)
 {
+  // Pure terminal model checks also run in headless build environments.
+  if(cmd_line_has_flag(cmd_line, str8_lit("terminal_link_diagnostics")))
+  { abort_self(uishell_terminal_link_diagnostics() ? 0 : 1); }
   ExecMode exec_mode = ExecMode_Normal;
   if(cmd_line_has_flag(cmd_line, str8_lit("?")) ||
      cmd_line_has_flag(cmd_line, str8_lit("help")))
