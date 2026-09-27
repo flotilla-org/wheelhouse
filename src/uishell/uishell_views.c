@@ -3330,8 +3330,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   B32 fixture_mode = str8_match(view_cfg->string, str8_lit("terminal_fixture"), 0);
   B32 benchmark_mode = uishell_overview_benchmark.enabled &&
     cfg_node_child_from_string(view_cfg, str8_lit("overview_fixture")) != &cfg_nil_node;
-  B32 benchmark_metrics = benchmark_mode || (uishell_overview_benchmark.enabled &&
-    cfg_node_child_from_string(view_cfg, str8_lit("overview_live")) != &cfg_nil_node);
+  UIShell_TerminalMetrics *metrics = uishell_terminal_metrics;
   F32 main_font_size = rd_font_size();
   FNT_Tag cell_font = rd_font_from_slot(RD_FontSlot_Code);
   FNT_RasterFlags cell_font_raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Code);
@@ -3383,11 +3382,11 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
                              !uishell_terminal_preview_admit_start(tv, background_preview);
   if(!fixture_mode && !benchmark_mode && !tv->initialized && !defer_terminal_start)
   {
-    U64 provider_start_us = benchmark_metrics ? now_time_us() : 0;
-    if(benchmark_metrics)
+    U64 provider_start_us = metrics != 0 ? now_time_us() : 0;
+    if(metrics != 0)
     {
-      uishell_overview_benchmark.provider_starts++;
-      uishell_overview_benchmark.background_starts += background_preview;
+      metrics->provider_starts++;
+      metrics->background_starts += background_preview;
     }
     tv->initialized = 1;
     // backend selection is per-view workspace config: `daemon:1` (optionally
@@ -3461,7 +3460,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         }
       }
     }
-    if(benchmark_metrics) { uishell_overview_benchmark.provider_start_us += now_time_us()-provider_start_us; }
+    if(metrics != 0) { metrics->provider_start_us += now_time_us()-provider_start_us; }
   }
   B32 session_ready = (!fixture_mode && tv->provider != 0 && tv->session != 0);
   for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
@@ -3476,11 +3475,11 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   {
     tv->cols = cols;
     tv->rows = rows;
-    U64 resize_begin_us = benchmark_metrics ? now_time_us() : 0;
-    if(benchmark_metrics && (view_dim.x <= 0 || view_dim.y <= 0))
-    { uishell_overview_benchmark.empty_layout_resizes++; }
+    U64 resize_begin_us = metrics != 0 ? now_time_us() : 0;
+    if(metrics != 0 && (view_dim.x <= 0 || view_dim.y <= 0))
+    { metrics->empty_layout_resizes++; }
     cleat_session_resize(tv->session, cols, rows);
-    if(benchmark_metrics) { uishell_overview_benchmark.provider_resize_us += now_time_us()-resize_begin_us; }
+    if(metrics != 0) { metrics->provider_resize_us += now_time_us()-resize_begin_us; }
   }
   UI_Box *terminal_root_box = &ui_nil_box;
   {
@@ -3990,21 +3989,21 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     else
     {
       if(benchmark_mode) { uishell_overview_benchmark_feed(view_cfg, &tv->cell_cache, &tv->image_cache, cols, rows); }
-      U64 update_begin_us = benchmark_metrics ? now_time_us() : 0;
+      U64 update_begin_us = metrics != 0 ? now_time_us() : 0;
       cleat_dirty_state dirty = benchmark_mode ? CLEAT_DIRTY_CLEAN : cleat_session_poll(tv->session);
       B32 needs_update = !benchmark_mode && (dirty != CLEAT_DIRTY_CLEAN || tv->cell_cache.cells == 0);
       if(!background_preview || !needs_update) { uishell_terminal_preview_dequeue(&uishell_terminal_preview_updates, &tv->preview_update); }
       B32 admit_update = needs_update && uishell_terminal_preview_admit_update(tv, background_preview);
-      if(benchmark_metrics && needs_update && !admit_update) { uishell_overview_benchmark.snapshot_deferred++; }
+      if(metrics != 0 && needs_update && !admit_update) { metrics->snapshot_deferred++; }
       if(admit_update)
       {
         cleat_render_update update = {0};
         if(cleat_session_render_update(tv->session, &update))
         {
-          if(benchmark_metrics)
+          if(metrics != 0)
           {
-            uishell_overview_benchmark.updates++;
-            uishell_overview_benchmark.background_updates += background_preview;
+            metrics->updates++;
+            metrics->background_updates += background_preview;
           }
           uishell_terminal_cell_cache_apply_render_update(&tv->cell_cache, &update);
           uishell_terminal_image_cache_apply_render_update(&tv->image_cache, tv->session, &update);
@@ -4013,7 +4012,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           cleat_session_release_render_update(tv->session, &update);
         }
       }
-      if(benchmark_metrics) { uishell_overview_benchmark.provider_update_us += now_time_us()-update_begin_us; }
+      if(metrics != 0) { metrics->provider_update_us += now_time_us()-update_begin_us; }
       // Recompute hover from the frame being drawn, including under a stationary
       // pointer. No retained URI survives a content/viewport update.
       if(ui_hovering(canvas_sig) && !tv->selecting && !tv->link_gesture &&
@@ -4120,16 +4119,16 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           // An observed producer update may be its last wake. Keep requesting
           // frames until this bounded refresh deadline so it cannot stay stale.
           rd_request_frame();
-          if(benchmark_metrics) { uishell_overview_benchmark.deferred++; }
+          if(metrics != 0) { metrics->deferred++; }
         }
-        if(benchmark_metrics) { uishell_overview_benchmark.terminal_visits++; }
+        if(metrics != 0) { metrics->terminal_visits++; }
         if(tv->retained_bucket == 0 || (!defer_content && tv->retained_bucket_key != bucket_key) || trace_this_draw)
         {
-          U64 benchmark_glyph_begin_us = benchmark_metrics ? now_time_us() : 0;
-          if(benchmark_metrics)
+          U64 glyph_begin_us = metrics != 0 ? now_time_us() : 0;
+          if(metrics != 0)
           {
-            uishell_overview_benchmark.rebuilds++;
-            uishell_overview_benchmark.cells_built += feed.cell_count;
+            metrics->rebuilds++;
+            metrics->cells_built += feed.cell_count;
           }
           if(tv->retained_bucket_arena == 0)
           {
@@ -4179,8 +4178,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           tv->retained_bucket_style_key = style_key;
           tv->retained_bucket_has_images = tv->image_cache.placement_count != 0;
           tv->retained_bucket_time_us = now_us;
-          if(benchmark_metrics)
-          { uishell_overview_benchmark.glyph_us += now_time_us()-benchmark_glyph_begin_us; }
+          if(metrics != 0)
+          { metrics->glyph_us += now_time_us()-glyph_begin_us; }
         }
         // The surface version describes what is displayed, not a newer feed
         // whose drawing has intentionally been deferred.

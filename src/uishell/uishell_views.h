@@ -4,6 +4,18 @@
 #ifndef UISHELL_VIEWS_H
 #define UISHELL_VIEWS_H
 
+// Optional terminal measurements, independent of the workload driving the views.
+// The collector owns storage and resets it at the start of each measured frame.
+typedef struct UIShell_TerminalMetrics UIShell_TerminalMetrics;
+struct UIShell_TerminalMetrics
+{
+  U64 provider_starts, provider_start_us, background_starts;
+  U64 provider_resize_us, provider_update_us, empty_layout_resizes;
+  U64 background_updates, snapshot_deferred;
+  U64 deferred, glyph_us, rebuilds, cells_built, terminal_visits, updates;
+};
+global UIShell_TerminalMetrics *uishell_terminal_metrics;
+
 ////////////////////////////////
 //~ rjf: Shell View Hooks
 

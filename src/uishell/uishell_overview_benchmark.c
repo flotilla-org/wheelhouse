@@ -25,6 +25,11 @@ uishell_overview_benchmark_init(CmdLine *cmd)
   b->busy = cmd_line_has_flag(cmd, str8_lit("overview_benchmark_busy"));
   b->interrupt = cmd_line_has_flag(cmd, str8_lit("overview_benchmark_interrupt"));
   b->enabled = 1;
+  rd_state->frame_metrics = &b->shell_metrics;
+  uishell_terminal_metrics = &b->terminal_metrics;
+  rd_state->frame_replay.fixed_dt = b->interactive ? 0 : 1.f/60.f;
+  rd_state->frame_replay.suppress_input = !b->interactive;
+  rd_state->frame_replay.prepare_window = uishell_overview_benchmark_window;
   b->phase_frames = 30;
   b->screenshots = !cmd_line_has_flag(cmd, str8_lit("overview_benchmark_no_screenshots"));
   String8 path = push_str8f(rd_state->arena, "%S/frames.csv", b->directory);
@@ -38,14 +43,10 @@ uishell_overview_benchmark_begin(void)
 {
   UIShell_OverviewBenchmark *b = &uishell_overview_benchmark;
   if(!b->enabled) { return; }
-  b->deferred = b->rebuilds = b->cells_built = b->terminal_visits = b->updates = b->surface_allocations = 0;
-  b->surface_us = b->glyph_us = b->window_us = 0;
-  b->surface_admissions = b->surface_deferred = b->background_surface_redraws = 0;
-  b->provider_starts = b->provider_start_us = b->background_starts = 0;
-  b->provider_resize_us = b->provider_update_us = b->empty_layout_resizes = b->event_wait_us = 0;
-  b->background_updates = b->snapshot_deferred = 0;
-  b->begin_us = now_time_us();
-  b->source_frame = b->interactive ? (U32)((b->begin_us-b->start_us)*60/1000000) : Min(b->frame, 7*b->phase_frames);
+  MemoryZeroStruct(&b->shell_metrics);
+  MemoryZeroStruct(&b->terminal_metrics);
+  b->shell_metrics.begin_us = now_time_us();
+  b->source_frame = b->interactive ? (U32)((b->shell_metrics.begin_us-b->start_us)*60/1000000) : Min(b->frame, 7*b->phase_frames);
   if(!b->live) { rd_request_frame(); }
 }
 
@@ -78,7 +79,7 @@ uishell_overview_benchmark_window(RD_WindowState *ws)
   }
   if(b->live && b->live_transitions)
   {
-    U32 phase = Min(5, (b->begin_us-b->start_us)/2000000);
+    U32 phase = Min(5, (b->shell_metrics.begin_us-b->start_us)/2000000);
     if(phase != b->live_phase)
     {
       b->live_phase = phase;
@@ -171,7 +172,7 @@ uishell_overview_benchmark_feed(CFG_Node *view, UIShell_TerminalCellCache *cache
   }
   uishell_terminal_cell_cache_apply_render_update(cache, &update);
   uishell_terminal_image_cache_apply_render_update(images, 0, &update);
-  b->updates++;
+  b->terminal_metrics.updates++;
   scratch_end(scratch);
 }
 
@@ -227,7 +228,7 @@ uishell_overview_benchmark_end(void)
 {
   UIShell_OverviewBenchmark *b = &uishell_overview_benchmark;
   if(!b->enabled || !b->initialized) { return; }
-  U64 elapsed = now_time_us()-b->begin_us;
+  U64 elapsed = now_time_us()-b->shell_metrics.begin_us;
   RD_WindowState *ws = rd_state->first_window_state;
   if(ws == &rd_nil_window_state)
   {
@@ -306,27 +307,27 @@ uishell_overview_benchmark_end(void)
   Vec2F32 dim=dim_2f32(wm_client_rect_from_window(ws->os));
   U32 phase=b->live ? (b->live_transitions ? b->live_phase : 0) : b->frame/b->phase_frames;
   fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
-    b->frame,phase,(unsigned long long)elapsed,(unsigned long long)b->build_us,(unsigned long long)b->deferred,(unsigned long long)b->rebuilds,
-    (unsigned long long)b->cells_built,(unsigned long long)b->terminal_visits,
-    (unsigned long long)b->updates,(unsigned long long)b->surface_allocations,
+    b->frame,phase,(unsigned long long)elapsed,(unsigned long long)b->shell_metrics.build_us,(unsigned long long)b->terminal_metrics.deferred,(unsigned long long)b->terminal_metrics.rebuilds,
+    (unsigned long long)b->terminal_metrics.cells_built,(unsigned long long)b->terminal_metrics.terminal_visits,
+    (unsigned long long)b->terminal_metrics.updates,(unsigned long long)b->shell_metrics.surface_allocations,
     (unsigned long long)pixels,ws->workspace_zoom_t,dim.x,dim.y,
-    (unsigned long long)b->surface_us,(unsigned long long)b->glyph_us,(unsigned long long)b->window_us,
-    (unsigned long long)b->surface_admissions,(unsigned long long)b->surface_deferred,(unsigned long long)instances,
-    (unsigned long long)b->provider_starts,(unsigned long long)b->provider_start_us,
-    (unsigned long long)b->background_starts,(unsigned long long)live_final_count,
-    (unsigned long long)b->provider_resize_us,(unsigned long long)b->provider_update_us,
-    (unsigned long long)b->empty_layout_resizes,(unsigned long long)b->event_wait_us,
-    (unsigned long long)b->background_updates,(unsigned long long)b->snapshot_deferred,
+    (unsigned long long)b->shell_metrics.surface_us,(unsigned long long)b->terminal_metrics.glyph_us,(unsigned long long)b->shell_metrics.window_us,
+    (unsigned long long)b->shell_metrics.surface_admissions,(unsigned long long)b->shell_metrics.surface_deferred,(unsigned long long)instances,
+    (unsigned long long)b->terminal_metrics.provider_starts,(unsigned long long)b->terminal_metrics.provider_start_us,
+    (unsigned long long)b->terminal_metrics.background_starts,(unsigned long long)live_final_count,
+    (unsigned long long)b->terminal_metrics.provider_resize_us,(unsigned long long)b->terminal_metrics.provider_update_us,
+    (unsigned long long)b->terminal_metrics.empty_layout_resizes,(unsigned long long)b->shell_metrics.event_wait_us,
+    (unsigned long long)b->terminal_metrics.background_updates,(unsigned long long)b->terminal_metrics.snapshot_deferred,
     (unsigned long long)live_image_terminals,(unsigned long long)live_image_resources,(unsigned long long)live_image_seen,
-    (unsigned long long)b->background_surface_redraws);
+    (unsigned long long)b->shell_metrics.background_surface_redraws);
   fflush(b->metrics);
   if(b->interactive && (!b->live || !b->screenshots)) { b->frame += 1; return; }
   B32 phase_checkpoint = b->frame%b->phase_frames == b->phase_frames-1;
   if(b->live)
   {
-    B32 drained = live_final_count == b->count && b->deferred == 0 &&
-                  b->surface_deferred == 0 && b->snapshot_deferred == 0 &&
-                  b->updates == 0 && b->rebuilds == 0 && b->surface_admissions == 0;
+    B32 drained = live_final_count == b->count && b->terminal_metrics.deferred == 0 &&
+                  b->shell_metrics.surface_deferred == 0 && b->terminal_metrics.snapshot_deferred == 0 &&
+                  b->terminal_metrics.updates == 0 && b->terminal_metrics.rebuilds == 0 && b->shell_metrics.surface_admissions == 0;
     if(drained) { phase = 6; }
     phase_checkpoint = !(b->live_checkpoint_mask & (1u << phase)) &&
                        (drained || now_time_us()-b->start_us >= (2*phase+1)*1000000ull);

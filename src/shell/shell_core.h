@@ -746,6 +746,26 @@ struct RD_AmbiguousPathNode
   String8List paths;
 };
 
+// Optional caller-owned measurements. The collector resets these at frame start;
+// ordinary rendering only accumulates them when a collector is attached.
+typedef struct RD_FrameMetrics RD_FrameMetrics;
+struct RD_FrameMetrics
+{
+  U64 begin_us, build_us, window_us, event_wait_us;
+  U64 surface_us, surface_allocations;
+  U64 surface_admissions, surface_deferred, background_surface_redraws;
+};
+
+// A replay can control time/input and prepare window state without teaching the
+// shell about a particular workload. Zero fields preserve normal interaction.
+typedef struct RD_FrameReplay RD_FrameReplay;
+struct RD_FrameReplay
+{
+  F32 fixed_dt;
+  B32 suppress_input;
+  void (*prepare_window)(RD_WindowState *ws);
+};
+
 typedef struct RD_State RD_State;
 struct RD_State
 {
@@ -755,6 +775,8 @@ struct RD_State
   B32 quit_after_success;
   // One-shot native diagnostics requiring the live frame evaluation context.
   B32 (*frame_diagnostic)(RD_WindowState *ws);
+  RD_FrameMetrics *frame_metrics;
+  RD_FrameReplay frame_replay;
   B32 preview_render_budget;
   B32 preview_surface_budget;
   B32 preview_refresh_budget; // temporal detail for small terminal previews
