@@ -103,3 +103,42 @@ All seven native diagnostics passed (`local/live-release-diagnostics`), includin
 the queue lifetime tests. Two all-scrolling interrupted synthetic replays also
 passed (`local/live-changes-replay`). The final candidate's live-provider rerun
 is recorded separately in `local/live-final-candidate`.
+
+## Image replacement and deletion
+
+The live source also supports `--images`: it alternates two 16×16 RGBA images
+under one Kitty image ID, deletes them every third update, and deletes all
+placements before its final text marker. This exercises texture replacement while
+other workspace surfaces are queued, without turning the workload into a decode
+throughput test.
+
+```sh
+python3 tools/benchmark-overview-live.py \
+  --output local/live-images-check --transitions --images --screenshots
+```
+
+The runner checks that every terminal consumed an image placement, same-ID
+replacement did not accumulate resources, final placements disappeared, and the
+frame loop went idle. Optional Metal readbacks capture each transition phase and
+the settled final overview. Pixel checks require both source colours to appear
+and neither to remain in the final capture. These are simple solid-colour
+lifecycle checks, not general image fidelity tests. Readbacks synchronize the GPU;
+omit `--screenshots` for timing runs without that additional interference.
+
+The first version of the test incorrectly required cached resources to disappear
+with placements. The current provider ABI exposes placement-derived resources;
+Wheelhouse deliberately retains unplaced assets below its quota. The correct
+expectation here is zero placements and at most one cached resource per terminal.
+The first final capture also ran on the frame that consumed the last update,
+before the composed preview reflected it. Final readback now waits for a frame
+with no updates, bucket rebuilds, surface admissions or pending preview work.
+
+`local/live-images-settled` passed with all 48 final markers, bounded resources,
+no final image-colour pixels, and eventual idle. Worst active frame was 32.03 ms;
+first paint was 197.72 ms. This uses the same optimized-C/debug-Rust build as the
+previous measurements. Neither small-image coverage nor scripted transitions
+establish physical mouse responsiveness or large-image decode performance.
+
+The final runner, including its automated pixel assertions, passed separately in
+`local/live-images-pixel-gate`: 36.42 ms worst active frame, 189.87 ms first paint,
+all 48 final markers and no failed checks.

@@ -30,6 +30,8 @@ def main():
     parser.add_argument('--timeout', type=float, default=40)
     parser.add_argument('--max-frame-ms', type=float, default=50)
     parser.add_argument('--no-render-budget', action='store_true')
+    parser.add_argument('--screenshots', action='store_true', help='capture phase readbacks; adds GPU synchronization')
+    parser.add_argument('--images', action='store_true')
     parser.add_argument('--transitions', action='store_true')
     args = parser.parse_args()
     if sys.platform != 'darwin':
@@ -43,10 +45,14 @@ def main():
     (output / 'user').write_text('window:\n{\n size: 1200 800\n}\n')
     command = shlex.join([sys.executable, str(source), '--duration', '14' if args.transitions else '8',
                           '--quiet-seconds', str(args.timeout)])
+    if args.images:
+        command += ' --images'
     launch = [str(binary), f'--user:{output}/user', f'--project:{output}/project',
               f'--overview_benchmark:{output}', f'--overview_benchmark_count:{args.count}',
               f'--overview_benchmark_command:{command}',
               '--preview_refresh_budget', '--preview_surface_budget']
+    if not args.screenshots:
+        launch.append('--overview_benchmark_no_screenshots')
     if args.transitions:
         launch.append('--overview_benchmark_live_transitions')
     if not args.no_render_budget:
@@ -96,6 +102,40 @@ def main():
         failures.append('background provider starts exceeded their per-frame limit')
     if not args.no_render_budget and max(row['background_updates'] for row in frames) > 4:
         failures.append('background snapshot fetches exceeded their per-frame limit')
+    if args.images:
+        if frames[-1]['live_image_seen'] != args.count:
+            failures.append('not all terminals consumed an image placement')
+        if frames[-1]['live_image_terminals'] != 0:
+            failures.append('final image deletion did not clear placements')
+        # The current ABI exposes placement-derived resources, so the image
+        # cache retains unplaced assets below its quota. One reused ID per
+        # terminal must remain bounded even across replacement/deletion cycles.
+        if max(row['live_image_resources'] for row in frames) > args.count:
+            failures.append('same-ID replacements accumulated image resources')
+    if args.screenshots:
+        expected_phases = range(7) if args.transitions else (0, 6)
+        captures = {}
+        for phase in expected_phases:
+            path = output / f'phase-{phase}.ppm'
+            if not path.exists():
+                failures.append(f'missing rendered checkpoint {phase}')
+                continue
+            magic, dimensions, maximum, pixels = path.read_bytes().split(b'\n', 3)
+            width, height = map(int, dimensions.split())
+            if magic != b'P6' or maximum != b'255' or len(pixels) != width * height * 3:
+                raise RuntimeError(f'invalid checkpoint: {path}')
+            colours = ((240, 40, 80), (30, 220, 180))
+            counts = dict.fromkeys(colours, 0)
+            for pixel in zip(pixels[::3], pixels[1::3], pixels[2::3]):
+                if pixel in counts:
+                    counts[pixel] += 1
+            captures[phase] = counts
+        if args.images:
+            for colour in ((240, 40, 80), (30, 220, 180)):
+                if not any(counts[colour] > 0 for phase, counts in captures.items() if phase != 6):
+                    failures.append(f'image colour {colour} absent from rendered checkpoints')
+            if 6 in captures and any(captures[6].values()):
+                failures.append('deleted image pixels remain in the settled overview')
     # First paint includes native-window/font initialization. Report it separately;
     # every subsequent frame, including the remaining provider starts, is gated.
     worst = max((row['frame_us']-row['event_wait_us']) / 1000 for row in frames[1:])
@@ -114,6 +154,7 @@ def main():
               'phases': phases, 'count': args.count, 'frames': len(frames),
               'first_paint_ms': frames[0]['frame_us'] / 1000,
               'active_frame_max_ms': worst, 'event_wait_total_ms': sum(r['event_wait_us'] for r in frames)/1000, 'final_terminals': frames[-1]['live_final_count'],
+              'images': args.images, 'screenshots': args.screenshots, 'peak_image_terminals': max(r['live_image_terminals'] for r in frames),
               'render_budget': not args.no_render_budget, 'failures': failures, 'samples': samples}
     (output / 'summary.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: v for k, v in report.items() if k != 'samples'}, indent=2))

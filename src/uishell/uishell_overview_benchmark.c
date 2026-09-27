@@ -30,7 +30,7 @@ uishell_overview_benchmark_init(CmdLine *cmd)
   String8 path = push_str8f(rd_state->arena, "%S/frames.csv", b->directory);
   b->metrics = fopen((char *)path.str, "w");
   if(b->metrics == 0) { fprintf(stderr, "cannot open benchmark metrics\n"); abort_self(2); }
-  fprintf(b->metrics, "frame,phase,frame_us,build_us,deferred,rebuilds,cells_built,terminal_visits,updates,surface_allocations,surface_pixels,zoom_t,width,height,surface_us,glyph_us,window_us,surface_admissions,surface_deferred,rect_instances,provider_starts,provider_start_us,background_starts,live_final_count,provider_resize_us,provider_update_us,empty_layout_resizes,event_wait_us,background_updates,snapshot_deferred\n");
+  fprintf(b->metrics, "frame,phase,frame_us,build_us,deferred,rebuilds,cells_built,terminal_visits,updates,surface_allocations,surface_pixels,zoom_t,width,height,surface_us,glyph_us,window_us,surface_admissions,surface_deferred,rect_instances,provider_starts,provider_start_us,background_starts,live_final_count,provider_resize_us,provider_update_us,empty_layout_resizes,event_wait_us,background_updates,snapshot_deferred,live_image_terminals,live_image_resources,live_image_seen\n");
 }
 
 internal void
@@ -270,7 +270,7 @@ uishell_overview_benchmark_end(void)
       { instances += g->batches.byte_count/g->batches.bytes_per_inst; }
     }
   }
-  U64 live_final_count = 0;
+  U64 live_final_count = 0, live_image_terminals = 0, live_image_resources = 0, live_image_seen = 0;
   if(b->live)
   {
     String8 marker = str8_lit("FINAL UPDATE");
@@ -278,6 +278,14 @@ uishell_overview_benchmark_end(void)
     {
       RD_ViewState *view = rd_view_state_from_cfg(cfg_node_from_id(b->views[i]));
       UIShell_TerminalViewState *terminal = (UIShell_TerminalViewState *)view->user_data;
+      if(terminal != 0)
+      {
+        live_image_terminals += terminal->image_cache.placement_count != 0;
+        b->live_image_seen[i] |= terminal->image_cache.placement_count != 0;
+        live_image_seen += b->live_image_seen[i];
+        for(UIShell_TerminalImageResource *r = terminal->image_cache.first_resource; r; r = r->next)
+        { live_image_resources += r->valid != 0; }
+      }
       if(terminal == 0 || terminal->cell_cache.cols < marker.size) { continue; }
       UIShell_TerminalCellCache *cache = &terminal->cell_cache;
       for(U32 row = 0; row < cache->rows; row += 1)
@@ -297,7 +305,7 @@ uishell_overview_benchmark_end(void)
   { pixels += (U64)n->size.x*n->size.y; }
   Vec2F32 dim=dim_2f32(wm_client_rect_from_window(ws->os));
   U32 phase=b->live ? (b->live_transitions ? b->live_phase : 0) : b->frame/b->phase_frames;
-  fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
+  fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
     b->frame,phase,(unsigned long long)elapsed,(unsigned long long)b->build_us,(unsigned long long)b->deferred,(unsigned long long)b->rebuilds,
     (unsigned long long)b->cells_built,(unsigned long long)b->terminal_visits,
     (unsigned long long)b->updates,(unsigned long long)b->surface_allocations,
@@ -308,11 +316,22 @@ uishell_overview_benchmark_end(void)
     (unsigned long long)b->background_starts,(unsigned long long)live_final_count,
     (unsigned long long)b->provider_resize_us,(unsigned long long)b->provider_update_us,
     (unsigned long long)b->empty_layout_resizes,(unsigned long long)b->event_wait_us,
-    (unsigned long long)b->background_updates,(unsigned long long)b->snapshot_deferred);
+    (unsigned long long)b->background_updates,(unsigned long long)b->snapshot_deferred,
+    (unsigned long long)live_image_terminals,(unsigned long long)live_image_resources,(unsigned long long)live_image_seen);
   fflush(b->metrics);
-  if(b->interactive) { b->frame += 1; return; }
+  if(b->interactive && (!b->live || !b->screenshots)) { b->frame += 1; return; }
   B32 phase_checkpoint = b->frame%b->phase_frames == b->phase_frames-1;
-  if(b->screenshots && (phase_checkpoint || b->frame == 31 || b->frame == 33 || b->frame == 37))
+  if(b->live)
+  {
+    B32 drained = live_final_count == b->count && b->deferred == 0 &&
+                  b->surface_deferred == 0 && b->snapshot_deferred == 0 &&
+                  b->updates == 0 && b->rebuilds == 0 && b->surface_admissions == 0;
+    if(drained) { phase = 6; }
+    phase_checkpoint = !(b->live_checkpoint_mask & (1u << phase)) &&
+                       (drained || now_time_us()-b->start_us >= (2*phase+1)*1000000ull);
+    if(phase_checkpoint) { b->live_checkpoint_mask |= 1u << phase; }
+  }
+  if(b->screenshots && (phase_checkpoint || (!b->live && (b->frame == 31 || b->frame == 33 || b->frame == 37))))
   {
     Temp scratch=scratch_begin(0,0);
     R_Readback rb=uishell_overview_benchmark_readback(scratch.arena, ws);
@@ -331,7 +350,7 @@ uishell_overview_benchmark_end(void)
     scratch_end(scratch);
   }
   b->frame++;
-  if(b->frame==8*b->phase_frames)
+  if(!b->interactive && b->frame==8*b->phase_frames)
   {
     fclose(b->metrics); b->metrics=0;
     // All terminal data is in-process fixture storage; there are no child sessions.

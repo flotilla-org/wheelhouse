@@ -8,7 +8,8 @@ struct UIShell_OverviewBenchmark
   B32 enabled, initialized, screenshots;
   U32 count, frame, phase_frames;
   B32 interrupt, busy, interactive, live, live_transitions;
-  U32 live_phase;
+  U32 live_phase, live_checkpoint_mask;
+  B32 live_image_seen[48];
   String8 command;
   U64 start_us;
   U32 source_frame;
