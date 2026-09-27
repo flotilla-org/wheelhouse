@@ -2208,6 +2208,7 @@ rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
   {
     r_tex2d_release(node->texture);
     node->texture = r_tex2d_alloc_render_target(size);
+    if(uishell_overview_benchmark.enabled) { uishell_overview_benchmark.surface_allocations++; }
     node->size = size;
     node->rendered_hash = 0;
   }
@@ -2224,6 +2225,7 @@ rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
     }
     node->key = key;
     node->texture = r_tex2d_alloc_render_target(size);
+    if(uishell_overview_benchmark.enabled) { uishell_overview_benchmark.surface_allocations++; }
     node->size = size;
     node->rendered_hash = 0;
     node->last_was_preserved = 0;
@@ -5140,7 +5142,9 @@ rd_window_frame(void)
       ui_set_active_scroll_bar_style(rd_setting_b32_from_name(str8_lit("overlay_scrollbars")) ? UI_ScrollBarStyle_Overlay : UI_ScrollBarStyle_Classic);
 
       // rjf: begin & push initial stack values
+      if(uishell_overview_benchmark.enabled) { MemoryZeroStruct(&ws->ui_events); }
       ui_begin_build(ws->os, &ws->ui_events, &icon_info, ws->theme, &animation_info, rd_state->frame_dt, rd_state->frame_dt);
+      if(uishell_overview_benchmark.enabled) { ui_state->mouse = v2f32(-10000, -10000); }
       ui_push_font(rd_font_from_slot(RD_FontSlot_Main));
       ui_push_font_size(top_level_font_size);
       ui_push_text_padding(floor_f32(ui_top_font_size()*0.3f));
@@ -9901,7 +9905,7 @@ rd_frame(void)
   //////////////////////////////
   //- rjf: target Hz -> delta time
   //
-  rd_state->frame_dt = 1.f/target_hz;
+  rd_state->frame_dt = uishell_overview_benchmark.enabled ? 1.f/60.f : 1.f/target_hz;
   
   //////////////////////////////
   //- rjf: begin measuring actual per-frame work
@@ -10767,6 +10771,7 @@ rd_frame(void)
       }
       uishell_push_regs();
       uishell_regs()->window = w->cfg_id;
+      uishell_overview_benchmark_window(w);
       rd_window_frame();
       if(rd_state->frame_diagnostic != 0)
       { abort_self(rd_state->frame_diagnostic(w) ? 0 : 1); }
@@ -10847,6 +10852,8 @@ rd_frame(void)
   //
   ProfScope("submit rendering to all windows")
   {
+    if(uishell_overview_benchmark.enabled)
+    { uishell_overview_benchmark.build_us = now_time_us()-uishell_overview_benchmark.begin_us; }
     r_begin_frame();
     for(RD_WindowState *w = rd_state->first_window_state; w != &rd_nil_window_state; w = w->order_next)
     {

@@ -3133,6 +3133,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   rd_view_state_from_cfg(cfg_node_from_id(uishell_regs()->view))->release_user_data = uishell_terminal_runtime_release;
   CFG_Node *view_cfg = cfg_node_from_id(uishell_regs()->view);
   B32 fixture_mode = str8_match(view_cfg->string, str8_lit("terminal_fixture"), 0);
+  B32 benchmark_mode = uishell_overview_benchmark.enabled &&
+    cfg_node_child_from_string(view_cfg, str8_lit("overview_fixture")) != &cfg_nil_node;
   F32 main_font_size = rd_font_size();
   FNT_Tag cell_font = rd_font_from_slot(RD_FontSlot_Code);
   FNT_RasterFlags cell_font_raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Code);
@@ -3178,7 +3180,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   U64 rows64 = ClampBot(1, (U64)(canvas_dim_target.y/cell_height_px));
   U16 cols = (U16)Min(cols64, 4096);
   U16 rows = (U16)Min(rows64, 4096);
-  if(!fixture_mode && !tv->initialized)
+  if(!fixture_mode && !benchmark_mode && !tv->initialized)
   {
     tv->initialized = 1;
     // backend selection is per-view workspace config: `daemon:1` (optionally
@@ -3731,14 +3733,15 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       }
       ui_box_equip_draw_bucket(canvas_box, terminal_bucket);
     }
-    else if(!session_ready)
+    else if(!session_ready && !benchmark_mode)
     {
       UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f)) ui_label(str8_lit("terminal provider unavailable"));
     }
     else
     {
-      cleat_dirty_state dirty = cleat_session_poll(tv->session);
-      if(dirty != CLEAT_DIRTY_CLEAN || tv->cell_cache.cells == 0)
+      if(benchmark_mode) { uishell_overview_benchmark_feed(view_cfg, &tv->cell_cache, cols, rows); }
+      cleat_dirty_state dirty = benchmark_mode ? CLEAT_DIRTY_CLEAN : cleat_session_poll(tv->session);
+      if(!benchmark_mode && (dirty != CLEAT_DIRTY_CLEAN || tv->cell_cache.cells == 0))
       {
         cleat_render_update update = {0};
         if(cleat_session_render_update(tv->session, &update))
@@ -3803,8 +3806,14 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         bucket_key_data.sel_cursor = tv->sel_cursor;
         U64 bucket_key = (u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1);
         rd_workspace_surface_contribute_version(bucket_key);
+        if(benchmark_mode) { uishell_overview_benchmark.terminal_visits++; }
         if(tv->retained_bucket == 0 || tv->retained_bucket_key != bucket_key || trace_this_draw)
         {
+          if(benchmark_mode)
+          {
+            uishell_overview_benchmark.rebuilds++;
+            uishell_overview_benchmark.cells_built += feed.cell_count;
+          }
           if(tv->retained_bucket_arena == 0)
           {
             tv->retained_bucket_arena = arena_alloc(.name = "terminal retained draw bucket");
