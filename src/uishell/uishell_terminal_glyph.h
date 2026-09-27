@@ -88,6 +88,7 @@ struct UIShell_TerminalCellCache
   U16 cols;
   U16 rows;
   cleat_cell *cells;
+  String8 *hyperlinks; // arena-owned, follows the same cell operations
   U64 cell_count;
   cleat_cursor cursor;
   cleat_terminal_scrollbar_state scrollbar;

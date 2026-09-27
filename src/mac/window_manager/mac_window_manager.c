@@ -1760,6 +1760,7 @@ wm_open_in_browser(String8 url)
 {
   Temp scratch = scratch_begin(0, 0);
   NSString *ns_url = mac_wm_ns_string_from_string8(scratch.arena, url);
-  [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:ns_url]];
+  NSURL *destination = [NSURL URLWithString:ns_url];
+  if(destination != 0) { [[NSWorkspace sharedWorkspace] openURL:destination]; }
   scratch_end(scratch);
 }

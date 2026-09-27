@@ -50,6 +50,8 @@ struct UIShell_TerminalViewState
   // authoritatively). Drives local-selection-vs-forward.
   U32 mouse_tracking_mode;
   // Local text selection (cursor/mark over grid cells, line=row column=col).
+  B32 link_gesture;     // owns left press, drag and release, even if modifiers change
+  B32 selection_rectangular; // latched at press, retained through release/copy
   B32 selecting;        // left button down, driving a selection this drag
   B32 has_selection;    // a non-empty selection exists
   TxtPt sel_mark;       // anchor (fixed end)
@@ -155,6 +157,75 @@ uishell_terminal_runtime_release(void *data)
                     tv->image_cache.arena, tv->image_cache.placement_arena};
   for(U64 i = 0; i < ArrayCount(arenas); i++) { if(arenas[i]) { arena_release(arenas[i]); } }
   MemoryZeroStruct(tv);
+}
+
+// Only explicit HTTP(S) OSC 8 destinations may launch a handler. Requiring
+// printable ASCII also excludes controls, embedded NULs and display bidi tricks;
+// international destinations can use percent encoding / punycode.
+internal B32
+uishell_terminal_link_allowed(String8 uri)
+{
+  U64 prefix = 0;
+  if(uri.size >= 7 && str8_match(str8_prefix(uri, 7), str8_lit("http://"), StringMatchFlag_CaseInsensitive)) { prefix = 7; }
+  if(uri.size >= 8 && str8_match(str8_prefix(uri, 8), str8_lit("https://"), StringMatchFlag_CaseInsensitive)) { prefix = 8; }
+  if(prefix == 0 || uri.size <= prefix || uri.str[prefix] == '/' || uri.str[prefix] == '?' || uri.str[prefix] == '#') { return 0; }
+  for(U64 i = 0; i < uri.size; i++)
+  {
+    if(uri.str[i] <= 32 || uri.str[i] >= 127 || uri.str[i] == '\\') { return 0; }
+  }
+  return 1;
+}
+
+internal String8
+uishell_terminal_link_display(Arena *arena, String8 uri)
+{
+  U8 *bytes = push_array(arena, U8, uri.size*4);
+  U64 size = 0;
+  U8 hex[] = "0123456789abcdef";
+  for(U64 i = 0; i < uri.size; i++)
+  {
+    U8 c = uri.str[i];
+    if(c >= 32 && c < 127 && c != '\\') { bytes[size++] = c; }
+    else
+    {
+      bytes[size++] = '\\'; bytes[size++] = 'x';
+      bytes[size++] = hex[c >> 4]; bytes[size++] = hex[c & 15];
+    }
+  }
+  return str8(bytes, size);
+}
+
+internal B32
+uishell_terminal_link_modifier(WM_Modifiers modifiers)
+{
+#if OS_MAC
+  return (modifiers & WM_Modifier_Super) && !(modifiers & (WM_Modifier_Ctrl|WM_Modifier_Alt|WM_Modifier_Shift));
+#else
+  return (modifiers & WM_Modifier_Ctrl) && !(modifiers & (WM_Modifier_Super|WM_Modifier_Alt|WM_Modifier_Shift));
+#endif
+}
+
+internal B32
+uishell_terminal_link_claim(B32 *held, B32 pressed, B32 released, B32 activate)
+{
+  // A new press also recovers from a release lost when the browser took focus.
+  if(pressed) { *held = activate; }
+  B32 consumed = *held;
+  if(released) { *held = 0; }
+  return consumed;
+}
+
+internal String8
+uishell_terminal_link_at(UIShell_TerminalCellCache *cache, U16 col, U16 row)
+{
+  if(cache->hyperlinks && col < cache->cols && row < cache->rows)
+  {
+    U64 idx = (U64)row*cache->cols + col;
+    // A wide glyph's trailing cell belongs to its leading cell.
+    if(cache->cells[idx].width == CLEAT_CELL_WIDTH_SPACER_TAIL && col > 0) { idx--; }
+    return cache->hyperlinks[idx];
+  }
+  return str8_zero();
 }
 
 internal B32
@@ -1032,6 +1103,14 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         String8 selected_cmd_name = rd_cmd_name_from_eval(eval);
         UIShell_RegsScope(.cmd_name = selected_cmd_name)
         {
+          // A palette is a temporary lister view. Run view-scoped actions on
+          // the view which opened it, as complete_query does for queried commands.
+          CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
+          RD_WindowState *ws = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
+          if(cfg_node_child_from_string(view, str8_lit("lister")) != &cfg_nil_node && ws->query_regs != 0)
+          {
+            uishell_regs()->view = ws->query_regs->view;
+          }
           uishell_cmd("run_command");
         }
       }break;
@@ -3208,6 +3287,38 @@ uishell_terminal_rgb_from_linear_rgba(Vec4F32 linear)
   return result;
 }
 
+// Hosting is a session property. The provider ownership flag remains fixed:
+// a transferred session can outlive its original in-process provider backend.
+internal void
+uishell_terminal_move(UIShell_TerminalViewState *tv, B32 adopt)
+{
+  String8 daemon = rd_view_setting_from_name(str8_lit("daemon_name"));
+  if(daemon.size == 0) { daemon = str8_lit("default"); }
+  B32 moved = adopt ? cleat_session_adopt(tv->session) : cleat_session_transfer(tv->session, daemon.str, daemon.size);
+  if(!moved)
+  {
+    cleat_str error = {0};
+    cleat_session_transfer_error(tv->session, &error);
+    log_user_errorf("Terminal hosting: %S", str8((U8 *)error.ptr, error.len));
+  }
+  else
+  {
+    // The next render belongs to a new engine generation. Keep selection,
+    // view state and handle; force the retained drawing to consume its full frame.
+    tv->retained_bucket_key = 0;
+    if(!adopt)
+    {
+      cleat_str id = {0};
+      if(cleat_session_id(tv->session, &id))
+      {
+        rd_store_view_param(str8_lit("session"), str8((U8 *)id.ptr, id.len));
+        rd_store_view_param(str8_lit("daemon_name"), daemon);
+      }
+    }
+  }
+  rd_request_frame();
+}
+
 RD_VIEW_UI_FUNCTION_DEF(terminal)
 {
   (void)eval;
@@ -3352,6 +3463,14 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     if(benchmark_metrics) { uishell_overview_benchmark.provider_start_us += now_time_us()-provider_start_us; }
   }
   B32 session_ready = (!fixture_mode && tv->provider != 0 && tv->session != 0);
+  for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
+  {
+    if(session_ready && str8_match(cmd->name, str8_lit("terminal_transfer"), 0)) { uishell_terminal_move(tv, 0); }
+    else if(session_ready && str8_match(cmd->name, str8_lit("terminal_adopt"), 0)) { uishell_terminal_move(tv, 1); }
+  }
+  cleat_str hosting = {0};
+  B32 daemon_hosted = session_ready && cleat_session_hosting(tv->session, &hosting) &&
+                      str8_match(str8_prefix(str8((U8 *)hosting.ptr, hosting.len), 7), str8_lit("daemon:"), 0);
   if(session_ready && (tv->cols != cols || tv->rows != rows))
   {
     tv->cols = cols;
@@ -3369,11 +3488,31 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     terminal_root_box = ui_build_box_from_string(0, str8_lit("terminal_root"));
   }
 
+  if(session_ready && hosting.len != 0)
+  {
+    String8 title = push_str8f(scratch.arena, "%S · %s", str8((U8 *)hosting.ptr, hosting.len),
+                              daemon_hosted ? "Adopt" : "Hand to daemon");
+    F32 height = floor_f32(ui_bottom_font_size()*1.8f);
+    F32 width = fnt_dim_from_tag_size_string(ui_bottom_font(), ui_bottom_font_size(), 0, 0, title).x + ui_bottom_font_size()*2.f;
+    UI_Parent(terminal_root_box) UI_CornerRadius(height*0.5f)
+    {
+      ui_set_next_fixed_x(Max(0.f, canvas_dim_target.x-width-ui_bottom_font_size()*0.5f));
+      ui_set_next_fixed_y(ui_bottom_font_size()*0.5f);
+      ui_set_next_fixed_width(width);
+      ui_set_next_fixed_height(height);
+      UI_Box *box = ui_build_box_from_string(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawText|
+                                             UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
+                                             str8_lit("terminal_hosting"));
+      ui_box_equip_display_string(box, title);
+      if(ui_clicked(ui_signal_from_box(box))) { uishell_terminal_move(tv, daemon_hosted); }
+    }
+  }
+
   // uishell: daemon transport/role status pill. Built before the canvas so it
   // is an earlier sibling and draws on top. Streaming-as-controller is the
   // silent common case; connecting/disconnected/closed are status cues (the
   // connection heals itself), and streaming-as-watcher offers take-control.
-  if(tv->daemon_backend && tv->session != 0)
+  if(daemon_hosted)
   {
     U32 connection_state = cleat_session_connection_state(tv->session);
     U32 role = cleat_session_role(tv->session);
@@ -3396,7 +3535,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       {
         F32 status_width = fnt_dim_from_tag_size_string(ui_bottom_font(), ui_bottom_font_size(), 0, 0, status_text).x + ui_bottom_font_size()*2.f;
         ui_set_next_fixed_x(canvas_dim_target.x*0.5f - status_width*0.5f);
-        ui_set_next_fixed_y(ui_bottom_font_size()*0.5f);
+        ui_set_next_fixed_y(ui_bottom_font_size()*2.8f);
         ui_set_next_fixed_width(status_width);
         ui_set_next_fixed_height(status_height);
         UI_BoxFlags status_flags = UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawText|UI_BoxFlag_DrawDropShadow;
@@ -3504,11 +3643,20 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     B32 left_pressed = !!(canvas_sig.f & UI_SignalFlag_LeftPressed);
     B32 left_released = !!(canvas_sig.f & UI_SignalFlag_LeftReleased);
     if(left_pressed) { uishell_cmd("focus_panel"); }
+    // Input refers to the last displayed cache, before this frame pulls output.
+    // A resize invalidates that coordinate mapping until a matching frame arrives.
+    String8 link = (tv->cell_cache.cols == cols && tv->cell_cache.rows == rows &&
+                    (canvas_sig.f & UI_SignalFlag_Hovering)) ?
+      uishell_terminal_link_at(&tv->cell_cache, cell_col, cell_row) : str8_zero();
+    B32 activate_link = uishell_terminal_link_modifier(canvas_sig.event_flags) && !tv->selecting && link.size;
+    B32 link_consumes_left = uishell_terminal_link_claim(&tv->link_gesture, left_pressed, left_released, activate_link);
+    if(left_pressed && activate_link && uishell_terminal_link_allowed(link)) { wm_open_in_browser(link); }
     B32 local_select = (tv->mouse_tracking_mode == CLEAT_MOUSE_TRACKING_NONE) || shift_held;
     B32 was_selecting = tv->selecting;
-    if(left_pressed && local_select && !was_selecting)
+    if(left_pressed && local_select && !was_selecting && !link_consumes_left)
     {
       tv->selecting = 1;
+      tv->selection_rectangular = shift_held && !!(canvas_sig.event_flags & WM_Modifier_Alt);
       tv->sel_mark = txt_pt((S64)cell_row, (S64)cell_col);
       tv->sel_cursor = tv->sel_mark;
       tv->has_selection = 0;
@@ -3527,14 +3675,14 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           Temp sel_scratch = scratch_begin(0, 0);
           UIShell_TerminalCellFeed sel_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
           String8 sel_text = uishell_terminal_selection_text_from_feed(sel_scratch.arena, &sel_feed,
-                                                                       txt_pt_min(tv->sel_mark, tv->sel_cursor),
-                                                                       txt_pt_max(tv->sel_mark, tv->sel_cursor));
+                                                                       tv->sel_mark,
+                                                                       tv->sel_cursor, tv->selection_rectangular);
           if(sel_text.size != 0) { wm_set_selection_text(sel_text); }
           scratch_end(sel_scratch);
         }
       }
     }
-    B32 selection_consumes_left = was_selecting || (left_pressed && local_select);
+    B32 selection_consumes_left = link_consumes_left || was_selecting || (left_pressed && local_select);
 
     // Middle-click pastes the selection buffer when no program is grabbing the
     // mouse (otherwise the button is forwarded below).
@@ -3604,7 +3752,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     // forwarding.)
     B32 moved = (!tv->mouse_pos_valid || lx != tv->last_mouse_x_px || ly != tv->last_mouse_y_px);
     B32 over_canvas = !!(canvas_sig.f & UI_SignalFlag_Hovering);
-    if(!was_selecting && !tv->selecting && moved && (tv->mouse_buttons_held != 0 || over_canvas))
+    if(!selection_consumes_left && moved && (tv->mouse_buttons_held != 0 || over_canvas))
     {
       U32 move_button = CLEAT_MOUSE_BUTTON_NONE;
       if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_LEFT) { move_button = CLEAT_MOUSE_BUTTON_LEFT; }
@@ -3674,8 +3822,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
               Temp clip_scratch = scratch_begin(0, 0);
               UIShell_TerminalCellFeed clip_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
               String8 clip_text = uishell_terminal_selection_text_from_feed(clip_scratch.arena, &clip_feed,
-                                                                            txt_pt_min(tv->sel_mark, tv->sel_cursor),
-                                                                            txt_pt_max(tv->sel_mark, tv->sel_cursor));
+                                                                            tv->sel_mark,
+                                                                            tv->sel_cursor, tv->selection_rectangular);
               if(clip_text.size != 0) { wm_set_clipboard_text(clip_text); }
               scratch_end(clip_scratch);
             }
@@ -3714,8 +3862,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
               Temp copy_scratch = scratch_begin(0, 0);
               UIShell_TerminalCellFeed copy_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
               String8 copy_text = uishell_terminal_selection_text_from_feed(copy_scratch.arena, &copy_feed,
-                                                                            txt_pt_min(tv->sel_mark, tv->sel_cursor),
-                                                                            txt_pt_max(tv->sel_mark, tv->sel_cursor));
+                                                                            tv->sel_mark,
+                                                                            tv->sel_cursor, tv->selection_rectangular);
               if(copy_text.size != 0) { wm_set_clipboard_text(copy_text); }
               scratch_end(copy_scratch);
             }
@@ -3865,6 +4013,29 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         }
       }
       if(benchmark_metrics) { uishell_overview_benchmark.provider_update_us += now_time_us()-update_begin_us; }
+      // Recompute hover from the frame being drawn, including under a stationary
+      // pointer. No retained URI survives a content/viewport update.
+      if(ui_hovering(canvas_sig) && !tv->selecting && !tv->link_gesture &&
+         tv->cell_cache.cols == cols && tv->cell_cache.rows == rows)
+      {
+        Vec2F32 mouse = ui_mouse();
+        S32 col = (S32)((mouse.x-canvas_box->rect.x0)/cell_width_px);
+        S32 row = (S32)((mouse.y-canvas_box->rect.y0)/cell_height_px);
+        String8 uri = uishell_terminal_link_at(&tv->cell_cache, (U16)col, (U16)row);
+        if(uri.size)
+        {
+          F32 width = Min(ui_bottom_font_size()*40.f, view_dim.x);
+          UI_Tooltip UI_PrefWidth(ui_px(width, 1)) UI_PrefHeight(ui_em(1.6f, 1))
+          {
+            ui_label_multiline(width, uishell_terminal_link_display(scratch.arena, uri));
+#if OS_MAC
+            ui_label(uishell_terminal_link_allowed(uri) ? str8_lit("Cmd-click to open") : str8_lit("Opening this destination is disabled"));
+#else
+            ui_label(uishell_terminal_link_allowed(uri) ? str8_lit("Ctrl-click to open") : str8_lit("Opening this destination is disabled"));
+#endif
+          }
+        }
+      }
       if(tv->cell_cache.cells != 0)
       {
         UIShell_TerminalCellFeed feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
@@ -3898,6 +4069,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           U32 raster_flags;
           B32 has_selection;
           B32 selecting;
+          B32 selection_rectangular;
           TxtPt sel_mark;
           TxtPt sel_cursor;
         } bucket_key_data;
@@ -3914,6 +4086,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         bucket_key_data.raster_flags = cell_font_raster_flags;
         bucket_key_data.has_selection = tv->has_selection;
         bucket_key_data.selecting = tv->selecting;
+        bucket_key_data.selection_rectangular = tv->selection_rectangular;
         bucket_key_data.sel_mark = tv->sel_mark;
         bucket_key_data.sel_cursor = tv->sel_cursor;
         U64 bucket_key = (u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1);
@@ -3974,9 +4147,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           glyph_renderer.trace_row = rd_state->terminal_glyph_trace_row;
           glyph_renderer.trace_generation = tv->cell_cache.render_generation;
           uishell_terminal_glyph_renderer_draw_cell_feed(scratch.arena, &glyph_renderer, &draw_params, &feed);
-          // Local selection highlight: a translucent stream-selection overlay
-          // (first row from the anchor column, last row to the cursor column,
-          // full width in between), composited over the just-drawn cells.
+          // Use exactly the same cell bounds as clipboard extraction.
           if(tv->has_selection || tv->selecting)
           {
             TxtPt sel_min = txt_pt_min(tv->sel_mark, tv->sel_cursor);
@@ -3985,8 +4156,9 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
             for(S64 r = sel_min.line; r <= sel_max.line; r += 1)
             {
               if(r < 0 || r >= (S64)feed.rows) { continue; }
-              S64 start_col = (r == sel_min.line) ? sel_min.column : 0;
-              S64 end_col = (r == sel_max.line) ? sel_max.column : (S64)feed.cols - 1;
+              Rng1S64 columns = uishell_terminal_selection_columns(&feed, tv->sel_mark, tv->sel_cursor, tv->selection_rectangular, r);
+              S64 start_col = columns.min;
+              S64 end_col = columns.max - 1;
               if(end_col < start_col) { continue; }
               F32 x0 = floor_f32(canvas_box->rect.x0 + (F32)start_col*cell_width_px);
               F32 x1 = ceil_f32(canvas_box->rect.x0 + (F32)(end_col + 1)*cell_width_px);

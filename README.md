@@ -59,7 +59,14 @@ The executable is `build/wheelhouse` (`build/wheelhouse.exe` on Windows); the ma
 
 Internal source names and existing configuration storage still use `uishell`.
 
-The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. CI checks out the public Andamento repository without an App credential, including for fork PRs.
+The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. For terminal hosting changes, use a sibling Cleat checkout at the revision pinned by `CLEAT_REV` or a descendant. CI checks out the public Andamento repository without an App credential, including for fork PRs.
+
+## Terminal hyperlinks
+
+Hover explicit OSC 8 links to inspect their destinations. Cmd-click on macOS or
+Ctrl-click on Linux/Windows opens HTTP(S) links; Shift-drag retains local text
+selection. See [terminal hyperlinks](docs/terminal-hyperlinks.md) for the URI
+policy, Cleat requirements, and interactive validation steps.
 
 ## Jackstay views
 
@@ -138,9 +145,12 @@ shell recipe can open too. It does not use the legacy grouping tree in Andamento
 Zellij template, which native snapshots deliberately omit.
 
 Use a Flotilla binary with the HTTP/UDS `pm connect` sink. The launcher
-currently defaults to `../flotilla/target/debug/flotilla` and does not rebuild
-Flotilla or start a Zellij session. [Issue #30](https://github.com/flotilla-org/wheelhouse/issues/30)
-tracks changing that default to the installed fleet binary.
+prefers `~/.local/opt/flotilla-fleet/current/bin/flotilla` when installed, following
+`current` to the fleet generation on launch and connector retries. Without a fleet
+install it uses `${FLOTILLA_ROOT:-../flotilla}/target/debug/flotilla`.
+`FLOTILLA_BIN` overrides both. It does not rebuild Flotilla or start a Zellij session.
+If the connector reports a wire build mismatch, the launcher prints both builds
+and a `FLOTILLA_BIN` hint; the full diagnostic remains in `logs/flotilla.log`.
 
 ```sh
 # Git facts only; no Flotilla binary or daemon needed.
@@ -206,3 +216,30 @@ adapter with a small C boundary. Andamento's core remains transport-independent.
 Ingress is opt-in; Windows builds retain the fixture sidebar but reject the
 Unix listener option. Clean application shutdown removes its socket. After a
 crash, remove the stale socket before restarting with the same path.
+
+### Moving a live terminal session
+
+The hosting pill in each terminal view shows `in_process` or `daemon:<name@generation>`.
+Click **Hand to daemon** or **Adopt**, or run **Hand Terminal to Daemon** / **Adopt Terminal**
+from the command palette. The view, selection, session handle, and wake callback stay in place.
+Handing off uses the view's `daemon_name` setting, or `default`; start that daemon first.
+Failures appear as non-modal notices and leave the prior hosting usable. Windows reports
+that transfer is unsupported.
+
+A handed-off session survives Wheelhouse closing. An adopted session leaves its recording
+with the daemon, which marks it hosted elsewhere until Wheelhouse releases it or exits;
+then `cleat attach` can recreate it from that recording.
+
+### Terminal selection
+
+Shift-drag selects linear terminal text, even when the child application captures
+mouse input. Shift-Option-drag on macOS selects a rectangle; on Linux and Windows,
+use Shift-Alt-drag. The mode is fixed when the left button goes down and lasts
+through release, even if you release the modifiers first. Copy with Cmd-C on macOS
+or Ctrl-Shift-C elsewhere; releasing the drag also updates the middle-click
+selection buffer.
+
+Rectangles include both endpoint cells and preserve blank cells and trailing
+spaces, with one slice per physical screen row, including wrapped lines. A wide
+character is copied once when both its cells are inside the rectangle; a clipped
+half is copied as a space. Ordinary linear selection still trims trailing spaces.
