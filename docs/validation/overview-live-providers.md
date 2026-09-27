@@ -157,3 +157,19 @@ The isolated interactive app uses this release binary with all three preview
 policies enabled. The policies remain opt-in pending hands-on acceptance. The
 computer-use service still reports `cgWindowNotFound` when binding the app; a
 running process and advancing metrics establish rendering, not mouse usability.
+
+## Current-main integration
+
+Main's terminal hosting, OSC 8 and rectangular-selection changes were merged
+before opening the draft PR. The dependency is now main's Cleat pin
+`be46c116d0f14de8192655e4a808e16a515a5e73`. The merged release build passed all
+eight native diagnostics (including terminal links), the daily-driver and build
+failure tests, and the generated-source check. Its 48-terminal image run
+(`local/live-merged-release`) passed pixel convergence and idle with a 29.95 ms
+maximum active frame and 189.88 ms first paint. The isolated interactive fixture
+was also running during this measurement; timings remain local observations.
+
+CI now runs the preview diagnostic twice per platform, with the policies off and
+on, using the same native build. This adds queue/render-path coverage without a
+second compile. It does not substitute for the macOS performance workload or
+hands-on interaction testing.
