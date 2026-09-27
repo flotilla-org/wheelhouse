@@ -77,7 +77,7 @@ frame loop permits. The 240-frame script has eight 30-frame phases:
 | return | Reopen overview, selecting the first workspace. |
 | resize_small | Resize native content area to 900 × 600 points. |
 | resize_large | Restore 1200 × 800 points. |
-| settle | Keep overview open with the same update mix. |
+| drain | Publish one final update, then keep overview open with no further output. |
 
 Actions set the same window state as overview controls. They do not simulate
 physical clicks. The benchmark suppresses incidental UI events/mouse hover in
@@ -100,7 +100,7 @@ reported as total GPU bytes or process footprint.
 
 Checks require all 240 frames, every workspace rendered, successful overview
 entry/exit and resizing, continued dynamic updates, no settled static rebuilds,
-valid nonblank checkpoints, and identical workload counts and checkpoint bytes
+final quiet-state convergence, valid nonblank checkpoints, and identical workload counts and checkpoint bytes
 between repetitions. Screenshot equality applies on the same host/build, not
 across renderers or font configurations. Budget violations give the loop a
 repeatable failure signal without changing production caching to suit the test.
@@ -113,6 +113,10 @@ ASCII workload does not replace emoji/image correctness diagnostics or a
 representative mixed-glyph performance case.
 
 ## First measured baseline, 27 September 2026
+
+These numbers precede the final-phase silence and image-cache-consumer additions.
+Use matching new runs for comparisons; the updated control and refresh experiment
+are recorded in [preview refresh budget](preview-refresh-budget.md).
 
 On the current macOS host, with the C debug build and existing pinned libraries:
 

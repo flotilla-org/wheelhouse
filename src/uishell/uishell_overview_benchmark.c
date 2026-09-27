@@ -22,7 +22,7 @@ uishell_overview_benchmark_init(CmdLine *cmd)
   String8 path = push_str8f(rd_state->arena, "%S/frames.csv", b->directory);
   b->metrics = fopen((char *)path.str, "w");
   if(b->metrics == 0) { fprintf(stderr, "cannot open benchmark metrics\n"); abort_self(2); }
-  fprintf(b->metrics, "frame,phase,frame_us,build_us,rebuilds,cells_built,terminal_visits,updates,surface_allocations,surface_pixels,zoom_t,width,height\n");
+  fprintf(b->metrics, "frame,phase,frame_us,build_us,deferred,rebuilds,cells_built,terminal_visits,updates,surface_allocations,surface_pixels,zoom_t,width,height\n");
 }
 
 internal void
@@ -30,7 +30,7 @@ uishell_overview_benchmark_begin(void)
 {
   UIShell_OverviewBenchmark *b = &uishell_overview_benchmark;
   if(!b->enabled) { return; }
-  b->rebuilds = b->cells_built = b->terminal_visits = b->updates = b->surface_allocations = 0;
+  b->deferred = b->rebuilds = b->cells_built = b->terminal_visits = b->updates = b->surface_allocations = 0;
   b->begin_us = now_time_us();
   rd_request_frame();
 }
@@ -79,7 +79,7 @@ uishell_overview_benchmark_window(RD_WindowState *ws)
 }
 
 internal void
-uishell_overview_benchmark_feed(CFG_Node *view, UIShell_TerminalCellCache *cache, U16 cols, U16 rows)
+uishell_overview_benchmark_feed(CFG_Node *view, UIShell_TerminalCellCache *cache, UIShell_TerminalImageCache *images, U16 cols, U16 rows)
 {
   UIShell_OverviewBenchmark *b = &uishell_overview_benchmark;
   U32 id = 0;
@@ -87,7 +87,8 @@ uishell_overview_benchmark_feed(CFG_Node *view, UIShell_TerminalCellCache *cache
   if(id == b->count) { return; }
   U32 kind = id % 4;
   // Static, cursor-only at 2 Hz, row update at 10 Hz, scrolling at 30 Hz.
-  U64 tick = kind == 0 ? 0 : b->frame/(kind == 1 ? 30 : kind == 2 ? 6 : 2);
+  U32 source_frame = Min(b->frame, 7*b->phase_frames); // final update, then silence
+  U64 tick = kind == 0 ? 0 : source_frame/(kind == 1 ? 30 : kind == 2 ? 6 : 2);
   U64 generation = tick + 1;
   B32 full = cache->cells == 0 || cache->cols != cols || cache->rows != rows ||
     (kind == 3 && generation > cache->render_generation + 1);
@@ -126,6 +127,7 @@ uishell_overview_benchmark_feed(CFG_Node *view, UIShell_TerminalCellCache *cache
     update.ops=ops; update.op_count=op_count;
   }
   uishell_terminal_cell_cache_apply_render_update(cache, &update);
+  uishell_terminal_image_cache_apply_render_update(images, 0, &update);
   b->updates++;
   scratch_end(scratch);
 }
@@ -190,8 +192,8 @@ uishell_overview_benchmark_end(void)
   { pixels += (U64)n->size.x*n->size.y; }
   Vec2F32 dim=dim_2f32(wm_client_rect_from_window(ws->os));
   U32 phase=b->frame/b->phase_frames;
-  fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f\n",
-    b->frame,phase,(unsigned long long)elapsed,(unsigned long long)b->build_us,(unsigned long long)b->rebuilds,
+  fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f\n",
+    b->frame,phase,(unsigned long long)elapsed,(unsigned long long)b->build_us,(unsigned long long)b->deferred,(unsigned long long)b->rebuilds,
     (unsigned long long)b->cells_built,(unsigned long long)b->terminal_visits,
     (unsigned long long)b->updates,(unsigned long long)b->surface_allocations,
     (unsigned long long)pixels,ws->workspace_zoom_t,dim.x,dim.y);

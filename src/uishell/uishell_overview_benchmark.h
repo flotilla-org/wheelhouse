@@ -7,6 +7,7 @@ struct UIShell_OverviewBenchmark
 {
   B32 enabled, initialized, screenshots;
   U32 count, frame, phase_frames;
+  U64 deferred;
   U64 begin_us, build_us, rebuilds, cells_built, terminal_visits, updates, surface_allocations;
   CFG_ID owners[48], views[48];
   String8 directory;
@@ -17,5 +18,5 @@ internal void uishell_overview_benchmark_init(CmdLine *cmd);
 internal void uishell_overview_benchmark_begin(void);
 internal void uishell_overview_benchmark_window(RD_WindowState *ws);
 internal void uishell_overview_benchmark_end(void);
-internal void uishell_overview_benchmark_feed(CFG_Node *view, UIShell_TerminalCellCache *cache, U16 cols, U16 rows);
+internal void uishell_overview_benchmark_feed(CFG_Node *view, UIShell_TerminalCellCache *cache, UIShell_TerminalImageCache *images, U16 cols, U16 rows);
 #endif

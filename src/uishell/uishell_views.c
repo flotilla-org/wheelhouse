@@ -30,6 +30,9 @@ struct UIShell_TerminalViewState
   Arena *retained_bucket_arena;
   DR_Bucket *retained_bucket;
   U64 retained_bucket_key;
+  U64 retained_bucket_style_key;
+  B32 retained_bucket_has_images;
+  U64 retained_bucket_time_us;
   U16 cols;
   U16 rows;
   F32 cell_width_px;
@@ -3739,7 +3742,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     }
     else
     {
-      if(benchmark_mode) { uishell_overview_benchmark_feed(view_cfg, &tv->cell_cache, cols, rows); }
+      if(benchmark_mode) { uishell_overview_benchmark_feed(view_cfg, &tv->cell_cache, &tv->image_cache, cols, rows); }
       cleat_dirty_state dirty = benchmark_mode ? CLEAT_DIRTY_CLEAN : cleat_session_poll(tv->session);
       if(!benchmark_mode && (dirty != CLEAT_DIRTY_CLEAN || tv->cell_cache.cells == 0))
       {
@@ -3805,9 +3808,39 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         bucket_key_data.sel_mark = tv->sel_mark;
         bucket_key_data.sel_cursor = tv->sel_cursor;
         U64 bucket_key = (u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1);
-        rd_workspace_surface_contribute_version(bucket_key);
+        // Only producer-content changes may wait. Geometry, font, image and
+        // selection changes bypass the preview refresh budget.
+        bucket_key_data.render_generation = 0;
+        bucket_key_data.image_generation = 0; // this mirrors every provider update, even without images
+        U64 style_key = u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1;
+        RD_WindowState *window_state = rd_window_state_from_cfg__existing(cfg_node_from_id(uishell_regs()->window));
+        RD_WorkspaceSurfaceEntry *surface = window_state != &rd_nil_window_state ? window_state->active_workspace_surface_entry : 0;
+        U64 interval_us = 0;
+        if(rd_state->preview_refresh_budget && surface != 0 && !surface->composite && !surface->full_res)
+        {
+          F32 width = rd_workspace_preview_demand_width(window_state, surface->workspace_id);
+          interval_us = width <= 128.f ? 200000 : width <= 256.f ? 100000 : 0;
+        }
+        U64 now_us = benchmark_mode ? ((U64)uishell_overview_benchmark.frame*1000000/60) : now_time_us();
+        // Give each workspace a stable phase so busy previews do not all
+        // rebuild together every 100/200 ms. A deadline is at most one interval
+        // after the previous build, even if no new producer wake arrives.
+        U64 phase_us = interval_us ? (surface->workspace_id*2654435761ull)%interval_us : 0;
+        U64 deadline_us = interval_us ? tv->retained_bucket_time_us + interval_us -
+          (tv->retained_bucket_time_us + phase_us)%interval_us : 0;
+        B32 defer_content = interval_us != 0 && tv->retained_bucket != 0 &&
+                            tv->retained_bucket_style_key == style_key && !trace_this_draw &&
+                            tv->image_cache.placement_count == 0 && !tv->retained_bucket_has_images &&
+                            now_us < deadline_us;
+        if(defer_content && tv->retained_bucket_key != bucket_key)
+        {
+          // An observed producer update may be its last wake. Keep requesting
+          // frames until this bounded refresh deadline so it cannot stay stale.
+          rd_request_frame();
+          if(benchmark_mode) { uishell_overview_benchmark.deferred++; }
+        }
         if(benchmark_mode) { uishell_overview_benchmark.terminal_visits++; }
-        if(tv->retained_bucket == 0 || tv->retained_bucket_key != bucket_key || trace_this_draw)
+        if(tv->retained_bucket == 0 || (!defer_content && tv->retained_bucket_key != bucket_key) || trace_this_draw)
         {
           if(benchmark_mode)
           {
@@ -3860,7 +3893,13 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           }
           tv->retained_bucket = terminal_bucket;
           tv->retained_bucket_key = (trace_this_draw ? 0 : bucket_key);
+          tv->retained_bucket_style_key = style_key;
+          tv->retained_bucket_has_images = tv->image_cache.placement_count != 0;
+          tv->retained_bucket_time_us = now_us;
         }
+        // The surface version describes what is displayed, not a newer feed
+        // whose drawing has intentionally been deferred.
+        rd_workspace_surface_contribute_version(tv->retained_bucket_key);
         ui_box_equip_draw_bucket(canvas_box, tv->retained_bucket);
       }
     }
