@@ -1020,6 +1020,14 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         String8 selected_cmd_name = rd_cmd_name_from_eval(eval);
         UIShell_RegsScope(.cmd_name = selected_cmd_name)
         {
+          // A palette is a temporary lister view. Run view-scoped actions on
+          // the view which opened it, as complete_query does for queried commands.
+          CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
+          RD_WindowState *ws = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
+          if(cfg_node_child_from_string(view, str8_lit("lister")) != &cfg_nil_node && ws->query_regs != 0)
+          {
+            uishell_regs()->view = ws->query_regs->view;
+          }
           uishell_cmd("run_command");
         }
       }break;
