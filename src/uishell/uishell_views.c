@@ -3821,7 +3821,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           F32 width = rd_workspace_preview_demand_width(window_state, surface->workspace_id);
           interval_us = width <= 128.f ? 200000 : width <= 256.f ? 100000 : 0;
         }
-        U64 now_us = benchmark_mode ? ((U64)uishell_overview_benchmark.frame*1000000/60) : now_time_us();
+        U64 now_us = (benchmark_mode && !uishell_overview_benchmark.interactive) ? ((U64)uishell_overview_benchmark.frame*1000000/60) : now_time_us();
         // Give each workspace a stable phase so busy previews do not all
         // rebuild together every 100/200 ms. A deadline is at most one interval
         // after the previous build, even if no new producer wake arrives.

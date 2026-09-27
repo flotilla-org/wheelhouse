@@ -499,6 +499,7 @@ struct RD_WorkspaceSurfaceEntry
   B32 composite; // visible workspace composites to the stage; preview-scale ones render offscreen only
   B32 full_res;  // non-composite, but rendered at full resolution (the selected child in the zoom view, for seamless open/close)
   U64 content_version_accum; // versions declared by the views built inside this workspace (terminal generations, text content hashes)
+  B32 defer_render; // frame-local preview admission decision
   B32 has_unversioned_views; // a view without a declared version was built -> shape-only preservation is unsafe; keep byte hashing
 };
 
@@ -519,6 +520,9 @@ struct RD_SurfaceCacheNode
   R_Handle texture;
   Vec2S32 size;
   U64 last_use_frame_index;
+  Rng2F32 workspace_content_uv; // crop belonging to the completed workspace pixels
+  U64 workspace_content_version;
+  U64 last_render_frame_index;
   U64 rendered_hash;       // content hash of what's in the texture (0 = invalid, must render)
   B32 last_was_preserved;  // dev visibility: last frame skipped the render
   B32 retained;            // survives eviction when undemanded; shows stale content (e.g. workspace previews)
@@ -751,6 +755,7 @@ struct RD_State
   B32 quit_after_success;
   // One-shot native diagnostics requiring the live frame evaluation context.
   B32 (*frame_diagnostic)(RD_WindowState *ws);
+  B32 preview_render_budget;
   B32 preview_surface_budget;
   B32 preview_refresh_budget; // opt-in temporal detail for small terminal previews
   B32 terminal_glyph_trace_enabled;

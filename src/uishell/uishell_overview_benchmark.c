@@ -16,13 +16,17 @@ uishell_overview_benchmark_init(CmdLine *cmd)
   if(!cmd_line_has_flag(cmd, str8_lit("user")) || !cmd_line_has_flag(cmd, str8_lit("project")) ||
      cmd_line_has_flag(cmd, str8_lit("andamento_socket")))
   { fprintf(stderr, "benchmark requires isolated --user/--project and no live ingress\n"); abort_self(2); }
+  b->interactive = cmd_line_has_flag(cmd, str8_lit("overview_benchmark_interactive"));
+  b->start_us = now_time_us();
+  b->busy = cmd_line_has_flag(cmd, str8_lit("overview_benchmark_busy"));
+  b->interrupt = cmd_line_has_flag(cmd, str8_lit("overview_benchmark_interrupt"));
   b->enabled = 1;
   b->phase_frames = 30;
   b->screenshots = !cmd_line_has_flag(cmd, str8_lit("overview_benchmark_no_screenshots"));
   String8 path = push_str8f(rd_state->arena, "%S/frames.csv", b->directory);
   b->metrics = fopen((char *)path.str, "w");
   if(b->metrics == 0) { fprintf(stderr, "cannot open benchmark metrics\n"); abort_self(2); }
-  fprintf(b->metrics, "frame,phase,frame_us,build_us,deferred,rebuilds,cells_built,terminal_visits,updates,surface_allocations,surface_pixels,zoom_t,width,height,surface_us,glyph_us,window_us\n");
+  fprintf(b->metrics, "frame,phase,frame_us,build_us,deferred,rebuilds,cells_built,terminal_visits,updates,surface_allocations,surface_pixels,zoom_t,width,height,surface_us,glyph_us,window_us,surface_admissions,surface_deferred,rect_instances\n");
 }
 
 internal void
@@ -32,7 +36,9 @@ uishell_overview_benchmark_begin(void)
   if(!b->enabled) { return; }
   b->deferred = b->rebuilds = b->cells_built = b->terminal_visits = b->updates = b->surface_allocations = 0;
   b->surface_us = b->glyph_us = b->window_us = 0;
+  b->surface_admissions = b->surface_deferred = 0;
   b->begin_us = now_time_us();
+  b->source_frame = b->interactive ? (U32)((b->begin_us-b->start_us)*60/1000000) : Min(b->frame, 7*b->phase_frames);
   rd_request_frame();
 }
 
@@ -62,6 +68,16 @@ uishell_overview_benchmark_window(RD_WindowState *ws)
     ws->root_controlled_split_selected_workspace_id = b->owners[0];
     b->initialized = 1;
   }
+  if(b->interactive) { return; }
+  if(b->interrupt)
+  {
+    if(b->frame == 32 || b->frame == 36)
+    {
+      ws->root_controlled_split_selected_workspace_id = b->owners[b->frame == 32 ? Min(1, b->count-1) : b->count/2];
+      ws->workspace_zoom_open = 0;
+    }
+    if(b->frame == 34 || b->frame == 39) { ws->workspace_zoom_open = 1; }
+  }
   U32 phase = b->frame/b->phase_frames;
   if(b->frame % b->phase_frames == 0)
   {
@@ -86,9 +102,9 @@ uishell_overview_benchmark_feed(CFG_Node *view, UIShell_TerminalCellCache *cache
   U32 id = 0;
   for(; id < b->count && b->views[id] != view->id; id++) {}
   if(id == b->count) { return; }
-  U32 kind = id % 4;
+  U32 kind = b->busy ? 3 : id % 4;
   // Static, cursor-only at 2 Hz, row update at 10 Hz, scrolling at 30 Hz.
-  U32 source_frame = Min(b->frame, 7*b->phase_frames); // final update, then silence
+  U32 source_frame = b->source_frame; // scripted replay stops output in its final phase
   U64 tick = kind == 0 ? 0 : source_frame/(kind == 1 ? 30 : kind == 2 ? 6 : 2);
   U64 generation = tick + 1;
   B32 full = cache->cells == 0 || cache->cols != cols || cache->rows != rows ||
@@ -187,20 +203,63 @@ uishell_overview_benchmark_end(void)
   if(!b->enabled || !b->initialized) { return; }
   U64 elapsed = now_time_us()-b->begin_us;
   RD_WindowState *ws = rd_state->first_window_state;
-  if(ws == &rd_nil_window_state) { fprintf(stderr, "benchmark window lost\n"); abort_self(2); }
+  if(ws == &rd_nil_window_state)
+  {
+    if(b->interactive) { fclose(b->metrics); b->metrics = 0; b->enabled = 0; return; }
+    fprintf(stderr, "benchmark window lost\n"); abort_self(2);
+  }
+  B32 pending[48] = {0};
+  // Selected/expanding workspaces must never wait behind the preview queue.
+  for(U64 i = 0; i < ws->workspace_surface_entry_count; i += 1)
+  {
+    RD_WorkspaceSurfaceEntry *entry = &ws->workspace_surface_entries[i];
+    for(U32 j = 0; j < b->count; j += 1)
+    {
+      if(b->owners[j] == entry->workspace_id) { pending[j] = entry->defer_render; break; }
+    }
+    if(entry->full_res || entry->composite)
+    {
+      RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, entry->box_key);
+      if(entry->defer_render || node == 0 || node->rendered_hash == 0 ||
+         node->workspace_content_version != entry->content_version_accum)
+      { fprintf(stderr, "selected workspace missed render admission\n"); abort_self(2); }
+    }
+  }
+  for(U32 i = 0; i < b->count; i += 1)
+  {
+    if(!pending[i]) { b->pending_since[i] = 0; }
+    else
+    {
+      if(b->pending_since[i] == 0) { b->pending_since[i] = b->frame+1; }
+      if(b->frame+1-b->pending_since[i] > (b->count+3)/4+2)
+      { fprintf(stderr, "preview render queue starved workspace %u\n", i); abort_self(2); }
+    }
+  }
+  U64 instances = 0;
+  for(R_PassNode *p = ws->draw_bucket->passes.first; p != 0; p = p->next)
+  {
+    if(p->v.kind == R_PassKind_UI && !p->v.params_ui->preserve)
+    {
+      for(R_BatchGroup2DNode *g = p->v.params_ui->rects.first; g != 0; g = g->next)
+      { instances += g->batches.byte_count/g->batches.bytes_per_inst; }
+    }
+  }
   U64 pixels=0;
   for(RD_SurfaceCacheNode *n=ws->first_surface_cache_node; n; n=n->next)
   { pixels += (U64)n->size.x*n->size.y; }
   Vec2F32 dim=dim_2f32(wm_client_rect_from_window(ws->os));
   U32 phase=b->frame/b->phase_frames;
-  fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f,%llu,%llu,%llu\n",
+  fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f,%llu,%llu,%llu,%llu,%llu,%llu\n",
     b->frame,phase,(unsigned long long)elapsed,(unsigned long long)b->build_us,(unsigned long long)b->deferred,(unsigned long long)b->rebuilds,
     (unsigned long long)b->cells_built,(unsigned long long)b->terminal_visits,
     (unsigned long long)b->updates,(unsigned long long)b->surface_allocations,
     (unsigned long long)pixels,ws->workspace_zoom_t,dim.x,dim.y,
-    (unsigned long long)b->surface_us,(unsigned long long)b->glyph_us,(unsigned long long)b->window_us);
+    (unsigned long long)b->surface_us,(unsigned long long)b->glyph_us,(unsigned long long)b->window_us,
+    (unsigned long long)b->surface_admissions,(unsigned long long)b->surface_deferred,(unsigned long long)instances);
   fflush(b->metrics);
-  if(b->screenshots && b->frame%b->phase_frames == b->phase_frames-1)
+  if(b->interactive) { b->frame += 1; return; }
+  B32 phase_checkpoint = b->frame%b->phase_frames == b->phase_frames-1;
+  if(b->screenshots && (phase_checkpoint || b->frame == 31 || b->frame == 33 || b->frame == 37))
   {
     Temp scratch=scratch_begin(0,0);
     R_Readback rb=uishell_overview_benchmark_readback(scratch.arena, ws);
@@ -212,7 +271,9 @@ uishell_overview_benchmark_end(void)
     String8List output={0};
     str8_list_push(scratch.arena,&output,push_str8f(scratch.arena,"P6\n%i %i\n255\n",rb.size.x,rb.size.y));
     str8_list_push(scratch.arena,&output,str8(rgb,count*3));
-    if(!write_data_list_to_file_path(push_str8f(scratch.arena,"%S/phase-%u.ppm",b->directory,phase),output))
+    String8 path = phase_checkpoint ? push_str8f(scratch.arena,"%S/phase-%u.ppm",b->directory,phase) :
+                                     push_str8f(scratch.arena,"%S/frame-%u.ppm",b->directory,b->frame);
+    if(!write_data_list_to_file_path(path,output))
     { fprintf(stderr,"benchmark checkpoint write failed\n"); abort_self(2); }
     scratch_end(scratch);
   }

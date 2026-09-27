@@ -143,3 +143,9 @@ Transition follow-up: [submitted-frame stalls and demand-sized surfaces](overvie
 Use `--max-frame-ms` to catch individual submission/presentation stalls that CPU
 build percentiles miss. `--preview-surface-budget` enables the separate spatial
 experiment; both preview policies remain opt-in.
+
+The [render admission experiment](preview-render-budget.md) adds
+`--preview-render-budget`, interrupted initialization (`--interrupt`), and an
+all-scrolling workload (`--busy`). Extra frame-31/33/37 checkpoints record partially
+initialized and interrupted transitions. The runner checks admission limits,
+selected-surface freshness, queue fairness and final drain as well as pixels.

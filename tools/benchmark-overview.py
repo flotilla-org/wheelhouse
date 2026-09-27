@@ -22,7 +22,7 @@ def percentile(values, quantile):
     return sorted(values)[max(0, math.ceil(len(values) * quantile) - 1)]
 
 
-def summarize(directory, count, screenshots):
+def summarize(directory, count, screenshots, render_budget):
     with (directory / 'frames.csv').open() as stream:
         rows = [{k: float(v) for k, v in row.items()} for row in csv.DictReader(stream)]
     if [r['frame'] for r in rows] != list(range(240)):
@@ -44,6 +44,11 @@ def summarize(directory, count, screenshots):
         raise ValueError('final quiet phase did not settle')
     if count > 1 and not sum(r['updates'] for r in rows[210:]):
         raise ValueError('dynamic replay stopped updating')
+    if render_budget:
+        if any(r['surface_admissions'] > 4 for r in rows):
+            raise ValueError('preview render admissions exceeded the per-frame budget')
+        if any(r['surface_deferred'] for r in rows[230:]):
+            raise ValueError('preview rendering did not drain after final output')
     result = {'phases': {}, 'checkpoints': {}}
     for phase, name in enumerate(PHASES):
         samples = [r for r in rows if r['phase'] == phase]
@@ -61,6 +66,9 @@ def summarize(directory, count, screenshots):
             'cells_built': int(sum(r['cells_built'] for r in samples)),
             'updates': int(sum(r['updates'] for r in samples)),
             'deferred': int(sum(r.get('deferred', 0) for r in samples)),
+            'surface_admissions': int(sum(r.get('surface_admissions', 0) for r in samples)),
+            'surface_deferred': int(sum(r.get('surface_deferred', 0) for r in samples)),
+            'rect_instances': int(sum(r.get('rect_instances', 0) for r in samples)),
             'surface_allocations': int(sum(r['surface_allocations'] for r in samples)),
             'surface_pixels_peak': int(max(r['surface_pixels'] for r in samples)),
         }
@@ -75,6 +83,10 @@ def summarize(directory, count, screenshots):
                 raise ValueError(f'blank screenshot {path}')
             result['checkpoints'][name] = {'sha256': hashlib.sha256(data).hexdigest(),
                                            'width': width, 'height': height}
+    if screenshots:
+        for frame in (31, 33, 37):
+            data = (directory / f'frame-{frame}.ppm').read_bytes()
+            result['checkpoints'][f'frame-{frame}'] = {'sha256': hashlib.sha256(data).hexdigest()}
     return result
 
 
@@ -88,6 +100,9 @@ def main():
     parser.add_argument('--no-screenshots', action='store_true')
     parser.add_argument('--preview-refresh-budget', action='store_true')
     parser.add_argument('--preview-surface-budget', action='store_true')
+    parser.add_argument('--preview-render-budget', action='store_true')
+    parser.add_argument('--interrupt', action='store_true')
+    parser.add_argument('--busy', action='store_true', help='scroll every fixture terminal')
     parser.add_argument('--max-frame-ms', type=float, help='fail any non-warmup frame exceeding this end-to-end budget')
     parser.add_argument('--max-build-p95-ms', type=float, help='fail any non-warmup phase exceeding this budget')
     parser.add_argument('--baseline', type=Path, help='previous summary.json; compare matching counts/repetitions')
@@ -108,7 +123,8 @@ def main():
         parser.error('baseline must use the same screenshot setting')
     report = {'schema': 1, 'binary': str(binary), 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
               'platform': platform.platform(), 'virtual_hz': 60, 'frames': 240,
-              'screenshots': not args.no_screenshots, 'preview_refresh_budget': args.preview_refresh_budget, 'preview_surface_budget': args.preview_surface_budget, 'runs': {}, 'failures': []}
+              'screenshots': not args.no_screenshots, 'preview_refresh_budget': args.preview_refresh_budget, 'preview_surface_budget': args.preview_surface_budget,
+              'preview_render_budget': args.preview_render_budget, 'interrupt': args.interrupt, 'busy': args.busy, 'runs': {}, 'failures': []}
     for count in args.counts:
         for repeat in range(args.repeats):
             key = f'{count}-{repeat}'
@@ -120,6 +136,12 @@ def main():
                        f'--overview_benchmark:{run.resolve()}', f'--overview_benchmark_count:{count}']
             if args.preview_refresh_budget:
                 command.append('--preview_refresh_budget')
+            if args.busy:
+                command.append('--overview_benchmark_busy')
+            if args.interrupt:
+                command.append('--overview_benchmark_interrupt')
+            if args.preview_render_budget:
+                command.append('--preview_render_budget')
             if args.preview_surface_budget:
                 command.append('--preview_surface_budget')
             if args.no_screenshots:
@@ -127,7 +149,7 @@ def main():
             start = time.monotonic()
             with (run / 'output.log').open('w') as log:
                 subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=args.timeout, check=True)
-            result = summarize(run, count, not args.no_screenshots)
+            result = summarize(run, count, not args.no_screenshots, args.preview_render_budget)
             result['wall_seconds'] = time.monotonic() - start
             if repeat:
                 first = report['runs'][f'{count}-0']
@@ -135,7 +157,7 @@ def main():
                     report['failures'].append(f'{key}: checkpoint pixels differ from first repetition')
                 for name in PHASES:
                     # Timing can vary; deterministic replay must not change its workload.
-                    for field in ('updates', 'rebuilds', 'cells_built', 'surface_allocations', 'surface_pixels_peak'):
+                    for field in ('updates', 'rebuilds', 'cells_built', 'surface_allocations', 'surface_pixels_peak', 'surface_admissions', 'surface_deferred', 'rect_instances'):
                         if result['phases'][name][field] != first['phases'][name][field]:
                             report['failures'].append(f'{key}/{name}: repeat differs in {field}')
 
