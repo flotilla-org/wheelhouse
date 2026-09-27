@@ -86,7 +86,7 @@ expanding workspaces remain immediate; preview scaling preserves terminal dimens
 
 These policies are enabled by default. For diagnostics and comparisons, disable
 them individually with `--no_preview_render_budget`, `--no_preview_surface_budget`
-or `--no_preview_refresh_budget`. See the [live preview workload](docs/validation/overview-live-providers.md)
+or `--no_preview_refresh_budget`. See the [preview performance guide](docs/validation/overview-performance.md)
 for measurements, reproduction commands and limits.
 
 ## Sidebar
