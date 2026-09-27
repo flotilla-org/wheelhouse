@@ -39,6 +39,9 @@ implement. Later design items below are deferred, not blockers for current fixes
    live attachment path. [Stopped-terminal lifecycle #88](https://github.com/flotilla-org/wheelhouse/issues/88)
    defines retained content, resource release, and exited versus disconnected
    behavior beyond the completed busy-loop fix.
+   [Cleat admission adoption #97](https://github.com/flotilla-org/wheelhouse/issues/97)
+   bumps the Cleat pin past output-cycle admission (Cleat #268), which is a
+   restart boundary for daemons, Wheelhouse and containing sessions together.
 2. **Make ordinary terminal interaction work through the current attach path.**
    [Scrolling override #70](https://github.com/flotilla-org/wheelhouse/issues/70),
    [OSC 52 clipboard #71](https://github.com/flotilla-org/wheelhouse/issues/71),
