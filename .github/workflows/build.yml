@@ -15,7 +15,7 @@ concurrency:
 
 env:
   # Frame-owned OSC 8 destinations and attach relay (cleat#276), ABI 10.
-  CLEAT_REV: c58f0222266f1a44639dd92c2c0733f9b1105d47
+  CLEAT_REV: b4a28cb7744dc2bb6c5df8aaf0fb91a438f1d87e
   # D3D11 frames in the C ABI (0.10, jackstay#46) and a host's own exchange
   # before setup (0.11, jackstay#48, which Porthole capture sessions need).
   # Pinned to jackstay#48's branch commit until it merges; then its squash commit.

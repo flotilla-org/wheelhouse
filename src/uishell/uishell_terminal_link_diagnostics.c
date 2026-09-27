@@ -57,6 +57,7 @@ uishell_terminal_link_diagnostics(void)
   uishell_terminal_cell_cache_apply_render_update(&cache, &update);
   LinkCheck(str8_match(uishell_terminal_link_at(&cache, 1, 1), str8_lit("https://one.test"), 0));
   MemoryZeroArray(cells);
+  cells[0].style.hyperlink_uri.len = 123; // malformed null pointer must clear the old link safely
   op = (cleat_render_update_op){.kind = CLEAT_RENDER_OP_ROW_REPLACE, .rows = &row, .row_desc_count = 1};
   uishell_terminal_cell_cache_apply_render_update(&cache, &update);
   LinkCheck(!uishell_terminal_link_at(&cache, 0, 0).size); // stationary hover no longer has a target
