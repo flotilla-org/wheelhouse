@@ -14,10 +14,17 @@ On macOS/Linux:
 bash build.sh wheelhouse
 ```
 
+The default is an unoptimized debug build. For normal use and performance
+measurements, build with optimizations enabled in both C and the Rust dependencies:
+
+```sh
+bash build.sh wheelhouse release
+```
+
 On macOS, build an app bundle with:
 
 ```sh
-bash build.sh bundle
+bash build.sh bundle release
 ```
 
 On Windows:

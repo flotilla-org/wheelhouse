@@ -142,3 +142,18 @@ establish physical mouse responsiveness or large-image decode performance.
 The final runner, including its automated pixel assertions, passed separately in
 `local/live-images-pixel-gate`: 36.42 ms worst active frame, 189.87 ms first paint,
 all 48 final markers and no failed checks.
+
+## Supported release build
+
+The next run used the existing `bash build.sh wheelhouse release` configuration:
+C at `-O2`, `BUILD_DEBUG=0`, and Cargo's release profile for all dependencies. No
+compiler wrapper is required. The local dependency checkout/target-directory
+overrides remained the same. `local/live-release-native` passed the 48-terminal
+image, pixel, transition and idle checks: 37.96 ms maximum active frame and
+212.36 ms first paint. All seven native diagnostics also passed in
+`local/native-release-diagnostics`.
+
+The isolated interactive app uses this release binary with all three preview
+policies enabled. The policies remain opt-in pending hands-on acceptance. The
+computer-use service still reports `cgWindowNotFound` when binding the app; a
+running process and advancing metrics establish rendering, not mouse usability.
