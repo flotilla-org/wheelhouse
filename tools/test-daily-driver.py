@@ -38,6 +38,12 @@ if os.environ.get('FAIL_PRODUCER') or (os.environ.get('FAIL_PRODUCER_UNTIL') and
 print('connector ready', flush=True)
 while True: time.sleep(1)
 '''
+MISMATCH_FLOTILLA = '''#!/usr/bin/env python3
+import sys
+print('wire generation mismatch: client fingerprint old speaks proto 21 (build old+dirty); '
+      'daemon fingerprint new speaks proto 21 (build new)', file=sys.stderr)
+sys.exit(1)
+'''
 
 
 class DailyDriverTests(unittest.TestCase):
@@ -51,6 +57,7 @@ class DailyDriverTests(unittest.TestCase):
             path.write_text(content)
             path.chmod(0o755)
         self.env = {**os.environ, 'WHEELHOUSE_BIN': str(self.app), 'FLOTILLA_BIN': str(self.flotilla),
+                    'HOME': str(self.directory), 'FLOTILLA_ROOT': str(self.directory / 'dev'),
                     'WHEELHOUSE_DAILY_DIR': str(self.state), 'WHEELHOUSE_ANDAMENTO_CONFIG': str(ROOT / 'data/sidebar/fixture.kdl')}
         self.command = [str(ROOT / 'scripts/run-daily-driver.sh'), '--repo', str(ROOT)]
         self.processes = []
@@ -116,6 +123,60 @@ class DailyDriverTests(unittest.TestCase):
         self.assertEqual(process.wait(timeout=10), 1)
         self.assertIn('before startup', process.stdout.read())
         self.assertFalse((self.state / 'logs/flotilla.log').exists())
+
+    def install_fleet(self, generation, content=FAKE_FLOTILLA):
+        fleet = self.directory / '.local/opt/flotilla-fleet'
+        binary = fleet / generation / 'bin/flotilla'
+        binary.parent.mkdir(parents=True)
+        binary.write_text(content)
+        binary.chmod(0o755)
+        current = fleet / 'current'
+        current.unlink(missing_ok=True)
+        current.symlink_to(generation)
+        return binary
+
+    def test_fleet_default_follows_current(self):
+        del self.env['FLOTILLA_BIN']
+        self.install_fleet('old', MISMATCH_FLOTILLA)
+        binary = self.install_fleet('new')
+        process = self.start()
+        self.ready(process, connector=True)
+        self.assertIn(str(binary), self.log('flotilla'))
+
+    def test_dev_fallback_without_fleet(self):
+        del self.env['FLOTILLA_BIN']
+        binary = Path(self.env['FLOTILLA_ROOT']) / 'target/debug/flotilla'
+        binary.parent.mkdir(parents=True)
+        shutil.copy2(self.flotilla, binary)
+        process = self.start()
+        self.ready(process, connector=True)
+        self.assertIn(str(binary), self.log('flotilla'))
+
+    def test_explicit_override_wins_over_fleet(self):
+        self.install_fleet('old', MISMATCH_FLOTILLA)
+        process = self.start()
+        self.ready(process, connector=True)
+        self.assertIn(str(self.flotilla), self.log('flotilla'))
+
+    def test_mismatch_hint_and_recovery_after_fleet_roll(self):
+        del self.env['FLOTILLA_BIN']
+        self.install_fleet('old', MISMATCH_FLOTILLA)
+        process = self.start()
+        deadline = time.monotonic() + 10
+        while 'restarting in' not in self.log('flotilla') and time.monotonic() < deadline:
+            if process.poll() is not None:
+                self.fail(process.stdout.read())
+            time.sleep(.05)
+        self.assertIn('restarting in', self.log('flotilla'))
+        binary = self.install_fleet('new')
+        self.ready(process, connector=True)
+        self.assertIn(str(binary), self.log('flotilla'))
+        process.terminate()
+        self.assertEqual(process.wait(timeout=10), 130)
+        output = process.stdout.read()
+        self.assertIn('Flotilla build mismatch: client old+dirty, daemon new;', output)
+        self.assertIn('set FLOTILLA_BIN', output)
+        self.assertNotIn('wire generation mismatch:', output)
 
     def test_flotilla_failure_restarts_without_closing_app(self):
         marker = self.directory / 'fleet-upgrade-complete'
