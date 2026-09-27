@@ -132,6 +132,13 @@ frame(void)
 internal void
 entry_point(CmdLine *cmd_line)
 {
+  // Cell selection diagnostics need only the base layer, so run headlessly.
+  if(cmd_line_has_flag(cmd_line, str8_lit("terminal_selection_diagnostics")))
+  {
+    B32 ok = uishell_terminal_selection_diagnostics();
+    fprintf(stderr, "terminal selection diagnostics %s\n", ok ? "passed" : "failed");
+    abort_self(ok ? 0 : 1);
+  }
   ExecMode exec_mode = ExecMode_Normal;
   if(cmd_line_has_flag(cmd_line, str8_lit("?")) ||
      cmd_line_has_flag(cmd_line, str8_lit("help")))
@@ -288,6 +295,7 @@ entry_point(CmdLine *cmd_line)
                                     "Check the fixture sidebar workspace bridge and exit (use temporary user/project files).\n\n"
                                     "--terminal_fixture\n"
                                     "Open the deterministic terminal glyph fixture on startup.\n\n"
+                                    "--terminal_selection_diagnostics\nCheck terminal selection bounds and clipboard text and exit.\n\n"
                                     "--terminal_glyph_diagnostics\n"
                                     "Run terminal glyph placement diagnostics and exit.\n\n"
                                     "--terminal_glyph_fixture_ppm:<path>\n"
