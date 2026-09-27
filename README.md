@@ -199,3 +199,17 @@ adapter with a small C boundary. Andamento's core remains transport-independent.
 Ingress is opt-in; Windows builds retain the fixture sidebar but reject the
 Unix listener option. Clean application shutdown removes its socket. After a
 crash, remove the stale socket before restarting with the same path.
+
+### Terminal selection
+
+Shift-drag selects linear terminal text, even when the child application captures
+mouse input. Shift-Option-drag on macOS selects a rectangle; on Linux and Windows,
+use Shift-Alt-drag. The mode is fixed when the left button goes down and lasts
+through release, even if you release the modifiers first. Copy with Cmd-C on macOS
+or Ctrl-Shift-C elsewhere; releasing the drag also updates the middle-click
+selection buffer.
+
+Rectangles include both endpoint cells and preserve blank cells and trailing
+spaces, with one slice per physical screen row, including wrapped lines. A wide
+character is copied once when both its cells are inside the rectangle; a clipped
+half is copied as a space. Ordinary linear selection still trims trailing spaces.

@@ -74,32 +74,56 @@ uishell_terminal_cell_is_kitty_placeholder(cleat_cell const *cell)
   return result;
 }
 
-// Extract the text of a stream selection (sel_min..sel_max inclusive, line=row
-// column=col over the feed grid): each row's selected columns joined, trailing
-// whitespace trimmed (terminal rows are space-padded), rows joined with '\n'.
+// Half-open columns shared by copying and highlighting. Rectangle axes are
+// normalized independently, so all four drag directions select the same cells.
+internal Rng1S64
+uishell_terminal_selection_columns(UIShell_TerminalCellFeed const *feed, TxtPt mark, TxtPt cursor, B32 rectangular, S64 row)
+{
+  Rng1S64 result = {0};
+  TxtPt first = txt_pt_min(mark, cursor);
+  TxtPt last = txt_pt_max(mark, cursor);
+  if(row >= 0 && row < (S64)feed->rows && row >= first.line && row <= last.line)
+  {
+    result.min = rectangular ? Min(mark.column, cursor.column) : (row == first.line ? first.column : 0);
+    result.max = rectangular ? Max(mark.column, cursor.column) + 1 : (row == last.line ? last.column + 1 : feed->cols);
+    result.min = Clamp(0, result.min, (S64)feed->cols);
+    result.max = Clamp(result.min, result.max, (S64)feed->cols);
+  }
+  return result;
+}
+
+// Rectangles preserve padding and physical row boundaries (including wrapped
+// rows). A wide glyph crossing an edge becomes a space: never copy outside the
+// highlighted rectangle or emit a partial glyph. Stream selection keeps its
+// existing trailing-whitespace trimming behavior.
 internal String8
-uishell_terminal_selection_text_from_feed(Arena *arena, UIShell_TerminalCellFeed const *feed, TxtPt sel_min, TxtPt sel_max)
+uishell_terminal_selection_text_from_feed(Arena *arena, UIShell_TerminalCellFeed const *feed, TxtPt mark, TxtPt cursor, B32 rectangular)
 {
   Temp scratch = scratch_begin(&arena, 1);
   String8List lines = {0};
-  for(S64 r = sel_min.line; r <= sel_max.line; r += 1)
+  for(S64 r = Max(0, Min(mark.line, cursor.line)); r <= Max(mark.line, cursor.line) && r < (S64)feed->rows; r += 1)
   {
-    if(r < 0 || r >= (S64)feed->rows) { continue; }
-    S64 start_col = (r == sel_min.line) ? sel_min.column : 0;
-    S64 end_col = (r == sel_max.line) ? sel_max.column : (S64)feed->cols - 1;
+    Rng1S64 columns = uishell_terminal_selection_columns(feed, mark, cursor, rectangular, r);
     String8List cells = {0};
-    for(S64 c = start_col; c <= end_col && c < (S64)feed->cols; c += 1)
+    for(S64 c = columns.min; c < columns.max; c += 1)
     {
       cleat_cell const *cell = &feed->cells[r*(S64)feed->cols + c];
-      if(uishell_terminal_cell_is_spacer(cell) || uishell_terminal_cell_is_kitty_placeholder(cell))
+      B32 spacer = uishell_terminal_cell_is_spacer(cell);
+      B32 placeholder = uishell_terminal_cell_is_kitty_placeholder(cell);
+      if(rectangular && cell->width == CLEAT_CELL_WIDTH_SPACER_TAIL && c > columns.min &&
+         feed->cells[r*(S64)feed->cols + c - 1].width == CLEAT_CELL_WIDTH_WIDE)
       {
-        continue;
+        continue; // already represented by the complete wide glyph
       }
-      String8 cell_string = (cell->grapheme_count == 0) ? str8_lit(" ") : uishell_terminal_string_from_cell(scratch.arena, cell);
+      if(!rectangular && (spacer || placeholder)) { continue; }
+      B32 blank = cell->grapheme_count == 0 || spacer || placeholder ||
+                  (rectangular && cell->width == CLEAT_CELL_WIDTH_WIDE && c + 1 >= columns.max);
+      String8 padding = (rectangular && cell->width == CLEAT_CELL_WIDTH_WIDE && c + 1 < columns.max) ? str8_lit("  ") : str8_lit(" ");
+      String8 cell_string = blank ? padding : uishell_terminal_string_from_cell(scratch.arena, cell);
       str8_list_push(scratch.arena, &cells, cell_string);
     }
     String8 line = str8_list_join(scratch.arena, &cells, 0);
-    while(line.size > 0 && (line.str[line.size-1] == ' ' || line.str[line.size-1] == '\t'))
+    while(!rectangular && line.size > 0 && (line.str[line.size-1] == ' ' || line.str[line.size-1] == '\t'))
     {
       line.size -= 1;
     }
@@ -110,6 +134,83 @@ uishell_terminal_selection_text_from_feed(Arena *arena, UIShell_TerminalCellFeed
   String8 result = str8_list_join(arena, &lines, &join);
   scratch_end(scratch);
   return result;
+}
+
+// Pure cell-model checks: no font rasterization or live terminal required.
+internal B32
+uishell_terminal_selection_diagnostics(void)
+{
+  Temp scratch = scratch_begin(0, 0);
+  cleat_cell cells[18] = {0};
+  U32 graphemes[18] = {0};
+  for(U64 i = 0; i < ArrayCount(cells); i += 1)
+  {
+    graphemes[i] = 'a' + i;
+    cells[i].graphemes = &graphemes[i];
+    cells[i].grapheme_count = 1;
+  }
+  UIShell_TerminalCellFeed feed = {.cells = cells, .cols = 6, .rows = 3};
+  struct { TxtPt mark; TxtPt cursor; B32 rectangular; String8 expected; } cases[] =
+  {
+    {txt_pt(0, 1), txt_pt(2, 3), 1, str8_lit("bcd\nhij\nnop")},
+    {txt_pt(2, 3), txt_pt(0, 1), 1, str8_lit("bcd\nhij\nnop")},
+    {txt_pt(0, 3), txt_pt(2, 1), 1, str8_lit("bcd\nhij\nnop")},
+    {txt_pt(2, 1), txt_pt(0, 3), 1, str8_lit("bcd\nhij\nnop")},
+    {txt_pt(0, 1), txt_pt(2, 3), 0, str8_lit("bcdef\nghijkl\nmnop")},
+    {txt_pt(2, 3), txt_pt(0, 1), 0, str8_lit("bcdef\nghijkl\nmnop")},
+    {txt_pt(0, 2), txt_pt(2, 2), 1, str8_lit("c\ni\no")},
+    {txt_pt(1, 3), txt_pt(1, 1), 1, str8_lit("hij")},
+    {txt_pt(-1, -2), txt_pt(0, 1), 1, str8_lit("ab")},
+    {txt_pt(2, 5), txt_pt(9, 9), 1, str8_lit("r")},
+  };
+  B32 ok = 1;
+  for(U64 i = 0; i < ArrayCount(cases); i += 1)
+  {
+    String8 text = uishell_terminal_selection_text_from_feed(scratch.arena, &feed, cases[i].mark, cases[i].cursor, cases[i].rectangular);
+    if(!str8_match(text, cases[i].expected, 0))
+    {
+      fprintf(stderr, "terminal selection case %llu failed\n", (unsigned long long)i);
+      ok = 0;
+    }
+  }
+  // Blanks, a wide grapheme, and a spacer at a physical wrap boundary.
+  // Cell feeds expose physical rows; no row joining is permitted for rectangles.
+  cells[2].grapheme_count = 0;
+  cells[3].grapheme_count = 0;
+  graphemes[7] = 0x754c;
+  cells[7].width = CLEAT_CELL_WIDTH_WIDE;
+  cells[8].width = CLEAT_CELL_WIDTH_SPACER_TAIL;
+  cells[8].grapheme_count = 0;
+  cells[15].width = CLEAT_CELL_WIDTH_SPACER_HEAD;
+  struct { S64 first; S64 last; String8 expected; } edge_cases[] =
+  {
+    {1, 3, str8_lit("b  \n\xe7\x95\x8cj\nno ")},
+    {1, 1, str8_lit("b\n \nn")},
+    {2, 3, str8_lit("  \n j\no ")},
+    {3, 3, str8_lit(" \nj\n ")},
+  };
+  for(U64 i = 0; i < ArrayCount(edge_cases); i += 1)
+  {
+    TxtPt mark = txt_pt(0, edge_cases[i].first);
+    TxtPt cursor = txt_pt(2, edge_cases[i].last);
+    String8 text = uishell_terminal_selection_text_from_feed(scratch.arena, &feed, mark, cursor, 1);
+    if(!str8_match(text, edge_cases[i].expected, 0))
+    {
+      fprintf(stderr, "terminal selection edge case %llu failed\n", (unsigned long long)i);
+      ok = 0;
+    }
+    for(S64 r = 0; r < 3; r += 1)
+    {
+      Rng1S64 columns = uishell_terminal_selection_columns(&feed, mark, cursor, 1, r);
+      if(columns.min != edge_cases[i].first || columns.max != edge_cases[i].last + 1) { ok = 0; }
+    }
+  }
+  String8 linear = uishell_terminal_selection_text_from_feed(scratch.arena, &feed, txt_pt(0, 1), txt_pt(0, 3), 0);
+  ok = ok && str8_match(linear, str8_lit("b"), 0);
+  if(ok) { log_infof("terminal selection diagnostics passed"); }
+  else { log_user_errorf("terminal selection diagnostics failed"); }
+  scratch_end(scratch);
+  return ok;
 }
 
 internal U64

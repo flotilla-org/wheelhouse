@@ -44,6 +44,7 @@ struct UIShell_TerminalViewState
   // authoritatively). Drives local-selection-vs-forward.
   U32 mouse_tracking_mode;
   // Local text selection (cursor/mark over grid cells, line=row column=col).
+  B32 selection_rectangular; // latched at press, retained through release/copy
   B32 selecting;        // left button down, driving a selection this drag
   B32 has_selection;    // a non-empty selection exists
   TxtPt sel_mark;       // anchor (fixed end)
@@ -3407,6 +3408,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     if(left_pressed && local_select && !was_selecting)
     {
       tv->selecting = 1;
+      tv->selection_rectangular = shift_held && !!(canvas_sig.event_flags & WM_Modifier_Alt);
       tv->sel_mark = txt_pt((S64)cell_row, (S64)cell_col);
       tv->sel_cursor = tv->sel_mark;
       tv->has_selection = 0;
@@ -3425,8 +3427,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           Temp sel_scratch = scratch_begin(0, 0);
           UIShell_TerminalCellFeed sel_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
           String8 sel_text = uishell_terminal_selection_text_from_feed(sel_scratch.arena, &sel_feed,
-                                                                       txt_pt_min(tv->sel_mark, tv->sel_cursor),
-                                                                       txt_pt_max(tv->sel_mark, tv->sel_cursor));
+                                                                       tv->sel_mark,
+                                                                       tv->sel_cursor, tv->selection_rectangular);
           if(sel_text.size != 0) { wm_set_selection_text(sel_text); }
           scratch_end(sel_scratch);
         }
@@ -3502,7 +3504,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     // forwarding.)
     B32 moved = (!tv->mouse_pos_valid || lx != tv->last_mouse_x_px || ly != tv->last_mouse_y_px);
     B32 over_canvas = !!(canvas_sig.f & UI_SignalFlag_Hovering);
-    if(!was_selecting && !tv->selecting && moved && (tv->mouse_buttons_held != 0 || over_canvas))
+    if(!selection_consumes_left && moved && (tv->mouse_buttons_held != 0 || over_canvas))
     {
       U32 move_button = CLEAT_MOUSE_BUTTON_NONE;
       if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_LEFT) { move_button = CLEAT_MOUSE_BUTTON_LEFT; }
@@ -3572,8 +3574,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
               Temp clip_scratch = scratch_begin(0, 0);
               UIShell_TerminalCellFeed clip_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
               String8 clip_text = uishell_terminal_selection_text_from_feed(clip_scratch.arena, &clip_feed,
-                                                                            txt_pt_min(tv->sel_mark, tv->sel_cursor),
-                                                                            txt_pt_max(tv->sel_mark, tv->sel_cursor));
+                                                                            tv->sel_mark,
+                                                                            tv->sel_cursor, tv->selection_rectangular);
               if(clip_text.size != 0) { wm_set_clipboard_text(clip_text); }
               scratch_end(clip_scratch);
             }
@@ -3612,8 +3614,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
               Temp copy_scratch = scratch_begin(0, 0);
               UIShell_TerminalCellFeed copy_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
               String8 copy_text = uishell_terminal_selection_text_from_feed(copy_scratch.arena, &copy_feed,
-                                                                            txt_pt_min(tv->sel_mark, tv->sel_cursor),
-                                                                            txt_pt_max(tv->sel_mark, tv->sel_cursor));
+                                                                            tv->sel_mark,
+                                                                            tv->sel_cursor, tv->selection_rectangular);
               if(copy_text.size != 0) { wm_set_clipboard_text(copy_text); }
               scratch_end(copy_scratch);
             }
@@ -3783,6 +3785,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           U32 raster_flags;
           B32 has_selection;
           B32 selecting;
+          B32 selection_rectangular;
           TxtPt sel_mark;
           TxtPt sel_cursor;
         } bucket_key_data;
@@ -3799,6 +3802,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         bucket_key_data.raster_flags = cell_font_raster_flags;
         bucket_key_data.has_selection = tv->has_selection;
         bucket_key_data.selecting = tv->selecting;
+        bucket_key_data.selection_rectangular = tv->selection_rectangular;
         bucket_key_data.sel_mark = tv->sel_mark;
         bucket_key_data.sel_cursor = tv->sel_cursor;
         U64 bucket_key = (u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1);
@@ -3822,9 +3826,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           glyph_renderer.trace_row = rd_state->terminal_glyph_trace_row;
           glyph_renderer.trace_generation = tv->cell_cache.render_generation;
           uishell_terminal_glyph_renderer_draw_cell_feed(scratch.arena, &glyph_renderer, &draw_params, &feed);
-          // Local selection highlight: a translucent stream-selection overlay
-          // (first row from the anchor column, last row to the cursor column,
-          // full width in between), composited over the just-drawn cells.
+          // Use exactly the same cell bounds as clipboard extraction.
           if(tv->has_selection || tv->selecting)
           {
             TxtPt sel_min = txt_pt_min(tv->sel_mark, tv->sel_cursor);
@@ -3833,8 +3835,9 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
             for(S64 r = sel_min.line; r <= sel_max.line; r += 1)
             {
               if(r < 0 || r >= (S64)feed.rows) { continue; }
-              S64 start_col = (r == sel_min.line) ? sel_min.column : 0;
-              S64 end_col = (r == sel_max.line) ? sel_max.column : (S64)feed.cols - 1;
+              Rng1S64 columns = uishell_terminal_selection_columns(&feed, tv->sel_mark, tv->sel_cursor, tv->selection_rectangular, r);
+              S64 start_col = columns.min;
+              S64 end_col = columns.max - 1;
               if(end_col < start_col) { continue; }
               F32 x0 = floor_f32(canvas_box->rect.x0 + (F32)start_col*cell_width_px);
               F32 x1 = ceil_f32(canvas_box->rect.x0 + (F32)(end_col + 1)*cell_width_px);
