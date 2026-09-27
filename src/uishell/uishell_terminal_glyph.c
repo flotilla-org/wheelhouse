@@ -207,8 +207,6 @@ uishell_terminal_selection_diagnostics(void)
   }
   String8 linear = uishell_terminal_selection_text_from_feed(scratch.arena, &feed, txt_pt(0, 1), txt_pt(0, 3), 0);
   ok = ok && str8_match(linear, str8_lit("b"), 0);
-  if(ok) { log_infof("terminal selection diagnostics passed"); }
-  else { log_user_errorf("terminal selection diagnostics failed"); }
   scratch_end(scratch);
   return ok;
 }
