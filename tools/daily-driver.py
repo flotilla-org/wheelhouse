@@ -6,6 +6,7 @@ import fcntl
 import http.client
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import subprocess
@@ -16,6 +17,26 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 CONNECTOR_STABLE_SECONDS = 30
 MAX_CONNECTOR_BACKOFF_SECONDS = 30
+
+
+def flotilla_binary():
+    if 'FLOTILLA_BIN' in os.environ:
+        return Path(os.environ['FLOTILLA_BIN']).resolve()
+    fleet = Path.home() / '.local/opt/flotilla-fleet/current/bin/flotilla'
+    if fleet.is_file():
+        return fleet.resolve()
+    root = Path(os.environ.get('FLOTILLA_ROOT', ROOT.parent / 'flotilla'))
+    return (root / 'target/debug/flotilla').resolve()
+
+
+def mismatch_hint(output):
+    mismatch = re.search(r'wire generation mismatch:.*?client fingerprint.*?\(build ([^)]+)\)'
+                         r'.*?daemon fingerprint.*?\(build ([^)]+)\)', output, re.DOTALL)
+    if mismatch:
+        client, daemon = mismatch.groups()
+        return (f'Flotilla build mismatch: client {client}, daemon {daemon}; '
+                'set FLOTILLA_BIN to a binary matching the daemon '
+                '(fleet install: ~/.local/opt/flotilla-fleet/current/bin/flotilla).')
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -60,7 +81,7 @@ def stop(process):
         process.wait()
 
 
-def run(args, binary, flotilla, template, state):
+def run(args, binary, template, state):
     with contextlib.ExitStack() as stack:
         # Keep Unix socket paths short even on macOS, where TMPDIR is long.
         runtime = stack.enter_context(tempfile.TemporaryDirectory(prefix='wh-daily-', dir='/tmp'))
@@ -89,14 +110,23 @@ def run(args, binary, flotilla, template, state):
                                     '--socket', path, '--repo', str(repo)])
             stack.callback(stop, process)
             producers.append((name, process))
-        connector_command = [str(flotilla), 'pm', 'connect', '--wheelhouse-socket', path,
-                             '--flotilla-bin', str(flotilla)]
+        connector_log_start = 0
+
+        def launch_connector(append=False):
+            nonlocal connector_log_start
+            # Resolve current again on retries so a fleet roll can recover in place.
+            flotilla = flotilla_binary()
+            log = logs / 'flotilla.log'
+            connector_log_start = log.stat().st_size if append and log.exists() else 0
+            return launch('flotilla', [str(flotilla), 'pm', 'connect', '--wheelhouse-socket', path,
+                                      '--flotilla-bin', str(flotilla)], append=append)
+
         connector = None
         connector_started_at = 0
         restart_at = 0
         backoff = 1
         if not args.git_only:
-            connector = launch('flotilla', connector_command)
+            connector = launch_connector()
             connector_started_at = time.monotonic()
 
         def stop_connector():
@@ -115,6 +145,11 @@ def run(args, binary, flotilla, template, state):
                     backoff = 1
                 stop(connector)
                 connector = None
+                with (logs / 'flotilla.log').open('rb') as output:
+                    output.seek(connector_log_start)
+                    hint = mismatch_hint(output.read().decode(errors='replace'))
+                if hint:
+                    print(hint, flush=True)
                 restart_at = time.monotonic() + backoff
                 message = f'Flotilla connector exited with status {status}; restarting in {backoff}s'
                 with (logs / 'flotilla.log').open('a') as output:
@@ -123,7 +158,7 @@ def run(args, binary, flotilla, template, state):
                 backoff = min(backoff * 2, MAX_CONNECTOR_BACKOFF_SECONDS)
             if connector is None and not args.git_only and time.monotonic() >= restart_at:
                 try:
-                    connector = launch('flotilla', connector_command, append=True)
+                    connector = launch_connector(append=True)
                     connector_started_at = time.monotonic()
                 except OSError as error:
                     message = f'Flotilla connector could not start: {error}; retrying in {backoff}s'
@@ -147,8 +182,7 @@ def main():
         parser.error('--no-git cannot be combined with --git-only or --repo')
     args.repo = [] if args.no_git else [repo.resolve() for repo in (args.repo or [Path.cwd()])]
     binary = Path(os.environ.get('WHEELHOUSE_BIN', ROOT / 'build/wheelhouse')).resolve()
-    flotilla_root = Path(os.environ.get('FLOTILLA_ROOT', ROOT.parent / 'flotilla')).resolve()
-    flotilla = Path(os.environ.get('FLOTILLA_BIN', flotilla_root / 'target/debug/flotilla')).resolve()
+    flotilla = flotilla_binary()
     andamento = Path(os.environ.get('WHEELHOUSE_ANDAMENTO_DIR', os.environ.get('ANDAMENTO_ROOT', ROOT.parent / 'andamento'))).resolve()
     template = Path(os.environ.get('WHEELHOUSE_ANDAMENTO_CONFIG', ROOT / 'data/sidebar/daily-driver.kdl')).resolve()
     config_home = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config'))
@@ -170,7 +204,7 @@ def main():
                            env={**os.environ, 'WHEELHOUSE_ANDAMENTO_DIR': str(andamento)}, check=True)
         if not os.access(binary, os.X_OK):
             parser.error(f'Wheelhouse binary not found: {binary}; run bash build.sh wheelhouse')
-        return run(args, binary, flotilla, template, state)
+        return run(args, binary, template, state)
 
 
 if __name__ == '__main__':
