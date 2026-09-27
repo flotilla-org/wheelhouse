@@ -16,7 +16,11 @@ uishell_overview_benchmark_init(CmdLine *cmd)
   if(!cmd_line_has_flag(cmd, str8_lit("user")) || !cmd_line_has_flag(cmd, str8_lit("project")) ||
      cmd_line_has_flag(cmd, str8_lit("andamento_socket")))
   { fprintf(stderr, "benchmark requires isolated --user/--project and no live ingress\n"); abort_self(2); }
-  b->interactive = cmd_line_has_flag(cmd, str8_lit("overview_benchmark_interactive"));
+  b->command = cmd_line_string(cmd, str8_lit("overview_benchmark_command"));
+  b->live = b->command.size != 0;
+  b->live_transitions = cmd_line_has_flag(cmd, str8_lit("overview_benchmark_live_transitions"));
+  b->live_phase = max_U32;
+  b->interactive = b->live || cmd_line_has_flag(cmd, str8_lit("overview_benchmark_interactive"));
   b->start_us = now_time_us();
   b->busy = cmd_line_has_flag(cmd, str8_lit("overview_benchmark_busy"));
   b->interrupt = cmd_line_has_flag(cmd, str8_lit("overview_benchmark_interrupt"));
@@ -26,7 +30,7 @@ uishell_overview_benchmark_init(CmdLine *cmd)
   String8 path = push_str8f(rd_state->arena, "%S/frames.csv", b->directory);
   b->metrics = fopen((char *)path.str, "w");
   if(b->metrics == 0) { fprintf(stderr, "cannot open benchmark metrics\n"); abort_self(2); }
-  fprintf(b->metrics, "frame,phase,frame_us,build_us,deferred,rebuilds,cells_built,terminal_visits,updates,surface_allocations,surface_pixels,zoom_t,width,height,surface_us,glyph_us,window_us,surface_admissions,surface_deferred,rect_instances\n");
+  fprintf(b->metrics, "frame,phase,frame_us,build_us,deferred,rebuilds,cells_built,terminal_visits,updates,surface_allocations,surface_pixels,zoom_t,width,height,surface_us,glyph_us,window_us,surface_admissions,surface_deferred,rect_instances,provider_starts,provider_start_us,background_starts,live_final_count,provider_resize_us,provider_update_us,empty_layout_resizes,event_wait_us,background_updates,snapshot_deferred\n");
 }
 
 internal void
@@ -37,9 +41,12 @@ uishell_overview_benchmark_begin(void)
   b->deferred = b->rebuilds = b->cells_built = b->terminal_visits = b->updates = b->surface_allocations = 0;
   b->surface_us = b->glyph_us = b->window_us = 0;
   b->surface_admissions = b->surface_deferred = 0;
+  b->provider_starts = b->provider_start_us = b->background_starts = 0;
+  b->provider_resize_us = b->provider_update_us = b->empty_layout_resizes = b->event_wait_us = 0;
+  b->background_updates = b->snapshot_deferred = 0;
   b->begin_us = now_time_us();
   b->source_frame = b->interactive ? (U32)((b->begin_us-b->start_us)*60/1000000) : Min(b->frame, 7*b->phase_frames);
-  rd_request_frame();
+  if(!b->live) { rd_request_frame(); }
 }
 
 internal void
@@ -60,13 +67,32 @@ uishell_overview_benchmark_window(RD_WindowState *ws)
       CFG_Node *panels = cfg_node_new(rd_state->cfg, owner, str8_lit("panels"));
       CFG_Node *panel = cfg_node_new(rd_state->cfg, panels, str8_lit("1"));
       cfg_node_new(rd_state->cfg, panel, str8_lit("selected"));
-      CFG_Node *view = rd_cfg_new_view_tab(panel, str8_lit("terminal"), str8_zero(), 1);
-      cfg_node_new(rd_state->cfg, view, str8_lit("overview_fixture"));
+      CFG_Node *view = rd_cfg_new_view_tab(panel, str8_lit("terminal"), b->command, 1);
+      cfg_node_new(rd_state->cfg, view, b->live ? str8_lit("overview_live") : str8_lit("overview_fixture"));
       b->owners[i] = owner->id; b->views[i] = view->id;
     }
     ws->root_controlled_split_initialized = 1;
     ws->root_controlled_split_selected_workspace_id = b->owners[0];
     b->initialized = 1;
+    if(b->live) { ws->workspace_zoom_open = 1; }
+  }
+  if(b->live && b->live_transitions)
+  {
+    U32 phase = Min(5, (b->begin_us-b->start_us)/2000000);
+    if(phase != b->live_phase)
+    {
+      b->live_phase = phase;
+      ws->workspace_zoom_open = phase != 2;
+      if(phase == 1) { ws->root_controlled_split_selected_workspace_id = b->owners[b->count-1]; }
+      if(phase == 3) { ws->root_controlled_split_selected_workspace_id = b->owners[0]; }
+#if OS_MAC
+      if(phase == 4 || phase == 5)
+      {
+        MAC_WM_Window *window = mac_wm_window_from_handle(ws->os);
+        [window->ns_window setContentSize:NSMakeSize(phase == 4 ? 900 : 1200, phase == 4 ? 600 : 800)];
+      }
+#endif
+    }
   }
   if(b->interactive) { return; }
   if(b->interrupt)
@@ -244,18 +270,45 @@ uishell_overview_benchmark_end(void)
       { instances += g->batches.byte_count/g->batches.bytes_per_inst; }
     }
   }
+  U64 live_final_count = 0;
+  if(b->live)
+  {
+    String8 marker = str8_lit("FINAL UPDATE");
+    for(U32 i = 0; i < b->count; i += 1)
+    {
+      RD_ViewState *view = rd_view_state_from_cfg(cfg_node_from_id(b->views[i]));
+      UIShell_TerminalViewState *terminal = (UIShell_TerminalViewState *)view->user_data;
+      if(terminal == 0 || terminal->cell_cache.cols < marker.size) { continue; }
+      UIShell_TerminalCellCache *cache = &terminal->cell_cache;
+      for(U32 row = 0; row < cache->rows; row += 1)
+      {
+        B32 matches = 1;
+        for(U32 col = 0; col < marker.size; col += 1)
+        {
+          cleat_cell *cell = &cache->cells[row*cache->cols+col];
+          matches = matches && cell->grapheme_count != 0 && cell->graphemes[0] == marker.str[col];
+        }
+        if(matches) { live_final_count += 1; break; }
+      }
+    }
+  }
   U64 pixels=0;
   for(RD_SurfaceCacheNode *n=ws->first_surface_cache_node; n; n=n->next)
   { pixels += (U64)n->size.x*n->size.y; }
   Vec2F32 dim=dim_2f32(wm_client_rect_from_window(ws->os));
-  U32 phase=b->frame/b->phase_frames;
-  fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f,%llu,%llu,%llu,%llu,%llu,%llu\n",
+  U32 phase=b->live ? (b->live_transitions ? b->live_phase : 0) : b->frame/b->phase_frames;
+  fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
     b->frame,phase,(unsigned long long)elapsed,(unsigned long long)b->build_us,(unsigned long long)b->deferred,(unsigned long long)b->rebuilds,
     (unsigned long long)b->cells_built,(unsigned long long)b->terminal_visits,
     (unsigned long long)b->updates,(unsigned long long)b->surface_allocations,
     (unsigned long long)pixels,ws->workspace_zoom_t,dim.x,dim.y,
     (unsigned long long)b->surface_us,(unsigned long long)b->glyph_us,(unsigned long long)b->window_us,
-    (unsigned long long)b->surface_admissions,(unsigned long long)b->surface_deferred,(unsigned long long)instances);
+    (unsigned long long)b->surface_admissions,(unsigned long long)b->surface_deferred,(unsigned long long)instances,
+    (unsigned long long)b->provider_starts,(unsigned long long)b->provider_start_us,
+    (unsigned long long)b->background_starts,(unsigned long long)live_final_count,
+    (unsigned long long)b->provider_resize_us,(unsigned long long)b->provider_update_us,
+    (unsigned long long)b->empty_layout_resizes,(unsigned long long)b->event_wait_us,
+    (unsigned long long)b->background_updates,(unsigned long long)b->snapshot_deferred);
   fflush(b->metrics);
   if(b->interactive) { b->frame += 1; return; }
   B32 phase_checkpoint = b->frame%b->phase_frames == b->phase_frames-1;

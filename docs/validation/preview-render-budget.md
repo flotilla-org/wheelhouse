@@ -7,8 +7,9 @@ policy and demand-sized surface policy.
 
 ## Scheduling boundary
 
-All demanded materialized workspaces still build their ordinary UI and consume
-provider updates. After layout, the shell admits at most four pending offscreen
+All demanded materialized workspaces still build their ordinary UI. The subsequent
+[live-provider work](overview-live-providers.md) also bounds background provider
+starts and snapshot requests; selected terminals remain immediate. After layout, the shell admits at most four pending offscreen
 workspace surfaces per frame. Pending means a missing/invalid surface, a changed
 size, or a changed declared content version. The oldest last-rendered workspace
 is admitted first, with inventory order breaking ties. Newly selected, expanding
@@ -24,7 +25,7 @@ work has run. Neither their nested surfaces nor their draw callbacks submit work
 Their completed surface pixels remain valid, and pending work requests another
 frame. A shared UI traversal helper computes the sibling/ancestor continuation;
 normal parent clip/transform stacks still unwind. No terminal dimensions or
-provider cadence change, and no deferred draw refers to released image handles:
+PTY processing cadence change, and no deferred draw refers to released image handles:
 the retained object is completed pixels, not a postponed image draw command.
 
 The overview uses retained small previews when the workspace's full wrapper
@@ -97,6 +98,7 @@ An isolated app bundle and fresh fixture are in `local/Wheelhouse Preview.app` a
 returned `cgWindowNotFound`. Real mouse-driven transition acceptance is therefore
 not yet established. The daily driver has not been replaced or restarted.
 
-Before enabling these policies by default, verify real input, provider-driven
-wakeups, mixed glyph/image content and repeated transitions. The four-surface
+Provider-driven wakeups, quiet-state drain and live transitions are now covered
+by the [live-provider check](overview-live-providers.md). Before enabling these
+policies by default, verify real input and mixed glyph/image pixels. The four-surface
 limit is a bounded first policy, not an adaptive GPU-time scheduler.

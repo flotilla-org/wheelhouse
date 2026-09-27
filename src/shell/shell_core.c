@@ -9924,6 +9924,7 @@ rd_frame(void)
   if(rd_state->frame_depth == 1)
   {
     events = wm_get_events(scratch.arena, rd_state->num_frames_requested == 0 && !DEV_always_refresh);
+    if(uishell_overview_benchmark.enabled) { uishell_overview_benchmark.event_wait_us += events.wait_time_us; }
   }
   
   //////////////////////////////

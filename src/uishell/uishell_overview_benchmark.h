@@ -7,11 +7,16 @@ struct UIShell_OverviewBenchmark
 {
   B32 enabled, initialized, screenshots;
   U32 count, frame, phase_frames;
-  B32 interrupt, busy, interactive;
+  B32 interrupt, busy, interactive, live, live_transitions;
+  U32 live_phase;
+  String8 command;
   U64 start_us;
   U32 source_frame;
   U32 pending_since[48];
   U64 surface_admissions, surface_deferred;
+  U64 provider_starts, provider_start_us, background_starts;
+  U64 provider_resize_us, provider_update_us, empty_layout_resizes;
+  U64 event_wait_us, background_updates, snapshot_deferred;
   U64 deferred;
   U64 surface_us, glyph_us, window_us;
   U64 begin_us, build_us, rebuilds, cells_built, terminal_visits, updates, surface_allocations;

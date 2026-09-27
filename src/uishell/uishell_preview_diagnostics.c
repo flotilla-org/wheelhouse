@@ -42,6 +42,44 @@ uishell_preview_diagnostics(RD_WindowState *ws)
   }
   U32 failures = 0;
 #define PreviewCheck(condition, label) do { if(!(condition)) { fprintf(stderr, "FAIL preview: %s\n", label); failures++; } } while(0)
+  // Exercise the production snapshot queue's ordering and lifetime edges.
+  {
+    UIShell_TerminalPreviewQueue saved_queue = uishell_terminal_preview_queue;
+    U64 saved_frame = rd_state->frame_index;
+    B32 saved_budget = rd_state->preview_render_budget;
+    UIShell_TerminalViewState queued[8] = {0};
+    uishell_terminal_preview_queue = (UIShell_TerminalPreviewQueue){.frame = max_U64};
+    rd_state->preview_render_budget = 1;
+    rd_state->frame_index = 100;
+    for(U32 i = 0; i < 8; i += 1)
+    { PreviewCheck(uishell_terminal_preview_admit_update(&queued[i], 1) == (i < 4), "first snapshot admission round"); }
+    rd_state->frame_index = 101;
+    for(U32 i = 0; i < 8; i += 1)
+    {
+      B32 admitted = uishell_terminal_preview_admit_update(&queued[i], i != 6);
+      PreviewCheck(admitted == (i >= 4), "older requests precede recurring producers; selected view bypasses queue");
+    }
+    // Releasing an actual queued view must unlink it before its state is zeroed.
+    uishell_terminal_runtime_release(&queued[1]);
+    PreviewCheck(queued[0].preview_next == &queued[2] && queued[2].preview_prev == &queued[0],
+                 "released view removed from middle of snapshot queue");
+    rd_state->frame_index = 102;
+    for(U32 i = 0; i < 4; i += 1)
+    {
+      if(i != 1) { PreviewCheck(uishell_terminal_preview_admit_update(&queued[i], 1), "queued producer eventually served"); }
+    }
+    PreviewCheck(uishell_terminal_preview_queue.first == 0, "snapshot queue drained");
+    rd_state->frame_index = 200;
+    for(U32 i = 0; i < 8; i += 1) { uishell_terminal_preview_admit_update(&queued[i], 1); }
+    rd_state->frame_index = 202;
+    PreviewCheck(uishell_terminal_preview_admit_update(&queued[0], 1), "undemanded queue heads cannot block a visible preview");
+    for(U32 i = 0; i < 8; i += 1) { uishell_terminal_runtime_release(&queued[i]); }
+    PreviewCheck(uishell_terminal_preview_queue.first == 0 && uishell_terminal_preview_queue.last == 0,
+                 "release leaves no queued terminal pointers");
+    uishell_terminal_preview_queue = saved_queue;
+    rd_state->frame_index = saved_frame;
+    rd_state->preview_render_budget = saved_budget;
+  }
   ui_select_state(test_ui);
   UIShell_RegsScope(.window = ws->cfg_id)
   {

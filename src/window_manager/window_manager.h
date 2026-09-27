@@ -171,6 +171,7 @@ struct WM_EventList
   U64 count;
   WM_Event *first;
   WM_Event *last;
+  U64 wait_time_us; // blocking native event wait, where measured (currently macOS)
 };
 
 ////////////////////////////////

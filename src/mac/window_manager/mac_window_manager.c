@@ -1258,12 +1258,15 @@ wm_get_events(Arena *arena, B32 wait)
 {
   WM_EventList result = {0};
   NSDate *limit = wait ? [NSDate distantFuture] : [NSDate distantPast];
+  B32 blocking = wait;
   for(;;)
   {
+    U64 wait_begin_us = blocking ? now_time_us() : 0;
     NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny
                                         untilDate:limit
                                            inMode:NSDefaultRunLoopMode
                                           dequeue:YES];
+    if(blocking) { result.wait_time_us += now_time_us()-wait_begin_us; blocking = 0; }
     if(event == 0)
     {
       break;

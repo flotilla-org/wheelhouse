@@ -276,6 +276,7 @@ wm_event_list_copy(Arena *arena, WM_EventList *src)
 internal void
 wm_event_list_concat_in_place(WM_EventList *dst, WM_EventList *to_push)
 {
+  U64 wait_time_us = dst->wait_time_us + to_push->wait_time_us;
   if(dst->last && to_push->first)
   {
     dst->last->next = to_push->first;
@@ -287,6 +288,7 @@ wm_event_list_concat_in_place(WM_EventList *dst, WM_EventList *to_push)
   {
     MemoryCopyStruct(dst, to_push);
   }
+  dst->wait_time_us = wait_time_us;
   MemoryZeroStruct(to_push);
 }
 

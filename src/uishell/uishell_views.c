@@ -18,6 +18,9 @@ typedef struct UIShell_TerminalViewState UIShell_TerminalViewState;
 struct UIShell_TerminalViewState
 {
   B32 initialized;
+  UIShell_TerminalViewState *preview_next, *preview_prev;
+  B32 preview_queued;
+  U64 preview_demand_frame;
   cleat_provider *provider;
   cleat_session *session;
   // daemon-backed session: provider is shared per-daemon (never closed by the
@@ -59,6 +62,82 @@ struct UIShell_TerminalViewState
   U64 glyph_trace_last_render_generation;
 };
 
+typedef struct UIShell_TerminalPreviewQueue UIShell_TerminalPreviewQueue;
+struct UIShell_TerminalPreviewQueue
+{
+  UIShell_TerminalViewState *first, *last;
+  U64 frame, start_frame;
+  U32 remaining;
+  B32 started;
+};
+global UIShell_TerminalPreviewQueue uishell_terminal_preview_queue = {.frame = ~(U64)0, .start_frame = ~(U64)0};
+
+// Provider creation can initialize a VT engine and launch a process. Keep its
+// admission separate from the cheaper snapshot queue, but under the same policy.
+internal B32
+uishell_terminal_preview_admit_start(B32 background)
+{
+  if(!background || !rd_state->preview_render_budget) { return 1; }
+  UIShell_TerminalPreviewQueue *queue = &uishell_terminal_preview_queue;
+  if(queue->start_frame != rd_state->frame_index)
+  {
+    queue->start_frame = rd_state->frame_index;
+    queue->started = 0;
+  }
+  if(queue->started) { rd_request_frame(); return 0; }
+  queue->started = 1;
+  return 1;
+}
+
+internal void
+uishell_terminal_preview_dequeue(UIShell_TerminalViewState *tv)
+{
+  if(tv->preview_queued)
+  {
+    DLLRemove_NP(uishell_terminal_preview_queue.first, uishell_terminal_preview_queue.last,
+                 tv, preview_next, preview_prev);
+    tv->preview_next = tv->preview_prev = 0;
+    tv->preview_queued = 0;
+  }
+}
+
+internal B32
+uishell_terminal_preview_admit_update(UIShell_TerminalViewState *tv, B32 background)
+{
+  UIShell_TerminalPreviewQueue *queue = &uishell_terminal_preview_queue;
+  if(!background || !rd_state->preview_render_budget)
+  {
+    uishell_terminal_preview_dequeue(tv);
+    return 1;
+  }
+  if(queue->frame != rd_state->frame_index)
+  {
+    queue->frame = rd_state->frame_index;
+    queue->remaining = 4;
+  }
+  // A hidden workspace stops requesting preview updates. Remove obsolete head
+  // requests so they cannot block the currently demanded previews. View release
+  // also unlinks its request before destroying the terminal state.
+  while(queue->first != 0 && queue->first->preview_demand_frame+1 < rd_state->frame_index)
+  { uishell_terminal_preview_dequeue(queue->first); }
+  tv->preview_demand_frame = rd_state->frame_index;
+  if(!tv->preview_queued)
+  {
+    DLLPushBack_NP(queue->first, queue->last, tv, preview_next, preview_prev);
+    tv->preview_queued = 1;
+  }
+  if(queue->first == tv && queue->remaining != 0)
+  {
+    queue->remaining -= 1;
+    uishell_terminal_preview_dequeue(tv);
+    return 1;
+  }
+  // Do not mark the provider generation observed until its update is consumed.
+  // Its wake may be coalesced, so our queue must drive its own eventual drain.
+  rd_request_frame();
+  return 0;
+}
+
 // Release only resources owned by this view. Daemon providers are shared;
 // destroying their session handle detaches this view without killing the session.
 internal void
@@ -66,6 +145,7 @@ uishell_terminal_runtime_release(void *data)
 {
   UIShell_TerminalViewState *tv = data;
   if(tv == 0) { return; }
+  uishell_terminal_preview_dequeue(tv);
   if(tv->provider && !tv->daemon_backend) { cleat_provider_set_wake_callback(tv->provider, 0, 0); }
   if(tv->session) { cleat_session_destroy(tv->session); }
   if(tv->provider && !tv->daemon_backend) { cleat_provider_close(tv->provider); }
@@ -3138,6 +3218,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   B32 fixture_mode = str8_match(view_cfg->string, str8_lit("terminal_fixture"), 0);
   B32 benchmark_mode = uishell_overview_benchmark.enabled &&
     cfg_node_child_from_string(view_cfg, str8_lit("overview_fixture")) != &cfg_nil_node;
+  B32 benchmark_metrics = benchmark_mode || (uishell_overview_benchmark.enabled &&
+    cfg_node_child_from_string(view_cfg, str8_lit("overview_live")) != &cfg_nil_node);
   F32 main_font_size = rd_font_size();
   FNT_Tag cell_font = rd_font_from_slot(RD_FontSlot_Code);
   FNT_RasterFlags cell_font_raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Code);
@@ -3183,8 +3265,18 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   U64 rows64 = ClampBot(1, (U64)(canvas_dim_target.y/cell_height_px));
   U16 cols = (U16)Min(cols64, 4096);
   U16 rows = (U16)Min(rows64, 4096);
-  if(!fixture_mode && !benchmark_mode && !tv->initialized)
+  RD_WorkspaceSurfaceEntry *workspace_surface = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window))->active_workspace_surface_entry;
+  B32 background_preview = workspace_surface != 0 && !workspace_surface->composite && !workspace_surface->full_res;
+  B32 defer_terminal_start = !fixture_mode && !benchmark_mode && !tv->initialized &&
+                             !uishell_terminal_preview_admit_start(background_preview);
+  if(!fixture_mode && !benchmark_mode && !tv->initialized && !defer_terminal_start)
   {
+    U64 provider_start_us = benchmark_metrics ? now_time_us() : 0;
+    if(benchmark_metrics)
+    {
+      uishell_overview_benchmark.provider_starts++;
+      uishell_overview_benchmark.background_starts += background_preview;
+    }
     tv->initialized = 1;
     // backend selection is per-view workspace config: `daemon:1` (optionally
     // `daemon_name:"..."`) hosts the session in a cleat daemon so it survives
@@ -3257,13 +3349,18 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         }
       }
     }
+    if(benchmark_metrics) { uishell_overview_benchmark.provider_start_us += now_time_us()-provider_start_us; }
   }
   B32 session_ready = (!fixture_mode && tv->provider != 0 && tv->session != 0);
   if(session_ready && (tv->cols != cols || tv->rows != rows))
   {
     tv->cols = cols;
     tv->rows = rows;
+    U64 resize_begin_us = benchmark_metrics ? now_time_us() : 0;
+    if(benchmark_metrics && (view_dim.x <= 0 || view_dim.y <= 0))
+    { uishell_overview_benchmark.empty_layout_resizes++; }
     cleat_session_resize(tv->session, cols, rows);
+    if(benchmark_metrics) { uishell_overview_benchmark.provider_resize_us += now_time_us()-resize_begin_us; }
   }
   UI_Box *terminal_root_box = &ui_nil_box;
   {
@@ -3738,17 +3835,28 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     }
     else if(!session_ready && !benchmark_mode)
     {
-      UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f)) ui_label(str8_lit("terminal provider unavailable"));
+      UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f))
+      { ui_label(defer_terminal_start ? str8_lit("Starting terminal…") : str8_lit("terminal provider unavailable")); }
     }
     else
     {
       if(benchmark_mode) { uishell_overview_benchmark_feed(view_cfg, &tv->cell_cache, &tv->image_cache, cols, rows); }
+      U64 update_begin_us = benchmark_metrics ? now_time_us() : 0;
       cleat_dirty_state dirty = benchmark_mode ? CLEAT_DIRTY_CLEAN : cleat_session_poll(tv->session);
-      if(!benchmark_mode && (dirty != CLEAT_DIRTY_CLEAN || tv->cell_cache.cells == 0))
+      B32 needs_update = !benchmark_mode && (dirty != CLEAT_DIRTY_CLEAN || tv->cell_cache.cells == 0);
+      if(!background_preview || !needs_update) { uishell_terminal_preview_dequeue(tv); }
+      B32 admit_update = needs_update && uishell_terminal_preview_admit_update(tv, background_preview);
+      if(benchmark_metrics && needs_update && !admit_update) { uishell_overview_benchmark.snapshot_deferred++; }
+      if(admit_update)
       {
         cleat_render_update update = {0};
         if(cleat_session_render_update(tv->session, &update))
         {
+          if(benchmark_metrics)
+          {
+            uishell_overview_benchmark.updates++;
+            uishell_overview_benchmark.background_updates += background_preview;
+          }
           uishell_terminal_cell_cache_apply_render_update(&tv->cell_cache, &update);
           uishell_terminal_image_cache_apply_render_update(&tv->image_cache, tv->session, &update);
           tv->mouse_tracking_mode = update.terminal_modes.mouse_tracking_mode;
@@ -3756,6 +3864,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           cleat_session_release_render_update(tv->session, &update);
         }
       }
+      if(benchmark_metrics) { uishell_overview_benchmark.provider_update_us += now_time_us()-update_begin_us; }
       if(tv->cell_cache.cells != 0)
       {
         UIShell_TerminalCellFeed feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
@@ -3837,13 +3946,13 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           // An observed producer update may be its last wake. Keep requesting
           // frames until this bounded refresh deadline so it cannot stay stale.
           rd_request_frame();
-          if(benchmark_mode) { uishell_overview_benchmark.deferred++; }
+          if(benchmark_metrics) { uishell_overview_benchmark.deferred++; }
         }
-        if(benchmark_mode) { uishell_overview_benchmark.terminal_visits++; }
+        if(benchmark_metrics) { uishell_overview_benchmark.terminal_visits++; }
         if(tv->retained_bucket == 0 || (!defer_content && tv->retained_bucket_key != bucket_key) || trace_this_draw)
         {
-          U64 benchmark_glyph_begin_us = benchmark_mode ? now_time_us() : 0;
-          if(benchmark_mode)
+          U64 benchmark_glyph_begin_us = benchmark_metrics ? now_time_us() : 0;
+          if(benchmark_metrics)
           {
             uishell_overview_benchmark.rebuilds++;
             uishell_overview_benchmark.cells_built += feed.cell_count;
@@ -3897,7 +4006,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           tv->retained_bucket_style_key = style_key;
           tv->retained_bucket_has_images = tv->image_cache.placement_count != 0;
           tv->retained_bucket_time_us = now_us;
-          if(benchmark_mode)
+          if(benchmark_metrics)
           { uishell_overview_benchmark.glyph_us += now_time_us()-benchmark_glyph_begin_us; }
         }
         // The surface version describes what is displayed, not a newer feed
