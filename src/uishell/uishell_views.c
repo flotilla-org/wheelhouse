@@ -14,10 +14,19 @@ struct UIShell_BinaryViewState
   U64 mark_off;
 };
 
+typedef struct UIShell_TerminalPreviewRequest UIShell_TerminalPreviewRequest;
+struct UIShell_TerminalPreviewRequest
+{
+  UIShell_TerminalPreviewRequest *next, *prev;
+  U64 demand_frame;
+  B32 queued;
+};
+
 typedef struct UIShell_TerminalViewState UIShell_TerminalViewState;
 struct UIShell_TerminalViewState
 {
   B32 initialized;
+  UIShell_TerminalPreviewRequest preview_start, preview_update;
   cleat_provider *provider;
   cleat_session *session;
   // daemon-backed session: provider is shared per-daemon (never closed by the
@@ -30,6 +39,9 @@ struct UIShell_TerminalViewState
   Arena *retained_bucket_arena;
   DR_Bucket *retained_bucket;
   U64 retained_bucket_key;
+  U64 retained_bucket_style_key;
+  B32 retained_bucket_has_images;
+  U64 retained_bucket_time_us;
   U16 cols;
   U16 rows;
   F32 cell_width_px;
@@ -58,6 +70,76 @@ struct UIShell_TerminalViewState
   U64 glyph_trace_last_render_generation;
 };
 
+typedef struct UIShell_TerminalPreviewQueue UIShell_TerminalPreviewQueue;
+struct UIShell_TerminalPreviewQueue
+{
+  UIShell_TerminalPreviewRequest *first, *last;
+  U64 frame;
+  U32 remaining;
+};
+// Provider work shares the UI thread across windows. Bound its aggregate cost,
+// with separate FIFOs so window traversal order cannot starve older requests.
+global UIShell_TerminalPreviewQueue uishell_terminal_preview_starts = {.frame = ~(U64)0};
+global UIShell_TerminalPreviewQueue uishell_terminal_preview_updates = {.frame = ~(U64)0};
+
+internal void
+uishell_terminal_preview_dequeue(UIShell_TerminalPreviewQueue *queue, UIShell_TerminalPreviewRequest *request)
+{
+  if(request->queued)
+  {
+    DLLRemove(queue->first, queue->last, request);
+    request->next = request->prev = 0;
+    request->queued = 0;
+  }
+}
+
+internal B32
+uishell_terminal_preview_admit(UIShell_TerminalPreviewQueue *queue, UIShell_TerminalPreviewRequest *request,
+                              B32 background, U32 limit)
+{
+  if(!background || !rd_state->preview_render_budget)
+  {
+    uishell_terminal_preview_dequeue(queue, request);
+    return 1;
+  }
+  if(queue->frame != rd_state->frame_index)
+  {
+    queue->frame = rd_state->frame_index;
+    queue->remaining = limit;
+  }
+  // Hidden workspaces stop requesting work. Remove obsolete heads so they
+  // cannot block demanded previews; release also unlinks both view requests.
+  while(queue->first != 0 && queue->first->demand_frame+1 < rd_state->frame_index)
+  { uishell_terminal_preview_dequeue(queue, queue->first); }
+  request->demand_frame = rd_state->frame_index;
+  if(!request->queued)
+  {
+    DLLPushBack(queue->first, queue->last, request);
+    request->queued = 1;
+  }
+  if(queue->first == request && queue->remaining != 0)
+  {
+    queue->remaining -= 1;
+    uishell_terminal_preview_dequeue(queue, request);
+    return 1;
+  }
+  // A provider wake may be coalesced; our queues drive their own eventual drain.
+  rd_request_frame();
+  return 0;
+}
+
+internal B32
+uishell_terminal_preview_admit_start(UIShell_TerminalViewState *tv, B32 background)
+{
+  return uishell_terminal_preview_admit(&uishell_terminal_preview_starts, &tv->preview_start, background, 1);
+}
+
+internal B32
+uishell_terminal_preview_admit_update(UIShell_TerminalViewState *tv, B32 background)
+{
+  return uishell_terminal_preview_admit(&uishell_terminal_preview_updates, &tv->preview_update, background, 4);
+}
+
 // Release only resources owned by this view. Daemon providers are shared;
 // destroying their session handle detaches this view without killing the session.
 internal void
@@ -65,6 +147,8 @@ uishell_terminal_runtime_release(void *data)
 {
   UIShell_TerminalViewState *tv = data;
   if(tv == 0) { return; }
+  uishell_terminal_preview_dequeue(&uishell_terminal_preview_starts, &tv->preview_start);
+  uishell_terminal_preview_dequeue(&uishell_terminal_preview_updates, &tv->preview_update);
   if(tv->provider && !tv->daemon_backend) { cleat_provider_set_wake_callback(tv->provider, 0, 0); }
   if(tv->session) { cleat_session_destroy(tv->session); }
   if(tv->provider && !tv->daemon_backend) { cleat_provider_close(tv->provider); }
@@ -3244,6 +3328,9 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   rd_view_state_from_cfg(cfg_node_from_id(uishell_regs()->view))->release_user_data = uishell_terminal_runtime_release;
   CFG_Node *view_cfg = cfg_node_from_id(uishell_regs()->view);
   B32 fixture_mode = str8_match(view_cfg->string, str8_lit("terminal_fixture"), 0);
+  B32 benchmark_mode = uishell_overview_benchmark.enabled &&
+    cfg_node_child_from_string(view_cfg, str8_lit("overview_fixture")) != &cfg_nil_node;
+  UIShell_TerminalMetrics *metrics = uishell_terminal_metrics;
   F32 main_font_size = rd_font_size();
   FNT_Tag cell_font = rd_font_from_slot(RD_FontSlot_Code);
   FNT_RasterFlags cell_font_raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Code);
@@ -3289,8 +3376,18 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   U64 rows64 = ClampBot(1, (U64)(canvas_dim_target.y/cell_height_px));
   U16 cols = (U16)Min(cols64, 4096);
   U16 rows = (U16)Min(rows64, 4096);
-  if(!fixture_mode && !tv->initialized)
+  RD_WorkspaceSurfaceEntry *workspace_surface = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window))->active_workspace_surface_entry;
+  B32 background_preview = workspace_surface != 0 && !workspace_surface->composite && !workspace_surface->full_res;
+  B32 defer_terminal_start = !fixture_mode && !benchmark_mode && !tv->initialized &&
+                             !uishell_terminal_preview_admit_start(tv, background_preview);
+  if(!fixture_mode && !benchmark_mode && !tv->initialized && !defer_terminal_start)
   {
+    U64 provider_start_us = metrics != 0 ? now_time_us() : 0;
+    if(metrics != 0)
+    {
+      metrics->provider_starts++;
+      metrics->background_starts += background_preview;
+    }
     tv->initialized = 1;
     // backend selection is per-view workspace config: `daemon:1` (optionally
     // `daemon_name:"..."`) hosts the session in a cleat daemon so it survives
@@ -3363,6 +3460,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         }
       }
     }
+    if(metrics != 0) { metrics->provider_start_us += now_time_us()-provider_start_us; }
   }
   B32 session_ready = (!fixture_mode && tv->provider != 0 && tv->session != 0);
   for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
@@ -3377,7 +3475,11 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   {
     tv->cols = cols;
     tv->rows = rows;
+    U64 resize_begin_us = metrics != 0 ? now_time_us() : 0;
+    if(metrics != 0 && (view_dim.x <= 0 || view_dim.y <= 0))
+    { metrics->empty_layout_resizes++; }
     cleat_session_resize(tv->session, cols, rows);
+    if(metrics != 0) { metrics->provider_resize_us += now_time_us()-resize_begin_us; }
   }
   UI_Box *terminal_root_box = &ui_nil_box;
   {
@@ -3879,18 +3981,30 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       }
       ui_box_equip_draw_bucket(canvas_box, terminal_bucket);
     }
-    else if(!session_ready)
+    else if(!session_ready && !benchmark_mode)
     {
-      UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f)) ui_label(str8_lit("terminal provider unavailable"));
+      UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f))
+      { ui_label(defer_terminal_start ? str8_lit("Starting terminal…") : str8_lit("terminal provider unavailable")); }
     }
     else
     {
-      cleat_dirty_state dirty = cleat_session_poll(tv->session);
-      if(dirty != CLEAT_DIRTY_CLEAN || tv->cell_cache.cells == 0)
+      if(benchmark_mode) { uishell_overview_benchmark_feed(view_cfg, &tv->cell_cache, &tv->image_cache, cols, rows); }
+      U64 update_begin_us = metrics != 0 ? now_time_us() : 0;
+      cleat_dirty_state dirty = benchmark_mode ? CLEAT_DIRTY_CLEAN : cleat_session_poll(tv->session);
+      B32 needs_update = !benchmark_mode && (dirty != CLEAT_DIRTY_CLEAN || tv->cell_cache.cells == 0);
+      if(!background_preview || !needs_update) { uishell_terminal_preview_dequeue(&uishell_terminal_preview_updates, &tv->preview_update); }
+      B32 admit_update = needs_update && uishell_terminal_preview_admit_update(tv, background_preview);
+      if(metrics != 0 && needs_update && !admit_update) { metrics->snapshot_deferred++; }
+      if(admit_update)
       {
         cleat_render_update update = {0};
         if(cleat_session_render_update(tv->session, &update))
         {
+          if(metrics != 0)
+          {
+            metrics->updates++;
+            metrics->background_updates += background_preview;
+          }
           uishell_terminal_cell_cache_apply_render_update(&tv->cell_cache, &update);
           uishell_terminal_image_cache_apply_render_update(&tv->image_cache, tv->session, &update);
           tv->mouse_tracking_mode = update.terminal_modes.mouse_tracking_mode;
@@ -3898,6 +4012,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           cleat_session_release_render_update(tv->session, &update);
         }
       }
+      if(metrics != 0) { metrics->provider_update_us += now_time_us()-update_begin_us; }
       // Recompute hover from the frame being drawn, including under a stationary
       // pointer. No retained URI survives a content/viewport update.
       if(ui_hovering(canvas_sig) && !tv->selecting && !tv->link_gesture &&
@@ -3975,9 +4090,46 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         bucket_key_data.sel_mark = tv->sel_mark;
         bucket_key_data.sel_cursor = tv->sel_cursor;
         U64 bucket_key = (u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1);
-        rd_workspace_surface_contribute_version(bucket_key);
-        if(tv->retained_bucket == 0 || tv->retained_bucket_key != bucket_key || trace_this_draw)
+        // Only producer-content changes may wait. Geometry, font, image and
+        // selection changes bypass the preview refresh budget.
+        bucket_key_data.render_generation = 0;
+        bucket_key_data.image_generation = 0; // this mirrors every provider update, even without images
+        U64 style_key = u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1;
+        RD_WindowState *window_state = rd_window_state_from_cfg__existing(cfg_node_from_id(uishell_regs()->window));
+        RD_WorkspaceSurfaceEntry *surface = window_state != &rd_nil_window_state ? window_state->active_workspace_surface_entry : 0;
+        U64 interval_us = 0;
+        if(rd_state->preview_refresh_budget && surface != 0 && !surface->composite && !surface->full_res)
         {
+          F32 width = rd_workspace_preview_demand_width(window_state, surface->workspace_id);
+          interval_us = width <= 128.f ? 200000 : width <= 256.f ? 100000 : 0;
+        }
+        U64 now_us = (benchmark_mode && !uishell_overview_benchmark.interactive) ? ((U64)uishell_overview_benchmark.frame*1000000/60) : now_time_us();
+        // Give each workspace a stable phase so busy previews do not all
+        // rebuild together every 100/200 ms. A deadline is at most one interval
+        // after the previous build, even if no new producer wake arrives.
+        U64 phase_us = interval_us ? (surface->workspace_id*2654435761ull)%interval_us : 0;
+        U64 deadline_us = interval_us ? tv->retained_bucket_time_us + interval_us -
+          (tv->retained_bucket_time_us + phase_us)%interval_us : 0;
+        B32 defer_content = interval_us != 0 && tv->retained_bucket != 0 &&
+                            tv->retained_bucket_style_key == style_key && !trace_this_draw &&
+                            tv->image_cache.placement_count == 0 && !tv->retained_bucket_has_images &&
+                            now_us < deadline_us;
+        if(defer_content && tv->retained_bucket_key != bucket_key)
+        {
+          // An observed producer update may be its last wake. Keep requesting
+          // frames until this bounded refresh deadline so it cannot stay stale.
+          rd_request_frame();
+          if(metrics != 0) { metrics->deferred++; }
+        }
+        if(metrics != 0) { metrics->terminal_visits++; }
+        if(tv->retained_bucket == 0 || (!defer_content && tv->retained_bucket_key != bucket_key) || trace_this_draw)
+        {
+          U64 glyph_begin_us = metrics != 0 ? now_time_us() : 0;
+          if(metrics != 0)
+          {
+            metrics->rebuilds++;
+            metrics->cells_built += feed.cell_count;
+          }
           if(tv->retained_bucket_arena == 0)
           {
             tv->retained_bucket_arena = arena_alloc(.name = "terminal retained draw bucket");
@@ -4023,7 +4175,15 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           }
           tv->retained_bucket = terminal_bucket;
           tv->retained_bucket_key = (trace_this_draw ? 0 : bucket_key);
+          tv->retained_bucket_style_key = style_key;
+          tv->retained_bucket_has_images = tv->image_cache.placement_count != 0;
+          tv->retained_bucket_time_us = now_us;
+          if(metrics != 0)
+          { metrics->glyph_us += now_time_us()-glyph_begin_us; }
         }
+        // The surface version describes what is displayed, not a newer feed
+        // whose drawing has intentionally been deferred.
+        rd_workspace_surface_contribute_version(tv->retained_bucket_key);
         ui_box_equip_draw_bucket(canvas_box, tv->retained_bucket);
       }
     }

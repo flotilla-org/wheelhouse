@@ -1,0 +1,56 @@
+diff --git a/src/uishell/uishell_terminal_glyph.c b/src/uishell/uishell_terminal_glyph.c
+index 516fd32..4936bb6 100644
+--- a/src/uishell/uishell_terminal_glyph.c
++++ b/src/uishell/uishell_terminal_glyph.c
+@@ -7470,6 +7470,51 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
+       .font_set = font_set,
+       .cache = &cache,
+     };
++    // Throwaway CPU draw-build benchmark; deliberately excludes GPU submission.
++    if(getenv("WHEELHOUSE_DRAW_BENCH"))
++    {
++      U32 cols = 200, rows = 60;
++      cleat_cell *cells = push_array(scratch.arena, cleat_cell, cols*rows);
++      U32 *graphemes = push_array(scratch.arena, U32, cols*rows);
++      for(U64 i = 0; i < cols*rows; i += 1)
++      {
++        graphemes[i] = 32 + (i % 95);
++        cells[i].graphemes = &graphemes[i];
++        cells[i].grapheme_count = 1;
++        cells[i].width = CLEAT_CELL_WIDTH_NARROW;
++        cells[i].fg = (cleat_rgb){190, 200, 210};
++        cells[i].bg = (cleat_rgb){10, 12, 14};
++      }
++      cleat_snapshot snapshot = {.cols=cols, .rows=rows, .cells=cells, .cell_count=cols*rows};
++      UIShell_TerminalCellFeed feed = uishell_terminal_cell_feed_from_cleat_snapshot(&snapshot);
++      UIShell_TerminalDrawParams params = {.canvas_rect={0,0,2000,1200}, .cell_width_px=10, .cell_height_px=20, .background_color={0,0,0,1}};
++      for(U32 scale_idx=0; scale_idx<2; scale_idx+=1)
++      {
++        for(U32 count_idx=0; count_idx<3; count_idx+=1)
++        {
++          U32 counts[]={1,16,48}; U32 count=counts[count_idx];
++          U64 elapsed=0, bytes=0;
++          for(U32 repeat=0;repeat<12;repeat+=1)
++          {
++            dr_begin_frame(fnt_tag_zero());
++            dr_thread_ctx->raster_scale = scale_idx ? 0.25f : 1.f;
++            Temp temp = temp_begin(scratch.arena);
++            U64 start=clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
++            for(U32 tile=0;tile<count;tile+=1)
++            {
++              DR_Bucket *bucket=dr_bucket_make();
++              DR_BucketScope(bucket) { uishell_terminal_glyph_renderer_draw_cell_feed(scratch.arena,&renderer,&params,&feed); }
++            }
++            U64 end=clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
++            if(repeat>=2) { elapsed += end-start; bytes += arena_pos(scratch.arena)-temp.pos; }
++            temp_end(temp);
++          }
++          fprintf(stderr,"DRAW_BENCH scale=%.2f tiles=%u grid=200x60 mean_ms=%.3f scratch_mb=%.2f\n",scale_idx ? 0.25 : 1.0,count,(double)elapsed/1e7,(double)bytes/10/1048576);
++        }
++      }
++      scratch_end(scratch);
++      return 1;
++    }
+     FNT_Metrics primary_metrics = fnt_metrics_from_tag_size(primary_font, font_size);
+     F32 diagnostic_text_y = 32.f;
+ 

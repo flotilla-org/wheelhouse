@@ -120,7 +120,10 @@ jobs:
       - name: Windows UI diagnostics
         if: runner.os == 'Windows'
         shell: cmd
-        run: call run_tests.bat
+        run: |
+          call run_tests.bat
+          if errorlevel 1 exit /b 1
+          call run_tests.bat -Diagnostics preview -NoPreviewBudget
       - name: Windows ConPTY packaging
         if: runner.os == 'Windows'
         shell: pwsh
@@ -142,6 +145,7 @@ jobs:
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
+          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/preview-control-user" --project:"$task_dir/preview-control-project" --preview_diagnostics --no_preview_refresh_budget --no_preview_surface_budget --no_preview_render_budget
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
@@ -154,6 +158,7 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
           ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
+          ./build/wheelhouse --user:"$task_dir/preview-control-user" --project:"$task_dir/preview-control-project" --preview_diagnostics --no_preview_refresh_budget --no_preview_surface_budget --no_preview_render_budget
           ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics

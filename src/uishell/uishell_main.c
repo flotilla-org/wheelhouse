@@ -59,6 +59,7 @@
 #include "uishell/uishell_terminal_provider.h"
 #include "uishell/uishell_terminal_glyph.h"
 #include "uishell/uishell_views.h"
+#include "uishell/uishell_overview_benchmark.h"
 
 //- rjf: [c]
 #include "base/base_inc.c"
@@ -98,6 +99,7 @@
 #include "uishell/uishell_preview_diagnostics.c"
 #include "uishell/uishell_panel_diagnostics.c"
 #include "uishell/uishell_managed_content_diagnostics.c"
+#include "uishell/uishell_overview_benchmark.c"
 
 ////////////////////////////////
 //~ rjf: Top-Level Execution Types
@@ -121,7 +123,9 @@ frame(void)
   {
     uishell_sidebar_poll_live();
     uishell_jackstay_tick(1,0);
+    uishell_overview_benchmark_begin();
     rd_frame();
+    uishell_overview_benchmark_end();
   }
   uishell_jackstay_tick(0,rd_state->quit);
   return rd_state->quit && !uishell_jackstay_pending();
@@ -160,6 +164,10 @@ entry_point(CmdLine *cmd_line)
       r_init(cmd_line);
       fnt_init();
       rd_init(cmd_line);
+      uishell_overview_benchmark_init(cmd_line);
+      rd_state->preview_render_budget = !cmd_line_has_flag(cmd_line, str8_lit("no_preview_render_budget"));
+      rd_state->preview_surface_budget = !cmd_line_has_flag(cmd_line, str8_lit("no_preview_surface_budget"));
+      rd_state->preview_refresh_budget = !cmd_line_has_flag(cmd_line, str8_lit("no_preview_refresh_budget"));
       uishell_sidebar_fixture = cmd_line_has_flag(cmd_line, str8_lit("sidebar_fixture")) ||
         cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
 
@@ -293,6 +301,10 @@ entry_point(CmdLine *cmd_line)
                                     "--panel_diagnostics\nRun panel drop and layout checks and exit.\n\n"
                                     "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
                                     "--preview_diagnostics\nCheck workspace preview isolation and dimming and exit.\n\n"
+                                    "--overview_benchmark:DIR --overview_benchmark_count:1|16|48\nRun isolated macOS overview replay (use tools/benchmark-overview.py).\n\n"
+                                    "--no_preview_render_budget\nDisable background provider and workspace render admission limits.\n\n"
+                                    "--no_preview_surface_budget\nDisable demand-sized workspace preview surfaces.\n\n"
+                                    "--no_preview_refresh_budget\nDisable reduced refresh cadence for small terminal previews.\n\n"
                                     "--tooltip_diagnostics\nCheck tooltip sizing and window-edge placement and exit.\n\n"
                                     "--sidebar_fixture\nOpen the example project catalog instead of the local workspace sidebar.\n\n"
                                     "--sidebar_diagnostics\n"

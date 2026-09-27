@@ -821,6 +821,7 @@ read_only global UI_Box ui_nil_box =
   &ui_nil_box,
 };
 internal B32 ui_box_is_nil(UI_Box *box);
+internal UI_BoxRec ui_box_rec_df_skip_children(UI_Box *box, UI_Box *root, U64 sib_member_off);
 internal UI_BoxRec ui_box_rec_df(UI_Box *box, UI_Box *root, U64 sib_member_off, U64 child_member_off);
 #define ui_box_rec_df_pre(box, root) ui_box_rec_df(box, root, OffsetOf(UI_Box, next), OffsetOf(UI_Box, first))
 #define ui_box_rec_df_post(box, root) ui_box_rec_df(box, root, OffsetOf(UI_Box, prev), OffsetOf(UI_Box, last))

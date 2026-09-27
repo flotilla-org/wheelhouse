@@ -5542,7 +5542,9 @@ uishell_terminal_image_lookup(void *context, cleat_image_resource const *meta, U
 internal R_Handle
 uishell_terminal_image_upload(void *context, U32 width, U32 height, U8 *rgba)
 {
-  return r_tex2d_alloc(R_ResourceKind_Static, v2s32((S32)width, (S32)height), R_Tex2DFormat_RGBA8, rgba);
+  // Image generations arrive during interaction. Use the dynamic upload path;
+  // Metal static uploads synchronously wait behind already-submitted GPU work.
+  return r_tex2d_alloc(R_ResourceKind_Dynamic, v2s32((S32)width, (S32)height), R_Tex2DFormat_RGBA8, rgba);
 }
 
 internal void

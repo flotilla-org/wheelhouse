@@ -369,16 +369,11 @@ ui_box_is_nil(UI_Box *box)
 }
 
 internal UI_BoxRec
-ui_box_rec_df(UI_Box *box, UI_Box *root, U64 sib_member_off, U64 child_member_off)
+ui_box_rec_df_skip_children(UI_Box *box, UI_Box *root, U64 sib_member_off)
 {
   UI_BoxRec result = {0};
   result.next = &ui_nil_box;
-  if(!ui_box_is_nil(*MemberFromOffset(UI_Box **, box, child_member_off)))
-  {
-    result.next = *MemberFromOffset(UI_Box **, box, child_member_off);
-    result.push_count = 1;
-  }
-  else for(UI_Box *p = box; !ui_box_is_nil(p) && p != root; p = p->parent)
+  for(UI_Box *p = box; !ui_box_is_nil(p) && p != root; p = p->parent)
   {
     if(!ui_box_is_nil(*MemberFromOffset(UI_Box **, p, sib_member_off)))
     {
@@ -386,6 +381,22 @@ ui_box_rec_df(UI_Box *box, UI_Box *root, U64 sib_member_off, U64 child_member_of
       break;
     }
     result.pop_count += 1;
+  }
+  return result;
+}
+
+internal UI_BoxRec
+ui_box_rec_df(UI_Box *box, UI_Box *root, U64 sib_member_off, U64 child_member_off)
+{
+  UI_BoxRec result = {0};
+  if(!ui_box_is_nil(*MemberFromOffset(UI_Box **, box, child_member_off)))
+  {
+    result.next = *MemberFromOffset(UI_Box **, box, child_member_off);
+    result.push_count = 1;
+  }
+  else
+  {
+    result = ui_box_rec_df_skip_children(box, root, sib_member_off);
   }
   return result;
 }

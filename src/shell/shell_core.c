@@ -2195,6 +2195,7 @@ rd_effect_from_name(String8 name)
 internal RD_SurfaceCacheNode *
 rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
 {
+  U64 surface_begin_us = rd_state->frame_metrics != 0 ? now_time_us() : 0;
   RD_SurfaceCacheNode *node = 0;
   for(RD_SurfaceCacheNode *n = ws->first_surface_cache_node; n != 0; n = n->next)
   {
@@ -2208,6 +2209,7 @@ rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
   {
     r_tex2d_release(node->texture);
     node->texture = r_tex2d_alloc_render_target(size);
+    if(rd_state->frame_metrics != 0) { rd_state->frame_metrics->surface_allocations++; }
     node->size = size;
     node->rendered_hash = 0;
   }
@@ -2223,7 +2225,10 @@ rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
       node = push_array(ws->arena, RD_SurfaceCacheNode, 1);
     }
     node->key = key;
+    node->workspace_content_version = 0;
+    node->last_render_frame_index = 0;
     node->texture = r_tex2d_alloc_render_target(size);
+    if(rd_state->frame_metrics != 0) { rd_state->frame_metrics->surface_allocations++; }
     node->size = size;
     node->rendered_hash = 0;
     node->last_was_preserved = 0;
@@ -2231,6 +2236,8 @@ rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
     SLLStackPush(ws->first_surface_cache_node, node);
   }
   node->last_use_frame_index = rd_state->frame_index;
+  if(rd_state->frame_metrics != 0)
+  { rd_state->frame_metrics->surface_us += now_time_us()-surface_begin_us; }
   return node;
 }
 
@@ -2347,6 +2354,90 @@ rd_workspace_preview_demand_width(RD_WindowState *ws, U64 workspace_id)
   return width_pt;
 }
 
+internal Vec2S32
+rd_workspace_surface_size(RD_WindowState *ws, RD_WorkspaceSurfaceEntry *ws_entry, Rng2F32 surface_rect)
+{
+  F32 backing_scale = wm_backing_scale_from_window(ws->os);
+  // non-visible workspace surfaces render at reduced resolution: they're
+  // only ever consumed as previews, & this quarters their memory
+  if(ws_entry != 0 && !ws_entry->composite && !ws_entry->full_res)
+  {
+    if(rd_state->preview_surface_budget)
+    {
+      // Keep the workspace's logical layout unchanged. Only its offscreen
+      // target follows quantized display demand; the selected workspace
+      // stays full resolution throughout the zoom transition.
+      F32 content_width = dim_2f32(surface_rect).x*(ws->workspace_content_uv.x1 - ws->workspace_content_uv.x0);
+      F32 demand_width = rd_workspace_preview_demand_width(ws, ws_entry->workspace_id);
+      backing_scale *= Min(1.f, demand_width/Max(1.f, content_width));
+    }
+    else
+    {
+      backing_scale *= 0.5f;
+    }
+  }
+  Vec2F32 surface_dim = dim_2f32(surface_rect);
+  Vec2S32 result = v2s32((S32)ceil_f32(surface_dim.x*backing_scale),
+                          (S32)ceil_f32(surface_dim.y*backing_scale));
+  return result;
+}
+
+// Producer versions do not describe the workspace chrome's layout/animation.
+// Fold that state in after layout so those redraws use the same admission queue.
+internal U64
+rd_workspace_surface_layout_version(UI_Box *root, U64 version)
+{
+  for(UI_Box *box = root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, root).next)
+  {
+    F32 animation[] = {box->squish, box->transparency, box->hot_t, box->active_t,
+                       box->disabled_t, box->focus_hot_t, box->focus_active_t,
+                       box->focus_active_disabled_t};
+    version = u64_hash_from_seed_str8(version, str8_struct(&box->rect));
+    version = u64_hash_from_seed_str8(version, str8_struct(&animation));
+  }
+  return version;
+}
+
+// Admit the oldest pending previews first. UI/provider work is independent of
+// this decision; only conversion of a workspace subtree into pixels is queued.
+internal void
+rd_workspace_surface_schedule(RD_WindowState *ws)
+{
+  for(U64 i = 0; i < ws->workspace_surface_entry_count; i += 1)
+  {
+    RD_WorkspaceSurfaceEntry *entry = &ws->workspace_surface_entries[i];
+    entry->defer_render = 0;
+    UI_Box *box = ui_box_from_key((UI_Key){{entry->box_key}});
+    entry->content_version_accum = rd_workspace_surface_layout_version(box, entry->content_version_accum);
+    if(entry->composite || entry->full_res) { continue; }
+    RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, entry->box_key);
+    Vec2S32 size = rd_workspace_surface_size(ws, entry, pad_2f32(box->rect, 2.f));
+    entry->defer_render = node == 0 || node->rendered_hash == 0 ||
+                          node->size.x != size.x || node->size.y != size.y ||
+                          (!entry->has_unversioned_views && node->workspace_content_version != entry->content_version_accum);
+  }
+  for(U64 slot = 0; slot < 4; slot += 1)
+  {
+    RD_WorkspaceSurfaceEntry *oldest = 0;
+    U64 oldest_frame = max_U64;
+    for(U64 i = 0; i < ws->workspace_surface_entry_count; i += 1)
+    {
+      RD_WorkspaceSurfaceEntry *entry = &ws->workspace_surface_entries[i];
+      if(!entry->defer_render) { continue; }
+      RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, entry->box_key);
+      U64 frame = node != 0 ? node->last_render_frame_index : 0;
+      if(oldest == 0 || frame < oldest_frame)
+      {
+        oldest = entry;
+        oldest_frame = frame;
+      }
+    }
+    if(oldest == 0) { break; }
+    oldest->defer_render = 0;
+    if(rd_state->frame_metrics != 0) { rd_state->frame_metrics->surface_admissions++; }
+  }
+}
+
 internal U64
 rd_workspace_preview_surface_key(U64 workspace_id)
 {
@@ -2361,6 +2452,7 @@ struct RD_WorkspacePreviewDraw
 {
   RD_SurfaceCacheNode *node;
   B32 keep_aspect;
+  B32 workspace_surface;
   Rng2F32 src_uv; // subrect of the surface to show ({0,0,1,1} = whole)
 };
 
@@ -2380,7 +2472,7 @@ internal UI_BOX_CUSTOM_DRAW(rd_workspace_preview_box_draw)
     }
     DR_Tex2DSampleKindScope(R_Tex2DSampleKind_Linear)
     {
-      dr_surface_img_sub(draw->node->texture, dst, draw->src_uv, v4f32(1, 1, 1, 1), 0, 0, 0);
+      dr_surface_img_sub(draw->node->texture, dst, draw->workspace_surface ? draw->node->workspace_content_uv : draw->src_uv, v4f32(1, 1, 1, 1), 0, 0, 0);
     }
   }
 }
@@ -5140,7 +5232,9 @@ rd_window_frame(void)
       ui_set_active_scroll_bar_style(rd_setting_b32_from_name(str8_lit("overlay_scrollbars")) ? UI_ScrollBarStyle_Overlay : UI_ScrollBarStyle_Classic);
 
       // rjf: begin & push initial stack values
+      if(rd_state->frame_replay.suppress_input) { MemoryZeroStruct(&ws->ui_events); }
       ui_begin_build(ws->os, &ws->ui_events, &icon_info, ws->theme, &animation_info, rd_state->frame_dt, rd_state->frame_dt);
+      if(rd_state->frame_replay.suppress_input) { ui_state->mouse = v2f32(-10000, -10000); }
       ui_push_font(rd_font_from_slot(RD_FontSlot_Main));
       ui_push_font_size(top_level_font_size);
       ui_push_text_padding(floor_f32(ui_top_font_size()*0.3f));
@@ -7365,11 +7459,17 @@ rd_window_frame(void)
                                                              "###workspace_tile_%I64u", child->id);
                 UI_Key wrapper_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", child->id);
                 RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, wrapper_key.u64[0]);
+                B32 workspace_surface = node != 0 && node->rendered_hash != 0;
+                if(!workspace_surface)
+                {
+                  node = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(child->id));
+                }
                 if(node != 0)
                 {
                   RD_WorkspacePreviewDraw *tile_draw = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
                   tile_draw->node = node;
-                  tile_draw->src_uv = ws->workspace_content_uv; // crop the transparent sidebar band
+                  tile_draw->workspace_surface = workspace_surface;
+                  tile_draw->src_uv = r2f32p(0, 0, 1, 1);
                   ui_box_equip_custom_draw(tile_box, rd_workspace_preview_box_draw, tile_draw);
                 }
                 UI_Signal tile_sig = ui_signal_from_box(tile_box);
@@ -7520,6 +7620,7 @@ rd_window_frame(void)
     RD_SurfaceCacheNode *surface_node_stack[8] = {0};
     B32 surface_child_changed_stack[8] = {0};
     U64 surface_box_count = 0;
+    if(rd_state->preview_render_budget) { rd_workspace_surface_schedule(ws); }
     for(UI_Box *box = ui_root_from_state(ws->ui); !ui_box_is_nil(box);)
     {
       // rjf: get corner radii
@@ -7533,6 +7634,20 @@ rd_window_frame(void)
       
       // rjf: get recursion
       UI_BoxRec rec = ui_box_rec_df_post(box, &ui_nil_box);
+      B32 defer_surface = 0;
+      RD_WorkspaceSurfaceEntry *preview_entry = rd_workspace_surface_entry_from_box_key(ws, box->key.u64[0]);
+      if(rd_state->preview_render_budget && preview_entry != 0 && preview_entry->defer_render)
+      {
+        defer_surface = 1;
+        RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, box->key.u64[0]);
+        if(rd_state->frame_metrics != 0) { rd_state->frame_metrics->surface_deferred++; }
+        // Leave completed pixels intact and avoid submitting nested surfaces.
+        if(node != 0) { node->last_use_frame_index = rd_state->frame_index; }
+        rec = ui_box_rec_df_skip_children(box, &ui_nil_box, OffsetOf(UI_Box, prev));
+        rd_request_frame();
+      }
+
+      if(defer_surface) { goto end_box_draw; }
       
       // rjf: sum to box heatmap
       if(DEV_draw_ui_box_heatmap)
@@ -7604,17 +7719,8 @@ rd_window_frame(void)
          surface_box_count < ArrayCount(surface_box_stack))
       {
         Rng2F32 surface_rect = pad_2f32(box->rect, 2.f);
-        F32 backing_scale = wm_backing_scale_from_window(ws->os);
-        // non-visible workspace surfaces render at reduced resolution: they're
-        // only ever consumed as previews, & this quarters their memory
         RD_WorkspaceSurfaceEntry *ws_entry = rd_workspace_surface_entry_from_box_key(ws, box->key.u64[0]);
-        if(ws_entry != 0 && !ws_entry->composite && !ws_entry->full_res)
-        {
-          backing_scale *= 0.5f;
-        }
-        Vec2F32 surface_dim = dim_2f32(surface_rect);
-        Vec2S32 size_px = v2s32((S32)ceil_f32(surface_dim.x*backing_scale),
-                                (S32)ceil_f32(surface_dim.y*backing_scale));
+        Vec2S32 size_px = rd_workspace_surface_size(ws, ws_entry, surface_rect);
         RD_SurfaceCacheNode *node = rd_window_surface_node_from_key(ws, box->key.u64[0], size_px);
         if(node != 0 && !r_handle_match(node->texture, r_handle_zero()))
         {
@@ -7842,13 +7948,15 @@ rd_window_frame(void)
         box->custom_draw(box, box->custom_draw_user_data);
       }
       
+      end_box_draw:;
+
       // rjf: pop
       {
         S32 pop_idx = 0;
         for(UI_Box *b = box; !ui_box_is_nil(b) && pop_idx <= rec.pop_count; b = b->parent)
         {
           pop_idx += 1;
-          if(b == box && rec.push_count != 0)
+          if(b == box && (rec.push_count != 0 || defer_surface))
           {
             continue;
           }
@@ -7912,7 +8020,15 @@ rd_window_frame(void)
             {
               changed = dr_surface_end_composite_cached(&node->rendered_hash, force_render);
             }
+            if(rd_state->frame_metrics != 0 && changed && ws_entry != 0 &&
+               !ws_entry->composite && !ws_entry->full_res)
+            { rd_state->frame_metrics->background_surface_redraws++; }
             node->last_was_preserved = !changed;
+            if(ws_entry != 0)
+            {
+              node->workspace_content_version = ws_entry->content_version_accum;
+              node->last_render_frame_index = rd_state->frame_index;
+            }
             if(changed && surface_box_count != 0)
             {
               surface_child_changed_stack[surface_box_count-1] = 1;
@@ -7923,6 +8039,7 @@ rd_window_frame(void)
             // for non-visible workspaces, the only consumer of the surface)
             if(changed && ws_entry != 0)
             {
+              node->workspace_content_uv = ws->workspace_content_uv;
               // minis hold only the workspace-content subrect of the wrapper (no
               // transparent sidebar band), at the content's aspect
               Rng2F32 content_uv = ws->workspace_content_uv;
@@ -9827,6 +9944,7 @@ rd_frame(void)
   if(rd_state->frame_depth == 1)
   {
     events = wm_get_events(scratch.arena, rd_state->num_frames_requested == 0 && !DEV_always_refresh);
+    if(rd_state->frame_metrics != 0) { rd_state->frame_metrics->event_wait_us += events.wait_time_us; }
   }
   
   //////////////////////////////
@@ -9901,7 +10019,7 @@ rd_frame(void)
   //////////////////////////////
   //- rjf: target Hz -> delta time
   //
-  rd_state->frame_dt = 1.f/target_hz;
+  rd_state->frame_dt = rd_state->frame_replay.fixed_dt > 0 ? rd_state->frame_replay.fixed_dt : 1.f/target_hz;
   
   //////////////////////////////
   //- rjf: begin measuring actual per-frame work
@@ -10767,7 +10885,11 @@ rd_frame(void)
       }
       uishell_push_regs();
       uishell_regs()->window = w->cfg_id;
+      if(rd_state->frame_replay.prepare_window) { rd_state->frame_replay.prepare_window(w); }
+      U64 window_begin_us = rd_state->frame_metrics != 0 ? now_time_us() : 0;
       rd_window_frame();
+      if(rd_state->frame_metrics != 0)
+      { rd_state->frame_metrics->window_us += now_time_us()-window_begin_us; }
       if(rd_state->frame_diagnostic != 0)
       { abort_self(rd_state->frame_diagnostic(w) ? 0 : 1); }
       MemoryZeroStruct(&w->ui_events);
@@ -10847,6 +10969,8 @@ rd_frame(void)
   //
   ProfScope("submit rendering to all windows")
   {
+    if(rd_state->frame_metrics != 0)
+    { rd_state->frame_metrics->build_us = now_time_us()-rd_state->frame_metrics->begin_us; }
     r_begin_frame();
     for(RD_WindowState *w = rd_state->first_window_state; w != &rd_nil_window_state; w = w->order_next)
     {
