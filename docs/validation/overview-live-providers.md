@@ -173,3 +173,26 @@ CI now runs the preview diagnostic twice per platform, with the policies off and
 on, using the same native build. This adds queue/render-path coverage without a
 second compile. It does not substitute for the macOS performance workload or
 hands-on interaction testing.
+
+## Provider fairness across windows
+
+PR review identified that the original one-start-per-frame limiter had no queue:
+a new provider in an earlier-visited window could repeatedly take the slot before
+an older request in a later window. A diagnostic modeling those ordered visits
+failed both ordering assertions before the fix (`local/start-fairness-red`) and
+passed afterward (`local/start-fairness-green`). Provider starts and snapshots now
+use separate named FIFOs built from the same admission helper. Each terminal owns
+two request nodes; release unlinks both before clearing the terminal state.
+
+The provider budgets intentionally remain process-wide because windows share the
+UI thread: splitting them per-window would multiply synchronous provider work as
+windows are added. Both queues preserve older requests regardless of traversal
+order, bypass foreground demand, and discard undemanded heads. Surface admission
+remains per-window. This tests provider fairness; it does not establish a timing
+bound for multiple simultaneous overview windows.
+
+The revised queues passed all eight native diagnostics and the 48-terminal live
+image/transition/pixel/idle workload (`local/live-fair-starts`), with a 30.64 ms
+maximum active frame and 192.96 ms first paint. Native diagnostics overlapped its
+initialization phase, so this run is a correctness/stall-gate check rather than a
+clean timing comparison.

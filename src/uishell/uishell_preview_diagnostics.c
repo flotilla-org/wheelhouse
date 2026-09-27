@@ -44,12 +44,22 @@ uishell_preview_diagnostics(RD_WindowState *ws)
 #define PreviewCheck(condition, label) do { if(!(condition)) { fprintf(stderr, "FAIL preview: %s\n", label); failures++; } } while(0)
   // Exercise the production snapshot queue's ordering and lifetime edges.
   {
-    UIShell_TerminalPreviewQueue saved_queue = uishell_terminal_preview_queue;
+    UIShell_TerminalPreviewQueue saved_updates = uishell_terminal_preview_updates;
+    UIShell_TerminalPreviewQueue saved_starts = uishell_terminal_preview_starts;
     U64 saved_frame = rd_state->frame_index;
     B32 saved_budget = rd_state->preview_render_budget;
     UIShell_TerminalViewState queued[8] = {0};
-    uishell_terminal_preview_queue = (UIShell_TerminalPreviewQueue){.frame = max_U64};
+    uishell_terminal_preview_updates = (UIShell_TerminalPreviewQueue){.frame = max_U64};
+    uishell_terminal_preview_starts = (UIShell_TerminalPreviewQueue){.frame = max_U64};
     rd_state->preview_render_budget = 1;
+    // Model two windows visited in order. An older request from the second
+    // window must precede a fresh start from the first on the next frame.
+    rd_state->frame_index = 90;
+    PreviewCheck(uishell_terminal_preview_admit_start(&queued[0], 1), "first window starts one provider");
+    PreviewCheck(!uishell_terminal_preview_admit_start(&queued[4], 1), "second window start waits");
+    rd_state->frame_index = 91;
+    PreviewCheck(!uishell_terminal_preview_admit_start(&queued[1], 1), "new first-window start cannot bypass second-window request");
+    PreviewCheck(uishell_terminal_preview_admit_start(&queued[4], 1), "older second-window provider start is served");
     rd_state->frame_index = 100;
     for(U32 i = 0; i < 8; i += 1)
     { PreviewCheck(uishell_terminal_preview_admit_update(&queued[i], 1) == (i < 4), "first snapshot admission round"); }
@@ -61,22 +71,25 @@ uishell_preview_diagnostics(RD_WindowState *ws)
     }
     // Releasing an actual queued view must unlink it before its state is zeroed.
     uishell_terminal_runtime_release(&queued[1]);
-    PreviewCheck(queued[0].preview_next == &queued[2] && queued[2].preview_prev == &queued[0],
+    PreviewCheck(queued[0].preview_update.next == &queued[2].preview_update && queued[2].preview_update.prev == &queued[0].preview_update,
                  "released view removed from middle of snapshot queue");
     rd_state->frame_index = 102;
     for(U32 i = 0; i < 4; i += 1)
     {
       if(i != 1) { PreviewCheck(uishell_terminal_preview_admit_update(&queued[i], 1), "queued producer eventually served"); }
     }
-    PreviewCheck(uishell_terminal_preview_queue.first == 0, "snapshot queue drained");
+    PreviewCheck(uishell_terminal_preview_updates.first == 0, "snapshot queue drained");
     rd_state->frame_index = 200;
     for(U32 i = 0; i < 8; i += 1) { uishell_terminal_preview_admit_update(&queued[i], 1); }
     rd_state->frame_index = 202;
     PreviewCheck(uishell_terminal_preview_admit_update(&queued[0], 1), "undemanded queue heads cannot block a visible preview");
     for(U32 i = 0; i < 8; i += 1) { uishell_terminal_runtime_release(&queued[i]); }
-    PreviewCheck(uishell_terminal_preview_queue.first == 0 && uishell_terminal_preview_queue.last == 0,
+    PreviewCheck(uishell_terminal_preview_updates.first == 0 && uishell_terminal_preview_updates.last == 0,
                  "release leaves no queued terminal pointers");
-    uishell_terminal_preview_queue = saved_queue;
+    PreviewCheck(uishell_terminal_preview_starts.first == 0 && uishell_terminal_preview_starts.last == 0,
+                 "release leaves no provider-start request pointers");
+    uishell_terminal_preview_updates = saved_updates;
+    uishell_terminal_preview_starts = saved_starts;
     rd_state->frame_index = saved_frame;
     rd_state->preview_render_budget = saved_budget;
   }

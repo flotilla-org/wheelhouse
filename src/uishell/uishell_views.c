@@ -14,13 +14,19 @@ struct UIShell_BinaryViewState
   U64 mark_off;
 };
 
+typedef struct UIShell_TerminalPreviewRequest UIShell_TerminalPreviewRequest;
+struct UIShell_TerminalPreviewRequest
+{
+  UIShell_TerminalPreviewRequest *next, *prev;
+  U64 demand_frame;
+  B32 queued;
+};
+
 typedef struct UIShell_TerminalViewState UIShell_TerminalViewState;
 struct UIShell_TerminalViewState
 {
   B32 initialized;
-  UIShell_TerminalViewState *preview_next, *preview_prev;
-  B32 preview_queued;
-  U64 preview_demand_frame;
+  UIShell_TerminalPreviewRequest preview_start, preview_update;
   cleat_provider *provider;
   cleat_session *session;
   // daemon-backed session: provider is shared per-daemon (never closed by the
@@ -67,77 +73,71 @@ struct UIShell_TerminalViewState
 typedef struct UIShell_TerminalPreviewQueue UIShell_TerminalPreviewQueue;
 struct UIShell_TerminalPreviewQueue
 {
-  UIShell_TerminalViewState *first, *last;
-  U64 frame, start_frame;
+  UIShell_TerminalPreviewRequest *first, *last;
+  U64 frame;
   U32 remaining;
-  B32 started;
 };
-global UIShell_TerminalPreviewQueue uishell_terminal_preview_queue = {.frame = ~(U64)0, .start_frame = ~(U64)0};
-
-// Provider creation can initialize a VT engine and launch a process. Keep its
-// admission separate from the cheaper snapshot queue, but under the same policy.
-internal B32
-uishell_terminal_preview_admit_start(B32 background)
-{
-  if(!background || !rd_state->preview_render_budget) { return 1; }
-  UIShell_TerminalPreviewQueue *queue = &uishell_terminal_preview_queue;
-  if(queue->start_frame != rd_state->frame_index)
-  {
-    queue->start_frame = rd_state->frame_index;
-    queue->started = 0;
-  }
-  if(queue->started) { rd_request_frame(); return 0; }
-  queue->started = 1;
-  return 1;
-}
+// Provider work shares the UI thread across windows. Bound its aggregate cost,
+// with separate FIFOs so window traversal order cannot starve older requests.
+global UIShell_TerminalPreviewQueue uishell_terminal_preview_starts = {.frame = ~(U64)0};
+global UIShell_TerminalPreviewQueue uishell_terminal_preview_updates = {.frame = ~(U64)0};
 
 internal void
-uishell_terminal_preview_dequeue(UIShell_TerminalViewState *tv)
+uishell_terminal_preview_dequeue(UIShell_TerminalPreviewQueue *queue, UIShell_TerminalPreviewRequest *request)
 {
-  if(tv->preview_queued)
+  if(request->queued)
   {
-    DLLRemove_NP(uishell_terminal_preview_queue.first, uishell_terminal_preview_queue.last,
-                 tv, preview_next, preview_prev);
-    tv->preview_next = tv->preview_prev = 0;
-    tv->preview_queued = 0;
+    DLLRemove(queue->first, queue->last, request);
+    request->next = request->prev = 0;
+    request->queued = 0;
   }
 }
 
 internal B32
-uishell_terminal_preview_admit_update(UIShell_TerminalViewState *tv, B32 background)
+uishell_terminal_preview_admit(UIShell_TerminalPreviewQueue *queue, UIShell_TerminalPreviewRequest *request,
+                              B32 background, U32 limit)
 {
-  UIShell_TerminalPreviewQueue *queue = &uishell_terminal_preview_queue;
   if(!background || !rd_state->preview_render_budget)
   {
-    uishell_terminal_preview_dequeue(tv);
+    uishell_terminal_preview_dequeue(queue, request);
     return 1;
   }
   if(queue->frame != rd_state->frame_index)
   {
     queue->frame = rd_state->frame_index;
-    queue->remaining = 4;
+    queue->remaining = limit;
   }
-  // A hidden workspace stops requesting preview updates. Remove obsolete head
-  // requests so they cannot block the currently demanded previews. View release
-  // also unlinks its request before destroying the terminal state.
-  while(queue->first != 0 && queue->first->preview_demand_frame+1 < rd_state->frame_index)
-  { uishell_terminal_preview_dequeue(queue->first); }
-  tv->preview_demand_frame = rd_state->frame_index;
-  if(!tv->preview_queued)
+  // Hidden workspaces stop requesting work. Remove obsolete heads so they
+  // cannot block demanded previews; release also unlinks both view requests.
+  while(queue->first != 0 && queue->first->demand_frame+1 < rd_state->frame_index)
+  { uishell_terminal_preview_dequeue(queue, queue->first); }
+  request->demand_frame = rd_state->frame_index;
+  if(!request->queued)
   {
-    DLLPushBack_NP(queue->first, queue->last, tv, preview_next, preview_prev);
-    tv->preview_queued = 1;
+    DLLPushBack(queue->first, queue->last, request);
+    request->queued = 1;
   }
-  if(queue->first == tv && queue->remaining != 0)
+  if(queue->first == request && queue->remaining != 0)
   {
     queue->remaining -= 1;
-    uishell_terminal_preview_dequeue(tv);
+    uishell_terminal_preview_dequeue(queue, request);
     return 1;
   }
-  // Do not mark the provider generation observed until its update is consumed.
-  // Its wake may be coalesced, so our queue must drive its own eventual drain.
+  // A provider wake may be coalesced; our queues drive their own eventual drain.
   rd_request_frame();
   return 0;
+}
+
+internal B32
+uishell_terminal_preview_admit_start(UIShell_TerminalViewState *tv, B32 background)
+{
+  return uishell_terminal_preview_admit(&uishell_terminal_preview_starts, &tv->preview_start, background, 1);
+}
+
+internal B32
+uishell_terminal_preview_admit_update(UIShell_TerminalViewState *tv, B32 background)
+{
+  return uishell_terminal_preview_admit(&uishell_terminal_preview_updates, &tv->preview_update, background, 4);
 }
 
 // Release only resources owned by this view. Daemon providers are shared;
@@ -147,7 +147,8 @@ uishell_terminal_runtime_release(void *data)
 {
   UIShell_TerminalViewState *tv = data;
   if(tv == 0) { return; }
-  uishell_terminal_preview_dequeue(tv);
+  uishell_terminal_preview_dequeue(&uishell_terminal_preview_starts, &tv->preview_start);
+  uishell_terminal_preview_dequeue(&uishell_terminal_preview_updates, &tv->preview_update);
   if(tv->provider && !tv->daemon_backend) { cleat_provider_set_wake_callback(tv->provider, 0, 0); }
   if(tv->session) { cleat_session_destroy(tv->session); }
   if(tv->provider && !tv->daemon_backend) { cleat_provider_close(tv->provider); }
@@ -3379,7 +3380,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   RD_WorkspaceSurfaceEntry *workspace_surface = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window))->active_workspace_surface_entry;
   B32 background_preview = workspace_surface != 0 && !workspace_surface->composite && !workspace_surface->full_res;
   B32 defer_terminal_start = !fixture_mode && !benchmark_mode && !tv->initialized &&
-                             !uishell_terminal_preview_admit_start(background_preview);
+                             !uishell_terminal_preview_admit_start(tv, background_preview);
   if(!fixture_mode && !benchmark_mode && !tv->initialized && !defer_terminal_start)
   {
     U64 provider_start_us = benchmark_metrics ? now_time_us() : 0;
@@ -3992,7 +3993,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       U64 update_begin_us = benchmark_metrics ? now_time_us() : 0;
       cleat_dirty_state dirty = benchmark_mode ? CLEAT_DIRTY_CLEAN : cleat_session_poll(tv->session);
       B32 needs_update = !benchmark_mode && (dirty != CLEAT_DIRTY_CLEAN || tv->cell_cache.cells == 0);
-      if(!background_preview || !needs_update) { uishell_terminal_preview_dequeue(tv); }
+      if(!background_preview || !needs_update) { uishell_terminal_preview_dequeue(&uishell_terminal_preview_updates, &tv->preview_update); }
       B32 admit_update = needs_update && uishell_terminal_preview_admit_update(tv, background_preview);
       if(benchmark_metrics && needs_update && !admit_update) { uishell_overview_benchmark.snapshot_deferred++; }
       if(admit_update)
