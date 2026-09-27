@@ -52,7 +52,7 @@ The executable is `build/wheelhouse` (`build/wheelhouse.exe` on Windows); the ma
 
 Internal source names and existing configuration storage still use `uishell`.
 
-The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. CI checks out the public Andamento repository without an App credential, including for fork PRs.
+The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. For terminal hosting changes, use a sibling Cleat checkout at the revision pinned by `CLEAT_REV` or a descendant. CI checks out the public Andamento repository without an App credential, including for fork PRs.
 
 ## Terminal hyperlinks
 
@@ -209,6 +209,19 @@ adapter with a small C boundary. Andamento's core remains transport-independent.
 Ingress is opt-in; Windows builds retain the fixture sidebar but reject the
 Unix listener option. Clean application shutdown removes its socket. After a
 crash, remove the stale socket before restarting with the same path.
+
+### Moving a live terminal session
+
+The hosting pill in each terminal view shows `in_process` or `daemon:<name@generation>`.
+Click **Hand to daemon** or **Adopt**, or run **Hand Terminal to Daemon** / **Adopt Terminal**
+from the command palette. The view, selection, session handle, and wake callback stay in place.
+Handing off uses the view's `daemon_name` setting, or `default`; start that daemon first.
+Failures appear as non-modal notices and leave the prior hosting usable. Windows reports
+that transfer is unsupported.
+
+A handed-off session survives Wheelhouse closing. An adopted session leaves its recording
+with the daemon, which marks it hosted elsewhere until Wheelhouse releases it or exits;
+then `cleat attach` can recreate it from that recording.
 
 ### Terminal selection
 
