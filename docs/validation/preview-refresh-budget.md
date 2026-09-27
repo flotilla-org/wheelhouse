@@ -1,5 +1,11 @@
 # Size-aware terminal preview refresh experiment
 
+Current status: the three preview policies are enabled by default following
+hands-on acceptance. Binary opt-outs are `--no_preview_render_budget`,
+`--no_preview_surface_budget` and `--no_preview_refresh_budget`. The experiments
+below record the earlier opt-in stages. The synthetic runner still selects each
+policy explicitly and disables unselected policies for reproducible controls.
+
 This is an opt-in experiment for [#103](https://github.com/flotilla-org/wheelhouse/issues/103),
 measured with the [overview replay](overview-replay.md). Normal startup behavior
 is unchanged. Enable `--preview_refresh_budget` on Wheelhouse, or

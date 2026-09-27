@@ -1,5 +1,11 @@
 # Repeatable overview rendering workload
 
+Current status: the three preview policies are enabled by default following
+hands-on acceptance. Binary opt-outs are `--no_preview_render_budget`,
+`--no_preview_surface_budget` and `--no_preview_refresh_budget`. The experiments
+below record the earlier opt-in stages. The synthetic runner still selects each
+policy explicitly and disables unselected policies for reproducible controls.
+
 This is the rendering regression loop for [#103](https://github.com/flotilla-org/wheelhouse/issues/103).
 It complements the [initial draw-cost investigation](overview-render-cost-2026-09-27.md).
 It runs in a separate process with fresh user/project files and does not attach

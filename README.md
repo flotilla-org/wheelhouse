@@ -77,6 +77,18 @@ a named pipe on Windows, a Unix socket elsewhere. Builds require `../jackstay`, 
 `jackstay.dll` next to the executable. See [Jackstay views](docs/design/jackstay-view.md)
 for endpoint configuration, focus behaviour and acceptance checks.
 
+## Workspace previews
+
+Overview bounds background terminal starts, snapshot fetches and surface redraws,
+retaining completed previews while newer work waits. Small text previews refresh
+less frequently and use textures sized to their displayed demand. Selected and
+expanding workspaces remain immediate; preview scaling preserves terminal dimensions.
+
+These policies are enabled by default. For diagnostics and comparisons, disable
+them individually with `--no_preview_render_budget`, `--no_preview_surface_budget`
+or `--no_preview_refresh_budget`. See the [live preview workload](docs/validation/overview-live-providers.md)
+for measurements, reproduction commands and limits.
+
 ## Sidebar
 
 The Andamento tree is the workspace sidebar. Without a producer, it lists local

@@ -47,6 +47,8 @@ def summarize(directory, count, screenshots, render_budget):
     if render_budget:
         if any(r['surface_admissions'] > 4 for r in rows):
             raise ValueError('preview render admissions exceeded the per-frame budget')
+        if any(r['background_surface_redraws'] > 4 for r in rows):
+            raise ValueError('actual background surface redraws exceeded the per-frame budget')
         if any(r['surface_deferred'] for r in rows[230:]):
             raise ValueError('preview rendering did not drain after final output')
     result = {'phases': {}, 'checkpoints': {}}
@@ -134,16 +136,16 @@ def main():
             (run / 'project').write_text('')
             command = [str(binary), f'--user:{run.resolve()}/user', f'--project:{run.resolve()}/project',
                        f'--overview_benchmark:{run.resolve()}', f'--overview_benchmark_count:{count}']
-            if args.preview_refresh_budget:
-                command.append('--preview_refresh_budget')
+            if not args.preview_refresh_budget:
+                command.append('--no_preview_refresh_budget')
             if args.busy:
                 command.append('--overview_benchmark_busy')
             if args.interrupt:
                 command.append('--overview_benchmark_interrupt')
-            if args.preview_render_budget:
-                command.append('--preview_render_budget')
-            if args.preview_surface_budget:
-                command.append('--preview_surface_budget')
+            if not args.preview_render_budget:
+                command.append('--no_preview_render_budget')
+            if not args.preview_surface_budget:
+                command.append('--no_preview_surface_budget')
             if args.no_screenshots:
                 command.append('--overview_benchmark_no_screenshots')
             start = time.monotonic()

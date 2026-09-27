@@ -1,5 +1,11 @@
 # Bounded workspace preview rendering
 
+Current status: the three preview policies are enabled by default following
+hands-on acceptance. Binary opt-outs are `--no_preview_render_budget`,
+`--no_preview_surface_budget` and `--no_preview_refresh_budget`. The experiments
+below record the earlier opt-in stages. The synthetic runner still selects each
+policy explicitly and disables unselected policies for reproducible controls.
+
 Follow-up to [transition measurements](overview-transition-cost.md). The first
 scheduler experiment is opt-in with `--preview_render_budget` (runner spelling:
 `--preview-render-budget`). It is independent of the temporal terminal bucket
@@ -11,7 +17,9 @@ All demanded materialized workspaces still build their ordinary UI. The subseque
 [live-provider work](overview-live-providers.md) also bounds background provider
 starts and snapshot requests; selected terminals remain immediate. After layout, the shell admits at most four pending offscreen
 workspace surfaces per frame. Pending means a missing/invalid surface, a changed
-size, or a changed declared content version. The oldest last-rendered workspace
+size, or a changed declared content version. Workspace layout and animation
+state are folded into that version after layout, so chrome movement uses the same
+admission queue as terminal content. The oldest last-rendered workspace
 is admitted first, with inventory order breaking ties. Newly selected, expanding
 and directly composited workspaces bypass the queue.
 
@@ -85,7 +93,7 @@ python3 tools/benchmark-overview.py --output local/budget-check \
   --preview-render-budget --interrupt --busy --no-screenshots --max-frame-ms 50
 ```
 
-## Interactive acceptance remains open
+## Interactive acceptance
 
 `--overview_benchmark_interactive` keeps the isolated fixture window alive, allows
 normal input and uses wall-clock producer ticks and refresh deadlines. It requires
@@ -95,10 +103,48 @@ this mode cannot prove real producer wake behavior or idle parking.
 
 An isolated app bundle and fresh fixture are in `local/Wheelhouse Preview.app` and
 `local/schedule-interactive-app`. Computer-use recognized the app but repeatedly
-returned `cgWindowNotFound`. Real mouse-driven transition acceptance is therefore
-not yet established. The daily driver has not been replaced or restarted.
+returned `cgWindowNotFound`. Robert confirmed the isolated 48-terminal window was
+visible and responsive while trying overview transitions and resizing. The daily
+driver has not been replaced or restarted.
 
 Provider-driven wakeups, quiet-state drain and live transitions are now covered
-by the [live-provider check](overview-live-providers.md). Before enabling these
-policies by default, verify real input and mixed glyph/image pixels. The four-surface
+by the [live-provider check](overview-live-providers.md). Mixed glyph/image pixels
+and image deletion are covered by its readback checks. The four-surface
 limit is a bounded first policy, not an adaptive GPU-time scheduler.
+
+
+## Default-on verification and remaining startup hitch
+
+The policies now default on, with explicit opt-outs for comparison. Further live
+image testing exposed two costs that the admission counters alone did not catch:
+
+- Terminal image uploads used Metal's synchronous static upload path. Dynamic
+  textures avoid waiting behind previously submitted GPU work when a new image
+  generation arrives.
+- Workspace chrome geometry changed while producer versions stayed unchanged.
+  The renderer redrew those surfaces outside the admission queue. Folding layout
+  and animation into admission fixes that mismatch. Both replay runners now
+  assert actual background redraws, in addition to admissions, never exceed four.
+
+`local/live-redraw-gate-red` demonstrates the failing redraw assertion before the
+layout fix (181 ms maximum active frame). `local/live-layout-admission` and
+`local/live-layout-confirm` pass the redraw, image lifecycle, final content and
+idle checks. Their selection/expansion/return/resize maxima are below 35 ms.
+They still **fail** the 50 ms post-first-paint timing gate: the second frame takes
+64.24 and 60.62 ms respectively. First paint is 204.82 and 195.49 ms.
+
+A targeted startup probe (`local/live-init-events`) measured 47.74 ms inside
+`wm_get_events` on the second frame, versus 0.13 ms on the third. A separate sample
+(`/tmp/wh-init-profile.sample`) shows AppKit activation/menu-bar handling and Core
+Animation transaction work in event processing. This startup cost remains open;
+the timing gate has not been relaxed or made to exclude it. The temporary probe
+was removed after measurement.
+
+The 1/16/48 synthetic replays in `local/layout-synthetic` pass a 50 ms transition
+gate and the actual-redraw bound. All nine native diagnostics and the explicit
+preview-policy opt-out control pass (`local/layout-diagnostics`). These results
+establish bounded preview work, not a guarantee of 60 Hz or bounded OS event cost.
+
+The expanded and final quiet screenshots match the render-budget-disabled control
+exactly at 1/16/48 terminals (`local/layout-control`). Timing comparisons from
+that control run are not used as a performance gate.

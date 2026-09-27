@@ -2382,6 +2382,22 @@ rd_workspace_surface_size(RD_WindowState *ws, RD_WorkspaceSurfaceEntry *ws_entry
   return result;
 }
 
+// Producer versions do not describe the workspace chrome's layout/animation.
+// Fold that state in after layout so those redraws use the same admission queue.
+internal U64
+rd_workspace_surface_layout_version(UI_Box *root, U64 version)
+{
+  for(UI_Box *box = root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, root).next)
+  {
+    F32 animation[] = {box->squish, box->transparency, box->hot_t, box->active_t,
+                       box->disabled_t, box->focus_hot_t, box->focus_active_t,
+                       box->focus_active_disabled_t};
+    version = u64_hash_from_seed_str8(version, str8_struct(&box->rect));
+    version = u64_hash_from_seed_str8(version, str8_struct(&animation));
+  }
+  return version;
+}
+
 // Admit the oldest pending previews first. UI/provider work is independent of
 // this decision; only conversion of a workspace subtree into pixels is queued.
 internal void
@@ -2391,9 +2407,10 @@ rd_workspace_surface_schedule(RD_WindowState *ws)
   {
     RD_WorkspaceSurfaceEntry *entry = &ws->workspace_surface_entries[i];
     entry->defer_render = 0;
+    UI_Box *box = ui_box_from_key((UI_Key){{entry->box_key}});
+    entry->content_version_accum = rd_workspace_surface_layout_version(box, entry->content_version_accum);
     if(entry->composite || entry->full_res) { continue; }
     RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, entry->box_key);
-    UI_Box *box = ui_box_from_key((UI_Key){{entry->box_key}});
     Vec2S32 size = rd_workspace_surface_size(ws, entry, pad_2f32(box->rect, 2.f));
     entry->defer_render = node == 0 || node->rendered_hash == 0 ||
                           node->size.x != size.x || node->size.y != size.y ||
@@ -8003,6 +8020,9 @@ rd_window_frame(void)
             {
               changed = dr_surface_end_composite_cached(&node->rendered_hash, force_render);
             }
+            if(uishell_overview_benchmark.enabled && changed && ws_entry != 0 &&
+               !ws_entry->composite && !ws_entry->full_res)
+            { uishell_overview_benchmark.background_surface_redraws++; }
             node->last_was_preserved = !changed;
             if(ws_entry != 0)
             {

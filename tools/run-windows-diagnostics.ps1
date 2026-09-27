@@ -3,7 +3,7 @@ param(
   [string[]]$Diagnostics = @("sidebar", "scroll_region", "preview", "tooltip", "panel", "terminal_link", "terminal_selection", "terminal_glyph"),
   [string]$Exe = "",
   [int]$TimeoutSeconds = 120,
-  [switch]$PreviewBudget
+  [switch]$NoPreviewBudget
 )
 
 # Runs each UI diagnostic in its own process with a throwaway --user/--project,
@@ -30,8 +30,8 @@ foreach($Name in $Diagnostics) {
   $StdErr = Join-Path $WorkDir "stderr.txt"
   $Arguments = @("`"--user:$WorkDir\user`"", "`"--project:$WorkDir\project`"", "--${Name}_diagnostics")
 
-  if($PreviewBudget) {
-    $Arguments += @("--preview_refresh_budget", "--preview_surface_budget", "--preview_render_budget")
+  if($NoPreviewBudget) {
+    $Arguments += @("--no_preview_refresh_budget", "--no_preview_surface_budget", "--no_preview_render_budget")
   }
 
   Write-Host "=== $Name"

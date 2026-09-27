@@ -1,5 +1,11 @@
 # Live Cleat preview workload
 
+Current status: the three preview policies are enabled by default following
+hands-on acceptance. Binary opt-outs are `--no_preview_render_budget`,
+`--no_preview_surface_budget` and `--no_preview_refresh_budget`. The experiments
+below record the earlier opt-in stages. The synthetic runner still selects each
+policy explicitly and disables unselected policies for reproducible controls.
+
 The synthetic replay established rendering improvements but bypassed provider
 snapshot work and drove every frame itself. This check uses 48 ordinary in-process
 Cleat terminal providers, including their PTYs, VT engines, output notifications

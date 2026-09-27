@@ -49,14 +49,13 @@ def main():
         command += ' --images'
     launch = [str(binary), f'--user:{output}/user', f'--project:{output}/project',
               f'--overview_benchmark:{output}', f'--overview_benchmark_count:{args.count}',
-              f'--overview_benchmark_command:{command}',
-              '--preview_refresh_budget', '--preview_surface_budget']
+              f'--overview_benchmark_command:{command}']
     if not args.screenshots:
         launch.append('--overview_benchmark_no_screenshots')
     if args.transitions:
         launch.append('--overview_benchmark_live_transitions')
-    if not args.no_render_budget:
-        launch.append('--preview_render_budget')
+    if args.no_render_budget:
+        launch.append('--no_preview_render_budget')
     samples = []
     frames = []
     idle_since = None
@@ -136,6 +135,8 @@ def main():
                     failures.append(f'image colour {colour} absent from rendered checkpoints')
             if 6 in captures and any(captures[6].values()):
                 failures.append('deleted image pixels remain in the settled overview')
+    if not args.no_render_budget and max(row['background_surface_redraws'] for row in frames) > 4:
+        failures.append('actual background surface redraws exceeded their per-frame limit')
     # First paint includes native-window/font initialization. Report it separately;
     # every subsequent frame, including the remaining provider starts, is gated.
     worst = max((row['frame_us']-row['event_wait_us']) / 1000 for row in frames[1:])
