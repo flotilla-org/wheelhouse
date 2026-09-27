@@ -3125,6 +3125,38 @@ uishell_terminal_rgb_from_linear_rgba(Vec4F32 linear)
   return result;
 }
 
+// Hosting is a session property. The provider ownership flag remains fixed:
+// a transferred session can outlive its original in-process provider backend.
+internal void
+uishell_terminal_move(UIShell_TerminalViewState *tv, B32 adopt)
+{
+  String8 daemon = rd_view_setting_from_name(str8_lit("daemon_name"));
+  if(daemon.size == 0) { daemon = str8_lit("default"); }
+  B32 moved = adopt ? cleat_session_adopt(tv->session) : cleat_session_transfer(tv->session, daemon.str, daemon.size);
+  if(!moved)
+  {
+    cleat_str error = {0};
+    cleat_session_transfer_error(tv->session, &error);
+    log_user_errorf("Terminal hosting: %S", str8((U8 *)error.ptr, error.len));
+  }
+  else
+  {
+    // The next render belongs to a new engine generation. Keep selection,
+    // view state and handle; force the retained drawing to consume its full frame.
+    tv->retained_bucket_key = 0;
+    if(!adopt)
+    {
+      cleat_str id = {0};
+      if(cleat_session_id(tv->session, &id))
+      {
+        rd_store_view_param(str8_lit("session"), str8((U8 *)id.ptr, id.len));
+        rd_store_view_param(str8_lit("daemon_name"), daemon);
+      }
+    }
+  }
+  rd_request_frame();
+}
+
 RD_VIEW_UI_FUNCTION_DEF(terminal)
 {
   (void)eval;
@@ -3254,6 +3286,14 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     }
   }
   B32 session_ready = (!fixture_mode && tv->provider != 0 && tv->session != 0);
+  for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
+  {
+    if(session_ready && str8_match(cmd->name, str8_lit("terminal_transfer"), 0)) { uishell_terminal_move(tv, 0); }
+    else if(session_ready && str8_match(cmd->name, str8_lit("terminal_adopt"), 0)) { uishell_terminal_move(tv, 1); }
+  }
+  cleat_str hosting = {0};
+  B32 daemon_hosted = session_ready && cleat_session_hosting(tv->session, &hosting) &&
+                      str8_match(str8_prefix(str8((U8 *)hosting.ptr, hosting.len), 7), str8_lit("daemon:"), 0);
   if(session_ready && (tv->cols != cols || tv->rows != rows))
   {
     tv->cols = cols;
@@ -3267,11 +3307,31 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     terminal_root_box = ui_build_box_from_string(0, str8_lit("terminal_root"));
   }
 
+  if(session_ready && hosting.len != 0)
+  {
+    String8 title = push_str8f(scratch.arena, "%S · %s", str8((U8 *)hosting.ptr, hosting.len),
+                              daemon_hosted ? "Adopt" : "Hand to daemon");
+    F32 height = floor_f32(ui_bottom_font_size()*1.8f);
+    F32 width = fnt_dim_from_tag_size_string(ui_bottom_font(), ui_bottom_font_size(), 0, 0, title).x + ui_bottom_font_size()*2.f;
+    UI_Parent(terminal_root_box) UI_CornerRadius(height*0.5f)
+    {
+      ui_set_next_fixed_x(Max(0.f, canvas_dim_target.x-width-ui_bottom_font_size()*0.5f));
+      ui_set_next_fixed_y(ui_bottom_font_size()*0.5f);
+      ui_set_next_fixed_width(width);
+      ui_set_next_fixed_height(height);
+      UI_Box *box = ui_build_box_from_string(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawText|
+                                             UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
+                                             str8_lit("terminal_hosting"));
+      ui_box_equip_display_string(box, title);
+      if(ui_clicked(ui_signal_from_box(box))) { uishell_terminal_move(tv, daemon_hosted); }
+    }
+  }
+
   // uishell: daemon transport/role status pill. Built before the canvas so it
   // is an earlier sibling and draws on top. Streaming-as-controller is the
   // silent common case; connecting/disconnected/closed are status cues (the
   // connection heals itself), and streaming-as-watcher offers take-control.
-  if(tv->daemon_backend && tv->session != 0)
+  if(daemon_hosted)
   {
     U32 connection_state = cleat_session_connection_state(tv->session);
     U32 role = cleat_session_role(tv->session);
