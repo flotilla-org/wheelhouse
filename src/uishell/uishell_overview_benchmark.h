@@ -8,6 +8,7 @@ struct UIShell_OverviewBenchmark
   B32 enabled, initialized, screenshots;
   U32 count, frame, phase_frames;
   U64 deferred;
+  U64 surface_us, glyph_us, window_us;
   U64 begin_us, build_us, rebuilds, cells_built, terminal_visits, updates, surface_allocations;
   CFG_ID owners[48], views[48];
   String8 directory;

@@ -2195,6 +2195,7 @@ rd_effect_from_name(String8 name)
 internal RD_SurfaceCacheNode *
 rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
 {
+  U64 benchmark_begin_us = uishell_overview_benchmark.enabled ? now_time_us() : 0;
   RD_SurfaceCacheNode *node = 0;
   for(RD_SurfaceCacheNode *n = ws->first_surface_cache_node; n != 0; n = n->next)
   {
@@ -2233,6 +2234,8 @@ rd_window_surface_node_from_key(RD_WindowState *ws, U64 key, Vec2S32 size)
     SLLStackPush(ws->first_surface_cache_node, node);
   }
   node->last_use_frame_index = rd_state->frame_index;
+  if(uishell_overview_benchmark.enabled)
+  { uishell_overview_benchmark.surface_us += now_time_us()-benchmark_begin_us; }
   return node;
 }
 
@@ -7614,7 +7617,19 @@ rd_window_frame(void)
         RD_WorkspaceSurfaceEntry *ws_entry = rd_workspace_surface_entry_from_box_key(ws, box->key.u64[0]);
         if(ws_entry != 0 && !ws_entry->composite && !ws_entry->full_res)
         {
-          backing_scale *= 0.5f;
+          if(rd_state->preview_surface_budget)
+          {
+            // Keep the workspace's logical layout unchanged. Only its offscreen
+            // target follows quantized display demand; the selected workspace
+            // stays full resolution throughout the zoom transition.
+            F32 content_width = dim_2f32(surface_rect).x*(ws->workspace_content_uv.x1 - ws->workspace_content_uv.x0);
+            F32 demand_width = rd_workspace_preview_demand_width(ws, ws_entry->workspace_id);
+            backing_scale *= Min(1.f, demand_width/Max(1.f, content_width));
+          }
+          else
+          {
+            backing_scale *= 0.5f;
+          }
         }
         Vec2F32 surface_dim = dim_2f32(surface_rect);
         Vec2S32 size_px = v2s32((S32)ceil_f32(surface_dim.x*backing_scale),
@@ -10772,7 +10787,10 @@ rd_frame(void)
       uishell_push_regs();
       uishell_regs()->window = w->cfg_id;
       uishell_overview_benchmark_window(w);
+      U64 benchmark_window_begin_us = uishell_overview_benchmark.enabled ? now_time_us() : 0;
       rd_window_frame();
+      if(uishell_overview_benchmark.enabled)
+      { uishell_overview_benchmark.window_us += now_time_us()-benchmark_window_begin_us; }
       if(rd_state->frame_diagnostic != 0)
       { abort_self(rd_state->frame_diagnostic(w) ? 0 : 1); }
       MemoryZeroStruct(&w->ui_events);

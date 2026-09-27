@@ -138,3 +138,8 @@ content and terminal glyphs) passed with benchmark mode disabled.
 Next experiments should change one variable at a time: optimized C build,
 size-aware refresh cadence, then damage-granular storage/drawing. Preserve the
 checkpoint images and the static reuse control while reducing rebuild work.
+
+Transition follow-up: [submitted-frame stalls and demand-sized surfaces](overview-transition-cost.md).
+Use `--max-frame-ms` to catch individual submission/presentation stalls that CPU
+build percentiles miss. `--preview-surface-budget` enables the separate spatial
+experiment; both preview policies remain opt-in.

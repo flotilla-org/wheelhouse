@@ -3842,6 +3842,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         if(benchmark_mode) { uishell_overview_benchmark.terminal_visits++; }
         if(tv->retained_bucket == 0 || (!defer_content && tv->retained_bucket_key != bucket_key) || trace_this_draw)
         {
+          U64 benchmark_glyph_begin_us = benchmark_mode ? now_time_us() : 0;
           if(benchmark_mode)
           {
             uishell_overview_benchmark.rebuilds++;
@@ -3896,6 +3897,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           tv->retained_bucket_style_key = style_key;
           tv->retained_bucket_has_images = tv->image_cache.placement_count != 0;
           tv->retained_bucket_time_us = now_us;
+          if(benchmark_mode)
+          { uishell_overview_benchmark.glyph_us += now_time_us()-benchmark_glyph_begin_us; }
         }
         // The surface version describes what is displayed, not a newer feed
         // whose drawing has intentionally been deferred.

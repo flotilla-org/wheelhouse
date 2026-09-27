@@ -54,6 +54,9 @@ def summarize(directory, count, screenshots):
             'frame_max_ms': max(r['frame_us'] / 1000 for r in samples),
             'action_frame_ms': samples[0]['frame_us'] / 1000,
             'build_p95_ms': percentile([r['build_us'] / 1000 for r in samples], .95),
+            'surface_lookup_total_ms': sum(r.get('surface_us', 0) for r in samples) / 1000,
+            'glyph_build_total_ms': sum(r.get('glyph_us', 0) for r in samples) / 1000,
+            'window_total_ms': sum(r.get('window_us', 0) for r in samples) / 1000,
             'rebuilds': int(sum(r['rebuilds'] for r in samples)),
             'cells_built': int(sum(r['cells_built'] for r in samples)),
             'updates': int(sum(r['updates'] for r in samples)),
@@ -84,6 +87,8 @@ def main():
     parser.add_argument('--timeout', type=float, default=180)
     parser.add_argument('--no-screenshots', action='store_true')
     parser.add_argument('--preview-refresh-budget', action='store_true')
+    parser.add_argument('--preview-surface-budget', action='store_true')
+    parser.add_argument('--max-frame-ms', type=float, help='fail any non-warmup frame exceeding this end-to-end budget')
     parser.add_argument('--max-build-p95-ms', type=float, help='fail any non-warmup phase exceeding this budget')
     parser.add_argument('--baseline', type=Path, help='previous summary.json; compare matching counts/repetitions')
     parser.add_argument('--max-regression-percent', type=float, default=15)
@@ -103,7 +108,7 @@ def main():
         parser.error('baseline must use the same screenshot setting')
     report = {'schema': 1, 'binary': str(binary), 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
               'platform': platform.platform(), 'virtual_hz': 60, 'frames': 240,
-              'screenshots': not args.no_screenshots, 'preview_refresh_budget': args.preview_refresh_budget, 'runs': {}, 'failures': []}
+              'screenshots': not args.no_screenshots, 'preview_refresh_budget': args.preview_refresh_budget, 'preview_surface_budget': args.preview_surface_budget, 'runs': {}, 'failures': []}
     for count in args.counts:
         for repeat in range(args.repeats):
             key = f'{count}-{repeat}'
@@ -115,6 +120,8 @@ def main():
                        f'--overview_benchmark:{run.resolve()}', f'--overview_benchmark_count:{count}']
             if args.preview_refresh_budget:
                 command.append('--preview_refresh_budget')
+            if args.preview_surface_budget:
+                command.append('--preview_surface_budget')
             if args.no_screenshots:
                 command.append('--overview_benchmark_no_screenshots')
             start = time.monotonic()
@@ -136,6 +143,8 @@ def main():
             for phase, values in result['phases'].items():
                 if phase == 'warmup':
                     continue
+                if args.max_frame_ms is not None and values['frame_max_ms'] > args.max_frame_ms:
+                    report['failures'].append(f"{key}/{phase}: frame max {values['frame_max_ms']:.2f} ms exceeds budget")
                 measured = values['build_p95_ms']
                 if args.max_build_p95_ms is not None and measured > args.max_build_p95_ms:
                     report['failures'].append(f'{key}/{phase}: build p95 {measured:.2f} ms exceeds budget')

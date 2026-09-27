@@ -22,7 +22,7 @@ uishell_overview_benchmark_init(CmdLine *cmd)
   String8 path = push_str8f(rd_state->arena, "%S/frames.csv", b->directory);
   b->metrics = fopen((char *)path.str, "w");
   if(b->metrics == 0) { fprintf(stderr, "cannot open benchmark metrics\n"); abort_self(2); }
-  fprintf(b->metrics, "frame,phase,frame_us,build_us,deferred,rebuilds,cells_built,terminal_visits,updates,surface_allocations,surface_pixels,zoom_t,width,height\n");
+  fprintf(b->metrics, "frame,phase,frame_us,build_us,deferred,rebuilds,cells_built,terminal_visits,updates,surface_allocations,surface_pixels,zoom_t,width,height,surface_us,glyph_us,window_us\n");
 }
 
 internal void
@@ -31,6 +31,7 @@ uishell_overview_benchmark_begin(void)
   UIShell_OverviewBenchmark *b = &uishell_overview_benchmark;
   if(!b->enabled) { return; }
   b->deferred = b->rebuilds = b->cells_built = b->terminal_visits = b->updates = b->surface_allocations = 0;
+  b->surface_us = b->glyph_us = b->window_us = 0;
   b->begin_us = now_time_us();
   rd_request_frame();
 }
@@ -192,11 +193,12 @@ uishell_overview_benchmark_end(void)
   { pixels += (U64)n->size.x*n->size.y; }
   Vec2F32 dim=dim_2f32(wm_client_rect_from_window(ws->os));
   U32 phase=b->frame/b->phase_frames;
-  fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f\n",
+  fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f,%llu,%llu,%llu\n",
     b->frame,phase,(unsigned long long)elapsed,(unsigned long long)b->build_us,(unsigned long long)b->deferred,(unsigned long long)b->rebuilds,
     (unsigned long long)b->cells_built,(unsigned long long)b->terminal_visits,
     (unsigned long long)b->updates,(unsigned long long)b->surface_allocations,
-    (unsigned long long)pixels,ws->workspace_zoom_t,dim.x,dim.y);
+    (unsigned long long)pixels,ws->workspace_zoom_t,dim.x,dim.y,
+    (unsigned long long)b->surface_us,(unsigned long long)b->glyph_us,(unsigned long long)b->window_us);
   fflush(b->metrics);
   if(b->screenshots && b->frame%b->phase_frames == b->phase_frames-1)
   {
