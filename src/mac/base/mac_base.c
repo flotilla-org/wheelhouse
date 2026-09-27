@@ -1567,7 +1567,7 @@ library_open(String8 path)
 internal void
 library_close(Library lib)
 {
-  void *so = (void *)lib.u64;
+  void *so = (void *)lib.u64[0];
   dlclose(so);
 }
 
@@ -1575,7 +1575,7 @@ internal VoidProc *
 library_load_proc(Library lib, String8 name)
 {
   Temp scratch = scratch_begin(0, 0);
-  void *so = (void *)lib.u64;
+  void *so = (void *)lib.u64[0];
   char *name_cstr = (char *)str8_copy(scratch.arena, name).str;
   VoidProc *proc = (VoidProc *)dlsym(so, name_cstr);
   scratch_end(scratch);

@@ -14,9 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Includes exited-session idle handling (#246), wake re-arming (#239),
+  # Includes stable-handle transfer/adoption (#257),
+  # exited-session idle handling (#246), wake re-arming (#239),
   # and bundled Windows ConPTY (#235).
-  CLEAT_REV: 001e028046a4f62353c331bae51ea3df2b7c52cd
+  CLEAT_REV: de2a351ad4f4c7c02dc9f98232f8b856ea41ec33
   # D3D11 frames in the C ABI (0.10, jackstay#46) and a host's own exchange
   # before setup (0.11, jackstay#48, which Porthole capture sessions need).
   # Pinned to jackstay#48's branch commit until it merges; then its squash commit.

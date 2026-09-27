@@ -3355,7 +3355,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       {
         F32 status_width = fnt_dim_from_tag_size_string(ui_bottom_font(), ui_bottom_font_size(), 0, 0, status_text).x + ui_bottom_font_size()*2.f;
         ui_set_next_fixed_x(canvas_dim_target.x*0.5f - status_width*0.5f);
-        ui_set_next_fixed_y(ui_bottom_font_size()*0.5f);
+        ui_set_next_fixed_y(ui_bottom_font_size()*2.8f);
         ui_set_next_fixed_width(status_width);
         ui_set_next_fixed_height(status_height);
         UI_BoxFlags status_flags = UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawText|UI_BoxFlag_DrawDropShadow;
