@@ -54,6 +54,13 @@ Internal source names and existing configuration storage still use `uishell`.
 
 The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. For terminal hosting changes, use a sibling Cleat checkout at the revision pinned by `CLEAT_REV` or a descendant. CI checks out the public Andamento repository without an App credential, including for fork PRs.
 
+## Terminal hyperlinks
+
+Hover explicit OSC 8 links to inspect their destinations. Cmd-click on macOS or
+Ctrl-click on Linux/Windows opens HTTP(S) links; Shift-drag retains local text
+selection. See [terminal hyperlinks](docs/terminal-hyperlinks.md) for the URI
+policy, Cleat requirements, and interactive validation steps.
+
 ## Jackstay views
 
 **Open Jackstay Source** opens a video panel with optional keyboard and pointer

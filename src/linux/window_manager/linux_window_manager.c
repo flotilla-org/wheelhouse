@@ -804,8 +804,27 @@ wm_show_in_filesystem_ui(String8 path)
   // TODO(rjf)
 }
 
+internal void *
+lnx_wm_reap_browser(void *data)
+{
+  pid_t pid = (pid_t)(intptr_t)data;
+  while(waitpid(pid, 0, 0) < 0 && errno == EINTR) {}
+  return 0;
+}
+
 internal void
 wm_open_in_browser(String8 url)
 {
-  // TODO(rjf)
+  Temp scratch = scratch_begin(0, 0);
+  String8 copy = push_str8_copy(scratch.arena, url);
+  char *argv[] = {"xdg-open", (char *)copy.str, 0};
+  pid_t pid = 0;
+  // URI is one argv element, never shell source.
+  if(posix_spawnp(&pid, "xdg-open", 0, 0, argv, environ) == 0)
+  {
+    pthread_t reaper;
+    if(pthread_create(&reaper, 0, lnx_wm_reap_browser, (void *)(intptr_t)pid) == 0) { pthread_detach(reaper); }
+    else { lnx_wm_reap_browser((void *)(intptr_t)pid); }
+  }
+  scratch_end(scratch);
 }

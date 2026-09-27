@@ -44,6 +44,7 @@ struct UIShell_TerminalViewState
   // authoritatively). Drives local-selection-vs-forward.
   U32 mouse_tracking_mode;
   // Local text selection (cursor/mark over grid cells, line=row column=col).
+  B32 link_gesture;     // owns left press, drag and release, even if modifiers change
   B32 selection_rectangular; // latched at press, retained through release/copy
   B32 selecting;        // left button down, driving a selection this drag
   B32 has_selection;    // a non-empty selection exists
@@ -73,6 +74,75 @@ uishell_terminal_runtime_release(void *data)
                     tv->image_cache.arena, tv->image_cache.placement_arena};
   for(U64 i = 0; i < ArrayCount(arenas); i++) { if(arenas[i]) { arena_release(arenas[i]); } }
   MemoryZeroStruct(tv);
+}
+
+// Only explicit HTTP(S) OSC 8 destinations may launch a handler. Requiring
+// printable ASCII also excludes controls, embedded NULs and display bidi tricks;
+// international destinations can use percent encoding / punycode.
+internal B32
+uishell_terminal_link_allowed(String8 uri)
+{
+  U64 prefix = 0;
+  if(uri.size >= 7 && str8_match(str8_prefix(uri, 7), str8_lit("http://"), StringMatchFlag_CaseInsensitive)) { prefix = 7; }
+  if(uri.size >= 8 && str8_match(str8_prefix(uri, 8), str8_lit("https://"), StringMatchFlag_CaseInsensitive)) { prefix = 8; }
+  if(prefix == 0 || uri.size <= prefix || uri.str[prefix] == '/' || uri.str[prefix] == '?' || uri.str[prefix] == '#') { return 0; }
+  for(U64 i = 0; i < uri.size; i++)
+  {
+    if(uri.str[i] <= 32 || uri.str[i] >= 127 || uri.str[i] == '\\') { return 0; }
+  }
+  return 1;
+}
+
+internal String8
+uishell_terminal_link_display(Arena *arena, String8 uri)
+{
+  U8 *bytes = push_array(arena, U8, uri.size*4);
+  U64 size = 0;
+  U8 hex[] = "0123456789abcdef";
+  for(U64 i = 0; i < uri.size; i++)
+  {
+    U8 c = uri.str[i];
+    if(c >= 32 && c < 127 && c != '\\') { bytes[size++] = c; }
+    else
+    {
+      bytes[size++] = '\\'; bytes[size++] = 'x';
+      bytes[size++] = hex[c >> 4]; bytes[size++] = hex[c & 15];
+    }
+  }
+  return str8(bytes, size);
+}
+
+internal B32
+uishell_terminal_link_modifier(WM_Modifiers modifiers)
+{
+#if OS_MAC
+  return (modifiers & WM_Modifier_Super) && !(modifiers & (WM_Modifier_Ctrl|WM_Modifier_Alt|WM_Modifier_Shift));
+#else
+  return (modifiers & WM_Modifier_Ctrl) && !(modifiers & (WM_Modifier_Super|WM_Modifier_Alt|WM_Modifier_Shift));
+#endif
+}
+
+internal B32
+uishell_terminal_link_claim(B32 *held, B32 pressed, B32 released, B32 activate)
+{
+  // A new press also recovers from a release lost when the browser took focus.
+  if(pressed) { *held = activate; }
+  B32 consumed = *held;
+  if(released) { *held = 0; }
+  return consumed;
+}
+
+internal String8
+uishell_terminal_link_at(UIShell_TerminalCellCache *cache, U16 col, U16 row)
+{
+  if(cache->hyperlinks && col < cache->cols && row < cache->rows)
+  {
+    U64 idx = (U64)row*cache->cols + col;
+    // A wide glyph's trailing cell belongs to its leading cell.
+    if(cache->cells[idx].width == CLEAT_CELL_WIDTH_SPACER_TAIL && col > 0) { idx--; }
+    return cache->hyperlinks[idx];
+  }
+  return str8_zero();
 }
 
 internal B32
@@ -3463,9 +3533,17 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     B32 left_pressed = !!(canvas_sig.f & UI_SignalFlag_LeftPressed);
     B32 left_released = !!(canvas_sig.f & UI_SignalFlag_LeftReleased);
     if(left_pressed) { uishell_cmd("focus_panel"); }
+    // Input refers to the last displayed cache, before this frame pulls output.
+    // A resize invalidates that coordinate mapping until a matching frame arrives.
+    String8 link = (tv->cell_cache.cols == cols && tv->cell_cache.rows == rows &&
+                    (canvas_sig.f & UI_SignalFlag_Hovering)) ?
+      uishell_terminal_link_at(&tv->cell_cache, cell_col, cell_row) : str8_zero();
+    B32 activate_link = uishell_terminal_link_modifier(canvas_sig.event_flags) && !tv->selecting && link.size;
+    B32 link_consumes_left = uishell_terminal_link_claim(&tv->link_gesture, left_pressed, left_released, activate_link);
+    if(left_pressed && activate_link && uishell_terminal_link_allowed(link)) { wm_open_in_browser(link); }
     B32 local_select = (tv->mouse_tracking_mode == CLEAT_MOUSE_TRACKING_NONE) || shift_held;
     B32 was_selecting = tv->selecting;
-    if(left_pressed && local_select && !was_selecting)
+    if(left_pressed && local_select && !was_selecting && !link_consumes_left)
     {
       tv->selecting = 1;
       tv->selection_rectangular = shift_held && !!(canvas_sig.event_flags & WM_Modifier_Alt);
@@ -3494,7 +3572,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         }
       }
     }
-    B32 selection_consumes_left = was_selecting || (left_pressed && local_select);
+    B32 selection_consumes_left = link_consumes_left || was_selecting || (left_pressed && local_select);
 
     // Middle-click pastes the selection buffer when no program is grabbing the
     // mouse (otherwise the button is forwarded below).
@@ -3810,6 +3888,29 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           tv->mouse_tracking_mode = update.terminal_modes.mouse_tracking_mode;
           cleat_session_mark_observed(tv->session, update.render_generation);
           cleat_session_release_render_update(tv->session, &update);
+        }
+      }
+      // Recompute hover from the frame being drawn, including under a stationary
+      // pointer. No retained URI survives a content/viewport update.
+      if(ui_hovering(canvas_sig) && !tv->selecting && !tv->link_gesture &&
+         tv->cell_cache.cols == cols && tv->cell_cache.rows == rows)
+      {
+        Vec2F32 mouse = ui_mouse();
+        S32 col = (S32)((mouse.x-canvas_box->rect.x0)/cell_width_px);
+        S32 row = (S32)((mouse.y-canvas_box->rect.y0)/cell_height_px);
+        String8 uri = uishell_terminal_link_at(&tv->cell_cache, (U16)col, (U16)row);
+        if(uri.size)
+        {
+          F32 width = Min(ui_bottom_font_size()*40.f, view_dim.x);
+          UI_Tooltip UI_PrefWidth(ui_px(width, 1)) UI_PrefHeight(ui_em(1.6f, 1))
+          {
+            ui_label_multiline(width, uishell_terminal_link_display(scratch.arena, uri));
+#if OS_MAC
+            ui_label(uishell_terminal_link_allowed(uri) ? str8_lit("Cmd-click to open") : str8_lit("Opening this destination is disabled"));
+#else
+            ui_label(uishell_terminal_link_allowed(uri) ? str8_lit("Ctrl-click to open") : str8_lit("Opening this destination is disabled"));
+#endif
+          }
         }
       }
       if(tv->cell_cache.cells != 0)
