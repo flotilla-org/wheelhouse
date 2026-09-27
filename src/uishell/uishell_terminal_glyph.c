@@ -5265,6 +5265,8 @@ uishell_terminal_cell_cache_apply_render_row(Arena *arena, UIShell_TerminalCellC
     for(U64 col_idx = 0; col_idx < col_count; col_idx += 1)
     {
       uishell_terminal_cell_copy_from_render_cell(arena, &cache->cells[row_start + col_idx], &row->cells[col_idx]);
+      cleat_str uri = row->cells[col_idx].style.hyperlink_uri;
+      cache->hyperlinks[row_start + col_idx] = (uri.ptr && uri.len) ? push_str8_copy(arena, str8((U8 *)uri.ptr, uri.len)) : str8_zero();
     }
   }
 }
@@ -5302,6 +5304,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
     Arena *new_arena = arena_alloc(.name = "terminal cell cache");
     U64 cell_count = (U64)update->cols*(U64)update->rows;
     cleat_cell *new_cells = push_array(new_arena, cleat_cell, cell_count);
+    String8 *new_links = push_array(new_arena, String8, cell_count);
     B32 can_copy_old = (cache->cells != 0 &&
                         cache->cols == update->cols &&
                         cache->rows == update->rows &&
@@ -5320,6 +5323,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
       for(U64 cell_idx = 0; cell_idx < cell_count; cell_idx += 1)
       {
         uishell_terminal_cell_copy_from_cleat_cell(new_arena, &new_cells[cell_idx], &cache->cells[cell_idx]);
+        if(cache->hyperlinks && cache->hyperlinks[cell_idx].size) { new_links[cell_idx] = push_str8_copy(new_arena, cache->hyperlinks[cell_idx]); }
       }
     }
 
@@ -5329,6 +5333,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
       .cols = update->cols,
       .rows = update->rows,
       .cells = new_cells,
+      .hyperlinks = new_links,
       .cell_count = cell_count,
       .cursor = update->cursor,
       .scrollbar = update->scrollbar,
@@ -5364,6 +5369,8 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
                 if(src_idx < op->cell_count && dst_idx < new_cache.cell_count)
                 {
                   uishell_terminal_cell_copy_from_render_cell(new_arena, &new_cache.cells[dst_idx], &op->cells[src_idx]);
+                  cleat_str uri = op->cells[src_idx].style.hyperlink_uri;
+                  new_links[dst_idx] = (uri.ptr && uri.len) ? push_str8_copy(new_arena, str8((U8 *)uri.ptr, uri.len)) : str8_zero();
                 }
               }
             }
@@ -5386,6 +5393,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
                 if(src_idx < new_cache.cell_count && dst_idx < new_cache.cell_count)
                 {
                   uishell_terminal_cell_copy_from_cleat_cell(new_arena, &new_cache.cells[dst_idx], &new_cache.cells[src_idx]);
+                  new_links[dst_idx] = new_links[src_idx];
                 }
               }
             }
