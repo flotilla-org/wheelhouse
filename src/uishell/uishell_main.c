@@ -98,6 +98,7 @@
 #include "uishell/uishell_terminal_link_diagnostics.c"
 #include "uishell/uishell_preview_diagnostics.c"
 #include "uishell/uishell_panel_diagnostics.c"
+#include "uishell/uishell_shared_ui_diagnostics.c"
 #include "uishell/uishell_managed_content_diagnostics.c"
 #include "uishell/uishell_overview_benchmark.c"
 
@@ -200,6 +201,13 @@ entry_point(CmdLine *cmd_line)
       if(cmd_line_has_flag(cmd_line, str8_lit("managed_content_diagnostics")))
       { rd_state->frame_diagnostic = uishell_managed_content_diagnostics; }
 #endif
+      if(cmd_line_has_flag(cmd_line, str8_lit("shared_ui_diagnostics")))
+      {
+        uishell_import_fixture_dir = cmd_line_string(cmd_line, str8_lit("shared_ui_fixture_dir"));
+        if(uishell_import_fixture_dir.size == 0)
+        { fprintf(stderr, "shared UI diagnostics require --shared_ui_fixture_dir:DIR\n"); abort_self(2); }
+        rd_state->frame_diagnostic = uishell_shared_ui_diagnostics;
+      }
       if(cmd_line_has_flag(cmd_line, str8_lit("panel_diagnostics")))
       { rd_state->frame_diagnostic = uishell_panel_diagnostics; }
       if(cmd_line_has_flag(cmd_line, str8_lit("preview_diagnostics")))
@@ -298,6 +306,7 @@ entry_point(CmdLine *cmd_line)
                                     "Accept live metadata over HTTP/UDS using the specified sidebar template.\n\n"
                                     "--scroll_region_fixture\nOpen the two-axis scrollbar fixture.\n\n"
                                     "--managed_content_diagnostics\nRun managed terminal reconciliation checks and exit (Unix).\n\n"
+                                    "--shared_ui_diagnostics --shared_ui_fixture_dir:DIR\nRun config, file-picker and Metal blur regressions using an empty temporary directory.\n\n"
                                     "--panel_diagnostics\nRun panel drop and layout checks and exit.\n\n"
                                     "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
                                     "--preview_diagnostics\nCheck workspace preview isolation and dimming and exit.\n\n"
