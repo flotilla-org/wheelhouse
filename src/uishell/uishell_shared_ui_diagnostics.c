@@ -1,6 +1,8 @@
 // Licensed under the MIT license (https://opensource.org/license/mit/)
 // Adapted from RAD regressions in 0cff14e4, 7b3c7388 and 1ad634d6.
 // Uses the normal initialized shell; fixture files belong to the caller's temp dir.
+#include "config/tests/native_menu_policy.c"
+
 global String8 uishell_import_fixture_dir;
 #define UIImportCheck(expr) do { if(!(expr)) { *failures += 1; fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #expr); } } while(0)
 
@@ -269,7 +271,7 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
     scratch_end(scratch);
     return 0;
   }
-  U32 failures = 0;
+  U32 failures = !cfg_native_menu_diagnostics();
   uishell_check_raster_baselines(scratch.arena, &failures);
   uishell_check_text_decorations(&failures);
   fprintf(stderr, "raster baselines and text decorations: %u failures\n", failures);

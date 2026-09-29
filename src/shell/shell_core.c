@@ -9220,17 +9220,21 @@ rd_app_menu_spec_content(RD_AppMenuSpec *spec)
 internal void
 rd_wm_set_main_menu(void)
 {
+  Temp scratch = scratch_begin(0, 0);
+  local_persist U64 last_hash = 0;
+  local_persist B32 initialized = 0;
+  B32 native = wm_application_menu_bar_is_native();
   RD_AppMenuSpecList specs = rd_app_menu_specs();
   WM_MenuArray menu_array = {0};
   menu_array.count = specs.count;
-  menu_array.menus = push_array(rd_state->arena, WM_Menu, menu_array.count);
+  menu_array.menus = push_array(scratch.arena, WM_Menu, menu_array.count);
   for(U64 menu_idx = 0; menu_idx < menu_array.count; menu_idx += 1)
   {
     RD_AppMenuSpec *spec = &specs.v[menu_idx];
     WM_Menu *menu = &menu_array.menus[menu_idx];
     menu->label = spec->label;
     menu->item_count = spec->item_count;
-    menu->items = push_array(rd_state->arena, WM_MenuItem, menu->item_count);
+    menu->items = push_array(scratch.arena, WM_MenuItem, menu->item_count);
     for(U64 item_idx = 0; item_idx < menu->item_count; item_idx += 1)
     {
       RD_AppMenuItemSpec *item_spec = &spec->items[item_idx];
@@ -9253,10 +9257,20 @@ rd_wm_set_main_menu(void)
         {
           item->command_name = info.string;
         }
+        CFG_Binding binding = cfg_native_menu_binding(rd_state->key_map, item->command_name);
+        item->shortcut_key = binding.key;
+        item->shortcut_modifiers = binding.modifiers;
       }
     }
   }
-  wm_set_main_menu(menu_array);
+  U64 hash = wm_menu_hash(menu_array, native);
+  if(!initialized || hash != last_hash)
+  {
+    wm_set_main_menu(menu_array);
+    last_hash = hash;
+    initialized = 1;
+  }
+  scratch_end(scratch);
 }
 
 internal String8
@@ -10029,57 +10043,14 @@ rd_frame(void)
   //////////////////////////////
   //- rjf: bind change
   //
-  if(!rd_state->popup_active && rd_state->bind_change_active)
+  B32 cancel_recording = wm_events_cancel_key_recording(&events);
+  if((!rd_state->popup_active || cancel_recording) &&
+     cfg_process_binding_recording(rd_state->cfg, &rd_state->bind_change_active,
+                                   rd_state->bind_change_binding_id, rd_state->bind_change_cmd_name, &events))
   {
-    if(wm_key_press(&events, wm_window_zero(), 0, WM_Key_Esc))
-    {
-      rd_request_frame();
-      rd_state->bind_change_active = 0;
-    }
-    if(wm_key_press(&events, wm_window_zero(), 0, WM_Key_Delete))
-    {
-      rd_request_frame();
-      cfg_node_release(rd_state->cfg, cfg_node_from_id(rd_state->bind_change_binding_id));
-      rd_state->bind_change_active = 0;
-    }
-    for(WM_Event *event = events.first, *next = 0; event != 0; event = next)
-    {
-      if(event->kind == WM_EventKind_Press &&
-         event->key != WM_Key_Esc &&
-         event->key != WM_Key_Return &&
-         event->key != WM_Key_Backspace &&
-         event->key != WM_Key_Delete &&
-         event->key != WM_Key_LeftMouseButton &&
-         event->key != WM_Key_RightMouseButton &&
-         event->key != WM_Key_MiddleMouseButton &&
-         event->key != WM_Key_Ctrl &&
-         event->key != WM_Key_Alt &&
-         event->key != WM_Key_Shift)
-      {
-        rd_state->bind_change_active = 0;
-        CFG_Node *binding = cfg_node_from_id(rd_state->bind_change_binding_id);
-        if(binding == &cfg_nil_node)
-        {
-          CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
-          CFG_Node *keybindings = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, str8_lit("keybindings"));
-          binding = cfg_node_new(rd_state->cfg, keybindings, str8_lit(""));
-        }
-        cfg_node_release_all_children(rd_state->cfg, binding);
-        cfg_node_new(rd_state->cfg, binding, rd_state->bind_change_cmd_name);
-        cfg_node_new(rd_state->cfg, binding, wm_key_cfg_name_table[event->key]);
-        if(event->modifiers & WM_Modifier_Ctrl)  { cfg_node_new(rd_state->cfg, binding, str8_lit("ctrl")); }
-        if(event->modifiers & WM_Modifier_Shift) { cfg_node_new(rd_state->cfg, binding, str8_lit("shift")); }
-        if(event->modifiers & WM_Modifier_Alt)   { cfg_node_new(rd_state->cfg, binding, str8_lit("alt")); }
-        if(event->modifiers & WM_Modifier_Super) { cfg_node_new(rd_state->cfg, binding, str8_lit("super")); }
-        U32 codepoint = wm_codepoint_from_modifiers_and_key(event->modifiers, event->key);
-        wm_text(&events, event->window, codepoint);
-        wm_eat_event(&events, event);
-        rd_request_frame();
-        break;
-      }
-    }
+    rd_request_frame();
   }
-  
+
   //////////////////////////////
   //- rjf: build key map from config
   //
@@ -10124,14 +10095,11 @@ rd_frame(void)
     if(!initialized || last_mac_native_menu_bar != mac_native_menu_bar)
     {
       wm_set_preferred_native_menu_bar(mac_native_menu_bar);
-      if(wm_application_menu_bar_is_native())
-      {
-        rd_wm_set_main_menu();
-      }
       last_mac_native_menu_bar = mac_native_menu_bar;
     }
     initialized = 1;
   }
+  if(OS_MAC) { rd_wm_set_main_menu(); }
 
   //////////////////////////////
   //- rjf: consume events
@@ -10197,7 +10165,7 @@ rd_frame(void)
         }
         else
         {
-          uishell_cmd("run_command", .cmd_name = event->string);
+          uishell_cmd("run_command", .cmd_name = cfg_command_from_menu_or_binding(scratch.arena, rd_state->key_map, event));
         }
         rd_request_frame();
       }
@@ -10243,14 +10211,13 @@ rd_frame(void)
       //- rjf: try hotkey presses
       if(!take && event->kind == WM_EventKind_Press && !terminal_claims_keyboard_input)
       {
-        CFG_Binding binding = {event->key, event->modifiers};
-        CFG_KeyMapNodePtrList key_map_nodes = cfg_key_map_node_ptr_list_from_binding(scratch.arena, rd_state->key_map, binding);
-        if(key_map_nodes.first != 0)
+        String8 binding_command = cfg_command_from_menu_or_binding(scratch.arena, rd_state->key_map, event);
+        if(binding_command.size != 0)
         {
           U32 hit_char = wm_codepoint_from_modifiers_and_key(event->modifiers, event->key);
           if(hit_char == 0 || allow_text_hotkeys)
           {
-            String8 cmd_name = key_map_nodes.first->v->name;
+            String8 cmd_name = binding_command;
             for(U64 idx = 0; idx < ArrayCount(RD_APP_BINDING_VERSION_REMAP_OLD_NAME_TABLE); idx += 1)
             {
               if(str8_match(RD_APP_BINDING_VERSION_REMAP_OLD_NAME_TABLE[idx], cmd_name, StringMatchFlag_CaseInsensitive))
