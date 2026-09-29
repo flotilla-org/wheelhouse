@@ -389,7 +389,8 @@ fp_raster(Arena *arena, FP_Handle handle, F32 size, FP_RasterFlags flags, String
                     }
                     result.kind = is_source_color ? FP_RasterKind_RGBA : FP_RasterKind_Mask;
                   }
-                  result.advance = ceil_f64(advance);
+                  // Keep logical spacing independent of the bitmap's pixel grid.
+                  result.advance = (F32)advance;
                   result.face_box_origin_from_left = (F32)origin_from_left;
                   result.face_box_baseline_from_top = (F32)((CGFloat)atlas_dim.y - baseline_from_bottom);
 

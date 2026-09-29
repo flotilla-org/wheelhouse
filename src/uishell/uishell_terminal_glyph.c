@@ -7462,7 +7462,8 @@ uishell_terminal_write_fixture_ppm(String8 path, FNT_Tag primary_font, FNT_Tag m
     };
     cleat_snapshot fixture = uishell_terminal_fixture_snapshot(scratch.arena, 80, 24);
     FNT_Metrics metrics = fnt_metrics_from_tag_size(primary_font, font_size);
-    F32 cell_width = Max(1.f, fnt_dim_from_tag_size_string(primary_font, font_size, 0, 0, str8_lit("H")).x);
+    // The PPM validators divide this fixture into an integer 80x24 cell grid.
+    F32 cell_width = Max(1.f, ceil_f32(fnt_dim_from_tag_size_string(primary_font, font_size, 0, 0, str8_lit("H")).x));
     F32 cell_height = ceil_f32(ClampBot(1.f, fnt_line_height_from_metrics(&metrics)*1.2f));
     cleat_rgb fixture_bg = {4, 4, 4};
     UIShell_TerminalDrawParams draw_params =
@@ -8212,15 +8213,16 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
       };
       UIShell_TerminalCursorArray cursors = {0};
 
+      // Run starts and cell bounds snap to pixels; glyph advances within runs do not.
       Rng2F32 expected[128] = {0};
       U64 expected_count = 0;
       {
         FNT_Run run = dr_fnt_run_from_string(uishell_terminal_font_from_cell(&renderer, &cells[0]), font_size, 0, 0, raster_flags, str8_lit("ab"));
-        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(canvas_rect.x0 + cell_width*0.f, text_y), primary_metrics.descent);
+        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*0.f), text_y), primary_metrics.descent);
       }
       {
         FNT_Run run = dr_fnt_run_from_string(uishell_terminal_font_from_cell(&renderer, &cells[3]), font_size, 0, 0, raster_flags, str8_lit("c"));
-        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(canvas_rect.x0 + cell_width*3.f, text_y), primary_metrics.descent);
+        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*3.f), text_y), primary_metrics.descent);
       }
       {
         UIShell_TerminalCellTextDecision decision = uishell_terminal_cell_text_decision_from_cell(scratch.arena, &renderer, &cells[5]);
@@ -8231,16 +8233,16 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
         }
         else
         {
-          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(canvas_rect.x0 + cell_width*5.f, text_y), primary_metrics.descent);
+          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*5.f), text_y), primary_metrics.descent);
           if(decision.path != UIShell_TerminalCellTextPath_SourceColor)
           {
-            expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(canvas_rect.x0 + cell_width*5.f + 1.f, text_y), primary_metrics.descent);
+            expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*5.f) + 1.f, text_y), primary_metrics.descent);
           }
         }
       }
       {
         FNT_Run run = dr_fnt_run_from_string(uishell_terminal_font_from_cell(&renderer, &cells[7]), font_size, 0, 0, raster_flags, str8_lit("e"));
-        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(canvas_rect.x0 + cell_width*7.f, text_y), primary_metrics.descent);
+        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*7.f), text_y), primary_metrics.descent);
       }
       if(fallback_cp != 0)
       {
@@ -8252,7 +8254,7 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
         }
         else
         {
-          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(canvas_rect.x0 + cell_width*9.f, text_y), primary_metrics.descent);
+          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*9.f), text_y), primary_metrics.descent);
         }
       }
       {
@@ -8264,9 +8266,9 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
         }
         else
         {
-          Rng2F32 emoji_cell_rect = r2f32p(canvas_rect.x0 + cell_width*11.f,
+          Rng2F32 emoji_cell_rect = r2f32p(floor_f32(canvas_rect.x0 + cell_width*11.f),
                                            canvas_rect.y0,
-                                           canvas_rect.x0 + cell_width*13.f,
+                                           ceil_f32(canvas_rect.x0 + cell_width*13.f),
                                            canvas_rect.y1);
           Vec2F32 emoji_text_p = (decision.path == UIShell_TerminalCellTextPath_SourceColor ?
                                   uishell_terminal_source_color_text_p_for_cell(decision, emoji_cell_rect, text_y, primary_metrics.descent) :
@@ -8280,13 +8282,17 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
       {
         uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(scratch.arena, &renderer, &draw_params, &feed, cursors);
       }
+      // Cell backgrounds cover whole pixels even when the font advance is fractional.
+      Rng2F32 background_rect = r2f32p(floor_f32(canvas_rect.x0), floor_f32(canvas_rect.y0),
+                                       ceil_f32(canvas_rect.x1), ceil_f32(canvas_rect.y1));
       Rng2F32 raw_actual[128] = {0};
       Rng2F32 actual[128] = {0};
       U64 raw_actual_count = uishell_terminal_diagnostic_collect_textured_rects(bucket, raw_actual, ArrayCount(raw_actual));
       U64 actual_count = 0;
       for(U64 actual_idx = 0; actual_idx < raw_actual_count && actual_count < ArrayCount(actual); actual_idx += 1)
       {
-        if(!uishell_terminal_rect2_match(raw_actual[actual_idx], canvas_rect, 0.001f))
+        if(!uishell_terminal_rect2_match(raw_actual[actual_idx], canvas_rect, 0.001f) &&
+           !uishell_terminal_rect2_match(raw_actual[actual_idx], background_rect, 0.001f))
         {
           actual[actual_count] = raw_actual[actual_idx];
           actual_count += 1;
