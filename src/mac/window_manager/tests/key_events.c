@@ -154,9 +154,20 @@ entry_point(CmdLine *cmdline)
       good &= presses == 1 && commands == 0 && texts == 0;
       // Tracking: AppKit matches the equivalent, producing exactly one command.
       [mac_wm_state->menu_target menuWillOpen:native_menu];
-      good &= [native_menu performKeyEquivalent:key];
-      [mac_wm_state->menu_target menuDidClose:native_menu];
-      WM_EventList tracked = wm_get_events(scratch.arena, 0);
+      WM_EventList tracked = {0};
+      if(target == 0)
+      {
+        good &= [native_menu performKeyEquivalent:key];
+        [mac_wm_state->menu_target menuDidClose:native_menu];
+        tracked = wm_get_events(scratch.arena, 0);
+      }
+      else
+      {
+        // A nested pump while tracking must give AppKit the key, too.
+        [NSApp postEvent:key atStart:NO];
+        tracked = wm_get_events(scratch.arena, 0);
+        [mac_wm_state->menu_target menuDidClose:native_menu];
+      }
       U64 opens = 0;
       presses = commands = texts = 0;
       for(WM_Event *e = tracked.first; e; e = e->next)

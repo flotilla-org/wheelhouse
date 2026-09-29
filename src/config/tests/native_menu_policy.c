@@ -88,8 +88,7 @@ cfg_native_menu_diagnostics(void)
   U64 before = cfg_ctx->change_gen;
   NativeMenuCheck(cfg_process_binding_recording(cfg, &recording, 0, str8_lit("new_binding"), &events));
   NativeMenuCheck(!recording && cfg_ctx->change_gen == before);
-  // An actual recorded stroke mutates the config and is consumed, including
-  // its text companion: it cannot dispatch or leak into a new input.
+  // An actual recorded stroke mutates the config and is consumed.
   events = (WM_EventList){0};
   WM_Event *press = wm_event_list_push_new(arena, &events, WM_EventKind_Press);
   press->key = WM_Key_L;
@@ -99,6 +98,15 @@ cfg_native_menu_diagnostics(void)
   NativeMenuCheck(!recording && events.count == 0);
   map = cfg_key_map_from_cfg(arena);
   NativeMenuCheck(cfg_native_menu_binding(map, str8_lit("recorded")).key == WM_Key_L);
+  // A printable recording consumes its companion text but preserves release.
+  events = (WM_EventList){0};
+  wm_event_list_push_new(arena, &events, WM_EventKind_Press)->key = WM_Key_T;
+  wm_event_list_push_new(arena, &events, WM_EventKind_Text)->character = 't';
+  wm_event_list_push_new(arena, &events, WM_EventKind_Release)->key = WM_Key_T;
+  recording = 1;
+  NativeMenuCheck(cfg_process_binding_recording(cfg, &recording, 0, str8_lit("recorded_text"), &events));
+  NativeMenuCheck(!recording && events.count == 1 && events.first->kind == WM_EventKind_Release);
+  NativeMenuCheck(cfg_command_from_menu_or_binding(arena, map, events.first).size == 0);
   // Cancel with Escape followed by another press: no binding may be saved.
   events = (WM_EventList){0};
   wm_event_list_push_new(arena, &events, WM_EventKind_Press)->key = WM_Key_Esc;
