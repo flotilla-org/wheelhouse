@@ -1,11 +1,9 @@
 ---
 kind: workflow_template
 name: wheelhouse-governor
-repos: [wheelhouse, cleat]
 ---
 vessels:
   - name: govern
-    stance: contained
     crew:
       - role: governor
         selector:
