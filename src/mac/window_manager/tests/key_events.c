@@ -7,6 +7,8 @@
 #include "base/base_inc.c"
 #include "window_manager/window_manager_inc.c"
 
+#define MacMenuCheck(expr) do { if(!(expr)) { good = 0; fprintf(stderr, "FAIL native menu line %d: %s\n", __LINE__, #expr); } } while(0)
+
 internal void
 entry_point(CmdLine *cmdline)
 {
@@ -121,13 +123,14 @@ entry_point(CmdLine *cmdline)
     // The constructor installs the application menu first, then supplied menus.
     NSMenu *native_menu = [[[NSApp mainMenu] itemAtIndex:1] submenu];
     NSMenuItem *palette = [native_menu itemAtIndex:0];
-    B32 good = [[palette keyEquivalent] isEqualToString:@"p"] &&
-               [palette keyEquivalentModifierMask] == (NSEventModifierFlagCommand|NSEventModifierFlagShift);
+    B32 good = 1;
+    MacMenuCheck([[palette keyEquivalent] isEqualToString:@"p"] &&
+                 [palette keyEquivalentModifierMask] == (NSEventModifierFlagCommand|NSEventModifierFlagShift));
     NSMenuItem *quit = [[[[NSApp mainMenu] itemAtIndex:0] submenu] itemAtIndex:0];
-    good &= [[quit keyEquivalent] isEqualToString:@"q"] && [quit keyEquivalentModifierMask] == NSEventModifierFlagCommand;
-    good &= [[[native_menu itemAtIndex:1] keyEquivalent] characterAtIndex:0] == NSF11FunctionKey;
-    good &= [[native_menu itemAtIndex:2] keyEquivalentModifierMask] ==
-            (NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift);
+    MacMenuCheck([[quit keyEquivalent] isEqualToString:@"q"] && [quit keyEquivalentModifierMask] == NSEventModifierFlagCommand);
+    MacMenuCheck([[[native_menu itemAtIndex:1] keyEquivalent] characterAtIndex:0] == NSF11FunctionKey);
+    MacMenuCheck([[native_menu itemAtIndex:2] keyEquivalentModifierMask] ==
+            (NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift));
     WM_Window second = wm_window_open(r2f32p(0, 0, 320, 200), 0, str8_lit("Second menu target"));
     for(U64 target = 0; target < 2; target++)
     {
@@ -152,14 +155,14 @@ entry_point(CmdLine *cmdline)
         commands += e->kind == WM_EventKind_MenuCommand;
         texts += e->kind == WM_EventKind_Text;
       }
-      good &= presses == 1 && commands == 0 && texts == 0;
+      MacMenuCheck(presses == 1 && commands == 0 && texts == 0);
       // Tracking: AppKit matches the equivalent, producing exactly one command.
       [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidBeginTrackingNotification object:[NSApp mainMenu]];
       [mac_wm_state->menu_target menuWillOpen:native_menu];
       WM_EventList tracked = {0};
       if(target == 0)
       {
-        good &= [native_menu performKeyEquivalent:key];
+        MacMenuCheck([native_menu performKeyEquivalent:key]);
         [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidEndTrackingNotification object:[NSApp mainMenu]];
         tracked = wm_get_events(scratch.arena, 0);
       }
@@ -180,11 +183,11 @@ entry_point(CmdLine *cmdline)
         if(e->kind == WM_EventKind_MenuCommand)
         {
           commands++;
-          good &= opens == 1 && str8_match(e->string, str8_lit("open_palette"), 0);
-          good &= wm_window_match(e->window, target_window);
+          MacMenuCheck(opens == 1 && str8_match(e->string, str8_lit("open_palette"), 0));
+          MacMenuCheck(wm_window_match(e->window, target_window));
         }
       }
-      good &= opens == 1 && commands == 1 && presses == 0 && texts == 0;
+      MacMenuCheck(opens == 1 && commands == 1 && presses == 0 && texts == 0);
       // Clicking the same entry reaches the same target/command.
       [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidBeginTrackingNotification object:[NSApp mainMenu]];
       [mac_wm_state->menu_target menuWillOpen:native_menu];
@@ -197,10 +200,10 @@ entry_point(CmdLine *cmdline)
         if(e->kind == WM_EventKind_MenuCommand)
         {
           commands++;
-          good &= str8_match(e->string, str8_lit("open_palette"), 0) && wm_window_match(e->window, target_window);
+          MacMenuCheck(str8_match(e->string, str8_lit("open_palette"), 0) && wm_window_match(e->window, target_window));
         }
       }
-      good &= commands == 1;
+      MacMenuCheck(commands == 1);
       scratch_end(scratch);
     }
     NSMenu *installed = [NSApp mainMenu];
@@ -208,30 +211,30 @@ entry_point(CmdLine *cmdline)
     items[0].shortcut_key = WM_Key_L;
     items[0].shortcut_modifiers = WM_Modifier_Ctrl;
     wm_set_main_menu(menus);
-    good &= [NSApp mainMenu] == installed && mac_wm_state->pending_main_menu != 0;
+    MacMenuCheck([NSApp mainMenu] == installed && mac_wm_state->pending_main_menu != 0);
     [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidEndTrackingNotification object:installed];
-    good &= !mac_wm_state->menu_tracking && mac_wm_state->pending_main_menu == 0;
+    MacMenuCheck(!mac_wm_state->menu_tracking && mac_wm_state->pending_main_menu == 0);
     palette = [[[[NSApp mainMenu] itemAtIndex:1] submenu] itemAtIndex:0];
-    good &= [[palette keyEquivalent] isEqualToString:@"l"] && [palette keyEquivalentModifierMask] == NSEventModifierFlagControl;
+    MacMenuCheck([[palette keyEquivalent] isEqualToString:@"l"] && [palette keyEquivalentModifierMask] == NSEventModifierFlagControl);
     // Deactivation must restore ownership even without a close/end callback.
     [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidBeginTrackingNotification object:[NSApp mainMenu]];
     items[0].shortcut_key = WM_Key_Null;
     items[0].shortcut_modifiers = 0;
     wm_set_main_menu(menus);
     [[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationDidResignActiveNotification object:NSApp];
-    good &= !mac_wm_state->menu_tracking && mac_wm_state->pending_main_menu == 0;
+    MacMenuCheck(!mac_wm_state->menu_tracking && mac_wm_state->pending_main_menu == 0);
     palette = [[[[NSApp mainMenu] itemAtIndex:1] submenu] itemAtIndex:0];
-    good &= [[palette keyEquivalent] length] == 0;
+    MacMenuCheck([[palette keyEquivalent] length] == 0);
     wm_set_preferred_native_menu_bar(0);
     wm_set_main_menu(menus);
-    good &= [[NSApp mainMenu] numberOfItems] == 1;
+    MacMenuCheck([[NSApp mainMenu] numberOfItems] == 1);
     quit = [[[[NSApp mainMenu] itemAtIndex:0] submenu] itemAtIndex:0];
-    good &= [[quit keyEquivalent] isEqualToString:@"q"];
+    MacMenuCheck([[quit keyEquivalent] isEqualToString:@"q"]);
     items[1].shortcut_key = WM_Key_Null;
     items[1].shortcut_modifiers = 0;
     wm_set_main_menu(menus);
     quit = [[[[NSApp mainMenu] itemAtIndex:0] submenu] itemAtIndex:0];
-    good &= [[quit keyEquivalent] length] == 0;
+    MacMenuCheck([[quit keyEquivalent] length] == 0);
     fprintf(stderr, "%s: native menu bindings, tracking, rebuild and window context\n", good ? "PASS" : "FAIL");
     failures += !good;
     wm_window_close(second);
