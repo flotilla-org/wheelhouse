@@ -124,72 +124,13 @@ entry_point(CmdLine *cmdline)
     NSMenu *native_menu = [[[NSApp mainMenu] itemAtIndex:1] submenu];
     NSMenuItem *palette = [native_menu itemAtIndex:0];
     B32 good = 1;
-    MacMenuCheck([[palette keyEquivalent] isEqualToString:@"p"] &&
-                 [palette keyEquivalentModifierMask] == (NSEventModifierFlagCommand|NSEventModifierFlagShift));
+    MacMenuCheck([[palette keyEquivalent] isEqualToString:@"P"] &&
+                 [palette keyEquivalentModifierMask] == NSEventModifierFlagCommand);
     NSMenuItem *quit = [[[[NSApp mainMenu] itemAtIndex:0] submenu] itemAtIndex:0];
     MacMenuCheck([[quit keyEquivalent] isEqualToString:@"q"] && [quit keyEquivalentModifierMask] == NSEventModifierFlagCommand);
     MacMenuCheck([[[native_menu itemAtIndex:1] keyEquivalent] characterAtIndex:0] == NSF11FunctionKey);
     MacMenuCheck([[native_menu itemAtIndex:2] keyEquivalentModifierMask] ==
-            (NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift));
-    // Temporary differential probe for native event and equivalent representation.
-    for(U64 probe = 0; probe < 32; probe++)
-    {
-      Temp probe_scratch = scratch_begin(0, 0);
-      wm_get_events(probe_scratch.arena, 0);
-      B32 queued = !!(probe & 1);
-      B32 canonical = !!(probe & 2);
-      B32 cg = !!(probe & 4);
-      B32 device_flags = !!(probe & 8);
-      B32 standalone = !!(probe & 16);
-      [palette setKeyEquivalent:canonical ? @"P" : @"p"];
-      [palette setKeyEquivalentModifierMask:canonical ? NSEventModifierFlagCommand : NSEventModifierFlagCommand|NSEventModifierFlagShift];
-      NSMenu *probe_menu = native_menu;
-      if(standalone)
-      {
-        probe_menu = [[[NSMenu alloc] initWithTitle:@"Standalone"] autorelease];
-        [probe_menu setAutoenablesItems:NO];
-        NSMenuItem *probe_item = [[palette copy] autorelease];
-        [probe_menu addItem:probe_item];
-      }
-      NSEventModifierFlags flags = NSEventModifierFlagCommand|NSEventModifierFlagShift;
-      if(device_flags) { flags |= 0x10a; }
-      NSEvent *probe_key = 0;
-      if(cg)
-      {
-        CGEventRef cg_key = CGEventCreateKeyboardEvent(0, 35, true);
-        CGEventSetFlags(cg_key, flags);
-        unichar character = 'P';
-        CGEventKeyboardSetUnicodeString(cg_key, 1, &character);
-        probe_key = [NSEvent eventWithCGEvent:cg_key];
-        CFRelease(cg_key);
-      }
-      else
-      {
-        probe_key = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
-                              modifierFlags:flags timestamp:0
-                               windowNumber:[ns_window windowNumber] context:0
-                                 characters:@"p" charactersIgnoringModifiers:@"P"
-                                  isARepeat:NO keyCode:35];
-      }
-      [NSApp postEvent:probe_key atStart:NO];
-      // Fetch directly so a previous unsuccessful submenu match cannot obscure
-      // the comparison of standalone and installed-menu equivalents.
-      if(queued)
-      {
-        probe_key = [NSApp nextEventMatchingMask:NSEventMaskKeyDown untilDate:[NSDate distantPast]
-                                        inMode:NSDefaultRunLoopMode dequeue:YES];
-      }
-      B32 matched = [probe_menu performKeyEquivalent:probe_key];
-      WM_EventList probe_events = wm_get_events(probe_scratch.arena, 0);
-      U64 probe_commands = 0;
-      for(WM_Event *e = probe_events.first; e; e = e->next) { probe_commands += e->kind == WM_EventKind_MenuCommand; }
-      fprintf(stderr, "[DEBUG-menu-matrix2] probe=%llu dequeued=%d canonical=%d cg=%d device=%d standalone=%d match=%d commands=%llu flags=%lx char=%s/%s\n",
-              probe, queued, canonical, cg, device_flags, standalone, matched, probe_commands,
-              (unsigned long)[probe_key modifierFlags], [[probe_key characters] UTF8String], [[probe_key charactersIgnoringModifiers] UTF8String]);
-      scratch_end(probe_scratch);
-    }
-    [palette setKeyEquivalent:@"p"];
-    [palette setKeyEquivalentModifierMask:NSEventModifierFlagCommand|NSEventModifierFlagShift];
+            (NSEventModifierFlagControl|NSEventModifierFlagOption));
     WM_Window second = wm_window_open(r2f32p(0, 0, 320, 200), 0, str8_lit("Second menu target"));
     for(U64 target = 0; target < 2; target++)
     {
@@ -202,7 +143,7 @@ entry_point(CmdLine *cmdline)
       NSEvent *key = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
                                modifierFlags:NSEventModifierFlagCommand|NSEventModifierFlagShift
                                    timestamp:0 windowNumber:[target_mac_window->ns_window windowNumber]
-                                     context:0 characters:@"P" charactersIgnoringModifiers:@"P"
+                                     context:0 characters:@"p" charactersIgnoringModifiers:@"P"
                                    isARepeat:NO keyCode:35];
       // Closed menu: physical press only, no native command or shortcut text.
       [NSApp postEvent:key atStart:NO];
@@ -220,7 +161,7 @@ entry_point(CmdLine *cmdline)
       key = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
                        modifierFlags:NSEventModifierFlagCommand|NSEventModifierFlagShift
                            timestamp:[[NSProcessInfo processInfo] systemUptime] windowNumber:[target_mac_window->ns_window windowNumber]
-                             context:0 characters:@"P" charactersIgnoringModifiers:@"P"
+                             context:0 characters:@"p" charactersIgnoringModifiers:@"P"
                            isARepeat:NO keyCode:35];
       // Tracking: AppKit matches the equivalent, producing exactly one command.
       [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidBeginTrackingNotification object:[NSApp mainMenu]];

@@ -1328,16 +1328,7 @@ wm_get_events(Arena *arena, B32 wait)
       B32 handled = 0;
       if(type == NSEventTypeKeyDown)
       {
-        // Equivalents belong to the command submenus, not the menu-bar root.
-        // NSMenu's root performKeyEquivalent: does not reliably descend here.
-        for(NSMenuItem *menu_item in [[NSApp mainMenu] itemArray])
-        {
-          if([[menu_item submenu] performKeyEquivalent:event])
-          {
-            handled = 1;
-            break;
-          }
-        }
+        handled = [[NSApp mainMenu] performKeyEquivalent:event];
       }
       if(!handled) { [NSApp sendEvent:event]; }
       limit = [NSDate distantPast];
@@ -1643,6 +1634,11 @@ mac_wm_menu_item(WM_MenuItem *item)
 {
   U32 codepoint = wm_menu_codepoint_from_key(item->shortcut_key);
   Assert(codepoint <= 0xffff);
+  // Canonicalize shifted ASCII letters. AppKit can advertise lowercase+Shift,
+  // but queued key-equivalent matching needs the uppercase equivalent instead.
+  B32 shifted_letter = ((item->shortcut_modifiers & WM_Modifier_Shift) &&
+                        'a' <= codepoint && codepoint <= 'z');
+  if(shifted_letter) { codepoint += 'A' - 'a'; }
   unichar character = (unichar)codepoint;
   NSString *equivalent = codepoint ? [NSString stringWithCharacters:&character length:1] : @"";
   NSString *label = [mac_wm_persistent_ns_string_from_string8(item->label) autorelease];
@@ -1652,7 +1648,7 @@ mac_wm_menu_item(WM_MenuItem *item)
   NSEventModifierFlags modifiers = 0;
   if(item->shortcut_modifiers & WM_Modifier_Ctrl)  {modifiers |= NSEventModifierFlagControl;}
   if(item->shortcut_modifiers & WM_Modifier_Super)   {modifiers |= NSEventModifierFlagCommand;}
-  if(item->shortcut_modifiers & WM_Modifier_Shift) {modifiers |= NSEventModifierFlagShift;}
+  if((item->shortcut_modifiers & WM_Modifier_Shift) && !shifted_letter) {modifiers |= NSEventModifierFlagShift;}
   if(item->shortcut_modifiers & WM_Modifier_Alt)   {modifiers |= NSEventModifierFlagOption;}
   [result setKeyEquivalentModifierMask:modifiers];
   [result setTarget:mac_wm_state->menu_target];
