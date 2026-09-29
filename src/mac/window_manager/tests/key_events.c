@@ -118,6 +118,7 @@ entry_point(CmdLine *cmdline)
     WM_MenuArray menus = {1, &menu};
     wm_set_preferred_native_menu_bar(1);
     wm_set_main_menu(menus);
+    // The constructor installs the application menu first, then supplied menus.
     NSMenu *native_menu = [[[NSApp mainMenu] itemAtIndex:1] submenu];
     NSMenuItem *palette = [native_menu itemAtIndex:0];
     B32 good = [[palette keyEquivalent] isEqualToString:@"p"] &&
@@ -153,12 +154,13 @@ entry_point(CmdLine *cmdline)
       }
       good &= presses == 1 && commands == 0 && texts == 0;
       // Tracking: AppKit matches the equivalent, producing exactly one command.
+      [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidBeginTrackingNotification object:[NSApp mainMenu]];
       [mac_wm_state->menu_target menuWillOpen:native_menu];
       WM_EventList tracked = {0};
       if(target == 0)
       {
         good &= [native_menu performKeyEquivalent:key];
-        [mac_wm_state->menu_target menuDidClose:native_menu];
+        [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidEndTrackingNotification object:[NSApp mainMenu]];
         tracked = wm_get_events(scratch.arena, 0);
       }
       else
@@ -166,7 +168,7 @@ entry_point(CmdLine *cmdline)
         // A nested pump while tracking must give AppKit the key, too.
         [NSApp postEvent:key atStart:NO];
         tracked = wm_get_events(scratch.arena, 0);
-        [mac_wm_state->menu_target menuDidClose:native_menu];
+        [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidEndTrackingNotification object:[NSApp mainMenu]];
       }
       U64 opens = 0;
       presses = commands = texts = 0;
@@ -184,9 +186,10 @@ entry_point(CmdLine *cmdline)
       }
       good &= opens == 1 && commands == 1 && presses == 0 && texts == 0;
       // Clicking the same entry reaches the same target/command.
+      [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidBeginTrackingNotification object:[NSApp mainMenu]];
       [mac_wm_state->menu_target menuWillOpen:native_menu];
       [native_menu performActionForItemAtIndex:0];
-      [mac_wm_state->menu_target menuDidClose:native_menu];
+      [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidEndTrackingNotification object:[NSApp mainMenu]];
       tracked = wm_get_events(scratch.arena, 0);
       commands = 0;
       for(WM_Event *e = tracked.first; e; e = e->next)
@@ -200,14 +203,23 @@ entry_point(CmdLine *cmdline)
       good &= commands == 1;
       scratch_end(scratch);
     }
+    NSMenu *installed = [NSApp mainMenu];
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidBeginTrackingNotification object:installed];
     items[0].shortcut_key = WM_Key_L;
     items[0].shortcut_modifiers = WM_Modifier_Ctrl;
     wm_set_main_menu(menus);
+    good &= [NSApp mainMenu] == installed && mac_wm_state->pending_main_menu != nil;
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidEndTrackingNotification object:installed];
+    good &= !mac_wm_state->menu_tracking && mac_wm_state->pending_main_menu == nil;
     palette = [[[[NSApp mainMenu] itemAtIndex:1] submenu] itemAtIndex:0];
     good &= [[palette keyEquivalent] isEqualToString:@"l"] && [palette keyEquivalentModifierMask] == NSEventModifierFlagControl;
+    // Deactivation must restore ownership even without a close/end callback.
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidBeginTrackingNotification object:[NSApp mainMenu]];
     items[0].shortcut_key = WM_Key_Null;
     items[0].shortcut_modifiers = 0;
     wm_set_main_menu(menus);
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationDidResignActiveNotification object:NSApp];
+    good &= !mac_wm_state->menu_tracking && mac_wm_state->pending_main_menu == nil;
     palette = [[[[NSApp mainMenu] itemAtIndex:1] submenu] itemAtIndex:0];
     good &= [[palette keyEquivalent] length] == 0;
     wm_set_preferred_native_menu_bar(0);

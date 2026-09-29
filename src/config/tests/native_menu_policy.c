@@ -47,6 +47,41 @@ cfg_native_menu_diagnostics(void)
   NativeMenuCheck(wm_menu_codepoint_from_key(WM_Key_LeftMouseButton) == 0);
   NativeMenuCheck(wm_menu_codepoint_from_key(WM_Key_Ctrl) == 0);
 
+  // The actual menu-refresh fingerprint includes every displayed/dispatch field.
+  WM_MenuItem item = {WM_MenuItemKind_Command, str8_lit("Palette"), str8_lit("palette"), palette.key, palette.modifiers};
+  WM_Menu menu = {str8_lit("Probe"), 1, &item};
+  WM_MenuArray menus = {1, &menu};
+  U64 hash = wm_menu_hash(menus, 1);
+  NativeMenuCheck(hash == wm_menu_hash(menus, 1));
+  NativeMenuCheck(hash != wm_menu_hash(menus, 0));
+  WM_MenuItem original_item = item;
+  item.shortcut_key = WM_Key_L;
+  NativeMenuCheck(hash != wm_menu_hash(menus, 1));
+  item = original_item;
+  item.shortcut_modifiers = WM_Modifier_Ctrl;
+  NativeMenuCheck(hash != wm_menu_hash(menus, 1));
+  item = original_item;
+  item.command_name = str8_lit("other_command");
+  NativeMenuCheck(hash != wm_menu_hash(menus, 1));
+  item = original_item;
+  item.label = str8_lit("Other label");
+  NativeMenuCheck(hash != wm_menu_hash(menus, 1));
+  item = original_item;
+  item.kind = WM_MenuItemKind_Separator;
+  NativeMenuCheck(hash != wm_menu_hash(menus, 1));
+  item = original_item;
+  menu.label = str8_lit("Another menu");
+  NativeMenuCheck(hash != wm_menu_hash(menus, 1));
+  menu.label = str8_lit("Probe");
+  menu.item_count = 0;
+  NativeMenuCheck(hash != wm_menu_hash(menus, 1));
+  menu.item_count = 1;
+  item.label = push_str8_copy(arena, item.label);
+  NativeMenuCheck(hash == wm_menu_hash(menus, 1));
+
+  NativeMenuCheck(wm_key_event_is_shell_owned(0));
+  NativeMenuCheck(!wm_key_event_is_shell_owned(1));
+
   // Both event owners resolve the same command and retain the event's window.
   // The adapter uses this ownership policy before translating physical keys.
   for(U64 tracking = 0; tracking < 2; tracking++)

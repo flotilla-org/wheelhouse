@@ -348,3 +348,30 @@ wm_events_cancel_key_recording(WM_EventList *events)
   }
   return 0;
 }
+
+// Value-based fingerprint: transient arena addresses must not force rebuilds.
+internal U64
+wm_menu_hash(WM_MenuArray menus, B32 native)
+{
+  U64 hash = u64_djb2_hash_from_str8(str8_struct(&native));
+  hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&menus.count));
+  for(U64 i = 0; i < menus.count; i++)
+  {
+    WM_Menu *menu = &menus.menus[i];
+    hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&menu->label.size));
+    hash = u64_djb2_hash_from_seed_str8(hash, menu->label);
+    hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&menu->item_count));
+    for(U64 j = 0; j < menu->item_count; j++)
+    {
+      WM_MenuItem *item = &menu->items[j];
+      hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->kind));
+      hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->command_name.size));
+      hash = u64_djb2_hash_from_seed_str8(hash, item->command_name);
+      hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->label.size));
+      hash = u64_djb2_hash_from_seed_str8(hash, item->label);
+      hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->shortcut_key));
+      hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->shortcut_modifiers));
+    }
+  }
+  return hash;
+}

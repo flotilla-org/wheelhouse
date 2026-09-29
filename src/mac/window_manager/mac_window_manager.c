@@ -118,11 +118,35 @@
 - (void)menuWillOpen:(NSMenu *)menu
 {
   mac_wm_state->menu_opened = 1;
-  mac_wm_state->menu_tracking_depth += 1;
 }
-- (void)menuDidClose:(NSMenu *)menu
+- (void)menuDidBeginTracking:(NSNotification *)notification
 {
-  if(mac_wm_state->menu_tracking_depth) { mac_wm_state->menu_tracking_depth -= 1; }
+  if([notification object] == [NSApp mainMenu])
+  {
+    mac_wm_state->menu_opened = 1;
+    mac_wm_state->menu_tracking = 1;
+  }
+}
+- (void)finishMenuTracking
+{
+  mac_wm_state->menu_tracking = 0;
+  if(mac_wm_state->pending_main_menu != nil)
+  {
+    [NSApp setMainMenu:mac_wm_state->pending_main_menu];
+    [mac_wm_state->pending_main_menu release];
+    mac_wm_state->pending_main_menu = nil;
+  }
+  wm_send_wakeup_event();
+}
+- (void)menuDidEndTracking:(NSNotification *)notification
+{
+  // AppKit posts this for the root menu, even when no action was sent.
+  // It does not depend on balancing submenu delegate callbacks.
+  if([notification object] == [NSApp mainMenu]) { [self finishMenuTracking]; }
+}
+- (void)applicationDidResignActive:(NSNotification *)notification
+{
+  [self finishMenuTracking];
 }
 - (void)menuItemSelected:(id)sender
 {
@@ -749,6 +773,13 @@ wm_init(void)
 
   [NSApplication sharedApplication];
   [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+  NSNotificationCenter *notifications = [NSNotificationCenter defaultCenter];
+  [notifications addObserver:mac_wm_state->menu_target selector:@selector(menuDidBeginTracking:)
+                        name:NSMenuDidBeginTrackingNotification object:nil];
+  [notifications addObserver:mac_wm_state->menu_target selector:@selector(menuDidEndTracking:)
+                        name:NSMenuDidEndTrackingNotification object:nil];
+  [notifications addObserver:mac_wm_state->menu_target selector:@selector(applicationDidResignActive:)
+                        name:NSApplicationDidResignActiveNotification object:NSApp];
   [NSApp finishLaunching];
   mac_wm_apply_menu_mode(mac_wm_state->menu_mode);
 }
@@ -1289,7 +1320,7 @@ wm_get_events(Arena *arena, B32 wait)
     }
     // AppKit owns key equivalents during native tracking, including a nested
     // event pump. Outside tracking, preserve physical keys and the #112 text gate.
-    if(!wm_key_event_is_shell_owned(mac_wm_state->menu_tracking_depth != 0) &&
+    if(!wm_key_event_is_shell_owned(mac_wm_state->menu_tracking) &&
        (type == NSEventTypeKeyDown || type == NSEventTypeKeyUp || type == NSEventTypeFlagsChanged))
     {
       [NSApp sendEvent:event];
@@ -1595,6 +1626,7 @@ internal NSMenuItem *
 mac_wm_menu_item(WM_MenuItem *item)
 {
   U32 codepoint = wm_menu_codepoint_from_key(item->shortcut_key);
+  Assert(codepoint <= 0xffff);
   unichar character = (unichar)codepoint;
   NSString *equivalent = codepoint ? [NSString stringWithCharacters:&character length:1] : @"";
   NSString *label = [mac_wm_persistent_ns_string_from_string8(item->label) autorelease];
@@ -1615,64 +1647,77 @@ mac_wm_menu_item(WM_MenuItem *item)
 internal void
 wm_set_main_menu(WM_MenuArray menu_array)
 {
-  // Wheelhouse's binding configuration also supplies the native menu equivalents.
-  [NSMenuItem setUsesUserKeyEquivalents:NO];
-  NSMenu *main_menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
-  NSMenuItem *app_menu_item = [[[NSMenuItem alloc] initWithTitle:@"" action:0 keyEquivalent:@""] autorelease];
-  NSMenu *app_menu = [[[NSMenu alloc] initWithTitle:mac_wm_app_menu_title()] autorelease];
-  [app_menu setDelegate:mac_wm_state->menu_target];
-  WM_MenuItem quit = {WM_MenuItemKind_Command, str8_lit("Quit " BUILD_TITLE), str8_lit("exit")};
-  for(U64 menu_idx = 0; menu_idx < menu_array.count; menu_idx += 1)
+  @autoreleasepool
   {
-    WM_Menu *menu = &menu_array.menus[menu_idx];
-    for(U64 item_idx = 0; item_idx < menu->item_count; item_idx += 1)
-    {
-      WM_MenuItem *item = &menu->items[item_idx];
-      if(str8_match(item->command_name, quit.command_name, 0))
-      {
-        quit.shortcut_key = item->shortcut_key;
-        quit.shortcut_modifiers = item->shortcut_modifiers;
-      }
-    }
-  }
-  [app_menu addItem:mac_wm_menu_item(&quit)];
-  [main_menu addItem:app_menu_item];
-  [main_menu setSubmenu:app_menu forItem:app_menu_item];
-  if(mac_wm_state->menu_mode == MAC_WM_MenuMode_Native)
-  {
+    // Wheelhouse's binding configuration also supplies the native menu equivalents.
+    [NSMenuItem setUsesUserKeyEquivalents:NO];
+    NSMenu *main_menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
+    NSMenuItem *app_menu_item = [[[NSMenuItem alloc] initWithTitle:@"" action:0 keyEquivalent:@""] autorelease];
+    NSMenu *app_menu = [[[NSMenu alloc] initWithTitle:mac_wm_app_menu_title()] autorelease];
+    [app_menu setDelegate:mac_wm_state->menu_target];
+    WM_MenuItem quit = {WM_MenuItemKind_Command, str8_lit("Quit " BUILD_TITLE), str8_lit("exit")};
     for(U64 menu_idx = 0; menu_idx < menu_array.count; menu_idx += 1)
     {
       WM_Menu *menu = &menu_array.menus[menu_idx];
-      NSString *menu_label = [mac_wm_persistent_ns_string_from_string8(menu->label) autorelease];
-      NSMenuItem *menu_item = [[[NSMenuItem alloc] initWithTitle:menu_label action:0 keyEquivalent:@""] autorelease];
-      NSMenu *submenu = [[[NSMenu alloc] initWithTitle:menu_label] autorelease];
-      [submenu setDelegate:mac_wm_state->menu_target];
-      [main_menu addItem:menu_item];
-      [main_menu setSubmenu:submenu forItem:menu_item];
-
       for(U64 item_idx = 0; item_idx < menu->item_count; item_idx += 1)
       {
         WM_MenuItem *item = &menu->items[item_idx];
-        switch(item->kind)
+        if(str8_match(item->command_name, quit.command_name, 0))
         {
-          default:{}break;
-          case WM_MenuItemKind_Separator:
-          {
-            [submenu addItem:[NSMenuItem separatorItem]];
-          }break;
-          case WM_MenuItemKind_Command:
-          {
-            if(!str8_match(item->command_name, quit.command_name, 0))
-            {
-              [submenu addItem:mac_wm_menu_item(item)];
-            }
-          }break;
+          quit.shortcut_key = item->shortcut_key;
+          quit.shortcut_modifiers = item->shortcut_modifiers;
         }
       }
     }
+    [app_menu addItem:mac_wm_menu_item(&quit)];
+    [main_menu addItem:app_menu_item];
+    [main_menu setSubmenu:app_menu forItem:app_menu_item];
+    if(mac_wm_state->menu_mode == MAC_WM_MenuMode_Native)
+    {
+      for(U64 menu_idx = 0; menu_idx < menu_array.count; menu_idx += 1)
+      {
+        WM_Menu *menu = &menu_array.menus[menu_idx];
+        NSString *menu_label = [mac_wm_persistent_ns_string_from_string8(menu->label) autorelease];
+        NSMenuItem *menu_item = [[[NSMenuItem alloc] initWithTitle:menu_label action:0 keyEquivalent:@""] autorelease];
+        NSMenu *submenu = [[[NSMenu alloc] initWithTitle:menu_label] autorelease];
+        [submenu setDelegate:mac_wm_state->menu_target];
+        [main_menu addItem:menu_item];
+        [main_menu setSubmenu:submenu forItem:menu_item];
 
+        for(U64 item_idx = 0; item_idx < menu->item_count; item_idx += 1)
+        {
+          WM_MenuItem *item = &menu->items[item_idx];
+          switch(item->kind)
+          {
+            default:{}break;
+            case WM_MenuItemKind_Separator:
+            {
+              [submenu addItem:[NSMenuItem separatorItem]];
+            }break;
+            case WM_MenuItemKind_Command:
+            {
+              if(!str8_match(item->command_name, quit.command_name, 0))
+              {
+                [submenu addItem:mac_wm_menu_item(item)];
+              }
+            }break;
+          }
+        }
+      }
+
+    }
+    if(mac_wm_state->menu_tracking)
+    {
+      // Keep the installed menu stable through AppKit's tracking loop. The most
+      // recent config snapshot replaces any earlier deferred snapshot.
+      [mac_wm_state->pending_main_menu release];
+      mac_wm_state->pending_main_menu = [main_menu retain];
+    }
+    else
+    {
+      [NSApp setMainMenu:main_menu];
+    }
   }
-  [NSApp setMainMenu:main_menu];
 }
 
 internal B32

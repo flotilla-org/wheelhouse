@@ -284,6 +284,7 @@ internal Vec2F32        wm_mouse_from_window(WM_Window window);
 //~ Application menu policy (shared, also exercised without AppKit)
 
 internal U32 wm_menu_codepoint_from_key(WM_Key key);
+internal U64 wm_menu_hash(WM_MenuArray menus, B32 native);
 internal B32 wm_key_event_is_shell_owned(B32 native_menu_tracking);
 internal B32 wm_events_cancel_key_recording(WM_EventList *events);
 

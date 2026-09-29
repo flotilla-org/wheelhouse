@@ -9224,7 +9224,6 @@ rd_wm_set_main_menu(void)
   local_persist U64 last_hash = 0;
   local_persist B32 initialized = 0;
   B32 native = wm_application_menu_bar_is_native();
-  U64 hash = u64_djb2_hash_from_str8(str8_struct(&native));
   RD_AppMenuSpecList specs = rd_app_menu_specs();
   WM_MenuArray menu_array = {0};
   menu_array.count = specs.count;
@@ -9234,7 +9233,6 @@ rd_wm_set_main_menu(void)
     RD_AppMenuSpec *spec = &specs.v[menu_idx];
     WM_Menu *menu = &menu_array.menus[menu_idx];
     menu->label = spec->label;
-    hash = u64_djb2_hash_from_seed_str8(hash, menu->label);
     menu->item_count = spec->item_count;
     menu->items = push_array(scratch.arena, WM_MenuItem, menu->item_count);
     for(U64 item_idx = 0; item_idx < menu->item_count; item_idx += 1)
@@ -9263,13 +9261,9 @@ rd_wm_set_main_menu(void)
         item->shortcut_key = binding.key;
         item->shortcut_modifiers = binding.modifiers;
       }
-      hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->kind));
-      hash = u64_djb2_hash_from_seed_str8(hash, item->command_name);
-      hash = u64_djb2_hash_from_seed_str8(hash, item->label);
-      hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->shortcut_key));
-      hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->shortcut_modifiers));
     }
   }
+  U64 hash = wm_menu_hash(menu_array, native);
   if(!initialized || hash != last_hash)
   {
     wm_set_main_menu(menu_array);
@@ -10049,7 +10043,8 @@ rd_frame(void)
   //////////////////////////////
   //- rjf: bind change
   //
-  if((!rd_state->popup_active || wm_events_cancel_key_recording(&events)) &&
+  B32 cancel_recording = wm_events_cancel_key_recording(&events);
+  if((!rd_state->popup_active || cancel_recording) &&
      cfg_process_binding_recording(rd_state->cfg, &rd_state->bind_change_active,
                                    rd_state->bind_change_binding_id, rd_state->bind_change_cmd_name, &events))
   {

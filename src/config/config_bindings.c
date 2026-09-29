@@ -175,8 +175,9 @@ cfg_process_binding_recording(CFG_State *cfg, B32 *active, CFG_ID binding_id, St
   B32 changed = 0;
   if(wm_events_cancel_key_recording(events))
   {
+    B32 changed = *active;
     *active = 0;
-    return 1;
+    return changed;
   }
   if(*active)
   {
