@@ -150,6 +150,9 @@ jobs:
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
+      - name: macOS keyboard event regression
+        if: runner.os == 'macOS'
+        run: bash src/mac/window_manager/tests/run_key_events.sh
       - name: macOS UI diagnostics
         if: runner.os == 'macOS'
         run: |
