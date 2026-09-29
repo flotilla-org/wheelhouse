@@ -133,7 +133,7 @@ entry_point(CmdLine *cmdline)
     {
       WM_Window target_window = target ? second : window;
       MAC_WM_Window *target_mac_window = mac_wm_window_from_handle(target_window);
-      [target_mac_window->ns_window makeKeyAndOrderFront:nil];
+      [target_mac_window->ns_window makeKeyAndOrderFront:0];
       mac_wm_set_focused_window(target_mac_window);
       Temp scratch = scratch_begin(0, 0);
       wm_get_events(scratch.arena, 0);
@@ -208,9 +208,9 @@ entry_point(CmdLine *cmdline)
     items[0].shortcut_key = WM_Key_L;
     items[0].shortcut_modifiers = WM_Modifier_Ctrl;
     wm_set_main_menu(menus);
-    good &= [NSApp mainMenu] == installed && mac_wm_state->pending_main_menu != nil;
+    good &= [NSApp mainMenu] == installed && mac_wm_state->pending_main_menu != 0;
     [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidEndTrackingNotification object:installed];
-    good &= !mac_wm_state->menu_tracking && mac_wm_state->pending_main_menu == nil;
+    good &= !mac_wm_state->menu_tracking && mac_wm_state->pending_main_menu == 0;
     palette = [[[[NSApp mainMenu] itemAtIndex:1] submenu] itemAtIndex:0];
     good &= [[palette keyEquivalent] isEqualToString:@"l"] && [palette keyEquivalentModifierMask] == NSEventModifierFlagControl;
     // Deactivation must restore ownership even without a close/end callback.
@@ -219,7 +219,7 @@ entry_point(CmdLine *cmdline)
     items[0].shortcut_modifiers = 0;
     wm_set_main_menu(menus);
     [[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationDidResignActiveNotification object:NSApp];
-    good &= !mac_wm_state->menu_tracking && mac_wm_state->pending_main_menu == nil;
+    good &= !mac_wm_state->menu_tracking && mac_wm_state->pending_main_menu == 0;
     palette = [[[[NSApp mainMenu] itemAtIndex:1] submenu] itemAtIndex:0];
     good &= [[palette keyEquivalent] length] == 0;
     wm_set_preferred_native_menu_bar(0);

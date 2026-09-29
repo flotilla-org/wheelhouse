@@ -130,11 +130,11 @@
 - (void)finishMenuTracking
 {
   mac_wm_state->menu_tracking = 0;
-  if(mac_wm_state->pending_main_menu != nil)
+  if(mac_wm_state->pending_main_menu != 0)
   {
     [NSApp setMainMenu:mac_wm_state->pending_main_menu];
     [mac_wm_state->pending_main_menu release];
-    mac_wm_state->pending_main_menu = nil;
+    mac_wm_state->pending_main_menu = 0;
   }
   wm_send_wakeup_event();
 }
@@ -775,9 +775,9 @@ wm_init(void)
   [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
   NSNotificationCenter *notifications = [NSNotificationCenter defaultCenter];
   [notifications addObserver:mac_wm_state->menu_target selector:@selector(menuDidBeginTracking:)
-                        name:NSMenuDidBeginTrackingNotification object:nil];
+                        name:NSMenuDidBeginTrackingNotification object:0];
   [notifications addObserver:mac_wm_state->menu_target selector:@selector(menuDidEndTracking:)
-                        name:NSMenuDidEndTrackingNotification object:nil];
+                        name:NSMenuDidEndTrackingNotification object:0];
   [notifications addObserver:mac_wm_state->menu_target selector:@selector(applicationDidResignActive:)
                         name:NSApplicationDidResignActiveNotification object:NSApp];
   [NSApp finishLaunching];
