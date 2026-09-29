@@ -2,7 +2,6 @@
 // Licensed under the MIT license (https://opensource.org/license/mit/)
 
 #define BUILD_CONSOLE_INTERFACE 1
-#define MAC_WM_TRACE_MENU_TEST 1
 #include "base/base_inc.h"
 #include "window_manager/window_manager_inc.h"
 #include "base/base_inc.c"
@@ -170,8 +169,6 @@ entry_point(CmdLine *cmdline)
       else
       {
         // A nested pump while tracking must give AppKit the key, too.
-        fprintf(stderr, "[DEBUG-menu] before post: tracking=%d key=%s flags=%lx\n",
-                mac_wm_state->menu_tracking, [[key characters] UTF8String], (unsigned long)[key modifierFlags]);
         [NSApp postEvent:key atStart:NO];
         tracked = wm_get_events(scratch.arena, 0);
         [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidEndTrackingNotification object:[NSApp mainMenu]];

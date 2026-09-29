@@ -1297,9 +1297,6 @@ internal WM_EventList
 wm_get_events(Arena *arena, B32 wait)
 {
   WM_EventList result = {0};
-#if MAC_WM_TRACE_MENU_TEST
-  if(mac_wm_state->menu_tracking) { fprintf(stderr, "[DEBUG-menu] pump begins tracking\n"); }
-#endif
   NSDate *limit = wait ? [NSDate distantFuture] : [NSDate distantPast];
   B32 blocking = wait;
   for(;;)
@@ -1316,9 +1313,6 @@ wm_get_events(Arena *arena, B32 wait)
     }
     MAC_WM_Window *window = mac_wm_window_from_ns_window([event window]);
     NSEventType type = [event type];
-#if MAC_WM_TRACE_MENU_TEST
-    if(mac_wm_state->menu_tracking) { fprintf(stderr, "[DEBUG-menu] dequeued type=%lu\n", (unsigned long)type); }
-#endif
     B32 send_to_nsapp = 1;
     if(mac_wm_event_type_should_activate_window(type))
     {
@@ -1331,11 +1325,20 @@ wm_get_events(Arena *arena, B32 wait)
     {
       // A reentrant pump is outside AppKit's own tracking-loop dispatch.
       // Offer the equivalent explicitly, and never forward a handled key twice.
-      B32 handled = type == NSEventTypeKeyDown && [[NSApp mainMenu] performKeyEquivalent:event];
-#if MAC_WM_TRACE_MENU_TEST
-      fprintf(stderr, "[DEBUG-menu] equivalent handled=%d key=%s flags=%lx\n", handled,
-              [[event characters] UTF8String], (unsigned long)[event modifierFlags]);
-#endif
+      B32 handled = 0;
+      if(type == NSEventTypeKeyDown)
+      {
+        // Equivalents belong to the command submenus, not the menu-bar root.
+        // NSMenu's root performKeyEquivalent: does not reliably descend here.
+        for(NSMenuItem *menu_item in [[NSApp mainMenu] itemArray])
+        {
+          if([[menu_item submenu] performKeyEquivalent:event])
+          {
+            handled = 1;
+            break;
+          }
+        }
+      }
       if(!handled) { [NSApp sendEvent:event]; }
       limit = [NSDate distantPast];
       continue;
