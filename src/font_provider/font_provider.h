@@ -49,7 +49,6 @@ struct FP_RasterResult
   F32 origin_from_left;
   F32 baseline_from_top;
   F32 face_box_origin_from_left;
-  F32 face_box_baseline_from_top;
   FP_RasterKind kind;
 };
 

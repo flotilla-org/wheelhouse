@@ -94,6 +94,7 @@ entry_point(CmdLine *cmdline)
       FP_RasterResult raster = fp_raster(arena, handle, floor_f32(size)*scale, fp_flags, str8_lit("H"));
       dr_set_raster_scale((F32)scale);
       FNT_Run drawn = dr_fnt_run_from_string(font, size, 0, 0, flags[flags_idx], str8_lit("H"));
+      // CoreText returns four-byte RGBA pixels; byte 3 holds alpha/coverage.
       S32 bottom = -1;
       for(S32 y = 0; y < raster.atlas_dim.y; y += 1)
       for(S32 x = 0; x < raster.atlas_dim.x; x += 1)
@@ -105,6 +106,7 @@ entry_point(CmdLine *cmdline)
       B32 pass = (bottom >= 0 && drawn.pieces.count == 1);
       if(pass)
       {
+        // +1 converts the last covered row index to its lower pixel edge.
         baseline_error = drawn.pieces.v[0].offset.y*scale + bottom + 1;
       }
       pass = pass && abs_f32(baseline_error) <= 0.5f;
@@ -119,6 +121,7 @@ entry_point(CmdLine *cmdline)
     }
     fp_font_close(handle);
   }
+  dr_set_raster_scale(1.f);
   arena_release(arena);
   printf("Raster baselines: %u cases, %u failures\n", cases, failures);
   exit(position_failures != 0 || failures != 0);
