@@ -1323,7 +1323,10 @@ wm_get_events(Arena *arena, B32 wait)
     if(!wm_key_event_is_shell_owned(mac_wm_state->menu_tracking) &&
        (type == NSEventTypeKeyDown || type == NSEventTypeKeyUp || type == NSEventTypeFlagsChanged))
     {
-      [NSApp sendEvent:event];
+      // A reentrant pump is outside AppKit's own tracking-loop dispatch.
+      // Offer the equivalent explicitly, and never forward a handled key twice.
+      B32 handled = type == NSEventTypeKeyDown && [[NSApp mainMenu] performKeyEquivalent:event];
+      if(!handled) { [NSApp sendEvent:event]; }
       limit = [NSDate distantPast];
       continue;
     }

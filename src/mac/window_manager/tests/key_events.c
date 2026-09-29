@@ -187,6 +187,11 @@ entry_point(CmdLine *cmdline)
           MacMenuCheck(wm_window_match(e->window, target_window));
         }
       }
+      if(opens != 1 || commands != 1 || presses != 0 || texts != 0)
+      {
+        fprintf(stderr, "native tracking target=%llu: open=%llu command=%llu press=%llu text=%llu\n",
+                target, opens, commands, presses, texts);
+      }
       MacMenuCheck(opens == 1 && commands == 1 && presses == 0 && texts == 0);
       // Clicking the same entry reaches the same target/command.
       [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidBeginTrackingNotification object:[NSApp mainMenu]];
