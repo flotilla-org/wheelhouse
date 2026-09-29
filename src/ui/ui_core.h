@@ -149,6 +149,7 @@ struct UI_Event
   String8List paths;
   Vec2F32 pos;
   Vec2F32 delta_2f32;
+  B32 scroll_is_precise;
   Vec2S32 delta_2s32;
   U64 timestamp_us;
 };
@@ -267,6 +268,8 @@ struct UI_ScrollPt
 {
   S64 idx;
   F32 off;
+  F64 target_off; // persistent fraction; off remains the animation displacement
+  F64 remainder;  // unapplied input when snapping precise movement to rows
 };
 
 typedef union UI_ScrollPt2 UI_ScrollPt2;
@@ -358,6 +361,8 @@ typedef U64 UI_BoxFlags;
 # define UI_BoxFlag_SquishAnchored            (UI_BoxFlags)(1ull<<52)
 # define UI_BoxFlag_RenderToSurface           (UI_BoxFlags)(1ull<<54) //- this box & its subtree draw into an offscreen surface, composited back at its rect
 # define UI_BoxFlag_IgnoreInteraction         (UI_BoxFlags)(1ull<<55) //- this box & its subtree are inert: signals are empty & they never become hot/active (e.g. non-visible workspace builds)
+
+# define UI_BoxFlag_ScrollPrecise             (UI_BoxFlags)(1ull<<56)
 
 //- rjf: debug
 # define UI_BoxFlag_Debug                     (UI_BoxFlags)(1ull<<53)
@@ -539,6 +544,7 @@ struct UI_Signal
   UI_Box *box;
   WM_Modifiers event_flags;
   Vec2S16 scroll;
+  Vec2F32 scroll_px; // precise movement, only for ScrollPrecise consumers
   UI_SignalFlags f;
 };
 
@@ -806,6 +812,8 @@ internal UI_Size ui_size(UI_SizeKind kind, F32 value, F32 strictness);
 internal UI_ScrollPt ui_scroll_pt(S64 idx, F32 off);
 internal void ui_scroll_pt_target_idx(UI_ScrollPt *v, S64 idx);
 internal void ui_scroll_pt_clamp_idx(UI_ScrollPt *v, Rng1S64 range);
+internal F32 ui_scroll_pt_offset(UI_ScrollPt v);
+internal void ui_scroll_pt_scroll(UI_ScrollPt *v, F32 delta, Rng1S64 range, B32 snap);
 
 ////////////////////////////////
 //~ rjf: Box Type Functions
