@@ -7462,7 +7462,8 @@ uishell_terminal_write_fixture_ppm(String8 path, FNT_Tag primary_font, FNT_Tag m
     };
     cleat_snapshot fixture = uishell_terminal_fixture_snapshot(scratch.arena, 80, 24);
     FNT_Metrics metrics = fnt_metrics_from_tag_size(primary_font, font_size);
-    F32 cell_width = Max(1.f, fnt_dim_from_tag_size_string(primary_font, font_size, 0, 0, str8_lit("H")).x);
+    // The PPM validators divide this fixture into an integer 80x24 cell grid.
+    F32 cell_width = Max(1.f, ceil_f32(fnt_dim_from_tag_size_string(primary_font, font_size, 0, 0, str8_lit("H")).x));
     F32 cell_height = ceil_f32(ClampBot(1.f, fnt_line_height_from_metrics(&metrics)*1.2f));
     cleat_rgb fixture_bg = {4, 4, 4};
     UIShell_TerminalDrawParams draw_params =
