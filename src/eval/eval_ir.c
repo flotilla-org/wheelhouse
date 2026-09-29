@@ -1837,6 +1837,15 @@ e_push_irtree_and_type_from_expr(Arena *arena, E_IRTreeAndType *root_parent, E_I
         else
         {
           String8 folder_path = str8_chop_last_slash(file_path);
+          // An empty parent is the POSIX root, but the Windows drive list.
+          // Keep the root in the path so its children remain absolute.
+          // On Unix this also covers relative input; on Windows only an
+          // explicitly Unix-absolute input uses this root instead of the drive list.
+          if(folder_path.size == 0 && (PathStyle_SystemAbsolute == PathStyle_UnixAbsolute ||
+                                      path_style_from_str8(file_path) == PathStyle_UnixAbsolute))
+          {
+            folder_path = str8_lit("/");
+          }
           props = properties_from_file_path(folder_path);
           if(props.flags & FilePropertyFlag_IsFolder || folder_path.size == 0 || str8_match(folder_path, str8_lit("/"), StringMatchFlag_SlashInsensitive))
           {

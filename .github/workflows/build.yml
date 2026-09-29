@@ -141,6 +141,7 @@ jobs:
         run: |
           task_dir=$(mktemp -d)
           trap 'rm -rf "$task_dir"' EXIT
+          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/shared-user" --project:"$task_dir/shared-project" --shared_ui_diagnostics --shared_ui_fixture_dir:"$task_dir"
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/selection-user" --project:"$task_dir/selection-project" --terminal_selection_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
@@ -154,6 +155,7 @@ jobs:
         run: |
           task_dir=$(mktemp -d)
           trap 'rm -rf "$task_dir"' EXIT
+          ./build/wheelhouse --user:"$task_dir/shared-user" --project:"$task_dir/shared-project" --shared_ui_diagnostics --shared_ui_fixture_dir:"$task_dir"
           ./build/wheelhouse --user:"$task_dir/selection-user" --project:"$task_dir/selection-project" --terminal_selection_diagnostics
           ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
