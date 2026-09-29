@@ -4,6 +4,9 @@ set -euo pipefail
 # Requires a macOS graphical login; no Accessibility permission is needed.
 cd "$(dirname "$0")/../../../.."
 mkdir -p build
+# Compile only the base/WM layers: sourcing build.sh would run application builds
+# and pull in renderer/provider dependencies. These warning exceptions match its
+# shared-layer exceptions; other default clang warnings remain enabled.
 clang -x objective-c -Isrc -Ilocal -g -O0 -D_GNU_SOURCE \
   -Wno-initializer-overrides -Wno-unused-value \
   -Wno-deprecated-declarations -Wno-incompatible-pointer-types-discards-qualifiers \

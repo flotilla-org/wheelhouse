@@ -37,6 +37,18 @@ entry_point(CmdLine *cmdline)
       {"control-a",      NSEventModifierFlagControl, 0, WM_Key_A, @"\x01",   0,      WM_Modifier_Ctrl},
       {"control-shift-p",NSEventModifierFlagControl|NSEventModifierFlagShift,
                                                     35, WM_Key_P, @"P",      0,      WM_Modifier_Ctrl|WM_Modifier_Shift},
+      // Control/Command always reserve the chord for a shortcut, even when
+      // AppKit supplies printable characters alongside Option.
+      {"control-option", NSEventModifierFlagControl|NSEventModifierFlagOption,
+                                                     0, WM_Key_A, @"\u00e5", 0,      WM_Modifier_Ctrl|WM_Modifier_Alt},
+      {"command-option", NSEventModifierFlagCommand|NSEventModifierFlagOption,
+                                                     0, WM_Key_A, @"\u00e5", 0,      WM_Modifier_Super|WM_Modifier_Alt},
+      {"control-command",NSEventModifierFlagControl|NSEventModifierFlagCommand,
+                                                     0, WM_Key_A, @"a",      0,      WM_Modifier_Ctrl|WM_Modifier_Super},
+      {"command-arrow",  NSEventModifierFlagCommand|NSEventModifierFlagFunction|NSEventModifierFlagNumericPad,
+                                                   123, WM_Key_Left, @"\uf702", 0,   WM_Modifier_Super},
+      {"fn-text",        NSEventModifierFlagFunction, 0, WM_Key_A, @"a",      'a',    0},
+      {"numpad-text",    NSEventModifierFlagNumericPad,83,WM_Key_Num1, @"1",   '1',    0},
       {"return",         0,                         36, WM_Key_Return, @"\r", 0,     0},
       {"delete",         0,                         51, WM_Key_Backspace, @"\x7f", 0, 0},
       {"left-arrow",     0,                        123, WM_Key_Left, @"\uf702", 0,   0},
