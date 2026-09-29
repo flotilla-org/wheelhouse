@@ -115,6 +115,15 @@
 @end
 
 @implementation MAC_WM_MenuTarget
+- (void)menuWillOpen:(NSMenu *)menu
+{
+  mac_wm_state->menu_opened = 1;
+  mac_wm_state->menu_tracking_depth += 1;
+}
+- (void)menuDidClose:(NSMenu *)menu
+{
+  if(mac_wm_state->menu_tracking_depth) { mac_wm_state->menu_tracking_depth -= 1; }
+}
 - (void)menuItemSelected:(id)sender
 {
   NSString *command = [sender representedObject];
@@ -1278,6 +1287,15 @@ wm_get_events(Arena *arena, B32 wait)
     {
       mac_wm_activate_window(window);
     }
+    // AppKit owns key equivalents during native tracking, including a nested
+    // event pump. Outside tracking, preserve physical keys and the #112 text gate.
+    if(!wm_key_event_is_shell_owned(mac_wm_state->menu_tracking_depth != 0) &&
+       (type == NSEventTypeKeyDown || type == NSEventTypeKeyUp || type == NSEventTypeFlagsChanged))
+    {
+      [NSApp sendEvent:event];
+      limit = [NSDate distantPast];
+      continue;
+    }
     switch(type)
     {
       default:{}break;
@@ -1467,6 +1485,12 @@ wm_get_events(Arena *arena, B32 wait)
       event->window = mac_wm_handle_from_window(window);
     }
   }
+  // Queue cancellation before any command selected by the tracking loop.
+  if(mac_wm_state->menu_opened)
+  {
+    mac_wm_state->menu_opened = 0;
+    wm_event_list_push_new(arena, &result, WM_EventKind_MenuOpen);
+  }
   for(MAC_WM_MenuCommandNode *node = mac_wm_state->first_pending_menu_command, *next = 0;
       node != 0;
       node = next)
@@ -1542,34 +1566,15 @@ mac_wm_persistent_ns_string_from_string8(String8 string)
 internal NSString *
 mac_wm_app_menu_title(void)
 {
-  NSString *result = mac_wm_persistent_ns_string_from_string8(str8_lit(BUILD_TITLE));
-  return result;
-}
-
-internal NSString *
-mac_wm_quit_menu_title(void)
-{
-  NSString *result = [[NSString alloc] initWithFormat:@"Quit %@", mac_wm_app_menu_title()];
+  NSString *result = [mac_wm_persistent_ns_string_from_string8(str8_lit(BUILD_TITLE)) autorelease];
   return result;
 }
 
 internal void
 mac_wm_set_minimal_main_menu(void)
 {
-  NSMenu *main_menu = [[NSMenu alloc] initWithTitle:@""];
-  NSMenuItem *app_menu_item = [[NSMenuItem alloc] initWithTitle:@"" action:0 keyEquivalent:@""];
-  [main_menu addItem:app_menu_item];
-
-  NSMenu *app_menu = [[NSMenu alloc] initWithTitle:mac_wm_app_menu_title()];
-  NSMenuItem *quit_item = [[NSMenuItem alloc] initWithTitle:mac_wm_quit_menu_title()
-                                                     action:@selector(menuItemSelected:)
-                                              keyEquivalent:@"q"];
-  [quit_item setTarget:mac_wm_state->menu_target];
-  [quit_item setRepresentedObject:mac_wm_persistent_ns_string_from_string8(str8_lit("exit"))];
-  [app_menu addItem:quit_item];
-  [main_menu setSubmenu:app_menu forItem:app_menu_item];
-
-  [NSApp setMainMenu:main_menu];
+  WM_MenuArray menus = {0};
+  wm_set_main_menu(menus);
 }
 
 internal void
@@ -1585,31 +1590,63 @@ mac_wm_apply_menu_mode(MAC_WM_MenuMode mode)
   }
 }
 
+// Adapted from RAD c4895d6a, reviewed at bfbefb3c (MIT).
+internal NSMenuItem *
+mac_wm_menu_item(WM_MenuItem *item)
+{
+  U32 codepoint = wm_menu_codepoint_from_key(item->shortcut_key);
+  unichar character = (unichar)codepoint;
+  NSString *equivalent = codepoint ? [NSString stringWithCharacters:&character length:1] : @"";
+  NSString *label = [mac_wm_persistent_ns_string_from_string8(item->label) autorelease];
+  NSString *command = [mac_wm_persistent_ns_string_from_string8(item->command_name) autorelease];
+  NSMenuItem *result = [[[NSMenuItem alloc] initWithTitle:label action:@selector(menuItemSelected:)
+                                         keyEquivalent:equivalent] autorelease];
+  NSEventModifierFlags modifiers = 0;
+  if(item->shortcut_modifiers & WM_Modifier_Ctrl)  {modifiers |= NSEventModifierFlagControl;}
+  if(item->shortcut_modifiers & WM_Modifier_Super)   {modifiers |= NSEventModifierFlagCommand;}
+  if(item->shortcut_modifiers & WM_Modifier_Shift) {modifiers |= NSEventModifierFlagShift;}
+  if(item->shortcut_modifiers & WM_Modifier_Alt)   {modifiers |= NSEventModifierFlagOption;}
+  [result setKeyEquivalentModifierMask:modifiers];
+  [result setTarget:mac_wm_state->menu_target];
+  [result setRepresentedObject:command];
+  return result;
+}
+
 internal void
 wm_set_main_menu(WM_MenuArray menu_array)
 {
+  // Wheelhouse's binding configuration also supplies the native menu equivalents.
+  [NSMenuItem setUsesUserKeyEquivalents:NO];
+  NSMenu *main_menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
+  NSMenuItem *app_menu_item = [[[NSMenuItem alloc] initWithTitle:@"" action:0 keyEquivalent:@""] autorelease];
+  NSMenu *app_menu = [[[NSMenu alloc] initWithTitle:mac_wm_app_menu_title()] autorelease];
+  [app_menu setDelegate:mac_wm_state->menu_target];
+  WM_MenuItem quit = {WM_MenuItemKind_Command, str8_lit("Quit " BUILD_TITLE), str8_lit("exit")};
+  for(U64 menu_idx = 0; menu_idx < menu_array.count; menu_idx += 1)
+  {
+    WM_Menu *menu = &menu_array.menus[menu_idx];
+    for(U64 item_idx = 0; item_idx < menu->item_count; item_idx += 1)
+    {
+      WM_MenuItem *item = &menu->items[item_idx];
+      if(str8_match(item->command_name, quit.command_name, 0))
+      {
+        quit.shortcut_key = item->shortcut_key;
+        quit.shortcut_modifiers = item->shortcut_modifiers;
+      }
+    }
+  }
+  [app_menu addItem:mac_wm_menu_item(&quit)];
+  [main_menu addItem:app_menu_item];
+  [main_menu setSubmenu:app_menu forItem:app_menu_item];
   if(mac_wm_state->menu_mode == MAC_WM_MenuMode_Native)
   {
-    NSMenu *main_menu = [[NSMenu alloc] initWithTitle:@""];
-
-    NSMenuItem *app_menu_item = [[NSMenuItem alloc] initWithTitle:@"" action:0 keyEquivalent:@""];
-    [main_menu addItem:app_menu_item];
-
-    NSMenu *app_menu = [[NSMenu alloc] initWithTitle:mac_wm_app_menu_title()];
-    NSMenuItem *quit_item = [[NSMenuItem alloc] initWithTitle:mac_wm_quit_menu_title()
-                                                       action:@selector(menuItemSelected:)
-                                                keyEquivalent:@"q"];
-    [quit_item setTarget:mac_wm_state->menu_target];
-    [quit_item setRepresentedObject:mac_wm_persistent_ns_string_from_string8(str8_lit("exit"))];
-    [app_menu addItem:quit_item];
-    [main_menu setSubmenu:app_menu forItem:app_menu_item];
-
     for(U64 menu_idx = 0; menu_idx < menu_array.count; menu_idx += 1)
     {
       WM_Menu *menu = &menu_array.menus[menu_idx];
-      NSString *menu_label = mac_wm_persistent_ns_string_from_string8(menu->label);
-      NSMenuItem *menu_item = [[NSMenuItem alloc] initWithTitle:menu_label action:0 keyEquivalent:@""];
-      NSMenu *submenu = [[NSMenu alloc] initWithTitle:menu_label];
+      NSString *menu_label = [mac_wm_persistent_ns_string_from_string8(menu->label) autorelease];
+      NSMenuItem *menu_item = [[[NSMenuItem alloc] initWithTitle:menu_label action:0 keyEquivalent:@""] autorelease];
+      NSMenu *submenu = [[[NSMenu alloc] initWithTitle:menu_label] autorelease];
+      [submenu setDelegate:mac_wm_state->menu_target];
       [main_menu addItem:menu_item];
       [main_menu setSubmenu:submenu forItem:menu_item];
 
@@ -1625,21 +1662,17 @@ wm_set_main_menu(WM_MenuArray menu_array)
           }break;
           case WM_MenuItemKind_Command:
           {
-            NSString *label = mac_wm_persistent_ns_string_from_string8(item->label);
-            NSString *command = mac_wm_persistent_ns_string_from_string8(item->command_name);
-            NSMenuItem *ns_item = [[NSMenuItem alloc] initWithTitle:label
-                                                             action:@selector(menuItemSelected:)
-                                                      keyEquivalent:@""];
-            [ns_item setTarget:mac_wm_state->menu_target];
-            [ns_item setRepresentedObject:command];
-            [submenu addItem:ns_item];
+            if(!str8_match(item->command_name, quit.command_name, 0))
+            {
+              [submenu addItem:mac_wm_menu_item(item)];
+            }
           }break;
         }
       }
     }
 
-    [NSApp setMainMenu:main_menu];
   }
+  [NSApp setMainMenu:main_menu];
 }
 
 internal B32

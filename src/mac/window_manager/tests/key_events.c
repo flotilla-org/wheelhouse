@@ -105,6 +105,113 @@ entry_point(CmdLine *cmdline)
       failures += !good;
       scratch_end(scratch);
     }
+    // Adapted from RAD c4895d6a after fb6f2a2c. Exercise real NSMenuItems,
+    // AppKit equivalent matching and the same event queue as the application.
+    WM_MenuItem items[] =
+    {
+      {WM_MenuItemKind_Command, str8_lit("Palette"), str8_lit("open_palette"), WM_Key_P, WM_Modifier_Super|WM_Modifier_Shift},
+      {WM_MenuItemKind_Command, str8_lit("Exit"), str8_lit("exit"), WM_Key_Q, WM_Modifier_Super},
+      {WM_MenuItemKind_Command, str8_lit("Step"), str8_lit("step"), WM_Key_F11, 0},
+      {WM_MenuItemKind_Command, str8_lit("Control"), str8_lit("control"), WM_Key_L, WM_Modifier_Ctrl|WM_Modifier_Alt|WM_Modifier_Shift},
+    };
+    WM_Menu menu = {str8_lit("Probe"), ArrayCount(items), items};
+    WM_MenuArray menus = {1, &menu};
+    wm_set_preferred_native_menu_bar(1);
+    wm_set_main_menu(menus);
+    NSMenu *native_menu = [[[NSApp mainMenu] itemAtIndex:1] submenu];
+    NSMenuItem *palette = [native_menu itemAtIndex:0];
+    B32 good = [[palette keyEquivalent] isEqualToString:@"p"] &&
+               [palette keyEquivalentModifierMask] == (NSEventModifierFlagCommand|NSEventModifierFlagShift);
+    NSMenuItem *quit = [[[[NSApp mainMenu] itemAtIndex:0] submenu] itemAtIndex:0];
+    good &= [[quit keyEquivalent] isEqualToString:@"q"] && [quit keyEquivalentModifierMask] == NSEventModifierFlagCommand;
+    good &= [[[native_menu itemAtIndex:1] keyEquivalent] characterAtIndex:0] == NSF11FunctionKey;
+    good &= [[native_menu itemAtIndex:2] keyEquivalentModifierMask] ==
+            (NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift);
+    WM_Window second = wm_window_open(r2f32p(0, 0, 320, 200), 0, str8_lit("Second menu target"));
+    for(U64 target = 0; target < 2; target++)
+    {
+      WM_Window target_window = target ? second : window;
+      MAC_WM_Window *target_mac_window = mac_wm_window_from_handle(target_window);
+      [target_mac_window->ns_window makeKeyAndOrderFront:nil];
+      mac_wm_set_focused_window(target_mac_window);
+      Temp scratch = scratch_begin(0, 0);
+      wm_get_events(scratch.arena, 0);
+      NSEvent *key = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                               modifierFlags:NSEventModifierFlagCommand|NSEventModifierFlagShift
+                                   timestamp:0 windowNumber:[target_mac_window->ns_window windowNumber]
+                                     context:0 characters:@"P" charactersIgnoringModifiers:@"P"
+                                   isARepeat:NO keyCode:35];
+      // Closed menu: physical press only, no native command or shortcut text.
+      [NSApp postEvent:key atStart:NO];
+      WM_EventList closed = wm_get_events(scratch.arena, 0);
+      U64 presses = 0, commands = 0, texts = 0;
+      for(WM_Event *e = closed.first; e; e = e->next)
+      {
+        presses += e->kind == WM_EventKind_Press;
+        commands += e->kind == WM_EventKind_MenuCommand;
+        texts += e->kind == WM_EventKind_Text;
+      }
+      good &= presses == 1 && commands == 0 && texts == 0;
+      // Tracking: AppKit matches the equivalent, producing exactly one command.
+      [mac_wm_state->menu_target menuWillOpen:native_menu];
+      good &= [native_menu performKeyEquivalent:key];
+      [mac_wm_state->menu_target menuDidClose:native_menu];
+      WM_EventList tracked = wm_get_events(scratch.arena, 0);
+      U64 opens = 0;
+      presses = commands = texts = 0;
+      for(WM_Event *e = tracked.first; e; e = e->next)
+      {
+        opens += e->kind == WM_EventKind_MenuOpen;
+        presses += e->kind == WM_EventKind_Press;
+        texts += e->kind == WM_EventKind_Text;
+        if(e->kind == WM_EventKind_MenuCommand)
+        {
+          commands++;
+          good &= opens == 1 && str8_match(e->string, str8_lit("open_palette"), 0);
+          good &= wm_window_match(e->window, target_window);
+        }
+      }
+      good &= opens == 1 && commands == 1 && presses == 0 && texts == 0;
+      // Clicking the same entry reaches the same target/command.
+      [mac_wm_state->menu_target menuWillOpen:native_menu];
+      [native_menu performActionForItemAtIndex:0];
+      [mac_wm_state->menu_target menuDidClose:native_menu];
+      tracked = wm_get_events(scratch.arena, 0);
+      commands = 0;
+      for(WM_Event *e = tracked.first; e; e = e->next)
+      {
+        if(e->kind == WM_EventKind_MenuCommand)
+        {
+          commands++;
+          good &= str8_match(e->string, str8_lit("open_palette"), 0) && wm_window_match(e->window, target_window);
+        }
+      }
+      good &= commands == 1;
+      scratch_end(scratch);
+    }
+    items[0].shortcut_key = WM_Key_L;
+    items[0].shortcut_modifiers = WM_Modifier_Ctrl;
+    wm_set_main_menu(menus);
+    palette = [[[[NSApp mainMenu] itemAtIndex:1] submenu] itemAtIndex:0];
+    good &= [[palette keyEquivalent] isEqualToString:@"l"] && [palette keyEquivalentModifierMask] == NSEventModifierFlagControl;
+    items[0].shortcut_key = WM_Key_Null;
+    items[0].shortcut_modifiers = 0;
+    wm_set_main_menu(menus);
+    palette = [[[[NSApp mainMenu] itemAtIndex:1] submenu] itemAtIndex:0];
+    good &= [[palette keyEquivalent] length] == 0;
+    wm_set_preferred_native_menu_bar(0);
+    wm_set_main_menu(menus);
+    good &= [[NSApp mainMenu] numberOfItems] == 1;
+    quit = [[[[NSApp mainMenu] itemAtIndex:0] submenu] itemAtIndex:0];
+    good &= [[quit keyEquivalent] isEqualToString:@"q"];
+    items[1].shortcut_key = WM_Key_Null;
+    items[1].shortcut_modifiers = 0;
+    wm_set_main_menu(menus);
+    quit = [[[[NSApp mainMenu] itemAtIndex:0] submenu] itemAtIndex:0];
+    good &= [[quit keyEquivalent] length] == 0;
+    fprintf(stderr, "%s: native menu bindings, tracking, rebuild and window context\n", good ? "PASS" : "FAIL");
+    failures += !good;
+    wm_window_close(second);
     wm_window_close(window);
     exit(failures != 0);
   }

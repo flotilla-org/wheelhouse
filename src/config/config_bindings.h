@@ -19,6 +19,7 @@ struct CFG_KeyMapNode
   CFG_ID cfg_id;
   String8 name;
   CFG_Binding binding;
+  B32 native_shortcut_eligible;
 };
 
 typedef struct CFG_KeyMapNodePtr CFG_KeyMapNodePtr;
@@ -55,5 +56,10 @@ struct CFG_KeyMap
 internal CFG_KeyMap *cfg_key_map_from_cfg(Arena *arena);
 internal CFG_KeyMapNodePtrList cfg_key_map_node_ptr_list_from_name(Arena *arena, CFG_KeyMap *key_map, String8 string);
 internal CFG_KeyMapNodePtrList cfg_key_map_node_ptr_list_from_binding(Arena *arena, CFG_KeyMap *key_map, CFG_Binding binding);
+
+internal CFG_Binding cfg_native_menu_binding(CFG_KeyMap *key_map, String8 command);
+internal String8 cfg_command_from_menu_or_binding(Arena *arena, CFG_KeyMap *key_map, WM_Event *event);
+
+internal B32 cfg_process_binding_recording(CFG_State *cfg, B32 *active, CFG_ID binding_id, String8 command, WM_EventList *events);
 
 #endif // CONFIG_BINDINGS_H

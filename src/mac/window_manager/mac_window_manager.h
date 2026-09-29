@@ -88,7 +88,7 @@ struct MAC_WM_FileDropNode
 }
 @end
 
-@interface MAC_WM_MenuTarget : NSObject
+@interface MAC_WM_MenuTarget : NSObject<NSMenuDelegate>
 - (void)menuItemSelected:(id)sender;
 @end
 
@@ -122,6 +122,8 @@ struct MAC_WM_State
   MAC_WM_ChromeMode chrome_mode;
   MAC_WM_MenuMode menu_mode;
   MAC_WM_MenuTarget *menu_target;
+  B32 menu_opened;
+  U64 menu_tracking_depth;
   MAC_WM_MenuCommandNode *first_pending_menu_command;
   MAC_WM_MenuCommandNode *last_pending_menu_command;
   MAC_WM_MenuCommandNode *free_menu_command_node;

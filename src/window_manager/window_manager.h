@@ -95,9 +95,25 @@ typedef enum WM_EventKind
   WM_EventKind_FileDrop,
   WM_EventKind_Wakeup,
   WM_EventKind_MenuCommand,
+  WM_EventKind_MenuOpen,
   WM_EventKind_COUNT
 }
 WM_EventKind;
+
+typedef U32 WM_Modifiers;
+enum
+{
+  WM_Modifier_Ctrl  = (1<<0),
+  WM_Modifier_Shift = (1<<1),
+  WM_Modifier_Alt   = (1<<2),
+  WM_Modifier_Super = (1<<3),
+};
+
+#if OS_MAC
+# define WM_Modifier_Accel WM_Modifier_Super
+#else
+# define WM_Modifier_Accel WM_Modifier_Ctrl
+#endif
 
 typedef enum WM_MenuItemKind
 {
@@ -113,6 +129,8 @@ struct WM_MenuItem
   WM_MenuItemKind kind;
   String8 label;
   String8 command_name;
+  WM_Key shortcut_key;
+  WM_Modifiers shortcut_modifiers;
 };
 
 typedef struct WM_Menu WM_Menu;
@@ -129,21 +147,6 @@ struct WM_MenuArray
   U64 count;
   WM_Menu *menus;
 };
-
-typedef U32 WM_Modifiers;
-enum
-{
-  WM_Modifier_Ctrl  = (1<<0),
-  WM_Modifier_Shift = (1<<1),
-  WM_Modifier_Alt   = (1<<2),
-  WM_Modifier_Super = (1<<3),
-};
-
-#if OS_MAC
-# define WM_Modifier_Accel WM_Modifier_Super
-#else
-# define WM_Modifier_Accel WM_Modifier_Ctrl
-#endif
 
 typedef struct WM_Event WM_Event;
 struct WM_Event
@@ -278,6 +281,12 @@ internal B32            wm_key_is_down(WM_Key key);
 internal Vec2F32        wm_mouse_from_window(WM_Window window);
 
 ////////////////////////////////
+//~ Application menu policy (shared, also exercised without AppKit)
+
+internal U32 wm_menu_codepoint_from_key(WM_Key key);
+internal B32 wm_key_event_is_shell_owned(B32 native_menu_tracking);
+internal B32 wm_events_cancel_key_recording(WM_EventList *events);
+
 //~ @os_hooks Application Menu (Implemented Per-OS)
 
 internal void           wm_set_main_menu(WM_MenuArray menu_array);

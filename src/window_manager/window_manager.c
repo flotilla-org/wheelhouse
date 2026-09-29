@@ -51,6 +51,7 @@ wm_string_from_event_kind(WM_EventKind kind)
     case WM_EventKind_WindowClose:          {result = str8_lit("WindowClose");}break;
     case WM_EventKind_FileDrop:             {result = str8_lit("FileDrop");}break;
     case WM_EventKind_Wakeup:               {result = str8_lit("Wakeup");}break;
+    case WM_EventKind_MenuOpen:             {result = str8_lit("MenuOpen");}break;
     case WM_EventKind_MenuCommand:          {result = str8_lit("MenuCommand");}break;
   }
   return result;
@@ -301,4 +302,49 @@ wm_event_list_push_new(Arena *arena, WM_EventList *evts, WM_EventKind kind)
   evt->timestamp_us = now_time_us();
   evt->kind = kind;
   return evt;
+}
+
+// Native menu characters follow AppKit's stable function-key Unicode values.
+// Adapted from RAD c4895d6a (MIT); kept shared so eligibility and display agree.
+internal U32
+wm_menu_codepoint_from_key(WM_Key key)
+{
+  U32 result = wm_codepoint_from_modifiers_and_key(0, key);
+  if(WM_Key_F1 <= key && key <= WM_Key_F24) { result = 0xf704 + key - WM_Key_F1; }
+  switch(key)
+  {
+    default: break;
+    case WM_Key_Backspace: result = 0x08; break;
+    case WM_Key_Delete: result = 0x7f; break;
+    case WM_Key_Return: result = 0x0d; break;
+    case WM_Key_Tab: result = 0x09; break;
+    case WM_Key_Esc: result = 0x1b; break;
+    case WM_Key_Left: result = 0xf702; break;
+    case WM_Key_Right: result = 0xf703; break;
+    case WM_Key_Up: result = 0xf700; break;
+    case WM_Key_Down: result = 0xf701; break;
+    case WM_Key_Home: result = 0xf729; break;
+    case WM_Key_End: result = 0xf72b; break;
+    case WM_Key_PageUp: result = 0xf72c; break;
+    case WM_Key_PageDown: result = 0xf72d; break;
+  }
+  // Keypad equivalents lose their physical identity in NSMenuItem.
+  if(WM_Key_NumLock <= key && key <= WM_Key_Num9) { result = 0; }
+  return result;
+}
+
+internal B32
+wm_key_event_is_shell_owned(B32 native_menu_tracking)
+{
+  return !native_menu_tracking;
+}
+
+internal B32
+wm_events_cancel_key_recording(WM_EventList *events)
+{
+  for(WM_Event *event = events->first; event != 0; event = event->next)
+  {
+    if(event->kind == WM_EventKind_MenuOpen) { return 1; }
+  }
+  return 0;
 }
