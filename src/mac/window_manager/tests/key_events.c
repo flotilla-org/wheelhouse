@@ -156,6 +156,13 @@ entry_point(CmdLine *cmdline)
         texts += e->kind == WM_EventKind_Text;
       }
       MacMenuCheck(presses == 1 && commands == 0 && texts == 0);
+      // A second gesture needs a fresh NSEvent; do not repost the same object
+      // that NSApplication has already dequeued for the closed-menu gesture.
+      key = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                       modifierFlags:NSEventModifierFlagCommand|NSEventModifierFlagShift
+                           timestamp:1 windowNumber:[target_mac_window->ns_window windowNumber]
+                             context:0 characters:@"P" charactersIgnoringModifiers:@"P"
+                           isARepeat:NO keyCode:35];
       // Tracking: AppKit matches the equivalent, producing exactly one command.
       [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuDidBeginTrackingNotification object:[NSApp mainMenu]];
       [mac_wm_state->menu_target menuWillOpen:native_menu];
