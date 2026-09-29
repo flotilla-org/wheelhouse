@@ -40,10 +40,12 @@ struct FNT_Piece
 {
   R_Handle texture;
   Rng2S16 subrect;
+  // Add to the pen/baseline position to locate the bitmap top-left.
   Vec2F32 offset;
   Vec2F32 draw_dim;
   F32 advance;
   F32 origin_from_left;
+  // Logical distance from bitmap top to the drawing baseline, including cropping.
   F32 baseline_from_top;
   U16 decode_size;
   FNT_RasterKind kind;
