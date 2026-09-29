@@ -407,7 +407,6 @@ fp_raster(Arena *arena, FP_Handle handle, F32 size, FP_RasterFlags flags, String
     result.origin_from_left = (F32)(-min_x)*fixed_size_scale;
     result.baseline_from_top = (F32)(baseline - min_y)*fixed_size_scale;
     result.face_box_origin_from_left = 0;
-    result.face_box_baseline_from_top = (F32)baseline*fixed_size_scale;
     result.atlas     = atlas;
     result.kind      = has_source_color ? FP_RasterKind_RGBA : FP_RasterKind_Mask;
     scratch_end(scratch);

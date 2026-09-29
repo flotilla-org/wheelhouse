@@ -855,7 +855,6 @@ fp_raster(Arena *arena, FP_Handle font_handle, F32 size, FP_RasterFlags flags, S
     result.origin_from_left = draw_p.x - (F32)src_x0;
     result.baseline_from_top = draw_p.y - (F32)src_y0;
     result.face_box_origin_from_left = draw_p.x;
-    result.face_box_baseline_from_top = draw_p.y;
 
     // rjf: fill atlas
     if(drew_color_layers)

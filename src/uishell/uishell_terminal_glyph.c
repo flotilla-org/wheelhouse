@@ -6512,9 +6512,8 @@ uishell_terminal_run_has_mask(FNT_Run run)
 }
 
 internal Rng2F32
-uishell_terminal_dr_text_piece_dst(Vec2F32 text_p, F32 run_descent, FNT_Piece *piece, F32 advance)
+uishell_terminal_dr_text_piece_dst(Vec2F32 text_p, FNT_Piece *piece, F32 advance)
 {
-  (void)run_descent;
   Vec2F32 size = piece->draw_dim;
   Rng2F32 result = r2f32p(text_p.x + piece->offset.x + advance,
                           text_p.y + piece->offset.y,
@@ -6541,16 +6540,15 @@ uishell_terminal_trace_codepoints_string(Arena *arena, cleat_cell const *cell)
 }
 
 internal void
-uishell_terminal_draw_run_at_row_baseline(FNT_Run run, Vec2F32 text_p, F32 row_descent, Vec4F32 color)
+uishell_terminal_draw_run_at_row_baseline(FNT_Run run, Vec2F32 text_p, Vec4F32 color)
 {
-  Vec2F32 run_text_p = v2f32(text_p.x, text_p.y + run.descent - row_descent);
   F32 advance = 0;
   for(U64 piece_idx = 0; piece_idx < run.pieces.count; piece_idx += 1)
   {
     FNT_Piece *piece = &run.pieces.v[piece_idx];
     R_Handle texture = piece->texture;
     Rng2F32 src = r2f32p((F32)piece->subrect.x0, (F32)piece->subrect.y0, (F32)piece->subrect.x1, (F32)piece->subrect.y1);
-    Rng2F32 dst = uishell_terminal_dr_text_piece_dst(run_text_p, run.descent, piece, advance);
+    Rng2F32 dst = uishell_terminal_dr_text_piece_dst(text_p, piece, advance);
     if(piece->draw_dim.x != 0 && piece->draw_dim.y != 0 && !r_handle_match(texture, r_handle_zero()))
     {
       Vec4F32 piece_color = (piece->kind == FNT_RasterKind_RGBA ? v4f32(1, 1, 1, color.w) : color);
@@ -6561,9 +6559,8 @@ uishell_terminal_draw_run_at_row_baseline(FNT_Run run, Vec2F32 text_p, F32 row_d
 }
 
 internal Rng2F32
-uishell_terminal_run_visible_rect_at_row_baseline(FNT_Run run, Vec2F32 text_p, F32 row_descent)
+uishell_terminal_run_visible_rect_at_row_baseline(FNT_Run run, Vec2F32 text_p)
 {
-  Vec2F32 run_text_p = v2f32(text_p.x, text_p.y + run.descent - row_descent);
   Rng2F32 result = {0};
   B32 got_rect = 0;
   F32 advance = 0;
@@ -6572,7 +6569,7 @@ uishell_terminal_run_visible_rect_at_row_baseline(FNT_Run run, Vec2F32 text_p, F
     FNT_Piece *piece = &run.pieces.v[piece_idx];
     if(piece->draw_dim.x != 0 && piece->draw_dim.y != 0 && !r_handle_match(piece->texture, r_handle_zero()))
     {
-      Rng2F32 dst = uishell_terminal_dr_text_piece_dst(run_text_p, run.descent, piece, advance);
+      Rng2F32 dst = uishell_terminal_dr_text_piece_dst(text_p, piece, advance);
       if(got_rect)
       {
         result.x0 = Min(result.x0, dst.x0);
@@ -6611,10 +6608,10 @@ struct UIShell_TerminalCellTextDecision
 };
 
 internal Vec2F32
-uishell_terminal_source_color_text_p_for_cell(UIShell_TerminalCellTextDecision decision, Rng2F32 cell_rect, F32 text_p_y, F32 row_descent)
+uishell_terminal_source_color_text_p_for_cell(UIShell_TerminalCellTextDecision decision, Rng2F32 cell_rect, F32 text_p_y)
 {
   Vec2F32 result = v2f32(cell_rect.x0, text_p_y);
-  Rng2F32 visible_rect = uishell_terminal_run_visible_rect_at_row_baseline(decision.run, result, row_descent);
+  Rng2F32 visible_rect = uishell_terminal_run_visible_rect_at_row_baseline(decision.run, result);
   F32 visible_width = visible_rect.x1 - visible_rect.x0;
   if(visible_width > 0)
   {
@@ -6683,8 +6680,8 @@ uishell_terminal_trace_run(Arena *arena, UIShell_TerminalGlyphRenderer *renderer
     cell_flags = cell->flags;
     cell_width = cell->width;
   }
-  Vec2F32 run_text_p = v2f32(text_p.x, text_p.y + run.descent - row_descent);
-  F32 row_baseline_y = text_p.y - row_descent;
+  Vec2F32 run_text_p = text_p;
+  F32 row_baseline_y = text_p.y;
   String8 font_role = uishell_terminal_trace_font_role_string(renderer, font);
   String8 font_path = fnt_path_from_tag(font);
   if(font_path.size == 0)
@@ -6722,7 +6719,7 @@ uishell_terminal_trace_run(Arena *arena, UIShell_TerminalGlyphRenderer *renderer
   for(U64 piece_idx = 0; piece_idx < run.pieces.count; piece_idx += 1)
   {
     FNT_Piece *piece = &run.pieces.v[piece_idx];
-    Rng2F32 dst = uishell_terminal_dr_text_piece_dst(run_text_p, run.descent, piece, advance);
+    Rng2F32 dst = uishell_terminal_dr_text_piece_dst(run_text_p, piece, advance);
     F32 piece_baseline_y = dst.y0 + piece->baseline_from_top;
     F32 baseline_delta = piece_baseline_y - row_baseline_y;
     log_infof("terminal glyph trace piece: gen=%I64u row=%I64u cols=%I64u..%I64u piece=%I64u kind=%S advance_before=%.3f advance=%.3f offset=(%.3f,%.3f) origin_from_left=%.3f baseline_from_top=%.3f draw_dim=(%.3f,%.3f) dst=(%.3f,%.3f)-(%.3f,%.3f) piece_baseline_y=%.3f baseline_delta=%.6f decode_size=%u texture=0x%I64x",
@@ -6790,7 +6787,7 @@ uishell_terminal_cell_text_decision_from_cell(Arena *arena, UIShell_TerminalGlyp
 }
 
 internal void
-uishell_terminal_draw_text_decision_in_cell(UIShell_TerminalCellTextDecision decision, Rng2F32 cell_rect, F32 text_p_y, F32 row_descent, Vec4F32 color)
+uishell_terminal_draw_text_decision_in_cell(UIShell_TerminalCellTextDecision decision, Rng2F32 cell_rect, F32 text_p_y, Vec4F32 color)
 {
   if(decision.path == UIShell_TerminalCellTextPath_NormalMask ||
      decision.path == UIShell_TerminalCellTextPath_SourceColor)
@@ -6798,9 +6795,9 @@ uishell_terminal_draw_text_decision_in_cell(UIShell_TerminalCellTextDecision dec
     Vec2F32 text_p = v2f32(cell_rect.x0, text_p_y);
     if(decision.path == UIShell_TerminalCellTextPath_SourceColor)
     {
-      text_p = uishell_terminal_source_color_text_p_for_cell(decision, cell_rect, text_p_y, row_descent);
+      text_p = uishell_terminal_source_color_text_p_for_cell(decision, cell_rect, text_p_y);
     }
-    uishell_terminal_draw_run_at_row_baseline(decision.run, text_p, row_descent, color);
+    uishell_terminal_draw_run_at_row_baseline(decision.run, text_p, color);
   }
 }
 
@@ -6819,7 +6816,7 @@ uishell_terminal_diagnostic_check_run_placement(FNT_Run run, String8 label)
   {
     FNT_Piece *piece = &run.pieces.v[piece_idx];
     Vec2F32 expected_offset = v2f32(-piece->origin_from_left,
-                                    -run.descent - piece->baseline_from_top);
+                                    -piece->baseline_from_top);
     if(abs_f32(piece->offset.x - expected_offset.x) > 0.001f ||
        abs_f32(piece->offset.y - expected_offset.y) > 0.001f)
     {
@@ -6827,7 +6824,7 @@ uishell_terminal_diagnostic_check_run_placement(FNT_Run run, String8 label)
       result = 0;
       break;
     }
-    Rng2F32 terminal_dst = uishell_terminal_dr_text_piece_dst(text_p, run.descent, piece, advance);
+    Rng2F32 terminal_dst = uishell_terminal_dr_text_piece_dst(text_p, piece, advance);
     Rng2F32 dr_dst = r2f32p(text_p.x + piece->offset.x + advance,
                             text_p.y + piece->offset.y,
                             text_p.x + piece->offset.x + advance + piece->draw_dim.x,
@@ -6849,7 +6846,7 @@ uishell_terminal_diagnostic_check_run_draw_contract(FNT_Run run, String8 label)
 {
   B32 result = 1;
   Vec2F32 text_p = v2f32(32.f, 48.f);
-  F32 baseline_y = text_p.y - run.descent;
+  F32 baseline_y = text_p.y;
   F32 advance = 0;
   if(run.pieces.count == 0)
   {
@@ -6860,7 +6857,7 @@ uishell_terminal_diagnostic_check_run_draw_contract(FNT_Run run, String8 label)
   {
     FNT_Piece *piece = &run.pieces.v[piece_idx];
     F32 pen_x = text_p.x + advance;
-    Rng2F32 dst = uishell_terminal_dr_text_piece_dst(text_p, run.descent, piece, advance);
+    Rng2F32 dst = uishell_terminal_dr_text_piece_dst(text_p, piece, advance);
     if(abs_f32((dst.x0 + piece->origin_from_left) - pen_x) > 0.001f ||
        abs_f32((dst.y0 + piece->baseline_from_top) - baseline_y) > 0.001f)
     {
@@ -6893,13 +6890,9 @@ uishell_terminal_diagnostic_check_normal_run_placement(FNT_Run run, String8 labe
   for(U64 piece_idx = 0; piece_idx < run.pieces.count; piece_idx += 1)
   {
     FNT_Piece *piece = &run.pieces.v[piece_idx];
-    Vec2F32 old_face_box_offset = v2f32(0, -(run.ascent + run.descent));
-    if(abs_f32(piece->origin_from_left) > 0.001f ||
-       abs_f32(piece->baseline_from_top - run.ascent) > 0.001f ||
-       abs_f32(piece->offset.x - old_face_box_offset.x) > 0.001f ||
-       abs_f32(piece->offset.y - old_face_box_offset.y) > 0.001f)
+    if(abs_f32(piece->origin_from_left) > 0.001f || abs_f32(piece->offset.x) > 0.001f)
     {
-      log_user_errorf("terminal glyph diagnostics failed: %S normal mask text did not preserve the established face-box text placement", label);
+      log_user_errorf("terminal glyph diagnostics failed: %S normal mask text shifted its horizontal origin", label);
       result = 0;
       break;
     }
@@ -7180,14 +7173,14 @@ uishell_terminal_readback_chromatic_pixel_count_in_rect(R_Readback readback, Rng
 }
 
 internal B32
-uishell_terminal_diagnostic_check_run_at_row_baseline_draw(FNT_Run run, Vec2F32 text_p, F32 row_descent, String8 label)
+uishell_terminal_diagnostic_check_run_at_row_baseline_draw(FNT_Run run, Vec2F32 text_p, String8 label)
 {
   B32 result = 1;
   Vec4F32 color = v4f32(0.25f, 0.60f, 0.85f, 0.70f);
   DR_Bucket *bucket = dr_bucket_make();
   DR_BucketScope(bucket)
   {
-    uishell_terminal_draw_run_at_row_baseline(run, text_p, row_descent, color);
+    uishell_terminal_draw_run_at_row_baseline(run, text_p, color);
   }
   F32 advance = 0;
   U64 piece_idx = 0;
@@ -7226,9 +7219,9 @@ uishell_terminal_diagnostic_check_run_at_row_baseline_draw(FNT_Run run, Vec2F32 
               Rng2F32 expected_dst =
               {
                 text_p.x + advance - piece->origin_from_left,
-                text_p.y - row_descent - piece->baseline_from_top,
+                text_p.y - piece->baseline_from_top,
                 text_p.x + advance - piece->origin_from_left + piece->draw_dim.x,
-                text_p.y - row_descent - piece->baseline_from_top + piece->draw_dim.y,
+                text_p.y - piece->baseline_from_top + piece->draw_dim.y,
               };
               R_Rect2DInst *inst = &insts[inst_idx];
               if(abs_f32(inst->dst.x0 - expected_dst.x0) > 0.001f ||
@@ -7262,10 +7255,10 @@ uishell_terminal_diagnostic_check_run_at_row_baseline_draw(FNT_Run run, Vec2F32 
 }
 
 internal B32
-uishell_terminal_diagnostic_check_terminal_row_baseline_draw(UIShell_TerminalCellTextDecision decision, F32 text_p_y, F32 row_descent, String8 label)
+uishell_terminal_diagnostic_check_terminal_row_baseline_draw(UIShell_TerminalCellTextDecision decision, F32 text_p_y, String8 label)
 {
   Rng2F32 cell_rect = r2f32p(8, 0, 128, 48);
-  B32 result = uishell_terminal_diagnostic_check_run_at_row_baseline_draw(decision.run, v2f32(cell_rect.x0, text_p_y), row_descent, label);
+  B32 result = uishell_terminal_diagnostic_check_run_at_row_baseline_draw(decision.run, v2f32(cell_rect.x0, text_p_y), label);
   return result;
 }
 
@@ -7280,7 +7273,7 @@ uishell_terminal_rect2_match(Rng2F32 a, Rng2F32 b, F32 epsilon)
 }
 
 internal U64
-uishell_terminal_diagnostic_push_run_rects(Rng2F32 *rects, U64 count, U64 cap, FNT_Run run, Vec2F32 text_p, F32 row_descent)
+uishell_terminal_diagnostic_push_run_rects(Rng2F32 *rects, U64 count, U64 cap, FNT_Run run, Vec2F32 text_p)
 {
   F32 advance = 0;
   for(U64 piece_idx = 0; piece_idx < run.pieces.count && count < cap; piece_idx += 1)
@@ -7289,9 +7282,9 @@ uishell_terminal_diagnostic_push_run_rects(Rng2F32 *rects, U64 count, U64 cap, F
     if(piece->draw_dim.x != 0 && piece->draw_dim.y != 0 && !r_handle_match(piece->texture, r_handle_zero()))
     {
       rects[count] = r2f32p(text_p.x + advance - piece->origin_from_left,
-                            text_p.y - row_descent - piece->baseline_from_top,
+                            text_p.y - piece->baseline_from_top,
                             text_p.x + advance - piece->origin_from_left + piece->draw_dim.x,
-                            text_p.y - row_descent - piece->baseline_from_top + piece->draw_dim.y);
+                            text_p.y - piece->baseline_from_top + piece->draw_dim.y);
       count += 1;
     }
     advance += piece->advance;
@@ -7525,7 +7518,7 @@ uishell_terminal_diagnostic_check_draw_command_color(UIShell_TerminalCellTextDec
   DR_Bucket *bucket = dr_bucket_make();
   DR_BucketScope(bucket)
   {
-    uishell_terminal_draw_text_decision_in_cell(decision, r2f32p(0, 0, 64, 32), 24.f, decision.run.descent, draw_color);
+    uishell_terminal_draw_text_decision_in_cell(decision, r2f32p(0, 0, 64, 32), 24.f, draw_color);
   }
   U64 expected_color_count = uishell_terminal_render_bucket_textured_instance_count_with_color(bucket, expected_piece_color);
   if(expected_color_count == 0)
@@ -7686,7 +7679,7 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
       DR_Bucket *bucket = dr_bucket_make();
       DR_BucketScope(bucket)
       {
-        uishell_terminal_draw_text_decision_in_cell(decision, r2f32p(0, 0, 64, 32), 24.f, decision.run.descent, probe_color);
+        uishell_terminal_draw_text_decision_in_cell(decision, r2f32p(0, 0, 64, 32), 24.f, probe_color);
       }
       if(uishell_terminal_render_bucket_textured_instance_count_with_color(bucket, source_color_piece_color) != 0)
       {
@@ -7771,7 +7764,7 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
         str8_list_push(scratch.arena, &parts, string1);
         String8 joined = str8_list_join(scratch.arena, &parts, 0);
         FNT_Run joined_run = dr_fnt_run_from_string(font0, font_size, 0, 0, raster_flags, joined);
-        if(!uishell_terminal_diagnostic_check_run_at_row_baseline_draw(joined_run, v2f32(8.f, diagnostic_text_y), primary_metrics.descent, str8_lit("batched ASCII terminal row baseline")))
+        if(!uishell_terminal_diagnostic_check_run_at_row_baseline_draw(joined_run, v2f32(8.f, diagnostic_text_y), str8_lit("batched ASCII terminal row baseline")))
         {
           result = 0;
         }
@@ -7796,7 +7789,7 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
           {
             result = 0;
           }
-          if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(decision, diagnostic_text_y, primary_metrics.descent, str8_lit("fallback normal text terminal row baseline")))
+          if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(decision, diagnostic_text_y, str8_lit("fallback normal text terminal row baseline")))
           {
             result = 0;
           }
@@ -7815,7 +7808,7 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
             {
               result = 0;
             }
-            if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(cluster_decision, diagnostic_text_y, primary_metrics.descent, str8_lit("fallback text-presentation cluster terminal row baseline")))
+            if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(cluster_decision, diagnostic_text_y, str8_lit("fallback text-presentation cluster terminal row baseline")))
             {
               result = 0;
             }
@@ -7849,7 +7842,7 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
           {
             result = 0;
           }
-          if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(shaped_cluster_decision, diagnostic_text_y, primary_metrics.descent, str8_lit("shaped fallback combining cluster terminal row baseline")))
+          if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(shaped_cluster_decision, diagnostic_text_y, str8_lit("shaped fallback combining cluster terminal row baseline")))
           {
             result = 0;
           }
@@ -7929,7 +7922,7 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
             {
               result = 0;
             }
-            if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(complex_decision, diagnostic_text_y, primary_metrics.descent, str8_lit("complex shaped fallback cluster terminal row baseline")))
+            if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(complex_decision, diagnostic_text_y, str8_lit("complex shaped fallback cluster terminal row baseline")))
             {
               result = 0;
             }
@@ -8026,14 +8019,14 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
         {
           result = 0;
         }
-        if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(decision, diagnostic_text_y, primary_metrics.descent, str8_lit("source-color emoji terminal row baseline")))
+        if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(decision, diagnostic_text_y, str8_lit("source-color emoji terminal row baseline")))
         {
           result = 0;
         }
         DR_Bucket *bucket = dr_bucket_make();
         DR_BucketScope(bucket)
         {
-          uishell_terminal_draw_text_decision_in_cell(decision, r2f32p(0, 0, 64, 32), 24.f, decision.run.descent, probe_color);
+          uishell_terminal_draw_text_decision_in_cell(decision, r2f32p(0, 0, 64, 32), 24.f, probe_color);
         }
         if(uishell_terminal_render_bucket_textured_instance_count_with_color(bucket, probe_color) != 0)
         {
@@ -8058,8 +8051,8 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
       if(cloud_decision.path == UIShell_TerminalCellTextPath_SourceColor)
       {
         Rng2F32 cloud_cell_rect = r2f32p(0, 0, 64, 32);
-        Vec2F32 cloud_text_p = uishell_terminal_source_color_text_p_for_cell(cloud_decision, cloud_cell_rect, 24.f, cloud_decision.run.descent);
-        Rng2F32 cloud_visible_rect = uishell_terminal_run_visible_rect_at_row_baseline(cloud_decision.run, cloud_text_p, cloud_decision.run.descent);
+        Vec2F32 cloud_text_p = uishell_terminal_source_color_text_p_for_cell(cloud_decision, cloud_cell_rect, 24.f);
+        Rng2F32 cloud_visible_rect = uishell_terminal_run_visible_rect_at_row_baseline(cloud_decision.run, cloud_text_p);
         F32 cloud_visible_center = (cloud_visible_rect.x0 + cloud_visible_rect.x1)*0.5f;
         F32 cloud_cell_center = (cloud_cell_rect.x0 + cloud_cell_rect.x1)*0.5f;
         if(abs_f32(cloud_visible_center - cloud_cell_center) > 0.501f)
@@ -8086,7 +8079,7 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
         {
           result = 0;
         }
-        if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(decision, diagnostic_text_y, primary_metrics.descent, str8_lit("mixed source-color/mask cluster terminal row baseline")))
+        if(!uishell_terminal_diagnostic_check_terminal_row_baseline_draw(decision, diagnostic_text_y, str8_lit("mixed source-color/mask cluster terminal row baseline")))
         {
           result = 0;
         }
@@ -8218,11 +8211,11 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
       U64 expected_count = 0;
       {
         FNT_Run run = dr_fnt_run_from_string(uishell_terminal_font_from_cell(&renderer, &cells[0]), font_size, 0, 0, raster_flags, str8_lit("ab"));
-        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*0.f), text_y), primary_metrics.descent);
+        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*0.f), text_y));
       }
       {
         FNT_Run run = dr_fnt_run_from_string(uishell_terminal_font_from_cell(&renderer, &cells[3]), font_size, 0, 0, raster_flags, str8_lit("c"));
-        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*3.f), text_y), primary_metrics.descent);
+        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*3.f), text_y));
       }
       {
         UIShell_TerminalCellTextDecision decision = uishell_terminal_cell_text_decision_from_cell(scratch.arena, &renderer, &cells[5]);
@@ -8233,16 +8226,16 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
         }
         else
         {
-          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*5.f), text_y), primary_metrics.descent);
+          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*5.f), text_y));
           if(decision.path != UIShell_TerminalCellTextPath_SourceColor)
           {
-            expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*5.f) + 1.f, text_y), primary_metrics.descent);
+            expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*5.f) + 1.f, text_y));
           }
         }
       }
       {
         FNT_Run run = dr_fnt_run_from_string(uishell_terminal_font_from_cell(&renderer, &cells[7]), font_size, 0, 0, raster_flags, str8_lit("e"));
-        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*7.f), text_y), primary_metrics.descent);
+        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*7.f), text_y));
       }
       if(fallback_cp != 0)
       {
@@ -8254,7 +8247,7 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
         }
         else
         {
-          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*9.f), text_y), primary_metrics.descent);
+          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*9.f), text_y));
         }
       }
       {
@@ -8271,9 +8264,9 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
                                            ceil_f32(canvas_rect.x0 + cell_width*13.f),
                                            canvas_rect.y1);
           Vec2F32 emoji_text_p = (decision.path == UIShell_TerminalCellTextPath_SourceColor ?
-                                  uishell_terminal_source_color_text_p_for_cell(decision, emoji_cell_rect, text_y, primary_metrics.descent) :
+                                  uishell_terminal_source_color_text_p_for_cell(decision, emoji_cell_rect, text_y) :
                                   v2f32(emoji_cell_rect.x0, text_y));
-          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, emoji_text_p, primary_metrics.descent);
+          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, emoji_text_p);
         }
       }
 
@@ -9275,7 +9268,7 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
             {
               uishell_terminal_trace_run(arena, renderer, str8_lit("batched"), row_idx, run_col_start, run_col_opl, &feed->cells[row_idx*(U64)feed->cols + run_col_start], UIShell_TerminalCellTextPath_NormalMask, run_font, raster_flags, joined, joined_run, text_pos, font_metrics.descent, run_fg);
             }
-            uishell_terminal_draw_run_at_row_baseline(joined_run, text_pos, font_metrics.descent, run_fg);
+            uishell_terminal_draw_run_at_row_baseline(joined_run, text_pos, run_fg);
           }
           col_idx = run_col_opl;
           continue;
@@ -9317,11 +9310,11 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
               {
                 uishell_terminal_trace_run(arena, renderer, str8_lit("cell"), row_idx, col_idx, col_idx + cell_cols, cell, text_decision.path, text_decision.font, text_decision.raster_flags, text_decision.string, text_decision.run, v2f32(cell_rect.x0, text_y), font_metrics.descent, fg);
               }
-              uishell_terminal_draw_text_decision_in_cell(text_decision, cell_rect, text_y, font_metrics.descent, fg);
+              uishell_terminal_draw_text_decision_in_cell(text_decision, cell_rect, text_y, fg);
               if((cell->flags & CLEAT_CELL_FLAG_BOLD) && text_decision.path != UIShell_TerminalCellTextPath_SourceColor)
               {
                 Rng2F32 bold_rect = shift_2f32(cell_rect, v2f32(1.f, 0));
-                uishell_terminal_draw_text_decision_in_cell(text_decision, bold_rect, text_y, font_metrics.descent, fg);
+                uishell_terminal_draw_text_decision_in_cell(text_decision, bold_rect, text_y, fg);
               }
             }
           }

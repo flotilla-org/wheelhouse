@@ -902,14 +902,14 @@ dr_truncated_fancy_run_list(Vec2F32 p, DR_FRunList *list, F32 max_x, FNT_Run tra
     if(fr->underline_thickness > 0)
     {
       dr_rect(r2f32p(p.x + pixel_range.min,
-                     p.y+fr->run.descent+fr->run.descent/8,
+                     p.y+fr->run.descent/8,
                      p.x + pixel_range.max,
-                     p.y+fr->run.descent+fr->run.descent/8+fr->underline_thickness),
+                     p.y+fr->run.descent/8+fr->underline_thickness),
               fr->color, 0, 0, 0.8f);
     }
     if(fr->strikethrough_thickness > 0)
     {
-      dr_rect(r2f32p(p.x+pre_advance, p.y+fr->run.descent - fr->run.ascent/2, p.x+advance, p.y+fr->run.descent - fr->run.ascent/2 + fr->strikethrough_thickness), fr->color, 0, 0, 1.f);
+      dr_rect(r2f32p(p.x+pre_advance, p.y - fr->run.ascent/2, p.x+advance, p.y - fr->run.ascent/2 + fr->strikethrough_thickness), fr->color, 0, 0, 1.f);
     }
     if(trailer_found)
     {

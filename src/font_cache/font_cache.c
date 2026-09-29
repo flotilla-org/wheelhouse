@@ -836,17 +836,16 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
             info->raster_dim = raster.atlas_dim;
             info->draw_dim   = v2f32((F32)raster.atlas_dim.x*inv_raster_scale, (F32)raster.atlas_dim.y*inv_raster_scale);
             info->advance    = raster.advance*inv_raster_scale;
+            // Provider baselines already include bitmap padding and any crop.
+            info->baseline_from_top = raster.baseline_from_top*inv_raster_scale;
             if(tight_bounds)
             {
               F32 crop_offset_x = (raster.face_box_origin_from_left - raster.origin_from_left)*inv_raster_scale;
-              F32 crop_offset_y = (raster.face_box_baseline_from_top - raster.baseline_from_top)*inv_raster_scale;
               info->origin_from_left = -crop_offset_x;
-              info->baseline_from_top = hash2style_node->ascent - crop_offset_y;
             }
             else
             {
               info->origin_from_left = 0;
-              info->baseline_from_top = hash2style_node->ascent;
             }
             info->kind       = (raster.kind == FP_RasterKind_RGBA ? FNT_RasterKind_RGBA : FNT_RasterKind_Mask);
           }
@@ -898,7 +897,7 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
             piece->decode_size = piece_substring.size;
             piece->kind = info->kind;
             piece->offset = v2f32(-info->origin_from_left,
-                                  -hash2style_node->descent - info->baseline_from_top);
+                                  -info->baseline_from_top);
           }
           base_align_px += advance;
           dim.x += piece->advance;

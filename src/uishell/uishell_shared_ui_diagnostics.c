@@ -167,6 +167,98 @@ uishell_check_metal_blur_kernel_bounds(U32 *failures)
 }
 #endif
 
+// Check raster coverage through every platform provider, including descenders.
+internal void
+uishell_check_raster_baselines(Arena *arena, U32 *failures)
+{
+  // Diagnostics may run from a temporary directory, as the Windows runner does.
+  String8 *fonts[] = {&rd_default_main_font_bytes, &rd_default_code_font_bytes};
+  String8 glyphs[] = {str8_lit("H"), str8_lit("g")};
+  for EachElement(font_idx, fonts)
+  {
+    FP_Handle handle = fp_font_open_from_static_data_string(fonts[font_idx]);
+    FNT_Tag font = fnt_tag_from_static_data_string(fonts[font_idx]);
+    for(U32 scale = 1; scale <= 2; scale++)
+    for(U32 size = 17; size <= 24; size += 7)
+    for EachElement(glyph_idx, glyphs)
+    {
+      F32 ink_top[2] = {0}, ink_bottom[2] = {0};
+      for(U32 tight = 0; tight < 2; tight++)
+      {
+        Temp temp = temp_begin(arena);
+        FP_RasterFlags fp_flags = FP_RasterFlag_Smooth | (tight ? FP_RasterFlag_TightBounds : 0);
+        FNT_RasterFlags flags = FNT_RasterFlag_Smooth | (tight ? FNT_RasterFlag_TightBounds : 0);
+        FP_RasterResult raster = fp_raster(arena, handle, (F32)(size*scale), fp_flags, glyphs[glyph_idx]);
+        FNT_Run run = fnt_run_from_string_scaled(font, (F32)size, (F32)scale, 0, 0, flags, glyphs[glyph_idx]);
+        S32 top = raster.atlas_dim.y, bottom = -1;
+        // All providers store four bytes per pixel, with coverage/alpha in byte 3.
+        for(S32 y = 0; raster.atlas != 0 && y < raster.atlas_dim.y; y++)
+        for(S32 x = 0; x < raster.atlas_dim.x; x++)
+        {
+          if(((U8 *)raster.atlas)[4*(y*raster.atlas_dim.x+x)+3] >= 128)
+          {
+            top = Min(top, y);
+            bottom = Max(bottom, y);
+          }
+        }
+        UIImportCheck(bottom >= top && run.pieces.count == 1);
+        if(bottom >= top && run.pieces.count == 1)
+        {
+          F32 offset = run.pieces.v[0].offset.y*(F32)scale;
+          ink_top[tight] = offset + (F32)top;
+          // Pixel indices denote their upper edge; +1 gives the lower ink edge.
+          ink_bottom[tight] = offset + (F32)bottom + 1.f;
+          if(glyph_idx == 0) { UIImportCheck(abs_f32(ink_bottom[tight]) <= 0.5f); }
+          else { UIImportCheck(ink_top[tight] < 0 && ink_bottom[tight] > 0); }
+        }
+        temp_end(temp);
+      }
+      UIImportCheck(abs_f32(ink_top[0] - ink_top[1]) <= 0.5f);
+      UIImportCheck(abs_f32(ink_bottom[0] - ink_bottom[1]) <= 0.5f);
+    }
+    fp_font_close(handle);
+  }
+}
+
+internal void
+uishell_check_text_decorations(U32 *failures)
+{
+  // No glyph texture: the bucket contains just the two actual decoration rects.
+  FNT_Piece piece = {.advance = 40};
+  DR_FRunNode node = {0};
+  node.v.run.pieces.v = &piece;
+  node.v.run.pieces.count = 1;
+  node.v.run.ascent = 20;
+  node.v.run.descent = 8;
+  node.v.color = v4f32(1, 1, 1, 1);
+  node.v.underline_thickness = node.v.strikethrough_thickness = 1;
+  DR_FRunList list = {.first = &node, .last = &node, .node_count = 1, .dim = {40, 28}};
+  DR_Bucket *bucket = dr_bucket_make();
+  DR_BucketScope(bucket)
+  {
+    dr_truncated_fancy_run_list(v2f32(10, 50), &list, 100, (FNT_Run){0});
+  }
+  U32 count = 0;
+  for(R_PassNode *pass = bucket->passes.first; pass != 0; pass = pass->next)
+  {
+    if(pass->v.kind != R_PassKind_UI) { continue; }
+    for(R_BatchGroup2DNode *group = pass->v.params_ui->rects.first; group != 0; group = group->next)
+    for(R_BatchNode *batch = group->batches.first; batch != 0; batch = batch->next)
+    {
+      R_Rect2DInst *rects = (R_Rect2DInst *)batch->v.v;
+      U64 n = batch->v.byte_count/group->batches.bytes_per_inst;
+      for(U64 idx = 0; idx < n; idx++, count++)
+      {
+        Rng2F32 rect = rects[idx].dst;
+        UIImportCheck(rect.x0 == 10 && rect.x1 == 50 && rect.y1-rect.y0 == 1);
+        // Underline just below the baseline; strike halfway up the ascent box.
+        UIImportCheck(rect.y0 == (count == 0 ? 51.f : 40.f));
+      }
+    }
+  }
+  UIImportCheck(count == 2);
+}
+
 internal B32
 uishell_shared_ui_diagnostics(RD_WindowState *ws)
 {
@@ -180,6 +272,9 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
     return 0;
   }
   U32 failures = !cfg_native_menu_diagnostics();
+  uishell_check_raster_baselines(scratch.arena, &failures);
+  uishell_check_text_decorations(&failures);
+  fprintf(stderr, "raster baselines and text decorations: %u failures\n", failures);
   CFG_State *state = cfg_state_alloc();
   uishell_check_config_directory_roundtrip(scratch.arena, &failures, state);
   cfg_state_release(state);
