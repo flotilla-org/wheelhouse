@@ -131,6 +131,39 @@ entry_point(CmdLine *cmdline)
     MacMenuCheck([[[native_menu itemAtIndex:1] keyEquivalent] characterAtIndex:0] == NSF11FunctionKey);
     MacMenuCheck([[native_menu itemAtIndex:2] keyEquivalentModifierMask] ==
             (NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift));
+    // Temporary differential probe for synthetic AppKit equivalent matching.
+    for(U64 probe = 0; probe < 16; probe++)
+    {
+      Temp probe_scratch = scratch_begin(0, 0);
+      wm_get_events(probe_scratch.arena, 0);
+      B32 queued = !!(probe & 1);
+      B32 lower = !!(probe & 2);
+      B32 zero_time = !!(probe & 4);
+      B32 notify = !!(probe & 8);
+      NSEvent *probe_key = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                              modifierFlags:NSEventModifierFlagCommand|NSEventModifierFlagShift
+                                  timestamp:zero_time ? 0 : [[NSProcessInfo processInfo] systemUptime]
+                               windowNumber:[ns_window windowNumber] context:0
+                                 characters:lower ? @"p" : @"P" charactersIgnoringModifiers:@"P"
+                                  isARepeat:NO keyCode:35];
+      NSNotification *begin = [NSNotification notificationWithName:NSMenuDidBeginTrackingNotification object:[NSApp mainMenu]];
+      if(notify) { [[NSNotificationCenter defaultCenter] postNotification:begin]; }
+      else { [mac_wm_state->menu_target menuDidBeginTracking:begin]; }
+      B32 enabled = [palette isEnabled];
+      B32 matched = 0;
+      if(queued) { [NSApp postEvent:probe_key atStart:NO]; }
+      else { matched = [native_menu performKeyEquivalent:probe_key]; }
+      WM_EventList probe_events = wm_get_events(probe_scratch.arena, 0);
+      U64 probe_commands = 0;
+      for(WM_Event *e = probe_events.first; e; e = e->next) { probe_commands += e->kind == WM_EventKind_MenuCommand; }
+      NSNotification *end = [NSNotification notificationWithName:NSMenuDidEndTrackingNotification object:[NSApp mainMenu]];
+      if(notify) { [[NSNotificationCenter defaultCenter] postNotification:end]; }
+      else { [mac_wm_state->menu_target menuDidEndTracking:end]; }
+      fprintf(stderr, "[DEBUG-menu-matrix] probe=%llu queue=%d lower=%d zero=%d notify=%d enabled=%d/%d match=%d commands=%llu flags=%lx char=%s/%s\n",
+              probe, queued, lower, zero_time, notify, enabled, [palette isEnabled], matched, probe_commands,
+              (unsigned long)[probe_key modifierFlags], [[probe_key characters] UTF8String], [[probe_key charactersIgnoringModifiers] UTF8String]);
+      scratch_end(probe_scratch);
+    }
     WM_Window second = wm_window_open(r2f32p(0, 0, 320, 200), 0, str8_lit("Second menu target"));
     for(U64 target = 0; target < 2; target++)
     {
