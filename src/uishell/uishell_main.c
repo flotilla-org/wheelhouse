@@ -205,7 +205,7 @@ entry_point(CmdLine *cmd_line)
       {
         uishell_import_fixture_dir = cmd_line_string(cmd_line, str8_lit("shared_ui_fixture_dir"));
         if(uishell_import_fixture_dir.size == 0)
-        { fprintf(stderr, "shared UI diagnostics require --shared_ui_fixture_dir:DIR\n"); abort_self(2); }
+        { fprintf(stderr, "shared UI diagnostics require --shared_ui_fixture_dir:DIR\n"); abort_self(1); }
         rd_state->frame_diagnostic = uishell_shared_ui_diagnostics;
       }
       if(cmd_line_has_flag(cmd_line, str8_lit("panel_diagnostics")))
