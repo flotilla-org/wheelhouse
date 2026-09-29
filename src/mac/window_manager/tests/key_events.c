@@ -160,7 +160,7 @@ entry_point(CmdLine *cmdline)
       // that NSApplication has already dequeued for the closed-menu gesture.
       key = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
                        modifierFlags:NSEventModifierFlagCommand|NSEventModifierFlagShift
-                           timestamp:1 windowNumber:[target_mac_window->ns_window windowNumber]
+                           timestamp:[[NSProcessInfo processInfo] systemUptime] windowNumber:[target_mac_window->ns_window windowNumber]
                              context:0 characters:@"P" charactersIgnoringModifiers:@"P"
                            isARepeat:NO keyCode:35];
       // Tracking: AppKit matches the equivalent, producing exactly one command.
