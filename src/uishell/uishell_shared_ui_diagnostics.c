@@ -169,12 +169,13 @@ uishell_check_metal_blur_kernel_bounds(U32 *failures)
 internal void
 uishell_check_raster_baselines(Arena *arena, U32 *failures)
 {
-  String8 fonts[] = {str8_lit("data/segoeui.ttf"), str8_lit("data/Inconsolata-Regular.ttf"), str8_lit("data/JetBrainsMono-Regular.ttf")};
+  // Diagnostics may run from a temporary directory, as the Windows runner does.
+  String8 *fonts[] = {&rd_default_main_font_bytes, &rd_default_code_font_bytes};
   String8 glyphs[] = {str8_lit("H"), str8_lit("g")};
   for EachElement(font_idx, fonts)
   {
-    FP_Handle handle = fp_font_open(fonts[font_idx]);
-    FNT_Tag font = fnt_tag_from_path(fonts[font_idx]);
+    FP_Handle handle = fp_font_open_from_static_data_string(fonts[font_idx]);
+    FNT_Tag font = fnt_tag_from_static_data_string(fonts[font_idx]);
     for(U32 scale = 1; scale <= 2; scale++)
     for(U32 size = 17; size <= 24; size += 7)
     for EachElement(glyph_idx, glyphs)
