@@ -4807,7 +4807,10 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
         
         {
           UI_Signal sig = ui_signal_from_box(scrollable_box);
-          ui_scroll_pt_scroll(&scroll_pos.y, sig.scroll_px.y/row_height_px, scroll_idx_rng, 0);
+          if(row_height_px > 0)
+          {
+            ui_scroll_pt_scroll(&scroll_pos.y, sig.scroll_px.y/row_height_px, scroll_idx_rng, 0);
+          }
           if(sig.scroll.y != 0)
           {
             S64 new_idx = scroll_pos.y.idx + sig.scroll.y;

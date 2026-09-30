@@ -195,6 +195,12 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
   UI_ScrollPt before_zero = pt;
   ui_scroll_pt_scroll(&pt, 0, bounds, 0);
   ScrollCheck(MemoryMatch(&pt, &before_zero, sizeof(pt)), "zero movement preserves target");
+  F32 invalid_deltas[] = {inf32(), neg_inf32(), inf32()-inf32(), 1.e30f, -1.e30f};
+  for(U32 i = 0; i < ArrayCount(invalid_deltas); i++)
+  {
+    ui_scroll_pt_scroll(&pt, invalid_deltas[i], bounds, 0);
+    ScrollCheck(MemoryMatch(&pt, &before_zero, sizeof(pt)), "invalid or unrepresentable input preserves target");
+  }
   pt = ui_scroll_pt(10, 0);
   for(U32 i = 0; i < 3; i++) { ui_scroll_pt_scroll(&pt, 0.25f, bounds, 1); }
   ScrollCheck(pt.idx == 10 && pt.target_off == 0 && pt.remainder == 0.75f, "snap accumulates sub-row input");

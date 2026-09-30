@@ -384,6 +384,9 @@ ui_scroll_pt_scroll(UI_ScrollPt *v, F32 delta, Rng1S64 range, B32 snap)
   ui_scroll_pt_clamp_idx(v, range);
   if(delta == 0) { return; }
   F64 amount = delta + (snap ? v->remainder + v->target_off : v->target_off);
+  // Reject malformed or unrepresentable input before the float-to-integer cast.
+  // The upper bound is exclusive because 2^63 cannot be represented by S64.
+  if(!(amount >= -9223372036854775808.0 && amount < 9223372036854775808.0)) { return; }
   S64 whole = snap ? (S64)amount : (S64)floor_f64(amount);
   F64 fraction = amount - (F64)whole;
   S64 next_idx = v->idx;
