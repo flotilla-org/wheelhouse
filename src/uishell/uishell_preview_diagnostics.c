@@ -168,6 +168,7 @@ uishell_preview_diagnostics(RD_WindowState *ws)
   ui_state_release(test_ui);
   for(U32 i = 0; i < 2; i++) { cfg_node_release(rd_state->cfg, owners[i]); }
   scratch_end(scratch);
+  failures += !uishell_scroll_preview_diagnostics(ws);
   fprintf(stderr, "Preview diagnostics: %u failures\n", failures);
 #undef PreviewCheck
   return failures == 0;

@@ -1276,7 +1276,7 @@ uishell_watch_view_ui(Rng2F32 rect)
           if(contains_1s64(global_vnum_range, cursor_tbl.y))
           {
             UI_ScrollPt *scroll_pt = &scroll_pos.y;
-            Rng1S64 visible_row_num_range = r1s64(scroll_pt->idx + 1 - !!(scroll_pt->off < 0),
+            Rng1S64 visible_row_num_range = r1s64(scroll_pt->idx + 1,
                                                   scroll_pt->idx + 1 + num_possible_visible_rows);
             Rng1S64 cursor_visibility_row_num_range = {0};
             cursor_visibility_row_num_range.min = ev_vnum_from_num(&block_ranges, cursor_tbl.y) - 1;
@@ -4267,6 +4267,7 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
   S64 visible_row_count = ClampBot(1, (S64)((dim_2f32(content_rect).y - dim_2f32(footer_rect).y)/row_height_px - 1));
   U64 last_off = props.size != 0 ? props.size-1 : 0;
   Rng1S64 scroll_idx_rng = r1s64(0, ClampBot(0, row_count-1));
+  ui_scroll_pt_clamp_idx(&scroll_pos.y, scroll_idx_rng);
   
   if(!bv->initialized)
   {
@@ -4435,8 +4436,8 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
       {
         Rng1S64 visible_row_rng = {0};
         {
-          visible_row_rng.min = scroll_pos.y.idx + (S64)scroll_pos.y.off - !!(scroll_pos.y.off < 0);
-          visible_row_rng.max = scroll_pos.y.idx + (S64)scroll_pos.y.off + num_possible_visible_rows;
+          visible_row_rng.min = scroll_pos.y.idx + (S64)floor_f32(ui_scroll_pt_offset(scroll_pos.y));
+          visible_row_rng.max = scroll_pos.y.idx + (S64)floor_f32(ui_scroll_pt_offset(scroll_pos.y)) + num_possible_visible_rows + 1;
           visible_row_rng.min = clamp_1s64(scroll_idx_rng, visible_row_rng.min);
           visible_row_rng.max = clamp_1s64(scroll_idx_rng, visible_row_rng.max);
         }
@@ -4606,10 +4607,10 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
           axes[Axis2_Y] = (UI_ScrollRegionAxis){scroll_pos.y, scroll_idx_rng, num_possible_visible_rows};
           UI_Key key = ui_key_from_string(ui_active_seed_key(), str8_lit("scrollable_box"));
           UI_ScrollRegionSignal region_sig = ui_scroll_region_build(container_box, key, &binary_region, axes,
-                                                                    UI_BoxFlag_Scroll|UI_BoxFlag_AllowOverflowY);
+                                                                    UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise|UI_BoxFlag_AllowOverflowY);
           scroll_pos.y = region_sig.position.y;
           scrollable_box = region_sig.content_box;
-          scrollable_box->view_off.y = scrollable_box->view_off_target.y = floor_f32(row_height_px*mod_f32(scroll_pos.y.off, 1.f) + row_height_px*(scroll_pos.y.off < 0));
+          scrollable_box->view_off.y = scrollable_box->view_off_target.y = row_height_px*(ui_scroll_pt_offset(scroll_pos.y)-floor_f32(ui_scroll_pt_offset(scroll_pos.y)));
         }
         
         UI_Box *row_container_box = &ui_nil_box;
@@ -4806,6 +4807,10 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
         
         {
           UI_Signal sig = ui_signal_from_box(scrollable_box);
+          if(row_height_px > 0)
+          {
+            ui_scroll_pt_scroll(&scroll_pos.y, sig.scroll_px.y/row_height_px, scroll_idx_rng, 0);
+          }
           if(sig.scroll.y != 0)
           {
             S64 new_idx = scroll_pos.y.idx + sig.scroll.y;
@@ -5601,18 +5606,22 @@ RD_VIEW_UI_FUNCTION_DEF(scroll_region_fixture)
   {
     S64 visible = (S64)dim_2f32(region.viewport).v[axis];
     Rng1S64 range = r1s64(0, Max(0, (S64)content_dim.v[axis]-visible));
-    state->position.v[axis].idx = clamp_1s64(range, state->position.v[axis].idx);
+    ui_scroll_pt_clamp_idx(&state->position.v[axis], range);
     axes[axis] = (UI_ScrollRegionAxis){state->position.v[axis], range, visible};
   }
   UI_Key key = ui_key_from_string(root->key, str8_lit("grid"));
   UI_ScrollRegionSignal region_sig = ui_scroll_region_build(root, key, &region, axes,
-    UI_BoxFlag_DrawBackground|UI_BoxFlag_Scroll|UI_BoxFlag_AllowOverflow);
+    UI_BoxFlag_DrawBackground|UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise|UI_BoxFlag_AllowOverflow);
   state->position = region_sig.position;
   UI_Signal sig = ui_signal_from_box(region_sig.content_box);
   for EachEnumVal(Axis2, axis)
   {
-    state->position.v[axis].idx = clamp_1s64(axes[axis].range, state->position.v[axis].idx + sig.scroll.v[axis]*30);
-    region_sig.content_box->view_off.v[axis] = region_sig.content_box->view_off_target.v[axis] = (F32)state->position.v[axis].idx;
+    ui_scroll_pt_scroll(&state->position.v[axis], sig.scroll_px.v[axis], axes[axis].range, 0);
+    if(sig.scroll.v[axis] != 0)
+    {
+      ui_scroll_pt_target_idx(&state->position.v[axis], clamp_1s64(axes[axis].range, state->position.v[axis].idx + sig.scroll.v[axis]*30));
+    }
+    region_sig.content_box->view_off.v[axis] = region_sig.content_box->view_off_target.v[axis] = (F32)state->position.v[axis].idx + state->position.v[axis].target_off;
   }
   UI_Parent(region_sig.content_box)
   {

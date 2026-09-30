@@ -160,6 +160,7 @@ uishell_dispatch_app_command(String8 name)
         ui_event.paths        = str8_list_copy(ui_build_arena(), &wm_event->strings);
         ui_event.pos          = wm_event->pos;
         ui_event.delta_2f32   = wm_event->delta;
+        ui_event.scroll_is_precise = wm_event->scroll_is_precise;
         ui_event.timestamp_us = wm_event->timestamp_us;
         CFG_Node *focused_view = cfg_node_from_id(uishell_regs()->view);
         B32 terminal_claims_keyboard_input = (!rd_state->popup_active &&
