@@ -1,5 +1,5 @@
 // No producer catalog: Andamento supplies coverage for observed local workspaces.
-region "tree" source="tree" root-template="tree/title" form="compact" placement="tree"
+region "tree" root-template="tree/title" form="compact" placement="tree"
 template "tree/title" slot="compact" node-kind="entity" {
   field "label" source="literal" value="Projects"
 }

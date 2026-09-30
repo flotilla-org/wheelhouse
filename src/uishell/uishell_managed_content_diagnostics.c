@@ -140,8 +140,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   // path records the managed target, so the first plan does not restart it.
   {
     String8 config = str8_lit(
-      "grouping \"roles\" { filter key=\"entity.kind\"; presence kind=\"role\" class=\"tab\"; level key=\"entity.id\"; }\n"
-      "region \"tree\" source=\"tree\" root-template=\"roles\" form=\"compact\" placement=\"tree\"\n"
+      "region \"tree\" root-template=\"roles\" form=\"compact\" placement=\"tree\"\n"
       "template \"roles\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Roles\"; }\n"
       "placement \"tree\" { for \"role\" kind=\"role\" { apply-template \"role/entry\"; }; }\n"
       "template \"role/entry\" { field \"label\" key=\"entity.id\"; }\n");
