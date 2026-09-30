@@ -121,8 +121,39 @@ entry_point(CmdLine *cmdline)
     }
     fp_font_close(handle);
   }
+  // The sidebar overview button uses the Machine glyph (M). Its raster must
+  // fit the compact button when positioned using the shared UI baseline rule.
+  FNT_Tag icon_font = fnt_tag_from_path(str8_lit("data/icons.ttf"));
+  FP_Handle icon_handle = fp_font_open(str8_lit("data/icons.ttf"));
+  U32 icon_failures = 0;
+  for(U32 size = 13; size <= 25; size += 4)
+  for(U32 scale = 1; scale <= 2; scale++)
+  {
+    Temp temp = temp_begin(arena);
+    FP_RasterResult raster = fp_raster(arena, icon_handle, (F32)(size*scale), FP_RasterFlag_Smooth, str8_lit("M"));
+    FNT_Run run = fnt_run_from_string_scaled(icon_font, (F32)size, (F32)scale, 0, 0, FNT_RasterFlag_Smooth, str8_lit("M"));
+    FNT_Metrics metrics = fnt_metrics_from_tag_size(icon_font, (F32)size);
+    F32 height = ceil_f32(size*1.6f);
+    F32 baseline = floor_f32(height/2.f + metrics.ascent/2.f - metrics.descent/2.f);
+    S32 top = raster.atlas_dim.y, bottom = -1;
+    for(S32 y = 0; y < raster.atlas_dim.y; y++)
+    for(S32 x = 0; x < raster.atlas_dim.x; x++)
+    {
+      if(((U8 *)raster.atlas)[4*(y*raster.atlas_dim.x+x)+3] >= 128)
+      { top = Min(top, y); bottom = Max(bottom, y); }
+    }
+    B32 pass = bottom >= top && run.pieces.count == 1;
+    F32 ink_top = pass ? baseline + run.pieces.v[0].offset.y + top/(F32)scale : -1;
+    F32 ink_bottom = pass ? baseline + run.pieces.v[0].offset.y + (bottom+1)/(F32)scale : height+1;
+    pass = pass && ink_top >= 1.f && ink_bottom <= height-1.f;
+    icon_failures += !pass;
+    if(!pass) fprintf(stderr, "FAIL workspace icon size=%u scale=%u ink=%.2f..%.2f button=1..%.2f\n", size, scale, ink_top, ink_bottom, height-1.f);
+    temp_end(temp);
+  }
+  fp_font_close(icon_handle);
+  printf("Workspace icon bounds: 8 cases, %u failures\n", icon_failures);
   dr_set_raster_scale(1.f);
   arena_release(arena);
   printf("Raster baselines: %u cases, %u failures\n", cases, failures);
-  exit(position_failures != 0 || failures != 0);
+  exit(position_failures != 0 || failures != 0 || icon_failures != 0);
 }

@@ -1131,10 +1131,13 @@ fnt_metrics_from_tag_size(FNT_Tag tag, F32 size)
     metrics.capital_height = 800.f;
   }
   {
-    result.ascent   = floor_f32(size) * metrics.ascent / metrics.design_units_per_em;
-    result.descent  = floor_f32(size) * metrics.descent / metrics.design_units_per_em;
-    result.line_gap = floor_f32(size) * metrics.line_gap / metrics.design_units_per_em;
-    result.capital_height = floor_f32(size) * metrics.capital_height / metrics.design_units_per_em;
+    // Providers rasterize point sizes at 96 DPI. Layout metrics must use the
+    // same logical-pixel scale as the glyphs placed on their baselines.
+    F32 pixel_size = floor_f32(size)*(96.f/72.f);
+    result.ascent   = pixel_size * metrics.ascent / metrics.design_units_per_em;
+    result.descent  = pixel_size * metrics.descent / metrics.design_units_per_em;
+    result.line_gap = pixel_size * metrics.line_gap / metrics.design_units_per_em;
+    result.capital_height = pixel_size * metrics.capital_height / metrics.design_units_per_em;
   }
   return result;
 }
