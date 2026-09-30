@@ -97,6 +97,7 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
   B32 visible[Axis2_COUNT] = {0};
   for EachEnumVal(Axis2, axis)
   {
+    ui_scroll_pt_clamp_idx(&axes[axis].position, axes[axis].range);
     result.position.v[axis] = axes[axis].position;
     visible[axis] = region->bar_enabled[axis] && (!overlay || axes[axis].range.max > axes[axis].range.min);
   }

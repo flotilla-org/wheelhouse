@@ -65,6 +65,7 @@ struct UI_ScrollListParams
   Rng2S64 cursor_range;
   Rng1S64 item_range;
   B32 cursor_min_is_empty_selection[Axis2_COUNT];
+  B32 snap_scroll; // opt-in precise row snapping, with a retained input remainder
 };
 
 typedef struct UI_ScrollListSignal UI_ScrollListSignal;

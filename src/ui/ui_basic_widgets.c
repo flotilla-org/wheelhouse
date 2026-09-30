@@ -1283,7 +1283,7 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
   S64 idx_range_dim = Max(dim_1s64(idx_range), 1);
   F32 thumb_fraction = Clamp(0.05f, (F32)((F64)Max(view_num_indices, 1)/((F64)idx_range_dim + Max(view_num_indices, 1))), 1.f);
   if(idx_range.min == idx_range.max) { thumb_fraction = 1.f; }
-  F32 position_fraction = Clamp(0.f, (F32)((F64)(pt.idx-idx_range.min)/(F64)idx_range_dim), 1.f);
+  F32 position_fraction = Clamp(0.f, (F32)(((F64)(pt.idx-idx_range.min) + pt.target_off)/(F64)idx_range_dim), 1.f);
 
   //- rjf: produce extra flags for cases in which scrolling is disabled
   UI_BoxFlags disabled_flags = 0;
@@ -1403,10 +1403,12 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
       UI_ScrollPt original_pt = drag_data->start_pt;
       F32 drag_delta = ui_drag_delta().v[axis];
       F32 drag_pct = drag_data->scroll_space_px > 0 ? drag_delta / drag_data->scroll_space_px : 0;
-      S64 new_idx = original_pt.idx + drag_pct*idx_range_dim;
-      new_idx = Clamp(idx_range.min, new_idx, idx_range.max);
-      ui_scroll_pt_target_idx(&new_pt, new_idx);
-      new_pt.off = 0;
+      new_pt = original_pt;
+      if(drag_delta != 0)
+      {
+        // Subtract indices as integers; dragging must not float a large index.
+        ui_scroll_pt_scroll(&new_pt, drag_pct*idx_range_dim, idx_range, 0);
+      }
     }
     if(ui_dragging(min_scroll_sig) || ui_dragging(space_before_sig))
     {
@@ -1442,6 +1444,8 @@ ui_active_scroll_bar_style(void)
   return ui_active_scroll_bar_style_v;
 }
 
+thread_static F32 ui_scroll_list_row_height_px = 0;
+thread_static B32 ui_scroll_list_snap_scroll = 0;
 thread_static UI_ScrollPt *ui_scroll_list_scroll_pt_ptr = 0;
 thread_static Rng1S64 ui_scroll_list_scroll_idx_rng = {0};
 
@@ -1450,7 +1454,8 @@ ui_scroll_list_begin(UI_ScrollListParams *params, UI_ScrollPt *scroll_pt, Vec2S6
 {
   //- rjf: unpack arguments
   Rng1S64 scroll_row_idx_range = r1s64(params->item_range.min, ClampBot(params->item_range.min, params->item_range.max-1));
-  S64 num_possible_visible_rows = (S64)(params->dim_px.y/params->row_height_px);
+  S64 num_possible_visible_rows = params->row_height_px > 0 ? (S64)(params->dim_px.y/params->row_height_px) : 0;
+  ui_scroll_pt_clamp_idx(scroll_pt, scroll_row_idx_range);
   
   //- rjf: do keyboard navigation
   B32 moved = 0;
@@ -1524,7 +1529,7 @@ ui_scroll_list_begin(UI_ScrollListParams *params, UI_ScrollPt *scroll_pt, Vec2S6
     if(params->item_range.min <= cursor_item_idx && cursor_item_idx <= params->item_range.max)
     {
       //- rjf: compute visible row range
-      Rng1S64 visible_row_range = r1s64(scroll_pt->idx + 0 - !!(scroll_pt->off < 0),
+      Rng1S64 visible_row_range = r1s64(scroll_pt->idx,
                                         scroll_pt->idx + 0 + num_possible_visible_rows + 1);
       
       //- rjf: compute cursor row range from cursor item
@@ -1556,6 +1561,8 @@ ui_scroll_list_begin(UI_ScrollListParams *params, UI_ScrollPt *scroll_pt, Vec2S6
   
   // Lists keep row navigation and wheel handling; the region owns both styles.
   ui_scroll_list_scroll_pt_ptr = scroll_pt;
+  ui_scroll_list_row_height_px = params->row_height_px;
+  ui_scroll_list_snap_scroll = params->snap_scroll;
   ui_scroll_list_scroll_idx_rng = scroll_row_idx_range;
   UI_Box *container_box;
   UI_FixedWidth(params->dim_px.x) UI_FixedHeight(params->dim_px.y) UI_ChildLayoutAxis(Axis2_Y)
@@ -1568,14 +1575,14 @@ ui_scroll_list_begin(UI_ScrollListParams *params, UI_ScrollPt *scroll_pt, Vec2S6
   axes[Axis2_Y] = (UI_ScrollRegionAxis){*scroll_pt, scroll_row_idx_range, num_possible_visible_rows};
   UI_Key key = ui_key_from_string(ui_active_seed_key(), str8_lit("###sp"));
   UI_ScrollRegionSignal region_sig = ui_scroll_region_build(container_box, key, &region, axes,
-                                                          UI_BoxFlag_AllowOverflowY|UI_BoxFlag_Scroll);
+                                                          UI_BoxFlag_AllowOverflowY|UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise);
   *scroll_pt = region_sig.position.y;
   UI_Box *scrollable_container_box = region_sig.content_box;
   scrollable_container_box->child_layout_axis = Axis2_Y;
-  scrollable_container_box->view_off.y = scrollable_container_box->view_off_target.y = params->row_height_px*mod_f32(scroll_pt->off, 1.f) + params->row_height_px*(scroll_pt->off < 0) - params->row_height_px*(scroll_pt->off == -1.f && scroll_pt->idx == 1);
+  scrollable_container_box->view_off.y = scrollable_container_box->view_off_target.y = params->row_height_px*(ui_scroll_pt_offset(*scroll_pt) - floor_f32(ui_scroll_pt_offset(*scroll_pt)));
   // Thumb movement affects this frame's virtualized content too.
-  Rng1S64 visible_row_range = r1s64(scroll_pt->idx + (S64)scroll_pt->off - !!(scroll_pt->off < 0),
-                            scroll_pt->idx + (S64)scroll_pt->off + num_possible_visible_rows + 1);
+  Rng1S64 visible_row_range = r1s64(scroll_pt->idx + (S64)floor_f32(ui_scroll_pt_offset(*scroll_pt)),
+                            scroll_pt->idx + (S64)floor_f32(ui_scroll_pt_offset(*scroll_pt)) + num_possible_visible_rows + 2);
   visible_row_range.min = clamp_1s64(params->item_range, visible_row_range.min);
   visible_row_range.max = clamp_1s64(params->item_range, visible_row_range.max);
   *visible_row_range_out = visible_row_range;
@@ -1594,6 +1601,11 @@ ui_scroll_list_end(void)
   //- rjf: scroll
   {
     UI_Signal sig = ui_signal_from_box(scrollable_container_box);
+    if(ui_scroll_list_row_height_px > 0)
+    {
+      ui_scroll_pt_scroll(ui_scroll_list_scroll_pt_ptr, sig.scroll_px.y/ui_scroll_list_row_height_px,
+                          ui_scroll_list_scroll_idx_rng, ui_scroll_list_snap_scroll);
+    }
     if(sig.scroll.y != 0)
     {
       S64 new_idx = ui_scroll_list_scroll_pt_ptr->idx + sig.scroll.y;

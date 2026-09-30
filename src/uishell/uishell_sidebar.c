@@ -878,11 +878,13 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
       axes[Axis2_Y].range = r1s64(0, Max(0, (S64)(content_heights[n]-heights[n])));
       axes[Axis2_Y].visible = (S64)heights[n];
-      axes[Axis2_Y].position.idx = clamp_1s64(axes[Axis2_Y].range, (S64)previous->view_off_target.y);
+      F32 target = Clamp(0.f, previous->view_off_target.y, (F32)axes[Axis2_Y].range.max);
+      axes[Axis2_Y].position.idx = (S64)target;
+      axes[Axis2_Y].position.target_off = target - (F32)axes[Axis2_Y].position.idx;
       UI_ScrollRegionSignal scroll = ui_scroll_region_build(root, content_key, &region, axes,
         UI_BoxFlag_ViewScrollY|UI_BoxFlag_ViewClamp|UI_BoxFlag_AllowOverflowY);
       UI_Box *body = scroll.content_box;
-      body->view_off_target.y = (F32)scroll.position.y.idx;
+      body->view_off_target.y = (F32)scroll.position.y.idx + scroll.position.y.target_off;
       body->view_off.y = Clamp(0.f, body->view_off.y, (F32)axes[Axis2_Y].range.max);
       body->child_layout_axis = Axis2_Y;
       UI_Parent(body) UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(row_height, 1))
@@ -1372,6 +1374,68 @@ uishell_sidebar_motion_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
   return ok;
 }
 
+// Real section bodies keep pixel fractions independently, across idle frames.
+internal B32
+uishell_sidebar_scroll_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *split)
+{
+  UI_State *saved = ui_state, *test = ui_state_alloc();
+  ui_select_state(test);
+  UIShell_SidebarState *state = uishell_sidebar_init(ws);
+  UI_Key keys[2] = {0};
+  F32 expected[2] = {0};
+  U32 found = 0, failures = 0;
+  for(U32 frame = 0; frame < 36; frame++)
+  {
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0};
+    animation.scroll_animation_rate = 0.5f;
+    UI_EventNode node = {0};
+    UI_EventList events = {0};
+    if(frame >= 4 && frame < 20 && found == 2)
+    {
+      U32 section = (frame/4)%2;
+      UI_Box *body = ui_box_from_key(keys[section]);
+      F32 delta = frame < 12 ? 0.25f : -0.125f;
+      node.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(body->rect),
+                         .delta_2f32 = {0, delta}, .scroll_is_precise = 1};
+      events.first = events.last = &node; events.count = 1;
+      expected[section] += delta;
+    }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = node.v.pos;
+    UI_Key root_key = ui_key_from_string(ui_active_seed_key(), str8_lit("###andamento_sidebar"));
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_sidebar_ui(r2f32p(0, 0, 320, 180), split); }
+    ui_end_build();
+    if(frame == 3)
+    {
+      for(UIShell_SidebarSection *section = state->sections; section && found < 2; section = section->next)
+      {
+        UI_Key key = ui_key_from_stringf(root_key, "section_body_%S", section->key);
+        UI_Box *body = ui_box_from_key(key);
+        if(!ui_box_is_nil(body) && dim_2f32(body->rect).y > 2 && body->view_bounds.y > body->fixed_size.y+2)
+        { keys[found++] = key; }
+      }
+      if(found != 2) { fprintf(stderr, "FAIL sidebar scroll fixture: expected two overflowing sections, got %u\n", found); failures++; break; }
+    }
+    if(frame >= 4)
+    {
+      if(events.count != 0) { failures++; }
+      for(U32 section = 0; section < found; section++)
+      {
+        UI_Box *body = ui_box_from_key(keys[section]);
+        if(abs_f32(body->view_off_target.y-expected[section]) > 0.00001f)
+        { fprintf(stderr, "FAIL sidebar fraction frame %u section %u: %g != %g\n", frame, section, body->view_off_target.y, expected[section]); failures++; }
+        if(frame == 35 && abs_f32(body->view_off.y-expected[section]) > 0.01f) { failures++; }
+      }
+    }
+  }
+  ui_select_state(saved);
+  ui_state_release(test);
+  fprintf(stderr, "Sidebar precise scroll diagnostics: %u failures\n", failures);
+  return failures == 0;
+}
+
 internal B32
 uishell_sidebar_diagnostics(CFG_Node *window)
 {
@@ -1469,6 +1533,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     andamento_effects_release(reveal_effects);
     state->reveal_workspace_id = 0;
     ok = ok && uishell_sidebar_motion_diagnostics(ws, &split, reveal_node.parent, created);
+    ok = uishell_sidebar_scroll_diagnostics(ws, &split) && ok;
     // A pending focus whose target disappears must be completed as a failure.
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {

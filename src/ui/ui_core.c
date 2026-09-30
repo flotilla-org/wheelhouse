@@ -345,17 +345,68 @@ ui_scroll_pt(S64 idx, F32 off)
 internal void
 ui_scroll_pt_target_idx(UI_ScrollPt *v, S64 idx)
 {
-  v->off = mod_f32(v->off, 1.f) + (F32)(v->idx+(S64)v->off - idx);
+  v->off = ui_scroll_pt_offset(*v) + (F32)(v->idx - idx);
   v->idx = idx;
+  v->target_off = 0;
+  v->remainder = 0;
 }
 
 internal void
 ui_scroll_pt_clamp_idx(UI_ScrollPt *v, Rng1S64 range)
 {
-  if(v->idx < range.min || range.max < v->idx)
+  range.max = Max(range.min, range.max);
+  if(v->idx < range.min || v->idx > range.max ||
+     (v->idx == range.max && v->target_off > 0) || range.min == range.max)
   {
-    S64 clamped = range.min;
-    ui_scroll_pt_target_idx(v, clamped);
+    v->idx = Clamp(range.min, v->idx, range.max);
+    v->target_off = v->off = v->remainder = 0;
+  }
+  if((v->idx == range.min && v->remainder < 0) ||
+     (v->idx == range.max && v->remainder > 0)) { v->remainder = 0; }
+  // Shrinking content must also bound the current animated position.
+  v->off = Clamp((F32)(range.min-v->idx)-v->target_off, v->off,
+                 (F32)(range.max-v->idx)-v->target_off);
+}
+
+internal F32
+ui_scroll_pt_offset(UI_ScrollPt v)
+{
+  return v.target_off + v.off;
+}
+
+// delta is in the content's units (rows for lists, coordinates for pixel views).
+// Adapted from RAD e8ecc312. Accumulate against the persistent target, not
+// animation displacement. Keep the large index out of floating-point arithmetic.
+internal void
+ui_scroll_pt_scroll(UI_ScrollPt *v, F32 delta, Rng1S64 range, B32 snap)
+{
+  range.max = Max(range.min, range.max);
+  ui_scroll_pt_clamp_idx(v, range);
+  if(delta == 0) { return; }
+  F64 amount = delta + (snap ? v->remainder + v->target_off : v->target_off);
+  S64 whole = snap ? (S64)amount : (S64)floor_f64(amount);
+  F64 fraction = amount - (F64)whole;
+  S64 next_idx = v->idx;
+  B32 clamped = 0;
+  if(whole < range.min - v->idx) { next_idx = range.min; clamped = 1; }
+  else if(whole > range.max - v->idx) { next_idx = range.max; clamped = 1; }
+  else { next_idx += whole; }
+  if((next_idx == range.min && fraction < 0) || (next_idx == range.max && fraction > 0))
+  {
+    clamped = 1;
+  }
+  if(clamped) { fraction = 0; }
+  if(snap)
+  {
+    if(next_idx != v->idx || v->target_off != 0) { ui_scroll_pt_target_idx(v, next_idx); }
+    v->remainder = fraction;
+  }
+  else
+  {
+    v->idx = next_idx;
+    v->target_off = fraction;
+    v->off = 0;
+    v->remainder = 0;
   }
 }
 
@@ -3106,13 +3157,20 @@ ui_signal_from_box(UI_Box *box)
       {
         Swap(F32, delta.x, delta.y);
       }
-      Vec2S16 delta16 = v2s16((S16)(delta.x/30.f), (S16)(delta.y/30.f));
-      if(delta.x > 0 && delta16.x == 0) { delta16.x = +1; }
-      if(delta.x < 0 && delta16.x == 0) { delta16.x = -1; }
-      if(delta.y > 0 && delta16.y == 0) { delta16.y = +1; }
-      if(delta.y < 0 && delta16.y == 0) { delta16.y = -1; }
-      sig.scroll.x += delta16.x;
-      sig.scroll.y += delta16.y;
+      if(evt->scroll_is_precise && box->flags & UI_BoxFlag_ScrollPrecise)
+      {
+        sig.scroll_px = add_2f32(sig.scroll_px, delta);
+      }
+      else
+      {
+        Vec2S16 delta16 = v2s16((S16)(delta.x/30.f), (S16)(delta.y/30.f));
+        if(delta.x > 0 && delta16.x == 0) { delta16.x = +1; }
+        if(delta.x < 0 && delta16.x == 0) { delta16.x = -1; }
+        if(delta.y > 0 && delta16.y == 0) { delta16.y = +1; }
+        if(delta.y < 0 && delta16.y == 0) { delta16.y = -1; }
+        sig.scroll.x += delta16.x;
+        sig.scroll.y += delta16.y;
+      }
       taken = 1;
     }
     
