@@ -6,6 +6,22 @@ display-variable "show-finished" type="bool" default=false label="Show finished"
 
 display-variable "show-role-attempts" type="bool" default=false label="Role attempts" icon="R" persist=true
 
+// First matching rule wins: finished role attempts follow Show finished.
+// Shared by tree and Attention; hidden open workspaces remain in the fallback.
+visibility "wheelhouse/activity" {
+  when kind="convoy" visible-when="show-finished" { match "flotilla.convoy.superseded" value="true"; }
+  when kind="vessel" visible-when="show-finished" { match "flotilla.convoy.superseded" value="true"; }
+  when kind="convoy" visible-when="show-finished" { match "flotilla.convoy.phase" value="landed"; }
+  when kind="vessel" visible-when="show-finished" { match "flotilla.convoy.phase" value="landed"; }
+  when kind="convoy" visible-when="show-finished" { match "flotilla.convoy.phase" value="cancelled"; }
+  when kind="vessel" visible-when="show-finished" { match "flotilla.convoy.phase" value="cancelled"; }
+  when kind="convoy" visible-when="show-finished" { match "flotilla.convoy.phase" value="abandoned"; }
+  when kind="vessel" visible-when="show-finished" { match "flotilla.convoy.phase" value="abandoned"; }
+  when kind="convoy" visible-when="show-role-attempts" { match "flotilla.role" exists=true; }
+  when kind="vessel" visible-when="show-role-attempts" { match "flotilla.role" exists=true; }
+  when kind="issue" visible-when="show-issues"
+}
+
 region "tree" root-template="wheelhouse/projects" form="compact" placement="tree"
 region "sessions" root-template="wheelhouse/sessions" form="compact" placement="sessions"
 region "attention" root-template="wheelhouse/attention" form="compact" placement="attention"
@@ -43,12 +59,12 @@ template "project/native" {
     order "display.label"
     apply-template "wheelhouse/entry"
   }
-  for "convoy" kind="convoy" {
+  for "convoy" kind="convoy" visibility="wheelhouse/activity" {
     match "flotilla.project" of="project"
     order "display.label"
     apply-template "convoy/native"
   }
-  for "issue" kind="issue" {
+  for "issue" kind="issue" visibility="wheelhouse/activity" {
     match "flotilla.project" of="project"
     order "display.label"
     apply-template "wheelhouse/entry"
@@ -58,7 +74,7 @@ template "convoy/native" {
   field "label" key="display.label"
   field "kind" key="entity.kind"
   field "status" key="status.state"
-  for "vessel" kind="vessel" layout="inline" {
+  for "vessel" kind="vessel" visibility="wheelhouse/activity" layout="inline" {
     match "flotilla.convoy" of="convoy"
     order "display.label"
     apply-template "wheelhouse/entry"
@@ -71,7 +87,7 @@ placement "sessions" {
   }
 }
 placement "attention" {
-  for "attention" {
+  for "attention" visibility="wheelhouse/activity" {
     match "status.attention" value="true"
     order "display.label"
     apply-template "wheelhouse/attention-entry"
