@@ -6,68 +6,25 @@ display-variable "show-finished" type="bool" default=false label="Show finished"
 
 display-variable "show-role-attempts" type="bool" default=false label="Role attempts" icon="R" persist=true
 
-// Flotilla derives this from stable project/role identity and generations.
-grouping "wheelhouse.superseded" priority=1200 {
-  filter key="flotilla.convoy.superseded" equals=true
-  presence kind="convoy" class="tab" visible-when="show-finished"
-  presence kind="vessel" class="tab" visible-when="show-finished"
-  level key="entity.id"
+// First matching rule wins: finished role attempts follow Show finished.
+// Shared by tree and Attention; hidden open workspaces remain in the fallback.
+visibility "wheelhouse/activity" {
+  when kind="convoy" visible-when="show-finished" { match "flotilla.convoy.superseded" value="true"; }
+  when kind="vessel" visible-when="show-finished" { match "flotilla.convoy.superseded" value="true"; }
+  when kind="convoy" visible-when="show-finished" { match "flotilla.convoy.phase" value="landed"; }
+  when kind="vessel" visible-when="show-finished" { match "flotilla.convoy.phase" value="landed"; }
+  when kind="convoy" visible-when="show-finished" { match "flotilla.convoy.phase" value="cancelled"; }
+  when kind="vessel" visible-when="show-finished" { match "flotilla.convoy.phase" value="cancelled"; }
+  when kind="convoy" visible-when="show-finished" { match "flotilla.convoy.phase" value="abandoned"; }
+  when kind="vessel" visible-when="show-finished" { match "flotilla.convoy.phase" value="abandoned"; }
+  when kind="convoy" visible-when="show-role-attempts" { match "flotilla.role" exists=true; }
+  when kind="vessel" visible-when="show-role-attempts" { match "flotilla.role" exists=true; }
+  when kind="issue" visible-when="show-issues"
 }
 
-grouping "wheelhouse.finished-landed" priority=1100 {
-  filter key="flotilla.convoy.phase" equals="landed"
-  presence kind="convoy" class="tab" visible-when="show-finished"
-  presence kind="vessel" class="tab" visible-when="show-finished"
-  level key="entity.id"
-}
-
-grouping "wheelhouse.finished-cancelled" priority=1100 {
-  filter key="flotilla.convoy.phase" equals="cancelled"
-  presence kind="convoy" class="tab" visible-when="show-finished"
-  presence kind="vessel" class="tab" visible-when="show-finished"
-  level key="entity.id"
-}
-
-grouping "wheelhouse.finished-abandoned" priority=1100 {
-  filter key="flotilla.convoy.phase" equals="abandoned"
-  presence kind="convoy" class="tab" visible-when="show-finished"
-  presence kind="vessel" class="tab" visible-when="show-finished"
-  level key="entity.id"
-}
-
-// A standing role's action on its project row is the current attempt. The
-// attempt's convoy and vessels are history-like detail; showing them too would
-// offer a second workspace for the same terminal. Flotilla puts flotilla.role on
-// every entity grouped under a known role's attempt, and on the role itself.
-grouping "wheelhouse.role-attempts" priority=1050 {
-  filter key="flotilla.role" exists=true
-  presence kind="role" class="tab"
-  presence kind="convoy" class="tab" visible-when="show-role-attempts"
-  presence kind="vessel" class="tab" visible-when="show-role-attempts"
-  presence kind="checkout" class="tab"
-  presence kind="issue" class="inline" visible-when="show-issues"
-  level key="entity.id"
-}
-
-// Native placements own the hierarchy. The current core still consults
-// presence/grouping for activation; a unique entity path avoids the legacy
-// single-member collapse that can make a vessel impossible to open.
-grouping "wheelhouse.activation" priority=1000 {
-  filter key="entity.kind"
-  presence kind="project" class="tab"
-  presence kind="role" class="tab"
-  presence kind="checkout" class="tab"
-  presence kind="convoy" class="tab"
-  presence kind="vessel" class="tab"
-  presence kind="session" class="tab"
-  presence kind="repo" class="inline"
-  presence kind="issue" class="inline" visible-when="show-issues"
-  level key="entity.id"
-}
-
-region "tree" source="tree" root-template="wheelhouse/projects" form="compact" placement="tree"
-region "sessions" source="tree" root-template="wheelhouse/sessions" form="compact" placement="sessions"
-region "attention" source="attention" root-template="wheelhouse/attention" form="compact" placement="attention"
+region "tree" root-template="wheelhouse/projects" form="compact" placement="tree"
+region "sessions" root-template="wheelhouse/sessions" form="compact" placement="sessions"
+region "attention" root-template="wheelhouse/attention" form="compact" placement="attention"
 
 template "wheelhouse/projects" slot="compact" node-kind="entity" {
   field "label" source="literal" value="Projects"
@@ -102,12 +59,12 @@ template "project/native" {
     order "display.label"
     apply-template "wheelhouse/entry"
   }
-  for "convoy" kind="convoy" {
+  for "convoy" kind="convoy" visibility="wheelhouse/activity" {
     match "flotilla.project" of="project"
     order "display.label"
     apply-template "convoy/native"
   }
-  for "issue" kind="issue" {
+  for "issue" kind="issue" visibility="wheelhouse/activity" {
     match "flotilla.project" of="project"
     order "display.label"
     apply-template "wheelhouse/entry"
@@ -117,7 +74,7 @@ template "convoy/native" {
   field "label" key="display.label"
   field "kind" key="entity.kind"
   field "status" key="status.state"
-  for "vessel" kind="vessel" layout="inline" {
+  for "vessel" kind="vessel" visibility="wheelhouse/activity" layout="inline" {
     match "flotilla.convoy" of="convoy"
     order "display.label"
     apply-template "wheelhouse/entry"
@@ -130,7 +87,7 @@ placement "sessions" {
   }
 }
 placement "attention" {
-  for "attention" {
+  for "attention" visibility="wheelhouse/activity" {
     match "status.attention" value="true"
     order "display.label"
     apply-template "wheelhouse/attention-entry"

@@ -6,9 +6,9 @@ static const char uishell_sidebar_fixture_config[] =
 "}\n"
 "display-variable \"show-issues\" type=\"bool\" default=true label=\"Issues\" icon=\"I\"\n"
 "\n"
-"region \"tree\" source=\"tree\" root-template=\"tree/title\" form=\"compact\" placement=\"tree\"\n"
-"region \"attention\" source=\"attention\" root-template=\"attention/title\" form=\"compact\" placement=\"attention\"\n"
-"region \"controls\" source=\"controls\" root-template=\"controls/title\" form=\"compact\" pinned=true\n"
+"region \"tree\" root-template=\"tree/title\" form=\"compact\" placement=\"tree\"\n"
+"region \"attention\" root-template=\"attention/title\" form=\"compact\" placement=\"attention\"\n"
+"region \"controls\" root-template=\"controls/title\" form=\"compact\" pinned=true\n"
 "\n"
 "template \"tree/title\" slot=\"compact\" node-kind=\"entity\" {\n"
 "  field \"label\" source=\"literal\" value=\"Projects\"\n"
@@ -49,7 +49,7 @@ static const char uishell_sidebar_fixture_patches[] =
 "{\"target\": {\"kind\": \"entity\", \"value\": {\"kind\": \"vessel\", \"id\": \"multi\"}}, \"source_id\": \"fixture\", \"set\": {\"flotilla.project\": {\"value\": {\"type\": \"text\", \"value\": \"p\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"flotilla.vessel\": {\"value\": {\"type\": \"text\", \"value\": \"multi\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"display.label\": {\"value\": {\"type\": \"text\", \"value\": \"Example workspace\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"status.attention\": {\"value\": {\"type\": \"bool\", \"value\": true}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"status.state\": {\"value\": {\"type\": \"text\", \"value\": \"waiting\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"action.primary.target\": {\"value\": {\"type\": \"text\", \"value\": \"vessel:multi\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}, \"action.primary.recipe\": {\"value\": {\"type\": \"text\", \"value\": \"printf 'Wheelhouse sidebar fixture\\\\n'; exec /bin/sh\"}, \"ttl_ms\": null, \"precedence\": null, \"ordinal\": null}}, \"unset\": []}\n";
 static const char uishell_sidebar_local_config[] =
 "// No producer catalog: Andamento supplies coverage for observed local workspaces.\n"
-"region \"tree\" source=\"tree\" root-template=\"tree/title\" form=\"compact\" placement=\"tree\"\n"
+"region \"tree\" root-template=\"tree/title\" form=\"compact\" placement=\"tree\"\n"
 "template \"tree/title\" slot=\"compact\" node-kind=\"entity\" {\n"
 "  field \"label\" source=\"literal\" value=\"Projects\"\n"
 "}\n"
