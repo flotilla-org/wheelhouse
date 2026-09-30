@@ -156,6 +156,9 @@ jobs:
       - name: macOS keyboard event regression
         if: runner.os == 'macOS'
         run: bash src/mac/window_manager/tests/run_key_events.sh
+      - name: macOS scroll event regression
+        if: runner.os == 'macOS'
+        run: bash src/mac/window_manager/tests/run_scroll_events.sh
       - name: macOS UI diagnostics
         if: runner.os == 'macOS'
         run: |
