@@ -6425,6 +6425,74 @@ uishell_terminal_codepoint_is_block_element(U32 codepoint)
   return result;
 }
 
+// Filled Powerline separators are cell graphics, independent of font metrics.
+// U+E0B0/2 are triangles; U+E0B4/6 are rounded caps. Other PUA symbols keep
+// their font fallback. Rounded geometry uses the same radius rule as Ghostty:
+// min(cell width, half cell height), with a straight middle for tall cells.
+internal B32
+uishell_terminal_codepoint_is_powerline_separator(U32 cp)
+{
+  return cp == 0xE0B0 || cp == 0xE0B2 || cp == 0xE0B4 || cp == 0xE0B6;
+}
+
+internal B32
+uishell_terminal_draw_powerline_separator(U32 cp, Rng2F32 cell, Vec4F32 color)
+{
+  if(!uishell_terminal_codepoint_is_powerline_separator(cp)) { return 0; }
+  F32 w = cell.x1-cell.x0, h = cell.y1-cell.y0;
+  if(w <= 0 || h <= 0) { return 1; }
+  B32 left = cp == 0xE0B2 || cp == 0xE0B6;
+  F32 scale = Max(1.f, dr_raster_scale());
+  if(cp == 0xE0B4 || cp == 0xE0B6)
+  {
+    F32 radius = Min(w, h/2.f);
+    F32 join = left ? cell.x1 : cell.x0;
+    Rng2F32 clip = dr_top_clip();
+    if(clip.x1 > clip.x0 && clip.y1 > clip.y0)
+    {
+      clip = intersect_2f32(clip, cell);
+      if(clip.x1 <= clip.x0 || clip.y1 <= clip.y0) { return 1; }
+    }
+    else { clip = cell; }
+    // Clip half of a capsule. Its flat joining edge has no antialias inset.
+    DR_ClipScope(clip)
+    { dr_rect(r2f32p(join-radius, cell.y0, join+radius, cell.y1), color, radius, 0, 0.5f/scale); }
+  }
+  else
+  {
+    // Scanline coverage for the diagonal edge, at the current device scale.
+    // Emit one solid span plus the few partially covered edge pixels per row.
+    // Rect-only render backends need no new triangle primitive or font atlas.
+    for(F32 y = 0; y < h; y += 1.f/scale)
+    {
+      F32 dy = Min(1.f/scale, h-y), extent[4], min_extent = w*scale, max_extent = 0;
+      for(U32 sample = 0; sample < ArrayCount(extent); sample++)
+      {
+        F32 sy = y + dy*((F32)sample+0.5f)/(F32)ArrayCount(extent);
+        extent[sample] = w*scale*(1.f-abs_f32(2.f*sy/h-1.f));
+        min_extent = Min(min_extent, extent[sample]);
+        max_extent = Max(max_extent, extent[sample]);
+      }
+      F32 solid = floor_f32(min_extent);
+      if(solid > 0)
+      {
+        F32 x0 = left ? cell.x1-solid/scale : cell.x0;
+        dr_rect(r2f32p(x0, cell.y0+y, x0+solid/scale, cell.y0+y+dy), color, 0, 0, 0);
+      }
+      for(F32 x = solid; x < ceil_f32(max_extent); x++)
+      {
+        F32 coverage = 0;
+        for(U32 sample = 0; sample < ArrayCount(extent); sample++)
+        { coverage += Clamp(0.f, extent[sample]-x, 1.f)/(F32)ArrayCount(extent); }
+        Vec4F32 edge_color = color; edge_color.w *= coverage;
+        F32 x0 = left ? cell.x1-(x+1.f)/scale : cell.x0+x/scale;
+        dr_rect(r2f32p(x0, cell.y0+y, x0+1.f/scale, cell.y0+y+dy), edge_color, 0, 0, 0);
+      }
+    }
+  }
+  return 1;
+}
+
 internal B32
 uishell_terminal_codepoint_is_direct_sprite(U32 codepoint)
 {
@@ -6437,7 +6505,8 @@ uishell_terminal_codepoint_is_direct_sprite(U32 codepoint)
   else
   {
     UIShell_TerminalBoxLines lines = {0};
-    result = (uishell_terminal_box_lines_from_codepoint(codepoint, &lines) ||
+    result = (uishell_terminal_codepoint_is_powerline_separator(codepoint) ||
+              uishell_terminal_box_lines_from_codepoint(codepoint, &lines) ||
               uishell_terminal_codepoint_is_block_element(codepoint) ||
               (0x2800 <= codepoint && codepoint <= 0x28FF));
   }
@@ -6447,7 +6516,8 @@ uishell_terminal_codepoint_is_direct_sprite(U32 codepoint)
 internal B32
 uishell_terminal_draw_direct_sprite(U32 codepoint, Rng2F32 cell_rect, Vec4F32 color)
 {
-  B32 result = (uishell_terminal_draw_box_drawing(codepoint, cell_rect, color) ||
+  B32 result = (uishell_terminal_draw_powerline_separator(codepoint, cell_rect, color) ||
+                uishell_terminal_draw_box_drawing(codepoint, cell_rect, color) ||
                 uishell_terminal_draw_block_element(codepoint, cell_rect, color) ||
                 uishell_terminal_draw_braille_pattern(codepoint, cell_rect, color));
   return result;
@@ -7575,6 +7645,45 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
     };
     FNT_Metrics primary_metrics = fnt_metrics_from_tag_size(primary_font, font_size);
     F32 diagnostic_text_y = 32.f;
+
+    // Powerline joins are cell graphics: no font side bearing or baseline gap.
+    for(U32 cp = 0xE0B0; cp <= 0xE0B6; cp += 2)
+    for(U32 tall = 0; tall < 2; tall++)
+    {
+      // Readback target dimensions are physical pixels (no window backing scale).
+      F32 saved_scale = dr_raster_scale();
+      dr_set_raster_scale(1.f);
+      F32 w = tall ? 19.f : 12.f, h = tall ? 43.f : 24.f;
+      cleat_cell cells[2] = {0};
+      cleat_rgb white = {255,255,255}, black = {0,0,0};
+      B32 left = cp == 0xE0B2 || cp == 0xE0B6;
+      U32 space = ' ';
+      cells[left ? 1 : 0] = uishell_terminal_diagnostic_cell_from_codepoints(&space, 1, 0, CLEAT_CELL_WIDTH_NARROW);
+      cells[left ? 1 : 0].bg = white;
+      cells[left ? 0 : 1] = uishell_terminal_diagnostic_cell_from_codepoints(&cp, 1, 0, CLEAT_CELL_WIDTH_NARROW);
+      cells[left ? 0 : 1].fg = white;
+      cells[left ? 0 : 1].bg = black;
+      UIShell_TerminalCellFeed feed = {.cols=2,.rows=1,.cells=cells,.cell_count=2};
+      UIShell_TerminalDrawParams params = {.canvas_rect=r2f32p(0,0,2*w,h),.cell_width_px=w,.cell_height_px=h,.background_color=v4f32(0,0,0,1)};
+      DR_Bucket *bucket = dr_bucket_make();
+      DR_BucketScope(bucket)
+      { UIShell_TerminalCursorArray cursors = {0}; uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(scratch.arena,&renderer,&params,&feed,cursors); }
+      R_Readback pixels = r_pass_list_readback(scratch.arena,v2s32((S32)(2*w),(S32)h),&bucket->passes);
+      if(pixels.data.size != 0 && pixels.format == R_Tex2DFormat_BGRA8)
+      {
+        S32 x = left ? (S32)w-1 : (S32)w;
+        for(S32 y=0; y<(S32)h; y++)
+        {
+          U8 blue = pixels.data.str[4*(y*pixels.size.x+x)];
+          if(blue < 8)
+          { log_user_errorf("Powerline U+%X has a gap at join row %i (height %.0f)",cp,y,h); result=0; break; }
+        }
+      }
+#if OS_MAC
+      else { log_user_errorf("Powerline diagnostic readback unavailable"); result=0; }
+#endif
+      dr_set_raster_scale(saved_scale);
+    }
 
     // Cursor movement must change colour, not the geometry of a stationary row.
     {
@@ -8978,7 +9087,7 @@ uishell_terminal_fixture_snapshot(Arena *arena, U16 cols, U16 rows)
   uishell_terminal_fixture_put_string(&snapshot, cells, graphemes, 10, 0, str8_lit("Braille:"), accent, bg, 0);
   uishell_terminal_fixture_put_codepoints(&snapshot, cells, graphemes, 10, 9, braille, ArrayCount(braille), accent, bg, 0);
 
-  U32 fallback[] = {0x03BB, ' ', 0x2713, ' ', 0x2605, ' ', 0x2190, 0x2191, 0x2192, 0x2193, ' ', 0xE0B0, 0xE0B1, 0xE0B2, 0xE0B3};
+  U32 fallback[] = {0x03BB, ' ', 0x2713, ' ', 0x2605, ' ', 0x2190, 0x2191, 0x2192, 0x2193, ' ', 0xE0B0, 0xE0B1, 0xE0B2, 0xE0B3, 0xE0B4, 0xE0B6};
   uishell_terminal_fixture_put_string(&snapshot, cells, graphemes, 12, 0, str8_lit("Fallback/PUA:"), fg, bg, 0);
   uishell_terminal_fixture_put_codepoints(&snapshot, cells, graphemes, 12, 14, fallback, ArrayCount(fallback), fg, bg, 0);
 
