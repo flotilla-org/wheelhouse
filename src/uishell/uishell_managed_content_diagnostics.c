@@ -206,7 +206,8 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     producer[0].text = uishell_sidebar_text(str8_lit("/tmp"));
     producer[1].key = uishell_sidebar_text(str8_lit("action.primary.recipe"));
     producer[1].kind = ANDAMENTO_FACT_TEXT;
-    producer[1].text = uishell_sidebar_text(str8_lit("test \"$PWD\" = /tmp && printf W; read answer"));
+    // /tmp may be a symlink (macOS); compare directory identity, not spelling.
+    producer[1].text = uishell_sidebar_text(str8_lit("test \"$PWD\" -ef /tmp && printf W; read answer"));
     ManagedCheck(andamento_apply_entity(opened.core, 0, uishell_sidebar_text(str8_lit("worktree")),
       uishell_sidebar_text(str8_lit("producer-worktree")), uishell_sidebar_text(str8_lit("fixture")), producer, 2, 0),
       "producer recipe and root accepted without managed state");
