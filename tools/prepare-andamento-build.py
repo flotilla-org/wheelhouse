@@ -16,7 +16,7 @@ output.mkdir(parents=True, exist_ok=True)
 (output / 'Cargo.toml').write_text(
     '[package]\nname = "wheelhouse-native-deps"\nversion = "0.1.0"\nedition = "2021"\n'
     '[lib]\nname = "wheelhouse_ingress"\ncrate-type = ["cdylib", "rlib"]\npath = ' + json.dumps(str(root / 'src/ingress/lib.rs')) + '\n'
-    '[[bin]]\nname = \"andamento-git-watcher\"\npath = ' + json.dumps(str(source.parent / 'andamento-git-watcher/src/main.rs')) + '\n'
+    '[[bin]]\nname = "andamento-git-watcher"\npath = ' + json.dumps(str(source.parent / 'andamento-git-watcher/src/main.rs')) + '\n'
     '[dependencies]\nandamento-git-watcher = { path = ' + json.dumps(str(source.parent / 'andamento-git-watcher')) + ' }\n'
     'andamento-ffi = { path = ' + json.dumps(str(source)) + ' }\n'
     '[target.\'cfg(unix)\'.dependencies]\naxum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }\ntokio = { version = "1", features = ["rt", "net", "sync", "time", "macros"] }\nserde_json = "1"\nlibc = "0.2"\n[workspace]\n', encoding='utf-8')

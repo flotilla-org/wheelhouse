@@ -1,8 +1,8 @@
 # Wheelhouse observed workdirs / Git producer validation
 
 Validated on Linux against Andamento PR #112 commit
-`c92ea96180ff2efd97e7670a28c001e09ef46ee6`, Cleat from the vessel checkout,
-and Jackstay pin `91156bfac2bc2f6df168c928b445c98e002f4950`.
+`c92ea96180ff2efd97e7670a28c001e09ef46ee6`, Cleat CI pin
+`87b9d853be9a2858ef73f82ea8442a9ae30683e7`, and Jackstay pin `91156bfac2bc2f6df168c928b445c98e002f4950`.
 
 - HTTP/Unix-socket ingress: 8 tests passed, including a real Wheelhouse process,
   saved and live-directory response fields, two views plus a directory-less view,
