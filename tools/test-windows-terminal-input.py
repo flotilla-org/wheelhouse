@@ -90,8 +90,9 @@ def check(executable):
                 return windows[0] if windows else None
 
             hwnd = wait_for(window, "test window")
-            wait_for(lambda: (directory / "ready").exists(), "VT input fixture")
-            child_pid = int((directory / "ready").read_text())
+            ready = directory / "ready"
+            child_pid = int(wait_for(lambda: ready.read_text() if ready.exists() else "",
+                                    "VT input fixture"))
             child_handle = kernel.OpenProcess(0x100000, False, child_pid)
             if not child_handle:
                 raise C.WinError(C.get_last_error())
