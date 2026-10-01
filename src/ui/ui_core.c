@@ -3213,6 +3213,10 @@ ui_signal_from_box(UI_Box *box)
     //- rjf: taken -> eat event
     if(taken)
     {
+      if(evt_key_is_mouse && (evt->kind == UI_EventKind_Press || evt->kind == UI_EventKind_Release))
+      {
+        ui_event_list_push(ui_build_arena(), &sig.mouse_events, evt);
+      }
       ui_eat_event(evt);
     }
   }
