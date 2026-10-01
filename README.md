@@ -139,11 +139,11 @@ Debugger app targets and local RAD utility/tool build targets have been removed 
 scripts/run-daily-driver.sh
 ```
 
-This builds Wheelhouse, launches its live Andamento sidebar, watches the current
-checkout with the Python git producer, and runs `flotilla pm connect` against the
+This builds Wheelhouse and the native Andamento git watcher, launches its live
+Andamento sidebar, discovers git worktrees from configured roots and terminal directories, and runs `flotilla pm connect` against the
 local daemon. It uses Wheelhouse's native `data/sidebar/daily-driver.kdl` template.
-Projects contain checkouts, convoys/vessels, and issues; sessions have their own
-section. Attention is a second placement of the same entities. The project tree
+Projects contain checkouts, convoys/vessels, and issues; sessions and Git have
+their own sections. Attention is a second placement of the same entities. The project tree
 is the only sidebar, including when an older saved `sidebar_mode` value exists.
 
 Use the disclosure arrow to expand a branch. Clicking an entry runs its supplied
@@ -152,8 +152,8 @@ when it was opened from Attention or an alias such as a one-vessel convoy.
 The current workspace has a highlighted row. Tooltips explain each entry's action;
 entries without a recipe show information inside the sidebar when clicked.
 Sections scroll independently, and display controls stay at the bottom.
-The native template gives checkouts workspace presence, so the git producer's
-shell recipe can open too. It does not use the legacy grouping tree in Andamento's
+The native template gives worktrees workspace presence, so the git producer's
+shell recipe opens a terminal in its root. It does not use the legacy grouping tree in Andamento's
 Zellij template, which native snapshots deliberately omit.
 
 Use a Flotilla binary with the HTTP/UDS `pm connect` sink. The launcher
@@ -167,7 +167,7 @@ and a `FLOTILLA_BIN` hint; the full diagnostic remains in `logs/flotilla.log`.
 ```sh
 # Git facts only; no Flotilla binary or daemon needed.
 scripts/run-daily-driver.sh --git-only
-# Watch several checkouts and use an existing Wheelhouse build.
+# Watch several checkouts using existing Wheelhouse and watcher builds.
 scripts/run-daily-driver.sh --no-build --repo ~/dev/wheelhouse --repo ~/dev/flotilla
 # Use a particular Flotilla build.
 FLOTILLA_BIN=/path/to/flotilla scripts/run-daily-driver.sh
@@ -186,14 +186,19 @@ directory are replaced on the next launch; saved layouts are retained.
 `WHEELHOUSE_BIN` selects an existing binary and skips the build. `FLOTILLA_ROOT`
 overrides the sibling Flotilla checkout. `WHEELHOUSE_ANDAMENTO_DIR` (or
 `ANDAMENTO_ROOT`) selects Andamento; `WHEELHOUSE_ANDAMENTO_CONFIG` overrides the
-KDL template. Normal `WHEELHOUSE_CLEAT_*` build overrides also apply.
+KDL template. `ANDAMENTO_GIT_WATCHER_BIN` selects an existing watcher and skips
+its build; otherwise the launcher builds the native target of the sibling
+`andamento-git-watcher` crate. `--no-build` reuses both binaries, and `--no-git`
+omits the watcher entirely. Normal `WHEELHOUSE_CLEAT_*` build overrides also apply.
 
 `python3 tools/test-native-sidebar.py /path/to/libandamento_ffi.dylib` (or `.so`)
 checks the shipped hierarchy, opening capability, and shared Open/Focus identity
 through the real C ABI.
 
 `python3 tools/test-daily-driver.py` checks producer delivery, profile locking,
-startup failure, producer failure, restart, and process cleanup with a fake UI.
+startup failure, producer failure, restart, and process cleanup with controlled
+UI, watcher, and connector processes. Real HTTP/UDS delivery is covered by
+`tools/test-andamento-ingress.py`.
 
 ### Live Andamento facts (Unix)
 

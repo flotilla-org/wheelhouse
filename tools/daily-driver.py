@@ -104,12 +104,13 @@ def run(args, binary, template, state):
         stack.callback(stop, app)
         wait_ready(app, path)
         producers = []
-        for index, repo in enumerate(args.repo):
-            name = f'git-{index}'
-            process = launch(name, [sys.executable, '-u', str(ROOT / 'tools/andamento-publish.py'),
-                                    '--socket', path, '--repo', str(repo)])
+        if args.repo:
+            command = [str(args.watcher), '--transport', 'wheelhouse', '--socket', path]
+            for repo in args.repo:
+                command.extend(['--roots', str(repo)])
+            process = launch('git', command)
             stack.callback(stop, process)
-            producers.append((name, process))
+            producers.append(('git', process))
         connector_log_start = 0
 
         def launch_connector(append=False):
@@ -173,7 +174,7 @@ def run(args, binary, template, state):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--no-build', action='store_true', help='use the existing Wheelhouse binary')
+    parser.add_argument('--no-build', action='store_true', help='use existing Wheelhouse and git watcher binaries')
     parser.add_argument('--no-git', action='store_true', help='omit local git discovery; use provider facts only')
     parser.add_argument('--git-only', action='store_true', help='omit Flotilla; publish only local git facts')
     parser.add_argument('--repo', type=Path, action='append', help='git checkout to watch; repeatable, defaults to current directory')
@@ -202,6 +203,22 @@ def main():
         if not args.no_build and 'WHEELHOUSE_BIN' not in os.environ:
             subprocess.run(['bash', 'build.sh', 'wheelhouse'], cwd=ROOT,
                            env={**os.environ, 'WHEELHOUSE_ANDAMENTO_DIR': str(andamento)}, check=True)
+        if args.repo:
+            if 'ANDAMENTO_GIT_WATCHER_BIN' in os.environ:
+                args.watcher = Path(os.environ['ANDAMENTO_GIT_WATCHER_BIN']).resolve()
+            else:
+                version = subprocess.check_output(['rustc', '-vV'], text=True)
+                host = next(line.split(': ', 1)[1] for line in version.splitlines() if line.startswith('host: '))
+                target = Path(os.environ.get('WHEELHOUSE_ANDAMENTO_TARGET_DIR',
+                              os.environ.get('CARGO_TARGET_DIR', andamento / 'target'))).resolve()
+                args.watcher = target / host / 'debug/andamento-git-watcher'
+                if not args.no_build:
+                    subprocess.run([sys.executable, str(ROOT / 'tools/prepare-andamento-build.py'), str(andamento)], check=True)
+                    subprocess.run(['cargo', 'build', '--manifest-path', str(ROOT / 'build/andamento/Cargo.toml'),
+                                    '-p', 'wheelhouse-native-deps', '--bin', 'andamento-git-watcher', '--locked', '--target', host,
+                                    '--target-dir', str(target)], check=True)
+            if not os.access(args.watcher, os.X_OK):
+                parser.error(f'Andamento git watcher not found: {args.watcher}; build andamento#107 or set ANDAMENTO_GIT_WATCHER_BIN')
         if not os.access(binary, os.X_OK):
             parser.error(f'Wheelhouse binary not found: {binary}; run bash build.sh wheelhouse')
         return run(args, binary, template, state)

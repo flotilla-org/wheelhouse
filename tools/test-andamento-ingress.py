@@ -228,6 +228,10 @@ class IngressTests(unittest.TestCase):
                     self.assertTrue(all(row['live_cwd'] is None and row['entity_id'] is None for row in rows))
                 finally:
                     connection.close()
+                if os.environ.get('WHEELHOUSE_TEST_WATCHER'):
+                    subprocess.run([os.environ['WHEELHOUSE_TEST_WATCHER'], '--transport', 'wheelhouse',
+                                    '--socket', path, '--roots', str(ROOT), '--once'],
+                                   check=True, timeout=30, stdout=log, stderr=log)
                 publish(path, patch('project', 'native', {
                     'display.label': 'Native HTTP project', 'flotilla.project': 'native'}))
                 connection = UnixHTTPConnection(path)
