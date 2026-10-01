@@ -212,7 +212,7 @@ runtime_dir=$(mktemp -d /tmp/wheelhouse.XXXXXX)
 From another terminal, publish real git facts without Flotilla:
 
 ```sh
-python3 tools/andamento-publish.py --socket /path/to/facts.sock --repo /path/to/checkout
+andamento-git-watcher --transport wheelhouse --socket /path/to/facts.sock --roots /path/to/checkout
 ```
 
 Or use a Flotilla build with the HTTP sink:
@@ -222,6 +222,37 @@ Clicking an entry runs its supplied recipe in an ordinary Terminal View;
 Flotilla's recipes use `flotilla attach` or `flotilla view`. Resource enumeration
 and dynamic overflow tabs remain follow-up work. A new window receives facts
 on the producer's next periodic reassertion.
+
+Producers discover terminal directories with `GET /v1/observed/workdirs` on
+that same Unix socket. A successful response is `200 application/json` with
+`Cache-Control: no-store`:
+
+```json
+{"workdirs":[{"workspace_id":42,"view_id":81,"entity_kind":"worktree","entity_id":"example","cwd":"/saved/root","live_cwd":null}]}
+```
+
+Each poll takes a fresh UI-thread snapshot of terminal views, including
+unselected views. `cwd` is the saved launch directory; `live_cwd` is reserved
+for a provider-reported current directory. Both are nullable, and views with
+neither are omitted. Prefer a nonempty `live_cwd`, falling back to `cwd`.
+The current Cleat provider API does not report live directories, so Wheelhouse
+currently returns null for `live_cwd`. Numeric host IDs remain stable while
+the workspace/view exists in this process; do not cache them across restarts.
+The nullable `entity_kind` and `entity_id` carry the persisted producer identity
+when the workspace has one. Empty inventory is `{"workdirs":[]}`; multiple
+views may have the same directory. There is no cursor or subscription.
+Poll periodically (the watcher defaults to five seconds); a full queue, missing
+observer, or UI response timeout returns 503, which is not an empty inventory.
+The existing `POST /v1/metadata/patch` behavior is unchanged.
+
+The Rust watcher from [Andamento #107](https://github.com/flotilla-org/andamento/issues/107)
+replaces `tools/andamento-publish.py`. Its repo/worktree facts populate the Git
+section using `git.repo` relationships, `git.root`, branch and dirty state.
+The native `layout="fields"` presentation measures template fields and removes
+optional, then low-priority fields as width shrinks; required branch/dirty fields
+remain, with normal text elision at very small widths. Producer medium/short
+labels come from the shared abbreviation tiers. Live daily-driver validation
+with the paired watcher remains pending; automated diagnostics are isolated.
 
 The build now also produces `wheelhouse_ingress`, a Wheelhouse-owned Rust HTTP
 adapter with a small C boundary. Andamento's core remains transport-independent.

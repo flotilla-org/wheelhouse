@@ -642,6 +642,39 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
   return action;
 }
 
+// Template field classes supply a generic width ladder: optional fields go
+// first, then lower-priority fields; required fields retain normal UI elision.
+internal String8
+uishell_sidebar_fields(Arena *arena, AndamentoSnapshot *snapshot, AndamentoNode node, F32 width)
+{
+  B32 *keep = push_array(arena, B32, node.field_count);
+  for(U64 i = 0; i < node.field_count; i++) { keep[i] = 1; }
+  String8 result = str8_zero();
+  for(U64 attempt = 0; attempt <= node.field_count; attempt++)
+  {
+    result = str8_zero();
+    U64 remove = ANDAMENTO_NONE;
+    S64 lowest = max_S64;
+    for(U64 i = 0; i < node.field_count; i++)
+    {
+      if(!keep[i]) { continue; }
+      AndamentoField field = {0};
+      andamento_snapshot_field(snapshot, node.first_field+i, &field);
+      String8 text = uishell_sidebar_string(field.text);
+      if(text.size) { result = result.size ? push_str8f(arena, "%S · %S", result, text) : text; }
+      if(field.class_ != ANDAMENTO_FIELD_REQUIRED)
+      {
+        S64 priority = field.class_ == ANDAMENTO_FIELD_OPTIONAL ? min_S64 : field.has_priority ? field.priority : 0;
+        if(remove == ANDAMENTO_NONE || priority < lowest) { remove = i; lowest = priority; }
+      }
+    }
+    F32 measured = fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, result).x;
+    if(measured <= width || remove == ANDAMENTO_NONE) { break; }
+    keep[remove] = 0;
+  }
+  return result;
+}
+
 internal void
 uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 {
@@ -1016,6 +1049,8 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 // Text remains available in the tooltip; terse marks distinguish
                 // selected/open workspaces from producer activity state.
                 String8 display = context.size ? push_str8f(scratch.arena, "%S · %S", label, context) : label;
+                if(str8_match(uishell_sidebar_string(node.layout), str8_lit("fields"), 0))
+                { display = uishell_sidebar_fields(scratch.arena, state->snapshot, node, Max(0.f, dim.x-em*6.f)); }
                 UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###entry_%S", display, node_key));
                 if(project && project_child_heights[i] > 0 && project_open[i] > 0)
                 {
@@ -1436,6 +1471,8 @@ uishell_sidebar_scroll_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
   return failures == 0;
 }
 
+#include "uishell/uishell_git_diagnostics.c"
+
 internal B32
 uishell_sidebar_diagnostics(CFG_Node *window)
 {
@@ -1534,6 +1571,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     state->reveal_workspace_id = 0;
     ok = ok && uishell_sidebar_motion_diagnostics(ws, &split, reveal_node.parent, created);
     ok = uishell_sidebar_scroll_diagnostics(ws, &split) && ok;
+    ok = uishell_sidebar_git_diagnostics(ws, &split) && ok;
     // A pending focus whose target disappears must be completed as a failure.
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
@@ -1612,11 +1650,53 @@ uishell_sidebar_apply_live(void *unused, const U8 *data, size_t size)
   return rejected ? 0 : (unavailable || !applied) ? 2 : 1;
 }
 
+internal WheelhouseIngressText
+uishell_ingress_text(String8 text)
+{
+  return (WheelhouseIngressText){text.str, text.size};
+}
+
+// Walk persisted terminal views, including unselected tabs and workspaces.
+// Cleat currently exposes no live cwd in its provider ABI; leave that field
+// empty rather than mistaking the saved launch directory for a live report.
+internal U32
+uishell_sidebar_observed_workdirs(void *unused, WheelhouseWorkdirEmit emit, void *context)
+{
+  Temp scratch = scratch_begin(0, 0);
+  for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
+  {
+    CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    for(UIShell_MaterializedWorkspace *w = split.inventory.first; w; w = w->next)
+    {
+      CFG_Node *workspace = w->mount.owner_cfg;
+      CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
+      CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
+      for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+      {
+        for(CFG_NodePtrNode *tab = p->tabs.first; tab; tab = tab->next)
+        {
+          if(!str8_match(tab->v->string, str8_lit("terminal"), 0)) { continue; }
+          String8 cwd = cfg_node_child_from_string(tab->v, str8_lit("cwd"))->first->string;
+          if(!cwd.size) { continue; }
+          WheelhouseWorkdir record = {w->id, tab->v->id,
+            uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string),
+            uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string),
+            uishell_ingress_text(cwd), {0}};
+          emit(context, &record);
+        }
+      }
+    }
+  }
+  scratch_end(scratch);
+  return 1;
+}
+
 internal void
 uishell_sidebar_poll_live(void)
 {
   if(uishell_ingress == 0) { return; }
-  wheelhouse_ingress_poll(uishell_ingress, uishell_sidebar_apply_live, 0);
+  wheelhouse_ingress_poll_observed(uishell_ingress, uishell_sidebar_apply_live, uishell_sidebar_observed_workdirs, 0);
   U64 now = wheelhouse_ingress_now_ms();
   if(now - uishell_sidebar_last_tick >= 250)
   {

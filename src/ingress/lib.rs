@@ -2,6 +2,22 @@
 use std::ffi::c_void;
 
 pub type Wake = extern "C" fn();
+#[repr(C)]
+pub struct Text {
+    pub data: *const u8,
+    pub len: usize,
+}
+#[repr(C)]
+pub struct Workdir {
+    pub workspace_id: u64,
+    pub view_id: u64,
+    pub entity_kind: Text,
+    pub entity_id: Text,
+    pub cwd: Text,
+    pub live_cwd: Text,
+}
+pub type Emit = unsafe extern "C" fn(*mut c_void, *const Workdir);
+pub type Observe = unsafe extern "C" fn(*mut c_void, Emit, *mut c_void) -> u32;
 pub type Apply = unsafe extern "C" fn(*mut c_void, *const u8, usize) -> u32;
 
 #[cfg(unix)]
@@ -11,6 +27,7 @@ mod unix {
         body::Bytes,
         extract::{DefaultBodyLimit, State},
         http::{HeaderMap, StatusCode},
+        response::{IntoResponse, Response},
         routing::{get, post},
         Router,
     };
@@ -23,9 +40,14 @@ mod unix {
     };
     use tokio::sync::oneshot;
 
-    pub struct Pending {
-        pub body: Bytes,
-        pub reply: oneshot::Sender<u32>,
+    pub enum Pending {
+        Patch {
+            body: Bytes,
+            reply: oneshot::Sender<u32>,
+        },
+        Workdirs {
+            reply: oneshot::Sender<Option<serde_json::Value>>,
+        },
     }
     pub struct Ingress {
         pub queue: mpsc::Receiver<Pending>,
@@ -55,7 +77,11 @@ mod unix {
             return StatusCode::BAD_REQUEST;
         }
         let (reply, response) = oneshot::channel();
-        if state.queue.try_send(Pending { body, reply }).is_err() {
+        if state
+            .queue
+            .try_send(Pending::Patch { body, reply })
+            .is_err()
+        {
             return StatusCode::SERVICE_UNAVAILABLE;
         }
         (state.wake)();
@@ -63,6 +89,25 @@ mod unix {
             Ok(Ok(1)) => StatusCode::NO_CONTENT,
             Ok(Ok(0)) => StatusCode::UNPROCESSABLE_ENTITY,
             _ => StatusCode::SERVICE_UNAVAILABLE,
+        }
+    }
+
+    async fn workdirs(State(state): State<Shared>) -> Response {
+        let (reply, response) = oneshot::channel();
+        if state.queue.try_send(Pending::Workdirs { reply }).is_err() {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+        (state.wake)();
+        match tokio::time::timeout(Duration::from_secs(5), response).await {
+            Ok(Ok(Some(value))) => (
+                [
+                    ("cache-control", "no-store"),
+                    ("content-type", "application/json"),
+                ],
+                value.to_string(),
+            )
+                .into_response(),
+            _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         }
     }
 
@@ -121,6 +166,7 @@ mod unix {
                         let app = Router::new()
                             .route("/v1/health", get(|| async { StatusCode::NO_CONTENT }))
                             .route("/v1/metadata/patch", post(patch))
+                            .route("/v1/observed/workdirs", get(workdirs))
                             .layer(DefaultBodyLimit::max(1024 * 1024))
                             .with_state(Shared { queue, wake });
                         let server = axum::serve(listener, app);
@@ -210,20 +256,73 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll(
     apply: Apply,
     context: *mut c_void,
 ) {
+    wheelhouse_ingress_poll_observed(server, apply, None, context);
+}
+
+/// Drain patch and read requests on the UI thread. Each emitted record is
+/// copied during the callback; no host pointer reaches the transport thread.
+///
+/// # Safety
+/// Same handle/context requirements as poll. Observe must call emit synchronously
+/// with valid UTF-8 buffers (NULL only for length zero), and must not unwind.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
+    server: *mut Ingress,
+    apply: Apply,
+    observe: Option<Observe>,
+    context: *mut c_void,
+) {
     #[cfg(unix)]
     if let Some(server) = server.as_mut() {
+        unsafe extern "C" fn emit(context: *mut c_void, record: *const Workdir) {
+            let values = &mut *(context as *mut Vec<serde_json::Value>);
+            let r = &*record;
+            unsafe fn text(t: &Text) -> Option<String> {
+                if t.len == 0 {
+                    None
+                } else {
+                    Some(
+                        String::from_utf8_lossy(std::slice::from_raw_parts(t.data, t.len))
+                            .into_owned(),
+                    )
+                }
+            }
+            let cwd = text(&r.cwd);
+            let live_cwd = text(&r.live_cwd);
+            if cwd.is_none() && live_cwd.is_none() {
+                return;
+            }
+            values.push(
+                serde_json::json!({"workspace_id": r.workspace_id, "view_id": r.view_id,
+                "entity_kind": text(&r.entity_kind), "entity_id": text(&r.entity_id),
+                "cwd": cwd, "live_cwd": live_cwd}),
+            );
+        }
         for _ in 0..64 {
             let Ok(pending) = server.queue.try_recv() else {
                 break;
             };
-            if !pending.reply.is_closed() {
-                let outcome = apply(context, pending.body.as_ptr(), pending.body.len());
-                let _ = pending.reply.send(outcome);
+            match pending {
+                unix::Pending::Patch { body, reply } => {
+                    if !reply.is_closed() {
+                        let outcome = apply(context, body.as_ptr(), body.len());
+                        let _ = reply.send(outcome);
+                    }
+                }
+                unix::Pending::Workdirs { reply } => {
+                    if !reply.is_closed() {
+                        let mut values: Vec<serde_json::Value> = Vec::new();
+                        let ok = observe.is_some_and(|f| {
+                            f(context, emit, &mut values as *mut _ as *mut c_void) == 1
+                        });
+                        let _ = reply.send(ok.then(|| serde_json::json!({"workdirs": values})));
+                    }
+                }
             }
         }
     }
     #[cfg(not(unix))]
-    let _ = (server, apply, context);
+    let _ = (server, apply, observe, context);
 }
 
 /// Stop the worker and release the listener.

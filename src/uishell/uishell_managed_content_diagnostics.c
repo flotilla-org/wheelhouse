@@ -191,6 +191,51 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     andamento_destroy(opened.core);
     cfg_node_release(rd_state->cfg, role_workspace);
   }
+  // Producer worktrees use the ordinary recipe/cwd path without opting into
+  // managed replacement or introducing a git-specific host branch.
+  {
+    String8 config = str8_lit(
+      "region \"git\" root-template=\"worktree/title\" form=\"compact\" placement=\"git\"\n"
+      "template \"worktree/title\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Git\"; }\n"
+      "placement \"git\" { for \"worktree\" kind=\"worktree\" { field \"label\" key=\"entity.id\"; }; }\n");
+    UIShell_SidebarState opened = {0};
+    opened.core = andamento_create(config.str, config.size, 0);
+    AndamentoFact producer[2] = {0};
+    producer[0].key = uishell_sidebar_text(str8_lit("git.root"));
+    producer[0].kind = ANDAMENTO_FACT_TEXT;
+    producer[0].text = uishell_sidebar_text(str8_lit("/tmp"));
+    producer[1].key = uishell_sidebar_text(str8_lit("action.primary.recipe"));
+    producer[1].kind = ANDAMENTO_FACT_TEXT;
+    producer[1].text = uishell_sidebar_text(str8_lit("test \"$PWD\" = /tmp && printf W; read answer"));
+    ManagedCheck(andamento_apply_entity(opened.core, 0, uishell_sidebar_text(str8_lit("worktree")),
+      uishell_sidebar_text(str8_lit("producer-worktree")), uishell_sidebar_text(str8_lit("fixture")), producer, 2, 0),
+      "producer recipe and root accepted without managed state");
+    uishell_sidebar_refresh(&opened);
+    size_t activate = ANDAMENTO_NONE;
+    for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("producer-worktree"), 0))
+      { ManagedCheck(node.state == ANDAMENTO_LATENT, "producer worktree starts latent"); activate = node.activate; }
+    }
+    ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(opened.core, opened.snapshot, activate, 0),
+                 "producer worktree activation dispatches");
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_effects(&opened, &split);
+    CFG_Node *worktree_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
+    CFG_Node *worktree_panels = cfg_node_child_from_string(worktree_workspace, str8_lit("panels"));
+    CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(scratch.arena, worktree_panels, Axis2_X);
+    CFG_Node *worktree_view = tree.root->tabs.first ? tree.root->tabs.first->v : &cfg_nil_node;
+    ManagedCheck(str8_match(cfg_node_child_from_string(worktree_view, str8_lit("cwd"))->first->string, str8_lit("/tmp"), 0),
+                 "materialized producer terminal saves git.root");
+    uishell_managed_diagnostic_frame(ws, worktree_view);
+    UIShell_TerminalViewState *worktree_tv = rd_view_state_from_cfg(worktree_view)->user_data;
+    ManagedCheck(worktree_tv && uishell_managed_diagnostic_marker(worktree_tv->session, 'W'),
+                 "materialized producer terminal actually runs at git.root");
+    uishell_terminal_runtime_release(worktree_tv);
+    cfg_node_release(rd_state->cfg, worktree_workspace);
+    uishell_sidebar_release(&opened);
+  }
   uishell_terminal_runtime_release(tv);
   cfg_node_release(rd_state->cfg, workspace);
   ui_select_state(saved);
