@@ -21,6 +21,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "andamento-git-watcher"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -506,6 +513,7 @@ name = "wheelhouse-native-deps"
 version = "0.1.0"
 dependencies = [
  "andamento-ffi",
+ "andamento-git-watcher",
  "axum",
  "libc",
  "serde_json",

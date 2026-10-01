@@ -163,3 +163,36 @@ template "issue/detail" slot="detail" node-kind="entity" {
   field "summary" key="summary.text"
   use "wheelhouse/hover-details"
 }
+
+// Host-independent git producer contract, shared with andamento-git.kdl.
+region "git" root-template="wheelhouse/git" form="compact" placement="git"
+template "wheelhouse/git" slot="compact" node-kind="entity" {
+  field "label" source="literal" value="Git"
+}
+placement "git" {
+  for "repo" kind="repo" layout="fields" tier="medium" {
+    order "display.label"
+    apply-template "repo/native"
+  }
+}
+template "repo/native" {
+  field "label" class="required" key="display.label"
+  for "worktree" kind="worktree" layout="fields" tier="short" {
+    match "git.repo" of="repo"
+    order "git.root"
+    apply-template "worktree/native"
+  }
+}
+template "worktree/native" {
+  field "label" class="optional" key="display.label"
+  field "branch" class="required" key="git.branch"
+  field "dirty" class="required" key="git.dirty" prefix="dirty:"
+  field "ahead" class="priority" priority=20 key="git.ahead" prefix="↑"
+  field "behind" class="priority" priority=20 key="git.behind" prefix="↓"
+}
+template "worktree/detail" slot="detail" node-kind="entity" {
+  field "root" key="git.root" prefix="Path: "
+  field "branch" key="git.branch" prefix="Branch: "
+  field "dirty" key="git.dirty" prefix="Dirty: "
+  field "upstream" key="git.upstream" prefix="Upstream: "
+}

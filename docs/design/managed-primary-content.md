@@ -95,3 +95,25 @@ project hover card lists each `project_repository` relation through a loop in
 `project/detail`, which Andamento evaluates as related-entity detail rather than
 tree rows. `tools/test-native-sidebar.py` covers ordering, subpaths, exclusion of
 other projects' memberships, and that memberships are never placed.
+
+## Observed worktree directories
+
+The host now supplies a full list of terminal launch directories through
+`andamento_observe_workdirs`, after workspace topology. Andamento matches exact
+nonempty materialization roots without selecting an entity kind. An existing
+terminal at a producer's `git.root` makes its row live and activation focuses
+that workspace. Explicit materialization bindings take precedence; changing a
+directory or closing a view removes its derived association. Observational
+matches never persist an opener identity or enroll a user terminal in managed
+replacement.
+
+A producer entity needs only `action.primary.recipe` and `git.root` to open a
+new terminal in that directory. The explicit `workspace.primary.state` contract
+above still governs subsequent managed replacement. `--managed_content_diagnostics`
+checks a latent worktree, a real terminal launched in its root, matching/focusing
+an existing terminal without duplication or replacement, and a directory change.
+
+This requires the additive API in Andamento #112. The ingress adapter exposes the
+same inventory at `GET /v1/observed/workdirs`; see the README for polling and
+identity semantics. Cleat currently has no live cwd report, so the adapter uses
+saved launch directories. Interactive daily-driver acceptance remains pending.

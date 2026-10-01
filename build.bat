@@ -102,7 +102,7 @@ if "%wheelhouse%"=="1" (
   if "%WHEELHOUSE_ANDAMENTO_TARGET_DIR%"=="" (set andamento_target_dir=!andamento_dir!\target) else (set andamento_target_dir=%WHEELHOUSE_ANDAMENTO_TARGET_DIR%)
   set andamento_lib_dir=!andamento_target_dir!\!andamento_target!\!cargo_profile!
   python tools\prepare-andamento-build.py "!andamento_dir!" || exit /b 1
-  cargo build --manifest-path "%~dp0build\andamento\Cargo.toml" -p andamento-ffi -p wheelhouse-native-deps --locked --target !andamento_target! --target-dir "!andamento_target_dir!" !cargo_profile_flags! || exit /b 1
+  cargo build --manifest-path "%~dp0build\andamento\Cargo.toml" -p andamento-ffi -p wheelhouse-native-deps -p andamento-git-watcher --locked --target !andamento_target! --target-dir "!andamento_target_dir!" !cargo_profile_flags! || exit /b 1
   set auto_compile_flags=!auto_compile_flags! -I"!andamento_dir!\crates\andamento-ffi\include"
   set andamento_link="!andamento_lib_dir!\andamento_ffi.dll.lib" "!andamento_lib_dir!\wheelhouse_ingress.dll.lib"
   python tools\embed-sidebar-fixture.py || exit /b 1
@@ -123,7 +123,7 @@ if "%wheelhouse%"=="1" (
 )
 
 :: --- Compile/Link Line Definitions ------------------------------------------
-set cl_common=     /I..\src\ /I..\local\ /nologo /FC /Z7 /Zc:preprocessor
+set cl_common=     /I..\src\ /I..\local\ /nologo /FC /Z7 /Zc:preprocessor /utf-8
 set cl_debug=      call cl /Od /Ob1 /DBUILD_DEBUG=1 %cl_common% %auto_compile_flags%
 set cl_release=    call cl /O2 /DBUILD_DEBUG=0 %cl_common% %auto_compile_flags%
 set cl_link=       /link /MANIFEST:EMBED /INCREMENTAL:NO /pdbaltpath:%%%%_PDB%%%% /NATVIS:"%~dp0\src\natvis\base.natvis" /noexp /nocoffgrpinfo /opt:ref /opt:icf

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise launcher lifecycle with a fake UI and the real git producer."""
+"""Exercise launcher lifecycle with controlled UI, watcher, and connector processes."""
 import os
 from pathlib import Path
 import shutil
@@ -38,6 +38,23 @@ if os.environ.get('FAIL_PRODUCER') or (os.environ.get('FAIL_PRODUCER_UNTIL') and
 print('connector ready', flush=True)
 while True: time.sleep(1)
 '''
+FAKE_WATCHER = '''#!/usr/bin/env python3
+import http.client, os, socket, sys, time
+assert sys.argv[1:3] == ['--transport', 'wheelhouse'], sys.argv
+path = sys.argv[sys.argv.index('--socket') + 1]
+roots = [sys.argv[i+1] for i, value in enumerate(sys.argv) if value == '--roots']
+assert roots
+print('args=' + repr(sys.argv[1:]), flush=True)
+print('pid=' + str(os.getpid()), flush=True)
+connection = http.client.HTTPConnection('localhost')
+connection.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+connection.sock.connect(path)
+connection.request('POST', '/v1/metadata/patch', '{}')
+assert connection.getresponse().status == 204
+connection.close()
+while all(os.path.isdir(root) for root in roots): time.sleep(.1)
+sys.exit(8)
+'''
 MISMATCH_FLOTILLA = '''#!/usr/bin/env python3
 import sys
 print('wire generation mismatch: client fingerprint old speaks proto 21 (build old+dirty); '
@@ -53,10 +70,11 @@ class DailyDriverTests(unittest.TestCase):
         self.state = self.directory / 'saved settings'
         self.app = self.directory / 'fake wheelhouse'
         self.flotilla = self.directory / 'fake flotilla'
-        for path, content in [(self.app, FAKE_APP), (self.flotilla, FAKE_FLOTILLA)]:
+        self.watcher = self.directory / 'fake watcher'
+        for path, content in [(self.app, FAKE_APP), (self.flotilla, FAKE_FLOTILLA), (self.watcher, FAKE_WATCHER)]:
             path.write_text(content)
             path.chmod(0o755)
-        self.env = {**os.environ, 'WHEELHOUSE_BIN': str(self.app), 'FLOTILLA_BIN': str(self.flotilla),
+        self.env = {**os.environ, 'WHEELHOUSE_BIN': str(self.app), 'ANDAMENTO_GIT_WATCHER_BIN': str(self.watcher), 'FLOTILLA_BIN': str(self.flotilla),
                     'HOME': str(self.directory), 'FLOTILLA_ROOT': str(self.directory / 'dev'),
                     'WHEELHOUSE_DAILY_DIR': str(self.state), 'WHEELHOUSE_ANDAMENTO_CONFIG': str(ROOT / 'data/sidebar/fixture.kdl')}
         self.command = [str(ROOT / 'scripts/run-daily-driver.sh'), '--repo', str(ROOT)]
@@ -96,6 +114,9 @@ class DailyDriverTests(unittest.TestCase):
     def test_full_launch_lock_signal_cleanup_and_restart(self):
         process = self.start()
         self.ready(process, connector=True)
+        watcher = self.log('git')
+        self.assertIn("'--transport', 'wheelhouse', '--socket'", watcher)
+        self.assertIn("'--roots', " + repr(str(ROOT)), watcher)
         connector = self.log('flotilla')
         self.assertIn("'pm', 'connect', '--wheelhouse-socket'", connector)
         self.assertIn(str(self.flotilla), connector)
@@ -117,6 +138,23 @@ class DailyDriverTests(unittest.TestCase):
         os.kill(int(self.log('wheelhouse').split('pid=', 1)[1].splitlines()[0]), signal.SIGUSR1)
         self.assertEqual(restarted.wait(timeout=10), 0)
         self.assertEqual((self.state / 'user').read_text(), 'saved layout')
+
+    def test_missing_watcher_fails_before_starting_app(self):
+        process = self.start(ANDAMENTO_GIT_WATCHER_BIN=str(self.directory / 'missing'))
+        self.assertNotEqual(process.wait(timeout=10), 0)
+        self.assertIn('Andamento git watcher not found', process.stdout.read())
+        self.assertFalse((self.state / 'logs/wheelhouse.log').exists())
+
+    def test_no_git_does_not_require_watcher(self):
+        self.command = self.command[:1]
+        process = self.start(['--no-git'], ANDAMENTO_GIT_WATCHER_BIN=str(self.directory / 'missing'))
+        deadline = time.monotonic() + 10
+        while 'connector ready' not in self.log('flotilla') and time.monotonic() < deadline:
+            if process.poll() is not None:
+                self.fail(process.stdout.read())
+            time.sleep(.05)
+        self.assertIn('connector ready', self.log('flotilla'))
+        self.assertFalse((self.state / 'logs/git.log').exists())
 
     def test_startup_failure_does_not_start_producers(self):
         process = self.start(FAIL_START='1')
@@ -204,9 +242,10 @@ class DailyDriverTests(unittest.TestCase):
         process = self.start(['--git-only', '--repo', str(repo)])
         self.ready(process)
         pid = int(self.log('wheelhouse').split('pid=', 1)[1].splitlines()[0])
+        self.assertIn(repr(str(repo)), self.log('git'))
         shutil.rmtree(repo)
         self.assertEqual(process.wait(timeout=10), 1)
-        self.assertIn('git-1 producer exited with status', process.stdout.read())
+        self.assertIn('git producer exited with status', process.stdout.read())
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
 

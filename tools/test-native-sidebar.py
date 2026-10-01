@@ -95,6 +95,34 @@ class NativeSidebarTests(unittest.TestCase):
             self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
         self.snapshots = []
 
+    def test_git_fixture_groups_and_materializes_worktrees(self):
+        for line in (ROOT / 'data/sidebar/git-fixture.jsonl').read_text().splitlines():
+            self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(line), None), 1)
+        snapshot, nodes = self.snapshot()
+        repos = [node for node in nodes if node.entity_kind.string() == 'repo']
+        worktrees = [node for node in nodes if node.entity_kind.string() == 'worktree']
+        self.assertEqual(len(repos), 2)
+        self.assertEqual(len(worktrees), 4)
+        for node in worktrees:
+            parent = nodes[node.parent]
+            self.assertEqual(parent.entity_kind.string(), 'repo')
+            self.assertIn(parent.entity_id.string().split('/')[-1], node.entity_id.string())
+            self.assertEqual(node.state, 1)  # latent
+            fields = []
+            for index in range(node.first_field, node.first_field + node.field_count):
+                field = Field()
+                self.assertEqual(lib.andamento_snapshot_field(snapshot, index, C.byref(field)), 1)
+                fields.append(field.text.string())
+            self.assertTrue(any(text.startswith('dirty:') for text in fields), fields)
+        self.assertEqual(lib.andamento_dispatch(self.core, snapshot, worktrees[0].activate, None), 1)
+        batch = lib.andamento_effects_take(self.core, None)
+        effect = Effect()
+        self.assertEqual(lib.andamento_effects_get(batch, 0, C.byref(effect)), 1)
+        self.assertEqual(effect.recipe.string(), '/bin/sh')
+        self.assertEqual(effect.has_cwd, 1)
+        self.assertEqual(effect.cwd.string(), worktrees[0].entity_id.string())
+        lib.andamento_effects_release(batch)
+
     def test_snapshot_validity_tracks_core_changes(self):
         displayed = lib.andamento_snapshot_acquire(self.core, None)
         self.snapshots.append(displayed)

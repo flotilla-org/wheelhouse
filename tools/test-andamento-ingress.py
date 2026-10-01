@@ -3,7 +3,6 @@
 import concurrent.futures
 import ctypes as C
 import http.client
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -19,13 +18,45 @@ LIBDIR = Path(sys.argv.pop(1))
 SUFFIX = '.dylib' if sys.platform == 'darwin' else '.so'
 lib = C.CDLL(str(LIBDIR / ('libwheelhouse_ingress' + SUFFIX)))
 core = C.CDLL(str(LIBDIR / ('libandamento_ffi' + SUFFIX)))
-spec = importlib.util.spec_from_file_location('publisher', ROOT / 'tools/andamento-publish.py')
-publisher = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(publisher)
+class UnixHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, path):
+        super().__init__('localhost', timeout=7)
+        self.path = path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.path)
+
+
+def patch(kind, identity, facts):
+    return {'type': 'metadata-patch', 'target': {'kind': 'entity', 'value': {'kind': kind, 'id': identity}},
+            'source_id': 'ingress.test', 'set': {
+                key: {'value': {'type': 'text', 'value': value}, 'ttl_ms': 6000}
+                for key, value in {'entity.kind': kind, 'entity.id': identity, **facts}.items()}, 'unset': []}
+
+
+def publish(path, value):
+    connection = UnixHTTPConnection(path)
+    try:
+        connection.request('POST', '/v1/metadata/patch', json.dumps(value), {'Content-Type': 'application/json'})
+        response = connection.getresponse()
+        response.read()
+        if response.status != 204:
+            raise AssertionError(f'patch failed: HTTP {response.status}')
+    finally:
+        connection.close()
+
 WAKE = C.CFUNCTYPE(None)
 APPLY = C.CFUNCTYPE(C.c_uint32, C.c_void_p, C.c_void_p, C.c_size_t)
 class Text(C.Structure):
     _fields_ = [('data', C.c_void_p), ('len', C.c_size_t)]
+class Workdir(C.Structure):
+    _fields_ = [('workspace_id', C.c_uint64), ('view_id', C.c_uint64)] + [
+        (key, Text) for key in ['entity_kind', 'entity_id', 'cwd', 'live_cwd']]
+EMIT = C.CFUNCTYPE(None, C.c_void_p, C.POINTER(Workdir))
+OBSERVE = C.CFUNCTYPE(C.c_uint32, C.c_void_p, EMIT, C.c_void_p)
+lib.wheelhouse_ingress_poll_observed.argtypes = [C.c_void_p, APPLY, OBSERVE, C.c_void_p]
 lib.wheelhouse_ingress_start.argtypes = [C.c_char_p, C.c_size_t, WAKE, C.c_void_p, C.c_size_t]
 lib.wheelhouse_ingress_start.restype = C.c_void_p
 lib.wheelhouse_ingress_poll.argtypes = [C.c_void_p, APPLY, C.c_void_p]
@@ -55,6 +86,17 @@ class IngressTests(unittest.TestCase):
             self.received.append(C.string_at(data, size))
             return core.andamento_apply_patch_json(self.core, 0, Text(data, size), None)
         self.apply = APPLY(apply)
+        self.workdirs = []
+        self.observed = 0
+        self.available = True
+        def observe(_, emit, context):
+            self.observed += 1
+            for workspace_id, view_id, *strings in self.workdirs:
+                buffers = [C.create_string_buffer(value.encode()) if value else None for value in strings]
+                texts = [Text(C.cast(buf, C.c_void_p), len(buf.value)) if buf else Text() for buf in buffers]
+                emit(context, C.byref(Workdir(workspace_id, view_id, *texts)))
+            return int(self.available)
+        self.observe = OBSERVE(observe)
         self.server = self.start()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
@@ -70,24 +112,80 @@ class IngressTests(unittest.TestCase):
         core.andamento_destroy(self.core)
         self.dir.cleanup()
 
-    def request(self, body, content_type='application/json', chunked=False, poll=True):
+    def request(self, body=b'', content_type='application/json', chunked=False, poll=True, read=False):
         def send():
-            connection = publisher.UnixHTTPConnection(self.path)
+            connection = UnixHTTPConnection(self.path)
             try:
                 payload = iter([body[:5], body[5:]]) if chunked else body
-                connection.request('POST', '/v1/metadata/patch', payload, {'Content-Type': content_type}, encode_chunked=chunked)
+                connection.request('GET' if read else 'POST', '/v1/observed/workdirs' if read else '/v1/metadata/patch', payload, {'Content-Type': content_type}, encode_chunked=chunked)
                 response = connection.getresponse()
-                response.read()
-                return response.status
+                data = response.read()
+                return (response.status, data, response.getheader("Content-Type")) if read else response.status
             finally:
                 connection.close()
         future = self.pool.submit(send)
         deadline = time.monotonic() + 8
         while not future.done() and time.monotonic() < deadline:
             if poll:
-                lib.wheelhouse_ingress_poll(self.server, self.apply, None)
+                lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
             time.sleep(.005)
         return future.result(timeout=1)
+
+    def test_observed_directories_change_and_omit_unknown_views(self):
+        self.workdirs = [
+            (42, 81, 'worktree', 'one', '/saved/"quoted"/東京', None),
+            (42, 82, 'worktree', 'one', '/saved/two', '/live/two'),
+            (43, 83, None, None, None, None),
+        ]
+        status, body, content_type = self.request(read=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, 'application/json')
+        self.assertEqual(json.loads(body), {'workdirs': [
+            dict(workspace_id=42, view_id=81, entity_kind='worktree', entity_id='one', cwd='/saved/"quoted"/東京', live_cwd=None),
+            dict(workspace_id=42, view_id=82, entity_kind='worktree', entity_id='one', cwd='/saved/two', live_cwd='/live/two'),
+        ]})
+        self.workdirs[1] = (42, 82, 'worktree', 'one', '/saved/two', '/changed')
+        self.assertEqual(json.loads(self.request(read=True)[1])['workdirs'][1]['live_cwd'], '/changed')
+        self.workdirs = [(43, 83, None, None, None, '/live/only')]
+        row = json.loads(self.request(read=True)[1])['workdirs'][0]
+        self.assertIsNone(row['cwd'])
+        self.assertIsNone(row['entity_id'])
+        self.workdirs = []
+        self.assertEqual(json.loads(self.request(read=True)[1]), {'workdirs': []})
+        self.assertEqual(self.received, [])
+
+    def test_invalid_utf8_does_not_invent_a_directory(self):
+        raw = C.create_string_buffer(b'/bad/\xff')
+        def invalid(_, emit, context):
+            emit(context, C.byref(Workdir(1, 2, Text(), Text(),
+                 Text(C.cast(raw, C.c_void_p), len(raw.value)), Text())))
+            return 1
+        self.observe = OBSERVE(invalid)
+        self.assertEqual(self.request(read=True)[0], 503)
+
+    def test_concurrent_http_read_burst(self):
+        def read():
+            connection = UnixHTTPConnection(self.path)
+            try:
+                connection.request('GET', '/v1/observed/workdirs')
+                response = connection.getresponse()
+                return response.status, json.loads(response.read())
+            finally:
+                connection.close()
+        requests = [self.pool.submit(read) for _ in range(8)]
+        deadline = time.monotonic() + 5
+        while not all(future.done() for future in requests) and time.monotonic() < deadline:
+            lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
+            time.sleep(.005)
+        for future in requests:
+            self.assertEqual(future.result(timeout=1), (200, {'workdirs': []}))
+
+    def test_read_timeout_cancellation_and_unavailability(self):
+        self.assertEqual(self.request(read=True, poll=False)[0], 503)
+        lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
+        self.assertEqual(self.observed, 0)
+        self.available = False
+        self.assertEqual(self.request(read=True)[0], 503)
 
     def count(self):
         snapshot = core.andamento_snapshot_acquire(self.core, None)
@@ -98,7 +196,7 @@ class IngressTests(unittest.TestCase):
 
     def test_patch_duplicate_expiry_and_chunked_http(self):
         before = self.count()
-        body = json.dumps(publisher.patch('project', 'p', {'display.label': 'Live project', 'flotilla.project': 'p'})).encode()
+        body = json.dumps(patch('project', 'p', {'display.label': 'Live project', 'flotilla.project': 'p'})).encode()
         self.assertEqual(self.request(body), 204)
         after = self.count()
         self.assertGreater(after, before)
@@ -116,15 +214,20 @@ class IngressTests(unittest.TestCase):
         self.assertEqual(self.request(b'x' * (1024 * 1024 + 1)), 413)
 
     def test_ack_waits_for_application_and_cancelled_request_is_skipped(self):
-        body = json.dumps(publisher.patch('project', 'p', {'display.label': 'late'})).encode()
+        body = json.dumps(patch('project', 'p', {'display.label': 'late'})).encode()
         self.assertEqual(self.request(body, poll=False), 503)
-        lib.wheelhouse_ingress_poll(self.server, self.apply, None)
+        lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
         self.assertEqual(self.received, [])
 
     @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
     def test_native_process_applies_producer_patch(self):
         path = os.path.join(self.dir.name, 'native.sock')
         binary = str(Path(os.environ['WHEELHOUSE_TEST_BINARY']).resolve())
+        Path(self.dir.name, 'user').write_text(
+            'window: {\nsize: 900 600\nworkspace: {\nlabel: "Observed"\npanels: {\n'
+            'terminal: {\nexpression: "read answer"\ncwd: "/tmp"\nselected\n}\n'
+            'terminal: {\nexpression: "read answer"\ncwd: "' + self.dir.name + '"\n}\n'
+            'terminal: {\nexpression: "read answer"\n}\n}\n}\n}\n')
         with tempfile.TemporaryFile() as log:
             process = subprocess.Popen([binary, '--user:' + self.dir.name + '/user',
                                         '--project:' + self.dir.name + '/project',
@@ -138,9 +241,26 @@ class IngressTests(unittest.TestCase):
                 if not os.path.exists(path):
                     log.seek(0)
                     self.fail('native listener failed: ' + log.read().decode(errors='replace'))
-                publisher.publish(path, publisher.patch('project', 'native', {
+                connection = UnixHTTPConnection(path)
+                try:
+                    connection.request('GET', '/v1/observed/workdirs')
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, 200)
+                    rows = json.loads(response.read())['workdirs']
+                    self.assertEqual({row['cwd'] for row in rows}, {'/tmp', self.dir.name})
+                    self.assertEqual(len(rows), 2)
+                    self.assertEqual(len({row['view_id'] for row in rows}), 2)
+                    self.assertEqual(len({row['workspace_id'] for row in rows}), 1)
+                    self.assertTrue(all(row['live_cwd'] is None and row['entity_id'] is None for row in rows))
+                finally:
+                    connection.close()
+                if os.environ.get('WHEELHOUSE_TEST_WATCHER'):
+                    subprocess.run([os.environ['WHEELHOUSE_TEST_WATCHER'], '--transport', 'wheelhouse',
+                                    '--socket', path, '--roots', str(ROOT), '--once'],
+                                   check=True, timeout=30, stdout=log, stderr=log)
+                publish(path, patch('project', 'native', {
                     'display.label': 'Native HTTP project', 'flotilla.project': 'native'}))
-                connection = publisher.UnixHTTPConnection(path)
+                connection = UnixHTTPConnection(path)
                 try:
                     connection.request('POST', '/v1/metadata/patch', b'{"type":"metadata-patch"}',
                                        {'Content-Type': 'application/json'})
@@ -151,7 +271,7 @@ class IngressTests(unittest.TestCase):
                     connection.close()
                 # Let the application become idle, then prove background wakeup.
                 time.sleep(1)
-                publisher.publish(path, publisher.patch('project', 'native', {
+                publish(path, patch('project', 'native', {
                     'display.label': 'Updated while idle', 'flotilla.project': 'native'}))
             finally:
                 process.terminate()
@@ -176,7 +296,7 @@ class IngressTests(unittest.TestCase):
         self.server = None
         self.assertFalse(os.path.exists(self.path))
         self.server = self.start()
-        self.assertEqual(self.request(json.dumps(publisher.patch('project', 'p', {'display.label': 'restart'})).encode()), 204)
+        self.assertEqual(self.request(json.dumps(patch('project', 'p', {'display.label': 'restart'})).encode()), 204)
 
 if __name__ == '__main__':
     unittest.main()
