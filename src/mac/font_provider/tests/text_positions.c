@@ -125,7 +125,12 @@ entry_point(CmdLine *cmdline)
   // fit the compact button when positioned using the shared UI baseline rule.
   FNT_Tag icon_font = fnt_tag_from_path(str8_lit("data/icons.ttf"));
   FP_Handle icon_handle = fp_font_open(str8_lit("data/icons.ttf"));
-  U32 icon_failures = 0;
+  U32 icon_failures = 0, icon_cases = 0;
+  if(fnt_tag_match(icon_font, fnt_tag_zero()) || fp_handle_match(icon_handle, fp_handle_zero()))
+  {
+    fprintf(stderr, "FAIL could not open data/icons.ttf\n");
+    exit(1);
+  }
   for(U32 size = 13; size <= 25; size += 4)
   for(U32 scale = 1; scale <= 2; scale++)
   {
@@ -146,12 +151,13 @@ entry_point(CmdLine *cmdline)
     F32 ink_top = pass ? baseline + run.pieces.v[0].offset.y + top/(F32)scale : -1;
     F32 ink_bottom = pass ? baseline + run.pieces.v[0].offset.y + (bottom+1)/(F32)scale : height+1;
     pass = pass && ink_top >= 1.f && ink_bottom <= height-1.f;
+    icon_cases += 1;
     icon_failures += !pass;
     if(!pass) fprintf(stderr, "FAIL workspace icon size=%u scale=%u ink=%.2f..%.2f button=1..%.2f\n", size, scale, ink_top, ink_bottom, height-1.f);
     temp_end(temp);
   }
   fp_font_close(icon_handle);
-  printf("Workspace icon bounds: 8 cases, %u failures\n", icon_failures);
+  printf("Workspace icon bounds: %u cases, %u failures\n", icon_cases, icon_failures);
   dr_set_raster_scale(1.f);
   arena_release(arena);
   printf("Raster baselines: %u cases, %u failures\n", cases, failures);

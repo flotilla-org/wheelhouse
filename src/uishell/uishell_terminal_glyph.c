@@ -6448,13 +6448,16 @@ uishell_terminal_draw_powerline_separator(U32 cp, Rng2F32 cell, Vec4F32 color)
     F32 radius = Min(w, h/2.f);
     F32 join = left ? cell.x1 : cell.x0;
     Rng2F32 clip = dr_top_clip();
-    if(clip.x1 > clip.x0 && clip.y1 > clip.y0)
+    // Only the all-zero rectangle means no clip in the draw layer. Empty or
+    // inverted active clips must suppress the cap, not expand to its cell.
+    if(clip.x0 != 0 || clip.y0 != 0 || clip.x1 != 0 || clip.y1 != 0)
     {
       clip = intersect_2f32(clip, cell);
       if(clip.x1 <= clip.x0 || clip.y1 <= clip.y0) { return 1; }
     }
     else { clip = cell; }
     // Clip half of a capsule. Its flat joining edge has no antialias inset.
+    // Half a device pixel gives the curved edge a one-pixel coverage ramp.
     DR_ClipScope(clip)
     { dr_rect(r2f32p(join-radius, cell.y0, join+radius, cell.y1), color, radius, 0, 0.5f/scale); }
   }
@@ -6462,9 +6465,13 @@ uishell_terminal_draw_powerline_separator(U32 cp, Rng2F32 cell, Vec4F32 color)
   {
     // Scanline coverage for the diagonal edge, at the current device scale.
     // Emit one solid span plus the few partially covered edge pixels per row.
-    // Rect-only render backends need no new triangle primitive or font atlas.
-    for(F32 y = 0; y < h; y += 1.f/scale)
+    // Rects batch into UI instances, not individual GPU draw calls. This
+    // keeps prompt separators simple; dense grids should use cached sprites
+    // to avoid O(device cell height) instance generation per separator.
+    U32 rows = (U32)ceil_f32(h*scale);
+    for(U32 row = 0; row < rows; row++)
     {
+      F32 y = (F32)row/scale;
       F32 dy = Min(1.f/scale, h-y), extent[4], min_extent = w*scale, max_extent = 0;
       for(U32 sample = 0; sample < ArrayCount(extent); sample++)
       {
@@ -7392,6 +7399,38 @@ uishell_terminal_diagnostic_collect_textured_rects(DR_Bucket *bucket, Rng2F32 *r
   return count;
 }
 
+// Solid rectangles can share a textured batch: identify this probe's glyph
+// by its atlas handle and source rectangle, not destination dimensions.
+internal U64
+uishell_terminal_diagnostic_collect_piece_rects(DR_Bucket *bucket, FNT_Piece *piece, Rng2F32 *rects, U64 cap)
+{
+  U64 count = 0;
+  for(R_PassNode *pass = bucket->passes.first; pass != 0; pass = pass->next)
+  {
+    if(pass->v.kind == R_PassKind_UI)
+    for(R_BatchGroup2DNode *group = pass->v.params_ui->rects.first; group != 0; group = group->next)
+    {
+      if(r_handle_match(group->params.tex, piece->texture))
+      for(R_BatchNode *batch = group->batches.first; batch != 0; batch = batch->next)
+      {
+        R_Rect2DInst *insts = (R_Rect2DInst *)batch->v.v;
+        U64 inst_count = batch->v.byte_count/group->batches.bytes_per_inst;
+        for(U64 i = 0; i < inst_count; i++)
+        {
+          Rng2F32 src = insts[i].src;
+          if(src.x0 == piece->subrect.x0 && src.y0 == piece->subrect.y0 &&
+             src.x1 == piece->subrect.x1 && src.y1 == piece->subrect.y1)
+          {
+            if(count < cap) { rects[count] = insts[i].dst; }
+            count++;
+          }
+        }
+      }
+    }
+  }
+  return count;
+}
+
 internal B32
 uishell_terminal_diagnostic_check_rect_set(Rng2F32 *expected, U64 expected_count, Rng2F32 *actual, U64 actual_count, String8 label)
 {
@@ -7685,6 +7724,33 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
       dr_set_raster_scale(saved_scale);
     }
 
+    // Active clips must stay effective when the capsule adds its cell clip.
+    for(U32 cp = 0xE0B4; cp <= 0xE0B6; cp += 2)
+    {
+      Rng2F32 clips[] = {r2f32p(3, 4, 9, 20), r2f32p(3, 4, 3, 20), r2f32p(9, 4, 3, 20)};
+      for(U32 clip_idx = 0; clip_idx < ArrayCount(clips); clip_idx++)
+      {
+        DR_Bucket *bucket = dr_bucket_make();
+        DR_BucketScope(bucket)
+        DR_ClipScope(clips[clip_idx])
+        { uishell_terminal_draw_powerline_separator(cp, r2f32p(0, 0, 12, 24), v4f32(1, 1, 1, 1)); }
+        UIShell_TerminalRenderBucketStats stats = uishell_terminal_render_bucket_stats_from_bucket(bucket);
+        if(stats.rect_inst_count != (clip_idx == 0 ? 1 : 0))
+        { log_user_errorf("Powerline clip diagnostic emitted unexpected instances"); result = 0; }
+        for(R_PassNode *pass = bucket->passes.first; pass != 0; pass = pass->next)
+        {
+          if(pass->v.kind == R_PassKind_UI)
+          for(R_BatchGroup2DNode *group = pass->v.params_ui->rects.first; group != 0; group = group->next)
+          {
+            Rng2F32 actual = group->params.clip;
+            if(actual.x0 != clips[clip_idx].x0 || actual.y0 != clips[clip_idx].y0 ||
+               actual.x1 != clips[clip_idx].x1 || actual.y1 != clips[clip_idx].y1)
+            { log_user_errorf("Powerline cap expanded its active clip"); result = 0; }
+          }
+        }
+      }
+    }
+
     // Cursor movement must change colour, not the geometry of a stationary row.
     {
       F32 saved_scale = dr_raster_scale();
@@ -7714,14 +7780,10 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
           DR_Bucket *bucket = dr_bucket_make();
           DR_BucketScope(bucket)
           { uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(scratch.arena, &renderer, &params, &feed, cursors); }
-          Rng2F32 raw[64] = {0}, actual[Cols] = {0};
-          U64 count = uishell_terminal_diagnostic_collect_textured_rects(bucket, raw, ArrayCount(raw)), used = 0;
-          for(U64 i = 0; i < count && used < Cols; i++)
-          {
-            if(abs_f32((raw[i].x1-raw[i].x0)-glyph.pieces.v[0].draw_dim.x) < 0.001f &&
-               abs_f32((raw[i].y1-raw[i].y0)-glyph.pieces.v[0].draw_dim.y) < 0.001f)
-            { actual[used++] = raw[i]; }
-          }
+          Rng2F32 actual[Cols+1] = {0};
+          U64 used = uishell_terminal_diagnostic_collect_piece_rects(bucket, &glyph.pieces.v[0], actual, ArrayCount(actual));
+          if(used > ArrayCount(actual))
+          { result = 0; log_user_errorf("cursor geometry probe exceeded glyph capacity"); continue; }
           if(cursor_col < 0) { MemoryCopy(reference, actual, sizeof(reference)); }
           else if(!uishell_terminal_diagnostic_check_rect_set(reference, Cols, actual, used, str8_lit("cursor-independent d row")))
           { result = 0; }
@@ -9465,6 +9527,8 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
               // Backgrounds/cursors cover whole pixels, but glyph origins share
               // the fractional grid used within text runs. A cursor, style or
               // colour boundary must not change the phase of subsequent glyphs.
+              // At 1x, fractional-width cells intentionally retain subpixel
+              // sampling instead of changing sharpness as the cursor moves.
               if(text_decision.path == UIShell_TerminalCellTextPath_NormalMask)
               { cell_rect.x0 = canvas_rect.x0 + (F32)col_idx*cell_width_px; }
               if(renderer->trace_enabled && (renderer->trace_all_rows || renderer->trace_row == row_idx))

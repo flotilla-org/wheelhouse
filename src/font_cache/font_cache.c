@@ -1133,6 +1133,8 @@ fnt_metrics_from_tag_size(FNT_Tag tag, F32 size)
   {
     // Providers rasterize point sizes at 96 DPI. Layout metrics must use the
     // same logical-pixel scale as the glyphs placed on their baselines.
+    // The run cache passes floor(size)*raster_scale to fp_raster, so floor
+    // before converting points, including for fractional requested sizes.
     F32 pixel_size = floor_f32(size)*(96.f/72.f);
     result.ascent   = pixel_size * metrics.ascent / metrics.design_units_per_em;
     result.descent  = pixel_size * metrics.descent / metrics.design_units_per_em;
