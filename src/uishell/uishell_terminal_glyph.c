@@ -6425,6 +6425,81 @@ uishell_terminal_codepoint_is_block_element(U32 codepoint)
   return result;
 }
 
+// Filled Powerline separators are cell graphics, independent of font metrics.
+// U+E0B0/2 are triangles; U+E0B4/6 are rounded caps. Other PUA symbols keep
+// their font fallback. Rounded geometry uses the same radius rule as Ghostty:
+// min(cell width, half cell height), with a straight middle for tall cells.
+internal B32
+uishell_terminal_codepoint_is_powerline_separator(U32 cp)
+{
+  return cp == 0xE0B0 || cp == 0xE0B2 || cp == 0xE0B4 || cp == 0xE0B6;
+}
+
+internal B32
+uishell_terminal_draw_powerline_separator(U32 cp, Rng2F32 cell, Vec4F32 color)
+{
+  if(!uishell_terminal_codepoint_is_powerline_separator(cp)) { return 0; }
+  F32 w = cell.x1-cell.x0, h = cell.y1-cell.y0;
+  if(w <= 0 || h <= 0) { return 1; }
+  B32 left = cp == 0xE0B2 || cp == 0xE0B6;
+  F32 scale = Max(1.f, dr_raster_scale());
+  if(cp == 0xE0B4 || cp == 0xE0B6)
+  {
+    F32 radius = Min(w, h/2.f);
+    F32 join = left ? cell.x1 : cell.x0;
+    Rng2F32 clip = dr_top_clip();
+    // Only the all-zero rectangle means no clip in the draw layer. Empty or
+    // inverted active clips must suppress the cap, not expand to its cell.
+    if(clip.x0 != 0 || clip.y0 != 0 || clip.x1 != 0 || clip.y1 != 0)
+    {
+      clip = intersect_2f32(clip, cell);
+      if(clip.x1 <= clip.x0 || clip.y1 <= clip.y0) { return 1; }
+    }
+    else { clip = cell; }
+    // Clip half of a capsule. Its flat joining edge has no antialias inset.
+    // Half a device pixel gives the curved edge a one-pixel coverage ramp.
+    DR_ClipScope(clip)
+    { dr_rect(r2f32p(join-radius, cell.y0, join+radius, cell.y1), color, radius, 0, 0.5f/scale); }
+  }
+  else
+  {
+    // Scanline coverage for the diagonal edge, at the current device scale.
+    // Emit one solid span plus the few partially covered edge pixels per row.
+    // Rects batch into UI instances, not individual GPU draw calls. This
+    // keeps prompt separators simple; dense grids should use cached sprites
+    // to avoid O(device cell height) instance generation per separator.
+    U32 rows = (U32)ceil_f32(h*scale);
+    for(U32 row = 0; row < rows; row++)
+    {
+      F32 y = (F32)row/scale;
+      F32 dy = Min(1.f/scale, h-y), extent[4], min_extent = w*scale, max_extent = 0;
+      for(U32 sample = 0; sample < ArrayCount(extent); sample++)
+      {
+        F32 sy = y + dy*((F32)sample+0.5f)/(F32)ArrayCount(extent);
+        extent[sample] = w*scale*(1.f-abs_f32(2.f*sy/h-1.f));
+        min_extent = Min(min_extent, extent[sample]);
+        max_extent = Max(max_extent, extent[sample]);
+      }
+      F32 solid = floor_f32(min_extent);
+      if(solid > 0)
+      {
+        F32 x0 = left ? cell.x1-solid/scale : cell.x0;
+        dr_rect(r2f32p(x0, cell.y0+y, x0+solid/scale, cell.y0+y+dy), color, 0, 0, 0);
+      }
+      for(F32 x = solid; x < ceil_f32(max_extent); x++)
+      {
+        F32 coverage = 0;
+        for(U32 sample = 0; sample < ArrayCount(extent); sample++)
+        { coverage += Clamp(0.f, extent[sample]-x, 1.f)/(F32)ArrayCount(extent); }
+        Vec4F32 edge_color = color; edge_color.w *= coverage;
+        F32 x0 = left ? cell.x1-(x+1.f)/scale : cell.x0+x/scale;
+        dr_rect(r2f32p(x0, cell.y0+y, x0+1.f/scale, cell.y0+y+dy), edge_color, 0, 0, 0);
+      }
+    }
+  }
+  return 1;
+}
+
 internal B32
 uishell_terminal_codepoint_is_direct_sprite(U32 codepoint)
 {
@@ -6437,7 +6512,8 @@ uishell_terminal_codepoint_is_direct_sprite(U32 codepoint)
   else
   {
     UIShell_TerminalBoxLines lines = {0};
-    result = (uishell_terminal_box_lines_from_codepoint(codepoint, &lines) ||
+    result = (uishell_terminal_codepoint_is_powerline_separator(codepoint) ||
+              uishell_terminal_box_lines_from_codepoint(codepoint, &lines) ||
               uishell_terminal_codepoint_is_block_element(codepoint) ||
               (0x2800 <= codepoint && codepoint <= 0x28FF));
   }
@@ -6447,7 +6523,8 @@ uishell_terminal_codepoint_is_direct_sprite(U32 codepoint)
 internal B32
 uishell_terminal_draw_direct_sprite(U32 codepoint, Rng2F32 cell_rect, Vec4F32 color)
 {
-  B32 result = (uishell_terminal_draw_box_drawing(codepoint, cell_rect, color) ||
+  B32 result = (uishell_terminal_draw_powerline_separator(codepoint, cell_rect, color) ||
+                uishell_terminal_draw_box_drawing(codepoint, cell_rect, color) ||
                 uishell_terminal_draw_block_element(codepoint, cell_rect, color) ||
                 uishell_terminal_draw_braille_pattern(codepoint, cell_rect, color));
   return result;
@@ -7322,6 +7399,38 @@ uishell_terminal_diagnostic_collect_textured_rects(DR_Bucket *bucket, Rng2F32 *r
   return count;
 }
 
+// Solid rectangles can share a textured batch: identify this probe's glyph
+// by its atlas handle and source rectangle, not destination dimensions.
+internal U64
+uishell_terminal_diagnostic_collect_piece_rects(DR_Bucket *bucket, FNT_Piece *piece, Rng2F32 *rects, U64 cap)
+{
+  U64 count = 0;
+  for(R_PassNode *pass = bucket->passes.first; pass != 0; pass = pass->next)
+  {
+    if(pass->v.kind == R_PassKind_UI)
+    for(R_BatchGroup2DNode *group = pass->v.params_ui->rects.first; group != 0; group = group->next)
+    {
+      if(r_handle_match(group->params.tex, piece->texture))
+      for(R_BatchNode *batch = group->batches.first; batch != 0; batch = batch->next)
+      {
+        R_Rect2DInst *insts = (R_Rect2DInst *)batch->v.v;
+        U64 inst_count = batch->v.byte_count/group->batches.bytes_per_inst;
+        for(U64 i = 0; i < inst_count; i++)
+        {
+          Rng2F32 src = insts[i].src;
+          if(src.x0 == piece->subrect.x0 && src.y0 == piece->subrect.y0 &&
+             src.x1 == piece->subrect.x1 && src.y1 == piece->subrect.y1)
+          {
+            if(count < cap) { rects[count] = insts[i].dst; }
+            count++;
+          }
+        }
+      }
+    }
+  }
+  return count;
+}
+
 internal B32
 uishell_terminal_diagnostic_check_rect_set(Rng2F32 *expected, U64 expected_count, Rng2F32 *actual, U64 actual_count, String8 label)
 {
@@ -7575,6 +7684,115 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
     };
     FNT_Metrics primary_metrics = fnt_metrics_from_tag_size(primary_font, font_size);
     F32 diagnostic_text_y = 32.f;
+
+    // Powerline joins are cell graphics: no font side bearing or baseline gap.
+    for(U32 cp = 0xE0B0; cp <= 0xE0B6; cp += 2)
+    for(U32 tall = 0; tall < 2; tall++)
+    {
+      // Readback target dimensions are physical pixels (no window backing scale).
+      F32 saved_scale = dr_raster_scale();
+      dr_set_raster_scale(1.f);
+      F32 w = tall ? 19.f : 12.f, h = tall ? 43.f : 24.f;
+      cleat_cell cells[2] = {0};
+      cleat_rgb white = {255,255,255}, black = {0,0,0};
+      B32 left = cp == 0xE0B2 || cp == 0xE0B6;
+      U32 space = ' ';
+      cells[left ? 1 : 0] = uishell_terminal_diagnostic_cell_from_codepoints(&space, 1, 0, CLEAT_CELL_WIDTH_NARROW);
+      cells[left ? 1 : 0].bg = white;
+      cells[left ? 0 : 1] = uishell_terminal_diagnostic_cell_from_codepoints(&cp, 1, 0, CLEAT_CELL_WIDTH_NARROW);
+      cells[left ? 0 : 1].fg = white;
+      cells[left ? 0 : 1].bg = black;
+      UIShell_TerminalCellFeed feed = {.cols=2,.rows=1,.cells=cells,.cell_count=2};
+      UIShell_TerminalDrawParams params = {.canvas_rect=r2f32p(0,0,2*w,h),.cell_width_px=w,.cell_height_px=h,.background_color=v4f32(0,0,0,1)};
+      DR_Bucket *bucket = dr_bucket_make();
+      DR_BucketScope(bucket)
+      { UIShell_TerminalCursorArray cursors = {0}; uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(scratch.arena,&renderer,&params,&feed,cursors); }
+      R_Readback pixels = r_pass_list_readback(scratch.arena,v2s32((S32)(2*w),(S32)h),&bucket->passes);
+      if(pixels.data.size != 0 && pixels.format == R_Tex2DFormat_BGRA8)
+      {
+        S32 x = left ? (S32)w-1 : (S32)w;
+        for(S32 y=0; y<(S32)h; y++)
+        {
+          U8 blue = pixels.data.str[4*(y*pixels.size.x+x)];
+          if(blue < 8)
+          { log_user_errorf("Powerline U+%X has a gap at join row %i (height %.0f)",cp,y,h); result=0; break; }
+        }
+      }
+#if OS_MAC
+      else { log_user_errorf("Powerline diagnostic readback unavailable"); result=0; }
+#endif
+      dr_set_raster_scale(saved_scale);
+    }
+
+    // Active clips must stay effective when the capsule adds its cell clip.
+    for(U32 cp = 0xE0B4; cp <= 0xE0B6; cp += 2)
+    {
+      Rng2F32 clips[] = {r2f32p(3, 4, 9, 20), r2f32p(3, 4, 3, 20), r2f32p(9, 4, 3, 20)};
+      for(U32 clip_idx = 0; clip_idx < ArrayCount(clips); clip_idx++)
+      {
+        DR_Bucket *bucket = dr_bucket_make();
+        DR_BucketScope(bucket)
+        DR_ClipScope(clips[clip_idx])
+        { uishell_terminal_draw_powerline_separator(cp, r2f32p(0, 0, 12, 24), v4f32(1, 1, 1, 1)); }
+        UIShell_TerminalRenderBucketStats stats = uishell_terminal_render_bucket_stats_from_bucket(bucket);
+        if(stats.rect_inst_count != (clip_idx == 0 ? 1 : 0))
+        { log_user_errorf("Powerline clip diagnostic emitted unexpected instances"); result = 0; }
+        for(R_PassNode *pass = bucket->passes.first; pass != 0; pass = pass->next)
+        {
+          if(pass->v.kind == R_PassKind_UI)
+          for(R_BatchGroup2DNode *group = pass->v.params_ui->rects.first; group != 0; group = group->next)
+          {
+            Rng2F32 actual = group->params.clip;
+            if(actual.x0 != clips[clip_idx].x0 || actual.y0 != clips[clip_idx].y0 ||
+               actual.x1 != clips[clip_idx].x1 || actual.y1 != clips[clip_idx].y1)
+            { log_user_errorf("Powerline cap expanded its active clip"); result = 0; }
+          }
+        }
+      }
+    }
+
+    // Cursor movement must change colour, not the geometry of a stationary row.
+    {
+      F32 saved_scale = dr_raster_scale();
+      F32 saved_size = renderer.font_set.font_size;
+      for(U32 probe_size = 13; probe_size <= 17; probe_size += 4)
+      for(U32 scale = 1; scale <= 2; scale++)
+      {
+        dr_set_raster_scale((F32)scale);
+        renderer.font_set.font_size = (F32)probe_size;
+        enum { Cols = 16 };
+        cleat_cell cells[Cols] = {0};
+        cleat_rgb fg = {220, 220, 220}, bg = {4, 4, 4};
+        uishell_terminal_diagnostic_put_ascii_string(scratch.arena, cells, Cols, 0, str8_lit("dddddddddddddddd"), fg, bg, 0);
+        UIShell_TerminalCellFeed feed = {.cols=Cols, .rows=1, .cells=cells, .cell_count=Cols};
+        FNT_Run glyph = dr_fnt_run_from_string(primary_font, (F32)probe_size, 0, 0, raster_flags, str8_lit("d"));
+        F32 width = glyph.dim.x;
+        UIShell_TerminalDrawParams params = {
+          .canvas_rect=r2f32p(0.375f, 0, 0.375f+Cols*width, 40),
+          .cell_width_px=width, .cell_height_px=40,
+          .background_color=uishell_terminal_rgba_from_rgb(bg),
+        };
+        Rng2F32 reference[Cols] = {0};
+        for(S32 cursor_col = -1; cursor_col < Cols; cursor_col++)
+        {
+          cleat_cursor cursor = {.col=(U16)Max(cursor_col, 0), .row=0, .visible=1, .style=CLEAT_CURSOR_STYLE_BLOCK};
+          UIShell_TerminalCursorArray cursors = {.v=&cursor, .count=cursor_col < 0 ? 0 : 1};
+          DR_Bucket *bucket = dr_bucket_make();
+          DR_BucketScope(bucket)
+          { uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(scratch.arena, &renderer, &params, &feed, cursors); }
+          Rng2F32 actual[Cols+1] = {0};
+          U64 used = uishell_terminal_diagnostic_collect_piece_rects(bucket, &glyph.pieces.v[0], actual, ArrayCount(actual));
+          if(used > ArrayCount(actual))
+          { result = 0; log_user_errorf("cursor geometry probe exceeded glyph capacity"); continue; }
+          if(cursor_col < 0) { MemoryCopy(reference, actual, sizeof(reference)); }
+          else if(!uishell_terminal_diagnostic_check_rect_set(reference, Cols, actual, used, str8_lit("cursor-independent d row")))
+          { result = 0; }
+          if(used != Cols) { result = 0; log_user_errorf("cursor geometry probe did not capture all glyphs"); }
+        }
+      }
+      renderer.font_set.font_size = saved_size;
+      dr_set_raster_scale(saved_scale);
+    }
 
     {
       typedef struct PresentationPolicyCase PresentationPolicyCase;
@@ -8206,16 +8424,16 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
       };
       UIShell_TerminalCursorArray cursors = {0};
 
-      // Run starts and cell bounds snap to pixels; glyph advances within runs do not.
+      // Mask glyph origins preserve the fractional cell grid across run boundaries.
       Rng2F32 expected[128] = {0};
       U64 expected_count = 0;
       {
         FNT_Run run = dr_fnt_run_from_string(uishell_terminal_font_from_cell(&renderer, &cells[0]), font_size, 0, 0, raster_flags, str8_lit("ab"));
-        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*0.f), text_y));
+        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32((canvas_rect.x0 + cell_width*0.f), text_y));
       }
       {
         FNT_Run run = dr_fnt_run_from_string(uishell_terminal_font_from_cell(&renderer, &cells[3]), font_size, 0, 0, raster_flags, str8_lit("c"));
-        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*3.f), text_y));
+        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32((canvas_rect.x0 + cell_width*3.f), text_y));
       }
       {
         UIShell_TerminalCellTextDecision decision = uishell_terminal_cell_text_decision_from_cell(scratch.arena, &renderer, &cells[5]);
@@ -8226,16 +8444,16 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
         }
         else
         {
-          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*5.f), text_y));
+          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32((canvas_rect.x0 + cell_width*5.f), text_y));
           if(decision.path != UIShell_TerminalCellTextPath_SourceColor)
           {
-            expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*5.f) + 1.f, text_y));
+            expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32((canvas_rect.x0 + cell_width*5.f) + 1.f, text_y));
           }
         }
       }
       {
         FNT_Run run = dr_fnt_run_from_string(uishell_terminal_font_from_cell(&renderer, &cells[7]), font_size, 0, 0, raster_flags, str8_lit("e"));
-        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32(floor_f32(canvas_rect.x0 + cell_width*7.f), text_y));
+        expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), run, v2f32((canvas_rect.x0 + cell_width*7.f), text_y));
       }
       if(fallback_cp != 0)
       {
@@ -8247,7 +8465,7 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
         }
         else
         {
-          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32(floor_f32(canvas_rect.x0 + cell_width*9.f), text_y));
+          expected_count = uishell_terminal_diagnostic_push_run_rects(expected, expected_count, ArrayCount(expected), decision.run, v2f32((canvas_rect.x0 + cell_width*9.f), text_y));
         }
       }
       {
@@ -8931,7 +9149,7 @@ uishell_terminal_fixture_snapshot(Arena *arena, U16 cols, U16 rows)
   uishell_terminal_fixture_put_string(&snapshot, cells, graphemes, 10, 0, str8_lit("Braille:"), accent, bg, 0);
   uishell_terminal_fixture_put_codepoints(&snapshot, cells, graphemes, 10, 9, braille, ArrayCount(braille), accent, bg, 0);
 
-  U32 fallback[] = {0x03BB, ' ', 0x2713, ' ', 0x2605, ' ', 0x2190, 0x2191, 0x2192, 0x2193, ' ', 0xE0B0, 0xE0B1, 0xE0B2, 0xE0B3};
+  U32 fallback[] = {0x03BB, ' ', 0x2713, ' ', 0x2605, ' ', 0x2190, 0x2191, 0x2192, 0x2193, ' ', 0xE0B0, 0xE0B1, 0xE0B2, 0xE0B3, 0xE0B4, 0xE0B6};
   uishell_terminal_fixture_put_string(&snapshot, cells, graphemes, 12, 0, str8_lit("Fallback/PUA:"), fg, bg, 0);
   uishell_terminal_fixture_put_codepoints(&snapshot, cells, graphemes, 12, 14, fallback, ArrayCount(fallback), fg, bg, 0);
 
@@ -9260,7 +9478,7 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
           {
             Vec2F32 text_pos =
             {
-              floor_f32(canvas_rect.x0 + (F32)run_col_start*cell_width_px),
+              canvas_rect.x0 + (F32)run_col_start*cell_width_px,
               text_y,
             };
             FNT_Run joined_run = dr_fnt_run_from_string(run_font, font_size, 0, 0, raster_flags, joined);
@@ -9306,6 +9524,13 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
             }
             else
             {
+              // Backgrounds/cursors cover whole pixels, but glyph origins share
+              // the fractional grid used within text runs. A cursor, style or
+              // colour boundary must not change the phase of subsequent glyphs.
+              // At 1x, fractional-width cells intentionally retain subpixel
+              // sampling instead of changing sharpness as the cursor moves.
+              if(text_decision.path == UIShell_TerminalCellTextPath_NormalMask)
+              { cell_rect.x0 = canvas_rect.x0 + (F32)col_idx*cell_width_px; }
               if(renderer->trace_enabled && (renderer->trace_all_rows || renderer->trace_row == row_idx))
               {
                 uishell_terminal_trace_run(arena, renderer, str8_lit("cell"), row_idx, col_idx, col_idx + cell_cols, cell, text_decision.path, text_decision.font, text_decision.raster_flags, text_decision.string, text_decision.run, v2f32(cell_rect.x0, text_y), font_metrics.descent, fg);
