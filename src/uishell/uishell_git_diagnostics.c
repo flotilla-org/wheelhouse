@@ -27,7 +27,6 @@ uishell_sidebar_git_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *spl
     if(str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("worktree"), 0))
     { worktrees++; ok = ok && node.state == ANDAMENTO_LATENT; }
   }
-  fprintf(stderr, "Git fixture: repos=%lu worktrees=%lu diagnostics=%lu\n", repos, worktrees, andamento_snapshot_diagnostic_count(fixture.snapshot));
   ok = ok && repos == 2 && worktrees == 4 && andamento_snapshot_diagnostic_count(fixture.snapshot) == 0;
   ws->sidebar = &fixture;
   ui_select_state(test);

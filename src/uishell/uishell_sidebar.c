@@ -98,6 +98,47 @@ uishell_sidebar_refresh(UIShell_SidebarState *state)
   }
 }
 
+typedef struct UIShell_Workdir UIShell_Workdir;
+struct UIShell_Workdir { UIShell_Workdir *next; WheelhouseWorkdir value; };
+typedef struct { UIShell_Workdir *first, *last; U64 count; } UIShell_Workdirs;
+
+internal WheelhouseIngressText
+uishell_ingress_text(String8 text)
+{
+  return (WheelhouseIngressText){text.str, text.size};
+}
+
+// Includes unselected tabs. Cleat has no live cwd report in its current ABI;
+// leave live_cwd empty rather than relabeling the saved launch directory.
+internal UIShell_Workdirs
+uishell_sidebar_workdirs(Arena *arena, UIShell_ControlledSplit *split)
+{
+  UIShell_Workdirs result = {0};
+  for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
+  {
+    CFG_Node *workspace = w->mount.owner_cfg;
+    CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
+    CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(arena, panels, Axis2_X);
+    for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+    {
+      for(CFG_NodePtrNode *tab = p->tabs.first; tab; tab = tab->next)
+      {
+        if(!str8_match(tab->v->string, str8_lit("terminal"), 0)) { continue; }
+        String8 cwd = cfg_node_child_from_string(tab->v, str8_lit("cwd"))->first->string;
+        if(!cwd.size) { continue; }
+        UIShell_Workdir *dir = push_array(arena, UIShell_Workdir, 1);
+        dir->value = (WheelhouseWorkdir){w->id, tab->v->id,
+          uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string),
+          uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string),
+          uishell_ingress_text(cwd), {0}};
+        SLLQueuePush(result.first, result.last, dir);
+        result.count++;
+      }
+    }
+  }
+  return result;
+}
+
 internal void
 uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
@@ -112,13 +153,27 @@ uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     for(U64 i = 0; i < w->display_name.size; i++) { hash = hash*33 + w->display_name.str[i]; }
     count++;
   }
+  UIShell_Workdirs dirs = uishell_sidebar_workdirs(scratch.arena, split);
+  AndamentoWorkdir *observed = push_array(scratch.arena, AndamentoWorkdir, dirs.count);
+  U64 index = 0;
+  for(UIShell_Workdir *dir = dirs.first; dir; dir = dir->next)
+  {
+    WheelhouseIngressText cwd = dir->value.live_cwd.len ? dir->value.live_cwd : dir->value.cwd;
+    observed[index++] = (AndamentoWorkdir){dir->value.workspace_id, {cwd.data, cwd.len}};
+    hash = hash*33 + dir->value.workspace_id;
+    hash = hash*33 + dir->value.view_id;
+    hash = hash*33 + cwd.len;
+    for(U64 i = 0; i < cwd.len; i++) { hash = hash*33 + cwd.data[i]; }
+  }
   if(hash != state->topology_hash)
   {
     char *error = 0;
     B32 ok = andamento_observe(state->core, items, count, 0, 0, &error);
     if(uishell_sidebar_result(state, ok, error))
     {
-      state->topology_hash = hash;
+      error = 0;
+      ok = andamento_observe_workdirs(state->core, observed, dirs.count, &error);
+      if(uishell_sidebar_result(state, ok, error)) { state->topology_hash = hash; }
       uishell_sidebar_refresh(state);
       rd_request_frame();
     }
@@ -1650,15 +1705,7 @@ uishell_sidebar_apply_live(void *unused, const U8 *data, size_t size)
   return rejected ? 0 : (unavailable || !applied) ? 2 : 1;
 }
 
-internal WheelhouseIngressText
-uishell_ingress_text(String8 text)
-{
-  return (WheelhouseIngressText){text.str, text.size};
-}
-
-// Walk persisted terminal views, including unselected tabs and workspaces.
-// Cleat currently exposes no live cwd in its provider ABI; leave that field
-// empty rather than mistaking the saved launch directory for a live report.
+// The same UI-owned inventory feeds producer discovery and core association.
 internal U32
 uishell_sidebar_observed_workdirs(void *unused, WheelhouseWorkdirEmit emit, void *context)
 {
@@ -1667,26 +1714,8 @@ uishell_sidebar_observed_workdirs(void *unused, WheelhouseWorkdirEmit emit, void
   {
     CFG_Node *window = cfg_node_from_id(ws->cfg_id);
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
-    for(UIShell_MaterializedWorkspace *w = split.inventory.first; w; w = w->next)
-    {
-      CFG_Node *workspace = w->mount.owner_cfg;
-      CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-      CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
-      for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
-      {
-        for(CFG_NodePtrNode *tab = p->tabs.first; tab; tab = tab->next)
-        {
-          if(!str8_match(tab->v->string, str8_lit("terminal"), 0)) { continue; }
-          String8 cwd = cfg_node_child_from_string(tab->v, str8_lit("cwd"))->first->string;
-          if(!cwd.size) { continue; }
-          WheelhouseWorkdir record = {w->id, tab->v->id,
-            uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string),
-            uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string),
-            uishell_ingress_text(cwd), {0}};
-          emit(context, &record);
-        }
-      }
-    }
+    UIShell_Workdirs dirs = uishell_sidebar_workdirs(scratch.arena, &split);
+    for(UIShell_Workdir *dir = dirs.first; dir; dir = dir->next) { emit(context, &dir->value); }
   }
   scratch_end(scratch);
   return 1;

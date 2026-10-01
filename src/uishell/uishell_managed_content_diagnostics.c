@@ -232,8 +232,48 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     UIShell_TerminalViewState *worktree_tv = rd_view_state_from_cfg(worktree_view)->user_data;
     ManagedCheck(worktree_tv && uishell_managed_diagnostic_marker(worktree_tv->session, 'W'),
                  "materialized producer terminal actually runs at git.root");
+    // As in the UI frame, acknowledge the new topology before closing it.
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(&opened, &split);
     uishell_terminal_runtime_release(worktree_tv);
     cfg_node_release(rd_state->cfg, worktree_workspace);
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(&opened, &split);
+    CFG_Node *existing = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+    CFG_Node *existing_panels = cfg_node_new(rd_state->cfg, existing, str8_lit("panels"));
+    CFG_Node *existing_view = rd_cfg_new_view_tab(existing_panels, str8_lit("terminal"), str8_lit("read original"), 1);
+    uishell_managed_set(existing_view, str8_lit("cwd"), str8_lit("/tmp"));
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    U64 workspace_count = split.inventory.count;
+    uishell_sidebar_observe(&opened, &split);
+    B32 matched = 0;
+    for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("producer-worktree"), 0))
+      { matched = node.state == ANDAMENTO_LIVE && node.workspace_id == existing->id; activate = node.activate; }
+    }
+    ManagedCheck(matched, "existing terminal directory marks producer worktree open");
+    ManagedCheck(andamento_dispatch(opened.core, opened.snapshot, activate, 0), "matched worktree dispatches focus");
+    uishell_sidebar_effects(&opened, &split);
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    ManagedCheck(split.inventory.count == workspace_count && ws->root_controlled_split_selected_workspace_id == existing->id,
+                 "matched worktree focuses existing workspace without creating another");
+    uishell_sidebar_reconcile_workspace(&opened, existing);
+    ManagedCheck(cfg_node_child_from_string(existing, str8_lit("sidebar_entity_id")) == &cfg_nil_node &&
+                 str8_match(rd_expr_from_cfg(existing_view), str8_lit("read original"), 0),
+                 "derived association does not enroll or overwrite the user's terminal");
+    uishell_managed_set(existing_view, str8_lit("cwd"), str8_lit("/"));
+    uishell_sidebar_observe(&opened, &split);
+    B32 latent = 0;
+    for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("producer-worktree"), 0))
+      { latent = node.state == ANDAMENTO_LATENT; if(!latent) { fprintf(stderr, "Unexpected worktree state=%u workspace=%lu after cwd change (existing=%lu)\n", node.state, node.workspace_id, existing->id); } }
+    }
+    ManagedCheck(latent, "directory change removes derived open association");
+    cfg_node_release(rd_state->cfg, existing);
     uishell_sidebar_release(&opened);
   }
   uishell_terminal_runtime_release(tv);
