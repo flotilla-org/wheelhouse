@@ -46,3 +46,9 @@ resolves `/tmp` to `/private/tmp`, and Windows reads UTF-8 arrows using its defa
 code page. The diagnostic now compares directory identity; the fixture generator
 uses explicit UTF-8 and LF output, with a CP1252/CRLF regression test.
 Live daily-driver acceptance remains tracked as pending under wheelhouse#130.
+
+Follow-up CI run `36863619948` passed Linux and macOS, including the cwd
+diagnostic. Windows passed generated-source verification, then revealed MSVC
+C4566 warnings: its default execution code page cannot encode the Git arrows.
+The Windows build now specifies `/utf-8` for both source and execution encoding;
+the existing Git sidebar diagnostic checks the resulting arrow bytes.

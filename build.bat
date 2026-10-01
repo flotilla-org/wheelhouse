@@ -123,7 +123,7 @@ if "%wheelhouse%"=="1" (
 )
 
 :: --- Compile/Link Line Definitions ------------------------------------------
-set cl_common=     /I..\src\ /I..\local\ /nologo /FC /Z7 /Zc:preprocessor
+set cl_common=     /I..\src\ /I..\local\ /nologo /FC /Z7 /Zc:preprocessor /utf-8
 set cl_debug=      call cl /Od /Ob1 /DBUILD_DEBUG=1 %cl_common% %auto_compile_flags%
 set cl_release=    call cl /O2 /DBUILD_DEBUG=0 %cl_common% %auto_compile_flags%
 set cl_link=       /link /MANIFEST:EMBED /INCREMENTAL:NO /pdbaltpath:%%%%_PDB%%%% /NATVIS:"%~dp0\src\natvis\base.natvis" /noexp /nocoffgrpinfo /opt:ref /opt:icf
