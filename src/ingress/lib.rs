@@ -154,6 +154,9 @@ mod unix {
                 .enable_all()
                 .build()
                 .map_err(|e| e.to_string())?;
+            // Reads and writes deliberately share one bounded admission queue:
+            // a burst of either may make the other receive 503 and retry. This
+            // preserves request ordering and bounds total pending UI work.
             let (queue, receiver) = mpsc::sync_channel(64);
             let (shutdown, stop) = oneshot::channel();
             let thread = thread::Builder::new()
@@ -204,6 +207,7 @@ mod unix {
         struct Host {
             reads: u32,
             generation: u64,
+            fail: bool,
         }
         unsafe extern "C" fn apply(context: *mut c_void, _: *const u8, _: usize) -> u32 {
             (*(context as *mut Host)).generation += 1;
@@ -212,6 +216,9 @@ mod unix {
         unsafe extern "C" fn observe(context: *mut c_void, emit: Emit, output: *mut c_void) -> u32 {
             let host = &mut *(context as *mut Host);
             host.reads += 1;
+            if host.fail {
+                return 0;
+            }
             let empty = || Text {
                 data: std::ptr::null(),
                 len: 0,
@@ -238,6 +245,44 @@ mod unix {
             let (reply, response) = oneshot::channel();
             assert!(queue.send(Pending::Workdirs { reply }).is_ok());
             response
+        }
+        #[test]
+        fn failed_observation_is_shared_only_within_the_drain() {
+            let (queue, receiver) = mpsc::sync_channel(64);
+            let mut server = Ingress {
+                queue: receiver,
+                shutdown: None,
+                thread: None,
+            };
+            let mut host = Host {
+                fail: true,
+                ..Host::default()
+            };
+            let reads: Vec<_> = (0..4).map(|_| read(&queue)).collect();
+            unsafe {
+                wheelhouse_ingress_poll_observed(
+                    &mut server,
+                    apply,
+                    Some(observe),
+                    &mut host as *mut _ as *mut c_void,
+                );
+            }
+            assert_eq!(host.reads, 1);
+            for response in reads {
+                assert!(response.blocking_recv().unwrap().is_none());
+            }
+            host.fail = false;
+            let response = read(&queue);
+            unsafe {
+                wheelhouse_ingress_poll_observed(
+                    &mut server,
+                    apply,
+                    Some(observe),
+                    &mut host as *mut _ as *mut c_void,
+                );
+            }
+            assert!(response.blocking_recv().unwrap().is_some());
+            assert_eq!(host.reads, 2);
         }
         #[test]
         fn burst_reads_share_snapshot_but_patches_invalidate_it() {

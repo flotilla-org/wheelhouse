@@ -18,8 +18,9 @@ Validated on Linux against Andamento PR #112 commit
 - Native `--managed_content_diagnostics`: zero failures, including a real terminal
   running at git.root, existing-directory focus without duplicate workspace or
   user-command replacement, and removing the match after cwd changes.
-- Deterministic Rust drain test: burst reads share snapshots, patches invalidate
-  them, cancelled reads are skipped, and no cache survives the drain. Passed.
+- Two deterministic Rust drain tests: burst reads share snapshots, patches invalidate
+  them, cancelled reads are skipped, failures are shared within a drain, and
+  neither successful nor failed caches survive the drain. Passed.
 - Native consumer Clippy with `-D warnings`: passed.
 - Windows GNU target `cargo check --lib --bins` of the ingress consumer and the
   watcher's own crate: passed. This checks non-Unix Rust compilation; full Windows
