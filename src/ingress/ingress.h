@@ -22,7 +22,9 @@ typedef void (*WheelhouseWorkdirEmit)(void *, const WheelhouseWorkdir *);
 // observe runs on the UI thread and synchronously emits borrowed records.
 // Return 1 for a complete snapshot, 0 when temporarily unavailable. Empty text
 // is encoded as null; records with neither directory are omitted. poll without
-// an observer answers reads with 503. No host pointers cross to the worker.
+// an observer answers reads with 503, as do invalid UTF-8 records. Adjacent
+// reads in a drain share one snapshot; intervening patches invalidate it.
+// No host pointers cross to the worker.
 extern void wheelhouse_ingress_poll_observed(WheelhouseIngress *,
   uint32_t (*)(void *, const uint8_t *, size_t),
   uint32_t (*)(void *, WheelhouseWorkdirEmit, void *), void *);

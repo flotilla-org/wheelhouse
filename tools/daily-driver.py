@@ -215,7 +215,7 @@ def main():
                 if not args.no_build:
                     subprocess.run([sys.executable, str(ROOT / 'tools/prepare-andamento-build.py'), str(andamento)], check=True)
                     subprocess.run(['cargo', 'build', '--manifest-path', str(ROOT / 'build/andamento/Cargo.toml'),
-                                    '-p', 'wheelhouse-native-deps', '--bin', 'andamento-git-watcher', '--locked', '--target', host,
+                                    '-p', 'andamento-git-watcher', '--bin', 'andamento-git-watcher', '--locked', '--target', host,
                                     '--target-dir', str(target)], check=True)
             if not os.access(args.watcher, os.X_OK):
                 parser.error(f'Andamento git watcher not found: {args.watcher}; build andamento#107 or set ANDAMENTO_GIT_WATCHER_BIN')

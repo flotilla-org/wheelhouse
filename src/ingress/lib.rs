@@ -46,7 +46,7 @@ mod unix {
             reply: oneshot::Sender<u32>,
         },
         Workdirs {
-            reply: oneshot::Sender<Option<serde_json::Value>>,
+            reply: oneshot::Sender<Option<std::sync::Arc<serde_json::Value>>>,
         },
     }
     pub struct Ingress {
@@ -197,6 +197,102 @@ mod unix {
             }
         }
     }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[derive(Default)]
+        struct Host {
+            reads: u32,
+            generation: u64,
+        }
+        unsafe extern "C" fn apply(context: *mut c_void, _: *const u8, _: usize) -> u32 {
+            (*(context as *mut Host)).generation += 1;
+            1
+        }
+        unsafe extern "C" fn observe(context: *mut c_void, emit: Emit, output: *mut c_void) -> u32 {
+            let host = &mut *(context as *mut Host);
+            host.reads += 1;
+            let empty = || Text {
+                data: std::ptr::null(),
+                len: 0,
+            };
+            emit(
+                output,
+                &Workdir {
+                    workspace_id: host.generation,
+                    view_id: 9,
+                    entity_kind: empty(),
+                    entity_id: empty(),
+                    live_cwd: empty(),
+                    cwd: Text {
+                        data: b"/repo".as_ptr(),
+                        len: 5,
+                    },
+                },
+            );
+            1
+        }
+        fn read(
+            queue: &mpsc::SyncSender<Pending>,
+        ) -> oneshot::Receiver<Option<std::sync::Arc<serde_json::Value>>> {
+            let (reply, response) = oneshot::channel();
+            assert!(queue.send(Pending::Workdirs { reply }).is_ok());
+            response
+        }
+        #[test]
+        fn burst_reads_share_snapshot_but_patches_invalidate_it() {
+            let (queue, receiver) = mpsc::sync_channel(64);
+            let mut server = Ingress {
+                queue: receiver,
+                shutdown: None,
+                thread: None,
+            };
+            let mut host = Host::default();
+            let mut reads = Vec::new();
+            drop(read(&queue)); // Cancelled reads do not call the observer.
+            for _ in 0..4 {
+                reads.push(read(&queue));
+            }
+            let (reply, ack) = oneshot::channel();
+            assert!(queue
+                .send(Pending::Patch {
+                    body: Bytes::new(),
+                    reply
+                })
+                .is_ok());
+            for _ in 0..4 {
+                reads.push(read(&queue));
+            }
+            unsafe {
+                wheelhouse_ingress_poll_observed(
+                    &mut server,
+                    apply,
+                    Some(observe),
+                    &mut host as *mut _ as *mut c_void,
+                );
+            }
+            assert_eq!(host.reads, 2);
+            assert_eq!(ack.blocking_recv().unwrap(), 1);
+            for (index, response) in reads.into_iter().enumerate() {
+                let value = response.blocking_recv().unwrap().unwrap();
+                assert_eq!(
+                    value["workdirs"][0]["workspace_id"],
+                    if index < 4 { 0 } else { 1 }
+                );
+            }
+            let response = read(&queue);
+            unsafe {
+                wheelhouse_ingress_poll_observed(
+                    &mut server,
+                    apply,
+                    Some(observe),
+                    &mut host as *mut _ as *mut c_void,
+                );
+            }
+            assert!(response.blocking_recv().unwrap().is_some());
+            assert_eq!(host.reads, 3); // The cache never survives a UI drain.
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -264,7 +360,7 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll(
 ///
 /// # Safety
 /// Same handle/context requirements as poll. Observe must call emit synchronously
-/// with valid UTF-8 buffers (NULL only for length zero), and must not unwind.
+/// with valid buffers (NULL only for length zero; invalid UTF-8 yields 503), and must not unwind.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
     server: *mut Ingress,
@@ -274,30 +370,40 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
 ) {
     #[cfg(unix)]
     if let Some(server) = server.as_mut() {
+        struct Snapshot {
+            values: Vec<serde_json::Value>,
+            valid: bool,
+        }
         unsafe extern "C" fn emit(context: *mut c_void, record: *const Workdir) {
-            let values = &mut *(context as *mut Vec<serde_json::Value>);
+            let snapshot = &mut *(context as *mut Snapshot);
             let r = &*record;
-            unsafe fn text(t: &Text) -> Option<String> {
+            unsafe fn text(t: &Text) -> Result<Option<&str>, std::str::Utf8Error> {
                 if t.len == 0 {
-                    None
+                    Ok(None)
                 } else {
-                    Some(
-                        String::from_utf8_lossy(std::slice::from_raw_parts(t.data, t.len))
-                            .into_owned(),
-                    )
+                    std::str::from_utf8(std::slice::from_raw_parts(t.data, t.len)).map(Some)
                 }
             }
-            let cwd = text(&r.cwd);
-            let live_cwd = text(&r.live_cwd);
+            let (Ok(cwd), Ok(live_cwd), Ok(kind), Ok(id)) = (
+                text(&r.cwd),
+                text(&r.live_cwd),
+                text(&r.entity_kind),
+                text(&r.entity_id),
+            ) else {
+                snapshot.valid = false;
+                return;
+            };
             if cwd.is_none() && live_cwd.is_none() {
                 return;
             }
-            values.push(
+            snapshot.values.push(
                 serde_json::json!({"workspace_id": r.workspace_id, "view_id": r.view_id,
-                "entity_kind": text(&r.entity_kind), "entity_id": text(&r.entity_id),
-                "cwd": cwd, "live_cwd": live_cwd}),
+                "entity_kind": kind, "entity_id": id, "cwd": cwd, "live_cwd": live_cwd}),
             );
         }
+        // Coalesce adjacent reads within this UI drain. A patch invalidates the
+        // snapshot so a later read still observes preceding host mutations.
+        let mut cached = None;
         for _ in 0..64 {
             let Ok(pending) = server.queue.try_recv() else {
                 break;
@@ -305,17 +411,28 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
             match pending {
                 unix::Pending::Patch { body, reply } => {
                     if !reply.is_closed() {
+                        cached = None;
                         let outcome = apply(context, body.as_ptr(), body.len());
                         let _ = reply.send(outcome);
                     }
                 }
                 unix::Pending::Workdirs { reply } => {
                     if !reply.is_closed() {
-                        let mut values: Vec<serde_json::Value> = Vec::new();
-                        let ok = observe.is_some_and(|f| {
-                            f(context, emit, &mut values as *mut _ as *mut c_void) == 1
+                        let value = cached.get_or_insert_with(|| {
+                            let mut snapshot = Snapshot {
+                                values: Vec::new(),
+                                valid: true,
+                            };
+                            let ok = observe.is_some_and(|f| {
+                                f(context, emit, &mut snapshot as *mut _ as *mut c_void) == 1
+                            });
+                            (ok && snapshot.valid).then(|| {
+                                std::sync::Arc::new(
+                                    serde_json::json!({"workdirs": snapshot.values}),
+                                )
+                            })
                         });
-                        let _ = reply.send(ok.then(|| serde_json::json!({"workdirs": values})));
+                        let _ = reply.send(value.clone());
                     }
                 }
             }

@@ -33,6 +33,8 @@ struct UIShell_SidebarState
   Andamento *core;
   AndamentoSnapshot *snapshot;
   U64 topology_hash;
+  U64 workdirs_hash;
+  U64 workdirs_retry_at;
   U64 managed_cfg_generation;
   B32 managed_dirty;
   U64 managed_error_workspace;
@@ -124,7 +126,9 @@ uishell_sidebar_workdirs(Arena *arena, UIShell_ControlledSplit *split)
       for(CFG_NodePtrNode *tab = p->tabs.first; tab; tab = tab->next)
       {
         if(!str8_match(tab->v->string, str8_lit("terminal"), 0)) { continue; }
-        String8 cwd = cfg_node_child_from_string(tab->v, str8_lit("cwd"))->first->string;
+        CFG_Node *cwd_node = cfg_node_child_from_string(tab->v, str8_lit("cwd"));
+        if(cwd_node == &cfg_nil_node || cwd_node->first == &cfg_nil_node) { continue; }
+        String8 cwd = cwd_node->first->string;
         if(!cwd.size) { continue; }
         UIShell_Workdir *dir = push_array(arena, UIShell_Workdir, 1);
         dir->value = (WheelhouseWorkdir){w->id, tab->v->id,
@@ -155,29 +159,36 @@ uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
   }
   UIShell_Workdirs dirs = uishell_sidebar_workdirs(scratch.arena, split);
   AndamentoWorkdir *observed = push_array(scratch.arena, AndamentoWorkdir, dirs.count);
-  U64 index = 0;
+  U64 index = 0, dirs_hash = 5381;
   for(UIShell_Workdir *dir = dirs.first; dir; dir = dir->next)
   {
     WheelhouseIngressText cwd = dir->value.live_cwd.len ? dir->value.live_cwd : dir->value.cwd;
     observed[index++] = (AndamentoWorkdir){dir->value.workspace_id, {cwd.data, cwd.len}};
-    hash = hash*33 + dir->value.workspace_id;
-    hash = hash*33 + dir->value.view_id;
-    hash = hash*33 + cwd.len;
-    for(U64 i = 0; i < cwd.len; i++) { hash = hash*33 + cwd.data[i]; }
+    dirs_hash = dirs_hash*33 + dir->value.workspace_id;
+    dirs_hash = dirs_hash*33 + dir->value.view_id;
+    dirs_hash = dirs_hash*33 + cwd.len;
+    for(U64 i = 0; i < cwd.len; i++) { dirs_hash = dirs_hash*33 + cwd.data[i]; }
   }
+  // Each core controls one window. HTTP discovery unions all windows, while
+  // focus and derived open state stay local to the window owning this split.
+  B32 changed = 0, topology_ready = 1;
   if(hash != state->topology_hash)
   {
     char *error = 0;
-    B32 ok = andamento_observe(state->core, items, count, 0, 0, &error);
-    if(uishell_sidebar_result(state, ok, error))
-    {
-      error = 0;
-      ok = andamento_observe_workdirs(state->core, observed, dirs.count, &error);
-      if(uishell_sidebar_result(state, ok, error)) { state->topology_hash = hash; }
-      uishell_sidebar_refresh(state);
-      rd_request_frame();
-    }
+    topology_ready = andamento_observe(state->core, items, count, 0, 0, &error);
+    if(uishell_sidebar_result(state, topology_ready, error))
+    { state->topology_hash = hash; changed = 1; }
   }
+  U64 now = wheelhouse_ingress_now_ms();
+  if(topology_ready && dirs_hash != state->workdirs_hash && now >= state->workdirs_retry_at)
+  {
+    char *error = 0;
+    B32 ok = andamento_observe_workdirs(state->core, observed, dirs.count, &error);
+    if(uishell_sidebar_result(state, ok, error))
+    { state->workdirs_hash = dirs_hash; state->workdirs_retry_at = 0; changed = 1; }
+    else { state->workdirs_retry_at = now+1000; }
+  }
+  if(changed) { uishell_sidebar_refresh(state); rd_request_frame(); }
   scratch_end(scratch);
 }
 
@@ -703,31 +714,43 @@ internal String8
 uishell_sidebar_fields(Arena *arena, AndamentoSnapshot *snapshot, AndamentoNode node, F32 width)
 {
   B32 *keep = push_array(arena, B32, node.field_count);
-  for(U64 i = 0; i < node.field_count; i++) { keep[i] = 1; }
-  String8 result = str8_zero();
-  for(U64 attempt = 0; attempt <= node.field_count; attempt++)
+  AndamentoField *fields = push_array(arena, AndamentoField, node.field_count);
+  F32 *widths = push_array(arena, F32, node.field_count);
+  String8 separator = str8_lit(" · ");
+  F32 separator_width = fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, separator).x;
+  F32 measured = 0;
+  U64 kept = 0;
+  for(U64 i = 0; i < node.field_count; i++)
   {
-    result = str8_zero();
+    andamento_snapshot_field(snapshot, node.first_field+i, &fields[i]);
+    String8 text = uishell_sidebar_string(fields[i].text);
+    if(!text.size) { continue; }
+    keep[i] = 1;
+    widths[i] = fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, text).x;
+    measured += widths[i] + (kept++ ? separator_width : 0);
+  }
+  while(measured > width)
+  {
     U64 remove = ANDAMENTO_NONE;
     S64 lowest = max_S64;
     for(U64 i = 0; i < node.field_count; i++)
     {
-      if(!keep[i]) { continue; }
-      AndamentoField field = {0};
-      andamento_snapshot_field(snapshot, node.first_field+i, &field);
-      String8 text = uishell_sidebar_string(field.text);
-      if(text.size) { result = result.size ? push_str8f(arena, "%S · %S", result, text) : text; }
-      if(field.class_ != ANDAMENTO_FIELD_REQUIRED)
+      AndamentoField field = fields[i];
+      if(keep[i] && field.class_ != ANDAMENTO_FIELD_REQUIRED)
       {
         S64 priority = field.class_ == ANDAMENTO_FIELD_OPTIONAL ? min_S64 : field.has_priority ? field.priority : 0;
         if(remove == ANDAMENTO_NONE || priority < lowest) { remove = i; lowest = priority; }
       }
     }
-    F32 measured = fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, result).x;
-    if(measured <= width || remove == ANDAMENTO_NONE) { break; }
+    if(remove == ANDAMENTO_NONE) { break; }
     keep[remove] = 0;
+    measured -= widths[remove] + (--kept ? separator_width : 0);
   }
-  return result;
+  String8List parts = {0};
+  for(U64 i = 0; i < node.field_count; i++)
+  { if(keep[i]) { str8_list_push(arena, &parts, uishell_sidebar_string(fields[i].text)); } }
+  StringJoin join = {.sep = separator};
+  return str8_list_join(arena, &parts, &join);
 }
 
 internal void

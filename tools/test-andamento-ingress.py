@@ -154,6 +154,32 @@ class IngressTests(unittest.TestCase):
         self.assertEqual(json.loads(self.request(read=True)[1]), {'workdirs': []})
         self.assertEqual(self.received, [])
 
+    def test_invalid_utf8_does_not_invent_a_directory(self):
+        raw = C.create_string_buffer(b'/bad/\xff')
+        def invalid(_, emit, context):
+            emit(context, C.byref(Workdir(1, 2, Text(), Text(),
+                 Text(C.cast(raw, C.c_void_p), len(raw.value)), Text())))
+            return 1
+        self.observe = OBSERVE(invalid)
+        self.assertEqual(self.request(read=True)[0], 503)
+
+    def test_concurrent_http_read_burst(self):
+        def read():
+            connection = UnixHTTPConnection(self.path)
+            try:
+                connection.request('GET', '/v1/observed/workdirs')
+                response = connection.getresponse()
+                return response.status, json.loads(response.read())
+            finally:
+                connection.close()
+        requests = [self.pool.submit(read) for _ in range(8)]
+        deadline = time.monotonic() + 5
+        while not all(future.done() for future in requests) and time.monotonic() < deadline:
+            lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
+            time.sleep(.005)
+        for future in requests:
+            self.assertEqual(future.result(timeout=1), (200, {'workdirs': []}))
+
     def test_read_timeout_cancellation_and_unavailability(self):
         self.assertEqual(self.request(read=True, poll=False)[0], 503)
         lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)

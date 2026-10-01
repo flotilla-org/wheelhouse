@@ -4,10 +4,10 @@ Validated on Linux against Andamento PR #112 commit
 `c92ea96180ff2efd97e7670a28c001e09ef46ee6`, Cleat CI pin
 `87b9d853be9a2858ef73f82ea8442a9ae30683e7`, and Jackstay pin `91156bfac2bc2f6df168c928b445c98e002f4950`.
 
-- HTTP/Unix-socket ingress: 8 tests passed, including a real Wheelhouse process,
+- HTTP/Unix-socket ingress: 10 tests passed, including a real Wheelhouse process,
   saved and live-directory response fields, two views plus a directory-less view,
   changed directories, empty inventory, JSON escaping, unavailable/cancelled reads,
-  existing patch handling, and a real Rust watcher `--once` against the process.
+  invalid UTF-8 rejection, concurrent reads, existing patch handling, and a real Rust watcher `--once` against the process.
 - Native sidebar C ABI: 20 tests passed, including Git fixture relationship and
   materialization checks.
 - Daily-driver launcher: 10 tests passed with controlled child processes,
@@ -18,7 +18,12 @@ Validated on Linux against Andamento PR #112 commit
 - Native `--managed_content_diagnostics`: zero failures, including a real terminal
   running at git.root, existing-directory focus without duplicate workspace or
   user-command replacement, and removing the match after cwd changes.
+- Deterministic Rust drain test: burst reads share snapshots, patches invalidate
+  them, cancelled reads are skipped, and no cache survives the drain. Passed.
 - Native consumer Clippy with `-D warnings`: passed.
+- Windows GNU target `cargo check --lib --bins` of the ingress consumer and the
+  watcher's own crate: passed. This checks non-Unix Rust compilation; full Windows
+  linking/UI checks still belong to CI.
 - Generated source check and git diff whitespace check: passed.
 
 Xvfb and runtime/keyboard packages were downloaded using private apt lists and
