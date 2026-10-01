@@ -48,6 +48,7 @@ struct UIShell_TerminalViewState
   F32 cell_height_px;
   B32 focus_active;
   U16 mouse_buttons_held;
+  B32 middle_press_consumed;
   F32 last_mouse_x_px;
   F32 last_mouse_y_px;
   B32 mouse_pos_valid;
@@ -3714,34 +3715,45 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     for(UI_EventNode *node = canvas_sig.mouse_events.first; node != 0; node = node->next)
     {
       UI_Event *evt = &node->v;
-      U32 button = evt->key == WM_Key_LeftMouseButton ? CLEAT_MOUSE_BUTTON_LEFT :
-                   evt->key == WM_Key_MiddleMouseButton ? CLEAT_MOUSE_BUTTON_MIDDLE : CLEAT_MOUSE_BUTTON_RIGHT;
-      U16 flag = evt->key == WM_Key_LeftMouseButton ? CLEAT_MOUSE_BUTTON_FLAG_LEFT :
-                 evt->key == WM_Key_MiddleMouseButton ? CLEAT_MOUSE_BUTTON_FLAG_MIDDLE : CLEAT_MOUSE_BUTTON_FLAG_RIGHT;
-      if(button == CLEAT_MOUSE_BUTTON_LEFT && selection_consumes_left) { continue; }
-      if(button == CLEAT_MOUSE_BUTTON_MIDDLE && paste_middle) { continue; }
+      U32 button = 0;
+      U16 flag = 0;
+      switch(evt->key)
+      {
+        case WM_Key_LeftMouseButton:   {button = CLEAT_MOUSE_BUTTON_LEFT;   flag = CLEAT_MOUSE_BUTTON_FLAG_LEFT;}break;
+        case WM_Key_MiddleMouseButton: {button = CLEAT_MOUSE_BUTTON_MIDDLE; flag = CLEAT_MOUSE_BUTTON_FLAG_MIDDLE;}break;
+        case WM_Key_RightMouseButton:  {button = CLEAT_MOUSE_BUTTON_RIGHT;  flag = CLEAT_MOUSE_BUTTON_FLAG_RIGHT;}break;
+        default: {continue;}
+      }
       B32 is_press = evt->kind == UI_EventKind_Press;
+      if(button == CLEAT_MOUSE_BUTTON_LEFT && selection_consumes_left) { continue; }
+      if(button == CLEAT_MOUSE_BUTTON_MIDDLE)
+      {
+        if(is_press) { tv->middle_press_consumed = paste_middle; }
+        if(tv->middle_press_consumed)
+        {
+          if(!is_press) { tv->middle_press_consumed = 0; }
+          continue;
+        }
+      }
       F32 event_x = evt->pos.x - canvas_box->rect.x0;
       F32 event_y = evt->pos.y - canvas_box->rect.y0;
       if(is_press)
       {
         tv->mouse_buttons_held |= flag;
       }
+      cleat_input_event input =
       {
-        cleat_input_event input =
-        {
-          .kind = CLEAT_INPUT_MOUSE,
-          .modifiers = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers),
-          .mouse_kind = is_press ? CLEAT_MOUSE_PRESS : CLEAT_MOUSE_RELEASE,
-          .mouse_button = button,
-          .mouse_buttons = tv->mouse_buttons_held,
-          .cell_col = (U16)Clamp(0, (S32)(event_x/cell_width_px), (S32)(cols-1)),
-          .cell_row = (U16)Clamp(0, (S32)(event_y/cell_height_px), (S32)(rows-1)),
-          .x_px = event_x,
-          .y_px = event_y,
-        };
-        cleat_session_send_input(tv->session, &input);
-      }
+        .kind = CLEAT_INPUT_MOUSE,
+        .modifiers = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers),
+        .mouse_kind = is_press ? CLEAT_MOUSE_PRESS : CLEAT_MOUSE_RELEASE,
+        .mouse_button = button,
+        .mouse_buttons = tv->mouse_buttons_held,
+        .cell_col = (U16)Clamp(0, (S32)(event_x/cell_width_px), (S32)(cols-1)),
+        .cell_row = (U16)Clamp(0, (S32)(event_y/cell_height_px), (S32)(rows-1)),
+        .x_px = event_x,
+        .y_px = event_y,
+      };
+      cleat_session_send_input(tv->session, &input);
       if(!is_press) { tv->mouse_buttons_held &= ~flag; }
     }
 
@@ -3928,6 +3940,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
             }
           }
         }
+        // Cleat's VT encoder emits key releases only when the application has
+        // enabled Kitty event types; legacy terminal applications remain unchanged.
         else if(!taken && session_ready &&
                 (evt->kind == UI_EventKind_Press || evt->kind == UI_EventKind_Release) &&
                 evt->key != WM_Key_LeftMouseButton &&
