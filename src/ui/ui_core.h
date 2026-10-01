@@ -546,6 +546,9 @@ struct UI_Signal
   Vec2S16 scroll;
   Vec2F32 scroll_px; // precise movement, only for ScrollPrecise consumers
   UI_SignalFlags f;
+  // Claimed button presses/releases, in order, with their original positions
+  // and modifiers. Copies live for this build, like other UI event data.
+  UI_EventList mouse_events;
 };
 
 #define ui_pressed(s)        !!((s).f&UI_SignalFlag_Pressed)

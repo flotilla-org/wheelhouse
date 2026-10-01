@@ -176,6 +176,9 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/managed-user" --project:"$task_dir/managed-project" --managed_content_diagnostics
           ./build/wheelhouse --user:"$task_dir/glyph-user" --project:"$task_dir/glyph-project" --terminal_glyph_diagnostics --terminal_glyph_fixture_ppm:"$task_dir/terminal.ppm"
           python3 tools/validate-terminal-fixture-ppm.py "$task_dir/terminal.ppm"
+      - name: Windows terminal input regression
+        if: runner.os == 'Windows'
+        run: python tools/test-windows-terminal-input.py
       - name: Jackstay media and input acceptance
         # Local Endpoints: named pipes on Windows, Unix sockets elsewhere.
         run: python tools/test-jackstay.py
