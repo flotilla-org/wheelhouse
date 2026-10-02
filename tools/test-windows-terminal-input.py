@@ -15,6 +15,39 @@ import tempfile
 import time
 
 
+READY_MARKER = "WheelhouseInputReady"
+
+
+def view_ready(log):
+    return any(b"terminal glyph trace:" in line and
+               ('text="' + READY_MARKER).encode() in line
+               for line in log.splitlines())
+
+
+def publish(directory, name, text):
+    pending = directory / (name + ".tmp")
+    pending.write_text(text)
+    pending.replace(directory / name)
+
+
+def mouse_modes(data):
+    return {int(mode): int(state) for mode, state in
+            re.findall(rb"\x1b\[\?(\d+);(\d+)\$y", data)}
+
+
+def kitty_flags(data):
+    # This fixture sends one query; use the latest complete reply if fragmented.
+    flags = re.findall(rb"\x1b\[\?(\d+)u", data)
+    return int(flags[-1]) if flags else None
+
+
+def terminal_ready(data):
+    modes = mouse_modes(data)
+    flags = kitty_flags(data)
+    return (all(modes.get(mode) in (1, 3) for mode in (1003, 1006, 1016)) and
+            flags is not None and flags & 3 == 3)
+
+
 def capture_input(directory):
     kernel = C.WinDLL("kernel32", use_last_error=True)
     kernel.GetStdHandle.restype = W.HANDLE
@@ -24,10 +57,15 @@ def capture_input(directory):
     handle = kernel.GetStdHandle(-10)
     if not kernel.SetConsoleMode(handle, 0x200):  # raw VT input
         raise C.WinError(C.get_last_error())
+    publish(directory, "child-pid", str(os.getpid()))
     # Kitty key event types and SGR pixel mouse tracking.
-    sys.stdout.write("\x1b[>3u\x1b[?1003h\x1b[?1006h\x1b[?1016hReady\r\n")
+    # A flush only queues output. Queries make readiness a round trip through
+    # the real VT parser and ConPTY input path, after all modes are enabled.
+    sys.stdout.write("\x1b[>3u\x1b[?1003h\x1b[?1006h\x1b[?1016h"
+                     "\x1b[?1003$p\x1b[?1006$p\x1b[?1016$p\x1b[?u")
     sys.stdout.flush()
-    (directory / "ready").write_text(str(os.getpid()))
+    replies = bytearray()
+    ready = False
     with (directory / "input.bin").open("wb", buffering=0) as output:
         while True:
             buf, count = C.create_string_buffer(4096), W.DWORD()
@@ -35,17 +73,31 @@ def capture_input(directory):
                 break
             if not count.value:
                 break
-            output.write(buf.raw[:count.value])
+            chunk = buf.raw[:count.value]
+            output.write(chunk)
+            if not ready:
+                replies.extend(chunk)
+                if terminal_ready(replies):
+                    publish(directory, "ready", str(os.getpid()))
+                    ready = True
+                    sys.stdout.write(READY_MARKER + "\r\n")
+                    sys.stdout.flush()
 
 
-def wait_for(predicate, description, timeout=15):
+def wait_for(predicate, description, timeout=15, diagnostics=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         result = predicate()
         if result:
             return result
         time.sleep(.05)
-    raise AssertionError("timed out waiting for " + description)
+    details = ""
+    if diagnostics:
+        try:
+            details = "\n" + diagnostics()
+        except Exception as error:
+            details = f"\ndiagnostics failed: {error!r}"
+    raise AssertionError(f"timed out after {timeout:g}s waiting for {description}{details}")
 
 
 def check(executable):
@@ -59,6 +111,8 @@ def check(executable):
     user.GetWindowThreadProcessId.argtypes = [W.HWND, C.POINTER(W.DWORD)]
     user.IsWindowVisible.argtypes = [W.HWND]
     user.GetWindowRect.argtypes = [W.HWND, C.POINTER(W.RECT)]
+    user.GetClientRect.argtypes = [W.HWND, C.POINTER(W.RECT)]
+    user.GetForegroundWindow.restype = W.HWND
     callback_type = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
     failures = []
     with tempfile.TemporaryDirectory(prefix="wheelhouse-input-") as tmp:
@@ -72,9 +126,13 @@ def check(executable):
             f'        expression: "{expression}"\n        selected\n'
             '      }\n      selected\n    }\n  }\n}\n')
         (directory / "project").write_text("// isolated input regression\n")
-        process = subprocess.Popen([str(executable), f"--user:{tmp}/user",
+        started = time.monotonic()
+        process = subprocess.Popen([str(executable), "--terminal_glyph_trace",
+                                    f"--user:{tmp}/user",
                                     f"--project:{tmp}/project"], cwd=executable.parent)
         child_handle = None
+        child_pid = None
+        hwnd = None
         try:
             def window():
                 windows = []
@@ -93,35 +151,71 @@ def check(executable):
                 user.EnumWindows(visit, 0)
                 return max(windows)[1] if windows else None
 
-            hwnd = wait_for(window, "test window")
-            ready = directory / "ready"
-            child_pid = int(wait_for(lambda: ready.read_text() if ready.exists() else "",
-                                    "VT input fixture"))
-            child_handle = kernel.OpenProcess(0x100000, False, child_pid)
-            if not child_handle:
-                raise C.WinError(C.get_last_error())
-            def post(message, wparam, lparam):
-                if not user.PostMessageW(hwnd, message, wparam, lparam):
-                    raise C.WinError(C.get_last_error())
-
             def data():
                 path = directory / "input.bin"
                 return path.read_bytes() if path.exists() else b""
+
+            def render_log():
+                return log_path.read_bytes() if log_path.exists() else b""
+
+            log_path = directory / "logs/ui_thread.uishell_log"
+            def diagnostics():
+                rect = W.RECT()
+                size = None
+                if hwnd and user.GetClientRect(hwnd, C.byref(rect)):
+                    size = (rect.right - rect.left, rect.bottom - rect.top)
+                received = data()
+                return (f"elapsed={time.monotonic() - started:.3f}s "
+                        f"wheelhouse_pid={process.pid} exit={process.poll()} "
+                        f"hwnd={hwnd} visible={bool(hwnd and user.IsWindowVisible(hwnd))} "
+                        f"foreground_hwnd={user.GetForegroundWindow()} client_size={size}\n"
+                        f"child_pid={child_pid} child_wait="
+                        f"{kernel.WaitForSingleObject(child_handle, 0) if child_handle else None} "
+                        f"ready={(directory / 'ready').exists()} "
+                        f"view_ready={view_ready(render_log())} "
+                        f"mouse_modes={mouse_modes(received)} kitty_flags={kitty_flags(received)}\n"
+                        f"render_log={log_path} exists={log_path.exists()}\n"
+                        f"received={received[-1024:]!r} ({len(received)} bytes total)")
+
+            def wait(predicate, description):
+                return wait_for(predicate, description, diagnostics=diagnostics)
+
+            hwnd = wait(window, "test window")
+            pid_file = directory / "child-pid"
+            child_pid = int(wait(lambda: pid_file.read_text() if pid_file.exists() else "",
+                                 "VT input fixture process"))
+            child_handle = kernel.OpenProcess(0x100000, False, child_pid)
+            if not child_handle:
+                raise C.WinError(C.get_last_error())
+            ready = directory / "ready"
+            wait(lambda: ready.exists(), "VT input fixture mode acknowledgements")
+            print(f"READY: terminal modes acknowledged after {time.monotonic() - started:.3f}s")
+            # The provider answers independently of UI frames. The render trace
+            # for this post-acknowledgement marker is emitted after the view
+            # adopts its update's mouse modes, so selection cannot swallow the
+            # first press using an older, non-tracking frame.
+            wait(lambda: view_ready(render_log()), "terminal view rendering readiness marker")
+            print(f"READY: terminal view rendered after {time.monotonic() - started:.3f}s")
+            def post(message, wparam, lparam):
+                if not user.PostMessageW(hwnd, message, wparam, lparam):
+                    raise C.WinError(C.get_last_error())
 
             def click(x, y):
                 post(0x201, 1, x | (y << 16))
                 post(0x202, 0, x | (y << 16))
 
+            pressed = time.monotonic()
             click(450, 200)  # clear of the sidebar; also focus the terminal view
             # Win32 client coordinates and Cleat's SGR-pixel coordinates have the
             # same physical pixel unit, even when the display uses DPI scaling.
-            wait_for(lambda: b"\x1b[<0;" in data(), "first mouse press")
+            wait(lambda: b"\x1b[<0;" in data(), "first mouse press")
+            print(f"READY: first mouse input after {time.monotonic() - pressed:.3f}s")
             click(570, 240)
             def left_presses():
                 return [(int(x), int(y)) for x, y in
                         re.findall(rb"\x1b\[<0;(\d+);(\d+)M", data())]
-            mouse = wait_for(lambda: left_presses() if len(left_presses()) >= 2 else None,
-                             "two mouse presses")
+            mouse = wait(lambda: left_presses() if len(left_presses()) >= 2 else None,
+                         "two mouse presses")
             if len(mouse) < 2 or (mouse[-1][0] - mouse[-2][0],
                                   mouse[-1][1] - mouse[-2][1]) != (120, 40):
                 failures.append(f"mouse presses lost message coordinates: {mouse!r}")
@@ -139,8 +233,8 @@ def check(executable):
             def button_events():
                 return [(int(b), int(x), int(y), action) for b, x, y, action in
                         re.findall(rb"\x1b\[<([012]);(\d+);(\d+)([Mm])", data()[start:])]
-            buttons = wait_for(lambda: button_events() if len(button_events()) >= 6 else None,
-                               "six ordered button events")
+            buttons = wait(lambda: button_events() if len(button_events()) >= 6 else None,
+                           "six ordered button events")
             if ([(b, a) for b, _, _, a in buttons] !=
                     [(b, a) for b in range(3) for a in (b"M", b"m")] or
                     any((buttons[i+1][1] - buttons[i][1],
@@ -157,8 +251,8 @@ def check(executable):
                 post(0x101, vk, 1 | (1 << 24) | (3 << 30))
                 press = b"\x1b[1;1:1" + suffix
                 release = b"\x1b[1;1:3" + suffix
-                received = wait_for(lambda: data()[start:] if release in data()[start:] else None,
-                                    "arrow release")
+                received = wait(lambda: data()[start:] if release in data()[start:] else None,
+                                "arrow release")
                 if press not in received or release not in received:
                     failures.append(f"arrow {suffix!r} missing press/release: {received!r}")
                 else:
