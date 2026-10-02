@@ -44,10 +44,12 @@ if WINDOWS:
     PipeSocket = module.PipeSocket
 
 
-def wait_ready(path, timeout=10):
+def wait_ready(path, timeout=10, process=None):
     """Health is the readiness contract, including after listener restart."""
     deadline = time.monotonic() + timeout
     while True:
+        if process is not None and process.poll() is not None:
+            raise RuntimeError(f'native ingress process exited with {process.returncode}')
         connection = UnixHTTPConnection(path)
         try:
             connection.request('GET', '/v1/health')
@@ -274,8 +276,8 @@ class IngressTests(unittest.TestCase):
                                        stdout=log, stderr=log)
             try:
                 try:
-                    wait_ready(path, timeout=20)
-                except (OSError, TimeoutError):
+                    wait_ready(path, timeout=20, process=process)
+                except (OSError, TimeoutError, RuntimeError):
                     log.seek(0)
                     self.fail('native listener failed: ' + log.read().decode(errors='replace'))
                 connection = UnixHTTPConnection(path)

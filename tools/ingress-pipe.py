@@ -134,10 +134,10 @@ class PipeSocket:
 
     def sendall(self, data):
         data = bytes(data)
+        buffer = C.create_string_buffer(data)
         offset = 0
         while offset < len(data):
-            buffer = C.create_string_buffer(data[offset:])
-            written = self.transfer(kernel.WriteFile, buffer, len(data) - offset)
+            written = self.transfer(kernel.WriteFile, C.byref(buffer, offset), len(data) - offset)
             if not written:
                 raise BrokenPipeError('pipe write made no progress')
             offset += written

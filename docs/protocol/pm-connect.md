@@ -8,9 +8,9 @@ Flotilla's `pm connect` is one producer. Andamento owns metadata semantics.
 Wheelhouse listens on the endpoint configured by `--andamento_socket`: a Unix
 socket on Unix hosts or a local byte-mode named pipe (`\\.\pipe\<name>`) on Windows.
 Producers discover it through `WHEELHOUSE_SOCKET` or an explicit socket argument.
-On Unix, the socket must
-live in a private directory (mode 0700); the listener uses mode 0600. Startup
-fails if the path already exists, and clean shutdown removes its own socket.
+On Unix, the socket must live in a private directory (mode 0700); the listener
+uses mode 0600. Startup fails if the path already exists, and clean shutdown
+removes its own socket.
 On Windows the name is used directly, without filesystem-path mapping. The
 listener follows [ADR 0011](../adr/0011-windows-local-ipc-uses-named-pipes-with-logical-endpoints.md):
 a protected DACL grants SYSTEM and the current user, remote clients are rejected,

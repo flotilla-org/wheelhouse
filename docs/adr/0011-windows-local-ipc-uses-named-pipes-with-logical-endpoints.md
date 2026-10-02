@@ -38,7 +38,10 @@ A server creates its endpoint with:
   of the same name is an error rather than a silent takeover.
 
 A client verifies the server before trusting it: `GetNamedPipeServerProcessId`,
-then that process's owner.
+then that process's owner. Hold the opened process handle through token
+inspection. PID reuse can race between querying the pipe's server PID and
+opening that process; the owner comparison is a same-user trust check, not
+proof of a stable process identity across that interval.
 
 ## Peer identity
 

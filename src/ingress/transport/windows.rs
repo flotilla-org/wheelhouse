@@ -168,3 +168,26 @@ impl axum::serve::Listener for Listener {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ADR 0011: a second listener must refuse an already-served pipe name.
+    // This lifecycle scenario uses real Windows pipe handles.
+    #[tokio::test(flavor = "current_thread")]
+    async fn duplicate_bind_preserves_the_original_listener() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let name = PathBuf::from(format!(
+            r"\\.\pipe\wheelhouse-bind-{}-{nonce}",
+            std::process::id()
+        ));
+        let owner = Listener::bind(&name).unwrap();
+        assert!(Listener::bind(&name).is_err());
+        drop(owner);
+        assert!(Listener::bind(&name).is_ok());
+    }
+}
