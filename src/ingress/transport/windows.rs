@@ -120,7 +120,12 @@ impl Listener {
         let text = name
             .to_str()
             .ok_or_else(|| io::Error::other("pipe name must be UTF-8"))?;
-        if !text.starts_with(r"\\.\pipe\") || text.len() <= 9 || text.contains('\0') {
+        if !text
+            .get(..9)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\.\pipe\"))
+            || text.len() <= 9
+            || text.contains('\0')
+        {
             return Err(io::Error::other(
                 r"expected a local \\.\pipe\<name> endpoint",
             ));
@@ -138,11 +143,15 @@ impl axum::serve::Listener for Listener {
     type Io = NamedPipeServer;
     type Addr = ();
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        let mut connect_error_reported = false;
         loop {
             if let Err(error) = self.pending.connect().await {
-                eprintln!("wheelhouse ingress: pipe connect failed: {error}");
+                if !connect_error_reported {
+                    eprintln!("wheelhouse ingress: pipe connect failed: {error}");
+                    connect_error_reported = true;
+                }
                 let _ = self.pending.disconnect();
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                 continue;
             }
             // Keep a listening instance alive before handing the connected one
@@ -188,6 +197,9 @@ mod tests {
         let owner = Listener::bind(&name).unwrap();
         assert!(Listener::bind(&name).is_err());
         drop(owner);
-        assert!(Listener::bind(&name).is_ok());
+        // Windows namespaces are case-insensitive; spelling PIPE in capitals
+        // must also work after the original owner releases the endpoint.
+        let upper = PathBuf::from(name.to_str().unwrap().replace(r"\pipe\", r"\PIPE\"));
+        assert!(Listener::bind(&upper).is_ok());
     }
 }
