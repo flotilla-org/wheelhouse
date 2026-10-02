@@ -358,7 +358,8 @@ pub use transport::Ingress;
 #[cfg(not(any(unix, windows)))]
 pub struct Ingress;
 
-/// Start a local HTTP listener (Unix socket or Windows named pipe). Error is NUL-terminated on failure.
+/// Start a local HTTP listener (Unix socket or Windows named pipe).
+/// Error is NUL-terminated on failure.
 ///
 /// # Safety
 /// A null or empty path is rejected. Other input/output pointers must be valid
@@ -383,7 +384,7 @@ pub unsafe extern "C" fn wheelhouse_ingress_start(
     #[cfg(not(any(unix, windows)))]
     let result: Result<Ingress, String> = {
         let _ = (path, len, wake);
-        Err("HTTP/UDS ingress is supported on Unix hosts".into())
+        Err("Local HTTP ingress is supported on Unix and Windows hosts".into())
     };
     match result {
         Ok(server) => Box::into_raw(Box::new(server)),

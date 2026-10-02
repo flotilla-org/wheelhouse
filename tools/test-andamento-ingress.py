@@ -7,6 +7,7 @@ import json
 import importlib.util
 import uuid
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -110,7 +111,7 @@ core.andamento_snapshot_release.argtypes = [C.c_void_p]
 
 class IngressTests(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.TemporaryDirectory(prefix='wh-')
+        self.dir = tempfile.TemporaryDirectory(prefix='wh-', dir=None if WINDOWS else '/tmp')
         self.path = r'\\.\pipe\wheelhouse-test-' + uuid.uuid4().hex if WINDOWS else os.path.join(self.dir.name, 'facts.sock')
         self.wake = WAKE(lambda: None)
         config = (ROOT / 'data/sidebar/fixture.kdl').read_bytes()
@@ -316,6 +317,73 @@ class IngressTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+
+    @unittest.skipUnless(WINDOWS, 'Windows protected pipe DACL')
+    def test_pipe_dacl_is_protected_and_grants_only_system_and_current_user(self):
+        # ADR 0011: inspect the actual created pipe, not just the SDDL builder.
+        from ctypes import wintypes as W
+        security, kernel = module.security, module.kernel
+        security.GetSecurityInfo.argtypes = [W.HANDLE, C.c_int, W.DWORD,
+            C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.POINTER(C.c_void_p)]
+        security.GetSecurityInfo.restype = W.DWORD
+        security.GetSecurityDescriptorControl.argtypes = [C.c_void_p, C.POINTER(W.WORD), C.POINTER(W.DWORD)]
+        security.GetSecurityDescriptorControl.restype = W.BOOL
+        security.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [
+            C.c_void_p, W.DWORD, W.DWORD, C.POINTER(C.c_void_p), C.c_void_p]
+        security.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = W.BOOL
+        security.ConvertSidToStringSidW.argtypes = [C.c_void_p, C.POINTER(C.c_void_p)]
+        security.ConvertSidToStringSidW.restype = W.BOOL
+        kernel.LocalFree.argtypes = [C.c_void_p]
+        kernel.LocalFree.restype = C.c_void_p
+        pipe = PipeSocket(self.path, 2)
+        descriptor, text, user_text = C.c_void_p(), C.c_void_p(), C.c_void_p()
+        try:
+            result = security.GetSecurityInfo(pipe.handle, 6, 4, None, None, None, None, C.byref(descriptor))
+            self.assertEqual(result, 0)
+            control, revision = W.WORD(), W.DWORD()
+            module.checked(security.GetSecurityDescriptorControl(descriptor, C.byref(control), C.byref(revision)))
+            self.assertTrue(control.value & 0x1000)  # SE_DACL_PROTECTED
+            module.checked(security.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor, 1, 4, C.byref(text), None))
+            token_buffer, sid = module.owner(kernel.GetCurrentProcess())
+            module.checked(security.ConvertSidToStringSidW(sid, C.byref(user_text)))
+            entries = re.findall(r'\(([^()]*)\)', C.wstring_at(text))
+            self.assertEqual(len(entries), 2)
+            self.assertEqual({entry.split(';')[-1] for entry in entries}, {'SY', C.wstring_at(user_text)})
+            for entry in entries:
+                fields = entry.split(';')
+                self.assertEqual(fields[0], 'A')
+                self.assertIn(fields[2], {'GA', 'FA'})
+        finally:
+            for allocation in (descriptor, text, user_text):
+                if allocation.value:
+                    kernel.LocalFree(allocation)
+            pipe.close()
+
+    @unittest.skipUnless(WINDOWS, 'Windows pipe identity and timeout boundary')
+    def test_pipe_rejects_unexpected_owner_and_times_out_reads(self):
+        # ADR 0011: reject a real server whose owner differs from the expected SID.
+        # Use the null SID as the injected policy; no real process can run as it.
+        module.security.ConvertStringSidToSidW.argtypes = [C.c_wchar_p, C.POINTER(C.c_void_p)]
+        module.security.ConvertStringSidToSidW.restype = C.c_int
+        module.kernel.LocalFree.argtypes = [C.c_void_p]
+        module.kernel.LocalFree.restype = C.c_void_p
+        sid = C.c_void_p()
+        module.checked(module.security.ConvertStringSidToSidW('S-1-0-0', C.byref(sid)))
+        pipe = PipeSocket(self.path, .1)
+        try:
+            with self.assertRaises(PermissionError):
+                module.verify_server(pipe.handle, sid)
+            # An idle connected server has no HTTP response to read. A bounded
+            # read must cancel and settle rather than hang the test process.
+            with pipe.makefile('rb') as reader:
+                started = time.monotonic()
+                with self.assertRaises(TimeoutError):
+                    reader.read(1)
+                self.assertLess(time.monotonic() - started, 2)
+        finally:
+            pipe.close()
+            module.kernel.LocalFree(sid)
 
     def test_null_and_empty_socket_paths_are_rejected(self):
         for path, size in [(None, 0), (None, 1), (b"", 0)]:

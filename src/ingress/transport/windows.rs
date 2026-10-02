@@ -139,17 +139,27 @@ impl axum::serve::Listener for Listener {
     type Addr = ();
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
         loop {
-            if self.pending.connect().await.is_err() {
+            if let Err(error) = self.pending.connect().await {
+                eprintln!("wheelhouse ingress: pipe connect failed: {error}");
                 let _ = self.pending.disconnect();
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 continue;
             }
             // Keep a listening instance alive before handing the connected one
             // to HTTP, so the address never disappears between clients.
+            let mut reported = false;
             loop {
                 match self.descriptor.instance(&self.name, false) {
                     Ok(next) => return (std::mem::replace(&mut self.pending, next), ()),
-                    Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+                    Err(error) => {
+                        if !reported {
+                            eprintln!(
+                                "wheelhouse ingress: cannot create next pipe instance: {error}"
+                            );
+                            reported = true;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    }
                 }
             }
         }
