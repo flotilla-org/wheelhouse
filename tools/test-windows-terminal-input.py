@@ -36,6 +36,7 @@ def mouse_modes(data):
 
 
 def kitty_flags(data):
+    # This fixture sends one query; use the latest complete reply if fragmented.
     flags = re.findall(rb"\x1b\[\?(\d+)u", data)
     return int(flags[-1]) if flags else None
 
@@ -214,7 +215,7 @@ def check(executable):
                 return [(int(x), int(y)) for x, y in
                         re.findall(rb"\x1b\[<0;(\d+);(\d+)M", data())]
             mouse = wait(lambda: left_presses() if len(left_presses()) >= 2 else None,
-                             "two mouse presses")
+                         "two mouse presses")
             if len(mouse) < 2 or (mouse[-1][0] - mouse[-2][0],
                                   mouse[-1][1] - mouse[-2][1]) != (120, 40):
                 failures.append(f"mouse presses lost message coordinates: {mouse!r}")
@@ -233,7 +234,7 @@ def check(executable):
                 return [(int(b), int(x), int(y), action) for b, x, y, action in
                         re.findall(rb"\x1b\[<([012]);(\d+);(\d+)([Mm])", data()[start:])]
             buttons = wait(lambda: button_events() if len(button_events()) >= 6 else None,
-                               "six ordered button events")
+                           "six ordered button events")
             if ([(b, a) for b, _, _, a in buttons] !=
                     [(b, a) for b in range(3) for a in (b"M", b"m")] or
                     any((buttons[i+1][1] - buttons[i][1],
@@ -251,7 +252,7 @@ def check(executable):
                 press = b"\x1b[1;1:1" + suffix
                 release = b"\x1b[1;1:3" + suffix
                 received = wait(lambda: data()[start:] if release in data()[start:] else None,
-                                    "arrow release")
+                                "arrow release")
                 if press not in received or release not in received:
                     failures.append(f"arrow {suffix!r} missing press/release: {received!r}")
                 else:
