@@ -47,6 +47,15 @@ surface is interactive and cannot be settled from a container.
   a decision or scope change makes comments authoritative.
 - UI behavior questions are usually interactive: expect briefs with an
   explicit call-for-human phase rather than fire-and-forget dispatch.
+- Crews never hold the GitHub `workflows` permission; the Governor applies
+  workflow edits ([flotilla#2258][flotilla-2258]). A contract that touches
+  `.github/workflows` tells the crew to push no commit that changes it and to
+  put the exact diff in the PR body under "Governor-applied workflow change".
+  That heading is fixed, so the Governor can find the diff in any PR body. The
+  Governor reviews the diff, pushes it as its own commit on the crew's branch,
+  and confirms in the job log that the changed step actually ran. The pushed
+  commit is authoritative. If it differs from the proposed diff, the Governor
+  says why in a PR comment, and the crew rebases onto it.
 
 ## Escalation
 
@@ -69,3 +78,4 @@ silent or conflict.
 [ui-scratch-issues]: https://github.com/rjwittams/ui-scratch/issues
 [cleat-issues]: https://github.com/flotilla-org/cleat/issues
 [flotilla-issues]: https://github.com/flotilla-org/flotilla/issues
+[flotilla-2258]: https://github.com/flotilla-org/flotilla/issues/2258
