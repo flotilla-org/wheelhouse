@@ -4,6 +4,8 @@ import concurrent.futures
 import ctypes as C
 import http.client
 import json
+import importlib.util
+import uuid
 import os
 from pathlib import Path
 import socket
@@ -15,18 +17,51 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 LIBDIR = Path(sys.argv.pop(1))
-SUFFIX = '.dylib' if sys.platform == 'darwin' else '.so'
-lib = C.CDLL(str(LIBDIR / ('libwheelhouse_ingress' + SUFFIX)))
-core = C.CDLL(str(LIBDIR / ('libandamento_ffi' + SUFFIX)))
+WINDOWS = sys.platform == 'win32'
+SUFFIX = '.dll' if WINDOWS else '.dylib' if sys.platform == 'darwin' else '.so'
+PREFIX = '' if WINDOWS else 'lib'
+lib = C.CDLL(str(LIBDIR / (PREFIX + 'wheelhouse_ingress' + SUFFIX)))
+core = C.CDLL(str(LIBDIR / (PREFIX + 'andamento_ffi' + SUFFIX)))
 class UnixHTTPConnection(http.client.HTTPConnection):
     def __init__(self, path):
         super().__init__('localhost', timeout=7)
         self.path = path
 
     def connect(self):
+        if WINDOWS:
+            self.sock = PipeSocket(self.path, self.timeout)
+            return
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
         self.sock.connect(self.path)
+
+
+if WINDOWS:
+    spec = importlib.util.spec_from_file_location('ingress_pipe', ROOT / 'tools/ingress-pipe.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    PipeSocket = module.PipeSocket
+
+
+def wait_ready(path, timeout=10):
+    """Health is the readiness contract, including after listener restart."""
+    deadline = time.monotonic() + timeout
+    while True:
+        connection = UnixHTTPConnection(path)
+        try:
+            connection.request('GET', '/v1/health')
+            response = connection.getresponse()
+            response.read()
+            if response.status == 204:
+                return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+        finally:
+            connection.close()
+        if time.monotonic() >= deadline:
+            raise TimeoutError('ingress health handshake timed out')
+        time.sleep(.01)
 
 
 def patch(kind, identity, facts):
@@ -75,8 +110,8 @@ core.andamento_snapshot_release.argtypes = [C.c_void_p]
 
 class IngressTests(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.TemporaryDirectory(prefix='wh-', dir='/tmp')
-        self.path = os.path.join(self.dir.name, 'facts.sock')
+        self.dir = tempfile.TemporaryDirectory(prefix='wh-')
+        self.path = r'\\.\pipe\wheelhouse-test-' + uuid.uuid4().hex if WINDOWS else os.path.join(self.dir.name, 'facts.sock')
         self.wake = WAKE(lambda: None)
         config = (ROOT / 'data/sidebar/fixture.kdl').read_bytes()
         self.core = core.andamento_create(config, len(config), None)
@@ -104,6 +139,7 @@ class IngressTests(unittest.TestCase):
         error = C.create_string_buffer(512)
         server = lib.wheelhouse_ingress_start(self.path.encode(), len(self.path.encode()), self.wake, error, len(error))
         self.assertTrue(server, error.value)
+        wait_ready(self.path)
         return server
 
     def tearDown(self):
@@ -219,6 +255,7 @@ class IngressTests(unittest.TestCase):
         lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
         self.assertEqual(self.received, [])
 
+    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
     @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
     def test_native_process_applies_producer_patch(self):
         path = os.path.join(self.dir.name, 'native.sock')
@@ -235,10 +272,9 @@ class IngressTests(unittest.TestCase):
                                         '--andamento_config:' + str(ROOT / 'data/sidebar/fixture.kdl')],
                                        stdout=log, stderr=log)
             try:
-                deadline = time.monotonic() + 20
-                while not os.path.exists(path) and time.monotonic() < deadline and process.poll() is None:
-                    time.sleep(.05)
-                if not os.path.exists(path):
+                try:
+                    wait_ready(path, timeout=20)
+                except (OSError, TimeoutError):
                     log.seek(0)
                     self.fail('native listener failed: ' + log.read().decode(errors='replace'))
                 connection = UnixHTTPConnection(path)
@@ -288,13 +324,16 @@ class IngressTests(unittest.TestCase):
             self.assertIn(b"null or empty", error.value)
 
     def test_socket_ownership_restart_and_no_stealing(self):
-        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
+        # ADR 0011: duplicate startup must fail; shutdown permits a fresh owner.
+        if not WINDOWS:
+            self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
         error = C.create_string_buffer(512)
         second = lib.wheelhouse_ingress_start(self.path.encode(), len(self.path), self.wake, error, len(error))
         self.assertFalse(second)
         lib.wheelhouse_ingress_stop(self.server)
         self.server = None
-        self.assertFalse(os.path.exists(self.path))
+        if not WINDOWS:
+            self.assertFalse(os.path.exists(self.path))
         self.server = self.start()
         self.assertEqual(self.request(json.dumps(patch('project', 'p', {'display.label': 'restart'})).encode()), 204)
 

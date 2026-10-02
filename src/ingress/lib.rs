@@ -20,8 +20,8 @@ pub type Emit = unsafe extern "C" fn(*mut c_void, *const Workdir);
 pub type Observe = unsafe extern "C" fn(*mut c_void, Emit, *mut c_void) -> u32;
 pub type Apply = unsafe extern "C" fn(*mut c_void, *const u8, usize) -> u32;
 
-#[cfg(unix)]
-mod unix {
+#[cfg(any(unix, windows))]
+mod transport {
     use super::*;
     use axum::{
         body::Bytes,
@@ -31,13 +31,7 @@ mod unix {
         routing::{get, post},
         Router,
     };
-    use std::{
-        os::unix::fs::{MetadataExt, PermissionsExt},
-        path::PathBuf,
-        sync::mpsc,
-        thread,
-        time::Duration,
-    };
+    use std::{path::PathBuf, sync::mpsc, thread, time::Duration};
     use tokio::sync::oneshot;
 
     pub enum Pending {
@@ -111,11 +105,19 @@ mod unix {
         }
     }
 
+    #[cfg(unix)]
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    #[cfg(windows)]
+    mod windows;
+
+    #[cfg(unix)]
     struct SocketGuard {
         path: PathBuf,
         dev: u64,
         ino: u64,
     }
+    #[cfg(unix)]
     impl Drop for SocketGuard {
         fn drop(&mut self) {
             if std::fs::symlink_metadata(&self.path)
@@ -127,33 +129,42 @@ mod unix {
     }
     impl Ingress {
         pub fn start(path: PathBuf, wake: Wake) -> Result<Self, String> {
-            let parent = path
-                .parent()
-                .ok_or("socket needs a private parent directory")?;
-            let meta = std::fs::metadata(parent).map_err(|e| e.to_string())?;
-            if !meta.is_dir()
-                || meta.mode() & 0o077 != 0
-                || meta.uid() != unsafe { libc::geteuid() }
-            {
-                return Err(
-                    "socket parent must be owned by this user and private (mode 0700)".into(),
-                );
-            }
-            let listener =
-                std::os::unix::net::UnixListener::bind(&path).map_err(|e| e.to_string())?;
-            let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-            let guard = SocketGuard {
-                path: path.clone(),
-                dev: meta.dev(),
-                ino: meta.ino(),
+            #[cfg(unix)]
+            let (listener, guard) = {
+                let parent = path
+                    .parent()
+                    .ok_or("socket needs a private parent directory")?;
+                let meta = std::fs::metadata(parent).map_err(|e| e.to_string())?;
+                if !meta.is_dir()
+                    || meta.mode() & 0o077 != 0
+                    || meta.uid() != unsafe { libc::geteuid() }
+                {
+                    return Err(
+                        "socket parent must be owned by this user and private (mode 0700)".into(),
+                    );
+                }
+                let listener =
+                    std::os::unix::net::UnixListener::bind(&path).map_err(|e| e.to_string())?;
+                let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+                let guard = SocketGuard {
+                    path: path.clone(),
+                    dev: meta.dev(),
+                    ino: meta.ino(),
+                };
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| e.to_string())?;
+                listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+                (listener, guard)
             };
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| e.to_string())?;
-            listener.set_nonblocking(true).map_err(|e| e.to_string())?;
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| e.to_string())?;
+            #[cfg(windows)]
+            let listener = {
+                let _entered = runtime.enter();
+                windows::Listener::bind(&path).map_err(|e| e.to_string())?
+            };
             // Reads and writes deliberately share one bounded admission queue:
             // a burst of either may make the other receive 503 and retry. This
             // preserves request ordering and bounds total pending UI work.
@@ -162,8 +173,10 @@ mod unix {
             let thread = thread::Builder::new()
                 .name("wheelhouse-ingress".into())
                 .spawn(move || {
+                    #[cfg(unix)]
                     let _guard = guard;
                     runtime.block_on(async move {
+                        #[cfg(unix)]
                         let listener = tokio::net::UnixListener::from_std(listener)
                             .expect("registered Unix listener");
                         let app = Router::new()
@@ -340,12 +353,12 @@ mod unix {
     }
 }
 
-#[cfg(unix)]
-pub use unix::Ingress;
-#[cfg(not(unix))]
+#[cfg(any(unix, windows))]
+pub use transport::Ingress;
+#[cfg(not(any(unix, windows)))]
 pub struct Ingress;
 
-/// Start a Unix HTTP listener. Error is NUL-terminated on failure.
+/// Start a local HTTP listener (Unix socket or Windows named pipe). Error is NUL-terminated on failure.
 ///
 /// # Safety
 /// A null or empty path is rejected. Other input/output pointers must be valid
@@ -359,7 +372,7 @@ pub unsafe extern "C" fn wheelhouse_ingress_start(
     error: *mut u8,
     capacity: usize,
 ) -> *mut Ingress {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let result = if path.is_null() || len == 0 {
         Err("socket path must not be null or empty".into())
     } else {
@@ -367,7 +380,7 @@ pub unsafe extern "C" fn wheelhouse_ingress_start(
             .map_err(|e| e.to_string())
             .and_then(|p| Ingress::start(p.into(), wake))
     };
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     let result: Result<Ingress, String> = {
         let _ = (path, len, wake);
         Err("HTTP/UDS ingress is supported on Unix hosts".into())
@@ -413,7 +426,7 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
     observe: Option<Observe>,
     context: *mut c_void,
 ) {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     if let Some(server) = server.as_mut() {
         struct Snapshot {
             values: Vec<serde_json::Value>,
@@ -454,14 +467,14 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
                 break;
             };
             match pending {
-                unix::Pending::Patch { body, reply } => {
+                transport::Pending::Patch { body, reply } => {
                     if !reply.is_closed() {
                         cached = None;
                         let outcome = apply(context, body.as_ptr(), body.len());
                         let _ = reply.send(outcome);
                     }
                 }
-                unix::Pending::Workdirs { reply } => {
+                transport::Pending::Workdirs { reply } => {
                     if !reply.is_closed() {
                         let value = cached.get_or_insert_with(|| {
                             let mut snapshot = Snapshot {
@@ -483,7 +496,7 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
             }
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     let _ = (server, apply, observe, context);
 }
 

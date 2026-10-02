@@ -18,5 +18,5 @@ output.mkdir(parents=True, exist_ok=True)
     '[lib]\nname = "wheelhouse_ingress"\ncrate-type = ["cdylib", "rlib"]\npath = ' + json.dumps(str(root / 'src/ingress/lib.rs')) + '\n'
     '[dependencies]\nandamento-git-watcher = { path = ' + json.dumps(str(source.parent / 'andamento-git-watcher')) + ' }\n'
     'andamento-ffi = { path = ' + json.dumps(str(source)) + ' }\n'
-    '[target.\'cfg(unix)\'.dependencies]\naxum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }\ntokio = { version = "1", features = ["rt", "net", "sync", "time", "macros"] }\nserde_json = "1"\nlibc = "0.2"\n[workspace]\n', encoding='utf-8')
+    'axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }\ntokio = { version = "1", features = ["rt", "net", "sync", "time", "macros"] }\nserde_json = "1"\n[target.\'cfg(windows)\'.dependencies]\nwindows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Authorization", "Win32_System_Threading"] }\n[target.\'cfg(unix)\'.dependencies]\nlibc = "0.2"\n[workspace]\n', encoding='utf-8')
 shutil.copyfile(root / 'tools' / 'andamento-build' / 'Cargo.lock', output / 'Cargo.lock')
