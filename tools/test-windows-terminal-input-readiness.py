@@ -83,6 +83,16 @@ class ReadinessTest(unittest.TestCase):
         self.assertIn("foreground_hwnd=123", str(failure.exception))
         self.assertIn("received=b'partial'", str(failure.exception))
 
+    def test_diagnostic_error_preserves_original_timeout(self):
+        def broken_diagnostics():
+            raise OSError("log unavailable")
+
+        with self.assertRaises(AssertionError) as failure:
+            fixture.wait_for(lambda: False, "first mouse press", timeout=0,
+                             diagnostics=broken_diagnostics)
+        self.assertIn("waiting for first mouse press", str(failure.exception))
+        self.assertIn("diagnostics failed: OSError('log unavailable')", str(failure.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

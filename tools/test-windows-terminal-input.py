@@ -35,11 +35,16 @@ def mouse_modes(data):
             re.findall(rb"\x1b\[\?(\d+);(\d+)\$y", data)}
 
 
+def kitty_flags(data):
+    flags = re.findall(rb"\x1b\[\?(\d+)u", data)
+    return int(flags[-1]) if flags else None
+
+
 def terminal_ready(data):
     modes = mouse_modes(data)
-    flags = re.findall(rb"\x1b\[\?(\d+)u", data)
+    flags = kitty_flags(data)
     return (all(modes.get(mode) in (1, 3) for mode in (1003, 1006, 1016)) and
-            bool(flags) and int(flags[-1]) & 3 == 3)
+            flags is not None and flags & 3 == 3)
 
 
 def capture_input(directory):
@@ -85,7 +90,12 @@ def wait_for(predicate, description, timeout=15, diagnostics=None):
         if result:
             return result
         time.sleep(.05)
-    details = "\n" + diagnostics() if diagnostics else ""
+    details = ""
+    if diagnostics:
+        try:
+            details = "\n" + diagnostics()
+        except Exception as error:
+            details = f"\ndiagnostics failed: {error!r}"
     raise AssertionError(f"timed out after {timeout:g}s waiting for {description}{details}")
 
 
@@ -145,9 +155,9 @@ def check(executable):
                 return path.read_bytes() if path.exists() else b""
 
             def render_log():
-                path = directory / "logs/ui_thread.uishell_log"
-                return path.read_bytes() if path.exists() else b""
+                return log_path.read_bytes() if log_path.exists() else b""
 
+            log_path = directory / "logs/ui_thread.uishell_log"
             def diagnostics():
                 rect = W.RECT()
                 size = None
@@ -162,7 +172,8 @@ def check(executable):
                         f"{kernel.WaitForSingleObject(child_handle, 0) if child_handle else None} "
                         f"ready={(directory / 'ready').exists()} "
                         f"view_ready={view_ready(render_log())} "
-                        f"mouse_modes={mouse_modes(received)}\n"
+                        f"mouse_modes={mouse_modes(received)} kitty_flags={kitty_flags(received)}\n"
+                        f"render_log={log_path} exists={log_path.exists()}\n"
                         f"received={received[-1024:]!r} ({len(received)} bytes total)")
 
             def wait(predicate, description):
