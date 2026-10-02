@@ -7,7 +7,6 @@ import json
 import importlib.util
 import uuid
 import os
-import re
 from pathlib import Path
 import socket
 import subprocess
@@ -330,34 +329,50 @@ class IngressTests(unittest.TestCase):
         security.GetSecurityInfo.restype = W.DWORD
         security.GetSecurityDescriptorControl.argtypes = [C.c_void_p, C.POINTER(W.WORD), C.POINTER(W.DWORD)]
         security.GetSecurityDescriptorControl.restype = W.BOOL
-        security.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [
-            C.c_void_p, W.DWORD, W.DWORD, C.POINTER(C.c_void_p), C.c_void_p]
-        security.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = W.BOOL
+        class AclHeader(C.Structure):
+            _fields_ = [('revision', W.BYTE), ('reserved', W.BYTE),
+                        ('size', W.WORD), ('count', W.WORD), ('reserved2', W.WORD)]
+        class AllowedAce(C.Structure):
+            _fields_ = [('kind', W.BYTE), ('flags', W.BYTE),
+                        ('size', W.WORD), ('mask', W.DWORD), ('sid_start', W.DWORD)]
+        security.GetAce.argtypes = [C.c_void_p, W.DWORD, C.POINTER(C.c_void_p)]
+        security.GetAce.restype = W.BOOL
         security.ConvertSidToStringSidW.argtypes = [C.c_void_p, C.POINTER(C.c_void_p)]
         security.ConvertSidToStringSidW.restype = W.BOOL
         kernel.LocalFree.argtypes = [C.c_void_p]
         kernel.LocalFree.restype = C.c_void_p
         pipe = PipeSocket(self.path, 2)
-        descriptor, text, user_text = C.c_void_p(), C.c_void_p(), C.c_void_p()
+        descriptor, dacl, user_text = C.c_void_p(), C.c_void_p(), C.c_void_p()
         try:
-            result = security.GetSecurityInfo(pipe.handle, 6, 4, None, None, None, None, C.byref(descriptor))
+            result = security.GetSecurityInfo(pipe.handle, 6, 4, None, None, C.byref(dacl), None, C.byref(descriptor))
             self.assertEqual(result, 0)
             control, revision = W.WORD(), W.DWORD()
             module.checked(security.GetSecurityDescriptorControl(descriptor, C.byref(control), C.byref(revision)))
             self.assertTrue(control.value & 0x1000)  # SE_DACL_PROTECTED
-            module.checked(security.ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                descriptor, 1, 4, C.byref(text), None))
             token_buffer, sid = module.owner(kernel.GetCurrentProcess())
             module.checked(security.ConvertSidToStringSidW(sid, C.byref(user_text)))
-            entries = re.findall(r'\(([^()]*)\)', C.wstring_at(text))
-            self.assertEqual(len(entries), 2)
-            self.assertEqual({entry.split(';')[-1] for entry in entries}, {'SY', C.wstring_at(user_text)})
-            for entry in entries:
-                fields = entry.split(';')
-                self.assertEqual(fields[0], 'A')
-                self.assertIn(fields[2], {'GA', 'FA'})
+            self.assertTrue(dacl.value)
+            self.assertEqual(C.cast(dacl, C.POINTER(AclHeader)).contents.count, 2)
+            trustees = set()
+            for index in range(2):
+                pointer = C.c_void_p()
+                module.checked(security.GetAce(dacl, index, C.byref(pointer)))
+                ace = C.cast(pointer, C.POINTER(AllowedAce)).contents
+                self.assertEqual(ace.kind, 0)  # ACCESS_ALLOWED_ACE_TYPE
+                self.assertEqual(ace.flags, 0)  # Explicit grants, no inheritance
+                self.assertIn(ace.mask, {0x10000000, 0x1f01ff})  # GA or FILE_ALL_ACCESS
+                sid_text = C.c_void_p()
+                # Compare binary ACE identities rendered by ConvertSidToStringSid,
+                # not SDDL aliases (the local Administrator can render as LA).
+                module.checked(security.ConvertSidToStringSidW(
+                    C.c_void_p(pointer.value + AllowedAce.sid_start.offset), C.byref(sid_text)))
+                try:
+                    trustees.add(C.wstring_at(sid_text))
+                finally:
+                    kernel.LocalFree(sid_text)
+            self.assertEqual(trustees, {'S-1-5-18', C.wstring_at(user_text)})
         finally:
-            for allocation in (descriptor, text, user_text):
+            for allocation in (descriptor, user_text):
                 if allocation.value:
                     kernel.LocalFree(allocation)
             pipe.close()
