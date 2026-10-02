@@ -51,8 +51,11 @@ surface is interactive and cannot be settled from a container.
   workflow edits ([flotilla#2258][flotilla-2258]). A contract that touches
   `.github/workflows` tells the crew to push no commit that changes it and to
   put the exact diff in the PR body under "Governor-applied workflow change".
-  The Governor reviews that diff, pushes it as its own commit on the crew's
-  branch, and confirms in the job log that the changed step actually ran.
+  That heading is fixed, so the Governor can find the diff in any PR body. The
+  Governor reviews the diff, pushes it as its own commit on the crew's branch,
+  and confirms in the job log that the changed step actually ran. The pushed
+  commit is authoritative. If it differs from the proposed diff, the Governor
+  says why in a PR comment, and the crew rebases onto it.
 
 ## Escalation
 
