@@ -1,15 +1,23 @@
-# Metadata ingress over HTTP/UDS
+# Metadata ingress over local HTTP
 
 Wheelhouse owns this contract (issue #22). Any local producer may publish;
 Flotilla's `pm connect` is one producer. Andamento owns metadata semantics.
 
 ## Endpoint and payload
 
-Wheelhouse listens on an explicitly configured Unix socket. Producers discover
-it through `WHEELHOUSE_SOCKET` or an explicit socket argument. The socket must
-live in a private directory (mode 0700); the listener uses mode 0600. Startup
-fails if the path already exists, and clean shutdown removes its own socket.
-No implicit socket stealing or fixed global socket name is used.
+Wheelhouse listens on the endpoint configured by `--andamento_socket`: a Unix
+socket on Unix hosts or a local byte-mode named pipe (`\\.\pipe\<name>`) on Windows.
+Producers discover it through `WHEELHOUSE_SOCKET` or an explicit socket argument.
+On Unix, the socket must live in a private directory (mode 0700); the listener
+uses mode 0600. Startup fails if the path already exists, and clean shutdown
+removes its own socket.
+On Windows the name is used directly, without filesystem-path mapping. The
+listener follows [ADR 0011](../adr/0011-windows-local-ipc-uses-named-pipes-with-logical-endpoints.md):
+a protected DACL grants SYSTEM and the current user, remote clients are rejected,
+and the first pipe instance fails if the name is already served. Shutdown closes
+the pipe instances. Clients must verify `GetNamedPipeServerProcessId` and that
+process's owner before sending requests. No implicit endpoint stealing or fixed
+global name is used.
 
 Send `POST /v1/metadata/patch` using HTTP/1.1, `Content-Type: application/json`,
 and one UTF-8 JSON object. The body is the byte-identical metadata-patch message
@@ -61,5 +69,5 @@ Recipes in facts are materialized only by explicit UI activation.
 
 This endpoint does not register a presentation manager. Future registration
 must allow one client to advertise multiple capability subsets; it must not
-assume one capability per connection. Native pane identity generalization,
-dynamic terminal resources, and Windows transport are separate work.
+assume one capability per connection. Native pane identity generalization
+and dynamic terminal resources are separate work.

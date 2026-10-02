@@ -4,6 +4,8 @@ import concurrent.futures
 import ctypes as C
 import http.client
 import json
+import importlib.util
+import uuid
 import os
 from pathlib import Path
 import socket
@@ -15,18 +17,53 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 LIBDIR = Path(sys.argv.pop(1))
-SUFFIX = '.dylib' if sys.platform == 'darwin' else '.so'
-lib = C.CDLL(str(LIBDIR / ('libwheelhouse_ingress' + SUFFIX)))
-core = C.CDLL(str(LIBDIR / ('libandamento_ffi' + SUFFIX)))
+WINDOWS = sys.platform == 'win32'
+SUFFIX = '.dll' if WINDOWS else '.dylib' if sys.platform == 'darwin' else '.so'
+PREFIX = '' if WINDOWS else 'lib'
+lib = C.CDLL(str(LIBDIR / (PREFIX + 'wheelhouse_ingress' + SUFFIX)))
+core = C.CDLL(str(LIBDIR / (PREFIX + 'andamento_ffi' + SUFFIX)))
 class UnixHTTPConnection(http.client.HTTPConnection):
     def __init__(self, path):
         super().__init__('localhost', timeout=7)
         self.path = path
 
     def connect(self):
+        if WINDOWS:
+            self.sock = PipeSocket(self.path, self.timeout)
+            return
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
         self.sock.connect(self.path)
+
+
+if WINDOWS:
+    spec = importlib.util.spec_from_file_location('ingress_pipe', ROOT / 'tools/ingress-pipe.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    PipeSocket = module.PipeSocket
+
+
+def wait_ready(path, timeout=10, process=None):
+    """Health is the readiness contract, including after listener restart."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if process is not None and process.poll() is not None:
+            raise RuntimeError(f'native ingress process exited with {process.returncode}')
+        connection = UnixHTTPConnection(path)
+        try:
+            connection.request('GET', '/v1/health')
+            response = connection.getresponse()
+            response.read()
+            if response.status == 204:
+                return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+        finally:
+            connection.close()
+        if time.monotonic() >= deadline:
+            raise TimeoutError('ingress health handshake timed out')
+        time.sleep(.01)
 
 
 def patch(kind, identity, facts):
@@ -75,8 +112,8 @@ core.andamento_snapshot_release.argtypes = [C.c_void_p]
 
 class IngressTests(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.TemporaryDirectory(prefix='wh-', dir='/tmp')
-        self.path = os.path.join(self.dir.name, 'facts.sock')
+        self.dir = tempfile.TemporaryDirectory(prefix='wh-', dir=None if WINDOWS else '/tmp')
+        self.path = r'\\.\pipe\wheelhouse-test-' + uuid.uuid4().hex if WINDOWS else os.path.join(self.dir.name, 'facts.sock')
         self.wake = WAKE(lambda: None)
         config = (ROOT / 'data/sidebar/fixture.kdl').read_bytes()
         self.core = core.andamento_create(config, len(config), None)
@@ -104,6 +141,7 @@ class IngressTests(unittest.TestCase):
         error = C.create_string_buffer(512)
         server = lib.wheelhouse_ingress_start(self.path.encode(), len(self.path.encode()), self.wake, error, len(error))
         self.assertTrue(server, error.value)
+        wait_ready(self.path)
         return server
 
     def tearDown(self):
@@ -219,6 +257,7 @@ class IngressTests(unittest.TestCase):
         lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
         self.assertEqual(self.received, [])
 
+    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
     @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
     def test_native_process_applies_producer_patch(self):
         path = os.path.join(self.dir.name, 'native.sock')
@@ -235,10 +274,9 @@ class IngressTests(unittest.TestCase):
                                         '--andamento_config:' + str(ROOT / 'data/sidebar/fixture.kdl')],
                                        stdout=log, stderr=log)
             try:
-                deadline = time.monotonic() + 20
-                while not os.path.exists(path) and time.monotonic() < deadline and process.poll() is None:
-                    time.sleep(.05)
-                if not os.path.exists(path):
+                try:
+                    wait_ready(path, timeout=20, process=process)
+                except (OSError, TimeoutError, RuntimeError):
                     log.seek(0)
                     self.fail('native listener failed: ' + log.read().decode(errors='replace'))
                 connection = UnixHTTPConnection(path)
@@ -281,6 +319,89 @@ class IngressTests(unittest.TestCase):
                     process.kill()
                     process.wait()
 
+    @unittest.skipUnless(WINDOWS, 'Windows protected pipe DACL')
+    def test_pipe_dacl_is_protected_and_grants_only_system_and_current_user(self):
+        # ADR 0011: inspect the actual created pipe, not just the SDDL builder.
+        from ctypes import wintypes as W
+        security, kernel = module.security, module.kernel
+        security.GetSecurityInfo.argtypes = [W.HANDLE, C.c_int, W.DWORD,
+            C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.POINTER(C.c_void_p)]
+        security.GetSecurityInfo.restype = W.DWORD
+        security.GetSecurityDescriptorControl.argtypes = [C.c_void_p, C.POINTER(W.WORD), C.POINTER(W.DWORD)]
+        security.GetSecurityDescriptorControl.restype = W.BOOL
+        class AclHeader(C.Structure):
+            _fields_ = [('revision', W.BYTE), ('reserved', W.BYTE),
+                        ('size', W.WORD), ('count', W.WORD), ('reserved2', W.WORD)]
+        class AllowedAce(C.Structure):
+            _fields_ = [('kind', W.BYTE), ('flags', W.BYTE),
+                        ('size', W.WORD), ('mask', W.DWORD), ('sid_start', W.DWORD)]
+        security.GetAce.argtypes = [C.c_void_p, W.DWORD, C.POINTER(C.c_void_p)]
+        security.GetAce.restype = W.BOOL
+        security.ConvertSidToStringSidW.argtypes = [C.c_void_p, C.POINTER(C.c_void_p)]
+        security.ConvertSidToStringSidW.restype = W.BOOL
+        kernel.LocalFree.argtypes = [C.c_void_p]
+        kernel.LocalFree.restype = C.c_void_p
+        pipe = PipeSocket(self.path, 2)
+        descriptor, dacl, user_text = C.c_void_p(), C.c_void_p(), C.c_void_p()
+        try:
+            result = security.GetSecurityInfo(pipe.handle, 6, 4, None, None, C.byref(dacl), None, C.byref(descriptor))
+            self.assertEqual(result, 0)
+            control, revision = W.WORD(), W.DWORD()
+            module.checked(security.GetSecurityDescriptorControl(descriptor, C.byref(control), C.byref(revision)))
+            self.assertTrue(control.value & 0x1000)  # SE_DACL_PROTECTED
+            token_buffer, sid = module.owner(kernel.GetCurrentProcess())
+            module.checked(security.ConvertSidToStringSidW(sid, C.byref(user_text)))
+            self.assertTrue(dacl.value)
+            self.assertEqual(C.cast(dacl, C.POINTER(AclHeader)).contents.count, 2)
+            trustees = set()
+            for index in range(2):
+                pointer = C.c_void_p()
+                module.checked(security.GetAce(dacl, index, C.byref(pointer)))
+                ace = C.cast(pointer, C.POINTER(AllowedAce)).contents
+                self.assertEqual(ace.kind, 0)  # ACCESS_ALLOWED_ACE_TYPE
+                self.assertEqual(ace.flags, 0)  # Explicit grants, no inheritance
+                self.assertIn(ace.mask, {0x10000000, 0x1f01ff})  # GA or FILE_ALL_ACCESS
+                sid_text = C.c_void_p()
+                # Compare binary ACE identities rendered by ConvertSidToStringSid,
+                # not SDDL aliases (the local Administrator can render as LA).
+                module.checked(security.ConvertSidToStringSidW(
+                    C.c_void_p(pointer.value + AllowedAce.sid_start.offset), C.byref(sid_text)))
+                try:
+                    trustees.add(C.wstring_at(sid_text))
+                finally:
+                    kernel.LocalFree(sid_text)
+            self.assertEqual(trustees, {'S-1-5-18', C.wstring_at(user_text)})
+        finally:
+            for allocation in (descriptor, user_text):
+                if allocation.value:
+                    kernel.LocalFree(allocation)
+            pipe.close()
+
+    @unittest.skipUnless(WINDOWS, 'Windows pipe identity and timeout boundary')
+    def test_pipe_rejects_unexpected_owner_and_times_out_reads(self):
+        # ADR 0011: reject a real server whose owner differs from the expected SID.
+        # Use the null SID as the injected policy; no real process can run as it.
+        module.security.ConvertStringSidToSidW.argtypes = [C.c_wchar_p, C.POINTER(C.c_void_p)]
+        module.security.ConvertStringSidToSidW.restype = C.c_int
+        module.kernel.LocalFree.argtypes = [C.c_void_p]
+        module.kernel.LocalFree.restype = C.c_void_p
+        sid = C.c_void_p()
+        module.checked(module.security.ConvertStringSidToSidW('S-1-0-0', C.byref(sid)))
+        pipe = PipeSocket(self.path, .1)
+        try:
+            with self.assertRaises(PermissionError):
+                module.verify_server(pipe.handle, sid)
+            # An idle connected server has no HTTP response to read. A bounded
+            # read must cancel and settle rather than hang the test process.
+            with pipe.makefile('rb') as reader:
+                started = time.monotonic()
+                with self.assertRaises(TimeoutError):
+                    reader.read(1)
+                self.assertLess(time.monotonic() - started, 2)
+        finally:
+            pipe.close()
+            module.kernel.LocalFree(sid)
+
     def test_null_and_empty_socket_paths_are_rejected(self):
         for path, size in [(None, 0), (None, 1), (b"", 0)]:
             error = C.create_string_buffer(512)
@@ -288,13 +409,16 @@ class IngressTests(unittest.TestCase):
             self.assertIn(b"null or empty", error.value)
 
     def test_socket_ownership_restart_and_no_stealing(self):
-        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
+        # ADR 0011: duplicate startup must fail; shutdown permits a fresh owner.
+        if not WINDOWS:
+            self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
         error = C.create_string_buffer(512)
         second = lib.wheelhouse_ingress_start(self.path.encode(), len(self.path), self.wake, error, len(error))
         self.assertFalse(second)
         lib.wheelhouse_ingress_stop(self.server)
         self.server = None
-        self.assertFalse(os.path.exists(self.path))
+        if not WINDOWS:
+            self.assertFalse(os.path.exists(self.path))
         self.server = self.start()
         self.assertEqual(self.request(json.dumps(patch('project', 'p', {'display.label': 'restart'})).encode()), 204)
 

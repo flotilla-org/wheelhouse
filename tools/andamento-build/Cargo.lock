@@ -518,6 +518,7 @@ dependencies = [
  "libc",
  "serde_json",
  "tokio",
+ "windows-sys",
 ]
 
 [[package]]

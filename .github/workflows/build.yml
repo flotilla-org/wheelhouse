@@ -184,14 +184,15 @@ jobs:
         # Local Endpoints: named pipes on Windows, Unix sockets elsewhere.
         run: python tools/test-jackstay.py
       - name: HTTP ingress and native producer checks
-        if: runner.os != 'Windows'
         shell: bash
         env:
           WHEELHOUSE_TEST_BINARY: build/wheelhouse
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
           host=$(rustc -vV | sed -n 's/^host: //p')
-          if [ "$RUNNER_OS" = Linux ]; then
+          if [ "$RUNNER_OS" = Windows ]; then
+            python tools/test-andamento-ingress.py "../andamento/target/$host/debug"
+          elif [ "$RUNNER_OS" = Linux ]; then
             python3 tools/test-native-sidebar.py "../andamento/target/$host/debug/libandamento_ffi.so"
             xvfb-run -a python3 tools/test-andamento-ingress.py "../andamento/target/$host/debug"
           else
