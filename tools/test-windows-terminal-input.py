@@ -15,6 +15,15 @@ import tempfile
 import time
 
 
+READY_MARKER = "WheelhouseInputReady"
+
+
+def view_ready(log):
+    return any(b"terminal glyph trace:" in line and
+               ('text="' + READY_MARKER).encode() in line
+               for line in log.splitlines())
+
+
 def publish(directory, name, text):
     pending = directory / (name + ".tmp")
     pending.write_text(text)
@@ -65,7 +74,7 @@ def capture_input(directory):
                 if terminal_ready(replies):
                     publish(directory, "ready", str(os.getpid()))
                     ready = True
-                    sys.stdout.write("Ready\r\n")
+                    sys.stdout.write(READY_MARKER + "\r\n")
                     sys.stdout.flush()
 
 
@@ -107,7 +116,8 @@ def check(executable):
             '      }\n      selected\n    }\n  }\n}\n')
         (directory / "project").write_text("// isolated input regression\n")
         started = time.monotonic()
-        process = subprocess.Popen([str(executable), f"--user:{tmp}/user",
+        process = subprocess.Popen([str(executable), "--terminal_glyph_trace",
+                                    f"--user:{tmp}/user",
                                     f"--project:{tmp}/project"], cwd=executable.parent)
         child_handle = None
         child_pid = None
@@ -134,6 +144,10 @@ def check(executable):
                 path = directory / "input.bin"
                 return path.read_bytes() if path.exists() else b""
 
+            def render_log():
+                path = directory / "logs/ui_thread.uishell_log"
+                return path.read_bytes() if path.exists() else b""
+
             def diagnostics():
                 rect = W.RECT()
                 size = None
@@ -147,6 +161,7 @@ def check(executable):
                         f"child_pid={child_pid} child_wait="
                         f"{kernel.WaitForSingleObject(child_handle, 0) if child_handle else None} "
                         f"ready={(directory / 'ready').exists()} "
+                        f"view_ready={view_ready(render_log())} "
                         f"mouse_modes={mouse_modes(received)}\n"
                         f"received={received[-1024:]!r} ({len(received)} bytes total)")
 
@@ -163,6 +178,12 @@ def check(executable):
             ready = directory / "ready"
             wait(lambda: ready.exists(), "VT input fixture mode acknowledgements")
             print(f"READY: terminal modes acknowledged after {time.monotonic() - started:.3f}s")
+            # The provider answers independently of UI frames. The render trace
+            # for this post-acknowledgement marker is emitted after the view
+            # adopts its update's mouse modes, so selection cannot swallow the
+            # first press using an older, non-tracking frame.
+            wait(lambda: view_ready(render_log()), "terminal view rendering readiness marker")
+            print(f"READY: terminal view rendered after {time.monotonic() - started:.3f}s")
             def post(message, wparam, lparam):
                 if not user.PostMessageW(hwnd, message, wparam, lparam):
                     raise C.WinError(C.get_last_error())

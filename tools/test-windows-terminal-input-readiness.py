@@ -68,6 +68,13 @@ class ReadinessTest(unittest.TestCase):
         self.capture([b"\x1b[?1003;1$y\x1b[?1006;1$y\x1b[?1016;1$y\x1b[?1u"],
                      [False, False])
 
+    def test_view_waits_for_marker_in_render_trace(self):
+        marker = fixture.READY_MARKER.encode()
+        self.assertFalse(fixture.view_ready(b'child stdout text="' + marker + b'"'))
+        self.assertFalse(fixture.view_ready(b'terminal glyph trace: text="Starting"'))
+        self.assertTrue(fixture.view_ready(b'terminal glyph trace: gen=2 text="' +
+                                           marker + b'   " cps=[...]'))
+
     def test_timeout_reports_the_stage_and_diagnostic_snapshot(self):
         with self.assertRaises(AssertionError) as failure:
             fixture.wait_for(lambda: False, "first mouse press", timeout=0,
