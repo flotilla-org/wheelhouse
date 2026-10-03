@@ -147,9 +147,11 @@ uishell_terminal_apply_update(UIShell_TerminalViewState *tv, cleat_render_update
     }
     for(S64 row = first_row; row <= last_row && !invalid; row++)
     {
+      if(row < 0 || row >= old.rows || !old.cells || !next.cells)
+      { invalid = 1; break; }
       Rng1S64 a = uishell_terminal_selection_columns(&before, tv->sel_mark, tv->sel_cursor, tv->selection_rectangular, row);
       Rng1S64 b = uishell_terminal_selection_columns(&after, tv->sel_mark, tv->sel_cursor, tv->selection_rectangular, row);
-      invalid = a.min != b.min || a.max != b.max || row < 0 || row >= old.rows || !old.cells || !next.cells;
+      invalid = a.min != b.min || a.max != b.max;
       for(S64 col = a.min; col < a.max && !invalid; col++)
       {
         U64 idx = row*old.cols + col;
@@ -177,9 +179,8 @@ internal void
 uishell_terminal_input_result(UIShell_TerminalViewState *tv, cleat_input_event const *input, B32 accepted, U64 count)
 {
   if(!accepted || !count) { return; }
-  if((input->kind == CLEAT_INPUT_TEXT || input->kind == CLEAT_INPUT_PASTE) && input->text_len != 0)
-  { uishell_terminal_clear_selection(tv); }
-  else if(input->kind == CLEAT_INPUT_KEY)
+  if(input->kind == CLEAT_INPUT_KEY ||
+     ((input->kind == CLEAT_INPUT_TEXT || input->kind == CLEAT_INPUT_PASTE) && input->text_len != 0))
   { uishell_terminal_clear_selection(tv); }
   else if(input->kind == CLEAT_INPUT_MOUSE &&
           (input->mouse_kind == CLEAT_MOUSE_PRESS || input->mouse_kind == CLEAT_MOUSE_WHEEL))
@@ -271,6 +272,7 @@ uishell_terminal_preview_admit_update(UIShell_TerminalViewState *tv, B32 backgro
 }
 
 internal void uishell_terminal_cancel_gesture(UIShell_TerminalViewState *tv);
+internal void uishell_terminal_cancel_buttons(UIShell_TerminalViewState *tv);
 
 // Release only resources owned by this view. Daemon providers are shared;
 // destroying their session handle detaches this view without killing the session.
@@ -282,7 +284,7 @@ uishell_terminal_runtime_release(void *data)
   uishell_terminal_preview_dequeue(&uishell_terminal_preview_starts, &tv->preview_start);
   uishell_terminal_preview_dequeue(&uishell_terminal_preview_updates, &tv->preview_update);
   if(tv->provider && !tv->daemon_backend) { cleat_provider_set_wake_callback(tv->provider, 0, 0); }
-  uishell_terminal_cancel_gesture(tv);
+  uishell_terminal_cancel_buttons(tv);
   if(tv->session) { cleat_session_destroy(tv->session); }
   if(tv->provider && !tv->daemon_backend) { cleat_provider_close(tv->provider); }
   for(UIShell_TerminalImageResource *r = tv->image_cache.first_resource; r; r = r->next)
@@ -355,28 +357,45 @@ uishell_terminal_link_at(UIShell_TerminalCellCache *cache, U16 col, U16 row)
 internal U16 uishell_terminal_cleat_modifiers_from_wm(WM_Modifiers mods);
 
 internal void
+uishell_terminal_release_button(UIShell_TerminalViewState *tv, U32 button, U16 flag)
+{
+  if(!(tv->mouse_buttons_held & flag)) { return; }
+  cleat_input_event release = {.kind = CLEAT_INPUT_MOUSE, .mouse_kind = CLEAT_MOUSE_RELEASE,
+    .mouse_button = button, .mouse_buttons = tv->mouse_buttons_held,
+    .x_px = tv->last_mouse_x_px, .y_px = tv->last_mouse_y_px,
+    .cell_col = (U16)Clamp(0, (S32)(tv->last_mouse_x_px/Max(1.f, tv->cell_width_px)), (S32)Max(1, tv->cell_cache.cols)-1),
+    .cell_row = (U16)Clamp(0, (S32)(tv->last_mouse_y_px/Max(1.f, tv->cell_height_px)), (S32)Max(1, tv->cell_cache.rows)-1)};
+  uishell_terminal_send_input(tv, &release);
+  tv->mouse_buttons_held &= ~flag;
+}
+
+internal void
 uishell_terminal_cancel_gesture(UIShell_TerminalViewState *tv)
 {
-  if(tv->left_owner == UIShell_TerminalLeftOwner_Application &&
-     tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_LEFT)
-  {
-    cleat_input_event release = {.kind = CLEAT_INPUT_MOUSE, .mouse_kind = CLEAT_MOUSE_RELEASE,
-      .mouse_button = CLEAT_MOUSE_BUTTON_LEFT, .mouse_buttons = tv->mouse_buttons_held,
-      .x_px = tv->last_mouse_x_px, .y_px = tv->last_mouse_y_px,
-      .cell_col = (U16)Clamp(0, (S32)(tv->last_mouse_x_px/Max(1.f, tv->cell_width_px)), (S32)Max(1, tv->cell_cache.cols)-1),
-      .cell_row = (U16)Clamp(0, (S32)(tv->last_mouse_y_px/Max(1.f, tv->cell_height_px)), (S32)Max(1, tv->cell_cache.rows)-1)};
-    uishell_terminal_send_input(tv, &release);
-  }
+  if(tv->left_owner == UIShell_TerminalLeftOwner_Application)
+  { uishell_terminal_release_button(tv, CLEAT_MOUSE_BUTTON_LEFT, CLEAT_MOUSE_BUTTON_FLAG_LEFT); }
   if(tv->selecting) { uishell_terminal_clear_selection(tv); }
   tv->mouse_buttons_held &= ~CLEAT_MOUSE_BUTTON_FLAG_LEFT;
   tv->left_owner = UIShell_TerminalLeftOwner_None;
-  if(tv->gesture_registered)
+  if(tv->gesture_registered && !tv->mouse_buttons_held)
   {
     UIShell_TerminalViewState **link = &uishell_terminal_gestures;
     for(; *link && *link != tv; link = &(*link)->gesture_next) {}
     if(*link) { *link = tv->gesture_next; }
     tv->gesture_next = 0; tv->gesture_registered = 0;
   }
+}
+
+// Focus loss/hidden views/teardown close every accepted application button.
+// A superseding left press uses the narrower left-only cancellation above.
+internal void
+uishell_terminal_cancel_buttons(UIShell_TerminalViewState *tv)
+{
+  uishell_terminal_cancel_gesture(tv);
+  uishell_terminal_release_button(tv, CLEAT_MOUSE_BUTTON_MIDDLE, CLEAT_MOUSE_BUTTON_FLAG_MIDDLE);
+  uishell_terminal_release_button(tv, CLEAT_MOUSE_BUTTON_RIGHT, CLEAT_MOUSE_BUTTON_FLAG_RIGHT);
+  tv->middle_press_consumed = 0;
+  uishell_terminal_cancel_gesture(tv); // unregister after the final held button
 }
 
 typedef struct UIShell_TerminalMouseResult UIShell_TerminalMouseResult;
@@ -449,7 +468,7 @@ uishell_terminal_mouse_event(UIShell_TerminalViewState *tv, UI_Event const *evt,
     B32 app_left = tv->left_owner == UIShell_TerminalLeftOwner_Application;
     if(app_left) { mods &= ~CLEAT_MOD_SHIFT; } // Shift cannot reclassify an application-owned drag
     B32 forward = (press || release) && flag;
-    if(left && release && (!app_left || !(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_LEFT)))
+    if(release && (!(tv->mouse_buttons_held & flag) || (left && !app_left)))
     { forward = 0; } // never report a release whose press was rejected
     if(move)
     {
@@ -471,7 +490,12 @@ uishell_terminal_mouse_event(UIShell_TerminalViewState *tv, UI_Event const *evt,
     }
     if(left && release) { tv->left_owner = UIShell_TerminalLeftOwner_None; }
   }
-  if(left && release) { uishell_terminal_cancel_gesture(tv); }
+  if(release && !tv->left_owner) { uishell_terminal_cancel_gesture(tv); }
+  if(tv->native_view && tv->mouse_buttons_held && !tv->gesture_registered)
+  {
+    tv->gesture_next = uishell_terminal_gestures;
+    uishell_terminal_gestures = tv; tv->gesture_registered = 1;
+  }
   tv->last_mouse_x_px = x; tv->last_mouse_y_px = y;
   tv->cell_width_px = cell_width; tv->cell_height_px = cell_height;
   return result;
@@ -485,9 +509,11 @@ uishell_terminal_retire_gestures(B32 after_frame)
   for(UIShell_TerminalViewState *tv = uishell_terminal_gestures, *next; tv; tv = next)
   {
     next = tv->gesture_next;
+    // rd_frame increments frame_index after building all Views; input_frame
+    // records its value inside the build, so a live visit is exactly one behind.
     if(!wm_window_is_focused(tv->input_window) ||
        (after_frame && tv->input_frame + 1 != rd_state->frame_index))
-    { uishell_terminal_cancel_gesture(tv); }
+    { uishell_terminal_cancel_buttons(tv); }
   }
 }
 
@@ -3569,7 +3595,7 @@ uishell_terminal_move(UIShell_TerminalViewState *tv, B32 adopt)
     // Hosting transfer has no stable provider document identity at this pin.
     // Conservatively clear coordinates; the handle and retained content survive.
     uishell_terminal_clear_selection(tv);
-    uishell_terminal_cancel_gesture(tv);
+    uishell_terminal_cancel_buttons(tv);
     // Force retained drawing to consume the new host's full frame.
     tv->retained_bucket_key = 0;
     if(!adopt)
@@ -3848,7 +3874,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt(top_row, 0),
       r1s64(0, (S64)Min(total > visible ? total-visible : 0, (U64)max_S64)), (S64)Min(visible, (U64)max_S64)};
     UI_ScrollRegionSignal region_sig = ui_scroll_region_build(terminal_root_box, canvas_key, &terminal_region, axes,
-      UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Scroll|UI_BoxFlag_DrawBackground);
+      UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Scroll|UI_BoxFlag_DrawBackground|UI_BoxFlag_CollectMouseMotion);
     canvas_box = region_sig.content_box;
     S64 delta_rows = region_sig.position.y.idx - top_row;
     if(session_ready && delta_rows != 0)
@@ -3941,7 +3967,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     UI_Focus(UI_FocusKind_On)
   {
     B32 focus_active = ui_is_focus_active();
-    if(tv->focus_active && !focus_active) { uishell_terminal_cancel_gesture(tv); }
+    if(tv->focus_active && !focus_active) { uishell_terminal_cancel_buttons(tv); }
     if(session_ready && tv->focus_active != focus_active)
     {
       tv->focus_active = focus_active;

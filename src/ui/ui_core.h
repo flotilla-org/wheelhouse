@@ -363,6 +363,8 @@ typedef U64 UI_BoxFlags;
 # define UI_BoxFlag_IgnoreInteraction         (UI_BoxFlags)(1ull<<55) //- this box & its subtree are inert: signals are empty & they never become hot/active (e.g. non-visible workspace builds)
 
 # define UI_BoxFlag_ScrollPrecise             (UI_BoxFlags)(1ull<<56)
+// Opt-in ordered motion messages for controls with per-event pointer ownership.
+# define UI_BoxFlag_CollectMouseMotion        (UI_BoxFlags)(1ull<<57)
 
 //- rjf: debug
 # define UI_BoxFlag_Debug                     (UI_BoxFlags)(1ull<<53)

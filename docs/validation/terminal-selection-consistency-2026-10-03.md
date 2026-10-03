@@ -22,11 +22,13 @@ Invalidate a drag on a changed content mapping or pixel geometry; keep its local
 owner until release so cancellation cannot turn into application input. Completed
 selection survives focus loss; incomplete drags are canceled. Native focus loss,
 hiding the View, superseding presses and runtime teardown retire active gesture
-ownership. A child press is paired with a release through the provider boundary;
+ownership. Accepted middle/right application buttons also close on retirement;
+late physical releases cannot emit orphan child events. A child press is paired with a release through the provider boundary;
 a rejected press acquires no held child button.
 
 `uishell_terminal_mouse_event` consumes ordered UI messages with their individual
-coordinates and modifiers. The left press chooses local selection (Shift or no
+coordinates and modifiers. Only Terminal View opts into ordered UI motion collection; ordinary clickable
+widgets retain their event handling. The left press chooses local selection (Shift or no
 capture), hyperlink activation (its platform chord), or application input. The
 choice and rectangular mode persist through drag/release. Shift added to an
 application gesture cannot invoke the provider's Shift override. Local gestures
@@ -48,6 +50,11 @@ reset/document/screen-transition epoch in render updates and packets. ABI 10 at
 handle, and switching screens away and back between pulls cannot be distinguished
 from an unchanged full refresh. **Those transitions are not proven safe by this
 change.** Neither dirty state nor render generation is used as a substitute.
+A logical scroll delivered only as a full/row replacement of identical rows is
+also indistinguishable when viewport metadata is unchanged (for example a capped
+history of repeated blank lines). Explicit SCROLL_COPY still invalidates source
+or destination overlap even when the row text is identical; its self-copy is a
+no-op. Cleat #301 needs to cover the indistinguishable replacement case as well.
 Persistent tracked history selection remains Cleat #300.
 
 Wheelhouse #70 should use the existing left-owner consumer and add wheel/middle
@@ -87,7 +94,8 @@ selection and Copy consumers execute.
 
 The existing scroll diagnostic also drives `ui_signal_from_box` with six ordered
 messages (two gestures) in one frame, a deliberately different sampled pointer,
-and an outside release, then feeds its claimed list to Terminal View's consumer.
+and an outside release, verifies an earlier sibling cannot steal a drag, checks
+ordinary clickable hover/motion remains unchanged, then feeds its claimed list to Terminal View's consumer.
 The AppKit key-event runner now posts a local application-queue mouse
 press/drag/outside release trace and verifies WM coordinates, modifiers and order.
 It does not inject global OS input.
@@ -102,7 +110,7 @@ Linux's mock feeds do not establish a real VT or physical GUI acceptance.
 
 ## Mutation checks
 
-All three targeted mutants were caught and reverted:
+All four targeted mutants were caught and reverted:
 
 - Disable feed invalidation: selection diagnostic exits 1 on stale Copy and mapping
   transitions.
@@ -110,6 +118,9 @@ All three targeted mutants were caught and reverted:
   on application press/drag/release modifier ownership.
 - Drop ordered motion claiming: the scroll diagnostic exits 1 specifically on the
   Terminal View's ordered UI-event trace.
+
+- Enable ordered motion on every clickable box: the scroll diagnostic exits 1
+  on ordinary-widget event preservation.
 
 Generated sources match committed copies; `git diff --check` passes.
 

@@ -318,18 +318,34 @@ uishell_terminal_selection_ui_diagnostics(RD_WindowState *ws)
     UI_AnimationInfo animation = {0};
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = v2f32(55, 25);
-    UI_Box *box = ui_build_box_from_key(UI_BoxFlag_MouseClickable, ui_key_make(987));
+    // An earlier sibling crossed by the drag cannot steal its motion before
+    // the terminal processes the queued press. It owns none of these presses.
+    UI_Box *sibling = ui_build_box_from_key(UI_BoxFlag_MouseClickable|(app ? UI_BoxFlag_CollectMouseMotion : 0), ui_key_make(986));
+    sibling->rect = r2f32p(30, 0, 150, 50);
+    UI_Signal sibling_signal = ui_signal_from_box(sibling);
+    ok &= sibling_signal.mouse_events.count == 0;
+    UI_Box *box = ui_build_box_from_key(UI_BoxFlag_MouseClickable|UI_BoxFlag_CollectMouseMotion, ui_key_make(987));
     box->rect = r2f32p(0, 0, 60, 30);
     UI_Signal signal = ui_signal_from_box(box);
     U32 count = 0;
     for(UI_EventNode *node = signal.mouse_events.first; node; node = node->next)
     {
+      if(count >= ArrayCount(kinds)) { ok = 0; break; }
       ok &= node->v.kind == kinds[count] && MemoryMatchStruct(&node->v.pos, &positions[count]);
       uishell_terminal_mouse_event(&f.tv, &node->v, box->rect, 10, 10); count++;
     }
     ok &= count == 6 && events.count == 0 && f.sent_count == (app ? 3 : 0);
     ok &= f.tv.selection_rectangular && txt_pt_match(f.tv.sel_mark, txt_pt(0, 2)) && txt_pt_match(f.tv.sel_cursor, txt_pt(2, 5));
     ok &= f.tv.has_selection && !f.tv.left_owner && !f.tv.mouse_buttons_held;
+    // Ordinary clickable widgets keep hover decoration without consuming the
+    // move; an opted-in terminal underneath can still receive that message.
+    UI_EventNode hover = {.v = {.kind = UI_EventKind_MouseMove, .pos = {45, 15}}};
+    events.first = events.last = &hover; events.count = 1;
+    sibling->flags &= ~UI_BoxFlag_CollectMouseMotion;
+    sibling_signal = ui_signal_from_box(sibling);
+    ok &= sibling_signal.mouse_events.count == 0 && events.count == 1 && (sibling_signal.f & UI_SignalFlag_MouseOver);
+    signal = ui_signal_from_box(box);
+    ok &= signal.mouse_events.count == 1 && events.count == 0;
     ui_end_build();
     // Hidden View retirement and teardown run their actual native hooks, pairing
     // an application press once and removing it from the active-gesture list.
@@ -343,6 +359,22 @@ uishell_terminal_selection_ui_diagnostics(RD_WindowState *ws)
     uishell_selection_test_mouse(&f, UI_EventKind_Press, 0, 0, 1);
     uishell_terminal_runtime_release(&f.tv);
     ok &= f.sent_count == previous+4 && !f.tv.gesture_registered && !uishell_terminal_gestures;
+    uishell_selection_fixture_release(&f);
+  }
+  // Application middle/right presses also retire on a hidden view. Their late
+  // physical releases are orphans and must not create a second child release.
+  for(U32 button = 0; button < 2; button++)
+  {
+    UIShell_SelectionFixture f; uishell_selection_fixture_init(&f);
+    f.tv.native_view = 1; f.tv.input_window = ws->os; f.tv.input_frame = rd_state->frame_index + 7;
+    f.tv.mouse_tracking_mode = CLEAT_MOUSE_TRACKING_NORMAL;
+    UI_Event event = {.kind = UI_EventKind_Press, .key = button ? WM_Key_RightMouseButton : WM_Key_MiddleMouseButton, .pos = {15, 5}};
+    uishell_terminal_mouse_event(&f.tv, &event, r2f32p(0, 0, 60, 30), 10, 10);
+    uishell_terminal_retire_gestures(1);
+    ok &= f.sent_count == 2 && f.sent[1].mouse_kind == CLEAT_MOUSE_RELEASE && !f.tv.mouse_buttons_held && !f.tv.gesture_registered;
+    event.kind = UI_EventKind_Release;
+    uishell_terminal_mouse_event(&f.tv, &event, r2f32p(0, 0, 60, 30), 10, 10);
+    ok &= f.sent_count == 2;
     uishell_selection_fixture_release(&f);
   }
   ui_select_state(saved); ui_state_release(test);

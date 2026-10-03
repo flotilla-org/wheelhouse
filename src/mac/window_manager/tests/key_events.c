@@ -24,7 +24,7 @@ mac_selection_mouse_events(WM_Window window, NSWindow *native_window)
   for(U32 i = 0; i < 3; i++)
   {
     NSEvent *event = [NSEvent mouseEventWithType:types[i] location:points[i] modifierFlags:flags[i]
-      timestamp:1+i windowNumber:[native_window windowNumber] context:nil eventNumber:i clickCount:1 pressure:1];
+      timestamp:1+i windowNumber:[native_window windowNumber] context:0 eventNumber:i clickCount:1 pressure:1];
     [NSApp postEvent:event atStart:NO];
   }
   WM_EventList events = wm_get_events(scratch.arena, 0);
