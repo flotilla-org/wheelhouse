@@ -128,7 +128,7 @@ frame(void)
     uishell_overview_benchmark_begin();
     uishell_terminal_retire_gestures(0);
     rd_frame();
-    if(!rd_state->quit) { uishell_terminal_retire_gestures(1); }
+    uishell_terminal_retire_gestures(1);
     uishell_overview_benchmark_end();
   }
   uishell_jackstay_tick(0,rd_state->quit);

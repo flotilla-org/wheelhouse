@@ -346,9 +346,27 @@ uishell_terminal_selection_ui_diagnostics(RD_WindowState *ws)
     ok &= sibling_signal.mouse_events.count == 0 && events.count == 1 && (sibling_signal.f & UI_SignalFlag_MouseOver);
     signal = ui_signal_from_box(box);
     ok &= signal.mouse_events.count == 1 && events.count == 0;
+    // A non-terminal control's active drag retains its signal and cannot lose
+    // motion to a terminal beside/under it, even inside the terminal bounds.
+    hover.v = (UI_Event){.kind = UI_EventKind_MouseMove, .pos = {45, 15}};
+    events.first = events.last = &hover; events.count = 1;
+    test->active_box_key[UI_MouseButtonKind_Left] = sibling->key;
+    sibling_signal = ui_signal_from_box(sibling);
+    signal = ui_signal_from_box(box);
+    ok &= (sibling_signal.f & UI_SignalFlag_LeftDragging) && !signal.mouse_events.count && events.count == 1;
+    test->active_box_key[UI_MouseButtonKind_Left] = ui_key_zero();
     ui_end_build();
     // Hidden View retirement and teardown run their actual native hooks, pairing
     // an application press once and removing it from the active-gesture list.
+    // Canceling terminal capture releases its UI keys as well as provider
+    // ownership, without clearing another control's active button.
+    f.tv.input_canvas_key = box->key;
+    test->active_box_key[UI_MouseButtonKind_Left] = box->key;
+    test->active_box_key[UI_MouseButtonKind_Middle] = sibling->key;
+    uishell_terminal_clear_ui_capture(&f.tv, test);
+    ok &= ui_key_match(test->active_box_key[UI_MouseButtonKind_Left], ui_key_zero()) &&
+          ui_key_match(test->active_box_key[UI_MouseButtonKind_Middle], sibling->key);
+    test->active_box_key[UI_MouseButtonKind_Middle] = ui_key_zero();
     U64 previous = f.sent_count;
     f.tv.native_view = 1; f.tv.input_window = ws->os;
     f.tv.input_frame = rd_state->frame_index + 7;
@@ -377,6 +395,15 @@ uishell_terminal_selection_ui_diagnostics(RD_WindowState *ws)
     ok &= f.sent_count == 2;
     uishell_selection_fixture_release(&f);
   }
+  // A closed window is absent from shell state. Retirement must close its
+  // provider gesture without dereferencing the retired native window handle.
+  UIShell_SelectionFixture closed; uishell_selection_fixture_init(&closed);
+  closed.tv.native_view = 1; closed.tv.input_canvas_key = ui_key_make(987);
+  closed.tv.mouse_tracking_mode = CLEAT_MOUSE_TRACKING_NORMAL;
+  uishell_selection_test_mouse(&closed, UI_EventKind_Press, 0, 0, 1);
+  uishell_terminal_retire_gestures(1);
+  ok &= closed.sent_count == 2 && !closed.tv.left_owner && !closed.tv.gesture_registered;
+  uishell_selection_fixture_release(&closed);
   ui_select_state(saved); ui_state_release(test);
   fprintf(stderr, "terminal selection ordered UI events %s\n", ok ? "passed" : "failed");
   return ok;

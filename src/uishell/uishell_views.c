@@ -71,6 +71,7 @@ struct UIShell_TerminalViewState
   UIShell_TerminalViewState *gesture_next;
   B32 gesture_registered;
   WM_Window input_window;
+  UI_Key input_canvas_key;
   U64 input_frame;
   B32 native_view;
   Rng2F32 selection_canvas;
@@ -386,6 +387,18 @@ uishell_terminal_cancel_gesture(UIShell_TerminalViewState *tv)
   }
 }
 
+internal void
+uishell_terminal_clear_ui_capture(UIShell_TerminalViewState *tv, UI_State *state)
+{
+  if(!state || ui_key_match(tv->input_canvas_key, ui_key_zero())) { return; }
+  for(U32 button = 0; button < UI_MouseButtonKind_COUNT; button++)
+  {
+    if(ui_key_match(state->active_box_key[button], tv->input_canvas_key))
+    { state->active_box_key[button] = ui_key_zero(); }
+  }
+  if(ui_key_match(state->hot_box_key, tv->input_canvas_key)) { state->hot_box_key = ui_key_zero(); }
+}
+
 // Focus loss/hidden views/teardown close every accepted application button.
 // A superseding left press uses the narrower left-only cancellation above.
 internal void
@@ -395,6 +408,13 @@ uishell_terminal_cancel_buttons(UIShell_TerminalViewState *tv)
   uishell_terminal_release_button(tv, CLEAT_MOUSE_BUTTON_MIDDLE, CLEAT_MOUSE_BUTTON_FLAG_MIDDLE);
   uishell_terminal_release_button(tv, CLEAT_MOUSE_BUTTON_RIGHT, CLEAT_MOUSE_BUTTON_FLAG_RIGHT);
   tv->middle_press_consumed = 0;
+  // Look up the owning live window instead of retaining a borrowed UI pointer.
+  // A closed window may already have released its UI state before View GC.
+  if(tv->native_view && !ui_key_match(tv->input_canvas_key, ui_key_zero()))
+  {
+    RD_WindowState *ws = rd_window_state_from_os_handle(tv->input_window);
+    if(ws != &rd_nil_window_state) { uishell_terminal_clear_ui_capture(tv, ws->ui); }
+  }
   uishell_terminal_cancel_gesture(tv); // unregister after the final held button
 }
 
@@ -511,7 +531,8 @@ uishell_terminal_retire_gestures(B32 after_frame)
     next = tv->gesture_next;
     // rd_frame increments frame_index after building all Views; input_frame
     // records its value inside the build, so a live visit is exactly one behind.
-    if(!wm_window_is_focused(tv->input_window) ||
+    RD_WindowState *ws = rd_window_state_from_os_handle(tv->input_window);
+    if(ws == &rd_nil_window_state || !wm_window_is_focused(tv->input_window) ||
        (after_frame && tv->input_frame + 1 != rd_state->frame_index))
     { uishell_terminal_cancel_buttons(tv); }
   }
@@ -3855,6 +3876,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   }
 
   UI_Key canvas_key = ui_key_from_string(ui_active_seed_key(), str8_lit("terminal_canvas"));
+  tv->input_canvas_key = canvas_key;
   UI_Box *canvas_box = &ui_nil_box;
   UI_Parent(terminal_root_box)
   UI_BackgroundColor(terminal_background_color)

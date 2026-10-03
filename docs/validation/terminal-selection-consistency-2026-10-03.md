@@ -22,7 +22,8 @@ Invalidate a drag on a changed content mapping or pixel geometry; keep its local
 owner until release so cancellation cannot turn into application input. Completed
 selection survives focus loss; incomplete drags are canceled. Native focus loss,
 hiding the View, superseding presses and runtime teardown retire active gesture
-ownership. Accepted middle/right application buttons also close on retirement;
+ownership and the owning canvas UI capture keys. Closed-window retirement
+resolves live window state before querying native focus. Accepted middle/right application buttons also close on retirement;
 late physical releases cannot emit orphan child events. A child press is paired with a release through the provider boundary;
 a rejected press acquires no held child button.
 
@@ -95,7 +96,7 @@ selection and Copy consumers execute.
 The existing scroll diagnostic also drives `ui_signal_from_box` with six ordered
 messages (two gestures) in one frame, a deliberately different sampled pointer,
 and an outside release, verifies an earlier sibling cannot steal a drag, checks
-ordinary clickable hover/motion remains unchanged, then feeds its claimed list to Terminal View's consumer.
+ordinary clickable hover/motion and active dragging remain unchanged, then feeds its claimed list to Terminal View's consumer.
 The AppKit key-event runner now posts a local application-queue mouse
 press/drag/outside release trace and verifies WM coordinates, modifiers and order.
 It does not inject global OS input.
