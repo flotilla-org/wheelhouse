@@ -71,12 +71,21 @@ struct UIShell_TerminalDrawParams
   UIShell_TerminalImageCache const *image_cache; // nullable: Kitty image placements to draw
 };
 
+// Directional provider facts: outgoing wrap and incoming continuation.
+typedef struct UIShell_TerminalRowWrap UIShell_TerminalRowWrap;
+struct UIShell_TerminalRowWrap
+{
+  B32 wrap;
+  B32 wrap_continuation;
+};
+
 typedef struct UIShell_TerminalCellFeed UIShell_TerminalCellFeed;
 struct UIShell_TerminalCellFeed
 {
   U16 cols;
   U16 rows;
   cleat_cell const *cells;
+  UIShell_TerminalRowWrap const *row_wraps; // nullable: legacy feeds have hard boundaries
   U64 cell_count;
   cleat_cursor cursor;
 };
@@ -88,6 +97,7 @@ struct UIShell_TerminalCellCache
   U16 cols;
   U16 rows;
   cleat_cell *cells;
+  UIShell_TerminalRowWrap *row_wraps; // arena-owned, follows row operations
   String8 *hyperlinks; // arena-owned, follows the same cell operations
   U64 cell_count;
   cleat_cursor cursor;
