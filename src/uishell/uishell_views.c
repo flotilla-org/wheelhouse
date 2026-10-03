@@ -22,6 +22,15 @@ struct UIShell_TerminalPreviewRequest
   B32 queued;
 };
 
+// A canceled local gesture keeps ownership until release, suppressing child input.
+typedef enum UIShell_TerminalLeftOwner
+{
+  UIShell_TerminalLeftOwner_None,
+  UIShell_TerminalLeftOwner_Selection,
+  UIShell_TerminalLeftOwner_Link,
+  UIShell_TerminalLeftOwner_Application,
+} UIShell_TerminalLeftOwner;
+
 typedef struct UIShell_TerminalViewState UIShell_TerminalViewState;
 struct UIShell_TerminalViewState
 {
@@ -29,6 +38,9 @@ struct UIShell_TerminalViewState
   UIShell_TerminalPreviewRequest preview_start, preview_update;
   cleat_provider *provider;
   cleat_session *session;
+  // Test double only at the provider input boundary. Native views use Cleat.
+  B32 (*input_sink)(void *user, cleat_input_event const *input, cleat_input_result *result);
+  void *input_sink_user;
   // daemon-backed session: provider is shared per-daemon (never closed by the
   // view) and the session survives uishell; connection state is surfaced
   B32 daemon_backend;
@@ -51,13 +63,23 @@ struct UIShell_TerminalViewState
   B32 middle_press_consumed;
   F32 last_mouse_x_px;
   F32 last_mouse_y_px;
-  B32 mouse_pos_valid;
   // Mouse tracking mode cached from the last render update (advisory: the mouse
   // block runs before this frame's update is fetched, and the encoder re-gates
   // authoritatively). Drives local-selection-vs-forward.
   U32 mouse_tracking_mode;
   // Local text selection (cursor/mark over grid cells, line=row column=col).
-  B32 link_gesture;     // owns left press, drag and release, even if modifiers change
+  UIShell_TerminalViewState *gesture_next;
+  B32 gesture_registered;
+  WM_Window input_window;
+  UI_Key input_canvas_key;
+  U64 input_frame;
+  B32 native_view;
+  Rng2F32 selection_canvas;
+  UIShell_TerminalLeftOwner left_owner;
+  cleat_session *selection_session;
+  U32 selection_viewport_kind;
+  U64 selection_scrollback_offset;
+  B32 selection_alternate_screen;
   B32 selection_rectangular; // latched at press, retained through release/copy
   B32 selecting;        // left button down, driving a selection this drag
   B32 has_selection;    // a non-empty selection exists
@@ -70,6 +92,115 @@ struct UIShell_TerminalViewState
   B32 glyph_trace_live_emitted;
   U64 glyph_trace_last_render_generation;
 };
+
+global UIShell_TerminalViewState *uishell_terminal_gestures;
+
+internal void
+uishell_terminal_clear_selection(UIShell_TerminalViewState *tv)
+{
+  tv->has_selection = tv->selecting = 0;
+}
+
+internal String8
+uishell_terminal_copy_selection(Arena *arena, UIShell_TerminalViewState *tv)
+{
+  if(!tv->has_selection || !tv->cell_cache.cells) { return str8_zero(); }
+  UIShell_TerminalCellFeed feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
+  return uishell_terminal_selection_text_from_feed(arena, &feed, tv->sel_mark, tv->sel_cursor, tv->selection_rectangular);
+}
+
+internal B32
+uishell_terminal_cell_text_matches(cleat_cell const *a, cleat_cell const *b)
+{
+  return a->width == b->width && a->grapheme_count == b->grapheme_count &&
+    (a->grapheme_count == 0 || MemoryMatch(a->graphemes, b->graphemes, a->grapheme_count*sizeof(U32)));
+}
+
+// Validate before publishing the new feed. Repaint, styling and cursor damage
+// are not content identities. Retain the old arena only for this comparison.
+internal void
+uishell_terminal_apply_update(UIShell_TerminalViewState *tv, cleat_render_update const *update)
+{
+  UIShell_TerminalCellCache old = tv->cell_cache;
+  UIShell_TerminalCellCache next = old;
+  next.arena = 0;
+  uishell_terminal_cell_cache_apply_render_update(&next, update);
+  B32 invalid = old.cols != next.cols || old.rows != next.rows ||
+    tv->selection_session != tv->session ||
+    tv->selection_viewport_kind != update->viewport_kind ||
+    tv->selection_scrollback_offset != update->scrollback_offset_rows ||
+    tv->selection_alternate_screen != update->terminal_modes.active_alternate_screen ||
+    old.scrollbar.viewport_top_row != next.scrollbar.viewport_top_row;
+  if(tv->has_selection || tv->selecting)
+  {
+    UIShell_TerminalCellFeed before = uishell_terminal_cell_feed_from_cache(&old);
+    UIShell_TerminalCellFeed after = uishell_terminal_cell_feed_from_cache(&next);
+    S64 first_row = Min(tv->sel_mark.line, tv->sel_cursor.line);
+    S64 last_row = Max(tv->sel_mark.line, tv->sel_cursor.line);
+    for(U64 i = 0; i < update->op_count && !invalid; i++)
+    {
+      cleat_render_update_op const *op = &update->ops[i];
+      if(op->kind == CLEAT_RENDER_OP_SCROLL_COPY && op->src_row != op->dst_row && op->row_count)
+      {
+        invalid = (op->src_row <= last_row && op->src_row + op->row_count > first_row) ||
+                  (op->dst_row <= last_row && op->dst_row + op->row_count > first_row);
+      }
+    }
+    for(S64 row = first_row; row <= last_row && !invalid; row++)
+    {
+      if(row < 0 || row >= old.rows || !old.cells || !next.cells)
+      { invalid = 1; break; }
+      Rng1S64 a = uishell_terminal_selection_columns(&before, tv->sel_mark, tv->sel_cursor, tv->selection_rectangular, row);
+      Rng1S64 b = uishell_terminal_selection_columns(&after, tv->sel_mark, tv->sel_cursor, tv->selection_rectangular, row);
+      invalid = a.min != b.min || a.max != b.max;
+      for(S64 col = a.min; col < a.max && !invalid; col++)
+      {
+        U64 idx = row*old.cols + col;
+        invalid = !uishell_terminal_cell_text_matches(&old.cells[idx], &next.cells[idx]);
+        // A tail at the left edge depends on its leading grapheme outside the range.
+        if(!invalid && col == a.min && col > 0 && old.cells[idx].width == CLEAT_CELL_WIDTH_SPACER_TAIL)
+        { invalid = !uishell_terminal_cell_text_matches(&old.cells[idx-1], &next.cells[idx-1]); }
+      }
+    }
+    if(invalid) { uishell_terminal_clear_selection(tv); }
+  }
+  if(next.cells == old.cells) { next.arena = old.arena; }
+  else if(old.arena) { arena_release(old.arena); }
+  tv->cell_cache = next;
+  tv->selection_session = tv->session;
+  tv->selection_viewport_kind = update->viewport_kind;
+  tv->selection_scrollback_offset = update->scrollback_offset_rows;
+  tv->selection_alternate_screen = update->terminal_modes.active_alternate_screen;
+  tv->mouse_tracking_mode = update->terminal_modes.mouse_tracking_mode;
+}
+
+// Only accepted process input dismisses selection. The count distinguishes
+// successful no-ops (empty paste, unsupported key) from emitted input.
+internal void
+uishell_terminal_input_result(UIShell_TerminalViewState *tv, cleat_input_event const *input, B32 accepted, U64 count)
+{
+  if(!accepted || !count) { return; }
+  if(input->kind == CLEAT_INPUT_KEY ||
+     ((input->kind == CLEAT_INPUT_TEXT || input->kind == CLEAT_INPUT_PASTE) && input->text_len != 0))
+  { uishell_terminal_clear_selection(tv); }
+  else if(input->kind == CLEAT_INPUT_MOUSE &&
+          (input->mouse_kind == CLEAT_MOUSE_PRESS || input->mouse_kind == CLEAT_MOUSE_WHEEL))
+  { uishell_terminal_clear_selection(tv); }
+}
+
+internal B32
+uishell_terminal_send_input(UIShell_TerminalViewState *tv, cleat_input_event const *input)
+{
+  // A disconnected/closed attachment retains Copy but never queues process input.
+  if(!tv->input_sink && (!tv->session ||
+     cleat_session_connection_state(tv->session) != CLEAT_SESSION_STREAMING ||
+     cleat_session_role(tv->session) != CLEAT_ROLE_CONTROLLER)) { return 0; }
+  cleat_input_result result = {0};
+  B32 accepted = tv->input_sink ? tv->input_sink(tv->input_sink_user, input, &result) :
+    (tv->session && cleat_session_send_input_ex(tv->session, input, &result));
+  uishell_terminal_input_result(tv, input, accepted, result.count);
+  return accepted && result.count != 0;
+}
 
 typedef struct UIShell_TerminalPreviewQueue UIShell_TerminalPreviewQueue;
 struct UIShell_TerminalPreviewQueue
@@ -141,6 +272,9 @@ uishell_terminal_preview_admit_update(UIShell_TerminalViewState *tv, B32 backgro
   return uishell_terminal_preview_admit(&uishell_terminal_preview_updates, &tv->preview_update, background, 4);
 }
 
+internal void uishell_terminal_cancel_gesture(UIShell_TerminalViewState *tv);
+internal void uishell_terminal_cancel_buttons(UIShell_TerminalViewState *tv);
+
 // Release only resources owned by this view. Daemon providers are shared;
 // destroying their session handle detaches this view without killing the session.
 internal void
@@ -151,6 +285,7 @@ uishell_terminal_runtime_release(void *data)
   uishell_terminal_preview_dequeue(&uishell_terminal_preview_starts, &tv->preview_start);
   uishell_terminal_preview_dequeue(&uishell_terminal_preview_updates, &tv->preview_update);
   if(tv->provider && !tv->daemon_backend) { cleat_provider_set_wake_callback(tv->provider, 0, 0); }
+  uishell_terminal_cancel_buttons(tv);
   if(tv->session) { cleat_session_destroy(tv->session); }
   if(tv->provider && !tv->daemon_backend) { cleat_provider_close(tv->provider); }
   for(UIShell_TerminalImageResource *r = tv->image_cache.first_resource; r; r = r->next)
@@ -207,16 +342,6 @@ uishell_terminal_link_modifier(WM_Modifiers modifiers)
 #endif
 }
 
-internal B32
-uishell_terminal_link_claim(B32 *held, B32 pressed, B32 released, B32 activate)
-{
-  // A new press also recovers from a release lost when the browser took focus.
-  if(pressed) { *held = activate; }
-  B32 consumed = *held;
-  if(released) { *held = 0; }
-  return consumed;
-}
-
 internal String8
 uishell_terminal_link_at(UIShell_TerminalCellCache *cache, U16 col, U16 row)
 {
@@ -228,6 +353,189 @@ uishell_terminal_link_at(UIShell_TerminalCellCache *cache, U16 col, U16 row)
     return cache->hyperlinks[idx];
   }
   return str8_zero();
+}
+
+internal U16 uishell_terminal_cleat_modifiers_from_wm(WM_Modifiers mods);
+
+internal void
+uishell_terminal_release_button(UIShell_TerminalViewState *tv, U32 button, U16 flag)
+{
+  if(!(tv->mouse_buttons_held & flag)) { return; }
+  cleat_input_event release = {.kind = CLEAT_INPUT_MOUSE, .mouse_kind = CLEAT_MOUSE_RELEASE,
+    .mouse_button = button, .mouse_buttons = tv->mouse_buttons_held,
+    .x_px = tv->last_mouse_x_px, .y_px = tv->last_mouse_y_px,
+    .cell_col = (U16)Clamp(0, (S32)(tv->last_mouse_x_px/Max(1.f, tv->cell_width_px)), (S32)Max(1, tv->cell_cache.cols)-1),
+    .cell_row = (U16)Clamp(0, (S32)(tv->last_mouse_y_px/Max(1.f, tv->cell_height_px)), (S32)Max(1, tv->cell_cache.rows)-1)};
+  uishell_terminal_send_input(tv, &release);
+  tv->mouse_buttons_held &= ~flag;
+}
+
+internal void
+uishell_terminal_cancel_gesture(UIShell_TerminalViewState *tv)
+{
+  if(tv->left_owner == UIShell_TerminalLeftOwner_Application)
+  { uishell_terminal_release_button(tv, CLEAT_MOUSE_BUTTON_LEFT, CLEAT_MOUSE_BUTTON_FLAG_LEFT); }
+  if(tv->selecting) { uishell_terminal_clear_selection(tv); }
+  tv->mouse_buttons_held &= ~CLEAT_MOUSE_BUTTON_FLAG_LEFT;
+  tv->left_owner = UIShell_TerminalLeftOwner_None;
+  if(tv->gesture_registered && !tv->mouse_buttons_held)
+  {
+    UIShell_TerminalViewState **link = &uishell_terminal_gestures;
+    for(; *link && *link != tv; link = &(*link)->gesture_next) {}
+    if(*link) { *link = tv->gesture_next; }
+    tv->gesture_next = 0; tv->gesture_registered = 0;
+  }
+}
+
+internal void
+uishell_terminal_clear_ui_capture(UIShell_TerminalViewState *tv, UI_State *state)
+{
+  if(!state || ui_key_match(tv->input_canvas_key, ui_key_zero())) { return; }
+  for(U32 button = 0; button < UI_MouseButtonKind_COUNT; button++)
+  {
+    if(ui_key_match(state->active_box_key[button], tv->input_canvas_key))
+    { state->active_box_key[button] = ui_key_zero(); }
+  }
+  if(ui_key_match(state->hot_box_key, tv->input_canvas_key)) { state->hot_box_key = ui_key_zero(); }
+}
+
+// Focus loss/hidden views/teardown close every accepted application button.
+// A superseding left press uses the narrower left-only cancellation above.
+internal void
+uishell_terminal_cancel_buttons(UIShell_TerminalViewState *tv)
+{
+  uishell_terminal_cancel_gesture(tv);
+  uishell_terminal_release_button(tv, CLEAT_MOUSE_BUTTON_MIDDLE, CLEAT_MOUSE_BUTTON_FLAG_MIDDLE);
+  uishell_terminal_release_button(tv, CLEAT_MOUSE_BUTTON_RIGHT, CLEAT_MOUSE_BUTTON_FLAG_RIGHT);
+  tv->middle_press_consumed = 0;
+  // Look up the owning live window instead of retaining a borrowed UI pointer.
+  // A closed window may already have released its UI state before View GC.
+  if(tv->native_view && !ui_key_match(tv->input_canvas_key, ui_key_zero()))
+  {
+    RD_WindowState *ws = rd_window_state_from_os_handle(tv->input_window);
+    if(ws != &rd_nil_window_state) { uishell_terminal_clear_ui_capture(tv, ws->ui); }
+  }
+  uishell_terminal_cancel_gesture(tv); // unregister after the final held button
+}
+
+typedef struct UIShell_TerminalMouseResult UIShell_TerminalMouseResult;
+struct UIShell_TerminalMouseResult { String8 link; B32 selection_completed; };
+
+// Consume each native/UI message in order, with its own coordinates/modifiers.
+// Ownership and rectangular mode belong to the press, never the current frame.
+internal UIShell_TerminalMouseResult
+uishell_terminal_mouse_event(UIShell_TerminalViewState *tv, UI_Event const *evt, Rng2F32 canvas, F32 cell_width, F32 cell_height)
+{
+  UIShell_TerminalMouseResult result = {0};
+  U16 cols = tv->cell_cache.cols, rows = tv->cell_cache.rows;
+  F32 x = evt->pos.x - canvas.x0, y = evt->pos.y - canvas.y0;
+  U16 col = (U16)Clamp(0, (S32)(x/Max(1.f, cell_width)), (S32)Max(1, cols)-1);
+  U16 row = (U16)Clamp(0, (S32)(y/Max(1.f, cell_height)), (S32)Max(1, rows)-1);
+  B32 press = evt->kind == UI_EventKind_Press;
+  B32 release = evt->kind == UI_EventKind_Release;
+  B32 left = evt->key == WM_Key_LeftMouseButton;
+  B32 move = evt->kind == UI_EventKind_MouseMove;
+  U16 mods = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers);
+  if(left && press)
+  {
+    uishell_terminal_cancel_gesture(tv); // superseding press closes the previous gesture
+    String8 link = contains_2f32(canvas, evt->pos) ? uishell_terminal_link_at(&tv->cell_cache, col, row) : str8_zero();
+    if(uishell_terminal_link_modifier(evt->modifiers) && link.size)
+    {
+      tv->left_owner = UIShell_TerminalLeftOwner_Link;
+      result.link = link;
+    }
+    else if(evt->modifiers & WM_Modifier_Shift || tv->mouse_tracking_mode == CLEAT_MOUSE_TRACKING_NONE)
+    {
+      tv->left_owner = UIShell_TerminalLeftOwner_Selection;
+      tv->selection_rectangular = !!(evt->modifiers & WM_Modifier_Shift) && !!(evt->modifiers & WM_Modifier_Alt);
+      tv->selecting = cols && rows && tv->cell_cache.cells && tv->cols == cols && tv->rows == rows;
+      tv->has_selection = 0;
+      tv->sel_mark = tv->sel_cursor = txt_pt(row, col);
+    }
+    else { tv->left_owner = UIShell_TerminalLeftOwner_Application; }
+    tv->selection_canvas = canvas;
+    if(tv->native_view && !tv->gesture_registered)
+    {
+      tv->gesture_next = uishell_terminal_gestures;
+      uishell_terminal_gestures = tv; tv->gesture_registered = 1;
+    }
+  }
+  if(tv->selecting && (tv->cell_width_px != cell_width || tv->cell_height_px != cell_height ||
+                      !MemoryMatchStruct(&tv->selection_canvas, &canvas)) && !press)
+  { uishell_terminal_clear_selection(tv); }
+  if((left || move) && tv->left_owner == UIShell_TerminalLeftOwner_Selection)
+  {
+    if(tv->selecting)
+    {
+      tv->sel_cursor = txt_pt(row, col);
+      tv->has_selection = !txt_pt_match(tv->sel_mark, tv->sel_cursor);
+      if(left && release) { tv->selecting = 0; result.selection_completed = tv->has_selection; }
+    }
+    if(left && release) { tv->left_owner = UIShell_TerminalLeftOwner_None; }
+  }
+  else if((left || move) && tv->left_owner == UIShell_TerminalLeftOwner_Link)
+  {
+    if(left && release) { tv->left_owner = UIShell_TerminalLeftOwner_None; }
+  }
+  else
+  {
+    U32 button = CLEAT_MOUSE_BUTTON_NONE;
+    U16 flag = 0;
+    if(left) { button = CLEAT_MOUSE_BUTTON_LEFT; flag = CLEAT_MOUSE_BUTTON_FLAG_LEFT; }
+    else if(evt->key == WM_Key_MiddleMouseButton) { button = CLEAT_MOUSE_BUTTON_MIDDLE; flag = CLEAT_MOUSE_BUTTON_FLAG_MIDDLE; }
+    else if(evt->key == WM_Key_RightMouseButton) { button = CLEAT_MOUSE_BUTTON_RIGHT; flag = CLEAT_MOUSE_BUTTON_FLAG_RIGHT; }
+    B32 app_left = tv->left_owner == UIShell_TerminalLeftOwner_Application;
+    if(app_left) { mods &= ~CLEAT_MOD_SHIFT; } // Shift cannot reclassify an application-owned drag
+    B32 forward = (press || release) && flag;
+    if(release && (!(tv->mouse_buttons_held & flag) || (left && !app_left)))
+    { forward = 0; } // never report a release whose press was rejected
+    if(move)
+    {
+      forward = tv->mouse_buttons_held || (contains_2f32(canvas, evt->pos) && tv->mouse_tracking_mode != CLEAT_MOUSE_TRACKING_NONE);
+      if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_LEFT) { button = CLEAT_MOUSE_BUTTON_LEFT; }
+      else if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_MIDDLE) { button = CLEAT_MOUSE_BUTTON_MIDDLE; }
+      else if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_RIGHT) { button = CLEAT_MOUSE_BUTTON_RIGHT; }
+    }
+    if(forward)
+    {
+      if(press) { tv->mouse_buttons_held |= flag; }
+      cleat_input_event input = {.kind = CLEAT_INPUT_MOUSE, .modifiers = mods,
+        .mouse_kind = move ? CLEAT_MOUSE_MOVE : press ? CLEAT_MOUSE_PRESS : CLEAT_MOUSE_RELEASE,
+        .mouse_button = button, .mouse_buttons = tv->mouse_buttons_held,
+        .cell_col = col, .cell_row = row, .x_px = x, .y_px = y};
+      B32 sent = uishell_terminal_send_input(tv, &input);
+      if(press && !sent) { tv->mouse_buttons_held &= ~flag; }
+      if(release) { tv->mouse_buttons_held &= ~flag; }
+    }
+    if(left && release) { tv->left_owner = UIShell_TerminalLeftOwner_None; }
+  }
+  if(release && !tv->left_owner) { uishell_terminal_cancel_gesture(tv); }
+  if(tv->native_view && tv->mouse_buttons_held && !tv->gesture_registered)
+  {
+    tv->gesture_next = uishell_terminal_gestures;
+    uishell_terminal_gestures = tv; tv->gesture_registered = 1;
+  }
+  tv->last_mouse_x_px = x; tv->last_mouse_y_px = y;
+  tv->cell_width_px = cell_width; tv->cell_height_px = cell_height;
+  return result;
+}
+
+// Called before/after native frame construction. Only active gestures are
+// visited; hiding a view or losing the native window cannot strand a button.
+internal void
+uishell_terminal_retire_gestures(B32 after_frame)
+{
+  for(UIShell_TerminalViewState *tv = uishell_terminal_gestures, *next; tv; tv = next)
+  {
+    next = tv->gesture_next;
+    // rd_frame increments frame_index after building all Views; input_frame
+    // records its value inside the build, so a live visit is exactly one behind.
+    RD_WindowState *ws = rd_window_state_from_os_handle(tv->input_window);
+    if(ws == &rd_nil_window_state || !wm_window_is_focused(tv->input_window) ||
+       (after_frame && tv->input_frame + 1 != rd_state->frame_index))
+    { uishell_terminal_cancel_buttons(tv); }
+  }
 }
 
 internal B32
@@ -3305,8 +3613,11 @@ uishell_terminal_move(UIShell_TerminalViewState *tv, B32 adopt)
   }
   else
   {
-    // The next render belongs to a new engine generation. Keep selection,
-    // view state and handle; force the retained drawing to consume its full frame.
+    // Hosting transfer has no stable provider document identity at this pin.
+    // Conservatively clear coordinates; the handle and retained content survive.
+    uishell_terminal_clear_selection(tv);
+    uishell_terminal_cancel_buttons(tv);
+    // Force retained drawing to consume the new host's full frame.
     tv->retained_bucket_key = 0;
     if(!adopt)
     {
@@ -3327,6 +3638,9 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   Temp scratch = scratch_begin(0, 0);
   UIShell_TerminalViewState *tv = rd_view_state(UIShell_TerminalViewState);
   rd_view_state_from_cfg(cfg_node_from_id(uishell_regs()->view))->release_user_data = uishell_terminal_runtime_release;
+  tv->native_view = 1;
+  tv->input_frame = rd_state->frame_index;
+  tv->input_window = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window))->os;
   CFG_Node *view_cfg = cfg_node_from_id(uishell_regs()->view);
   B32 fixture_mode = str8_match(view_cfg->string, str8_lit("terminal_fixture"), 0);
   B32 benchmark_mode = uishell_overview_benchmark.enabled &&
@@ -3474,6 +3788,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
                       str8_match(str8_prefix(str8((U8 *)hosting.ptr, hosting.len), 7), str8_lit("daemon:"), 0);
   if(session_ready && (tv->cols != cols || tv->rows != rows))
   {
+    uishell_terminal_clear_selection(tv);
     tv->cols = cols;
     tv->rows = rows;
     U64 resize_begin_us = metrics != 0 ? now_time_us() : 0;
@@ -3561,6 +3876,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   }
 
   UI_Key canvas_key = ui_key_from_string(ui_active_seed_key(), str8_lit("terminal_canvas"));
+  tv->input_canvas_key = canvas_key;
   UI_Box *canvas_box = &ui_nil_box;
   UI_Parent(terminal_root_box)
   UI_BackgroundColor(terminal_background_color)
@@ -3580,7 +3896,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt(top_row, 0),
       r1s64(0, (S64)Min(total > visible ? total-visible : 0, (U64)max_S64)), (S64)Min(visible, (U64)max_S64)};
     UI_ScrollRegionSignal region_sig = ui_scroll_region_build(terminal_root_box, canvas_key, &terminal_region, axes,
-      UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Scroll|UI_BoxFlag_DrawBackground);
+      UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Scroll|UI_BoxFlag_DrawBackground|UI_BoxFlag_CollectMouseMotion);
     canvas_box = region_sig.content_box;
     S64 delta_rows = region_sig.position.y.idx - top_row;
     if(session_ready && delta_rows != 0)
@@ -3588,6 +3904,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       cleat_viewport_command command = {.kind = CLEAT_VIEWPORT_COMMAND_DELTA_ROWS, .delta_rows = delta_rows};
       cleat_viewport_command_result command_result = {0};
       cleat_session_scroll_viewport(tv->session, &command, &command_result);
+      if(command_result.outcome == CLEAT_VIEWPORT_OUTCOME_MOVED) { uishell_terminal_clear_selection(tv); }
       rd_request_frame();
     }
   }
@@ -3608,7 +3925,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       .wheel_delta_x = -(F32)canvas_sig.scroll.x,
       .wheel_delta_y = -(F32)canvas_sig.scroll.y,
     };
-    cleat_session_send_input(tv->session, &input);
+    uishell_terminal_send_input(tv, &input);
     rd_request_frame();
   }
   if(session_ready)
@@ -3624,171 +3941,43 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       .content_height_px = canvas_dim.y,
     };
     cleat_session_update_geometry(tv->session, &geometry);
+    if(tv->selecting && (tv->cell_width_px != cell_width_px || tv->cell_height_px != cell_height_px))
+    { uishell_terminal_clear_selection(tv); }
     tv->cell_width_px = cell_width_px;
     tv->cell_height_px = cell_height_px;
   }
-  if(session_ready)
+  if(tv->cell_cache.cells)
   {
-    Vec2F32 mouse = ui_mouse();
-    F32 lx = mouse.x - canvas_box->rect.x0;
-    F32 ly = mouse.y - canvas_box->rect.y0;
-    U16 mods = uishell_terminal_cleat_modifiers_from_wm(canvas_sig.event_flags);
-    U16 cell_col = (U16)Clamp(0, (S32)(lx/cell_width_px), (S32)(cols-1));
-    U16 cell_row = (U16)Clamp(0, (S32)(ly/cell_height_px), (S32)(rows-1));
-    B32 shift_held = !!(canvas_sig.event_flags & WM_Modifier_Shift);
-
-    // Local text selection: left-drag selects locally when no program is
-    // tracking the mouse, or when Shift overrides an app that is (Ghostty
-    // behavior). While selecting, the left button + motion are consumed here and
-    // not forwarded to the program.
-    B32 left_pressed = !!(canvas_sig.f & UI_SignalFlag_LeftPressed);
-    B32 left_released = !!(canvas_sig.f & UI_SignalFlag_LeftReleased);
-    if(left_pressed) { uishell_cmd("focus_panel"); }
-    // Input refers to the last displayed cache, before this frame pulls output.
-    // A resize invalidates that coordinate mapping until a matching frame arrives.
-    String8 link = (tv->cell_cache.cols == cols && tv->cell_cache.rows == rows &&
-                    (canvas_sig.f & UI_SignalFlag_Hovering)) ?
-      uishell_terminal_link_at(&tv->cell_cache, cell_col, cell_row) : str8_zero();
-    B32 activate_link = uishell_terminal_link_modifier(canvas_sig.event_flags) && !tv->selecting && link.size;
-    B32 link_consumes_left = uishell_terminal_link_claim(&tv->link_gesture, left_pressed, left_released, activate_link);
-    if(left_pressed && activate_link && uishell_terminal_link_allowed(link)) { wm_open_in_browser(link); }
-    B32 local_select = (tv->mouse_tracking_mode == CLEAT_MOUSE_TRACKING_NONE) || shift_held;
-    B32 was_selecting = tv->selecting;
-    if(left_pressed && local_select && !was_selecting && !link_consumes_left)
-    {
-      tv->selecting = 1;
-      tv->selection_rectangular = shift_held && !!(canvas_sig.event_flags & WM_Modifier_Alt);
-      tv->sel_mark = txt_pt((S64)cell_row, (S64)cell_col);
-      tv->sel_cursor = tv->sel_mark;
-      tv->has_selection = 0;
-    }
-    if(tv->selecting)
-    {
-      tv->sel_cursor = txt_pt((S64)cell_row, (S64)cell_col);
-      tv->has_selection = !txt_pt_match(tv->sel_mark, tv->sel_cursor);
-      if(left_released)
-      {
-        tv->selecting = 0;
-        // Copy-on-select: write the selection to the shared selection pasteboard
-        // (for middle-click paste), leaving the standard clipboard untouched.
-        if(tv->has_selection && tv->cell_cache.cells != 0)
-        {
-          Temp sel_scratch = scratch_begin(0, 0);
-          UIShell_TerminalCellFeed sel_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
-          String8 sel_text = uishell_terminal_selection_text_from_feed(sel_scratch.arena, &sel_feed,
-                                                                       tv->sel_mark,
-                                                                       tv->sel_cursor, tv->selection_rectangular);
-          if(sel_text.size != 0) { wm_set_selection_text(sel_text); }
-          scratch_end(sel_scratch);
-        }
-      }
-    }
-    B32 selection_consumes_left = link_consumes_left || was_selecting || (left_pressed && local_select);
-
-    // Middle-click pastes the selection buffer when no program is grabbing the
-    // mouse (otherwise the button is forwarded below).
-    B32 paste_middle = !!(canvas_sig.f & UI_SignalFlag_MiddlePressed) && (tv->mouse_tracking_mode == CLEAT_MOUSE_TRACKING_NONE);
-    if(paste_middle)
-    {
-      Temp paste_scratch = scratch_begin(0, 0);
-      String8 paste_text = wm_get_selection_text(paste_scratch.arena);
-      if(paste_text.size != 0)
-      {
-        // Route through Cleat's paste path so bracketed-paste mode wraps it.
-        cleat_input_event input =
-        {
-          .kind = CLEAT_INPUT_PASTE,
-          .text = paste_text.str,
-          .text_len = paste_text.size,
-        };
-        cleat_session_send_input(tv->session, &input);
-      }
-      scratch_end(paste_scratch);
-    }
-
-    // Press / release for each button. These route through Cleat → libghostty's
-    // mouse encoder, which gates them against the program's tracking mode and
-    // emits the format (SGR / SGR-pixels / X10) the program requested.
-    // Signal flags collapse a frame's clicks and ui_mouse() samples the current
-    // pointer. Forward the claimed events instead, retaining each message's
-    // coordinates, modifiers and order (including a press + release in one frame).
-    for(UI_EventNode *node = canvas_sig.mouse_events.first; node != 0; node = node->next)
+    for(UI_EventNode *node = canvas_sig.mouse_events.first; node; node = node->next)
     {
       UI_Event *evt = &node->v;
-      U32 button = 0;
-      U16 flag = 0;
-      switch(evt->key)
+      if(evt->key == WM_Key_LeftMouseButton && evt->kind == UI_EventKind_Press) { uishell_cmd("focus_panel"); }
+      if(evt->key == WM_Key_MiddleMouseButton)
       {
-        case WM_Key_LeftMouseButton:   {button = CLEAT_MOUSE_BUTTON_LEFT;   flag = CLEAT_MOUSE_BUTTON_FLAG_LEFT;}break;
-        case WM_Key_MiddleMouseButton: {button = CLEAT_MOUSE_BUTTON_MIDDLE; flag = CLEAT_MOUSE_BUTTON_FLAG_MIDDLE;}break;
-        case WM_Key_RightMouseButton:  {button = CLEAT_MOUSE_BUTTON_RIGHT;  flag = CLEAT_MOUSE_BUTTON_FLAG_RIGHT;}break;
-        default: {continue;}
-      }
-      B32 is_press = evt->kind == UI_EventKind_Press;
-      if(button == CLEAT_MOUSE_BUTTON_LEFT && selection_consumes_left) { continue; }
-      if(button == CLEAT_MOUSE_BUTTON_MIDDLE)
-      {
-        if(is_press) { tv->middle_press_consumed = paste_middle; }
+        if(evt->kind == UI_EventKind_Press)
+        {
+          tv->middle_press_consumed = tv->mouse_tracking_mode == CLEAT_MOUSE_TRACKING_NONE;
+          if(tv->middle_press_consumed)
+          {
+            String8 text = wm_get_selection_text(scratch.arena);
+            cleat_input_event input = {.kind = CLEAT_INPUT_PASTE, .text = text.str, .text_len = text.size};
+            if(text.size) { uishell_terminal_send_input(tv, &input); }
+          }
+        }
         if(tv->middle_press_consumed)
         {
-          if(!is_press) { tv->middle_press_consumed = 0; }
+          if(evt->kind == UI_EventKind_Release) { tv->middle_press_consumed = 0; }
           continue;
         }
       }
-      F32 event_x = evt->pos.x - canvas_box->rect.x0;
-      F32 event_y = evt->pos.y - canvas_box->rect.y0;
-      if(is_press)
+      UIShell_TerminalMouseResult result = uishell_terminal_mouse_event(tv, evt, canvas_box->rect, cell_width_px, cell_height_px);
+      if(result.link.size && uishell_terminal_link_allowed(result.link)) { wm_open_in_browser(result.link); }
+      if(result.selection_completed)
       {
-        tv->mouse_buttons_held |= flag;
+        String8 text = uishell_terminal_copy_selection(scratch.arena, tv);
+        if(text.size) { wm_set_selection_text(text); }
       }
-      cleat_input_event input =
-      {
-        .kind = CLEAT_INPUT_MOUSE,
-        .modifiers = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers),
-        .mouse_kind = is_press ? CLEAT_MOUSE_PRESS : CLEAT_MOUSE_RELEASE,
-        .mouse_button = button,
-        .mouse_buttons = tv->mouse_buttons_held,
-        .cell_col = (U16)Clamp(0, (S32)(event_x/cell_width_px), (S32)(cols-1)),
-        .cell_row = (U16)Clamp(0, (S32)(event_y/cell_height_px), (S32)(rows-1)),
-        .x_px = event_x,
-        .y_px = event_y,
-      };
-      cleat_session_send_input(tv->session, &input);
-      if(!is_press) { tv->mouse_buttons_held &= ~flag; }
     }
-
-    // Motion: forward when the pointer moved while either a button is held
-    // (drag) or it is hovering this terminal (bare mouse-move, e.g. game
-    // mouse-look). The encoder drops moves unless the program is in a
-    // motion-tracking mode, so hover only reaches any-event apps. (Gating this
-    // on the actual tracking mode — once surfaced to uishell — would avoid the
-    // dropped round-trips, and is the same hook needed for local-selection vs
-    // forwarding.)
-    B32 moved = (!tv->mouse_pos_valid || lx != tv->last_mouse_x_px || ly != tv->last_mouse_y_px);
-    B32 over_canvas = !!(canvas_sig.f & UI_SignalFlag_Hovering);
-    if(!selection_consumes_left && moved && (tv->mouse_buttons_held != 0 || over_canvas))
-    {
-      U32 move_button = CLEAT_MOUSE_BUTTON_NONE;
-      if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_LEFT) { move_button = CLEAT_MOUSE_BUTTON_LEFT; }
-      else if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_MIDDLE) { move_button = CLEAT_MOUSE_BUTTON_MIDDLE; }
-      else if(tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_RIGHT) { move_button = CLEAT_MOUSE_BUTTON_RIGHT; }
-      cleat_input_event input =
-      {
-        .kind = CLEAT_INPUT_MOUSE,
-        .modifiers = mods,
-        .mouse_kind = CLEAT_MOUSE_MOVE,
-        .mouse_button = move_button,
-        .mouse_buttons = tv->mouse_buttons_held,
-        .cell_col = cell_col,
-        .cell_row = cell_row,
-        .x_px = lx,
-        .y_px = ly,
-      };
-      cleat_session_send_input(tv->session, &input);
-    }
-    tv->last_mouse_x_px = lx;
-    tv->last_mouse_y_px = ly;
-    tv->mouse_pos_valid = 1;
   }
   
   UI_Parent(canvas_box)
@@ -3800,6 +3989,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     UI_Focus(UI_FocusKind_On)
   {
     B32 focus_active = ui_is_focus_active();
+    if(tv->focus_active && !focus_active) { uishell_terminal_cancel_buttons(tv); }
     if(session_ready && tv->focus_active != focus_active)
     {
       tv->focus_active = focus_active;
@@ -3808,7 +3998,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         .kind = CLEAT_INPUT_FOCUS,
         .focused = focus_active,
       };
-      cleat_session_send_input(tv->session, &input);
+      uishell_terminal_send_input(tv, &input);
     }
     if(focus_active)
     {
@@ -3821,7 +4011,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
         // keybinding system; once the RAD keymap rework (sane mac Cmd/Ctrl
         // handling) lands, replace this with terminal copy/paste *commands* bound
         // per-platform by the keymap.
-        if(session_ready && evt->kind == UI_EventKind_Press &&
+        if(evt->kind == UI_EventKind_Press &&
            (evt->key == WM_Key_C || evt->key == WM_Key_V))
         {
 #if OS_MAC
@@ -3834,16 +4024,13 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
             if(tv->has_selection && tv->cell_cache.cells != 0)
             {
               Temp clip_scratch = scratch_begin(0, 0);
-              UIShell_TerminalCellFeed clip_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
-              String8 clip_text = uishell_terminal_selection_text_from_feed(clip_scratch.arena, &clip_feed,
-                                                                            tv->sel_mark,
-                                                                            tv->sel_cursor, tv->selection_rectangular);
+              String8 clip_text = uishell_terminal_copy_selection(clip_scratch.arena, tv);
               if(clip_text.size != 0) { wm_set_clipboard_text(clip_text); }
               scratch_end(clip_scratch);
             }
             taken = 1;
           }
-          else if(clip_chord && evt->key == WM_Key_V)
+          else if(session_ready && clip_chord && evt->key == WM_Key_V)
           {
             Temp clip_scratch = scratch_begin(0, 0);
             String8 clip_text = wm_get_clipboard_text(clip_scratch.arena);
@@ -3856,13 +4043,13 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
                 .text = clip_text.str,
                 .text_len = clip_text.size,
               };
-              cleat_session_send_input(tv->session, &input);
+              uishell_terminal_send_input(tv, &input);
             }
             scratch_end(clip_scratch);
             taken = 1;
           }
         }
-        if(!taken && session_ready &&
+        if(!taken && (session_ready || (evt->flags & UI_EventFlag_Copy)) &&
            (evt->kind == UI_EventKind_Edit ||
             evt->kind == UI_EventKind_Navigate ||
            evt->kind == UI_EventKind_Text))
@@ -3874,10 +4061,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
             if(tv->has_selection && tv->cell_cache.cells != 0)
             {
               Temp copy_scratch = scratch_begin(0, 0);
-              UIShell_TerminalCellFeed copy_feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
-              String8 copy_text = uishell_terminal_selection_text_from_feed(copy_scratch.arena, &copy_feed,
-                                                                            tv->sel_mark,
-                                                                            tv->sel_cursor, tv->selection_rectangular);
+              String8 copy_text = uishell_terminal_copy_selection(copy_scratch.arena, tv);
               if(copy_text.size != 0) { wm_set_clipboard_text(copy_text); }
               scratch_end(copy_scratch);
             }
@@ -3895,7 +4079,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
                 .text = text.str,
                 .text_len = text.size,
               };
-              cleat_session_send_input(tv->session, &input);
+              uishell_terminal_send_input(tv, &input);
               taken = 1;
             }
             else
@@ -3917,6 +4101,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
               };
               cleat_viewport_command_result command_result = {0};
               cleat_session_scroll_viewport(tv->session, &command, &command_result);
+              if(command_result.outcome == CLEAT_VIEWPORT_OUTCOME_MOVED) { uishell_terminal_clear_selection(tv); }
               sent_viewport_command = 1;
               taken = 1;
             }
@@ -3934,7 +4119,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
                   .key_kind = key_kind,
                   .key_code = key_code,
                 };
-                cleat_session_send_input(tv->session, &input);
+                uishell_terminal_send_input(tv, &input);
                 taken = 1;
               }
             }
@@ -3960,7 +4145,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
               .key_kind = key_kind,
               .key_code = key_code,
             };
-            cleat_session_send_input(tv->session, &input);
+            uishell_terminal_send_input(tv, &input);
             taken = 1;
           }
         }
@@ -4021,9 +4206,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
             metrics->updates++;
             metrics->background_updates += background_preview;
           }
-          uishell_terminal_cell_cache_apply_render_update(&tv->cell_cache, &update);
+          uishell_terminal_apply_update(tv, &update);
           uishell_terminal_image_cache_apply_render_update(&tv->image_cache, tv->session, &update);
-          tv->mouse_tracking_mode = update.terminal_modes.mouse_tracking_mode;
           cleat_session_mark_observed(tv->session, update.render_generation);
           cleat_session_release_render_update(tv->session, &update);
         }
@@ -4031,7 +4215,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       if(metrics != 0) { metrics->provider_update_us += now_time_us()-update_begin_us; }
       // Recompute hover from the frame being drawn, including under a stationary
       // pointer. No retained URI survives a content/viewport update.
-      if(ui_hovering(canvas_sig) && !tv->selecting && !tv->link_gesture &&
+      if(ui_hovering(canvas_sig) && tv->left_owner == UIShell_TerminalLeftOwner_None &&
          tv->cell_cache.cols == cols && tv->cell_cache.rows == rows)
       {
         Vec2F32 mouse = ui_mouse();

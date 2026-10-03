@@ -363,6 +363,7 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
     ui_select_state(saved);
     ui_state_release(test_ui);
   }
+  failures += !uishell_terminal_selection_ui_diagnostics(ws);
   failures += !uishell_scroll_preview_diagnostics(ws);
   failures += !uishell_precise_list_diagnostics(ws);
   fprintf(stderr, "Scroll region diagnostics: %u failures\n", failures);

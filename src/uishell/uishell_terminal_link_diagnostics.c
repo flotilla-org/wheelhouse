@@ -21,17 +21,6 @@ uishell_terminal_link_diagnostics(void)
   LinkCheck(!uishell_terminal_link_modifier(modifier|WM_Modifier_Shift));
   LinkCheck(!uishell_terminal_link_modifier(modifier|WM_Modifier_Alt));
   LinkCheck(!uishell_terminal_link_modifier(modifier|WM_Modifier_Shift|WM_Modifier_Alt));
-  B32 held = 0;
-  LinkCheck(!uishell_terminal_link_claim(&held, 1, 0, 0)); // plain press belongs to selection/app
-  LinkCheck(!uishell_terminal_link_claim(&held, 0, 1, 1)); // adding modifier on release cannot activate
-  LinkCheck(uishell_terminal_link_claim(&held, 1, 0, 1));
-  LinkCheck(uishell_terminal_link_claim(&held, 0, 0, 0)); // drag after releasing modifier
-  LinkCheck(uishell_terminal_link_claim(&held, 0, 1, 0)); // release never reaches child
-  LinkCheck(!held);
-  LinkCheck(!uishell_terminal_link_claim(&held, 0, 0, 0));
-
-  LinkCheck(uishell_terminal_link_claim(&held, 1, 0, 1));
-  LinkCheck(!uishell_terminal_link_claim(&held, 1, 0, 0)); // lost release / browser focus round trip
   Temp scratch = scratch_begin(0, 0);
   LinkCheck(str8_match(uishell_terminal_link_display(scratch.arena, str8_lit("a\0\n\\b")), str8_lit("a\\x00\\x0a\\x5cb"), 0));
   scratch_end(scratch);

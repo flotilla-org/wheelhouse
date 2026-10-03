@@ -3023,6 +3023,7 @@ ui_signal_from_box(UI_Box *box)
   //- rjf: process events related to this box
   //
   B32 view_scrolled = 0;
+  U32 pending_mouse_buttons = 0;
   for(UI_Event *evt = 0; ui_next_event(&evt);)
   {
     B32 taken = 0;
@@ -3210,10 +3211,29 @@ ui_signal_from_box(UI_Box *box)
       taken = 1;
     }
     
+    // A box built before the press owner must not steal later motion merely
+    // because the pointer crossed it. Preserve pending press order until the
+    // owning box consumes its press, including multiple gestures in one frame.
+    if(evt_key_is_mouse && evt->kind == UI_EventKind_Press)
+    { pending_mouse_buttons |= 1u << evt_mouse_button_kind; }
+    if(evt_key_is_mouse && evt->kind == UI_EventKind_Release)
+    { pending_mouse_buttons &= ~(1u << evt_mouse_button_kind); }
+    B32 owns_drag = !ui_key_match(box->key, ui_key_zero()) &&
+      (ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Left], box->key) ||
+       ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Middle], box->key) ||
+       ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Right], box->key));
+    B32 uncaptured = pending_mouse_buttons == 0 &&
+      ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Left], ui_key_zero()) &&
+      ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Middle], ui_key_zero()) &&
+      ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Right], ui_key_zero());
+    if(box->flags & UI_BoxFlag_CollectMouseMotion && evt->kind == UI_EventKind_MouseMove &&
+       (owns_drag || (uncaptured && evt_mouse_in_bounds)))
+    { taken = 1; }
+
     //- rjf: taken -> eat event
     if(taken)
     {
-      if(evt_key_is_mouse && (evt->kind == UI_EventKind_Press || evt->kind == UI_EventKind_Release))
+      if((evt_key_is_mouse && (evt->kind == UI_EventKind_Press || evt->kind == UI_EventKind_Release)) || evt->kind == UI_EventKind_MouseMove)
       {
         ui_event_list_push(ui_build_arena(), &sig.mouse_events, evt);
       }

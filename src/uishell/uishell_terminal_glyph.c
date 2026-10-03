@@ -5382,6 +5382,8 @@ uishell_terminal_cell_feed_from_cleat_snapshot(cleat_snapshot const *snapshot)
 internal void
 uishell_terminal_cell_copy_from_cleat_cell(Arena *arena, cleat_cell *dst, cleat_cell const *src)
 {
+  cleat_cell source = *src; // self-copy must retain the original grapheme pointer
+  src = &source;
   *dst = *src;
   if(src->grapheme_count != 0 && src->graphemes != 0)
   {
