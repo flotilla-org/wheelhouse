@@ -3210,10 +3210,18 @@ ui_signal_from_box(UI_Box *box)
       taken = 1;
     }
     
+    // Ordered terminal drag/hover consumers need the message's own position,
+    // including motion between two clicks in a single frame.
+    if(box->flags & UI_BoxFlag_MouseClickable && evt->kind == UI_EventKind_MouseMove &&
+       (evt_mouse_in_bounds || ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Left], box->key) ||
+        ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Middle], box->key) ||
+        ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Right], box->key)))
+    { taken = 1; }
+
     //- rjf: taken -> eat event
     if(taken)
     {
-      if(evt_key_is_mouse && (evt->kind == UI_EventKind_Press || evt->kind == UI_EventKind_Release))
+      if((evt_key_is_mouse && (evt->kind == UI_EventKind_Press || evt->kind == UI_EventKind_Release)) || evt->kind == UI_EventKind_MouseMove)
       {
         ui_event_list_push(ui_build_arena(), &sig.mouse_events, evt);
       }

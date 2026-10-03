@@ -9,6 +9,44 @@
 
 #define MacMenuCheck(expr) do { if(!(expr)) { good = 0; fprintf(stderr, "FAIL native menu line %d: %s\n", __LINE__, #expr); } } while(0)
 
+// Local AppKit queue trace: per-message coordinates/modifiers and drag/release
+// order must survive translation, including an outside release in one pump.
+internal B32
+mac_selection_mouse_events(WM_Window window, NSWindow *native_window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  wm_get_events(scratch.arena, 0);
+  NSEventType types[] = {NSEventTypeLeftMouseDown, NSEventTypeLeftMouseDragged, NSEventTypeLeftMouseUp};
+  NSEventModifierFlags flags[] = {NSEventModifierFlagShift|NSEventModifierFlagOption, 0, NSEventModifierFlagCommand};
+  NSPoint points[] = {{25, 100}, {65, 70}, {450, -20}};
+  WM_EventKind expected_kinds[] = {WM_EventKind_Press, WM_EventKind_MouseMove, WM_EventKind_Release};
+  WM_Modifiers expected_mods[] = {WM_Modifier_Shift|WM_Modifier_Alt, 0, WM_Modifier_Super};
+  for(U32 i = 0; i < 3; i++)
+  {
+    NSEvent *event = [NSEvent mouseEventWithType:types[i] location:points[i] modifierFlags:flags[i]
+      timestamp:1+i windowNumber:[native_window windowNumber] context:nil eventNumber:i clickCount:1 pressure:1];
+    [NSApp postEvent:event atStart:NO];
+  }
+  WM_EventList events = wm_get_events(scratch.arena, 0);
+  U32 count = 0;
+  B32 good = 1;
+  F32 previous_y = 0;
+  for(WM_Event *event = events.first; event; event = event->next)
+  {
+    if(!wm_window_match(event->window, window) ||
+       (event->kind != WM_EventKind_MouseMove && event->key != WM_Key_LeftMouseButton)) { continue; }
+    if(count >= 3) { good = 0; break; }
+    good &= event->kind == expected_kinds[count] && event->modifiers == expected_mods[count];
+    good &= event->pos.x == points[count].x;
+    if(count) { good &= event->pos.y-previous_y == points[count-1].y-points[count].y; }
+    previous_y = event->pos.y; count++;
+  }
+  good &= count == 3 && !wm_key_is_down(WM_Key_LeftMouseButton);
+  fprintf(stderr, "%s: AppKit selection press/drag/outside release order and modifiers\n", good ? "PASS" : "FAIL");
+  scratch_end(scratch);
+  return good;
+}
+
 internal void
 entry_point(CmdLine *cmdline)
 {
@@ -249,6 +287,7 @@ entry_point(CmdLine *cmdline)
     MacMenuCheck([[quit keyEquivalent] length] == 0);
     fprintf(stderr, "%s: native menu bindings, tracking, rebuild and window context\n", good ? "PASS" : "FAIL");
     failures += !good;
+    failures += !mac_selection_mouse_events(window, ns_window);
     wm_window_close(second);
     wm_window_close(window);
     exit(failures != 0);

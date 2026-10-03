@@ -93,6 +93,7 @@
 #include "uishell/uishell_views.c"
 #include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
+#include "uishell/uishell_terminal_selection_diagnostics.c"
 #include "uishell/uishell_scroll_diagnostics.c"
 #include "uishell/uishell_tooltip_diagnostics.c"
 #include "uishell/uishell_terminal_link_diagnostics.c"
@@ -125,7 +126,9 @@ frame(void)
     uishell_sidebar_poll_live();
     uishell_jackstay_tick(1,0);
     uishell_overview_benchmark_begin();
+    uishell_terminal_retire_gestures(0);
     rd_frame();
+    if(!rd_state->quit) { uishell_terminal_retire_gestures(1); }
     uishell_overview_benchmark_end();
   }
   uishell_jackstay_tick(0,rd_state->quit);
@@ -145,6 +148,7 @@ entry_point(CmdLine *cmd_line)
   if(cmd_line_has_flag(cmd_line, str8_lit("terminal_selection_diagnostics")))
   {
     B32 ok = uishell_terminal_selection_diagnostics();
+    ok = uishell_terminal_selection_lifetime_diagnostics() && ok;
     fprintf(stderr, "terminal selection diagnostics %s\n", ok ? "passed" : "failed");
     abort_self(ok ? 0 : 1);
   }
@@ -320,7 +324,7 @@ entry_point(CmdLine *cmd_line)
                                     "Check the fixture sidebar workspace bridge and exit (use temporary user/project files).\n\n"
                                     "--terminal_fixture\n"
                                     "Open the deterministic terminal glyph fixture on startup.\n\n"
-                                    "--terminal_selection_diagnostics\nCheck terminal selection bounds and clipboard text and exit.\n\n"
+                                    "--terminal_selection_diagnostics\nCheck terminal selection bounds, lifetime, Copy and gesture traces and exit.\n\n"
                                     "--terminal_glyph_diagnostics\n"
                                     "Run terminal glyph placement diagnostics and exit.\n\n"
                                     "--terminal_glyph_fixture_ppm:<path>\n"
