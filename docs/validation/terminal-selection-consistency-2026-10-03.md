@@ -119,7 +119,6 @@ All four targeted mutants were caught and reverted:
   on application press/drag/release modifier ownership.
 - Drop ordered motion claiming: the scroll diagnostic exits 1 specifically on the
   Terminal View's ordered UI-event trace.
-
 - Enable ordered motion on every clickable box: the scroll diagnostic exits 1
   on ordinary-widget event preservation.
 
@@ -135,6 +134,11 @@ This applies to direct app launches as well as the daily-driver script. Paths,
 credentials and workspace routing remain inherited; Cleat owns the terminal
 identity. Already running sessions and external daemons keep their existing
 environment.
+
+Colour overrides are deliberately removed for every Wheelhouse launch, including
+a user-wide inherited `NO_COLOR` preference: the host process's CLI policy is not
+the default policy for new interactive terminals. A shell rc can explicitly set
+it again. This does not depend on guessing whether the parent is an agent.
 
 `python tools/test-terminal-environment.py` exercises the same startup policy
 without opening windows. It covers empty/nonempty flags, idempotence, preserved
@@ -159,9 +163,16 @@ fallback, not Ghostty parity: tracked selection should survive history scrolling
 
 Nested Flotilla acceptance is pending. The connector hit the unsupported
 include-replicas watch/cursor loop in Flotilla #2523; the isolated test connector
-was paused and no sidebar-based acceptance is claimed. A local AppKit run passed
-keyboard/menu checks but failed its new mouse-order trace during the handover;
-that discrepancy remains to be investigated independently of CI success.
+was paused and no sidebar-based acceptance is claimed. A direct read-only
+`flotilla attach --watch --transient` tab is prepared for the nested check.
+
+The local AppKit trace initially failed because queued synthetic coordinates
+were round-tripped through the display transform (requested x=25, queued
+x=25.420561). WM preserved those queued coordinates exactly. The test now peeks
+at each queued event without consuming it and checks exact client coordinates,
+order, modifiers and released-button state in the single WM pump. The native
+runner passes locally; a temporary WM mutant adding three points to x fails
+the mouse trace. No production WM conversion change was needed.
 
 Use a separate candidate build and disposable settings. Do not restart or replace
 the daily driver. Record OS/build, Cleat/daemon revisions, route and exact results

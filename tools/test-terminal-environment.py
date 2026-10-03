@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='wh-terminal-env-') as directory:
     output = Path(directory) / ('test.exe' if os.name == 'nt' else 'test')
     if os.name == 'nt':
+        # Run from a Visual Studio developer shell (CI uses msvc-dev-cmd).
         command = ['cl', '/nologo', '/W4', '/I' + str(ROOT / 'src'),
                    '/Fe:' + str(output), '/Fo:' + str(Path(directory) / 'test.obj'),
                    str(ROOT / 'tools/test-terminal-environment.c')]
