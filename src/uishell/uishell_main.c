@@ -173,7 +173,8 @@ entry_point(CmdLine *cmd_line)
       rd_state->preview_render_budget = !cmd_line_has_flag(cmd_line, str8_lit("no_preview_render_budget"));
       rd_state->preview_surface_budget = !cmd_line_has_flag(cmd_line, str8_lit("no_preview_surface_budget"));
       rd_state->preview_refresh_budget = !cmd_line_has_flag(cmd_line, str8_lit("no_preview_refresh_budget"));
-      uishell_sidebar_fixture = cmd_line_has_flag(cmd_line, str8_lit("sidebar_fixture")) ||
+      uishell_sidebar_subject_fixture = cmd_line_has_flag(cmd_line, str8_lit("sidebar_subject_fixture"));
+      uishell_sidebar_fixture = uishell_sidebar_subject_fixture || cmd_line_has_flag(cmd_line, str8_lit("sidebar_fixture")) ||
         cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
 
       String8 socket_path = cmd_line_string(cmd_line, str8_lit("andamento_socket"));
@@ -319,6 +320,7 @@ entry_point(CmdLine *cmd_line)
                                     "--no_preview_surface_budget\nDisable demand-sized workspace preview surfaces.\n\n"
                                     "--no_preview_refresh_budget\nDisable reduced refresh cadence for small terminal previews.\n\n"
                                     "--tooltip_diagnostics\nCheck tooltip sizing and window-edge placement and exit.\n\n"
+                                    "--sidebar_subject_fixture\nOpen the subject/role fixture with daily-driver templates.\n\n"
                                     "--sidebar_fixture\nOpen the example project catalog instead of the local workspace sidebar.\n\n"
                                     "--sidebar_diagnostics\n"
                                     "Check the fixture sidebar workspace bridge and exit (use temporary user/project files).\n\n"

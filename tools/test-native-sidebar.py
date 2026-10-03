@@ -50,6 +50,7 @@ def load(path):
         'tick': (U32, [Ptr, U64, Ptr]),
         'snapshot_is_current': (U32, [Ptr, Ptr, Ptr]),
         'snapshot_field': (U32, [Ptr, Size, C.POINTER(Field)]),
+        'snapshot_copy_url_action': (Size, [Ptr, Size]),
         'snapshot_node_loop_key': (U32, [Ptr, Size, C.POINTER(Text)]),
         'apply_patch_json': (U32, [Ptr, U64, Text, Ptr]),
         'snapshot_acquire': (Ptr, [Ptr, Ptr]), 'snapshot_release': (None, [Ptr]),
@@ -71,7 +72,7 @@ def load(path):
 def patch(kind, identity, **facts):
     facts = {'entity.kind': kind, 'entity.id': identity, 'display.label': identity, **facts}
     return {'type': 'metadata-patch', 'target': {'kind': 'entity', 'value': {'kind': kind, 'id': identity}},
-            'source_id': 'native-test', 'set': {k: {'value': {'type': 'bool' if isinstance(v, bool) else 'text', 'value': v}}
+            'source_id': 'native-test', 'set': {k: {'value': {'type': 'bool' if isinstance(v, bool) else 'entity-refs' if isinstance(v, list) else 'text', 'value': v}}
                                               for k, v in facts.items()}, 'unset': []}
 
 
@@ -94,6 +95,147 @@ class NativeSidebarTests(unittest.TestCase):
         for item in facts:
             self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
         self.snapshots = []
+
+    def publish_fixture(self):
+        for line in (ROOT / 'data/sidebar/fixture.jsonl').read_text().splitlines():
+            item = json.loads(line)
+            item['source_id'] = 'native-test'
+            self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
+
+    def values(self, snapshot, node, detail=False):
+        start, count = (node.first_detail, node.detail_count) if detail else (node.first_field, node.field_count)
+        result = []
+        for index in range(start, start + count):
+            field = Field()
+            self.assertTrue(lib.andamento_snapshot_field(snapshot, index, C.byref(field)))
+            result.append(field.text.string())
+        return result
+
+    def children(self, nodes, identity):
+        parent = next(i for i, n in enumerate(nodes) if n.entity_id.string() == identity)
+        return [n for n in nodes if n.parent == parent]
+
+    # The issue's multi-repository fixture is a scenario through the real core:
+    # numeric order, duplicate edges, shared generations, missing forge and label tiers.
+    def test_subject_fixture_joins_order_and_label_tiers(self):
+        self.publish_fixture()
+        snapshot, nodes = self.snapshot()
+        subjects = self.children(nodes, 'build')
+        self.assertEqual([n.entity_id.string() for n in subjects], ['pr-281', 'pr-1000', 'no-forge', 'issue-137'])
+        self.assertEqual([self.values(snapshot, n)[0] for n in subjects], ['!281', 'c!1000', '!2508', '#137'])
+        self.assertNotIn('superseded', [n.entity_id.string() for n in nodes])
+        self.toggle_variable('Show finished')
+        _, nodes = self.snapshot()
+        self.assertEqual([n.entity_id.string() for n in self.children(nodes, 'superseded')], ['pr-281', 'pr-1000'])
+        self.toggle_variable('Issues')
+        _, nodes = self.snapshot()
+        self.assertNotIn('issue-137', [n.entity_id.string() for n in nodes])
+        config = (ROOT / 'data/sidebar/daily-driver.kdl').read_text().replace('tier="medium"', 'tier="short"')
+        self.assertTrue(lib.andamento_configure(self.core, Text.of(config), None))
+        snapshot, nodes = self.snapshot()
+        pr = next(n for n in self.children(nodes, 'build') if n.entity_id.string() == 'pr-1000')
+        self.assertEqual(self.values(snapshot, pr)[0], '!1000')
+        self.assertEqual(pr.label.string(), 'c!1000')
+
+    # Each published readiness is exercised across changes, with no status.attention.
+    # Finished subjects obey the existing toggle; pending/draft/conflicting stay in the tree.
+    def test_subject_readiness_attention_and_finished_lifecycle(self):
+        self.publish_fixture()
+        for readiness, state in [('ready_to_merge', 'open'), ('awaiting_review_response', 'open'),
+                ('ci_failing', 'open'), ('conflicting', 'open'), ('draft', 'draft'),
+                ('merged_not_landed', 'merged'), ('closed', 'closed')]:
+            update = patch('change_request', 'pr-281', **{'flotilla.change_request.readiness': readiness,
+                                                        'flotilla.change_request.state': state})
+            # Patch identity/label are omitted, matching producer partial updates.
+            for key in ('entity.kind', 'entity.id', 'display.label'):
+                update['set'].pop(key)
+            self.assertTrue(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(update)), None))
+            for show in (False, True):
+                snapshot, nodes = self.snapshot()
+                tree = self.children(nodes, 'build')
+                ids = [n.entity_id.string() for n in tree]
+                self.assertEqual('pr-281' in ids, show or state not in ('merged', 'closed'))
+                attention = [n.entity_id.string() for n in nodes if n.parent != Size(-1).value and
+                             nodes[n.parent].is_section and nodes[n.parent].label.string() == 'attention']
+                self.assertEqual('pr-281' in attention, readiness in ('ready_to_merge', 'ci_failing'))
+                self.toggle_variable('Show finished')
+        update = patch('issue', 'issue-137', **{'flotilla.issue.state': 'closed'})
+        update['set'].pop('display.label')
+        self.assertTrue(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(update)), None))
+        _, nodes = self.snapshot()
+        self.assertNotIn('issue-137', [n.entity_id.string() for n in nodes])
+        self.toggle_variable('Show finished')
+        _, nodes = self.snapshot()
+        self.assertIn('issue-137', [n.entity_id.string() for n in nodes])
+        self.toggle_variable('Issues')
+        _, nodes = self.snapshot()
+        self.assertNotIn('issue-137', [n.entity_id.string() for n in nodes])
+
+    # Canonical actions use the fixture forge's deliberately nonstandard URL shapes.
+    # Missing forge keeps the row and short reference, with no URL or workspace action.
+    def test_subject_actions_and_observation_details(self):
+        self.publish_fixture()
+        snapshot, nodes = self.snapshot()
+        for identity, url in [('pr-281', 'https://forge.example/org/wheelhouse/review/281'),
+                              ('issue-137', 'https://forge.example/org/wheelhouse/ticket/137')]:
+            index = next(i for i, n in enumerate(nodes) if n.entity_id.string() == identity)
+            self.assertEqual(self.dispatch(snapshot, nodes[index].activate)[0::3], (3, url))
+            copy = lib.andamento_snapshot_copy_url_action(snapshot, index)
+            self.assertNotEqual(copy, Size(-1).value)
+            self.assertEqual(self.dispatch(snapshot, copy)[0::3], (4, url))
+        missing = next(i for i, n in enumerate(nodes) if n.entity_id.string() == 'no-forge')
+        self.assertEqual(lib.andamento_snapshot_copy_url_action(snapshot, missing), Size(-1).value)
+        self.assertFalse(nodes[missing].openable)
+        self.assertEqual(self.values(snapshot, nodes[missing])[0], '!2508')
+        pr = next(n for n in nodes if n.entity_id.string() == 'pr-281')
+        details = self.values(snapshot, pr, detail=True)
+        for expected in ['Title: Render subjects', 'State: open', 'Checks: pass', 'Review: approved',
+                         'Mergeable: mergeable', 'Checks observed: 2026-10-03T09:19:00Z']:
+            self.assertIn(expected, details)
+        forge = patch('forge', 'fixture', **{'flotilla.forge.web_url': 'https://new.example'})
+        self.assertTrue(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(forge)), None))
+        self.assertFalse(lib.andamento_dispatch(self.core, snapshot, pr.activate, None))
+        fresh, nodes = self.snapshot()
+        pr = next(n for n in nodes if n.entity_id.string() == 'pr-281')
+        self.assertEqual(self.dispatch(fresh, pr.activate)[3], 'https://new.example/org/wheelhouse/review/281')
+
+    # Producer templates may be malformed: only http(s) URL actions may reach a host.
+    def test_subject_rejects_non_web_forge_templates(self):
+        self.publish_fixture()
+        for template in ('file:///tmp/program', 'javascript:alert(1)', '/tmp/program', 'custom:handler'):
+            update = patch('forge', 'fixture', **{'flotilla.forge.change_request_url_template': template})
+            self.assertTrue(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(update)), None))
+            snapshot, nodes = self.snapshot()
+            index = next(i for i, n in enumerate(nodes) if n.entity_id.string() == 'pr-281')
+            self.assertEqual(lib.andamento_snapshot_copy_url_action(snapshot, index), Size(-1).value)
+            self.assertEqual(self.dispatch(snapshot, nodes[index].activate)[0], 2)  # inspect, no URL launch
+
+    # Role attachment/status come from lifted facts. Forward edges supply current
+    # detail and oldest-first attempts even when IDs sort in the opposite order.
+    def test_role_fixture_current_detail_and_ordered_attempts(self):
+        self.publish_fixture()
+        snapshot, nodes = self.snapshot()
+        role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
+        self.assertTrue(role.openable)
+        self.assertIn('waiting', self.values(snapshot, role))
+        details = self.values(snapshot, role, detail=True)
+        self.assertIn('Current attempt: Governor attempt 2', details)
+        self.assertIn('Attempt phase: active', details)
+        self.assertIn('Attachment: ready', details)
+        self.assertEqual(self.children(nodes, 'p/governor'), [])
+        self.toggle_variable('Role attempts')
+        _, nodes = self.snapshot()
+        self.assertEqual([n.entity_id.string() for n in self.children(nodes, 'p/governor')], ['z-attempt-1', 'a-attempt-2'])
+        self.toggle_variable('Show finished')
+        _, nodes = self.snapshot()
+        # Attempts have one placement under the role, including when finished work is shown.
+        for identity in ('z-attempt-1', 'a-attempt-2'):
+            instances = [n for n in nodes if n.entity_id.string() == identity]
+            self.assertEqual(len(instances), 1)
+            self.assertEqual(nodes[instances[0].parent].entity_id.string(), 'p/governor')
+        self.toggle_variable('Role attempts')
+        _, nodes = self.snapshot()
+        self.assertEqual(self.children(nodes, 'p/governor'), [])
 
     def test_git_fixture_groups_and_materializes_worktrees(self):
         for line in (ROOT / 'data/sidebar/git-fixture.jsonl').read_text().splitlines():
@@ -246,9 +388,9 @@ class NativeSidebarTests(unittest.TestCase):
                     return
         self.fail('no control ' + label)
 
-    def test_standing_roles_are_inline_project_actions_and_replace_their_attempts(self):
-        self.publish_role('quartermaster', attempt='q-v')
-        self.publish_role('governor', attempt='g-v')
+    def test_standing_roles_are_project_rows_and_replace_their_attempts(self):
+        self.publish_role('quartermaster', attempt='q-v', **{'flotilla.role.attempts': [{'kind': 'convoy', 'id': 'q'}]})
+        self.publish_role('governor', attempt='g-v', **{'flotilla.role.attempts': [{'kind': 'convoy', 'id': 'g'}]})
         self.publish_attempt('g', 'governor', **{'status.attention': True})
         self.publish_attempt('q', 'quartermaster')
         # A task convoy that happens to share a role name is not a role attempt.
@@ -257,7 +399,7 @@ class NativeSidebarTests(unittest.TestCase):
         project = next(i for i, n in enumerate(nodes) if n.entity_id.string() == 'p' and not n.is_section)
         roles = [n for n in nodes if n.entity_kind.string() == 'role']
         self.assertEqual([n.entity_id.string() for n in roles], ['p/governor', 'p/quartermaster'])
-        self.assertTrue(all(n.parent == project and n.layout.string() == 'inline' and n.openable for n in roles))
+        self.assertTrue(all(n.parent == project and n.openable for n in roles))
         ids = {n.entity_id.string() for n in nodes}
         for hidden in ('g', 'g-v', 'q', 'q-v'):
             self.assertNotIn(hidden, ids)

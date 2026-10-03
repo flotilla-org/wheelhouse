@@ -101,6 +101,7 @@ uishell_terminal_selection_text_from_feed(Arena *arena, UIShell_TerminalCellFeed
 {
   Temp scratch = scratch_begin(&arena, 1);
   String8List lines = {0};
+  String8List logical_line = {0};
   for(S64 r = Max(0, Min(mark.line, cursor.line)); r <= Max(mark.line, cursor.line) && r < (S64)feed->rows; r += 1)
   {
     Rng1S64 columns = uishell_terminal_selection_columns(feed, mark, cursor, rectangular, r);
@@ -123,14 +124,28 @@ uishell_terminal_selection_text_from_feed(Arena *arena, UIShell_TerminalCellFeed
       str8_list_push(scratch.arena, &cells, cell_string);
     }
     String8 line = str8_list_join(scratch.arena, &cells, 0);
-    while(!rectangular && line.size > 0 && (line.str[line.size-1] == ' ' || line.str[line.size-1] == '\t'))
+    // Join only selected adjacent rows whose two directional facts agree.
+    B32 soft_join = !rectangular && r < Max(mark.line, cursor.line) && r + 1 < feed->rows &&
+                    feed->row_wraps != 0 && feed->row_wraps[r].wrap && feed->row_wraps[r + 1].wrap_continuation;
+    str8_list_push(scratch.arena, &logical_line, line);
+    if(!soft_join)
     {
-      line.size -= 1;
+      line = str8_list_join(scratch.arena, &logical_line, 0);
+      // Trim the entire logical line, including spaces in earlier wrapped rows
+      // when the selected final row is blank.
+      while(!rectangular && line.size > 0 && (line.str[line.size-1] == ' ' || line.str[line.size-1] == '\t'))
+      {
+        line.size -= 1;
+      }
+      str8_list_push(arena, &lines, push_str8_copy(arena, line));
+      if(r < Max(mark.line, cursor.line) && r + 1 < feed->rows)
+      {
+        str8_list_push(arena, &lines, str8_lit("\n"));
+      }
+      MemoryZeroStruct(&logical_line);
     }
-    str8_list_push(arena, &lines, push_str8_copy(arena, line));
   }
   StringJoin join = {0};
-  join.sep = str8_lit("\n");
   String8 result = str8_list_join(arena, &lines, &join);
   scratch_end(scratch);
   return result;
@@ -207,6 +222,142 @@ uishell_terminal_selection_diagnostics(void)
   }
   String8 linear = uishell_terminal_selection_text_from_feed(scratch.arena, &feed, txt_pt(0, 1), txt_pt(0, 3), 0);
   ok = ok && str8_match(linear, str8_lit("b"), 0);
+  // Provider boundary fixture: native Copy consumes this same cached feed.
+  // A command wraps after a meaningful space and retains its logical bytes.
+  cleat_render_cell render_cells[18] = {0};
+  U32 command[18] = {'e','c','h','o',' ',' ','h','e','l','l','o',' ','w','o','r','l','d',' '};
+  cleat_render_row render_rows[3] = {0};
+  for(U64 i = 0; i < 18; i += 1)
+  {
+    render_cells[i].graphemes = &command[i];
+    render_cells[i].grapheme_count = 1;
+  }
+  for(U64 r = 0; r < 3; r += 1)
+  {
+    render_rows[r].row = r;
+    render_rows[r].cells = render_cells + r*6;
+    render_rows[r].cell_count = 6;
+    render_rows[r].wrap = r < 2;
+    render_rows[r].wrap_continuation = r > 0;
+  }
+  cleat_render_update_op op = {.kind = CLEAT_RENDER_OP_FULL_VISIBLE_REPLACE, .rows = render_rows, .row_desc_count = 3};
+  cleat_render_update update = {.cols = 6, .rows = 3, .ops = &op, .op_count = 1};
+  UIShell_TerminalCellCache cache = {0};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  UIShell_TerminalCellFeed wrapped_feed = uishell_terminal_cell_feed_from_cache(&cache);
+  String8 command_text = uishell_terminal_selection_text_from_feed(scratch.arena, &wrapped_feed, txt_pt(0, 0), txt_pt(2, 5), 0);
+  if(!str8_match(command_text, str8_lit("echo  hello world"), 0))
+  {
+    fprintf(stderr, "terminal selection wrapped command failed: %.*s\n", (int)command_text.size, command_text.str);
+    ok = 0;
+  }
+  // Exact clipboard bytes for partial endpoints, reverse drags, and rectangles.
+  struct { TxtPt first; TxtPt last; B32 rectangle; String8 expected; } wrapped_cases[] =
+  {
+    {txt_pt(0, 2), txt_pt(2, 2), 0, str8_lit("ho  hello wor")},
+    {txt_pt(2, 2), txt_pt(0, 2), 0, str8_lit("ho  hello wor")},
+    {txt_pt(0, 0), txt_pt(1, 5), 0, str8_lit("echo  hello")},
+    {txt_pt(0, 0), txt_pt(2, 5), 1, str8_lit("echo  \nhello \nworld ")},
+    {txt_pt(2, 3), txt_pt(0, 1), 1, str8_lit("cho\nell\norl")},
+    {txt_pt(0, 3), txt_pt(2, 1), 1, str8_lit("cho\nell\norl")},
+    {txt_pt(1, 6), txt_pt(1, 8), 0, str8_lit("")},
+  };
+  for(U64 i = 0; i < ArrayCount(wrapped_cases); i += 1)
+  {
+    String8 text = uishell_terminal_selection_text_from_feed(scratch.arena, &wrapped_feed, wrapped_cases[i].first, wrapped_cases[i].last, wrapped_cases[i].rectangle);
+    if(!str8_match(text, wrapped_cases[i].expected, 0))
+    {
+      fprintf(stderr, "terminal wrapped endpoints case %llu failed\n", (unsigned long long)i);
+      ok = 0;
+    }
+    if(wrapped_cases[i].rectangle)
+    {
+      for(S64 r = 0; r < 3; r += 1)
+      {
+        Rng1S64 bounds = uishell_terminal_selection_columns(&wrapped_feed, wrapped_cases[i].first, wrapped_cases[i].last, 1, r);
+        ok = ok && bounds.min == Min(wrapped_cases[i].first.column, wrapped_cases[i].last.column) &&
+                   bounds.max == Max(wrapped_cases[i].first.column, wrapped_cases[i].last.column) + 1;
+      }
+    }
+  }
+  // Exhaust all directional flag combinations: neither flag is a synonym for
+  // the other. Hard boundaries trim padding; soft joins retain selected spaces.
+  for(U64 mask = 0; mask < 16; mask += 1)
+  {
+    render_rows[0].wrap = !!(mask & 1);
+    render_rows[1].wrap_continuation = !!(mask & 2);
+    render_rows[1].wrap = !!(mask & 4);
+    render_rows[2].wrap_continuation = !!(mask & 8);
+    uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+    wrapped_feed = uishell_terminal_cell_feed_from_cache(&cache);
+    B32 first_join = (mask & 3) == 3;
+    B32 second_join = (mask & 12) == 12;
+    String8 expected = push_str8f(scratch.arena, "echo%shello%sworld", first_join ? "  " : "\n", second_join ? " " : "\n");
+    String8 text = uishell_terminal_selection_text_from_feed(scratch.arena, &wrapped_feed, txt_pt(0, 0), txt_pt(2, 5), 0);
+    if(!str8_match(text, expected, 0)) { fprintf(stderr, "terminal wrap mask %llu failed\n", (unsigned long long)mask); ok = 0; }
+  }
+  // Grapheme clusters and a wide glyph cross the same wrap fixture. Spacer
+  // heads/tails contribute no extra bytes in linear copy.
+  U32 cluster[] = {0x65, 0x301};
+  command[6] = 0x754c;
+  render_cells[6].style.width = CLEAT_CELL_WIDTH_WIDE;
+  render_cells[7].style.width = CLEAT_CELL_WIDTH_SPACER_TAIL;
+  render_cells[7].grapheme_count = 0;
+  render_cells[5].style.width = CLEAT_CELL_WIDTH_SPACER_HEAD;
+  render_cells[8].graphemes = cluster;
+  render_cells[8].grapheme_count = 2;
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  wrapped_feed = uishell_terminal_cell_feed_from_cache(&cache);
+  String8 unicode = uishell_terminal_selection_text_from_feed(scratch.arena, &wrapped_feed, txt_pt(0, 0), txt_pt(2, 5), 0);
+  ok = ok && str8_match(unicode, str8_lit("echo \xe7\x95\x8c" "e\xcc\x81lo world"), 0);
+  // A blank selected endpoint still trims the whole logical line, even when
+  // its trailing spaces began in the preceding soft-wrapped row.
+  for(U64 i = 6; i < 12; i += 1) { render_cells[i].grapheme_count = 0; }
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  wrapped_feed = uishell_terminal_cell_feed_from_cache(&cache);
+  String8 blank_end = uishell_terminal_selection_text_from_feed(scratch.arena, &wrapped_feed, txt_pt(0, 0), txt_pt(1, 3), 0);
+  ok = ok && str8_match(blank_end, str8_lit("echo"), 0);
+  // Empty physical rows retain hard newlines, including consecutive boundaries.
+  for(U64 i = 6; i < 12; i += 1) { render_cells[i].grapheme_count = 0; }
+  render_rows[0].wrap = 0;
+  render_rows[1].wrap = 0;
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  wrapped_feed = uishell_terminal_cell_feed_from_cache(&cache);
+  String8 empty = uishell_terminal_selection_text_from_feed(scratch.arena, &wrapped_feed, txt_pt(0, 0), txt_pt(2, 5), 0);
+  ok = ok && str8_match(empty, str8_lit("echo\n\nworld"), 0);
+  // A sequence through the real cache covers rebuilds, no-op pulls, overlapping
+  // row copies in both directions, replacements without descriptors, and resize.
+  render_rows[0].wrap = 1;
+  render_rows[1].wrap = 1;
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  update.op_count = 0;
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  ok = ok && cache.row_wraps[0].wrap && cache.row_wraps[1].wrap_continuation;
+  update.op_count = 1;
+  op = (cleat_render_update_op){.kind = CLEAT_RENDER_OP_SCROLL_COPY, .src_row = 0, .dst_row = 1, .row_count = 2};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  ok = ok && cache.row_wraps[1].wrap && !cache.row_wraps[1].wrap_continuation && cache.row_wraps[2].wrap_continuation;
+  op.src_row = 1; op.dst_row = 0;
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  ok = ok && !cache.row_wraps[0].wrap_continuation && cache.row_wraps[1].wrap_continuation;
+  cleat_render_row replacement = {.row = 1}; // absent cell payload still replaces row facts
+  op = (cleat_render_update_op){.kind = CLEAT_RENDER_OP_ROW_REPLACE, .rows = &replacement, .row_desc_count = 1};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  ok = ok && cache.row_wraps[0].wrap && !cache.row_wraps[1].wrap && !cache.row_wraps[1].wrap_continuation;
+  op = (cleat_render_update_op){.kind = CLEAT_RENDER_OP_ROW_REPLACE, .first_row = 0, .row_count = 1, .col_count = 6, .cells = render_cells, .cell_count = 6};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  ok = ok && !cache.row_wraps[0].wrap && !cache.row_wraps[0].wrap_continuation;
+  op = (cleat_render_update_op){.kind = CLEAT_RENDER_OP_FULL_VISIBLE_REPLACE, .rows = render_rows, .row_desc_count = 3};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  op = (cleat_render_update_op){.kind = CLEAT_RENDER_OP_FULL_VISIBLE_REPLACE, .cells = render_cells, .col_count = 6, .row_count = 3, .cell_count = 18};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  for(U64 r = 0; r < 3; r += 1) { ok = ok && !cache.row_wraps[r].wrap && !cache.row_wraps[r].wrap_continuation; }
+  op = (cleat_render_update_op){.kind = CLEAT_RENDER_OP_FULL_VISIBLE_REPLACE, .rows = render_rows, .row_desc_count = 3};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  update.cols = 7; update.op_count = 0;
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  for(U64 r = 0; r < 3; r += 1) { ok = ok && !cache.row_wraps[r].wrap && !cache.row_wraps[r].wrap_continuation; }
+  arena_release(cache.arena);
   scratch_end(scratch);
   return ok;
 }
@@ -5260,8 +5411,10 @@ uishell_terminal_cell_copy_from_render_cell(Arena *arena, cleat_cell *dst, cleat
 internal void
 uishell_terminal_cell_cache_apply_render_row(Arena *arena, UIShell_TerminalCellCache *cache, cleat_render_row const *row)
 {
-  if(row != 0 && row->row < cache->rows && row->cells != 0)
+  if(row != 0 && row->row < cache->rows)
   {
+    cache->row_wraps[row->row] = (UIShell_TerminalRowWrap){row->wrap, row->wrap_continuation};
+    if(row->cells == 0) { return; }
     U64 col_count = Min((U64)cache->cols, row->cell_count);
     U64 row_start = (U64)row->row*(U64)cache->cols;
     for(U64 col_idx = 0; col_idx < col_count; col_idx += 1)
@@ -5281,6 +5434,7 @@ uishell_terminal_cell_feed_from_cache(UIShell_TerminalCellCache *cache)
     .cols = cache->cols,
     .rows = cache->rows,
     .cells = cache->cells,
+    .row_wraps = cache->row_wraps,
     .cell_count = cache->cell_count,
     .cursor = cache->cursor,
   };
@@ -5307,6 +5461,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
     U64 cell_count = (U64)update->cols*(U64)update->rows;
     cleat_cell *new_cells = push_array(new_arena, cleat_cell, cell_count);
     String8 *new_links = push_array(new_arena, String8, cell_count);
+    UIShell_TerminalRowWrap *new_wraps = push_array(new_arena, UIShell_TerminalRowWrap, update->rows);
     B32 can_copy_old = (cache->cells != 0 &&
                         cache->cols == update->cols &&
                         cache->rows == update->rows &&
@@ -5322,6 +5477,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
     }
     if(can_copy_old && !has_full_replace)
     {
+      if(cache->row_wraps != 0) { MemoryCopy(new_wraps, cache->row_wraps, sizeof(*new_wraps)*update->rows); }
       for(U64 cell_idx = 0; cell_idx < cell_count; cell_idx += 1)
       {
         uishell_terminal_cell_copy_from_cleat_cell(new_arena, &new_cells[cell_idx], &cache->cells[cell_idx]);
@@ -5336,6 +5492,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
       .rows = update->rows,
       .cells = new_cells,
       .hyperlinks = new_links,
+      .row_wraps = new_wraps,
       .cell_count = cell_count,
       .cursor = update->cursor,
       .scrollbar = update->scrollbar,
@@ -5350,6 +5507,10 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
         case CLEAT_RENDER_OP_FULL_VISIBLE_REPLACE:
         case CLEAT_RENDER_OP_ROW_REPLACE:
         {
+          if(op->kind == CLEAT_RENDER_OP_FULL_VISIBLE_REPLACE)
+          {
+            MemoryZero(new_wraps, sizeof(*new_wraps)*new_cache.rows);
+          }
           if(op->rows != 0)
           {
             for(U64 row_idx = 0; row_idx < op->row_desc_count; row_idx += 1)
@@ -5357,18 +5518,20 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
               uishell_terminal_cell_cache_apply_render_row(new_arena, &new_cache, &op->rows[row_idx]);
             }
           }
-          else if(op->cells != 0)
+          else
           {
             U64 first_row = Min((U64)op->first_row, (U64)new_cache.rows);
             U64 row_count = Min((U64)op->row_count, (U64)new_cache.rows - first_row);
             U64 col_count = Min((U64)op->col_count, (U64)new_cache.cols);
             for(U64 row_idx = 0; row_idx < row_count; row_idx += 1)
             {
+              // Legacy cell-only replacement carries no row facts.
+              new_wraps[first_row + row_idx] = (UIShell_TerminalRowWrap){0};
               for(U64 col_idx = 0; col_idx < col_count; col_idx += 1)
               {
                 U64 src_idx = row_idx*(U64)op->col_count + col_idx;
                 U64 dst_idx = (first_row + row_idx)*(U64)new_cache.cols + col_idx;
-                if(src_idx < op->cell_count && dst_idx < new_cache.cell_count)
+                if(op->cells != 0 && src_idx < op->cell_count && dst_idx < new_cache.cell_count)
                 {
                   uishell_terminal_cell_copy_from_render_cell(new_arena, &new_cache.cells[dst_idx], &op->cells[src_idx]);
                   cleat_str uri = op->cells[src_idx].style.hyperlink_uri;
@@ -5388,6 +5551,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
               U64 row_idx = (op->dst_row > op->src_row) ? row_count - 1 - row_num : row_num;
               U64 src_row = (U64)op->src_row + row_idx;
               U64 dst_row = (U64)op->dst_row + row_idx;
+              new_wraps[dst_row] = new_wraps[src_row];
               for(U64 col_idx = 0; col_idx < new_cache.cols; col_idx += 1)
               {
                 U64 src_idx = src_row*(U64)new_cache.cols + col_idx;
