@@ -57,6 +57,7 @@
 #include "uishell/uishell_eval.h"
 #include "uishell/uishell_dispatch.h"
 #include "uishell/uishell_terminal_provider.h"
+#include "uishell/uishell_terminal_environment.h"
 #include "uishell/uishell_terminal_glyph.h"
 #include "uishell/uishell_views.h"
 #include "uishell/uishell_overview_benchmark.h"
@@ -141,6 +142,7 @@ frame(void)
 internal void
 entry_point(CmdLine *cmd_line)
 {
+  if(!uishell_prepare_terminal_environment()) { abort_self(1); }
   // Pure terminal model checks also run in headless build environments.
   if(cmd_line_has_flag(cmd_line, str8_lit("terminal_link_diagnostics")))
   { abort_self(uishell_terminal_link_diagnostics() ? 0 : 1); }

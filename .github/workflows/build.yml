@@ -151,6 +151,9 @@ jobs:
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
+      - name: Terminal launch environment
+        shell: bash
+        run: python tools/test-terminal-environment.py
       - name: macOS text positions
         if: runner.os == 'macOS'
         run: bash src/mac/font_provider/tests/run_text_positions.sh

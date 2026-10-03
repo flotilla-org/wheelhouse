@@ -125,7 +125,43 @@ All four targeted mutants were caught and reverted:
 
 Generated sources match committed copies; `git diff --check` passes.
 
-## Operator native acceptance (pending)
+## Interactive launch environment
+
+Wheelhouse startup removes inherited colour overrides (`NO_COLOR`, `CLICOLOR`,
+`CLICOLOR_FORCE`, `FORCE_COLOR`) and parent runner/agent flags (`CI`,
+`GITHUB_ACTIONS`, `CODEX_CI`, `CODEX_THREAD_ID`, `CLAUDECODE`,
+`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SESSION_ID`) before opening providers.
+This applies to direct app launches as well as the daily-driver script. Paths,
+credentials and workspace routing remain inherited; Cleat owns the terminal
+identity. Already running sessions and external daemons keep their existing
+environment.
+
+`python tools/test-terminal-environment.py` exercises the same startup policy
+without opening windows. It covers empty/nonempty flags, idempotence, preserved
+variables, and both CRT/native environment readers on Windows. The no-cleanup
+mutant fails. A disposable macOS C ABI probe created a real Ghostty-backed Cleat
+child and verified clean flags plus preserved routing/credential markers.
+
+Plain `/bin/zsh -f` under a disposable PTY emits inverse styling (`SGR 7`) for
+bracketed-pasted text and removes it on the next typed character. This explains
+why shell paste can resemble a block cursor/selection without copying its style;
+it is separate from Wheelhouse's local selection overlay.
+
+## Operator native acceptance (in progress)
+
+The macOS candidate at `540faca`, with pinned Cleat `87b9d853`, Andamento
+`afa24619` and Jackstay `91156bfa`, passed selection and scroll diagnostics.
+All five CI checks passed, including AppKit and Windows. The operator reported
+selection clears on typing/scrolling and that the mouse-tracking fixture
+"seems to work ok". The scrolling behavior is a protective coordinate-selection
+fallback, not Ghostty parity: tracked selection should survive history scrolling
+(Cleat #300). These observations do not establish the entire checklist below.
+
+Nested Flotilla acceptance is pending. The connector hit the unsupported
+include-replicas watch/cursor loop in Flotilla #2523; the isolated test connector
+was paused and no sidebar-based acceptance is claimed. A local AppKit run passed
+keyboard/menu checks but failed its new mouse-order trace during the handover;
+that discrepancy remains to be investigated independently of CI success.
 
 Use a separate candidate build and disposable settings. Do not restart or replace
 the daily driver. Record OS/build, Cleat/daemon revisions, route and exact results

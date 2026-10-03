@@ -242,7 +242,7 @@ class DailyDriverTests(unittest.TestCase):
         process = self.start(['--git-only', '--repo', str(repo)])
         self.ready(process)
         pid = int(self.log('wheelhouse').split('pid=', 1)[1].splitlines()[0])
-        self.assertIn(repr(str(repo)), self.log('git'))
+        self.assertIn(repr(str(repo.resolve())), self.log('git'))
         shutil.rmtree(repo)
         self.assertEqual(process.wait(timeout=10), 1)
         self.assertIn('git producer exited with status', process.stdout.read())
