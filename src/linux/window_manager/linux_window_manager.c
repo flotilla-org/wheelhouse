@@ -507,6 +507,8 @@ wm_get_events(Arena *arena, B32 wait)
 
       // Serve small copied references directly. Large transfers require INCR,
       // so reject them rather than overflowing the server's request limit.
+      // Handled before window-table lookup: clipboard_owner is a private window.
+      // XMaxRequestSize is in four-byte units; reserve 128 bytes for request overhead.
       case SelectionRequest:
       {
         XSelectionRequestEvent *request = &evt.xselectionrequest;

@@ -598,6 +598,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     }
     if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
   }
+  // Context menus take visual priority over hover cards across the sidebar.
   if(ui_hovering(sig) && !ui_any_ctx_menu_is_open())
   {
     F32 card_width = Min(em*34.f, dim_2f32(wm_client_rect_from_window(ws->os)).x*0.6f);
@@ -1137,7 +1138,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 UI_PrefWidth(ui_px(3.f, 1))
                 { ui_build_box_from_stringf(UI_BoxFlag_DrawBackground, "###accent_%S", node_key); }
               }
-              ui_spacer(ui_em(0.3f+Min(depth[i], 3)*0.4f, 1));
+              ui_spacer(ui_em(0.3f+Min(depth[i], (str8_match(kind, str8_lit("role"), 0) || str8_match(kind, str8_lit("convoy"), 0) || str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0)) ? 3 : 1)*0.4f, 1));
               UI_PrefWidth(ui_em(1.5f, 1))
               {
                 if(children && node.toggle != ANDAMENTO_NONE)
@@ -1158,6 +1159,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               {
                 // Text remains available in the tooltip; terse marks distinguish
                 // selected/open workspaces from producer activity state.
+                // daily-driver declares prefix="orphaned:" on the boolean orphan fact.
                 B32 orphaned = 0;
                 for(U64 f = 3; str8_match(kind, str8_lit("change_request"), 0) && f < node.field_count; f++)
                 {
@@ -1254,7 +1256,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               {
                 if(change_request)
                 {
-                  String8 badge = status;
+                  String8 badge = str8_lit("~ pending");
                   Vec4F32 color = ui_color_from_name(str8_lit("text"));
                   if(str8_match(status, str8_lit("ready_to_merge"), 0)) { badge = str8_lit("+ ready to merge"); color = v4f32(0.4f, 0.85f, 0.55f, 1.f); }
                   else if(str8_match(status, str8_lit("ci_failing"), 0)) { badge = str8_lit("! CI failing"); color = v4f32(1.f, 0.4f, 0.35f, 1.f); }
