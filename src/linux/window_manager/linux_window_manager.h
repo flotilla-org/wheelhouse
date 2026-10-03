@@ -53,6 +53,8 @@ struct LNX_WM_State
   WM_SystemInfo gfx_info;
   Arena *clipboard_arena;
   String8 clipboard_text;
+  B32 clipboard_owned;
+  B32 clipboard_ascii;
   Window clipboard_owner;
   Atom clipboard_atom;
   Atom clipboard_utf8_atom;

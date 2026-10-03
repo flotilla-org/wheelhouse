@@ -14,9 +14,9 @@ closed issues also require Issues. Flotilla owns the 24-hour retention window.
 ## Screenshots and human phase
 
 Please review badge colour/readability, hover density, and the role history layout.
-A human review was requested during implementation; these screenshots document
-the concrete presentation for that review. Automated rendering is not human
-acceptance.
+The operator accepted this interim presentation during human review. Richer
+convoy attachments, embedded web access and prioritization of unattached work
+remain outside this change.
 
 ![Subject rows and readiness promotion into Attention](screenshots/sidebar-subjects/subjects.png)
 
@@ -44,7 +44,7 @@ Reproduce on a built checkout with isolated settings:
 
 `./build.sh wheelhouse` passed with clang, sibling Andamento at `fa8cfd2`,
 `WHEELHOUSE_CLEAT_FEATURES=none`, and the workflow-pinned Jackstay checkout.
-The 24 native ABI tests and generated-fixture locale/newline test pass.
+The 25 native ABI tests and generated-fixture locale/newline test pass.
 `tools/test-sidebar-subject-actions.py` exercises real mouse gestures and the
 external X11 clipboard; its browser subprocess records the exact destination
 without navigating to fixture URLs. Tree and Attention URL copies, no-forge
@@ -54,11 +54,12 @@ Screenshots were captured from that native Linux presentation.
 All seven readiness values and finished/Issues transitions are covered through
 the real Andamento ABI. The native badges for conflicting, draft, merged, closed,
 and orphaned were only built locally; their visual presentation was not exercised.
-macOS and Windows were not built or exercised locally. Human visual approval
-has not been claimed. The Linux writer now serves small UTF-8/ASCII clipboard
+macOS and Windows were not built or exercised locally. The operator accepted the current scope and presentation. The Linux writer now serves small UTF-8/ASCII clipboard
 copies; external clipboard reads, PRIMARY integration and large INCR transfers
 remain outside this change.
 
 The consumer requires the companion Andamento forward-loop/multiple-selector
 change. The workflow dependency pin must be applied by the governor, as recorded
 in the PR body under “Governor-applied workflow change”.
+
+The duplicate `build` reference in the fixture intentionally exercises edge deduplication.

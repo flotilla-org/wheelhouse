@@ -199,6 +199,17 @@ class NativeSidebarTests(unittest.TestCase):
         pr = next(n for n in nodes if n.entity_id.string() == 'pr-281')
         self.assertEqual(self.dispatch(fresh, pr.activate)[3], 'https://new.example/org/wheelhouse/review/281')
 
+    # Producer templates may be malformed: only http(s) URL actions may reach a host.
+    def test_subject_rejects_non_web_forge_templates(self):
+        self.publish_fixture()
+        for template in ('file:///tmp/program', 'javascript:alert(1)', '/tmp/program', 'custom:handler'):
+            update = patch('forge', 'fixture', **{'flotilla.forge.change_request_url_template': template})
+            self.assertTrue(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(update)), None))
+            snapshot, nodes = self.snapshot()
+            index = next(i for i, n in enumerate(nodes) if n.entity_id.string() == 'pr-281')
+            self.assertEqual(lib.andamento_snapshot_copy_url_action(snapshot, index), Size(-1).value)
+            self.assertEqual(self.dispatch(snapshot, nodes[index].activate)[0], 2)  # inspect, no URL launch
+
     # Role attachment/status come from lifted facts. Forward edges supply current
     # detail and oldest-first attempts even when IDs sort in the opposite order.
     def test_role_fixture_current_detail_and_ordered_attempts(self):

@@ -96,8 +96,11 @@ wm_set_clipboard_text(String8 string)
   if(lnx_wm_state->clipboard_arena == 0) { lnx_wm_state->clipboard_arena = arena_alloc(); }
   arena_clear(lnx_wm_state->clipboard_arena);
   lnx_wm_state->clipboard_text = push_str8_copy(lnx_wm_state->clipboard_arena, string);
+  lnx_wm_state->clipboard_ascii = 1;
+  for(U64 i = 0; i < string.size; i++) { lnx_wm_state->clipboard_ascii &= string.str[i] < 128; }
   XSetSelectionOwner(lnx_wm_state->display, lnx_wm_state->clipboard_atom,
     lnx_wm_state->clipboard_owner, CurrentTime);
+  lnx_wm_state->clipboard_owned = XGetSelectionOwner(lnx_wm_state->display, lnx_wm_state->clipboard_atom) == lnx_wm_state->clipboard_owner;
   XFlush(lnx_wm_state->display);
 }
 
@@ -492,6 +495,16 @@ wm_get_events(Arena *arena, B32 wait)
     {
       default:{}break;
       
+      case SelectionClear:
+      {
+        if(evt.xselectionclear.selection == lnx_wm_state->clipboard_atom)
+        {
+          lnx_wm_state->clipboard_owned = 0;
+          if(lnx_wm_state->clipboard_arena) { arena_clear(lnx_wm_state->clipboard_arena); }
+          lnx_wm_state->clipboard_text = str8_zero();
+        }
+      }break;
+
       // Serve small copied references directly. Large transfers require INCR,
       // so reject them rather than overflowing the server's request limit.
       case SelectionRequest:
@@ -507,10 +520,9 @@ wm_get_events(Arena *arena, B32 wait)
         response.xselection.property = None;
         Atom property = request->property != None ? request->property : request->target;
         String8 text = lnx_wm_state->clipboard_text;
-        B32 ascii = 1;
-        for(U64 i = 0; i < text.size; i++) { ascii &= text.str[i] < 128; }
+        B32 ascii = lnx_wm_state->clipboard_ascii;
         if(request->selection == lnx_wm_state->clipboard_atom &&
-           XGetSelectionOwner(lnx_wm_state->display, request->selection) == lnx_wm_state->clipboard_owner)
+           request->owner == lnx_wm_state->clipboard_owner && lnx_wm_state->clipboard_owned)
         {
           if(request->target == lnx_wm_state->clipboard_targets_atom)
           {

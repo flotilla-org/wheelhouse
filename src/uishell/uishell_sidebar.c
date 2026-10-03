@@ -300,6 +300,7 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     if(effect.kind == ANDAMENTO_EFFECT_OPEN_URL || effect.kind == ANDAMENTO_EFFECT_COPY_URL)
     {
       String8 url = uishell_sidebar_string(effect.recipe);
+      // Andamento subject_url accepts only http:// or https:// before emitting this effect.
       if(effect.kind == ANDAMENTO_EFFECT_OPEN_URL) { wm_open_in_browser(url); }
       else { wm_set_clipboard_text(url); }
       continue; // URL actions own no workspace request and need no completion.
@@ -585,7 +586,8 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "subject_menu");
     UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
     {
-      if(copy_url != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Open in browser"))))
+      // The retained snapshot gives every placed subject an activate action.
+      if(copy_url != ANDAMENTO_NONE && node.activate != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Open in browser"))))
       { action = node.activate; ui_ctx_menu_close(); }
       if(ui_clicked(ui_button(copy_url != ANDAMENTO_NONE ? str8_lit("Copy URL") : str8_lit("Copy reference"))))
       {
@@ -1064,7 +1066,10 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             // Native templates declare the display label first. The core may
             // abbreviate it; node.label remains the full hover/inspection text.
             if(f == 0 && value.size) { label = value; }
-            if(f == 2) { status = value; }
+            if(str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0))
+            { if(f == 2) { status = value; } }
+            else if(!str8_match(value, label, 0) && !str8_match(value, kind, 0) && status.size == 0)
+            { status = value; }
             // Native Attention templates append context identities after the
             // label/kind/state fields. Match identities without parsing them.
             if(f >= 3 && value.size && !str8_match(kind, str8_lit("change_request"), 0))
@@ -1154,7 +1159,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 // Text remains available in the tooltip; terse marks distinguish
                 // selected/open workspaces from producer activity state.
                 B32 orphaned = 0;
-                for(U64 f = 3; f < node.field_count; f++)
+                for(U64 f = 3; str8_match(kind, str8_lit("change_request"), 0) && f < node.field_count; f++)
                 {
                   AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field+f, &field);
                   orphaned |= str8_match(uishell_sidebar_string(field.text), str8_lit("orphaned:true"), 0);
