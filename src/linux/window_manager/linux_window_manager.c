@@ -37,6 +37,13 @@ wm_init(void)
   lnx_wm_state->wm_sync_request_atom         = XInternAtom(lnx_wm_state->display, "_NET_WM_SYNC_REQUEST", 0);
   lnx_wm_state->wm_sync_request_counter_atom = XInternAtom(lnx_wm_state->display, "_NET_WM_SYNC_REQUEST_COUNTER", 0);
   
+  lnx_wm_state->clipboard_atom = XInternAtom(lnx_wm_state->display, "CLIPBOARD", 0);
+  lnx_wm_state->clipboard_utf8_atom = XInternAtom(lnx_wm_state->display, "UTF8_STRING", 0);
+  lnx_wm_state->clipboard_targets_atom = XInternAtom(lnx_wm_state->display, "TARGETS", 0);
+  // A private owner survives closing any one of the application's windows.
+  lnx_wm_state->clipboard_owner = XCreateSimpleWindow(lnx_wm_state->display,
+    DefaultRootWindow(lnx_wm_state->display), 0, 0, 1, 1, 0, 0, 0);
+
   //- rjf: open im
   lnx_wm_state->xim = XOpenIM(lnx_wm_state->display, 0, 0, 0);
   
@@ -86,7 +93,12 @@ wm_get_system_info(void)
 internal void
 wm_set_clipboard_text(String8 string)
 {
-  
+  if(lnx_wm_state->clipboard_arena == 0) { lnx_wm_state->clipboard_arena = arena_alloc(); }
+  arena_clear(lnx_wm_state->clipboard_arena);
+  lnx_wm_state->clipboard_text = push_str8_copy(lnx_wm_state->clipboard_arena, string);
+  XSetSelectionOwner(lnx_wm_state->display, lnx_wm_state->clipboard_atom,
+    lnx_wm_state->clipboard_owner, CurrentTime);
+  XFlush(lnx_wm_state->display);
 }
 
 internal String8
@@ -97,7 +109,7 @@ wm_get_clipboard_text(Arena *arena)
 }
 
 // NOTE: process-local selection buffer; X11 PRIMARY selection integration
-// belongs with the (also unimplemented) clipboard above
+// and external clipboard reading are still unimplemented
 internal void
 wm_set_selection_text(String8 string)
 {
@@ -480,6 +492,45 @@ wm_get_events(Arena *arena, B32 wait)
     {
       default:{}break;
       
+      // Serve small copied references directly. Large transfers require INCR,
+      // so reject them rather than overflowing the server's request limit.
+      case SelectionRequest:
+      {
+        XSelectionRequestEvent *request = &evt.xselectionrequest;
+        XEvent response = {0};
+        response.xselection.type = SelectionNotify;
+        response.xselection.display = request->display;
+        response.xselection.requestor = request->requestor;
+        response.xselection.selection = request->selection;
+        response.xselection.target = request->target;
+        response.xselection.time = request->time;
+        response.xselection.property = None;
+        Atom property = request->property != None ? request->property : request->target;
+        String8 text = lnx_wm_state->clipboard_text;
+        B32 ascii = 1;
+        for(U64 i = 0; i < text.size; i++) { ascii &= text.str[i] < 128; }
+        if(request->selection == lnx_wm_state->clipboard_atom &&
+           XGetSelectionOwner(lnx_wm_state->display, request->selection) == lnx_wm_state->clipboard_owner)
+        {
+          if(request->target == lnx_wm_state->clipboard_targets_atom)
+          {
+            Atom targets[] = {lnx_wm_state->clipboard_targets_atom, lnx_wm_state->clipboard_utf8_atom, XA_STRING};
+            XChangeProperty(lnx_wm_state->display, request->requestor, property,
+              XA_ATOM, 32, PropModeReplace, (U8 *)targets, ascii ? 3 : 2);
+            response.xselection.property = property;
+          }
+          else if((request->target == lnx_wm_state->clipboard_utf8_atom || (ascii && request->target == XA_STRING)) &&
+                  text.size < (U64)XMaxRequestSize(lnx_wm_state->display)*4-128)
+          {
+            XChangeProperty(lnx_wm_state->display, request->requestor, property,
+              request->target, 8, PropModeReplace, text.str, (int)text.size);
+            response.xselection.property = property;
+          }
+        }
+        XSendEvent(lnx_wm_state->display, request->requestor, False, 0, &response);
+        XFlush(lnx_wm_state->display);
+      }break;
+
       //- rjf: key presses/releases
       case KeyPress:
       case KeyRelease:

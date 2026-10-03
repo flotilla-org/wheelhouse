@@ -5,6 +5,7 @@ global WheelhouseIngress *uishell_ingress;
 global String8 uishell_sidebar_live_config;
 global B32 uishell_sidebar_live;
 global B32 uishell_sidebar_fixture;
+global B32 uishell_sidebar_subject_fixture;
 global U64 uishell_sidebar_last_tick;
 // The first resource is primary. This descriptor is local fixture input, not
 // an andamento wire format. Persist IDs on tabs independently of their labels.
@@ -207,7 +208,7 @@ uishell_sidebar_init(RD_WindowState *ws)
       return state;
     }
     String8 config = uishell_sidebar_live ? uishell_sidebar_live_config :
-      str8_cstring((char *)(uishell_sidebar_fixture ? uishell_sidebar_fixture_config : uishell_sidebar_local_config));
+      str8_cstring((char *)(uishell_sidebar_subject_fixture ? uishell_sidebar_daily_config : uishell_sidebar_fixture ? uishell_sidebar_fixture_config : uishell_sidebar_local_config));
     state->core = andamento_create(config.str, config.size, &error);
     if(uishell_sidebar_result(state, state->core != 0, error))
     {
@@ -296,6 +297,13 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     CFG_Node *workspace = &cfg_nil_node;
     uint32_t outcome = ANDAMENTO_COMPLETE_ERROR;
     String8 failure = str8_lit("Workspace is no longer available");
+    if(effect.kind == ANDAMENTO_EFFECT_OPEN_URL || effect.kind == ANDAMENTO_EFFECT_COPY_URL)
+    {
+      String8 url = uishell_sidebar_string(effect.recipe);
+      if(effect.kind == ANDAMENTO_EFFECT_OPEN_URL) { wm_open_in_browser(url); }
+      else { wm_set_clipboard_text(url); }
+      continue; // URL actions own no workspace request and need no completion.
+    }
     if(effect.kind == ANDAMENTO_EFFECT_MATERIALIZE)
     {
       // Reuse a previously created fixture workspace after switching modes or
@@ -548,14 +556,16 @@ internal UI_BOX_CUSTOM_DRAW(uishell_sidebar_project_rule_draw)
 
 internal size_t
 uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
-                             AndamentoNode node, UI_Signal sig, String8 context,
+                             AndamentoNode node, U64 node_index, UI_Signal sig, String8 context,
                              B32 contains_current)
 {
   size_t action = ANDAMENTO_NONE;
   F32 em = ui_top_font_size();
   String8 full_label = uishell_sidebar_string(node.label);
   String8 kind = uishell_sidebar_string(node.entity_kind);
-  B32 can_activate = node.activate != ANDAMENTO_NONE && (node.openable || node.state == ANDAMENTO_LIVE);
+  B32 subject = str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0);
+  size_t copy_url = subject ? andamento_snapshot_copy_url_action(state->snapshot, node_index) : ANDAMENTO_NONE;
+  B32 can_activate = node.activate != ANDAMENTO_NONE && (node.openable || node.state == ANDAMENTO_LIVE || copy_url != ANDAMENTO_NONE);
   Temp scratch = scratch_begin(0, 0);
   sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
   if(ui_clicked(sig))
@@ -563,13 +573,30 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     if(can_activate) { action = node.activate; }
     else
     {
-      String8 detail = push_str8f(scratch.arena, "%S (%S) — no opening recipe", full_label, kind);
+      String8 detail = subject ? push_str8f(scratch.arena, "%S — URL unavailable", full_label) :
+        push_str8f(scratch.arena, "%S (%S) — no opening recipe", full_label, kind);
       U64 size = Min(detail.size, sizeof(state->inspection)-1);
       MemoryCopy(state->inspection, detail.str, size); state->inspection[size] = 0;
       rd_request_frame();
     }
   }
-  if(ui_hovering(sig))
+  if(subject)
+  {
+    UI_Key menu_key = ui_key_from_stringf(sig.box->key, "subject_menu");
+    UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+    {
+      if(copy_url != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Open in browser"))))
+      { action = node.activate; ui_ctx_menu_close(); }
+      if(ui_clicked(ui_button(copy_url != ANDAMENTO_NONE ? str8_lit("Copy URL") : str8_lit("Copy reference"))))
+      {
+        if(copy_url != ANDAMENTO_NONE) { action = copy_url; }
+        else { wm_set_clipboard_text(full_label); }
+        ui_ctx_menu_close();
+      }
+    }
+    if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
+  }
+  if(ui_hovering(sig) && !ui_any_ctx_menu_is_open())
   {
     F32 card_width = Min(em*34.f, dim_2f32(wm_client_rect_from_window(ws->os)).x*0.6f);
     UI_Tooltip UI_PrefWidth(ui_px(card_width, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_TextAlignment(UI_TextAlign_Left)
@@ -591,7 +618,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
         if(!duplicate) { ui_label_multiline(card_width, value); }
       }
       UI_TagF("weak")
-      { ui_label(node.selected ? str8_lit("Current workspace") : can_activate ? (node.state == ANDAMENTO_LIVE ? str8_lit("Focus workspace") : str8_lit("Open workspace")) : str8_lit("No opening recipe available")); }
+      { ui_label(subject ? (copy_url != ANDAMENTO_NONE ? str8_lit("Click to open · Right-click to copy URL") : str8_lit("Right-click to copy reference · URL unavailable")) : node.selected ? str8_lit("Current workspace") : can_activate ? (node.state == ANDAMENTO_LIVE ? str8_lit("Focus workspace") : str8_lit("Open workspace")) : str8_lit("No opening recipe available")); }
       if(node.state == ANDAMENTO_LIVE)
       {
         rd_workspace_preview_demand_push(ws, node.workspace_id, card_width);
@@ -642,7 +669,7 @@ uishell_sidebar_action_border(void)
 
 internal size_t
 uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
-                              AndamentoNode node, String8 context, B32 overview)
+                              AndamentoNode node, U64 node_index, String8 context, B32 overview)
 {
   Temp scratch = scratch_begin(0, 0);
   UI_Signal sig = {0};
@@ -703,7 +730,7 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
       ui_pop_parent();
     }
   }
-  size_t action = uishell_sidebar_entry_signal(state, ws, node, sig, context, 0);
+  size_t action = uishell_sidebar_entry_signal(state, ws, node, node_index, sig, context, 0);
   scratch_end(scratch);
   return action;
 }
@@ -1037,10 +1064,10 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             // Native templates declare the display label first. The core may
             // abbreviate it; node.label remains the full hover/inspection text.
             if(f == 0 && value.size) { label = value; }
-            if(!str8_match(value, label, 0) && !str8_match(value, kind, 0) && status.size == 0) { status = value; }
+            if(f == 2) { status = value; }
             // Native Attention templates append context identities after the
             // label/kind/state fields. Match identities without parsing them.
-            if(f >= 3 && value.size)
+            if(f >= 3 && value.size && !str8_match(kind, str8_lit("change_request"), 0))
             {
               for(U64 j = 0; j < count; j++)
               {
@@ -1105,7 +1132,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 UI_PrefWidth(ui_px(3.f, 1))
                 { ui_build_box_from_stringf(UI_BoxFlag_DrawBackground, "###accent_%S", node_key); }
               }
-              ui_spacer(ui_em(0.3f+Min(depth[i], 1)*0.4f, 1));
+              ui_spacer(ui_em(0.3f+Min(depth[i], 3)*0.4f, 1));
               UI_PrefWidth(ui_em(1.5f, 1))
               {
                 if(children && node.toggle != ANDAMENTO_NONE)
@@ -1126,6 +1153,13 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               {
                 // Text remains available in the tooltip; terse marks distinguish
                 // selected/open workspaces from producer activity state.
+                B32 orphaned = 0;
+                for(U64 f = 3; f < node.field_count; f++)
+                {
+                  AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field+f, &field);
+                  orphaned |= str8_match(uishell_sidebar_string(field.text), str8_lit("orphaned:true"), 0);
+                }
+                if(orphaned) { label = push_str8f(scratch.arena, "%S · orphaned", label); }
                 String8 display = context.size ? push_str8f(scratch.arena, "%S · %S", label, context) : label;
                 if(str8_match(uishell_sidebar_string(node.layout), str8_lit("fields"), 0))
                 { display = uishell_sidebar_fields(scratch.arena, state->snapshot, node, Max(0.f, dim.x-em*6.f)); }
@@ -1141,14 +1175,14 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 // The rich tooltip already includes the full label. Do not also
                 // enroll this row in the shell's automatic truncated-text hover.
                 sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
-                size_t requested = uishell_sidebar_entry_signal(state, ws, node, sig, context, contains_current);
+                size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current);
                 if(requested != ANDAMENTO_NONE) { action = requested; }
               }
               if(project)
               {
                 UI_PrefWidth(ui_em(3.8f, 1))
                 {
-                  size_t requested = uishell_sidebar_inline_action(state, ws, node, str8_zero(), 1);
+                  size_t requested = uishell_sidebar_inline_action(state, ws, node, i, str8_zero(), 1);
                   if(requested != ANDAMENTO_NONE) { action = requested; }
                 }
               }
@@ -1179,7 +1213,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 {
                   UI_PrefWidth(ui_px(slot_width, 1))
                   {
-                    size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[index]], full_label, 0);
+                    size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[index]], members[index], full_label, 0);
                     if(requested != ANDAMENTO_NONE) { action = requested; }
                   }
                 }
@@ -1192,7 +1226,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                   {
                     for(U64 index = visible; index < inline_count[i]; index++)
                     {
-                      size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[index]], full_label, 0);
+                      size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[index]], members[index], full_label, 0);
                       if(requested != ANDAMENTO_NONE) { action = requested; ui_ctx_menu_close(); }
                     }
                   }
@@ -1210,9 +1244,23 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               // Reserve the same trailing slot at every level. Project-wide
               // status belongs here once supplied; workspace state stays on
               // the overview action rather than being duplicated in this slot.
-              UI_TagF("weak") UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0)
+              B32 change_request = str8_match(kind, str8_lit("change_request"), 0);
+              UI_PrefWidth(ui_em(change_request ? 10.f : 1.2f, 1)) UI_TextPadding(0)
               {
-                if(project) { ui_spacer(ui_em(1.2f, 1)); }
+                if(change_request)
+                {
+                  String8 badge = status;
+                  Vec4F32 color = ui_color_from_name(str8_lit("text"));
+                  if(str8_match(status, str8_lit("ready_to_merge"), 0)) { badge = str8_lit("+ ready to merge"); color = v4f32(0.4f, 0.85f, 0.55f, 1.f); }
+                  else if(str8_match(status, str8_lit("ci_failing"), 0)) { badge = str8_lit("! CI failing"); color = v4f32(1.f, 0.4f, 0.35f, 1.f); }
+                  else if(str8_match(status, str8_lit("conflicting"), 0)) { badge = str8_lit("! conflicting"); color = v4f32(1.f, 0.7f, 0.3f, 1.f); }
+                  else if(str8_match(status, str8_lit("awaiting_review_response"), 0)) { badge = str8_lit("~ review response"); color = v4f32(0.9f, 0.75f, 0.4f, 1.f); }
+                  else if(str8_match(status, str8_lit("draft"), 0)) { badge = str8_lit("o draft"); color.w = 0.65f; }
+                  else if(str8_match(status, str8_lit("merged_not_landed"), 0)) { badge = str8_lit("+ merged"); color = v4f32(0.65f, 0.6f, 0.95f, 1.f); }
+                  else if(str8_match(status, str8_lit("closed"), 0)) { badge = str8_lit("x closed"); color.w = 0.65f; }
+                  UI_TextColor(color) { ui_label(badge); }
+                }
+                else if(project) { ui_spacer(ui_em(1.2f, 1)); }
                 else if(node.state == ANDAMENTO_OPENING) { ui_label(str8_lit("…")); }
                 else if(str8_match(status, str8_lit("failed"), 0)) { ui_label(str8_lit("!")); }
                 else if(str8_match(status, str8_lit("waiting"), 0)) { ui_label(str8_lit("◷")); }
