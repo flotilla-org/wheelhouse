@@ -51,6 +51,14 @@ struct LNX_WM_State
   Cursor cursors[WM_Cursor_COUNT];
   WM_Cursor last_set_cursor;
   WM_SystemInfo gfx_info;
+  Arena *clipboard_arena;
+  String8 clipboard_text;
+  B32 clipboard_owned;
+  B32 clipboard_ascii;
+  Window clipboard_owner;
+  Atom clipboard_atom;
+  Atom clipboard_utf8_atom;
+  Atom clipboard_targets_atom;
   Arena *selection_arena;
   String8 selection_text;
 };
