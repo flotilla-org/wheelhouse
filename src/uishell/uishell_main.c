@@ -100,6 +100,7 @@
 #include "uishell/uishell_edit_diagnostics.c"
 #include "uishell/uishell_scroll_diagnostics.c"
 #include "uishell/uishell_tooltip_diagnostics.c"
+#include "uishell/uishell_hover_card_diagnostics.c"
 #include "uishell/uishell_terminal_link_diagnostics.c"
 #include "uishell/uishell_preview_diagnostics.c"
 #include "uishell/uishell_panel_diagnostics.c"
@@ -184,6 +185,7 @@ entry_point(CmdLine *cmd_line)
       rd_state->preview_render_budget = !cmd_line_has_flag(cmd_line, str8_lit("no_preview_render_budget"));
       rd_state->preview_surface_budget = !cmd_line_has_flag(cmd_line, str8_lit("no_preview_surface_budget"));
       rd_state->preview_refresh_budget = !cmd_line_has_flag(cmd_line, str8_lit("no_preview_refresh_budget"));
+      uishell_hover_cards_outside = cmd_line_has_flag(cmd_line, str8_lit("hover_cards_outside"));
       uishell_sidebar_subject_fixture = cmd_line_has_flag(cmd_line, str8_lit("sidebar_subject_fixture"));
       uishell_sidebar_subject_geometry_path = cmd_line_string(cmd_line, str8_lit("sidebar_subject_geometry"));
       uishell_sidebar_fixture = uishell_sidebar_subject_fixture || cmd_line_has_flag(cmd_line, str8_lit("sidebar_fixture")) ||
@@ -241,6 +243,7 @@ entry_point(CmdLine *cmd_line)
         {
           RD_WindowState *ws = rd_state->first_window_state;
           B32 ok = ws != &rd_nil_window_state && uishell_tooltip_diagnostics(ws);
+          if(ws != &rd_nil_window_state) { ok = uishell_hover_card_diagnostics(ws) && ok; }
           abort_self(ok ? 0 : 1);
         }
         if(run_scroll_diagnostics)

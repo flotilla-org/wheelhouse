@@ -686,6 +686,10 @@ struct UI_State
   void (*edit_owner_dispatch)(void *user, String8 command, String8 paste);
   UI_Key edit_consumer_key;
   B32 edit_menu_focus;
+  // Interactive hover overlays own pointer hits; only a click gives them keys.
+  B32 hover_card_focus;
+  UI_Key hover_card_keys[2];
+  Rng2F32 hover_card_rects[2];
   U64 edit_owner_view;
 
   //- rjf: main arena

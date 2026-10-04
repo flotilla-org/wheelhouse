@@ -58,6 +58,7 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@default(0) @display_name('Compact Menu Bar') @description(\"Collapses the in-window menu bar into a single drop-down button, freeing the title-bar row.\") 'compact_menu_bar': bool,"
     "@default(0) @display_name('Show Project Selector') @description(\"Shows the project selector (project name) in the title bar.\") 'show_project_selector': bool,"
     "@default(0) @display_name('Show Status Bar') @description(\"Shows the bottom status bar (build/version, task and error status).\") 'show_status_bar': bool,"
+    "@default(0) @display_name('Hover Cards Outside Sidebar') @description(\"Anchors hover cards beyond the sidebar edge instead of near the hovered row or chip.\") 'hover_cards_outside_sidebar': bool,"
     "@default(1) @display_name('Overlay Scroll Bars') @description(\"Draws thin scroll bars that float over content and fade out when idle, instead of the classic gutter scroll bars.\") 'overlay_scrollbars': bool,"
     "@default(0.55f) @display_name('Inactive Panel Dim') @description(\"Fades panels other than the keyboard-focused one toward the background, as a subtractive focus cue. 0 disables.\") 'inactive_panel_dim': @range[0.f, 0.8f] f32,"
     "@default(0.f) @display_name('Panel Gap') @description(\"Space between adjacent panels, in ems. 0 = flush (panels share a single seam); a larger value separates them as cards.\") 'panel_gap': @range[0.f, 1.f] f32,"

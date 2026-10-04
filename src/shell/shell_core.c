@@ -3848,6 +3848,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                 !query_is_open &&
                                 !ui_any_ctx_menu_is_open() &&
                                 !ws->hover_eval_focused &&
+                                !ws->ui->hover_card_focus &&
                                 panel_tree.focused == panel);
         CFG_Node *selected_tab = panel->selected_tab;
         RD_ViewState *selected_tab_view_state = rd_view_state_from_cfg(selected_tab);
@@ -5247,6 +5248,8 @@ rd_window_frame(void)
       ui_push_text_raster_flags(text_raster_flags);
     }
     
+    uishell_sidebar_cards_ui(ws);
+
     ////////////////////////////
     //- rjf: @window_ui_part calculate top-level rectangles/sizes
     //
@@ -10164,6 +10167,7 @@ rd_frame(void)
         uishell_regs()->view   = panel_tree.focused->selected_tab->id;
         scratch_end(scratch);
       }
+      B32 card_took_event = uishell_sidebar_card_wm_event(ws, event);
       CFG_Node *focused_view = cfg_node_from_id(uishell_regs()->view);
       // Terminal views get physical keyboard input before command bindings; Super stays available for app shortcuts.
       B32 terminal_input_is_focused = (ws != 0 &&
@@ -10171,23 +10175,24 @@ rd_frame(void)
                                        !rd_state->popup_active &&
                                        !ws->query_is_active &&
                                        !ws->menu_bar_focused &&
+                                       !ws->ui->hover_card_focus &&
                                        str8_match(focused_view->string, str8_lit("terminal"), 0));
       B32 terminal_claims_keyboard_input = (terminal_input_is_focused &&
                                             !(event->modifiers & WM_Modifier_Super) &&
                                             (event->kind == WM_EventKind_Press ||
                                              event->kind == WM_EventKind_Release ||
                                              event->kind == WM_EventKind_Text));
-      B32 take = 0;
+      B32 take = card_took_event;
       B32 terminal_edit_owner = terminal_input_is_focused ||
         (ws && ws != &rd_nil_window_state && ws->ui && ws->ui->edit_owner_terminal &&
          !rd_state->popup_active && !ws->query_is_active);
-      take = uishell_route_edit_activation(scratch.arena, ws, event, terminal_edit_owner);
+      if(!take) { take = uishell_route_edit_activation(scratch.arena, ws, event, terminal_edit_owner); }
       String8 repeat_page_command = {0};
       if(!take) { take = uishell_terminal_page_binding_event(ws, event,
         terminal_input_is_focused ? focused_view->id : 0, &repeat_page_command); }
       if(repeat_page_command.size) { uishell_cmd("run_command", .cmd_name = repeat_page_command); }
       if(!take && ws != 0 && ws != &rd_nil_window_state &&
-         !rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused)
+         !rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused && !ws->ui->hover_card_focus)
         take = uishell_jackstay_event(focused_view->id,event);
       
       //- rjf: try drag/drop drop-kickoff

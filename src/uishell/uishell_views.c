@@ -4255,7 +4255,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     UI_TextRasterFlags(cell_font_raster_flags)
     UI_Focus(UI_FocusKind_On)
   {
-    B32 focus_active = ui_is_focus_active();
+    B32 focus_active = ui_is_focus_active() && !ui_state->hover_card_focus;
     if(tv->focus_active && !focus_active) { uishell_terminal_cancel_buttons(tv); }
     if(session_ready && tv->focus_active != focus_active)
     {
