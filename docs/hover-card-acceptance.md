@@ -11,7 +11,8 @@ Entering a card engages it and reveals related navigation and actions.
 Mouse-out closes an unfocused card after 400 ms. A click gives the card keyboard
 focus and keeps it open until an outside click or Escape. Hover alone leaves
 Escape with the focused View; a focused card consumes both Escape edges and
-returns focus to that View. Underlying sidebar and workspace controls do not
+returns focus to that View. An outside click also activates its normal target.
+Underlying sidebar and workspace controls do not
 receive pointer hits through a card. A removed or clipped source closes its
 card, as does removal of the current detail target or native window focus loss.
 
@@ -69,8 +70,11 @@ pass, and generated sources match.
 The tooltip diagnostic also runs hover-card checks through production seams:
 300 ms opening, immediate replacement and outgoing content, diagonal and
 stationary corridor traces, 400 ms closing, click focus, Escape press/release,
-outside dismissal, path retention and exclusion of underlying pointer events,
-including a batched click whose final pointer position is elsewhere. Actual
+outside dismissal, focus loss while Escape is held, long paths, Related/Back
+widget activation, independent closure of the second card, path retention and exclusion of underlying pointer events,
+including a batched click whose final pointer position is elsewhere. Full
+controller layout checks ensure that fields and controls occupy separate rows
+and that initial bounds include the measured content. Actual
 body construction checks flat title fields, engagement-only actions, preview
 boxes and live preview demand in both states. These tests do not establish
 physical native acceptance.

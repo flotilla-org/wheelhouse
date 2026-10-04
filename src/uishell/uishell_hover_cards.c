@@ -51,6 +51,8 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, AndamentoNode node, UI_Key sou
   if(!card->arena) { card->arena = arena_alloc(); }
   arena_clear(card->arena);
   card->previous = push_str8_copy(card->arena, previous);
+  card->capacity = 32;
+  card->path = push_array(card->arena, String8, card->capacity);
   card->path[0] = push_str8_copy(card->arena, uishell_sidebar_string(node.key));
   card->depth = 1;
   card->context = push_str8_copy(card->arena, context);
@@ -68,7 +70,7 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, AndamentoNode node, UI_Key sou
 }
 
 internal void
-uishell_sidebar_card_source_at(UIShell_SidebarState *state, RD_WindowState *ws, AndamentoNode node,
+uishell_sidebar_card_source_at(UIShell_SidebarState *state, AndamentoNode node,
                                UI_Signal sig, String8 context, B32 contains_current, U64 now)
 {
   if(ui_any_ctx_menu_is_open() || !ui_hovering(sig)) { return; }
@@ -96,14 +98,13 @@ uishell_sidebar_card_source_at(UIShell_SidebarState *state, RD_WindowState *ws, 
   card->source_rect = sig.box->rect;
   card->departure = ui_state->mouse;
   rd_request_frame();
-  (void)ws;
 }
 
 internal void
-uishell_sidebar_card_source(UIShell_SidebarState *state, RD_WindowState *ws, AndamentoNode node,
+uishell_sidebar_card_source(UIShell_SidebarState *state, AndamentoNode node,
                             UI_Signal sig, String8 context, B32 contains_current)
 {
-  uishell_sidebar_card_source_at(state, ws, node, sig, context, contains_current, now_time_us());
+  uishell_sidebar_card_source_at(state, node, sig, context, contains_current, now_time_us());
 }
 
 internal void
@@ -130,6 +131,13 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
 {
   if(!ws || ws == &rd_nil_window_state || !ws->sidebar || !ws->ui) { return 0; }
   UIShell_SidebarState *state = ws->sidebar;
+  if(event->kind == WM_EventKind_WindowLoseFocus)
+  {
+    state->card_escape_down = 0;
+    for(U64 i = 0; i < ArrayCount(state->cards); i++) { uishell_sidebar_card_close(&state->cards[i]); }
+    ws->ui->hover_card_focus = 0;
+    return 0;
+  }
   if(event->key == WM_Key_Esc &&
      (event->kind == WM_EventKind_Press || event->kind == WM_EventKind_Release))
   {
@@ -165,23 +173,15 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
   return 0;
 }
 
-internal B32
-uishell_sidebar_card_on_path(UIShell_SidebarState *state, UIShell_HoverCard *card, AndamentoNode node)
-{
-  for(U64 i = 0; i < card->depth; i++)
-  {
-    AndamentoNode ancestor = {0};
-    if(uishell_sidebar_card_find(state, card->path[i], &ancestor) != ANDAMENTO_NONE &&
-       str8_match(uishell_sidebar_string(ancestor.entity_kind), uishell_sidebar_string(node.entity_kind), 0) &&
-       str8_match(uishell_sidebar_string(ancestor.entity_id), uishell_sidebar_string(node.entity_id), 0)) { return 1; }
-  }
-  return 0;
-}
-
 internal void
 uishell_sidebar_card_navigate(UIShell_HoverCard *card, String8 key, U64 now)
 {
-  if(card->depth >= ArrayCount(card->path)) { return; }
+  if(card->depth >= card->capacity)
+  {
+    String8 *path = push_array(card->arena, String8, card->capacity*2);
+    MemoryCopy(path, card->path, card->depth*sizeof(String8));
+    card->path = path; card->capacity *= 2;
+  }
   card->previous = card->path[card->depth-1];
   card->path[card->depth++] = push_str8_copy(card->arena, key);
   card->changed_at = now;
@@ -211,6 +211,13 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
     }
     if(!duplicate) { ui_label_multiline(width, value); }
   }
+  AndamentoField status = {0};
+  if(node.field_count > 2) { andamento_snapshot_field(state->snapshot, node.first_field+2, &status); }
+  UI_TagF("weak")
+  {
+    if(str8_match(uishell_sidebar_string(status.text), str8_lit("ended"), 0)) { ui_label(str8_lit("Ended workspace")); }
+    else if(node.selected) { ui_label(str8_lit("Current workspace")); }
+  }
   if(node.state == ANDAMENTO_LIVE && node.workspace_id)
   {
     rd_workspace_preview_demand_push(ws, node.workspace_id, width);
@@ -230,34 +237,54 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
   // ABI 2 has placement edges, not typed relation fields. Offer its parent and
   // direct children, deduplicated by entity, without parsing resolved prose.
   U64 count = andamento_snapshot_node_count(state->snapshot);
+  AndamentoNode *nodes = push_array(ui_build_arena(), AndamentoNode, count);
+  B32 *aliases = push_array(ui_build_arena(), B32, count);
   B32 *relations = push_array(ui_build_arena(), B32, count);
-  for(U64 alias = 0; alias < count; alias++)
+  B32 *excluded = push_array(ui_build_arena(), B32, count);
+  // Preorder parents index direct children in one pass; alias parents preserve
+  // Attention-to-tree navigation without scanning descendants per alias.
+  for(U64 i = 0; i < count; i++)
   {
-    AndamentoNode placed = {0}; andamento_snapshot_node(state->snapshot, alias, &placed);
-    if(placed.is_section || !str8_match(uishell_sidebar_string(placed.entity_kind), kind, 0) ||
-       !str8_match(uishell_sidebar_string(placed.entity_id), uishell_sidebar_string(node.entity_id), 0)) { continue; }
-    if(placed.parent != ANDAMENTO_NONE) { relations[placed.parent] = 1; }
-    for(U64 child = alias+1; child < count; child++)
+    andamento_snapshot_node(state->snapshot, i, &nodes[i]);
+    aliases[i] = !nodes[i].is_section &&
+      str8_match(uishell_sidebar_string(nodes[i].entity_kind), kind, 0) &&
+      str8_match(uishell_sidebar_string(nodes[i].entity_id), uishell_sidebar_string(node.entity_id), 0);
+    if(aliases[i] && nodes[i].parent != ANDAMENTO_NONE) { relations[nodes[i].parent] = 1; }
+  }
+  for(U64 i = 0; i < count; i++)
+  { if(nodes[i].parent != ANDAMENTO_NONE && aliases[nodes[i].parent]) { relations[i] = 1; } }
+  for(U64 path = 0; path < card->depth; path++)
+  {
+    AndamentoNode ancestor = {0};
+    if(uishell_sidebar_card_find(state, card->path[path], &ancestor) == ANDAMENTO_NONE) { continue; }
+    for(U64 i = 0; i < count; i++)
     {
-      AndamentoNode candidate = {0}; andamento_snapshot_node(state->snapshot, child, &candidate);
-      if(candidate.parent == alias) { relations[child] = 1; }
+      excluded[i] |= str8_match(uishell_sidebar_string(ancestor.entity_kind), uishell_sidebar_string(nodes[i].entity_kind), 0) &&
+                     str8_match(uishell_sidebar_string(ancestor.entity_id), uishell_sidebar_string(nodes[i].entity_id), 0);
     }
   }
+  U64 table_size = 1;
+  while(table_size < count*2+1) { table_size *= 2; }
+  U64 *seen = push_array(ui_build_arena(), U64, table_size);
+  for(U64 i = 0; i < table_size; i++) { seen[i] = ANDAMENTO_NONE; }
   B32 related_label = 0;
   for(U64 i = 0; i < count; i++)
   {
-    AndamentoNode related = {0}; andamento_snapshot_node(state->snapshot, i, &related);
-    if(related.is_section || !relations[i] ||
-       uishell_sidebar_card_on_path(state, card, related)) { continue; }
+    AndamentoNode related = nodes[i];
+    if(related.is_section || !relations[i] || excluded[i]) { continue; }
+    String8 related_kind = uishell_sidebar_string(related.entity_kind), related_id = uishell_sidebar_string(related.entity_id);
+    U64 hash = u64_hash_from_str8(related_kind) ^ (u64_hash_from_str8(related_id)*0x9e3779b97f4a7c15ull);
+    U64 bucket = hash & (table_size-1);
     B32 duplicate = 0;
-    for(U64 p = 0; p < i; p++)
+    while(seen[bucket] != ANDAMENTO_NONE)
     {
-      AndamentoNode other = {0}; andamento_snapshot_node(state->snapshot, p, &other);
-      if(relations[p] &&
-         str8_match(uishell_sidebar_string(other.entity_kind), uishell_sidebar_string(related.entity_kind), 0) &&
-         str8_match(uishell_sidebar_string(other.entity_id), uishell_sidebar_string(related.entity_id), 0)) { duplicate = 1; break; }
+      AndamentoNode other = nodes[seen[bucket]];
+      if(str8_match(related_kind, uishell_sidebar_string(other.entity_kind), 0) &&
+         str8_match(related_id, uishell_sidebar_string(other.entity_id), 0)) { duplicate = 1; break; }
+      bucket = (bucket+1) & (table_size-1);
     }
     if(duplicate) { continue; }
+    seen[bucket] = i;
     if(!related_label) { UI_TagF("weak") { ui_label(str8_lit("Related")); } related_label = 1; }
     if(!interactive) { ui_label_multiline(width, uishell_sidebar_string(related.label)); continue; }
     UI_Signal link = uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###related_%I64u_%I64u", uishell_sidebar_string(related.label), slot, i));
@@ -298,17 +325,18 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
 }
 
 internal void
-uishell_sidebar_cards_ui(RD_WindowState *ws)
+uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
 {
   UIShell_SidebarState *state = ws->sidebar;
   if(!state) { return; }
   state->card_has_action = 0;
-  U64 now = now_time_us();
   Rng2F32 window = wm_client_rect_from_window(ws->os);
   Vec2F32 mouse = ui_state->mouse;
   ui_state->hover_card_focus = 0;
   MemoryZeroArray(ui_state->hover_card_keys);
   MemoryZeroArray(ui_state->hover_card_rects);
+  B32 outside = uishell_hover_cards_outside || rd_setting_b32_from_name(str8_lit("hover_cards_outside_sidebar"));
+  if(!window_focused) { state->card_escape_down = 0; }
   for(U64 slot = 0; slot < ArrayCount(state->cards); slot++)
   {
     UIShell_HoverCard *card = &state->cards[slot];
@@ -317,7 +345,7 @@ uishell_sidebar_cards_ui(RD_WindowState *ws)
     if(!card->source_seen && !card->open) { card->candidate = str8_zero(); }
     card->source_seen = 0;
     if(!card->open) { continue; }
-    if(ui_any_ctx_menu_is_open() || !wm_window_is_focused(ws->os))
+    if(ui_any_ctx_menu_is_open() || !window_focused)
     { uishell_sidebar_card_close(card); continue; }
     AndamentoNode node = {0};
     U64 index = uishell_sidebar_card_find(state, card->path[card->depth-1], &node);
@@ -343,7 +371,7 @@ uishell_sidebar_cards_ui(RD_WindowState *ws)
     F32 em = ui_top_font_size(), width = Min(em*34, dim_2f32(window).x-20);
     F32 content_height = ui_box_is_nil(old_content) ? em*(6+node.detail_count*1.6f) : old_content->fixed_size.y;
     F32 height = Clamp(em*4, content_height+16, dim_2f32(window).y-20);
-    F32 x = (uishell_hover_cards_outside || rd_setting_b32_from_name(str8_lit("hover_cards_outside_sidebar"))) ? state->rect.x1+8 : Min(card->source_rect.x1+8, state->rect.x1-24);
+    F32 x = outside ? state->rect.x1+8 : Min(card->source_rect.x1+8, state->rect.x1-24);
     if(slot) { x = card->source_rect.x1+8; }
     Vec2F32 target = v2f32(Clamp(window.x0+10, x, window.x1-width-10),
                           Clamp(window.y0+10, card->source_rect.y0, window.y1-height-10));
@@ -355,11 +383,13 @@ uishell_sidebar_cards_ui(RD_WindowState *ws)
     ui_state->hover_card_rects[slot] = card->rect;
     card->last_mouse = mouse;
     size_t action = ANDAMENTO_NONE;
-    UI_Parent(ui_state->root) UI_TagF("floating") UI_Rect(card->rect)
+    UI_Parent(ui_state->root) UI_TagF("floating")
     UI_Focus(card->focused ? UI_FocusKind_On : UI_FocusKind_Off) UI_CornerRadius(em*0.25f)
     {
-      UI_Box *root = ui_build_box_from_key(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|
-        UI_BoxFlag_DrawDropShadow|UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DefaultFocusNavY, key);
+      UI_Box *root;
+      UI_Rect(card->rect)
+      { root = ui_build_box_from_key(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|
+          UI_BoxFlag_DrawDropShadow|UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DefaultFocusNavY, key); }
       UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(8, 8, width-8, height-8), UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);
       params.content_dim_px = v2f32(width-16, content_height);
       UI_ScrollRegion region = ui_scroll_region_layout(params);
@@ -371,10 +401,11 @@ uishell_sidebar_cards_ui(RD_WindowState *ws)
         UI_ScrollRegionSignal scroll = ui_scroll_region_build(root, ui_key_from_stringf(key, "scroll"), &region, axes, UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise);
         F32 content_width = dim_2f32(region.viewport).x;
         card->scroll = (F32)scroll.position.y.idx;
-        UI_Parent(scroll.content_box) UI_FixedY(-card->scroll) UI_PrefWidth(ui_px(content_width, 1))
+        UI_Box *content;
+        UI_Parent(scroll.content_box) UI_PrefWidth(ui_px(content_width, 1))
         UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
         {
-          UI_Box *content = ui_build_box_from_key(0, content_key);
+          UI_FixedY(-card->scroll) { content = ui_build_box_from_key(0, content_key); }
           UI_Parent(content) UI_PrefWidth(ui_px(content_width, 1)) UI_PrefHeight(ui_em(1.6f, 1))
           UI_TextAlignment(UI_TextAlign_Left) UI_Transparency(card->previous.size ? 1-t : 0)
           { action = uishell_sidebar_card_content(state, ws, card, slot, node, index, content_width, card->engaged); }
@@ -384,15 +415,30 @@ uishell_sidebar_cards_ui(RD_WindowState *ws)
           AndamentoNode previous = {0}; U64 previous_index = uishell_sidebar_card_find(state, card->previous, &previous);
           if(previous_index != ANDAMENTO_NONE)
           {
-            UI_Parent(scroll.content_box) UI_FixedY(-card->scroll) UI_PrefWidth(ui_px(content_width, 1)) UI_PrefHeight(ui_children_sum(1))
+            UI_Parent(scroll.content_box) UI_PrefWidth(ui_px(content_width, 1)) UI_PrefHeight(ui_children_sum(1))
             UI_ChildLayoutAxis(Axis2_Y) UI_Transparency(t) UI_Flags(UI_BoxFlag_IgnoreInteraction)
             {
-              UI_Box *outgoing = ui_build_box_from_stringf(0, "###outgoing_%I64u", slot);
+              UI_Box *outgoing;
+              UI_FixedY(-card->scroll) { outgoing = ui_build_box_from_stringf(0, "###outgoing_%I64u", slot); }
               UI_Parent(outgoing) UI_PrefHeight(ui_em(1.6f, 1)) UI_TextAlignment(UI_TextAlign_Left)
               { uishell_sidebar_card_content(state, ws, card, slot+2, previous, previous_index, content_width, 0); }
             }
           }
           rd_request_frame();
+        }
+        ui_layout_root(content, Axis2_X); ui_layout_root(content, Axis2_Y);
+        F32 measured_height = Clamp(em*4, content->fixed_size.y+16, dim_2f32(window).y-20);
+        if(abs_f32(measured_height-height) > 0.5f)
+        {
+          height = measured_height;
+          target.y = Clamp(window.y0+10, card->source_rect.y0, window.y1-height-10);
+          if(!card->previous.size) { card->glide_from = target; }
+          pos = mix_2f32(card->glide_from, target, glide);
+          root->fixed_position = pos; root->fixed_size.y = height;
+          scroll.content_box->fixed_size.y = height-16;
+          card->rect = r2f32p(pos.x, pos.y, pos.x+width, pos.y+height);
+          ui_state->hover_card_rects[slot] = card->rect;
+          rd_request_frame(); // Update scroll thumb geometry with the measured extent.
         }
         UI_Signal wheel = ui_signal_from_box(scroll.content_box);
         card->scroll = Clamp(0.f, card->scroll+wheel.scroll.y*em*2, (F32)axes[Axis2_Y].range.max);
@@ -404,4 +450,15 @@ uishell_sidebar_cards_ui(RD_WindowState *ws)
     }
     if(action != ANDAMENTO_NONE) { state->card_action = action; state->card_has_action = 1; rd_request_frame(); }
   }
+  // Buttons can close a card or transfer focus while building its content.
+  // Update before the selected View gets any remaining keyboard events.
+  ui_state->hover_card_focus = 0;
+  for(U64 i = 0; i < ArrayCount(state->cards); i++)
+  { ui_state->hover_card_focus |= state->cards[i].open && state->cards[i].focused; }
+}
+
+internal void
+uishell_sidebar_cards_ui(RD_WindowState *ws)
+{
+  uishell_sidebar_cards_ui_at(ws, now_time_us(), wm_window_is_focused(ws->os));
 }

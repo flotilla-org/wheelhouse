@@ -1,3 +1,56 @@
+// Click an actual related/Back widget through press and release frames.
+internal B32
+uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
+                             UIShell_HoverCard *card, String8 label, WM_Modifiers modifiers)
+{
+  UI_IconInfo icons = ws->ui->icon_info;
+  UI_AnimationInfo animation = {0};
+  Rng2F32 hit = {0};
+  B32 found = 0;
+  for(U64 frame = 0; frame < 3; frame++)
+  {
+    UI_EventList events = {0};
+    Vec2F32 mouse = center_2f32(hit);
+    UI_Event event = {.kind = frame == 2 ? UI_EventKind_Release : UI_EventKind_Press,
+                     .key = WM_Key_LeftMouseButton, .pos = mouse, .modifiers = modifiers};
+    if(frame) { ui_event_list_push(ws->ui->arena, &events, &event); }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = mouse; MemoryZeroArray(ui_state->hover_card_keys);
+    AndamentoNode node = {0};
+    U64 index = uishell_sidebar_card_find(state, card->path[card->depth-1], &node);
+    if(index == ANDAMENTO_NONE) { ui_end_build(); return 0; }
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+    UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_ChildLayoutAxis(Axis2_Y)
+    {
+      UI_Box *body;
+      UI_Rect(r2f32p(0, 0, 400, 700)) UI_Focus(UI_FocusKind_On)
+      { body = ui_build_box_from_key(UI_BoxFlag_DefaultFocusNavY, ui_key_make(9090)); }
+      UI_Parent(body) UI_FocusHot(UI_FocusKind_Root) UI_FocusActive(UI_FocusKind_Root)
+      { uishell_sidebar_card_content(state, ws, card, 0, node, index, 400, 1); }
+    }
+    ui_end_build();
+    if(frame == 0)
+    {
+      AndamentoNode source = {0};
+      if(card->depth > 1 && uishell_sidebar_card_find(state, card->path[0], &source) != ANDAMENTO_NONE)
+      {
+        for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
+        {
+          if((box->flags & UI_BoxFlag_MouseClickable) &&
+             str8_match(ui_box_display_string(box), uishell_sidebar_string(source.label), 0)) { return 0; }
+        }
+      }
+      for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
+      {
+        if((box->flags & UI_BoxFlag_MouseClickable) && str8_match(ui_box_display_string(box), label, 0))
+        { hit = box->rect; found = 1; break; }
+      }
+      if(!found) { return 0; }
+    }
+  }
+  return found;
+}
+
 // Deterministic time traces use the production transitions; UI and raw-WM
 // checks exercise the actual hit exclusion and Escape routing seams.
 internal B32
@@ -17,13 +70,13 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   AndamentoNode b = {.key = uishell_sidebar_text(str8_lit("b"))};
   UIShell_HoverCard *card = &fixture.cards[0];
   test->mouse = v2f32(50, 115);
-  uishell_sidebar_card_source_at(&fixture, ws, a, hover, str8_zero(), 0, 1000000);
+  uishell_sidebar_card_source_at(&fixture, a, hover, str8_zero(), 0, 1000000);
   CardCheck(!card->open && !test->hover_card_focus, "first hover starts without focus");
-  uishell_sidebar_card_source_at(&fixture, ws, a, hover, str8_zero(), 0, 1299999);
+  uishell_sidebar_card_source_at(&fixture, a, hover, str8_zero(), 0, 1299999);
   CardCheck(!card->open, "first hover waits 300ms");
-  uishell_sidebar_card_source_at(&fixture, ws, a, hover, str8_zero(), 0, 1300000);
+  uishell_sidebar_card_source_at(&fixture, a, hover, str8_zero(), 0, 1300000);
   CardCheck(card->open && !card->engaged && !card->focused, "300ms opens an informational peek");
-  uishell_sidebar_card_source_at(&fixture, ws, b, hover, str8_zero(), 0, 1300001);
+  uishell_sidebar_card_source_at(&fixture, b, hover, str8_zero(), 0, 1300001);
   CardCheck(card->open && str8_match(card->path[0], str8_lit("b"), 0) &&
             str8_match(card->previous, str8_lit("a"), 0), "next source swaps immediately and retains outgoing content");
   card->rect = r2f32p(180, 90, 400, 300);
@@ -65,6 +118,21 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   uishell_sidebar_card_wm_event(ws, &click);
   click.pos = v2f32(500, 350); uishell_sidebar_card_wm_event(ws, &click);
   CardCheck(!card->open && !test->hover_card_focus, "outside click dismisses a focused card");
+  // Losing native focus can drop a held Escape release.
+  uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3400000);
+  card->rect = r2f32p(180, 90, 400, 300); click.pos = v2f32(200, 150);
+  uishell_sidebar_card_wm_event(ws, &click);
+  escape.kind = WM_EventKind_Press; uishell_sidebar_card_wm_event(ws, &escape);
+  WM_Event lost = {.kind = WM_EventKind_WindowLoseFocus};
+  uishell_sidebar_card_wm_event(ws, &lost);
+  CardCheck(!fixture.card_escape_down && !test->hover_card_focus, "focus loss clears held Escape ownership");
+  escape.kind = WM_EventKind_Release;
+  CardCheck(!uishell_sidebar_card_wm_event(ws, &escape), "late Escape release after focus loss is not retained by the card");
+  escape.kind = WM_EventKind_Press;
+  CardCheck(!uishell_sidebar_card_wm_event(ws, &escape), "first Escape after focus loss reaches the View");
+  uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3500000);
+  for(U64 i = 0; i < 40; i++) { uishell_sidebar_card_navigate(card, str8_lit("additional target"), 3500001+i); }
+  CardCheck(card->depth == 41, "long navigation paths grow instead of silently refusing a link");
   // Build two real overlapping buttons and send a click over the overlay.
   UI_IconInfo icons = saved_window_ui->icon_info;
   UI_AnimationInfo animation = {0};
@@ -144,8 +212,51 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         CardCheck(title, "current flat title field remains rendered");
         CardCheck(actions == engaged, "actions appear only when engaged");
       }
-      // A path excludes alias placements of the same entity, not just the key.
-      CardCheck(uishell_sidebar_card_on_path(&fixture, card, live), "related list excludes entities on the navigation path");
+      AndamentoNode parent = {0}; andamento_snapshot_node(fixture.snapshot, live.parent, &parent);
+      String8 parent_label = uishell_sidebar_string(parent.label);
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, parent_label, 0) && card->depth == 2,
+                "clicking a related widget navigates within the card");
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("← Back"), 0) && card->depth == 1 &&
+                str8_match(card->path[0], uishell_sidebar_string(live.key), 0), "Back widget restores the source target");
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, parent_label, WM_Modifier_Ctrl) && card->depth == 1 &&
+                fixture.cards[1].open && fixture.cards[1].focused &&
+                str8_match(fixture.cards[1].path[0], uishell_sidebar_string(parent.key), 0),
+                "modifier-click opens a separate focused card without changing the original path");
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Close"), 0) && !card->open &&
+                fixture.cards[1].open && fixture.cards[1].focused, "closing the original leaves the separate card open and focused");
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, &fixture.cards[1], str8_lit("Close"), 0) &&
+                !fixture.cards[1].open, "the separate card closes through its own action");
+      // Full production layout catches fixed-rectangle scope leakage into
+      // fields and buttons, rather than only testing their existence.
+      uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
+      card->source_rect = r2f32p(20, 20, 80, 50); fixture.rect = r2f32p(0, 0, 320, 700);
+      for(U64 frame = 0; frame < 2; frame++)
+      {
+        UI_EventList events = {0};
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = frame ? center_2f32(card->rect) : v2f32(50, 35);
+        card->focused = frame; // Click-focus ownership is covered by the WM trace.
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1); }
+        ui_end_build();
+        UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);
+        UI_Box *root = ui_box_from_key(root_key);
+        CardCheck(!ui_box_is_nil(root) && dim_2f32(root->rect).y > 40, "full card measures its content on the first frame");
+        F32 previous_y = -1; U64 lines = 0;
+        for(UI_Box *box = root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, root).next)
+        {
+          if(!(box->flags & UI_BoxFlag_DrawText)) { continue; }
+          CardCheck(box->rect.y0 >= previous_y && dim_2f32(box->rect).y < dim_2f32(root->rect).y,
+                    "fields and controls occupy individual rows in full card layout");
+          previous_y = box->rect.y1; lines++;
+        }
+        CardCheck(lines > 5, "full card retains the current detail fields");
+        CardCheck(test->hover_card_focus == (B32)frame, "full controller preserves peek/click focus distinction");
+      }
+      uishell_sidebar_card_close(card);
+      UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      uishell_sidebar_cards_ui_at(ws, now_time_us(), 1); ui_end_build();
+      CardCheck(!test->hover_card_focus, "closing the last card clears focus before View event consumers");
     }
   }
   ws->sidebar = saved_sidebar; ws->ui = saved_window_ui;

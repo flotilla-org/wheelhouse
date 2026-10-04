@@ -37,8 +37,9 @@ typedef struct UIShell_HoverCard UIShell_HoverCard;
 struct UIShell_HoverCard
 {
   Arena *arena;
-  String8 path[32], previous, candidate, context;
-  U64 depth, candidate_since, changed_at, left_at;
+  String8 *path;
+  String8 previous, candidate, context;
+  U64 depth, capacity, candidate_since, changed_at, left_at;
   UI_Key source, dismissed;
   Rng2F32 source_rect, rect;
   Vec2F32 departure, last_mouse, glide_from;
@@ -653,7 +654,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     }
     if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
   }
-  uishell_sidebar_card_source(state, ws, node, sig, context, contains_current);
+  uishell_sidebar_card_source(state, node, sig, context, contains_current);
   scratch_end(scratch);
   return action;
 }
@@ -1523,6 +1524,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   }
   if(uishell_sidebar_subject_fixture && uishell_sidebar_subject_geometry_path.size)
   {
+    // Fixture-only controller state accompanies hit rectangles for diagnostics.
     UIShell_HoverCard *c = &state->cards[0];
     write_data_to_file_path(push_str8f(scratch.arena, "%S.cards", uishell_sidebar_subject_geometry_path),
       push_str8f(scratch.arena, "{\"mouse\":[%g,%g],\"open\":%u,\"engaged\":%u,\"focused\":%u,\"candidate_since\":%I64u,\"now\":%I64u,\"source_seen\":%u,\"rect\":[%g,%g,%g,%g]}",

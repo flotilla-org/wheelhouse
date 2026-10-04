@@ -3037,6 +3037,9 @@ ui_signal_from_box(UI_Box *box)
     blacklist_rect = ui_state->ctx_menu_root->rect;
   }
   
+  B32 mouse_is_blacklisted = contains_2f32(blacklist_rect, ui_state->mouse) ||
+    ui_hover_card_blocks_pointer(box, ui_state->mouse);
+
   //////////////////////////////
   //- rjf: process events related to this box
   //
@@ -3338,7 +3341,7 @@ ui_signal_from_box(UI_Box *box)
   //
   {
     if(contains_2f32(rect, ui_state->mouse) &&
-       !contains_2f32(blacklist_rect, ui_state->mouse) && !ui_hover_card_blocks_pointer(box, ui_state->mouse))
+       !mouse_is_blacklisted)
     {
       sig.f |= UI_SignalFlag_MouseOver;
     }
@@ -3350,7 +3353,7 @@ ui_signal_from_box(UI_Box *box)
   {
     if(box->flags & UI_BoxFlag_MouseClickable &&
        contains_2f32(rect, ui_state->mouse) &&
-       !contains_2f32(blacklist_rect, ui_state->mouse) && !ui_hover_card_blocks_pointer(box, ui_state->mouse) &&
+       !mouse_is_blacklisted &&
        (ui_key_match(ui_state->hot_box_key, ui_key_zero()) || ui_key_match(ui_state->hot_box_key, box->key)) &&
        (ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Left], ui_key_zero()) || ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Left], box->key)) &&
        (ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Middle], ui_key_zero()) || ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Middle], box->key)) &&
@@ -3366,7 +3369,7 @@ ui_signal_from_box(UI_Box *box)
   //
   if(box->flags & UI_BoxFlag_MouseClickable &&
      contains_2f32(rect, ui_state->mouse) &&
-     !contains_2f32(blacklist_rect, ui_state->mouse) && !ui_hover_card_blocks_pointer(box, ui_state->mouse) &&
+     !mouse_is_blacklisted &&
      !ui_key_match(ui_key_zero(), box->group_key))
   {
     for EachEnumVal(UI_MouseButtonKind, k)
@@ -3387,7 +3390,7 @@ ui_signal_from_box(UI_Box *box)
   {
     if(box->flags & UI_BoxFlag_DropSite &&
        contains_2f32(rect, ui_state->mouse) &&
-       !contains_2f32(blacklist_rect, ui_state->mouse) && !ui_hover_card_blocks_pointer(box, ui_state->mouse) &&
+       !mouse_is_blacklisted &&
        (ui_key_match(ui_state->drop_hot_box_key, ui_key_zero()) || ui_key_match(ui_state->drop_hot_box_key, box->key)))
     {
       ui_state->drop_hot_box_key = box->key;
@@ -3400,7 +3403,7 @@ ui_signal_from_box(UI_Box *box)
   {
     if(box->flags & UI_BoxFlag_DropSite &&
        (!contains_2f32(rect, ui_state->mouse) ||
-        contains_2f32(blacklist_rect, ui_state->mouse)) &&
+        mouse_is_blacklisted) &&
        ui_key_match(ui_state->drop_hot_box_key, box->key))
     {
       ui_state->drop_hot_box_key = ui_key_zero();
