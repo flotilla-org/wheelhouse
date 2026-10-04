@@ -51,6 +51,14 @@ implement. Later design items below are deferred, not blockers for current fixes
    [rectangular selection #73](https://github.com/flotilla-org/wheelhouse/issues/73),
    and [hyperlinks #77](https://github.com/flotilla-org/wheelhouse/issues/77).
    These should not wait for native remote attachment.
+   The [selection, clipboard, and Edit menu review](design/terminal-clipboard.md)
+   records the current gaps and delivery order. Rectangular selection #73 has
+   landed. Implementation briefs cover selection lifetime #72, Shift scrolling
+   #70, [wrap-aware copying #151](https://github.com/flotilla-org/wheelhouse/issues/151),
+   and [Edit menu #152](https://github.com/flotilla-org/wheelhouse/issues/152).
+   OSC 52 #71 follows [Cleat #240](https://github.com/flotilla-org/cleat/issues/240);
+   [tracked history selection](https://github.com/flotilla-org/cleat/issues/300)
+   remains deferred design work.
 3. **Continue sidebar presentation and explanations.**
    [Role action icons #79](https://github.com/flotilla-org/wheelhouse/issues/79),
    [compact display controls #80](https://github.com/flotilla-org/wheelhouse/issues/80),

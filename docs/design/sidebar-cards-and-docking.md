@@ -47,6 +47,9 @@ A card has a fixed structure instead of a list of `Prefix: value` lines:
 - **Related:** linked entities as clickable mini-rows with their own chips,
   leaving out anything already on the navigation path. A PR card reached from
   its convoy does not list the convoy or project.
+- **Preview:** the live workspace preview, when the entity has a workspace, as
+  today's hover card draws it. The restructure keeps it; #89 decides when a
+  preview may attach.
 - **Actions:** icon buttons from the same Andamento controls as the workspace
   controls (#122): open in browser, attach, copy URL.
 
