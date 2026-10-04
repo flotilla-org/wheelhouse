@@ -48,6 +48,7 @@ rd_dock_check(RD_ViewRegistration *view, RD_DockProposal p)
   if((traits & RD_ViewTrait_SelectsWorkspaces) && p.selected_workspace_region &&
      p.selected_workspace_region == p.host.workspace_region) { return RD_DockRule_SelectorOutsideSelectedRegion; }
   if((U32)p.host.kind >= RD_DockHostKind_COUNT) { return RD_DockRule_HostAcceptance; }
+  if(p.view_level != p.host.level) { return RD_DockRule_ControlSplitLevel; }
   RD_DockAcceptance acceptance = rd_dock_acceptance[p.host.kind];
   if((acceptance.any_of && !(traits & acceptance.any_of)) || (traits & acceptance.forbidden)) { return RD_DockRule_HostAcceptance; }
   if((traits & RD_ViewTrait_NeedsWorkspaceSubject) && !p.host.has_workspace_subject) { return RD_DockRule_WorkspaceSubject; }
@@ -62,6 +63,18 @@ rd_dock_host_from_cfg(CFG_Node *cfg, F32 width)
   RD_DockHost host = {RD_DockHostKind_WorkspaceRegion, 0, 0, 0, width};
   for(CFG_Node *c = cfg; c != &cfg_nil_node; c = c->parent)
   {
+    // A layout's owner identifies its level. Legacy window.panels is a child
+    // workspace, even though it predates an explicit workspace config node.
+    if(!host.level)
+    {
+      if(str8_match(c->string, RD_DOCK_SIDEBAR_ROOT, 0) ||
+         str8_match(c->string, str8_lit("floating_panels"), 0))
+      { host.level = c->parent->id; }
+      else if(str8_match(c->string, str8_lit("panels"), 0))
+      {
+        host.level = str8_match(c->parent->string, str8_lit("workspace"), 0) ? c->parent->id : c->id;
+      }
+    }
     if(str8_match(c->string, RD_DOCK_SIDEBAR_ROOT, 0)) { host.kind = RD_DockHostKind_Sidebar; }
     if(str8_match(c->string, str8_lit("floating_panels"), 0)) { host.kind = RD_DockHostKind_FloatingPanel; }
     if(str8_match(c->string, str8_lit("workspace"), 0))
@@ -120,6 +133,16 @@ rd_dock_instances(CFG_Node *container, RD_ViewRegistration *registration)
   return count;
 }
 
+// These declarations use the root split's Andamento state, not the subject
+// of whichever child workspace happens to contain an old saved placement.
+internal CFG_ID
+rd_dock_view_level(RD_ViewRegistration *registration, CFG_Node *view)
+{
+  if(registration && (registration->traits & RD_ViewTrait_ControlSplitScope))
+  { return rd_dock_window(view)->id; }
+  return rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH).level;
+}
+
 internal RD_DockRule
 rd_dock_placement(CFG_Node *view, CFG_Node *destination, F32 width)
 {
@@ -129,6 +152,7 @@ rd_dock_placement(CFG_Node *view, CFG_Node *destination, F32 width)
   p.host = rd_dock_host_from_cfg(destination, width);
   p.selected_workspace_region = source.controlled_split;
   RD_ViewRegistration *registration = rd_dock_view_from_name(view->string);
+  p.view_level = rd_dock_view_level(registration, view);
   p.instances_after = 1;
   p.control_surfaces_after = 1; // TODO(#164): derive counts from nested Controlled Splits.
   // The current root Control Surface is implicit.
@@ -157,6 +181,7 @@ rd_dock_creation(String8 name, CFG_Node *destination)
   if(!view) { return RD_DockRule_RegisteredView; }
   RD_DockProposal p = {0};
   p.host = rd_dock_host_from_cfg(destination, RD_DOCK_UNMEASURED_WIDTH);
+  p.view_level = (view->traits & RD_ViewTrait_ControlSplitScope) ? rd_dock_window(destination)->id : p.host.level;
   p.selected_workspace_region = p.host.controlled_split;
   p.instances_after = (view->traits & RD_ViewTrait_Singleton) ? rd_dock_instances(rd_dock_window(destination), view)+1 : 1;
   // TODO(#164): derive this with placement/closure counts from nested splits.
@@ -199,6 +224,7 @@ rd_dock_rule_message(RD_DockRule rule)
     case RD_DockRule_OneControlSurface: return str8_lit("a Controlled Split must retain exactly one Control Surface");
     case RD_DockRule_SelectorOutsideSelectedRegion: return str8_lit("a selector cannot occupy its selected Workspace Region");
     case RD_DockRule_SelectorCannotClose: return str8_lit("the workspace selector cannot be closed");
+    case RD_DockRule_ControlSplitLevel: return str8_lit("the View belongs to a different Controlled Split level");
   }
   return str8_lit("invalid docking rule");
 }
@@ -240,15 +266,15 @@ rd_dock_restore_container(CFG_State *state, CFG_Node *window, CFG_Node *containe
             if(workspace != &cfg_nil_node) { owner = workspace; }
           }
           fallback = cfg_node_child_from_string_or_alloc(state, owner, str8_lit("panels"));
-          // A split root cannot hold tabs. Choose its first leaf.
-          for(;;)
-          {
-            CFG_Node *child = &cfg_nil_node;
-            for(CFG_Node *n = fallback->first; n != &cfg_nil_node; n = n->next)
-            { if(!rd_dock_view_from_name(n->string) && rd_dock_is_container(n)) { child = n; break; } }
-            if(child == &cfg_nil_node) { break; }
-            fallback = child;
-          }
+        }
+        // A split root cannot hold tabs. Choose a leaf in either host kind.
+        for(;;)
+        {
+          CFG_Node *child = &cfg_nil_node;
+          for(CFG_Node *n = fallback->first; n != &cfg_nil_node; n = n->next)
+          { if(!rd_dock_view_from_name(n->string) && rd_dock_is_container(n)) { child = n; break; } }
+          if(child == &cfg_nil_node) { break; }
+          fallback = child;
         }
         rd_dock_restore_move(state, c, fallback);
       }
@@ -267,7 +293,9 @@ rd_dock_saved_placement_valid(CFG_Node *view)
   p.host = rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH);
   p.selected_workspace_region = p.host.controlled_split;
   p.instances_after = p.control_surfaces_after = 1;
-  return rd_dock_check(rd_dock_view_from_name(view->string), p) == RD_DockRule_Valid;
+  RD_ViewRegistration *registration = rd_dock_view_from_name(view->string);
+  p.view_level = rd_dock_view_level(registration, view);
+  return rd_dock_check(registration, p) == RD_DockRule_Valid;
 }
 
 internal void

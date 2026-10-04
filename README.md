@@ -163,8 +163,9 @@ current workspace has a highlighted row. Tooltips explain each entry's action;
 entries without a recipe show information inside the sidebar when clicked. Sections
 are docked Views. Single-section sidebar panels show a header with a count and
 compact display toggles; merged panels show compact tabs. Drag the header's hover
-handle to reorder sections, merge them, or move them into a workspace, where they
-use ordinary tabs. Sections retain independent scrolling, and their panel boundaries
+handle to reorder or merge sections within their owning Controlled Split level.
+Fleet sections stay available while child workspaces switch; they cannot be docked
+into those workspaces. Sections retain independent scrolling, and their panel boundaries
 resize their allocation. Display-variable toggles follow the template's persistence
 declarations. The native template gives worktrees workspace presence, so the git
 producer's shell recipe opens a terminal in its root. It does not use the legacy

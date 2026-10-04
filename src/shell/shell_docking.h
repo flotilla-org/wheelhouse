@@ -45,6 +45,8 @@ enum
   RD_ViewTrait_Singleton = 1<<3,
   RD_ViewTrait_NeedsWorkspaceSubject = 1<<4,
   RD_ViewTrait_NeedsHost = 1<<5,
+  // Content supplied by the root Controlled Split, not a child workspace.
+  RD_ViewTrait_ControlSplitScope = 1<<6,
 };
 
 typedef struct RD_ViewRegistration RD_ViewRegistration;
@@ -64,6 +66,8 @@ struct RD_DockHost
   CFG_ID workspace_region;
   B32 has_workspace_subject;
   F32 available_width;
+  // Layout owner identity; independent of visual host kind or screen position.
+  CFG_ID level;
 };
 
 typedef enum RD_DockRule
@@ -77,6 +81,7 @@ typedef enum RD_DockRule
   RD_DockRule_OneControlSurface,
   RD_DockRule_SelectorOutsideSelectedRegion,
   RD_DockRule_SelectorCannotClose,
+  RD_DockRule_ControlSplitLevel,
 } RD_DockRule;
 
 // Counts describe the proposed result, not the source layout. A move retains
@@ -89,12 +94,14 @@ struct RD_DockProposal
   U32 instances_after;
   U32 control_surfaces_after;
   B32 closing;
+  // The View's existing owner, rather than the proposed destination's scope.
+  CFG_ID view_level;
 };
 
 // This is also the UI registration list. Adding a View requires declaring its
 // traits here, so enumeration and rendering cannot acquire separate lists.
 #define RD_DOCK_RENDERED_VIEWS(X) \
-  X(sidebar_section, sidebar_section, RD_ViewTrait_Content|RD_ViewTrait_Section, 0, Sidebar) \
+  X(sidebar_section, sidebar_section, RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_ControlSplitScope, 0, Sidebar) \
   X(text, shell_text, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(jackstay, jackstay, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(terminal, terminal, RD_ViewTrait_Content, 0, WorkspaceRegion) \
@@ -112,7 +119,7 @@ struct RD_DockProposal
   X(getting_started, null, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(pending, null, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(watch, null, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(workspace_selector, null, RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_SelectsWorkspaces|RD_ViewTrait_Singleton, 0, Sidebar)
+  X(workspace_selector, null, RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_SelectsWorkspaces|RD_ViewTrait_Singleton|RD_ViewTrait_ControlSplitScope, 0, Sidebar)
 
 #define RD_DOCK_DECLARE(name, ui, traits, width, host) \
   {str8_lit_comp(#name), traits, width, RD_DockHostKind_##host},

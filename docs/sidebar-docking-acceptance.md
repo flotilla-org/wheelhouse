@@ -2,9 +2,23 @@
 
 Projects, Sessions, Attention and Git are `sidebar_section` Views in the saved
 `control_views` panel tree. The shared panel renderer chooses section headers
-for one sidebar tab, compact tabs for merged sections, and normal tabs in a
-Workspace Region. Placement creation, moves, drops and restore use the existing
+for one sidebar tab and compact tabs for merged sections. Ordinary workspace
+content uses normal tabs. Placement creation, moves, drops and restore use the existing
 `rd_dock_check` rules. No placement hints were added to KDL.
+
+The human review clarified the level boundary: a View may dock only on its
+owning Controlled Split level. Fleet sections use the root split's Andamento
+state. They may rearrange within that level but cannot enter a selected child
+workspace, including the legacy window workspace. Host presentation does not
+grant permission to cross levels. Root-level floating placements remain valid;
+floating placements inside a child workspace do not. This corrects #163's
+original instruction to allow sections into workspace content. Nested split
+providers and their bindings remain #164's work.
+
+Restore recovers fleet sections moved into child workspaces by earlier previews
+into a leaf of the root Control Region, keeping View identity, section key and
+settings. They remain available across workspace switches. A recovered section
+may share a compact-tab panel with an existing section.
 
 The section key supplies the scroll identity across docking moves. Default
 vertical panels retain content-based secondary sizing; dragging a panel boundary
@@ -26,12 +40,15 @@ core toggle behavior.
 
 ## Kiwi human review
 
-Host-direct candidate runs use `/tmp/sidebar-docking-review/Sidebar Docking Review.app`
+Host-direct candidate runs now use `/tmp/sidebar-docking-review/Docking Level Review.app`
 and disposable user/project settings. Each run included a call for human review.
 The daily driver was left untouched. The first candidate exposed an origin
 conversion error; the next run corrected it. The current candidate hides empty
 sections, retains single-section headers and shows Issues, Show finished and
-Role attempts beside the count. The latest verified candidate process starts on kiwi, but automation cannot currently locate its window. Human interaction feedback is still pending.
+Role attempts beside the count. Human review exposed that fleet sections could
+enter child workspaces and disappear from view when those workspaces changed.
+The latest candidate enforces owning levels. Its copied arrangement visibly recovers Projects, Other workspaces and Attention into a fleet-level compact-tab panel.
+Final interaction acceptance remains pending.
 
 The human naming choice proposes **Role history** for what Role attempts
 reveals, or grouping it with Show finished as history/detail controls. The
@@ -44,7 +61,8 @@ Reproduce the fixture with disposable settings:
 ```
 
 Hover a header to expose drag and close. Drag sections to reorder them, merge
-one into another panel, or move them into a Workspace Region and back. Try the
+one into another panel, and check that child workspaces offer no section targets.
+Switch workspaces and verify that fleet controls remain available. Try the
 three display buttons and restart with the same disposable profile.
 
 ## Verification
@@ -52,7 +70,8 @@ three display buttons and restart with the same disposable profile.
 The macOS debug build passes. Native panel diagnostics exercise the shared host
 at a nonzero origin, alternating fractional wheel events between two overflowing
 sections, independent offsets, idle-frame stability, bounds, singleton header
-presentation, merge/split, transfers between hosts and restore. Header controls
+presentation, merge/split, rejected cross-level moves and splits, absence of
+workspace drop affordances, and recovery of old saved placements. Header controls
 fit at 260 and 600 points; native press/release events toggle their values and
 pressed appearance. Hover checks cover hidden and visible close controls.
 Persistent values survive serializing and reloading the window configuration and

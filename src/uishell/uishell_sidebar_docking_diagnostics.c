@@ -158,26 +158,57 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(view->parent == second_view->parent);
   DockFailure(rd_dock_host_from_cfg(second_view, 320).kind != RD_DockHostKind_Sidebar);
   DockFailure(cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT) == &cfg_nil_node);
-  // Move a section to a Workspace Region and back through the same commands.
+  // Child workspace targets must stay absent, and commands enforce the same
+  // level boundary even when called without a drag. Old previews' saved
+  // cross-level placements must recover into the root Control Region.
   CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
   CFG_Node *panels = cfg_node_new(rd_state->cfg, workspace, str8_lit("panels"));
+  UIShell_WorkspaceMount child_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace);
+  UIShell_RegsScope(.window = window->id, .panel = view->parent->id, .view = view->id)
+  {
+    rd_drag_begin(UIShell_ContextRegSlot_View);
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0};
+    UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = v2f32(320, 240);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11)
+    { rd_panel_area_ui(scratch, r2f32p(0, 0, 640, 480), r2f32p(0, 0, 640, 480), ws, &child_mount, 1, 0, 0, 0, 0); }
+    ui_end_build();
+    char *names[] = {"center", "up", "down", "left", "right"};
+    for(U32 i = 0; i < ArrayCount(names); i++)
+    {
+      UI_Key site = ui_key_from_stringf(ui_key_zero(), "drop_split_%s_%p", names[i], panels);
+      DockFailure(!ui_box_is_nil(ui_box_from_key(site)));
+    }
+    UI_Key catchall = ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panels);
+    DockFailure(!ui_box_is_nil(ui_box_from_key(catchall)));
+    rd_drag_kill();
+  }
+  CFG_Node *original_panel = view->parent;
+  U64 before_rejected = cfg_change_gen();
+  log_scope_begin();
   before = rd_state->cmds[0].last;
   UIShell_RegsScope(.window = window->id, .panel = view->parent->id, .view = view->id,
                    .dst_panel = panels->id, .prev_tab = 0)
   { uishell_dispatch_tab_command(str8_lit("move_view")); }
   uishell_sidebar_docking_drain(before);
-  DockFailure(view->parent != panels || view->id != view_id);
-  DockFailure(rd_dock_host_from_cfg(view, 320).kind != RD_DockHostKind_WorkspaceRegion);
-  DockFailure(rd_dock_presentation(RD_DockHostKind_WorkspaceRegion, 1) != RD_DockPresentation_Tabs);
-  before = rd_state->cmds[0].last;
-  UIShell_RegsScope(.window = window->id, .panel = panels->id, .view = view->id,
-                   .dst_panel = second_view->parent->id, .prev_tab = second_view->id)
-  { uishell_dispatch_tab_command(str8_lit("move_view")); }
-  uishell_sidebar_docking_drain(before);
-  DockFailure(view->parent != second_view->parent || view->id != view_id);
-  CFG_Node *parent = view->parent;
+  UIShell_RegsScope(.window = window->id, .panel = view->parent->id, .view = view->id,
+                   .dst_panel = panels->id, .dir2 = Dir2_Right)
+  { uishell_dispatch_panel_command(str8_lit("split_panel")); }
+  LogScopeResult rejected = log_scope_end(scratch.arena);
+  DockFailure(str8_find_needle(rejected.strings[LogMsgKind_UserError], 0,
+    str8_lit("different Controlled Split level"), 0) == rejected.strings[LogMsgKind_UserError].size);
+  DockFailure(view->parent != original_panel || cfg_change_gen() != before_rejected);
+  cfg_node_unhook(rd_state->cfg, original_panel, view);
+  cfg_node_insert_child(rd_state->cfg, panels, panels->last, view);
   rd_dock_restore_window(rd_state->cfg, window);
-  DockFailure(view->parent != parent);
+  DockFailure(view->parent == panels || view->id != view_id);
+  DockFailure(rd_dock_host_from_cfg(view, 320).kind != RD_DockHostKind_Sidebar);
+  CFG_Node *recovered_panel = view->parent;
+  U64 recovered_gen = cfg_change_gen();
+  rd_dock_restore_window(rd_state->cfg, window);
+  DockFailure(view->parent != recovered_panel || cfg_change_gen() != recovered_gen);
   // Persistence crosses a new core instance, through the same code used at
   // application startup. Ephemeral declarations are excluded from storage.
   UIShell_SidebarState display = {0};
