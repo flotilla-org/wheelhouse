@@ -182,8 +182,20 @@ entry_point(CmdLine *cmdline)
   B32 expected_widths[] = {0, 0, 1, 1, 1};
   for(U64 i = 0; i < ArrayCount(query_widths); i++)
   { Check(rd_dock_drag_target(width_fixture, panels, query_widths[i]) == expected_widths[i]); }
-  // Strict command refusal explains unknown saved types; all shell-dispatched
-  // and visualizer registrations still have exhaustive creation coverage.
+  // Repairing to the current default must preserve order and generation,
+  // even if future context requirements cannot be satisfied there.
+  CFG_Node *following_view = cfg_node_new(cfg, panels, str8_lit("text"));
+  U64 before_default = cfg_change_gen();
+  CFG_Node *before_prev = width_fixture->prev;
+  rd_dock_restore_move(cfg, width_fixture, panels);
+  Check(cfg_change_gen() == before_default && width_fixture->prev == before_prev);
+  Check(width_fixture->next == following_view && panels->last == following_view);
+  // A different default still moves the same View, and repeating it is stable.
+  rd_dock_restore_move(cfg, width_fixture, floating_panel);
+  Check(width_fixture->parent == floating_panel);
+  before_default = cfg_change_gen();
+  rd_dock_restore_move(cfg, width_fixture, floating_panel);
+  Check(cfg_change_gen() == before_default && width_fixture->parent == floating_panel);
   // Unknown saved content must remain removable even though it cannot be
   // created, duplicated or offered a docking target without declared traits.
   CFG_Node *unknown_saved = cfg_node_new(cfg, panels, str8_lit("unknown_saved_view"));

@@ -55,7 +55,7 @@ rd_view_ui_rule_map_insert(Arena *arena, RD_ViewUIRuleMap *map, String8 string, 
   n->v.name = push_str8_copy(arena, string);
   n->v.ui = ui;
   n->v.registration = rd_dock_view_from_name(string);
-  Assert(n->v.registration != 0);
+  AssertAlways(n->v.registration != 0);
   SLLQueuePush(map->slots[slot_idx].first, map->slots[slot_idx].last, n);
 }
 

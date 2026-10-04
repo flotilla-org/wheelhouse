@@ -185,6 +185,16 @@ rd_dock_rule_message(RD_DockRule rule)
   return str8_lit("invalid docking rule");
 }
 
+// A default can still lack context (for example a required subject). Moving
+// a View already there would only reorder it.
+internal void
+rd_dock_restore_move(CFG_State *state, CFG_Node *view, CFG_Node *fallback)
+{
+  if(view->parent == fallback) { return; }
+  cfg_node_unhook(state, view->parent, view);
+  cfg_node_insert_child(state, fallback, fallback->last, view);
+}
+
 // Restore walks only layout containers, never View settings (whose keys can
 // also be View names). Preserve the View node, settings and identity on fallback.
 internal void
@@ -222,8 +232,7 @@ rd_dock_restore_container(CFG_State *state, CFG_Node *window, CFG_Node *containe
             fallback = child;
           }
         }
-        cfg_node_unhook(state, container, c);
-        cfg_node_insert_child(state, fallback, fallback->last, c);
+        rd_dock_restore_move(state, c, fallback);
       }
     }
     else if(rd_dock_is_container(c))
