@@ -22,7 +22,7 @@ env:
   # before setup (0.11, jackstay#48, which Porthole capture sessions need).
   # Pinned to jackstay#48's branch commit until it merges; then its squash commit.
   JACKSTAY_REV: 91156bfac2bc2f6df168c928b445c98e002f4950
-  ANDAMENTO_REV: b72a103f41424f4ee7caef15f1b1a89532dab990
+  ANDAMENTO_REV: 37c114dd742c0eef63416cdaba9fca10d18157b6
 
 jobs:
   daily-driver:
