@@ -14,13 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Cleat main after #287 (stable-handle transfer/adoption, cleat#257). Also
-  # carries output-cycle admission at the daemon boundary (#268), frame-owned
-  # OSC 8 destinations and attach relay (#283: ABI 10, packet protocol 11),
-  # lossless server handover (#284) and drain recovery (#282). Daemons,
-  # Wheelhouse and containing sessions must be restarted together across
-  # this pin (wheelhouse#97).
-  CLEAT_REV: 87b9d853be9a2858ef73f82ea8442a9ae30683e7
+  # Live clipboard effects (#304): provider ABI 11 and packet protocol 12.
+  # This also carries #298/#299/#303. Protocol-11 daemons are rejected:
+  # coordinate the Cleat fleet and Wheelhouse daily-driver rollout (#97).
+  CLEAT_REV: 00c072b207dc943f6c93fe3b6b09abaa257695a6
   # D3D11 frames in the C ABI (0.10, jackstay#46) and a host's own exchange
   # before setup (0.11, jackstay#48, which Porthole capture sessions need).
   # Pinned to jackstay#48's branch commit until it merges; then its squash commit.
@@ -118,6 +115,9 @@ jobs:
           codesign --verify --deep --strict build/Wheelhouse.app
       - name: Verify generated sources
         run: python tools/check-generated.py
+      - name: Headless terminal clipboard effects
+        if: runner.os != 'Windows'
+        run: ./build/wheelhouse --terminal_clipboard_diagnostics
       - name: Windows UI diagnostics
         if: runner.os == 'Windows'
         shell: cmd
