@@ -1,7 +1,7 @@
 # Retained subject workspaces
 
 A workspace opened from a sidebar subject stays linked to that subject when
-it ends. Show finished exposes it with an ended label and a × marker. Focusing
+it ends. Show finished exposes it with a × marker and Ended workspace hover text. Focusing
 it uses its original workspace ID; its panels and tabs are not recreated.
 Other workspaces still contains ordinary workspaces without subjects.
 
@@ -29,15 +29,17 @@ its convoy. The unrelated Workspace row remains in Other workspaces.
 - Native Linux build with clang, Cleat's `none` feature set, and the existing
   workflow-pinned Jackstay succeeds.
 - All 26 scenarios in `tools/test-native-sidebar.py` pass against Andamento
-  `76fda30` (companion PR andamento#121). They use the real daily-driver
+  `3808cbe` (companion PR andamento#121). They use the real daily-driver
   templates and C ABI, including source-heartbeat removal, alias identity,
   Show finished, focus and user close.
-- Andamento's 114 unit tests and 35 sidebar scenarios pass. Disconnect tests
+- Andamento's 114 unit tests and 40 sidebar scenarios pass. Disconnect tests
   cross the lease boundary, stay on the original project path, reconnect,
   and remain unended. Tests also cover ancestor removal, repeated authoritative
   ends, no timer, standing roles, unrelated sources and subjectless workspaces.
-- Targeted mutations removing retained catalog augmentation and terminal-phase
-  detection each fail the corresponding scenario. The new lifecycle test also
+- Targeted core mutations removing retained catalog augmentation, terminal-phase
+  detection, and explicit fact withdrawal each fail the corresponding scenario.
+  Native mutations dropping the ended glyph or letting opening override ended
+  each fail the shared-renderer diagnostics. The new lifecycle test also
   fails against the unpatched core.
 
 Reproduce the headless ABI acceptance after building:

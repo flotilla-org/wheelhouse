@@ -566,6 +566,13 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   String8 kind = uishell_sidebar_string(node.entity_kind);
   B32 subject = str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0);
   size_t copy_url = subject ? andamento_snapshot_copy_url_action(state->snapshot, node_index) : ANDAMENTO_NONE;
+  B32 ended = 0;
+  if(node.field_count > 2)
+  {
+    AndamentoField status_field = {0};
+    andamento_snapshot_field(state->snapshot, node.first_field+2, &status_field);
+    ended = str8_match(uishell_sidebar_string(status_field.text), str8_lit("ended"), 0);
+  }
   B32 can_activate = node.activate != ANDAMENTO_NONE && (node.openable || node.state == ANDAMENTO_LIVE || copy_url != ANDAMENTO_NONE);
   Temp scratch = scratch_begin(0, 0);
   sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
@@ -621,7 +628,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
         if(!duplicate) { ui_label_multiline(card_width, value); }
       }
       UI_TagF("weak")
-      { ui_label(subject ? (copy_url != ANDAMENTO_NONE ? str8_lit("Click to open · Right-click to copy URL") : str8_lit("Right-click to copy reference · URL unavailable")) : node.selected ? str8_lit("Current workspace") : can_activate ? (node.state == ANDAMENTO_LIVE ? str8_lit("Focus workspace") : str8_lit("Open workspace")) : str8_lit("No opening recipe available")); }
+      { ui_label(subject ? (copy_url != ANDAMENTO_NONE ? str8_lit("Click to open · Right-click to copy URL") : str8_lit("Right-click to copy reference · URL unavailable")) : ended ? str8_lit("Ended workspace") : node.selected ? str8_lit("Current workspace") : can_activate ? (node.state == ANDAMENTO_LIVE ? str8_lit("Focus workspace") : str8_lit("Open workspace")) : str8_lit("No opening recipe available")); }
       if(node.state == ANDAMENTO_LIVE)
       {
         rd_workspace_preview_demand_push(ws, node.workspace_id, card_width);
@@ -670,6 +677,18 @@ uishell_sidebar_action_border(void)
   return color;
 }
 
+// Inline actions and rows share terminal-state precedence. Project rows keep
+// their own spacer at the call site rather than displaying a workspace marker.
+internal String8
+uishell_sidebar_status_mark(AndamentoNode node, String8 status)
+{
+  if(str8_match(status, str8_lit("ended"), 0)) { return str8_lit("×"); }
+  if(node.state == ANDAMENTO_OPENING) { return str8_lit("…"); }
+  if(str8_match(status, str8_lit("failed"), 0)) { return str8_lit("!"); }
+  if(str8_match(status, str8_lit("waiting"), 0)) { return str8_lit("◷"); }
+  return node.state == ANDAMENTO_LIVE ? str8_lit("•") : str8_zero();
+}
+
 internal size_t
 uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
                               AndamentoNode node, U64 node_index, String8 context, B32 overview)
@@ -693,11 +712,7 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
       andamento_snapshot_field(state->snapshot, node.first_field+2, &field);
       status = uishell_sidebar_string(field.text);
     }
-    String8 mark = str8_match(status, str8_lit("ended"), 0) ? str8_lit("×") :
-      node.state == ANDAMENTO_OPENING ? str8_lit("…") :
-      str8_match(status, str8_lit("failed"), 0) ? str8_lit("!") :
-      str8_match(status, str8_lit("waiting"), 0) ? str8_lit("◷") :
-      node.state == ANDAMENTO_LIVE ? str8_lit("•") : str8_zero();
+    String8 mark = uishell_sidebar_status_mark(node, status);
     // Fixed status slot: opening/focus transitions never move the label.
     UI_ChildLayoutAxis(Axis2_X)
     {
@@ -1269,11 +1284,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                   UI_TextColor(color) { ui_label(badge); }
                 }
                 else if(project) { ui_spacer(ui_em(1.2f, 1)); }
-                else if(str8_match(status, str8_lit("ended"), 0)) { ui_label(str8_lit("×")); }
-                else if(node.state == ANDAMENTO_OPENING) { ui_label(str8_lit("…")); }
-                else if(str8_match(status, str8_lit("failed"), 0)) { ui_label(str8_lit("!")); }
-                else if(str8_match(status, str8_lit("waiting"), 0)) { ui_label(str8_lit("◷")); }
-                else { ui_label(node.state == ANDAMENTO_LIVE ? str8_lit("•") : str8_lit("")); }
+                else { ui_label(uishell_sidebar_status_mark(node, status)); }
               }
             }
             ui_spacer(ui_px(2.f, 1));
@@ -1633,6 +1644,21 @@ uishell_sidebar_diagnostics(CFG_Node *window)
   }
   char *error = 0;
   B32 ok = state->core != 0 && activate != ANDAMENTO_NONE;
+  // Terminal ended markers win over pending opening or live state. Exercise
+  // the exact shared renderer helper, including ordinary non-ended markers.
+  struct { U32 state; char *status; char *mark; } marks[] = {
+    {ANDAMENTO_OPENING, "ended", "×"}, {ANDAMENTO_LIVE, "ended", "×"},
+    {ANDAMENTO_LATENT, "ended", "×"}, {ANDAMENTO_OPENING, "failed", "…"},
+    {ANDAMENTO_LIVE, "failed", "!"}, {ANDAMENTO_LATENT, "waiting", "◷"},
+    {ANDAMENTO_LIVE, "", "•"}, {ANDAMENTO_LATENT, "", ""},
+  };
+  B32 markers_ok = 1;
+  for(U64 i = 0; i < ArrayCount(marks); i++)
+  {
+    AndamentoNode marker_node = {0}; marker_node.state = marks[i].state;
+    markers_ok = markers_ok && str8_match(uishell_sidebar_status_mark(marker_node, str8_cstring(marks[i].status)),
+                          str8_cstring(marks[i].mark), 0);
+  }
   if(ok) { ok = andamento_dispatch(state->core, state->snapshot, activate, &error); }
   ok = uishell_sidebar_result(state, ok, error);
   if(ok)
@@ -1761,8 +1787,48 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
     ok = ok && restored_live && tree.root->last->selected_tab->id == tools_id &&
          tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 2;
+    // Authoritative end and focus retain the host's user-selected overflow tab
+    // and panel identities, including content that the producer did not create.
+    String8 retained_config = push_str8f(scratch.arena, "%s\ndisplay-variable \"show-finished\" type=\"bool\" default=true label=\"Show finished\" icon=\"F\"\n",
+                                        uishell_sidebar_fixture_config);
+    error = 0;
+    ok = ok && andamento_configure(state->core, uishell_sidebar_text(retained_config), &error);
+    uishell_sidebar_result(state, ok, error);
+    AndamentoFact end_fact = {0};
+    end_fact.key = uishell_sidebar_text(str8_lit("flotilla.convoy.phase"));
+    end_fact.kind = ANDAMENTO_FACT_TEXT;
+    end_fact.text = uishell_sidebar_text(str8_lit("landed"));
+    error = 0;
+    ok = ok && andamento_apply_entity(state->core, 0, uishell_sidebar_text(str8_lit("vessel")),
+      uishell_sidebar_text(str8_lit("multi")), uishell_sidebar_text(str8_lit("fixture")), &end_fact, 1, &error);
+    uishell_sidebar_result(state, ok, error);
+    uishell_sidebar_refresh(state);
+    B32 retained_live = 0;
+    for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      if(node.workspace_id == workspace->id && node.state == ANDAMENTO_LIVE &&
+         str8_match(uishell_sidebar_string(node.entity_id), str8_lit("multi"), 0))
+      {
+        retained_live = str8_match(uishell_sidebar_string(node.label), str8_lit("Example workspace"), 0);
+        activate = node.activate;
+      }
+    }
+    ok = ok && retained_live;
+    error = 0;
+    ok = ok && andamento_dispatch(state->core, state->snapshot, activate, &error);
+    uishell_sidebar_result(state, ok, error);
+    uishell_sidebar_effects(state, &split);
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
+    ok = ok && split.inventory.count == before+1 &&
+         ws->root_controlled_split_selected_workspace_id == workspace->id &&
+         tree.root->last->selected_tab->id == tools_id &&
+         tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 2;
+
   }
-  fprintf(stderr, "Sidebar host diagnostics: %s (split layout, overflow selection, project motion, reveal, focus, close, failure, retry, restore)\n", ok ? "passed" : "FAILED");
+  ok = markers_ok && ok;
+  fprintf(stderr, "Sidebar host diagnostics: %s (split layout, overflow selection, project motion, reveal, focus, close, failure, retry, restore, ended retention, status glyphs)\n", ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;
 }
