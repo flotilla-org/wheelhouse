@@ -166,7 +166,11 @@ compact display toggles; merged panels show compact tabs. Drag the header's hove
 handle to reorder or merge sections within their owning Controlled Split level.
 Fleet sections stay available while child workspaces switch; they cannot be docked
 into those workspaces. Sections retain independent scrolling, and their panel boundaries
-resize their allocation. Display-variable toggles follow the template's persistence
+resize their allocation. Reveal expands a collapsed section to show its workspace.
+Closed sections stay closed on restart; restoring them is tracked in #183.
+Sections added by a later template are not automatically inserted into an existing
+saved arrangement; placement hints and migration remain #162's work.
+Display-variable toggles follow the template's persistence
 declarations. The native template gives worktrees workspace presence, so the git
 producer's shell recipe opens a terminal in its root. It does not use the legacy
 grouping tree in Andamento's Zellij template, which native snapshots deliberately

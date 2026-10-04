@@ -1140,9 +1140,17 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       section->next = state->sections;
       state->sections = section;
     }
-    if(sections[n] == reveal_section) { section->collapsed = 0; }
     if(section_panel && str8_match(only_section, key, 0))
     { section->collapsed = cfg_node_child_from_string(cfg_node_from_id(uishell_regs()->view), str8_lit("section_collapsed")) != &cfg_nil_node; }
+    if(sections[n] == reveal_section)
+    {
+      section->collapsed = 0;
+      if(section_panel && str8_match(only_section, key, 0))
+      {
+        CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
+        cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("section_collapsed")));
+      }
+    }
     states[n] = section;
     U64 end = n+1 < section_count ? sections[n+1] : count;
     for(U64 i = sections[n]; i < end; i++)
@@ -1653,11 +1661,19 @@ RD_VIEW_UI_FUNCTION_DEF(sidebar_section)
   CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   CFG_Node *window = rd_window_from_cfg(view);
   RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
+  // Non-composite preview surfaces own their complete presentation; they do
+  // not render the root split's fleet controls inside the preview content.
   if(ws->active_workspace_surface_entry && !ws->active_workspace_surface_entry->composite)
   { scratch_end(scratch); return; }
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   String8 key = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
   if(key.size) { uishell_sidebar_render(rect, &split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, key}); }
+  else
+  {
+    // Keep an invalid saved View visible instead of silently discarding it.
+    UI_WidthFill UI_PrefHeight(ui_em(2.2f, 1)) UI_TagF("weak")
+    { ui_label(str8_lit("Section unavailable")); }
+  }
   scratch_end(scratch);
 }
 
@@ -2168,6 +2184,38 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     andamento_effects_release(reveal_effects);
     state->reveal_workspace_id = 0;
     ok = ok && uishell_sidebar_motion_diagnostics(ws, &split, reveal_node.parent, created);
+    // Reveal must open a docked View's saved collapse state, not just the
+    // aggregate renderer's transient section state.
+    reveal_target = uishell_sidebar_reveal_target(state, created);
+    AndamentoNode reveal_section_node = {0};
+    andamento_snapshot_node(state->snapshot, reveal_target, &reveal_section_node);
+    while(!reveal_section_node.is_section && reveal_section_node.parent != ANDAMENTO_NONE)
+    { andamento_snapshot_node(state->snapshot, reveal_section_node.parent, &reveal_section_node); }
+    String8 reveal_key = uishell_sidebar_string(reveal_section_node.key);
+    CFG_Node *reveal_view = uishell_sidebar_find_view(uishell_sidebar_dock_layout(&split), reveal_key);
+    ok = ok && reveal_view != &cfg_nil_node;
+    cfg_node_child_from_string_or_alloc(rd_state->cfg, reveal_view, str8_lit("section_collapsed"));
+    UI_State *saved_reveal_ui = ui_state, *reveal_ui = ui_state_alloc();
+    ui_select_state(reveal_ui);
+    state->reveal_workspace_id = created;
+    for(U32 frame = 0; frame < 3; frame++)
+    {
+      UI_IconInfo icons = ws->ui->icon_info;
+      UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      UIShell_RegsScope(.window = window->id, .view = reveal_view->id, .panel = reveal_view->parent->id)
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_sidebar_render(r2f32p(0, 0, 320, 240), &split,
+          (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, reveal_key}); }
+      ui_end_build();
+      B32 revealed = cfg_node_child_from_string(reveal_view, str8_lit("section_collapsed")) == &cfg_nil_node &&
+                     state->reveal_workspace_id == 0;
+      if(!revealed) { fprintf(stderr, "FAIL docked section Reveal frame %u: still collapsed or request pending\n", frame); }
+      ok = revealed && ok;
+    }
+    state->reveal_workspace_id = 0;
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(reveal_view, str8_lit("section_collapsed")));
+    ui_select_state(saved_reveal_ui); ui_state_release(reveal_ui);
     ok = uishell_sidebar_scroll_diagnostics(ws, &split) && ok;
     ok = uishell_sidebar_git_diagnostics(ws, &split) && ok;
     ok = uishell_sidebar_chip_diagnostics(ws, &split) && ok;

@@ -24,11 +24,18 @@ The section key supplies the scroll identity across docking moves. Default
 vertical panels retain content-based secondary sizing; dragging a panel boundary
 switches the arrangement to saved split ratios. Double-clicking a sidebar
 boundary or explicitly resetting panels returns to automatic content sizing.
-Collapse state belongs to the View. An empty saved sidebar remains empty after
+Collapse state belongs to the View. Reveal clears the saved collapse marker before
+scrolling to its workspace, so the section remains expanded on subsequent frames.
+An invalid saved View without a section identity shows “Section unavailable”.
+An empty saved sidebar remains empty after
 restart. Initial creation waits for a valid snapshot containing sections, so a
 startup failure cannot save an empty host. Regions added by later templates are
 not inserted into an existing saved arrangement; placement hints and migration
 policy remain #162's work.
+
+Restoring intentionally closed sections is the human-requested follow-up #183.
+Consistent movement affordances for section headers and tabs are #184. Failed
+display-value restore reconciliation is tracked separately in #185.
 
 Boolean display controls use the declared glyph and tooltip label. A checked
 button has the selection fill and border. Persistent values are stored by the
@@ -40,7 +47,7 @@ core toggle behavior.
 
 ## Kiwi human review
 
-Host-direct candidate runs now use `/tmp/sidebar-docking-review/Docking Level Review.app`
+Host-direct candidate runs now use `/tmp/sidebar-docking-review/Docking Reveal Review.app`
 and disposable user/project settings. Each run included a call for human review.
 The daily driver was left untouched. The first candidate exposed an origin
 conversion error; the next run corrected it. The current candidate hides empty
@@ -48,7 +55,8 @@ sections, retains single-section headers and shows Issues, Show finished and
 Role attempts beside the count. Human review exposed that fleet sections could
 enter child workspaces and disappear from view when those workspaces changed.
 The latest candidate enforces owning levels. Its copied arrangement visibly recovers Projects, Other workspaces and Attention into a fleet-level compact-tab panel.
-Final interaction acceptance remains pending.
+A subsequent review fixed Reveal opening a collapsed docked section. Final
+interaction acceptance remains pending.
 
 The human naming choice proposes **Role history** for what Role attempts
 reveals, or grouping it with Show finished as history/detail controls. The
@@ -71,8 +79,9 @@ The macOS debug build passes. Native panel diagnostics exercise the shared host
 at a nonzero origin, alternating fractional wheel events between two overflowing
 sections, independent offsets, idle-frame stability, bounds, singleton header
 presentation, merge/split, rejected cross-level moves and splits, absence of
-workspace drop affordances, and recovery of old saved placements. Header controls
-fit at 260 and 600 points; native press/release events toggle their values and
+workspace drop affordances, and recovery of old saved placements. Docked-section
+Reveal was reproduced failing on three consecutive frames before the saved
+collapse-state override was corrected; its regression now passes. Header controls fit at 260 and 600 points; native press/release events toggle their values and
 pressed appearance. Hover checks cover hidden and visible close controls.
 Persistent values survive serializing and reloading the window configuration and
 creating a new core; ephemeral declarations are skipped. Startup checks cover
