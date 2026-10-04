@@ -22,6 +22,7 @@ uishell_sidebar_card_close(UIShell_HoverCard *card)
   card->open = card->engaged = card->focused = 0;
   card->candidate = str8_zero();
   card->candidate_since = card->left_at = 0;
+  card->corridor_active = 0;
 }
 
 // A bounded triangle toward the nearest card edge protects diagonal travel.
@@ -63,6 +64,7 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, AndamentoNode node, UI_Key sou
   card->changed_at = now;
   card->glide_from = card->rect.p0;
   card->left_at = 0;
+  card->corridor_active = 0;
   card->scroll = 0;
   card->open = 1;
   card->engaged = card->focused = 0;
@@ -293,7 +295,7 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
     seen[bucket] = i;
     if(!related_label) { UI_TagF("weak") { ui_label(str8_lit("Related")); } related_label = 1; }
     if(!interactive) { ui_label_multiline(width, uishell_sidebar_string(related.label)); continue; }
-    UI_Signal link = uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###related_%I64u_%I64u", uishell_sidebar_string(related.label), slot, i));
+    UI_Signal link = uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###related_%I64u_%I64u_%S_%S", uishell_sidebar_string(related.label), slot, related_kind.size, related_kind, related_id));
     if(ui_clicked(link))
     {
       if(link.event_flags & (WM_Modifier_Super|WM_Modifier_Ctrl))

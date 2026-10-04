@@ -138,6 +138,15 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3500000);
   for(U64 i = 0; i < 40; i++) { uishell_sidebar_card_navigate(card, str8_lit("additional target"), 3500001+i); }
   CardCheck(card->depth == 41, "long navigation paths grow instead of silently refusing a link");
+  // Closing while crossing a protected corridor must not suppress future hovers.
+  card->corridor_active = 1;
+  uishell_sidebar_card_close(card);
+  test->mouse = v2f32(50, 115);
+  UI_Box next_source = source; next_source.key = ui_key_make(710);
+  UI_Signal next_hover = hover; next_hover.box = &next_source;
+  uishell_sidebar_card_source_at(&fixture, b, next_hover, str8_zero(), 0, 3550000);
+  uishell_sidebar_card_source_at(&fixture, b, next_hover, str8_zero(), 0, 3850000);
+  CardCheck(card->open && !card->corridor_active, "closing an active corridor allows a new 300ms hover");
   // Build two real overlapping buttons and send a click over the overlay.
   UI_IconInfo icons = saved_window_ui->icon_info;
   UI_AnimationInfo animation = {0};
