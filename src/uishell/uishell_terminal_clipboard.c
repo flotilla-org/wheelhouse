@@ -80,6 +80,7 @@ uishell_terminal_clipboard_reject(UIShell_TerminalViewState *tv, char const *rea
   U64 previous = tv->clipboard_rejected;
   tv->clipboard_rejected += Min(count, max_U64-tv->clipboard_rejected);
   // Bounded diagnostics, with no application payload in the log.
+  // count is the cumulative total; lost_or_rejected is this observation's delta.
   if(previous < 4)
   { fprintf(stderr, "terminal clipboard effect discarded (view=%llu count=%llu lost_or_rejected=%llu reason=%s)\n",
             (unsigned long long)tv->clipboard_view_id, (unsigned long long)tv->clipboard_rejected, (unsigned long long)count, reason); }
