@@ -39,9 +39,13 @@ jobs:
             - Test coverage
 
             Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
-            Use Read, Glob, and Grep to inspect local files. If CLAUDE.md is absent,
-            use CONTEXT.md and the relevant design notes. Local shell commands
-            are not allowed by this review workflow.
+            START by running `gh pr diff ${{ github.event.pull_request.number }}` (and
+            `gh pr view ${{ github.event.pull_request.number }}` for the description) to see
+            exactly what changed. These `gh` commands are allowed; the checkout is a
+            merge commit, so the working tree alone does not show the change.
+            Use Read, Glob, and Grep to inspect surrounding files. If CLAUDE.md is absent,
+            use CONTEXT.md and the relevant design notes. Shell commands other than
+            the allowed `gh` commands are not available in this review workflow.
 
             AFTER reviewing, 
               * CHECK your findings against the existing comments and replies on the PR. e.g if followup issues are filed or the implementor pushed back, make sure that is 
