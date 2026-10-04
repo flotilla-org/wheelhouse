@@ -34,7 +34,7 @@ change preview attachment policy (#89).
 
 ## Placements and kiwi review
 
-Near placement opens below the source row with a 16-point gap, overlapping the
+Near is the default placement. It opens below the source row with a 16-point gap, overlapping the
 sidebar edge. When there is insufficient space below, it uses the space above.
 The gap leaves adjacent pills reachable while the safe corridor still protects
 diagonal entry.
@@ -45,7 +45,9 @@ scroll region so actions and details remain reachable.
 
 Separate candidate applications and settings live under
 `/tmp/wheelhouse-hover-review/`. The daily driver has not been restarted or
-replaced. Native human acceptance and the final placement choice are pending.
+replaced. On 2026-10-04, after reviewing the refreshed candidates on kiwi,
+the operator accepted phase 1: “That looks good. Lets default to near”.
+Near remains the default; Outside remains available through User Settings.
 The automation tool's synthetic pointer does not update the native global
 mouse position that Wheelhouse reads, so its synthetic hover is not evidence
 of physical pointer acceptance.

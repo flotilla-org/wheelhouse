@@ -103,8 +103,8 @@ chips. Move into a card to reveal actions and related navigation; click it to
 keep it open and give it keyboard focus. Escape dismisses a click-focused card,
 while a peek leaves Escape with the focused View. Related items navigate inside
 the card with Back; Cmd-click or Ctrl-click opens a second
-card. User Settings includes **Hover Cards Outside Sidebar** for the alternate
-placement. Both states retain live workspace previews. See the
+card. Near is the default placement. User Settings includes **Hover Cards
+Outside Sidebar** for the alternate placement. Both states retain live workspace previews. See the
 [acceptance notes](docs/hover-card-acceptance.md).
 
 Run `./build/wheelhouse --sidebar_fixture` with temporary user/project files to
