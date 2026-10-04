@@ -11,7 +11,7 @@ expiry, empty drains during disconnects, and subsequent reassertions are
 unobserved periods, which preserve the existing path without marking it ended.
 A standing role outlives the terminal phase of its current attempt.
 
-Retained paths are held while their workspace remains open. No timeout runs:
+Retained paths are held while their workspace remains open. No timeout runs ([policy follow-up #159](https://github.com/flotilla-org/wheelhouse/issues/159)):
 `retained_workspace_expired` in Andamento is the policy seam for #159's later
 expiry decision. Historical search and log navigation remain outside this slice.
 
@@ -29,10 +29,10 @@ its convoy. The unrelated Workspace row remains in Other workspaces.
 - Native Linux build with clang, Cleat's `none` feature set, and the existing
   workflow-pinned Jackstay succeeds.
 - All 26 scenarios in `tools/test-native-sidebar.py` pass against Andamento
-  `3808cbe` (companion PR andamento#121). They use the real daily-driver
+  `1527d80` (companion PR andamento#121). They use the real daily-driver
   templates and C ABI, including source-heartbeat removal, alias identity,
   Show finished, focus and user close.
-- Andamento's 114 unit tests and 40 sidebar scenarios pass. Disconnect tests
+- Andamento's 114 unit tests and 41 sidebar scenarios pass. Disconnect tests
   cross the lease boundary, stay on the original project path, reconnect,
   and remain unended. Tests also cover ancestor removal, repeated authoritative
   ends, no timer, standing roles, unrelated sources and subjectless workspaces.
