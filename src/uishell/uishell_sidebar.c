@@ -1151,7 +1151,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
               {
                 RD_IconKind icon = RD_IconKind_FileOutline;
                 if(str8_match(kind, str8_lit("project"), 0)) { icon = RD_IconKind_FolderClosedOutline; }
-                else if(str8_match(kind, str8_lit("convoy"), 0)) { icon = RD_IconKind_Threads; }
+                else if(str8_match(kind, str8_lit("convoy"), 0) || str8_match(kind, str8_lit("role"), 0)) { icon = RD_IconKind_Threads; }
                 else if(str8_match(kind, str8_lit("vessel"), 0) || str8_match(kind, str8_lit("session"), 0)) { icon = RD_IconKind_Machine; }
                 ui_label(rd_icon_kind_text_table[icon]);
               }

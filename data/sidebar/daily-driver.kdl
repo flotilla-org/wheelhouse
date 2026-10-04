@@ -78,7 +78,9 @@ template "project/native" {
   field "label" key="display.label"
   // Standing roles (flotilla#1908) are actions on the project row, selected by
   // kind rather than by any convoy or role name.
-  for "role" kind="role" {
+  // Inline while history is hidden; the native renderer keeps non-leaf roles
+  // as rows when Role attempts exposes their descendants.
+  for "role" kind="role" layout="inline" {
     match "flotilla.project" of="project"
     order "flotilla.role.name"
     apply-template "role/native"
