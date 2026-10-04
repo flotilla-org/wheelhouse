@@ -53,7 +53,8 @@ struct UIShell_SidebarState
   UIShell_HoverCard cards[2];
   Rng2F32 rect;
   B32 card_escape_down;
-  size_t card_action;
+  String8 card_action_key;
+  B32 card_action_copy_url;
   B32 card_has_action;
   Andamento *core;
   AndamentoSnapshot *snapshot;
@@ -926,8 +927,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
     uishell_sidebar_expand_reveal(state);
   }
   state->rect = rect;
-  size_t action = state->card_has_action ? state->card_action : ANDAMENTO_NONE;
-  state->card_has_action = 0;
+  size_t action = uishell_sidebar_card_take_action(state);
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size(), row_height = floor_f32(em*2.2f);
   F32 minimum_name = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, str8_lit("abcdefghij…")).x+em;

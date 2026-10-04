@@ -25,6 +25,29 @@ uishell_sidebar_card_find(UIShell_SidebarState *state, String8 key, AndamentoNod
   return ANDAMENTO_NONE;
 }
 
+// Pending intent is frame-local. Resolve only after sidebar reconciliation and
+// reveal have finished replacing snapshots; no action index crosses that seam.
+internal void
+uishell_sidebar_card_queue_action(UIShell_SidebarState *state, AndamentoNode node, size_t action)
+{
+  state->card_action_key = push_str8_copy(ui_build_arena(), uishell_sidebar_string(node.key));
+  state->card_action_copy_url = action != node.activate;
+  state->card_has_action = 1;
+}
+
+internal size_t
+uishell_sidebar_card_take_action(UIShell_SidebarState *state)
+{
+  B32 pending = state->card_has_action, copy_url = state->card_action_copy_url;
+  String8 key = state->card_action_key;
+  state->card_has_action = 0;
+  state->card_action_key = str8_zero();
+  AndamentoNode node = {0};
+  U64 index = pending ? uishell_sidebar_card_find(state, key, &node) : ANDAMENTO_NONE;
+  if(index == ANDAMENTO_NONE) { return ANDAMENTO_NONE; }
+  return copy_url ? andamento_snapshot_copy_url_action(state->snapshot, index) : node.activate;
+}
+
 internal void
 uishell_sidebar_card_close(UIShell_HoverCard *card)
 {
@@ -379,7 +402,10 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
 {
   UIShell_SidebarState *state = ws->sidebar;
   if(!state) { return; }
+  // Abandon any unconsumed intent from the previous frame. A hidden sidebar
+  // closes cards below, before their controls can emit a new intent.
   state->card_has_action = 0;
+  state->card_action_key = str8_zero();
   Rng2F32 window = wm_client_rect_from_window(ws->os);
   Vec2F32 mouse = ui_state->mouse;
   ui_state->hover_card_focus = 0;
@@ -520,7 +546,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
         ui_signal_from_box(root);
       }
     }
-    if(action != ANDAMENTO_NONE) { state->card_action = action; state->card_has_action = 1; rd_request_frame(); }
+    if(action != ANDAMENTO_NONE) { uishell_sidebar_card_queue_action(state, node, action); rd_request_frame(); }
   }
   // Buttons can close a card or transfer focus while building its content.
   // Update before the selected View gets any remaining keyboard events.

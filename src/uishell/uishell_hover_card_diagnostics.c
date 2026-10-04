@@ -425,6 +425,36 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 0); ui_end_build();
       CardCheck(!card->open && !fixture.cards[1].open && !fixture.card_has_action && !test->hover_card_focus,
                 "hidden sidebar closes both cards before an action can be emitted");
+      // A reveal/observe refresh can replace the snapshot after the card emits
+      // its intent but before sidebar dispatch. Never retain the old index.
+      AndamentoNode action_node = {0};
+      U64 action_index = uishell_sidebar_card_find(&fixture, card->path[0], &action_node);
+      size_t copy_action = andamento_snapshot_copy_url_action(fixture.snapshot, action_index);
+      CardCheck(copy_action != ANDAMENTO_NONE, "refresh trace starts with a Copy URL action");
+      uishell_sidebar_card_queue_action(&fixture, action_node, copy_action);
+      AndamentoFact refreshed_title = {.key = uishell_sidebar_text(str8_lit("flotilla.change_request.title")),
+                                       .kind = ANDAMENTO_FACT_TEXT, .text = uishell_sidebar_text(str8_lit("Refreshed title"))};
+      CardCheck(andamento_apply_entity(fixture.core, 0, uishell_sidebar_text(str8_lit("change_request")),
+                uishell_sidebar_text(str8_lit("pr-281")), uishell_sidebar_text(str8_lit("fixture")), &refreshed_title, 1, 0),
+                "refresh trace updates the selected entity");
+      uishell_sidebar_refresh(&fixture);
+      action_index = uishell_sidebar_card_find(&fixture, fixture.card_action_key, &action_node);
+      copy_action = andamento_snapshot_copy_url_action(fixture.snapshot, action_index);
+      CardCheck(copy_action != ANDAMENTO_NONE && uishell_sidebar_card_take_action(&fixture) == copy_action &&
+                !fixture.card_has_action && uishell_sidebar_card_take_action(&fixture) == ANDAMENTO_NONE,
+                "Copy URL intent resolves against the refreshed snapshot exactly once");
+      uishell_sidebar_card_queue_action(&fixture, action_node, action_node.activate);
+      CardCheck(action_node.activate != ANDAMENTO_NONE && uishell_sidebar_card_take_action(&fixture) == action_node.activate,
+                "Open intent remains distinct from Copy URL intent");
+      uishell_sidebar_card_queue_action(&fixture, action_node, copy_action);
+      String8 remove_url = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"pr-281\"}},\"source_id\":\"fixture\",\"set\":{},\"unset\":[\"flotilla.forge\"]}");
+      CardCheck(andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(remove_url), 0), "refresh trace removes URL metadata");
+      uishell_sidebar_refresh(&fixture);
+      action_index = uishell_sidebar_card_find(&fixture, fixture.card_action_key, &action_node);
+      CardCheck(action_index != ANDAMENTO_NONE && andamento_snapshot_copy_url_action(fixture.snapshot, action_index) == ANDAMENTO_NONE,
+                "refresh keeps the entity but removes its Copy URL action");
+      CardCheck(uishell_sidebar_card_take_action(&fixture) == ANDAMENTO_NONE && !fixture.card_has_action,
+                "refresh drops a removed action rather than dispatching an old snapshot index");
     }
   }
   ws->sidebar = saved_sidebar; ws->ui = saved_window_ui;

@@ -77,18 +77,21 @@ terminal links, tooltip, panel, managed content and terminal glyphs. The
 existing 27 native ABI/width tests and generated-fixture locale/newline test
 pass, and generated sources match.
 
-The tooltip diagnostic also runs hover-card checks through production seams:
-300 ms opening, immediate replacement and outgoing content, diagonal and
-stationary corridor traces, 400 ms closing, click focus, Escape press/release,
-outside dismissal and target activation, overlapping two-card hit order, focus loss while Escape is held, long paths, Related/Back
-widget activation, independent closure of the second card, path retention and exclusion of underlying pointer events,
-including a batched click whose final pointer position is elsewhere. Full
-controller layout checks ensure that fields and controls occupy separate rows
-and that initial bounds include the measured content. Cross-fade layers share
-the same origin. Actual
-body construction checks flat title fields, engagement-only actions, preview
-boxes and live preview demand in both states. These tests do not establish
-physical native acceptance.
+The tooltip diagnostic also runs hover-card checks through production seams: 300
+ms opening, immediate replacement and outgoing content, diagonal and stationary
+corridor traces, 400 ms closing, click focus, Escape press/release, outside
+dismissal and target activation, overlapping two-card hit order, focus loss
+while Escape is held, long paths, Related/Back widget activation, independent
+closure of the second card, path retention and exclusion of underlying pointer
+events, including a batched click whose final pointer position is elsewhere.
+Full controller layout checks ensure that fields and controls occupy separate
+rows and that initial bounds include the measured content. Cross-fade layers
+share the same origin. Actual body construction checks flat title fields,
+engagement-only actions, preview boxes and live preview demand in both states.
+These tests do not establish physical native acceptance. Card actions retain
+only a stable target key and action kind until sidebar dispatch; a snapshot-
+refresh trace checks both valid resolution and cancellation when the selected
+action disappears.
 
 ## Phase 2
 
