@@ -365,6 +365,7 @@ typedef U64 UI_BoxFlags;
 # define UI_BoxFlag_ScrollPrecise             (UI_BoxFlags)(1ull<<56)
 // Opt-in ordered motion messages for controls with per-event pointer ownership.
 # define UI_BoxFlag_CollectMouseMotion        (UI_BoxFlags)(1ull<<57)
+# define UI_BoxFlag_CollectScrollEvents       (UI_BoxFlags)(1ull<<58)
 
 //- rjf: debug
 # define UI_BoxFlag_Debug                     (UI_BoxFlags)(1ull<<53)
@@ -548,8 +549,8 @@ struct UI_Signal
   Vec2S16 scroll;
   Vec2F32 scroll_px; // precise movement, only for ScrollPrecise consumers
   UI_SignalFlags f;
-  // Claimed button presses/releases, in order, with their original positions
-  // and modifiers. Copies live for this build, like other UI event data.
+  // Claimed button and opted-in wheel events in order, with original
+  // positions and modifiers. Copies live for this build, like other UI event data.
   UI_EventList mouse_events;
 };
 

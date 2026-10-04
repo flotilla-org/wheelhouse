@@ -10138,8 +10138,11 @@ rd_frame(void)
                                             (event->kind == WM_EventKind_Press ||
                                              event->kind == WM_EventKind_Release ||
                                              event->kind == WM_EventKind_Text));
-      B32 take = 0;
-      if(ws != 0 && ws != &rd_nil_window_state &&
+      String8 repeat_page_command = {0};
+      B32 take = uishell_terminal_page_binding_event(ws, event,
+        terminal_input_is_focused ? focused_view->id : 0, &repeat_page_command);
+      if(repeat_page_command.size) { uishell_cmd("run_command", .cmd_name = repeat_page_command); }
+      if(!take && ws != 0 && ws != &rd_nil_window_state &&
          !rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused)
         take = uishell_jackstay_event(focused_view->id,event);
       
@@ -10225,6 +10228,8 @@ rd_frame(void)
                 cmd_name = RD_APP_BINDING_VERSION_REMAP_NEW_NAME_TABLE[idx];
               }
             }
+            if(terminal_input_is_focused)
+            { uishell_terminal_page_binding_accept(ws, event->key, cmd_name, focused_view->id); }
             uishell_cmd("run_command", .cmd_name = cmd_name);
             if(allow_text_hotkeys)
             {

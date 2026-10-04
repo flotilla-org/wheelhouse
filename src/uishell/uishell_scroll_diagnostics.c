@@ -364,6 +364,10 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
     ui_state_release(test_ui);
   }
   failures += !uishell_terminal_selection_ui_diagnostics(ws);
+  failures += !uishell_terminal_override_ui_diagnostics(ws);
+#if OS_MAC
+  failures += !uishell_terminal_override_appkit_diagnostics();
+#endif
   failures += !uishell_scroll_preview_diagnostics(ws);
   failures += !uishell_precise_list_diagnostics(ws);
   fprintf(stderr, "Scroll region diagnostics: %u failures\n", failures);
