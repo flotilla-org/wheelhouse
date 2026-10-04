@@ -27,6 +27,11 @@ To assign a local role icon, select a template explicitly, for example a
 with `source="literal" value="gear" prefix="chip-icon-override:"`. Match that
 role loop on `flotilla.role.name`, rather than changing the renderer. Producer
 suggestions still win. The shipped template leaves the override empty.
+Keep the inherited field order when extending a native template: the renderer
+expects the presentation marker after one field for projects, four for roles
+and three for other entries. Adding or removing earlier fields disables the
+presentation block, so chips use their defaults. Typed ABI metadata will
+eventually replace this convention.
 
 ## Kiwi human review
 
@@ -58,9 +63,9 @@ The fixture forge uses `/review/` and `/ticket/` to expose hard-coded URL shapes
 
 ## Verification
 
-The macOS debug build uses the vessel's Cleat and Andamento checkouts, kiwi's
-prepared Ghostty prefix, and `/Users/robert/dev/jackstay` at the workflow-pinned
-revision. The 26 native ABI tests include the production width resolver's name
+The macOS debug build uses the vessel's Cleat and Andamento checkouts, the
+prepared Ghostty library, and the workflow-pinned Jackstay revision.
+The 26 native ABI tests include the production width resolver's name
 ladder, quiet fold order, protected workspace and extreme-width behavior.
 The generated-fixture locale/newline test passes.
 

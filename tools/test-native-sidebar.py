@@ -2,6 +2,7 @@
 """Check the shipped native template against Andamento's real typed C ABI."""
 import ctypes as C
 import json
+import os
 import shutil
 from pathlib import Path
 import sys
@@ -125,8 +126,10 @@ class NativeSidebarTests(unittest.TestCase):
         parent = next(i for i, n in enumerate(nodes) if n.entity_id.string() == identity)
         return [n for n in nodes if n.parent == parent]
 
-    @unittest.skipUnless(shutil.which("cc"), "A C compiler is required for the standalone layout test")
+    @unittest.skipUnless(shutil.which('cc') or (os.environ.get('CI') == 'true' and sys.platform != 'win32'),
+                         'A C compiler is required for the standalone layout test')
     def test_chip_layout_width_ladder_and_attention(self):
+        self.assertIsNotNone(shutil.which('cc'), 'C compiler required for Unix CI width coverage')
         # Exercise the production resolver with measured widths independent of
         # the native display. Status space is subtracted by the caller.
         import subprocess
