@@ -1083,6 +1083,40 @@ wm_get_selection_text(Arena *arena)
   return push_str8_copy(arena, w32_wm_selection_text);
 }
 
+internal B32
+wm_apply_clipboard_write(U32 destination, B32 clear, String8 text)
+{
+  if(destination > 1) { return 0; }
+  if(destination == 1) { wm_set_selection_text(clear ? str8_zero() : text); return 1; }
+  Temp scratch = scratch_begin(0, 0);
+  HANDLE allocation = 0;
+  B32 result = 0;
+  if(!clear)
+  {
+    String16 wide = str16_from_8(scratch.arena, text);
+    allocation = GlobalAlloc(GMEM_MOVEABLE, (wide.size+1)*sizeof(U16));
+    U16 *buffer = allocation ? GlobalLock(allocation) : 0;
+    if(!buffer) { if(allocation) { GlobalFree(allocation); } scratch_end(scratch); return 0; }
+    MemoryCopy(buffer, wide.str, wide.size*sizeof(U16));
+    buffer[wide.size] = 0;
+    GlobalUnlock(allocation);
+  }
+  // EmptyClipboard requires an owner HWND for a subsequent SetClipboardData.
+  HWND owner = w32_wm_state && w32_wm_state->first_window ? w32_wm_state->first_window->hwnd : 0;
+  if(owner && OpenClipboard(owner))
+  {
+    if(EmptyClipboard())
+    {
+      result = clear || SetClipboardData(CF_UNICODETEXT, allocation) != 0;
+      if(result && !clear) { allocation = 0; } // ownership transferred to Windows
+    }
+    CloseClipboard();
+  }
+  if(allocation) { GlobalFree(allocation); }
+  scratch_end(scratch);
+  return result;
+}
+
 ////////////////////////////////
 //~ rjf: @os_hooks Windows (Implemented Per-OS)
 

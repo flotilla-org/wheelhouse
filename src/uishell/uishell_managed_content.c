@@ -57,6 +57,7 @@ uishell_managed_commit(UIShell_SidebarState *state, CFG_Node *workspace, CFG_Nod
     tv->initialized = 1;
     tv->provider = provider;
     tv->session = session;
+    uishell_terminal_clipboard_register(tv, view->id, uishell_regs()->window);
     vs->release_user_data = uishell_terminal_runtime_release;
     cleat_provider_set_wake_callback(provider, uishell_terminal_provider_wake, tv);
   }

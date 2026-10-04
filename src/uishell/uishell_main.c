@@ -94,6 +94,8 @@
 #include "uishell/uishell_views.c"
 #include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
+#include "uishell/uishell_terminal_clipboard.c"
+#include "uishell/uishell_terminal_clipboard_diagnostics.c"
 #include "uishell/uishell_terminal_selection_diagnostics.c"
 #include "uishell/uishell_edit_diagnostics.c"
 #include "uishell/uishell_scroll_diagnostics.c"
@@ -144,6 +146,8 @@ internal void
 entry_point(CmdLine *cmd_line)
 {
   if(!uishell_prepare_terminal_environment()) { abort_self(1); }
+  if(cmd_line_has_flag(cmd_line, str8_lit("terminal_clipboard_diagnostics")))
+  { abort_self(uishell_terminal_clipboard_diagnostics() ? 0 : 1); }
   // Pure terminal model checks also run in headless build environments.
   if(cmd_line_has_flag(cmd_line, str8_lit("terminal_link_diagnostics")))
   { abort_self(uishell_terminal_link_diagnostics() ? 0 : 1); }
@@ -333,6 +337,7 @@ entry_point(CmdLine *cmd_line)
                                     "Check the fixture sidebar workspace bridge and exit (use temporary user/project files).\n\n"
                                     "--terminal_fixture\n"
                                     "Open the deterministic terminal glyph fixture on startup.\n\n"
+                                    "--terminal_clipboard_diagnostics\nCheck live clipboard effect policy, ownership, bounds and consumption with fake sinks and exit.\n\n"
                                     "--terminal_selection_diagnostics\nCheck terminal selection bounds, lifetime, Copy and gesture traces and exit.\n\n"
                                     "--terminal_glyph_diagnostics\n"
                                     "Run terminal glyph placement diagnostics and exit.\n\n"
