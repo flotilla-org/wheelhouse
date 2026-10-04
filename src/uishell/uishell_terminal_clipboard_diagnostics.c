@@ -4,7 +4,7 @@ typedef struct UIShell_ClipboardFixture UIShell_ClipboardFixture;
 struct UIShell_ClipboardFixture
 {
   cleat_clipboard_event events[32];
-  U64 count, acquired, released, writes, clears, lost;
+  U64 count, acquired, released, writes, clears, lost, context_calls;
   U32 destination;
   U8 text[KB(64)+1];
   String8 last_text;
@@ -37,6 +37,7 @@ internal UIShell_TerminalClipboardContext
 uishell_clipboard_fixture_context(void *user, UIShell_TerminalViewState *tv)
 {
   UIShell_ClipboardFixture *f = user;
+  f->context_calls++;
   return f->contexts[tv == &f->views[1]];
 }
 internal void
@@ -52,6 +53,7 @@ uishell_clipboard_fixture_host_context(void *user, UIShell_TerminalViewState *tv
 {
   UIShell_ClipboardFixture *f = user;
   // Only OS window focus and provider role/capability are injected boundaries.
+  f->context_calls++;
   return uishell_terminal_clipboard_host_context(tv, f->contexts[0].window_active,
     f->contexts[0].controller, f->contexts[0].supported);
 }
@@ -79,6 +81,7 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   cfg_node_new(cfg, preview, str8_lit("selected"));
   RD_WindowState *ws = push_array(arena, RD_WindowState, 1);
   ws->ui = push_array(arena, UI_State, 1);
+  ws->ui->edit_owner_terminal = 1; ws->ui->edit_owner_user = tv; ws->ui->edit_owner_view = view->id;
   ws->cfg_id = window->id; ws->root_controlled_split_initialized = 1;
   ws->root_controlled_split_selected_workspace_id = workspace->id;
   rd_state->window_state_last_accessed_id = window->id; rd_state->window_state_last_accessed = ws;
@@ -101,7 +104,7 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   // modal focus, preview/overview, replay, inactivity and capability demotion.
   B32 *gates[] = {&ws->query_is_active, &ws->menu_bar_focused, &ws->hover_eval_focused,
     &rd_state->popup_active, &ws->ui->ctx_menu_open, &ws->ui->next_ctx_menu_open, &ws->workspace_zoom_open, &rd_state->frame_replay.suppress_input, &rd_state->quit};
-  for(U64 i = 0; i < ArrayCount(gates)+7; i++)
+  for(U64 i = 0; i < ArrayCount(gates)+8; i++)
   {
     U64 before = f->writes;
     if(i < ArrayCount(gates)) { *gates[i] = 1; }
@@ -114,12 +117,13 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
       case 4: f->contexts[0].controller = 0; break;
       case 5: f->contexts[0].window_active = 0; break;
       case 6: f->contexts[0].supported = 0; break;
+      case 7: ws->ui->edit_owner_user = 0; break;
     }
     uishell_clipboard_fixture_event(f, ++sequence, 0, 1, str8_lit("ineligible"));
     uishell_terminal_clipboard_dispatch_with_ops(&ops);
     HostClipboardCheck(f->writes == before && f->released == 1, "current host context suppresses stale ownership");
     if(i < ArrayCount(gates)) { *gates[i] = 0; }
-    tv->focus_active = 1; tv->input_frame = 9; vs->user_data = tv;
+    tv->focus_active = 1; tv->input_frame = 9; vs->user_data = tv; ws->ui->edit_owner_user = tv;
     ws->root_controlled_split_selected_workspace_id = workspace->id;
     f->contexts[0] = (UIShell_TerminalClipboardContext){.allowed=1, .input_owner=1, .window_active=1, .live=1, .controller=1, .supported=1};
     f->acquired = f->released = 0;
@@ -266,7 +270,9 @@ uishell_terminal_clipboard_diagnostics(void)
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
   ClipboardCheck(f->writes == before && f->released == 1, "failed native attempt never retries");
   // Redraw, resize, refresh and repeated wakes see an empty queue; none repeat.
+  U64 contexts_before_idle = f->context_calls;
   for(U32 wake = 0; wake < 5; wake++) { uishell_terminal_clipboard_dispatch_with_ops(&ops); }
+  ClipboardCheck(f->context_calls == contexts_before_idle, "idle queues never resolve host configuration");
   ClipboardCheck(f->writes == before, "empty effect-only wakes never redraw/replay clipboard");
   // Two references to the same session elect the active view before acquisition,
   // then retain the consumed identity when the active reference is removed.

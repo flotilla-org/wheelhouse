@@ -224,6 +224,7 @@ uishell_terminal_clipboard_host_context(UIShell_TerminalViewState *tv, B32 windo
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   UIShell_WorkspaceMount *mount = uishell_controlled_split_selected_mount(&split);
   result.input_owner = mount->panel_tree.focused->selected_tab == view && tv->focus_active &&
+    ws->ui && ws->ui->edit_owner_terminal && ws->ui->edit_owner_user == tv && ws->ui->edit_owner_view == view->id &&
     tv->input_frame + 1 == rd_state->frame_index && !ws->query_is_active && !rd_state->popup_active && !ws->menu_bar_focused && !ws->hover_eval_focused && (!ws->ui || (!ws->ui->ctx_menu_open && !ws->ui->next_ctx_menu_open));
   result.window_active = window_active;
   result.live = !rd_state->quit && !ws->workspace_zoom_open &&
