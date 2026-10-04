@@ -864,13 +864,14 @@ wm_get_selection_text(Arena *arena)
   return result;
 }
 
+// Validated application writes use explicit destinations; no selection UI changes.
 internal B32
 wm_apply_clipboard_write(U32 destination, B32 clear, String8 text)
 {
   if(destination > 1) { return 0; }
   NSPasteboard *pasteboard = destination == 0 ? [NSPasteboard generalPasteboard] : mac_wm_selection_pasteboard();
-  NSString *string = clear ? nil : [[NSString alloc] initWithBytes:text.str length:text.size encoding:NSUTF8StringEncoding];
-  if(!clear && string == nil) { return 0; }
+  NSString *string = clear ? NULL : [[NSString alloc] initWithBytes:text.str length:text.size encoding:NSUTF8StringEncoding];
+  if(!clear && string == NULL) { return 0; }
   [pasteboard clearContents];
   B32 result = clear || [pasteboard setString:string forType:NSPasteboardTypeString];
   [string release];
@@ -880,7 +881,6 @@ wm_apply_clipboard_write(U32 destination, B32 clear, String8 text)
 ////////////////////////////////
 //~ @os_hooks Windows (Implemented Per-OS)
 
-// Validated application writes use explicit destinations; no selection UI changes.
 internal WM_Window
 wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
 {
