@@ -234,6 +234,11 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
       else { rd_request_frame(); }
     }
   }
+  if(!interactive && card->depth == 1 && andamento_snapshot_copy_url_action(state->snapshot, index) != ANDAMENTO_NONE &&
+     (str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0)))
+  {
+    UI_TagF("weak") { ui_label_multiline(width, str8_lit("Source row: click to open · Right-click to copy URL")); }
+  }
   // ABI 2 has placement edges, not typed relation fields. Offer its parent and
   // direct children, deduplicated by entity, without parsing resolved prose.
   U64 count = andamento_snapshot_node_count(state->snapshot);
@@ -337,6 +342,16 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
   MemoryZeroArray(ui_state->hover_card_rects);
   B32 outside = uishell_hover_cards_outside || rd_setting_b32_from_name(str8_lit("hover_cards_outside_sidebar"));
   if(!window_focused) { state->card_escape_down = 0; }
+  // Seed both previous-frame bounds before building the lower card's controls.
+  // Raw WM routing also uses these bounds; each layout refreshes its own mask.
+  for(U64 slot = 0; slot < ArrayCount(state->cards); slot++)
+  {
+    if(state->cards[slot].open && window_focused && !ui_any_ctx_menu_is_open())
+    {
+      ui_state->hover_card_keys[slot] = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", slot);
+      ui_state->hover_card_rects[slot] = state->cards[slot].rect;
+    }
+  }
   for(U64 slot = 0; slot < ArrayCount(state->cards); slot++)
   {
     UIShell_HoverCard *card = &state->cards[slot];
@@ -405,7 +420,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
         UI_Parent(scroll.content_box) UI_PrefWidth(ui_px(content_width, 1))
         UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
         {
-          UI_FixedY(-card->scroll) { content = ui_build_box_from_key(0, content_key); }
+          UI_FixedX(0) UI_FixedY(-card->scroll) { content = ui_build_box_from_key(0, content_key); }
           UI_Parent(content) UI_PrefWidth(ui_px(content_width, 1)) UI_PrefHeight(ui_em(1.6f, 1))
           UI_TextAlignment(UI_TextAlign_Left) UI_Transparency(card->previous.size ? 1-t : 0)
           { action = uishell_sidebar_card_content(state, ws, card, slot, node, index, content_width, card->engaged); }
@@ -419,7 +434,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
             UI_ChildLayoutAxis(Axis2_Y) UI_Transparency(t) UI_Flags(UI_BoxFlag_IgnoreInteraction)
             {
               UI_Box *outgoing;
-              UI_FixedY(-card->scroll) { outgoing = ui_build_box_from_stringf(0, "###outgoing_%I64u", slot); }
+              UI_FixedX(0) UI_FixedY(-card->scroll) { outgoing = ui_build_box_from_stringf(0, "###outgoing_%I64u", slot); }
               UI_Parent(outgoing) UI_PrefHeight(ui_em(1.6f, 1)) UI_TextAlignment(UI_TextAlign_Left)
               { uishell_sidebar_card_content(state, ws, card, slot+2, previous, previous_index, content_width, 0); }
             }

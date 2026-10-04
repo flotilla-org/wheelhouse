@@ -2972,14 +2972,15 @@ ui_box_char_pos_from_xy(UI_Box *box, Vec2F32 xy)
 internal B32
 ui_hover_card_blocks_pointer(UI_Box *box, Vec2F32 pos)
 {
-  for(U64 i = 0; i < ArrayCount(ui_state->hover_card_keys); i++)
+  // The last card is painted on top. Only its ancestry owns this position;
+  // lower cards and the workspace underneath cannot claim the same event.
+  for(U64 i = ArrayCount(ui_state->hover_card_keys); i-- > 0;)
   {
     if(ui_key_match(ui_state->hover_card_keys[i], ui_key_zero()) ||
        !contains_2f32(ui_state->hover_card_rects[i], pos)) { continue; }
-    B32 ancestor = 0;
     for(UI_Box *p = box; !ui_box_is_nil(p); p = p->parent)
-    { ancestor |= ui_key_match(p->key, ui_state->hover_card_keys[i]); }
-    if(!ancestor) { return 1; }
+    { if(ui_key_match(p->key, ui_state->hover_card_keys[i])) { return 0; } }
+    return 1;
   }
   return 0;
 }

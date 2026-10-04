@@ -158,6 +158,56 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     if(frame == 1) { CardCheck(ui_pressed(above), "overlay receives its own pointer press"); }
     if(frame == 2) { CardCheck(ui_clicked(above), "overlay receives its own pointer release"); }
   }
+  // Two cards can overlap after window-edge clamping. The later card owns
+  // the overlap, including children; the exposed part of the lower stays live.
+  for(U64 frame = 0; frame < 3; frame++)
+  {
+    UI_EventList events = {0};
+    UI_Event event = {.kind = frame == 2 ? UI_EventKind_Release : UI_EventKind_Press,
+                      .key = WM_Key_LeftMouseButton, .pos = {150, 100}};
+    if(frame) { ui_event_list_push(test->arena, &events, &event); }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    test->mouse = event.pos;
+    test->hover_card_keys[0] = ui_key_make(810); test->hover_card_rects[0] = r2f32p(50, 50, 200, 200);
+    test->hover_card_keys[1] = ui_key_make(820); test->hover_card_rects[1] = r2f32p(100, 50, 250, 200);
+    UI_Signal lower = {0}, upper = {0}; UI_Box *lower_root, *upper_root;
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+    {
+      UI_Rect(test->hover_card_rects[0]) { lower_root = ui_build_box_from_key(0, test->hover_card_keys[0]); }
+      UI_Parent(lower_root) UI_Rect(r2f32p(0, 0, 150, 150))
+      { lower = ui_signal_from_box(ui_build_box_from_key(UI_BoxFlag_MouseClickable, ui_key_make(811))); }
+      UI_Rect(test->hover_card_rects[1]) { upper_root = ui_build_box_from_key(0, test->hover_card_keys[1]); }
+      UI_Parent(upper_root) UI_Rect(r2f32p(0, 0, 150, 150))
+      { upper = ui_signal_from_box(ui_build_box_from_key(UI_BoxFlag_MouseClickable, ui_key_make(821))); }
+    }
+    ui_end_build();
+    CardCheck(!ui_mouse_over(lower) && !ui_pressed(lower) && !ui_clicked(lower), "lower card cannot claim overlapping upper-card hits");
+    CardCheck(!ui_hover_card_blocks_pointer(lower_root->first, v2f32(75, 100)), "exposed lower-card controls stay interactive");
+    if(frame == 1) { CardCheck(ui_pressed(upper), "upper-card child receives the overlapping press"); }
+    if(frame == 2) { CardCheck(ui_clicked(upper), "upper-card child receives the overlapping release"); }
+  }
+  // Physical outside dismissal must leave both click edges for the target.
+  uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3600000);
+  card->rect = r2f32p(180, 90, 400, 300); click.pos = v2f32(200, 150);
+  uishell_sidebar_card_wm_event(ws, &click);
+  for(U64 frame = 0; frame < 3; frame++)
+  {
+    click.kind = frame == 2 ? WM_EventKind_Release : WM_EventKind_Press; click.pos = v2f32(500, 350);
+    B32 taken = frame ? uishell_sidebar_card_wm_event(ws, &click) : 0;
+    UI_EventList events = {0};
+    UI_Event event = {.kind = frame == 2 ? UI_EventKind_Release : UI_EventKind_Press,
+                      .key = WM_Key_LeftMouseButton, .pos = click.pos};
+    if(frame && !taken) { ui_event_list_push(test->arena, &events, &event); }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    test->mouse = click.pos; MemoryZeroArray(test->hover_card_keys);
+    if(card->open) { test->hover_card_keys[0] = ui_key_make(810); test->hover_card_rects[0] = card->rect; }
+    UI_Signal target = {0};
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) UI_Rect(r2f32p(450, 300, 550, 400))
+    { target = ui_signal_from_box(ui_build_box_from_key(UI_BoxFlag_MouseClickable, ui_key_make(830))); }
+    ui_end_build();
+    if(frame == 1) { CardCheck(!taken && !card->open && ui_pressed(target), "outside dismissal lets the target receive its press"); }
+    if(frame == 2) { CardCheck(!taken && ui_clicked(target), "outside dismissal lets the target activate on release"); }
+  }
   // Render current detail fields through the production body in both states.
   // A LIVE observation exercises the existing preview demand and drawing box,
   // without starting a test terminal or altering the daily-driver inventory.
@@ -234,6 +284,16 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       {
         UI_EventList events = {0};
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        if(frame)
+        {
+          AndamentoNode next = {0};
+          for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+          {
+            andamento_snapshot_node(fixture.snapshot, i, &next);
+            if(str8_match(uishell_sidebar_string(next.entity_id), str8_lit("pr-1000"), 0)) { break; }
+          }
+          uishell_sidebar_card_set(card, next, ui_key_zero(), str8_zero(), 0, now_time_us());
+        }
         test->mouse = frame ? center_2f32(card->rect) : v2f32(50, 35);
         card->focused = frame; // Click-focus ownership is covered by the WM trace.
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
@@ -245,12 +305,26 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         F32 previous_y = -1; U64 lines = 0;
         for(UI_Box *box = root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, root).next)
         {
-          if(!(box->flags & UI_BoxFlag_DrawText)) { continue; }
+          B32 outgoing = 0;
+          for(UI_Box *p = box; !ui_box_is_nil(p); p = p->parent) { outgoing |= !!(p->flags & UI_BoxFlag_IgnoreInteraction); }
+          if(outgoing || !(box->flags & UI_BoxFlag_DrawText)) { continue; }
           CardCheck(box->rect.y0 >= previous_y && dim_2f32(box->rect).y < dim_2f32(root->rect).y,
                     "fields and controls occupy individual rows in full card layout");
           previous_y = box->rect.y1; lines++;
         }
         CardCheck(lines > 5, "full card retains the current detail fields");
+        if(frame)
+        {
+          UI_Box *incoming = ui_box_from_key(ui_key_from_stringf(root_key, "content"));
+          UI_Box *outgoing = &ui_nil_box;
+          for(UI_Box *box = root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, root).next)
+          {
+            if((box->flags & UI_BoxFlag_IgnoreInteraction) && box->parent == incoming->parent && !ui_box_is_nil(box->first))
+            { outgoing = box; break; }
+          }
+          CardCheck(!ui_box_is_nil(outgoing) && abs_f32(outgoing->rect.x0-incoming->rect.x0) < 1 &&
+                    abs_f32(outgoing->rect.y0-incoming->rect.y0) < 1, "cross-fade layers share the same content origin");
+        }
         CardCheck(test->hover_card_focus == (B32)frame, "full controller preserves peek/click focus distinction");
       }
       uishell_sidebar_card_close(card);
