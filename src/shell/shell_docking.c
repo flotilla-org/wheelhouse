@@ -68,12 +68,16 @@ rd_dock_is_container(CFG_Node *cfg)
      str8_match(cfg->string, str8_lit("panels"), 0) ||
      str8_match(cfg->string, str8_lit("control_views"), 0) ||
      str8_match(cfg->string, str8_lit("floating_panels"), 0)) { return 1; }
-  // Match the panel parser's numeric split children, including signed values.
-  Temp scratch = scratch_begin(0, 0);
-  MD_TokenizeResult tokens = md_tokenize_from_text(scratch.arena, cfg->string);
-  B32 numeric = tokens.tokens.count == 1 && (tokens.tokens.v[0].flags & MD_TokenFlag_Numeric);
-  scratch_end(scratch);
-  return numeric;
+  // Match a single MD numeric token without allocating a token array. Numeric
+  // tokens start with a digit, .digit or -digit, then contain alnum, _ or . .
+  String8 name = cfg->string;
+  if(name.size == 0) { return 0; }
+  B32 start = char_is_digit(name.str[0], 10) ||
+    (name.size > 1 && (name.str[0] == '.' || name.str[0] == '-') && char_is_digit(name.str[1], 10));
+  if(!start) { return 0; }
+  for(U64 i = 1; i < name.size; i++)
+  { if(!char_is_alpha(name.str[i]) && !char_is_digit(name.str[i], 10) && name.str[i] != '_' && name.str[i] != '.') { return 0; } }
+  return 1;
 }
 
 internal CFG_Node *
@@ -107,7 +111,8 @@ rd_dock_placement(CFG_Node *view, CFG_Node *destination, F32 width)
   p.selected_workspace_region = source.controlled_split;
   RD_ViewRegistration *registration = rd_dock_view_from_name(view->string);
   p.instances_after = 1;
-  p.control_surfaces_after = 1; // the root Control Surface is currently implicit
+  p.control_surfaces_after = 1; // TODO(#164): derive counts from nested Controlled Splits.
+  // The current root Control Surface is implicit.
   if(registration && (registration->traits & RD_ViewTrait_Singleton))
   {
     p.instances_after = rd_dock_instances(rd_dock_window(destination), registration);
@@ -126,27 +131,54 @@ rd_dock_drag_target(CFG_Node *view, CFG_Node *destination, F32 width)
   return rd_dock_placement(view, destination, width) == RD_DockRule_Valid;
 }
 
-internal B32
-rd_dock_can_create(String8 name, CFG_Node *destination)
+internal RD_DockRule
+rd_dock_creation(String8 name, CFG_Node *destination)
 {
   RD_ViewRegistration *view = rd_dock_view_from_name(name);
+  if(!view) { return RD_DockRule_RegisteredView; }
   RD_DockProposal p = {0};
   p.host = rd_dock_host_from_cfg(destination, RD_DOCK_UNMEASURED_WIDTH);
   p.selected_workspace_region = p.host.controlled_split;
-  p.instances_after = rd_dock_instances(rd_dock_window(destination), view)+1;
+  p.instances_after = (view->traits & RD_ViewTrait_Singleton) ? rd_dock_instances(rd_dock_window(destination), view)+1 : 1;
   // A creation must not add another selector to the implicit root surface.
   p.control_surfaces_after = view && (view->traits & RD_ViewTrait_SelectsWorkspaces) ? 2 : 1;
-  return destination != &cfg_nil_node && rd_dock_check(view, p) == RD_DockRule_Valid;
+  return destination != &cfg_nil_node ? rd_dock_check(view, p) : RD_DockRule_HostAcceptance;
 }
 
-internal B32
-rd_dock_can_close(CFG_Node *view)
+internal RD_DockRule
+rd_dock_closure(CFG_Node *view)
 {
   RD_DockProposal p = {0};
   p.host = rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH);
   p.closing = 1;
   p.control_surfaces_after = 1;
-  return rd_dock_check(rd_dock_view_from_name(view->string), p) == RD_DockRule_Valid;
+  return rd_dock_check(rd_dock_view_from_name(view->string), p);
+}
+
+internal B32
+rd_dock_can_create(String8 name, CFG_Node *destination)
+{ return rd_dock_creation(name, destination) == RD_DockRule_Valid; }
+
+internal B32
+rd_dock_can_close(CFG_Node *view)
+{ return rd_dock_closure(view) == RD_DockRule_Valid; }
+
+internal String8
+rd_dock_rule_message(RD_DockRule rule)
+{
+  switch(rule)
+  {
+    case RD_DockRule_Valid: return str8_lit("valid placement");
+    case RD_DockRule_RegisteredView: return str8_lit("the View type is not registered");
+    case RD_DockRule_HostAcceptance: return str8_lit("the host does not accept this View");
+    case RD_DockRule_WorkspaceSubject: return str8_lit("a Workspace Subject is required");
+    case RD_DockRule_MinimumWidth: return str8_lit("the target is narrower than the View's minimum width");
+    case RD_DockRule_Singleton: return str8_lit("only one instance of this View is allowed");
+    case RD_DockRule_OneControlSurface: return str8_lit("a Controlled Split must retain exactly one Control Surface");
+    case RD_DockRule_SelectorOutsideSelectedRegion: return str8_lit("a selector cannot occupy its selected Workspace Region");
+    case RD_DockRule_SelectorCannotClose: return str8_lit("the workspace selector cannot be closed");
+  }
+  return str8_lit("invalid docking rule");
 }
 
 // Restore walks only layout containers, never View settings (whose keys can
@@ -195,11 +227,36 @@ rd_dock_restore_container(CFG_State *state, CFG_Node *window, CFG_Node *containe
   }
 }
 
-// An invalid duplicate singleton cannot be repaired by placing both copies at
-// the default. Retain the first saved instance deterministically; the implicit
-// root Control Surface supplies the selector when no explicit instance exists.
+// Prefer a valid saved placement; tree order breaks ties. Assess placement
+// with one proposed instance so duplicate cardinality does not mask validity.
+internal B32
+rd_dock_saved_placement_valid(CFG_Node *view)
+{
+  RD_DockProposal p = {0};
+  p.host = rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH);
+  p.selected_workspace_region = p.host.controlled_split;
+  p.instances_after = p.control_surfaces_after = 1;
+  return rd_dock_check(rd_dock_view_from_name(view->string), p) == RD_DockRule_Valid;
+}
+
 internal void
-rd_dock_restore_singletons(CFG_State *state, CFG_Node *container, B32 *seen)
+rd_dock_choose_singletons(CFG_Node *container, CFG_Node **keepers)
+{
+  for(CFG_Node *c = container->first; c != &cfg_nil_node; c = c->next)
+  {
+    RD_ViewRegistration *view = rd_dock_view_from_name(c->string);
+    if(view && (view->traits & RD_ViewTrait_Singleton))
+    {
+      U64 index = (U64)(view-rd_view_registrations);
+      if(!keepers[index] || (!rd_dock_saved_placement_valid(keepers[index]) && rd_dock_saved_placement_valid(c)))
+      { keepers[index] = c; }
+    }
+    else if(!view && rd_dock_is_container(c)) { rd_dock_choose_singletons(c, keepers); }
+  }
+}
+
+internal void
+rd_dock_prune_singletons(CFG_State *state, CFG_Node *container, CFG_Node **keepers)
 {
   for(CFG_Node *c = container->first, *next; c != &cfg_nil_node; c = next)
   {
@@ -207,18 +264,17 @@ rd_dock_restore_singletons(CFG_State *state, CFG_Node *container, B32 *seen)
     RD_ViewRegistration *view = rd_dock_view_from_name(c->string);
     if(view && (view->traits & RD_ViewTrait_Singleton))
     {
-      U64 index = (U64)(view-rd_view_registrations);
-      if(seen[index]) { cfg_node_release(state, c); }
-      else { seen[index] = 1; }
+      if(keepers[view-rd_view_registrations] != c) { cfg_node_release(state, c); }
     }
-    else if(!view && rd_dock_is_container(c)) { rd_dock_restore_singletons(state, c, seen); }
+    else if(!view && rd_dock_is_container(c)) { rd_dock_prune_singletons(state, c, keepers); }
   }
 }
 
 internal void
 rd_dock_restore_window(CFG_State *state, CFG_Node *window)
 {
-  B32 seen[ArrayCount(rd_view_registrations)] = {0};
-  rd_dock_restore_singletons(state, window, seen);
+  CFG_Node *keepers[ArrayCount(rd_view_registrations)] = {0};
+  rd_dock_choose_singletons(window, keepers);
+  rd_dock_prune_singletons(state, window, keepers);
   rd_dock_restore_container(state, window, window);
 }

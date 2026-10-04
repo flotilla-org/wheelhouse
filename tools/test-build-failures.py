@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BuildFailures(unittest.TestCase):
-    def run_build(self, platform, fail_stage):
+    def run_build(self, platform, fail_stage, ci=False):
         with tempfile.TemporaryDirectory(prefix='wheelhouse-build-test-') as directory:
             root = Path(directory)
             shutil.copy2(ROOT / 'build.sh', root / 'build.sh')
@@ -33,6 +33,8 @@ if name == 'rm':
     stage = 'cleanup-symbols' if '-rf' in sys.argv else 'remove-object'
 elif name == 'cp':
     stage = 'copy-symbols'
+elif name == 'python3' and any('test-docking.py' in arg for arg in sys.argv):
+    stage = 'docking-tests'
 elif name == 'cc':
     stage = 'compile' if '-c' in sys.argv else 'link'
 with open(os.environ['BUILD_TEST_LOG'], 'a') as log:
@@ -56,7 +58,7 @@ elif name == 'cc':
             log = root / 'calls'
             env = {key: value for key, value in os.environ.items()
                    if not key.startswith('WHEELHOUSE_')}
-            env.update(PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
+            env.update(CI='true' if ci else 'false', PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
                        CC=str(bin_dir / 'cc'), BUILD_TEST_LOG=str(log),
                        BUILD_TEST_FAIL=fail_stage, BUILD_TEST_PLATFORM=platform,
                        WHEELHOUSE_CLEAT_DIR=str(root / 'deps'),
@@ -79,6 +81,18 @@ elif name == 'cc':
                     self.assertEqual(calls[-1], stage, calls)
                     if stage in ('cargo', 'compile', 'link'):
                         self.assertEqual(artifact, 'previous build')
+
+    def test_docking_contract_runs_in_ci_and_propagates_failure(self):
+        # Native CI must enforce the docking contract, while a normal developer
+        # build introduces no dependency on the test compiler or runner.
+        result, calls, artifact = self.run_build('Linux', 'docking-tests', ci=True)
+        self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
+        self.assertEqual(calls[-1], 'docking-tests')
+        self.assertEqual(artifact, 'previous build')
+        result, calls, artifact = self.run_build('Linux', 'docking-tests', ci=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('docking-tests', calls)
+        self.assertEqual(artifact, 'new link')
 
     def test_success(self):
         for platform in ('Linux', 'Darwin'):

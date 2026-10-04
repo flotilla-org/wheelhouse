@@ -197,7 +197,10 @@ popd
 
 :: --- Build Everything (@build_targets) --------------------------------------
 pushd build
-if "%wheelhouse%"=="1" python ..\tools\test-docking.py || exit /b 1
+set docking_tests=
+if "%CI%"=="true" set docking_tests=1
+if "%WHEELHOUSE_DOCKING_TESTS%"=="1" set docking_tests=1
+if "%wheelhouse%"=="1" if "%docking_tests%"=="1" python ..\tools\test-docking.py || exit /b 1
 if "%wheelhouse%"=="1"                    set didbuild=1 && %compile% ..\src\uishell\uishell_main.c                            %compile_link% %link_icon% %cleat_link% %andamento_link% %jackstay_link% %out%wheelhouse.exe || exit /b 1
 if "%wheelhouse%"=="1" if "%cleat%"=="1"  copy /y "!cleat_lib_dir!\cleat.dll" . >nul || exit /b 1
 rem cleat.dll imports ghostty-vt.dll when built with the ghostty-vt feature; without it

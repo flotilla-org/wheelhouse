@@ -2750,17 +2750,24 @@ uishell_workspace_cfg_from_cfg(CFG_Node *cfg)
   return workspace;
 }
 
-internal UIShell_WorkspaceMount
-uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner)
+// Repair only at explicit mutation boundaries, before callers build trees or
+// retain CFG_Node pointers. Mount accessors themselves never mutate layouts.
+internal void
+rd_dock_restore_layouts(void)
 {
   if(rd_state->docking_restore_gen != cfg_change_gen())
   {
-    Temp restore = scratch_begin(&arena, 1);
+    Temp restore = scratch_begin(0, 0);
     CFG_NodePtrList windows = cfg_node_top_level_list_from_string(restore.arena, str8_lit("window"));
     for(CFG_NodePtrNode *n = windows.first; n; n = n->next) { rd_dock_restore_window(rd_state->cfg, n->v); }
     rd_state->docking_restore_gen = cfg_change_gen();
     scratch_end(restore);
   }
+}
+
+internal UIShell_WorkspaceMount
+uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner)
+{
   CFG_Node *panels_root = cfg_node_child_from_string(owner, str8_lit("panels"));
   Axis2 root_split_axis = cfg_node_child_from_string(owner, str8_lit("split_x")) != &cfg_nil_node ? Axis2_X : Axis2_Y;
   CFG_PanelTree panel_tree = cfg_panel_tree_from_panels_cfg(arena, panels_root, root_split_axis);
@@ -3352,6 +3359,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             Axis2 axis = axis2_flip(panel_tree.root->split_axis);
             for EachEnumVal(Side, side)
             {
+              // Approximate post-split width using the new two-child layout.
               F32 target_width = dim_2f32(panel_rect).x * (axis == Axis2_X ? 0.5f : 1.f);
               if(!rd_dock_drag_target(drag_view, panel->cfg, target_width)) { continue; }
               UI_Key key = ui_key_from_stringf(ui_key_zero(), "root_extra_split_%i", side);
@@ -3445,6 +3453,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             // rjf: form rect
             Rng2F32 child_rect = cfg_target_rect_from_panel_node_child(panel_rect, panel, child);
             Vec2F32 child_rect_center = center_2f32(child_rect);
+            // Approximate the equalized width after inserting a sibling.
             F32 target_width = dim_2f32(panel_rect).x / (split_axis == Axis2_X ? panel->child_count+1 : 1);
             if(!rd_dock_drag_target(drag_view, panel->cfg, target_width)) { continue; }
             UI_Key key = ui_key_from_stringf(ui_key_zero(), "drop_boundary_%p_%p", panel->cfg, child->cfg);
@@ -3976,6 +3985,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 Rng2F32 rect = sites[idx].rect;
                 Axis2 split_axis = axis2_from_dir2(dir);
                 Side split_side = side_from_dir2(dir);
+                // Approximate a new half-width Panel; center/Y drops retain width.
                 F32 target_width = dim_2f32(panel_rect).x * (dir != Dir2_Invalid && split_axis == Axis2_X ? 0.5f : 1.f);
                 if(!rd_dock_drag_target(view, panel->cfg, target_width)) { continue; }
                 if(dir != Dir2_Invalid && panel->parent != &cfg_nil_panel_node &&
@@ -9850,6 +9860,8 @@ rd_frame(void)
     MemoryZeroStruct(&rd_state->cmd_outputs);
   }
   
+  if(rd_state->frame_depth == 1) { rd_dock_restore_layouts(); }
+
   //////////////////////////////
   //- rjf: iterate all materialized workspace tabs, touch their view-states
   //
@@ -10743,7 +10755,9 @@ rd_frame(void)
     }
   }
   
-	  //////////////////////////////
+  if(rd_state->frame_depth == 1) { rd_dock_restore_layouts(); }
+
+  //////////////////////////////
   //- rjf: update window titles
   //
   if(rd_state->frame_depth == 1)

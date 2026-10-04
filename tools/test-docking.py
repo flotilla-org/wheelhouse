@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compile and run the production docking validity, restore and drag query without a GUI."""
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -14,7 +15,7 @@ if os.name == "nt":
     command = ["cl", "/nologo", "/Z7", "/Od", "/DBUILD_DEBUG=1", "/Zc:preprocessor",
                "/I" + str(ROOT / "src"), str(source), "/Fe:" + str(binary)]
 else:
-    command = ["clang", "-g", "-O0", "-D_GNU_SOURCE", "-I" + str(ROOT / "src"),
+    command = shlex.split(os.environ.get("CC", "clang")) + ["-g", "-O0", "-D_GNU_SOURCE", "-I" + str(ROOT / "src"),
                "-Wno-initializer-overrides", "-Wno-unused-value",
                "-Wno-incompatible-pointer-types-discards-qualifiers"]
     if sys.platform == "darwin":

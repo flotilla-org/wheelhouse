@@ -1049,6 +1049,7 @@ internal void uishell_cmd_list_push_new(Arena *arena, UIShell_CmdList *cmds, Str
 ////////////////////////////////
 //~ rjf: View UI Rule Functions
 
+internal void rd_dock_restore_layouts(void);
 internal RD_ViewUIRuleMap *rd_view_ui_rule_map_make(Arena *arena, U64 slots_count);
 internal void rd_view_ui_rule_map_insert(Arena *arena, RD_ViewUIRuleMap *map, String8 string, RD_ViewUIFunctionType *ui);
 

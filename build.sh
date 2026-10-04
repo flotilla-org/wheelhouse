@@ -213,8 +213,10 @@ then
   # debug map. Then link, then produce a co-located .dSYM (and the linked cleat
   # dylib's) for profiling/debugging across the wheelhouse+cleat+ghostty stack.
   # Keep required steps separate: set -e ignores failures before &&.
-  # Keep the declared docking contract checked by the existing native CI builds.
-  python3 ../tools/test-docking.py
+  # CI enforces the headless contract; developer builds opt in explicitly.
+  if [ "${CI:-}" = "true" ] || [ "${WHEELHOUSE_DOCKING_TESTS:-0}" = "1" ]; then
+    CC="$compiler" python3 ../tools/test-docking.py
+  fi
   $compile -c ../src/uishell/uishell_main.c $out uishell_main.o
   $compile -x none uishell_main.o $compile_link $link_os_gfx $link_render $link_font_provider $cleat_link $andamento_link $jackstay_link $out wheelhouse
   if [ "$host_os" = "Darwin" ]; then

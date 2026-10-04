@@ -35,13 +35,13 @@ will supply their own binding identities in #164.
 
 The configuration adapter recognizes `panels` and numeric split children,
 `control_views` (sidebar declarations), and `floating_panels`. The latter two
-are placement declarations, not newly rendered docking hosts. Before building
-Panel trees, configuration changes trigger repair of saved window layouts.
+are placement declarations, not newly rendered docking hosts. At frame boundaries and immediately after loading config, configuration
+changes trigger repair of saved window layouts; mount getters never mutate
+or release nodes.
 Invalid placements return to their registered default: the sidebar or the
 first Panel leaf of their Workspace (the first remembered Workspace when the
-source has no Workspace). View identity and settings are retained. Duplicate
-singleton declarations retain the first saved instance in tree order, since
-placing both at their default would still violate the invariant. Missing
+source has no Workspace). View identity and settings are retained. Duplicate singleton declarations prefer an instance with a valid placement;
+tree order breaks ties, including when all copies need fallback. Missing
 explicit selectors use the existing implicit Control Surface.
 
 Every View drop site uses the production query `rd_dock_drag_target`, which
@@ -49,7 +49,11 @@ calls the same checker. Split targets pass the proposed width rather than the
 unsplit Panel width. Move, split, create, duplicate and close commands also
 consult the model. Restore and command execution use unmeasured geometry;
 resizing a window does not relocate saved Views just because they currently
-have too little space. Expression drops are a separate content interaction.
+have too little space. Unknown View types are refused rather than acquiring undeclared traits. The
+registry covers all current visualizer hooks and shell-dispatched types;
+rejected create/duplicate/close/move/split commands explain the named rule to
+the user. Drag feedback omits invalid targets without issuing a command.
+Expression drops are a separate content interaction.
 
 ## Headless verification
 
@@ -60,3 +64,9 @@ hand-edited invalid layout to verify fallback, settings retention, duplicate
 repair, split-leaf placement and idempotence. It covers missing subjects,
 minimum-width boundaries, unknown Views, invalid hosts and empty layouts.
 No display or runtime provider is required.
+
+Existing CI native builds run the suite with their configured compiler. Normal
+developer builds opt in with `WHEELHOUSE_DOCKING_TESTS=1`; the standalone runner
+also honors `CC`. The existing Panel diagnostics exercise actual command
+dispatch (including refused operations and error messages), non-mutating mount
+reads, and repair-generation stability on Linux and macOS.

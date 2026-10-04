@@ -105,6 +105,9 @@ internal RD_DockHost rd_dock_host_from_cfg(CFG_Node *cfg, F32 width);
 internal RD_DockRule rd_dock_placement(CFG_Node *view, CFG_Node *destination, F32 width);
 // The production drag-target query, shared by all View drop sites.
 internal B32 rd_dock_drag_target(CFG_Node *view, CFG_Node *destination, F32 width);
+internal RD_DockRule rd_dock_creation(String8 name, CFG_Node *destination);
+internal RD_DockRule rd_dock_closure(CFG_Node *view);
+internal String8 rd_dock_rule_message(RD_DockRule rule);
 internal B32 rd_dock_can_create(String8 name, CFG_Node *destination);
 internal B32 rd_dock_can_close(CFG_Node *view);
 internal void rd_dock_restore_window(CFG_State *state, CFG_Node *window);

@@ -112,15 +112,15 @@ entry_point(CmdLine *cmdline)
   rd_dock_restore_window(cfg, window);
   Check(selecting_view->parent == sidebar && text->parent == panels && terminal->parent == panels);
   // Duplicate singleton declarations cannot create a second Control Surface.
-  // Restore keeps the first saved selector, then repairs its placement.
+  // Restore prefers the valid placement even when an invalid copy comes first.
   CFG_Node *duplicate = cfg_node_new(cfg, panels, str8_lit("workspace_selector"));
   CFG_ID duplicate_id = duplicate->id;
   Check(!rd_dock_drag_target(selecting_view, sidebar, 640));
   rd_dock_restore_window(cfg, window);
-  // The first declaration in tree order is the panels copy in this layout.
-  Check(cfg_node_from_id(duplicate_id)->parent == sidebar);
+  Check(cfg_node_from_id(duplicate_id) == &cfg_nil_node);
+  Check(selecting_view->parent == sidebar && selecting_view->id == selector_id);
   Check(rd_dock_instances(window, selector) == 1);
-  Check(rd_dock_drag_target(cfg_node_from_id(duplicate_id), sidebar, 640));
+  Check(rd_dock_drag_target(selecting_view, sidebar, 640));
   // Invalid content under the sidebar falls back to a leaf of a split root.
   CFG_Node *split = cfg_node_new(cfg, cfg_node_root(), str8_lit("window"));
   CFG_Node *split_panels = cfg_node_new(cfg, split, str8_lit("panels"));
@@ -133,7 +133,51 @@ entry_point(CmdLine *cmdline)
   Check(cfg_panel_tree_from_panels_cfg(arena, split_panels, Axis2_X).root->first->tabs.first->v == misplaced);
   // The selector cannot cross Controlled Splits, which would leave one split
   // without its Control Surface and give the other two.
-  Check(!rd_dock_drag_target(cfg_node_from_id(duplicate_id), split_sidebar, 640));
+  Check(!rd_dock_drag_target(selecting_view, split_sidebar, 640));
+  // When all copies are invalid, tree order is the deterministic tie-breaker.
+  CFG_Node *all_invalid = cfg_node_new(cfg, cfg_node_root(), str8_lit("window"));
+  CFG_Node *invalid_panels = cfg_node_new(cfg, all_invalid, str8_lit("panels"));
+  CFG_Node *first_selector = cfg_node_new(cfg, invalid_panels, str8_lit("workspace_selector"));
+  CFG_Node *second_selector = cfg_node_new(cfg, invalid_panels, str8_lit("workspace_selector"));
+  CFG_ID second_id = second_selector->id;
+  rd_dock_restore_window(cfg, all_invalid);
+  Check(first_selector->parent == cfg_node_child_from_string(all_invalid, str8_lit("control_views")));
+  Check(cfg_node_from_id(second_id) == &cfg_nil_node);
+  // Floating Panels are real config hosts, including beneath a Workspace with
+  // a subject. Restore retains their valid Views and preserves the subject.
+  CFG_Node *subject = cfg_node_new(cfg, workspace, str8_lit("subject"));
+  cfg_node_new(cfg, subject, str8_lit("convoy:example"));
+  CFG_Node *floating = cfg_node_new(cfg, workspace, str8_lit("floating_panels"));
+  CFG_Node *floating_panel = cfg_node_new(cfg, floating, str8_lit("1"));
+  CFG_Node *floating_text = cfg_node_new(cfg, floating_panel, str8_lit("text"));
+  RD_DockHost floating_host = rd_dock_host_from_cfg(floating_panel, 100);
+  Check(floating_host.kind == RD_DockHostKind_FloatingPanel && floating_host.has_workspace_subject);
+  Check(rd_dock_drag_target(floating_text, floating_panel, 100));
+  // A subject-dependent section can use its Workspace context while floating
+  // if it does not require a host. Missing context is rejected by the checker.
+  RD_ViewRegistration subject_view = {str8_lit_comp("subject"), RD_ViewTrait_Section|RD_ViewTrait_NeedsWorkspaceSubject, 0, RD_DockHostKind_WorkspaceRegion};
+  RD_DockProposal subject_proposal = {floating_host, 0, 1, 1, 0};
+  Check(rd_dock_check(&subject_view, subject_proposal) == RD_DockRule_Valid);
+  subject_proposal.host.has_workspace_subject = 0;
+  Check(rd_dock_check(&subject_view, subject_proposal) == RD_DockRule_WorkspaceSubject);
+  rd_dock_restore_window(cfg, window);
+  Check(floating_text->parent == floating_panel && subject->parent == workspace);
+  // The cheap container classifier must agree with the production panel
+  // tokenizer for numeric spellings and invalid/identifier boundaries.
+  char *spellings[] = {"", "0", "1", "0.5", ".5", "-1", "-.5", "+1", "1e3", "1_0", "_", "selected", "1/2", "1 2"};
+  for(U64 i = 0; i < ArrayCount(spellings); i++)
+  {
+    CFG_Node *test_container = cfg_node_new(cfg, cfg_node_root(), str8_lit("test"));
+    CFG_Node *node = cfg_node_new(cfg, test_container, str8_cstring(spellings[i]));
+    MD_TokenizeResult tokens = md_tokenize_from_text(arena, node->string);
+    B32 expected_numeric = tokens.tokens.count == 1 && (tokens.tokens.v[0].flags & MD_TokenFlag_Numeric);
+    Check(rd_dock_is_container(node) == !!expected_numeric);
+    cfg_node_release(cfg, test_container);
+  }
+  // Strict command refusal explains unknown saved types; all shell-dispatched
+  // and visualizer registrations still have exhaustive creation coverage.
+  Check(rd_dock_creation(str8_lit("unknown_saved_view"), panels) == RD_DockRule_RegisteredView);
+  Check(rd_dock_rule_message(RD_DockRule_RegisteredView).size != 0);
   // Empty saved layouts remain empty; there is already an implicit root
   // Control Surface and restore must not manufacture content Views.
   CFG_Node *empty = cfg_node_new(cfg, cfg_node_root(), str8_lit("window"));
