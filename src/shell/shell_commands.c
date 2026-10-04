@@ -7,6 +7,51 @@
 #include "shell_app_hooks.h"
 
 internal RD_AppMenuSpecList
+uishell_shell_edit_menu_specs(void)
+{
+  local_persist RD_AppMenuItemSpec items[] =
+  {
+    {0, str8_lit_comp("undo"), 'u'}, {0, str8_lit_comp("redo"), 'r'}, {1},
+    {0, str8_lit_comp("cut"), 't'}, {0, str8_lit_comp("copy"), 'c'},
+    {0, str8_lit_comp("paste"), 'p'}, {1},
+    {0, str8_lit_comp("select_all"), 'a'}, {0, str8_lit_comp("clear_selection"), 'l'},
+  };
+  local_persist RD_AppMenuSpec specs[] =
+  {{str8_lit_comp("Edit"), 'e', WM_Key_E, ArrayCount(items), items}};
+  return (RD_AppMenuSpecList){ArrayCount(specs), specs};
+}
+
+internal B32
+uishell_is_edit_command(String8 name)
+{
+  return str8_match(name, str8_lit("copy"), 0) || str8_match(name, str8_lit("cut"), 0) ||
+    str8_match(name, str8_lit("paste"), 0) || str8_match(name, str8_lit("select_all"), 0) ||
+    str8_match(name, str8_lit("clear_selection"), 0) || str8_match(name, str8_lit("undo"), 0) ||
+    str8_match(name, str8_lit("redo"), 0);
+}
+
+internal B32
+uishell_edit_command_enabled(String8 name, RD_WindowState *ws)
+{
+  if(!uishell_is_edit_command(name)) { return 1; }
+  if(!ws || ws == &rd_nil_window_state || !ws->ui) { return 0; }
+  UI_State *state = ws->ui;
+  // Commands run before the next UI build: the last completed build is a valid
+  // owner snapshot. Missing consumers expire after that one build of slack.
+  B32 current_owner = state->edit_owner_build == state->build_index ||
+                      state->edit_owner_build+1 == state->build_index;
+  if(!state->edit_owner_key.u64[0] || !current_owner) { return 0; }
+  if(state->edit_owner_terminal)
+  {
+    if(rd_state->popup_active || ws->query_is_active ||
+       cfg_node_from_id(state->edit_owner_view) == &cfg_nil_node) { return 0; }
+    return state->edit_owner_enabled && state->edit_owner_enabled(state->edit_owner_user, name);
+  }
+  if(str8_match(name, str8_lit("paste"), 0) || str8_match(name, str8_lit("select_all"), 0)) { return 1; }
+  return (str8_match(name, str8_lit("copy"), 0) || str8_match(name, str8_lit("cut"), 0)) && state->edit_owner_selection;
+}
+
+internal RD_AppMenuSpecList
 uishell_shell_window_menu_specs(void)
 {
 #define UIShell_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
@@ -197,6 +242,21 @@ uishell_dispatch_app_command(String8 name)
 internal B32
 uishell_dispatch_ui_event_command(String8 name)
 {
+  RD_WindowState *edit_ws = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
+  B32 semantic_edit = uishell_is_edit_command(name);
+  if(semantic_edit)
+  {
+    if(!uishell_edit_command_enabled(name, edit_ws)) { return 1; }
+    // Availability validated the window/UI before all owner-targeted event paths.
+    UI_State *state = edit_ws->ui;
+    if(uishell_regs()->edit_owner_captured && !ui_key_match(uishell_regs()->edit_owner_key, state->edit_owner_key)) { return 1; }
+    if(state->edit_owner_terminal)
+    {
+      String8 paste = str8_match(name, str8_lit("paste"), 0) ? wm_get_clipboard_text(rd_frame_arena()) : str8_zero();
+      state->edit_owner_dispatch(state->edit_owner_user, name, paste);
+      return 1;
+    }
+  }
   B32 result = 1;
   UI_Event event = zero_struct;
   B32 push_event = 1;
@@ -433,13 +493,16 @@ uishell_dispatch_ui_event_command(String8 name)
   {
     UI_Event event1 = zero_struct;
     event1.kind = UI_EventKind_Navigate;
+    event1.edit_owner_key = edit_ws->ui->edit_owner_key.u64[0];
+    event1.flags = UI_EventFlag_SkipDefaultFocusNav;
     event1.delta_unit = UI_EventDeltaUnit_Whole;
     event1.delta_2s32 = v2s32(-1, +0);
     uishell_push_window_ui_event(&event1);
 
     UI_Event event2 = zero_struct;
     event2.kind = UI_EventKind_Navigate;
-    event2.flags = UI_EventFlag_KeepMark;
+    event2.flags = UI_EventFlag_KeepMark|UI_EventFlag_SkipDefaultFocusNav;
+    event2.edit_owner_key = edit_ws->ui->edit_owner_key.u64[0];
     event2.delta_unit = UI_EventDeltaUnit_Whole;
     event2.delta_2s32 = v2s32(+1, +0);
     uishell_push_window_ui_event(&event2);
@@ -520,6 +583,11 @@ uishell_dispatch_ui_event_command(String8 name)
 
   if(push_event)
   {
+    if(semantic_edit)
+    {
+      event.edit_owner_key = edit_ws->ui->edit_owner_key.u64[0];
+      event.flags |= UI_EventFlag_SkipDefaultFocusNav;
+    }
     uishell_push_window_ui_event(&event);
   }
   return result;
@@ -563,6 +631,11 @@ uishell_dispatch_command_palette_command(String8 name)
     if(info.string.size == 0)
     {
       result = 0;
+    }
+    else if(uishell_is_edit_command(info.string) && !uishell_edit_command_enabled(info.string,
+      rd_window_state_from_cfg__existing(cfg_node_from_id(uishell_regs()->window))))
+    {
+      // Availability is a dispatch policy, not merely menu decoration.
     }
     else if(!(info.query_flags & UIShell_QueryFlag_Required))
     {
@@ -2029,6 +2102,7 @@ uishell_register_shell_cmd_packs(void)
     .binding_count = uishell_shell_ui_event_cmd_pack_binding_count,
     .binding_from_index = uishell_shell_ui_event_cmd_pack_binding_from_index,
     .dispatch = uishell_dispatch_ui_event_command,
+    .menu_specs = uishell_shell_edit_menu_specs,
   };
   local_persist UIShell_CmdPack shell_font_pack =
   {
@@ -2041,11 +2115,13 @@ uishell_register_shell_cmd_packs(void)
     .dispatch = uishell_dispatch_font_command,
   };
 
+  // Edit precedes the other shell menus. These packs have distinct command
+  // names, so registration order changes menu order without changing lookup.
+  uishell_register_cmd_pack(&shell_ui_event_pack);
   uishell_register_cmd_pack(&shell_window_pack);
   uishell_register_cmd_pack(&shell_panel_pack);
   uishell_register_cmd_pack(&shell_tab_pack);
   uishell_register_cmd_pack(&shell_app_pack);
   uishell_register_cmd_pack(&shell_query_pack);
-  uishell_register_cmd_pack(&shell_ui_event_pack);
   uishell_register_cmd_pack(&shell_font_pack);
 }

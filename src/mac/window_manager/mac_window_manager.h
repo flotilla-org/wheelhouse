@@ -125,6 +125,8 @@ struct MAC_WM_State
   MAC_WM_MenuTarget *menu_target;
   B32 menu_opened;
   B32 menu_tracking;
+  MAC_WM_Window *menu_invoking_window;
+  B32 menu_key_held[WM_Key_COUNT];
   NSMenu *pending_main_menu;
   MAC_WM_MenuCommandNode *first_pending_menu_command;
   MAC_WM_MenuCommandNode *last_pending_menu_command;

@@ -20,12 +20,12 @@ wm_get_system_info(void)
 //~ rjf: @os_hooks Clipboards (Implemented Per-OS)
 
 internal void
-wm_set_clipboard_text(String8 string)
+wm_set_clipboard_text_impl(String8 string)
 {
 }
 
 internal String8
-wm_get_clipboard_text(Arena *arena)
+wm_get_clipboard_text_impl(Arena *arena)
 {
   return str8_zero();
 }

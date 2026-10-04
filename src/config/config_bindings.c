@@ -125,8 +125,17 @@ cfg_key_map_node_ptr_list_from_binding(Arena *arena, CFG_KeyMap *key_map, CFG_Bi
 
 // Select in effective configuration order, skipping unsupported and shadowed
 // bindings. Never publish a shortcut that the shell assigns to another command.
+internal B32
+cfg_terminal_edit_binding_eligible(CFG_Binding binding)
+{
+  // Plain Ctrl editing chords belong to the child, including application interrupt.
+  return !(binding.modifiers == WM_Modifier_Ctrl &&
+    (binding.key == WM_Key_C || binding.key == WM_Key_V || binding.key == WM_Key_A ||
+     binding.key == WM_Key_X || binding.key == WM_Key_Z || binding.key == WM_Key_Y));
+}
+
 internal CFG_Binding
-cfg_native_menu_binding(CFG_KeyMap *key_map, String8 command)
+cfg_native_menu_binding_for_owner(CFG_KeyMap *key_map, String8 command, B32 terminal)
 {
   CFG_Binding result = {0};
   if(key_map != 0)
@@ -134,7 +143,8 @@ cfg_native_menu_binding(CFG_KeyMap *key_map, String8 command)
     U64 slot = u64_djb2_hash_from_str8(command)%key_map->name_slots_count;
     for(CFG_KeyMapNode *n = key_map->name_slots[slot].first; n; n = n->name_hash_next)
     {
-      if(!str8_match(n->name, command, 0) || !n->native_shortcut_eligible ||
+      if((terminal && !cfg_terminal_edit_binding_eligible(n->binding)) ||
+         !str8_match(n->name, command, 0) || !n->native_shortcut_eligible ||
          wm_menu_codepoint_from_key(n->binding.key) == 0 ||
          (n->binding.modifiers & ~(WM_Modifier_Ctrl|WM_Modifier_Super|WM_Modifier_Shift|WM_Modifier_Alt)))
       {
@@ -152,6 +162,10 @@ cfg_native_menu_binding(CFG_KeyMap *key_map, String8 command)
   }
   return result;
 }
+
+internal CFG_Binding
+cfg_native_menu_binding(CFG_KeyMap *key_map, String8 command)
+{ return cfg_native_menu_binding_for_owner(key_map, command, 0); }
 
 internal String8
 cfg_command_from_menu_or_binding(Arena *arena, CFG_KeyMap *key_map, WM_Event *event)

@@ -152,6 +152,7 @@ struct UI_Event
   B32 scroll_is_precise;
   Vec2S32 delta_2s32;
   U64 timestamp_us;
+  U64 edit_owner_key; // semantic edits address the invoking consumer
 };
 
 typedef struct UI_EventNode UI_EventNode;
@@ -675,6 +676,18 @@ struct UI_BoxHashSlot
 typedef struct UI_State UI_State;
 struct UI_State
 {
+  // Last editing focus is retained while a menu temporarily disables focus.
+  UI_Key edit_owner_key;
+  U64 edit_owner_build;
+  B32 edit_owner_selection;
+  B32 edit_owner_terminal;
+  void *edit_owner_user;
+  B32 (*edit_owner_enabled)(void *user, String8 command);
+  void (*edit_owner_dispatch)(void *user, String8 command, String8 paste);
+  UI_Key edit_consumer_key;
+  B32 edit_menu_focus;
+  U64 edit_owner_view;
+
   //- rjf: main arena
   Arena *arena;
   
@@ -801,6 +814,10 @@ internal B32 ui_char_is_scan_boundary(U8 c);
 internal S64 ui_scanned_column_from_column(String8 string, S64 start_column, Side side);
 internal UI_TxtOp ui_single_line_txt_op_from_event(Arena *arena, UI_Event *event, String8 string, TxtPt cursor, TxtPt mark);
 internal String8 ui_push_string_replace_range(Arena *arena, String8 string, Rng1S64 range, String8 replace);
+internal void ui_apply_text_edit_op(Arena *arena, UI_TxtOp op, U8 *buffer, U64 capacity, U64 *size, TxtPt *cursor, TxtPt *mark);
+internal void ui_clear_edit_owner(UI_State *state);
+internal void ui_register_text_edit_owner(UI_Key key, TxtPt cursor, TxtPt mark);
+internal B32 ui_consume_text_edit_events(UI_Key key, U8 *buffer, U64 capacity, U64 *size, TxtPt *cursor, TxtPt *mark, B32 target_only);
 
 ////////////////////////////////
 //~ rjf: Size Type Functions

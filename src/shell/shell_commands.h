@@ -125,6 +125,7 @@ read_only global UIShell_AppCmdInfo uishell_shell_ui_event_cmd_info_table[] =
   UISHELL_SHELL_CMD("move_end", "Move End", Null, "Moves to the end.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("move_home_select", "Move Home Select", Null, "Extends selection to the beginning.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("move_end_select", "Move End Select", Null, "Extends selection to the end.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
+  UISHELL_SHELL_CMD("clear_selection", "Clear Selection", Null, "Clears the local terminal selection.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("select_all", "Select All", Null, "Selects all.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("delete_single", "Delete Single", Null, "Deletes one item.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("delete_chunk", "Delete Chunk", Null, "Deletes one chunk.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
@@ -282,6 +283,11 @@ read_only global UIShell_DefaultBinding uishell_shell_ui_event_default_binding_t
   UISHELL_BIND("backspace_single", Backspace, 0),
   UISHELL_BIND("backspace_chunk", Backspace, WM_Modifier_Accel),
   UISHELL_BIND("copy", C, WM_Modifier_Accel),
+#if !OS_MAC
+  UISHELL_BIND("copy", C, WM_Modifier_Ctrl|WM_Modifier_Shift),
+  UISHELL_BIND("paste", V, WM_Modifier_Ctrl|WM_Modifier_Shift),
+  UISHELL_BIND("select_all", A, WM_Modifier_Ctrl|WM_Modifier_Shift),
+#endif
   UISHELL_BIND("copy", Insert, WM_Modifier_Accel),
   UISHELL_BIND("cut", X, WM_Modifier_Accel),
   UISHELL_BIND("paste", V, WM_Modifier_Accel),
@@ -331,4 +337,6 @@ UISHELL_SHELL_CMD_PACK_BINDING_FUNCTIONS(uishell_shell_ui_event_cmd_pack, uishel
 
 internal void uishell_register_shell_cmd_packs(void);
 
+internal B32 uishell_is_edit_command(String8 name);
+internal B32 uishell_edit_command_enabled(String8 name, RD_WindowState *ws);
 #endif // SHELL_COMMANDS_H

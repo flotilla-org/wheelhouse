@@ -6118,10 +6118,11 @@ rd_window_frame(void)
     ////////////////////////////
     //- rjf: @window_ui_part build all floating views
     //
+    ui_state->edit_menu_focus = ui_any_ctx_menu_is_open() || ws->menu_bar_focused;
     ProfScope("build all floating views")
       RD_Font(RD_FontSlot_Code)
       UI_TagF("floating")
-      UI_Focus(ui_any_ctx_menu_is_open() || ws->menu_bar_focused ? UI_FocusKind_Off : UI_FocusKind_Null)
+      UI_Focus(ui_state->edit_menu_focus ? UI_FocusKind_Off : UI_FocusKind_Null)
     {
       F32 fast_open_rate = rd_state->menu_animation_rate;
       F32 slow_open_rate = rd_state->menu_animation_rate__slow;
@@ -9099,7 +9100,19 @@ uishell_app_cmd_info_from_string(String8 string)
 internal void
 uishell_push_stored_cmd(String8 name, UIShell_Regs *regs)
 {
-  uishell_cmd_list_push_new(rd_state->cmds_arenas[0], &rd_state->cmds[0], name, regs);
+  UIShell_Regs captured = *regs;
+  String8 edit_name = str8_match(name, str8_lit("run_command"), 0) ? regs->cmd_name : name;
+  if(uishell_is_edit_command(edit_name) && !captured.edit_owner_captured)
+  {
+    RD_WindowState *ws = rd_window_state_from_cfg__existing(cfg_node_from_id(regs->window));
+    if(ws != &rd_nil_window_state && ws->ui)
+    {
+      captured.edit_owner_key = ws->ui->edit_owner_key;
+      if(ws->ui->edit_owner_terminal) { captured.view = ws->ui->edit_owner_view; }
+    }
+    captured.edit_owner_captured = 1;
+  }
+  uishell_cmd_list_push_new(rd_state->cmds_arenas[0], &rd_state->cmds[0], name, &captured);
 }
 
 //- rjf: iterating
@@ -9217,6 +9230,24 @@ rd_app_menu_spec_content(RD_AppMenuSpec *spec)
   }
 }
 
+internal WM_MenuItem
+uishell_menu_item_from_spec(RD_AppMenuItemSpec *spec, RD_WindowState *ws)
+{
+  WM_MenuItem item = {0};
+  if(spec->separator) { item.kind = WM_MenuItemKind_Separator; return item; }
+  UIShell_AppCmdInfo info = uishell_app_cmd_info_from_string(spec->command_name);
+  item.kind = WM_MenuItemKind_Command;
+  item.command_name = info.string.size ? info.string : spec->command_name;
+  item.label = info.display_name.size ? info.display_name : spec->command_name;
+  item.disabled = !uishell_edit_command_enabled(item.command_name, ws);
+  B32 terminal = ws && ws != &rd_nil_window_state && ws->ui && ws->ui->edit_owner_terminal &&
+    uishell_is_edit_command(item.command_name);
+  CFG_Binding binding = cfg_native_menu_binding_for_owner(rd_state->key_map, item.command_name, terminal);
+  item.shortcut_key = binding.key;
+  item.shortcut_modifiers = binding.modifiers;
+  return item;
+}
+
 internal void
 rd_wm_set_main_menu(void)
 {
@@ -9224,6 +9255,9 @@ rd_wm_set_main_menu(void)
   local_persist U64 last_hash = 0;
   local_persist B32 initialized = 0;
   B32 native = wm_application_menu_bar_is_native();
+  RD_WindowState *menu_ws = &rd_nil_window_state;
+  for(RD_WindowState *ws = rd_state->first_window_state; ws && ws != &rd_nil_window_state; ws = ws->order_next)
+  { if(wm_window_is_focused(ws->os)) { menu_ws = ws; break; } }
   RD_AppMenuSpecList specs = rd_app_menu_specs();
   WM_MenuArray menu_array = {0};
   menu_array.count = specs.count;
@@ -9239,28 +9273,7 @@ rd_wm_set_main_menu(void)
     {
       RD_AppMenuItemSpec *item_spec = &spec->items[item_idx];
       WM_MenuItem *item = &menu->items[item_idx];
-      if(item_spec->separator)
-      {
-        item->kind = WM_MenuItemKind_Separator;
-      }
-      else
-      {
-        UIShell_AppCmdInfo info = uishell_app_cmd_info_from_string(item_spec->command_name);
-        item->kind = WM_MenuItemKind_Command;
-        item->command_name = item_spec->command_name;
-        item->label = rd_display_from_code_name(item_spec->command_name);
-        if(item->label.size == 0)
-        {
-          item->label = item_spec->command_name;
-        }
-        if(info.string.size != 0)
-        {
-          item->command_name = info.string;
-        }
-        CFG_Binding binding = cfg_native_menu_binding(rd_state->key_map, item->command_name);
-        item->shortcut_key = binding.key;
-        item->shortcut_modifiers = binding.modifiers;
-      }
+      *item = uishell_menu_item_from_spec(item_spec, menu_ws);
     }
   }
   U64 hash = wm_menu_hash(menu_array, native);
@@ -9725,6 +9738,32 @@ rd_init(CmdLine *cmdln)
   scratch_end(scratch);
 }
 
+internal B32
+uishell_route_edit_activation(Arena *arena, RD_WindowState *ws, WM_Event *event, B32 terminal)
+{
+  if(!ws || ws == &rd_nil_window_state) { return 0; }
+  if(!wm_window_match(event->window, wm_window_zero()) && !wm_window_match(event->window, ws->os)) { return 0; }
+  if(event->kind == WM_EventKind_WindowLoseFocus) { MemoryZeroArray(ws->edit_chord_held); }
+  if(event->key > WM_Key_Null && event->key < WM_Key_COUNT && ws->edit_chord_held[event->key] &&
+     (event->kind == WM_EventKind_Press || event->kind == WM_EventKind_Release))
+  {
+    if(event->kind == WM_EventKind_Release) { ws->edit_chord_held[event->key] = 0; }
+    return 1;
+  }
+  if(event->kind == WM_EventKind_Text && event->source_key > WM_Key_Null &&
+     event->source_key < WM_Key_COUNT && ws->edit_chord_held[event->source_key]) { return 1; }
+  String8 command = cfg_command_from_menu_or_binding(arena, rd_state->key_map, event);
+  B32 host_edit = uishell_is_edit_command(command) &&
+    (event->kind == WM_EventKind_MenuCommand ||
+     (event->kind == WM_EventKind_Press &&
+      (!terminal || cfg_terminal_edit_binding_eligible((CFG_Binding){event->key, event->modifiers}))));
+  if(!host_edit) { return 0; }
+  if(event->kind == WM_EventKind_Press) { ws->edit_chord_held[event->key] = 1; }
+  UIShell_RegsScope(.window = ws->cfg_id)
+  { uishell_cmd("run_command", .cmd_name = command); }
+  return 1;
+}
+
 internal void
 rd_frame(void)
 {
@@ -10138,9 +10177,14 @@ rd_frame(void)
                                             (event->kind == WM_EventKind_Press ||
                                              event->kind == WM_EventKind_Release ||
                                              event->kind == WM_EventKind_Text));
+      B32 take = 0;
+      B32 terminal_edit_owner = terminal_input_is_focused ||
+        (ws && ws != &rd_nil_window_state && ws->ui && ws->ui->edit_owner_terminal &&
+         !rd_state->popup_active && !ws->query_is_active);
+      take = uishell_route_edit_activation(scratch.arena, ws, event, terminal_edit_owner);
       String8 repeat_page_command = {0};
-      B32 take = uishell_terminal_page_binding_event(ws, event,
-        terminal_input_is_focused ? focused_view->id : 0, &repeat_page_command);
+      if(!take) { take = uishell_terminal_page_binding_event(ws, event,
+        terminal_input_is_focused ? focused_view->id : 0, &repeat_page_command); }
       if(repeat_page_command.size) { uishell_cmd("run_command", .cmd_name = repeat_page_command); }
       if(!take && ws != 0 && ws != &rd_nil_window_state &&
          !rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused)
@@ -10215,7 +10259,7 @@ rd_frame(void)
       if(!take && event->kind == WM_EventKind_Press && !terminal_claims_keyboard_input)
       {
         String8 binding_command = cfg_command_from_menu_or_binding(scratch.arena, rd_state->key_map, event);
-        if(binding_command.size != 0)
+        if(binding_command.size != 0 && !uishell_is_edit_command(binding_command))
         {
           U32 hit_char = wm_codepoint_from_modifiers_and_key(event->modifiers, event->key);
           if(hit_char == 0 || allow_text_hotkeys)

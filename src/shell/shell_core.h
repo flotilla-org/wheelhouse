@@ -198,6 +198,8 @@ struct UIShell_Regs
   U64 vaddr;
   String8 expr;
   UI_Key ui_key;
+  UI_Key edit_owner_key; // captured semantic-command owner, separate from UI navigation
+  B32 edit_owner_captured;
   Vec2F32 off_px;
   UIShell_ContextRegSlot reg_slot;
   B32 force_confirm;
@@ -231,6 +233,8 @@ struct UIShell_Regs
 .vaddr = uishell_regs()->vaddr,\
 .expr = uishell_regs()->expr,\
 .ui_key = uishell_regs()->ui_key,\
+.edit_owner_key = uishell_regs()->edit_owner_key,\
+.edit_owner_captured = uishell_regs()->edit_owner_captured,\
 .off_px = uishell_regs()->off_px,\
 .reg_slot = uishell_regs()->reg_slot,\
 .force_confirm = uishell_regs()->force_confirm,\
@@ -636,6 +640,7 @@ struct RD_WindowState
   F32 chrome_trailing_px; // pixel extent of the right zone (trailing buttons + window controls)
 
   // rjf: menu bar state
+  B32 edit_chord_held[WM_Key_COUNT];
   B32 menu_bar_focused;
   B32 menu_bar_focused_on_press;
   B32 menu_bar_key_held;

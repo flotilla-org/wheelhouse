@@ -95,6 +95,7 @@
 #include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
 #include "uishell/uishell_terminal_selection_diagnostics.c"
+#include "uishell/uishell_edit_diagnostics.c"
 #include "uishell/uishell_scroll_diagnostics.c"
 #include "uishell/uishell_tooltip_diagnostics.c"
 #include "uishell/uishell_terminal_link_diagnostics.c"
@@ -152,9 +153,12 @@ entry_point(CmdLine *cmd_line)
     B32 ok = uishell_terminal_selection_diagnostics();
     ok = uishell_terminal_selection_lifetime_diagnostics() && ok;
     ok = uishell_terminal_override_diagnostics() && ok;
+    ok = uishell_edit_command_diagnostics(0) && ok;
     fprintf(stderr, "terminal selection diagnostics %s\n", ok ? "passed" : "failed");
     abort_self(ok ? 0 : 1);
   }
+  if(cmd_line_has_flag(cmd_line, str8_lit("edit_command_diagnostics")))
+  { abort_self(uishell_edit_command_diagnostics(0) ? 0 : 1); }
   ExecMode exec_mode = ExecMode_Normal;
   if(cmd_line_has_flag(cmd_line, str8_lit("?")) ||
      cmd_line_has_flag(cmd_line, str8_lit("help")))
