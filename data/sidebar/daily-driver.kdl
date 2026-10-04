@@ -4,14 +4,14 @@ display-variable "show-issues" type="bool" default=true label="Issues" icon="I" 
 
 display-variable "show-finished" type="bool" default=false label="Show finished" icon="F" persist=true
 
-display-variable "show-role-attempts" type="bool" default=false label="Role attempts" icon="R" persist=true
+display-variable "show-role-attempts" type="bool" default=false label="Role history" icon="R" persist=true
 
 // Internal constants let first-match visibility rules express Attention's union.
 display-variable "attention-yes" type="bool" default=true label="Internal" icon="·" persist=false
 display-variable "attention-no" type="bool" default=false label="Internal" icon="·" persist=false
 
 // First matching rule wins: finished tasks/subjects follow Show finished.
-// Standing-role history is placed separately behind Role attempts.
+// Standing-role history is placed separately behind Role history.
 // Shared by tree and Attention; hidden open workspaces remain in the fallback.
 visibility "wheelhouse/activity" {
   when kind="convoy" visible-when="attention-no" { match "flotilla.role" exists=true; }
@@ -80,7 +80,7 @@ template "project/native" {
   // Standing roles (flotilla#1908) are actions on the project row, selected by
   // kind rather than by any convoy or role name.
   // Inline while history is hidden; the native renderer keeps non-leaf roles
-  // as rows when Role attempts exposes their descendants.
+  // as rows when Role history exposes their descendants.
   for "role" kind="role" layout="inline" {
     match "flotilla.project" of="project"
     order "flotilla.role.name"

@@ -52,15 +52,16 @@ and disposable user/project settings. Each run included a call for human review.
 The daily driver was left untouched. The first candidate exposed an origin
 conversion error; the next run corrected it. The current candidate hides empty
 sections, retains single-section headers and shows Issues, Show finished and
-Role attempts beside the count. Human review exposed that fleet sections could
+Role history beside the count. Human review exposed that fleet sections could
 enter child workspaces and disappear from view when those workspaces changed.
 The latest candidate enforces owning levels. Its copied arrangement visibly recovers Projects, Other workspaces and Attention into a fleet-level compact-tab panel.
-A subsequent review fixed Reveal opening a collapsed docked section. Final
-interaction acceptance remains pending.
+A subsequent review fixed Reveal opening a collapsed docked section. The human
+accepted rearranging sections, workspace switching and the fleet-level boundary
+in the refreshed Docking Reveal Review candidate.
 
-The human naming choice proposes **Role history** for what Role attempts
-reveals, or grouping it with Show finished as history/detail controls. The
-shipped label remains **Role attempts** pending that choice.
+The human selected **Role history** as the replacement for Role attempts. The
+shipped template uses that label; the stable variable identity, existing behavior
+and persisted settings remain unchanged.
 
 Reproduce the fixture with disposable settings:
 

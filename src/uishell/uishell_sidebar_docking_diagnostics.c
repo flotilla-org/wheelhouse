@@ -290,10 +290,10 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   }
   ws->sidebar = state;
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_display")));
-  String8 persisted = str8_lit("display-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role attempts\" icon=\"R\" persist=true");
+  String8 persisted = str8_lit("display-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role history\" icon=\"R\" persist=true");
   U64 declaration_at = str8_find_needle(daily, 0, persisted, 0);
   DockFailure(declaration_at == daily.size);
-  String8 ephemeral = push_str8f(scratch.arena, "%Sdisplay-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role attempts\" icon=\"R\" persist=false%S",
+  String8 ephemeral = push_str8f(scratch.arena, "%Sdisplay-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role history\" icon=\"R\" persist=false%S",
                                  str8_prefix(daily, declaration_at), str8_skip(daily, declaration_at+persisted.size));
   error = 0;
   DockFailure(!andamento_configure(display.core, uishell_sidebar_text(ephemeral), &error));
