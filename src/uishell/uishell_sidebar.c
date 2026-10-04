@@ -1,5 +1,6 @@
 // Native andamento control surface. Included after the workspace helpers.
 #include "andamento.h"
+#include "uishell/uishell_sidebar_chips.h"
 #include "ingress/ingress.h"
 global WheelhouseIngress *uishell_ingress;
 global String8 uishell_sidebar_live_config;
@@ -7,6 +8,10 @@ global B32 uishell_sidebar_live;
 global B32 uishell_sidebar_fixture;
 global B32 uishell_sidebar_subject_fixture;
 global U64 uishell_sidebar_last_tick;
+// Optional fixture-only hit rectangles for the external mouse/clipboard test.
+global String8 uishell_sidebar_subject_geometry_path;
+global String8List uishell_sidebar_subject_geometry;
+
 // The first resource is primary. This descriptor is local fixture input, not
 // an andamento wire format. Persist IDs on tabs independently of their labels.
 typedef struct UIShell_SidebarResource UIShell_SidebarResource;
@@ -57,6 +62,20 @@ internal String8
 uishell_sidebar_string(AndamentoText s)
 {
   return str8((U8 *)s.data, s.len);
+}
+
+internal void
+uishell_sidebar_subject_hit(AndamentoNode node, UI_Box *box, char *action, B32 menu)
+{
+  if(!uishell_sidebar_subject_fixture || !uishell_sidebar_subject_geometry_path.size ||
+     dim_2f32(box->rect).x <= 0 || dim_2f32(box->rect).y <= 0) { return; }
+  // Rectangles come from the previous layout; fixture consumers poll until
+  // it settles. The embedded subject IDs are fixed ASCII identifiers.
+  str8_list_pushf(ui_build_arena(), &uishell_sidebar_subject_geometry,
+    "{\"id\":\"%S\",\"chip\":%s,\"action\":\"%s\",\"menu\":%s,\"rect\":[%g,%g,%g,%g]}",
+    uishell_sidebar_string(node.entity_id),
+    str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0) ? "true" : "false", action, menu ? "true" : "false",
+    box->rect.x0, box->rect.y0, box->rect.x1, box->rect.y1);
 }
 
 internal B32
@@ -568,7 +587,7 @@ uishell_sidebar_node_status(UIShell_SidebarState *state, AndamentoNode node)
 internal size_t
 uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
                              AndamentoNode node, U64 node_index, UI_Signal sig, String8 context,
-                             B32 contains_current)
+                             B32 contains_current, B32 menu)
 {
   size_t action = ANDAMENTO_NONE;
   F32 em = ui_top_font_size();
@@ -594,13 +613,16 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   }
   if(subject)
   {
+    uishell_sidebar_subject_hit(node, sig.box, "subject", menu);
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "subject_menu");
     UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
     {
       // The retained snapshot gives every placed subject an activate action.
       if(copy_url != ANDAMENTO_NONE && node.activate != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Open in browser"))))
       { action = node.activate; ui_ctx_menu_close(); }
-      if(ui_clicked(ui_button(copy_url != ANDAMENTO_NONE ? str8_lit("Copy URL") : str8_lit("Copy reference"))))
+      UI_Signal copy = ui_button(copy_url != ANDAMENTO_NONE ? str8_lit("Copy URL") : str8_lit("Copy reference"));
+      uishell_sidebar_subject_hit(node, copy.box, "copy", 1);
+      if(ui_clicked(copy))
       {
         if(copy_url != ANDAMENTO_NONE) { action = copy_url; }
         else { wm_set_clipboard_text(full_label); }
@@ -694,60 +716,168 @@ uishell_sidebar_status_mark(AndamentoNode node, String8 status)
   return node.state == ANDAMENTO_LIVE ? str8_lit("•") : str8_zero();
 }
 
+// The native template reserves seven chip-presentation fields after its normal
+// fields. A literal marker identifies that block. Producer labels and other
+// field values are never interpreted as presentation directives.
+// TODO: Replace this text convention with typed presentation metadata when
+// the shared ABI exposes field identities, then retire the reserved prefixes.
+internal U64
+uishell_sidebar_chip_fields_start(UIShell_SidebarState *state, AndamentoNode node)
+{
+  String8 kind = uishell_sidebar_string(node.entity_kind);
+  U64 start = str8_match(kind, str8_lit("project"), 0) ? 1 :
+    str8_match(kind, str8_lit("role"), 0) ? 4 : 3;
+  AndamentoField marker = {0};
+  if(start < node.field_count && andamento_snapshot_field(state->snapshot, node.first_field+start, &marker) &&
+     str8_match(uishell_sidebar_string(marker.text), str8_lit("chip-fields:1"), 0)) { return start; }
+  return ANDAMENTO_NONE;
+}
+
+internal B32
+uishell_sidebar_chip_field(UIShell_SidebarState *state, AndamentoNode node, U64 f, String8 text)
+{
+  U64 start = uishell_sidebar_chip_fields_start(state, node);
+  if(start == ANDAMENTO_NONE || f < start || f >= start+7) { return 0; }
+  String8 prefixes[] = {str8_lit("chip-fields:"), str8_lit("chip-medium:"), str8_lit("chip-short:"),
+    str8_lit("chip-icon:"), str8_lit("chip-icon-override:"), str8_lit("chip-attention:"), str8_lit("chip-status:")};
+  for(U64 i = 0; i < ArrayCount(prefixes); i++)
+  { if(str8_match(str8_prefix(text, prefixes[i].size), prefixes[i], 0)) { return 1; } }
+  return 0;
+}
+
+internal String8
+uishell_sidebar_chip_fact(UIShell_SidebarState *state, AndamentoNode node, String8 prefix)
+{
+  U64 start = uishell_sidebar_chip_fields_start(state, node);
+  for(U64 f = start; start != ANDAMENTO_NONE && f < Min(node.field_count, start+7); f++)
+  {
+    AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field+f, &field);
+    String8 text = uishell_sidebar_string(field.text);
+    if(str8_match(str8_prefix(text, prefix.size), prefix, 0)) { return str8_skip(text, prefix.size); }
+  }
+  return str8_zero();
+}
+
+internal String8
+uishell_sidebar_chip_status(UIShell_SidebarState *state, AndamentoNode node)
+{
+  String8 status = uishell_sidebar_node_status(state, node);
+  // Retained workspaces get their terminal status from the core. Producer
+  // activity metadata must not override that authoritative end.
+  if(str8_match(status, str8_lit("ended"), 0)) { return status; }
+  String8 activity = uishell_sidebar_chip_fact(state, node, str8_lit("chip-status:"));
+  if(activity.size) { return activity; }
+  return status;
+}
+
+internal B32
+uishell_sidebar_is_subject(AndamentoNode node)
+{
+  String8 kind = uishell_sidebar_string(node.entity_kind);
+  return str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0);
+}
+
+internal B32
+uishell_sidebar_chip_attention(UIShell_SidebarState *state, AndamentoNode node)
+{
+  String8 status = uishell_sidebar_chip_status(state, node);
+  if(uishell_sidebar_is_subject(node))
+  { return str8_match(status, str8_lit("ready_to_merge"), 0) || str8_match(status, str8_lit("ci_failing"), 0); }
+  return node.selected || node.state == ANDAMENTO_OPENING ||
+    (node.state == ANDAMENTO_LIVE && (str8_match(uishell_sidebar_chip_fact(state, node, str8_lit("chip-attention:")), str8_lit("true"), 0) ||
+     str8_match(status, str8_lit("active"), 0) || str8_match(status, str8_lit("working"), 0) || str8_match(status, str8_lit("failed"), 0)));
+}
+
+internal Vec4F32
+uishell_sidebar_subject_color(String8 status)
+{
+  Vec4F32 text = ui_color_from_name(str8_lit("text")), color = text;
+  String8 tag = str8_zero();
+  if(str8_match(status, str8_lit("ready_to_merge"), 0)) { tag = str8_lit("good"); }
+  else if(str8_match(status, str8_lit("ci_failing"), 0) || str8_match(status, str8_lit("conflicting"), 0)) { tag = str8_lit("bad"); }
+  else if(str8_match(status, str8_lit("awaiting_review_response"), 0) || str8_match(status, str8_lit("merged_not_landed"), 0)) { tag = str8_lit("neutral"); }
+  if(tag.size) UI_TagF("%S", tag) { color = mix_4f32(ui_color_from_name(str8_lit("text")), text, 0.2f); }
+  if(str8_match(status, str8_lit("draft"), 0) || str8_match(status, str8_lit("closed"), 0)) { color.w = 0.65f; }
+  return color;
+}
+
+internal String8
+uishell_sidebar_chip_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *icon_font)
+{
+  String8 icon = uishell_sidebar_chip_fact(state, node, str8_lit("chip-icon:"));
+  if(!icon.size) { icon = uishell_sidebar_chip_fact(state, node, str8_lit("chip-icon-override:")); }
+  *icon_font = 1;
+  // Supported symbolic suggestions use the existing icon font. Other values
+  // are literal glyphs rendered with the normal font/fallback chain.
+  struct { char *name; RD_IconKind kind; } icons[] = {
+    {"terminal", RD_IconKind_Machine}, {"overview", RD_IconKind_Thumbnails},
+    {"role", RD_IconKind_Threads}, {"threads", RD_IconKind_Threads},
+    {"gear", RD_IconKind_Gear}, {"code", RD_IconKind_Module},
+    {"review", RD_IconKind_Glasses}, {"workspace", RD_IconKind_Window},
+  };
+  for(U64 i = 0; i < ArrayCount(icons); i++)
+  { if(str8_match(icon, str8_cstring(icons[i].name), 0)) { return rd_icon_kind_text_table[icons[i].kind]; } }
+  if(icon.size) { *icon_font = 0; return icon; }
+  String8 kind = uishell_sidebar_string(node.entity_kind);
+  RD_IconKind fallback = str8_match(kind, str8_lit("project"), 0) ? RD_IconKind_Thumbnails :
+    str8_match(kind, str8_lit("role"), 0) ? RD_IconKind_Threads : RD_IconKind_Machine;
+  return rd_icon_kind_text_table[fallback];
+}
+
+internal String8
+uishell_sidebar_chip_label(UIShell_SidebarState *state, AndamentoNode node)
+{
+  String8 label = uishell_sidebar_string(node.label);
+  if(str8_match(uishell_sidebar_chip_status(state, node), str8_lit("ended"), 0))
+  { label = push_str8f(ui_build_arena(), "%S ×", label); }
+  return label;
+}
+
+internal F32
+uishell_sidebar_chip_width(UIShell_SidebarState *state, AndamentoNode node)
+{
+  F32 em = ui_top_font_size();
+  String8 label = uishell_sidebar_is_subject(node) ? uishell_sidebar_chip_label(state, node) : str8_zero();
+  return uishell_sidebar_is_subject(node) ?
+    fnt_dim_from_tag_size_string(ui_top_font(), em*0.9f, 0, 0, label).x+em*0.9f+4.f : em*2.f+4.f;
+}
+
 internal size_t
 uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
-                              AndamentoNode node, U64 node_index, String8 context, B32 overview)
+                              AndamentoNode node, U64 node_index, String8 context, F32 row_height, B32 menu)
 {
   Temp scratch = scratch_begin(0, 0);
+  F32 em = ui_top_font_size();
+  B32 subject = uishell_sidebar_is_subject(node), icon_font = 0;
+  String8 label = subject ? uishell_sidebar_chip_label(state, node) : uishell_sidebar_chip_icon(state, node, &icon_font);
+  String8 status = uishell_sidebar_chip_status(state, node);
+  Vec4F32 border = subject ? uishell_sidebar_subject_color(status) : uishell_sidebar_action_border();
+  Vec4F32 fill = node.selected ? uishell_sidebar_selection_fill(1) :
+    mix_4f32(ui_color_from_name(str8_lit("background")), border, node.state == ANDAMENTO_LIVE ? 0.23f : 0.06f);
   UI_Signal sig = {0};
-  UI_CornerRadius(3.f)
+  ui_spacer(ui_px(4.f, 1));
+  UI_CornerRadius(subject ? em*0.7f : 3.f) UI_PrefHeight(ui_px(em*1.6f, 1))
+  UI_FixedY(Max(0.f, (row_height-4.f-em*1.6f)*0.5f))
+  UI_PrefWidth(menu ? ui_pct(1, 0) : ui_px(uishell_sidebar_chip_width(state, node)-4.f, 1))
+  UI_BackgroundColor(fill) UI_TextColor(subject ? border : ui_color_from_name(str8_lit("text")))
+  UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_FontSize(em*0.9f)
   {
-    String8 label = uishell_sidebar_string(node.label);
-    String8 status = uishell_sidebar_node_status(state, node);
-    if(node.field_count)
+    ui_set_next_border_color(border);
+    UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|
+      UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DisableTextTrunc,
+      "###action_%S", uishell_sidebar_string(node.key));
+    UI_Parent(box) UI_PrefHeight(ui_pct(1, 1)) UI_PrefWidth(ui_pct(1, 0))
     {
-      AndamentoField field = {0};
-      andamento_snapshot_field(state->snapshot, node.first_field, &field);
-      if(field.text.len) { label = uishell_sidebar_string(field.text); }
+      if(menu) { ui_label(uishell_sidebar_chip_label(state, node)); }
+      else if(!subject && (str8_match(status, str8_lit("ended"), 0) || node.state == ANDAMENTO_OPENING))
+      { ui_label(uishell_sidebar_status_mark(node, status)); }
+      else if(icon_font) RD_Font(RD_FontSlot_Icons) { ui_label(label); }
+      else { ui_label(label); }
     }
-    String8 mark = uishell_sidebar_status_mark(node, status);
-    // Fixed status slot: opening/focus transitions never move the label.
-    UI_ChildLayoutAxis(Axis2_X)
-    {
-      UI_Box *slot = ui_build_box_from_stringf(0, "###action_slot_%S", uishell_sidebar_string(node.key));
-      ui_push_parent(slot);
-      ui_spacer(ui_px(5.f, 1));
-      UI_Box *column;
-      UI_PrefWidth(ui_pct(1, 0)) UI_ChildLayoutAxis(Axis2_Y)
-      { column = ui_build_box_from_stringf(0, "###action_column_%S", uishell_sidebar_string(node.key)); }
-      ui_push_parent(column);
-      ui_spacer(ui_px(1.f, 1));
-      ui_set_next_pref_width(ui_pct(1, 0));
-      ui_set_next_pref_height(ui_pct(1, 0));
-      ui_set_next_border_color(uishell_sidebar_action_border());
-      if(node.selected) { ui_set_next_background_color(uishell_sidebar_selection_fill(1)); }
-      UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|
-        UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|
-        (node.selected ? UI_BoxFlag_DrawBackground : 0), "###action_%S", uishell_sidebar_string(node.key));
-      UI_Parent(box) UI_PrefHeight(ui_pct(1, 1)) UI_TextPadding(ui_top_font_size()*0.4f)
-      UI_FlagsAdd(UI_BoxFlag_DisableTruncatedHover)
-      {
-        UI_PrefWidth(ui_pct(1, 0))
-        {
-          if(overview) RD_Font(RD_FontSlot_Icons) UI_TextAlignment(UI_TextAlign_Center) UI_TextPadding(0)
-          { ui_label(rd_icon_kind_text_table[RD_IconKind_Machine]); }
-          else { ui_label(label); }
-        }
-        UI_PrefWidth(ui_em(1.1f, 1)) UI_TextPadding(0)
-        { ui_label(mark); }
-      }
-      sig = ui_signal_from_box(box);
-      ui_spacer(ui_px(1.f, 1));
-      ui_pop_parent();
-      ui_pop_parent();
-    }
+    if(!subject && node.state == ANDAMENTO_LIVE) { box->flags |= UI_BoxFlag_DrawSideLeft; }
+    sig = ui_signal_from_box(box);
   }
-  size_t action = uishell_sidebar_entry_signal(state, ws, node, node_index, sig, context, 0);
+  size_t action = uishell_sidebar_entry_signal(state, ws, node, node_index, sig, context, 0, menu);
   scratch_end(scratch);
   return action;
 }
@@ -800,6 +930,7 @@ uishell_sidebar_fields(Arena *arena, AndamentoSnapshot *snapshot, AndamentoNode 
 internal void
 uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 {
+  MemoryZeroStruct(&uishell_sidebar_subject_geometry);
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
   uishell_sidebar_restore(state, split);
@@ -818,6 +949,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   size_t action = ANDAMENTO_NONE;
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size(), row_height = floor_f32(em*2.2f);
+  F32 minimum_name = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, str8_lit("abcdefghij…")).x+em;
   F32 project_gap = 6.f, project_padding = 4.f;
   F32 body_top_padding = 2.f; // Room for the first container's outward border stroke.
   Vec2F32 dim = dim_2f32(rect);
@@ -1071,13 +1203,17 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           String8 full_label = uishell_sidebar_string(node.label);
           String8 label = full_label;
           String8 kind = uishell_sidebar_string(node.entity_kind);
-          String8 status = uishell_sidebar_node_status(state, node);
+          String8 status = uishell_sidebar_chip_status(state, node);
           String8 context = str8_zero();
           for(U64 f = 0; f < node.field_count; f++)
           {
             AndamentoField field = {0};
             andamento_snapshot_field(state->snapshot, node.first_field+f, &field);
             String8 value = uishell_sidebar_string(field.text);
+            if(uishell_sidebar_chip_field(state, node, f, value))
+            {
+              continue;
+            }
             // Native templates declare the display label first. The core may
             // abbreviate it; node.label remains the full hover/inspection text.
             if(f == 0 && value.size) { label = value; }
@@ -1095,6 +1231,38 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             }
           }
           B32 project = depth[i] == 0 && str8_match(kind, str8_lit("project"), 0);
+          U64 chip_count = inline_count[i]+project;
+          U64 *members = push_array(scratch.arena, U64, chip_count);
+          UIShell_ChipMeasure *chip_measures = push_array(scratch.arena, UIShell_ChipMeasure, chip_count);
+          U64 member_count = 0;
+          if(project) { members[member_count++] = i; }
+          for(U64 j = inline_first[i]; j != ANDAMENTO_NONE; j = inline_next[j]) { members[member_count++] = j; }
+          for(U64 c = 0; c < chip_count; c++)
+          {
+            chip_measures[c].width = uishell_sidebar_chip_width(state, nodes[members[c]]);
+            chip_measures[c].attention = uishell_sidebar_chip_attention(state, nodes[members[c]]);
+          }
+          String8 names[3] = {label,
+            uishell_sidebar_chip_fact(state, node, str8_lit("chip-medium:")),
+            uishell_sidebar_chip_fact(state, node, str8_lit("chip-short:"))};
+          if(!names[1].size) { names[1] = names[0]; }
+          if(!names[2].size) { names[2] = names[1]; }
+          F32 name_widths[3];
+          for(U64 c = 0; chip_count && c < 3; c++)
+          { name_widths[c] = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, names[c]).x+em; }
+          F32 indent = 0.3f+Min(depth[i], (str8_match(kind, str8_lit("role"), 0) || str8_match(kind, str8_lit("convoy"), 0) || uishell_sidebar_is_subject(node)) ? 3 : 1)*0.4f;
+          F32 status_width = em*(str8_match(kind, str8_lit("change_request"), 0) ? 10.f : 1.2f);
+          F32 row_width = Max(0.f, dim_2f32(region.viewport).x-8.f-(owner != ANDAMENTO_NONE ? 4.f : 0.f));
+          F32 available_width = Max(0.f, row_width-em*(indent+1.5f+1.2f)-status_width-(project ? 3.f : 0.f));
+          F32 overflow_width = chip_count ? Max(em*2.5f,
+            fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0,
+              push_str8f(scratch.arena, "+%I64u", chip_count)).x+8.f) : 0;
+          UIShell_ChipLayout chip_layout = {0};
+          if(chip_count) { chip_layout = uishell_chip_layout(Max(0.f, available_width-2.f), name_widths, minimum_name,
+            chip_measures, chip_count, overflow_width); }
+          F32 chip_clearance = chip_count ? 2.f : 0.f;
+          if(chip_count) { label = names[chip_layout.tier]; }
+
           if(project)
           {
             Vec4F32 accent = uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
@@ -1148,7 +1316,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 UI_PrefWidth(ui_px(3.f, 1))
                 { ui_build_box_from_stringf(UI_BoxFlag_DrawBackground, "###accent_%S", node_key); }
               }
-              ui_spacer(ui_em(0.3f+Min(depth[i], (str8_match(kind, str8_lit("role"), 0) || str8_match(kind, str8_lit("convoy"), 0) || str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0)) ? 3 : 1)*0.4f, 1));
+              ui_spacer(ui_em(indent, 1));
               UI_PrefWidth(ui_em(1.5f, 1))
               {
                 if(children && node.toggle != ANDAMENTO_NONE)
@@ -1157,7 +1325,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 }
                 else { ui_spacer(ui_em(1.5f, 1)); }
               }
-              if(!project && !inline_count[i]) UI_TagF("weak") UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) RD_Font(RD_FontSlot_Icons)
+              UI_TagF("weak") UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) RD_Font(RD_FontSlot_Icons)
               {
                 RD_IconKind icon = RD_IconKind_FileOutline;
                 if(str8_match(kind, str8_lit("project"), 0)) { icon = RD_IconKind_FolderClosedOutline; }
@@ -1192,71 +1360,57 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 // The rich tooltip already includes the full label. Do not also
                 // enroll this row in the shell's automatic truncated-text hover.
                 sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
-                size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current);
+                size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0);
                 if(requested != ANDAMENTO_NONE) { action = requested; }
               }
-              if(project)
+              if(chip_count)
               {
-                UI_PrefWidth(ui_em(3.8f, 1))
+                UI_Box *chip_area;
+                UI_PrefWidth(ui_px(chip_layout.chip_width+chip_clearance, 1)) UI_ChildLayoutAxis(Axis2_X)
                 {
-                  size_t requested = uishell_sidebar_inline_action(state, ws, node, i, str8_zero(), 1);
-                  if(requested != ANDAMENTO_NONE) { action = requested; }
+                  chip_area = ui_build_box_from_stringf(UI_BoxFlag_Clip|UI_BoxFlag_AllowOverflowX|
+                    UI_BoxFlag_ViewScrollX|UI_BoxFlag_ViewClampX, "###chips_%S", node_key);
                 }
-              }
-              if(inline_count[i])
-              {
-                F32 slot_width = em*7.f;
-                F32 budget = dim.x*0.48f, overflow_width = em*2.5f;
-                U64 capacity = Max(0, (S64)(budget/slot_width));
-                U64 visible = inline_count[i] <= capacity ? inline_count[i] :
-                  Max(0, (S64)((budget-overflow_width)/slot_width));
-                // Keep the selected workspace visible without changing the slot
-                // budget. Replace the last visible item, retaining catalog order
-                // for the other visible items and for the overflow menu.
-                U64 *members = push_array(scratch.arena, U64, inline_count[i]);
-                U64 selected_index = ANDAMENTO_NONE;
-                for(U64 j = inline_first[i], index = 0; j != ANDAMENTO_NONE; j = inline_next[j], index++)
+                UI_Parent(chip_area)
                 {
-                  members[index] = j;
-                  if(nodes[j].selected && selected_index == ANDAMENTO_NONE) { selected_index = index; }
-                }
-                if(visible && selected_index != ANDAMENTO_NONE && selected_index >= visible)
-                {
-                  U64 selected = members[selected_index];
-                  for(U64 index = selected_index; index >= visible; index--) { members[index] = members[index-1]; }
-                  members[visible-1] = selected;
-                }
-                for(U64 index = 0; index < visible; index++)
-                {
-                  UI_PrefWidth(ui_px(slot_width, 1))
+                  for(U64 c = 0; c < chip_count; c++)
                   {
-                    size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[index]], members[index], full_label, 0);
+                    if(chip_measures[c].folded) { continue; }
+                    size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[c]], members[c],
+                      members[c] == i ? str8_zero() : full_label, row_height, 0);
                     if(requested != ANDAMENTO_NONE) { action = requested; }
                   }
-                }
-                if(visible < inline_count[i])
-                {
-                  UI_Key menu_key = ui_key_from_stringf(root->key, "overflow_%S", node_key);
-                  B32 overflow_selected = 0;
-                  for(U64 index = visible; index < inline_count[i]; index++) { overflow_selected |= nodes[members[index]].selected; }
-                  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(24.f, 1)) UI_PrefHeight(ui_px(row_height, 1))
+                  if(chip_layout.folded)
                   {
-                    for(U64 index = visible; index < inline_count[i]; index++)
+                    UI_Key menu_key = ui_key_from_stringf(root->key, "overflow_%S", node_key);
+                    UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(24.f, 1)) UI_PrefHeight(ui_px(row_height, 1))
                     {
-                      size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[index]], members[index], full_label, 0);
-                      if(requested != ANDAMENTO_NONE) { action = requested; ui_ctx_menu_close(); }
+                      for(U64 c = 0; c < chip_count; c++)
+                      {
+                        if(!chip_measures[c].folded) { continue; }
+                        UI_ChildLayoutAxis(Axis2_X)
+                        {
+                          UI_Box *menu_row = ui_build_box_from_stringf(0, "###overflow_row_%S", uishell_sidebar_string(nodes[members[c]].key));
+                          UI_Parent(menu_row)
+                          {
+                            size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[c]], members[c], full_label, row_height, 1);
+                            if(requested != ANDAMENTO_NONE) { action = requested; ui_ctx_menu_close(); }
+                          }
+                        }
+                      }
+                    }
+                    ui_spacer(ui_px(4.f, 1));
+                    UI_CornerRadius(3.f) UI_FixedY(Max(0.f, (row_height-4.f-em*1.6f)*0.5f))
+                    UI_PrefHeight(ui_px(em*1.6f, 1)) UI_PrefWidth(ui_px(overflow_width-4.f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+                    {
+                      ui_set_next_border_color(uishell_sidebar_action_border());
+                      UI_Signal sig = ui_button(push_str8f(scratch.arena, "+%I64u###overflow_%S", chip_layout.folded, node_key));
+                      if(ui_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, row_height)); }
                     }
                   }
-                  ui_spacer(ui_px(5.f, 1));
-                  UI_CornerRadius(3.f) UI_FixedY(1.f) UI_PrefHeight(ui_px(row_height-6.f, 1))
-                  UI_PrefWidth(ui_px(overflow_width-5.f, 1))
-                  {
-                    ui_set_next_border_color(uishell_sidebar_action_border());
-                    if(overflow_selected) { ui_set_next_background_color(uishell_sidebar_selection_fill(1)); }
-                    UI_Signal sig = ui_button(push_str8f(scratch.arena, "+%I64u###overflow_%S", inline_count[i]-visible, node_key));
-                    if(ui_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, row_height)); }
-                  }
                 }
+                UI_Parent(chip_area) { ui_spacer(ui_px(chip_clearance, 1)); }
+                ui_signal_from_box(chip_area);
               }
               // Reserve the same trailing slot at every level. Project-wide
               // status belongs here once supplied; workspace state stays on
@@ -1386,6 +1540,12 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         }
       }
     }
+  }
+  if(uishell_sidebar_subject_fixture && uishell_sidebar_subject_geometry_path.size)
+  {
+    StringJoin join = {.pre = str8_lit("["), .sep = str8_lit(","), .post = str8_lit("]")};
+    write_data_to_file_path(uishell_sidebar_subject_geometry_path,
+      str8_list_join(scratch.arena, &uishell_sidebar_subject_geometry, &join));
   }
   scratch_end(scratch);
   // Dispatch only against the snapshot used above, before topology mutations.
@@ -1612,6 +1772,7 @@ uishell_sidebar_scroll_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
 }
 
 #include "uishell/uishell_git_diagnostics.c"
+#include "uishell/uishell_chip_diagnostics.c"
 
 internal B32
 uishell_sidebar_diagnostics(CFG_Node *window)
@@ -1727,6 +1888,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = ok && uishell_sidebar_motion_diagnostics(ws, &split, reveal_node.parent, created);
     ok = uishell_sidebar_scroll_diagnostics(ws, &split) && ok;
     ok = uishell_sidebar_git_diagnostics(ws, &split) && ok;
+    ok = uishell_sidebar_chip_diagnostics(ws, &split) && ok;
     // A pending focus whose target disappears must be completed as a failure.
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {

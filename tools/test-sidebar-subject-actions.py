@@ -4,6 +4,7 @@
 Run under an X11 display (or xvfb-run), with xdotool and xclip installed.
 Browser launch is the only fake: a subprocess boundary records the URL.
 """
+import json
 import os
 from pathlib import Path
 import shutil
@@ -27,9 +28,13 @@ def main():
         env = {**os.environ, 'PATH': str(directory) + os.pathsep + os.environ['PATH'],
                'WHEELHOUSE_TEST_URLS': str(urls)}
         project = directory / 'subject-actions-project'
+        geometry = directory / 'geometry.json'
+        user = directory / 'user'
+        user.write_text('window:\n{\n  size: 1280 720\n  control_split_pct: 0.32\n}\n')
         with (directory / 'app.log').open('w') as log:
             app = subprocess.Popen([str(ROOT / 'build/wheelhouse'), '--sidebar_subject_fixture',
-                                    '--user:' + str(directory / 'user'), '--project:' + str(project)],
+                                    '--user:' + str(user), '--project:' + str(project),
+                                    '--sidebar_subject_geometry:' + str(geometry)],
                                    env=env, stdout=log, stderr=subprocess.STDOUT)
             try:
                 deadline = time.monotonic() + 10
@@ -56,26 +61,38 @@ def main():
                         command += ['-target', target]
                     return subprocess.check_output(command, text=True, timeout=3)
 
-                # A click opens the canonical URL through the forge's custom template.
-                click(85, 148)
+                def hit(identity, action='subject', chip=True):
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        try:
+                            records = json.loads(geometry.read_text())
+                            record = next(r for r in records if r['id'] == identity and
+                                          r['action'] == action and r['chip'] == chip and
+                                          r['menu'] == (action == 'copy'))
+                            x0, y0, x1, y1 = record['rect']
+                            return round((x0 + x1) / 2), round((y0 + y1) / 2)
+                        except (OSError, ValueError, StopIteration):
+                            time.sleep(.05)
+                    raise AssertionError(f'No {action} geometry for {identity}, chip={chip}')
+
+                # Use real laid-out rectangles so widths, tiers and chip order
+                # cannot silently turn this test back into child-row clicks.
+                click(*hit('pr-281'))
                 assert urls.read_text().splitlines() == ['https://forge.example/org/wheelhouse/review/281']
-                # Both tree and detached Attention copies yield the external canonical URL.
-                for row, menu_copy in [(148, 198), (510, 560)]:
-                    click(85, row, 3)
-                    click(95, menu_copy)
+                for chip in (True, False):
+                    click(*hit('pr-281', chip=chip), button=3)
+                    click(*hit('pr-281', action='copy', chip=chip))
                     assert clipboard() == 'https://forge.example/org/wheelhouse/review/281'
                     assert clipboard('UTF8_STRING') == 'https://forge.example/org/wheelhouse/review/281'
-                # A missing forge copies the subject's own short reference and cannot open a browser.
-                click(85, 196)
+                click(*hit('no-forge'))
                 assert len(urls.read_text().splitlines()) == 1
-                click(85, 196, 3)
-                click(95, 226)
+                click(*hit('no-forge'), button=3)
+                click(*hit('no-forge', action='copy'))
                 assert clipboard() == '!2508'
-                # Issues use their own forge template rather than a hard-coded /issues path.
-                click(85, 220)
+                click(*hit('issue-137'))
                 assert urls.read_text().splitlines()[-1] == 'https://forge.example/org/wheelhouse/ticket/137'
-                click(85, 220, 3)
-                click(95, 270)
+                click(*hit('issue-137'), button=3)
+                click(*hit('issue-137', action='copy'))
                 assert clipboard() == 'https://forge.example/org/wheelhouse/ticket/137'
                 print('Native subject URL and clipboard scenarios passed')
             finally:

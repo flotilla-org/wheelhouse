@@ -76,6 +76,7 @@ placement "tree" {
 }
 template "project/native" {
   field "label" key="display.label"
+  use "wheelhouse/chip-presentation"
   // Standing roles (flotilla#1908) are actions on the project row, selected by
   // kind rather than by any convoy or role name.
   // Inline while history is hidden; the native renderer keeps non-leaf roles
@@ -106,6 +107,7 @@ template "role/native" {
   field "kind" key="entity.kind"
   field "status" key="status.state"
   field "phase" key="flotilla.convoy.phase" prefix="Phase: "
+  use "wheelhouse/chip-presentation"
   for "attempt" kind="convoy" in="flotilla.role.attempts" of="role" visibility="wheelhouse/role-attempt" {
     apply-template "convoy/native"
   }
@@ -114,14 +116,15 @@ template "convoy/native" {
   field "label" key="display.label"
   field "kind" key="entity.kind"
   field "status" key="status.state"
+  use "wheelhouse/chip-presentation"
   // Reverse entity edges support many repositories and shared generations.
   // PR relationships (produces/adopts) precede works_on issues; each group is numeric.
-  for "change_request" kind="change_request" visibility="wheelhouse/activity" tier="medium" {
+  for "change_request" kind="change_request" visibility="wheelhouse/activity" tier="medium" layout="inline" {
     match "flotilla.subject_of" of="convoy"
     order "flotilla.subject.number" natural=true
     apply-template "change_request/native"
   }
-  for "issue" kind="issue" visibility="wheelhouse/activity" tier="medium" {
+  for "issue" kind="issue" visibility="wheelhouse/activity" tier="medium" layout="inline" {
     match "flotilla.subject_of" of="convoy"
     order "flotilla.subject.number" natural=true
     apply-template "issue/native"
@@ -164,6 +167,19 @@ template "wheelhouse/entry" {
   field "label" key="display.label"
   field "kind" key="entity.kind"
   field "status" key="status.state"
+  use "wheelhouse/chip-presentation"
+}
+
+// Named prefixes carry native presentation values through ABI 2's text fields.
+// icon-override is local template policy; presentation.icon always wins.
+fragment "wheelhouse/chip-presentation" {
+  field "chip-fields" source="literal" value="1" prefix="chip-fields:"
+  field "medium" source="metadata-text" key="display.label.medium" prefix="chip-medium:"
+  field "short" source="metadata-text" key="display.label.short" prefix="chip-short:"
+  field "icon" key="presentation.icon" prefix="chip-icon:"
+  field "icon-override" source="literal" value="" prefix="chip-icon-override:"
+  field "attention" key="status.attention" prefix="chip-attention:"
+  field "activity" key="status.state" prefix="chip-status:"
 }
 
 // Context travels with detached Attention entries; the native renderer resolves

@@ -181,6 +181,7 @@ entry_point(CmdLine *cmd_line)
       rd_state->preview_surface_budget = !cmd_line_has_flag(cmd_line, str8_lit("no_preview_surface_budget"));
       rd_state->preview_refresh_budget = !cmd_line_has_flag(cmd_line, str8_lit("no_preview_refresh_budget"));
       uishell_sidebar_subject_fixture = cmd_line_has_flag(cmd_line, str8_lit("sidebar_subject_fixture"));
+      uishell_sidebar_subject_geometry_path = cmd_line_string(cmd_line, str8_lit("sidebar_subject_geometry"));
       uishell_sidebar_fixture = uishell_sidebar_subject_fixture || cmd_line_has_flag(cmd_line, str8_lit("sidebar_fixture")) ||
         cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
 
