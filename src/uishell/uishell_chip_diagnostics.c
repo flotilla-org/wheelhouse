@@ -170,10 +170,73 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     }
     uishell_sidebar_refresh(&fixture);
   }
+  if(fixture.core && fixture.snapshot)
+  {
+    // Simulate a template with stale activity presentation. The core's retained
+    // terminal status still wins, including pending glyphs and menu labels.
+    String8 activity_field = str8_lit("field \"activity\" key=\"status.state\" prefix=\"chip-status:\"");
+    U64 activity_at = str8_find_needle(config, 0, activity_field, 0);
+    String8 stale_config = push_str8f(scratch.arena, "%Sfield \"activity\" source=\"literal\" value=\"active\" prefix=\"chip-status:\"%S",
+      str8_prefix(config, activity_at), str8_skip(config, activity_at+activity_field.size));
+    ok = activity_at < config.size && andamento_configure(fixture.core, uishell_sidebar_text(stale_config), 0) && ok;
+    uishell_sidebar_refresh(&fixture);
+    for(U64 i = 0; fixture.snapshot && i < andamento_snapshot_node_count(fixture.snapshot); i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("chip-v"), 0))
+      { ok = andamento_dispatch(fixture.core, fixture.snapshot, node.activate, 0) && ok; break; }
+    }
+    AndamentoEffects *effects = andamento_effects_take(fixture.core, 0);
+    AndamentoEffect effect = {0};
+    B32 materialized = effects && andamento_effects_get(effects, 0, &effect) && effect.kind == ANDAMENTO_EFFECT_MATERIALIZE;
+    ok = materialized && ok;
+    if(materialized) { ok = andamento_complete(fixture.core, effect.request_id, 1, 4242, uishell_sidebar_text(str8_zero()), 0) && ok; }
+    if(effects) { andamento_effects_release(effects); }
+    AndamentoWorkspace retained = {4242, 0, uishell_sidebar_text(str8_lit("chip-v")), 1};
+    ok = andamento_observe(fixture.core, &retained, 1, 0, 0, 0) && ok;
+    String8 terminal_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"chip-v\"}},\"source_id\":\"fixture\",\"set\":{\"flotilla.convoy.phase\":{\"value\":{\"type\":\"text\",\"value\":\"landed\"}}},\"unset\":[]}");
+    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(terminal_patch), 0) && ok;
+    uishell_sidebar_refresh(&fixture);
+    B32 toggled = 0;
+    for(U64 i = 0; !toggled && i < andamento_snapshot_node_count(fixture.snapshot); i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      for(U64 c = 0; c < node.control_count; c++)
+      {
+        AndamentoControl control = {0}; andamento_snapshot_control(fixture.snapshot, node.first_control+c, &control);
+        if(str8_match(uishell_sidebar_string(control.label), str8_lit("Show finished"), 0))
+        { toggled = andamento_dispatch(fixture.core, fixture.snapshot, control.action, 0); break; }
+      }
+    }
+    uishell_sidebar_refresh(&fixture);
+    B32 ended_chip = 0;
+    for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      if(node.workspace_id == 4242 && str8_match(uishell_sidebar_string(node.entity_id), str8_lit("chip-v"), 0))
+      {
+        node.state = ANDAMENTO_OPENING;
+        ended_chip = str8_match(uishell_sidebar_chip_fact(&fixture, node, str8_lit("chip-status:")), str8_lit("active"), 0) &&
+          str8_match(uishell_sidebar_chip_status(&fixture, node), str8_lit("ended"), 0) &&
+          str8_match(uishell_sidebar_status_mark(node, uishell_sidebar_chip_status(&fixture, node)), str8_lit("×"), 0) &&
+          str8_match(uishell_sidebar_chip_label(&fixture, node), str8_lit("Subject workspace ×"), 0);
+        if(!ended_chip)
+        {
+          String8 activity = uishell_sidebar_chip_fact(&fixture, node, str8_lit("chip-status:"));
+          String8 status = uishell_sidebar_chip_status(&fixture, node), label = uishell_sidebar_chip_label(&fixture, node);
+          fprintf(stderr, "FAIL retained chip: activity %.*s status %.*s label %.*s\n",
+            (int)activity.size, activity.str, (int)status.size, status.str, (int)label.size, label.str);
+        }
+      }
+    }
+    ok = toggled && ended_chip && ok;
+    if(!toggled || !ended_chip) { fprintf(stderr, "FAIL retained chip setup: materialized %d toggled %d ended %d\n", materialized, toggled, ended_chip); }
+  }
+  else { ok = 0; }
   ws->sidebar = saved_sidebar;
   ui_select_state(saved_ui); ui_state_release(test);
   uishell_sidebar_release(&fixture);
   scratch_end(scratch);
-  fprintf(stderr, "Chip sidebar diagnostics: %s (240/320/600px, latent/pending/removed, fixed status)\n", ok ? "passed" : "FAILED");
+  fprintf(stderr, "Chip sidebar diagnostics: %s (240/320/600px, latent/pending/removed, fixed status, ended precedence)\n", ok ? "passed" : "FAILED");
   return ok;
 }

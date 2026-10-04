@@ -761,11 +761,13 @@ uishell_sidebar_chip_fact(UIShell_SidebarState *state, AndamentoNode node, Strin
 internal String8
 uishell_sidebar_chip_status(UIShell_SidebarState *state, AndamentoNode node)
 {
+  String8 status = uishell_sidebar_node_status(state, node);
+  // Retained workspaces get their terminal status from the core. Producer
+  // activity metadata must not override that authoritative end.
+  if(str8_match(status, str8_lit("ended"), 0)) { return status; }
   String8 activity = uishell_sidebar_chip_fact(state, node, str8_lit("chip-status:"));
   if(activity.size) { return activity; }
-  AndamentoField field = {0};
-  if(node.field_count > 2) { andamento_snapshot_field(state->snapshot, node.first_field+2, &field); }
-  return uishell_sidebar_string(field.text);
+  return status;
 }
 
 internal B32
@@ -822,11 +824,20 @@ uishell_sidebar_chip_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *
   return rd_icon_kind_text_table[fallback];
 }
 
+internal String8
+uishell_sidebar_chip_label(UIShell_SidebarState *state, AndamentoNode node)
+{
+  String8 label = uishell_sidebar_string(node.label);
+  if(str8_match(uishell_sidebar_chip_status(state, node), str8_lit("ended"), 0))
+  { label = push_str8f(ui_build_arena(), "%S ×", label); }
+  return label;
+}
+
 internal F32
-uishell_sidebar_chip_width(AndamentoNode node)
+uishell_sidebar_chip_width(UIShell_SidebarState *state, AndamentoNode node)
 {
   F32 em = ui_top_font_size();
-  String8 label = uishell_sidebar_string(node.label);
+  String8 label = uishell_sidebar_is_subject(node) ? uishell_sidebar_chip_label(state, node) : str8_zero();
   return uishell_sidebar_is_subject(node) ?
     fnt_dim_from_tag_size_string(ui_top_font(), em*0.9f, 0, 0, label).x+em*0.9f+4.f : em*2.f+4.f;
 }
@@ -838,7 +849,7 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size();
   B32 subject = uishell_sidebar_is_subject(node), icon_font = 0;
-  String8 label = subject ? uishell_sidebar_string(node.label) : uishell_sidebar_chip_icon(state, node, &icon_font);
+  String8 label = subject ? uishell_sidebar_chip_label(state, node) : uishell_sidebar_chip_icon(state, node, &icon_font);
   String8 status = uishell_sidebar_chip_status(state, node);
   Vec4F32 border = subject ? uishell_sidebar_subject_color(status) : uishell_sidebar_action_border();
   Vec4F32 fill = node.selected ? uishell_sidebar_selection_fill(1) :
@@ -847,7 +858,7 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
   ui_spacer(ui_px(4.f, 1));
   UI_CornerRadius(subject ? em*0.7f : 3.f) UI_PrefHeight(ui_px(em*1.6f, 1))
   UI_FixedY(Max(0.f, (row_height-4.f-em*1.6f)*0.5f))
-  UI_PrefWidth(menu ? ui_pct(1, 0) : ui_px(uishell_sidebar_chip_width(node)-4.f, 1))
+  UI_PrefWidth(menu ? ui_pct(1, 0) : ui_px(uishell_sidebar_chip_width(state, node)-4.f, 1))
   UI_BackgroundColor(fill) UI_TextColor(subject ? border : ui_color_from_name(str8_lit("text")))
   UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_FontSize(em*0.9f)
   {
@@ -857,8 +868,9 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
       "###action_%S", uishell_sidebar_string(node.key));
     UI_Parent(box) UI_PrefHeight(ui_pct(1, 1)) UI_PrefWidth(ui_pct(1, 0))
     {
-      if(menu) { ui_label(uishell_sidebar_string(node.label)); }
-      else if(!subject && node.state == ANDAMENTO_OPENING) { ui_label(str8_lit("…")); }
+      if(menu) { ui_label(uishell_sidebar_chip_label(state, node)); }
+      else if(!subject && (str8_match(status, str8_lit("ended"), 0) || node.state == ANDAMENTO_OPENING))
+      { ui_label(uishell_sidebar_status_mark(node, status)); }
       else if(icon_font) RD_Font(RD_FontSlot_Icons) { ui_label(label); }
       else { ui_label(label); }
     }
@@ -1191,7 +1203,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           String8 full_label = uishell_sidebar_string(node.label);
           String8 label = full_label;
           String8 kind = uishell_sidebar_string(node.entity_kind);
-          String8 status = uishell_sidebar_node_status(state, node);
+          String8 status = uishell_sidebar_chip_status(state, node);
           String8 context = str8_zero();
           for(U64 f = 0; f < node.field_count; f++)
           {
@@ -1200,8 +1212,6 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             String8 value = uishell_sidebar_string(field.text);
             if(uishell_sidebar_chip_field(state, node, f, value))
             {
-              String8 status_prefix = str8_lit("chip-status:");
-              if(str8_match(str8_prefix(value, status_prefix.size), status_prefix, 0)) { status = str8_skip(value, status_prefix.size); }
               continue;
             }
             // Native templates declare the display label first. The core may
@@ -1229,7 +1239,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           for(U64 j = inline_first[i]; j != ANDAMENTO_NONE; j = inline_next[j]) { members[member_count++] = j; }
           for(U64 c = 0; c < chip_count; c++)
           {
-            chip_measures[c].width = uishell_sidebar_chip_width(nodes[members[c]]);
+            chip_measures[c].width = uishell_sidebar_chip_width(state, nodes[members[c]]);
             chip_measures[c].attention = uishell_sidebar_chip_attention(state, nodes[members[c]]);
           }
           String8 names[3] = {label,

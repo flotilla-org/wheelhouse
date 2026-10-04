@@ -21,6 +21,9 @@ is used to guess an icon. Open workspaces have a stronger fill and left edge,
 selected workspaces have the selection fill, and pending actions show an
 ellipsis without changing width. Every action retains its full label in the
 hover card.
+Retained ended workspaces keep the core's × marker and Ended workspace hover
+text. That terminal state wins over pending or stale activity presentation.
+Subject references and overflow labels retain their text beside the marker.
 
 To assign a local role icon, select a template explicitly, for example a
 `role/governor` template extending `role/native`, overriding `icon-override`
@@ -63,9 +66,9 @@ The fixture forge uses `/review/` and `/ticket/` to expose hard-coded URL shapes
 
 ## Verification
 
-The macOS debug build uses the vessel's Cleat and Andamento checkouts, the
-prepared Ghostty library, and the workflow-pinned Jackstay revision.
-The 26 native ABI tests include the production width resolver's name
+The macOS debug build uses the workflow-pinned dependency revisions and a
+prepared Ghostty library. After rebasing onto #170, the 27 native ABI tests
+pass against Andamento `b72a103`. They include the production width resolver's name
 ladder, quiet fold order, protected workspace and extreme-width behavior.
 The generated-fixture locale/newline test passes.
 
@@ -74,7 +77,9 @@ Native sidebar diagnostics check laid-out status geometry at 240, 320 and
 subjects remain chips, and the existing workspace, selection, reveal, scrolling
 and project-motion diagnostics pass. The width path also covers localized
 wide-glyph names and compact references, including labels that resemble chip
-directives. Icon resolution checks cover suggestion
+directives. A retained-workspace scenario checks that terminal status wins
+over stale template activity, including the pending marker and overflow label.
+Icon resolution checks cover suggestion
 precedence, a local template override and a default for a role with an arbitrary
 label. The macOS PR chip Copy URL interaction also passed against the real
 clipboard.
@@ -86,5 +91,5 @@ fixture. Its browser subprocess records destinations without navigating, and
 its clipboard reader checks chip and Attention copies. It passed against Xvfb
 in a disposable Linux container on feta, including PR/issue destinations,
 chip/Attention URL copies and the no-forge reference copy. The Linux build,
-26 ABI/width tests and native sidebar diagnostics also passed. Cross-platform
+ABI/width tests and native sidebar diagnostics also passed. Cross-platform
 CI results are recorded on the PR.
