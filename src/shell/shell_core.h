@@ -20,6 +20,8 @@ enum
 ////////////////////////////////
 //~ rjf: View UI Hook Types
 
+#include "shell_docking.h"
+
 #define RD_VIEW_UI_FUNCTION_SIG(name) void name(E_Eval eval, Rng2F32 rect)
 #define RD_VIEW_UI_FUNCTION_NAME(name) rd_view_ui__##name
 #define RD_VIEW_UI_FUNCTION_DEF(name) internal RD_VIEW_UI_FUNCTION_SIG(RD_VIEW_UI_FUNCTION_NAME(name))
@@ -30,6 +32,7 @@ struct RD_ViewUIRule
 {
   String8 name;
   RD_ViewUIFunctionType *ui;
+  RD_ViewRegistration *registration;
 };
 
 typedef struct RD_ViewUIRuleNode RD_ViewUIRuleNode;
@@ -883,6 +886,7 @@ struct RD_State
 
   // rjf: name -> view ui map (constructed from-scratch each frame)
   RD_ViewUIRuleMap *view_ui_rule_map;
+  U64 docking_restore_gen;
 
   // rjf: registers stack
   UIShell_RegsNode base_regs;

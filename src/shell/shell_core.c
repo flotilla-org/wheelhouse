@@ -5,6 +5,7 @@
 #define LAYER_COLOR 0xf0a215ff
 
 #include "shell_app_hooks.h"
+#include "shell_docking.c"
 
 ////////////////////////////////
 //~ rjf: Generated Code
@@ -53,6 +54,8 @@ rd_view_ui_rule_map_insert(Arena *arena, RD_ViewUIRuleMap *map, String8 string, 
   RD_ViewUIRuleNode *n = push_array(arena, RD_ViewUIRuleNode, 1);
   n->v.name = push_str8_copy(arena, string);
   n->v.ui = ui;
+  n->v.registration = rd_dock_view_from_name(string);
+  Assert(n->v.registration != 0);
   SLLQueuePush(map->slots[slot_idx].first, map->slots[slot_idx].last, n);
 }
 
@@ -2750,6 +2753,14 @@ uishell_workspace_cfg_from_cfg(CFG_Node *cfg)
 internal UIShell_WorkspaceMount
 uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner)
 {
+  if(rd_state->docking_restore_gen != cfg_change_gen())
+  {
+    Temp restore = scratch_begin(&arena, 1);
+    CFG_NodePtrList windows = cfg_node_top_level_list_from_string(restore.arena, str8_lit("window"));
+    for(CFG_NodePtrNode *n = windows.first; n; n = n->next) { rd_dock_restore_window(rd_state->cfg, n->v); }
+    rd_state->docking_restore_gen = cfg_change_gen();
+    scratch_end(restore);
+  }
   CFG_Node *panels_root = cfg_node_child_from_string(owner, str8_lit("panels"));
   Axis2 root_split_axis = cfg_node_child_from_string(owner, str8_lit("split_x")) != &cfg_nil_node ? Axis2_X : Axis2_Y;
   CFG_PanelTree panel_tree = cfg_panel_tree_from_panels_cfg(arena, panels_root, root_split_axis);
@@ -3323,7 +3334,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
       //
       {
         CFG_Node *drag_view = cfg_node_from_id(rd_state->drag_drop_regs->view);
-        if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && drag_view != &cfg_nil_node)
+        if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_dock_drag_target(drag_view, panel->cfg, dim_2f32(panel_rect).x))
         {
           //- rjf: params
           F32 drop_site_major_dim_px = ceil_f32(ui_top_font_size()*7.f);
@@ -3341,6 +3352,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             Axis2 axis = axis2_flip(panel_tree.root->split_axis);
             for EachEnumVal(Side, side)
             {
+              F32 target_width = dim_2f32(panel_rect).x * (axis == Axis2_X ? 0.5f : 1.f);
+              if(!rd_dock_drag_target(drag_view, panel->cfg, target_width)) { continue; }
               UI_Key key = ui_key_from_stringf(ui_key_zero(), "root_extra_split_%i", side);
               Rng2F32 site_rect = panel_rect;
               site_rect.p0.v[axis2_flip(axis)] = panel_rect_center.v[axis2_flip(axis)] - drop_site_major_dim_px/2;
@@ -3432,6 +3445,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             // rjf: form rect
             Rng2F32 child_rect = cfg_target_rect_from_panel_node_child(panel_rect, panel, child);
             Vec2F32 child_rect_center = center_2f32(child_rect);
+            F32 target_width = dim_2f32(panel_rect).x / (split_axis == Axis2_X ? panel->child_count+1 : 1);
+            if(!rd_dock_drag_target(drag_view, panel->cfg, target_width)) { continue; }
             UI_Key key = ui_key_from_stringf(ui_key_zero(), "drop_boundary_%p_%p", panel->cfg, child->cfg);
             Rng2F32 site_rect = r2f32(child_rect_center, child_rect_center);
             site_rect.p0.v[split_axis] = child_rect.p0.v[split_axis] - drop_site_minor_dim_px/2;
@@ -3897,7 +3912,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           if(build_panel)
           {
             CFG_Node *view = cfg_node_from_id(rd_state->drag_drop_regs->view);
-            if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && view != &cfg_nil_node && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
+            if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_dock_drag_target(view, panel->cfg, dim_2f32(panel_rect).x) && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
             {
               F32 drop_site_dim_px = ceil_f32(ui_top_font_size()*7.f);
               drop_site_dim_px = Min(drop_site_dim_px, dim_2f32(panel_rect).v[panel->split_axis]/4.f);
@@ -3961,6 +3976,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 Rng2F32 rect = sites[idx].rect;
                 Axis2 split_axis = axis2_from_dir2(dir);
                 Side split_side = side_from_dir2(dir);
+                F32 target_width = dim_2f32(panel_rect).x * (dir != Dir2_Invalid && split_axis == Axis2_X ? 0.5f : 1.f);
+                if(!rd_dock_drag_target(view, panel->cfg, target_width)) { continue; }
                 if(dir != Dir2_Invalid && panel->parent != &cfg_nil_panel_node &&
                    split_axis == panel->parent->split_axis)
                 {
@@ -4072,7 +4089,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //- rjf: build catch-all panel drop-site
           //
           UI_Key catchall_drop_site_key = ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panel->cfg);
-          if(build_panel && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View) UI_Rect(panel_rect)
+          if(build_panel && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
+             rd_dock_drag_target(cfg_node_from_id(rd_state->drag_drop_regs->view), panel->cfg, dim_2f32(panel_rect).x)) UI_Rect(panel_rect)
           {
             UI_Box *catchall_drop_site = ui_build_box_from_key(UI_BoxFlag_DropSite, catchall_drop_site_key);
             ui_signal_from_box(catchall_drop_site);
@@ -4489,7 +4507,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                       UI_CornerRadius00(0)
                       UI_CornerRadius01(0)
                     {
-                      UI_Box *close_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                      UI_Box *close_box = ui_build_box_from_stringf((rd_dock_can_close(tab) ? 0 : UI_BoxFlag_Disabled)|UI_BoxFlag_Clickable|
                                                                     UI_BoxFlag_DrawBorder|
                                                                     UI_BoxFlag_DrawBackground|
                                                                     UI_BoxFlag_DrawText|

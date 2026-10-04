@@ -128,6 +128,8 @@ layout restore (invalid placements fall back to their default), and tests that
 enumerate view and host pairs. Validity is a property of the view and the host,
 not of the gesture.
 
+The foundation is described in [Declared docking validity](docking-validity.md).
+
 ### KDL owns what, layout owns where
 
 - An Andamento `region` declares a section's identity and content plus a
