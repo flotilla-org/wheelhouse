@@ -382,6 +382,23 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         }
         CardCheck(test->hover_card_focus == (B32)(frame == 1), "full controller preserves peek/click focus distinction");
       }
+      // Exercise leave timing through the full controller while deactivated.
+      WM_Event deactivate = {.kind = WM_EventKind_WindowLoseFocus};
+      uishell_sidebar_card_wm_event(ws, &deactivate);
+      CardCheck(card->open && !card->focused, "background leave trace starts with an informational card");
+      U64 background_leave = now_time_us()+1000000;
+      U64 background_offsets[] = {0, 399999, 400000};
+      for(U64 frame = 0; frame < ArrayCount(background_offsets); frame++)
+      {
+        UI_EventList background_events = {0};
+        ui_begin_build(ws->os, &background_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = v2f32(-100, -100);
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        { uishell_sidebar_cards_ui_at(ws, background_leave+background_offsets[frame], 0, 1); }
+        ui_end_build();
+        CardCheck(card->open == (B32)(frame < 2) && !test->hover_card_focus,
+                  "deactivated card survives 399ms outside and closes at 400ms without keyboard focus");
+      }
       uishell_sidebar_card_close(card); uishell_sidebar_card_close(&fixture.cards[1]);
       UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); ui_end_build();

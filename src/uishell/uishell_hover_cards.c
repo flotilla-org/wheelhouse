@@ -109,6 +109,8 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, AndamentoNode node, UI_Key sou
   card->dismissed = ui_key_zero();
   card->candidate = card->path[0];
   card->changed_at = now;
+  // Replacement glides from retained bounds; a fresh open has no previous
+  // content, so layout resets this origin directly to its target.
   card->glide_from = card->rect.p0;
   card->left_at = 0;
   card->corridor_active = 0;
@@ -561,6 +563,8 @@ uishell_sidebar_cards_ui(RD_WindowState *ws, B32 sidebar_visible)
   // UI normally stops polling a background window's pointer after 500ms.
   // An informational card must keep tracking departure independently of the
   // keyboard target, including while a recorder temporarily owns activation.
+  // Restore the shared UI pointer deliberately: source pills and subsequent
+  // widgets keep their normal hover feedback; this does not grant keyboard focus.
   if(ws->sidebar && !wm_window_is_focused(ws->os))
   {
     for(U64 i = 0; i < ArrayCount(ws->sidebar->cards); i++)
