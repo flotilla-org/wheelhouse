@@ -37,7 +37,7 @@ consumer CI can pass. Earlier review-thread revisions are superseded.
 - Native Linux build with clang, Cleat's `none` feature set, and the existing
   workflow-pinned Jackstay succeeds.
 - All 26 scenarios in `tools/test-native-sidebar.py` pass against Andamento
-  `5a84451` (companion PR andamento#121). They use the real daily-driver
+  `b72a103` (the main merge of verified companion `5a84451`, andamento#121). They use the real daily-driver
   templates and C ABI, including source-heartbeat removal, alias identity,
   Show finished, focus and user close.
 - Andamento's 114 unit tests and 43 sidebar scenarios pass. Disconnect tests
