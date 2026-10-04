@@ -158,6 +158,18 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   card->source_rect = r2f32p(10, 600, 100, 630);
   F32 above = uishell_sidebar_card_target_y(card, 200, r2f32p(0, 0, 800, 700), 1);
   CardCheck(above+200 <= card->source_rect.y0-16, "Near uses space above a row near the window bottom");
+  // Overview northwest of a vessel button: entry toward the card crosses the
+  // vessel before reaching the card's top edge, past its vertical edge plane.
+  card->source_rect = r2f32p(300, 60, 340, 88);
+  card->rect = r2f32p(348, 104, 722, 330);
+  card->departure = card->last_mouse = v2f32(328, 80); card->left_at = 4100000;
+  test->mouse = v2f32(355, 98);
+  uishell_sidebar_card_tick(card, test->mouse, 4100001);
+  UI_Box vessel_source = {.key = ui_key_make(720), .rect = r2f32p(340, 91, 359, 108)};
+  UI_Signal vessel_hover = {.box = &vessel_source, .f = UI_SignalFlag_Hovering};
+  uishell_sidebar_card_source_at(&fixture, a, vessel_hover, str8_zero(), 0, 4100001);
+  CardCheck(card->corridor_active && str8_match(card->path[0], str8_lit("b"), 0),
+            "diagonal northwest-card entry protects a southeast target crossed before the top edge");
   // Build two real overlapping buttons and send a click over the overlay.
   UI_IconInfo icons = saved_window_ui->icon_info;
   UI_AnimationInfo animation = {0};

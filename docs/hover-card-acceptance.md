@@ -4,8 +4,8 @@ Phase 1 of #165 keeps the flat `<kind>/detail` fields and adds a persistent
 card controller. The first source waits 300 ms; subsequent rows and chips swap
 immediately, retaining the previous content during a 100 ms cross-fade and
 an ease-out glide. Position comes from the source rectangle, not the pointer.
-A triangle toward the nearest card edge protects diagonal travel for up to
-400 ms. Vertical scanning and movement away release that protection.
+A triangle toward the approaching side or top/bottom edge protects diagonal
+travel for up to 400 ms, including northwest/southeast target arrangements. Vertical scanning and movement away release that protection.
 
 Entering a card engages it and reveals related navigation and actions.
 Mouse-out closes an unfocused card after 400 ms. A click gives the card keyboard

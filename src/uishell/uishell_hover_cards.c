@@ -25,22 +25,36 @@ uishell_sidebar_card_close(UIShell_HoverCard *card)
   card->corridor_active = 0;
 }
 
-// A bounded triangle toward the nearest card edge protects diagonal travel.
-// Vertical scanning and motion away from the card never acquire the corridor.
+// A bounded triangle toward the approaching edge protects diagonal travel.
+// Use a top/bottom edge when the vertical gap dominates, so crossing beyond a
+// side edge before reaching the card does not release a northwest/southeast path.
 internal B32
 uishell_sidebar_card_corridor(UIShell_HoverCard *card, Vec2F32 mouse, U64 now)
 {
   if(!card->open || !card->left_at || now-card->left_at > 400000) { return 0; }
-  F32 edge = card->rect.x0 >= card->departure.x ? card->rect.x0 : card->rect.x1;
-  F32 dx = edge-card->departure.x;
-  F32 progress = (mouse.x-card->last_mouse.x)*dx;
-  if(abs_f32(dx) < 1 || progress < 0 ||
-     (progress == 0 && (mouse.y != card->last_mouse.y || !card->corridor_active))) { return 0; }
-  F32 t = (mouse.x-card->departure.x)/dx;
+  Vec2F32 gap = {0}, delta = sub_2f32(mouse, card->last_mouse);
+  for(Axis2 axis = Axis2_X; axis < Axis2_COUNT; axis++)
+  {
+    gap.v[axis] = Clamp(card->rect.p0.v[axis], card->departure.v[axis], card->rect.p1.v[axis])-card->departure.v[axis];
+  }
+  B32 stationary = delta.x == 0 && delta.y == 0;
+  if(stationary && !card->corridor_active) { return 0; }
+  if(!stationary)
+  {
+    // A card diagonally away requires diagonal intent. Pure row or column
+    // scanning remains free to switch sources, as does motion away from it.
+    for(Axis2 axis = Axis2_X; axis < Axis2_COUNT; axis++)
+    { if(gap.v[axis] != 0 && delta.v[axis]*gap.v[axis] <= 0) { return 0; } }
+  }
+  Axis2 axis = abs_f32(gap.x) >= abs_f32(gap.y) ? Axis2_X : Axis2_Y;
+  Axis2 other = axis2_flip(axis);
+  F32 distance = gap.v[axis];
+  if(abs_f32(distance) < 1) { return 0; }
+  F32 t = (mouse.v[axis]-card->departure.v[axis])/distance;
   if(t < 0 || t > 1) { return 0; }
-  F32 top = card->departure.y + (card->rect.y0-12-card->departure.y)*t;
-  F32 bottom = card->departure.y + (card->rect.y1+12-card->departure.y)*t;
-  return mouse.y >= top && mouse.y <= bottom;
+  F32 low = card->departure.v[other] + (card->rect.p0.v[other]-12-card->departure.v[other])*t;
+  F32 high = card->departure.v[other] + (card->rect.p1.v[other]+12-card->departure.v[other])*t;
+  return mouse.v[other] >= low && mouse.v[other] <= high;
 }
 
 internal void
