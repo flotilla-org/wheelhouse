@@ -96,6 +96,15 @@ class NativeSidebarTests(unittest.TestCase):
             self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
         self.snapshots = []
 
+    def open_workspace(self, identity, workspace_id):
+        snapshot, nodes = self.snapshot()
+        node = next(n for n in nodes if n.entity_id.string() == identity)
+        kind, request, _, _ = self.dispatch(snapshot, node.activate)
+        self.assertEqual(kind, 1)
+        self.assertTrue(lib.andamento_complete(self.core, request, 1, workspace_id, Text.of(''), None))
+        workspace = Workspace(workspace_id, 0, Text.of(identity), 1)
+        self.assertTrue(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None))
+
     def publish_fixture(self):
         for line in (ROOT / 'data/sidebar/fixture.jsonl').read_text().splitlines():
             item = json.loads(line)
@@ -432,12 +441,7 @@ class NativeSidebarTests(unittest.TestCase):
         held = next(n for n in nodes if n.entity_id.string() == 'p/governor')
         self.assertFalse(held.openable)  # visible and inspectable, never a stale attachment
         self.publish_role('governor', attempt='g-v')
-        snapshot, nodes = self.snapshot()
-        role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
-        _, request, _, _ = self.dispatch(snapshot, role.activate)
-        self.assertEqual(lib.andamento_complete(self.core, request, 1, 44, Text.of(''), None), 1)
-        workspace = Workspace(44, 0, Text.of('governor'), 1)
-        self.assertEqual(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None), 1)
+        self.open_workspace('p/governor', 44)
         _, nodes = self.snapshot()
         role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
         self.assertEqual((role.workspace_id, role.selected), (44, 1))
@@ -450,7 +454,13 @@ class NativeSidebarTests(unittest.TestCase):
         self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(removed)), None), 1)
         _, nodes = self.snapshot()
         self.assertFalse(any(n.entity_id.string() == 'p/governor' for n in nodes))
-        self.assertEqual([n.workspace_id for n in nodes if n.entity_kind.string() == 'andamento.workspace'], [44])
+        # A producer removal hides the retained role until Show finished.
+        self.assertFalse(any(n.workspace_id == 44 for n in nodes))
+        self.toggle_variable('Show finished')
+        snapshot, nodes = self.snapshot()
+        role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
+        self.assertEqual(role.workspace_id, 44)
+        self.assertEqual(self.values(snapshot, role)[2], 'ended')
 
     def test_project_hover_lists_repository_membership_without_placing_it(self):
         # Facts shaped as flotilla pm connect publishes membership (flotilla#1897).
@@ -475,6 +485,33 @@ class NativeSidebarTests(unittest.TestCase):
         start = detail.index('Repositories: 2')
         self.assertEqual(detail[start:], ['Repositories: 2', '  org/docs', '    path: guide', '  org/web'])
         self.assertFalse(any(n.entity_kind.string() == 'project_repository' for n in nodes))
+
+    # Lifecycle scenario through the real daily-driver KDL and C ABI: an ended
+    # workspace stays on its subject, follows Show finished, and remains focusable.
+    def test_ended_workspace_retains_subject_after_producer_removal(self):
+        self.open_workspace('v', 42)
+        # Removal has the real producer shape: identity unsets and a source heartbeat.
+        removal = patch('vessel', 'v', source='flotilla')
+        removal['set'] = {'source': removal['set']['source']}
+        removal['unset'] = ['entity.kind', 'entity.id', 'display.label', 'flotilla.project',
+                            'flotilla.convoy', 'flotilla.vessel', 'action.primary.recipe', 'status.attention']
+        self.assertTrue(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(removal)), None))
+        _, nodes = self.snapshot()
+        self.assertFalse(any(n.workspace_id == 42 for n in nodes))
+        self.toggle_variable('Show finished')
+        snapshot, nodes = self.snapshot()
+        retained = next(n for n in nodes if n.workspace_id == 42 and n.entity_id.string() == 'v')
+        self.assertEqual((retained.entity_kind.string(), retained.entity_id.string(), retained.state), ('vessel', 'v', 3))
+        self.assertEqual(self.values(snapshot, retained)[2], 'ended')
+        parent = nodes[retained.parent]
+        self.assertEqual((parent.entity_kind.string(), parent.entity_id.string()), ('convoy', 'c'))
+        self.assertFalse(any(n.entity_kind.string() == 'andamento.workspace' for n in nodes))
+        kind, request, identity, _ = self.dispatch(snapshot, retained.activate)
+        self.assertEqual((kind, identity), (0, 42))
+        self.assertTrue(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None))
+        self.assertTrue(lib.andamento_observe(self.core, None, 0, None, 0, None))
+        _, nodes = self.snapshot()
+        self.assertFalse(any(n.workspace_id == 42 for n in nodes))
 
     def test_local_sidebar_has_only_observed_workspaces(self):
         lib.andamento_destroy(self.core)
@@ -516,24 +553,23 @@ class NativeSidebarTests(unittest.TestCase):
         _, nodes = self.snapshot()
         self.assertEqual([n.workspace_id for n in nodes if n.entity_kind.string() == 'andamento.workspace'], [70])
 
-    def test_finished_open_workspace_moves_to_fallback_and_back(self):
-        snapshot, nodes = self.snapshot()
-        vessel = next(n for n in nodes if n.entity_id.string() == 'v')
-        _, request, _, _ = self.dispatch(snapshot, vessel.activate)
-        self.assertEqual(lib.andamento_complete(self.core, request, 1, 42, Text.of(''), None), 1)
-        workspace = Workspace(42, 0, Text.of('worker'), 1)
-        self.assertEqual(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None), 1)
+    # Terminal subject phases retain the workspace in place. A later stale
+    # active publication cannot undo an authoritative end for the same identity.
+    def test_finished_open_workspace_follows_show_finished_in_place(self):
+        self.open_workspace('v', 42)
         for phase in ('landed', 'active'):
             for kind, identity in [('convoy', 'c'), ('vessel', 'v')]:
                 update = patch(kind, identity, **{'flotilla.convoy.phase': phase})
-                self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
-            snapshot, nodes = self.snapshot()
-            fallback = [n for n in nodes if n.entity_kind.string() == 'andamento.workspace']
-            self.assertEqual(len(fallback), 1 if phase == 'landed' else 0)
-            live = next(n for n in nodes if not n.is_section and n.workspace_id == 42 and n.state == 3)
-            kind, request, identity, _ = self.dispatch(snapshot, live.activate)
-            self.assertEqual((kind, identity), (0, 42))
-            self.assertEqual(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None), 1)
+                self.assertTrue(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None))
+            _, nodes = self.snapshot()
+            self.assertFalse(any(n.workspace_id == 42 for n in nodes))
+        self.toggle_variable('Show finished')
+        snapshot, nodes = self.snapshot()
+        live = next(n for n in nodes if n.entity_id.string() == 'v' and n.workspace_id == 42)
+        self.assertEqual(self.values(snapshot, live)[2], 'ended')
+        kind, request, identity, _ = self.dispatch(snapshot, live.activate)
+        self.assertEqual((kind, identity), (0, 42))
+        self.assertTrue(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None))
 
     def test_hover_details_use_templates_without_changing_compact_rows(self):
         update = patch('vessel', 'v', **{'flotilla.vessel.host': 'remote',
