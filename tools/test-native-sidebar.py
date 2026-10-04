@@ -217,6 +217,7 @@ class NativeSidebarTests(unittest.TestCase):
         snapshot, nodes = self.snapshot()
         role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
         self.assertTrue(role.openable)
+        self.assertEqual(role.layout.string(), 'inline')
         self.assertIn('waiting', self.values(snapshot, role))
         details = self.values(snapshot, role, detail=True)
         self.assertIn('Current attempt: Governor attempt 2', details)
@@ -400,6 +401,8 @@ class NativeSidebarTests(unittest.TestCase):
         roles = [n for n in nodes if n.entity_kind.string() == 'role']
         self.assertEqual([n.entity_id.string() for n in roles], ['p/governor', 'p/quartermaster'])
         self.assertTrue(all(n.parent == project and n.openable for n in roles))
+        self.assertTrue(all(n.layout.string() == 'inline' for n in roles),
+                        'standing roles must be actions on the project row')
         ids = {n.entity_id.string() for n in nodes}
         for hidden in ('g', 'g-v', 'q', 'q-v'):
             self.assertNotIn(hidden, ids)
