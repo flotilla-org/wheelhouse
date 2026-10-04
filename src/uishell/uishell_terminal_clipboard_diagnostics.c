@@ -157,6 +157,19 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   uishell_clipboard_fixture_event(f, ++sequence, 1, 2, str8_zero());
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
   HostClipboardCheck(f->writes == before && f->released == 1 && tv->has_selection, "host deny overrides workspace config");
+  // Generate recognized false values and true/unknown spellings. An invalid
+  // non-empty security setting must fail closed rather than enable writes.
+  String8 deny_values[] = {str8_lit("0"), str8_lit("false"), str8_lit("FALSE"),
+    str8_lit("1"), str8_lit("true"), str8_lit("yes"), str8_lit("on"), str8_lit("invalid"), str8_lit("2")};
+  for(U64 i = 0; i < ArrayCount(deny_values); i++)
+  {
+    cfg_node_new_replace(cfg, deny, deny_values[i]);
+    U64 prior = f->writes;
+    uishell_clipboard_fixture_event(f, ++sequence, 0, 1, str8_lit("policy spelling"));
+    uishell_terminal_clipboard_dispatch_with_ops(&ops);
+    HostClipboardCheck(f->writes == prior+(i < 3) && f->released == 1, "unknown deny spelling fails closed");
+  }
+  before = f->writes;
   cfg_node_release(cfg, deny);
   // Current selected-tab config wins even if the previous build still reports
   // terminal focus. Hydrated/previews and replaced view types are never owners.
@@ -170,6 +183,14 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   uishell_clipboard_fixture_event(f, ++sequence, 0, 1, str8_lit("hydration"));
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
   HostClipboardCheck(f->writes == before && f->released == 1, "retained fixture cannot deliver clipboard");
+  CFG_ID original_view_id = tv->clipboard_view_id;
+  tv->clipboard_view_id = 0;
+  HostClipboardCheck(uishell_terminal_clipboard_host_context(tv, 1, 1, 1).context_missing,
+                     "missing view has a distinct host-context reason");
+  uishell_clipboard_fixture_event(f, ++sequence, 0, 1, str8_lit("missing host"));
+  uishell_terminal_clipboard_dispatch_with_ops(&ops);
+  HostClipboardCheck(f->writes == before && f->released == 1, "missing host discards and releases");
+  tv->clipboard_view_id = original_view_id;
   uishell_terminal_clipboard_unregister(tv);
 
 #undef HostClipboardCheck

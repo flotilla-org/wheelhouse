@@ -4,6 +4,7 @@ typedef struct UIShell_TerminalClipboardContext UIShell_TerminalClipboardContext
 struct UIShell_TerminalClipboardContext
 {
   B32 allowed, input_owner, window_active, live, controller, supported;
+  B32 context_missing;
 };
 
 typedef struct UIShell_TerminalClipboardOps UIShell_TerminalClipboardOps;
@@ -71,7 +72,7 @@ uishell_terminal_clipboard_text_valid(String8 text)
 internal B32
 uishell_terminal_clipboard_eligible(UIShell_TerminalClipboardContext c)
 {
-  return c.allowed && c.input_owner && c.window_active && c.live && c.controller && c.supported;
+  return !c.context_missing && c.allowed && c.input_owner && c.window_active && c.live && c.controller && c.supported;
 }
 
 internal void
@@ -131,6 +132,7 @@ uishell_terminal_clipboard_drain(UIShell_TerminalViewState *tv, UIShell_Terminal
       ((clear && event->text_len == 0 && event->text == 0) ||
        (event->kind == 1 && bounded && uishell_terminal_clipboard_text_valid(text)));
     char const *rejection = !fresh ? "consumed identity" : !bounded ? "queue/payload bound" : !valid ? "unsupported/invalid content" :
+      context.context_missing ? "missing host context" :
       !uishell_terminal_clipboard_eligible(context) ? "host policy/ownership" : 0;
     if(!rejection && !ops->write(ops->user, event->destination, clear, text)) { rejection = "native adapter failure"; }
     if(rejection) { uishell_terminal_clipboard_reject(tv, rejection, 1); }
@@ -142,6 +144,8 @@ uishell_terminal_clipboard_drain(UIShell_TerminalViewState *tv, UIShell_Terminal
 // watermark. Elect the eligible reference before draining; an inactive alias
 // must not discard the active reference's event. Distinct provider handles use
 // Cleat's sole-recipient contract, including across windows and reconnects.
+// Registry/session changes and this entire batch run on the UI thread. Provider
+// workers only wake it; replacement cannot interleave draining and alias sync.
 internal void
 uishell_terminal_clipboard_dispatch_with_ops(UIShell_TerminalClipboardOps *ops)
 {
@@ -159,6 +163,7 @@ uishell_terminal_clipboard_dispatch_with_ops(UIShell_TerminalClipboardOps *ops)
   for(UIShell_TerminalViewState *tv = uishell_terminal_clipboard_views; tv; tv = tv->clipboard_next)
   {
     if(!tv->session) { continue; }
+    // Pointer bits distribute buckets only; full pointer equality defines identity.
     U64 slot = ((U64)(uintptr_t)tv->session >> 4)%slots_count;
     ClipboardHandle *handle = slots[slot];
     for(; handle && handle->session != tv->session; handle = handle->next) {}
@@ -212,16 +217,20 @@ uishell_terminal_clipboard_dispatch_with_ops(UIShell_TerminalClipboardOps *ops)
 internal UIShell_TerminalClipboardContext
 uishell_terminal_clipboard_host_context(UIShell_TerminalViewState *tv, B32 window_active, B32 controller, B32 supported)
 {
-  UIShell_TerminalClipboardContext result = {0};
+  UIShell_TerminalClipboardContext result = {.context_missing = 1};
   CFG_Node *view = cfg_node_from_id(tv->clipboard_view_id);
   CFG_Node *window = cfg_node_from_id(tv->clipboard_window_id);
   RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
   if(view == &cfg_nil_node || window == &cfg_nil_node || ws == &rd_nil_window_state) { return result; }
+  result.context_missing = 0;
   // A host deny lives only in the user bucket. Workspace/view config must not
   // override this host policy (operator Copy uses the separate existing path).
   CFG_Node *host = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
   String8 deny = cfg_node_child_from_string(host, str8_lit("deny_application_clipboard_writes"))->first->string;
-  result.allowed = !str8_match(deny, str8_lit("1"), 0) && !str8_match(deny, str8_lit("true"), StringMatchFlag_CaseInsensitive);
+  // Only an unset value or explicit false permits writes. Unknown nonempty
+  // spellings fail closed without inheriting a workspace/view boolean setting.
+  result.allowed = deny.size == 0 || str8_match(deny, str8_lit("0"), 0) ||
+    str8_match(deny, str8_lit("false"), StringMatchFlag_CaseInsensitive);
   Temp scratch = scratch_begin(0, 0);
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   UIShell_WorkspaceMount *mount = uishell_controlled_split_selected_mount(&split);
