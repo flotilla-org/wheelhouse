@@ -67,6 +67,10 @@ entry_point(CmdLine *cmdline)
   p.host.kind = RD_DockHostKind_COUNT; Check(rd_dock_check(selector, p) == RD_DockRule_HostAcceptance);
   p.host.kind = (RD_DockHostKind)-1; Check(rd_dock_check(selector, p) == RD_DockRule_HostAcceptance);
 
+  Check(rd_dock_presentation(RD_DockHostKind_Sidebar, 1) == RD_DockPresentation_SectionHeader);
+  Check(rd_dock_presentation(RD_DockHostKind_Sidebar, 2) == RD_DockPresentation_CompactTabs);
+  Check(rd_dock_presentation(RD_DockHostKind_WorkspaceRegion, 1) == RD_DockPresentation_Tabs);
+  Check(rd_dock_presentation(RD_DockHostKind_FloatingPanel, 1) == RD_DockPresentation_Tabs);
   Arena *arena = arena_alloc();
   CFG_State *cfg = cfg_state_alloc();
   cfg_ctx_select(cfg_state_ctx(cfg));

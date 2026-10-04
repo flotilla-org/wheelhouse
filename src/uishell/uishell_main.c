@@ -103,6 +103,7 @@
 #include "uishell/uishell_hover_card_diagnostics.c"
 #include "uishell/uishell_terminal_link_diagnostics.c"
 #include "uishell/uishell_preview_diagnostics.c"
+#include "uishell/uishell_sidebar_docking_diagnostics.c"
 #include "uishell/uishell_panel_diagnostics.c"
 #include "uishell/uishell_shared_ui_diagnostics.c"
 #include "uishell/uishell_managed_content_diagnostics.c"

@@ -2768,8 +2768,9 @@ rd_dock_restore_layouts(void)
 internal UIShell_WorkspaceMount
 uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner)
 {
-  CFG_Node *panels_root = cfg_node_child_from_string(owner, str8_lit("panels"));
-  Axis2 root_split_axis = cfg_node_child_from_string(owner, str8_lit("split_x")) != &cfg_nil_node ? Axis2_X : Axis2_Y;
+  B32 sidebar = str8_match(owner->string, str8_lit("control_views"), 0);
+  CFG_Node *panels_root = sidebar ? owner : cfg_node_child_from_string(owner, str8_lit("panels"));
+  Axis2 root_split_axis = cfg_node_child_from_string(sidebar ? window : owner, sidebar ? str8_lit("control_views_split_x") : str8_lit("split_x")) != &cfg_nil_node ? Axis2_X : Axis2_Y;
   CFG_PanelTree panel_tree = cfg_panel_tree_from_panels_cfg(arena, panels_root, root_split_axis);
   CFG_Node *workspace = str8_match(owner->string, str8_lit("workspace"), 0) ? owner : &cfg_nil_node;
   UIShell_WorkspaceMount mount =
@@ -2816,6 +2817,8 @@ uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg)
   CFG_Node *window = rd_window_from_cfg(cfg);
   CFG_Node *workspace = uishell_workspace_cfg_from_cfg(cfg);
   CFG_Node *owner = workspace != &cfg_nil_node ? workspace : window;
+  for(CFG_Node *c = cfg; c != &cfg_nil_node && c != window; c = c->parent)
+  { if(str8_match(c->string, str8_lit("control_views"), 0)) { owner = c; break; } }
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(arena, window, owner);
   return mount;
 }
@@ -3068,30 +3071,6 @@ uishell_controlled_split_boundary_ui(UIShell_ControlledSplit *split, Rng2F32 rec
 
 #include "uishell/uishell_sidebar.c"
 
-internal void
-uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
-{
-  if(rect.x1 > rect.x0 && rect.y1 > rect.y0)
-  {
-    // The shell owns the control region's frame, with the same thickness and
-    // colour as panel frames. Keep scrolling content inside the top/right edges.
-    F32 thickness = floor_f32(Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_border_px")), 4.f));
-    thickness = Min(thickness, Min(dim_2f32(rect).x, dim_2f32(rect).y));
-    Rng2F32 inner = r2f32p(rect.x0, rect.y0+thickness, rect.x1-thickness, rect.y1);
-    if(inner.x1 > inner.x0 && inner.y1 > inner.y0) { uishell_sidebar_ui(inner, split); }
-    if(thickness > 0)
-    {
-      UI_BackgroundColor(ui_color_from_name(str8_lit("border"))) UI_CornerRadius(0)
-      {
-        UI_Rect(r2f32p(rect.x0, rect.y0, rect.x1, rect.y0+thickness))
-        { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
-        UI_Rect(r2f32p(rect.x1-thickness, rect.y0+thickness, rect.x1, rect.y1))
-        { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
-      }
-    }
-  }
-}
-
 ////////////////////////////////
 //~ rjf: Panel Chrome Frame Segments
 
@@ -3311,6 +3290,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
     TabTask *first_tab_task;
     TabTask *last_tab_task;
     U64 tab_task_count;
+    RD_DockPresentation presentation;
   };
   
     ////////////////////////////
@@ -3571,6 +3551,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           ui_set_next_hover_cursor(split_axis == Axis2_X ? WM_Cursor_LeftRight : WM_Cursor_UpDown);
           UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable, "###%p_%p", min_child->cfg, max_child->cfg);
           UI_Signal sig = ui_signal_from_box(box);
+          if((ui_double_clicked(sig) || ui_dragging(sig)) && rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar)
+          { cfg_node_child_from_string_or_alloc(rd_state->cfg, mount->window_cfg, str8_lit("sidebar_layout_sized")); }
           if(ui_double_clicked(sig))
           {
             ui_kill_action();
@@ -3699,9 +3681,15 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
         plan->settled_panel_rect = pad_2f32(plan->settled_panel_rect, -panel_inset_px);
         plan->settled_panel_rect = r2f32p(round_f32(plan->settled_panel_rect.x0), round_f32(plan->settled_panel_rect.y0), round_f32(plan->settled_panel_rect.x1), round_f32(plan->settled_panel_rect.y1));
 
+        plan->presentation = rd_dock_presentation(rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind, panel->tabs.count);
         plan->panel_inset_px = panel_inset_px;
         plan->tab_bar_rheight = floor_f32(ui_top_font_size()*3.5f);
         plan->tab_bar_vheight = floor_f32(ui_top_font_size()*rd_setting_f32_from_name(str8_lit("tab_height")));
+        if(plan->presentation != RD_DockPresentation_Tabs)
+        {
+          plan->tab_bar_vheight = plan->presentation == RD_DockPresentation_SectionHeader ? 0 : floor_f32(ui_top_font_size()*2.2f);
+          plan->tab_bar_rheight = plan->tab_bar_vheight;
+        }
         plan->tab_bar_rv_diff = plan->tab_bar_rheight - plan->tab_bar_vheight;
         plan->tab_bar_rect = r2f32p(plan->panel_rect.x0, plan->panel_rect.y0, plan->panel_rect.x1, plan->panel_rect.y0 + plan->tab_bar_vheight);
         plan->content_rect = r2f32p(plan->panel_rect.x0, plan->panel_rect.y0+plan->tab_bar_vheight, plan->panel_rect.x1, plan->panel_rect.y1);
@@ -3728,7 +3716,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
         if(plan->content_rect.x1 > plan->content_rect.x0 && plan->content_rect.y1 > plan->content_rect.y0) UI_TagF("tab")
         {
           B32 reset = (window_layout_reset || ws->frames_alive < 5 || is_changing_panel_boundaries);
-          F32 tab_close_width_px = ui_top_font_size()*2.5f;
+          F32 tab_close_width_px = ui_top_font_size()*(plan->presentation == RD_DockPresentation_CompactTabs ? 1.6f : 2.5f);
           F32 max_tab_width_px = ui_top_font_size()*20.f;
           for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next)
           {
@@ -3746,10 +3734,12 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
               t->tab = tab;
               t->fstrs = rd_title_fstrs_from_cfg(scratch.arena, tab, 0);
               F32 tab_width_target = dr_dim_from_fstrs(ui_top_tab_size(), &t->fstrs).x + tab_close_width_px + ui_top_font_size()*1.f;
-              if(tab_is_selected && panel_tree.focused == panel)
+              if(plan->presentation == RD_DockPresentation_Tabs && tab_is_selected && panel_tree.focused == panel)
               {
                 tab_width_target += tab_close_width_px;
               }
+              if(plan->presentation == RD_DockPresentation_CompactTabs)
+              { max_tab_width_px = Max(tab_close_width_px, (dim_2f32(plan->tab_bar_rect).x-plan->tab_bar_vheight-tab_gap_px*(panel->tabs.count+1))/Max(1, panel->tabs.count)); }
               tab_width_target = Min(max_tab_width_px, tab_width_target);
               t->tab_width = floor_f32(ui_anim(ui_key_from_stringf(ui_key_zero(), "tab_width_%p", tab), tab_width_target, .initial = reset ? tab_width_target : 0, .rate = rd_state->menu_animation_rate));
               SLLQueuePush(plan->first_tab_task, plan->last_tab_task, t);
@@ -3758,7 +3748,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
         }
 
-        if(panel_border_px >= 1.f && plan->tab_task_count != 0)
+        if(plan->presentation != RD_DockPresentation_SectionHeader && panel_border_px >= 1.f && plan->tab_task_count != 0)
         {
           UI_Key tab_bar_key = ui_key_from_stringf(ui_key_zero(), "tab_bar_%p", panel->cfg);
           UI_Box *prev_tab_bar_box = ui_box_from_key(tab_bar_key);
@@ -3873,7 +3863,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                 !ui_any_ctx_menu_is_open() &&
                                 !ws->hover_eval_focused &&
                                 !ws->ui->hover_card_focus &&
-                                panel_tree.focused == panel);
+                                panel_tree.focused == panel &&
+                                ((rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar) == !!ws->sidebar_panel_focus));
         CFG_Node *selected_tab = panel->selected_tab;
         RD_ViewState *selected_tab_view_state = rd_view_state_from_cfg(selected_tab);
         ProfScope("leaf panel UI work - %.*s: %.*s", str8_varg(selected_tab->string), str8_varg(rd_expr_from_cfg(selected_tab)))
@@ -4110,7 +4101,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //////////////////////////
           //- rjf: panel not selected? -> darken
           //
-          if(build_panel && !is_preview) if(panel != panel_tree.focused)
+          if(build_panel && !is_preview && rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind != RD_DockHostKind_Sidebar) if(panel != panel_tree.focused)
           {
             // uishell: dim non-Active panels — a scrim fading the whole panel toward
             // the window background, so inactive content loses contrast and recedes
@@ -4303,14 +4294,14 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //- rjf: unpack tab build tasks
           //
           TabTask *first_tab_task = chrome_plan->first_tab_task;
-          F32 tab_close_width_px = ui_top_font_size()*2.5f;
+          F32 tab_close_width_px = ui_top_font_size()*(chrome_plan->presentation == RD_DockPresentation_CompactTabs ? 1.6f : 2.5f);
           
           //////////////////////////
           //- rjf: build tab bar container
           //
           UI_Box *tab_bar_box = &ui_nil_box;
           UI_Box *tab_strip_add_button_box = &ui_nil_box;
-          if(build_panel) UI_CornerRadius(0) UI_Rect(tab_bar_rect)
+          if(build_panel && chrome_plan->presentation != RD_DockPresentation_SectionHeader) UI_CornerRadius(0) UI_Rect(tab_bar_rect)
           {
             tab_bar_box = ui_build_box_from_stringf(UI_BoxFlag_Clip|
                                                     UI_BoxFlag_AllowOverflowY|
@@ -4378,7 +4369,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //////////////////////////
           //- rjf: build tab bar contents
           //
-          if(build_panel) UI_Focus(UI_FocusKind_Off) UI_Parent(tab_bar_box) UI_Padding(ui_px(tab_gap_px, 1.f)) UI_PrefHeight(ui_pct(1, 0)) UI_TagF("tab")
+          if(build_panel && chrome_plan->presentation != RD_DockPresentation_SectionHeader) UI_Focus(UI_FocusKind_Off) UI_Parent(tab_bar_box) UI_Padding(ui_px(tab_gap_px, 1.f)) UI_PrefHeight(ui_pct(1, 0)) UI_TagF("tab")
           {
             F32 corner_radius = ui_top_font_size()*0.6f;
             TabTask start_boundary_tab_task = {first_tab_task, &cfg_nil_node};
@@ -4479,7 +4470,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                         ui_box_equip_display_fstrs(name_box, &tab_fstrs);
                       }
                     }
-                    if(tab_is_selected && panel_tree.focused == panel)
+                    if(chrome_plan->presentation == RD_DockPresentation_Tabs && tab_is_selected && panel_tree.focused == panel)
                     {
                       UI_PrefWidth(ui_px(tab_close_width_px, 1.f)) UI_TextAlignment(UI_TextAlign_Center)
                         RD_Font(RD_FontSlot_Icons)
@@ -4764,6 +4755,25 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
     
     ws->window_layout_reset = 0;
     
+}
+
+internal void
+uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
+{
+  if(dim_2f32(rect).x <= 0 || dim_2f32(rect).y <= 0) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, split->owner_cfg,
+    uishell_sidebar_dock_layout(split));
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
+  ws->sidebar->rect = rect;
+  MemoryZeroStruct(&uishell_sidebar_subject_geometry);
+  F32 footer_height = Min(dim_2f32(rect).y, uishell_sidebar_footer_height(ws));
+  Rng2F32 panels_rect = rect;
+  panels_rect.y1 -= footer_height;
+  uishell_sidebar_size_panels(split, &mount, panels_rect);
+  rd_panel_area_ui(scratch, panels_rect, rect, ws, &mount, wm_window_is_focused(ws->os), 0, 0, 0, 0);
+  uishell_sidebar_footer_ui(r2f32p(rect.x0, panels_rect.y1, rect.x1, rect.y1), split);
+  scratch_end(scratch);
 }
 
 ////////////////////////////////

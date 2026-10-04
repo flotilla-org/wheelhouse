@@ -14,6 +14,16 @@ typedef enum RD_DockHostKind
   RD_DockHostKind_COUNT,
 } RD_DockHostKind;
 
+// Presentation belongs to the host; validity remains an independent query.
+typedef enum RD_DockPresentation
+{
+  RD_DockPresentation_Tabs,
+  RD_DockPresentation_SectionHeader,
+  RD_DockPresentation_CompactTabs,
+} RD_DockPresentation;
+
+internal RD_DockPresentation rd_dock_presentation(RD_DockHostKind host, U64 tab_count);
+
 typedef U32 RD_ViewTraits;
 enum
 {
@@ -72,6 +82,7 @@ struct RD_DockProposal
 // This is also the UI registration list. Adding a View requires declaring its
 // traits here, so enumeration and rendering cannot acquire separate lists.
 #define RD_DOCK_RENDERED_VIEWS(X) \
+  X(sidebar_section, sidebar_section, RD_ViewTrait_Content|RD_ViewTrait_Section, 0, Sidebar) \
   X(text, shell_text, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(jackstay, jackstay, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(terminal, terminal, RD_ViewTrait_Content, 0, WorkspaceRegion) \

@@ -1,3 +1,11 @@
+internal RD_DockPresentation
+rd_dock_presentation(RD_DockHostKind host, U64 tab_count)
+{
+  if(host == RD_DockHostKind_Sidebar)
+  { return tab_count == 1 ? RD_DockPresentation_SectionHeader : RD_DockPresentation_CompactTabs; }
+  return RD_DockPresentation_Tabs;
+}
+
 // One checker for drag feedback, command execution, and layout restore.
 internal RD_ViewRegistration *
 rd_dock_view_from_name(String8 name)
