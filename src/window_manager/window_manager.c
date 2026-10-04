@@ -365,6 +365,7 @@ wm_menu_hash(WM_MenuArray menus, B32 native)
     {
       WM_MenuItem *item = &menu->items[j];
       hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->kind));
+      hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->disabled));
       hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->command_name.size));
       hash = u64_djb2_hash_from_seed_str8(hash, item->command_name);
       hash = u64_djb2_hash_from_seed_str8(hash, str8_struct(&item->label.size));
@@ -374,4 +375,19 @@ wm_menu_hash(WM_MenuArray menus, B32 native)
     }
   }
   return hash;
+}
+
+// The standard clipboard crosses an OS boundary. Production uses the native
+// implementation; headless diagnostics may supply an in-memory clipboard.
+internal void
+wm_set_clipboard_text(String8 text)
+{
+  if(wm_clipboard_io.write) { wm_clipboard_io.write(wm_clipboard_io.user, text); }
+  else { wm_set_clipboard_text_impl(text); }
+}
+
+internal String8
+wm_get_clipboard_text(Arena *arena)
+{
+  return wm_clipboard_io.read ? wm_clipboard_io.read(wm_clipboard_io.user, arena) : wm_get_clipboard_text_impl(arena);
 }

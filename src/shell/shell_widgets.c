@@ -729,8 +729,10 @@ rd_cmd_list_menu_buttons(U64 count, String8 *cmd_names, U32 *fastpath_codepoints
     else
     {
       ui_set_next_fastpath_codepoint(fastpath_codepoints[idx]);
-      UI_Signal sig = rd_cmd_spec_button(cmd_names[idx]);
-      if(ui_clicked(sig))
+      B32 enabled = uishell_edit_command_enabled(cmd_names[idx], rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window)));
+      UI_Signal sig = {0};
+      UI_FlagsAdd(enabled ? 0 : UI_BoxFlag_Disabled) sig = rd_cmd_spec_button(cmd_names[idx]);
+      if(enabled && ui_clicked(sig))
       {
         uishell_cmd("run_command", .cmd_name = cmd_names[idx]);
         ui_ctx_menu_close();
@@ -2811,12 +2813,15 @@ rd_cell(RD_CellParams *params, String8 string)
   //- rjf: take navigation actions for editing
   //
   B32 changes_made = 0;
-  if(!(params->flags & RD_CellFlag_DisableEdit) && (is_focus_active || focus_started))
+  if(!(params->flags & RD_CellFlag_DisableEdit) && (is_focus_active || focus_started ||
+     (ui_state->edit_menu_focus && ui_key_match(key, ui_state->edit_owner_key) && ui_top_focus_active() == UI_FocusKind_On)))
   {
     Temp scratch = scratch_begin(0, 0);
     rd_state->text_edit_mode = 1;
+    ui_state->edit_consumer_key = key;
     for(UI_Event *evt = 0; ui_next_event(&evt);)
     {
+      if(!is_focus_active && !focus_started && !evt->edit_owner_key) { continue; }
       String8 edit_string = str8(params->edit_buffer, params->edit_string_size_out[0]);
       
       // rjf: do not consume anything that doesn't fit a single-line's operations
@@ -2851,24 +2856,7 @@ rd_cell(RD_CellParams *params, String8 string)
         MemoryZeroStruct(&autocomplete_hint_string);
       }
       
-      // rjf: perform replace range
-      if(!txt_pt_match(op.range.min, op.range.max) || op.replace.size != 0)
-      {
-        String8 new_string = ui_push_string_replace_range(scratch.arena, edit_string, r1s64(op.range.min.column, op.range.max.column), op.replace);
-        new_string.size = Min(params->edit_buffer_size, new_string.size);
-        MemoryCopy(params->edit_buffer, new_string.str, new_string.size);
-        params->edit_string_size_out[0] = new_string.size;
-      }
-      
-      // rjf: perform copy
-      if(op.flags & UI_TxtOpFlag_Copy)
-      {
-        wm_set_clipboard_text(op.copy);
-      }
-      
-      // rjf: commit op's changed cursor & mark to caller-provided state
-      params->cursor[0] = op.cursor;
-      params->mark[0] = op.mark;
+      ui_apply_text_edit_op(scratch.arena, op, params->edit_buffer, params->edit_buffer_size, params->edit_string_size_out, params->cursor, params->mark);
       
       // rjf: consume event
       {
@@ -2880,6 +2868,8 @@ rd_cell(RD_CellParams *params, String8 string)
       }
     }
     scratch_end(scratch);
+    ui_state->edit_consumer_key = ui_key_zero();
+    ui_register_text_edit_owner(key, params->cursor[0], params->mark[0]);
   }
   
   //////////////////////////////

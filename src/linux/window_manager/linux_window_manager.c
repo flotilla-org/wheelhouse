@@ -91,7 +91,7 @@ wm_get_system_info(void)
 //~ rjf: @os_hooks Clipboards (Implemented Per-OS)
 
 internal void
-wm_set_clipboard_text(String8 string)
+wm_set_clipboard_text_impl(String8 string)
 {
   if(lnx_wm_state->clipboard_arena == 0) { lnx_wm_state->clipboard_arena = arena_alloc(); }
   arena_clear(lnx_wm_state->clipboard_arena);
@@ -105,7 +105,7 @@ wm_set_clipboard_text(String8 string)
 }
 
 internal String8
-wm_get_clipboard_text(Arena *arena)
+wm_get_clipboard_text_impl(Arena *arena)
 {
   String8 result = {0};
   return result;
@@ -633,6 +633,14 @@ wm_get_events(Arena *arena, B32 wait)
           case ' ':{key = WM_Key_Space;}break;
         }
         
+        // rjf: push key event
+        {
+          WM_Event *e = wm_event_list_push_new(arena, &evts, evt.type == KeyPress ? WM_EventKind_Press : WM_EventKind_Release);
+          e->window.u64[0] = (U64)window;
+          e->modifiers = modifiers;
+          e->key = key;
+          e->right_sided = is_right_sided;
+        }
         // rjf: push text event
         if(evt.type == KeyPress && text_size != 0)
         {
@@ -644,6 +652,8 @@ wm_get_events(Arena *arena, B32 wait)
               WM_Event *e = wm_event_list_push_new(arena, &evts, WM_EventKind_Text);
               e->window.u64[0] = (U64)window;
               e->character = decode.codepoint;
+              e->source_key = key;
+              e->modifiers = modifiers;
             }
             if(decode.inc == 0)
             {
@@ -653,14 +663,6 @@ wm_get_events(Arena *arena, B32 wait)
           }
         }
         
-        // rjf: push key event
-        {
-          WM_Event *e = wm_event_list_push_new(arena, &evts, evt.type == KeyPress ? WM_EventKind_Press : WM_EventKind_Release);
-          e->window.u64[0] = (U64)window;
-          e->modifiers = modifiers;
-          e->key = key;
-          e->right_sided = is_right_sided;
-        }
       }break;
       
       //- rjf: mouse button presses/releases

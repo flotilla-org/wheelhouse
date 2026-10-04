@@ -41,6 +41,7 @@ struct UIShell_TerminalViewState
   // Test double only at the provider input boundary. Native views use Cleat.
   B32 (*input_sink)(void *user, cleat_input_event const *input, cleat_input_result *result);
   void *input_sink_user;
+  void (*input_state_sink)(void *user, U32 *connection, U32 *role);
   // daemon-backed session: provider is shared per-daemon (never closed by the
   // view) and the session survives uishell; connection state is surfaced
   B32 daemon_backend;
@@ -111,6 +112,47 @@ uishell_terminal_copy_selection(Arena *arena, UIShell_TerminalViewState *tv)
   if(!tv->has_selection || !tv->cell_cache.cells) { return str8_zero(); }
   UIShell_TerminalCellFeed feed = uishell_terminal_cell_feed_from_cache(&tv->cell_cache);
   return uishell_terminal_selection_text_from_feed(arena, &feed, tv->sel_mark, tv->sel_cursor, tv->selection_rectangular);
+}
+
+internal B32
+uishell_terminal_input_available(UIShell_TerminalViewState *tv)
+{
+  U32 connection = CLEAT_SESSION_CLOSED, role = CLEAT_ROLE_UNKNOWN;
+  if(tv->input_state_sink) { tv->input_state_sink(tv->input_sink_user, &connection, &role); }
+  else if(tv->input_sink) { connection = CLEAT_SESSION_STREAMING; role = CLEAT_ROLE_CONTROLLER; }
+  else if(tv->session)
+  { connection = cleat_session_connection_state(tv->session); role = cleat_session_role(tv->session); }
+  return connection == CLEAT_SESSION_STREAMING && role == CLEAT_ROLE_CONTROLLER;
+}
+
+internal B32
+uishell_terminal_edit_enabled(void *user, String8 command)
+{
+  UIShell_TerminalViewState *tv = user;
+  if(str8_match(command, str8_lit("copy"), 0) || str8_match(command, str8_lit("clear_selection"), 0))
+  { return tv->has_selection && tv->cell_cache.cells; }
+  if(str8_match(command, str8_lit("select_all"), 0))
+  { return tv->cell_cache.cells && tv->cell_cache.rows && tv->cell_cache.cols; }
+  // The pinned provider exposes stopped/disconnected daemon transport state.
+  // In-process sessions always report STREAMING, even after child exit: Paste
+  // stays enabled until the lifecycle API in flotilla-org/cleat#277 is available.
+  if(str8_match(command, str8_lit("paste"), 0))
+  { return uishell_terminal_input_available(tv); }
+  return 0;
+}
+
+internal void uishell_terminal_edit_dispatch(void *user, String8 command, String8 paste);
+
+internal void
+uishell_terminal_register_edit_owner(UI_Key key, UIShell_TerminalViewState *tv, CFG_ID view)
+{
+  ui_state->edit_owner_key = key;
+  ui_state->edit_owner_build = ui_state->build_index;
+  ui_state->edit_owner_terminal = 1;
+  ui_state->edit_owner_user = tv;
+  ui_state->edit_owner_view = view;
+  ui_state->edit_owner_enabled = uishell_terminal_edit_enabled;
+  ui_state->edit_owner_dispatch = uishell_terminal_edit_dispatch;
 }
 
 internal B32
@@ -196,9 +238,7 @@ internal B32
 uishell_terminal_send_input(UIShell_TerminalViewState *tv, cleat_input_event const *input)
 {
   // A disconnected/closed attachment retains Copy but never queues process input.
-  if(!tv->input_sink && (!tv->session ||
-     cleat_session_connection_state(tv->session) != CLEAT_SESSION_STREAMING ||
-     cleat_session_role(tv->session) != CLEAT_ROLE_CONTROLLER)) { return 0; }
+  if(!uishell_terminal_input_available(tv)) { return 0; }
   cleat_input_result result = {0};
   B32 accepted = tv->input_sink ? tv->input_sink(tv->input_sink_user, input, &result) :
     (tv->session && cleat_session_send_input_ex(tv->session, input, &result));
@@ -274,6 +314,45 @@ uishell_terminal_paste_selection(UIShell_TerminalViewState *tv, String8 text)
   {
     cleat_input_event paste = {.kind = CLEAT_INPUT_PASTE, .text = text.str, .text_len = text.size};
     uishell_terminal_send_input(tv, &paste);
+  }
+}
+
+internal B32 uishell_terminal_key_event(UIShell_TerminalViewState *tv, UI_Event const *evt, U32 action);
+
+internal B32
+uishell_terminal_send_key_event(UIShell_TerminalViewState *tv, UI_Event *evt)
+{
+  return uishell_terminal_key_event(tv, evt,
+    evt->kind == UI_EventKind_Release ? CLEAT_KEY_ACTION_RELEASE : CLEAT_KEY_ACTION_PRESS);
+}
+
+internal void
+uishell_terminal_edit_dispatch(void *user, String8 command, String8 paste)
+{
+  UIShell_TerminalViewState *tv = user;
+  if(!uishell_terminal_edit_enabled(tv, command)) { return; }
+  if(str8_match(command, str8_lit("copy"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    String8 text = uishell_terminal_copy_selection(scratch.arena, tv);
+    if(text.size) { wm_set_clipboard_text(text); }
+    scratch_end(scratch);
+  }
+  else if(str8_match(command, str8_lit("clear_selection"), 0)) { uishell_terminal_clear_selection(tv); }
+  else if(str8_match(command, str8_lit("select_all"), 0))
+  {
+    // Viewport only until Cleat exposes shared history selection (cleat#300).
+    tv->sel_mark = txt_pt(0, 0);
+    tv->sel_cursor = txt_pt(tv->cell_cache.rows-1, tv->cell_cache.cols-1);
+    tv->has_selection = 1;
+    tv->selecting = 0;
+    tv->selection_rectangular = 0;
+    tv->selection_session = tv->session;
+  }
+  else if(str8_match(command, str8_lit("paste"), 0) && paste.size)
+  {
+    cleat_input_event input = {.kind = CLEAT_INPUT_PASTE, .text = paste.str, .text_len = paste.size};
+    uishell_terminal_send_input(tv, &input);
   }
 }
 
@@ -357,6 +436,14 @@ uishell_terminal_runtime_release(void *data)
 {
   UIShell_TerminalViewState *tv = data;
   if(tv == 0) { return; }
+  for(RD_WindowState *ws = rd_state ? rd_state->first_window_state : &rd_nil_window_state;
+      ws && ws != &rd_nil_window_state; ws = ws->order_next)
+  {
+    if(ws->ui && ws->ui->edit_owner_user == tv)
+    {
+      ui_clear_edit_owner(ws->ui);
+    }
+  }
   uishell_terminal_preview_dequeue(&uishell_terminal_preview_starts, &tv->preview_start);
   uishell_terminal_preview_dequeue(&uishell_terminal_preview_updates, &tv->preview_update);
   if(tv->provider && !tv->daemon_backend) { cleat_provider_set_wake_callback(tv->provider, 0, 0); }
@@ -4166,55 +4253,15 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
       };
       uishell_terminal_send_input(tv, &input);
     }
+    if(focus_active || (ui_state->edit_menu_focus && ui_top_focus_active() == UI_FocusKind_On && ui_key_match(canvas_key, ui_state->edit_owner_key)))
+    {
+      uishell_terminal_register_edit_owner(canvas_key, tv, uishell_regs()->view);
+    }
     if(focus_active)
     {
       for(UI_Event *evt = 0; ui_next_event(&evt);)
       {
         B32 taken = session_ready && uishell_terminal_page_event(tv, evt);
-        // INTERIM: terminal clipboard chords detected inline — Cmd-C/Cmd-V on
-        // macOS, Ctrl-Shift-C/V elsewhere (plain Ctrl-C/V must still reach the
-        // program). This duplicates platform Cmd/Ctrl logic that belongs in the
-        // keybinding system; once the RAD keymap rework (sane mac Cmd/Ctrl
-        // handling) lands, replace this with terminal copy/paste *commands* bound
-        // per-platform by the keymap.
-        if(evt->kind == UI_EventKind_Press &&
-           (evt->key == WM_Key_C || evt->key == WM_Key_V))
-        {
-#if OS_MAC
-          B32 clip_chord = (evt->modifiers & WM_Modifier_Super) && !(evt->modifiers & (WM_Modifier_Ctrl|WM_Modifier_Alt));
-#else
-          B32 clip_chord = (evt->modifiers & WM_Modifier_Ctrl) && (evt->modifiers & WM_Modifier_Shift) && !(evt->modifiers & WM_Modifier_Super);
-#endif
-          if(clip_chord && evt->key == WM_Key_C)
-          {
-            if(tv->has_selection && tv->cell_cache.cells != 0)
-            {
-              Temp clip_scratch = scratch_begin(0, 0);
-              String8 clip_text = uishell_terminal_copy_selection(clip_scratch.arena, tv);
-              if(clip_text.size != 0) { wm_set_clipboard_text(clip_text); }
-              scratch_end(clip_scratch);
-            }
-            taken = 1;
-          }
-          else if(session_ready && clip_chord && evt->key == WM_Key_V)
-          {
-            Temp clip_scratch = scratch_begin(0, 0);
-            String8 clip_text = wm_get_clipboard_text(clip_scratch.arena);
-            if(clip_text.size != 0)
-            {
-              // Route through Cleat's paste path so bracketed-paste mode wraps it.
-              cleat_input_event input =
-              {
-                .kind = CLEAT_INPUT_PASTE,
-                .text = clip_text.str,
-                .text_len = clip_text.size,
-              };
-              uishell_terminal_send_input(tv, &input);
-            }
-            scratch_end(clip_scratch);
-            taken = 1;
-          }
-        }
         if(!taken && (session_ready || (evt->flags & UI_EventFlag_Copy)) &&
            (evt->kind == UI_EventKind_Edit ||
             evt->kind == UI_EventKind_Navigate ||
@@ -4237,7 +4284,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
           {
             if((evt->flags & UI_EventFlag_Paste) || (evt->modifiers & (WM_Modifier_Ctrl|WM_Modifier_Alt)) == 0)
             {
-              String8 text = (evt->flags & UI_EventFlag_Paste) ? wm_get_clipboard_text(scratch.arena) : evt->string;
+              String8 text = evt->string; // semantic Paste already took one coherent clipboard snapshot
               cleat_input_event input =
               {
                 .kind = (evt->flags & UI_EventFlag_Paste) ? CLEAT_INPUT_PASTE : CLEAT_INPUT_TEXT,

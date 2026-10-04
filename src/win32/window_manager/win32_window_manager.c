@@ -222,6 +222,17 @@ w32_wm_os_key_from_vkey(WPARAM vkey)
   return key;
 }
 
+internal WM_Key
+w32_wm_source_key_from_char_lparam(LPARAM lparam)
+{
+  U32 scan = (lparam >> 16) & 0xff;
+  // IME/synthetic character messages with no physical scan code are independent
+  // of a consumed chord, even if other lParam flags are present.
+  if(scan == 0) { return WM_Key_Null; }
+  if(lparam & bit24) { scan |= 0xe000; }
+  return w32_wm_os_key_from_vkey(MapVirtualKeyW(scan, MAPVK_VSC_TO_VK_EX));
+}
+
 internal WPARAM
 w32_wm_vkey_from_os_key(WM_Key key)
 {
@@ -513,6 +524,7 @@ w32_wm_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             event->modifiers |= WM_Modifier_Alt;
           }
           event->character = character;
+          event->source_key = w32_wm_source_key_from_char_lparam(lParam);
         }
       }break;
       
@@ -1007,7 +1019,7 @@ wm_get_system_info(void)
 //~ rjf: @os_hooks Clipboards (Implemented Per-OS)
 
 internal void
-wm_set_clipboard_text(String8 string)
+wm_set_clipboard_text_impl(String8 string)
 {
   Temp scratch = scratch_begin(0, 0);
   if(OpenClipboard(0))
@@ -1029,7 +1041,7 @@ wm_set_clipboard_text(String8 string)
 }
 
 internal String8
-wm_get_clipboard_text(Arena *arena)
+wm_get_clipboard_text_impl(Arena *arena)
 {
   String8 result = {0};
   if(IsClipboardFormatAvailable(CF_UNICODETEXT) &&

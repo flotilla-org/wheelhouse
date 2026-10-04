@@ -62,4 +62,6 @@ internal String8 cfg_command_from_menu_or_binding(Arena *arena, CFG_KeyMap *key_
 
 internal B32 cfg_process_binding_recording(CFG_State *cfg, B32 *active, CFG_ID binding_id, String8 command, WM_EventList *events);
 
+internal B32 cfg_terminal_edit_binding_eligible(CFG_Binding binding);
+internal CFG_Binding cfg_native_menu_binding_for_owner(CFG_KeyMap *key_map, String8 command, B32 terminal);
 #endif // CONFIG_BINDINGS_H

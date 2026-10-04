@@ -229,48 +229,9 @@ ui_line_edit(TxtPt *cursor, TxtPt *mark, U8 *edit_buffer, U64 edit_buffer_size, 
   
   //- rjf: take navigation actions for editing
   B32 changes_made = 0;
-  if(is_focus_active)
+  if(is_focus_active || (is_focus_active_disabled && ui_state->edit_menu_focus && ui_key_match(key, ui_state->edit_owner_key)))
   {
-    Temp scratch = scratch_begin(0, 0);
-    for(UI_Event *evt = 0; ui_next_event(&evt);)
-    {
-      String8 edit_string = str8(edit_buffer, edit_string_size_out[0]);
-      
-      // rjf: do not consume anything that doesn't fit a single-line's operations
-      if((evt->kind != UI_EventKind_Edit && evt->kind != UI_EventKind_Navigate && evt->kind != UI_EventKind_Text) || evt->delta_2s32.y != 0)
-      {
-        continue;
-      }
-      
-      // rjf: map this action to an op
-      UI_TxtOp op = ui_single_line_txt_op_from_event(scratch.arena, evt, edit_string, *cursor, *mark);
-      
-      // rjf: perform replace range
-      if(!txt_pt_match(op.range.min, op.range.max) || op.replace.size != 0)
-      {
-        String8 new_string = ui_push_string_replace_range(scratch.arena, edit_string, r1s64(op.range.min.column, op.range.max.column), op.replace);
-        new_string.size = Min(edit_buffer_size, new_string.size);
-        MemoryCopy(edit_buffer, new_string.str, new_string.size);
-        edit_string_size_out[0] = new_string.size;
-      }
-      
-      // rjf: perform copy
-      if(op.flags & UI_TxtOpFlag_Copy)
-      {
-        wm_set_clipboard_text(op.copy);
-      }
-      
-      // rjf: commit op's changed cursor & mark to caller-provided state
-      *cursor = op.cursor;
-      *mark = op.mark;
-      
-      // rjf: consume event
-      {
-        ui_eat_event(evt);
-        changes_made = 1;
-      }
-    }
-    scratch_end(scratch);
+    changes_made = ui_consume_text_edit_events(key, edit_buffer, edit_buffer_size, edit_string_size_out, cursor, mark, !is_focus_active);
   }
   
   //- rjf: build contents

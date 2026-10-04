@@ -143,6 +143,8 @@ entry_point(CmdLine *cmdline)
           texts += 1;
           good &= wm_window_match(event->window, window);
           good &= event->character == cases[idx].expected_character;
+          good &= event->source_key == cases[idx].key;
+          good &= event->modifiers == cases[idx].expected_modifiers;
         }
       }
       good &= presses == 1 && releases == 1;

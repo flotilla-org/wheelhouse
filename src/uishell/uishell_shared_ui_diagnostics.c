@@ -272,6 +272,13 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
     return 0;
   }
   U32 failures = !cfg_native_menu_diagnostics();
+  failures += !uishell_edit_menu_ui_diagnostics(ws);
+#if OS_LINUX
+  failures += !uishell_edit_x11_text_diagnostics(ws);
+#endif
+#if OS_MAC
+  failures += !uishell_edit_command_diagnostics(1);
+#endif
   uishell_check_raster_baselines(scratch.arena, &failures);
   uishell_check_text_decorations(&failures);
   fprintf(stderr, "raster baselines and text decorations: %u failures\n", failures);

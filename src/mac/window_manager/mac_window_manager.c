@@ -117,12 +117,14 @@
 @implementation MAC_WM_MenuTarget
 - (void)menuWillOpen:(NSMenu *)menu
 {
+  if(!mac_wm_state->menu_invoking_window) { mac_wm_state->menu_invoking_window = mac_wm_menu_command_target_window(); }
   mac_wm_state->menu_opened = 1;
 }
 - (void)menuDidBeginTracking:(NSNotification *)notification
 {
   if([notification object] == [NSApp mainMenu])
   {
+    if(!mac_wm_state->menu_tracking) { mac_wm_state->menu_invoking_window = mac_wm_menu_command_target_window(); }
     mac_wm_state->menu_opened = 1;
     mac_wm_state->menu_tracking = 1;
   }
@@ -130,6 +132,7 @@
 - (void)finishMenuTracking
 {
   mac_wm_state->menu_tracking = 0;
+  mac_wm_state->menu_invoking_window = 0;
   if(mac_wm_state->pending_main_menu != 0)
   {
     [NSApp setMainMenu:mac_wm_state->pending_main_menu];
@@ -147,9 +150,11 @@
 - (void)applicationDidResignActive:(NSNotification *)notification
 {
   [self finishMenuTracking];
+  MemoryZeroArray(mac_wm_state->menu_key_held);
 }
 - (void)menuItemSelected:(id)sender
 {
+  if(![sender isEnabled]) { return; }
   NSString *command = [sender representedObject];
   if(command != 0)
   {
@@ -228,6 +233,11 @@ mac_wm_menu_command_target_window(void)
   MAC_WM_Window *result = 0;
   if(mac_wm_state != 0)
   {
+    if(mac_wm_state->menu_invoking_window)
+    {
+      // Tracking retains the invoking window; a closed target has no fallback.
+      return mac_wm_window_is_live(mac_wm_state->menu_invoking_window) ? mac_wm_state->menu_invoking_window : 0;
+    }
     result = mac_wm_state->focused_window;
     if(!mac_wm_window_is_live(result))
     {
@@ -797,7 +807,7 @@ wm_get_system_info(void)
 //~ @os_hooks Clipboards (Implemented Per-OS)
 
 internal void
-wm_set_clipboard_text(String8 string)
+wm_set_clipboard_text_impl(String8 string)
 {
   Temp scratch = scratch_begin(0, 0);
   NSString *ns_string = mac_wm_ns_string_from_string8(scratch.arena, string);
@@ -808,7 +818,7 @@ wm_set_clipboard_text(String8 string)
 }
 
 internal String8
-wm_get_clipboard_text(Arena *arena)
+wm_get_clipboard_text_impl(Arena *arena)
 {
   NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
   NSString *ns_string = [pasteboard stringForType:NSPasteboardTypeString];
@@ -1327,6 +1337,27 @@ wm_get_events(Arena *arena, B32 wait)
     {
       mac_wm_activate_window(window);
     }
+    // A fresh physical down recovers from a lost release after window focus or
+    // lifecycle changes. Keep the latch through tracking end so its late key-up
+    // cannot escape to a Kitty consumer.
+    if(type == NSEventTypeKeyDown && ![event isARepeat])
+    {
+      B32 right = 0;
+      WM_Key pressed = mac_wm_key_from_key_code([event keyCode], &right);
+      if(pressed != WM_Key_Null) { mac_wm_state->menu_key_held[pressed] = 0; }
+    }
+    if(type == NSEventTypeKeyUp)
+    {
+      B32 right = 0;
+      WM_Key released = mac_wm_key_from_key_code([event keyCode], &right);
+      if(released != WM_Key_Null && mac_wm_state->menu_key_held[released])
+      {
+        mac_wm_state->menu_key_held[released] = 0;
+        mac_wm_state->key_is_down[released] = 0;
+        limit = [NSDate distantPast];
+        continue;
+      }
+    }
     // AppKit owns key equivalents during native tracking, including a nested
     // event pump. Outside tracking, preserve physical keys and the #112 text gate.
     if(!wm_key_event_is_shell_owned(mac_wm_state->menu_tracking) &&
@@ -1337,6 +1368,13 @@ wm_get_events(Arena *arena, B32 wait)
       B32 handled = 0;
       if(type == NSEventTypeKeyDown)
       {
+        B32 right = 0;
+        WM_Key pressed = mac_wm_key_from_key_code([event keyCode], &right);
+        if(pressed != WM_Key_Null)
+        {
+          if(mac_wm_state->menu_key_held[pressed]) { limit = [NSDate distantPast]; continue; }
+          mac_wm_state->menu_key_held[pressed] = 1;
+        }
         handled = [[NSApp mainMenu] performKeyEquivalent:event];
       }
       if(!handled) { [NSApp sendEvent:event]; }
@@ -1374,7 +1412,10 @@ wm_get_events(Arena *arena, B32 wait)
         if(type == NSEventTypeKeyDown &&
            !([event modifierFlags] & (NSEventModifierFlagCommand|NSEventModifierFlagControl)))
         {
+          WM_Event *before_text = result.last;
           mac_wm_push_text_events_from_ns_string(arena, &result, window, [event characters]);
+          for(WM_Event *text = before_text ? before_text->next : result.first; text; text = text->next)
+          { text->source_key = key; text->modifiers = wm_event->modifiers; }
         }
       }break;
       case NSEventTypeFlagsChanged:
@@ -1661,6 +1702,7 @@ mac_wm_menu_item(WM_MenuItem *item)
   [result setKeyEquivalentModifierMask:modifiers];
   [result setTarget:mac_wm_state->menu_target];
   [result setRepresentedObject:command];
+  [result setEnabled:!item->disabled];
   return result;
 }
 
@@ -1672,6 +1714,7 @@ wm_set_main_menu(WM_MenuArray menu_array)
     // Wheelhouse's binding configuration also supplies the native menu equivalents.
     [NSMenuItem setUsesUserKeyEquivalents:NO];
     NSMenu *main_menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
+    [main_menu setAutoenablesItems:NO];
     NSMenuItem *app_menu_item = [[[NSMenuItem alloc] initWithTitle:@"" action:0 keyEquivalent:@""] autorelease];
     NSMenu *app_menu = [[[NSMenu alloc] initWithTitle:mac_wm_app_menu_title()] autorelease];
     [app_menu setDelegate:mac_wm_state->menu_target];
@@ -1701,6 +1744,7 @@ wm_set_main_menu(WM_MenuArray menu_array)
         NSMenuItem *menu_item = [[[NSMenuItem alloc] initWithTitle:menu_label action:0 keyEquivalent:@""] autorelease];
         NSMenu *submenu = [[[NSMenu alloc] initWithTitle:menu_label] autorelease];
         [submenu setDelegate:mac_wm_state->menu_target];
+        [submenu setAutoenablesItems:NO];
         [main_menu addItem:menu_item];
         [main_menu setSubmenu:submenu forItem:menu_item];
 

@@ -131,6 +131,7 @@ struct WM_MenuItem
   String8 command_name;
   WM_Key shortcut_key;
   WM_Modifiers shortcut_modifiers;
+  B32 disabled;
 };
 
 typedef struct WM_Menu WM_Menu;
@@ -161,6 +162,7 @@ struct WM_Event
   B32 is_repeat;
   B32 right_sided;
   U32 character;
+  WM_Key source_key; // physical source of text; Null for composition/synthetic text
   U32 repeat_count;
   String8 string;
   Vec2F32 pos;
@@ -218,6 +220,16 @@ internal WM_SystemInfo *wm_get_system_info(void);
 ////////////////////////////////
 //~ rjf: @os_hooks Clipboards (Implemented Per-OS)
 
+typedef struct WM_ClipboardIO WM_ClipboardIO;
+struct WM_ClipboardIO
+{
+  void *user;
+  void (*write)(void *user, String8 text);
+  String8 (*read)(void *user, Arena *arena);
+};
+global WM_ClipboardIO wm_clipboard_io; // optional OS-boundary override for diagnostics
+internal void wm_set_clipboard_text_impl(String8 string);
+internal String8 wm_get_clipboard_text_impl(Arena *arena);
 internal void    wm_set_clipboard_text(String8 string);
 internal String8 wm_get_clipboard_text(Arena *arena);
 // Selection ("primary") buffer, distinct from the standard clipboard: set on

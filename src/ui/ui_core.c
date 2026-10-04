@@ -233,8 +233,8 @@ ui_single_line_txt_op_from_event(Arena *arena, UI_Event *event, String8 string, 
   if(event->flags & UI_EventFlag_Paste)
   {
     range = txt_rng(cursor, mark);
-    replace = wm_get_clipboard_text(arena);
-    next_cursor = next_mark = txt_pt(cursor.line, cursor.column+replace.size);
+    replace = event->string; // command dispatch owns the single clipboard read
+    next_cursor = next_mark = txt_pt(range.min.line, range.min.column+replace.size);
   }
   
   //- rjf: deletion
@@ -584,6 +584,7 @@ ui_next_event(UI_Event **ev)
     UI_PermissionFlags perms = ui_top_permission_flags();
     for(UI_EventNode *n = start_node; n != 0; n = n->next)
     {
+      if(n->v.edit_owner_key && n->v.edit_owner_key != ui_state->edit_consumer_key.u64[0]) { continue; }
       B32 good = 1;
       if(!(perms & UI_PermissionFlag_ClicksLeft) &&
          (n->v.kind == UI_EventKind_Press ||
@@ -3773,3 +3774,66 @@ ui_top_px_height(void)
 //~ rjf: Generated Code
 
 #include "generated/ui.meta.c"
+
+internal void
+ui_apply_text_edit_op(Arena *arena, UI_TxtOp op, U8 *buffer, U64 capacity, U64 *size, TxtPt *cursor, TxtPt *mark)
+{
+  if(!txt_pt_match(op.range.min, op.range.max) || op.replace.size)
+  {
+    String8 text = ui_push_string_replace_range(arena, str8(buffer, *size), r1s64(op.range.min.column, op.range.max.column), op.replace);
+    *size = Min(capacity, text.size);
+    MemoryCopy(buffer, text.str, *size);
+  }
+  if(op.flags & UI_TxtOpFlag_Copy && op.copy.size) { wm_set_clipboard_text(op.copy); }
+  *cursor = op.cursor; *mark = op.mark;
+  cursor->column = Clamp(1, cursor->column, (S64)*size+1);
+  mark->column = Clamp(1, mark->column, (S64)*size+1);
+}
+
+internal void
+ui_clear_edit_owner(UI_State *state)
+{
+  state->edit_owner_key = ui_key_zero();
+  state->edit_owner_build = 0;
+  state->edit_owner_selection = 0;
+  state->edit_owner_terminal = 0;
+  state->edit_owner_view = 0;
+  state->edit_owner_user = 0;
+  state->edit_owner_enabled = 0;
+  state->edit_owner_dispatch = 0;
+}
+
+internal void
+ui_register_text_edit_owner(UI_Key key, TxtPt cursor, TxtPt mark)
+{
+  ui_state->edit_owner_key = key;
+  ui_state->edit_owner_build = ui_state->build_index;
+  ui_state->edit_owner_selection = !txt_pt_match(cursor, mark);
+  ui_state->edit_owner_terminal = 0;
+  ui_state->edit_owner_view = 0;
+  ui_state->edit_owner_user = 0;
+  ui_state->edit_owner_enabled = 0;
+  ui_state->edit_owner_dispatch = 0;
+}
+
+internal B32
+ui_consume_text_edit_events(UI_Key key, U8 *buffer, U64 capacity, U64 *size, TxtPt *cursor, TxtPt *mark, B32 target_only)
+{
+  B32 changed = 0;
+  UI_Key previous = ui_state->edit_consumer_key;
+  ui_state->edit_consumer_key = key;
+  Temp scratch = scratch_begin(0, 0);
+  for(UI_Event *evt = 0; ui_next_event(&evt);)
+  {
+    if(target_only && !evt->edit_owner_key) { continue; }
+    if((evt->kind != UI_EventKind_Edit && evt->kind != UI_EventKind_Navigate && evt->kind != UI_EventKind_Text) || evt->delta_2s32.y) { continue; }
+    UI_TxtOp op = ui_single_line_txt_op_from_event(scratch.arena, evt, str8(buffer, *size), *cursor, *mark);
+    ui_apply_text_edit_op(scratch.arena, op, buffer, capacity, size, cursor, mark);
+    ui_eat_event(evt);
+    changed = 1;
+  }
+  scratch_end(scratch);
+  ui_state->edit_consumer_key = previous;
+  ui_register_text_edit_owner(key, *cursor, *mark);
+  return changed;
+}
