@@ -104,10 +104,11 @@ The earlier placement-edge Related fallback above is superseded by typed
 relation fields.
 
 The header uses kind icons, identity, title and a state badge. Facts occupy two
-columns with labels, values and smaller controller-relative observation ages
-on one line. The actions footer packs its controls into one row. Missing
-facts are omitted; known-empty facts keep their label and a dash. Retained stale values
-and ages are dimmed. Producer timestamp strings are never parsed. Related
+columns with icons and values. The engaged header has a Details toggle that
+reveals full fact labels, controller-relative observation ages and stale styling.
+The actions footer packs its controls into one row. Missing
+facts are omitted; known-empty facts show a dash. Retained stale values
+and ages are dimmed in Details mode. Producer timestamp strings are never parsed. Related
 mini-rows show kind icons, target labels and state chips. An unavailable target
 is informational; available targets navigate by exact kind/id, including those
 absent from the tree. All path entities and duplicate targets are omitted.
@@ -124,9 +125,15 @@ Disposable kiwi candidates for this slice live under
 `/tmp/wheelhouse-structured-hover-review/`: **Structured Cards Near.app** and
 **Structured Cards Outside.app**. Their launchers supply separate disposable
 user/project settings and the subject fixture. The daily driver is untouched.
-Both candidates were launched for human review on 2026-10-05. The operator
+Both candidates were launched for human review on 2026-10-05
+(Europe/London; 2026-10-04 UTC). The operator
 confirmed that the live previews work and requested a more compact, glanceable
-layout. The revised compact layout is awaiting review.
+layout. The operator asked to hide fact labels and freshness by default after seeing
+the compact layout, since the labels did not fit. The latest revision uses
+icons and values by default and reveals labels and freshness with Details.
+The operator accepted this revision: “That looks better.” The whole card turns
+blue when clicked; that retained phase-1 focus styling is tracked separately in
+#187, as the operator allowed a follow-up.
 
 The fixture exposes change requests, issues, convoys, roles and projects.
 The project's Related rows reach a worktree and an issue with no tree placement.

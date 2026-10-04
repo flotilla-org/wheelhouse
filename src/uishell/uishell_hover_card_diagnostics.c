@@ -347,6 +347,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                 "related mini-rows exclude every ancestor, not only the immediate parent");
       CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Unavailable"), 0),
                 "unavailable relation targets do not expose a navigation button");
+      uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
+      CardCheck(!card->enriched && uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Details"), 0) && card->enriched,
+                "engaged Details button reveals labels and observation ages");
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Details"), 0) && !card->enriched,
+                "Details button returns to compact mode");
       // Full production layout catches fixed-rectangle scope leakage into
       // fields and buttons, rather than only testing their existence.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
@@ -533,6 +538,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       AndamentoNode node = {0}; U64 index = uishell_sidebar_card_find(&fixture, entity, &node);
       CardCheck(index != ANDAMENTO_NONE, "all six shipped detail templates have a catalog target");
       uishell_sidebar_card_set(card, node, ui_key_zero(), str8_zero(), 0, now_time_us());
+      card->enriched = 1;
       UI_EventList events = {0};
       ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       MemoryZeroArray(test->hover_card_keys);
@@ -613,23 +619,28 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(node.state == ANDAMENTO_LIVE && node.workspace_id == 123456, "retained catalog preview identity survives expiry");
     UIShell_HoverCard *fresh_card = &freshness.cards[0];
     uishell_sidebar_card_set(fresh_card, node, ui_key_zero(), str8_zero(), 0, now_time_us());
-    UI_EventList events = {0};
-    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-    MemoryZeroArray(test->hover_card_keys);
-    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-    UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_ChildLayoutAxis(Axis2_Y)
-    { uishell_sidebar_card_content(&freshness, ws, fresh_card, 0, node, index, 400, 0); }
-    ui_end_build();
-    B32 stale = 0, age = 0, empty = 0;
-    for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+    for(U64 enriched = 0; enriched < 2; enriched++)
     {
-      String8 text = ui_box_display_string(box);
-      stale |= str8_match(text, str8_lit("retained-branch"), 0) && box->transparency >= 0.5f;
-      age |= str8_match(text, str8_lit("1m ago"), 0) && box->transparency >= 0.5f;
-      empty |= str8_match(text, str8_lit("Upstream"), 0);
+      fresh_card->enriched = enriched;
+      UI_EventList events = {0};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      MemoryZeroArray(test->hover_card_keys);
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+      UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_ChildLayoutAxis(Axis2_Y)
+      { uishell_sidebar_card_content(&freshness, ws, fresh_card, 0, node, index, 400, 0); }
+      ui_end_build();
+      B32 stale = 0, value = 0, age = 0, empty = 0;
+      for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+      {
+        String8 text = ui_box_display_string(box);
+        value |= str8_match(text, str8_lit("retained-branch"), 0);
+        stale |= str8_match(text, str8_lit("retained-branch"), 0) && box->transparency >= 0.5f;
+        age |= str8_match(text, str8_lit("1m ago"), 0) && box->transparency >= 0.5f;
+        empty |= str8_match(text, str8_lit("Upstream"), 0);
+      }
+      CardCheck(value && stale == enriched && age == enriched, "freshness styling and observation ages appear only in enriched mode");
+      CardCheck(empty == enriched, "known-empty fact labels appear only in enriched mode");
     }
-    CardCheck(stale && age, "retained stale values and their controller-relative ages are dimmed");
-    CardCheck(empty, "known-empty facts retain their separate labels");
     uishell_sidebar_release(&freshness);
 
   }

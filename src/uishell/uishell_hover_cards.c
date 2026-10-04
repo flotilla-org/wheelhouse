@@ -9,6 +9,8 @@ enum
   UIShell_HoverCardCorridorPaddingPT = 12,
   UIShell_HoverCardNearGapPT = 16,
   UIShell_HoverCardInitialPathCapacity = 32,
+  // ABI 2 detail_action exposes slot 0 (primary) and slot 1 (copy URL).
+  UIShell_HoverCardActionCount = 2,
 };
 StaticAssert(UIShell_HoverCardNearGapPT > UIShell_HoverCardCorridorPaddingPT, hover_card_scan_gap);
 
@@ -37,8 +39,10 @@ uishell_sidebar_card_find(UIShell_SidebarState *state, AndamentoEntity entity, A
 {
   U64 index = state->snapshot ? andamento_snapshot_detail_find(state->snapshot, entity.kind, entity.id) : ANDAMENTO_NONE;
   AndamentoDetail detail = {0};
-  if(index != ANDAMENTO_NONE && out && andamento_snapshot_detail(state->snapshot, index, &detail))
+  if(index == ANDAMENTO_NONE) { return ANDAMENTO_NONE; }
+  if(out)
   {
+    if(!andamento_snapshot_detail(state->snapshot, index, &detail)) { return ANDAMENTO_NONE; }
     *out = (AndamentoNode){.entity_kind = detail.entity.kind, .entity_id = detail.entity.id,
       .label = detail.label, .activate = detail.activate, .detail_count = detail.field_count,
       .state = detail.has_workspace ? ANDAMENTO_LIVE : ANDAMENTO_LATENT, .workspace_id = detail.workspace_id};
@@ -52,7 +56,8 @@ internal void
 uishell_sidebar_card_queue_action(UIShell_SidebarState *state, AndamentoNode node, size_t action)
 {
   U64 index = uishell_sidebar_card_find(state, uishell_sidebar_card_entity(node), 0);
-  for(U64 i = 0; i < 2; i++)
+  if(index == ANDAMENTO_NONE) { return; }
+  for(U64 i = 0; i < UIShell_HoverCardActionCount; i++)
   {
     AndamentoDetailAction control = {0};
     if(andamento_snapshot_detail_action(state->snapshot, index, i, &control) && control.action == action)
@@ -76,7 +81,7 @@ uishell_sidebar_card_take_action(UIShell_SidebarState *state)
   state->card_action_intent = str8_zero();
   U64 index = pending ? uishell_sidebar_card_find(state, target, 0) : ANDAMENTO_NONE;
   if(index == ANDAMENTO_NONE) { return ANDAMENTO_NONE; }
-  for(U64 i = 0; i < 2; i++)
+  for(U64 i = 0; i < UIShell_HoverCardActionCount; i++)
   {
     AndamentoDetailAction control = {0};
     if(andamento_snapshot_detail_action(state->snapshot, index, i, &control) &&
@@ -153,7 +158,7 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, AndamentoNode node, UI_Key sou
   card->corridor_active = 0;
   card->scroll = 0;
   card->open = 1;
-  card->engaged = card->focused = 0;
+  card->engaged = card->focused = card->enriched = 0;
   scratch_end(scratch);
 }
 
@@ -289,6 +294,55 @@ uishell_sidebar_card_icon(AndamentoText kind)
   return RD_IconKind_FileOutline;
 }
 
+// Match declared source keys, not rendered labels. Custom facts get an info
+// icon and retain their name in the tooltip and enriched presentation.
+internal RD_IconKind
+uishell_sidebar_card_fact_icon(AndamentoDetailField field)
+{
+  struct { char *key; RD_IconKind icon; } icons[] = {
+    {"flotilla.change_request.checks", RD_IconKind_Check},
+    {"flotilla.change_request.review_decision", RD_IconKind_Glasses},
+    {"flotilla.change_request.mergeable", RD_IconKind_YSplit},
+    {"flotilla.change_request.readiness", RD_IconKind_CheckFilled},
+    {"flotilla.orphaned", RD_IconKind_WarningSmall},
+    {"flotilla.convoy.phase", RD_IconKind_Scheduler},
+    {"flotilla.vessel.host", RD_IconKind_Machine},
+    {"vcs.repo", RD_IconKind_Module},
+    {"checkout.branch", RD_IconKind_XSplit}, {"git.branch", RD_IconKind_XSplit},
+    {"checkout.path", RD_IconKind_FolderOpenOutline}, {"git.root", RD_IconKind_FolderOpenOutline},
+    {"git.dirty", RD_IconKind_Pencil}, {"git.upstream", RD_IconKind_UpArrow},
+    {"flotilla.role.name", RD_IconKind_Thread},
+    {"flotilla.role.presents_as", RD_IconKind_Person},
+    {"flotilla.role.hold", RD_IconKind_Pause},
+    {"workspace.primary.state", RD_IconKind_Window},
+    {"count.convoys", RD_IconKind_Threads}, {"count.vessels", RD_IconKind_Machine},
+    {"count.issues", RD_IconKind_FileOutline}, {"count.checkouts", RD_IconKind_XSplit},
+    {"flotilla.project.repository_count", RD_IconKind_Module},
+  };
+  for(U64 i = 0; i < ArrayCount(icons); i++)
+  { if(str8_match(uishell_sidebar_string(field.source_key), str8_cstring(icons[i].key), 0)) { return icons[i].icon; } }
+  return RD_IconKind_Info;
+}
+
+internal String8
+uishell_sidebar_card_fact_tag(AndamentoDetailField field)
+{
+  String8 key = uishell_sidebar_string(field.source_key), value = uishell_sidebar_string(field.text);
+  B32 outcome = str8_match(key, str8_lit("flotilla.change_request.checks"), 0) ||
+    str8_match(key, str8_lit("flotilla.change_request.review_decision"), 0) ||
+    str8_match(key, str8_lit("flotilla.change_request.mergeable"), 0) ||
+    str8_match(key, str8_lit("flotilla.change_request.readiness"), 0);
+  if(outcome)
+  {
+    if(str8_match(value, str8_lit("pass"), 0) || str8_match(value, str8_lit("approved"), 0) ||
+       str8_match(value, str8_lit("mergeable"), 0) || str8_match(value, str8_lit("ready_to_merge"), 0)) { return str8_lit("good"); }
+    if(str8_match(value, str8_lit("fail"), 0) || str8_match(value, str8_lit("failed"), 0) ||
+       str8_match(value, str8_lit("changes_requested"), 0) || str8_match(value, str8_lit("conflicting"), 0) ||
+       str8_match(value, str8_lit("ci_failing"), 0)) { return str8_lit("bad"); }
+  }
+  return str8_lit("weak");
+}
+
 internal String8
 uishell_sidebar_card_age(U64 now, U64 observed)
 {
@@ -311,25 +365,31 @@ uishell_sidebar_card_role_text(UIShell_SidebarState *state, U64 index, U32 role)
   return str8_zero();
 }
 
-internal size_t
-uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UIShell_HoverCard *card,
-                            U64 slot, AndamentoNode node, U64 index, F32 width, B32 interactive)
+internal void
+uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card,
+                            U64 index, AndamentoDetail detail, F32 width, B32 interactive)
 {
-  size_t action = ANDAMENTO_NONE;
-  AndamentoDetail detail = {0};
-  if(!andamento_snapshot_detail(state->snapshot, index, &detail)) { return action; }
   String8 identity = uishell_sidebar_card_role_text(state, index, ANDAMENTO_DETAIL_IDENTITY);
   String8 title = uishell_sidebar_card_role_text(state, index, ANDAMENTO_DETAIL_TITLE);
   String8 badge = uishell_sidebar_card_role_text(state, index, ANDAMENTO_DETAIL_STATE);
   if(!identity.size) { identity = uishell_sidebar_string(detail.entity.id); }
   if(!title.size) { title = uishell_sidebar_string(detail.label); }
-  F32 badge_width = badge.size ? Min(width*0.3f, ui_top_font_size()*(badge.size*0.65f+1)) : 0;
+  F32 details_width = interactive ? ui_top_font_size()*4.5f : 0;
+  F32 badge_width = badge.size ? Min(width*0.3f, fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, ui_top_tab_size(), badge).x+ui_top_font_size()) : 0;
   UI_Row
   {
     UI_PrefWidth(ui_em(1.4f, 1)) RD_Font(RD_FontSlot_Icons)
     { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_icon(detail.entity.kind)]); }
-    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width), 1)) UI_TagF("weak")
+    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-details_width), 1)) UI_TagF("weak")
     { ui_label(identity); }
+    if(interactive)
+    {
+      UI_PrefWidth(ui_px(details_width, 1)) UI_TagF("weak")
+      {
+        if(ui_clicked(uishell_sidebar_button(str8_lit("Details###card_details"))))
+        { card->enriched = !card->enriched; rd_request_frame(); }
+      }
+    }
     if(badge.size)
     {
       UI_PrefWidth(ui_px(badge_width, 1)) UI_CornerRadius(ui_top_font_size()*0.3f)
@@ -344,6 +404,12 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
   if(card->contains_current && card->depth == 1) { UI_TagF("weak") { ui_label(str8_lit("Contains current workspace")); } }
   if(detail.error.len) { ui_label_multiline(width, uishell_sidebar_string(detail.error)); }
 
+}
+
+internal void
+uishell_sidebar_card_facts(UIShell_SidebarState *state, UIShell_HoverCard *card,
+                           U64 index, AndamentoDetail detail, F32 width, B32 interactive)
+{
   // Omit missing facts; known-empty facts keep a label and dash. Labels and
   // observation times come from the typed fields.
   UI_Box *facts_row = 0;
@@ -358,20 +424,38 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
       UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_X)
       { facts_row = ui_build_box_from_stringf(0, "###facts_row_%I64u", fact_count/2); }
     }
-    UI_Parent(facts_row) UI_PrefWidth(ui_px(cell_width, 1)) UI_PrefHeight(ui_em(1.5f, 1))
-    UI_ChildLayoutAxis(Axis2_X) UI_Transparency(field.stale ? 1-(1-ui_top_transparency())*0.5f : ui_top_transparency())
+    UI_Parent(facts_row) UI_PrefWidth(ui_px(cell_width, 1))
+    UI_PrefHeight(card->enriched ? ui_children_sum(1) : ui_em(1.5f, 1))
+    UI_ChildLayoutAxis(card->enriched ? Axis2_Y : Axis2_X)
+    UI_Transparency(field.stale && card->enriched ? 1-(1-ui_top_transparency())*0.5f : ui_top_transparency())
     {
       UI_Box *cell = ui_build_box_from_stringf(0, "###fact_%I64u", f);
-      UI_Parent(cell)
+      UI_Parent(cell) UI_PrefHeight(ui_em(1.5f, 1))
       {
-        UI_TagF("weak") UI_FontSize(ui_top_font_size()*0.85f) UI_PrefWidth(ui_text_dim(5, 0))
-        { ui_label(uishell_sidebar_string(field.label)); }
-        UI_PrefWidth(ui_pct(1, 0))
-        { ui_label(field.has_value && field.text.len ? uishell_sidebar_string(field.text) : str8_lit("—")); }
-        if(field.has_observation)
+        String8 value = field.text.len ? uishell_sidebar_string(field.text) : str8_lit("—");
+        if(card->enriched)
         {
-          UI_TagF("weak") UI_FontSize(ui_top_font_size()*0.75f) UI_PrefWidth(ui_text_dim(2, 1))
-          { ui_label(uishell_sidebar_card_age(detail.now_ms, field.observed_at_ms)); }
+          UI_TagF("weak") UI_FontSize(ui_top_font_size()*0.85f)
+          { ui_label_multiline(cell_width, uishell_sidebar_string(field.label)); }
+          ui_label_multiline(cell_width, value);
+          if(field.has_observation)
+          {
+            UI_TagF("weak") UI_FontSize(ui_top_font_size()*0.75f)
+            { ui_label(uishell_sidebar_card_age(detail.now_ms, field.observed_at_ms)); }
+          }
+        }
+        else
+        {
+          UI_PrefWidth(ui_em(1.4f, 1)) RD_Font(RD_FontSlot_Icons) UI_TagF("%S", uishell_sidebar_card_fact_tag(field))
+          { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_fact_icon(field)]); }
+          UI_Signal fact = {0};
+          UI_PrefWidth(ui_px(Max(0.f, cell_width-ui_top_font_size()*1.4f), 1)) { fact = ui_label(value); }
+          if(interactive && ui_hovering(fact)) UI_Tooltip
+          {
+            ui_state->tooltip_anchor_key = fact.box->key;
+            ui_label(uishell_sidebar_string(field.label));
+            ui_label_multiline(width, value);
+          }
         }
       }
     }
@@ -379,6 +463,12 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
     fact_count++;
   }
 
+}
+
+internal void
+uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *card,
+                             U64 slot, U64 index, AndamentoDetail detail, F32 width, B32 interactive)
+{
   B32 related_label = 0;
   U64 relation_capacity = 0;
   for(U64 f = 0; f < detail.field_count; f++)
@@ -386,8 +476,10 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
     AndamentoDetailField field = {0}; andamento_snapshot_detail_field(state->snapshot, index, f, &field);
     if(field.role == ANDAMENTO_DETAIL_RELATION) { relation_capacity += field.relation_count; }
   }
-  AndamentoEntity *seen = push_array(ui_build_arena(), AndamentoEntity, relation_capacity);
-  U64 seen_count = 0;
+  U64 table_capacity = 1;
+  while(table_capacity < relation_capacity*2+1) { table_capacity *= 2; }
+  AndamentoEntity *seen = push_array(ui_build_arena(), AndamentoEntity, table_capacity);
+  B32 *occupied = push_array(ui_build_arena(), B32, table_capacity);
   for(U64 f = 0; f < detail.field_count; f++)
   {
     AndamentoDetailField field = {0}; andamento_snapshot_detail_field(state->snapshot, index, f, &field);
@@ -396,10 +488,13 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
     {
       AndamentoDetailRelation relation = {0};
       if(!andamento_snapshot_detail_relation(state->snapshot, index, f, r, card->path, card->depth, &relation)) { continue; }
-      B32 duplicate = 0;
-      for(U64 i = 0; i < seen_count; i++) { duplicate |= uishell_sidebar_card_entity_match(seen[i], relation.entity); }
-      if(duplicate) { continue; }
-      seen[seen_count++] = relation.entity;
+      U64 hash = u64_hash_from_str8(uishell_sidebar_string(relation.entity.kind)) ^
+        (u64_hash_from_str8(uishell_sidebar_string(relation.entity.id))*0x9e3779b97f4a7c15ull);
+      U64 bucket = hash & (table_capacity-1);
+      while(occupied[bucket] && !uishell_sidebar_card_entity_match(seen[bucket], relation.entity))
+      { bucket = (bucket+1) & (table_capacity-1); }
+      if(occupied[bucket]) { continue; }
+      occupied[bucket] = 1; seen[bucket] = relation.entity;
       if(!related_label) { UI_TagF("weak") { ui_label(str8_lit("Related")); } related_label = 1; }
       AndamentoNode related = {0};
       B32 available = uishell_sidebar_card_find(state, relation.entity, &related) != ANDAMENTO_NONE;
@@ -432,6 +527,11 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
       }
     }
   }
+}
+
+internal void
+uishell_sidebar_card_preview(RD_WindowState *ws, U64 slot, AndamentoNode node, F32 width)
+{
   if(node.state == ANDAMENTO_LIVE && node.workspace_id)
   {
     rd_workspace_preview_demand_push(ws, node.workspace_id, width);
@@ -448,46 +548,62 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
       else { rd_request_frame(); }
     }
   }
-  if(interactive)
+}
+
+internal size_t
+uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card, U64 index, F32 width)
+{
+  size_t action = ANDAMENTO_NONE;
+  ui_spacer(ui_em(0.5f, 1));
+  if(card->depth > 1 && ui_clicked(uishell_sidebar_button(str8_lit("← Back###card_back"))))
   {
-    ui_spacer(ui_em(0.5f, 1));
-    if(card->depth > 1 && ui_clicked(uishell_sidebar_button(str8_lit("← Back###card_back"))))
+    card->previous = card->path[card->depth-1]; card->depth--;
+    card->changed_at = now_time_us(); card->glide_from = card->rect.p0; card->scroll = 0; rd_request_frame();
+  }
+  // Labels and enabled controls come from Andamento. The footer packs the
+  // controls into one row; the text label remains the keyboard target.
+  AndamentoDetailAction controls[UIShell_HoverCardActionCount] = {0};
+  U64 control_count = 0;
+  for(U64 i = 0; i < ArrayCount(controls); i++)
+  {
+    AndamentoDetailAction control = {0};
+    if(andamento_snapshot_detail_action(state->snapshot, index, i, &control)) { controls[control_count++] = control; }
+  }
+  F32 button_width = width/(control_count+1);
+  UI_Row
+  {
+    for(U64 i = 0; i < control_count; i++)
     {
-      card->previous = card->path[card->depth-1]; card->depth--;
-      card->changed_at = now_time_us(); card->glide_from = card->rect.p0; card->scroll = 0; rd_request_frame();
-    }
-    // Labels and enabled controls come from Andamento. The footer packs the
-    // controls into one row; the text label remains the keyboard target.
-    AndamentoDetailAction controls[2] = {0};
-    U64 control_count = 0;
-    for(U64 i = 0; i < ArrayCount(controls); i++)
-    {
-      AndamentoDetailAction control = {0};
-      if(andamento_snapshot_detail_action(state->snapshot, index, i, &control)) { controls[control_count++] = control; }
-    }
-    F32 button_width = width/(control_count+1);
-    UI_Row
-    {
-      for(U64 i = 0; i < control_count; i++)
+      AndamentoDetailAction control = controls[i];
+      String8 intent = uishell_sidebar_string(control.intent);
+      RD_IconKind icon = str8_match(intent, str8_lit("copy-url"), 0) ? RD_IconKind_FileOutline : RD_IconKind_Window;
+      UI_PrefWidth(ui_px(button_width, 1)) UI_Row
       {
-        AndamentoDetailAction control = controls[i];
-        String8 intent = uishell_sidebar_string(control.intent);
-        RD_IconKind icon = str8_match(intent, str8_lit("copy-url"), 0) ? RD_IconKind_FileOutline : RD_IconKind_Window;
-        UI_PrefWidth(ui_px(button_width, 1)) UI_Row
+        UI_PrefWidth(ui_em(1.4f, 1)) RD_Font(RD_FontSlot_Icons) { ui_label(rd_icon_kind_text_table[icon]); }
+        UI_PrefWidth(ui_px(Max(0.f, button_width-ui_top_font_size()*1.4f), 1))
         {
-          UI_PrefWidth(ui_em(1.4f, 1)) RD_Font(RD_FontSlot_Icons) { ui_label(rd_icon_kind_text_table[icon]); }
-          UI_PrefWidth(ui_px(Max(0.f, button_width-ui_top_font_size()*1.4f), 1))
-          {
-            if(ui_clicked(uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###card_action_%I64u_%S", uishell_sidebar_string(control.label), i, intent))))
-            { action = control.action; if(!str8_match(intent, str8_lit("copy-url"), 0)) { uishell_sidebar_card_close(card); } }
-          }
+          if(ui_clicked(uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###card_action_%I64u_%S", uishell_sidebar_string(control.label), i, intent))))
+          { action = control.action; if(!str8_match(intent, str8_lit("copy-url"), 0)) { uishell_sidebar_card_close(card); } }
         }
       }
-      UI_PrefWidth(ui_px(button_width, 1))
-      { if(ui_clicked(uishell_sidebar_button(str8_lit("Close###card_close")))) { uishell_sidebar_card_close(card); rd_request_frame(); } }
     }
+    UI_PrefWidth(ui_px(button_width, 1))
+    { if(ui_clicked(uishell_sidebar_button(str8_lit("Close###card_close")))) { uishell_sidebar_card_close(card); rd_request_frame(); } }
   }
   return action;
+}
+
+internal size_t
+uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UIShell_HoverCard *card,
+                            U64 slot, AndamentoNode node, U64 index, F32 width, B32 interactive)
+{
+  AndamentoDetail detail = {0};
+  if(!andamento_snapshot_detail(state->snapshot, index, &detail)) { return ANDAMENTO_NONE; }
+  uishell_sidebar_card_header(state, card, index, detail, width, interactive);
+  uishell_sidebar_card_facts(state, card, index, detail, width, interactive);
+  uishell_sidebar_card_related(state, card, slot, index, detail, width, interactive);
+  uishell_sidebar_card_preview(ws, slot, node, width);
+  return interactive ? uishell_sidebar_card_footer(state, card, index, width) : ANDAMENTO_NONE;
 }
 
 // Leave the source row clear for horizontal scanning in Near placement. The

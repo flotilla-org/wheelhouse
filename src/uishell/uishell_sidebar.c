@@ -46,7 +46,7 @@ struct UIShell_HoverCard
   UI_Key source, dismissed;
   Rng2F32 source_rect, rect;
   Vec2F32 departure, last_mouse, glide_from;
-  B32 open, engaged, focused, contains_current, source_seen, corridor_active;
+  B32 open, engaged, focused, contains_current, source_seen, corridor_active, enriched;
   F32 scroll;
 };
 
