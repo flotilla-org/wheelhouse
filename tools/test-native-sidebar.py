@@ -289,7 +289,7 @@ int main(void) {
         self.assertIn('Attempt phase: active', details)
         self.assertIn('Attachment: ready', details)
         self.assertEqual(self.children(nodes, 'p/governor'), [])
-        self.toggle_variable('Role attempts')
+        self.toggle_variable('Role history')
         _, nodes = self.snapshot()
         self.assertEqual([n.entity_id.string() for n in self.children(nodes, 'p/governor')], ['z-attempt-1', 'a-attempt-2'])
         self.toggle_variable('Show finished')
@@ -299,7 +299,7 @@ int main(void) {
             instances = [n for n in nodes if n.entity_id.string() == identity]
             self.assertEqual(len(instances), 1)
             self.assertEqual(nodes[instances[0].parent].entity_id.string(), 'p/governor')
-        self.toggle_variable('Role attempts')
+        self.toggle_variable('Role history')
         _, nodes = self.snapshot()
         self.assertEqual(self.children(nodes, 'p/governor'), [])
 
@@ -472,7 +472,7 @@ int main(void) {
         for hidden in ('g', 'g-v', 'q', 'q-v'):
             self.assertNotIn(hidden, ids)
         self.assertIn('task', ids)
-        self.toggle_variable('Role attempts')
+        self.toggle_variable('Role history')
         _, nodes = self.snapshot()
         ids = {n.entity_id.string() for n in nodes}
         for shown in ('g', 'g-v', 'q', 'q-v', 'task', 'p/governor'):

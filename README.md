@@ -156,14 +156,25 @@ and issues; sessions and Git have their own sections. Attention is a second plac
 the same entities. The project tree is the only sidebar, including when an older saved
 `sidebar_mode` value exists.
 
-Use the disclosure arrow to expand a branch. Clicking an entry runs its supplied recipe
-in a native terminal workspace, or focuses its existing workspace, including when it was
-opened from Attention or an alias such as a one-vessel convoy. The current workspace has
-a highlighted row. Tooltips explain each entry's action; entries without a recipe show
-information inside the sidebar when clicked. Sections scroll independently, and display
-controls stay at the bottom. The native template gives worktrees workspace presence, so
-the git producer's shell recipe opens a terminal in its root. It does not use the legacy
-grouping tree in Andamento's Zellij template, which native snapshots deliberately omit.
+Use the disclosure arrow to expand a branch. Clicking an entry runs its supplied
+recipe in a native terminal workspace, or focuses its existing workspace, including
+when it was opened from Attention or an alias such as a one-vessel convoy. The
+current workspace has a highlighted row. Tooltips explain each entry's action;
+entries without a recipe show information inside the sidebar when clicked. Sections
+are docked Views. Single-section sidebar panels show a header with a count and
+compact display toggles; merged panels show compact tabs. Drag the header's hover
+handle to reorder or merge sections within their owning Controlled Split level.
+Fleet sections stay available while child workspaces switch; they cannot be docked
+into those workspaces. Sections retain independent scrolling, and their panel boundaries
+resize their allocation. Reveal expands a collapsed section to show its workspace.
+Closed sections stay closed on restart; restoring them is tracked in #183.
+Sections added by a later template are not automatically inserted into an existing
+saved arrangement; placement hints and migration remain #162's work.
+Display-variable toggles follow the template's persistence
+declarations. The native template gives worktrees workspace presence, so the git
+producer's shell recipe opens a terminal in its root. It does not use the legacy
+grouping tree in Andamento's Zellij template, which native snapshots deliberately
+omit.
 
 Use a Flotilla binary with the HTTP/UDS `pm connect` sink. The launcher prefers
 `~/.local/opt/flotilla-fleet/current/bin/flotilla` when installed, following `current`

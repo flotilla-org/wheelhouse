@@ -292,6 +292,9 @@ _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 - A **Workspace Region** may be frame-bearing at the boundary where it participates in a **Controlled Split**; its internal regions may also be frame-bearing within the workspace.
 - A **Controlled Split** contains exactly one **Control Surface** region and exactly one selected **Workspace** region.
 - A **Controlled Split** owns the **Workspaces** selected by its **Control Surface**.
+- Docking preserves a **View**'s owning **Controlled Split** level. A fleet-level
+  control View cannot become content of a selected child **Workspace**; its
+  visual position and tab presentation do not change its scope.
 - A **Workspace Region** cannot contain the **Control Surface** that selects it.
 - The workspace-selecting **View** may move while retaining its **Workspace Selection Binding**, but cannot close.
 - A selected **Selection Handle** may create **Frame Integration** with the region selected by its binding; unselected handles may have their own boundaries or themed previews, but they do not open the selected region's frame.

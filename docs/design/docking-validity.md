@@ -4,7 +4,8 @@
 three host kinds. `rd_dock_check` returns a named rule: host acceptance,
 Workspace Subject, minimum width, singleton, one Control Surface per
 Controlled Split, exclusion of a selector from its selected Workspace Region,
-or refusal to close the workspace-selecting View. It has no UI or gesture
+refusal to close the workspace-selecting View, or a different owning Controlled
+Split level. It has no UI or gesture
 dependency.
 
 A proposal describes the resulting placement, including instance and Control
@@ -19,6 +20,21 @@ existing self-contained targets need no Workspace Subject. User content Views
 impose no additional minimum width; the scroll-region diagnostic fixture
 declares a 128px minimum to exercise production drag-query width checks. These
 declarations do not move sidebar content.
+
+Host style and owning level are separate checks. A View's level must match the
+destination layout's level. The current adapter identifies the root Control
+Region by its window owner, each child workspace by its workspace identity,
+and the legacy window workspace by its panels-root identity. Floating layouts
+inherit their owner's level. Thus a section can move within its level without
+being tied to a physical side of the window; it cannot become child-workspace
+content merely because it declares the Content trait.
+
+The root Andamento sections and selector declare ControlSplitScope. Their
+logical owner stays the root split, including when repairing an old saved
+placement in a child workspace. Other Views use their source layout's level
+for a move. New ordinary content belongs to its destination level. Creation,
+move, split, drag feedback and restore consult the same checker. Nested
+subject-rooted providers supply their owning split bindings in #164.
 
 The registration list includes shell-dispatched `pending`, `watch` and
 `getting_started` Views as well as visualizer hooks. Adding a visualizer

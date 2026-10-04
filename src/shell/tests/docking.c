@@ -66,7 +66,18 @@ entry_point(CmdLine *cmdline)
   Check(rd_dock_check(0, p) == RD_DockRule_RegisteredView);
   p.host.kind = RD_DockHostKind_COUNT; Check(rd_dock_check(selector, p) == RD_DockRule_HostAcceptance);
   p.host.kind = (RD_DockHostKind)-1; Check(rd_dock_check(selector, p) == RD_DockRule_HostAcceptance);
+  RD_ViewRegistration *fleet_section = rd_dock_view_from_name(str8_lit("sidebar_section"));
+  p.host.kind = RD_DockHostKind_WorkspaceRegion;
+  p.host.workspace_region = 0;
+  p.host.level = p.view_level = 7;
+  Check(rd_dock_check(fleet_section, p) == RD_DockRule_Valid);
+  p.host.level = 8;
+  Check(rd_dock_check(fleet_section, p) == RD_DockRule_ControlSplitLevel);
 
+  Check(rd_dock_presentation(RD_DockHostKind_Sidebar, 1) == RD_DockPresentation_SectionHeader);
+  Check(rd_dock_presentation(RD_DockHostKind_Sidebar, 2) == RD_DockPresentation_CompactTabs);
+  Check(rd_dock_presentation(RD_DockHostKind_WorkspaceRegion, 1) == RD_DockPresentation_Tabs);
+  Check(rd_dock_presentation(RD_DockHostKind_FloatingPanel, 1) == RD_DockPresentation_Tabs);
   Arena *arena = arena_alloc();
   CFG_State *cfg = cfg_state_alloc();
   cfg_ctx_select(cfg_state_ctx(cfg));
@@ -78,7 +89,7 @@ entry_point(CmdLine *cmdline)
   CFG_Node *window = cfg_node_child_from_string(cfg_node_root(), str8_lit("window"));
   CFG_Node *workspace = cfg_node_child_from_string(window, str8_lit("workspace"));
   CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-  CFG_Node *sidebar = cfg_node_child_from_string(window, str8_lit("control_views"));
+  CFG_Node *sidebar = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
   CFG_Node *selecting_view = cfg_node_child_from_string(panels, str8_lit("workspace_selector"));
   CFG_Node *text = cfg_node_child_from_string(sidebar, str8_lit("text"));
   CFG_Node *terminal = cfg_node_child_from_string(panels, str8_lit("terminal"));
@@ -101,6 +112,41 @@ entry_point(CmdLine *cmdline)
   Check(rd_dock_can_create(str8_lit("watch"), panels));
   Check(rd_dock_can_create(str8_lit("getting_started"), panels));
   Check(!rd_dock_can_create(str8_lit("workspace_selector"), sidebar));
+  // Fleet sections belong to the root Controlled Split, regardless of a
+  // destination's tab styling or the workspace currently selected there.
+  CFG_Node *section_panel = cfg_node_new(cfg, sidebar, str8_lit("1"));
+  CFG_Node *section = cfg_node_new(cfg, section_panel, str8_lit("sidebar_section"));
+  cfg_node_new(cfg, cfg_node_new(cfg, section, str8_lit("section")), str8_lit("attention"));
+  CFG_ID section_id = section->id;
+  Check(rd_dock_drag_target(section, section_panel, 640));
+  Check(!rd_dock_drag_target(section, panels, 640));
+  Check(!rd_dock_can_create(str8_lit("sidebar_section"), panels));
+  CFG_Node *legacy_panels = cfg_node_new(cfg, window, str8_lit("panels"));
+  Check(!rd_dock_drag_target(section, legacy_panels, 640));
+  CFG_Node *root_floating = cfg_node_new(cfg, window, str8_lit("floating_panels"));
+  Check(rd_dock_drag_target(section, root_floating, 640));
+  CFG_Node *child_floating = cfg_node_new(cfg, workspace, str8_lit("floating_panels"));
+  Check(!rd_dock_drag_target(section, child_floating, 640));
+  CFG_Node *other_workspace = cfg_node_new(cfg, window, str8_lit("workspace"));
+  CFG_Node *other_panels = cfg_node_new(cfg, other_workspace, str8_lit("panels"));
+  Check(!rd_dock_drag_target(terminal, other_panels, 640));
+  CFG_Node *other_window = cfg_node_new(cfg, cfg_node_root(), str8_lit("window"));
+  CFG_Node *other_sidebar = cfg_node_new(cfg, other_window, RD_DOCK_SIDEBAR_ROOT);
+  Check(!rd_dock_drag_target(section, other_sidebar, 640));
+  // Repair old cross-level placements into a leaf, preserving identity and settings.
+  cfg_node_unhook(cfg, section_panel, section);
+  cfg_node_insert_child(cfg, panels, panels->last, section);
+  rd_dock_restore_window(cfg, window);
+  Check(section->parent == section_panel && section->id == section_id);
+  Check(str8_match(cfg_node_child_from_string(section, str8_lit("section"))->first->string, str8_lit("attention"), 0));
+  cfg_node_unhook(cfg, selecting_view->parent, selecting_view);
+  cfg_node_insert_child(cfg, sidebar, sidebar->last, selecting_view);
+  cfg_node_release(cfg, section_panel);
+  cfg_node_release(cfg, legacy_panels);
+  cfg_node_release(cfg, root_floating);
+  cfg_node_release(cfg, child_floating);
+  cfg_node_release(cfg, other_workspace);
+  cfg_node_release(cfg, other_window);
   // A hand-edited invalid placement returns to its declared default without
   // losing identity or settings. Valid Views stay put. Repair is idempotent.
   rd_dock_restore_window(cfg, window);
@@ -126,7 +172,7 @@ entry_point(CmdLine *cmdline)
   CFG_Node *split_panels = cfg_node_new(cfg, split, str8_lit("panels"));
   CFG_Node *leaf = cfg_node_new(cfg, split_panels, str8_lit("0.5"));
   cfg_node_new(cfg, split_panels, str8_lit("0.5"));
-  CFG_Node *split_sidebar = cfg_node_new(cfg, split, str8_lit("control_views"));
+  CFG_Node *split_sidebar = cfg_node_new(cfg, split, RD_DOCK_SIDEBAR_ROOT);
   CFG_Node *misplaced = cfg_node_new(cfg, split_sidebar, str8_lit("terminal"));
   rd_dock_restore_window(cfg, split);
   Check(misplaced->parent == leaf);
@@ -141,7 +187,7 @@ entry_point(CmdLine *cmdline)
   CFG_Node *second_selector = cfg_node_new(cfg, invalid_panels, str8_lit("workspace_selector"));
   CFG_ID second_id = second_selector->id;
   rd_dock_restore_window(cfg, all_invalid);
-  Check(first_selector->parent == cfg_node_child_from_string(all_invalid, str8_lit("control_views")));
+  Check(first_selector->parent == cfg_node_child_from_string(all_invalid, RD_DOCK_SIDEBAR_ROOT));
   Check(cfg_node_from_id(second_id) == &cfg_nil_node);
   // Floating Panels are real config hosts, including beneath a Workspace with
   // a subject. Restore retains their valid Views and preserves the subject.
@@ -157,6 +203,7 @@ entry_point(CmdLine *cmdline)
   // if it does not require a host. Missing context is rejected by the checker.
   RD_ViewRegistration subject_view = {str8_lit_comp("subject"), RD_ViewTrait_Section|RD_ViewTrait_NeedsWorkspaceSubject, 0, RD_DockHostKind_WorkspaceRegion};
   RD_DockProposal subject_proposal = {floating_host, 0, 1, 1, 0};
+  subject_proposal.view_level = floating_host.level;
   Check(rd_dock_check(&subject_view, subject_proposal) == RD_DockRule_Valid);
   subject_proposal.host.has_workspace_subject = 0;
   Check(rd_dock_check(&subject_view, subject_proposal) == RD_DockRule_WorkspaceSubject);
