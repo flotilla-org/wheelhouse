@@ -44,6 +44,12 @@ wm_get_selection_text(Arena *arena)
 ////////////////////////////////
 //~ rjf: @os_hooks Windows (Implemented Per-OS)
 
+internal B32
+wm_apply_clipboard_write(U32 destination, B32 clear, String8 text)
+{
+  return 0; // Headless builds never claim desktop delivery.
+}
+
 internal WM_Window
 wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
 {

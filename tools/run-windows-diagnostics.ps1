@@ -1,6 +1,6 @@
 param(
   # Diagnostics to run, by the name in their --<name>_diagnostics flag.
-  [string[]]$Diagnostics = @("shared_ui", "sidebar", "scroll_region", "preview", "tooltip", "panel", "terminal_link", "terminal_selection", "terminal_glyph"),
+  [string[]]$Diagnostics = @("shared_ui", "sidebar", "scroll_region", "preview", "tooltip", "panel", "terminal_link", "terminal_clipboard", "terminal_selection", "terminal_glyph"),
   [string]$Exe = "",
   [int]$TimeoutSeconds = 120,
   [switch]$NoPreviewBudget

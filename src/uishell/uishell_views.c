@@ -35,6 +35,14 @@ typedef struct UIShell_TerminalViewState UIShell_TerminalViewState;
 struct UIShell_TerminalViewState
 {
   B32 initialized;
+  UIShell_TerminalViewState *clipboard_next;
+  B32 clipboard_registered;
+  CFG_ID clipboard_view_id, clipboard_window_id;
+  cleat_session *clipboard_session;
+  U8 clipboard_epoch[16];
+  U64 clipboard_connection, clipboard_sequence;
+  U64 clipboard_rejected, clipboard_provider_dropped;
+  B32 clipboard_identity_valid;
   UIShell_TerminalPreviewRequest preview_start, preview_update;
   cleat_provider *provider;
   cleat_session *session;
@@ -99,6 +107,10 @@ struct UIShell_TerminalViewState
 };
 
 global UIShell_TerminalViewState *uishell_terminal_gestures;
+global UIShell_TerminalViewState *uishell_terminal_clipboard_views;
+internal void uishell_terminal_clipboard_unregister(UIShell_TerminalViewState *tv);
+internal void uishell_terminal_clipboard_register(UIShell_TerminalViewState *tv, CFG_ID view, CFG_ID window);
+internal void uishell_terminal_clipboard_dispatch(void);
 
 internal void
 uishell_terminal_clear_selection(UIShell_TerminalViewState *tv)
@@ -436,6 +448,7 @@ uishell_terminal_runtime_release(void *data)
 {
   UIShell_TerminalViewState *tv = data;
   if(tv == 0) { return; }
+  uishell_terminal_clipboard_unregister(tv);
   for(RD_WindowState *ws = rd_state ? rd_state->first_window_state : &rd_nil_window_state;
       ws && ws != &rd_nil_window_state; ws = ws->order_next)
   {
@@ -4064,6 +4077,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     if(metrics != 0) { metrics->provider_start_us += now_time_us()-provider_start_us; }
   }
   B32 session_ready = (!fixture_mode && tv->provider != 0 && tv->session != 0);
+  if(session_ready) { uishell_terminal_clipboard_register(tv, view_cfg->id, uishell_regs()->window); }
   for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
   {
     if(session_ready && str8_match(cmd->name, str8_lit("terminal_transfer"), 0)) { uishell_terminal_move(tv, 0); }

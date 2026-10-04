@@ -220,6 +220,9 @@ internal WM_SystemInfo *wm_get_system_info(void);
 ////////////////////////////////
 //~ rjf: @os_hooks Clipboards (Implemented Per-OS)
 
+// Application effects: destination 0 = standard, 1 = selection; clear is explicit.
+// Return false for unsupported destinations or native write failures. No reads.
+internal B32     wm_apply_clipboard_write(U32 destination, B32 clear, String8 text);
 typedef struct WM_ClipboardIO WM_ClipboardIO;
 struct WM_ClipboardIO
 {

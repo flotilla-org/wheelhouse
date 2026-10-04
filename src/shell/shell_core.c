@@ -10887,6 +10887,9 @@ rd_frame(void)
   //////////////////////////////
   //- rjf: update/render all windows
   //
+  // Live effects drain after event/command processing and before any rendering.
+  // Hidden views are drained too; render admission/cache lifetime is irrelevant.
+  uishell_terminal_clipboard_dispatch();
   {
     dr_begin_frame(rd_font_from_slot(RD_FontSlot_Icons));
     CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));

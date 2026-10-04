@@ -130,6 +130,31 @@ wm_get_selection_text(Arena *arena)
   return push_str8_copy(arena, lnx_wm_state->selection_text);
 }
 
+internal B32
+wm_apply_clipboard_write(U32 destination, B32 clear, String8 text)
+{
+  if(destination > 1 || !lnx_wm_state || !lnx_wm_state->display) { return 0; }
+  // Selection is process-local, not X11 PRIMARY. See wheelhouse#150.
+  if(destination == 1) { wm_set_selection_text(clear ? str8_zero() : text); return 1; }
+  // UI-thread dispatch is serialized with SelectionClear/SelectionRequest
+  // handling in wm_get_events; no provider worker touches the clipboard arena.
+  if(clear)
+  {
+    XSetSelectionOwner(lnx_wm_state->display, lnx_wm_state->clipboard_atom, None, CurrentTime);
+    lnx_wm_state->clipboard_owned = 0;
+    if(lnx_wm_state->clipboard_arena) { arena_clear(lnx_wm_state->clipboard_arena); }
+    lnx_wm_state->clipboard_text = str8_zero();
+    XFlush(lnx_wm_state->display);
+    return 1;
+  }
+  // Existing X11 adapter serves bounded UTF8_STRING requests without INCR.
+  // Reject text it cannot serve before changing clipboard ownership/content.
+  U64 max_bytes = (U64)Max(0, XMaxRequestSize(lnx_wm_state->display)-128)*4;
+  if(text.size > Min(max_bytes, (U64)KB(64))) { return 0; }
+  wm_set_clipboard_text(text);
+  return lnx_wm_state->clipboard_owned;
+}
+
 ////////////////////////////////
 //~ rjf: @os_hooks Windows (Implemented Per-OS)
 

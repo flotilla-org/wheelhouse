@@ -5,6 +5,10 @@
 
 #include "cleat_provider.h"
 
+#if CLEAT_PROVIDER_ABI_VERSION != 11u
+# error "Wheelhouse requires Cleat provider ABI 11 (packet protocol 12)"
+#endif
+
 #if !defined(CLEAT_CELL_FLAG_BOLD)
 # define CLEAT_CELL_FLAG_BOLD (1u << 0)
 # define CLEAT_CELL_FLAG_ITALIC (1u << 1)
