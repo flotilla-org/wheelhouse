@@ -5248,8 +5248,6 @@ rd_window_frame(void)
       ui_push_text_raster_flags(text_raster_flags);
     }
     
-    uishell_sidebar_cards_ui(ws);
-
     ////////////////////////////
     //- rjf: @window_ui_part calculate top-level rectangles/sizes
     //
@@ -5268,6 +5266,11 @@ rd_window_frame(void)
     // Window-edge padding belongs at the outer edges, not at the internal seam
     // with title-bar chrome. Panel spacing is applied by the panel layout.
     content_rect.y0 = top_bar_rect.y1;
+    Rng2F32 control_surface_rect = uishell_controlled_split_control_rect(&root_controlled_split, content_rect);
+    F32 control_surface_border = floor_f32(Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_border_px")), 4.f));
+    uishell_sidebar_cards_ui(ws, dim_2f32(control_surface_rect).x > control_surface_border &&
+                                 dim_2f32(control_surface_rect).y > control_surface_border);
+
     
     ////////////////////////////
     //- rjf: @window_ui_part truncated string hover
@@ -7018,7 +7021,6 @@ rd_window_frame(void)
                                                                      ws->theme);
     access_close(workspace_theme_access);
 
-    Rng2F32 control_surface_rect = uishell_controlled_split_control_rect(&root_controlled_split, content_rect);
     uishell_control_surface_ui(control_surface_rect, &root_controlled_split);
     B32 control_split_is_changing = uishell_controlled_split_boundary_ui(&root_controlled_split, content_rect);
     if(control_split_is_changing)

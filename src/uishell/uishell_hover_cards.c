@@ -332,8 +332,23 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
   return action;
 }
 
+// Leave the source row clear for horizontal scanning in Near placement. The
+// 16pt gap exceeds the corridor's 12pt edge padding, so sideways motion along
+// the row does not accidentally enter the diagonal corridor.
+internal F32
+uishell_sidebar_card_target_y(UIShell_HoverCard *card, F32 height, Rng2F32 window, B32 near)
+{
+  F32 y = card->source_rect.y0;
+  if(near)
+  {
+    y = card->source_rect.y1+16;
+    if(y+height > window.y1-10) { y = card->source_rect.y0-height-16; }
+  }
+  return Clamp(window.y0+10, y, window.y1-height-10);
+}
+
 internal void
-uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
+uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32 sidebar_visible)
 {
   UIShell_SidebarState *state = ws->sidebar;
   if(!state) { return; }
@@ -343,6 +358,14 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
   ui_state->hover_card_focus = 0;
   MemoryZeroArray(ui_state->hover_card_keys);
   MemoryZeroArray(ui_state->hover_card_rects);
+  if(!sidebar_visible)
+  {
+    // Without the sidebar there is no same-frame snapshot action dispatcher.
+    // Close before constructing controls, including the source-less second card.
+    for(U64 i = 0; i < ArrayCount(state->cards); i++) { uishell_sidebar_card_close(&state->cards[i]); }
+    state->card_escape_down = 0;
+    return;
+  }
   B32 outside = uishell_hover_cards_outside || rd_setting_b32_from_name(str8_lit("hover_cards_outside_sidebar"));
   if(!window_focused) { state->card_escape_down = 0; }
   // Seed both previous-frame bounds before building the lower card's controls.
@@ -394,7 +417,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
     F32 x = outside ? state->rect.x1+8 : Min(card->source_rect.x1+8, state->rect.x1-24);
     if(slot) { x = card->source_rect.x1+8; }
     Vec2F32 target = v2f32(Clamp(window.x0+10, x, window.x1-width-10),
-                          Clamp(window.y0+10, card->source_rect.y0, window.y1-height-10));
+                          uishell_sidebar_card_target_y(card, height, window, !outside && slot == 0));
     F32 t = Clamp(0.f, (now-card->changed_at)/100000.f, 1.f), glide = 1-(1-t)*(1-t)*(1-t);
     if(!card->previous.size) { card->glide_from = target; }
     Vec2F32 pos = mix_2f32(card->glide_from, target, glide);
@@ -441,6 +464,8 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
               UI_Box *outgoing;
               UI_FixedX(0) UI_FixedY(-card->scroll) { outgoing = ui_build_box_from_stringf(0, "###outgoing_%I64u", slot); }
               UI_Parent(outgoing) UI_PrefHeight(ui_em(1.6f, 1)) UI_TextAlignment(UI_TextAlign_Left)
+              // Keep the visible outgoing preview live for the 100ms fade;
+              // demand merges by workspace ID and expires with its frame index.
               { uishell_sidebar_card_content(state, ws, card, slot+2, previous, previous_index, content_width, 0); }
             }
           }
@@ -451,7 +476,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
         if(abs_f32(measured_height-height) > 0.5f)
         {
           height = measured_height;
-          target.y = Clamp(window.y0+10, card->source_rect.y0, window.y1-height-10);
+          target.y = uishell_sidebar_card_target_y(card, height, window, !outside && slot == 0);
           if(!card->previous.size) { card->glide_from = target; }
           pos = mix_2f32(card->glide_from, target, glide);
           root->fixed_position = pos; root->fixed_size.y = height;
@@ -478,7 +503,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
 }
 
 internal void
-uishell_sidebar_cards_ui(RD_WindowState *ws)
+uishell_sidebar_cards_ui(RD_WindowState *ws, B32 sidebar_visible)
 {
   // UI normally stops polling a background window's pointer after 500ms.
   // An informational card must keep tracking departure independently of the
@@ -490,5 +515,5 @@ uishell_sidebar_cards_ui(RD_WindowState *ws)
       if(ws->sidebar->cards[i].open) { ui_state->mouse = wm_mouse_from_window(ws->os); break; }
     }
   }
-  uishell_sidebar_cards_ui_at(ws, now_time_us(), wm_window_is_focused(ws->os));
+  uishell_sidebar_cards_ui_at(ws, now_time_us(), wm_window_is_focused(ws->os), sidebar_visible);
 }

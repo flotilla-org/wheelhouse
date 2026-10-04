@@ -14,7 +14,8 @@ Escape with the focused View; a focused card consumes both Escape edges and
 returns focus to that View. An outside click also activates its normal target.
 Underlying sidebar and workspace controls do not
 receive pointer hits through a card. A removed or clipped source closes its
-card, as does removal of the current detail target. Native window focus loss
+card, as does removal of the current detail target. Hiding the sidebar closes
+both cards before their controls can emit an action. Native window focus loss
 dismisses click-focused cards and releases Escape ownership. Informational
 cards remain available to hover while another window owns keyboard focus,
 including during screen recording. Pointer tracking continues until mouse-out
@@ -32,7 +33,10 @@ change preview attachment policy (#89).
 
 ## Placements and kiwi review
 
-Near placement opens just beyond the source, overlapping the sidebar edge.
+Near placement opens below the source row with a 16-point gap, overlapping the
+sidebar edge. When there is insufficient space below, it uses the space above.
+The gap leaves adjacent pills reachable while the safe corridor still protects
+diagonal entry.
 **Hover Cards Outside Sidebar** in User Settings selects the fully outside
 placement. `--hover_cards_outside` forces it for a disposable candidate.
 Both placements clamp to the client rectangle; long cards use the shared
@@ -59,7 +63,9 @@ inside a card, leave it, then dismiss with Escape or an outside click. Navigate
 through a convoy's subjects and Back; modifier-click a related item for a
 second card. Open Example terminal or Example workspace, then hover its source
 to check the live preview in both states. With a terminal focused, a peek card
-must leave Escape with the terminal.
+must leave Escape with the terminal. Click-focus a card, then use Tab (and
+Shift-Tab) or arrows through Related, Back and the action buttons; Enter should
+activate the highlighted action.
 
 ## Automated verification
 

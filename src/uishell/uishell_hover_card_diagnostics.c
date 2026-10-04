@@ -147,6 +147,17 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   uishell_sidebar_card_source_at(&fixture, b, next_hover, str8_zero(), 0, 3550000);
   uishell_sidebar_card_source_at(&fixture, b, next_hover, str8_zero(), 0, 3850000);
   CardCheck(card->open && !card->corridor_active, "closing an active corridor allows a new 300ms hover");
+  // Near's row offset leaves adjacent pills reachable by horizontal scanning.
+  card->source_rect = source.rect;
+  F32 below = uishell_sidebar_card_target_y(card, 200, r2f32p(0, 0, 800, 700), 1);
+  CardCheck(below >= source.rect.y1+16, "Near leaves the source row clear below its anchor");
+  card->rect = r2f32p(180, below, 400, below+200);
+  card->departure = card->last_mouse = v2f32(90, 115); card->left_at = 4000000;
+  CardCheck(!uishell_sidebar_card_corridor(card, v2f32(120, 115), 4000001), "horizontal pill scanning does not acquire Near's corridor");
+  CardCheck(uishell_sidebar_card_corridor(card, v2f32(120, 140), 4000001), "diagonal entry still crosses the gap into Near");
+  card->source_rect = r2f32p(10, 600, 100, 630);
+  F32 above = uishell_sidebar_card_target_y(card, 200, r2f32p(0, 0, 800, 700), 1);
+  CardCheck(above+200 <= card->source_rect.y0-16, "Near uses space above a row near the window bottom");
   // Build two real overlapping buttons and send a click over the overlay.
   UI_IconInfo icons = saved_window_ui->icon_info;
   UI_AnimationInfo animation = {0};
@@ -318,7 +329,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         test->mouse = frame ? center_2f32(card->rect) : v2f32(50, 35);
         card->focused = frame == 1; // Click-focus ownership is covered by the WM trace.
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-        { uishell_sidebar_cards_ui_at(ws, now_time_us(), frame != 2); }
+        { uishell_sidebar_cards_ui_at(ws, now_time_us(), frame != 2, 1); }
         if(frame == 2) { CardCheck(card->open && !card->focused, "hover remains informational when the window is not the keyboard target"); }
         ui_end_build();
         UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);
@@ -361,8 +372,47 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       }
       uishell_sidebar_card_close(card); uishell_sidebar_card_close(&fixture.cards[1]);
       UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-      uishell_sidebar_cards_ui_at(ws, now_time_us(), 1); ui_end_build();
+      uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); ui_end_build();
       CardCheck(!test->hover_card_focus, "closing the last card clears focus before View event consumers");
+      // Follow the focused card's production default-navigation path.
+      uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
+      uishell_sidebar_card_navigate(card, uishell_sidebar_string(parent.key), now_time_us());
+      card->previous = str8_zero(); card->engaged = card->focused = 1;
+      B32 saw_related = 0, saw_back = 0, saw_close = 0;
+      for(U64 frame = 0; frame < 32 && card->open; frame++)
+      {
+        UI_EventList keys = {0};
+        UI_Event key = {.kind = UI_EventKind_Press, .key = saw_close ? WM_Key_Return : WM_Key_Tab,
+                        .slot = saw_close ? UI_EventActionSlot_Accept : UI_EventActionSlot_Null};
+        if(frame) { ui_event_list_push(test->arena, &keys, &key); }
+        ui_begin_build(ws->os, &keys, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = center_2f32(card->rect);
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+        ui_end_build();
+        UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);
+        UI_Box *root = ui_box_from_key(root_key);
+        UI_Box *hot = ui_box_from_key(root->default_nav_focus_hot_key);
+        if(!ui_box_is_nil(hot))
+        {
+          String8 text = ui_box_display_string(hot);
+          saw_back |= str8_match(text, str8_lit("← Back"), 0);
+          saw_close |= str8_match(text, str8_lit("Close"), 0);
+          saw_related |= !saw_back && !saw_close && !!(hot->flags & UI_BoxFlag_Clickable);
+        }
+      }
+      CardCheck(saw_related && saw_back && saw_close && !card->open && !test->hover_card_focus,
+                "Tab reaches Related, Back and Close and Enter activates Close");
+      // Hiding the sidebar also dismisses the independent source-less card,
+      // before its controls can enqueue an action without a dispatcher.
+      uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
+      uishell_sidebar_card_set(&fixture.cards[1], parent, ui_key_zero(), str8_zero(), 0, now_time_us());
+      fixture.cards[1].focused = 1; fixture.card_has_action = 1;
+      UI_EventList hidden_events = {0};
+      ui_begin_build(ws->os, &hidden_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 0); ui_end_build();
+      CardCheck(!card->open && !fixture.cards[1].open && !fixture.card_has_action && !test->hover_card_focus,
+                "hidden sidebar closes both cards before an action can be emitted");
     }
   }
   ws->sidebar = saved_sidebar; ws->ui = saved_window_ui;
