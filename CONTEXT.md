@@ -103,6 +103,10 @@ _Avoid_: Sidebar, control side, left pane
 A remembered working area that can reconnect controls, panels, and embedded views to live local or remote resources.
 _Avoid_: Tab, project, session
 
+**Workspace Subject**:
+The domain entity a **Workspace** represents, such as a project or convoy. A **View** requiring a **Workspace Subject** uses that entity as the context for its content.
+_Avoid_: Workspace ID, target reference, selected view
+
 **Runtime Instance**:
 A live attachment between a **View** or **Control Surface** and an external or in-process resource.
 _Avoid_: Workspace, config, layout
@@ -288,6 +292,8 @@ _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 - A **Workspace Region** may be frame-bearing at the boundary where it participates in a **Controlled Split**; its internal regions may also be frame-bearing within the workspace.
 - A **Controlled Split** contains exactly one **Control Surface** region and exactly one selected **Workspace** region.
 - A **Controlled Split** owns the **Workspaces** selected by its **Control Surface**.
+- A **Workspace Region** cannot contain the **Control Surface** that selects it.
+- The workspace-selecting **View** may move while retaining its **Workspace Selection Binding**, but cannot close.
 - A selected **Selection Handle** may create **Frame Integration** with the region selected by its binding; unselected handles may have their own boundaries or themed previews, but they do not open the selected region's frame.
 - A **Workspace ID** identifies a **Workspace** within its owning **Controlled Split**.
 - A **Workspace Address** locates a **Workspace** by composing stable IDs through nested **Controlled Splits**.

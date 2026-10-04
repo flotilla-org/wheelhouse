@@ -2741,16 +2741,12 @@ RD_VIEW_UI_FUNCTION_DEF(sessions)
 internal void
 uishell_register_view_ui_rules(Arena *arena, RD_ViewUIRuleMap *map)
 {
-  rd_view_ui_rule_map_insert(arena, map, str8_lit("text"), RD_VIEW_UI_FUNCTION_NAME(shell_text));
-  rd_view_ui_rule_map_insert(arena, map, str8_lit("jackstay"), RD_VIEW_UI_FUNCTION_NAME(jackstay));
-  rd_view_ui_rule_map_insert(arena, map, str8_lit("terminal"), RD_VIEW_UI_FUNCTION_NAME(terminal));
-  rd_view_ui_rule_map_insert(arena, map, str8_lit("scroll_region_fixture"), RD_VIEW_UI_FUNCTION_NAME(scroll_region_fixture));
-  rd_view_ui_rule_map_insert(arena, map, str8_lit("terminal_fixture"), RD_VIEW_UI_FUNCTION_NAME(terminal));
-  rd_view_ui_rule_map_insert(arena, map, str8_lit("sessions"), RD_VIEW_UI_FUNCTION_NAME(sessions));
-  rd_view_ui_rule_map_insert(arena, map, str8_lit("binary"), RD_VIEW_UI_FUNCTION_NAME(binary));
-  rd_view_ui_rule_map_insert(arena, map, str8_lit("bitmap"), RD_VIEW_UI_FUNCTION_NAME(bitmap));
-  rd_view_ui_rule_map_insert(arena, map, str8_lit("color"), RD_VIEW_UI_FUNCTION_NAME(color));
-  rd_view_ui_rule_map_insert(arena, map, str8_lit("geo3d"), RD_VIEW_UI_FUNCTION_NAME(geo3d));
+  // The selector remains rendered by the Control Surface until sections become
+  // dockable (#163). Its registration declares validity without moving it.
+#define RD_REGISTER_VIEW(name, ui, traits, width, host) \
+  rd_view_ui_rule_map_insert(arena, map, str8_lit(#name), RD_VIEW_UI_FUNCTION_NAME(ui));
+  RD_DOCK_RENDERED_VIEWS(RD_REGISTER_VIEW)
+#undef RD_REGISTER_VIEW
 }
 
 internal void

@@ -686,6 +686,15 @@ uishell_dispatch_command_palette_command(String8 name)
   return result;
 }
 
+// Commands explain refusal; drag feedback simply omits invalid targets.
+internal B32
+rd_dock_command_allowed(char *action, String8 view, RD_DockRule rule)
+{
+  if(rule != RD_DockRule_Valid)
+  { log_user_errorf("Cannot %s View '%S': %S.", action, view, rd_dock_rule_message(rule)); }
+  return rule == RD_DockRule_Valid;
+}
+
 internal B32
 uishell_dispatch_tab_command(String8 name)
 {
@@ -863,7 +872,7 @@ uishell_dispatch_tab_command(String8 name)
     {
       log_user_errorf("Couldn't open a new tab because no panel was available.");
     }
-    else
+    else if(rd_dock_command_allowed("create", uishell_regs()->string, rd_dock_creation(uishell_regs()->string, panel)))
     {
       CFG_Node *tab = cfg_node_new(rd_state->cfg, panel, uishell_regs()->string);
       CFG_Node *expr = cfg_node_new(rd_state->cfg, tab, str8_lit("expression"));
@@ -883,6 +892,7 @@ uishell_dispatch_tab_command(String8 name)
   else if(str8_match(name, str8_lit("duplicate_tab"), 0))
   {
     CFG_Node *src = cfg_node_from_id(uishell_regs()->tab);
+    if(!rd_dock_command_allowed("duplicate", src->string, rd_dock_creation(src->string, src->parent))) { return 1; }
     CFG_Node *dst = cfg_node_deep_copy(rd_state->cfg, src);
     cfg_node_insert_child(rd_state->cfg, src->parent, src, dst);
     UIShell_RegsScope(.tab = dst->id)
@@ -894,6 +904,7 @@ uishell_dispatch_tab_command(String8 name)
   {
     Temp scratch = scratch_begin(0, 0);
     CFG_Node *tab = cfg_node_from_id(uishell_regs()->tab);
+    if(!rd_dock_command_allowed("close", tab->string, rd_dock_closure(tab))) { scratch_end(scratch); return 1; }
     UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, tab);
     CFG_PanelTree panel_tree = workspace_mount.panel_tree;
     CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, tab->parent);
@@ -931,7 +942,7 @@ uishell_dispatch_tab_command(String8 name)
     CFG_Node *prev_tab = cfg_node_from_id(uishell_regs()->prev_tab);
     CFG_Node *src_panel = view->parent;
     CFG_Node *dst_panel = cfg_node_from_id(uishell_regs()->dst_panel);
-    if(dst_panel != &cfg_nil_node && prev_tab != view)
+    if(dst_panel != &cfg_nil_node && prev_tab != view && rd_dock_command_allowed("move", view->string, rd_dock_placement(view, dst_panel, RD_DOCK_UNMEASURED_WIDTH)))
     {
       cfg_node_unhook(rd_state->cfg, src_panel, view);
       cfg_node_insert_child(rd_state->cfg, dst_panel, prev_tab, view);
@@ -1061,6 +1072,10 @@ uishell_dispatch_panel_command(String8 name)
       {
         split_panel = cfg_node_from_id(uishell_regs()->panel);
       }
+      CFG_Node *moving_view = cfg_node_from_id(uishell_regs()->view);
+      if(do_dragdrop_split && !rd_dock_command_allowed("split with", moving_view->string,
+          rd_dock_placement(moving_view, split_panel, RD_DOCK_UNMEASURED_WIDTH)))
+      { scratch_end(scratch); return 1; }
       CFG_Node *new_panel_cfg = &cfg_nil_node;
       UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, split_panel);
       CFG_PanelTree panel_tree = workspace_mount.panel_tree;

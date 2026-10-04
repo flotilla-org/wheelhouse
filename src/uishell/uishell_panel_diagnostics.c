@@ -92,6 +92,73 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     failures += !valid;
     cfg_node_release(rd_state->cfg, split_owner);
   }
+  // Commands must enforce the same validity as drag queries. Exercise real
+  // create, duplicate, close, move and drag-split dispatchers, not helper mocks.
+  CFG_Node *commands_owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+  CFG_Node *commands_panel = cfg_node_new(rd_state->cfg, commands_owner, str8_lit("panels"));
+  UIShell_RegsScope(.window = window->id, .panel = commands_panel->id, .string = str8_lit("text"), .expr = str8_zero())
+  { uishell_dispatch_tab_command(str8_lit("build_tab")); }
+  CFG_Node *created = cfg_node_child_from_string(commands_panel, str8_lit("text"));
+  failures += created == &cfg_nil_node;
+  UIShell_RegsScope(.tab = created->id)
+  { uishell_dispatch_tab_command(str8_lit("duplicate_tab")); }
+  CFG_NodePtrList copies = cfg_node_child_list_from_string(scratch.arena, commands_panel, str8_lit("text"));
+  failures += copies.count != 2;
+  CFG_ID created_id = created->id;
+  UIShell_RegsScope(.tab = created_id)
+  { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+  failures += cfg_node_from_id(created_id) != &cfg_nil_node;
+  CFG_Node *control = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("control_views"));
+  CFG_Node *selector = cfg_node_new(rd_state->cfg, control, str8_lit("workspace_selector"));
+  CFG_ID selector_id = selector->id;
+  log_scope_begin();
+  UIShell_RegsScope(.window = window->id, .panel = commands_panel->id, .string = str8_lit("unknown_saved_view"))
+  { uishell_dispatch_tab_command(str8_lit("build_tab")); }
+  failures += cfg_node_child_from_string(commands_panel, str8_lit("unknown_saved_view")) != &cfg_nil_node;
+  CFG_Node *unknown = cfg_node_new(rd_state->cfg, commands_panel, str8_lit("unknown_saved_view"));
+  CFG_ID unknown_id = unknown->id;
+  // An unknown saved View cannot duplicate, but closing must remove it so a
+  // typo or unavailable extension never traps content in the saved layout.
+  UIShell_RegsScope(.tab = unknown_id)
+  { uishell_dispatch_tab_command(str8_lit("duplicate_tab")); }
+  failures += cfg_node_from_id(unknown_id) != unknown;
+  failures += cfg_node_child_list_from_string(scratch.arena, commands_panel, str8_lit("unknown_saved_view")).count != 1;
+  UIShell_RegsScope(.tab = unknown_id)
+  { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+  failures += cfg_node_from_id(unknown_id) != &cfg_nil_node;
+  UIShell_RegsScope(.tab = selector_id)
+  {
+    uishell_dispatch_tab_command(str8_lit("duplicate_tab"));
+    uishell_dispatch_tab_command(str8_lit("close_tab"));
+  }
+  UIShell_RegsScope(.view = selector_id, .dst_panel = commands_panel->id, .prev_tab = 0)
+  { uishell_dispatch_tab_command(str8_lit("move_view")); }
+  UIShell_RegsScope(.view = selector_id, .dst_panel = commands_panel->id, .dir2 = Dir2_Left)
+  { uishell_dispatch_panel_command(str8_lit("split_panel")); }
+  LogScopeResult rejected = log_scope_end(scratch.arena);
+  // Every refusal names its action and the returned validity rule.
+  String8 errors = rejected.strings[LogMsgKind_UserError];
+  char *actions[] = {"Cannot create", "Cannot duplicate", "Cannot close", "Cannot move", "Cannot split with", "not registered"};
+  for(U64 i = 0; i < ArrayCount(actions); i++)
+  { failures += str8_find_needle(errors, 0, str8_cstring(actions[i]), 0) == errors.size; }
+  failures += cfg_node_from_id(selector_id) != selector || selector->parent != control;
+  failures += cfg_node_child_list_from_string(scratch.arena, control, str8_lit("workspace_selector")).count != 1;
+  CFG_PanelTree command_tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, commands_owner).panel_tree;
+  failures += command_tree.root->child_count != 0;
+  // Reading mounts must not repair or release nodes retained by a caller.
+  CFG_Node *invalid_copy = cfg_node_new(rd_state->cfg, commands_panel, str8_lit("workspace_selector"));
+  CFG_ID invalid_id = invalid_copy->id;
+  U64 before_read = cfg_change_gen();
+  uishell_workspace_mount_from_owner_cfg(scratch.arena, window, commands_owner);
+  failures += cfg_change_gen() != before_read || cfg_node_from_id(invalid_id) != invalid_copy || invalid_copy->parent != commands_panel;
+  // Explicit repair prefers the valid selector and settles its generation.
+  rd_dock_restore_layouts();
+  failures += cfg_node_from_id(invalid_id) != &cfg_nil_node || cfg_node_from_id(selector_id) != selector;
+  U64 after_repair = cfg_change_gen();
+  rd_dock_restore_layouts();
+  failures += cfg_change_gen() != after_repair;
+  cfg_node_release(rd_state->cfg, selector);
+  cfg_node_release(rd_state->cfg, commands_owner);
   ui_select_state(saved_ui);
   ui_state_release(test_ui);
   cfg_node_release(rd_state->cfg, owner);

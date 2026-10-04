@@ -134,6 +134,9 @@ uishell_dispatch_config_command(String8 name)
       }
     }
     
+    // Repair loaded placements before selection/layout readers retain nodes.
+    if(file_is_okay) { rd_dock_restore_layouts(); }
+
     if(file_is_okay && is_user)
     {
       CFG_NodePtrList all_user_windows = cfg_node_child_list_from_string(scratch.arena, file_root, str8_lit("window"));
