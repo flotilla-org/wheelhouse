@@ -126,11 +126,57 @@ class NativeSidebarTests(unittest.TestCase):
 
     # The issue's multi-repository fixture is a scenario through the real core:
     # numeric order, duplicate edges, shared generations, missing forge and label tiers.
+    def test_chip_layout_width_ladder_and_attention(self):
+        # Exercise the production resolver with measured widths independent of
+        # the native display. Status space is subtracted by the caller.
+        import subprocess
+        import tempfile
+        source = r"""
+#include <assert.h>
+#include "uishell/uishell_sidebar_chips.h"
+int main(void) {
+  float names[] = {180, 130, 100};
+  UIShell_ChipMeasure chips[] = {{50, 1, 0}, {60, 1, 0}, {35, 0, 0}, {35, 0, 0}};
+  UIShell_ChipLayout r = uishell_chip_layout(400, names, 80, chips, 4, 30);
+  assert(r.tier == 0 && r.folded == 0);
+  r = uishell_chip_layout(320, names, 80, chips, 4, 30);
+  assert(r.tier == 1 && r.folded == 0);
+  r = uishell_chip_layout(285, names, 80, chips, 4, 30);
+  assert(r.tier == 2 && r.folded == 0);
+  r = uishell_chip_layout(260, names, 80, chips, 4, 30);
+  assert(r.folded == 0 && r.name_width == 80);
+  r = uishell_chip_layout(240, names, 80, chips, 4, 30);
+  assert(r.folded == 2 && !chips[0].folded && !chips[1].folded);
+  assert(chips[2].folded && chips[3].folded && r.chip_width == 140);
+  // Activity/selection pins a workspace even when it is last in order.
+  chips[3].attention = 1;
+  r = uishell_chip_layout(240, names, 80, chips, 4, 30);
+  assert(r.folded == 1 && chips[2].folded && !chips[3].folded);
+  assert(r.content_width > r.chip_width);
+  // Impossible widths retain attention in the scrollable viewport, with
+  // nonnegative name/viewport widths and the same caller-owned status slot.
+  r = uishell_chip_layout(50, names, 80, chips, 4, 30);
+  assert(!chips[0].folded && !chips[1].folded && !chips[3].folded);
+  assert(r.name_width >= 0 && r.chip_width >= 0);
+  r = uishell_chip_layout(400, names, 80, chips, 4, 30);
+  assert(r.folded == 0 && !chips[2].folded);
+  return 0;
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            source_file = Path(directory) / 'chips.c'
+            source_file.write_text(source)
+            executable = Path(directory) / 'chips'
+            subprocess.run(['cc', '-std=c99', '-Wall', '-Werror', '-I', str(ROOT / 'src'),
+                            str(source_file), '-o', str(executable)], check=True)
+            subprocess.run([str(executable)], check=True)
+
     def test_subject_fixture_joins_order_and_label_tiers(self):
         self.publish_fixture()
         snapshot, nodes = self.snapshot()
-        subjects = self.children(nodes, 'build')
+        subjects = [n for n in self.children(nodes, 'build') if n.entity_kind.string() in ('change_request', 'issue')]
         self.assertEqual([n.entity_id.string() for n in subjects], ['pr-281', 'pr-1000', 'no-forge', 'issue-137'])
+        self.assertTrue(all(n.layout.string() == 'inline' for n in subjects))
         self.assertEqual([self.values(snapshot, n)[0] for n in subjects], ['!281', 'c!1000', '!2508', '#137'])
         self.assertNotIn('superseded', [n.entity_id.string() for n in nodes])
         self.toggle_variable('Show finished')
@@ -722,7 +768,8 @@ class NativeSidebarTests(unittest.TestCase):
             field = Field()
             self.assertEqual(lib.andamento_snapshot_field(snapshot, index, C.byref(field)), 1)
             fields.append(field.text.string())
-        self.assertEqual(fields, ['w', 'vessel', ''])
+        self.assertEqual(fields[:3], ['w', 'vessel', ''])
+        self.assertIn('chip-short:w', fields)
         self.assertEqual(vessel.label.string(), 'Full worker label')
         self.assertTrue(vessel.openable)
 

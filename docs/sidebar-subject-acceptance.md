@@ -1,65 +1,79 @@
-# Sidebar subjects: call for human review
+# Sidebar subject chips: acceptance
 
-The daily-driver sidebar renders each convoy's own name, then PR and issue
-rows joined through typed subject edges. PR rows precede issue rows and sort
-numerically within their group. Subjects retain their own producer label tiers.
-Readiness supplies the badge; ready-to-merge and CI-failing subjects also appear
-in Attention without producer `status.attention` facts. The owner merges.
+Convoy subjects are inline chips, in PR/issue numeric order. Workspace actions
+share their area and one `+N` menu. Attention retains standalone PR rows, and
+Issues, Show finished and Role attempts retain their existing visibility rules.
 
-Standing roles expose their lifted phase, attention and attach action. Role
-attempts expands the producer's oldest-first history under that role. Show
-finished exposes retained merged/closed subjects and superseded task convoys;
-closed issues also require Issues. Flotilla owns the 24-hour retention window.
+At width pressure, the name uses the producer's medium and short labels, then
+elides to about ten characters. Quiet chips fold from the end of catalog order.
+Ready-to-merge and CI-failing subjects, selected/pending workspaces and active
+open workspaces remain visible. If those protected chips alone exceed the
+available width, their area scrolls horizontally while the status slot stays
+fixed. The last chip has two pixels of clearance for its border stroke.
 
-## Screenshots and human phase
+Workspace actions use fixed-width icons. `presentation.icon` wins over a local
+template `icon-override` field, then the entity kind supplies the default.
+Supported symbolic icons are `terminal`, `overview`, `role`, `threads`, `gear`,
+`code`, `review` and `workspace`; other suggestions are literal glyphs. No name
+is used to guess an icon. Open workspaces have a stronger fill and left edge,
+selected workspaces have the selection fill, and pending actions show an
+ellipsis without changing width. Every action retains its full label in the
+hover card.
 
-Please review badge colour/readability, hover density, and the role history layout.
-The operator accepted this interim presentation during human review. Richer
-convoy attachments, embedded web access and prioritization of unattached work
-remain outside this change.
+To assign a local role icon, select a template explicitly, for example a
+`role/governor` template extending `role/native`, overriding `icon-override`
+with `source="literal" value="gear" prefix="chip-icon-override:"`. Match that
+role loop on `flotilla.role.name`, rather than changing the renderer. Producer
+suggestions still win. The shipped template leaves the override empty.
 
-![Subject rows and readiness promotion into Attention](screenshots/sidebar-subjects/subjects.png)
+## Kiwi human review
 
-![Subject title, checks, review, mergeability and observation times](screenshots/sidebar-subjects/subject-hover.png)
+The operator reviewed the host-direct candidate with disposable profiles at
+480-point and 260-point sidebar widths on 2026-10-04. The first review requested
+clearance around the final governor chip's right border. After the two-pixel
+correction, the operator accepted the presentation: “Looks ok”. The daily
+driver was not restarted or replaced.
 
-![Role attempts in oldest-first order](screenshots/sidebar-subjects/role-attempts.png)
+![Wide: convoy name and every subject/workspace chip](screenshots/convoy-chips/wide.png)
 
-Reproduce on a built checkout with isolated settings:
+![Narrow: short name, both attention subjects, one shared overflow](screenshots/convoy-chips/narrow.png)
+
+![Overflow contains quiet PR, issue and workspace action](screenshots/convoy-chips/overflow.png)
+
+Reproduce with disposable settings:
 
 ```sh
-./build/wheelhouse --sidebar_subject_fixture --user:/tmp/sidebar-review-user --project:/tmp/sidebar-review-project
+./build/wheelhouse --sidebar_subject_fixture --user:/tmp/chips-user --project:/tmp/chips-project
 ```
 
-- Check `!281` precedes `c!1000`, followed by the no-forge subject and issue.
-- Check ready/CI-failing PRs appear in Attention.
-- Click a PR or issue to launch its canonical URL; right-click to copy its URL.
-  The fixture forge deliberately uses `/review/` and `/ticket/` to expose any
-  hard-coded forge URL shapes. Browser launch uses `xdg-open` on Linux.
-- Right-click `!2508` to copy its short reference; there is no URL action.
-- Hover subjects for title, state, checks, review, mergeability and freshness.
-- Toggle Role attempts to show the two generations once each, oldest first.
-  Toggle Show finished to show the superseded task generation sharing the PRs.
+- Hover a subject for its title, readiness, checks, review and observation times.
+- Click a subject to open its canonical URL; right-click for Copy URL.
+- The no-forge subject offers Copy reference and has no browser action.
+- Open Subject workspace from `+N`: its active chip remains on the convoy row.
+- Toggle Issues, Show finished and Role attempts to check existing placements.
 
-## Evidence and limits
+The fixture forge uses `/review/` and `/ticket/` to expose hard-coded URL shapes.
 
-`./build.sh wheelhouse` passed with clang, sibling Andamento at `fa8cfd2`,
-`WHEELHOUSE_CLEAT_FEATURES=none`, and the workflow-pinned Jackstay checkout.
-The 25 native ABI tests and generated-fixture locale/newline test pass.
-`tools/test-sidebar-subject-actions.py` exercises real mouse gestures and the
-external X11 clipboard; its browser subprocess records the exact destination
-without navigating to fixture URLs. Tree and Attention URL copies, no-forge
-reference copy, and PR/issue browser dispatch passed under Xvfb/software OpenGL.
-Screenshots were captured from that native Linux presentation.
+## Verification
 
-All seven readiness values and finished/Issues transitions are covered through
-the real Andamento ABI. The native badges for conflicting, draft, merged, closed,
-and orphaned were only built locally; their visual presentation was not exercised.
-macOS and Windows were not built or exercised locally. The operator accepted the current scope and presentation. The Linux writer now serves small UTF-8/ASCII clipboard
-copies; external clipboard reads, PRIMARY integration and large INCR transfers
-remain outside this change.
+The macOS debug build uses the vessel's Cleat and Andamento checkouts, kiwi's
+prepared Ghostty prefix, and `/Users/robert/dev/jackstay` at the workflow-pinned
+revision. The 26 native ABI tests include the production width resolver's name
+ladder, quiet fold order, protected workspace and extreme-width behavior.
+The generated-fixture locale/newline test passes.
 
-The consumer requires the companion Andamento forward-loop/multiple-selector
-change. The workflow dependency pin must be applied by the governor, as recorded
-in the PR body under “Governor-applied workflow change”.
+Native sidebar diagnostics check laid-out status geometry at 240, 320 and
+600 pixels through latent, pending and removed-subject states. Both attention
+subjects remain chips, and the existing workspace, selection, reveal, scrolling
+and project-motion diagnostics pass. Icon resolution checks cover suggestion
+precedence, a local template override and a default for a role with an arbitrary
+label. The macOS PR chip Copy URL interaction also passed against the real
+clipboard.
 
-The duplicate `build` reference in the fixture intentionally exercises edge deduplication.
+The X11 action test now reads actual fixture hit rectangles through
+`--sidebar_subject_geometry:<path>` instead of clicking the retired child-row
+positions. The optional geometry output is restricted to the embedded subject
+fixture. Its browser subprocess records destinations without navigating, and
+its clipboard reader checks chip and Attention copies. This X11 test is not
+exercised on kiwi; macOS mouse interaction and the real native ABI cover the
+local acceptance run. Cross-platform build results are recorded on the PR.
