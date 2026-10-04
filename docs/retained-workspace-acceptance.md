@@ -24,6 +24,14 @@ on its convoy and vessel. With Show finished off, its rows disappeared without
 an Other workspaces fallback; with it on, the same workspace reappeared under
 its convoy. The unrelated Workspace row remains in Other workspaces.
 
+Native entry templates supply fields in label/kind/status order. Custom KDL
+must put status at index 2 for native status glyphs and ended hover text; the
+renderer no longer guesses status from the first non-label/non-kind field.
+
+The acceptance revision below is the latest verified companion. The governor
+must apply its matching `ANDAMENTO_REV` in `.github/workflows/build.yml` before
+consumer CI can pass. Earlier review-thread revisions are superseded.
+
 ## Validation
 
 - Native Linux build with clang, Cleat's `none` feature set, and the existing
