@@ -63,8 +63,6 @@ struct UIShell_TerminalViewState
   B32 middle_press_consumed;
   F64 local_scroll_rows;
   F64 application_wheel_rows[8][2]; // independent Ctrl/Alt/Super modifier streams
-  // 1: local page gesture; 2: application. Retained through matching release.
-  U8 page_owner[2];
   B32 (*viewport_sink)(void *user, cleat_viewport_command const *command, cleat_viewport_command_result *result);
   void *viewport_sink_user;
   F32 last_mouse_x_px;
@@ -236,7 +234,11 @@ uishell_terminal_wheel_rows(F32 delta, B32 precise, F32 cell_size)
 internal void
 uishell_terminal_wheel_event(UIShell_TerminalViewState *tv, UI_Event const *evt, Rng2F32 canvas)
 {
-  F32 dy = uishell_terminal_wheel_rows(evt->delta_2f32.y, evt->scroll_is_precise, tv->cell_height_px);
+  // AppKit may put a Shift mouse wheel on X; force either native axis into
+  // vertical outer-document navigation, retaining Y when both are present.
+  F32 vertical_delta = evt->delta_2f32.y;
+  if((evt->modifiers & WM_Modifier_Shift) && vertical_delta == 0) { vertical_delta = evt->delta_2f32.x; }
+  F32 dy = uishell_terminal_wheel_rows(vertical_delta, evt->scroll_is_precise, tv->cell_height_px);
   if(evt->modifiers & WM_Modifier_Shift)
   {
     tv->local_scroll_rows += dy;
@@ -3687,30 +3689,59 @@ uishell_terminal_shift_page_command(WM_Event const *event)
   return str8_zero();
 }
 
-// Called only after the shell's existing config matcher accepts a binding.
+// Physical Shift-page and accepted config bindings share one window owner.
 internal void
 uishell_terminal_page_binding_accept(RD_WindowState *ws, WM_Key key, String8 command, CFG_ID view)
 {
   if(key <= WM_Key_Null || key >= WM_Key_COUNT) { return; }
-  if(str8_match(command, str8_lit("terminal_scroll_page_up"), 0)) { ws->terminal_page_keys[key] = 1; }
-  else if(str8_match(command, str8_lit("terminal_scroll_page_down"), 0)) { ws->terminal_page_keys[key] = 2; }
+  if(str8_match(command, str8_lit("terminal_scroll_page_up"), 0)) { ws->terminal_page_keys[key] = UIShell_TerminalPageOwner_Up; }
+  else if(str8_match(command, str8_lit("terminal_scroll_page_down"), 0)) { ws->terminal_page_keys[key] = UIShell_TerminalPageOwner_Down; }
   else { return; }
   ws->terminal_page_views[key] = view;
 }
 
 internal B32
-uishell_terminal_page_binding_event(RD_WindowState *ws, WM_Event const *event, CFG_ID focused_view, String8 *repeat_command)
+uishell_terminal_page_binding_event(RD_WindowState *ws, WM_Event const *event, CFG_ID focused_view, String8 *command)
 {
-  if(!ws || ws == &rd_nil_window_state || event->key <= WM_Key_Null || event->key >= WM_Key_COUNT ||
-     !ws->terminal_page_keys[event->key]) { return 0; }
-  U8 owner = ws->terminal_page_keys[event->key];
+  if(!ws || ws == &rd_nil_window_state) { return 0; }
+  if(event->kind == WM_EventKind_WindowLoseFocus)
+  {
+    for(U32 key = 0; key < WM_Key_COUNT; key++)
+    {
+      UIShell_TerminalPageOwner owner = ws->terminal_page_keys[key];
+      ws->terminal_page_keys[key] = owner == UIShell_TerminalPageOwner_Application ? UIShell_TerminalPageOwner_None :
+        owner == UIShell_TerminalPageOwner_None ? UIShell_TerminalPageOwner_None : UIShell_TerminalPageOwner_Cancelled;
+      ws->terminal_page_views[key] = 0;
+    }
+    return 0;
+  }
+  if(event->key <= WM_Key_Null || event->key >= WM_Key_COUNT) { return 0; }
+  UIShell_TerminalPageOwner owner = ws->terminal_page_keys[event->key];
+  // A cancelled local action still suppresses its late release. A fresh press
+  // starts a new gesture; a repeat cannot revive a cancelled action.
+  if(owner == UIShell_TerminalPageOwner_Cancelled && event->kind == WM_EventKind_Press && !event->is_repeat)
+  { ws->terminal_page_keys[event->key] = owner = UIShell_TerminalPageOwner_None; }
+  if(owner == UIShell_TerminalPageOwner_None && event->kind == WM_EventKind_Press && focused_view &&
+     (event->key == WM_Key_PageUp || event->key == WM_Key_PageDown))
+  {
+    *command = uishell_terminal_shift_page_command(event);
+    if(command->size)
+    { uishell_terminal_page_binding_accept(ws, event->key, *command, focused_view); return 1; }
+    ws->terminal_page_keys[event->key] = UIShell_TerminalPageOwner_Application;
+    return 0;
+  }
+  if(owner == UIShell_TerminalPageOwner_None) { return 0; }
   if(event->kind == WM_EventKind_Release)
-  { ws->terminal_page_keys[event->key] = 0; ws->terminal_page_views[event->key] = 0; return owner != 3; }
-  if(owner == 3) { return 0; } // physical page press already belongs to the child
+  {
+    ws->terminal_page_keys[event->key] = UIShell_TerminalPageOwner_None;
+    ws->terminal_page_views[event->key] = 0;
+    return owner != UIShell_TerminalPageOwner_Application;
+  }
+  if(owner == UIShell_TerminalPageOwner_Application) { return 0; }
   if(event->kind == WM_EventKind_Press)
   {
-    if(focused_view && focused_view == ws->terminal_page_views[event->key])
-    { *repeat_command = ws->terminal_page_keys[event->key] == 1 ? str8_lit("terminal_scroll_page_up") : str8_lit("terminal_scroll_page_down"); }
+    if(owner != UIShell_TerminalPageOwner_Cancelled && focused_view && focused_view == ws->terminal_page_views[event->key])
+    { *command = owner == UIShell_TerminalPageOwner_Up ? str8_lit("terminal_scroll_page_up") : str8_lit("terminal_scroll_page_down"); }
     return 1;
   }
   return 0;
@@ -3731,20 +3762,11 @@ uishell_terminal_page_command(UIShell_TerminalViewState *tv, String8 name, U16 v
 internal B32
 uishell_terminal_page_event(UIShell_TerminalViewState *tv, UI_Event const *evt)
 {
-  B32 semantic = evt->kind == UI_EventKind_Navigate && evt->delta_unit == UI_EventDeltaUnit_Page;
-  if(!semantic && !((evt->kind == UI_EventKind_Press || evt->kind == UI_EventKind_Release) &&
-                   (evt->key == WM_Key_PageUp || evt->key == WM_Key_PageDown))) { return 0; }
-  U32 page = semantic ? evt->delta_2s32.y >= 0 : evt->key == WM_Key_PageDown;
-  if(evt->kind == UI_EventKind_Release)
-  {
-    B32 local = tv->page_owner[page] == 1;
-    tv->page_owner[page] = 0;
-    return local;
-  }
-  if(semantic || !tv->page_owner[page])
-  { tv->page_owner[page] = (evt->modifiers & WM_Modifier_Shift || (semantic && evt->flags & UI_EventFlag_KeepMark)) ? 1 : 2; }
-  if(tv->page_owner[page] != 1) { return 0; }
-  uishell_terminal_scroll_rows(tv, page ? (S64)tv->rows : -(S64)tv->rows);
+  if(evt->kind != UI_EventKind_Navigate || evt->delta_unit != UI_EventDeltaUnit_Page ||
+     !(evt->modifiers & WM_Modifier_Shift || evt->flags & UI_EventFlag_KeepMark)) { return 0; }
+  // Semantic commands have no physical gesture to latch. Native physical page
+  // keys are consumed once at the window seam, before UI/key translation.
+  uishell_terminal_scroll_rows(tv, evt->delta_2s32.y < 0 ? -(S64)tv->rows : (S64)tv->rows);
   return 1;
 }
 

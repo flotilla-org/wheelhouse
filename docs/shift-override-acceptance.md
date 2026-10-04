@@ -11,7 +11,8 @@ history availability for each run.
 1. Run a numbered normal-screen transcript (for example `seq 1 500`) directly
    and through the current nested attachment. Compare plain wheel and
    Shift-wheel, both directions, small trackpad deltas, and both bounds.
-   Shift-wheel must affect only the outer document. If its history is absent,
+   Shift-wheel must affect only the outer document, including mouse wheels
+   which AppKit reports on its horizontal axis while Shift is held. If its history is absent,
    record “outer history unavailable; consumed local no-op,” rather than
    claiming inner history moved.
 2. Repeat using a fullscreen mouse-capturing TUI, including Claude Code. Verify

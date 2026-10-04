@@ -507,6 +507,19 @@ uishell_terminal_override_diagnostics(void)
     OverrideCheck(f.sent_count == 2 && f.sent[1].modifiers == CLEAT_MOD_CTRL && f.tv.local_scroll_rows == 0.5);
     uishell_selection_fixture_release(&f);
   }
+  for(U32 precise = 0; precise < 2; precise++)
+  for(S32 sign = -1; sign <= 1; sign += 2)
+  {
+    UIShell_SelectionFixture f; uishell_selection_fixture_init(&f);
+    f.viewport_top = 5; f.viewport_max = 10;
+    // AppKit Shift mouse wheels can arrive on X. The forced local override
+    // uses that signed axis when Y is zero, including precise trackpad fractions.
+    UI_Event wheel = {.kind = UI_EventKind_Scroll, .modifiers = WM_Modifier_Shift,
+      .delta_2f32 = {precise ? sign*5.f : sign*30.f, 0}, .scroll_is_precise = precise};
+    for(U32 n = 0; n < (precise ? 2 : 1); n++) { uishell_terminal_wheel_event(&f.tv, &wheel, canvas); }
+    OverrideCheck(!f.sent_count && f.viewport_count == 1 && f.viewport[0].delta_rows == sign && f.viewport_top == 5+sign);
+    uishell_selection_fixture_release(&f);
+  }
   for(U32 down = 0; down < 2; down++)
   for(U32 semantic = 0; semantic < 2; semantic++)
   {
@@ -515,16 +528,34 @@ uishell_terminal_override_diagnostics(void)
     UI_Event page = {.kind = semantic ? UI_EventKind_Navigate : UI_EventKind_Press,
       .key = down ? WM_Key_PageDown : WM_Key_PageUp, .modifiers = semantic ? 0 : WM_Modifier_Shift,
       .flags = semantic ? UI_EventFlag_KeepMark : 0, .delta_unit = UI_EventDeltaUnit_Page, .delta_2s32 = {0, down ? 1 : -1}};
-    // Physical Shift page and configurable select-page commands are local;
-    // repeats use current visible rows and their matching release is consumed.
-    OverrideCheck(uishell_terminal_key_event(&f.tv, &page, CLEAT_KEY_ACTION_PRESS));
-    f.tv.rows = 6; OverrideCheck(uishell_terminal_key_event(&f.tv, &page, CLEAT_KEY_ACTION_PRESS));
-    OverrideCheck(f.viewport_count == 2 && f.viewport[0].delta_rows == (down ? 3 : -3) && f.viewport[1].delta_rows == (down ? 6 : -6));
-    page.kind = UI_EventKind_Release; page.modifiers = 0;
-    OverrideCheck(uishell_terminal_key_event(&f.tv, &page, CLEAT_KEY_ACTION_RELEASE) && !f.sent_count);
+    // Drive the native shell ownership consumer and its actual semantic
+    // command consumer together: one physical press yields one viewport request,
+    // never a second UI Navigate/key event. Semantic commands act once too.
+    Temp page_scratch = scratch_begin(0, 0);
+    RD_WindowState *window = push_array(page_scratch.arena, RD_WindowState, 1);
+    WM_Event wm = {.kind = WM_EventKind_Press, .key = page.key, .modifiers = WM_Modifier_Shift};
+    String8 command = {0};
+    if(semantic) { OverrideCheck(uishell_terminal_key_event(&f.tv, &page, CLEAT_KEY_ACTION_PRESS)); }
+    else
+    {
+      OverrideCheck(uishell_terminal_page_binding_event(window, &wm, 42, &command));
+      OverrideCheck(uishell_terminal_page_command(&f.tv, command, f.tv.rows));
+    }
+    OverrideCheck(f.viewport_count == 1 && !f.sent_count);
+    f.tv.rows = 6; wm.is_repeat = 1; command = str8_zero();
+    if(semantic) { OverrideCheck(uishell_terminal_key_event(&f.tv, &page, CLEAT_KEY_ACTION_PRESS)); }
+    else
+    {
+      OverrideCheck(uishell_terminal_page_binding_event(window, &wm, 42, &command));
+      OverrideCheck(uishell_terminal_page_command(&f.tv, command, f.tv.rows));
+      wm.kind = WM_EventKind_Release; wm.modifiers = 0;
+      OverrideCheck(uishell_terminal_page_binding_event(window, &wm, 42, &command));
+    }
+    OverrideCheck(f.viewport_count == 2 && !f.sent_count && f.viewport[0].delta_rows == (down ? 3 : -3) && f.viewport[1].delta_rows == (down ? 6 : -6));
+    scratch_end(page_scratch);
     // Plain page press/release stay on the application path even if Shift is
     // added before release; there is no extra local page movement.
-    page.kind = UI_EventKind_Press; page.flags = 0;
+    page.kind = UI_EventKind_Press; page.flags = 0; page.modifiers = 0;
     OverrideCheck(uishell_terminal_key_event(&f.tv, &page, CLEAT_KEY_ACTION_PRESS));
     OverrideCheck(f.sent_count == 1 && f.sent[0].kind == CLEAT_INPUT_KEY && f.sent[0].key_code == (down ? CLEAT_KEY_PAGE_DOWN : CLEAT_KEY_PAGE_UP));
     page.kind = UI_EventKind_Release; page.modifiers = WM_Modifier_Shift;
@@ -606,12 +637,32 @@ uishell_terminal_override_diagnostics(void)
     OverrideCheck(uishell_terminal_page_binding_event(first, &event, 0, &repeat));
     // Adding Shift after an application page press cannot reclassify repeats
     // or swallow the application's matching release.
-    first->terminal_page_keys[WM_Key_PageDown] = 3;
+    first->terminal_page_keys[WM_Key_PageDown] = UIShell_TerminalPageOwner_Application;
     event = (WM_Event){.kind = WM_EventKind_Press, .key = WM_Key_PageDown, .modifiers = WM_Modifier_Shift};
     OverrideCheck(!uishell_terminal_page_binding_event(first, &event, 42, &repeat));
-    OverrideCheck(first->terminal_page_keys[WM_Key_PageDown] == 3);
+    OverrideCheck(first->terminal_page_keys[WM_Key_PageDown] == UIShell_TerminalPageOwner_Application);
     event.kind = WM_EventKind_Release;
     OverrideCheck(!uishell_terminal_page_binding_event(first, &event, 42, &repeat) && !first->terminal_page_keys[WM_Key_PageDown]);
+    // Losing focus clears application latches and view references, while a
+    // cancelled local latch consumes its late release without scrolling.
+    first->terminal_page_keys[WM_Key_PageDown] = UIShell_TerminalPageOwner_Application;
+    uishell_terminal_page_binding_accept(first, WM_Key_PageUp, str8_lit("terminal_scroll_page_up"), 42);
+    event = (WM_Event){.kind = WM_EventKind_WindowLoseFocus}; repeat = str8_zero();
+    OverrideCheck(!uishell_terminal_page_binding_event(first, &event, 0, &repeat));
+    OverrideCheck(!first->terminal_page_keys[WM_Key_PageDown] && !first->terminal_page_views[WM_Key_PageUp]);
+    event = (WM_Event){.kind = WM_EventKind_Release, .key = WM_Key_PageUp};
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 42, &repeat) && !repeat.size);
+    event = (WM_Event){.kind = WM_EventKind_Press, .key = WM_Key_PageDown, .modifiers = WM_Modifier_Shift};
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 42, &repeat));
+    OverrideCheck(str8_match(repeat, str8_lit("terminal_scroll_page_down"), 0));
+    event.kind = WM_EventKind_WindowLoseFocus; repeat = str8_zero();
+    uishell_terminal_page_binding_event(first, &event, 0, &repeat);
+    event.kind = WM_EventKind_Press; event.is_repeat = 1;
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 42, &repeat) && !repeat.size);
+    event.is_repeat = 0;
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 42, &repeat) && repeat.size);
+    event.kind = WM_EventKind_Release;
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 42, &repeat));
     uishell_terminal_page_binding_accept(first, WM_Key_Down, str8_lit("copy"), 42);
     OverrideCheck(!first->terminal_page_keys[WM_Key_Down]);
     scratch_end(scratch);
@@ -704,25 +755,44 @@ internal B32
 uishell_terminal_override_appkit_diagnostics(void)
 {
   B32 ok = 1;
+  for(U32 horizontal = 0; horizontal < 2; horizontal++)
   for(U32 precise = 0; precise < 2; precise++)
   for(U32 shift = 0; shift < 2; shift++)
   for(S32 sign = -1; sign <= 1; sign += 2)
   {
-    CGEventRef cg = CGEventCreateScrollWheelEvent(0, precise ? kCGScrollEventUnitPixel : kCGScrollEventUnitLine, 2, sign*5, 0);
+    CGEventRef cg = CGEventCreateScrollWheelEvent(0, precise ? kCGScrollEventUnitPixel : kCGScrollEventUnitLine, 2, horizontal ? 0 : sign*5, horizontal ? sign*5 : 0);
     CGEventSetFlags(cg, shift ? kCGEventFlagMaskShift : 0);
     NSEvent *event = [NSEvent eventWithCGEvent:cg];
     WM_Event wm = {.kind = WM_EventKind_Scroll}; mac_wm_scroll_fields(&wm, event);
-    // AppKit's signed delta and precision survive WM -> terminal routing.
-    ok &= !!(wm.modifiers & WM_Modifier_Shift) == shift && wm.scroll_is_precise == precise;
-    ok &= wm.delta.y == -(F32)[event scrollingDeltaY] && wm.delta.y*sign < 0;
+    // Assert the actual AppKit event's units and signed axis, rather than
+    // assuming CGEvent's requested ticks equal AppKit's scrollingDelta pixels.
+    F32 native_delta = wm.delta.y != 0 ? wm.delta.y : wm.delta.x;
+    B32 case_ok = !!(wm.modifiers & WM_Modifier_Shift) == shift && wm.scroll_is_precise == precise;
+    case_ok &= wm.delta.y == -(F32)[event scrollingDeltaY] && wm.delta.x == -(F32)[event scrollingDeltaX];
+    case_ok &= native_delta*sign < 0;
     UIShell_SelectionFixture f; uishell_selection_fixture_init(&f);
     f.viewport_top = 20; f.viewport_max = 40;
     UI_Event ui = {.kind = UI_EventKind_Scroll, .modifiers = wm.modifiers,
       .pos = {25, 15}, .delta_2f32 = wm.delta, .scroll_is_precise = wm.scroll_is_precise};
-    for(U32 n = 0; n < (precise ? 2 : 1); n++)
-    { uishell_terminal_wheel_event(&f.tv, &ui, r2f32p(0, 0, 60, 30)); }
-    ok &= f.sent_count == !shift;
-    if(!shift) { ok &= f.sent[0].wheel_delta_y*sign > 0; }
+    U32 events = 0;
+    while(events < 1024 && !(shift ? f.viewport_count : f.sent_count))
+    { uishell_terminal_wheel_event(&f.tv, &ui, r2f32p(0, 0, 60, 30)); events++; }
+    F32 rows_per_event = uishell_terminal_wheel_rows(native_delta, wm.scroll_is_precise, 10);
+    S32 expected_rows = (S32)(rows_per_event*events);
+    case_ok &= f.sent_count == !shift && expected_rows != 0;
+    if(!shift)
+    {
+      F32 delivered = wm.delta.y != 0 ? f.sent[0].wheel_delta_y : f.sent[0].wheel_delta_x;
+      case_ok &= delivered == -expected_rows && delivered*sign > 0;
+    }
+    else { case_ok &= f.viewport_count == 1 && f.viewport[0].delta_rows == expected_rows && f.viewport[0].delta_rows*sign < 0; }
+    if(!case_ok)
+    {
+      fprintf(stderr, "AppKit wheel failed: axis=%u precise=%u shift=%u sign=%i delta=(%g,%g) native_precise=%i mods=%u events=%u rows=%i input=%llu viewport=%llu\n",
+        horizontal, precise, shift, sign, wm.delta.x, wm.delta.y, wm.scroll_is_precise, wm.modifiers, events, expected_rows,
+        (unsigned long long)f.sent_count, (unsigned long long)f.viewport_count);
+    }
+    ok &= case_ok;
     uishell_selection_fixture_release(&f); CFRelease(cg);
   }
   Temp scratch = scratch_begin(0, 0);
@@ -730,8 +800,10 @@ uishell_terminal_override_appkit_diagnostics(void)
   String8 saved_selection = wm_get_selection_text(scratch.arena);
   String8 saved_clipboard = wm_get_clipboard_text(scratch.arena);
   wm_set_selection_text(str8_lit("paste")); wm_set_clipboard_text(str8_lit("standard"));
-  ok &= str8_match(wm_get_selection_text(scratch.arena), str8_lit("paste"), 0);
-  ok &= str8_match(wm_get_clipboard_text(scratch.arena), str8_lit("standard"), 0);
+  B32 selection_ok = str8_match(wm_get_selection_text(scratch.arena), str8_lit("paste"), 0);
+  B32 clipboard_ok = str8_match(wm_get_clipboard_text(scratch.arena), str8_lit("standard"), 0);
+  if(!selection_ok || !clipboard_ok) { fprintf(stderr, "native clipboard distinction failed: selection=%i standard=%i\n", selection_ok, clipboard_ok); }
+  ok &= selection_ok && clipboard_ok;
   char runtime_dir[] = "/tmp/wheelhouse-native-paste.XXXXXX";
   char *runtime_root = mkdtemp(runtime_dir);
   cleat_provider_desc provider_desc = {.abi_version = CLEAT_PROVIDER_ABI_VERSION, .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS,
@@ -739,7 +811,7 @@ uishell_terminal_override_appkit_diagnostics(void)
   cleat_provider *provider = runtime_root ? cleat_provider_open(&provider_desc) : 0;
   // The subprocess enables capture/bracketed paste, then prints the exact input
   // bytes. The 17-byte read cannot complete if Paste is sent as ordinary text.
-  String8 command = str8_lit("/bin/sh -c \"stty raw -echo; printf '\\033[?2004h\\033[?1000hREADY'; dd bs=1 count=17 2>/dev/null | od -An -tx1 | tr -d ' \\n'; sleep 2\"");
+  String8 command = str8_lit("/bin/sh -c \"stty raw -echo; printf '\\033[?2004h\\033[?1000hREADY'; dd bs=1 count=17 2>/dev/null | od -An -tx1 | tr -d ' \\n'\"");
   cleat_session_desc desc = {.cols = 80, .rows = 8, .cell_width_px = 10, .cell_height_px = 10,
     .vt_engine = CLEAT_PROVIDER_VT_GHOSTTY, .command = command.str, .command_len = command.size};
   cleat_session *session = provider ? cleat_session_create(provider, &desc) : 0;
@@ -759,6 +831,12 @@ uishell_terminal_override_appkit_diagnostics(void)
     cleat_session_destroy(session);
   }
   if(provider) { cleat_provider_close(provider); }
+  if(runtime_root)
+  {
+    NSError *error = nil;
+    ok &= [[NSFileManager defaultManager] removeItemAtPath:[NSString stringWithUTF8String:runtime_root] error:&error];
+    if(error) { fprintf(stderr, "native paste cleanup failed: %s\n", [[error description] UTF8String]); }
+  }
   ok &= ready && wrapped;
   wm_set_selection_text(saved_selection); wm_set_clipboard_text(saved_clipboard);
   scratch_end(scratch);

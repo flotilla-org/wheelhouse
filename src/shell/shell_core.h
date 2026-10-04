@@ -589,6 +589,15 @@ internal UI_Signal rd_chrome_build_sidebar_collapse(CFG_Node *owner_cfg);
 
 typedef struct UIShell_SidebarState UIShell_SidebarState;
 
+typedef enum UIShell_TerminalPageOwner
+{
+  UIShell_TerminalPageOwner_None,
+  UIShell_TerminalPageOwner_Up,
+  UIShell_TerminalPageOwner_Down,
+  UIShell_TerminalPageOwner_Application,
+  UIShell_TerminalPageOwner_Cancelled,
+} UIShell_TerminalPageOwner;
+
 struct RD_WindowState
 {
   // rjf: links & metadata
@@ -630,10 +639,11 @@ struct RD_WindowState
   B32 menu_bar_focused;
   B32 menu_bar_focused_on_press;
   B32 menu_bar_key_held;
-  // Accepted semantic terminal page bindings retain ownership through release.
-  U8 terminal_page_keys[WM_Key_COUNT];
-  CFG_ID terminal_page_views[WM_Key_COUNT];
   B32 menu_bar_focus_press_started;
+
+  // Page ownership belongs to the native window through matching release.
+  UIShell_TerminalPageOwner terminal_page_keys[WM_Key_COUNT];
+  CFG_ID terminal_page_views[WM_Key_COUNT];
 
   // rjf: root controlled split runtime state
   UIShell_SidebarState *sidebar;

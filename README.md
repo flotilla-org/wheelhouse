@@ -302,7 +302,8 @@ half is copied as a space. Ordinary linear selection still trims trailing spaces
 
 Shift-wheel scrolls the Terminal View's **outer displayed document** through
 Cleat's viewport API, even when the child captures mouse input. Trackpad pixels
-accumulate into rows using the current cell height. With no outer history or at
+accumulate into rows using the current cell height. A Shift wheel reported on
+AppKit's horizontal axis still navigates this outer document vertically. With no outer history or at
 a bound, this is a consumed local no-op. In a nested Flotilla attachment, outer
 repaint history is not the inner Cleat session's complete history. Plain wheel
 keeps Cleat's ordinary application/history routing.
@@ -325,7 +326,8 @@ so Cleat applies bracketed-paste mode. Selection and standard clipboard remain
 separate: macOS uses its named selection pasteboard; Linux and Windows currently
 use Wheelhouse's process-local selection buffer. Linux does not read external
 X11 PRIMARY selections, and Windows has no system PRIMARY capability; neither
-silently substitutes the standard clipboard. This is a forced local Shift
+silently substitutes the standard clipboard. External X11 PRIMARY integration is
+tracked in [#150](https://github.com/flotilla-org/wheelhouse/issues/150). This is a forced local Shift
 override, with no claim of XTSHIFTESCAPE negotiation.
 
 The headless `--terminal_selection_diagnostics` runner includes capture/ownership

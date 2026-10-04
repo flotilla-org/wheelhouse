@@ -10142,18 +10142,6 @@ rd_frame(void)
       B32 take = uishell_terminal_page_binding_event(ws, event,
         terminal_input_is_focused ? focused_view->id : 0, &repeat_page_command);
       if(repeat_page_command.size) { uishell_cmd("run_command", .cmd_name = repeat_page_command); }
-      if(!take && terminal_input_is_focused && event->kind == WM_EventKind_Press &&
-         (event->key == WM_Key_PageUp || event->key == WM_Key_PageDown) && !ws->terminal_page_keys[event->key])
-      {
-        String8 page_command = uishell_terminal_shift_page_command(event);
-        if(page_command.size)
-        {
-          uishell_terminal_page_binding_accept(ws, event->key, page_command, focused_view->id);
-          uishell_cmd("run_command", .cmd_name = page_command);
-          take = 1;
-        }
-        else { ws->terminal_page_keys[event->key] = 3; } // latch plain page ownership too
-      }
       if(!take && ws != 0 && ws != &rd_nil_window_state &&
          !rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused)
         take = uishell_jackstay_event(focused_view->id,event);
