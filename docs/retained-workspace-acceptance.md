@@ -29,10 +29,10 @@ its convoy. The unrelated Workspace row remains in Other workspaces.
 - Native Linux build with clang, Cleat's `none` feature set, and the existing
   workflow-pinned Jackstay succeeds.
 - All 26 scenarios in `tools/test-native-sidebar.py` pass against Andamento
-  `04b39da` (companion PR andamento#121). They use the real daily-driver
+  `5a84451` (companion PR andamento#121). They use the real daily-driver
   templates and C ABI, including source-heartbeat removal, alias identity,
   Show finished, focus and user close.
-- Andamento's 114 unit tests and 41 sidebar scenarios pass. Disconnect tests
+- Andamento's 114 unit tests and 43 sidebar scenarios pass. Disconnect tests
   cross the lease boundary, stay on the original project path, reconnect,
   and remain unended. Tests also cover ancestor removal, repeated authoritative
   ends, no timer, standing roles, unrelated sources and subjectless workspaces.
