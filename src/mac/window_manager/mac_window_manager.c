@@ -1293,6 +1293,15 @@ global MAC_WM_Window *mac_wm_window_drag_window = 0;
 global NSPoint mac_wm_window_drag_start_mouse = {0};
 global NSPoint mac_wm_window_drag_start_origin = {0};
 
+// Shared with native AppKit diagnostics; retain per-event precision/modifiers.
+internal void
+mac_wm_scroll_fields(WM_Event *out, NSEvent *event)
+{
+  out->modifiers = mac_wm_modifiers_from_ns_flags([event modifierFlags]);
+  out->delta = v2f32(-(F32)[event scrollingDeltaX], -(F32)[event scrollingDeltaY]);
+  out->scroll_is_precise = [event hasPreciseScrollingDeltas];
+}
+
 internal WM_EventList
 wm_get_events(Arena *arena, B32 wait)
 {
@@ -1497,10 +1506,8 @@ wm_get_events(Arena *arena, B32 wait)
       case NSEventTypeScrollWheel:
       {
         WM_Event *wm_event = mac_wm_push_event(arena, &result, WM_EventKind_Scroll, window);
-        wm_event->modifiers = mac_wm_modifiers_from_ns_flags([event modifierFlags]);
+        mac_wm_scroll_fields(wm_event, event);
         wm_event->pos = mac_wm_client_pos_from_ns_point(window, [event locationInWindow]);
-        wm_event->delta = v2f32(-(F32)[event scrollingDeltaX], -(F32)[event scrollingDeltaY]);
-        wm_event->scroll_is_precise = [event hasPreciseScrollingDeltas];
       }break;
     }
     if(send_to_nsapp)

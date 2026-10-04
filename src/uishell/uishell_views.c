@@ -61,6 +61,12 @@ struct UIShell_TerminalViewState
   B32 focus_active;
   U16 mouse_buttons_held;
   B32 middle_press_consumed;
+  F64 local_scroll_rows;
+  F64 application_wheel_rows[8][2]; // independent Ctrl/Alt/Super modifier streams
+  // 1: local page gesture; 2: application. Retained through matching release.
+  U8 page_owner[2];
+  B32 (*viewport_sink)(void *user, cleat_viewport_command const *command, cleat_viewport_command_result *result);
+  void *viewport_sink_user;
   F32 last_mouse_x_px;
   F32 last_mouse_y_px;
   // Mouse tracking mode cached from the last render update (advisory: the mouse
@@ -200,6 +206,73 @@ uishell_terminal_send_input(UIShell_TerminalViewState *tv, cleat_input_event con
     (tv->session && cleat_session_send_input_ex(tv->session, input, &result));
   uishell_terminal_input_result(tv, input, accepted, result.count);
   return accepted && result.count != 0;
+}
+
+internal U16 uishell_terminal_cleat_modifiers_from_wm(WM_Modifiers mods);
+
+// Test sink replaces only the Cleat provider boundary; all routing is shared.
+internal void
+uishell_terminal_scroll_rows(UIShell_TerminalViewState *tv, S64 rows)
+{
+  cleat_viewport_command command = {.kind = CLEAT_VIEWPORT_COMMAND_DELTA_ROWS, .delta_rows = rows};
+  cleat_viewport_command_result result = {0};
+  if(tv->viewport_sink) { tv->viewport_sink(tv->viewport_sink_user, &command, &result); }
+  else if(tv->session) { cleat_session_scroll_viewport(tv->session, &command, &result); }
+  if(result.outcome == CLEAT_VIEWPORT_OUTCOME_MOVED) { uishell_terminal_clear_selection(tv); }
+  // Do not accumulate an overscroll debt at either bound or without history.
+  else { tv->local_scroll_rows = 0; }
+}
+
+internal F32
+uishell_terminal_wheel_rows(F32 delta, B32 precise, F32 cell_size)
+{
+  if(!isfinite(delta)) { return 0; }
+  if(precise) { return delta/Max(1.f, cell_size); }
+  // Preserve the existing UI's discrete-wheel scale, including X11's +/-1.
+  F32 rows = delta/30.f;
+  return delta == 0 ? 0 : delta > 0 ? Max(1.f, rows) : Min(-1.f, rows);
+}
+
+internal void
+uishell_terminal_wheel_event(UIShell_TerminalViewState *tv, UI_Event const *evt, Rng2F32 canvas)
+{
+  F32 dy = uishell_terminal_wheel_rows(evt->delta_2f32.y, evt->scroll_is_precise, tv->cell_height_px);
+  if(evt->modifiers & WM_Modifier_Shift)
+  {
+    tv->local_scroll_rows += dy;
+    // Native deltas point down the document; Cleat wheel deltas point up.
+    S64 rows = (S64)Clamp(-(F64)max_S32, tv->local_scroll_rows, (F64)max_S32);
+    tv->local_scroll_rows -= rows;
+    if(rows) { uishell_terminal_scroll_rows(tv, rows); }
+    return; // forced local override, including an empty outer document
+  }
+  U16 modifiers = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers);
+  F64 *pending = tv->application_wheel_rows[(modifiers >> 1) & 7];
+  pending[0] += uishell_terminal_wheel_rows(evt->delta_2f32.x, evt->scroll_is_precise, tv->cell_width_px);
+  pending[1] += dy;
+  S32 dx_rows = (S32)Clamp(-(F64)max_S32, pending[0], (F64)max_S32);
+  S32 dy_rows = (S32)Clamp(-(F64)max_S32, pending[1], (F64)max_S32);
+  pending[0] -= dx_rows; pending[1] -= dy_rows;
+  if(!dx_rows && !dy_rows) { return; }
+  F32 x = evt->pos.x-canvas.x0, y = evt->pos.y-canvas.y0;
+  cleat_input_event input = {.kind = CLEAT_INPUT_MOUSE,
+    .modifiers = modifiers,
+    .mouse_kind = CLEAT_MOUSE_WHEEL, .mouse_button = CLEAT_MOUSE_BUTTON_NONE,
+    .cell_col = (U16)Clamp(0, (S32)(x/Max(1.f, tv->cell_width_px)), (S32)Max(1, tv->cols)-1),
+    .cell_row = (U16)Clamp(0, (S32)(y/Max(1.f, tv->cell_height_px)), (S32)Max(1, tv->rows)-1),
+    .x_px = x, .y_px = y,
+    .wheel_delta_x = -(F32)dx_rows, .wheel_delta_y = -(F32)dy_rows};
+  uishell_terminal_send_input(tv, &input);
+}
+
+internal void
+uishell_terminal_paste_selection(UIShell_TerminalViewState *tv, String8 text)
+{
+  if(text.size)
+  {
+    cleat_input_event paste = {.kind = CLEAT_INPUT_PASTE, .text = text.str, .text_len = text.size};
+    uishell_terminal_send_input(tv, &paste);
+  }
 }
 
 typedef struct UIShell_TerminalPreviewQueue UIShell_TerminalPreviewQueue;
@@ -378,7 +451,7 @@ uishell_terminal_cancel_gesture(UIShell_TerminalViewState *tv)
   if(tv->selecting) { uishell_terminal_clear_selection(tv); }
   tv->mouse_buttons_held &= ~CLEAT_MOUSE_BUTTON_FLAG_LEFT;
   tv->left_owner = UIShell_TerminalLeftOwner_None;
-  if(tv->gesture_registered && !tv->mouse_buttons_held)
+  if(tv->gesture_registered && !tv->mouse_buttons_held && !tv->middle_press_consumed)
   {
     UIShell_TerminalViewState **link = &uishell_terminal_gestures;
     for(; *link && *link != tv; link = &(*link)->gesture_next) {}
@@ -419,7 +492,7 @@ uishell_terminal_cancel_buttons(UIShell_TerminalViewState *tv)
 }
 
 typedef struct UIShell_TerminalMouseResult UIShell_TerminalMouseResult;
-struct UIShell_TerminalMouseResult { String8 link; B32 selection_completed; };
+struct UIShell_TerminalMouseResult { String8 link; B32 selection_completed; B32 paste_selection; };
 
 // Consume each native/UI message in order, with its own coordinates/modifiers.
 // Ownership and rectangular mode belong to the press, never the current frame.
@@ -436,6 +509,27 @@ uishell_terminal_mouse_event(UIShell_TerminalViewState *tv, UI_Event const *evt,
   B32 left = evt->key == WM_Key_LeftMouseButton;
   B32 move = evt->kind == UI_EventKind_MouseMove;
   U16 mods = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers);
+  if(evt->key == WM_Key_MiddleMouseButton && press)
+  {
+    // Close an earlier accepted middle press before assigning its new owner.
+    uishell_terminal_release_button(tv, CLEAT_MOUSE_BUTTON_MIDDLE, CLEAT_MOUSE_BUTTON_FLAG_MIDDLE);
+    tv->middle_press_consumed = !!(evt->modifiers & WM_Modifier_Shift) || tv->mouse_tracking_mode == CLEAT_MOUSE_TRACKING_NONE;
+    result.paste_selection = tv->middle_press_consumed;
+  }
+  if(tv->middle_press_consumed && (evt->key == WM_Key_MiddleMouseButton || (move && !tv->left_owner)))
+  {
+    if(release)
+    {
+      tv->middle_press_consumed = 0;
+      if(!tv->left_owner) { uishell_terminal_cancel_gesture(tv); }
+    }
+    if(tv->native_view && tv->middle_press_consumed && !tv->gesture_registered)
+    {
+      tv->gesture_next = uishell_terminal_gestures;
+      uishell_terminal_gestures = tv; tv->gesture_registered = 1;
+    }
+    return result;
+  }
   if(left && press)
   {
     uishell_terminal_cancel_gesture(tv); // superseding press closes the previous gesture
@@ -486,7 +580,7 @@ uishell_terminal_mouse_event(UIShell_TerminalViewState *tv, UI_Event const *evt,
     else if(evt->key == WM_Key_MiddleMouseButton) { button = CLEAT_MOUSE_BUTTON_MIDDLE; flag = CLEAT_MOUSE_BUTTON_FLAG_MIDDLE; }
     else if(evt->key == WM_Key_RightMouseButton) { button = CLEAT_MOUSE_BUTTON_RIGHT; flag = CLEAT_MOUSE_BUTTON_FLAG_RIGHT; }
     B32 app_left = tv->left_owner == UIShell_TerminalLeftOwner_Application;
-    if(app_left) { mods &= ~CLEAT_MOD_SHIFT; } // Shift cannot reclassify an application-owned drag
+    if(app_left || (tv->mouse_buttons_held & CLEAT_MOUSE_BUTTON_FLAG_MIDDLE)) { mods &= ~CLEAT_MOD_SHIFT; } // Shift cannot reclassify an application-owned drag
     B32 forward = (press || release) && flag;
     if(release && (!(tv->mouse_buttons_held & flag) || (left && !app_left)))
     { forward = 0; } // never report a release whose press was rejected
@@ -3584,6 +3678,89 @@ uishell_terminal_key_from_ui_event(UI_Event *evt)
   return result;
 }
 
+internal String8
+uishell_terminal_shift_page_command(WM_Event const *event)
+{
+  if(event->kind != WM_EventKind_Press || !(event->modifiers & WM_Modifier_Shift)) { return str8_zero(); }
+  if(event->key == WM_Key_PageUp) { return str8_lit("terminal_scroll_page_up"); }
+  if(event->key == WM_Key_PageDown) { return str8_lit("terminal_scroll_page_down"); }
+  return str8_zero();
+}
+
+// Called only after the shell's existing config matcher accepts a binding.
+internal void
+uishell_terminal_page_binding_accept(RD_WindowState *ws, WM_Key key, String8 command, CFG_ID view)
+{
+  if(key <= WM_Key_Null || key >= WM_Key_COUNT) { return; }
+  if(str8_match(command, str8_lit("terminal_scroll_page_up"), 0)) { ws->terminal_page_keys[key] = 1; }
+  else if(str8_match(command, str8_lit("terminal_scroll_page_down"), 0)) { ws->terminal_page_keys[key] = 2; }
+  else { return; }
+  ws->terminal_page_views[key] = view;
+}
+
+internal B32
+uishell_terminal_page_binding_event(RD_WindowState *ws, WM_Event const *event, CFG_ID focused_view, String8 *repeat_command)
+{
+  if(!ws || ws == &rd_nil_window_state || event->key <= WM_Key_Null || event->key >= WM_Key_COUNT ||
+     !ws->terminal_page_keys[event->key]) { return 0; }
+  U8 owner = ws->terminal_page_keys[event->key];
+  if(event->kind == WM_EventKind_Release)
+  { ws->terminal_page_keys[event->key] = 0; ws->terminal_page_views[event->key] = 0; return owner != 3; }
+  if(owner == 3) { return 0; } // physical page press already belongs to the child
+  if(event->kind == WM_EventKind_Press)
+  {
+    if(focused_view && focused_view == ws->terminal_page_views[event->key])
+    { *repeat_command = ws->terminal_page_keys[event->key] == 1 ? str8_lit("terminal_scroll_page_up") : str8_lit("terminal_scroll_page_down"); }
+    return 1;
+  }
+  return 0;
+}
+
+internal B32
+uishell_terminal_page_command(UIShell_TerminalViewState *tv, String8 name, U16 visible_rows)
+{
+  B32 up = str8_match(name, str8_lit("terminal_scroll_page_up"), 0);
+  B32 down = str8_match(name, str8_lit("terminal_scroll_page_down"), 0);
+  if(!up && !down) { return 0; }
+  uishell_terminal_scroll_rows(tv, up ? -(S64)visible_rows : (S64)visible_rows);
+  return 1;
+}
+
+// KeepMark page events are the configurable move_{up,down}_page_select
+// commands, giving keyboards without physical page keys the same local action.
+internal B32
+uishell_terminal_page_event(UIShell_TerminalViewState *tv, UI_Event const *evt)
+{
+  B32 semantic = evt->kind == UI_EventKind_Navigate && evt->delta_unit == UI_EventDeltaUnit_Page;
+  if(!semantic && !((evt->kind == UI_EventKind_Press || evt->kind == UI_EventKind_Release) &&
+                   (evt->key == WM_Key_PageUp || evt->key == WM_Key_PageDown))) { return 0; }
+  U32 page = semantic ? evt->delta_2s32.y >= 0 : evt->key == WM_Key_PageDown;
+  if(evt->kind == UI_EventKind_Release)
+  {
+    B32 local = tv->page_owner[page] == 1;
+    tv->page_owner[page] = 0;
+    return local;
+  }
+  if(semantic || !tv->page_owner[page])
+  { tv->page_owner[page] = (evt->modifiers & WM_Modifier_Shift || (semantic && evt->flags & UI_EventFlag_KeepMark)) ? 1 : 2; }
+  if(tv->page_owner[page] != 1) { return 0; }
+  uishell_terminal_scroll_rows(tv, page ? (S64)tv->rows : -(S64)tv->rows);
+  return 1;
+}
+
+internal B32
+uishell_terminal_key_event(UIShell_TerminalViewState *tv, UI_Event const *evt, U32 action)
+{
+  if(uishell_terminal_page_event(tv, evt)) { return 1; }
+  U32 kind = 0, code = 0;
+  if(!uishell_terminal_cleat_key_from_ui_event(evt, &kind, &code)) { return 0; }
+  cleat_input_event input = {.kind = CLEAT_INPUT_KEY,
+    .modifiers = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers),
+    .key_action = action, .key_kind = kind, .key_code = code};
+  uishell_terminal_send_input(tv, &input);
+  return 1;
+}
+
 internal cleat_rgb
 uishell_terminal_rgb_from_linear_rgba(Vec4F32 linear)
 {
@@ -3782,6 +3959,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   {
     if(session_ready && str8_match(cmd->name, str8_lit("terminal_transfer"), 0)) { uishell_terminal_move(tv, 0); }
     else if(session_ready && str8_match(cmd->name, str8_lit("terminal_adopt"), 0)) { uishell_terminal_move(tv, 1); }
+    else if(session_ready) { uishell_terminal_page_command(tv, cmd->name, rows); }
   }
   cleat_str hosting = {0};
   B32 daemon_hosted = session_ready && cleat_session_hosting(tv->session, &hosting) &&
@@ -3896,38 +4074,16 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt(top_row, 0),
       r1s64(0, (S64)Min(total > visible ? total-visible : 0, (U64)max_S64)), (S64)Min(visible, (U64)max_S64)};
     UI_ScrollRegionSignal region_sig = ui_scroll_region_build(terminal_root_box, canvas_key, &terminal_region, axes,
-      UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Scroll|UI_BoxFlag_DrawBackground|UI_BoxFlag_CollectMouseMotion);
+      UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_CollectScrollEvents|UI_BoxFlag_DrawBackground|UI_BoxFlag_CollectMouseMotion);
     canvas_box = region_sig.content_box;
     S64 delta_rows = region_sig.position.y.idx - top_row;
     if(session_ready && delta_rows != 0)
     {
-      cleat_viewport_command command = {.kind = CLEAT_VIEWPORT_COMMAND_DELTA_ROWS, .delta_rows = delta_rows};
-      cleat_viewport_command_result command_result = {0};
-      cleat_session_scroll_viewport(tv->session, &command, &command_result);
-      if(command_result.outcome == CLEAT_VIEWPORT_OUTCOME_MOVED) { uishell_terminal_clear_selection(tv); }
+      uishell_terminal_scroll_rows(tv, delta_rows);
       rd_request_frame();
     }
   }
   UI_Signal canvas_sig = ui_signal_from_box(canvas_box);
-  if(session_ready && (canvas_sig.scroll.x != 0 || canvas_sig.scroll.y != 0))
-  {
-    Vec2F32 mouse = ui_mouse();
-    cleat_input_event input =
-    {
-      .kind = CLEAT_INPUT_MOUSE,
-      .modifiers = uishell_terminal_cleat_modifiers_from_wm(canvas_sig.event_flags),
-      .mouse_kind = CLEAT_MOUSE_WHEEL,
-      .mouse_button = CLEAT_MOUSE_BUTTON_NONE,
-      .cell_col = (U16)Clamp(0, (S32)((mouse.x-canvas_box->rect.x0)/cell_width_px), (S32)(cols-1)),
-      .cell_row = (U16)Clamp(0, (S32)((mouse.y-canvas_box->rect.y0)/cell_height_px), (S32)(rows-1)),
-      .x_px = mouse.x-canvas_box->rect.x0,
-      .y_px = mouse.y-canvas_box->rect.y0,
-      .wheel_delta_x = -(F32)canvas_sig.scroll.x,
-      .wheel_delta_y = -(F32)canvas_sig.scroll.y,
-    };
-    uishell_terminal_send_input(tv, &input);
-    rd_request_frame();
-  }
   if(session_ready)
   {
     Vec2F32 canvas_dim = dim_2f32(canvas_box->rect);
@@ -3951,26 +4107,14 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     for(UI_EventNode *node = canvas_sig.mouse_events.first; node; node = node->next)
     {
       UI_Event *evt = &node->v;
-      if(evt->key == WM_Key_LeftMouseButton && evt->kind == UI_EventKind_Press) { uishell_cmd("focus_panel"); }
-      if(evt->key == WM_Key_MiddleMouseButton)
+      if(evt->kind == UI_EventKind_Scroll)
       {
-        if(evt->kind == UI_EventKind_Press)
-        {
-          tv->middle_press_consumed = tv->mouse_tracking_mode == CLEAT_MOUSE_TRACKING_NONE;
-          if(tv->middle_press_consumed)
-          {
-            String8 text = wm_get_selection_text(scratch.arena);
-            cleat_input_event input = {.kind = CLEAT_INPUT_PASTE, .text = text.str, .text_len = text.size};
-            if(text.size) { uishell_terminal_send_input(tv, &input); }
-          }
-        }
-        if(tv->middle_press_consumed)
-        {
-          if(evt->kind == UI_EventKind_Release) { tv->middle_press_consumed = 0; }
-          continue;
-        }
+        if(session_ready) { uishell_terminal_wheel_event(tv, evt, canvas_box->rect); rd_request_frame(); }
+        continue;
       }
+      if(evt->key == WM_Key_LeftMouseButton && evt->kind == UI_EventKind_Press) { uishell_cmd("focus_panel"); }
       UIShell_TerminalMouseResult result = uishell_terminal_mouse_event(tv, evt, canvas_box->rect, cell_width_px, cell_height_px);
+      if(result.paste_selection) { uishell_terminal_paste_selection(tv, wm_get_selection_text(scratch.arena)); }
       if(result.link.size && uishell_terminal_link_allowed(result.link)) { wm_open_in_browser(result.link); }
       if(result.selection_completed)
       {
@@ -4004,7 +4148,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     {
       for(UI_Event *evt = 0; ui_next_event(&evt);)
       {
-        B32 taken = 0;
+        B32 taken = session_ready && uishell_terminal_page_event(tv, evt);
         // INTERIM: terminal clipboard chords detected inline — Cmd-C/Cmd-V on
         // macOS, Ctrl-Shift-C/V elsewhere (plain Ctrl-C/V must still reach the
         // program). This duplicates platform Cmd/Ctrl logic that belongs in the
@@ -4088,42 +4232,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
             }
           }
           else if(evt->kind == UI_EventKind_Edit || evt->kind == UI_EventKind_Navigate)
-          {
-            B32 sent_viewport_command = 0;
-            if(evt->kind == UI_EventKind_Navigate &&
-               evt->delta_unit == UI_EventDeltaUnit_Page &&
-               evt->modifiers & WM_Modifier_Shift)
-            {
-              cleat_viewport_command command =
-              {
-                .kind = CLEAT_VIEWPORT_COMMAND_DELTA_ROWS,
-                .delta_rows = evt->delta_2s32.y < 0 ? -(S64)rows : (S64)rows,
-              };
-              cleat_viewport_command_result command_result = {0};
-              cleat_session_scroll_viewport(tv->session, &command, &command_result);
-              if(command_result.outcome == CLEAT_VIEWPORT_OUTCOME_MOVED) { uishell_terminal_clear_selection(tv); }
-              sent_viewport_command = 1;
-              taken = 1;
-            }
-            if(!sent_viewport_command)
-            {
-              U32 key_kind = 0;
-              U32 key_code = 0;
-              if(uishell_terminal_cleat_key_from_ui_event(evt, &key_kind, &key_code))
-              {
-                cleat_input_event input =
-                {
-                  .kind = CLEAT_INPUT_KEY,
-                  .modifiers = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers),
-                  .key_action = CLEAT_KEY_ACTION_PRESS,
-                  .key_kind = key_kind,
-                  .key_code = key_code,
-                };
-                uishell_terminal_send_input(tv, &input);
-                taken = 1;
-              }
-            }
-          }
+          { taken = uishell_terminal_key_event(tv, evt, CLEAT_KEY_ACTION_PRESS); }
         }
         // Cleat's VT encoder emits key releases only when the application has
         // enabled Kitty event types; legacy terminal applications remain unchanged.
@@ -4133,21 +4242,8 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
                 evt->key != WM_Key_MiddleMouseButton &&
                 evt->key != WM_Key_RightMouseButton)
         {
-          U32 key_kind = 0;
-          U32 key_code = 0;
-          if(uishell_terminal_cleat_key_from_ui_event(evt, &key_kind, &key_code))
-          {
-            cleat_input_event input =
-            {
-              .kind = CLEAT_INPUT_KEY,
-              .modifiers = uishell_terminal_cleat_modifiers_from_wm(evt->modifiers),
-              .key_action = evt->kind == UI_EventKind_Release ? CLEAT_KEY_ACTION_RELEASE : CLEAT_KEY_ACTION_PRESS,
-              .key_kind = key_kind,
-              .key_code = key_code,
-            };
-            uishell_terminal_send_input(tv, &input);
-            taken = 1;
-          }
+          taken = uishell_terminal_key_event(tv, evt,
+            evt->kind == UI_EventKind_Release ? CLEAT_KEY_ACTION_RELEASE : CLEAT_KEY_ACTION_PRESS);
         }
         if(taken)
         {

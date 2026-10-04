@@ -151,6 +151,7 @@ entry_point(CmdLine *cmd_line)
   {
     B32 ok = uishell_terminal_selection_diagnostics();
     ok = uishell_terminal_selection_lifetime_diagnostics() && ok;
+    ok = uishell_terminal_override_diagnostics() && ok;
     fprintf(stderr, "terminal selection diagnostics %s\n", ok ? "passed" : "failed");
     abort_self(ok ? 0 : 1);
   }

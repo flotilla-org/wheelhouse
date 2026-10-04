@@ -3150,8 +3150,13 @@ ui_signal_from_box(UI_Box *box)
       }
     }
     
+    // Ordered scroll consumers own routing, units and modifiers themselves.
+    if(box->flags & UI_BoxFlag_CollectScrollEvents &&
+       evt->kind == UI_EventKind_Scroll && evt_mouse_in_bounds)
+    { taken = 1; }
+
     //- rjf: scrolling
-    if(box->flags & UI_BoxFlag_Scroll &&
+    if(!(box->flags & UI_BoxFlag_CollectScrollEvents) && box->flags & UI_BoxFlag_Scroll &&
        evt->kind == UI_EventKind_Scroll &&
        (evt->modifiers == 0 || evt->modifiers == WM_Modifier_Shift) &&
        evt_mouse_in_bounds)
@@ -3179,7 +3184,7 @@ ui_signal_from_box(UI_Box *box)
     }
     
     //- rjf: view scrolling
-    if(box->flags & UI_BoxFlag_ViewScroll && box->first_touched_build_index != box->last_touched_build_index &&
+    if(!(box->flags & UI_BoxFlag_CollectScrollEvents) && box->flags & UI_BoxFlag_ViewScroll && box->first_touched_build_index != box->last_touched_build_index &&
        evt->kind == UI_EventKind_Scroll &&
        (evt->modifiers == 0 || evt->modifiers == WM_Modifier_Shift) &&
        evt_mouse_in_bounds)
@@ -3233,7 +3238,8 @@ ui_signal_from_box(UI_Box *box)
     //- rjf: taken -> eat event
     if(taken)
     {
-      if((evt_key_is_mouse && (evt->kind == UI_EventKind_Press || evt->kind == UI_EventKind_Release)) || evt->kind == UI_EventKind_MouseMove)
+      if((evt_key_is_mouse && (evt->kind == UI_EventKind_Press || evt->kind == UI_EventKind_Release)) || evt->kind == UI_EventKind_MouseMove ||
+         (evt->kind == UI_EventKind_Scroll && box->flags & UI_BoxFlag_CollectScrollEvents))
       {
         ui_event_list_push(ui_build_arena(), &sig.mouse_events, evt);
       }

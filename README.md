@@ -297,3 +297,39 @@ Rectangles include both endpoint cells and preserve blank cells and trailing
 spaces, with one slice per physical screen row, including wrapped lines. A wide
 character is copied once when both its cells are inside the rectangle; a clipped
 half is copied as a space. Ordinary linear selection still trims trailing spaces.
+
+### Native terminal overrides
+
+Shift-wheel scrolls the Terminal View's **outer displayed document** through
+Cleat's viewport API, even when the child captures mouse input. Trackpad pixels
+accumulate into rows using the current cell height. With no outer history or at
+a bound, this is a consumed local no-op. In a nested Flotilla attachment, outer
+repaint history is not the inner Cleat session's complete history. Plain wheel
+keeps Cleat's ordinary application/history routing.
+
+Shift-PageUp/Down also navigates that outer viewport and consumes the matching
+key release. Keyboards without page keys can use **Scroll Terminal View Up** /
+**Scroll Terminal View Down** (`terminal_scroll_page_up` /
+`terminal_scroll_page_down`) in the command palette or configurable bindings;
+a Super/Cmd binding with Up/Down remains available while Terminal View is focused.
+Use non-text keys for these bindings; ordinary typing remains application input.
+The existing page-selection semantic commands also request local navigation.
+Plain PageUp/Down continues to reach the child.
+
+Shift-middle-click pastes the selection buffer locally under mouse capture.
+Plain middle-click pastes it when the application does not capture the mouse,
+and otherwise goes to the application. Press ownership lasts through release,
+even outside the canvas or after modifiers/capture change; focus loss cancels
+it. Empty selection is a consumed local no-op. Paste remains structured input,
+so Cleat applies bracketed-paste mode. Selection and standard clipboard remain
+separate: macOS uses its named selection pasteboard; Linux and Windows currently
+use Wheelhouse's process-local selection buffer. Linux does not read external
+X11 PRIMARY selections, and Windows has no system PRIMARY capability; neither
+silently substitutes the standard clipboard. This is a forced local Shift
+override, with no claim of XTSHIFTESCAPE negotiation.
+
+The headless `--terminal_selection_diagnostics` runner includes capture/ownership
+and signed/precise scroll traces. `--scroll_region_diagnostics` checks real UI
+event claiming; on macOS it also exercises AppKit wheel events and a real Cleat
+PTY's bracketed-paste bytes. Physical native acceptance is recorded separately
+using [the acceptance checklist](docs/shift-override-acceptance.md).
