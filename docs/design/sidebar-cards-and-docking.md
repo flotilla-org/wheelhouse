@@ -2,7 +2,7 @@
 
 Design direction from the 2026-10-04 grilling, now that Flotilla publishes
 subjects, readiness and standing roles. Nothing here is built yet. Each section
-names the ticket that owns its first slice; expect the presentation details to
+is tracked by a ticket listed at the end; expect the presentation details to
 move once there is something on screen.
 
 ## Rows carry their subjects as chips
@@ -159,4 +159,10 @@ prototype, but it loses per-child layout. The recursive split is the target.
 
 ## Tickets
 
-Filled in as tickets are filed.
+- #160 Convoy rows carry PR and issue subjects as compact chips (with #79)
+- #165 Structured hover cards with peek and engaged states (with #89)
+- #166 Detach hover cards to float, dock under their source, or pin
+- #163 Sidebar sections as docked Views with host-styled panels (with #80)
+- #161 Declared docking validity
+- #162 Sidebar sections: KDL declares what, Wheelhouse layout stores where
+- #164 Nested splits as recursive Controlled Splits (after #122)
