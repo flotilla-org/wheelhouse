@@ -174,8 +174,22 @@ entry_point(CmdLine *cmdline)
     Check(rd_dock_is_container(node) == !!expected_numeric);
     cfg_node_release(cfg, test_container);
   }
+  // The registered scroll-region diagnostic fixture requires 128px. These
+  // boundary widths exercise the production drag query and registry lookup,
+  // so bypassing width checks in the drag adapter cannot survive.
+  CFG_Node *width_fixture = cfg_node_new(cfg, panels, str8_lit("scroll_region_fixture"));
+  F32 query_widths[] = {0, 127, 128, 129, 640};
+  B32 expected_widths[] = {0, 0, 1, 1, 1};
+  for(U64 i = 0; i < ArrayCount(query_widths); i++)
+  { Check(rd_dock_drag_target(width_fixture, panels, query_widths[i]) == expected_widths[i]); }
   // Strict command refusal explains unknown saved types; all shell-dispatched
   // and visualizer registrations still have exhaustive creation coverage.
+  // Unknown saved content must remain removable even though it cannot be
+  // created, duplicated or offered a docking target without declared traits.
+  CFG_Node *unknown_saved = cfg_node_new(cfg, panels, str8_lit("unknown_saved_view"));
+  Check(rd_dock_can_close(unknown_saved));
+  Check(!rd_dock_drag_target(unknown_saved, panels, 640));
+  Check(!rd_dock_can_close(&cfg_nil_node));
   Check(rd_dock_creation(str8_lit("unknown_saved_view"), panels) == RD_DockRule_RegisteredView);
   Check(rd_dock_rule_message(RD_DockRule_RegisteredView).size != 0);
   // Empty saved layouts remain empty; there is already an implicit root

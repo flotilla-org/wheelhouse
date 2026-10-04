@@ -75,7 +75,7 @@ struct RD_DockProposal
   X(text, shell_text, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(jackstay, jackstay, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(terminal, terminal, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(scroll_region_fixture, scroll_region_fixture, RD_ViewTrait_Content, 0, WorkspaceRegion) \
+  X(scroll_region_fixture, scroll_region_fixture, RD_ViewTrait_Content, 128, WorkspaceRegion) \
   X(terminal_fixture, terminal, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(sessions, sessions, RD_ViewTrait_Content|RD_ViewTrait_Section, 0, WorkspaceRegion) \
   X(binary, binary, RD_ViewTrait_Content, 0, WorkspaceRegion) \

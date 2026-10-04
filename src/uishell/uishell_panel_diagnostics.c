@@ -117,14 +117,15 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   failures += cfg_node_child_from_string(commands_panel, str8_lit("unknown_saved_view")) != &cfg_nil_node;
   CFG_Node *unknown = cfg_node_new(rd_state->cfg, commands_panel, str8_lit("unknown_saved_view"));
   CFG_ID unknown_id = unknown->id;
+  // An unknown saved View cannot duplicate, but closing must remove it so a
+  // typo or unavailable extension never traps content in the saved layout.
   UIShell_RegsScope(.tab = unknown_id)
-  {
-    uishell_dispatch_tab_command(str8_lit("duplicate_tab"));
-    uishell_dispatch_tab_command(str8_lit("close_tab"));
-  }
+  { uishell_dispatch_tab_command(str8_lit("duplicate_tab")); }
   failures += cfg_node_from_id(unknown_id) != unknown;
   failures += cfg_node_child_list_from_string(scratch.arena, commands_panel, str8_lit("unknown_saved_view")).count != 1;
-  cfg_node_release(rd_state->cfg, unknown);
+  UIShell_RegsScope(.tab = unknown_id)
+  { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+  failures += cfg_node_from_id(unknown_id) != &cfg_nil_node;
   UIShell_RegsScope(.tab = selector_id)
   {
     uishell_dispatch_tab_command(str8_lit("duplicate_tab"));

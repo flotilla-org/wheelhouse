@@ -21,7 +21,8 @@ read_only global RD_DockAcceptance rd_dock_acceptance[RD_DockHostKind_COUNT] =
 internal RD_DockRule
 rd_dock_check(RD_ViewRegistration *view, RD_DockProposal p)
 {
-  if(view == 0) { return RD_DockRule_RegisteredView; }
+  // Unknown saved content can be removed, but has no placement traits.
+  if(view == 0) { return p.closing ? RD_DockRule_Valid : RD_DockRule_RegisteredView; }
   RD_ViewTraits traits = view->traits;
   if(p.closing && (traits & RD_ViewTrait_SelectsWorkspaces)) { return RD_DockRule_SelectorCannotClose; }
   if(p.host.controlled_split && p.control_surfaces_after != 1) { return RD_DockRule_OneControlSurface; }
@@ -140,6 +141,7 @@ rd_dock_creation(String8 name, CFG_Node *destination)
   p.host = rd_dock_host_from_cfg(destination, RD_DOCK_UNMEASURED_WIDTH);
   p.selected_workspace_region = p.host.controlled_split;
   p.instances_after = (view->traits & RD_ViewTrait_Singleton) ? rd_dock_instances(rd_dock_window(destination), view)+1 : 1;
+  // TODO(#164): derive this with placement/closure counts from nested splits.
   // A creation must not add another selector to the implicit root surface.
   p.control_surfaces_after = view && (view->traits & RD_ViewTrait_SelectsWorkspaces) ? 2 : 1;
   return destination != &cfg_nil_node ? rd_dock_check(view, p) : RD_DockRule_HostAcceptance;
@@ -148,9 +150,11 @@ rd_dock_creation(String8 name, CFG_Node *destination)
 internal RD_DockRule
 rd_dock_closure(CFG_Node *view)
 {
+  if(view == &cfg_nil_node) { return RD_DockRule_RegisteredView; }
   RD_DockProposal p = {0};
   p.host = rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH);
   p.closing = 1;
+  // TODO(#164): derive this with placement/creation counts from nested splits.
   p.control_surfaces_after = 1;
   return rd_dock_check(rd_dock_view_from_name(view->string), p);
 }
