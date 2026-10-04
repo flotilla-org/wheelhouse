@@ -118,6 +118,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   uishell_sidebar_card_wm_event(ws, &click);
   click.pos = v2f32(500, 350); uishell_sidebar_card_wm_event(ws, &click);
   CardCheck(!card->open && !test->hover_card_focus, "outside click dismisses a focused card");
+  // Informational cards own no keyboard focus and survive activation changes.
+  uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3350000);
+  WM_Event deactivate = {.kind = WM_EventKind_WindowLoseFocus};
+  uishell_sidebar_card_wm_event(ws, &deactivate);
+  CardCheck(card->open && !card->focused && !test->hover_card_focus, "native focus loss preserves a peek without claiming keyboard input");
   // Losing native focus can drop a held Escape release.
   uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3400000);
   card->rect = r2f32p(180, 90, 400, 300); click.pos = v2f32(200, 150);
@@ -280,7 +285,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       // fields and buttons, rather than only testing their existence.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
       card->source_rect = r2f32p(20, 20, 80, 50); fixture.rect = r2f32p(0, 0, 320, 700);
-      for(U64 frame = 0; frame < 2; frame++)
+      for(U64 frame = 0; frame < 3; frame++)
       {
         UI_EventList events = {0};
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
@@ -293,11 +298,19 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
             if(str8_match(uishell_sidebar_string(next.entity_id), str8_lit("pr-1000"), 0)) { break; }
           }
           uishell_sidebar_card_set(card, next, ui_key_zero(), str8_zero(), 0, now_time_us());
+          uishell_sidebar_card_set(&fixture.cards[1], parent, ui_key_zero(), str8_zero(), 0, now_time_us());
+          fixture.cards[1].source_rect = card->rect;
+        }
+        if(frame == 2)
+        {
+          uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
+          uishell_sidebar_card_close(&fixture.cards[1]);
         }
         test->mouse = frame ? center_2f32(card->rect) : v2f32(50, 35);
-        card->focused = frame; // Click-focus ownership is covered by the WM trace.
+        card->focused = frame == 1; // Click-focus ownership is covered by the WM trace.
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-        { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1); }
+        { uishell_sidebar_cards_ui_at(ws, now_time_us(), frame != 2); }
+        if(frame == 2) { CardCheck(card->open && !card->focused, "hover remains informational when the window is not the keyboard target"); }
         ui_end_build();
         UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);
         UI_Box *root = ui_box_from_key(root_key);
@@ -313,8 +326,18 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           previous_y = box->rect.y1; lines++;
         }
         CardCheck(lines > 5, "full card retains the current detail fields");
-        if(frame)
+        if(frame == 1)
         {
+          // Match the shell renderer's reverse-sibling traversal, not build order.
+          U64 draw_index = 0, original_draw = 0, separate_draw = 0;
+          UI_Key separate_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)1);
+          for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_post(box, &ui_nil_box).next)
+          {
+            draw_index++;
+            if(ui_key_match(box->key, root_key)) { original_draw = draw_index; }
+            if(ui_key_match(box->key, separate_key)) { separate_draw = draw_index; }
+          }
+          CardCheck(original_draw && separate_draw > original_draw, "second card is painted above the original as hit routing expects");
           UI_Box *incoming = ui_box_from_key(ui_key_from_stringf(root_key, "content"));
           UI_Box *outgoing = &ui_nil_box;
           for(UI_Box *box = root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, root).next)
@@ -325,9 +348,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           CardCheck(!ui_box_is_nil(outgoing) && abs_f32(outgoing->rect.x0-incoming->rect.x0) < 1 &&
                     abs_f32(outgoing->rect.y0-incoming->rect.y0) < 1, "cross-fade layers share the same content origin");
         }
-        CardCheck(test->hover_card_focus == (B32)frame, "full controller preserves peek/click focus distinction");
+        CardCheck(test->hover_card_focus == (B32)(frame == 1), "full controller preserves peek/click focus distinction");
       }
-      uishell_sidebar_card_close(card);
+      uishell_sidebar_card_close(card); uishell_sidebar_card_close(&fixture.cards[1]);
       UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       uishell_sidebar_cards_ui_at(ws, now_time_us(), 1); ui_end_build();
       CardCheck(!test->hover_card_focus, "closing the last card clears focus before View event consumers");

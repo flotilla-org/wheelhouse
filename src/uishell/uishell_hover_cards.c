@@ -134,7 +134,8 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
   if(event->kind == WM_EventKind_WindowLoseFocus)
   {
     state->card_escape_down = 0;
-    for(U64 i = 0; i < ArrayCount(state->cards); i++) { uishell_sidebar_card_close(&state->cards[i]); }
+    for(U64 i = 0; i < ArrayCount(state->cards); i++)
+    { if(state->cards[i].focused) { uishell_sidebar_card_close(&state->cards[i]); } }
     ws->ui->hover_card_focus = 0;
     return 0;
   }
@@ -346,13 +347,15 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
   // Raw WM routing also uses these bounds; each layout refreshes its own mask.
   for(U64 slot = 0; slot < ArrayCount(state->cards); slot++)
   {
-    if(state->cards[slot].open && window_focused && !ui_any_ctx_menu_is_open())
+    if(state->cards[slot].open && !ui_any_ctx_menu_is_open())
     {
       ui_state->hover_card_keys[slot] = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", slot);
       ui_state->hover_card_rects[slot] = state->cards[slot].rect;
     }
   }
-  for(U64 slot = 0; slot < ArrayCount(state->cards); slot++)
+  // The renderer traverses siblings in reverse. Build the separate card first
+  // so it paints last and shares the topmost ownership used by input routing.
+  for(U64 slot = ArrayCount(state->cards); slot-- > 0;)
   {
     UIShell_HoverCard *card = &state->cards[slot];
     UI_Box *dismissed = ui_box_from_key(card->dismissed);
@@ -360,7 +363,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
     if(!card->source_seen && !card->open) { card->candidate = str8_zero(); }
     card->source_seen = 0;
     if(!card->open) { continue; }
-    if(ui_any_ctx_menu_is_open() || !window_focused)
+    if(ui_any_ctx_menu_is_open() || (!window_focused && card->focused))
     { uishell_sidebar_card_close(card); continue; }
     AndamentoNode node = {0};
     U64 index = uishell_sidebar_card_find(state, card->path[card->depth-1], &node);
@@ -475,5 +478,15 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused)
 internal void
 uishell_sidebar_cards_ui(RD_WindowState *ws)
 {
+  // UI normally stops polling a background window's pointer after 500ms.
+  // An informational card must keep tracking departure independently of the
+  // keyboard target, including while a recorder temporarily owns activation.
+  if(ws->sidebar && !wm_window_is_focused(ws->os))
+  {
+    for(U64 i = 0; i < ArrayCount(ws->sidebar->cards); i++)
+    {
+      if(ws->sidebar->cards[i].open) { ui_state->mouse = wm_mouse_from_window(ws->os); break; }
+    }
+  }
   uishell_sidebar_cards_ui_at(ws, now_time_us(), wm_window_is_focused(ws->os));
 }

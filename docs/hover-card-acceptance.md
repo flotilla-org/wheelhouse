@@ -14,7 +14,11 @@ Escape with the focused View; a focused card consumes both Escape edges and
 returns focus to that View. An outside click also activates its normal target.
 Underlying sidebar and workspace controls do not
 receive pointer hits through a card. A removed or clipped source closes its
-card, as does removal of the current detail target or native window focus loss.
+card, as does removal of the current detail target. Native window focus loss
+dismisses click-focused cards and releases Escape ownership. Informational
+cards remain available to hover while another window owns keyboard focus,
+including during screen recording. Pointer tracking continues until mouse-out
+closes the card; keyboard input remains with the active window.
 
 Related navigation uses the snapshot's placement parents and direct children,
 including aliases in other sections. It deduplicates entities and omits every
