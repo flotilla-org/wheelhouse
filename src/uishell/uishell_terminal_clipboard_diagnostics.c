@@ -57,20 +57,13 @@ uishell_clipboard_fixture_host_context(void *user, UIShell_TerminalViewState *tv
 }
 
 internal B32
-uishell_terminal_clipboard_host_diagnostics(void)
+uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
 {
-  Temp scratch = scratch_begin(0, 0);
-  CFG_State *cfg = cfg_state_alloc();
-  CFG_Ctx *saved_cfg = cfg_ctx;
-  RD_State *saved_rd = rd_state;
-  UIShell_TerminalViewState *saved_views = uishell_terminal_clipboard_views;
-  cfg_ctx_select(cfg_state_ctx(cfg));
-  rd_state = push_array(scratch.arena, RD_State, 1);
   rd_state->cfg = cfg; rd_state->frame_index = 10;
-  UIShell_ClipboardFixture *f = push_array(scratch.arena, UIShell_ClipboardFixture, 1);
+  UIShell_ClipboardFixture *f = push_array(arena, UIShell_ClipboardFixture, 1);
   UIShell_TerminalViewState *tv = &f->views[0];
   tv->session = (cleat_session *)tv; tv->focus_active = 1; tv->input_frame = 9;
-  f->contexts[0] = (UIShell_TerminalClipboardContext){1,1,1,1,1,1};
+  f->contexts[0] = (UIShell_TerminalClipboardContext){.allowed=1, .input_owner=1, .window_active=1, .live=1, .controller=1, .supported=1};
   CFG_Node *user = cfg_node_new(cfg, cfg_node_root(), str8_lit("user"));
   CFG_Node *window = cfg_node_new(cfg, user, str8_lit("window"));
   CFG_Node *workspace = cfg_node_new(cfg, window, str8_lit("workspace"));
@@ -84,11 +77,12 @@ uishell_terminal_clipboard_host_diagnostics(void)
   cfg_node_new(cfg, other_panels, str8_lit("selected"));
   CFG_Node *preview = cfg_node_new(cfg, other_panels, str8_lit("terminal"));
   cfg_node_new(cfg, preview, str8_lit("selected"));
-  RD_WindowState *ws = push_array(scratch.arena, RD_WindowState, 1);
+  RD_WindowState *ws = push_array(arena, RD_WindowState, 1);
+  ws->ui = push_array(arena, UI_State, 1);
   ws->cfg_id = window->id; ws->root_controlled_split_initialized = 1;
   ws->root_controlled_split_selected_workspace_id = workspace->id;
   rd_state->window_state_last_accessed_id = window->id; rd_state->window_state_last_accessed = ws;
-  RD_ViewState *vs = push_array(scratch.arena, RD_ViewState, 1);
+  RD_ViewState *vs = push_array(arena, RD_ViewState, 1);
   vs->cfg_id = view->id; vs->user_data = tv;
   rd_state->view_state_last_accessed_id = view->id; rd_state->view_state_last_accessed = vs;
   uishell_terminal_clipboard_views = 0;
@@ -106,7 +100,7 @@ uishell_terminal_clipboard_host_diagnostics(void)
   // Generate independent UI ownership transitions before draining, including
   // modal focus, preview/overview, replay, inactivity and capability demotion.
   B32 *gates[] = {&ws->query_is_active, &ws->menu_bar_focused, &ws->hover_eval_focused,
-    &rd_state->popup_active, &ws->workspace_zoom_open, &rd_state->frame_replay.suppress_input, &rd_state->quit};
+    &rd_state->popup_active, &ws->ui->ctx_menu_open, &ws->ui->next_ctx_menu_open, &ws->workspace_zoom_open, &rd_state->frame_replay.suppress_input, &rd_state->quit};
   for(U64 i = 0; i < ArrayCount(gates)+7; i++)
   {
     U64 before = f->writes;
@@ -127,7 +121,7 @@ uishell_terminal_clipboard_host_diagnostics(void)
     if(i < ArrayCount(gates)) { *gates[i] = 0; }
     tv->focus_active = 1; tv->input_frame = 9; vs->user_data = tv;
     ws->root_controlled_split_selected_workspace_id = workspace->id;
-    f->contexts[0] = (UIShell_TerminalClipboardContext){1,1,1,1,1,1};
+    f->contexts[0] = (UIShell_TerminalClipboardContext){.allowed=1, .input_owner=1, .window_active=1, .live=1, .controller=1, .supported=1};
     f->acquired = f->released = 0;
     uishell_terminal_clipboard_dispatch_with_ops(&ops);
     HostClipboardCheck(f->writes == before && f->released == 1, "restoring host focus cannot replay suppressed effects");
@@ -156,10 +150,26 @@ uishell_terminal_clipboard_host_diagnostics(void)
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
   HostClipboardCheck(f->writes == before && f->released == 1, "retained fixture cannot deliver clipboard");
   uishell_terminal_clipboard_unregister(tv);
+
+#undef HostClipboardCheck
+  return ok;
+}
+
+internal B32
+uishell_terminal_clipboard_host_diagnostics(void)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_State *cfg = cfg_state_alloc();
+  CFG_Ctx *saved_cfg = cfg_ctx;
+  RD_State *saved_rd = rd_state;
+  UIShell_TerminalViewState *saved_views = uishell_terminal_clipboard_views;
+  cfg_ctx_select(cfg_state_ctx(cfg));
+  rd_state = push_array(scratch.arena, RD_State, 1);
+  // The checks may return early; the wrapper always restores their global state.
+  B32 ok = uishell_terminal_clipboard_host_checks(scratch.arena, cfg);
   uishell_terminal_clipboard_views = saved_views;
   rd_state = saved_rd;
   cfg_ctx_select(saved_cfg); cfg_state_release(cfg);
-#undef HostClipboardCheck
   scratch_end(scratch);
   return ok;
 }
@@ -172,7 +182,7 @@ uishell_terminal_clipboard_diagnostics(void)
   UIShell_TerminalViewState *saved = uishell_terminal_clipboard_views;
   uishell_terminal_clipboard_views = 0;
   f->views[0].session = (cleat_session *)&f->views[0];
-  f->contexts[0] = (UIShell_TerminalClipboardContext){1,1,1,1,1,1};
+  f->contexts[0] = (UIShell_TerminalClipboardContext){.allowed=1, .input_owner=1, .window_active=1, .live=1, .controller=1, .supported=1};
   UIShell_TerminalClipboardOps ops = {uishell_clipboard_fixture_acquire, uishell_clipboard_fixture_release,
     uishell_clipboard_fixture_write, uishell_clipboard_fixture_context, uishell_clipboard_fixture_dropped, f};
   uishell_terminal_clipboard_register(&f->views[0], 1, 1);
@@ -198,13 +208,14 @@ uishell_terminal_clipboard_diagnostics(void)
   // or duplicated suppressed effect. Generate all six single-bit focus/role cases.
   for(U32 bit = 0; bit < 6; bit++)
   {
-    B32 *bits = &f->contexts[0].allowed;
+    B32 *bits[] = {&f->contexts[0].allowed, &f->contexts[0].input_owner, &f->contexts[0].window_active,
+      &f->contexts[0].live, &f->contexts[0].controller, &f->contexts[0].supported};
     U64 before = f->writes;
-    bits[bit] = 0;
+    *bits[bit] = 0;
     uishell_clipboard_fixture_event(f, ++seq, 0, 1, str8_lit("suppressed"));
     uishell_terminal_clipboard_dispatch_with_ops(&ops);
     ClipboardCheck(f->writes == before && f->released == 1, "focus/role/deny drop before drain");
-    bits[bit] = 1;
+    *bits[bit] = 1;
     f->acquired = f->released = 0; // repeat the same live identity
     uishell_terminal_clipboard_dispatch_with_ops(&ops);
     ClipboardCheck(f->writes == before && f->released == 1, "suppressed identity cannot retry on later focus");
@@ -260,7 +271,7 @@ uishell_terminal_clipboard_diagnostics(void)
   // Two references to the same session elect the active view before acquisition,
   // then retain the consumed identity when the active reference is removed.
   f->views[1].session = f->views[0].session;
-  f->contexts[1] = (UIShell_TerminalClipboardContext){1,0,0,1,1,1};
+  f->contexts[1] = (UIShell_TerminalClipboardContext){.allowed=1, .input_owner=0, .window_active=0, .live=1, .controller=1, .supported=1};
   uishell_terminal_clipboard_register(&f->views[1], 2, 2);
   uishell_clipboard_fixture_event(f, ++seq, 1, 1, str8_lit("alias"));
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
@@ -269,10 +280,11 @@ uishell_terminal_clipboard_diagnostics(void)
   f->acquired = f->released = 0;
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
   ClipboardCheck(f->writes == before+1, "alias retirement preserves consumption watermark");
-  // Connection demotion/reconnect rejects older activations even with a higher
-  // sequence. A new actor epoch (hosting transfer) admits only future events.
+  // Generate higher activation with reset sequence, then older activation with
+  // higher sequence. Only the new activation is fresh. Hosting changes actor ID.
   uishell_clipboard_fixture_event(f, ++seq, 0, 1, str8_lit("reconnected"));
   f->events[0].connection_epoch = 2;
+  f->events[0].sequence = 1; // A higher activation is fresh even if its sequence resets.
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
   uishell_clipboard_fixture_event(f, ++seq, 0, 1, str8_lit("old activation"));
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
@@ -293,9 +305,9 @@ uishell_terminal_clipboard_diagnostics(void)
   U64 rejected = f->views[0].clipboard_rejected;
   f->count = f->acquired = 0; f->lost = 3;
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
-  ClipboardCheck(f->views[0].clipboard_rejected == rejected+1, "provider loss observed");
+  ClipboardCheck(f->views[0].clipboard_rejected == rejected+3, "provider loss delta observed");
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
-  ClipboardCheck(f->views[0].clipboard_rejected == rejected+1, "unchanged loss counter not repeated");
+  ClipboardCheck(f->views[0].clipboard_rejected == rejected+3, "unchanged loss counter not repeated");
   uishell_terminal_clipboard_unregister(&f->views[0]);
   ClipboardCheck(uishell_terminal_clipboard_views == 0, "retirement removes clipboard target");
   uishell_terminal_clipboard_views = saved;

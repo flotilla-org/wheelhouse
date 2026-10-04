@@ -75,18 +75,19 @@ uishell_terminal_clipboard_eligible(UIShell_TerminalClipboardContext c)
 }
 
 internal void
-uishell_terminal_clipboard_reject(UIShell_TerminalViewState *tv, char const *reason)
+uishell_terminal_clipboard_reject(UIShell_TerminalViewState *tv, char const *reason, U64 count)
 {
-  if(tv->clipboard_rejected != max_U64) { tv->clipboard_rejected++; }
+  U64 previous = tv->clipboard_rejected;
+  tv->clipboard_rejected += Min(count, max_U64-tv->clipboard_rejected);
   // Bounded diagnostics, with no application payload in the log.
-  if(tv->clipboard_rejected <= 4)
-  { fprintf(stderr, "terminal clipboard effect discarded (view=%llu count=%llu reason=%s)\n",
-            (unsigned long long)tv->clipboard_view_id, (unsigned long long)tv->clipboard_rejected, reason); }
+  if(previous < 4)
+  { fprintf(stderr, "terminal clipboard effect discarded (view=%llu count=%llu lost_or_rejected=%llu reason=%s)\n",
+            (unsigned long long)tv->clipboard_view_id, (unsigned long long)tv->clipboard_rejected, (unsigned long long)count, reason); }
 }
 
 internal void
 uishell_terminal_clipboard_drain(UIShell_TerminalViewState *tv, UIShell_TerminalClipboardOps *ops,
-                                 UIShell_TerminalClipboardContext context)
+                                 UIShell_TerminalClipboardContext context, cleat_clipboard_event const *first_event)
 {
   if(!tv->session) { return; }
   if(tv->clipboard_session != tv->session)
@@ -98,18 +99,19 @@ uishell_terminal_clipboard_drain(UIShell_TerminalViewState *tv, UIShell_Terminal
   U64 dropped = ops->dropped(ops->user, tv->session);
   if(dropped > tv->clipboard_provider_dropped)
   {
-    uishell_terminal_clipboard_reject(tv, "provider loss");
+    uishell_terminal_clipboard_reject(tv, "provider loss", dropped-tv->clipboard_provider_dropped);
   }
   tv->clipboard_provider_dropped = dropped;
   U64 events = 0, bytes = 0;
-  for(cleat_clipboard_event const *event; (event = ops->acquire(ops->user, tv->session)) != 0;)
+  for(cleat_clipboard_event const *event = first_event; event != 0; event = ops->acquire(ops->user, tv->session))
   {
     B32 fresh = 1;
     // Cleat guarantees ordered effects and resets its receipt queue on recipient
     // changes/transfer. Remember even suppressed identities: focus cannot retry.
     if(tv->clipboard_identity_valid && MemoryMatch(tv->clipboard_epoch, event->session_epoch, 16))
     {
-      fresh = event->connection_epoch >= tv->clipboard_connection && event->sequence > tv->clipboard_sequence;
+      fresh = event->connection_epoch > tv->clipboard_connection ||
+        (event->connection_epoch == tv->clipboard_connection && event->sequence > tv->clipboard_sequence);
     }
     if(fresh)
     {
@@ -129,7 +131,7 @@ uishell_terminal_clipboard_drain(UIShell_TerminalViewState *tv, UIShell_Terminal
     char const *rejection = !fresh ? "consumed identity" : !bounded ? "queue/payload bound" : !valid ? "unsupported/invalid content" :
       !uishell_terminal_clipboard_eligible(context) ? "host policy/ownership" : 0;
     if(!rejection && !ops->write(ops->user, event->destination, clear, text)) { rejection = "native adapter failure"; }
-    if(rejection) { uishell_terminal_clipboard_reject(tv, rejection); }
+    if(rejection) { uishell_terminal_clipboard_reject(tv, rejection, 1); }
     ops->release(ops->user, event);
   }
 }
@@ -141,34 +143,68 @@ uishell_terminal_clipboard_drain(UIShell_TerminalViewState *tv, UIShell_Terminal
 internal void
 uishell_terminal_clipboard_dispatch_with_ops(UIShell_TerminalClipboardOps *ops)
 {
+  Temp scratch = scratch_begin(0, 0);
+  typedef struct ClipboardReference ClipboardReference;
+  struct ClipboardReference { ClipboardReference *next; UIShell_TerminalViewState *view; };
+  typedef struct ClipboardHandle ClipboardHandle;
+  struct ClipboardHandle { ClipboardHandle *next; cleat_session *session; ClipboardReference *first, *last; };
+  U64 count = 0;
+  for(UIShell_TerminalViewState *tv = uishell_terminal_clipboard_views; tv; tv = tv->clipboard_next) { count++; }
+  U64 slots_count = Max(1, count*2);
+  ClipboardHandle **slots = push_array(scratch.arena, ClipboardHandle *, slots_count);
+  // Hash distinct handles once: inactive references share the same destructive
+  // queue/watermark. Idle handles never build the host configuration context.
   for(UIShell_TerminalViewState *tv = uishell_terminal_clipboard_views; tv; tv = tv->clipboard_next)
   {
-    B32 already = 0;
-    for(UIShell_TerminalViewState *p = uishell_terminal_clipboard_views; p != tv; p = p->clipboard_next)
-    { if(p->session == tv->session) { already = 1; break; } }
-    if(already || !tv->session) { continue; }
-    UIShell_TerminalClipboardContext context = ops->context(ops->user, tv);
-    for(UIShell_TerminalViewState *p = tv->clipboard_next; p; p = p->clipboard_next)
+    if(!tv->session) { continue; }
+    U64 slot = ((U64)(uintptr_t)tv->session >> 4)%slots_count;
+    ClipboardHandle *handle = slots[slot];
+    for(; handle && handle->session != tv->session; handle = handle->next) {}
+    if(!handle)
     {
-      if(p->session == tv->session)
+      handle = push_array(scratch.arena, ClipboardHandle, 1);
+      handle->session = tv->session;
+      handle->next = slots[slot]; slots[slot] = handle;
+    }
+    ClipboardReference *reference = push_array(scratch.arena, ClipboardReference, 1);
+    reference->view = tv;
+    SLLQueuePush(handle->first, handle->last, reference);
+  }
+  for(U64 slot = 0; slot < slots_count; slot++)
+  for(ClipboardHandle *handle = slots[slot]; handle; handle = handle->next)
+  {
+    UIShell_TerminalViewState *tv = handle->first->view;
+    cleat_clipboard_event const *first_event = ops->acquire(ops->user, tv->session);
+    UIShell_TerminalClipboardContext context = {0};
+    if(first_event)
+    {
+      context = ops->context(ops->user, tv);
+      // Only event-bearing shared handles need alias context resolution.
+      for(ClipboardReference *reference = handle->first->next; reference; reference = reference->next)
       {
-        UIShell_TerminalClipboardContext candidate = ops->context(ops->user, p);
+        UIShell_TerminalClipboardContext candidate = ops->context(ops->user, reference->view);
         if(uishell_terminal_clipboard_eligible(candidate)) { context = candidate; break; }
       }
     }
-    uishell_terminal_clipboard_drain(tv, ops, context);
-    for(UIShell_TerminalViewState *p = tv->clipboard_next; p; p = p->clipboard_next)
+    uishell_terminal_clipboard_drain(tv, ops, context, first_event);
+  }
+  // Preserve consumption state when any alias retires, without a view scan.
+  for(U64 slot = 0; slot < slots_count; slot++)
+  for(ClipboardHandle *handle = slots[slot]; handle; handle = handle->next)
+  {
+    UIShell_TerminalViewState *source = handle->first->view;
+    for(ClipboardReference *reference = handle->first->next; reference; reference = reference->next)
     {
-      if(p->session == tv->session)
-      {
-        p->clipboard_session = tv->clipboard_session;
-        MemoryCopyArray(p->clipboard_epoch, tv->clipboard_epoch);
-        p->clipboard_connection = tv->clipboard_connection;
-        p->clipboard_sequence = tv->clipboard_sequence;
-        p->clipboard_identity_valid = tv->clipboard_identity_valid;
-      }
+      UIShell_TerminalViewState *tv = reference->view;
+      tv->clipboard_session = source->clipboard_session;
+      MemoryCopyArray(tv->clipboard_epoch, source->clipboard_epoch);
+      tv->clipboard_connection = source->clipboard_connection;
+      tv->clipboard_sequence = source->clipboard_sequence;
+      tv->clipboard_identity_valid = source->clipboard_identity_valid;
+      tv->clipboard_provider_dropped = source->clipboard_provider_dropped;
     }
   }
+  scratch_end(scratch);
 }
 
 internal UIShell_TerminalClipboardContext
@@ -188,7 +224,7 @@ uishell_terminal_clipboard_host_context(UIShell_TerminalViewState *tv, B32 windo
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   UIShell_WorkspaceMount *mount = uishell_controlled_split_selected_mount(&split);
   result.input_owner = mount->panel_tree.focused->selected_tab == view && tv->focus_active &&
-    tv->input_frame + 1 == rd_state->frame_index && !ws->query_is_active && !rd_state->popup_active && !ws->menu_bar_focused && !ws->hover_eval_focused;
+    tv->input_frame + 1 == rd_state->frame_index && !ws->query_is_active && !rd_state->popup_active && !ws->menu_bar_focused && !ws->hover_eval_focused && (!ws->ui || (!ws->ui->ctx_menu_open && !ws->ui->next_ctx_menu_open));
   result.window_active = window_active;
   result.live = !rd_state->quit && !ws->workspace_zoom_open &&
     !rd_state->frame_replay.suppress_input && !rd_state->frame_replay.prepare_window && rd_state->frame_replay.fixed_dt == 0 &&

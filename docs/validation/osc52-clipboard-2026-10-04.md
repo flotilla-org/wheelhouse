@@ -27,7 +27,7 @@ Wheelhouse rejects duplicate sequences and older activations within an actor.
 The host validates UTF-8 (including NUL, overlong, surrogate and range rejection),
 kind/destination, clear shape, 64 KiB text, 16 events and 256 KiB text per drain.
 Unsupported representations are rejected by Cleat before acquisition. The first
-four rejects per runtime log a reason without payloads; rejection and upstream
+four rejection observations per runtime log a reason and loss delta without payloads; rejection and upstream
 loss counters remain bounded. Native write failure consumes the event too.
 
 ## Version boundary
@@ -46,7 +46,7 @@ preparation scripts read that revision from the pinned Cleat toolchain file.
   `com.mitchellh.ghostty.selection` pasteboard. Clear uses `clearContents` without
   installing an empty text representation. UTF-8 conversion precedes mutation.
 - Windows: `CF_UNICODETEXT` with allocation/conversion before opening or emptying
-  the clipboard, and a native owner HWND. Selection uses the existing process-local
+  the clipboard, and the active native owner HWND. Selection uses the existing process-local
   buffer (Windows has no native PRIMARY). Clear calls `EmptyClipboard`, or empties
   the selection buffer.
 - Linux: the existing X11 CLIPBOARD owner serves small UTF8_STRING requests;

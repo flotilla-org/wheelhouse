@@ -40,7 +40,7 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@display_name('Animation Speed') @description(\"Multiplies UI animation speed; lower is slower, useful for inspecting transitions.\") @expand_if(\"$.animations\") @default(1.f) 'animation_speed': @range[0.1f, 3.f] f32,"
     "@display_name('UI Font') @description(\"Path to the font used when displaying non-code UI elements. Empty uses the embedded default.\") @default('') 'main_font': string,"
     "@display_name('Code Font') @description(\"Path to the font used when displaying code and terminal cells. Empty uses the embedded default.\") @default('') 'code_font': string,"
-    "@display_name('Deny Application Clipboard Writes') @description(\"Discards live terminal application clipboard writes and clears. Operator Copy remains available.\") @default(0) 'deny_application_clipboard_writes': bool,"
+    "@display_name('Deny Application Clipboard Writes') @description(\"Discards clipboard writes and clears from focused local or remote terminal applications. Writes are allowed by default. Operator Copy remains available.\") @default(0) 'deny_application_clipboard_writes': bool,"
     "@display_name('Terminal Fallback Fonts') @description(\"Comma, semicolon, or newline separated font paths used as terminal glyph fallbacks before embedded terminal fallback fonts.\") @default('') 'terminal_fallback_fonts': string,"
     "@default(\"Default (Dark)\") @display_name('User Theme') @description(\"The user's theme, which describes all colors used throughout the UI.\") 'theme': string,"
     "@no_expand @display_name('User Theme') 'theme_colors': set,"

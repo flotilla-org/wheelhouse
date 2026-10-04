@@ -1102,8 +1102,8 @@ wm_apply_clipboard_write(U32 destination, B32 clear, String8 text)
     GlobalUnlock(allocation);
   }
   // EmptyClipboard requires an owner HWND for a subsequent SetClipboardData.
-  HWND owner = w32_wm_state && w32_wm_state->first_window ? w32_wm_state->first_window->hwnd : 0;
-  if(owner && OpenClipboard(owner))
+  HWND owner = GetActiveWindow();
+  if(owner && IsWindow(owner) && OpenClipboard(owner))
   {
     if(EmptyClipboard())
     {
