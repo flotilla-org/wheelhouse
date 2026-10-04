@@ -95,15 +95,49 @@ only a stable target key and action kind until sidebar dispatch; a snapshot-
 refresh trace checks both valid resolution and cancellation when the selected
 action disappears.
 
-## Phase 2
+## Structured cards (#177)
 
-[Andamento #124](https://github.com/flotilla-org/andamento/issues/124) adds
-section/role metadata, separate fact labels and observation times, related
-entity targets and semantic actions. ABI 2 exposes resolved text and placement
-edges today; it cannot express the full relation graph or a detail target absent
-from the current tree. The renderer must not infer those roles by parsing text.
+Wheelhouse now opts into Andamento's `snapshot_acquire_details` at revision
+`9718ba15b8f29cf1379d6f4f11320d30dd953fde` (Andamento #126). The native role
+agreement is recorded on [Andamento #124](https://github.com/flotilla-org/andamento/issues/124#issuecomment-5985487611).
+The earlier placement-edge Related fallback above is superseded by typed
+relation fields.
 
-[Wheelhouse #177](https://github.com/flotilla-org/wheelhouse/issues/177) then
-builds the header, badge, two-column facts with relative ages and stale styling,
-related mini-rows and actions footer for change requests, issues, convoys,
-roles, projects and worktrees. It keeps phase 1's interaction and live preview.
+The header uses kind icons, identity, title and a state badge. Facts occupy two
+columns with labels, values and smaller controller-relative observation ages
+on one line. The actions footer packs its controls into one row. Missing
+facts are omitted; known-empty facts keep their label and a dash. Retained stale values
+and ages are dimmed. Producer timestamp strings are never parsed. Related
+mini-rows show kind icons, target labels and state chips. An unavailable target
+is informational; available targets navigate by exact kind/id, including those
+absent from the tree. All path entities and duplicate targets are omitted.
+
+The existing live preview stays in both card states. Engaged cards expose the
+semantic controls supplied by Andamento in an actions footer, plus Back and
+Close. Pending actions retain entity identity and semantic intent, and resolve
+against the snapshot current at sidebar dispatch. A disappearing or changed
+intent cancels the pending action. Near remains the default and Outside remains
+in User Settings. The existing timing, safe corridor and focus controller is
+unchanged.
+
+Disposable kiwi candidates for this slice live under
+`/tmp/wheelhouse-structured-hover-review/`: **Structured Cards Near.app** and
+**Structured Cards Outside.app**. Their launchers supply separate disposable
+user/project settings and the subject fixture. The daily driver is untouched.
+Both candidates were launched for human review on 2026-10-05. The operator
+confirmed that the live previews work and requested a more compact, glanceable
+layout. The revised compact layout is awaiting review.
+
+The fixture exposes change requests, issues, convoys, roles and projects.
+The project's Related rows reach a worktree and an issue with no tree placement.
+The PR's Related rows include a missing target and a cycle. Review all six
+kinds in both placements, Related/Back, modifier-open, rapid source swaps,
+diagonal entry, click focus, outside dismissal and Escape. Open Example terminal
+or Example workspace and check its live preview in peek and engaged states.
+Native synthetic pointer input does not establish physical hover acceptance.
+
+The tooltip diagnostic exercises the production body and controller, including
+all six shipped templates, hidden catalog targets, path omission, modifier-open,
+relative ages, known-empty facts, retained stale styling, preview identity and
+snapshot-refresh action cancellation. Existing timing and input ownership
+traces remain in place.

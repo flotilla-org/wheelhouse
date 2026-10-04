@@ -1,3 +1,10 @@
+internal size_t
+action_node_copy(UIShell_SidebarState *state, U64 index)
+{
+  AndamentoDetail detail = {0};
+  return andamento_snapshot_detail(state->snapshot, index, &detail) ? detail.copy_url : ANDAMENTO_NONE;
+}
+
 // Click an actual related/Back widget through press and release frames.
 internal B32
 uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
@@ -66,8 +73,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   ui_select_state(test);
   UI_Box source = {.key = ui_key_make(700), .rect = r2f32p(10, 100, 100, 130)};
   UI_Signal hover = {.box = &source, .f = UI_SignalFlag_Hovering};
-  AndamentoNode a = {.key = uishell_sidebar_text(str8_lit("a"))};
-  AndamentoNode b = {.key = uishell_sidebar_text(str8_lit("b"))};
+  AndamentoNode a = {.entity_kind = uishell_sidebar_text(str8_lit("issue")), .entity_id = uishell_sidebar_text(str8_lit("a"))};
+  AndamentoNode b = {.entity_kind = uishell_sidebar_text(str8_lit("issue")), .entity_id = uishell_sidebar_text(str8_lit("b"))};
   UIShell_HoverCard *card = &fixture.cards[0];
   test->mouse = v2f32(50, 115);
   uishell_sidebar_card_source_at(&fixture, a, hover, str8_zero(), 0, 1000000);
@@ -77,8 +84,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   uishell_sidebar_card_source_at(&fixture, a, hover, str8_zero(), 0, 1300000);
   CardCheck(card->open && !card->engaged && !card->focused, "300ms opens an informational peek");
   uishell_sidebar_card_source_at(&fixture, b, hover, str8_zero(), 0, 1300001);
-  CardCheck(card->open && str8_match(card->path[0], str8_lit("b"), 0) &&
-            str8_match(card->previous, str8_lit("a"), 0), "next source swaps immediately and retains outgoing content");
+  CardCheck(card->open && str8_match(uishell_sidebar_string(card->path[0].id), str8_lit("b"), 0) &&
+            str8_match(uishell_sidebar_string(card->previous.id), str8_lit("a"), 0), "next source swaps immediately and retains outgoing content");
   card->rect = r2f32p(180, 90, 400, 300);
   card->departure = v2f32(90, 115); card->last_mouse = card->departure;
   uishell_sidebar_card_tick(card, v2f32(120, 145), 1400000);
@@ -111,9 +118,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   escape.kind = WM_EventKind_Press;
   CardCheck(!uishell_sidebar_card_wm_event(ws, &escape), "next Escape reaches the terminal");
   uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3300000);
-  uishell_sidebar_card_navigate(card, str8_lit("b"), 3300001);
-  CardCheck(card->depth == 2 && str8_match(card->path[0], str8_lit("a"), 0) &&
-            str8_match(card->path[1], str8_lit("b"), 0), "related navigation retains a back path");
+  uishell_sidebar_card_navigate(card, uishell_sidebar_card_entity(b), 3300001);
+  CardCheck(card->depth == 2 && str8_match(uishell_sidebar_string(card->path[0].id), str8_lit("a"), 0) &&
+            str8_match(uishell_sidebar_string(card->path[1].id), str8_lit("b"), 0), "related navigation retains a back path");
   card->rect = r2f32p(180, 90, 400, 300);
   uishell_sidebar_card_wm_event(ws, &click);
   click.pos = v2f32(500, 350); uishell_sidebar_card_wm_event(ws, &click);
@@ -136,7 +143,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   escape.kind = WM_EventKind_Press;
   CardCheck(!uishell_sidebar_card_wm_event(ws, &escape), "first Escape after focus loss reaches the View");
   uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3500000);
-  for(U64 i = 0; i < 40; i++) { uishell_sidebar_card_navigate(card, str8_lit("additional target"), 3500001+i); }
+  for(U64 i = 0; i < 40; i++) { uishell_sidebar_card_navigate(card, uishell_sidebar_card_entity(b), 3500001+i); }
   CardCheck(card->depth == 41, "long navigation paths grow instead of silently refusing a link");
   // Closing while crossing a protected corridor must not suppress future hovers.
   card->corridor_active = 1;
@@ -168,7 +175,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   UI_Box vessel_source = {.key = ui_key_make(720), .rect = r2f32p(340, 91, 359, 108)};
   UI_Signal vessel_hover = {.box = &vessel_source, .f = UI_SignalFlag_Hovering};
   uishell_sidebar_card_source_at(&fixture, a, vessel_hover, str8_zero(), 0, 4100001);
-  CardCheck(card->corridor_active && str8_match(card->path[0], str8_lit("b"), 0),
+  CardCheck(card->corridor_active && str8_match(uishell_sidebar_string(card->path[0].id), str8_lit("b"), 0),
             "diagonal northwest-card entry protects a southeast target crossed before the top edge");
   // Build two real overlapping buttons and send a click over the overlay.
   UI_IconInfo icons = saved_window_ui->icon_info;
@@ -273,6 +280,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(index != ANDAMENTO_NONE, "subject details exist");
     if(index != ANDAMENTO_NONE)
     {
+      index = uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(live), 0);
       live.state = ANDAMENTO_LIVE; live.workspace_id = 123456;
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, 4000000);
       for(U64 engaged = 0; engaged < 2; engaged++)
@@ -293,10 +301,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
         {
           String8 text = ui_box_display_string(box);
-          title |= str8_match(str8_prefix(text, 6), str8_lit("Title:"), 0);
+          title |= str8_match(text, str8_lit("Render subjects"), 0);
           actions |= str8_match(text, str8_lit("Copy URL"), 0);
         }
-        CardCheck(title, "current flat title field remains rendered");
+        CardCheck(title, "structured title is rendered without a prefix");
         CardCheck(actions == engaged, "actions appear only when engaged");
       }
       AndamentoNode parent = {0}; andamento_snapshot_node(fixture.snapshot, live.parent, &parent);
@@ -304,15 +312,41 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(uishell_hover_card_test_click(ws, &fixture, card, parent_label, 0) && card->depth == 2,
                 "clicking a related widget navigates within the card");
       CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("← Back"), 0) && card->depth == 1 &&
-                str8_match(card->path[0], uishell_sidebar_string(live.key), 0), "Back widget restores the source target");
+                str8_match(uishell_sidebar_string(card->path[0].id), uishell_sidebar_string(live.entity_id), 0), "Back widget restores the source target");
       CardCheck(uishell_hover_card_test_click(ws, &fixture, card, parent_label, WM_Modifier_Ctrl) && card->depth == 1 &&
                 fixture.cards[1].open && fixture.cards[1].focused &&
-                str8_match(fixture.cards[1].path[0], uishell_sidebar_string(parent.key), 0),
+                str8_match(uishell_sidebar_string(fixture.cards[1].path[0].id), uishell_sidebar_string(parent.entity_id), 0),
                 "modifier-click opens a separate focused card without changing the original path");
       CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Close"), 0) && !card->open &&
                 fixture.cards[1].open && fixture.cards[1].focused, "closing the original leaves the separate card open and focused");
       CardCheck(uishell_hover_card_test_click(ws, &fixture, &fixture.cards[1], str8_lit("Close"), 0) &&
                 !fixture.cards[1].open, "the separate card closes through its own action");
+      // Hidden targets navigate by catalog identity, including cycles and
+      // modifier-open. No placement-edge fallback may invent a relation.
+      uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
+      B32 hidden_in_tree = 0;
+      for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+      {
+        AndamentoNode row = {0}; andamento_snapshot_node(fixture.snapshot, i, &row);
+        hidden_in_tree |= str8_match(uishell_sidebar_string(row.entity_id), str8_lit("hidden-detail"), 0);
+      }
+      CardCheck(!hidden_in_tree, "hidden relation target has no tree placement");
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Hidden related issue"), WM_Modifier_Ctrl) &&
+                fixture.cards[1].open && card->depth == 1,
+                "modifier-open resolves a target without a tree placement");
+      uishell_sidebar_card_close(&fixture.cards[1]);
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Hidden related issue"), 0) && card->depth == 2,
+                "typed hidden relation navigates to catalog details");
+      CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("!281"), 0),
+                "typed relation back to the source is omitted from the path");
+      CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Hidden related issue"), 0),
+                "self relation is omitted");
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Example project"), 0) && card->depth == 3,
+                "catalog navigation follows typed relations across kinds");
+      CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Hidden related issue"), 0),
+                "related mini-rows exclude every ancestor, not only the immediate parent");
+      CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Unavailable"), 0),
+                "unavailable relation targets do not expose a navigation button");
       // Full production layout catches fixed-rectangle scope leakage into
       // fields and buttons, rather than only testing their existence.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
@@ -347,15 +381,24 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);
         UI_Box *root = ui_box_from_key(root_key);
         CardCheck(!ui_box_is_nil(root) && dim_2f32(root->rect).y > 40, "full card measures its content on the first frame");
-        F32 previous_y = -1; U64 lines = 0;
+        U64 lines = 0;
         for(UI_Box *box = root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, root).next)
         {
           B32 outgoing = 0;
           for(UI_Box *p = box; !ui_box_is_nil(p); p = p->parent) { outgoing |= !!(p->flags & UI_BoxFlag_IgnoreInteraction); }
           if(outgoing || !(box->flags & UI_BoxFlag_DrawText)) { continue; }
-          CardCheck(box->rect.y0 >= previous_y && dim_2f32(box->rect).y < dim_2f32(root->rect).y,
-                    "fields and controls occupy individual rows in full card layout");
-          previous_y = box->rect.y1; lines++;
+          CardCheck(dim_2f32(box->rect).y > 0 && dim_2f32(box->rect).y < dim_2f32(root->rect).y,
+                    "structured text has its own nonzero height in full card layout");
+          for(UI_Box *other = box->next; !ui_box_is_nil(other); other = other->next)
+          {
+            if(other->flags & UI_BoxFlag_DrawText)
+            {
+              Rng2F32 overlap = intersect_2f32(box->rect, other->rect);
+              CardCheck(dim_2f32(overlap).x <= 0 || dim_2f32(overlap).y <= 0,
+                        "header and relation text siblings occupy separate grid cells");
+            }
+          }
+          lines++;
         }
         CardCheck(lines > 5, "full card retains the current detail fields");
         if(frame == 1)
@@ -405,8 +448,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(!test->hover_card_focus, "closing the last card clears focus before View event consumers");
       // Follow the focused card's production default-navigation path.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
-      uishell_sidebar_card_navigate(card, uishell_sidebar_string(parent.key), now_time_us());
-      card->previous = str8_zero(); card->engaged = card->focused = 1;
+      uishell_sidebar_card_navigate(card, uishell_sidebar_card_entity(parent), now_time_us());
+      card->previous = (AndamentoEntity){0}; card->engaged = card->focused = 1;
       B32 saw_related = 0, saw_back = 0, saw_close = 0;
       for(U64 frame = 0; frame < 32 && card->open; frame++)
       {
@@ -446,7 +489,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       // its intent but before sidebar dispatch. Never retain the old index.
       AndamentoNode action_node = {0};
       U64 action_index = uishell_sidebar_card_find(&fixture, card->path[0], &action_node);
-      size_t copy_action = andamento_snapshot_copy_url_action(fixture.snapshot, action_index);
+      size_t copy_action = action_node_copy(&fixture, action_index);
       CardCheck(copy_action != ANDAMENTO_NONE, "refresh trace starts with a Copy URL action");
       uishell_sidebar_card_queue_action(&fixture, action_node, copy_action);
       AndamentoFact refreshed_title = {.key = uishell_sidebar_text(str8_lit("flotilla.change_request.title")),
@@ -455,8 +498,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                 uishell_sidebar_text(str8_lit("pr-281")), uishell_sidebar_text(str8_lit("fixture")), &refreshed_title, 1, 0),
                 "refresh trace updates the selected entity");
       uishell_sidebar_refresh(&fixture);
-      action_index = uishell_sidebar_card_find(&fixture, fixture.card_action_key, &action_node);
-      copy_action = andamento_snapshot_copy_url_action(fixture.snapshot, action_index);
+      action_index = uishell_sidebar_card_find(&fixture, fixture.card_action_target, &action_node);
+      copy_action = action_node_copy(&fixture, action_index);
       CardCheck(copy_action != ANDAMENTO_NONE && uishell_sidebar_card_take_action(&fixture) == copy_action &&
                 !fixture.card_has_action && uishell_sidebar_card_take_action(&fixture) == ANDAMENTO_NONE,
                 "Copy URL intent resolves against the refreshed snapshot exactly once");
@@ -467,12 +510,128 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       String8 remove_url = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"pr-281\"}},\"source_id\":\"fixture\",\"set\":{},\"unset\":[\"flotilla.forge\"]}");
       CardCheck(andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(remove_url), 0), "refresh trace removes URL metadata");
       uishell_sidebar_refresh(&fixture);
-      action_index = uishell_sidebar_card_find(&fixture, fixture.card_action_key, &action_node);
-      CardCheck(action_index != ANDAMENTO_NONE && andamento_snapshot_copy_url_action(fixture.snapshot, action_index) == ANDAMENTO_NONE,
+      action_index = uishell_sidebar_card_find(&fixture, fixture.card_action_target, &action_node);
+      CardCheck(action_index != ANDAMENTO_NONE && action_node_copy(&fixture, action_index) == ANDAMENTO_NONE,
                 "refresh keeps the entity but removes its Copy URL action");
       CardCheck(uishell_sidebar_card_take_action(&fixture) == ANDAMENTO_NONE && !fixture.card_has_action,
                 "refresh drops a removed action rather than dispatching an old snapshot index");
     }
+  }
+  if(fixture.core)
+  {
+    struct { char *kind, *id, *title; } cards[] = {
+      {"change_request", "pr-281", "Refreshed title"},
+      {"issue", "issue-137", "Sidebar subject rows"},
+      {"convoy", "build", "Ship sidebar subjects"},
+      {"role", "p/governor", "governor"},
+      {"project", "p", "Example project"},
+      {"worktree", "hover-worktree", "Hover-card worktree"},
+    };
+    for(U64 i = 0; i < ArrayCount(cards); i++)
+    {
+      AndamentoEntity entity = {uishell_sidebar_text(str8_cstring(cards[i].kind)), uishell_sidebar_text(str8_cstring(cards[i].id))};
+      AndamentoNode node = {0}; U64 index = uishell_sidebar_card_find(&fixture, entity, &node);
+      CardCheck(index != ANDAMENTO_NONE, "all six shipped detail templates have a catalog target");
+      uishell_sidebar_card_set(card, node, ui_key_zero(), str8_zero(), 0, now_time_us());
+      UI_EventList events = {0};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      MemoryZeroArray(test->hover_card_keys);
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+      UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_ChildLayoutAxis(Axis2_Y)
+      { uishell_sidebar_card_content(&fixture, ws, card, 0, node, index, 400, 0); }
+      ui_end_build();
+      B32 title = 0, identity = 0, facts = 0, expected_facts = 0;
+      AndamentoDetail d = {0}; andamento_snapshot_detail(fixture.snapshot, index, &d);
+      for(U64 f = 0; f < d.field_count; f++)
+      {
+        AndamentoDetailField field = {0}; andamento_snapshot_detail_field(fixture.snapshot, index, f, &field);
+        expected_facts |= field.role == ANDAMENTO_DETAIL_FACT && field.has_value;
+      }
+      for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+      {
+        String8 text = ui_box_display_string(box);
+        title |= str8_match(text, str8_cstring(cards[i].title), 0);
+        identity |= str8_match(text, str8_cstring(cards[i].id), 0);
+        AndamentoDetail d = {0}; andamento_snapshot_detail(fixture.snapshot, index, &d);
+        for(U64 f = 0; f < d.field_count; f++)
+        {
+          AndamentoDetailField field = {0}; andamento_snapshot_detail_field(fixture.snapshot, index, f, &field);
+          facts |= field.role == ANDAMENTO_DETAIL_FACT && field.has_value && str8_match(text, uishell_sidebar_string(field.label), 0);
+        }
+        CardCheck(!str8_match(str8_prefix(text, 6), str8_lit("Title:"), 0), "typed headers do not display flat prefixes");
+      }
+      CardCheck(title && identity && facts == expected_facts, "each shipped template renders its header and facts");
+    }
+    CardCheck(str8_match(uishell_sidebar_card_age(60000, 0), str8_lit("1m ago"), 0) &&
+              str8_match(uishell_sidebar_card_age(3600000, 0), str8_lit("1h ago"), 0) &&
+              str8_match(uishell_sidebar_card_age(86400000, 0), str8_lit("1d ago"), 0) &&
+              str8_match(uishell_sidebar_card_age(0, 100), str8_lit("0s ago"), 0),
+              "relative ages use the controller clock and saturate future observations");
+
+    // Exercise retained expiry in an isolated controller with the same native
+    // card renderer. The fixture's display filtering cannot affect this path.
+    String8 freshness_config = str8_lit(
+      "region \"tree\" root-template=\"title\" placement=\"tree\"\n"
+      "template \"title\" { field \"label\" literal=\"Tree\"; }\n"
+      "placement \"tree\" { for \"worktree\" kind=\"worktree\" { field \"label\" key=\"display.label\"; }; }\n"
+      "template \"worktree/detail\" slot=\"detail\" node-kind=\"entity\" {\n"
+      " field \"branch\" role=\"fact\" section=\"facts\" label=\"Branch\" key=\"git.branch\"\n"
+      " field \"upstream\" role=\"fact\" section=\"facts\" label=\"Upstream\" key=\"git.upstream\"\n"
+      "}\n");
+    UIShell_SidebarState freshness = {0};
+    freshness.core = andamento_create(freshness_config.str, freshness_config.size, 0);
+    CardCheck(freshness.core != 0, "freshness fixture initializes");
+    AndamentoEntity entity = {uishell_sidebar_text(str8_lit("worktree")), uishell_sidebar_text(str8_lit("stale-worktree"))};
+    AndamentoFact facts[] = {
+      {.key = uishell_sidebar_text(str8_lit("display.label")), .kind = ANDAMENTO_FACT_TEXT,
+       .text = uishell_sidebar_text(str8_lit("Worker")), .has_ttl = 1, .ttl_ms = 10},
+      {.key = uishell_sidebar_text(str8_lit("git.branch")), .kind = ANDAMENTO_FACT_TEXT,
+       .text = uishell_sidebar_text(str8_lit("retained-branch")), .has_ttl = 1, .ttl_ms = 10},
+      {.key = uishell_sidebar_text(str8_lit("git.upstream")), .kind = ANDAMENTO_FACT_TEXT,
+       .text = uishell_sidebar_text(str8_zero()), .has_ttl = 1, .ttl_ms = 10},
+      {.key = uishell_sidebar_text(str8_lit("action.primary.target")), .kind = ANDAMENTO_FACT_TEXT,
+       .text = uishell_sidebar_text(str8_lit("worktree:stale-worktree")), .has_ttl = 1, .ttl_ms = 10},
+      {.key = uishell_sidebar_text(str8_lit("action.primary.recipe")), .kind = ANDAMENTO_FACT_TEXT,
+       .text = uishell_sidebar_text(str8_lit("exec sh")), .has_ttl = 1, .ttl_ms = 10},
+    };
+    CardCheck(andamento_apply_entity(freshness.core, 1000, entity.kind, entity.id, uishell_sidebar_text(str8_lit("fixture")), facts, ArrayCount(facts), 0),
+              "retained observation fixture applies");
+    uishell_sidebar_refresh(&freshness);
+    AndamentoNode node = {0}; U64 index = uishell_sidebar_card_find(&freshness, entity, &node);
+    CardCheck(andamento_dispatch(freshness.core, freshness.snapshot, node.activate, 0), "freshness fixture activates its control");
+    AndamentoEffects *effects = andamento_effects_take(freshness.core, 0);
+    AndamentoEffect effect = {0};
+    CardCheck(andamento_effects_get(effects, 0, &effect) && effect.kind == ANDAMENTO_EFFECT_MATERIALIZE,
+              "freshness fixture gets a materialize effect");
+    CardCheck(andamento_complete(freshness.core, effect.request_id, ANDAMENTO_COMPLETE_MATERIALIZE, 123456, uishell_sidebar_text(str8_zero()), 0),
+              "freshness fixture binds preview identity");
+    andamento_effects_release(effects);
+    AndamentoWorkspace workspace = {.id = 123456, .name = uishell_sidebar_text(str8_lit("Worker")), .selected = 1};
+    CardCheck(andamento_observe(freshness.core, &workspace, 1, 0, 0, 0) && andamento_tick(freshness.core, 61000, 0), "retained observation ages");
+    uishell_sidebar_refresh(&freshness);
+    index = uishell_sidebar_card_find(&freshness, entity, &node);
+    CardCheck(node.state == ANDAMENTO_LIVE && node.workspace_id == 123456, "retained catalog preview identity survives expiry");
+    UIShell_HoverCard *fresh_card = &freshness.cards[0];
+    uishell_sidebar_card_set(fresh_card, node, ui_key_zero(), str8_zero(), 0, now_time_us());
+    UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    MemoryZeroArray(test->hover_card_keys);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+    UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_ChildLayoutAxis(Axis2_Y)
+    { uishell_sidebar_card_content(&freshness, ws, fresh_card, 0, node, index, 400, 0); }
+    ui_end_build();
+    B32 stale = 0, age = 0, empty = 0;
+    for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+    {
+      String8 text = ui_box_display_string(box);
+      stale |= str8_match(text, str8_lit("retained-branch"), 0) && box->transparency >= 0.5f;
+      age |= str8_match(text, str8_lit("1m ago"), 0) && box->transparency >= 0.5f;
+      empty |= str8_match(text, str8_lit("Upstream"), 0);
+    }
+    CardCheck(stale && age, "retained stale values and their controller-relative ages are dimmed");
+    CardCheck(empty, "known-empty facts retain their separate labels");
+    uishell_sidebar_release(&freshness);
+
   }
   ws->sidebar = saved_sidebar; ws->ui = saved_window_ui;
   uishell_sidebar_release(&fixture); ui_select_state(saved_ui); ui_state_release(test);
