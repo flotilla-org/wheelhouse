@@ -350,10 +350,10 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
 // 16pt gap exceeds the corridor's 12pt edge padding, so sideways motion along
 // the row does not accidentally enter the diagonal corridor.
 internal F32
-uishell_sidebar_card_target_y(UIShell_HoverCard *card, F32 height, Rng2F32 window, B32 near)
+uishell_sidebar_card_target_y(UIShell_HoverCard *card, F32 height, Rng2F32 window, B32 near_placement)
 {
   F32 y = card->source_rect.y0;
-  if(near)
+  if(near_placement)
   {
     y = card->source_rect.y1+16;
     if(y+height > window.y1-10) { y = card->source_rect.y0-height-16; }
