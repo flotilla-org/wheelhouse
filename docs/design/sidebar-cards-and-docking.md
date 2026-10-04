@@ -157,6 +157,29 @@ inside a Workspace Region:
 A single panel whose view retargets through a picker is a cheaper first
 prototype, but it loses per-child layout. The recursive split is the target.
 
+## Prototype findings
+
+`sidebar-cards-prototype.html`, next to this doc, is a throwaway web mockup of
+rows, chips, hover cards and detaching, with live controls for placement,
+timings and the safe corridor. Open it directly in a browser. It is kept as a
+reference for an eventual web Flotilla/Wheelhouse surface. Operator verdicts
+from 2026-10-04:
+
+- **Near placement wins**, with outside-the-sidebar kept as a preference. Near
+  covers the rest of the hovered row's chips; the corridor and the instant
+  swap make that acceptable in use.
+- **Fold order reads fine.** At the default width the first convoy's name
+  drops to its short form because attention chips hold their space; that is
+  acceptable.
+- **A card focused by a click stays open** until a click elsewhere or Escape.
+  Without this, the card holding focus would vanish on mouse-out.
+- **A pinned card outlives its subject** and says it is no longer present.
+  Ended presentations and cards will need a timeout policy; it is not decided.
+- **One pinned card per entity.** Pinning again reveals the existing card.
+- **Pinned areas need not be singular.** Since pinned areas are ordinary
+  sections in the docking system, dragging a card to a new place in the
+  sidebar could create a new pinned area there.
+
 ## Tickets
 
 - #160 Convoy rows carry PR and issue subjects as compact chips (with #79)

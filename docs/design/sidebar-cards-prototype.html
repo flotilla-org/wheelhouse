@@ -1,0 +1,507 @@
+<!doctype html>
+<!--
+  PROTOTYPE - throwaway. Answers: do the row/chip/hover-card/detach rules in
+  docs/design/sidebar-cards-and-docking.md (#159) feel right before we build
+  them in the C UI? Three chip styles via ?variant=A|B|C (bottom bar, or the
+  arrow keys). Placement, timings and the safe corridor are live knobs in the
+  panel on the right. Verdicts are recorded in the design doc's "Prototype
+  findings". Kept as a reference for a future web Flotilla/Wheelhouse surface;
+  it is not production code.
+  Run: open docs/design/sidebar-cards-prototype.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidebar cards prototype</title>
+<style>
+:root{
+  --bg:#1e1e1e; --side:#232323; --panel:#262626; --line:#3a3a3a; --text:#d8d8d8; --dim:#8c8c8c; --faint:#5f5f5f;
+  --tint:#38332b; --tint-line:#5a5040; --accent:#e0b34a; --sel:#3b4048;
+  --good:#8fdc9f; --bad:#f28b82; --warn:#e6c07b; --muted:#a0a0a0; --issue:#9ab8e8;
+  --card:#2b2b2b; --card-line:#4a4a4a;
+  --glide:100ms;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px "Segoe UI",system-ui,-apple-system,sans-serif;overflow:hidden;user-select:none}
+svg.i{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;vertical-align:-2px}
+#app{display:flex;height:100%}
+#sidebar{position:relative;flex:none;background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:160px}
+#resize{position:absolute;top:0;right:-3px;width:6px;height:100%;cursor:ew-resize;z-index:5}
+#resize:hover,#resize.on{background:#e0b34a55}
+.sec{display:flex;flex-direction:column;min-height:0;border-top:1px solid var(--line)}
+.sec:first-child{border-top:none}
+.sec.grow{flex:1}
+.sec-h{display:flex;align-items:center;gap:6px;height:24px;padding:0 8px;font-size:11px;letter-spacing:.04em;color:var(--dim);text-transform:uppercase;flex:none}
+.sec-h .n{margin-left:auto}
+.sec-b{overflow:auto;min-height:0;padding:2px 4px 6px}
+.sec.drop-hot{outline:1px dashed var(--accent);outline-offset:-2px}
+.tint{background:var(--tint);border:1px solid var(--tint-line);border-radius:5px;padding:2px 0 4px;margin:2px 0 4px}
+.row{position:relative;display:flex;align-items:center;height:24px;padding-right:4px;border-radius:3px;white-space:nowrap}
+.row:hover{background:#ffffff0c}
+.row.sel{background:var(--sel)}
+.row .tw{width:14px;flex:none;color:var(--dim);text-align:center;font-size:10px}
+.row .ic{width:20px;flex:none;color:var(--dim);display:flex;align-items:center}
+.row .nm{overflow:hidden;text-overflow:ellipsis;flex:none}
+.row .sp{flex:1;min-width:8px}
+.row .chips{display:flex;gap:4px;align-items:center;flex:none}
+.row .st{width:16px;flex:none;display:flex;justify-content:center}
+.row.proj .nm{border-bottom:1px solid #d8d8d8aa}
+.row.proj::before{content:"";position:absolute;left:-3px;top:3px;bottom:3px;width:3px;border-radius:2px;background:var(--accent)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--faint)}
+.dot.active{background:var(--good)} .dot.stalled{background:var(--warn)} .dot.idle{background:var(--faint)} .dot.bad{background:var(--bad)}
+.att-r{margin-left:auto;font-size:12px}
+.c-good{color:var(--good)} .c-bad{color:var(--bad)} .c-warn{color:var(--warn)} .c-muted{color:var(--muted)} .c-issue{color:var(--issue)}
+/* chips: variant A pills */
+.chip{display:inline-flex;align-items:center;gap:2px;height:18px;font-size:12px;border-radius:9px;cursor:default;flex:none}
+.v-A .chip.subj{padding:0 6px;border:1px solid currentColor;background:#00000022}
+.v-A .chip.subj b{font-weight:normal;opacity:.9}
+.v-B .chip.subj{padding:0 2px}
+.v-B .chip.subj b{font-weight:normal;font-size:11px}
+.v-C .chip.subj{width:16px;justify-content:center;border-radius:4px;background:#ffffff10;padding:0}
+.v-C .chip.subj .ref{display:none}
+.chip.more{padding:0 5px;border:1px solid var(--faint);color:var(--dim)}
+.chip.ws{position:relative;width:24px;justify-content:center;border:1px solid var(--faint);border-radius:4px;color:var(--text)}
+.chip.ws .act{position:absolute;right:-2px;top:-2px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.chip:hover{filter:brightness(1.3)}
+/* workspace area */
+#work{flex:1;display:flex;flex-direction:column;min-width:0}
+#tabs{display:flex;height:30px;border-bottom:1px solid var(--line);background:var(--side)}
+#tabs .t{display:flex;gap:6px;align-items:center;padding:0 12px;border-right:1px solid var(--line);background:var(--bg)}
+#term{flex:1;padding:8px 10px;font:12.5px ui-monospace,Menlo,Consolas,monospace;color:#cfcfcf;outline:none;white-space:pre-wrap;overflow:auto}
+#term:focus{box-shadow:inset 0 0 0 1px #e0b34a66}
+#term .cur{background:#cfcfcf;color:#1e1e1e}
+/* cards */
+.card{width:300px;background:var(--card);border:1px solid var(--card-line);border-radius:6px;box-shadow:0 8px 24px #0009;font-size:12.5px;outline:none}
+#hc{position:fixed;z-index:50;opacity:0;pointer-events:none;transition:left var(--glide) ease-out,top var(--glide) ease-out,opacity 120ms}
+#hc.on{opacity:1;pointer-events:auto}
+#hc.noanim{transition:opacity 120ms}
+.card.focused{border-color:var(--accent)}
+.card .inner.xf{animation:xf var(--glide) ease-out}
+@keyframes xf{from{opacity:.25}to{opacity:1}}
+.ch{display:flex;align-items:center;gap:6px;padding:7px 8px 2px}
+.ch .ref{color:var(--dim)}
+.ch .badge{margin-left:auto;font-size:11.5px;padding:0 6px;border-radius:8px;border:1px solid currentColor;white-space:nowrap}
+.ch .ctl{display:flex;gap:2px}
+.ctl button,.ch .back{background:none;border:none;color:var(--dim);padding:2px 3px;border-radius:3px;cursor:pointer;font:inherit;line-height:1}
+.ctl button:hover,.ch .back:hover{background:#ffffff18;color:var(--text)}
+.grip{color:var(--faint);cursor:grab;letter-spacing:-2px}
+.ct{padding:0 8px 6px;font-weight:600;line-height:1.3}
+.cs{padding:0 8px 6px;color:var(--dim)}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;padding:4px 8px 6px;border-top:1px solid #ffffff10}
+.facts .k{color:var(--dim)}
+.facts .age{color:var(--faint);font-style:normal;margin-left:6px;font-size:11px}
+.facts .stale{opacity:.5}
+.rel{border-top:1px solid #ffffff10;padding:3px 4px 4px}
+.mini{display:flex;align-items:center;gap:6px;height:22px;padding:0 4px;border-radius:3px;cursor:pointer;white-space:nowrap;overflow:hidden}
+.mini:hover{background:#ffffff12}
+.mini .mt{overflow:hidden;text-overflow:ellipsis;color:var(--dim)}
+.mini .mr{margin-left:auto;flex:none}
+.acts{display:flex;gap:4px;padding:5px 8px 7px;border-top:1px solid #ffffff10}
+.acts button{display:flex;align-items:center;gap:4px;background:#ffffff0d;border:1px solid var(--line);color:var(--text);border-radius:4px;padding:2px 7px;font:inherit;font-size:12px;cursor:pointer}
+.acts button:hover{background:#ffffff1c}
+/* peek hides engaged-only furniture */
+.card.peek .grip,.card.peek .ctl,.card.peek .acts{display:none}
+.card.peek.reserve .acts{display:flex;visibility:hidden}
+.card.peek.reserve .ctl{display:flex;visibility:hidden}
+.card.peek .mini{cursor:default}
+.gone-note{padding:4px 8px;color:var(--warn);font-size:11.5px}
+.det{position:fixed;z-index:40}
+.det.dock,.det.pin{position:relative;width:auto;margin:3px 4px 5px 20px;box-shadow:none}
+.det.pin{margin:3px 2px 6px}
+.det.dragging{opacity:.85;z-index:60;cursor:grabbing}
+/* prototype chrome: deliberately not Wheelhouse-styled */
+#knobs{position:fixed;right:10px;top:40px;width:250px;background:#f4f1e8;color:#222;border-radius:8px;padding:8px 10px;font:12px system-ui;box-shadow:0 4px 16px #0008;z-index:70;user-select:none}
+#knobs h3{margin:0 0 6px;font-size:12px;display:flex;justify-content:space-between}
+#knobs label{display:flex;justify-content:space-between;align-items:center;gap:6px;margin:3px 0}
+#knobs input[type=number]{width:62px}
+#knobs button{font:11.5px system-ui;margin:2px 0}
+#knobs .st{margin-top:6px;padding:6px;background:#fff;border-radius:4px;font:11px ui-monospace,Menlo,monospace;white-space:pre-wrap;min-height:90px}
+#knobs.min>*:not(h3){display:none}
+#bar{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;background:#f4f1e8;color:#222;border-radius:20px;padding:5px 8px;font:12.5px system-ui;box-shadow:0 4px 16px #0009;z-index:80}
+#bar button{border:none;background:#2222;border-radius:50%;width:24px;height:24px;cursor:pointer}
+#corr{position:fixed;inset:0;pointer-events:none;z-index:45}
+#measure{position:absolute;visibility:hidden;white-space:nowrap;left:-9999px;top:0}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar"><div id="resize" title="Drag to resize the sidebar"></div><div id="sb"></div></div>
+  <div id="work">
+    <div id="tabs"><div class="t">▸ crew-kiwi-1</div></div>
+    <div id="term" tabindex="0"></div>
+  </div>
+</div>
+<div id="hc" class="card peek" tabindex="-1"></div>
+<canvas id="corr"></canvas>
+<div id="measure"></div>
+<div id="knobs">
+  <h3>Prototype controls <a href="#" id="kmin">–</a></h3>
+  <label>Card placement <select id="k-place"><option value="near">near (overlaps sidebar)</option><option value="out">outside sidebar</option></select></label>
+  <label>First delay ms <input type="number" id="k-delay" value="300" step="50"></label>
+  <label>Warm window ms <input type="number" id="k-warm" value="600" step="50"></label>
+  <label>Glide ms <input type="number" id="k-glide" value="100" step="20"></label>
+  <label>Engaged grace ms <input type="number" id="k-grace" value="400" step="50"></label>
+  <label>Safe corridor <input type="checkbox" id="k-corr" checked></label>
+  <label>Draw corridor <input type="checkbox" id="k-corrdraw"></label>
+  <label>Reserve action space in peek <input type="checkbox" id="k-reserve"></label>
+  <label>Pinned section <select id="k-pinpos"><option value="bottom">bottom</option><option value="top">top</option></select></label>
+  <button id="k-land">Simulate: "Hover cards" convoy lands</button>
+  <button id="k-reset">Reset data</button>
+  <div class="st" id="state"></div>
+</div>
+<div id="bar"><button id="vprev">‹</button><span id="vlabel"></span><button id="vnext">›</button></div>
+
+<script>
+// ---------- icons ----------
+const P = {
+  project:'M1.5 4h4.5l1.5 1.5h7v7.5h-13z',
+  convoy:'M2.5 4h1.5M2.5 8h1.5M2.5 12h1.5M6.5 4h7M6.5 8h7M6.5 12h7',
+  vessel:'M2 3h12v8H2zM5.5 14h5M8 11v3',
+  change_request:'M4 2.5v11M12 13.5V6.5c0-1.5-1-2.5-2.5-2.5H7M8.5 2.5 7 4l1.5 1.5',
+  issue:'M8 2.5a5.5 5.5 0 1 1 0 11a5.5 5.5 0 1 1 0-11M8 7.5v1',
+  monitor:'M2 3h12v8H2zM6 14h4M8 11v3',
+  terminal:'M2 3h12v10H2zM4.5 6.5l2 1.5-2 1.5M8 10h3',
+  role:'M8 1.5l5.5 2v4c0 3.5-2.5 5.5-5.5 7-3-1.5-5.5-3.5-5.5-7v-4z',
+  workspace:'M2 3h12v10H2zM2 6h12',
+  ext:'M9 2.5h4.5V7M13.5 2.5 7 9M11.5 9.5v4h-9v-9h4',
+  copy:'M5 5h8.5v8.5H5zM2.5 11V2.5H11',
+  pin:'M6 2.5h4l-.5 4 2.5 2.5H4l2.5-2.5zM8 9v4.5',
+  dock:'M2.5 13.5h11M8 2.5v8M5 7.5l3 3 3-3',
+  float:'M3 5h8v8H3zM6 2.5h7.5V10',
+  close:'M4 4l8 8M12 4l-8 8',
+  attach:'M5 3.5l7 4.5-7 4.5z',
+};
+const ic = k => `<svg class="i" viewBox="0 0 16 16"><path d="${P[k]||P.workspace}"/></svg>`;
+
+// ---------- data ----------
+const RD = {
+  ready_to_merge:{g:'✓',c:'good',t:'Ready to merge',att:true},
+  ci_failing:{g:'✕',c:'bad',t:'CI failing',att:true},
+  awaiting_review_response:{g:'↩',c:'warn',t:'Review response',att:false},
+  awaiting_review:{g:'◷',c:'muted',t:'Awaiting review',att:false},
+  checks_pending:{g:'◌',c:'muted',t:'Checks running',att:false},
+  open:{g:'○',c:'issue',t:'Open',att:false},
+};
+function freshData(){ return {
+  proj:{kind:'project',label:'wheelhouse',facts:[['Convoys','4'],['Vessels','6'],['Repositories','3']],related:['gov'],ws:['ws_over','gov']},
+  gov:{kind:'role',label:'governor',title:'governor',badge:['Active','good'],summary:'Watching merges and dispatching follow-ups',facts:[['Phase','active','4m'],['Current attempt','governor-2026-10-04'],['Held','no']],related:['proj'],chipAtt:false},
+  ws_over:{kind:'workspace',label:'Project overview',title:'Project overview',badge:['Open','muted'],facts:[['Views','overview TUI, governor'],['Last activity','12m','12m',null,true]],related:['proj'],chipIcon:'monitor',chipAtt:false},
+  c1:{kind:'convoy',label:'Ship sidebar subjects for convoys',medium:'Sidebar subjects',short:'sb-subjects',status:'active',badge:['Active','good'],summary:'Waiting on review response for !2508',
+      facts:[['Phase','active','2m'],['Host','kiwi'],['Branch','convoy/sidebar-subjects']],subjects:['pr281','c1000','pr2508','i137'],vessels:['v1','v2'],ws:['ws_c1'],related:['pr281','c1000','pr2508','i137','v1','v2','proj']},
+  c2:{kind:'convoy',label:'Fix precise scrolling through nested lists',medium:'Precise scrolling',short:'scroll',status:'idle',badge:['Idle','muted'],summary:'Vessel idle after pushing !150',
+      facts:[['Phase','active','40m','',true],['Host','feta'],['Branch','convoy/precise-scroll']],subjects:['pr150','i117'],vessels:['v3'],ws:[],related:['pr150','i117','v3','proj']},
+  c3:{kind:'convoy',label:'Hover cards with peek and engaged states',medium:'Hover cards',short:'cards',status:'stalled',badge:['Stalled','warn'],summary:'Checkout blocked: Forgejo clone could not authenticate',
+      facts:[['Phase','provisioning','6m'],['Host','kiwi'],['Blocker','checkout auth']],subjects:['i165'],vessels:['v4'],ws:['ws_c3'],related:['i165','v4','proj']},
+  c4:{kind:'convoy',label:'Adopt Cleat output-cycle admission',medium:'Cleat admission',short:'cleat-adm',status:'active',badge:['Active','good'],summary:'Two PRs across wheelhouse and cleat',
+      facts:[['Phase','active','1m'],['Host','feta'],['Repos','wheelhouse, cleat']],subjects:['pr97','cl268','i97'],vessels:['v5'],ws:['ws_c4'],related:['pr97','cl268','i97','v5','proj']},
+  pr281:{kind:'change_request',ref:'!281',title:'Render convoy subjects, readiness and role attempts',rd:'ready_to_merge',facts:[['State','open','3m'],['CI','✓ pass','3m'],['Review','approved','1h'],['Mergeable','yes','3m']],related:['c1','i137'],url:'https://github.com/flotilla-org/wheelhouse/pull/281'},
+  c1000:{kind:'change_request',ref:'c!1000',title:'Publish subject edges from the session actor',rd:'ci_failing',facts:[['State','open','5m'],['CI','✕ 2 failing','12m'],['Review','none'],['Mergeable','yes','12m']],related:['c1'],url:'https://github.com/flotilla-org/cleat/pull/1000'},
+  pr2508:{kind:'change_request',ref:'!2508',title:'Lift standing-role facts onto the role entity',rd:'awaiting_review_response',facts:[['State','open','2h'],['CI','✓ pass','2h','',true],['Review','changes requested','50m'],['Mergeable','yes','2h','',true]],related:['c1','i137'],url:'https://github.com/flotilla-org/flotilla/pull/2508'},
+  i137:{kind:'issue',ref:'#137',title:'Sidebar: render convoy PRs/issues via subject edges',rd:'open',facts:[['State','open','1d'],['Updated','3h']],related:['c1','pr281','pr2508'],url:'https://github.com/flotilla-org/wheelhouse/issues/137'},
+  pr150:{kind:'change_request',ref:'!150',title:'Preserve precise scrolling through nested lists',rd:'awaiting_review',facts:[['State','open','40m'],['CI','✓ pass','38m'],['Review','pending']],related:['c2','i117'],url:'https://github.com/flotilla-org/wheelhouse/pull/150'},
+  i117:{kind:'issue',ref:'#117',title:'Port RAD scrollbar interaction and styling follow-ups',rd:'open',facts:[['State','open','5d'],['Updated','1d']],related:['c2','pr150'],url:'https://github.com/flotilla-org/wheelhouse/issues/117'},
+  i165:{kind:'issue',ref:'#165',title:'Structured hover cards with peek and engaged states',rd:'open',facts:[['State','open','2h'],['Updated','2h']],related:['c3'],url:'https://github.com/flotilla-org/wheelhouse/issues/165'},
+  pr97:{kind:'change_request',ref:'!97',title:'Bump CLEAT_REV past #268 and roll out the restart boundary',rd:'checks_pending',facts:[['State','open','1m'],['CI','◌ running','1m'],['Review','none']],related:['c4','cl268','i97'],url:'https://github.com/flotilla-org/wheelhouse/pull/97'},
+  cl268:{kind:'change_request',ref:'cl!268',title:'Output-cycle admission',rd:'awaiting_review',facts:[['State','open','3h'],['CI','✓ pass','3h','',true],['Review','pending']],related:['c4','pr97'],url:'https://github.com/flotilla-org/cleat/pull/268'},
+  i97:{kind:'issue',ref:'#97',title:'Adopt Cleat output-cycle admission',rd:'open',facts:[['State','open','7d']],related:['c4','pr97'],url:'https://github.com/flotilla-org/wheelhouse/issues/97'},
+  v1:{kind:'vessel',label:'crew-kiwi-1',status:'active',badge:['Working','good'],summary:'Addressing review comments on !2508',facts:[['Agent','claude-code:opus'],['Host','kiwi'],['Last output','20s']],related:['c1','proj']},
+  v2:{kind:'vessel',label:'crew-kiwi-2',status:'idle',badge:['Idle','muted'],facts:[['Agent','codex'],['Host','kiwi'],['Last output','1h','1h','',true]],related:['c1','proj']},
+  v3:{kind:'vessel',label:'crew-feta-1',status:'idle',badge:['Idle','muted'],facts:[['Agent','claude-code:opus'],['Host','feta']],related:['c2','proj']},
+  v4:{kind:'vessel',label:'crew-kiwi-3',status:'stalled',badge:['Stalled','warn'],summary:'Waiting for checkout',facts:[['Agent','claude-code:opus'],['Host','kiwi']],related:['c3','proj']},
+  v5:{kind:'vessel',label:'crew-feta-2',status:'active',badge:['Working','good'],facts:[['Agent','codex'],['Host','feta'],['Last output','5s']],related:['c4','proj']},
+  ws_c1:{kind:'workspace',label:'Workspace',title:'Sidebar subjects workspace',badge:['Open · activity','warn'],facts:[['Views','crew-kiwi-1 terminal, diff'],['Last activity','20s']],related:['c1'],chipIcon:'terminal',chipAtt:true},
+  ws_c3:{kind:'workspace',label:'Workspace',title:'Hover cards workspace',badge:['Open','muted'],facts:[['Views','crew-kiwi-3 terminal'],['Last activity','6m']],related:['c3'],chipIcon:'terminal',chipAtt:false},
+  ws_c4:{kind:'workspace',label:'Workspace',title:'Cleat admission workspace',badge:['Open','muted'],facts:[['Views','crew-feta-2 terminal'],['Last activity','2m']],related:['c4'],chipIcon:'terminal',chipAtt:false},
+};}
+let E = freshData();
+let convoys = ['c1','c2','c3','c4'];
+const ref = id => E[id].ref || E[id].label;
+
+// ---------- knobs / variant ----------
+const K = {place:'near',delay:300,warm:600,glide:100,grace:400,corr:true,corrdraw:false,reserve:false,pinpos:'bottom'};
+const VARIANTS = [['A','Pill chips'],['B','Bare coloured refs'],['C','Glyph only']];
+let variant = new URLSearchParams(location.search).get('variant') || 'A';
+function setVariant(v){ variant=v; const u=new URL(location); u.searchParams.set('variant',v); history.replaceState(null,'',u);
+  document.getElementById('vlabel').textContent = v+' — '+VARIANTS.find(x=>x[0]===v)[1]; chipW={}; renderSidebar(); }
+function cycle(d){ const i=VARIANTS.findIndex(x=>x[0]===variant); setVariant(VARIANTS[(i+d+VARIANTS.length)%VARIANTS.length][0]); }
+document.getElementById('vprev').onclick=()=>cycle(-1); document.getElementById('vnext').onclick=()=>cycle(1);
+
+// ---------- measuring ----------
+const M = document.getElementById('measure');
+let chipW = {};
+function textW(s){ M.className='v-'+variant; M.innerHTML=`<span style="font:13px 'Segoe UI',system-ui,-apple-system,sans-serif">${s}</span>`; return M.firstChild.offsetWidth; }
+function htmlW(h,key){ if(chipW[key]!=null) return chipW[key]; M.className='v-'+variant; M.innerHTML=h; return chipW[key]=M.firstElementChild.offsetWidth; }
+
+// ---------- chips & row layout ----------
+function subjChip(id, path){ const r=RD[E[id].rd];
+  return {id, att:r.att, subj:true, html:`<span class="chip subj c-${r.c}" data-hover="${id}" data-path='${JSON.stringify(path)}'><b>${r.g}</b><span class="ref">${E[id].ref}</span></span>`}; }
+function wsChip(id, path){ const e=E[id];
+  return {id, att:!!e.chipAtt, subj:false, html:`<span class="chip ws" data-hover="${id}" data-path='${JSON.stringify(path)}'>${ic(e.chipIcon||'role')}${e.chipAtt?'<i class="act"></i>':''}</span>`}; }
+const moreHtml = (n,host,path) => `<span class="chip more" data-hover="${host}" data-path='${JSON.stringify(path)}'>+${n}</span>`;
+const GAP=4;
+function layoutRow(names, chips, avail, hostId, path){
+  chips.forEach(c=>c.w=htmlW(c.html,c.id));
+  const cw=(list,nf)=>list.reduce((a,c)=>a+c.w+GAP,0)+(nf?htmlW(moreHtml(nf,hostId,path),'more'+nf)+GAP:0);
+  const all=cw(chips,0);
+  for(const n of names) if(textW(n)+all<=avail) return {name:n,width:null,shown:chips,folded:[]};
+  const minW=textW('abcdefghij'); let shown=chips.slice(), folded=[];
+  const pick=()=>{ for(let i=shown.length-1;i>=0;i--) if(!shown[i].att&&shown[i].subj) return i;
+                   for(let i=shown.length-1;i>=0;i--) if(!shown[i].att) return i; return -1; };
+  while(avail-cw(shown,folded.length)<minW){ const i=pick(); if(i<0) break; folded.unshift(shown.splice(i,1)[0]); }
+  const room=Math.max(avail-cw(shown,folded.length),24);
+  const fit=names.find(n=>textW(n)<=room);
+  return {name:fit||names[names.length-1],width:fit?null:room,shown,folded};
+}
+function rowHtml({key,depth,kind,icon,names,chips=[],status,hostId,path,cls='',twisty=''}){
+  const w=sbWidth-8-8; // section padding + tint inset
+  const avail=w-depth*14-14-20-16-8-4;
+  const L=layoutRow(names,chips,avail,hostId,path);
+  let ch=''; let moreDone=false;
+  const lastSubj = L.shown.map(c=>c.subj).lastIndexOf(true);
+  L.shown.forEach((c,i)=>{ ch+=c.html; if(i===lastSubj && L.folded.length){ch+=moreHtml(L.folded.length,hostId,path); moreDone=true;} });
+  if(L.folded.length&&!moreDone) ch=moreHtml(L.folded.length,hostId,path)+ch;
+  return `<div class="row ${cls}" data-rowkey="${key}" data-hover="${hostId}" data-path='${JSON.stringify(path)}' style="padding-left:${depth*14}px">
+    <span class="tw">${twisty}</span><span class="ic">${ic(icon)}</span>
+    <span class="nm" ${L.width?`style="width:${L.width}px"`:''}>${L.name}</span><span class="sp"></span>
+    <span class="chips">${ch}</span><span class="st">${status?`<i class="dot ${status}"></i>`:''}</span></div>`;
+}
+
+// ---------- sidebar ----------
+let sbWidth=330; let selKey=null;
+const sb=document.getElementById('sb');
+function renderSidebar(){
+  document.getElementById('sidebar').style.width=sbWidth+'px';
+  sb.className='v-'+variant; sb.style.cssText='display:flex;flex-direction:column;height:100%';
+  let projRows=rowHtml({key:'proj',depth:0,kind:'project',icon:'project',names:[E.proj.label],chips:E.proj.ws.map(id=>wsChip(id,['proj'])),hostId:'proj',path:[],cls:'proj',twisty:'⌄'});
+  for(const c of convoys){ const e=E[c]; const p=['proj',c];
+    const chips=[...e.subjects.map(s=>subjChip(s,p)), ...e.ws.map(w=>wsChip(w,p))];
+    projRows+=rowHtml({key:c,depth:1,kind:'convoy',icon:'convoy',names:[e.label,e.medium,e.short],chips,status:e.status,hostId:c,path:['proj'],twisty:'⌄'});
+    for(const v of e.vessels) projRows+=rowHtml({key:v,depth:2,kind:'vessel',icon:'vessel',names:[E[v].label],status:E[v].status,hostId:v,path:['proj',c]});
+  }
+  const attIds=Object.keys(E).filter(id=>E[id].kind==='change_request'&&RD[E[id].rd].att&&!E[id].gone);
+  let att=attIds.map(id=>{const r=RD[E[id].rd]; return `<div class="row" data-rowkey="att-${id}" data-hover="${id}" data-path='[]' style="padding-left:6px"><span class="ic">${ic('change_request')}</span><span class="nm">${E[id].ref}</span><span class="att-r c-${r.c}">${r.g} ${r.t}</span></div>`;}).join('');
+  att+=`<div class="row" data-rowkey="att-v1" data-hover="v1" data-path='[]' style="padding-left:6px"><span class="ic">${ic('vessel')}</span><span class="nm">crew-kiwi-1 · Sidebar subjects</span><span class="sp"></span><span class="st"><i class="dot active"></i></span></div>`;
+  const pinned=dets.filter(d=>d.mode==='pin');
+  const pinSec=`<div class="sec" id="pinsec" style="max-height:45%"><div class="sec-h">⌄ Pinned<span class="n">${pinned.length}</span></div><div class="sec-b" id="pinbody">${pinned.length?'':'<div style="color:var(--faint);padding:4px 8px;font-size:12px">Drag a card here, or press its pin.</div>'}</div></div>`;
+  sb.innerHTML=(K.pinpos==='top'?pinSec:'')+
+    `<div class="sec grow"><div class="sec-h">⌄ Projects<span class="n">1</span></div><div class="sec-b"><div class="tint">${projRows}</div></div></div>`+
+    `<div class="sec" style="max-height:30%"><div class="sec-h">⌄ Attention<span class="n">${attIds.length+1}</span></div><div class="sec-b">${att}</div></div>`+
+    (K.pinpos==='bottom'?pinSec:'')+
+    `<div style="flex:none;border-top:1px solid var(--line);padding:4px 6px;color:var(--dim);font-size:12px">Issues · Show finished · Role attempts</div>`;
+  if(selKey){ const r=sb.querySelector(`[data-rowkey="${selKey}"]`); r&&r.classList.add('sel'); }
+  // re-seat docked and pinned cards
+  for(const d of dets){
+    if(d.mode==='dock'){ const r=sb.querySelector(`[data-rowkey="${d.rowKey}"]`); if(r) r.after(d.el); else { closeDet(d,'source row gone'); } }
+    if(d.mode==='pin') document.getElementById('pinbody').appendChild(d.el);
+  }
+  if(hc.state!=='idle') hideCard(false);
+}
+
+// resize
+const rz=document.getElementById('resize');
+rz.onpointerdown=e=>{ rz.setPointerCapture(e.pointerId); rz.classList.add('on');
+  rz.onpointermove=ev=>{ sbWidth=Math.max(170,Math.min(560,ev.clientX)); renderSidebar(); };
+  rz.onpointerup=()=>{ rz.onpointermove=null; rz.classList.remove('on'); }; };
+
+// ---------- card rendering ----------
+function cardInner(id, ctx){
+  const e=E[id]; const r=e.rd?RD[e.rd]:null;
+  const badge=r?[r.t,r.c]:(e.badge||null);
+  const excl=new Set([...ctx.path, ...ctx.hist, id]);
+  const rel=(e.related||[]).filter(x=>!excl.has(x)&&E[x]&&!E[x].gone);
+  const kindIcon=e.kind==='workspace'?(e.chipIcon||'workspace'):e.kind;
+  const ctl=ctx.mode==='peek'||ctx.mode==='engaged'
+    ? `<button data-a="float" title="Float">${ic('float')}</button><button data-a="dock" title="Dock under row">${ic('dock')}</button><button data-a="pin" title="Pin">${ic('pin')}</button><button data-a="close" title="Close">${ic('close')}</button>`
+    : ['float','dock','pin'].filter(m=>m!==ctx.mode).map(m=>`<button data-a="${m}" title="${m}">${ic(m)}</button>`).join('')+`<button data-a="close" title="Close">${ic('close')}</button>`;
+  return `<div class="inner ${ctx.xf?'xf':''}">
+   <div class="ch" data-drag="1"><span class="grip">⋮⋮</span>${ctx.hist.length?`<button class="back" data-a="back" title="Back">‹</button>`:''}
+     <span style="color:var(--dim)">${ic(kindIcon)}</span><span class="ref">${e.ref||e.kind}</span>
+     ${badge?`<span class="badge c-${badge[1]}">${badge[0]}</span>`:'<span style="margin-left:auto"></span>'}<span class="ctl">${ctl}</span></div>
+   <div class="ct">${e.title||e.label}</div>
+   ${e.gone?'<div class="gone-note">No longer present (landed)</div>':''}
+   ${e.summary?`<div class="cs">${e.summary}</div>`:''}
+   ${e.facts?`<div class="facts">${e.facts.map(([k,v,age,_,stale])=>`<span class="k ${stale?'stale':''}">${k}</span><span class="${stale?'stale':''}">${v}${age?`<i class="age">${age}</i>`:''}</span>`).join('')}</div>`:''}
+   ${rel.length?`<div class="rel">${rel.map(x=>{const o=E[x]; const rr=o.rd?RD[o.rd]:null;
+      return `<div class="mini" data-nav="${x}"><span style="color:var(--dim)">${ic(o.kind==='workspace'?'workspace':o.kind)}</span><span>${o.ref||o.label}</span><span class="mt">${o.ref?o.title:''}</span>${rr?`<span class="mr c-${rr.c}">${rr.g}</span>`:o.status?`<span class="mr"><i class="dot ${o.status}" style="display:inline-block"></i></span>`:''}</div>`;}).join('')}</div>`:''}
+   <div class="acts">${e.url?`<button data-a="open">${ic('ext')} Open</button><button data-a="copy">${ic('copy')} Copy URL</button>`:''}${['convoy','vessel','workspace','role'].includes(e.kind)?`<button data-a="attach">${ic('attach')} Attach</button>`:''}${e.kind==='project'?`<button data-a="attach">${ic('monitor')} Overview</button>`:''}</div>
+  </div>`;
+}
+
+// ---------- hover card state machine ----------
+const HC=document.getElementById('hc');
+const hc={state:'idle',el:null,id:null,path:[],hist:[],focused:false,rowKey:null};
+let openT=null,closeT=null,switchT=null,graceT=null,openTarget=null,warmUntil=0,lastTgt=null;
+const clr=()=>{clearTimeout(openT);clearTimeout(closeT);clearTimeout(switchT);clearTimeout(graceT);openT=closeT=switchT=graceT=null;};
+function rowKeyOf(el){ const r=el.closest('[data-rowkey]'); return r&&r.dataset.rowkey; }
+function place(el){
+  const rr=el.getBoundingClientRect(); const sr=document.getElementById('sidebar').getBoundingClientRect();
+  let left;
+  if(K.place==='near'){ const anchor=el.classList.contains('row')?(el.querySelector('.nm')||el):el; left=anchor.getBoundingClientRect().right+8; }
+  else left=sr.right+6;
+  let top=rr.top-6; HC.style.left=left+'px';
+  const h=HC.offsetHeight||200; top=Math.max(6,Math.min(top,innerHeight-h-8)); HC.style.top=top+'px';
+}
+function renderHC(xf){ HC.innerHTML=cardInner(hc.id,{path:hc.path,hist:hc.hist,mode:hc.state,xf});
+  HC.className='card '+(hc.state==='peek'?'peek':'engaged')+(K.reserve?' reserve':'')+(hc.state!=='idle'?' on':'')+(hc.focused?' focused':''); }
+function showCard(el){
+  const first=hc.state==='idle';
+  clr(); hc.el=el; hc.id=el.dataset.hover; hc.path=JSON.parse(el.dataset.path||'[]'); hc.hist=[]; hc.state='peek'; hc.focused=false; hc.rowKey=rowKeyOf(el);
+  if(first){ HC.classList.add('noanim'); renderHC(false); place(el); void HC.offsetWidth; HC.classList.remove('noanim'); }
+  else { renderHC(true); place(el); }
+  HC.classList.add('on'); status();
+}
+function hideCard(warm=true){ clr(); if(document.activeElement===HC) HC.blur(); hc.state='idle'; hc.focused=false; HC.className='card peek'; if(warm) warmUntil=performance.now()+K.warm; status(); }
+function engage(){ if(hc.state!=='peek') return; hc.state='engaged'; HC.classList.remove('peek'); HC.classList.add('engaged'); renderHC(false); status(); }
+
+// pointer history for the corridor
+const pts=[];
+function heading(pt){
+  if(hc.state==='idle') return false;
+  const now=performance.now(); let a=null;
+  for(let i=pts.length-1;i>=0;i--) if(now-pts[i].t>=40){a=pts[i];break;}
+  if(!a) a=pts[0]; if(!a) return false;
+  const c=HC.getBoundingClientRect(); const nx=c.left>=a.x?c.left:c.right;
+  const b={x:nx,y:c.top-10}, d={x:nx,y:c.bottom+10};
+  corr={a,b,d};
+  const s=(p,q,r)=>(p.x-r.x)*(q.y-r.y)-(q.x-r.x)*(p.y-r.y);
+  const d1=s(pt,a,b),d2=s(pt,b,d),d3=s(pt,d,a);
+  return !((d1<0||d2<0||d3<0)&&(d1>0||d2>0||d3>0));
+}
+let corr=null; const CV=document.getElementById('corr'); const cx=CV.getContext('2d');
+function drawCorr(){ CV.width=innerWidth; CV.height=innerHeight; cx.clearRect(0,0,CV.width,CV.height);
+  if(!K.corrdraw||!corr||hc.state==='idle') return; cx.fillStyle='#e0b34a33'; cx.strokeStyle='#e0b34a';
+  cx.beginPath(); cx.moveTo(corr.a.x,corr.a.y); cx.lineTo(corr.b.x,corr.b.y); cx.lineTo(corr.d.x,corr.d.y); cx.closePath(); cx.fill(); cx.stroke(); }
+
+let dragging=null;
+document.addEventListener('pointermove',e=>{
+  const pt={x:e.clientX,y:e.clientY,t:performance.now()}; pts.push(pt); while(pts.length>12) pts.shift();
+  if(dragging) return;
+  const inCard=!!e.target.closest('#hc');
+  const inDet=!!e.target.closest('.det');
+  const tgt=(inCard||inDet)?null:e.target.closest('[data-hover]');
+  lastTgt=tgt;
+  if(hc.state==='peek'){
+    if(inCard){ clr(); engage(); }
+    else if(tgt&&tgt===hc.el){ clearTimeout(closeT);closeT=null;clearTimeout(switchT);switchT=null; }
+    else if(tgt){ const h=K.corr&&heading(pt); clearTimeout(closeT);closeT=null; clearTimeout(switchT);
+      if(h) switchT=setTimeout(()=>{ if(lastTgt===tgt&&hc.state==='peek') showCard(tgt); },220); else showCard(tgt); }
+    else { const h=K.corr&&heading(pt); if(!closeT) closeT=setTimeout(()=>hideCard(),h?350:120); }
+  } else if(hc.state==='engaged'){
+    if(inCard){ clearTimeout(graceT); graceT=null; }
+    else if(!hc.focused&&!graceT) graceT=setTimeout(()=>{ hideCard(); if(lastTgt) showCard(lastTgt); },K.grace);
+  } else {
+    if(tgt){ if(performance.now()<warmUntil) showCard(tgt);
+      else if(openTarget!==tgt){ clearTimeout(openT); openTarget=tgt; openT=setTimeout(()=>{ if(lastTgt===tgt) showCard(tgt); openTarget=null; },K.delay); } }
+    else { clearTimeout(openT); openT=null; openTarget=null; }
+  }
+  drawCorr(); status();
+});
+
+// ---------- detached cards ----------
+let dets=[]; let detSeq=0;
+// one pinned card per entity: pinning again reveals the existing one
+function pinnedTwin(id,self){ const t=dets.find(x=>x.mode==='pin'&&x.id===id&&x!==self); if(!t) return null;
+  t.el.scrollIntoView({block:'nearest'}); t.el.animate([{borderColor:'#e0b34a'},{borderColor:'#4a4a4a'}],{duration:900}); note(`${ref(id)} is already pinned`); return t; }
+function makeDet(fromHC, mode, rect){
+  if(mode==='pin'&&pinnedTwin(hc.id)){ hideCard(false); return null; }
+  const d={n:++detSeq,id:hc.id,path:hc.path.slice(),hist:hc.hist.slice(),rowKey:hc.rowKey,mode,el:document.createElement('div')};
+  d.el.className='card det'; d.el.tabIndex=-1; dets.push(d);
+  if(mode==='float'){ document.body.appendChild(d.el); d.el.style.left=rect.left+'px'; d.el.style.top=rect.top+'px'; }
+  hideCard(false); renderDet(d); if(mode!=='float') renderSidebar(); return d;
+}
+function renderDet(d,xf){ d.el.className='card det '+d.mode; d.el.innerHTML=cardInner(d.id,{path:d.path,hist:d.hist,mode:d.mode,xf}); }
+function setMode(d,mode){
+  if(mode==='pin'&&pinnedTwin(d.id,d)){ closeDet(d); return; }
+  const r=d.el.getBoundingClientRect(); d.mode=mode; d.el.style.left=d.el.style.top='';
+  if(mode==='float'){ document.body.appendChild(d.el); d.el.style.left=Math.min(r.left+24,innerWidth-320)+'px'; d.el.style.top=r.top+'px'; }
+  renderDet(d); renderSidebar(); status();
+}
+function closeDet(d,why){ d.el.remove(); dets=dets.filter(x=>x!==d); if(why) note(`docked card ${ref(d.id)} closed: ${why}`); status(); }
+
+// actions, navigation, focus
+let lastNote='';
+function note(s){ lastNote=s; status(); }
+document.addEventListener('pointerdown',e=>{
+  const card=e.target.closest('.card');
+  if(!card){ if(hc.state!=='idle'&&hc.focused) hideCard(); return; }
+  const isHC=card===HC; const d=isHC?null:dets.find(x=>x.el===card);
+  const btn=e.target.closest('[data-a]'); const nav=e.target.closest('[data-nav]');
+  if(isHC){ hc.focused=true; HC.classList.add('focused'); HC.focus(); clearTimeout(graceT); graceT=null; } else card.focus();
+  if(btn){ e.preventDefault(); const a=btn.dataset.a;
+    if(a==='back'){ const s=isHC?hc:d; s.id=s.hist.pop(); isHC?renderHC(true):renderDet(d,true); }
+    else if(a==='close'){ isHC?hideCard():closeDet(d); }
+    else if(['float','dock','pin'].includes(a)){ if(isHC) makeDet(true,a,HC.getBoundingClientRect()); else setMode(d,a); }
+    else note(`would ${a}: ${E[(isHC?hc:d).id].url||ref((isHC?hc:d).id)}`);
+    status(); return; }
+  if(nav){ const s=isHC?hc:d; if(isHC&&hc.state==='peek') return;
+    if(e.altKey||e.metaKey||e.ctrlKey){ const r=card.getBoundingClientRect(); const save={...hc};
+      hc.id=nav.dataset.nav; hc.hist=[]; hc.path=s.path; hc.rowKey=s.rowKey; const nd=makeDet(false,'float',{left:Math.min(r.right+8,innerWidth-310),top:r.top});
+      if(!isHC) {} return; }
+    s.hist.push(s.id); s.id=nav.dataset.nav; isHC?renderHC(true):renderDet(d,true); status(); return; }
+  if(e.target.closest('[data-drag]')) startDrag(e,isHC?null:d);
+});
+function startDrag(e,d){
+  if(!d){ if(hc.state==='peek') return; d=makeDet(true,'float',HC.getBoundingClientRect()); if(!d) return; }
+  else if(d.mode!=='float'){ const r=d.el.getBoundingClientRect(); d.mode='float'; document.body.appendChild(d.el); d.el.style.left=r.left+'px'; d.el.style.top=r.top+'px'; renderDet(d); renderSidebar(); }
+  const r=d.el.getBoundingClientRect(); const ox=e.clientX-r.left, oy=e.clientY-r.top;
+  dragging=d; d.el.classList.add('dragging');
+  const mv=ev=>{ d.el.style.left=(ev.clientX-ox)+'px'; d.el.style.top=(ev.clientY-oy)+'px';
+    d.el.style.pointerEvents='none'; const under=document.elementFromPoint(ev.clientX,ev.clientY); d.el.style.pointerEvents='';
+    document.getElementById('pinsec').classList.toggle('drop-hot',!!(under&&under.closest('#pinsec')));
+    sb.querySelectorAll('.row.sel-drop').forEach(x=>x.style.outline='');
+    const row=under&&under.closest(`[data-rowkey="${d.rowKey}"]`); if(row) row.style.outline='1px dashed var(--accent)'; d._dropRow=!!row; d._dropPin=!!(under&&under.closest('#pinsec'));
+    if(row) row.classList.add('sel-drop'); };
+  const up=()=>{ removeEventListener('pointermove',mv); removeEventListener('pointerup',up); dragging=null; d.el.classList.remove('dragging');
+    sb.querySelectorAll('.row.sel-drop').forEach(x=>{x.style.outline='';x.classList.remove('sel-drop');});
+    document.getElementById('pinsec')?.classList.remove('drop-hot');
+    if(d._dropPin) setMode(d,'pin'); else if(d._dropRow) setMode(d,'dock'); status(); };
+  addEventListener('pointermove',mv); addEventListener('pointerup',up);
+}
+
+// clicks on rows and chips
+sb.addEventListener('click',e=>{ if(e.target.closest('.card')) return;
+  const chip=e.target.closest('.chip'); if(chip){ const id=chip.dataset.hover; note(E[id].url?`would open ${E[id].url}`:`would activate ${ref(id)}`); return; }
+  const row=e.target.closest('[data-rowkey]'); if(row){ selKey=row.dataset.rowkey; sb.querySelectorAll('.row.sel').forEach(x=>x.classList.remove('sel')); row.classList.add('sel'); } });
+
+// escape follows focus; a toy terminal shows who received it
+const T=document.getElementById('term'); let tbuf='crew-kiwi-1 $ claude\n> addressing review comments on !2508\n> ';
+const drawT=()=>T.innerHTML=tbuf.replace(/</g,'&lt;')+'<span class="cur"> </span>'; drawT();
+document.addEventListener('keydown',e=>{
+  const a=document.activeElement;
+  if(e.key==='Escape'){
+    if(a===HC&&hc.state!=='idle'){ hideCard(); T.focus(); note('Escape → focused hover card closed'); e.preventDefault(); return; }
+    const d=dets.find(x=>x.el===a); if(d){ a.blur(); note('Escape → detached card blurred (stays open)'); return; }
+    if(a===T){ tbuf+='^['; drawT(); note('Escape → terminal'); return; }
+    note('Escape → nobody (nothing focused)'); return; }
+  if(a===T&&!e.metaKey&&!e.ctrlKey){ if(e.key.length===1){tbuf+=e.key;drawT();} else if(e.key==='Enter'){tbuf+='\n> ';drawT();} else if(e.key==='Backspace'){tbuf=tbuf.slice(0,-1);drawT();} e.preventDefault(); return; }
+  if(['INPUT','SELECT','TEXTAREA'].includes(a.tagName)) return;
+  if(e.key==='ArrowLeft') cycle(-1); if(e.key==='ArrowRight') cycle(1);
+});
+T.addEventListener('focus',status); T.addEventListener('blur',status);
+
+// ---------- knobs + state readout ----------
+const bind=(id,k,num)=>{ const el=document.getElementById(id); el.addEventListener('change',()=>{ K[k]=el.type==='checkbox'?el.checked:(num?+el.value:el.value);
+  document.documentElement.style.setProperty('--glide',K.glide+'ms'); if(k==='pinpos'||k==='reserve') renderSidebar(); drawCorr(); }); };
+bind('k-place','place'); bind('k-delay','delay',1); bind('k-warm','warm',1); bind('k-glide','glide',1); bind('k-grace','grace',1);
+bind('k-corr','corr'); bind('k-corrdraw','corrdraw'); bind('k-reserve','reserve'); bind('k-pinpos','pinpos');
+document.getElementById('kmin').onclick=e=>{e.preventDefault(); document.getElementById('knobs').classList.toggle('min');};
+document.getElementById('k-land').onclick=()=>{ if(!convoys.includes('c3')) return; convoys=convoys.filter(c=>c!=='c3'); ['c3','v4','i165','ws_c3'].forEach(i=>E[i].gone=true);
+  renderSidebar(); dets.forEach(d=>renderDet(d)); note('convoy c3 landed: docked cards under it close, pinned/floating stay'); };
+document.getElementById('k-reset').onclick=()=>{ E=freshData(); convoys=['c1','c2','c3','c4']; dets.forEach(d=>d.el.remove()); dets=[]; renderSidebar(); note('reset'); };
+function status(){
+  const a=document.activeElement; const focus=a===T?'terminal':a===HC?'hover card':dets.find(d=>d.el===a)?'detached card':'none';
+  document.getElementById('state').textContent=
+`hover:  ${hc.state}${hc.state!=='idle'?' '+ref(hc.id)+(hc.hist.length?' (nav depth '+hc.hist.length+')':''):''}
+path:   ${hc.state!=='idle'?(hc.path.map(ref).join(' › ')||'(none)'):'-'}
+timers: ${[openT&&'open',switchT&&'switch',closeT&&'close',graceT&&'grace'].filter(Boolean).join(' ')||'-'}${performance.now()<warmUntil?' warm':''}
+focus:  ${focus}
+cards:  float ${dets.filter(d=>d.mode==='float').length} · dock ${dets.filter(d=>d.mode==='dock').length} · pin ${dets.filter(d=>d.mode==='pin').length}
+sidebar ${sbWidth}px
+${lastNote}`; }
+
+setVariant(VARIANTS.some(v=>v[0]===variant)?variant:'A');
+addEventListener('resize',()=>{ renderSidebar(); drawCorr(); });
+</script>
+</body>
+</html>
