@@ -193,79 +193,91 @@ template "wheelhouse/attention-entry" {
 }
 
 // Detail fields are independent of the compact row composition.
+fragment "wheelhouse/hover-header" {
+  field "identity" structured-only=true section="header" role="identity" key="entity.id"
+  field "label" structured-only=true section="header" role="title" key="display.label"
+  field "badge" structured-only=true section="header" role="state" key="status.state"
+  field "related" structured-only=true section="related" role="relation" key="related.entities"
+  field "produces" structured-only=true section="related" role="relation" key="flotilla.subject.produces"
+  field "works-on" structured-only=true section="related" role="relation" key="flotilla.subject.works_on"
+  field "subject-of" structured-only=true section="related" role="relation" key="flotilla.subject_of"
+  field "attempt-link" structured-only=true section="related" role="relation" key="flotilla.role.current_attempt"
+}
 fragment "wheelhouse/hover-details" {
-  field "status" key="status.state" prefix="Status: "
-  field "detail" key="status.detail"
-  field "phase" key="flotilla.convoy.phase" prefix="Phase: "
-  field "host" key="flotilla.vessel.host" prefix="Host: "
-  field "repo" key="vcs.repo" prefix="Repository: "
-  field "branch" key="checkout.branch" prefix="Branch: "
-  field "path" key="checkout.path" prefix="Path: "
+  use "wheelhouse/hover-header"
+  field "status" section="facts" role="fact" label="Status" key="status.state" prefix="Status: "
+  field "detail" section="facts" role="fact" label="Detail" key="status.detail"
+  field "phase" section="facts" role="fact" label="Phase" key="flotilla.convoy.phase" prefix="Phase: "
+  field "host" section="facts" role="fact" label="Host" key="flotilla.vessel.host" prefix="Host: "
+  field "repo" section="facts" role="fact" label="Repository" key="vcs.repo" prefix="Repository: "
+  field "branch" section="facts" role="fact" label="Branch" key="checkout.branch" prefix="Branch: "
+  field "path" section="facts" role="fact" label="Path" key="checkout.path" prefix="Path: "
 }
 template "project/detail" slot="detail" node-kind="entity" {
   use "wheelhouse/hover-details"
-  field "convoys" source="metadata-display" key="count.convoys" prefix="Convoys: "
-  field "vessels" source="metadata-display" key="count.vessels" prefix="Vessels: "
-  field "issues" source="metadata-display" key="count.issues" prefix="Issues: "
-  field "checkouts" source="metadata-display" key="count.checkouts" prefix="Checkouts: "
+  field "convoys" section="facts" role="fact" label="Convoys" source="metadata-display" key="count.convoys" prefix="Convoys: "
+  field "vessels" section="facts" role="fact" label="Vessels" source="metadata-display" key="count.vessels" prefix="Vessels: "
+  field "issues" section="facts" role="fact" label="Issues" source="metadata-display" key="count.issues" prefix="Issues: "
+  field "checkouts" section="facts" role="fact" label="Checkouts" source="metadata-display" key="count.checkouts" prefix="Checkouts: "
   // Complete membership from the project definition (flotilla#1897), not
   // inferred from activity. Zero is known-empty; absence is unavailable.
-  field "repositories" source="metadata-display" key="flotilla.project.repository_count" prefix="Repositories: "
+  field "repositories" section="facts" role="fact" label="Repositories" source="metadata-display" key="flotilla.project.repository_count" prefix="Repositories: "
   for "repository" kind="project_repository" {
     match "flotilla.project" of="project"
     order "display.label"
-    field "repository" key="display.label" prefix="  "
-    field "subpath" key="flotilla.membership.subpath" prefix="    path: "
+    field "repository" section="facts" role="fact" label="" key="display.label" prefix="  "
+    field "subpath" section="facts" role="fact" label="path" key="flotilla.membership.subpath" prefix="    path: "
   }
 }
 template "role/detail" slot="detail" node-kind="entity" {
-  field "summary" key="summary.text"
-  field "role" key="flotilla.role.name" prefix="Role: "
-  field "presents" key="flotilla.role.presents_as" prefix="Presents as: "
-  field "hold" key="flotilla.role.hold" prefix="Held: "
-  field "content" key="workspace.primary.state" prefix="Attachment: "
+  field "summary" section="facts" role="fact" label="Summary" key="summary.text"
+  field "role" section="facts" role="fact" label="Role" key="flotilla.role.name" prefix="Role: "
+  field "presents" section="facts" role="fact" label="Presents as" key="flotilla.role.presents_as" prefix="Presents as: "
+  field "hold" section="facts" role="fact" label="Held" key="flotilla.role.hold" prefix="Held: "
+  field "content" section="facts" role="fact" label="Attachment" key="workspace.primary.state" prefix="Attachment: "
   for "attempt" kind="convoy" in="flotilla.role.current_attempt" of="role" {
-    field "attempt" key="display.label" prefix="Current attempt: "
-    field "phase" key="flotilla.convoy.phase" prefix="Attempt phase: "
+    field "attempt" section="facts" role="fact" label="Current attempt" key="display.label" prefix="Current attempt: "
+    field "phase" section="facts" role="fact" label="Attempt phase" key="flotilla.convoy.phase" prefix="Attempt phase: "
   }
   use "wheelhouse/hover-details"
 }
 template "convoy/detail" slot="detail" node-kind="entity" {
-  field "summary" key="summary.text"
+  field "summary" section="facts" role="fact" label="Summary" key="summary.text"
   use "wheelhouse/hover-details"
 }
 template "vessel/detail" slot="detail" node-kind="entity" {
-  field "summary" key="summary.text"
+  field "summary" section="facts" role="fact" label="Summary" key="summary.text"
   use "wheelhouse/hover-details"
 }
 template "checkout/detail" slot="detail" node-kind="entity" {
-  field "summary" key="summary.text"
+  field "summary" section="facts" role="fact" label="Summary" key="summary.text"
   use "wheelhouse/hover-details"
 }
 template "session/detail" slot="detail" node-kind="entity" {
-  field "summary" key="summary.text"
+  field "summary" section="facts" role="fact" label="Summary" key="summary.text"
   use "wheelhouse/hover-details"
 }
 template "change_request/detail" slot="detail" node-kind="entity" {
-  field "title" key="flotilla.change_request.title" prefix="Title: "
+  field "title" section="header" role="title" key="flotilla.change_request.title" prefix="Title: "
   field "title-at" key="flotilla.change_request.title.observed_at" prefix="Title observed: "
-  field "readiness" key="flotilla.change_request.readiness" prefix="Readiness: "
-  field "orphaned" key="flotilla.orphaned" prefix="Orphaned: "
-  field "state" key="flotilla.change_request.state" prefix="State: "
+  field "readiness" section="facts" role="fact" label="Readiness" key="flotilla.change_request.readiness" prefix="Readiness: "
+  field "orphaned" section="facts" role="fact" label="Orphaned" key="flotilla.orphaned" prefix="Orphaned: "
+  field "state" section="header" role="state" key="flotilla.change_request.state" prefix="State: "
   field "state-at" key="flotilla.change_request.state.observed_at" prefix="State observed: "
-  field "checks" key="flotilla.change_request.checks" prefix="Checks: "
+  field "checks" section="facts" role="fact" label="Checks" key="flotilla.change_request.checks" prefix="Checks: "
   field "checks-at" key="flotilla.change_request.checks.observed_at" prefix="Checks observed: "
-  field "review" key="flotilla.change_request.review_decision" prefix="Review: "
+  field "review" section="facts" role="fact" label="Review" key="flotilla.change_request.review_decision" prefix="Review: "
   field "review-at" key="flotilla.change_request.review_decision.observed_at" prefix="Review observed: "
-  field "mergeable" key="flotilla.change_request.mergeable" prefix="Mergeable: "
+  field "mergeable" section="facts" role="fact" label="Mergeable" key="flotilla.change_request.mergeable" prefix="Mergeable: "
   field "mergeable-at" key="flotilla.change_request.mergeable.observed_at" prefix="Mergeability observed: "
+  use "wheelhouse/hover-header"
 }
 template "issue/detail" slot="detail" node-kind="entity" {
-  field "title" key="flotilla.issue.title" prefix="Title: "
-  field "state" key="flotilla.issue.state" prefix="State: "
+  field "title" section="header" role="title" key="flotilla.issue.title" prefix="Title: "
+  field "state" section="header" role="state" key="flotilla.issue.state" prefix="State: "
   field "state-at" key="flotilla.issue.state.observed_at" prefix="State observed: "
   field "updated" key="flotilla.issue.updated_at" prefix="Updated: "
-  field "summary" key="summary.text"
+  field "summary" section="facts" role="fact" label="Summary" key="summary.text"
   use "wheelhouse/hover-details"
 }
 
@@ -296,8 +308,9 @@ template "worktree/native" {
   field "behind" class="priority" priority=20 key="git.behind" prefix="↓"
 }
 template "worktree/detail" slot="detail" node-kind="entity" {
-  field "root" key="git.root" prefix="Path: "
-  field "branch" key="git.branch" prefix="Branch: "
-  field "dirty" key="git.dirty" prefix="Dirty: "
-  field "upstream" key="git.upstream" prefix="Upstream: "
+  use "wheelhouse/hover-header"
+  field "root" section="facts" role="fact" label="Path" key="git.root" prefix="Path: "
+  field "branch" section="facts" role="fact" label="Branch" key="git.branch" prefix="Branch: "
+  field "dirty" section="facts" role="fact" label="Dirty" key="git.dirty" prefix="Dirty: "
+  field "upstream" section="facts" role="fact" label="Upstream" key="git.upstream" prefix="Upstream: "
 }

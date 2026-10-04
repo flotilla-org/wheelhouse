@@ -39,13 +39,14 @@ typedef struct UIShell_HoverCard UIShell_HoverCard;
 struct UIShell_HoverCard
 {
   Arena *arena;
-  String8 *path;
-  String8 previous, candidate, context;
+  AndamentoEntity *path;
+  AndamentoEntity previous, candidate;
+  String8 context;
   U64 depth, capacity, candidate_since, changed_at, left_at;
   UI_Key source, dismissed;
   Rng2F32 source_rect, rect;
   Vec2F32 departure, last_mouse, glide_from;
-  B32 open, engaged, focused, contains_current, source_seen, corridor_active;
+  B32 open, engaged, focused, contains_current, source_seen, corridor_active, enriched;
   F32 scroll;
 };
 
@@ -55,8 +56,8 @@ struct UIShell_SidebarState
   UIShell_HoverCard cards[2];
   Rng2F32 rect;
   B32 card_escape_down;
-  String8 card_action_key;
-  B32 card_action_copy_url;
+  AndamentoEntity card_action_target;
+  String8 card_action_intent;
   B32 card_has_action;
   Andamento *core;
   AndamentoSnapshot *snapshot;
@@ -137,7 +138,7 @@ uishell_sidebar_refresh(UIShell_SidebarState *state)
   B32 current = andamento_snapshot_is_current(state->core, state->snapshot, &error);
   if(error != 0) { uishell_sidebar_result(state, 0, error); return; }
   if(current) { return; }
-  AndamentoSnapshot *next = andamento_snapshot_acquire(state->core, &error);
+  AndamentoSnapshot *next = andamento_snapshot_acquire_details(state->core, &error);
   if(uishell_sidebar_result(state, next != 0, error))
   {
     andamento_snapshot_release(state->snapshot);
