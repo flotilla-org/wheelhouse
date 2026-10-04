@@ -693,7 +693,8 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
       andamento_snapshot_field(state->snapshot, node.first_field+2, &field);
       status = uishell_sidebar_string(field.text);
     }
-    String8 mark = node.state == ANDAMENTO_OPENING ? str8_lit("…") :
+    String8 mark = str8_match(status, str8_lit("ended"), 0) ? str8_lit("×") :
+      node.state == ANDAMENTO_OPENING ? str8_lit("…") :
       str8_match(status, str8_lit("failed"), 0) ? str8_lit("!") :
       str8_match(status, str8_lit("waiting"), 0) ? str8_lit("◷") :
       node.state == ANDAMENTO_LIVE ? str8_lit("•") : str8_zero();
@@ -1268,6 +1269,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                   UI_TextColor(color) { ui_label(badge); }
                 }
                 else if(project) { ui_spacer(ui_em(1.2f, 1)); }
+                else if(str8_match(status, str8_lit("ended"), 0)) { ui_label(str8_lit("×")); }
                 else if(node.state == ANDAMENTO_OPENING) { ui_label(str8_lit("…")); }
                 else if(str8_match(status, str8_lit("failed"), 0)) { ui_label(str8_lit("!")); }
                 else if(str8_match(status, str8_lit("waiting"), 0)) { ui_label(str8_lit("◷")); }
