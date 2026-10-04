@@ -833,7 +833,7 @@ uishell_terminal_override_appkit_diagnostics(void)
   if(provider) { cleat_provider_close(provider); }
   if(runtime_root)
   {
-    NSError *error = nil;
+    NSError *error = 0;
     ok &= [[NSFileManager defaultManager] removeItemAtPath:[NSString stringWithUTF8String:runtime_root] error:&error];
     if(error) { fprintf(stderr, "native paste cleanup failed: %s\n", [[error description] UTF8String]); }
   }
