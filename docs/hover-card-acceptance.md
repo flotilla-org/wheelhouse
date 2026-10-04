@@ -24,7 +24,8 @@ closes the card; keyboard input remains with the active window.
 Related navigation uses the snapshot's placement parents and direct children,
 including aliases in other sections. It deduplicates entities and omits every
 entity already on the path. Back restores the previous target. Cmd-click or Ctrl-click opens a second card without changing the
-original path. This second transient card supports click focus and its own
+original path. This second transient card captures its launch anchor and stays
+in place when the original navigates or closes. It supports click focus and its own
 navigation; detaching, dragging and pinning remain #166.
 
 Live entities keep the existing workspace preview demand, cached surface and

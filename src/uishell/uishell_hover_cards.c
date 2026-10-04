@@ -1,6 +1,16 @@
 // Phase 1 cards keep the ABI 2 flat detail fields. No snapshot pointers or
 // action indices survive a frame; paths own stable placement keys instead.
 global B32 uishell_hover_cards_outside;
+enum
+{
+  UIShell_HoverCardOpenDelayUS = 300000,
+  UIShell_HoverCardLeaveDelayUS = 400000,
+  UIShell_HoverCardTransitionUS = 100000,
+  UIShell_HoverCardCorridorPaddingPT = 12,
+  UIShell_HoverCardNearGapPT = 16,
+  UIShell_HoverCardInitialPathCapacity = 32,
+};
+StaticAssert(UIShell_HoverCardNearGapPT > UIShell_HoverCardCorridorPaddingPT, hover_card_scan_gap);
 
 internal U64
 uishell_sidebar_card_find(UIShell_SidebarState *state, String8 key, AndamentoNode *out)
@@ -31,7 +41,7 @@ uishell_sidebar_card_close(UIShell_HoverCard *card)
 internal B32
 uishell_sidebar_card_corridor(UIShell_HoverCard *card, Vec2F32 mouse, U64 now)
 {
-  if(!card->open || !card->left_at || now-card->left_at > 400000) { return 0; }
+  if(!card->open || !card->left_at || now-card->left_at > UIShell_HoverCardLeaveDelayUS) { return 0; }
   Vec2F32 gap = {0}, delta = sub_2f32(mouse, card->last_mouse);
   for(Axis2 axis = Axis2_X; axis < Axis2_COUNT; axis++)
   {
@@ -52,8 +62,8 @@ uishell_sidebar_card_corridor(UIShell_HoverCard *card, Vec2F32 mouse, U64 now)
   if(abs_f32(distance) < 1) { return 0; }
   F32 t = (mouse.v[axis]-card->departure.v[axis])/distance;
   if(t < 0 || t > 1) { return 0; }
-  F32 low = card->departure.v[other] + (card->rect.p0.v[other]-12-card->departure.v[other])*t;
-  F32 high = card->departure.v[other] + (card->rect.p1.v[other]+12-card->departure.v[other])*t;
+  F32 low = card->departure.v[other] + (card->rect.p0.v[other]-UIShell_HoverCardCorridorPaddingPT-card->departure.v[other])*t;
+  F32 high = card->departure.v[other] + (card->rect.p1.v[other]+UIShell_HoverCardCorridorPaddingPT-card->departure.v[other])*t;
   return mouse.v[other] >= low && mouse.v[other] <= high;
 }
 
@@ -66,7 +76,7 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, AndamentoNode node, UI_Key sou
   if(!card->arena) { card->arena = arena_alloc(); }
   arena_clear(card->arena);
   card->previous = push_str8_copy(card->arena, previous);
-  card->capacity = 32;
+  card->capacity = UIShell_HoverCardInitialPathCapacity;
   card->path = push_array(card->arena, String8, card->capacity);
   card->path[0] = push_str8_copy(card->arena, uishell_sidebar_string(node.key));
   card->depth = 1;
@@ -108,7 +118,7 @@ uishell_sidebar_card_source_at(UIShell_SidebarState *state, AndamentoNode node,
       card->candidate_since = now;
     }
   }
-  if(!card->open && now-card->candidate_since >= 300000)
+  if(!card->open && now-card->candidate_since >= UIShell_HoverCardOpenDelayUS)
   { uishell_sidebar_card_set(card, node, sig.box->key, context, contains_current, now); }
   card->source_seen = 1;
   card->source_rect = sig.box->rect;
@@ -134,7 +144,7 @@ uishell_sidebar_card_tick(UIShell_HoverCard *card, Vec2F32 mouse, U64 now)
     if(at_source && !inside) { card->departure = mouse; }
   }
   else if(!card->left_at) { card->left_at = now; }
-  if(!card->focused && card->left_at && now-card->left_at >= 400000)
+  if(!card->focused && card->left_at && now-card->left_at >= UIShell_HoverCardLeaveDelayUS)
   { uishell_sidebar_card_close(card); }
   card->corridor_active = uishell_sidebar_card_corridor(card, mouse, now);
 }
@@ -316,6 +326,9 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
       {
         UIShell_HoverCard *separate = &state->cards[1];
         uishell_sidebar_card_set(separate, related, ui_key_zero(), str8_zero(), 0, now_time_us());
+        // Capture the launch anchor: the separate card stays in place when
+        // this card glides, navigates or closes. A zero source key deliberately
+        // makes its position and lifetime independent of the original card.
         separate->source_rect = card->rect;
         separate->engaged = 1;
         separate->focused = 1;
@@ -355,8 +368,8 @@ uishell_sidebar_card_target_y(UIShell_HoverCard *card, F32 height, Rng2F32 windo
   F32 y = card->source_rect.y0;
   if(near_placement)
   {
-    y = card->source_rect.y1+16;
-    if(y+height > window.y1-10) { y = card->source_rect.y0-height-16; }
+    y = card->source_rect.y1+UIShell_HoverCardNearGapPT;
+    if(y+height > window.y1-10) { y = card->source_rect.y0-height-UIShell_HoverCardNearGapPT; }
   }
   return Clamp(window.y0+10, y, window.y1-height-10);
 }
@@ -432,7 +445,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     if(slot) { x = card->source_rect.x1+8; }
     Vec2F32 target = v2f32(Clamp(window.x0+10, x, window.x1-width-10),
                           uishell_sidebar_card_target_y(card, height, window, !outside && slot == 0));
-    F32 t = Clamp(0.f, (now-card->changed_at)/100000.f, 1.f), glide = 1-(1-t)*(1-t)*(1-t);
+    F32 t = Clamp(0.f, (F32)(now-card->changed_at)/UIShell_HoverCardTransitionUS, 1.f), glide = 1-(1-t)*(1-t)*(1-t);
     if(!card->previous.size) { card->glide_from = target; }
     Vec2F32 pos = mix_2f32(card->glide_from, target, glide);
     card->rect = r2f32p(pos.x, pos.y, pos.x+width, pos.y+height);
