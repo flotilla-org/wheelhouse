@@ -173,6 +173,7 @@ template "wheelhouse/entry" {
 // Named prefixes carry native presentation values through ABI 2's text fields.
 // icon-override is local template policy; presentation.icon always wins.
 fragment "wheelhouse/chip-presentation" {
+  field "chip-fields" source="literal" value="1" prefix="chip-fields:"
   field "medium" source="metadata-text" key="display.label.medium" prefix="chip-medium:"
   field "short" source="metadata-text" key="display.label.short" prefix="chip-short:"
   field "icon" key="presentation.icon" prefix="chip-icon:"

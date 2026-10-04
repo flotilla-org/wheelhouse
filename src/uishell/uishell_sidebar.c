@@ -65,15 +65,16 @@ uishell_sidebar_string(AndamentoText s)
 }
 
 internal void
-uishell_sidebar_subject_hit(AndamentoNode node, UI_Box *box, char *action)
+uishell_sidebar_subject_hit(AndamentoNode node, UI_Box *box, char *action, B32 menu)
 {
   if(!uishell_sidebar_subject_fixture || !uishell_sidebar_subject_geometry_path.size ||
      dim_2f32(box->rect).x <= 0 || dim_2f32(box->rect).y <= 0) { return; }
-  // The embedded fixture's subject IDs are fixed ASCII identifiers.
+  // Rectangles come from the previous layout; fixture consumers poll until
+  // it settles. The embedded subject IDs are fixed ASCII identifiers.
   str8_list_pushf(ui_build_arena(), &uishell_sidebar_subject_geometry,
-    "{\"id\":\"%S\",\"chip\":%s,\"action\":\"%s\",\"rect\":[%g,%g,%g,%g]}",
+    "{\"id\":\"%S\",\"chip\":%s,\"action\":\"%s\",\"menu\":%s,\"rect\":[%g,%g,%g,%g]}",
     uishell_sidebar_string(node.entity_id),
-    str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0) ? "true" : "false", action,
+    str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0) ? "true" : "false", action, menu ? "true" : "false",
     box->rect.x0, box->rect.y0, box->rect.x1, box->rect.y1);
 }
 
@@ -586,7 +587,7 @@ uishell_sidebar_node_status(UIShell_SidebarState *state, AndamentoNode node)
 internal size_t
 uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
                              AndamentoNode node, U64 node_index, UI_Signal sig, String8 context,
-                             B32 contains_current)
+                             B32 contains_current, B32 menu)
 {
   size_t action = ANDAMENTO_NONE;
   F32 em = ui_top_font_size();
@@ -612,7 +613,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   }
   if(subject)
   {
-    uishell_sidebar_subject_hit(node, sig.box, "subject");
+    uishell_sidebar_subject_hit(node, sig.box, "subject", menu);
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "subject_menu");
     UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
     {
@@ -620,7 +621,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
       if(copy_url != ANDAMENTO_NONE && node.activate != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Open in browser"))))
       { action = node.activate; ui_ctx_menu_close(); }
       UI_Signal copy = ui_button(copy_url != ANDAMENTO_NONE ? str8_lit("Copy URL") : str8_lit("Copy reference"));
-      uishell_sidebar_subject_hit(node, copy.box, "copy");
+      uishell_sidebar_subject_hit(node, copy.box, "copy", 1);
       if(ui_clicked(copy))
       {
         if(copy_url != ANDAMENTO_NONE) { action = copy_url; }
@@ -715,12 +716,38 @@ uishell_sidebar_status_mark(AndamentoNode node, String8 status)
   return node.state == ANDAMENTO_LIVE ? str8_lit("•") : str8_zero();
 }
 
-// Presentation fields are explicitly prefixed by the native templates because
-// ABI 2 exposes resolved text, rather than field names or raw metadata.
+// The native template reserves seven chip-presentation fields after its normal
+// fields. A literal marker identifies that block. Producer labels and other
+// field values are never interpreted as presentation directives.
+internal U64
+uishell_sidebar_chip_fields_start(UIShell_SidebarState *state, AndamentoNode node)
+{
+  String8 kind = uishell_sidebar_string(node.entity_kind);
+  U64 start = str8_match(kind, str8_lit("project"), 0) ? 1 :
+    str8_match(kind, str8_lit("role"), 0) ? 4 : 3;
+  AndamentoField marker = {0};
+  if(start < node.field_count && andamento_snapshot_field(state->snapshot, node.first_field+start, &marker) &&
+     str8_match(uishell_sidebar_string(marker.text), str8_lit("chip-fields:1"), 0)) { return start; }
+  return ANDAMENTO_NONE;
+}
+
+internal B32
+uishell_sidebar_chip_field(UIShell_SidebarState *state, AndamentoNode node, U64 f, String8 text)
+{
+  U64 start = uishell_sidebar_chip_fields_start(state, node);
+  if(start == ANDAMENTO_NONE || f < start || f >= start+7) { return 0; }
+  String8 prefixes[] = {str8_lit("chip-fields:"), str8_lit("chip-medium:"), str8_lit("chip-short:"),
+    str8_lit("chip-icon:"), str8_lit("chip-icon-override:"), str8_lit("chip-attention:"), str8_lit("chip-status:")};
+  for(U64 i = 0; i < ArrayCount(prefixes); i++)
+  { if(str8_match(str8_prefix(text, prefixes[i].size), prefixes[i], 0)) { return 1; } }
+  return 0;
+}
+
 internal String8
 uishell_sidebar_chip_fact(UIShell_SidebarState *state, AndamentoNode node, String8 prefix)
 {
-  for(U64 f = 0; f < node.field_count; f++)
+  U64 start = uishell_sidebar_chip_fields_start(state, node);
+  for(U64 f = start; start != ANDAMENTO_NONE && f < Min(node.field_count, start+7); f++)
   {
     AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field+f, &field);
     String8 text = uishell_sidebar_string(field.text);
@@ -760,13 +787,13 @@ uishell_sidebar_chip_attention(UIShell_SidebarState *state, AndamentoNode node)
 internal Vec4F32
 uishell_sidebar_subject_color(String8 status)
 {
-  Vec4F32 color = ui_color_from_name(str8_lit("text"));
-  if(str8_match(status, str8_lit("ready_to_merge"), 0)) { color = v4f32(0.4f, 0.85f, 0.55f, 1.f); }
-  else if(str8_match(status, str8_lit("ci_failing"), 0)) { color = v4f32(1.f, 0.4f, 0.35f, 1.f); }
-  else if(str8_match(status, str8_lit("conflicting"), 0)) { color = v4f32(1.f, 0.7f, 0.3f, 1.f); }
-  else if(str8_match(status, str8_lit("awaiting_review_response"), 0)) { color = v4f32(0.9f, 0.75f, 0.4f, 1.f); }
-  else if(str8_match(status, str8_lit("merged_not_landed"), 0)) { color = v4f32(0.65f, 0.6f, 0.95f, 1.f); }
-  else if(str8_match(status, str8_lit("draft"), 0) || str8_match(status, str8_lit("closed"), 0)) { color.w = 0.65f; }
+  Vec4F32 text = ui_color_from_name(str8_lit("text")), color = text;
+  String8 tag = str8_zero();
+  if(str8_match(status, str8_lit("ready_to_merge"), 0)) { tag = str8_lit("good"); }
+  else if(str8_match(status, str8_lit("ci_failing"), 0) || str8_match(status, str8_lit("conflicting"), 0)) { tag = str8_lit("bad"); }
+  else if(str8_match(status, str8_lit("awaiting_review_response"), 0) || str8_match(status, str8_lit("merged_not_landed"), 0)) { tag = str8_lit("neutral"); }
+  if(tag.size) UI_TagF("%S", tag) { color = mix_4f32(ui_color_from_name(str8_lit("text")), text, 0.2f); }
+  if(str8_match(status, str8_lit("draft"), 0) || str8_match(status, str8_lit("closed"), 0)) { color.w = 0.65f; }
   return color;
 }
 
@@ -804,7 +831,7 @@ uishell_sidebar_chip_width(AndamentoNode node)
 
 internal size_t
 uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
-                              AndamentoNode node, U64 node_index, String8 context, B32 menu)
+                              AndamentoNode node, U64 node_index, String8 context, F32 row_height, B32 menu)
 {
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size();
@@ -817,7 +844,7 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
   UI_Signal sig = {0};
   ui_spacer(ui_px(4.f, 1));
   UI_CornerRadius(subject ? em*0.7f : 3.f) UI_PrefHeight(ui_px(em*1.6f, 1))
-  UI_FixedY(Max(0.f, (em*2.2f-4.f-em*1.6f)*0.5f))
+  UI_FixedY(Max(0.f, (row_height-4.f-em*1.6f)*0.5f))
   UI_PrefWidth(menu ? ui_pct(1, 0) : ui_px(uishell_sidebar_chip_width(node)-4.f, 1))
   UI_BackgroundColor(fill) UI_TextColor(subject ? border : ui_color_from_name(str8_lit("text")))
   UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_FontSize(em*0.9f)
@@ -836,7 +863,7 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
     if(!subject && node.state == ANDAMENTO_LIVE) { box->flags |= UI_BoxFlag_DrawSideLeft; }
     sig = ui_signal_from_box(box);
   }
-  size_t action = uishell_sidebar_entry_signal(state, ws, node, node_index, sig, context, 0);
+  size_t action = uishell_sidebar_entry_signal(state, ws, node, node_index, sig, context, 0, menu);
   scratch_end(scratch);
   return action;
 }
@@ -908,6 +935,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   size_t action = ANDAMENTO_NONE;
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size(), row_height = floor_f32(em*2.2f);
+  F32 minimum_name = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, str8_lit("abcdefghij…")).x+em;
   F32 project_gap = 6.f, project_padding = 4.f;
   F32 body_top_padding = 2.f; // Room for the first container's outward border stroke.
   Vec2F32 dim = dim_2f32(rect);
@@ -1168,8 +1196,11 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             AndamentoField field = {0};
             andamento_snapshot_field(state->snapshot, node.first_field+f, &field);
             String8 value = uishell_sidebar_string(field.text);
-            if(str8_match(str8_prefix(value, 12), str8_lit("chip-status:"), 0)) { status = str8_skip(value, 12); }
-            if(str8_match(str8_prefix(value, 5), str8_lit("chip-"), 0)) { continue; }
+            if(uishell_sidebar_chip_field(state, node, f, value))
+            {
+              if(str8_match(str8_prefix(value, 12), str8_lit("chip-status:"), 0)) { status = str8_skip(value, 12); }
+              continue;
+            }
             // Native templates declare the display label first. The core may
             // abbreviate it; node.label remains the full hover/inspection text.
             if(f == 0 && value.size) { label = value; }
@@ -1204,18 +1235,18 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           if(!names[1].size) { names[1] = names[0]; }
           if(!names[2].size) { names[2] = names[1]; }
           F32 name_widths[3];
-          for(U64 c = 0; c < 3; c++)
+          for(U64 c = 0; chip_count && c < 3; c++)
           { name_widths[c] = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, names[c]).x+em; }
           F32 indent = 0.3f+Min(depth[i], (str8_match(kind, str8_lit("role"), 0) || str8_match(kind, str8_lit("convoy"), 0) || uishell_sidebar_is_subject(node)) ? 3 : 1)*0.4f;
           F32 status_width = em*(str8_match(kind, str8_lit("change_request"), 0) ? 10.f : 1.2f);
           F32 row_width = Max(0.f, dim_2f32(region.viewport).x-8.f-(owner != ANDAMENTO_NONE ? 4.f : 0.f));
           F32 available_width = Max(0.f, row_width-em*(indent+1.5f+1.2f)-status_width-(project ? 3.f : 0.f));
-          F32 minimum_name = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, str8_lit("abcdefghij…")).x+em;
-          F32 overflow_width = Max(em*2.5f,
+          F32 overflow_width = chip_count ? Max(em*2.5f,
             fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0,
-              push_str8f(scratch.arena, "+%I64u", chip_count)).x+8.f);
-          UIShell_ChipLayout chip_layout = uishell_chip_layout(Max(0.f, available_width-2.f), name_widths, minimum_name,
-            chip_measures, chip_count, overflow_width);
+              push_str8f(scratch.arena, "+%I64u", chip_count)).x+8.f) : 0;
+          UIShell_ChipLayout chip_layout = {0};
+          if(chip_count) { chip_layout = uishell_chip_layout(Max(0.f, available_width-2.f), name_widths, minimum_name,
+            chip_measures, chip_count, overflow_width); }
           F32 chip_clearance = chip_count ? 2.f : 0.f;
           if(chip_count) { label = names[chip_layout.tier]; }
 
@@ -1316,7 +1347,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                 // The rich tooltip already includes the full label. Do not also
                 // enroll this row in the shell's automatic truncated-text hover.
                 sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
-                size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current);
+                size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0);
                 if(requested != ANDAMENTO_NONE) { action = requested; }
               }
               if(chip_count)
@@ -1333,7 +1364,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                   {
                     if(chip_measures[c].folded) { continue; }
                     size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[c]], members[c],
-                      members[c] == i ? str8_zero() : full_label, 0);
+                      members[c] == i ? str8_zero() : full_label, row_height, 0);
                     if(requested != ANDAMENTO_NONE) { action = requested; }
                   }
                   if(chip_layout.folded)
@@ -1349,7 +1380,7 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
                           UI_Box *menu_row = ui_build_box_from_stringf(0, "###overflow_row_%S", uishell_sidebar_string(nodes[members[c]].key));
                           UI_Parent(menu_row)
                           {
-                            size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[c]], members[c], full_label, 1);
+                            size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[c]], members[c], full_label, row_height, 1);
                             if(requested != ANDAMENTO_NONE) { action = requested; ui_ctx_menu_close(); }
                           }
                         }

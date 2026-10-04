@@ -248,6 +248,7 @@ static const char uishell_sidebar_daily_config[] =
 "// Named prefixes carry native presentation values through ABI 2's text fields.\n"
 "// icon-override is local template policy; presentation.icon always wins.\n"
 "fragment \"wheelhouse/chip-presentation\" {\n"
+"  field \"chip-fields\" source=\"literal\" value=\"1\" prefix=\"chip-fields:\"\n"
 "  field \"medium\" source=\"metadata-text\" key=\"display.label.medium\" prefix=\"chip-medium:\"\n"
 "  field \"short\" source=\"metadata-text\" key=\"display.label.short\" prefix=\"chip-short:\"\n"
 "  field \"icon\" key=\"presentation.icon\" prefix=\"chip-icon:\"\n"

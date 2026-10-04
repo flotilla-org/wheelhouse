@@ -13,6 +13,8 @@ fixed. The last chip has two pixels of clearance for its border stroke.
 
 Workspace actions use fixed-width icons. `presentation.icon` wins over a local
 template `icon-override` field, then the entity kind supplies the default.
+The prefixed `chip-*` fields are reserved inside the template’s marker-delimited
+presentation block. A producer label starting with the same text stays a label.
 Supported symbolic icons are `terminal`, `overview`, `role`, `threads`, `gear`,
 `code`, `review` and `workspace`; other suggestions are literal glyphs. No name
 is used to guess an icon. Open workspaces have a stronger fill and left edge,
@@ -38,7 +40,7 @@ driver was not restarted or replaced.
 
 ![Narrow: short name, both attention subjects, one shared overflow](screenshots/convoy-chips/narrow.png)
 
-![Overflow contains quiet PR, issue and workspace action](screenshots/convoy-chips/overflow.png)
+![Quiet PR and issue in overflow, active workspace retained on the row](screenshots/convoy-chips/overflow.png)
 
 Reproduce with disposable settings:
 
@@ -65,7 +67,9 @@ The generated-fixture locale/newline test passes.
 Native sidebar diagnostics check laid-out status geometry at 240, 320 and
 600 pixels through latent, pending and removed-subject states. Both attention
 subjects remain chips, and the existing workspace, selection, reveal, scrolling
-and project-motion diagnostics pass. Icon resolution checks cover suggestion
+and project-motion diagnostics pass. The width path also covers localized
+wide-glyph names and compact references, including labels that resemble chip
+directives. Icon resolution checks cover suggestion
 precedence, a local template override and a default for a role with an arbitrary
 label. The macOS PR chip Copy URL interaction also passed against the real
 clipboard.
@@ -74,6 +78,8 @@ The X11 action test now reads actual fixture hit rectangles through
 `--sidebar_subject_geometry:<path>` instead of clicking the retired child-row
 positions. The optional geometry output is restricted to the embedded subject
 fixture. Its browser subprocess records destinations without navigating, and
-its clipboard reader checks chip and Attention copies. This X11 test is not
-exercised on kiwi; macOS mouse interaction and the real native ABI cover the
-local acceptance run. Cross-platform build results are recorded on the PR.
+its clipboard reader checks chip and Attention copies. It passed against Xvfb
+in a disposable Linux container on feta, including PR/issue destinations,
+chip/Attention URL copies and the no-forge reference copy. The Linux build,
+26 ABI/width tests and native sidebar diagnostics also passed. Cross-platform
+CI results are recorded on the PR.

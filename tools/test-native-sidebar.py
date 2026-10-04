@@ -2,6 +2,7 @@
 """Check the shipped native template against Andamento's real typed C ABI."""
 import ctypes as C
 import json
+import shutil
 from pathlib import Path
 import sys
 import unittest
@@ -124,8 +125,7 @@ class NativeSidebarTests(unittest.TestCase):
         parent = next(i for i, n in enumerate(nodes) if n.entity_id.string() == identity)
         return [n for n in nodes if n.parent == parent]
 
-    # The issue's multi-repository fixture is a scenario through the real core:
-    # numeric order, duplicate edges, shared generations, missing forge and label tiers.
+    @unittest.skipUnless(shutil.which("cc"), "A C compiler is required for the standalone layout test")
     def test_chip_layout_width_ladder_and_attention(self):
         # Exercise the production resolver with measured widths independent of
         # the native display. Status space is subtracted by the caller.
@@ -171,6 +171,8 @@ int main(void) {
                             str(source_file), '-o', str(executable)], check=True)
             subprocess.run([str(executable)], check=True)
 
+    # The issue's multi-repository fixture is a scenario through the real core:
+    # numeric order, duplicate edges, shared generations, missing forge and label tiers.
     def test_subject_fixture_joins_order_and_label_tiers(self):
         self.publish_fixture()
         snapshot, nodes = self.snapshot()
@@ -178,6 +180,11 @@ int main(void) {
         self.assertEqual([n.entity_id.string() for n in subjects], ['pr-281', 'pr-1000', 'no-forge', 'issue-137'])
         self.assertTrue(all(n.layout.string() == 'inline' for n in subjects))
         self.assertEqual([self.values(snapshot, n)[0] for n in subjects], ['!281', 'c!1000', '!2508', '#137'])
+        self.assertEqual([self.values(snapshot, n)[:3] for n in subjects], [
+            ['!281', 'change_request', 'ready_to_merge'],
+            ['c!1000', 'change_request', 'ci_failing'],
+            ['!2508', 'change_request', 'awaiting_review_response'],
+            ['#137', 'issue', 'open']])
         self.assertNotIn('superseded', [n.entity_id.string() for n in nodes])
         self.toggle_variable('Show finished')
         _, nodes = self.snapshot()

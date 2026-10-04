@@ -67,7 +67,8 @@ def main():
                         try:
                             records = json.loads(geometry.read_text())
                             record = next(r for r in records if r['id'] == identity and
-                                          r['action'] == action and r['chip'] == chip)
+                                          r['action'] == action and r['chip'] == chip and
+                                          r['menu'] == (action == 'copy'))
                             x0, y0, x1, y1 = record['rect']
                             return round((x0 + x1) / 2), round((y0 + y1) / 2)
                         except (OSError, ValueError, StopIteration):

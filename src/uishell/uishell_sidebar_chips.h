@@ -11,9 +11,9 @@ typedef struct UIShell_ChipMeasure {
 typedef struct UIShell_ChipLayout {
   size_t tier;
   size_t folded;
-  float name_width;
+  float name_width; // Resolved name budget, retained for diagnostic tests.
   float chip_width;
-  float content_width;
+  float content_width; // Unclipped content budget, retained for diagnostic tests.
 } UIShell_ChipLayout;
 
 // Width excludes the kind/disclosure and fixed trailing status slots. Names

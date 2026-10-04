@@ -8,7 +8,13 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   fixture.initialized = fixture.restored = 1;
   String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
   fixture.core = andamento_create(config.str, config.size, 0);
-  B32 ok = fixture.core != 0;
+  if(!fixture.core)
+  {
+    ui_state_release(test); scratch_end(scratch);
+    fprintf(stderr, "Chip sidebar diagnostics: FAILED (fixture initialization)\n");
+    return 0;
+  }
+  B32 ok = 1;
   String8 patches = str8_cstring((char *)uishell_sidebar_fixture_patches);
   for(U64 start = 0; start < patches.size;)
   {
@@ -18,6 +24,12 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     start = end+1;
   }
   uishell_sidebar_refresh(&fixture);
+  if(!ok || !fixture.snapshot)
+  {
+    uishell_sidebar_release(&fixture); ui_state_release(test); scratch_end(scratch);
+    fprintf(stderr, "Chip sidebar diagnostics: FAILED (fixture patches)\n");
+    return 0;
+  }
   // Producer suggestion, local template override, then kind fallback. Labels
   // must never participate in icon resolution.
   B32 icon_font = 0;
@@ -47,6 +59,23 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   }
   ok = andamento_configure(fixture.core, uishell_sidebar_text(config), 0) && ok;
   uishell_sidebar_refresh(&fixture);
+  // Producer labels that resemble directives remain ordinary labels. The
+  // first width also exercises a wide-glyph compact subject reference.
+  String8 unicode_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"convoy\",\"id\":\"build\"}},\"source_id\":\"fixture\",\"set\":{\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"chip-icon:列車の作業\"}},\"display.label.medium\":{\"value\":{\"type\":\"text\",\"value\":\"chip-status:列車\"}},\"display.label.short\":{\"value\":{\"type\":\"text\",\"value\":\"列車\"}}},\"unset\":[]}");
+  ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(unicode_patch), 0) && ok;
+  unicode_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"pr-281\"}},\"source_id\":\"fixture\",\"set\":{\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"漢!281\"}}},\"unset\":[]}");
+  ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(unicode_patch), 0) && ok;
+  uishell_sidebar_refresh(&fixture);
+  for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+  {
+    AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+    if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("build"), 0))
+    {
+      ok = !uishell_sidebar_chip_fact(&fixture, node, str8_lit("chip-icon:")).size &&
+        !uishell_sidebar_chip_field(&fixture, node, 0, str8_lit("chip-icon:列車の作業")) &&
+        str8_match(uishell_sidebar_chip_status(&fixture, node), str8_lit("active"), 0) && ok;
+    }
+  }
   ws->sidebar = &fixture;
   ui_select_state(test);
   F32 widths[] = {240, 320, 600};
@@ -109,7 +138,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
          abs_f32(status->rect.x1-row->rect.x1) > 1.f)
       {
         fprintf(stderr, "FAIL chip status geometry: width %g phase %llu status [%g,%g], original %g row end %g\n",
-          widths[w], phase, status->rect.x0, status->rect.x1, status_x, row->rect.x1);
+          widths[w], (unsigned long long)phase, status->rect.x0, status->rect.x1, status_x, row->rect.x1);
         ok = 0;
       }
       if(phase < 2)
@@ -118,20 +147,21 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
         for(UI_Box *box = row; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, row).next)
         {
           String8 text = ui_box_display_string(box);
-          subjects += str8_match(text, str8_lit("!281"), 0) || str8_match(text, str8_lit("c!1000"), 0);
+          subjects += str8_match(text, str8_lit("漢!281"), 0) || str8_match(text, str8_lit("!281"), 0) || str8_match(text, str8_lit("c!1000"), 0);
           if(text.size && text.str[0] == '+' && box->pref_size[Axis2_X].kind == UI_SizeKind_Pixels)
           {
             if(dim_2f32(box->rect).x+1.f < box->pref_size[Axis2_X].value)
             { fprintf(stderr, "FAIL chip overflow: width %g expected %g\n", dim_2f32(box->rect).x, box->pref_size[Axis2_X].value); ok = 0; }
           }
         }
-        if(subjects != 2) { fprintf(stderr, "FAIL chip attention: width %g phase %llu subjects %llu\n", widths[w], phase, subjects); ok = 0; }
+        if(subjects != 2) { fprintf(stderr, "FAIL chip attention: width %g phase %llu subjects %llu\n", widths[w], (unsigned long long)phase, (unsigned long long)subjects); ok = 0; }
       }
     }
     // Restore subjects and cancel the synthetic pending request for next width.
-    andamento_destroy(fixture.core); andamento_snapshot_release(fixture.snapshot);
-    fixture.snapshot = 0;
+    uishell_sidebar_release(&fixture);
+    fixture.core = 0; fixture.snapshot = 0;
     fixture.core = andamento_create(config.str, config.size, 0);
+    if(!fixture.core) { ok = 0; break; }
     for(U64 start = 0; start < patches.size;)
     {
       U64 end = start; while(end < patches.size && patches.str[end] != '\n') { end++; }
