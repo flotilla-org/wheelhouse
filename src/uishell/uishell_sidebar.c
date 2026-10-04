@@ -33,9 +33,29 @@ struct UIShell_SidebarSection
   B32 collapsed;
 };
 
+typedef struct UIShell_HoverCard UIShell_HoverCard;
+struct UIShell_HoverCard
+{
+  Arena *arena;
+  String8 *path;
+  String8 previous, candidate, context;
+  U64 depth, capacity, candidate_since, changed_at, left_at;
+  UI_Key source, dismissed;
+  Rng2F32 source_rect, rect;
+  Vec2F32 departure, last_mouse, glide_from;
+  B32 open, engaged, focused, contains_current, source_seen, corridor_active;
+  F32 scroll;
+};
+
 struct UIShell_SidebarState
 {
   UIShell_SidebarSection *sections;
+  UIShell_HoverCard cards[2];
+  Rng2F32 rect;
+  B32 card_escape_down;
+  String8 card_action_key;
+  B32 card_action_copy_url;
+  B32 card_has_action;
   Andamento *core;
   AndamentoSnapshot *snapshot;
   U64 topology_hash;
@@ -99,6 +119,8 @@ uishell_sidebar_release(UIShell_SidebarState *state)
 {
   if(state != 0)
   {
+    for(U64 i = 0; i < ArrayCount(state->cards); i++)
+    { if(state->cards[i].arena) { arena_release(state->cards[i].arena); } }
     andamento_snapshot_release(state->snapshot);
     andamento_destroy(state->core);
   }
@@ -574,6 +596,8 @@ internal UI_BOX_CUSTOM_DRAW(uishell_sidebar_project_rule_draw)
   }
 }
 
+#include "uishell/uishell_hover_cards.c"
+
 // Native entry templates declare label/kind/status before optional context.
 internal String8
 uishell_sidebar_node_status(UIShell_SidebarState *state, AndamentoNode node)
@@ -631,51 +655,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     }
     if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
   }
-  // Context menus take visual priority over hover cards across the sidebar.
-  if(ui_hovering(sig) && !ui_any_ctx_menu_is_open())
-  {
-    F32 card_width = Min(em*34.f, dim_2f32(wm_client_rect_from_window(ws->os)).x*0.6f);
-    UI_Tooltip UI_PrefWidth(ui_px(card_width, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_TextAlignment(UI_TextAlign_Left)
-    {
-      ui_label_multiline(card_width, full_label);
-      if(context.size) { ui_label_multiline(card_width, context); }
-      if(contains_current) { ui_label(str8_lit("Contains current workspace")); }
-      for(U64 f = 0; f < node.detail_count; f++)
-      {
-        AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_detail+f, &field);
-        String8 value = uishell_sidebar_string(field.text);
-        if(!value.size || str8_match(value, full_label, 0) || str8_match(value, kind, 0)) { continue; }
-        B32 duplicate = 0;
-        for(U64 previous = 0; previous < f; previous++)
-        {
-          AndamentoField other = {0}; andamento_snapshot_field(state->snapshot, node.first_detail+previous, &other);
-          duplicate |= str8_match(value, uishell_sidebar_string(other.text), 0);
-        }
-        if(!duplicate) { ui_label_multiline(card_width, value); }
-      }
-      UI_TagF("weak")
-      // Subject rows prioritize the URL interaction hint; the ended glyph remains visible.
-      { ui_label(subject ? (copy_url != ANDAMENTO_NONE ? str8_lit("Click to open · Right-click to copy URL") : str8_lit("Right-click to copy reference · URL unavailable")) : ended ? str8_lit("Ended workspace") : node.selected ? str8_lit("Current workspace") : can_activate ? (node.state == ANDAMENTO_LIVE ? str8_lit("Focus workspace") : str8_lit("Open workspace")) : str8_lit("No opening recipe available")); }
-      if(node.state == ANDAMENTO_LIVE)
-      {
-        rd_workspace_preview_demand_push(ws, node.workspace_id, card_width);
-        RD_SurfaceCacheNode *mini = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(node.workspace_id));
-        UI_PrefHeight(ui_px(card_width*0.625f, 1))
-        {
-          UI_Box *preview_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder, "###sidebar_hover_preview_%I64u", node.workspace_id);
-          if(mini != 0)
-          {
-            RD_WorkspacePreviewDraw *preview = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
-            preview->node = mini;
-            preview->src_uv = r2f32p(0, 0, 1, 1);
-            preview->keep_aspect = 1;
-            ui_box_equip_custom_draw(preview_box, rd_workspace_preview_box_draw, preview);
-          }
-          else { rd_request_frame(); }
-        }
-      }
-    }
-  }
+  uishell_sidebar_card_source(state, node, sig, context, contains_current);
   scratch_end(scratch);
   return action;
 }
@@ -946,7 +926,8 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
     uishell_sidebar_observe(state, split);
     uishell_sidebar_expand_reveal(state);
   }
-  size_t action = ANDAMENTO_NONE;
+  state->rect = rect;
+  size_t action = uishell_sidebar_card_take_action(state);
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size(), row_height = floor_f32(em*2.2f);
   F32 minimum_name = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, str8_lit("abcdefghij…")).x+em;
@@ -1543,6 +1524,12 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   }
   if(uishell_sidebar_subject_fixture && uishell_sidebar_subject_geometry_path.size)
   {
+    // Fixture-only controller state accompanies hit rectangles for diagnostics.
+    UIShell_HoverCard *c = &state->cards[0];
+    write_data_to_file_path(push_str8f(scratch.arena, "%S.cards", uishell_sidebar_subject_geometry_path),
+      push_str8f(scratch.arena, "{\"mouse\":[%g,%g],\"open\":%u,\"engaged\":%u,\"focused\":%u,\"candidate_since\":%I64u,\"now\":%I64u,\"source_seen\":%u,\"rect\":[%g,%g,%g,%g]}",
+        ui_state->mouse.x, ui_state->mouse.y, c->open, c->engaged, c->focused,
+        c->candidate_since, now_time_us(), c->source_seen, c->rect.x0, c->rect.y0, c->rect.x1, c->rect.y1));
     StringJoin join = {.pre = str8_lit("["), .sep = str8_lit(","), .post = str8_lit("]")};
     write_data_to_file_path(uishell_sidebar_subject_geometry_path,
       str8_list_join(scratch.arena, &uishell_sidebar_subject_geometry, &join));

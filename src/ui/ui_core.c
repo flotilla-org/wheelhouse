@@ -2967,6 +2967,24 @@ ui_box_char_pos_from_xy(UI_Box *box, Vec2F32 xy)
 ////////////////////////////////
 //~ rjf: Box Interaction
 
+// Test each event position, rather than only the frame's final mouse position.
+// This also excludes a lower card when a second card overlaps it.
+internal B32
+ui_hover_card_blocks_pointer(UI_Box *box, Vec2F32 pos)
+{
+  // The last card is painted on top. Only its ancestry owns this position;
+  // lower cards and the workspace underneath cannot claim the same event.
+  for(U64 i = ArrayCount(ui_state->hover_card_keys); i-- > 0;)
+  {
+    if(ui_key_match(ui_state->hover_card_keys[i], ui_key_zero()) ||
+       !contains_2f32(ui_state->hover_card_rects[i], pos)) { continue; }
+    for(UI_Box *p = box; !ui_box_is_nil(p); p = p->parent)
+    { if(ui_key_match(p->key, ui_state->hover_card_keys[i])) { return 0; } }
+    return 1;
+  }
+  return 0;
+}
+
 internal UI_Signal
 ui_signal_from_box(UI_Box *box)
 {
@@ -3020,6 +3038,9 @@ ui_signal_from_box(UI_Box *box)
     blacklist_rect = ui_state->ctx_menu_root->rect;
   }
   
+  B32 mouse_is_blacklisted = contains_2f32(blacklist_rect, ui_state->mouse) ||
+    ui_hover_card_blocks_pointer(box, ui_state->mouse);
+
   //////////////////////////////
   //- rjf: process events related to this box
   //
@@ -3031,7 +3052,7 @@ ui_signal_from_box(UI_Box *box)
     
     //- rjf: unpack event
     Vec2F32 evt_mouse = evt->pos;
-    B32 evt_mouse_in_bounds = !contains_2f32(blacklist_rect, evt_mouse) && contains_2f32(rect, evt_mouse);
+    B32 evt_mouse_in_bounds = !contains_2f32(blacklist_rect, evt_mouse) && !ui_hover_card_blocks_pointer(box, evt_mouse) && contains_2f32(rect, evt_mouse);
     UI_MouseButtonKind evt_mouse_button_kind = (evt->key == WM_Key_LeftMouseButton   ? UI_MouseButtonKind_Left :
                                                 evt->key == WM_Key_MiddleMouseButton ? UI_MouseButtonKind_Middle :
                                                 evt->key == WM_Key_RightMouseButton  ? UI_MouseButtonKind_Right :
@@ -3321,7 +3342,7 @@ ui_signal_from_box(UI_Box *box)
   //
   {
     if(contains_2f32(rect, ui_state->mouse) &&
-       !contains_2f32(blacklist_rect, ui_state->mouse))
+       !mouse_is_blacklisted)
     {
       sig.f |= UI_SignalFlag_MouseOver;
     }
@@ -3333,7 +3354,7 @@ ui_signal_from_box(UI_Box *box)
   {
     if(box->flags & UI_BoxFlag_MouseClickable &&
        contains_2f32(rect, ui_state->mouse) &&
-       !contains_2f32(blacklist_rect, ui_state->mouse) &&
+       !mouse_is_blacklisted &&
        (ui_key_match(ui_state->hot_box_key, ui_key_zero()) || ui_key_match(ui_state->hot_box_key, box->key)) &&
        (ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Left], ui_key_zero()) || ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Left], box->key)) &&
        (ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Middle], ui_key_zero()) || ui_key_match(ui_state->active_box_key[UI_MouseButtonKind_Middle], box->key)) &&
@@ -3349,7 +3370,7 @@ ui_signal_from_box(UI_Box *box)
   //
   if(box->flags & UI_BoxFlag_MouseClickable &&
      contains_2f32(rect, ui_state->mouse) &&
-     !contains_2f32(blacklist_rect, ui_state->mouse) &&
+     !mouse_is_blacklisted &&
      !ui_key_match(ui_key_zero(), box->group_key))
   {
     for EachEnumVal(UI_MouseButtonKind, k)
@@ -3370,7 +3391,7 @@ ui_signal_from_box(UI_Box *box)
   {
     if(box->flags & UI_BoxFlag_DropSite &&
        contains_2f32(rect, ui_state->mouse) &&
-       !contains_2f32(blacklist_rect, ui_state->mouse) &&
+       !mouse_is_blacklisted &&
        (ui_key_match(ui_state->drop_hot_box_key, ui_key_zero()) || ui_key_match(ui_state->drop_hot_box_key, box->key)))
     {
       ui_state->drop_hot_box_key = box->key;
@@ -3383,7 +3404,7 @@ ui_signal_from_box(UI_Box *box)
   {
     if(box->flags & UI_BoxFlag_DropSite &&
        (!contains_2f32(rect, ui_state->mouse) ||
-        contains_2f32(blacklist_rect, ui_state->mouse)) &&
+        mouse_is_blacklisted) &&
        ui_key_match(ui_state->drop_hot_box_key, box->key))
     {
       ui_state->drop_hot_box_key = ui_key_zero();

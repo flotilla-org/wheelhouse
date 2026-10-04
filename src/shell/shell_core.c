@@ -3872,6 +3872,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                 !query_is_open &&
                                 !ui_any_ctx_menu_is_open() &&
                                 !ws->hover_eval_focused &&
+                                !ws->ui->hover_card_focus &&
                                 panel_tree.focused == panel);
         CFG_Node *selected_tab = panel->selected_tab;
         RD_ViewState *selected_tab_view_state = rd_view_state_from_cfg(selected_tab);
@@ -5293,6 +5294,11 @@ rd_window_frame(void)
     // Window-edge padding belongs at the outer edges, not at the internal seam
     // with title-bar chrome. Panel spacing is applied by the panel layout.
     content_rect.y0 = top_bar_rect.y1;
+    Rng2F32 control_surface_rect = uishell_controlled_split_control_rect(&root_controlled_split, content_rect);
+    F32 control_surface_border = floor_f32(Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_border_px")), 4.f));
+    uishell_sidebar_cards_ui(ws, dim_2f32(control_surface_rect).x > control_surface_border &&
+                                 dim_2f32(control_surface_rect).y > control_surface_border);
+
     
     ////////////////////////////
     //- rjf: @window_ui_part truncated string hover
@@ -7043,7 +7049,6 @@ rd_window_frame(void)
                                                                      ws->theme);
     access_close(workspace_theme_access);
 
-    Rng2F32 control_surface_rect = uishell_controlled_split_control_rect(&root_controlled_split, content_rect);
     uishell_control_surface_ui(control_surface_rect, &root_controlled_split);
     B32 control_split_is_changing = uishell_controlled_split_boundary_ui(&root_controlled_split, content_rect);
     if(control_split_is_changing)
@@ -10194,6 +10199,7 @@ rd_frame(void)
         uishell_regs()->view   = panel_tree.focused->selected_tab->id;
         scratch_end(scratch);
       }
+      B32 card_took_event = uishell_sidebar_card_wm_event(ws, event);
       CFG_Node *focused_view = cfg_node_from_id(uishell_regs()->view);
       // Terminal views get physical keyboard input before command bindings; Super stays available for app shortcuts.
       B32 terminal_input_is_focused = (ws != 0 &&
@@ -10201,23 +10207,24 @@ rd_frame(void)
                                        !rd_state->popup_active &&
                                        !ws->query_is_active &&
                                        !ws->menu_bar_focused &&
+                                       !ws->ui->hover_card_focus &&
                                        str8_match(focused_view->string, str8_lit("terminal"), 0));
       B32 terminal_claims_keyboard_input = (terminal_input_is_focused &&
                                             !(event->modifiers & WM_Modifier_Super) &&
                                             (event->kind == WM_EventKind_Press ||
                                              event->kind == WM_EventKind_Release ||
                                              event->kind == WM_EventKind_Text));
-      B32 take = 0;
+      B32 take = card_took_event;
       B32 terminal_edit_owner = terminal_input_is_focused ||
         (ws && ws != &rd_nil_window_state && ws->ui && ws->ui->edit_owner_terminal &&
          !rd_state->popup_active && !ws->query_is_active);
-      take = uishell_route_edit_activation(scratch.arena, ws, event, terminal_edit_owner);
+      if(!take) { take = uishell_route_edit_activation(scratch.arena, ws, event, terminal_edit_owner); }
       String8 repeat_page_command = {0};
       if(!take) { take = uishell_terminal_page_binding_event(ws, event,
         terminal_input_is_focused ? focused_view->id : 0, &repeat_page_command); }
       if(repeat_page_command.size) { uishell_cmd("run_command", .cmd_name = repeat_page_command); }
       if(!take && ws != 0 && ws != &rd_nil_window_state &&
-         !rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused)
+         !rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused && !ws->ui->hover_card_focus)
         take = uishell_jackstay_event(focused_view->id,event);
       
       //- rjf: try drag/drop drop-kickoff

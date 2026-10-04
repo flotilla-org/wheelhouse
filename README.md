@@ -98,6 +98,15 @@ in the toolbar. Creation, Reveal, and Close also live in the toolbar. **Window â
 Workspace Settings** edits the current workspace's properties, including its name.
 Old saved `sidebar_mode` values no longer select a different sidebar.
 
+Hover cards appear after 300 ms, then swap immediately as you scan rows or
+chips. Move into a card to reveal actions and related navigation; click it to
+keep it open and give it keyboard focus. Escape dismisses a click-focused card,
+while a peek leaves Escape with the focused View. Related items navigate inside
+the card with Back; Cmd-click or Ctrl-click opens a second
+card. Near is the default placement. User Settings includes **Hover Cards
+Outside Sidebar** for the alternate placement. Both states retain live workspace previews. See the
+[acceptance notes](docs/hover-card-acceptance.md).
+
 Run `./build/wheelhouse --sidebar_fixture` with temporary user/project files to
 show the embedded example catalog. **Example workspace** opens a primary terminal
 on the left and Shell/Tools tabs on the right, split 60/40. **Example terminal**
