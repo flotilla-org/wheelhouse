@@ -719,6 +719,8 @@ uishell_sidebar_status_mark(AndamentoNode node, String8 status)
 // The native template reserves seven chip-presentation fields after its normal
 // fields. A literal marker identifies that block. Producer labels and other
 // field values are never interpreted as presentation directives.
+// TODO: Replace this text convention with typed presentation metadata when
+// the shared ABI exposes field identities, then retire the reserved prefixes.
 internal U64
 uishell_sidebar_chip_fields_start(UIShell_SidebarState *state, AndamentoNode node)
 {
@@ -1198,7 +1200,8 @@ uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             String8 value = uishell_sidebar_string(field.text);
             if(uishell_sidebar_chip_field(state, node, f, value))
             {
-              if(str8_match(str8_prefix(value, 12), str8_lit("chip-status:"), 0)) { status = str8_skip(value, 12); }
+              String8 status_prefix = str8_lit("chip-status:");
+              if(str8_match(str8_prefix(value, status_prefix.size), status_prefix, 0)) { status = str8_skip(value, status_prefix.size); }
               continue;
             }
             // Native templates declare the display label first. The core may
