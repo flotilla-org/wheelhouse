@@ -1103,7 +1103,16 @@ wm_apply_clipboard_write(U32 destination, B32 clear, String8 text)
   }
   // EmptyClipboard requires an owner HWND for a subsequent SetClipboardData.
   HWND owner = GetActiveWindow();
-  if(owner && IsWindow(owner) && OpenClipboard(owner))
+  if(!owner || !IsWindow(owner))
+  {
+    local_persist U32 missing_owner_reports = 0;
+    if(missing_owner_reports < 4)
+    {
+      missing_owner_reports++;
+      fprintf(stderr, "terminal clipboard write failed: no active owner window on UI thread\n");
+    }
+  }
+  else if(OpenClipboard(owner))
   {
     if(EmptyClipboard())
     {

@@ -14,6 +14,9 @@ focus, overview, diagnostic replay, retained fixtures and replaced runtimes deny
 effects. The host setting `deny_application_clipboard_writes:1` in the **user**
 bucket denies both writes and clears; workspace configuration cannot override it.
 Operator selection Copy and structured Paste retain their separate input paths.
+Focused local or remote applications may replace the clipboard with bounded UTF-8
+text, including control characters and newlines; the host does not sanitize text.
+The default-on policy is the initial #71 contract.
 
 Cleat delivers to only one controlling attachment. References to the same provider
 session handle share one destructive queue and identity watermark. Separate handles
@@ -47,7 +50,9 @@ preparation scripts read that revision from the pinned Cleat toolchain file.
   installing an empty text representation. UTF-8 conversion precedes mutation.
 - Windows: `CF_UNICODETEXT` with allocation/conversion before opening or emptying
   the clipboard, and the active native owner HWND. Selection uses the existing process-local
-  buffer (Windows has no native PRIMARY). Clear calls `EmptyClipboard`, or empties
+  buffer (Windows has no native PRIMARY). LF is preserved, matching the existing
+  selection Copy adapter; no implicit CRLF normalization is added. Verify multiline
+  text with the external reader during acceptance. Clear calls `EmptyClipboard`, or empties
   the selection buffer.
 - Linux: the existing X11 CLIPBOARD owner serves small UTF8_STRING requests;
   clear relinquishes the standard selection. Selection is process-local. This does

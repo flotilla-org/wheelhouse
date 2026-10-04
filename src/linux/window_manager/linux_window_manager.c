@@ -136,6 +136,8 @@ wm_apply_clipboard_write(U32 destination, B32 clear, String8 text)
   if(destination > 1 || !lnx_wm_state || !lnx_wm_state->display) { return 0; }
   // Selection is process-local, not X11 PRIMARY. See wheelhouse#150.
   if(destination == 1) { wm_set_selection_text(clear ? str8_zero() : text); return 1; }
+  // UI-thread dispatch is serialized with SelectionClear/SelectionRequest
+  // handling in wm_get_events; no provider worker touches the clipboard arena.
   if(clear)
   {
     XSetSelectionOwner(lnx_wm_state->display, lnx_wm_state->clipboard_atom, None, CurrentTime);

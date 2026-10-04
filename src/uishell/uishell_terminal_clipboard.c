@@ -126,6 +126,7 @@ uishell_terminal_clipboard_drain(UIShell_TerminalViewState *tv, UIShell_Terminal
     if(bounded) { bytes += event->text_len; }
     String8 text = str8((U8 *)event->text, event->text_len);
     B32 clear = event->kind == 2;
+    // Provider ABI 11 explicitly requires NULL text and zero length for clear.
     B32 valid = event->destination <= 1 &&
       ((clear && event->text_len == 0 && event->text == 0) ||
        (event->kind == 1 && bounded && uishell_terminal_clipboard_text_valid(text)));
@@ -224,7 +225,8 @@ uishell_terminal_clipboard_host_context(UIShell_TerminalViewState *tv, B32 windo
   Temp scratch = scratch_begin(0, 0);
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   UIShell_WorkspaceMount *mount = uishell_controlled_split_selected_mount(&split);
-  result.input_owner = mount->panel_tree.focused->selected_tab == view && tv->focus_active &&
+  result.input_owner = mount && mount->panel_tree.focused &&
+    mount->panel_tree.focused->selected_tab == view && tv->focus_active &&
     ws->ui && ws->ui->edit_owner_terminal && ws->ui->edit_owner_user == tv && ws->ui->edit_owner_view == view->id &&
     tv->input_frame + 1 == rd_state->frame_index && !ws->query_is_active && !rd_state->popup_active && !ws->menu_bar_focused && !ws->hover_eval_focused && (!ws->ui || (!ws->ui->ctx_menu_open && !ws->ui->next_ctx_menu_open));
   result.window_active = window_active;

@@ -102,8 +102,17 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   HostClipboardCheck(f->writes == 1 && f->released == 1, "real host dispatch with effect-only wake");
   // Generate independent UI ownership transitions before draining, including
   // modal focus, preview/overview, replay, inactivity and capability demotion.
-  B32 *gates[] = {&ws->query_is_active, &ws->menu_bar_focused, &ws->hover_eval_focused,
-    &rd_state->popup_active, &ws->ui->ctx_menu_open, &ws->ui->next_ctx_menu_open, &ws->workspace_zoom_open, &rd_state->frame_replay.suppress_input, &rd_state->quit};
+  B32 *gates[] = {
+    &ws->query_is_active,
+    &ws->menu_bar_focused,
+    &ws->hover_eval_focused,
+    &rd_state->popup_active,
+    &ws->ui->ctx_menu_open,
+    &ws->ui->next_ctx_menu_open,
+    &ws->workspace_zoom_open,
+    &rd_state->frame_replay.suppress_input,
+    &rd_state->quit,
+  };
   for(U64 i = 0; i < ArrayCount(gates)+8; i++)
   {
     U64 before = f->writes;
@@ -130,6 +139,14 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
     uishell_terminal_clipboard_dispatch_with_ops(&ops);
     HostClipboardCheck(f->writes == before && f->released == 1, "restoring host focus cannot replay suppressed effects");
   }
+  // A workspace without an Active Panel has a nil panel sentinel and cannot
+  // deliver, even if the previously rendered terminal still reports focus.
+  cfg_node_release(cfg, cfg_node_child_from_string(panels, str8_lit("selected")));
+  U64 before_nil_panel = f->writes;
+  uishell_clipboard_fixture_event(f, ++sequence, 0, 1, str8_lit("no active panel"));
+  uishell_terminal_clipboard_dispatch_with_ops(&ops);
+  HostClipboardCheck(f->writes == before_nil_panel && f->released == 1, "nil Active Panel drops effect");
+  cfg_node_new(cfg, panels, str8_lit("selected"));
   // User deny cannot be overridden by a view setting; denying does not change
   // the independently maintained local selection or operator Copy interface.
   CFG_Node *deny = cfg_node_new(cfg, user, str8_lit("deny_application_clipboard_writes"));
@@ -212,8 +229,14 @@ uishell_terminal_clipboard_diagnostics(void)
   // or duplicated suppressed effect. Generate all six single-bit focus/role cases.
   for(U32 bit = 0; bit < 6; bit++)
   {
-    B32 *bits[] = {&f->contexts[0].allowed, &f->contexts[0].input_owner, &f->contexts[0].window_active,
-      &f->contexts[0].live, &f->contexts[0].controller, &f->contexts[0].supported};
+    B32 *bits[] = {
+      &f->contexts[0].allowed,
+      &f->contexts[0].input_owner,
+      &f->contexts[0].window_active,
+      &f->contexts[0].live,
+      &f->contexts[0].controller,
+      &f->contexts[0].supported,
+    };
     U64 before = f->writes;
     *bits[bit] = 0;
     uishell_clipboard_fixture_event(f, ++seq, 0, 1, str8_lit("suppressed"));
@@ -227,13 +250,15 @@ uishell_terminal_clipboard_diagnostics(void)
   // Unsupported kind/destination and malformed/empty text leave the sink intact.
   String8 invalid[] = {str8_zero(), str8_lit("\0"), str8_lit("\xc0\x80"), str8_lit("\xed\xa0\x80"),
     str8_lit("\xf4\x90\x80\x80"), str8_lit("\xe2\x82"), str8_lit("\x80"), str8_lit("\xe2x\xac")};
-  for(U64 i = 0; i < ArrayCount(invalid)+4; i++)
+  for(U64 i = 0; i < ArrayCount(invalid)+5; i++)
   {
     U64 before = f->writes;
     uishell_clipboard_fixture_event(f, ++seq, i == ArrayCount(invalid) ? 2 : 0,
       i == ArrayCount(invalid)+1 ? 3 : 1, i < ArrayCount(invalid) ? invalid[i] : str8_lit("valid"));
     if(i == ArrayCount(invalid)+2) { f->events[0].text = 0; }
     if(i == ArrayCount(invalid)+3) { f->events[0].kind = 2; }
+    // ABI 11 clears require NULL: a non-null empty payload must not mutate the sink.
+    if(i == ArrayCount(invalid)+4) { f->events[0].kind = 2; f->events[0].text_len = 0; }
     uishell_terminal_clipboard_dispatch_with_ops(&ops);
     ClipboardCheck(f->writes == before && f->released == 1, "malformed/unsupported content leaves sink intact");
   }
