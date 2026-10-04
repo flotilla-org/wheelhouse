@@ -1029,6 +1029,7 @@ uishell_dispatch_panel_command(String8 name)
      str8_match(name, str8_lit("reset_to_simple_panels"), 0))
   {
     CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+    uishell_sidebar_manual_sizing(window, 0);
     UISHELL_APP_RESET_PANELS(window);
   }
   else if(str8_match(name, str8_lit("new_panel_left"), 0) ||
@@ -1080,9 +1081,10 @@ uishell_dispatch_panel_command(String8 name)
       UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, split_panel);
       CFG_PanelTree panel_tree = workspace_mount.panel_tree;
       CFG_PanelNode *panel_root = panel_tree.root;
-      String8 host_root_name = push_str8_copy(scratch.arena, panel_root->cfg->string);
-      CFG_Node *host_owner = panel_root->cfg->parent;
-      String8 axis_key = str8_match(host_root_name, str8_lit("control_views"), 0) ? str8_lit("control_views_split_x") : str8_lit("split_x");
+      RD_DockLayoutKeys layout = rd_dock_layout_keys(scratch.arena, panel_root->cfg);
+      String8 host_root_name = layout.root_name;
+      CFG_Node *host_owner = layout.owner;
+      String8 axis_key = layout.axis_key;
       CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_root, split_panel);
       CFG_PanelNode *parent = panel->parent;
 
@@ -1248,9 +1250,10 @@ uishell_dispatch_panel_command(String8 name)
     CFG_Node *window = workspace_mount.window_cfg;
     CFG_PanelTree panel_tree = workspace_mount.panel_tree;
     CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, cfg_node_from_id(uishell_regs()->panel));
-    String8 host_root_name = push_str8_copy(scratch.arena, panel_tree.root->cfg->string);
-    CFG_Node *host_owner = panel_tree.root->cfg->parent;
-    String8 axis_key = str8_match(host_root_name, str8_lit("control_views"), 0) ? str8_lit("control_views_split_x") : str8_lit("split_x");
+    RD_DockLayoutKeys layout = rd_dock_layout_keys(scratch.arena, panel_tree.root->cfg);
+    String8 host_root_name = layout.root_name;
+    CFG_Node *host_owner = layout.owner;
+    String8 axis_key = layout.axis_key;
     CFG_PanelNode *parent = panel->parent;
     if(parent != &cfg_nil_panel_node)
     {
@@ -1455,7 +1458,7 @@ uishell_dispatch_panel_command(String8 name)
       CFG_Node *window = rd_window_from_cfg(panel);
       RD_WindowState *ws = rd_window_state_from_cfg(window);
       ws->menu_bar_focused = 0;
-      ws->sidebar_panel_focus = rd_dock_host_from_cfg(panel, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar;
+      ws->active_panel_id = panel->id;
     }
     scratch_end(scratch);
   }
@@ -1639,7 +1642,7 @@ uishell_dispatch_window_command(String8 name)
       {
         ws->root_controlled_split_initialized = 1;
         ws->root_controlled_split_selected_workspace_id = workspace->id;
-        ws->sidebar_panel_focus = 0;
+        ws->active_panel_id = 0;
       }
       UISHELL_APP_RESET_PANELS(window);
     }
@@ -1654,7 +1657,7 @@ uishell_dispatch_window_command(String8 name)
     {
       ws->root_controlled_split_initialized = 1;
       ws->root_controlled_split_selected_workspace_id = workspace->id;
-      ws->sidebar_panel_focus = 0;
+      ws->active_panel_id = 0;
       ws->window_layout_reset = 1;
     }
   }

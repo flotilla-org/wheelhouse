@@ -6,6 +6,18 @@
 // the proposed target width; a resize is not a structural layout repair.
 #define RD_DOCK_UNMEASURED_WIDTH 3.402823466e38f
 
+#define RD_DOCK_SIDEBAR_ROOT str8_lit("control_views")
+
+typedef struct RD_DockLayoutKeys RD_DockLayoutKeys;
+struct RD_DockLayoutKeys
+{
+  CFG_Node *owner;
+  String8 root_name;
+  String8 axis_key;
+};
+
+internal RD_DockLayoutKeys rd_dock_layout_keys(Arena *arena, CFG_Node *root);
+
 typedef enum RD_DockHostKind
 {
   RD_DockHostKind_Sidebar,

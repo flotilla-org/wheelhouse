@@ -64,6 +64,8 @@ struct UIShell_SidebarState
   U64 workdirs_hash;
   U64 workdirs_retry_at;
   U64 managed_cfg_generation;
+  UI_State *render_ui;
+  U64 render_build_index;
   B32 managed_dirty;
   U64 managed_error_workspace;
   B32 initialized;
@@ -154,63 +156,79 @@ uishell_ingress_text(String8 text)
   return (WheelhouseIngressText){text.str, text.size};
 }
 
-// Includes unselected tabs. Cleat has no live cwd report in its current ABI;
-// leave live_cwd empty rather than relabeling the saved launch directory.
 // Persist only declared boolean display variables. Storage belongs to the
-// host's existing saved layout, while dispatch remains Andamento's action.
+// window node in the saved user configuration; dispatch is Andamento's action.
+typedef struct UIShell_DisplayControlIterator UIShell_DisplayControlIterator;
+struct UIShell_DisplayControlIterator
+{
+  AndamentoSnapshot *snapshot;
+  U64 node;
+  U64 control;
+};
+
+internal B32
+uishell_sidebar_next_persistent_control(UIShell_DisplayControlIterator *it,
+                                       AndamentoControl *control, AndamentoText *name)
+{
+  if(!it->snapshot) { return 0; }
+  U64 count = andamento_snapshot_node_count(it->snapshot);
+  for(; it->node < count; it->node++, it->control = 0)
+  {
+    AndamentoNode node = {0};
+    andamento_snapshot_node(it->snapshot, it->node, &node);
+    for(; it->control < node.control_count;)
+    {
+      U64 index = node.first_control + it->control++;
+      U32 persist = 0;
+      if(andamento_snapshot_control(it->snapshot, index, control) && control->value_kind == 1 &&
+         andamento_snapshot_control_variable(it->snapshot, index, name, &persist) && persist)
+      { return 1; }
+    }
+  }
+  return 0;
+}
+
 internal void
 uishell_sidebar_save_display(UIShell_SidebarState *state, CFG_Node *window)
 {
   if(!state->snapshot) { return; }
-  U64 count = andamento_snapshot_node_count(state->snapshot);
-  for(U64 i = 0; i < count; i++)
+  UIShell_DisplayControlIterator it = {state->snapshot};
+  AndamentoControl control = {0}; AndamentoText name = {0};
+  while(uishell_sidebar_next_persistent_control(&it, &control, &name))
   {
-    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
-    for(U64 c = 0; c < node.control_count; c++)
-    {
-      AndamentoControl control = {0}; AndamentoText name = {0}; U32 persist = 0;
-      U64 index = node.first_control+c;
-      if(!andamento_snapshot_control(state->snapshot, index, &control) || control.value_kind != 1 ||
-         !andamento_snapshot_control_variable(state->snapshot, index, &name, &persist) || !persist) { continue; }
-      CFG_Node *saved = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("sidebar_display"));
-      CFG_Node *value = cfg_node_child_from_string_or_alloc(rd_state->cfg, saved, uishell_sidebar_string(name));
-      String8 text = control.checked ? str8_lit("true") : str8_lit("false");
-      if(!str8_match(value->first->string, text, 0)) { cfg_node_new_replace(rd_state->cfg, value, text); }
-    }
+    CFG_Node *saved = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("sidebar_display"));
+    CFG_Node *value = cfg_node_child_from_string_or_alloc(rd_state->cfg, saved, uishell_sidebar_string(name));
+    String8 text = control.checked ? str8_lit("true") : str8_lit("false");
+    if(!str8_match(value->first->string, text, 0)) { cfg_node_new_replace(rd_state->cfg, value, text); }
   }
 }
 
 internal void
 uishell_sidebar_restore_display(UIShell_SidebarState *state, CFG_Node *window)
 {
+  if(!state->snapshot) { return; }
   CFG_Node *saved = cfg_node_child_from_string(window, str8_lit("sidebar_display"));
   for(CFG_Node *value = saved->first; value != &cfg_nil_node; value = value->next)
   {
     B32 checked = str8_match(value->first->string, str8_lit("true"), 0);
     if(!checked && !str8_match(value->first->string, str8_lit("false"), 0)) { continue; }
-    U64 count = andamento_snapshot_node_count(state->snapshot);
-    B32 dispatched = 0;
-    for(U64 i = 0; i < count && !dispatched; i++)
+    UIShell_DisplayControlIterator it = {state->snapshot};
+    AndamentoControl control = {0}; AndamentoText name = {0};
+    while(uishell_sidebar_next_persistent_control(&it, &control, &name))
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
-      for(U64 c = 0; c < node.control_count; c++)
-      {
-        AndamentoControl control = {0}; AndamentoText name = {0}; U32 persist = 0;
-        U64 index = node.first_control+c;
-        if(!andamento_snapshot_control(state->snapshot, index, &control) || control.value_kind != 1 ||
-           !andamento_snapshot_control_variable(state->snapshot, index, &name, &persist) || !persist ||
-           !str8_match(value->string, uishell_sidebar_string(name), 0) || checked == !!control.checked) { continue; }
-        char *error = 0;
-        B32 ok = andamento_dispatch(state->core, state->snapshot, control.action, &error);
-        uishell_sidebar_result(state, ok, error);
-        uishell_sidebar_refresh(state);
-        dispatched = 1;
-        break;
-      }
+      if(!str8_match(value->string, uishell_sidebar_string(name), 0) ||
+         checked == !!control.checked || control.action == ANDAMENTO_NONE) { continue; }
+      char *error = 0;
+      B32 ok = andamento_dispatch(state->core, state->snapshot, control.action, &error);
+      uishell_sidebar_result(state, ok, error);
+      uishell_sidebar_refresh(state);
+      break;
     }
   }
 }
 
+// Includes unselected tabs. Cleat has no live cwd report in its current ABI;
+// leave live_cwd empty rather than relabeling the saved launch directory.
 internal UIShell_Workdirs
 uishell_sidebar_workdirs(Arena *arena, UIShell_ControlledSplit *split)
 {
@@ -477,7 +495,7 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     {
       ws->root_controlled_split_initialized = 1;
       ws->root_controlled_split_selected_workspace_id = workspace->id;
-      ws->sidebar_panel_focus = 0;
+      ws->active_panel_id = 0;
       ws->window_layout_reset = 1;
     }
     error = 0;
@@ -966,26 +984,52 @@ uishell_sidebar_fields(Arena *arena, AndamentoSnapshot *snapshot, AndamentoNode 
   return str8_list_join(arena, &parts, &join);
 }
 
-internal void
-uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 only_section)
+typedef enum UIShell_SidebarRenderMode
 {
-  if(!only_section.size) { MemoryZeroStruct(&uishell_sidebar_subject_geometry); }
+  UIShell_SidebarRenderMode_DiagnosticAggregate,
+  UIShell_SidebarRenderMode_SectionPanel,
+} UIShell_SidebarRenderMode;
+
+typedef struct UIShell_SidebarRenderParams UIShell_SidebarRenderParams;
+struct UIShell_SidebarRenderParams
+{
+  UIShell_SidebarRenderMode mode;
+  String8 section_key;
+};
+
+internal F32 uishell_sidebar_footer_height(RD_WindowState *ws);
+internal void uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split);
+
+internal void
+uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_SidebarRenderParams params)
+{
+  B32 section_panel = params.mode == UIShell_SidebarRenderMode_SectionPanel;
+  String8 only_section = params.section_key;
+  if(!section_panel) { MemoryZeroStruct(&uishell_sidebar_subject_geometry); }
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
-  uishell_sidebar_restore(state, split);
-  if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
+  B32 prepare = state->render_ui != ui_state || state->render_build_index != ui_state->build_index;
+  if(prepare)
   {
-    for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
-    { uishell_sidebar_reconcile_workspace(state, w->mount.owner_cfg); }
-    state->managed_cfg_generation = cfg_change_gen();
-    state->managed_dirty = 0;
+    state->render_ui = ui_state;
+    state->render_build_index = ui_state->build_index;
+    uishell_sidebar_restore(state, split);
+    if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
+    {
+      for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
+      { uishell_sidebar_reconcile_workspace(state, w->mount.owner_cfg); }
+      state->managed_cfg_generation = cfg_change_gen();
+      state->managed_dirty = 0;
+    }
+    if(state->reveal_workspace_id)
+    {
+      uishell_sidebar_observe(state, split);
+      uishell_sidebar_expand_reveal(state);
+    }
   }
-  if(state->reveal_workspace_id)
-  {
-    uishell_sidebar_observe(state, split);
-    uishell_sidebar_expand_reveal(state);
-  }
-  if(!only_section.size) { state->rect = rect; }
+  if(!section_panel) { state->rect = rect; }
+  // All sections share one state. The first rendered section consumes a queued
+  // hover-card action; a header/row click is dispatched by its own section.
   size_t action = uishell_sidebar_card_take_action(state);
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size(), row_height = floor_f32(em*2.2f);
@@ -994,10 +1038,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 onl
   F32 body_top_padding = 2.f; // Room for the first container's outward border stroke.
   Vec2F32 dim = dim_2f32(rect);
   UI_Box *root;
-  UI_Focus(only_section.size ? UI_FocusKind_Null : UI_FocusKind_On) UI_Rect(only_section.size ? r2f32p(0, 0, dim.x, dim.y) : rect)
+  UI_Focus(section_panel ? UI_FocusKind_Null : UI_FocusKind_On) UI_Rect(section_panel ? r2f32p(0, 0, dim.x, dim.y) : rect)
   {
     root = ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Clip|UI_BoxFlag_DefaultFocusNav,
-      only_section.size ? ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", only_section) :
+      section_panel ? ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", only_section) :
       ui_key_from_string(ui_active_seed_key(), str8_lit("###andamento_sidebar")));
   }
   U64 count = state->snapshot ? andamento_snapshot_node_count(state->snapshot) : 0;
@@ -1078,28 +1122,17 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 onl
   U64 *rows = push_array(scratch.arena, U64, section_count);
   F32 *content_heights = push_array(scratch.arena, F32, section_count);
   U64 *entries = push_array(scratch.arena, U64, section_count);
-  AndamentoText diagnostic = {0};
-  if(state->snapshot && andamento_snapshot_diagnostic_count(state->snapshot))
-  { andamento_snapshot_diagnostic(state->snapshot, 0, &diagnostic); }
-  F32 footer = only_section.size ? 0 : row_height; // Stable diagnostic strip, including when empty.
-  F32 available = Max(0.f, dim.y-footer-section_count*row_height);
-  // Template controls share one fixed row at the bottom of the sidebar.
-  B32 has_controls = 0;
-
-  B32 chrome_controls = ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions ||
-    ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions ||
-    ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions ||
-    ws->chrome_niche[RD_ChromeElementKind_CloseWorkspace] == RD_ChromeNiche_SidebarActions;
-  if(only_section.size) { chrome_controls = has_controls = 0; }
-  F32 chrome_height = chrome_controls ? row_height : 0;
-  F32 controls_height = (has_controls ? row_height : 0)+chrome_height;
-  available = Max(0.f, available-controls_height);
+  F32 footer_height = section_panel ? 0 : uishell_sidebar_footer_height(ws);
+  F32 available = Max(0.f, dim.y-footer_height-section_count*row_height);
   U64 flexible = section_count;
   for(U64 n = 0; n < section_count; n++)
   {
     String8 key = uishell_sidebar_string(nodes[sections[n]].key);
     UIShell_SidebarSection *section = state->sections;
-    for(; section; section = section->next) { if(str8_match(section->key, key, 0)) { break; } }
+    for(; section; section = section->next)
+    {
+      if(str8_match(section->key, key, 0)) { break; }
+    }
     if(!section)
     {
       section = push_array(ws->arena, UIShell_SidebarSection, 1);
@@ -1108,7 +1141,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 onl
       state->sections = section;
     }
     if(sections[n] == reveal_section) { section->collapsed = 0; }
-    if(only_section.size && str8_match(only_section, key, 0))
+    if(section_panel && str8_match(only_section, key, 0))
     { section->collapsed = cfg_node_child_from_string(cfg_node_from_id(uishell_regs()->view), str8_lit("section_collapsed")) != &cfg_nil_node; }
     states[n] = section;
     U64 end = n+1 < section_count ? sections[n+1] : count;
@@ -1152,7 +1185,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 onl
     remaining -= heights[n];
   }
   if(flexible < section_count) { heights[flexible] = remaining; }
-  if(only_section.size)
+  if(section_panel)
   {
     for(U64 n = 0; n < section_count; n++)
     { heights[n] = states[n]->collapsed ? 0 : Max(0.f, dim.y-row_height); }
@@ -1163,7 +1196,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 onl
     for(U64 n = 0; n < section_count; n++)
     {
       AndamentoNode *section_node = &nodes[sections[n]];
-      if(only_section.size ? !str8_match(only_section, uishell_sidebar_string(section_node->key), 0) :
+      if(section_panel ? !str8_match(only_section, uishell_sidebar_string(section_node->key), 0) :
          (!rows[n] && !section_node->control_count)) { continue; }
       String8 key = uishell_sidebar_string(section_node->key);
       String8 title = uishell_sidebar_string(section_node->label);
@@ -1176,7 +1209,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 onl
       UI_Box *header;
       if(states[n]->collapsed && contains_selected[sections[n]])
       { ui_set_next_background_color(uishell_sidebar_selection_fill(0)); }
-      UI_Rect(r2f32p(0, y+(!only_section.size && n != flexible && heights[n] > 0 ? 6.f : 0.f), dim.x, y+row_height)) UI_ChildLayoutAxis(Axis2_X)
+      UI_Rect(r2f32p(0, y+(!section_panel && n != flexible && heights[n] > 0 ? 6.f : 0.f), dim.x, y+row_height)) UI_ChildLayoutAxis(Axis2_X)
       { header = ui_build_box_from_stringf(states[n]->collapsed && contains_selected[sections[n]] ? UI_BoxFlag_DrawBackground : 0, "###section_header_%S", key); }
       UI_Parent(header) UI_PrefHeight(ui_pct(1, 1)) UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak")
       {
@@ -1206,7 +1239,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 onl
             { ui_state->tooltip_anchor_key = button->key; ui_label(uishell_sidebar_string(control.label)); }
           }
         }
-        if(only_section.size)
+        if(section_panel)
         {
           CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
           UI_Key hover_key = ui_key_from_stringf(root->key, "###section_header_%S", key);
@@ -1225,7 +1258,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 onl
         if(toggle)
         {
           states[n]->collapsed = !states[n]->collapsed;
-          if(only_section.size)
+          if(section_panel)
           {
             CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
             if(states[n]->collapsed) { cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("section_collapsed")); }
@@ -1237,7 +1270,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 onl
       if(heights[n] <= 0) { continue; }
       // The top edge of a secondary body resizes its allocation without
       // changing another section's scroll position or core state.
-      if(!only_section.size && n != flexible)
+      if(!section_panel && n != flexible)
       {
         UI_Rect(r2f32p(0, y-row_height, dim.x, y-row_height+6.f)) UI_HoverCursor(WM_Cursor_UpDown)
         {
@@ -1572,35 +1605,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 onl
       ui_signal_from_box(body);
       y += heights[n];
     }
-    if(chrome_controls)
-    {
-      UI_Rect(r2f32p(0, dim.y-chrome_height, dim.x, dim.y)) UI_ChildLayoutAxis(Axis2_X)
-      {
-        UI_Box *bar = ui_build_box_from_string(UI_BoxFlag_DrawSideTop, str8_lit("###workspace_chrome"));
-        UI_Parent(bar) UI_PrefWidth(ui_em(2.25f, 1)) UI_PrefHeight(ui_pct(1, 1))
-        {
-          if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_new_workspace(split->owner_cfg); }
-          ui_spacer(ui_pct(1, 0));
-          if(ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_workspace_action(split->owner_cfg, 0); }
-          if(ws->chrome_niche[RD_ChromeElementKind_CloseWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_workspace_action(split->owner_cfg, 1); }
-          if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_overview_toggle(ws); }
-        }
-      }
-    }
-    if(!only_section.size) UI_Rect(r2f32p(0, dim.y-controls_height-footer, dim.x, dim.y-controls_height)) UI_ChildLayoutAxis(Axis2_X)
-    {
-      UI_Box *notice = ui_build_box_from_string(UI_BoxFlag_DrawSideTop, str8_lit("###sidebar_notice"));
-      UI_Parent(notice) UI_PrefHeight(ui_pct(1, 1))
-      {
-        String8 message = state->error[0] ? str8_cstring((char *)state->error) : state->inspection[0] ? str8_cstring((char *)state->inspection) : uishell_sidebar_string(diagnostic);
-        UI_PrefWidth(ui_pct(1, 0)) { ui_label(message); }
-        UI_PrefWidth(ui_em(1.5f, 1))
-        {
-          if((state->error[0] || state->inspection[0]) && ui_clicked(uishell_sidebar_button(str8_lit("×###sidebar_dismiss"))))
-          { state->inspection[0] = state->error[0] = 0; rd_request_frame(); }
-        }
-      }
-    }
+    if(!section_panel)
+    { uishell_sidebar_footer_ui(r2f32p(0, dim.y-footer_height, dim.x, dim.y), split); }
   }
   if(uishell_sidebar_subject_fixture && uishell_sidebar_subject_geometry_path.size)
   {
@@ -1627,16 +1633,19 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, String8 onl
       uishell_sidebar_save_display(state, split->owner_cfg);
       rd_request_frame();
     }
-    Temp scratch = scratch_begin(0, 0);
-    UIShell_ControlledSplit current = uishell_root_controlled_split_from_window(scratch.arena, split->owner_cfg);
-    uishell_sidebar_observe(state, &current);
-    scratch_end(scratch);
+    if(prepare || action != ANDAMENTO_NONE)
+    {
+      Temp scratch = scratch_begin(0, 0);
+      UIShell_ControlledSplit current = uishell_root_controlled_split_from_window(scratch.arena, split->owner_cfg);
+      uishell_sidebar_observe(state, &current);
+      scratch_end(scratch);
+    }
   }
 }
 
 internal void
 uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
-{ uishell_sidebar_render(rect, split, str8_zero()); }
+{ uishell_sidebar_render(rect, split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_DiagnosticAggregate}); }
 
 RD_VIEW_UI_FUNCTION_DEF(sidebar_section)
 {
@@ -1648,7 +1657,7 @@ RD_VIEW_UI_FUNCTION_DEF(sidebar_section)
   { scratch_end(scratch); return; }
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   String8 key = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
-  if(key.size) { uishell_sidebar_render(rect, &split, key); }
+  if(key.size) { uishell_sidebar_render(rect, &split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, key}); }
   scratch_end(scratch);
 }
 
@@ -1662,7 +1671,10 @@ uishell_sidebar_find_view(CFG_Node *container, String8 key)
     if(str8_match(c->string, str8_lit("sidebar_section"), 0) &&
        str8_match(cfg_node_child_from_string(c, str8_lit("section"))->first->string, key, 0)) { return c; }
     if(rd_dock_is_container(c))
-    { CFG_Node *found = uishell_sidebar_find_view(c, key); if(found != &cfg_nil_node) { return found; } }
+    {
+      CFG_Node *found = uishell_sidebar_find_view(c, key);
+      if(found != &cfg_nil_node) { return found; }
+    }
   }
   return &cfg_nil_node;
 }
@@ -1672,13 +1684,24 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
 {
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
-  CFG_Node *root = cfg_node_child_from_string(split->owner_cfg, str8_lit("control_views"));
+  CFG_Node *root = cfg_node_child_from_string(split->owner_cfg, RD_DOCK_SIDEBAR_ROOT);
   // Initialise once. A saved empty host means that its sections were closed or
   // moved, so restarting must not manufacture new copies.
   if(root == &cfg_nil_node)
   {
-    root = cfg_node_new(rd_state->cfg, split->owner_cfg, str8_lit("control_views"));
-    U64 count = state->snapshot ? andamento_snapshot_node_count(state->snapshot) : 0;
+    // A failed or section-free initial snapshot must not create a saved empty
+    // host: that empty layout is reserved for intentional closes and moves.
+    if(!state->snapshot) { return &cfg_nil_node; }
+    U64 count = andamento_snapshot_node_count(state->snapshot);
+    B32 has_section = 0;
+    for(U64 i = 0; i < count; i++)
+    {
+      AndamentoNode node = {0};
+      andamento_snapshot_node(state->snapshot, i, &node);
+      if(node.is_section) { has_section = 1; break; }
+    }
+    if(!has_section) { return &cfg_nil_node; }
+    root = cfg_node_new(rd_state->cfg, split->owner_cfg, RD_DOCK_SIDEBAR_ROOT);
     for(U64 i = 0; i < count; i++)
     {
       AndamentoNode node = {0};
@@ -1698,6 +1721,17 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
     }
   }
   return root;
+}
+
+// Dragging opts into saved ratios. Double-clicking a sidebar boundary or an
+// explicit panel reset returns the window to content-based default sizing.
+internal void
+uishell_sidebar_manual_sizing(CFG_Node *window, B32 manual)
+{
+  CFG_Node *flag = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized"));
+  if(manual)
+  { cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("sidebar_layout_sized")); }
+  else if(flag != &cfg_nil_node) { cfg_node_release(rd_state->cfg, flag); }
 }
 
 // Default stacked panels keep secondary sections bounded by their content;
@@ -1726,7 +1760,10 @@ uishell_sidebar_size_panels(UIShell_ControlledSplit *split, UIShell_WorkspaceMou
     String8 key = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
     collapsed[n] = cfg_node_child_from_string(view, str8_lit("section_collapsed")) != &cfg_nil_node;
     UIShell_SidebarSection *section = state->sections;
-    for(; section; section = section->next) { if(str8_match(section->key, key, 0)) { break; } }
+    for(; section; section = section->next)
+    {
+      if(str8_match(section->key, key, 0)) { break; }
+    }
     contents[n] = section ? section->content_height : 7*row_height;
     headers[n] = !section || contents[n] > 0 || section->has_controls ? row_height : 0;
     available -= headers[n];

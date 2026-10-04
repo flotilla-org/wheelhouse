@@ -612,7 +612,7 @@ struct RD_WindowState
   RD_WindowState *order_prev;
   RD_WindowState *hash_next;
   RD_WindowState *hash_prev;
-  B32 sidebar_panel_focus;
+  CFG_ID active_panel_id;
   CFG_ID cfg_id;
   U64 frames_alive;
   U64 last_frame_index_touched;

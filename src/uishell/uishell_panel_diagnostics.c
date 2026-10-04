@@ -108,7 +108,7 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   UIShell_RegsScope(.tab = created_id)
   { uishell_dispatch_tab_command(str8_lit("close_tab")); }
   failures += cfg_node_from_id(created_id) != &cfg_nil_node;
-  CFG_Node *control = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("control_views"));
+  CFG_Node *control = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
   CFG_Node *selector = cfg_node_new(rd_state->cfg, control, str8_lit("workspace_selector"));
   CFG_ID selector_id = selector->id;
   log_scope_begin();

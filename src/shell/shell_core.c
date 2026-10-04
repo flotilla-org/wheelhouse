@@ -2768,9 +2768,11 @@ rd_dock_restore_layouts(void)
 internal UIShell_WorkspaceMount
 uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner)
 {
-  B32 sidebar = str8_match(owner->string, str8_lit("control_views"), 0);
+  B32 sidebar = str8_match(owner->string, RD_DOCK_SIDEBAR_ROOT, 0);
   CFG_Node *panels_root = sidebar ? owner : cfg_node_child_from_string(owner, str8_lit("panels"));
-  Axis2 root_split_axis = cfg_node_child_from_string(sidebar ? window : owner, sidebar ? str8_lit("control_views_split_x") : str8_lit("split_x")) != &cfg_nil_node ? Axis2_X : Axis2_Y;
+  RD_DockLayoutKeys layout = rd_dock_layout_keys(arena, panels_root);
+  CFG_Node *axis_owner = layout.owner != &cfg_nil_node ? layout.owner : (sidebar ? window : owner);
+  Axis2 root_split_axis = cfg_node_child_from_string(axis_owner, layout.axis_key) != &cfg_nil_node ? Axis2_X : Axis2_Y;
   CFG_PanelTree panel_tree = cfg_panel_tree_from_panels_cfg(arena, panels_root, root_split_axis);
   CFG_Node *workspace = str8_match(owner->string, str8_lit("workspace"), 0) ? owner : &cfg_nil_node;
   UIShell_WorkspaceMount mount =
@@ -2818,7 +2820,13 @@ uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg)
   CFG_Node *workspace = uishell_workspace_cfg_from_cfg(cfg);
   CFG_Node *owner = workspace != &cfg_nil_node ? workspace : window;
   for(CFG_Node *c = cfg; c != &cfg_nil_node && c != window; c = c->parent)
-  { if(str8_match(c->string, str8_lit("control_views"), 0)) { owner = c; break; } }
+  {
+    if(str8_match(c->string, RD_DOCK_SIDEBAR_ROOT, 0))
+    {
+      owner = c;
+      break;
+    }
+  }
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(arena, window, owner);
   return mount;
 }
@@ -3551,8 +3559,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           ui_set_next_hover_cursor(split_axis == Axis2_X ? WM_Cursor_LeftRight : WM_Cursor_UpDown);
           UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable, "###%p_%p", min_child->cfg, max_child->cfg);
           UI_Signal sig = ui_signal_from_box(box);
-          if((ui_double_clicked(sig) || ui_dragging(sig)) && rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar)
-          { cfg_node_child_from_string_or_alloc(rd_state->cfg, mount->window_cfg, str8_lit("sidebar_layout_sized")); }
+          B32 sidebar_boundary = rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar;
+          if(sidebar_boundary && (ui_double_clicked(sig) || ui_dragging(sig)))
+          { uishell_sidebar_manual_sizing(mount->window_cfg, !ui_double_clicked(sig)); }
           if(ui_double_clicked(sig))
           {
             ui_kill_action();
@@ -3864,7 +3873,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                 !ws->hover_eval_focused &&
                                 !ws->ui->hover_card_focus &&
                                 panel_tree.focused == panel &&
-                                ((rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar) == !!ws->sidebar_panel_focus));
+                                (rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind ==
+                                 rd_dock_host_from_cfg(cfg_node_from_id(ws->active_panel_id), RD_DOCK_UNMEASURED_WIDTH).kind));
         CFG_Node *selected_tab = panel->selected_tab;
         RD_ViewState *selected_tab_view_state = rd_view_state_from_cfg(selected_tab);
         ProfScope("leaf panel UI work - %.*s: %.*s", str8_varg(selected_tab->string), str8_varg(rd_expr_from_cfg(selected_tab)))
@@ -4762,16 +4772,19 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 {
   if(dim_2f32(rect).x <= 0 || dim_2f32(rect).y <= 0) { return; }
   Temp scratch = scratch_begin(0, 0);
-  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, split->owner_cfg,
-    uishell_sidebar_dock_layout(split));
+  CFG_Node *root = uishell_sidebar_dock_layout(split);
+  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, split->owner_cfg, root);
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   ws->sidebar->rect = rect;
   MemoryZeroStruct(&uishell_sidebar_subject_geometry);
   F32 footer_height = Min(dim_2f32(rect).y, uishell_sidebar_footer_height(ws));
   Rng2F32 panels_rect = rect;
   panels_rect.y1 -= footer_height;
-  uishell_sidebar_size_panels(split, &mount, panels_rect);
-  rd_panel_area_ui(scratch, panels_rect, rect, ws, &mount, wm_window_is_focused(ws->os), 0, 0, 0, 0);
+  if(root != &cfg_nil_node)
+  {
+    uishell_sidebar_size_panels(split, &mount, panels_rect);
+    rd_panel_area_ui(scratch, panels_rect, rect, ws, &mount, wm_window_is_focused(ws->os), 0, 0, 0, 0);
+  }
   uishell_sidebar_footer_ui(r2f32p(rect.x0, panels_rect.y1, rect.x1, rect.y1), split);
   scratch_end(scratch);
 }

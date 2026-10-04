@@ -1,3 +1,13 @@
+// Capture before split/close mutates or releases the root's configuration.
+internal RD_DockLayoutKeys
+rd_dock_layout_keys(Arena *arena, CFG_Node *root)
+{
+  RD_DockLayoutKeys result = {root->parent, push_str8_copy(arena, root->string)};
+  result.axis_key = str8_match(result.root_name, RD_DOCK_SIDEBAR_ROOT, 0) ?
+    str8_lit("control_views_split_x") : str8_lit("split_x");
+  return result;
+}
+
 internal RD_DockPresentation
 rd_dock_presentation(RD_DockHostKind host, U64 tab_count)
 {
@@ -52,7 +62,7 @@ rd_dock_host_from_cfg(CFG_Node *cfg, F32 width)
   RD_DockHost host = {RD_DockHostKind_WorkspaceRegion, 0, 0, 0, width};
   for(CFG_Node *c = cfg; c != &cfg_nil_node; c = c->parent)
   {
-    if(str8_match(c->string, str8_lit("control_views"), 0)) { host.kind = RD_DockHostKind_Sidebar; }
+    if(str8_match(c->string, RD_DOCK_SIDEBAR_ROOT, 0)) { host.kind = RD_DockHostKind_Sidebar; }
     if(str8_match(c->string, str8_lit("floating_panels"), 0)) { host.kind = RD_DockHostKind_FloatingPanel; }
     if(str8_match(c->string, str8_lit("workspace"), 0))
     {
@@ -75,7 +85,7 @@ rd_dock_is_container(CFG_Node *cfg)
 {
   if(str8_match(cfg->string, str8_lit("workspace"), 0) ||
      str8_match(cfg->string, str8_lit("panels"), 0) ||
-     str8_match(cfg->string, str8_lit("control_views"), 0) ||
+     str8_match(cfg->string, RD_DOCK_SIDEBAR_ROOT, 0) ||
      str8_match(cfg->string, str8_lit("floating_panels"), 0)) { return 1; }
   // Match a single MD numeric token without allocating a token array. Numeric
   // tokens start with a digit, .digit or -digit, then contain alnum, _ or . .
@@ -218,7 +228,7 @@ rd_dock_restore_container(CFG_State *state, CFG_Node *window, CFG_Node *containe
       {
         CFG_Node *fallback = &cfg_nil_node;
         if(view->default_host == RD_DockHostKind_Sidebar)
-        { fallback = cfg_node_child_from_string_or_alloc(state, window, str8_lit("control_views")); }
+        { fallback = cfg_node_child_from_string_or_alloc(state, window, RD_DOCK_SIDEBAR_ROOT); }
         else
         {
           CFG_Node *owner = window;

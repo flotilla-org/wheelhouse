@@ -82,7 +82,7 @@ entry_point(CmdLine *cmdline)
   CFG_Node *window = cfg_node_child_from_string(cfg_node_root(), str8_lit("window"));
   CFG_Node *workspace = cfg_node_child_from_string(window, str8_lit("workspace"));
   CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-  CFG_Node *sidebar = cfg_node_child_from_string(window, str8_lit("control_views"));
+  CFG_Node *sidebar = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
   CFG_Node *selecting_view = cfg_node_child_from_string(panels, str8_lit("workspace_selector"));
   CFG_Node *text = cfg_node_child_from_string(sidebar, str8_lit("text"));
   CFG_Node *terminal = cfg_node_child_from_string(panels, str8_lit("terminal"));
@@ -130,7 +130,7 @@ entry_point(CmdLine *cmdline)
   CFG_Node *split_panels = cfg_node_new(cfg, split, str8_lit("panels"));
   CFG_Node *leaf = cfg_node_new(cfg, split_panels, str8_lit("0.5"));
   cfg_node_new(cfg, split_panels, str8_lit("0.5"));
-  CFG_Node *split_sidebar = cfg_node_new(cfg, split, str8_lit("control_views"));
+  CFG_Node *split_sidebar = cfg_node_new(cfg, split, RD_DOCK_SIDEBAR_ROOT);
   CFG_Node *misplaced = cfg_node_new(cfg, split_sidebar, str8_lit("terminal"));
   rd_dock_restore_window(cfg, split);
   Check(misplaced->parent == leaf);
@@ -145,7 +145,7 @@ entry_point(CmdLine *cmdline)
   CFG_Node *second_selector = cfg_node_new(cfg, invalid_panels, str8_lit("workspace_selector"));
   CFG_ID second_id = second_selector->id;
   rd_dock_restore_window(cfg, all_invalid);
-  Check(first_selector->parent == cfg_node_child_from_string(all_invalid, str8_lit("control_views")));
+  Check(first_selector->parent == cfg_node_child_from_string(all_invalid, RD_DOCK_SIDEBAR_ROOT));
   Check(cfg_node_from_id(second_id) == &cfg_nil_node);
   // Floating Panels are real config hosts, including beneath a Workspace with
   // a subject. Restore retains their valid Views and preserves the subject.
