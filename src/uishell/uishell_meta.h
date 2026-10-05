@@ -371,8 +371,6 @@ uishell_app_file_menu_specs(void)
 ////////////////////////////////
 //~ rjf: Shell Default Panels
 
-internal void uishell_sidebar_reset_regions(CFG_Node *owner);
-
 internal void
 uishell_reset_panels(CFG_Node *window)
 {

@@ -252,6 +252,10 @@ rd_dock_restore_container(CFG_State *state, CFG_Node *window, CFG_Node *containe
     {
       if(rd_dock_placement(c, container, RD_DOCK_UNMEASURED_WIDTH) != RD_DockRule_Valid)
       {
+        // Region-specific defaults arrive with the native snapshot. Preserve
+        // the need to resolve those hints after this generic safety fallback.
+        if(str8_match(c->string, str8_lit("sidebar_section"), 0))
+        { cfg_node_child_from_string_or_alloc(state, c, str8_lit("section_hint_pending")); }
         CFG_Node *fallback = &cfg_nil_node;
         if(view->default_host == RD_DockHostKind_Sidebar)
         { fallback = cfg_node_child_from_string_or_alloc(state, window, RD_DOCK_SIDEBAR_ROOT); }

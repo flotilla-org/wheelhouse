@@ -1856,19 +1856,46 @@ uishell_sidebar_find_view(CFG_Node *container, String8 key)
 // roots. A known id with no View records an intentional close, not a new region.
 #define UISHELL_REGION_INVENTORY str8_lit("section_positions")
 
-internal U64
-uishell_sidebar_region_index(AndamentoSnapshot *snapshot, String8 key)
+typedef struct UIShell_SectionPlacement UIShell_SectionPlacement;
+struct UIShell_SectionPlacement
 {
-  for(U64 i = 0, count = andamento_snapshot_node_count(snapshot); i < count; i++)
-  {
-    AndamentoNode node = {0}; andamento_snapshot_node(snapshot, i, &node);
-    if(node.is_section && str8_match(uishell_sidebar_string(node.key), key, 0)) { return i; }
-  }
+  String8 key, title, default_host;
+  S64 order;
+};
+
+internal U64
+uishell_sidebar_region_index(UIShell_SectionPlacement *regions, U64 count, String8 key)
+{
+  for(U64 i = 0; i < count; i++)
+  { if(str8_match(regions[i].key, key, 0)) { return i; } }
   return ANDAMENTO_NONE;
 }
 
 internal B32
-uishell_sidebar_prune_regions(CFG_Node *container, AndamentoSnapshot *snapshot, B32 reset)
+uishell_sidebar_panel_has_content(CFG_Node *panel)
+{
+  for(CFG_Node *n = panel->first; n != &cfg_nil_node; n = n->next)
+  { if(rd_dock_view_from_name(n->string) || rd_dock_is_container(n)) { return 1; } }
+  return 0;
+}
+
+internal void
+uishell_sidebar_prune_empty_panel(CFG_Node *panel)
+{
+  // The View was found within this level's sidebar/floating host. Remove empty
+  // intermediate wrappers, stopping before the host and its owning split.
+  while(panel != &cfg_nil_node && rd_dock_is_container(panel) &&
+        !str8_match(panel->string, RD_DOCK_SIDEBAR_ROOT, 0) &&
+        !str8_match(panel->string, str8_lit("floating_panels"), 0) &&
+        !uishell_sidebar_panel_has_content(panel))
+  {
+    CFG_Node *parent = panel->parent;
+    cfg_node_release(rd_state->cfg, panel); panel = parent;
+  }
+}
+
+internal B32
+uishell_sidebar_prune_regions(CFG_Node *container, UIShell_SectionPlacement *regions, U64 count, B32 reset)
 {
   B32 removed = 0;
   for(CFG_Node *c = container->first, *next; c != &cfg_nil_node; c = next)
@@ -1877,20 +1904,15 @@ uishell_sidebar_prune_regions(CFG_Node *container, AndamentoSnapshot *snapshot, 
     if(str8_match(c->string, str8_lit("sidebar_section"), 0))
     {
       String8 key = cfg_node_child_from_string(c, str8_lit("section"))->first->string;
-      if(reset || uishell_sidebar_region_index(snapshot, key) == ANDAMENTO_NONE)
+      if(reset || uishell_sidebar_region_index(regions, count, key) == ANDAMENTO_NONE)
       { cfg_node_release(rd_state->cfg, c); removed = 1; }
     }
     else if(rd_dock_is_container(c))
     {
-      B32 child_removed = uishell_sidebar_prune_regions(c, snapshot, reset);
+      B32 child_removed = uishell_sidebar_prune_regions(c, regions, count, reset);
       removed |= child_removed;
-      if(child_removed || reset)
-      {
-        B32 has_content = 0;
-        for(CFG_Node *n = c->first; n != &cfg_nil_node; n = n->next)
-        { if(rd_dock_view_from_name(n->string) || rd_dock_is_container(n)) { has_content = 1; break; } }
-        if(!has_content) { cfg_node_release(rd_state->cfg, c); }
-      }
+      if(!uishell_sidebar_panel_has_content(c))
+      { cfg_node_release(rd_state->cfg, c); }
     }
   }
   return removed;
@@ -1902,12 +1924,15 @@ uishell_sidebar_reset_regions(CFG_Node *owner)
   // Only this level's hosts; child Workspace Regions own independent layouts.
   CFG_Node *sidebar = cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT);
   CFG_Node *floating = cfg_node_child_from_string(owner, str8_lit("floating_panels"));
-  uishell_sidebar_prune_regions(sidebar, 0, 1);
-  uishell_sidebar_prune_regions(floating, 0, 1);
-  if(sidebar->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, sidebar); }
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY));
+  uishell_sidebar_prune_regions(sidebar, 0, 0, 1);
+  uishell_sidebar_prune_regions(floating, 0, 0, 1);
+  if(sidebar != &cfg_nil_node && sidebar->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, sidebar); }
+  CFG_Node *inventory = cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY);
+  if(inventory != &cfg_nil_node) { cfg_node_release(rd_state->cfg, inventory); }
   // Empty inventory makes every declared id new even if unrelated tabs keep
-  // the host alive. Preserve those tabs when resetting section placements.
+  // the host alive: reconcile_regions' legacy_saved test must see this node.
+  // Avoid releasing absent nodes: cfg_node_release does no tree work for nil,
+  // but still increments the configuration change generation.
   cfg_node_new(rd_state->cfg, owner, UISHELL_REGION_INVENTORY);
 }
 
@@ -1921,93 +1946,113 @@ uishell_sidebar_region_view(CFG_Node *owner, String8 key)
 }
 
 internal CFG_Node *
-uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
+uishell_sidebar_place_region(CFG_Node *owner, UIShell_SectionPlacement *regions, U64 count, U64 index, CFG_Node *view)
 {
-  RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
-  UIShell_SidebarState *state = uishell_sidebar_init(ws);
-  CFG_Node *owner = split->owner_cfg;
+  UIShell_SectionPlacement region = regions[index];
+  String8 host_name = str8_match(region.default_host, str8_lit("floating"), 0) ? str8_lit("floating_panels") : RD_DOCK_SIDEBAR_ROOT;
+  CFG_Node *host = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner, host_name);
+  CFG_Node *panel = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
+  B32 valid = view == &cfg_nil_node ? rd_dock_can_create(str8_lit("sidebar_section"), panel) :
+    rd_dock_drag_target(view, panel, RD_DOCK_UNMEASURED_WIDTH);
+  if(!valid)
+  {
+    cfg_node_release(rd_state->cfg, panel);
+    host = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner, RD_DOCK_SIDEBAR_ROOT);
+    panel = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
+    valid = view == &cfg_nil_node ? rd_dock_can_create(str8_lit("sidebar_section"), panel) :
+      rd_dock_drag_target(view, panel, RD_DOCK_UNMEASURED_WIDTH);
+  }
+  if(!valid) { cfg_node_release(rd_state->cfg, panel); return view; }
+  if(view == &cfg_nil_node)
+  {
+    view = cfg_node_new(rd_state->cfg, panel, str8_lit("sidebar_section"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")), region.key);
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), region.title);
+    cfg_node_new(rd_state->cfg, view, str8_lit("selected"));
+  }
+  else
+  {
+    CFG_Node *old_panel = view->parent;
+    cfg_node_insert_child(rd_state->cfg, panel, panel->last, view);
+    uishell_sidebar_prune_empty_panel(old_panel);
+  }
+  // Insert beside the next hinted neighbour's whole subtree. Existing nested
+  // splits keep their structure, tab selection, ratios and View identities.
+  for(U64 next = index+1; next < count; next++)
+  {
+    CFG_Node *neighbour = uishell_sidebar_region_view(owner, regions[next].key);
+    if(neighbour == &cfg_nil_node) { continue; }
+    CFG_Node *anchor = neighbour->parent;
+    while(anchor != &cfg_nil_node && anchor->parent != host) { anchor = anchor->parent; }
+    if(anchor != &cfg_nil_node)
+    { cfg_node_insert_child(rd_state->cfg, host, anchor->prev, panel); break; }
+  }
+  return view;
+}
+
+// An authoritative empty declaration removes stale Views and close records.
+// Missing provider snapshots never reach this function and preserve layout.
+internal CFG_Node *
+uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *regions, U64 count)
+{
   CFG_Node *root = cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT);
-  // Provider failure must not mutate a remembered arrangement.
-  if(!state->snapshot) { return root; }
-  AndamentoSnapshot *snapshot = state->snapshot;
-  U64 count = andamento_snapshot_node_count(snapshot);
   CFG_Node *inventory = cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY);
   B32 legacy_saved = inventory == &cfg_nil_node && root != &cfg_nil_node;
-  if(inventory == &cfg_nil_node)
-  { inventory = cfg_node_new(rd_state->cfg, owner, UISHELL_REGION_INVENTORY); }
-  uishell_sidebar_prune_regions(root, snapshot, 0);
-  uishell_sidebar_prune_regions(cfg_node_child_from_string(owner, str8_lit("floating_panels")), snapshot, 0);
+  if(inventory == &cfg_nil_node) { inventory = cfg_node_new(rd_state->cfg, owner, UISHELL_REGION_INVENTORY); }
+  uishell_sidebar_prune_regions(root, regions, count, 0);
+  uishell_sidebar_prune_regions(cfg_node_child_from_string(owner, str8_lit("floating_panels")), regions, count, 0);
   for(CFG_Node *c = inventory->first, *next; c != &cfg_nil_node; c = next)
   {
     next = c->next;
-    if(uishell_sidebar_region_index(snapshot, c->string) == ANDAMENTO_NONE) { cfg_node_release(rd_state->cfg, c); }
+    if(uishell_sidebar_region_index(regions, count, c->string) == ANDAMENTO_NONE) { cfg_node_release(rd_state->cfg, c); }
   }
-  Temp scratch = scratch_begin(0, 0);
-  U64 *indices = push_array(scratch.arena, U64, count);
-  S64 *orders = push_array(scratch.arena, S64, count);
-  U64 regions = 0;
-  for(U64 i = 0; i < count; i++)
+  for(U64 r = 0; r < count; r++)
   {
-    AndamentoNode node = {0}; andamento_snapshot_node(snapshot, i, &node);
-    if(!node.is_section) { continue; }
-    AndamentoRegionHints hints = {0}; andamento_snapshot_region_hints(snapshot, i, &hints);
-    S64 order = hints.has_order ? hints.order : (S64)regions;
-    U64 at = regions;
-    // Stable insertion: equal and absent hints retain declaration order.
-    while(at && orders[at-1] > order) { indices[at] = indices[at-1]; orders[at] = orders[at-1]; at--; }
-    indices[at] = i; orders[at] = order; regions++;
-  }
-  for(U64 r = 0; r < regions; r++)
-  {
-    AndamentoNode node = {0}; andamento_snapshot_node(snapshot, indices[r], &node);
-    String8 key = uishell_sidebar_string(node.key);
+    String8 key = regions[r].key;
     CFG_Node *record = cfg_node_child_from_string(inventory, key);
     CFG_Node *view = uishell_sidebar_region_view(owner, key);
     B32 known = record != &cfg_nil_node;
-    B32 invalid = view != &cfg_nil_node && !rd_dock_saved_placement_valid(view);
     if(!known) { record = cfg_node_new(rd_state->cfg, inventory, key); }
-    if(invalid)
-    { cfg_node_release(rd_state->cfg, view); view = &cfg_nil_node; known = 0; }
-    if(view == &cfg_nil_node && ((!known && !legacy_saved) || invalid))
+    CFG_Node *hint_pending = cfg_node_child_from_string(view, str8_lit("section_hint_pending"));
+    B32 invalid = view != &cfg_nil_node && (!rd_dock_saved_placement_valid(view) || hint_pending != &cfg_nil_node);
+    if(invalid || (view == &cfg_nil_node && !known && !legacy_saved))
     {
-      AndamentoRegionHints hints = {0}; andamento_snapshot_region_hints(snapshot, indices[r], &hints);
-      String8 host_name = str8_match(uishell_sidebar_string(hints.default_host), str8_lit("floating"), 0) ?
-        str8_lit("floating_panels") : RD_DOCK_SIDEBAR_ROOT;
-      CFG_Node *host = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner, host_name);
-      CFG_Node *panel = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
-      if(!rd_dock_can_create(str8_lit("sidebar_section"), panel))
-      {
-        cfg_node_release(rd_state->cfg, panel);
-        host = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner, RD_DOCK_SIDEBAR_ROOT);
-        panel = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
-      }
-      if(rd_dock_can_create(str8_lit("sidebar_section"), panel))
-      {
-        view = cfg_node_new(rd_state->cfg, panel, str8_lit("sidebar_section"));
-        cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")), key);
-        String8 title = uishell_sidebar_string(node.label);
-        if(node.field_count)
-        { AndamentoField field = {0}; andamento_snapshot_field(snapshot, node.first_field, &field); title = uishell_sidebar_string(field.text); }
-        cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), title);
-        cfg_node_new(rd_state->cfg, view, str8_lit("selected"));
-        // Insert a new region beside its next hinted neighbour. Existing panels
-        // keep their relative order, ratios, tabs and identities.
-        for(U64 next = r+1; next < regions; next++)
-        {
-          AndamentoNode neighbour = {0}; andamento_snapshot_node(snapshot, indices[next], &neighbour);
-          CFG_Node *neighbour_view = uishell_sidebar_region_view(owner, uishell_sidebar_string(neighbour.key));
-          if(neighbour_view != &cfg_nil_node && neighbour_view->parent->parent == host)
-          { cfg_node_insert_child(rd_state->cfg, host, neighbour_view->parent->prev, panel); break; }
-        }
-      }
-      else { cfg_node_release(rd_state->cfg, panel); }
+      view = uishell_sidebar_place_region(owner, regions, count, r, view);
+      if(hint_pending != &cfg_nil_node && rd_dock_saved_placement_valid(view))
+      { cfg_node_release(rd_state->cfg, hint_pending); }
     }
     CFG_Node *closed = cfg_node_child_from_string(record, str8_lit("closed"));
     if(view == &cfg_nil_node && closed == &cfg_nil_node) { cfg_node_new(rd_state->cfg, record, str8_lit("closed")); }
     if(view != &cfg_nil_node && closed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, closed); }
   }
-  scratch_end(scratch);
   return cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT);
+}
+
+internal CFG_Node *
+uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
+{
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
+  UIShell_SidebarState *state = uishell_sidebar_init(ws);
+  if(!state->snapshot) { return cfg_node_child_from_string(split->owner_cfg, RD_DOCK_SIDEBAR_ROOT); }
+  Temp scratch = scratch_begin(0, 0);
+  U64 nodes = andamento_snapshot_node_count(state->snapshot), count = 0;
+  UIShell_SectionPlacement *regions = push_array(scratch.arena, UIShell_SectionPlacement, nodes);
+  for(U64 i = 0; i < nodes; i++)
+  {
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    if(!node.is_section) { continue; }
+    AndamentoRegionHints hints = {0}; andamento_snapshot_region_hints(state->snapshot, i, &hints);
+    UIShell_SectionPlacement region = {uishell_sidebar_string(node.key), uishell_sidebar_string(node.label),
+      uishell_sidebar_string(hints.default_host), hints.has_order ? hints.order : (S64)count};
+    if(node.field_count)
+    { AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field, &field); region.title = uishell_sidebar_string(field.text); }
+    U64 at = count;
+    // Stable insertion: equal and absent hints retain declaration order.
+    while(at && regions[at-1].order > region.order) { regions[at] = regions[at-1]; at--; }
+    regions[at] = region; count++;
+  }
+  CFG_Node *root = uishell_sidebar_reconcile_regions(split->owner_cfg, regions, count);
+  scratch_end(scratch); return root;
 }
 
 // Dragging opts into saved ratios. Double-clicking a sidebar boundary or an

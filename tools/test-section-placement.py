@@ -14,7 +14,7 @@ binary = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "build/whe
 # config trees and the real serializer. No display or terminal daemon is needed.
 with tempfile.TemporaryDirectory(prefix="section-placement-") as directory:
     subprocess.run([str(binary), "--section_placement_diagnostics",
-                    f"--user:{directory}/user", f"--project:{directory}/project"],
+                    f"--andamento_config:{config}", f"--user:{directory}/user", f"--project:{directory}/project"],
                    check=True, timeout=60)
 # User layout operations must never write the producer's shared KDL source.
 assert hashlib.sha256(config.read_bytes()).digest() == before, "section placement changed KDL"
