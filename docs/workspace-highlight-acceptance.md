@@ -18,6 +18,12 @@ subjects with both workspaces open, all project/convoy/section collapse states,
 row and inline-chip layouts, aggregate and docked section rendering, and widths
 of 240 and 800 pixels. Inventory coverage checks traverse collapsed descendants
 and print `Open workspace without sidebar entry: <ID> (<name>)` for omissions.
+This proves that inventory IDs have a LIVE snapshot entry, including retained
+ended subjects; it does not prove current visibility or navigation reachability.
+The separate selection matrix checks visible selection and collapsed outlines.
+
+`tools/run-sidebar-diagnostics.sh` is Linux-only: it requires `prlimit` and
+a C compiler for the CPU adapter.
 
 The shipped-template ABI suite covers ended subjects with Show finished off,
 producer removal, expired facts before observation, fresh-core restart without
