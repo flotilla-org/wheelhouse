@@ -222,6 +222,59 @@ failure, producer failure, restart, and process cleanup with controlled UI, watc
 connector processes. Real HTTP/UDS delivery is covered by
 `tools/test-andamento-ingress.py`.
 
+### Daily driver (Windows)
+
+Use Python 3 and an existing Flotilla Windows client with the SSH endpoint from
+flotilla#2639. The remote CLI must provide `daemon-bridge`, and the client must
+match the running daemon's protocol fingerprint. The launcher does not rebuild
+Flotilla or upgrade the remote fleet. A remote candidate executable can be selected
+by its absolute path in the endpoint.
+
+```powershell
+# From a Developer PowerShell with the native build dependencies configured:
+scripts/run-daily-driver.ps1 --daemon ssh://udder
+# Reuse an existing Wheelhouse build and select compatible Flotilla binaries:
+$env:WHEELHOUSE_BIN = 'C:\dev\wheelhouse\build\wheelhouse.exe'
+$env:FLOTILLA_BIN = 'C:\dev\flotilla-ssh\target\debug\flotilla.exe'
+scripts/run-daily-driver.ps1 --no-build --daemon ssh://udder/home/robert/candidates/flotilla
+```
+
+`--daemon` overrides `FLOTILLA_DAEMON`; the selected endpoint is inherited by the
+UI, its terminals and the connector. Without either, the Windows launcher fails
+before starting Wheelhouse. The default binaries have an `.exe` suffix. Without
+`WHEELHOUSE_BIN` or `--no-build`, the launcher runs `build.bat wheelhouse`.
+The PowerShell entrypoint uses `py -3`, falling back to `python`; set
+`WHEELHOUSE_PYTHON_BIN` to select a particular Python executable. Running
+`python tools/daily-driver.py` directly supports the same options.
+
+Settings and layouts persist in `%LOCALAPPDATA%\Wheelhouse\daily-driver`;
+`WHEELHOUSE_DAILY_DIR` selects a separate profile. A byte-range lock prevents
+concurrent launchers from using the same profile. Each launch creates a fresh
+`\\.\pipe\wheelhouse-daily-<unique-name>` endpoint. Readiness uses HTTP health
+over the pipe with same-user server verification, matching ADR 0011. The app
+and its terminals inherit `WHEELHOUSE_SOCKET` for additional producers.
+
+The connector restarts with backoff while Wheelhouse stays open. Logs live in
+the profile's `logs` directory. Closing Wheelhouse or pressing Ctrl-C stops
+the launcher-owned process trees, including the connector's SSH subprocesses.
+Windows Job Objects also clean up children if the Python launcher is abruptly
+terminated. Helper processes do not create visible console windows. Saved
+profiles are retained across launches; remote daemons remain running.
+
+Windows currently publishes the Flotilla catalog only. Local git discovery is
+disabled by default, and `--repo` / `--git-only` are refused until
+[andamento#123](https://github.com/flotilla-org/andamento/issues/123) provides the
+watcher's named-pipe sink. Clickable Windows recipes and remote terminal
+attachment remain [flotilla#2470](https://github.com/flotilla-org/flotilla/issues/2470).
+Permanent connector-error classification remains flotilla#2589; the launcher
+retains the existing retry policy.
+
+`python tools/test-daily-driver-windows.py` checks native pipe readiness, profile
+locking, endpoint inheritance, settings retention, connector restart, UI closure,
+Ctrl-C, abrupt termination and descendant cleanup. These contracts use controlled
+processes and a health-only named-pipe server, independently of a fleet or native
+Wheelhouse build. Real metadata ingress is covered by `tools/test-andamento-ingress.py`.
+
 ### Live Andamento facts (Unix)
 
 Launch a separate Wheelhouse instance with a socket in a private directory and an

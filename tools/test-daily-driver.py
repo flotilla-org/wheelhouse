@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -25,6 +26,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(204); self.end_headers()
     def log_message(self, *args): pass
 print('pid=' + str(os.getpid()), flush=True)
+print('daemon=' + os.environ.get('FLOTILLA_DAEMON', ''), flush=True)
 with socketserver.UnixStreamServer(path, Handler) as server:
     server.serve_forever()
 '''
@@ -32,6 +34,7 @@ FAKE_FLOTILLA = '''#!/usr/bin/env python3
 import os, sys, time
 print('args=' + repr(sys.argv[1:]), flush=True)
 print('socket=' + os.environ['WHEELHOUSE_SOCKET'], flush=True)
+print('daemon=' + os.environ.get('FLOTILLA_DAEMON', ''), flush=True)
 if os.environ.get('FAIL_PRODUCER') or (os.environ.get('FAIL_PRODUCER_UNTIL') and
                                       not os.path.exists(os.environ['FAIL_PRODUCER_UNTIL'])):
     sys.exit(7)
@@ -63,6 +66,7 @@ sys.exit(1)
 '''
 
 
+@unittest.skipIf(sys.platform == 'win32', 'Unix fixtures; Windows has native pipe/job lifecycle contracts')
 class DailyDriverTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='wh-driver-test-', dir='/tmp')
@@ -144,6 +148,13 @@ class DailyDriverTests(unittest.TestCase):
         self.assertNotEqual(process.wait(timeout=10), 0)
         self.assertIn('Andamento git watcher not found', process.stdout.read())
         self.assertFalse((self.state / 'logs/wheelhouse.log').exists())
+
+    def test_explicit_remote_endpoint_is_inherited_by_ui_and_connector(self):
+        endpoint = 'ssh://udder/opt/flotilla tools/flotilla'
+        process = self.start(['--daemon', endpoint])
+        self.ready(process, connector=True)
+        self.assertIn('daemon=' + endpoint, self.log('wheelhouse'))
+        self.assertIn('daemon=' + endpoint, self.log('flotilla'))
 
     def test_no_git_does_not_require_watcher(self):
         self.command = self.command[:1]
