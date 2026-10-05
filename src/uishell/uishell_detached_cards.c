@@ -22,11 +22,9 @@ uishell_sidebar_card_request(UIShell_HoverCard *card, UIShell_CardPlacement plac
 internal UI_Signal
 uishell_sidebar_card_icon_button(String8 glyph, String8 key, String8 description)
 {
-  UI_Box *box;
-  UI_FontSize(floor_f32(ui_top_font_size()*0.82f))
-  { box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|
-      UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DisableTruncatedHover,
-      "%S###%S", glyph, key); }
+  UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|
+    UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DisableTruncatedHover,
+    "%S###%S", glyph, key);
   UI_Signal signal = ui_signal_from_box(box);
   if(ui_hovering(signal)) UI_Tooltip
   {
@@ -48,10 +46,7 @@ uishell_sidebar_card_panel_drop(CFG_ID destination, Dir2 direction, CFG_ID previ
 internal void
 uishell_sidebar_card_drag_control(UIShell_HoverCard *card)
 {
-  UI_Signal drag;
-  UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
-  UI_HoverCursor(WM_Cursor_HandPoint)
-  { drag = uishell_sidebar_card_icon_button(str8_lit("⋮⋮"), str8_lit("card_drag"), str8_lit("Drag card")); }
+  UI_Signal drag = uishell_sidebar_grip(str8_lit("card_drag"), str8_lit("Drag card"));
   if(ui_pressed(drag)) { card->move_origin = card->rect.p0; }
   if(ui_dragging(drag) && length_2f32(ui_drag_delta()) > UIShell_HoverCardDragThresholdPT)
   {
@@ -326,7 +321,7 @@ uishell_sidebar_detached_content(UIShell_SidebarState *state, RD_WindowState *ws
     uishell_sidebar_card_retain_label(card, label);
     return uishell_sidebar_card_content(state, ws, card, slot, node, index, width, interactive);
   }
-  UI_Row
+  UI_Row UI_FontSize(floor_f32(ui_top_font_size()*0.82f)) UI_TagF("weak") RD_Font(RD_FontSlot_Main)
   {
     UI_PrefWidth(ui_em(1.4f, 1)) { uishell_sidebar_card_drag_control(card); }
     UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f*5), 1)) { ui_label(card->retained_label); }
@@ -557,17 +552,23 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
   UI_Box *root;
   UI_Rect(rect) UI_ChildLayoutAxis(Axis2_Y)
   { root = ui_build_box_from_stringf(UI_BoxFlag_Clip, "###pinned_area_%I64u", view->id); }
-  UI_Parent(root) UI_PrefHeight(ui_em(2.2f, 1)) UI_Row
+  UI_Parent(root) UI_PrefHeight(ui_px(floor_f32(em*2.2f), 1)) UI_Row
+  UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak") RD_Font(RD_FontSlot_Main)
   {
-    UI_PrefWidth(ui_px(Max(0.f, width-em*3), 1)) { ui_label(str8_lit("PINNED")); }
+    ui_spacer(ui_em(0.3f, 1));
     UI_PrefWidth(ui_em(1.5f, 1))
     {
-      UI_Signal drag = uishell_sidebar_button(str8_lit("↕###pinned_drag"));
+      UI_Signal drag = uishell_sidebar_grip(str8_lit("pinned_drag"), str8_lit("Drag pinned area"));
       if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_HoverCardDragThresholdPT)
       { rd_drag_begin(UIShell_ContextRegSlot_View); }
+    }
+    UI_PrefWidth(ui_pct(1, 0)) { ui_label(str8_lit("PINNED")); }
+    UI_PrefWidth(ui_em(1.5f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+    {
       if(ui_clicked(uishell_sidebar_button(str8_lit("×###pinned_close"))) && rd_dock_can_close(view))
       { uishell_cmd("close_tab"); }
     }
+    ui_spacer(ui_px(4.f, 1));
   }
   UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, em*2.2f, width, dim_2f32(rect).y),
     UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);

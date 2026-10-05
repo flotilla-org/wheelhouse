@@ -979,6 +979,24 @@ uishell_sidebar_button(String8 text)
   return ui_signal_from_box(box);
 }
 
+// Sections and cards share a left-side grip; the owner supplies the drag action.
+internal UI_Signal
+uishell_sidebar_grip(String8 key, String8 description)
+{
+  UI_Signal signal = {0};
+  UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
+  UI_HoverCursor(WM_Cursor_HandPoint) RD_Font(RD_FontSlot_Main)
+  {
+    UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|
+      UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DisableTruncatedHover,
+      "⋮⋮###%S", key);
+    signal = ui_signal_from_box(box);
+    if(ui_hovering(signal)) UI_Tooltip
+    { ui_state->tooltip_anchor_key = box->key; RD_Font(RD_FontSlot_Main) { ui_label(description); } }
+  }
+  return signal;
+}
+
 // Use the shell's icon-font expander, not a text-font '>' in a narrow label.
 // Padding and truncation are inappropriate for this fixed-size glyph.
 internal UI_Signal
@@ -1578,6 +1596,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       {
         B32 toggle = 0;
         ui_spacer(ui_em(0.3f, 1));
+        if(section_panel) UI_PrefWidth(ui_em(1.5f, 1))
+        {
+          UI_Signal drag = uishell_sidebar_grip(str8_lit("section_drag"), str8_lit("Drag section"));
+          if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
+          { rd_drag_begin(UIShell_ContextRegSlot_View); }
+        }
         toggle |= ui_clicked(uishell_sidebar_disclosure(!states[n]->collapsed, push_str8f(scratch.arena, "###section_toggle_%S", key)));
         UI_PrefWidth(ui_pct(1, 0))
         { toggle |= ui_clicked(uishell_sidebar_button(push_str8f(scratch.arena, "%S###section_%S", upper_from_str8(scratch.arena, title), key))); }
@@ -1610,9 +1634,6 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           B32 engaged = !ui_box_is_nil(previous) && contains_2f32(previous->rect, ui_mouse());
           UI_PrefWidth(ui_em(1.5f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
           {
-            UI_Signal drag = uishell_sidebar_button(engaged ? str8_lit("↕###section_drag") : str8_lit("###section_drag"));
-            if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
-            { rd_drag_begin(UIShell_ContextRegSlot_View); }
             UI_Signal close = uishell_sidebar_button(engaged ? str8_lit("×###section_close") : str8_lit("###section_close"));
             if(engaged && ui_clicked(close) && rd_dock_can_close(view)) { uishell_cmd("close_tab"); }
           }

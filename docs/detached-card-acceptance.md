@@ -1,9 +1,9 @@
 # Detached hover cards
 
 Engaged cards expose a dotted drag grip at the left of the header, with compact
-Show details, Float, Dock under source, Pin and Close icons at the right. Controls
-use the section-header symbol size; entity and action icons use the sidebar
-rows’ muted styling. Descriptive tooltips use the main text font. Hover
+Show details, Float, Dock under source, Pin and Close icons at the right. Pinned-area and card header rows use the ordinary section-header text size
+and muted style. Section and card grips use the same dotted symbol at the
+left; entity and action icons use the sidebar rows’ muted styling. Descriptive tooltips use the main text font. Hover
 an icon for its label. Detached cards omit their current destination icon.
 Dragging past ten points releases the card from its hover anchor. Sidebar drops
 use the same target widgets and animated highlights as ordinary panel drags.
