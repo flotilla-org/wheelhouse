@@ -64,3 +64,7 @@ feedback, inline measured height, source removal, the pinned View's measured bod
 and clipped hit geometry, duplicate-pin reveal, moving between areas, copied-layout
 deduplication, saved-layout serialization/reload, missing-subject display, explicit
 pin removal, and preservation of a merged sidebar when another area is added.
+Saved-layout tolerance covers unknown entity kinds, missing identity fields,
+extra fields and duplicate identities through reconciliation, serialization and
+actual pinned View rendering. Unknown or incomplete entries remain closable with
+the missing-subject marker.

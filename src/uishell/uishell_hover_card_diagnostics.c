@@ -879,6 +879,47 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_pin_deduplicate(window, window);
     CardCheck(cfg_node_from_id(copy_id) == &cfg_nil_node && cfg_node_from_id(unique->id) == unique,
               "layout copies reconcile to one pinned card per entity");
+    // Unversioned saved layouts tolerate future kinds, missing identity
+    // fields and duplicate exact identities through reconciliation and render.
+    CFG_Node *tolerance_area = unique->parent;
+    CFG_Node *unknown = cfg_node_new(rd_state->cfg, tolerance_area, str8_lit("card"));
+    uishell_sidebar_pin_set_field(unknown, str8_lit("kind"), str8_lit("future_kind"));
+    uishell_sidebar_pin_set_field(unknown, str8_lit("entity"), str8_lit("orphan"));
+    uishell_sidebar_pin_set_field(unknown, str8_lit("label"), str8_lit("Future pin"));
+    uishell_sidebar_pin_set_field(unknown, str8_lit("future_field"), str8_lit("ignored"));
+    CFG_Node *unknown_copy = cfg_node_deep_copy(rd_state->cfg, unknown);
+    cfg_node_insert_child(rd_state->cfg, tolerance_area, tolerance_area->last, unknown_copy);
+    CFG_ID unknown_copy_id = unknown_copy->id;
+    CFG_Node *incomplete = cfg_node_new(rd_state->cfg, tolerance_area, str8_lit("card"));
+    uishell_sidebar_pin_set_field(incomplete, str8_lit("label"), str8_lit("Incomplete pin"));
+    uishell_sidebar_pin_deduplicate(window, window);
+    CardCheck(cfg_node_from_id(unknown_copy_id) == &cfg_nil_node && cfg_node_from_id(unknown->id) == unknown &&
+              cfg_node_from_id(incomplete->id) == incomplete && cfg_node_from_id(unique->id) == unique,
+              "unknown kinds and incomplete entries tolerate reconciliation without losing valid pins");
+    Temp tolerance_scratch = scratch_begin(0, 0);
+    CFG_State *tolerance_cfg = cfg_state_alloc();
+    String8 tolerance_text = cfg_string_from_tree(tolerance_scratch.arena, rd_state->cfg_schema_table, str8_zero(), window);
+    CFG_NodePtrList tolerance_loaded = cfg_node_ptr_list_from_string(tolerance_scratch.arena, tolerance_cfg,
+      rd_state->cfg_schema_table, str8_zero(), tolerance_text);
+    AndamentoEntity future_entity = {uishell_sidebar_text(str8_lit("future_kind")), uishell_sidebar_text(str8_lit("orphan"))};
+    CFG_Node *future_restored = tolerance_loaded.count ? uishell_sidebar_pin_find(tolerance_loaded.first->v, future_entity, 0) : &cfg_nil_node;
+    CardCheck(future_restored != &cfg_nil_node &&
+              str8_match(cfg_node_child_from_string(future_restored, str8_lit("label"))->first->string, str8_lit("Future pin"), 0),
+              "unversioned layout round-trip retains unknown pin kinds and fallback labels");
+    cfg_state_release(tolerance_cfg); scratch_end(tolerance_scratch);
+    UI_EventList tolerance_events = {0};
+    ui_begin_build(ws->os, &tolerance_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
+    UIShell_RegsScope(.window = window->id, .view = tolerance_area->id)
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+    { RD_VIEW_UI_FUNCTION_NAME(pinned_cards)((E_Eval){0}, r2f32p(17, 29, 297, 629)); }
+    ui_end_build();
+    U64 missing_markers = 0;
+    for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+    { missing_markers += str8_match(ui_box_display_string(box), str8_lit("No longer present"), 0); }
+    CardCheck(missing_markers >= 2 && uishell_sidebar_saved_card(ws, unknown)->open && uishell_sidebar_saved_card(ws, incomplete)->open,
+              "unknown and malformed saved pins render a missing marker and remain explicitly closable");
+    cfg_node_release(rd_state->cfg, unknown); cfg_node_release(rd_state->cfg, incomplete);
     cfg_node_release(rd_state->cfg, unique);
     // A wrong controlled-split owner rejects creation before any layout edit.
     CFG_Node *invalid_owner = cfg_node_new(rd_state->cfg, window, str8_lit("invalid_owner"));
