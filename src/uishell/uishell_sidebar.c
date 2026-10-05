@@ -1121,6 +1121,13 @@ uishell_sidebar_selection_fill(B32 exact_action)
   return color;
 }
 
+// Ended subject text uses the same contrast in rows and inline actions.
+internal Vec4F32
+uishell_sidebar_ended_color(void)
+{
+  return mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), 0.55f);
+}
+
 // Workspace controls need more contrast than passive container separators.
 internal Vec4F32
 uishell_sidebar_action_border(void)
@@ -1287,7 +1294,7 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
   UI_FixedY(Max(0.f, (row_height-4.f-em*1.6f)*0.5f))
   UI_PrefWidth(menu ? ui_pct(1, 0) : ui_px(uishell_sidebar_chip_width(state, node)-4.f, 1))
   UI_BackgroundColor(fill) UI_TextColor(str8_match(status, str8_lit("ended"), 0) ?
-    mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), 0.55f) :
+    uishell_sidebar_ended_color() :
     subject ? border : ui_color_from_name(str8_lit("text")))
   UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_FontSize(em*0.9f)
   {
@@ -1871,7 +1878,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                 if(str8_match(uishell_sidebar_string(node.layout), str8_lit("fields"), 0))
                 { display = uishell_sidebar_fields(scratch.arena, state->snapshot, node, Max(0.f, dim.x-em*6.f)); }
                 if(str8_match(status, str8_lit("ended"), 0))
-                { ui_set_next_text_color(mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), 0.55f)); }
+                { ui_set_next_text_color(uishell_sidebar_ended_color()); }
                 UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###entry_%S", display, node_key));
                 if(project && project_child_heights[i] > 0 && project_open[i] > 0)
                 {
@@ -2685,8 +2692,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     return 0;
   }
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
-  if(!uishell_sidebar_selection_diagnostics(ws, &split)) { scratch_end(scratch); return 0; }
-  if(!uishell_sidebar_coverage_diagnostics(state, &split)) { scratch_end(scratch); return 0; }
+  B32 selection_ok = uishell_sidebar_selection_diagnostics(ws, &split);
+  B32 coverage_ok = uishell_sidebar_coverage_diagnostics(state, &split);
   U64 before = split.inventory.count;
   size_t activate = ANDAMENTO_NONE;
   for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
@@ -2913,6 +2920,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
          tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 2;
   }
   ok = markers_ok && ok;
+  ok = ok && selection_ok && coverage_ok;
   fprintf(stderr, "Sidebar host diagnostics: %s (split layout, overflow selection, project motion, reveal, focus, close, failure, retry, restore, ended retention, status glyphs)\n", ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

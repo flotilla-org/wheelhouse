@@ -51,7 +51,8 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
     "template \"convoy\" { field \"label\" key=\"display.label\"; for \"vessel\" kind=\"vessel\" { match \"flotilla.convoy\" of=\"convoy\"; apply-template \"vessel\"; }; }\n"
     "template \"vessel\" { field \"label\" key=\"display.label\"; }\n"
     "region \"attention\" root-template=\"title\" placement=\"attention\"\n"
-    "placement \"attention\" { for \"attention\" kind=\"vessel\" { apply-template \"vessel\"; }; }\n");
+    "placement \"attention\" { for \"attention\" kind=\"vessel\" { apply-template \"vessel\"; }; }\n"
+    "region \"duplicate\" root-template=\"title\" placement=\"tree\"\n");
   state.core = andamento_create(config.str, config.size, &error);
   ok &= uishell_sidebar_result(&state, state.core != 0, error);
   if(!state.core) { scratch_end(scratch); return 0; }

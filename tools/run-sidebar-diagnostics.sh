@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Linux harness: prlimit and a C compiler are required for the memory/CPU cap.
+command -v prlimit >/dev/null || { echo 'sidebar diagnostics require Linux prlimit' >&2; exit 1; }
+command -v "${CC:-cc}" >/dev/null || { echo 'sidebar diagnostics require a C compiler (CC or cc)' >&2; exit 1; }
 # Release avoids the debug arena table's 256 GiB virtual reservation.
 bash build.sh wheelhouse release
 task_dir=$(mktemp -d "${TMPDIR:-/tmp}/wheelhouse-sidebar.XXXXXX")

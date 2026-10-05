@@ -46,8 +46,10 @@ content is a placeholder. The evidence concerns sidebar selection, not VT output
 
 ## Validation
 
-- Andamento: 119 core unit tests and 44 sidebar scenarios pass. The revised
+- Andamento: 119 core unit tests and 47 sidebar scenarios pass. The revised
   sidebar suite fails against the original state implementation (seven failures).
+- The equal-depth duplicate-section scenario also fails when the canonical tie
+  rule is mutated to prefer the last occurrence; the mutation was reverted.
 - Wheelhouse: 31 shipped-template ABI scenarios pass. The native diagnostics
   pass with an 8 GiB address-space cap, one CPU adapter and one llvmpipe worker.
 - Mutations removing exact subject binding and ended-path visibility each fail
@@ -66,7 +68,7 @@ so cache stripe and worker reservations fit under `prlimit --as=8589934592 --`.
 
 ![Open ended subject remains visible with Show finished off](screenshots/workspace-highlight/ended-open.png)
 
-Companion core revision: `01889ff9baac5c9fc1c0d3c66719a6c0ba4ade23`
+Companion core revision: `3ebb1a09089e113f676cb91da72e02e130ab5875`
 ([andamento#131](https://github.com/flotilla-org/andamento/pull/131)). The governor
 applies the matching `ANDAMENTO_REV` workflow pin; replace the temporary PR head
 with the squash-merge revision after the companion merges.
