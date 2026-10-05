@@ -375,6 +375,7 @@ internal void
 uishell_reset_panels(CFG_Node *window)
 {
   Temp scratch = scratch_begin(0, 0);
+  uishell_sidebar_reset_regions(window);
   UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_window(scratch.arena, window);
   CFG_Node *panels_owner = workspace_mount.owner_cfg;
   CFG_Node *old_panels = cfg_node_child_from_string(panels_owner, str8_lit("panels"));
