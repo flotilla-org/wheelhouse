@@ -339,6 +339,7 @@ rd_dock_restore_window(CFG_State *state, CFG_Node *window)
 }
 
 // Split commands store proportions with the config formatter's precision.
+// Match the %f writes in split_panel (new_cfg and redistributed child pct).
 // Reuse it so rounding at pixel boundaries matches the committed tree.
 internal F32
 rd_dock_allocated_fraction(F32 fraction)

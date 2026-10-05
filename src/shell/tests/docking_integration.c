@@ -1,3 +1,7 @@
+// Compiled by tools/test-docking-integration.py from the production shell
+// amalgamation with its entry point replaced. Links real Andamento/Cleat native
+// libraries and native ingress; headless WM/renderer/font backends avoid a display.
+// Tests use the real parser, panel UI, commands, checker and settings evaluator.
 // OS window sizing and the external action ABI are the fault boundaries;
 // config, command dispatch, snapshot refresh and validity checking are real.
 global Rng2F32 integration_rect;
@@ -68,6 +72,9 @@ integration_drag_site(RD_WindowState *ws, CFG_Node *source, CFG_Node *destinatio
   CFG_PanelNode *boundary = side_from_dir2(dir) == Side_Max ? target->next : target;
   UI_Key site = insertion ? ui_key_from_stringf(ui_key_zero(), "drop_boundary_%p_%p", target->parent->cfg, boundary->cfg) :
     ui_key_from_stringf(ui_key_zero(), "drop_split_%S_%p", site_name, destination);
+  F32 layout_font_size = 0;
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = 0, .view = 0, .tab = 0)
+  { layout_font_size = rd_font_size(); }
   UIShell_RegsScope(.window = ws->cfg_id, .panel = source->parent->id, .view = source->id)
   {
     rd_drag_begin(UIShell_ContextRegSlot_View);
@@ -76,7 +83,7 @@ integration_drag_site(RD_WindowState *ws, CFG_Node *source, CFG_Node *destinatio
     dr_begin_frame(rd_font_from_slot(RD_FontSlot_Icons));
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = v2f32(250, 250);
-    UI_FontSize(rd_font_size()) UI_Font(rd_font_from_slot(RD_FontSlot_Main))
+    UI_FontSize(layout_font_size) UI_Font(rd_font_from_slot(RD_FontSlot_Main))
     {
       Rng2F32 area = pad_2f32(integration_rect, -rd_window_edge_inset_px(ws));
       ui_state->mouse = center_2f32(cfg_target_rect_from_panel_node(area, mount.panel_tree.root, target));
@@ -237,6 +244,8 @@ entry_point(CmdLine *cmdline)
   // Nonzero spacing makes renderer/measurement drift observable.
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, user, str8_lit("panel_gap")), str8_lit("1"));
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, user, str8_lit("font_size")), str8_lit("16"));
+  // Window chrome uses its own size even with a different View override.
+  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, window, str8_lit("font_size")), str8_lit("24"));
   cfg_node_new(rd_state->cfg, window, str8_lit("control_split_collapsed"));
   CFG_Node *panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
   CFG_Node *source = cfg_node_new(rd_state->cfg, panels, str8_lit("scroll_region_fixture"));
@@ -268,6 +277,7 @@ entry_point(CmdLine *cmdline)
     CFG_Node *origin = shape ? cfg_node_new(rd_state->cfg, panels, str8_lit("0.3")) : panels;
     CFG_Node *destination = shape ? cfg_node_new(rd_state->cfg, panels, str8_lit("0.7")) : panels;
     source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, source, str8_lit("font_size")), str8_lit("72"));
     cfg_node_new(rd_state->cfg, origin, str8_lit("terminal"));
     cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
     Dir2 dir = directions[direction];

@@ -173,6 +173,9 @@ int main(void) {
   }
   r = uishell_chip_layout(160, names, 80, mixed, 2, 30);
   assert(r.folded == 1 && mixed[0].folded && !mixed[1].folded);
+  // At tighter width both classes must fold, after unopened-only folding above.
+  r = uishell_chip_layout(80, names, 80, mixed, 2, 30);
+  assert(r.folded == 2 && mixed[0].folded && mixed[1].folded);
   mixed[0].attention = 1;
   r = uishell_chip_layout(160, names, 80, mixed, 2, 30);
   assert(!mixed[0].folded && mixed[1].folded);

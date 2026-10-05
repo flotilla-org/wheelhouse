@@ -235,6 +235,7 @@ uishell_sidebar_save_display(UIShell_SidebarState *state, CFG_Node *window)
     // A changed live value is newer user intent and supersedes recovery.
     if(restore && restore->pending)
     {
+      // Unchanged live state does not authorize erasing failed saved intent.
       if(restore->observed == !!control.checked) { continue; }
       restore->pending = 0;
     }
@@ -246,6 +247,8 @@ uishell_sidebar_save_display(UIShell_SidebarState *state, CFG_Node *window)
 // State and timer each own one reference to a completion token. It contains
 // no sidebar/window/snapshot pointers and outlives a released sidebar. A fired
 // token is consumed even before its deadline, allowing an early wake to re-arm.
+// Heap storage outlives the sidebar arena. Raw OS threads avoid the base helper's
+// detachable entity lifetime; each worker owns a token reference until return.
 #if OS_WINDOWS
 internal DWORD WINAPI
 uishell_sidebar_display_wakeup(void *data)
@@ -297,6 +300,9 @@ uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64
     state->display_wakeup_at = 0;
   }
   uishell_sidebar_refresh(state);
+  // FFI acquisition always returns a snapshot for a healthy core. Null means
+  // invalid/poisoned core (recreation required), not a transient ingress failure;
+  // another timer cannot repair that core. Local polling needs no ingress.
   if(!state->snapshot) { return; }
   for(UIShell_DisplayRestore *r = state->display_restores; r; r = r->next)
   {

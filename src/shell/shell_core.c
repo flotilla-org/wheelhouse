@@ -3293,6 +3293,8 @@ rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
   if(ws == &rd_nil_window_state) { return result; }
   UIShell_RegsScope(.window = mount->window_cfg->id, .panel = 0, .view = 0, .tab = 0)
   {
+    // Window build pushes this same window-level rd_font_size before control
+    // chrome/panel layout; per-View font scopes start inside those panel bodies.
     F32 font_size = rd_font_size();
     result.area = pad_2f32(wm_client_rect_from_window(ws->os), -rd_window_edge_inset_px(ws));
     UIShell_ControlledSplit split = {.owner_cfg = mount->window_cfg};
