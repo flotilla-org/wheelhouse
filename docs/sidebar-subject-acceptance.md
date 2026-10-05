@@ -5,7 +5,8 @@ share their area and one `+N` menu. Attention retains standalone PR rows, and
 Issues, Show finished and Role attempts retain their existing visibility rules.
 
 At width pressure, the name uses the producer's medium and short labels, then
-elides to about ten characters. Quiet chips fold from the end of catalog order.
+elides to about ten characters. Unopened workspace actions fold before quiet issue/PR chips; within each class,
+fold from the end of catalog order.
 Ready-to-merge and CI-failing subjects, selected/pending workspaces and active
 open workspaces remain visible. If those protected chips alone exceed the
 available width, their area scrolls horizontally while the status slot stays
@@ -93,3 +94,11 @@ in a disposable Linux container on feta, including PR/issue destinations,
 chip/Attention URL copies and the no-forge reference copy. The Linux build,
 ABI/width tests and native sidebar diagnostics also passed. Cross-platform
 CI results are recorded on the PR.
+
+Unopened workspace actions enter `+N` before a quiet issue chip (owner ruling,
+2026-10-05, #175). The action remains reachable from the project row and hover
+card; the issue chip carries state only this row shows. Numeric PR/issue order
+is retained. Attention-bearing chips never fold and the trailing status slot
+never moves. For a narrow mixed row with an 80px name, 60px unopened action,
+50px quiet issue and 30px overflow, a 160px content budget shows the issue and
+`+1`; the unopened action goes into overflow even when it precedes the issue.

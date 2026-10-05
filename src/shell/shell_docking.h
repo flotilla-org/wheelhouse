@@ -2,8 +2,7 @@
 #ifndef SHELL_DOCKING_H
 #define SHELL_DOCKING_H
 
-// Restore and command execution have no measured geometry. Drag queries pass
-// the proposed target width; a resize is not a structural layout repair.
+// Restore deliberately ignores physical width: resizing is not structural repair.
 #define RD_DOCK_UNMEASURED_WIDTH 3.402823466e38f
 
 #define RD_DOCK_SIDEBAR_ROOT str8_lit("control_views")
@@ -141,5 +140,8 @@ internal String8 rd_dock_rule_message(RD_DockRule rule);
 internal B32 rd_dock_can_create(String8 name, CFG_Node *destination);
 internal B32 rd_dock_can_close(CFG_Node *view);
 internal void rd_dock_restore_window(CFG_State *state, CFG_Node *window);
+
+internal F32 rd_dock_resulting_width(CFG_PanelNode *root, CFG_PanelNode *panel,
+                                    Rng2F32 area, Dir2 dir, F32 inset);
 
 #endif

@@ -99,3 +99,17 @@ content and terminal glyph diagnostics pass. Docking policy, generated fixture
 checks and the embedded-fixture locale/newline test pass. The locale/newline
 test uses Homebrew Python because the system Python predates its
 `Path.write_text` API.
+
+Display restore recovery (#185) performs at most three attempts: immediately,
+after one second, and after two more seconds. Sleeping wake timers work in local
+and live sidebars without requesting continuous frames; they carry no window,
+state or snapshot pointers. Each attempt refreshes the
+snapshot and resolves the declaration identity to its current action. A failed
+preference is retained when other controls are saved; exhaustion keeps both
+the saved intent and the surfaced error and performs no further dispatches.
+Changing the saved target during recovery replaces the old intent, while a
+new live user value supersedes recovery. Explicit restoration or the next
+session may start a new bounded attempt sequence. The headless command/drag
+integration suite exercises failure then recovery, snapshot invalidation,
+repeated failure across 1,000 polls, preservation on unrelated saves and newer
+saved/live intent. Core toggle semantics are unchanged.

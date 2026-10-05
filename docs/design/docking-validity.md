@@ -67,7 +67,11 @@ selectors use the existing implicit Control Surface.
 Every View drop site uses the production query `rd_dock_drag_target`, which
 calls the same checker. Split targets pass the proposed width rather than the
 unsplit Panel width. Move, split, create, duplicate and close commands also
-consult the model. Restore and command execution use unmeasured geometry;
+consult the model. Move and split execution remeasure the live client area and current layout.
+The common resulting-width calculation uses serialized split fractions, pixel
+rounding, sibling redistribution and both panel insets; horizontal tab chrome
+does not reduce body width. Drag targets use this same calculation. Restore
+alone uses unmeasured geometry;
 resizing a window does not relocate saved Views just because they currently
 have too little space. Unknown View types cannot be created, duplicated or
 docked without declared traits, but saved unknown content can always be closed
@@ -91,3 +95,9 @@ developer builds opt in with `WHEELHOUSE_DOCKING_TESTS=1`; the standalone
 runner also honors `CC`. The existing Panel diagnostics exercise actual
 command dispatch (including refused operations and error messages),
 non-mutating mount reads, and repair-generation stability on Linux and macOS.
+
+On Linux, `python tools/test-docking-integration.py <andamento-lib-dir>
+<cleat-lib-dir>` exercises the real panel drag UI and move/split command routes
+with a controllable OS size boundary. It covers 127/128/129px body widths, root
+bisection, both parent axes, sibling insertion in all directions, and resizing
+between feedback and commit. CI native builds also run it through `build.sh`.

@@ -194,3 +194,11 @@ from 2026-10-04:
 - #161 Declared docking validity
 - #162 Sidebar sections: KDL declares what, Wheelhouse layout stores where
 - #164 Nested splits as recursive Controlled Splits (after #122)
+
+Unopened workspace actions enter `+N` before a quiet issue chip (owner ruling,
+2026-10-05, #175). The action remains reachable from the project row and hover
+card; the issue chip carries state only this row shows. Numeric PR/issue order
+is retained. Attention-bearing chips never fold and the trailing status slot
+never moves. For a narrow mixed row with an 80px name, 60px unopened action,
+50px quiet issue and 30px overflow, a 160px content budget shows the issue and
+`+1`; the unopened action goes into overflow even when it precedes the issue.

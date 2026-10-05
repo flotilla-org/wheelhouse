@@ -1308,3 +1308,5 @@ internal void rd_init(CmdLine *cmdln);
 internal void rd_frame(void);
 
 #endif // SHELL_CORE_H
+
+internal F32 rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir);
