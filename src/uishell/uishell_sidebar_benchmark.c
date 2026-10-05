@@ -200,12 +200,17 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     }
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT));
     if(old_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, old_host); }
-    // A real state owns snapshots, a core, labels and both hover-card arenas.
+    // A real state owns core/snapshot, labels, cards and display recovery resources.
     // Teardown must clear every owned pointer so repeated release is safe.
     for(U64 i = 0; i < ArrayCount(state.cards); i++)
     { if(!state.cards[i].arena) { state.cards[i].arena = arena_alloc(); } }
+    if(!state.display_restore_arena) { state.display_restore_arena = arena_alloc(); }
+    state.display_restores = push_array(state.display_restore_arena, UIShell_DisplayRestore, 1);
+    if(!state.display_wakeup) { state.display_wakeup = uishell_sidebar_display_wake_after(1); }
+    ok &= state.display_wakeup != 0;
     uishell_sidebar_release(&state);
-    B32 released = !state.core && !state.snapshot && !state.labels_arena;
+    B32 released = !state.core && !state.snapshot && !state.labels_arena &&
+      !state.display_restore_arena && !state.display_restores && !state.display_wakeup && !state.display_wakeup_at;
     for(U64 i = 0; i < ArrayCount(state.cards); i++) { released &= !state.cards[i].arena; }
     ok &= released;
     if(!released) { fprintf(stderr, "FAIL sidebar owned resources remain after release\n"); }

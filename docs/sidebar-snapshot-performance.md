@@ -93,7 +93,9 @@ empty label. The table borrows snapshot-owned strings and invalidates before eve
 dispatch and before replacing a snapshot. Releasing state also clears the freed
 label-arena pointer, allowing the existing native fixtures to reuse their state.
 Release now also resets both card structs and clears the core/snapshot pointers,
-so repeated teardown of a real state is safe.
+so repeated teardown of a real state is safe. After rebasing onto docking
+recovery #192, teardown also clears its restore arena/list and releases the
+state-owned wake token without disturbing the timer worker's own reference.
 The C ABI exposes snapshot currency rather than a revision number, so snapshot
 identity plus explicit invalidation provides the revision boundary. Font metrics
 and viewport width cannot affect labels; they are deliberately absent from this key.
@@ -127,7 +129,8 @@ section exclusion, first empty labels, missing/empty identities, empty snapshots
 repopulation, invalidation with the same snapshot identity, and release/reuse.
 The benchmark also exercises real-core failed dispatch, current-revision refresh,
 label-changing refresh, restoration of the original catalog, and repeated
-release with a real core/snapshot plus both allocated card arenas. The ownership
+release with a real core/snapshot, both allocated card arenas, and display
+recovery storage plus a real timer token. The ownership
 regression failed before pointer clearing and passes afterward.
 
 The existing native sidebar diagnostics pass (precise scroll, Git, chip state,
@@ -138,3 +141,22 @@ Mutation check: allowing duplicate placements to overwrite the first label fails
 `sidebar context labels`; omitting refresh invalidation fails the real-core
 snapshot lifecycle check. Both mutations were reverted. The bounded font-storage
 check also fails against the recovered implementation before the lifecycle fix.
+
+## Rebase verification
+
+Rebased onto `d35b472` (docking recovery #192), preserving its display retry,
+wakeup and persistent preference reconciliation. Retry dispatch also passes
+through label invalidation. Workflow dependency pins remain Cleat `00c072b`,
+Andamento `9718ba1`, and Jackstay `91156bf`; verification uses those pins.
+The measurements above are the original paired baseline; a fresh capped stepped
+run checks for regressions after integrating recovery.
+
+Fresh capped release verification passes all six paired runs: peak RSS is
+123,840/124,892 KiB (100), 151,968/152,440 KiB (300), and
+249,820/249,724 KiB (1,000), linear/lookup respectively. Maximum
+post-warmup RSS growth is 1,848 KiB, within the runner’s 2 MiB bound.
+All ten Linux UI diagnostic invocations, generated-source verification,
+daily-driver/build-failure/input-readiness tests, docking and fixture tests,
+27 native sidebar ABI tests, 12 ingress tests (two platform skips), terminal
+environment and Jackstay acceptance checks pass. Local native checks use the
+capped release build; the pinned debug/platform matrix runs in GitHub CI.
