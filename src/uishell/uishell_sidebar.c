@@ -277,6 +277,7 @@ uishell_sidebar_release(UIShell_SidebarState *state)
       if(c->arena) { arena_release(c->arena); }
       if(c->label_arena) { arena_release(c->label_arena); }
     }
+    state->detached = state->drag_card = 0;
     andamento_snapshot_release(state->snapshot);
     andamento_destroy(state->core);
     state->snapshot = 0;
@@ -329,8 +330,15 @@ uishell_sidebar_labels_diagnostics(void)
   uishell_sidebar_labels_invalidate(&state);
   // Released state can be reused by native fixture lifecycles without a
   // dangling arena, including an idempotent second release.
+  UIShell_HoverCard detached[2] = {0};
+  detached[0].next = &detached[1]; state.detached = &detached[0]; state.drag_card = &detached[1];
+  for(U64 i = 0; i < ArrayCount(detached); i++)
+  {
+    detached[i].arena = arena_alloc(); detached[i].label_arena = arena_alloc();
+    state.cards[i].arena = arena_alloc(); state.cards[i].label_arena = arena_alloc();
+  }
   uishell_sidebar_release(&state);
-  ok &= !state.labels_arena;
+  ok &= !state.labels_arena && !state.detached && !state.drag_card && !state.cards[0].arena && !state.cards[1].label_arena;
   uishell_sidebar_release(&state);
   ok &= str8_match(uishell_sidebar_context_label(&state, nodes, ArrayCount(nodes), first), str8_lit("replacement"), 0);
   uishell_sidebar_release(&state);
