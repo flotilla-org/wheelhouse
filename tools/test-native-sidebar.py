@@ -139,7 +139,7 @@ class NativeSidebarTests(unittest.TestCase):
 #include "uishell/uishell_sidebar_chips.h"
 int main(void) {
   float names[] = {180, 130, 100};
-  UIShell_ChipMeasure chips[] = {{50, 1, 0}, {60, 1, 0}, {35, 0, 0}, {35, 0, 0}};
+  UIShell_ChipMeasure chips[] = {{50, 1, 0, 0}, {60, 1, 0, 0}, {35, 0, 0, 0}, {35, 0, 0, 0}};
   UIShell_ChipLayout r = uishell_chip_layout(400, names, 80, chips, 4, 30);
   assert(r.tier == 0 && r.folded == 0);
   r = uishell_chip_layout(320, names, 80, chips, 4, 30);
@@ -163,6 +163,22 @@ int main(void) {
   assert(r.name_width >= 0 && r.chip_width >= 0);
   r = uishell_chip_layout(400, names, 80, chips, 4, 30);
   assert(r.folded == 0 && !chips[2].folded);
+  // Owner policy: an unopened action folds before a later quiet issue.
+  // Generate widths spanning no fold, one fold, both folds and clipping.
+  UIShell_ChipMeasure mixed[] = {{60, 0, 0, 1}, {50, 0, 0, 0}};
+  for(int width = 0; width <= 300; width++) {
+    r = uishell_chip_layout(width, names, 80, mixed, 2, 30);
+    assert(!mixed[1].folded || mixed[0].folded);
+    assert(r.name_width >= 0 && r.chip_width >= 0);
+  }
+  r = uishell_chip_layout(160, names, 80, mixed, 2, 30);
+  assert(r.folded == 1 && mixed[0].folded && !mixed[1].folded);
+  // At tighter width both classes must fold, after unopened-only folding above.
+  r = uishell_chip_layout(80, names, 80, mixed, 2, 30);
+  assert(r.folded == 2 && mixed[0].folded && mixed[1].folded);
+  mixed[0].attention = 1;
+  r = uishell_chip_layout(160, names, 80, mixed, 2, 30);
+  assert(!mixed[0].folded && mixed[1].folded);
   return 0;
 }
 """

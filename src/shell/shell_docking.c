@@ -337,3 +337,56 @@ rd_dock_restore_window(CFG_State *state, CFG_Node *window)
   rd_dock_prune_singletons(state, window, keepers);
   rd_dock_restore_container(state, window, window);
 }
+
+// Split commands store proportions with the config formatter's precision.
+// Match the %f writes in split_panel (new_cfg and redistributed child pct).
+// Reuse it so rounding at pixel boundaries matches the committed tree.
+internal F32
+rd_dock_allocated_fraction(F32 fraction)
+{
+  Temp scratch = scratch_begin(0, 0);
+  F32 result = (F32)f64_from_str8(push_str8f(scratch.arena, "%f", fraction));
+  scratch_end(scratch);
+  return result;
+}
+
+// Compute the new leaf's settled body width using the same allocation as
+// split_panel: insert a sibling into a matching parent, otherwise bisect.
+// Tabs occupy vertical chrome only; the panel inset consumes both X edges.
+internal F32
+rd_dock_resulting_width(CFG_PanelNode *root, CFG_PanelNode *panel,
+                        Rng2F32 area, Dir2 dir, F32 inset)
+{
+  if(panel == &cfg_nil_panel_node) { return 0; }
+  Rng2F32 rect = cfg_target_rect_from_panel_node(area, root, panel);
+  if(dir != Dir2_Invalid)
+  {
+    Axis2 axis = axis2_from_dir2(dir);
+    Side side = side_from_dir2(dir);
+    CFG_PanelNode *parent = panel->parent;
+    if(parent != &cfg_nil_panel_node && parent->split_axis == axis)
+    {
+      // The root is passed to its children unrounded by the layout walker.
+      rect = parent == root ? area : cfg_target_rect_from_panel_node(area, root, parent);
+      F32 start = rect.p0.v[axis], size = dim_2f32(rect).v[axis];
+      F32 scale = (F32)parent->child_count/(parent->child_count+1);
+      for(CFG_PanelNode *child = parent->first; child != &cfg_nil_panel_node; child = child->next)
+      {
+        if(child == panel && side == Side_Min) { break; }
+        start += size*rd_dock_allocated_fraction(child->pct_of_parent*scale);
+        if(child == panel) { break; }
+      }
+      rect.p0.v[axis] = round_f32(start);
+      rect.p1.v[axis] = round_f32(start + size*rd_dock_allocated_fraction(1.f/(parent->child_count+1)));
+    }
+    else
+    {
+      if(panel == root) { rect = area; }
+      F32 middle = round_f32((rect.p0.v[axis]+rect.p1.v[axis])*0.5f);
+      if(side == Side_Min) { rect.p1.v[axis] = middle; }
+      else { rect.p0.v[axis] = middle; }
+    }
+  }
+  rect.x0 = round_f32(rect.x0); rect.x1 = round_f32(rect.x1);
+  return Max(0.f, round_f32(rect.x1-inset)-round_f32(rect.x0+inset));
+}

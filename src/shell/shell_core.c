@@ -2955,11 +2955,11 @@ uishell_controlled_split_selected_mount(UIShell_ControlledSplit *split)
 }
 
 internal F32
-uishell_controlled_split_default_control_width_px(UIShell_ControlledSplit *split, Rng2F32 rect)
+uishell_controlled_split_default_control_width_px(UIShell_ControlledSplit *split, Rng2F32 rect, F32 font_size)
 {
   F32 rect_width = dim_2f32(rect).x;
-  F32 min_width = floor_f32(ui_top_font_size()*4.f);
-  F32 desired_width = floor_f32(ui_top_font_size()*32.f);
+  F32 min_width = floor_f32(font_size*4.f);
+  F32 desired_width = floor_f32(font_size*32.f);
   F32 max_width = floor_f32(rect_width*0.32f);
   F32 width = 0;
   if(rect_width >= min_width*2.f)
@@ -2970,11 +2970,11 @@ uishell_controlled_split_default_control_width_px(UIShell_ControlledSplit *split
 }
 
 internal Rng1F32
-uishell_controlled_split_control_width_range_px(UIShell_ControlledSplit *split, Rng2F32 rect)
+uishell_controlled_split_control_width_range_px(UIShell_ControlledSplit *split, Rng2F32 rect, F32 font_size)
 {
   (void)split;
   F32 rect_width = dim_2f32(rect).x;
-  F32 min_width = floor_f32(ui_top_font_size()*4.f);
+  F32 min_width = floor_f32(font_size*4.f);
   F32 max_width = Max(min_width, floor_f32(rect_width*0.32f));
   Rng1F32 result = r1f32(min_width, max_width);
   if(rect_width < min_width*2.f)
@@ -2984,26 +2984,26 @@ uishell_controlled_split_control_width_range_px(UIShell_ControlledSplit *split, 
   return result;
 }
 
+// Settled allocation is also available to commands before any UI build.
+internal F32
+uishell_controlled_split_settled_control_width(UIShell_ControlledSplit *split, Rng2F32 rect, F32 font_size)
+{
+  F32 rect_width = Max(0.f, dim_2f32(rect).x);
+  Rng1F32 range = uishell_controlled_split_control_width_range_px(split, rect, font_size);
+  if(range.max <= range.min) { return 0; }
+  F32 width = uishell_controlled_split_default_control_width_px(split, rect, font_size);
+  CFG_Node *pct = cfg_node_child_from_string(split->owner_cfg, str8_lit("control_split_pct"));
+  if(pct->first != &cfg_nil_node) { width = rect_width*(F32)f64_from_str8(pct->first->string); }
+  return Clamp(range.min, width, range.max);
+}
+
 internal F32
 uishell_controlled_split_control_width_px(UIShell_ControlledSplit *split, Rng2F32 rect)
 {
   // collapsed (sidebar-collapse chrome element): the control surface is hidden &
   // the workspace takes the full width. persisted next to control_split_pct.
   B32 collapsed = (cfg_node_child_from_string(split->owner_cfg, str8_lit("control_split_collapsed")) != &cfg_nil_node);
-  F32 rect_width = dim_2f32(rect).x;
-  Rng1F32 width_range = uishell_controlled_split_control_width_range_px(split, rect);
-  F32 width = 0;
-  if(width_range.max > width_range.min)
-  {
-    F32 default_width = uishell_controlled_split_default_control_width_px(split, rect);
-    F32 pct = default_width/rect_width;
-    CFG_Node *pct_cfg = cfg_node_child_from_string(split->owner_cfg, str8_lit("control_split_pct"));
-    if(pct_cfg != &cfg_nil_node && pct_cfg->first != &cfg_nil_node)
-    {
-      pct = (F32)f64_from_str8(pct_cfg->first->string);
-    }
-    width = Clamp(width_range.min, rect_width*pct, width_range.max);
-  }
+  F32 width = uishell_controlled_split_settled_control_width(split, rect, ui_top_font_size());
   // animate collapse/expand: the open width above is instant (so divider drags
   // don't lag), and a separate 0..1 factor slides the sidebar in/out from the
   // left. downstream the workspace edge (main_workspace_rect.p0.x) follows this,
@@ -3043,7 +3043,7 @@ uishell_controlled_split_boundary_ui(UIShell_ControlledSplit *split, Rng2F32 rec
   B32 is_changing = 0;
   F32 rect_width = dim_2f32(rect).x;
   F32 control_width = uishell_controlled_split_control_width_px(split, rect);
-  Rng1F32 width_range = uishell_controlled_split_control_width_range_px(split, rect);
+  Rng1F32 width_range = uishell_controlled_split_control_width_range_px(split, rect, ui_top_font_size());
   if(control_width != 0 && rect_width > 0)
   {
     F32 hit_radius = ui_top_font_size()/3.f;
@@ -3262,10 +3262,86 @@ rd_panel_frame_segment_list_push_unique(Arena *arena, RD_PanelFrameSegmentList *
   }
 }
 
+// Rendering and docking share these chrome allocations.
+internal F32
+rd_window_edge_inset_px(RD_WindowState *ws)
+{
+  return 96.f*wm_layout_scale_from_window(ws->os)*0.035f;
+}
+
+internal F32
+rd_panel_inset_px(F32 font_size)
+{
+  return floor_f32(font_size*Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_gap")), 1.f)*0.5f);
+}
+
+typedef struct RD_DockGeometry RD_DockGeometry;
+struct RD_DockGeometry
+{
+  CFG_PanelTree tree;
+  Rng2F32 area;
+  F32 inset;
+};
+
+// Build one measured geometry context per panel area during a drag. Only the
+// controlled split's owner is needed; do not build another workspace inventory.
+internal RD_DockGeometry
+rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
+{
+  RD_DockGeometry result = {.tree = mount->panel_tree};
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(mount->owner_cfg);
+  if(ws == &rd_nil_window_state) { return result; }
+  UIShell_RegsScope(.window = mount->window_cfg->id, .panel = 0, .view = 0, .tab = 0)
+  {
+    // Window build pushes this same window-level rd_font_size before control
+    // chrome/panel layout; per-View font scopes start inside those panel bodies.
+    F32 font_size = rd_font_size();
+    result.area = pad_2f32(wm_client_rect_from_window(ws->os), -rd_window_edge_inset_px(ws));
+    UIShell_ControlledSplit split = {.owner_cfg = mount->window_cfg};
+    F32 control_width = uishell_controlled_split_settled_control_width(&split, result.area, font_size);
+    if(cfg_node_child_from_string(split.owner_cfg, str8_lit("control_split_collapsed")) != &cfg_nil_node) { control_width = 0; }
+    RD_DockHostKind kind = rd_dock_host_from_cfg(mount->panel_tree.root->cfg, 0).kind;
+    if(kind == RD_DockHostKind_Sidebar) { result.area.x1 = result.area.x0+control_width; }
+    else if(kind == RD_DockHostKind_WorkspaceRegion)
+    { if(control_width != 0) { result.area.x0 += control_width+1.f; } }
+    // Current builders select rendered panels/sidebar roots. Defensive future
+    // floating mounts have no rendered body to measure. Zero-minimum
+    // Views remain accepted; constrained Views require a rendered allocation.
+    else { result.area.x1 = result.area.x0; }
+    result.inset = rd_panel_inset_px(font_size);
+  }
+  return result;
+}
+
+internal F32
+rd_dock_width_from_geometry(RD_DockGeometry *geometry, CFG_Node *destination, Dir2 dir)
+{
+  return rd_dock_resulting_width(geometry->tree.root,
+    cfg_panel_node_from_tree_cfg(geometry->tree.root, destination), geometry->area, dir, geometry->inset);
+}
+
+// Commands build and release their temporary tree and remeasure current size.
+internal F32
+rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir)
+{
+  Temp temp = temp_begin(arena);
+  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_cfg(arena, destination);
+  if(rd_window_state_from_cfg__existing(mount.owner_cfg) == &rd_nil_window_state)
+  { log_user_errorf("Docking geometry unavailable: destination has no live window state."); }
+  RD_DockGeometry geometry = rd_dock_geometry_from_mount(&mount);
+  F32 width = rd_dock_width_from_geometry(&geometry, destination, dir);
+  temp_end(temp);
+  return width;
+}
+
 internal void
 rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right, B32 tabs_in_title_bar)
 {
   CFG_PanelTree panel_tree = mount->panel_tree;
+  // Every use below is guarded by active View drag, matching initialization.
+  RD_DockGeometry dock_geometry = {0};
+  if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View)
+  { dock_geometry = rd_dock_geometry_from_mount(mount); }
   B32 is_preview = ws->active_workspace_surface_entry != 0 && !ws->active_workspace_surface_entry->composite;
   B32 window_layout_reset = ws->window_layout_reset;
   Rng2F32 panel_area_rect = content_rect; // captured before the per-panel `content_rect` shadows it (for tabs-in-title-bar edge detection)
@@ -3329,7 +3405,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
       //
       {
         CFG_Node *drag_view = cfg_node_from_id(rd_state->drag_drop_regs->view);
-        if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_dock_drag_target(drag_view, panel->cfg, dim_2f32(panel_rect).x))
+        if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_dock_drag_target(drag_view, panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid)))
         {
           //- rjf: params
           F32 drop_site_major_dim_px = ceil_f32(ui_top_font_size()*7.f);
@@ -3347,8 +3423,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             Axis2 axis = axis2_flip(panel_tree.root->split_axis);
             for EachEnumVal(Side, side)
             {
-              // Approximate post-split width using the new two-child layout.
-              F32 target_width = dim_2f32(panel_rect).x * (axis == Axis2_X ? 0.5f : 1.f);
+              // Measure the resulting leaf allocation, including insets.
+              F32 target_width = rd_dock_width_from_geometry(&dock_geometry, panel->cfg,
+                axis == Axis2_X ? (side == Side_Min ? Dir2_Left : Dir2_Right) : (side == Side_Min ? Dir2_Up : Dir2_Down));
               if(!rd_dock_drag_target(drag_view, panel->cfg, target_width)) { continue; }
               UI_Key key = ui_key_from_stringf(ui_key_zero(), "root_extra_split_%i", side);
               Rng2F32 site_rect = panel_rect;
@@ -3441,9 +3518,16 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             // rjf: form rect
             Rng2F32 child_rect = cfg_target_rect_from_panel_node_child(panel_rect, panel, child);
             Vec2F32 child_rect_center = center_2f32(child_rect);
-            // Approximate the equalized width after inserting a sibling.
-            F32 target_width = dim_2f32(panel_rect).x / (split_axis == Axis2_X ? panel->child_count+1 : 1);
-            if(!rd_dock_drag_target(drag_view, panel->cfg, target_width)) { continue; }
+            // Query the same insertion that the boundary drop command commits.
+            CFG_PanelNode *target = child == &cfg_nil_panel_node ? panel->last : child;
+            Dir2 target_dir = split_axis == Axis2_X ? (child == &cfg_nil_panel_node ? Dir2_Right : Dir2_Left) :
+              (child == &cfg_nil_panel_node ? Dir2_Down : Dir2_Up);
+            F32 target_width = rd_dock_width_from_geometry(&dock_geometry, target->cfg, target_dir);
+            if(!rd_dock_drag_target(drag_view, panel->cfg, target_width))
+            {
+              if(child == &cfg_nil_panel_node) { break; }
+              continue;
+            }
             UI_Key key = ui_key_from_stringf(ui_key_zero(), "drop_boundary_%p_%p", panel->cfg, child->cfg);
             Rng2F32 site_rect = r2f32(child_rect_center, child_rect_center);
             site_rect.p0.v[split_axis] = child_rect.p0.v[split_axis] - drop_site_minor_dim_px/2;
@@ -3648,7 +3732,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
     F32 edge_tol = ui_top_font_size()*0.5f;
     Vec4F32 panel_body_bg     = ui_color_from_name(str8_lit("background"));
     Vec4F32 panel_frame_color = ui_color_from_name(str8_lit("border"));
-    F32 panel_inset_px = floor_f32(ui_top_font_size()*Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_gap")), 1.f)*0.5f);
+    F32 panel_inset_px = rd_panel_inset_px(ui_top_font_size());
     F32 tab_gap_px = floor_f32(ui_top_font_size()*Clamp(0.f, rd_setting_f32_from_name(str8_lit("tab_gap")), 1.f));
     F32 selected_tab_edge_softness = 1.f;
     if(content_rect.x1 > content_rect.x0 && content_rect.y1 > content_rect.y0)
@@ -3923,7 +4007,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           if(build_panel)
           {
             CFG_Node *view = cfg_node_from_id(rd_state->drag_drop_regs->view);
-            if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_dock_drag_target(view, panel->cfg, dim_2f32(panel_rect).x) && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
+            if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_dock_drag_target(view, panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid)) && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
             {
               F32 drop_site_dim_px = ceil_f32(ui_top_font_size()*7.f);
               drop_site_dim_px = Min(drop_site_dim_px, dim_2f32(panel_rect).v[panel->split_axis]/4.f);
@@ -3987,8 +4071,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 Rng2F32 rect = sites[idx].rect;
                 Axis2 split_axis = axis2_from_dir2(dir);
                 Side split_side = side_from_dir2(dir);
-                // Approximate a new half-width Panel; center/Y drops retain width.
-                F32 target_width = dim_2f32(panel_rect).x * (dir != Dir2_Invalid && split_axis == Axis2_X ? 0.5f : 1.f);
+                F32 target_width = rd_dock_width_from_geometry(&dock_geometry, panel->cfg, dir);
                 if(!rd_dock_drag_target(view, panel->cfg, target_width)) { continue; }
                 if(dir != Dir2_Invalid && panel->parent != &cfg_nil_panel_node &&
                    split_axis == panel->parent->split_axis)
@@ -4102,7 +4185,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //
           UI_Key catchall_drop_site_key = ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panel->cfg);
           if(build_panel && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
-             rd_dock_drag_target(cfg_node_from_id(rd_state->drag_drop_regs->view), panel->cfg, dim_2f32(panel_rect).x)) UI_Rect(panel_rect)
+             rd_dock_drag_target(cfg_node_from_id(rd_state->drag_drop_regs->view), panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid))) UI_Rect(panel_rect)
           {
             UI_Box *catchall_drop_site = ui_build_box_from_key(UI_BoxFlag_DropSite, catchall_drop_site_key);
             ui_signal_from_box(catchall_drop_site);
@@ -5312,7 +5395,7 @@ rd_window_frame(void)
     Rng2F32 top_bar_rect = r2f32p(window_rect.x0, window_rect.y0, window_rect.x0+window_rect_dim.x+1, window_rect.y0+top_bar_dim_px);
     Rng2F32 bottom_bar_rect = r2f32p(window_rect.x0, window_rect_dim.y - bottom_bar_dim_px, window_rect.x0+window_rect_dim.x, window_rect.y0+window_rect_dim.y);
     Rng2F32 content_rect = r2f32p(window_rect.x0, top_bar_rect.y1, window_rect.x0+window_rect_dim.x, bottom_bar_rect.y0);
-    F32 window_edge_px = 96.f*wm_layout_scale_from_window(ws->os)*0.035f;
+    F32 window_edge_px = rd_window_edge_inset_px(ws);
     content_rect = pad_2f32(content_rect, -window_edge_px);
     // Window-edge padding belongs at the outer edges, not at the internal seam
     // with title-bar chrome. Panel spacing is applied by the panel layout.

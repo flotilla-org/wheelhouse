@@ -50,8 +50,35 @@ struct UIShell_HoverCard
   F32 scroll;
 };
 
+typedef struct UIShell_DisplayWake UIShell_DisplayWake;
+struct UIShell_DisplayWake
+{
+  U32 references, fired, delay_ms;
+};
+
+internal void
+uishell_sidebar_display_wake_release(UIShell_DisplayWake *wake)
+{
+  if(wake && ins_atomic_u32_dec_eval(&wake->references) == 0) { free(wake); }
+}
+
+typedef struct UIShell_DisplayRestore UIShell_DisplayRestore;
+struct UIShell_DisplayRestore
+{
+  UIShell_DisplayRestore *next;
+  String8 name; // declaration identity; never retain snapshot action indices
+  // Pending means unresolved; attempts at the limit stop dispatch, not reconciliation.
+  B32 desired, observed, pending;
+  U32 attempts;
+  U64 retry_at;
+};
+
 struct UIShell_SidebarState
 {
+  Arena *display_restore_arena;
+  UIShell_DisplayRestore *display_restores;
+  U64 display_wakeup_at;
+  UIShell_DisplayWake *display_wakeup;
   UIShell_SidebarSection *sections;
   UIShell_HoverCard cards[2];
   Rng2F32 rect;
@@ -126,6 +153,8 @@ uishell_sidebar_release(UIShell_SidebarState *state)
   {
     for(U64 i = 0; i < ArrayCount(state->cards); i++)
     { if(state->cards[i].arena) { arena_release(state->cards[i].arena); } }
+    uishell_sidebar_display_wake_release(state->display_wakeup);
+    if(state->display_restore_arena) { arena_release(state->display_restore_arena); }
     andamento_snapshot_release(state->snapshot);
     andamento_destroy(state->core);
   }
@@ -199,33 +228,158 @@ uishell_sidebar_save_display(UIShell_SidebarState *state, CFG_Node *window)
   {
     CFG_Node *saved = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("sidebar_display"));
     CFG_Node *value = cfg_node_child_from_string_or_alloc(rd_state->cfg, saved, uishell_sidebar_string(name));
+    UIShell_DisplayRestore *restore = state->display_restores;
+    for(; restore; restore = restore->next)
+    { if(str8_match(restore->name, uishell_sidebar_string(name), 0)) { break; } }
+    // Saving another action must not erase an unresolved saved preference.
+    // A changed live value is newer user intent and supersedes recovery.
+    if(restore && restore->pending)
+    {
+      // Unchanged live state does not authorize erasing failed saved intent.
+      if(restore->observed == !!control.checked) { continue; }
+      restore->pending = 0;
+    }
     String8 text = control.checked ? str8_lit("true") : str8_lit("false");
     if(!str8_match(value->first->string, text, 0)) { cfg_node_new_replace(rd_state->cfg, value, text); }
+  }
+}
+
+// State and timer each own one reference to a completion token. It contains
+// no sidebar/window/snapshot pointers and outlives a released sidebar. A fired
+// token is consumed even before its deadline, allowing an early wake to re-arm.
+// Heap storage outlives the sidebar arena. Raw OS threads avoid the base helper's
+// detachable entity lifetime; each worker owns a token reference until return.
+#if OS_WINDOWS
+internal DWORD WINAPI
+uishell_sidebar_display_wakeup(void *data)
+#else
+internal void *
+uishell_sidebar_display_wakeup(void *data)
+#endif
+{
+  UIShell_DisplayWake *wake = data;
+  sleep_ms(wake->delay_ms);
+  ins_atomic_u32_eval_assign(&wake->fired, 1);
+  wm_send_wakeup_event();
+  uishell_sidebar_display_wake_release(wake);
+  return 0;
+}
+
+internal UIShell_DisplayWake *
+uishell_sidebar_display_wake_after(U32 delay)
+{
+  UIShell_DisplayWake *wake = calloc(1, sizeof(*wake));
+  if(!wake) { return 0; }
+  wake->references = 2; wake->delay_ms = delay;
+#if OS_WINDOWS
+  HANDLE thread = CreateThread(0, 0, uishell_sidebar_display_wakeup, wake, 0, 0);
+  if(!thread) { free(wake); return 0; }
+  CloseHandle(thread);
+#else
+  pthread_t thread;
+  if(pthread_create(&thread, 0, uishell_sidebar_display_wakeup, wake) != 0)
+  { free(wake); return 0; }
+  pthread_detach(thread);
+#endif
+  return wake;
+}
+
+enum { UIShell_DisplayRetryLimit = 3, UIShell_DisplayRetryStepMs = 1000 };
+
+// Three total attempts, spaced one and two seconds apart. Exhaustion retains
+// the saved preference and surfaced error until a new explicit restore/session.
+// Reconciliation uses fresh declarations and stops for newer saved/live intent.
+internal void
+uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64 now)
+{
+  if(!state->core) { return; }
+  if(state->display_wakeup && ins_atomic_u32_eval(&state->display_wakeup->fired))
+  {
+    uishell_sidebar_display_wake_release(state->display_wakeup);
+    state->display_wakeup = 0;
+    state->display_wakeup_at = 0;
+  }
+  uishell_sidebar_refresh(state);
+  // FFI acquisition always returns a snapshot for a healthy core. Null means
+  // invalid/poisoned core (recreation required), not a transient ingress failure;
+  // another timer cannot repair that core. Local polling needs no ingress.
+  if(!state->snapshot) { return; }
+  for(UIShell_DisplayRestore *r = state->display_restores; r; r = r->next)
+  {
+    if(!r->pending) { continue; }
+    CFG_Node *saved = cfg_node_child_from_string(window, str8_lit("sidebar_display"));
+    CFG_Node *value = cfg_node_child_from_string(saved, r->name);
+    B32 desired = str8_match(value->first->string, str8_lit("true"), 0);
+    if(!desired && !str8_match(value->first->string, str8_lit("false"), 0))
+    { r->pending = 0; continue; }
+    if(desired != r->desired) { r->desired = desired; r->attempts = 0; }
+    UIShell_DisplayControlIterator it = {state->snapshot};
+    AndamentoControl control = {0}; AndamentoText name = {0};
+    B32 found = 0;
+    while(uishell_sidebar_next_persistent_control(&it, &control, &name))
+    { if(str8_match(r->name, uishell_sidebar_string(name), 0)) { found = 1; break; } }
+    if(found && !!control.checked == r->desired) { r->pending = 0; continue; }
+    // Polling observes values, never attributes an external change to user intent.
+    // Explicit UI actions save intent through save_display; retry preserves it.
+    if(r->attempts >= UIShell_DisplayRetryLimit || now < r->retry_at) { continue; }
+    r->attempts++;
+    char *error = 0;
+    B32 ok = found && control.action != ANDAMENTO_NONE &&
+      andamento_dispatch(state->core, state->snapshot, control.action, &error);
+    uishell_sidebar_result(state, ok, error);
+    uishell_sidebar_refresh(state);
+    rd_request_frame();
+    if(ok) { r->pending = 0; }
+    else { r->retry_at = now + UIShell_DisplayRetryStepMs*r->attempts; }
+  }
+  U64 deadline = 0;
+  for(UIShell_DisplayRestore *r = state->display_restores; r; r = r->next)
+  {
+    if(r->pending && r->attempts < UIShell_DisplayRetryLimit && (!deadline || r->retry_at < deadline))
+    { deadline = r->retry_at; }
+  }
+  if(deadline != state->display_wakeup_at)
+  {
+    uishell_sidebar_display_wake_release(state->display_wakeup);
+    state->display_wakeup = 0;
+    state->display_wakeup_at = 0;
+    if(deadline)
+    {
+      U64 delay = deadline > now ? deadline-now : 1;
+      state->display_wakeup = uishell_sidebar_display_wake_after((U32)delay);
+      if(state->display_wakeup) { state->display_wakeup_at = deadline; }
+      else { uishell_sidebar_result(state, 0, 0); }
+    }
   }
 }
 
 internal void
 uishell_sidebar_restore_display(UIShell_SidebarState *state, CFG_Node *window)
 {
+  if(!state->core) { return; }
+  uishell_sidebar_refresh(state);
   if(!state->snapshot) { return; }
+  if(!state->display_restore_arena) { state->display_restore_arena = arena_alloc(); }
+  arena_clear(state->display_restore_arena);
+  state->display_restores = 0;
   CFG_Node *saved = cfg_node_child_from_string(window, str8_lit("sidebar_display"));
   for(CFG_Node *value = saved->first; value != &cfg_nil_node; value = value->next)
   {
-    B32 checked = str8_match(value->first->string, str8_lit("true"), 0);
-    if(!checked && !str8_match(value->first->string, str8_lit("false"), 0)) { continue; }
+    B32 desired = str8_match(value->first->string, str8_lit("true"), 0);
+    if(!desired && !str8_match(value->first->string, str8_lit("false"), 0)) { continue; }
     UIShell_DisplayControlIterator it = {state->snapshot};
     AndamentoControl control = {0}; AndamentoText name = {0};
     while(uishell_sidebar_next_persistent_control(&it, &control, &name))
     {
-      if(!str8_match(value->string, uishell_sidebar_string(name), 0) ||
-         checked == !!control.checked || control.action == ANDAMENTO_NONE) { continue; }
-      char *error = 0;
-      B32 ok = andamento_dispatch(state->core, state->snapshot, control.action, &error);
-      uishell_sidebar_result(state, ok, error);
-      uishell_sidebar_refresh(state);
+      if(!str8_match(value->string, uishell_sidebar_string(name), 0) || desired == !!control.checked) { continue; }
+      UIShell_DisplayRestore *r = push_array(state->display_restore_arena, UIShell_DisplayRestore, 1);
+      r->name = push_str8_copy(state->display_restore_arena, value->string);
+      r->desired = desired; r->observed = !!control.checked; r->pending = 1;
+      SLLStackPush(state->display_restores, r);
       break;
     }
   }
+  uishell_sidebar_retry_display(state, window, wheelhouse_ingress_now_ms());
 }
 
 // Includes unselected tabs. Cleat has no live cwd report in its current ABI;
@@ -1376,6 +1530,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           for(U64 c = 0; c < chip_count; c++)
           {
             chip_measures[c].width = uishell_sidebar_chip_width(state, nodes[members[c]]);
+            chip_measures[c].unopened_workspace = !uishell_sidebar_is_subject(nodes[members[c]]) &&
+              nodes[members[c]].state != ANDAMENTO_LIVE;
             chip_measures[c].attention = uishell_sidebar_chip_attention(state, nodes[members[c]]);
           }
           String8 names[3] = {label,
@@ -2356,29 +2512,34 @@ uishell_sidebar_observed_workdirs(void *unused, WheelhouseWorkdirEmit emit, void
 internal void
 uishell_sidebar_poll_live(void)
 {
-  if(uishell_ingress == 0) { return; }
-  wheelhouse_ingress_poll_observed(uishell_ingress, uishell_sidebar_apply_live, uishell_sidebar_observed_workdirs, 0);
   U64 now = wheelhouse_ingress_now_ms();
-  if(now - uishell_sidebar_last_tick >= 250)
+  if(uishell_ingress != 0)
   {
-    uishell_sidebar_last_tick = now;
-    for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
+    wheelhouse_ingress_poll_observed(uishell_ingress, uishell_sidebar_apply_live, uishell_sidebar_observed_workdirs, 0);
+    if(now - uishell_sidebar_last_tick >= 250)
     {
-      UIShell_SidebarState *state = uishell_sidebar_init(ws);
-      if(state->core != 0)
+      uishell_sidebar_last_tick = now;
+      for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
       {
-        char *error = 0;
-        B32 ok = andamento_tick(state->core, now, &error);
-        uishell_sidebar_result(state, ok, error);
+        UIShell_SidebarState *state = uishell_sidebar_init(ws);
+        if(state->core != 0)
+        {
+          char *error = 0;
+          B32 ok = andamento_tick(state->core, now, &error);
+          uishell_sidebar_result(state, ok, error);
+        }
       }
+      rd_request_frame();
     }
-    rd_request_frame();
   }
   // Apply every queued patch and expiry tick before publishing one snapshot.
   // Andamento owns change detection, including action-only changes and leases.
   for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
   {
     UIShell_SidebarState *state = uishell_sidebar_init(ws);
-    if(state->core != 0) { uishell_sidebar_refresh(state); }
+    if(state->core != 0)
+    {
+      uishell_sidebar_retry_display(state, cfg_node_from_id(ws->cfg_id), now);
+    }
   }
 }

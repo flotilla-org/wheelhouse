@@ -6,6 +6,7 @@ typedef struct UIShell_ChipMeasure {
   float width;
   int attention;
   int folded;
+  int unopened_workspace;
 } UIShell_ChipMeasure;
 
 typedef struct UIShell_ChipLayout {
@@ -17,7 +18,8 @@ typedef struct UIShell_ChipLayout {
 } UIShell_ChipLayout;
 
 // Width excludes the kind/disclosure and fixed trailing status slots. Names
-// give way first; only quiet chips fold, from the end of catalog order.
+// give way first; unopened workspace actions fold before quiet subjects.
+// Within each class, fold from the end without reordering surviving chips.
 static UIShell_ChipLayout
 uishell_chip_layout(float width, const float names[3], float minimum_name,
                     UIShell_ChipMeasure *chips, size_t count, float overflow_width)
@@ -28,9 +30,10 @@ uishell_chip_layout(float width, const float names[3], float minimum_name,
   while(result.tier < 2 && names[result.tier]+total > width) { result.tier++; }
   float name = names[result.tier];
   if(name+total > width) { name = minimum_name < name ? minimum_name : name; }
+  for(int priority = 1; priority >= 0; priority--)
   for(size_t i = count; i > 0 && name+total > width; i--)
   {
-    if(chips[i-1].attention) { continue; }
+    if(chips[i-1].attention || chips[i-1].unopened_workspace != priority) { continue; }
     chips[i-1].folded = 1;
     total -= chips[i-1].width;
     if(result.folded++ == 0) { total += overflow_width; }
