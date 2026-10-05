@@ -22,7 +22,7 @@ uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
                      .key = WM_Key_LeftMouseButton, .pos = mouse, .modifiers = modifiers};
     if(frame) { ui_event_list_push(ws->ui->arena, &events, &event); }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-    ui_state->mouse = mouse; MemoryZeroArray(ui_state->hover_card_keys);
+    ui_state->mouse = mouse; MemoryZeroArray(ui_state->hover_card_keys); ui_state->hover_card_extra = 0;
     AndamentoNode node = {0};
     U64 index = uishell_sidebar_card_find(state, card->path[card->depth-1], &node);
     if(index == ANDAMENTO_NONE) { ui_end_build(); return 0; }
@@ -385,6 +385,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_end_build();
         UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);
         UI_Box *root = ui_box_from_key(root_key);
+        CardCheck((root->flags & UI_BoxFlag_DisableFocusOverlay) && (root->flags & UI_BoxFlag_DisableFocusBorder),
+                  "transient card surface suppresses whole-card focus paint");
         CardCheck(!ui_box_is_nil(root) && dim_2f32(root->rect).y > 40, "full card measures its content on the first frame");
         U64 lines = 0;
         for(UI_Box *box = root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, root).next)
@@ -472,6 +474,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         UI_Box *hot = ui_box_from_key(root->default_nav_focus_hot_key);
         if(!ui_box_is_nil(hot))
         {
+          CardCheck(!(hot->flags & (UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder)),
+                    "keyboard-focused child keeps its focus indication");
           String8 text = ui_box_display_string(hot);
           saw_back |= str8_match(text, str8_lit("← Back"), 0);
           saw_close |= str8_match(text, str8_lit("Close"), 0);
@@ -644,6 +648,184 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_release(&freshness);
 
   }
+  // Detached lifecycle and saved-layout round-trip use the same transitions
+  // that the move controls request. No KDL or producer data is edited.
+  if(fixture.snapshot)
+  {
+    AndamentoNode entity = {0};
+    for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+    { andamento_snapshot_node(fixture.snapshot, i, &entity); if(!entity.is_section && entity.entity_id.len) { break; } }
+    UIShell_HoverCard *original = &fixture.cards[0];
+    uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+    original->rect = r2f32p(400, 100, 800, 400); original->engaged = original->focused = 1;
+    fixture.rect = r2f32p(0, 0, 320, 700);
+    CardCheck(uishell_sidebar_card_target_valid(ws, UIShell_CardPlacement_Float, 0) &&
+              uishell_sidebar_card_target_valid(ws, UIShell_CardPlacement_Inline, 0) &&
+              uishell_sidebar_card_target_valid(ws, UIShell_CardPlacement_Pinned, 0),
+              "all detached targets use the shared checker with zero minimum width");
+    CardCheck(uishell_hover_card_test_click(ws, &fixture, original, str8_lit("Float"), 0) && original->move_requested,
+              "actual Float control requests detachment");
+    uishell_sidebar_detached_finish(ws);
+    UIShell_HoverCard *floating = fixture.detached;
+    CardCheck(!original->open && floating && floating->open && floating->placement == UIShell_CardPlacement_Float,
+              "float detaches into an independent controller");
+    floating->focused = 0;
+    uishell_sidebar_card_tick(floating, v2f32(-100, -100), 10000000);
+    uishell_sidebar_card_tick(floating, v2f32(-100, -100), 11000000);
+    CardCheck(floating->open, "unfocused float survives mouse-out timeout");
+    for(U64 placement = 0; placement < 2; placement++)
+    {
+      B32 saved_outside = uishell_hover_cards_outside; uishell_hover_cards_outside = placement;
+      UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      test->mouse = v2f32(-100, -100); floating->focused = 1;
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+      { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+      ui_end_build();
+      UI_Box *root = ui_box_from_key(floating->mask.key);
+      CardCheck(!ui_box_is_nil(root) && (root->flags & UI_BoxFlag_DisableFocusOverlay) &&
+                (root->flags & UI_BoxFlag_DisableFocusBorder), "Near and Outside keep a clicked card surface neutral");
+      WM_Event outside = {.kind = WM_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = v2f32(-100, -100)};
+      uishell_sidebar_card_wm_event(ws, &outside);
+      CardCheck(floating->open && !floating->focused && !test->hover_card_focus, "outside click blurs a float without closing it");
+      floating->focused = 1; test->hover_card_focus = 1;
+      WM_Event esc = {.kind = WM_EventKind_Press, .key = WM_Key_Esc};
+      CardCheck(uishell_sidebar_card_wm_event(ws, &esc) && floating->open && !floating->focused, "focused float owns Escape and retains its placement");
+      esc.kind = WM_EventKind_Release;
+      CardCheck(uishell_sidebar_card_wm_event(ws, &esc), "float consumes the Escape release");
+      uishell_hover_cards_outside = saved_outside;
+    }
+    uishell_sidebar_card_request(floating, UIShell_CardPlacement_Inline);
+    uishell_sidebar_detached_finish(ws);
+    CardCheck(floating->open && floating->placement == UIShell_CardPlacement_Inline && floating->source_row.size,
+              "under-source transition keeps the placement's stable row identity");
+    UI_EventList inline_events = {0}; ui_begin_build(ws->os, &inline_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+    { uishell_sidebar_inline_ui(ws, floating->source_row, 280); }
+    ui_end_build();
+    CardCheck(floating->content_height > 0 && uishell_sidebar_inline_height(&fixture, floating->source_row) > floating->content_height,
+              "inline measured height contributes to the tree scroll allocation");
+    uishell_sidebar_card_request(floating, UIShell_CardPlacement_Pinned);
+    uishell_sidebar_detached_finish(ws);
+    CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *saved = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0);
+    CardCheck(saved != &cfg_nil_node && !floating->open, "pin persists entity identity in the saved panel layout");
+    CFG_ID saved_id = saved->id;
+    uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+    CFG_Node *again = uishell_sidebar_card_pin(ws, original, 0);
+    CardCheck(again->id == saved_id && fixture.pin_reveal == saved_id, "pinning twice reveals the same card");
+    Temp saved_scratch = scratch_begin(0, 0);
+    CFG_State *loaded_cfg = cfg_state_alloc();
+    String8 serialized = cfg_string_from_tree(saved_scratch.arena, rd_state->cfg_schema_table, str8_zero(), window);
+    CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(saved_scratch.arena, loaded_cfg, rd_state->cfg_schema_table, str8_zero(), serialized);
+    CFG_Node *restored = loaded.count ? uishell_sidebar_pin_find(loaded.first->v, uishell_sidebar_card_entity(entity), 0) : &cfg_nil_node;
+    CardCheck(restored != &cfg_nil_node && str8_match(cfg_node_child_from_string(restored, str8_lit("label"))->first->string,
+              uishell_sidebar_string(entity.label), 0), "layout serialization and restart preserve pinned identity and label");
+    cfg_state_release(loaded_cfg); scratch_end(saved_scratch);
+    UIShell_HoverCard *pinned = uishell_sidebar_saved_card(ws, saved);
+    for(U64 frame = 0; frame < 3; frame++)
+    {
+      UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      test->mouse = v2f32(-100, -100); test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
+      UIShell_RegsScope(.window = window->id, .view = saved->parent->id)
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+      { RD_VIEW_UI_FUNCTION_NAME(pinned_cards)((E_Eval){0}, r2f32p(17, 29, 297, 329)); }
+      ui_end_build();
+      UI_Box *body = ui_box_from_key(pinned->mask.key);
+      CardCheck(!ui_box_is_nil(body) && body->rect.y0 >= 29+24 && body->fixed_size.y > 40,
+                "pinned View renders a measured body below its ordinary section header");
+      uishell_sidebar_detached_bounds(ws);
+      CardCheck(pinned->rect.x0 >= 17 && pinned->rect.x1 <= 297 && pinned->rect.y1 <= 329,
+                "pinned WM hit geometry is clipped to the section viewport");
+    }
+    original->rect = pinned->rect; original->open = 1; original->focused = 0;
+    WM_Event overlap = {.kind = WM_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = center_2f32(pinned->rect)};
+    uishell_sidebar_card_wm_event(ws, &overlap);
+    CardCheck(original->focused && !pinned->focused, "transient overlay owns clicks above a pinned section");
+    UIShell_HoverCard *top = uishell_sidebar_detached_copy(ws, original);
+    top->placement = UIShell_CardPlacement_Float; top->rect = pinned->rect;
+    uishell_sidebar_card_wm_event(ws, &overlap);
+    CardCheck(top->focused && !original->focused && !pinned->focused, "float owns clicks above transient and pinned cards");
+    uishell_sidebar_card_close(top);
+    AndamentoSnapshot *snapshot = fixture.snapshot; fixture.snapshot = 0;
+    UI_EventList absent_events = {0}; ui_begin_build(ws->os, &absent_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    MemoryZeroArray(test->hover_card_keys); test->hover_card_extra = 0;
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) UI_PrefWidth(ui_px(280, 1)) UI_PrefHeight(ui_em(1.6f, 1))
+    { uishell_sidebar_detached_content(&fixture, ws, pinned, saved->id, (AndamentoNode){0}, ANDAMENTO_NONE, 280, 1); }
+    ui_end_build();
+    B32 absent = 0;
+    for(UI_Box *b = test->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->root).next)
+    { absent |= str8_match(ui_box_display_string(b), str8_lit("No longer present"), 0); }
+    CardCheck(absent && pinned->open && cfg_node_from_id(saved_id) != &cfg_nil_node, "missing subject retains pinned card with an explicit marker");
+    fixture.snapshot = snapshot;
+    CFG_Node *area = saved->parent;
+    CFG_Node *moved = uishell_sidebar_card_pin(ws, original, 1);
+    CardCheck(moved->id == saved_id && moved->parent != area, "dragging to a new pinned area moves the unique card");
+    uishell_sidebar_card_close(pinned); uishell_sidebar_detached_finish(ws);
+    CardCheck(uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == &cfg_nil_node,
+              "explicit Close removes a pinned card from persisted layout");
+    // Drive the real drag control through press, motion and release frames.
+    uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+    original->source_rect = r2f32p(20, 20, 120, 50); original->engaged = original->focused = 1;
+    Vec2F32 drag_start = {0};
+    for(U64 frame = 0; frame < 4; frame++)
+    {
+      UI_EventList events = {0};
+      Vec2F32 pointer = frame < 2 ? drag_start : add_2f32(drag_start, v2f32(450, 30));
+      UI_Event event = {.kind = frame == 3 ? UI_EventKind_Release : UI_EventKind_Press,
+        .key = WM_Key_LeftMouseButton, .pos = pointer};
+      if(frame == 1 || frame == 3) { ui_event_list_push(test->arena, &events, &event); }
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      test->mouse = pointer;
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+      { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+      ui_end_build();
+      if(frame == 0)
+      {
+        for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+        { if(str8_match(ui_box_display_string(box), str8_lit("↕ Drag"), 0)) { drag_start = center_2f32(box->rect); break; } }
+        CardCheck(drag_start.x > 0, "engaged production overlay exposes the drag control");
+      }
+      if(frame == 2) { CardCheck(original->moving && original->open, "native drag motion detaches the overlay from its anchor"); }
+    }
+    CardCheck(!original->open && fixture.detached->open && fixture.detached->placement == UIShell_CardPlacement_Float,
+              "native drag release outside the sidebar creates a float");
+    uishell_sidebar_card_close(fixture.detached);
+
+    // A source-bound card closes when its exact placement is removed.
+    uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+    UIShell_HoverCard *removed = uishell_sidebar_detached_copy(ws, original);
+    removed->placement = UIShell_CardPlacement_Inline;
+    removed->source_key = removed->source_row = str8_lit("removed-placement");
+    uishell_sidebar_detached_finish(ws);
+    CardCheck(!removed->open, "inline card closes when its source placement disappears");
+    // Duplicating a section must not duplicate the pinned entity.
+    CFG_Node *unique = uishell_sidebar_card_pin(ws, original, 0);
+    CFG_Node *copy = cfg_node_deep_copy(rd_state->cfg, unique);
+    cfg_node_insert_child(rd_state->cfg, unique->parent, unique->parent->last, copy);
+    CFG_ID copy_id = copy->id;
+    uishell_sidebar_pin_deduplicate(window, window);
+    CardCheck(cfg_node_from_id(copy_id) == &cfg_nil_node && cfg_node_from_id(unique->id) == unique,
+              "layout copies reconcile to one pinned card per entity");
+    cfg_node_release(rd_state->cfg, unique);
+    // Adding a new area to a merged root leaf preserves its existing tabs.
+    CFG_Node *old_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+    cfg_node_unhook(rd_state->cfg, window, old_host);
+    CFG_Node *merged_host = cfg_node_new(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
+    CFG_Node *existing_view = cfg_node_new(rd_state->cfg, merged_host, str8_lit("sidebar_section"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, existing_view, str8_lit("section")), str8_lit("projects"));
+    unique = uishell_sidebar_card_pin(ws, original, 1);
+    CardCheck(unique != &cfg_nil_node && existing_view->parent != merged_host &&
+              existing_view->parent->parent == merged_host, "new pinned area preserves tabs in a merged sidebar root");
+    F32 sum = 0;
+    for(CFG_Node *n = merged_host->first; n != &cfg_nil_node; n = n->next) { sum += (F32)f64_from_str8(n->string); }
+    CardCheck(abs_f32(sum-1) < .0001f, "new area normalizes saved panel ratios");
+    cfg_node_release(rd_state->cfg, merged_host);
+    cfg_node_insert_child(rd_state->cfg, window, window->last, old_host);
+
+    // The empty ordinary areas are confined to this diagnostic's disposable profile.
+    uishell_sidebar_card_close(original);
+  }
+
   ws->sidebar = saved_sidebar; ws->ui = saved_window_ui;
   uishell_sidebar_release(&fixture); ui_select_state(saved_ui); ui_state_release(test);
   fprintf(stderr, "Hover card diagnostics: %u failures\n", failures);

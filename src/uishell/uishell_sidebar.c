@@ -41,9 +41,24 @@ struct UIShell_SidebarSection
   B32 collapsed;
 };
 
+typedef enum UIShell_CardPlacement
+{
+  UIShell_CardPlacement_Transient,
+  UIShell_CardPlacement_Float,
+  UIShell_CardPlacement_Inline,
+  UIShell_CardPlacement_Pinned,
+} UIShell_CardPlacement;
+
 typedef struct UIShell_HoverCard UIShell_HoverCard;
 struct UIShell_HoverCard
 {
+  UIShell_HoverCard *next;
+  UI_HoverCardMask mask;
+  CFG_ID saved;
+  UIShell_CardPlacement placement, requested;
+  B32 move_requested, moving;
+  Vec2F32 move_origin;
+  String8 source_key, source_row, retained_label;
   Arena *arena;
   AndamentoEntity *path;
   AndamentoEntity previous, candidate;
@@ -53,7 +68,7 @@ struct UIShell_HoverCard
   Rng2F32 source_rect, rect;
   Vec2F32 departure, last_mouse, glide_from;
   B32 open, engaged, focused, contains_current, source_seen, corridor_active, enriched;
-  F32 scroll;
+  F32 scroll, content_height;
 };
 
 typedef struct UIShell_SidebarLabel UIShell_SidebarLabel;
@@ -95,6 +110,9 @@ struct UIShell_SidebarState
   AndamentoSnapshot *labels_snapshot;
   UIShell_SidebarSection *sections;
   UIShell_HoverCard cards[2];
+  UIShell_HoverCard *detached;
+  CFG_ID pin_before, pin_reveal;
+  U64 pin_cfg_generation;
   Rng2F32 rect;
   B32 card_escape_down;
   AndamentoEntity card_action_target;
@@ -249,6 +267,9 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     state->display_wakeup_at = 0;
     uishell_sidebar_labels_invalidate(state);
     if(state->labels_arena) { arena_release(state->labels_arena); state->labels_arena = 0; }
+
+    for(UIShell_HoverCard *c = state->detached; c; c = c->next)
+    { if(c->arena) { arena_release(c->arena); } }
     andamento_snapshot_release(state->snapshot);
     andamento_destroy(state->core);
     state->snapshot = 0;
@@ -1483,6 +1504,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       }
       rows[n] += node_rows;
       F32 node_height = node_rows*row_height;
+      node_height += uishell_sidebar_inline_height(state, uishell_sidebar_string(nodes[i].key));
       U64 owner = project_owner[i];
       if(owner != ANDAMENTO_NONE && owner != i)
       {
@@ -1893,6 +1915,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             ui_spacer(ui_px(4.f, 1));
             ui_pop_parent();
           }
+          if(!node.is_section)
+          {
+            F32 inline_height = uishell_sidebar_inline_height(state, node_key);
+            uishell_sidebar_inline_ui(ws, node_key, Max(0.f, dim_2f32(region.viewport).x-8));
+            row_y += inline_height;
+          }
           for(U64 c = 0; !node.is_section && c < node.control_count; c++)
           {
             AndamentoControl control = {0};
@@ -2247,9 +2275,15 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
     state->placement_count = count;
     state->placement_cache_builds++;
   }
-  // A present immutable snapshot is authoritative, including zero sections.
-  // Only provider acquisition failure (the null guard above) preserves old ids.
-  return uishell_sidebar_reconcile_regions(split->owner_cfg, state->placement_regions, state->placement_count);
+  // Reconcile declared regions first, then deduplicate saved card identities.
+  // Pins are independent Views and survive authoritative section removal.
+  CFG_Node *root = uishell_sidebar_reconcile_regions(split->owner_cfg, state->placement_regions, state->placement_count);
+  if(state->pin_cfg_generation != cfg_change_gen())
+  {
+    uishell_sidebar_pin_deduplicate(split->owner_cfg, split->owner_cfg);
+    state->pin_cfg_generation = cfg_change_gen();
+  }
+  return root;
 }
 
 // Dragging opts into saved ratios. Double-clicking a sidebar boundary or an

@@ -19,6 +19,7 @@ global UIShell_TerminalMetrics *uishell_terminal_metrics;
 ////////////////////////////////
 //~ rjf: Shell View Hooks
 
+RD_VIEW_UI_FUNCTION_DEF(pinned_cards);
 RD_VIEW_UI_FUNCTION_DEF(sidebar_section);
 RD_VIEW_UI_FUNCTION_DEF(shell_text);
 RD_VIEW_UI_FUNCTION_DEF(terminal);

@@ -4865,6 +4865,12 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   panels_rect.y1 -= footer_height;
   if(root != &cfg_nil_node)
   {
+    ws->sidebar->pin_before = 0;
+    for(CFG_PanelNode *p = mount.panel_tree.root->first; p != &cfg_nil_panel_node; p = p->next)
+    {
+      Rng2F32 target = cfg_target_rect_from_panel_node(panels_rect, mount.panel_tree.root, p);
+      if(ui_mouse().y < center_2f32(target).y) { ws->sidebar->pin_before = p->cfg->id; break; }
+    }
     uishell_sidebar_size_panels(split, &mount, panels_rect);
     rd_panel_area_ui(scratch, panels_rect, rect, ws, &mount, wm_window_is_focused(ws->os), 0, 0, 0, 0);
   }
