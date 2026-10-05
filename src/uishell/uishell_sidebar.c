@@ -1121,6 +1121,13 @@ uishell_sidebar_selection_fill(B32 exact_action)
   return color;
 }
 
+// Ended subject text uses the same contrast in rows and inline actions.
+internal Vec4F32
+uishell_sidebar_ended_color(void)
+{
+  return mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), 0.55f);
+}
+
 // Workspace controls need more contrast than passive container separators.
 internal Vec4F32
 uishell_sidebar_action_border(void)
@@ -1286,7 +1293,9 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
   UI_CornerRadius(subject ? em*0.7f : 3.f) UI_PrefHeight(ui_px(em*1.6f, 1))
   UI_FixedY(Max(0.f, (row_height-4.f-em*1.6f)*0.5f))
   UI_PrefWidth(menu ? ui_pct(1, 0) : ui_px(uishell_sidebar_chip_width(state, node)-4.f, 1))
-  UI_BackgroundColor(fill) UI_TextColor(subject ? border : ui_color_from_name(str8_lit("text")))
+  UI_BackgroundColor(fill) UI_TextColor(str8_match(status, str8_lit("ended"), 0) ?
+    uishell_sidebar_ended_color() :
+    subject ? border : ui_color_from_name(str8_lit("text")))
   UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_FontSize(em*0.9f)
   {
     ui_set_next_border_color(border);
@@ -1473,7 +1482,17 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     }
     else if(parent != ANDAMENTO_NONE) { row_children[parent] = 1; }
   }
-  // Propagate selection for collapsed ancestors and rows with inline actions. Their
+  // One navigation handle per workspace: prefer the deepest selected subject
+  // appearance, with stable section order resolving equal-depth duplicates.
+  // nodes follows snapshot section order, then each section's traversal order.
+  U64 selected_entry = ANDAMENTO_NONE;
+  for(U64 i = 0; i < count; i++)
+  {
+    if(nodes[i].selected && (selected_entry == ANDAMENTO_NONE || depth[i] > depth[selected_entry]))
+    { selected_entry = i; }
+  }
+  for(U64 i = 0; i < count; i++) { nodes[i].selected = i == selected_entry; }
+  // Propagate selection only for collapsed ancestors. Their
   // own action and selected state still belong to their exact workspace binding.
   B32 *contains_selected = push_array(scratch.arena, B32, count);
   for(U64 i = count; i > 0; i--)
@@ -1589,9 +1608,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       }
       UI_Box *header;
       if(states[n]->collapsed && contains_selected[sections[n]])
-      { ui_set_next_background_color(uishell_sidebar_selection_fill(0)); }
+      { ui_set_next_border_color(uishell_sidebar_selection_fill(1)); }
       UI_Rect(r2f32p(0, y+(!section_panel && n != flexible && heights[n] > 0 ? 6.f : 0.f), dim.x, y+row_height)) UI_ChildLayoutAxis(Axis2_X)
-      { header = ui_build_box_from_stringf(states[n]->collapsed && contains_selected[sections[n]] ? UI_BoxFlag_DrawBackground : 0, "###section_header_%S", key); }
+      { header = ui_build_box_from_stringf(states[n]->collapsed && contains_selected[sections[n]] ? UI_BoxFlag_DrawBorder : 0, "###section_header_%S", key); }
       UI_Parent(header) UI_PrefHeight(ui_pct(1, 1)) UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak")
       {
         B32 toggle = 0;
@@ -1709,7 +1728,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           if(hidden[i] || inlined[i] ||
              (owner != ANDAMENTO_NONE && owner != i && project_open[owner] == 0.f)) { continue; }
           AndamentoNode node = nodes[i];
-          B32 children = row_children[i];
+          B32 children = row_children[i] || inline_count[i];
           String8 node_key = uishell_sidebar_string(node.key);
           String8 full_label = uishell_sidebar_string(node.label);
           String8 label = full_label;
@@ -1740,12 +1759,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             }
           }
           B32 project = depth[i] == 0 && str8_match(kind, str8_lit("project"), 0);
-          U64 chip_count = inline_count[i]+project;
+          U64 chip_count = (node.collapsed ? 0 : inline_count[i])+project;
           U64 *members = push_array(scratch.arena, U64, chip_count);
           UIShell_ChipMeasure *chip_measures = push_array(scratch.arena, UIShell_ChipMeasure, chip_count);
           U64 member_count = 0;
           if(project) { members[member_count++] = i; }
-          for(U64 j = inline_first[i]; j != ANDAMENTO_NONE; j = inline_next[j]) { members[member_count++] = j; }
+          for(U64 j = node.collapsed ? ANDAMENTO_NONE : inline_first[i]; j != ANDAMENTO_NONE; j = inline_next[j]) { members[member_count++] = j; }
           for(U64 c = 0; c < chip_count; c++)
           {
             chip_measures[c].width = uishell_sidebar_chip_width(state, nodes[members[c]]);
@@ -1790,7 +1809,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             ui_spacer(ui_px(project_padding, 1));
             row_y += project_padding;
           }
-          B32 contains_current = (node.collapsed || inline_count[i]) && contains_selected[i] && !node.selected;
+          B32 contains_current = node.collapsed && contains_selected[i] && !node.selected;
           if(!node.is_section)
           {
             if(i == reveal)
@@ -1815,10 +1834,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             ui_push_parent(column);
             ui_spacer(ui_px(2.f, 1));
             UI_Box *row;
-            if(node.selected || contains_current)
-            { ui_set_next_background_color(uishell_sidebar_selection_fill(0)); }
+            if(node.selected) { ui_set_next_background_color(uishell_sidebar_selection_fill(0)); }
+            if(contains_current) { ui_set_next_border_color(uishell_sidebar_selection_fill(1)); }
             UI_PrefHeight(ui_px(row_height-4.f, 1)) UI_CornerRadius(3.f) UI_ChildLayoutAxis(Axis2_X)
-            { row = ui_build_box_from_stringf(node.selected || contains_current ? UI_BoxFlag_DrawBackground : 0, "###sidebar_row_%S", node_key); }
+            { row = ui_build_box_from_stringf((node.selected ? UI_BoxFlag_DrawBackground : 0) | (contains_current ? UI_BoxFlag_DrawBorder : 0), "###sidebar_row_%S", node_key); }
             UI_Parent(row) UI_PrefHeight(ui_pct(1, 1))
             {
               if(project)
@@ -1859,6 +1878,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                 String8 display = context.size ? push_str8f(scratch.arena, "%S · %S", label, context) : label;
                 if(str8_match(uishell_sidebar_string(node.layout), str8_lit("fields"), 0))
                 { display = uishell_sidebar_fields(scratch.arena, state->snapshot, node, Max(0.f, dim.x-em*6.f)); }
+                if(str8_match(status, str8_lit("ended"), 0))
+                { ui_set_next_text_color(uishell_sidebar_ended_color()); }
                 UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###entry_%S", display, node_key));
                 if(project && project_child_heights[i] > 0 && project_open[i] > 0)
                 {
@@ -2655,6 +2676,8 @@ uishell_sidebar_scroll_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
 #include "uishell/uishell_git_diagnostics.c"
 #include "uishell/uishell_chip_diagnostics.c"
 
+#include "uishell/uishell_sidebar_selection_diagnostics.c"
+
 internal B32
 uishell_sidebar_diagnostics(CFG_Node *window)
 {
@@ -2670,6 +2693,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     return 0;
   }
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+  B32 selection_ok = uishell_sidebar_selection_diagnostics(ws, &split);
+  B32 coverage_ok = uishell_sidebar_coverage_diagnostics(state, &split);
   U64 before = split.inventory.count;
   size_t activate = ANDAMENTO_NONE;
   for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
@@ -2896,6 +2921,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
          tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 2;
   }
   ok = markers_ok && ok;
+  ok = ok && selection_ok && coverage_ok;
   fprintf(stderr, "Sidebar host diagnostics: %s (split layout, overflow selection, project motion, reveal, focus, close, failure, retry, restore, ended retention, status glyphs)\n", ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;
