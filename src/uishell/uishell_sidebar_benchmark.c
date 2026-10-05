@@ -53,6 +53,8 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
   UIShell_SidebarState *saved = ws->sidebar;
   UI_State *saved_ui = ui_state;
   B32 ok = uishell_sidebar_labels_diagnostics();
+  enum { warmup = 40, frames = 240, sample_interval = 40 };
+  fprintf(stderr, "SIDEBAR_CONFIG frames=%u warmup=%u sample_interval=%u combinations=%u\n", frames, warmup, sample_interval, 4u);
   U64 sizes[] = {uishell_sidebar_benchmark_issues};
   for(U64 size_index = 0; size_index < ArrayCount(sizes); size_index++)
   {
@@ -125,7 +127,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
         UI_State *test_ui = ui_state_alloc();
         ui_select_state(test_ui);
         U64 elapsed = 0, analysis = 0, context = 0, font_baseline = 0;
-        for(U64 frame = 0; frame < 240; frame++)
+        for(U64 frame = 0; frame < frames; frame++)
         {
           // update() normally owns this boundary. This diagnostic builds many
           // frames inside one update, so retire the preceding frame's font runs.
@@ -133,7 +135,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
           UI_IconInfo icons = ws->ui->icon_info;
           UI_AnimationInfo animation = {0}; animation.scroll_animation_rate = .5f;
           UI_EventList events = {0}; UI_EventNode event = {0};
-          if(scrolling && frame >= 40)
+          if(scrolling && frame >= warmup)
           {
             UI_Key root = ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", str8_lit("tree"));
             UI_Box *body = ui_box_from_key(ui_key_from_stringf(root, "section_body_%S", str8_lit("tree")));
@@ -153,11 +155,11 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
           U64 frame_elapsed = now_time_us()-start;
           // Repeated native frames at a fixed catalog must bound transient font
           // storage. Allow one MiB for scroll-dependent text after warmup.
-          if(frame == 39) { font_baseline = arena_pos(fnt_state->frame_arena); }
-          if(frame == 239 && arena_pos(fnt_state->frame_arena) > font_baseline+MB(1))
-          { ok = 0; fprintf(stderr, "FAIL sidebar frame storage: font grew from %lu to %lu bytes\n", font_baseline, arena_pos(fnt_state->frame_arena)); }
+          if(frame+1 == warmup) { font_baseline = arena_pos(fnt_state->frame_arena); }
+          if(frame+1 == frames && arena_pos(fnt_state->frame_arena) > font_baseline+MB(1))
+          { ok = 0; fprintf(stderr, "FAIL sidebar frame storage: font grew from %llu to %llu bytes\n", (unsigned long long)font_baseline, (unsigned long long)arena_pos(fnt_state->frame_arena)); }
 #if OS_LINUX
-          if(frame%40 == 39)
+          if((frame+1)%sample_interval == 0)
           {
             fprintf(stderr, "SIDEBAR_STORAGE frame=%lu draw=%lu font=%lu ui=%lu\n", frame+1, arena_pos(dr_thread_ctx->arena), arena_pos(fnt_state->frame_arena), arena_pos(ui_state->arena));
             FILE *status = fopen("/proc/self/status", "r");
@@ -167,7 +169,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
             if(status) { fclose(status); }
           }
 #endif
-          if(frame >= 40)
+          if(frame >= warmup)
           {
             elapsed += frame_elapsed;
             analysis += uishell_sidebar_analysis_us;
@@ -190,9 +192,9 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
         fprintf(stderr, "SIDEBAR_LAYOUT panels=%s input=%s tree_scroll=%g attention_scroll=%g tree_height=%g attention_height=%g\n",
           merged ? "merged" : "four", scrolling ? "precise" : "idle", tree_body->view_off_target.y,
           attention_body->view_off_target.y, dim_2f32(tree_body->rect).y, dim_2f32(attention_body->rect).y);
-        fprintf(stderr, "SIDEBAR_BENCH issues=%lu nodes=%lu panels=%s input=%s frames=200 frame_us=%.2f analysis_us=%.2f context_us=%.2f\n",
-          sizes[size_index], (U64)andamento_snapshot_node_count(state.snapshot), merged ? "merged" : "four",
-          scrolling ? "precise" : "idle", elapsed/200., analysis/200., context/200.);
+        fprintf(stderr, "SIDEBAR_BENCH issues=%llu nodes=%llu panels=%s input=%s frames=%u frame_us=%.2f analysis_us=%.2f context_us=%.2f\n",
+          (unsigned long long)sizes[size_index], (unsigned long long)andamento_snapshot_node_count(state.snapshot), merged ? "merged" : "four",
+          scrolling ? "precise" : "idle", frames-warmup, elapsed/(F64)(frames-warmup), analysis/(F64)(frames-warmup), context/(F64)(frames-warmup));
         ui_select_state(saved_ui); ui_state_release(test_ui);
       }
     }

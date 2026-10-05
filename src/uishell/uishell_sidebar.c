@@ -8,7 +8,8 @@ global B32 uishell_sidebar_live;
 global B32 uishell_sidebar_fixture;
 global B32 uishell_sidebar_subject_fixture;
 global U64 uishell_sidebar_last_tick;
-// Enabled only by the native benchmark; normal frames avoid clock queries.
+// Unity-build benchmark controls: declared here for the adapter and set by
+// uishell_main.c only for native diagnostics. Normal frames avoid clock queries.
 global B32 uishell_sidebar_benchmark_active;
 global B32 uishell_sidebar_benchmark_uncached;
 global U64 uishell_sidebar_analysis_us, uishell_sidebar_context_us;
@@ -253,11 +254,12 @@ uishell_sidebar_labels_diagnostics(void)
   AndamentoNode nodes[6] = {0};
   UIShell_SidebarState state = {0};
   String8 first = str8_lit("label-first"), collision = {0};
-  for(U64 i = 0; !collision.size; i++)
+  for(U64 i = 0; i < 1024 && !collision.size; i++)
   {
     String8 candidate = push_str8f(scratch.arena, "label-collision-%I64u", i);
     if((u64_hash_from_str8(candidate)&15) == (u64_hash_from_str8(first)&15)) { collision = candidate; }
   }
+  if(!collision.size) { scratch_end(scratch); uishell_sidebar_benchmark_uncached = saved_uncached; return 0; }
   nodes[0] = (AndamentoNode){.is_section = 1, .entity_id = uishell_sidebar_text(first), .label = uishell_sidebar_text(str8_lit("section"))};
   nodes[1] = (AndamentoNode){.entity_id = uishell_sidebar_text(first), .label = uishell_sidebar_text(str8_lit("first"))};
   nodes[2] = (AndamentoNode){.entity_id = uishell_sidebar_text(collision), .label = uishell_sidebar_text(str8_lit("collision"))};

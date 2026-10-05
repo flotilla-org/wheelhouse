@@ -29,7 +29,8 @@ the virtual-memory budget despite low RSS. The runner interposes `get_nprocs()`
 to size application workers/stripes for one CPU, uses one async worker, and sets
 `MALLOC_ARENA_MAX=2` and `LP_NUM_THREADS=1`. These controls apply equally to both
 lookup modes and do not change sidebar UI work. They do not pin execution to a
-physical CPU. GPU presentation and pacing are excluded.
+physical CPU. The interposer affects dynamically resolved (PLT) calls; it cannot
+replace statically bound or inlined CPU discovery. GPU presentation and pacing are excluded.
 
 ## Method
 
@@ -111,7 +112,8 @@ xvfb-run -a python3 tools/benchmark-sidebar.py
 
 The runner caps every process, saves raw logs under `build/sidebar-benchmark`,
 checks bounded RSS at each size, and stops immediately on a failure. An alternative
-GNU time path can be provided with `--time`; `--sizes 100 300` is a shorter run.
+GNU time path can be provided with `--time`; increase `--timeout` on slower hosts.
+Timeouts terminate the entire process group and preserve partial logs; `--sizes 100 300` is a shorter run.
 Release mode is necessary: the debug arena inspection table reserves 256 GiB.
 
 Native context diagnostics cover generated hash collisions, duplicate placements,
