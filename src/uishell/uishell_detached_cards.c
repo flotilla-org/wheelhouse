@@ -55,12 +55,14 @@ UI_BOX_CUSTOM_DRAW(uishell_sidebar_card_icon_draw)
       case RD_IconKind_Pin:
       {
         Vec2F32 path[] = {{6,2.5f},{10,2.5f},{9.5f,6.5f},{12,9},{4,9},{6.5f,6.5f},{6,2.5f}};
+        StaticAssert(ArrayCount(path) <= ArrayCount(points), pin_icon_path_fits);
         count = ArrayCount(path); MemoryCopy(points, path, sizeof(path));
         uishell_sidebar_card_icon_stroke(v2f32(8,9), v2f32(8,13.5f), color);
       }break;
       case RD_IconKind_DownArrow:
       {
         Vec2F32 path[] = {{5,7.5f},{8,10.5f},{11,7.5f}};
+        StaticAssert(ArrayCount(path) <= ArrayCount(points), dock_icon_path_fits);
         count = ArrayCount(path); MemoryCopy(points, path, sizeof(path));
         uishell_sidebar_card_icon_stroke(v2f32(8,2.5f), v2f32(8,10.5f), color);
         uishell_sidebar_card_icon_stroke(v2f32(2.5f,13.5f), v2f32(13.5f,13.5f), color);
@@ -68,6 +70,7 @@ UI_BOX_CUSTOM_DRAW(uishell_sidebar_card_icon_draw)
       case RD_IconKind_Window:
       {
         Vec2F32 path[] = {{3,5},{11,5},{11,13},{3,13},{3,5}};
+        StaticAssert(ArrayCount(path) <= ArrayCount(points), float_icon_path_fits);
         count = ArrayCount(path); MemoryCopy(points, path, sizeof(path));
         uishell_sidebar_card_icon_stroke(v2f32(6,2.5f), v2f32(13.5f,2.5f), color);
         uishell_sidebar_card_icon_stroke(v2f32(13.5f,2.5f), v2f32(13.5f,10), color);
@@ -375,6 +378,8 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
       }
     }
     if(root->last != panel) { cfg_node_insert_child(rd_state->cfg, root, root->last, panel); }
+    // The new panel is last before the optional insertion, so before->prev
+    // cannot name the node being moved (the intrusive-list self-insert case).
     CFG_Node *before = cfg_node_from_id(state->pin_before);
     cfg_node_equip_stringf(rd_state->cfg, panel, "%f", fraction);
     if(before != &cfg_nil_node && before->parent == root)
@@ -563,6 +568,13 @@ uishell_sidebar_detached_finish(RD_WindowState *ws)
     uishell_sidebar_detached_apply(ws, c);
     if(!c->open && c->saved)
     { uishell_sidebar_card_saved_release(c); }
+    if(c->open && c->saved && c->depth == 1)
+    {
+      CFG_Node *saved = cfg_node_from_id(c->saved);
+      CFG_Node *label = cfg_node_child_from_string(saved, str8_lit("label"));
+      if(!str8_match(label->first->string, c->retained_label, 0))
+      { uishell_sidebar_pin_set_field(saved, str8_lit("label"), c->retained_label); }
+    }
     if(c->placement == UIShell_CardPlacement_Inline && c->open)
     {
       B32 present = 0;
@@ -693,17 +705,27 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
     UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);
   UI_Key key = ui_key_from_stringf(root->key, "body");
   UI_Box *old = ui_box_from_key(key);
+  U64 card_count = 0;
+  for(CFG_Node *saved = view->first; saved != &cfg_nil_node; saved = saved->next)
+  { card_count += str8_match(saved->string, str8_lit("card"), 0); }
+  UIShell_HoverCard **cards = push_array(ui_build_arena(), UIShell_HoverCard *, card_count);
+  U64 card_index = 0;
   F32 height = 0;
   for(CFG_Node *saved = view->first; saved != &cfg_nil_node; saved = saved->next)
-  { if(str8_match(saved->string, str8_lit("card"), 0)) { height += uishell_sidebar_pinned_card_extent(uishell_sidebar_saved_card(ws, saved), em); } }
+  {
+    if(!str8_match(saved->string, str8_lit("card"), 0)) { continue; }
+    UIShell_HoverCard *c = cards[card_index++] = uishell_sidebar_saved_card(ws, saved);
+    height += uishell_sidebar_pinned_card_extent(c, em);
+  }
   params.content_dim_px = v2f32(width, height);
   UI_ScrollRegion region = ui_scroll_region_layout(params);
   F32 target = ui_box_is_nil(old) ? 0 : old->view_off_target.y;
   F32 reveal_y = 0; B32 measured = 1;
+  card_index = 0;
   for(CFG_Node *saved = view->first; saved != &cfg_nil_node; saved = saved->next)
   {
     if(!str8_match(saved->string, str8_lit("card"), 0)) { continue; }
-    UIShell_HoverCard *c = uishell_sidebar_saved_card(ws, saved);
+    UIShell_HoverCard *c = cards[card_index++];
     measured &= c->content_height > 0;
     if(saved->id == state->pin_reveal)
     {
@@ -722,12 +744,13 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
   scroll.content_box->child_layout_axis = Axis2_Y;
   F32 card_width = Max(0.f, dim_2f32(region.viewport).x-12.f);
   F32 content_width = Max(0.f, card_width-12.f);
+  card_index = 0;
   UI_Parent(scroll.content_box) UI_PrefWidth(ui_px(card_width, 1))
   {
     for(CFG_Node *saved = view->first; saved != &cfg_nil_node; saved = saved->next)
     {
       if(!str8_match(saved->string, str8_lit("card"), 0)) { continue; }
-      UIShell_HoverCard *c = uishell_sidebar_saved_card(ws, saved);
+      UIShell_HoverCard *c = cards[card_index++];
       // Keep the source allocation while the overlay owns the moving card.
       if(c->moving) { ui_spacer(ui_px(uishell_sidebar_pinned_card_extent(c, em), 1)); continue; }
       UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
@@ -752,9 +775,6 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
           ui_layout_root(body, Axis2_X); ui_layout_root(body, Axis2_Y);
           if(abs_f32(c->content_height-body->fixed_size.y) > .5f) { rd_request_frame(); }
           c->content_height = body->fixed_size.y;
-          String8 label = cfg_node_child_from_string(saved, str8_lit("label"))->first->string;
-          if(c->depth == 1 && !str8_match(label, c->retained_label, 0))
-          { cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string(saved, str8_lit("label")), c->retained_label); }
           if(!c->moving) { c->rect = body->rect; c->rect.y1 = c->rect.y0+body->fixed_size.y; }
           body->flags |= UI_BoxFlag_MouseClickable; ui_signal_from_box(body);
         }

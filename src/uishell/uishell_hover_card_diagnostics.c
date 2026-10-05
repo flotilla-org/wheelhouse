@@ -864,9 +864,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_pin_set_field(layout_second, str8_lit("label"), str8_lit("Second layout card"));
     UIShell_HoverCard *second_layout_card = uishell_sidebar_saved_card(ws, layout_second);
     F32 nil_scroll_before = ui_nil_box.view_off_target.y;
-    for(U64 frame = 0; frame < 3; frame++)
+    F32 pinned_widths[] = {280, 160, 460};
+    F32 previous_height = 0;
+    for(U64 frame = 0; frame < ArrayCount(pinned_widths)*5; frame++)
     {
-      Rng2F32 view_rect = r2f32p(17+frame*100, 29+frame*100, 297+frame*100, 329+frame*100);
+      F32 offset = (F32)(frame/5)*100;
+      Rng2F32 view_rect = r2f32p(17+offset, 29+offset, 17+offset+pinned_widths[frame/5], 329+offset);
       UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       test->mouse = v2f32(-100, -100); test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
       UIShell_RegsScope(.window = window->id, .view = saved->parent->id)
@@ -893,9 +896,20 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       UI_Box *second_body = ui_box_from_key(second_layout_card->mask.key);
       CardCheck(!ui_box_is_nil(second_body) && abs_f32(second_body->rect.y0-body->rect.y1-UIShell_HoverCardPinnedGapPT) < 1,
                 "successive pinned cards retain their fixed gap when the View moves");
+      if(frame%5 >= 3)
+      { CardCheck(abs_f32(pinned->content_height-previous_height) < .5f,
+                  "pinned card height converges after resizing narrow and wide"); }
+      previous_height = pinned->content_height;
       uishell_sidebar_detached_bounds(ws);
       CardCheck(pinned->rect.x0 >= view_rect.x0 && pinned->rect.x1 <= view_rect.x1 && pinned->rect.y1 <= view_rect.y1,
                 "pinned WM hit geometry is clipped to the section viewport");
+      uishell_sidebar_detached_finish(ws);
+      CFG_Node *label = cfg_node_child_from_string(saved, str8_lit("label"));
+      CardCheck(str8_match(label->first->string, pinned->retained_label, 0),
+                "finish pass persists the live pinned label");
+      CFG_ID label_value = label->first->id;
+      uishell_sidebar_detached_finish(ws);
+      CardCheck(label->first->id == label_value, "unchanged pinned label does not rewrite config on later finish passes");
     }
     uishell_sidebar_card_close(second_layout_card);
     uishell_sidebar_detached_finish(ws);
