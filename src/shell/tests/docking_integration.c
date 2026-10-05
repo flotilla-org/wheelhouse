@@ -4,6 +4,34 @@ global Rng2F32 integration_rect;
 global U64 integration_now = 10000;
 internal U64 integration_now_ms(void) { return integration_now; }
 global U32 integration_failures_left, integration_dispatches;
+// Queue timer threads at the OS boundary so early wake and lifetime sequences
+// are deterministic. The production worker, completion token and polling run.
+typedef struct { void *(*callback)(void *); void *data; } IntegrationWake;
+global IntegrationWake integration_wakes[64];
+global U32 integration_wake_first, integration_wake_count, integration_wake_posts;
+internal int
+integration_thread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*callback)(void *), void *data)
+{
+  if(integration_wake_count == ArrayCount(integration_wakes)) { return 1; }
+  *thread = (pthread_t)0;
+  integration_wakes[integration_wake_count++] = (IntegrationWake){callback, data};
+  return 0;
+}
+internal int integration_thread_detach(pthread_t thread) { return 0; }
+internal void integration_sleep_ms(U32 delay) { }
+internal void integration_post_wake(void) { integration_wake_posts++; }
+internal void
+integration_fire_wake(void)
+{
+  Assert(integration_wake_first < integration_wake_count);
+  IntegrationWake wake = integration_wakes[integration_wake_first++];
+  wake.callback(wake.data);
+}
+internal void
+integration_finish_wakes(void)
+{
+  while(integration_wake_first < integration_wake_count) { integration_fire_wake(); }
+}
 internal Rng2F32 integration_client_rect(WM_Window window) { return integration_rect; }
 internal U32
 integration_dispatch(Andamento *core, const AndamentoSnapshot *snapshot, size_t action, char **error)
@@ -22,7 +50,7 @@ integration_width(CFG_Node *destination, Dir2 dir)
   return width;
 }
 internal B32
-integration_drag_site(RD_WindowState *ws, CFG_Node *source, CFG_Node *destination, Dir2 dir)
+integration_drag_site(RD_WindowState *ws, CFG_Node *source, CFG_Node *destination, Dir2 dir, F32 *rendered_width)
 {
   Temp scratch = scratch_begin(0, 0);
   UI_State *previous_ui = ui_state, *gesture_ui = ui_state_alloc();
@@ -50,7 +78,7 @@ integration_drag_site(RD_WindowState *ws, CFG_Node *source, CFG_Node *destinatio
     ui_state->mouse = v2f32(250, 250);
     UI_FontSize(rd_font_size()) UI_Font(rd_font_from_slot(RD_FontSlot_Main))
     {
-      Rng2F32 area = pad_2f32(integration_rect, -96.f*0.035f);
+      Rng2F32 area = pad_2f32(integration_rect, -rd_window_edge_inset_px(ws));
       ui_state->mouse = center_2f32(cfg_target_rect_from_panel_node(area, mount.panel_tree.root, target));
       rd_panel_area_ui(scratch, area, integration_rect, ws, &mount, 1, 0, 0, 0, 0);
     }
@@ -58,12 +86,117 @@ integration_drag_site(RD_WindowState *ws, CFG_Node *source, CFG_Node *destinatio
     rd_drag_kill();
   }
   B32 exists = !ui_box_is_nil(ui_box_from_key(site));
+  if(rendered_width)
+  {
+    UI_Box *body = ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "panel_box_%p", destination));
+    *rendered_width = ui_box_is_nil(body) ? 0 : dim_2f32(body->rect).x;
+  }
   ui_select_state(previous_ui);
   ui_state_release(gesture_ui);
   scratch_end(scratch);
   return exists;
 }
 #define IntegrationCheck(x) do { if(!(x)) { fprintf(stderr, "FAIL integration line %d: %s\n", __LINE__, #x); failures++; } } while(0)
+internal U32
+integration_display_policy(CFG_Node *window, RD_WindowState *ws)
+{
+  U32 failures = 0;
+  // Real persistent declarations and snapshots cross a failing external ABI.
+  // Each independent run starts with a fresh core, saved config and OS/fault
+  // state. The operations within it intentionally form one recovery scenario.
+  integration_finish_wakes();
+  integration_now = 10000; integration_failures_left = integration_dispatches = 0;
+  integration_wake_first = integration_wake_count = integration_wake_posts = 0;
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_display")));
+  UIShell_SidebarState display = {0}; char *error = 0;
+  String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
+  display.core = andamento_create(daily.str, daily.size, &error);
+  IntegrationCheck(uishell_sidebar_result(&display, display.core != 0, error));
+  uishell_sidebar_refresh(&display);
+  UIShell_DisplayControlIterator it = {display.snapshot};
+  AndamentoControl control = {0}; AndamentoText name = {0};
+  IntegrationCheck(uishell_sidebar_next_persistent_control(&it, &control, &name));
+  B32 initial = !!control.checked;
+  CFG_Node *saved = cfg_node_new(rd_state->cfg, window, str8_lit("sidebar_display"));
+  CFG_Node *value = cfg_node_new(rd_state->cfg, saved, uishell_sidebar_string(name));
+  cfg_node_new(rd_state->cfg, value, initial ? str8_lit("false") : str8_lit("true"));
+  integration_failures_left = 1; integration_dispatches = 0;
+  uishell_sidebar_restore_display(&display, window);
+  UIShell_DisplayRestore *retry = display.display_restores;
+  IntegrationCheck(retry && retry->pending && retry->attempts == 1 && display.error[0]);
+  // A completed timer can wake before the deadline (e.g. interrupted sleep).
+  // Consuming its completion must re-arm exactly once, without dispatching early.
+  U32 scheduled = integration_wake_count;
+  IntegrationCheck(display.display_wakeup && scheduled == 1);
+  integration_fire_wake();
+  uishell_sidebar_retry_display(&display, window, retry->retry_at-1);
+  IntegrationCheck(integration_dispatches == 1 && integration_wake_count == scheduled+1);
+  IntegrationCheck(display.display_wakeup_at == retry->retry_at && integration_wake_posts == 1);
+  uishell_sidebar_retry_display(&display, window, retry->retry_at-1);
+  IntegrationCheck(integration_wake_count == scheduled+1);
+  // Saving unrelated UI state preserves failed restore intent.
+  uishell_sidebar_save_display(&display, window);
+  IntegrationCheck(str8_match(value->first->string, initial ? str8_lit("false") : str8_lit("true"), 0));
+  // Expire the old snapshot through a real tick before recovery.
+  it = (UIShell_DisplayControlIterator){display.snapshot};
+  AndamentoControl unrelated = {0}; AndamentoText unrelated_name = {0};
+  uishell_sidebar_next_persistent_control(&it, &unrelated, &unrelated_name);
+  IntegrationCheck(uishell_sidebar_next_persistent_control(&it, &unrelated, &unrelated_name));
+  IntegrationCheck(andamento_dispatch(display.core, display.snapshot, unrelated.action, 0));
+  // The production poll services local sidebars even without live ingress.
+  display.initialized = 1; ws->sidebar = &display;
+  integration_now = retry->retry_at;
+  uishell_sidebar_poll_live();
+  IntegrationCheck(integration_dispatches == 2 && !retry->pending);
+  it = (UIShell_DisplayControlIterator){display.snapshot};
+  uishell_sidebar_next_persistent_control(&it, &control, &name);
+  IntegrationCheck(!!control.checked != initial);
+  uishell_sidebar_save_display(&display, window);
+  // Three failures exhaust recovery; thousands of frames never dispatch again.
+  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("true") : str8_lit("false"));
+  integration_failures_left = 100; integration_dispatches = 0;
+  uishell_sidebar_restore_display(&display, window); retry = display.display_restores;
+  uishell_sidebar_retry_display(&display, window, retry->retry_at);
+  uishell_sidebar_retry_display(&display, window, retry->retry_at);
+  rd_state->num_frames_requested = 0; // The event loop consumed requested frames.
+  U64 frames_after_exhaustion = rd_state->num_frames_requested;
+  for(U32 frame = 0; frame < 1000; frame++)
+  { uishell_sidebar_retry_display(&display, window, retry->retry_at+frame); }
+  IntegrationCheck(integration_dispatches == 3 && retry->pending && retry->attempts == 3);
+  IntegrationCheck(!display.display_wakeup_at && rd_state->num_frames_requested == frames_after_exhaustion);
+  uishell_sidebar_save_display(&display, window);
+  IntegrationCheck(str8_match(value->first->string, initial ? str8_lit("true") : str8_lit("false"), 0));
+  // Reconciliation continues after exhaustion without dispatching: a new
+  // saved value matching live state settles the old unresolved preference.
+  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("false") : str8_lit("true"));
+  uishell_sidebar_retry_display(&display, window, retry->retry_at);
+  IntegrationCheck(!retry->pending && integration_dispatches == 3);
+  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("true") : str8_lit("false"));
+  // A newer saved setting during recovery cancels the obsolete target.
+  integration_dispatches = 0;
+  uishell_sidebar_restore_display(&display, window); retry = display.display_restores;
+  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("false") : str8_lit("true"));
+  uishell_sidebar_retry_display(&display, window, retry->retry_at);
+  IntegrationCheck(!retry->pending && integration_dispatches == 1);
+  // A successful user toggle also supersedes recovery without another toggle.
+  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("true") : str8_lit("false"));
+  uishell_sidebar_restore_display(&display, window); retry = display.display_restores;
+  it = (UIShell_DisplayControlIterator){display.snapshot};
+  uishell_sidebar_next_persistent_control(&it, &control, &name);
+  IntegrationCheck(andamento_dispatch(display.core, display.snapshot, control.action, 0));
+  uishell_sidebar_refresh(&display);
+  uishell_sidebar_save_display(&display, window);
+  IntegrationCheck(!retry->pending);
+  // Retiring state while a worker is still queued must leave only the token;
+  // callbacks after arena/core release cannot touch the retired sidebar.
+  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("false") : str8_lit("true"));
+  uishell_sidebar_restore_display(&display, window);
+  IntegrationCheck(display.display_wakeup != 0);
+  ws->sidebar = 0;
+  uishell_sidebar_release(&display);
+  integration_finish_wakes();
+  return failures;
+}
 internal void
 entry_point(CmdLine *cmdline)
 {
@@ -71,12 +204,21 @@ entry_point(CmdLine *cmdline)
   wm_init(); fp_init(); r_init(cmdline); fnt_init(); rd_init(cmdline);
   rd_state->view_ui_rule_map = rd_view_ui_rule_map_make(rd_state->arena, 512);
   e_select_cache(rd_state->eval_cache);
-  E_BaseCtx base_ctx = {.address_arch = Arch_CURRENT}; e_select_base_ctx(&base_ctx);
-  E_IRCtx ir_ctx = {0}; e_select_ir_ctx(&ir_ctx);
+  E_BaseCtx base_ctx = {.address_arch = Arch_CURRENT, .space_gen = rd_eval_space_gen,
+                       .space_read = rd_eval_space_read, .space_write = rd_eval_space_write}; e_select_base_ctx(&base_ctx);
+  // Settings evaluate through the production raw lens, as in the frame setup.
+  E_String2ExprMap macros = e_string2expr_map_make(rd_state->arena, 16);
+  E_Expr *raw = e_push_expr(rd_state->arena, E_ExprKind_LeafOffset, r1u64(0, 0));
+  raw->type_key = e_type_key_cons(.kind = E_TypeKind_LensSpec, .name = str8_lit("raw"));
+  e_string2expr_map_insert(rd_state->arena, &macros, str8_lit("raw"), raw);
+  E_IRCtx ir_ctx = {.macro_map = &macros}; e_select_ir_ctx(&ir_ctx);
   E_InterpretCtx interpret_ctx = {0}; e_select_interpret_ctx(&interpret_ctx);
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *user = cfg_node_new(rd_state->cfg, cfg_node_root(), str8_lit("user"));
   CFG_Node *window = cfg_node_new(rd_state->cfg, user, str8_lit("window"));
+  // Nonzero spacing makes renderer/measurement drift observable.
+  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, user, str8_lit("panel_gap")), str8_lit("1"));
+  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, user, str8_lit("font_size")), str8_lit("16"));
   cfg_node_new(rd_state->cfg, window, str8_lit("control_split_collapsed"));
   CFG_Node *panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
   CFG_Node *source = cfg_node_new(rd_state->cfg, panels, str8_lit("scroll_region_fixture"));
@@ -85,6 +227,8 @@ entry_point(CmdLine *cmdline)
   integration_rect = r2f32p(0, 0, 640, 480);
   RD_WindowState *ws = rd_window_state_from_cfg(window);
   UI_Theme theme = {0}; ws->theme = &theme;
+  UIShell_RegsScope(.window = window->id)
+  { IntegrationCheck(rd_panel_inset_px(rd_font_size()) > 0); }
   ui_select_state(ws->ui);
   UI_IconInfo init_icons = {0}; UI_AnimationInfo init_animation = {0}; UI_EventList init_events = {0};
   ui_begin_build(ws->os, &init_events, &init_icons, ws->theme, &init_animation, 1.f/60, 1.f/60);
@@ -117,7 +261,7 @@ entry_point(CmdLine *cmdline)
     }
     IntegrationCheck(measured);
     if(!measured) { fprintf(stderr, "axis %u dir %u boundary %u width %g\n", axis, direction, boundary, integration_width(destination, dir)); continue; }
-    B32 site = integration_drag_site(ws, source, destination, dir);
+    B32 site = integration_drag_site(ws, source, destination, dir, 0);
     IntegrationCheck(site == (boundary >= 128));
     if(site != (boundary >= 128)) { fprintf(stderr, "site axis=%u dir=%u width=%u pixels=%g exists=%u\n", axis, direction, boundary, integration_rect.x1, site); }
     if(boundary == 128)
@@ -171,7 +315,13 @@ entry_point(CmdLine *cmdline)
     IntegrationCheck((source->parent != before_parent) == (boundary >= 128));
     if(boundary < 128) { IntegrationCheck(cfg_change_gen() == before_gen); }
     if(boundary >= 128)
-    { F32 actual = integration_width(source->parent, Dir2_Invalid); IntegrationCheck(actual >= 128); if(actual < 128) fprintf(stderr, "actual axis=%u dir=%u boundary=%u actual=%g\n", axis, direction, boundary, actual); }
+    {
+      F32 actual = integration_width(source->parent, Dir2_Invalid), rendered = 0;
+      // Committed measurement must equal the body rectangle the real UI lays
+      // out, so a future rendering-only inset change cannot silently drift.
+      integration_drag_site(ws, source, source->parent, Dir2_Invalid, &rendered);
+      IntegrationCheck(actual == boundary && rendered == actual);
+    }
   }
   // A shown target is remeasured when the drop is committed after a resize.
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
@@ -182,89 +332,24 @@ entry_point(CmdLine *cmdline)
   cfg_node_new(rd_state->cfg, origin, str8_lit("terminal"));
   cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
   integration_rect.x1 = 640;
-  IntegrationCheck(integration_drag_site(ws, source, destination, Dir2_Invalid));
+  IntegrationCheck(integration_drag_site(ws, source, destination, Dir2_Invalid, 0));
   integration_rect.x1 = 100;
   U64 before_resize = cfg_change_gen();
+  log_scope_begin();
   UIShell_RegsScope(.window = window->id, .panel = origin->id, .view = source->id, .dst_panel = destination->id)
   { uishell_dispatch_tab_command(str8_lit("move_view")); }
+  LogScopeResult resize_log = log_scope_end(scratch.arena);
+  String8 explanation = rd_dock_rule_message(RD_DockRule_MinimumWidth);
+  // Scripted width refusals retain the checker’s user-facing explanation.
+  IntegrationCheck(str8_find_needle(resize_log.strings[LogMsgKind_UserError], 0, explanation, 0) !=
+                   resize_log.strings[LogMsgKind_UserError].size);
   IntegrationCheck(source->parent == origin && cfg_change_gen() == before_resize);
   // Restore retains its structural policy even when geometry is too narrow.
   rd_dock_restore_window(rd_state->cfg, window);
   IntegrationCheck(source->parent == origin);
 
-  // Real persistent declarations and snapshots cross a failing external ABI.
-  UIShell_SidebarState display = {0}; char *error = 0;
-  String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
-  display.core = andamento_create(daily.str, daily.size, &error);
-  IntegrationCheck(uishell_sidebar_result(&display, display.core != 0, error));
-  uishell_sidebar_refresh(&display);
-  UIShell_DisplayControlIterator it = {display.snapshot};
-  AndamentoControl control = {0}; AndamentoText name = {0};
-  IntegrationCheck(uishell_sidebar_next_persistent_control(&it, &control, &name));
-  B32 initial = !!control.checked;
-  CFG_Node *saved = cfg_node_new(rd_state->cfg, window, str8_lit("sidebar_display"));
-  CFG_Node *value = cfg_node_new(rd_state->cfg, saved, uishell_sidebar_string(name));
-  cfg_node_new(rd_state->cfg, value, initial ? str8_lit("false") : str8_lit("true"));
-  integration_failures_left = 1; integration_dispatches = 0;
-  uishell_sidebar_restore_display(&display, window);
-  UIShell_DisplayRestore *retry = display.display_restores;
-  IntegrationCheck(retry && retry->pending && retry->attempts == 1 && display.error[0]);
-  uishell_sidebar_retry_display(&display, window, retry->retry_at-1);
-  IntegrationCheck(integration_dispatches == 1);
-  // Saving unrelated UI state preserves failed restore intent.
-  uishell_sidebar_save_display(&display, window);
-  IntegrationCheck(str8_match(value->first->string, initial ? str8_lit("false") : str8_lit("true"), 0));
-  // Expire the old snapshot through a real tick before recovery.
-  it = (UIShell_DisplayControlIterator){display.snapshot};
-  AndamentoControl unrelated = {0}; AndamentoText unrelated_name = {0};
-  uishell_sidebar_next_persistent_control(&it, &unrelated, &unrelated_name);
-  IntegrationCheck(uishell_sidebar_next_persistent_control(&it, &unrelated, &unrelated_name));
-  IntegrationCheck(andamento_dispatch(display.core, display.snapshot, unrelated.action, 0));
-  // The production poll services local sidebars even without live ingress.
-  display.initialized = 1; ws->sidebar = &display;
-  integration_now = retry->retry_at;
-  uishell_sidebar_poll_live();
-  IntegrationCheck(integration_dispatches == 2 && !retry->pending);
-  it = (UIShell_DisplayControlIterator){display.snapshot};
-  uishell_sidebar_next_persistent_control(&it, &control, &name);
-  IntegrationCheck(!!control.checked != initial);
-  uishell_sidebar_save_display(&display, window);
-  // Three failures exhaust recovery; thousands of frames never dispatch again.
-  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("true") : str8_lit("false"));
-  integration_failures_left = 100; integration_dispatches = 0;
-  uishell_sidebar_restore_display(&display, window); retry = display.display_restores;
-  uishell_sidebar_retry_display(&display, window, retry->retry_at);
-  uishell_sidebar_retry_display(&display, window, retry->retry_at);
-  U64 frames_after_exhaustion = rd_state->num_frames_requested;
-  for(U32 frame = 0; frame < 1000; frame++)
-  { uishell_sidebar_retry_display(&display, window, retry->retry_at+frame); }
-  IntegrationCheck(integration_dispatches == 3 && retry->pending && retry->attempts == 3);
-  IntegrationCheck(!display.display_wakeup_at && rd_state->num_frames_requested == frames_after_exhaustion);
-  uishell_sidebar_save_display(&display, window);
-  IntegrationCheck(str8_match(value->first->string, initial ? str8_lit("true") : str8_lit("false"), 0));
-  // Reconciliation continues after exhaustion without dispatching: a new
-  // saved value matching live state settles the old unresolved preference.
-  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("false") : str8_lit("true"));
-  uishell_sidebar_retry_display(&display, window, retry->retry_at);
-  IntegrationCheck(!retry->pending && integration_dispatches == 3);
-  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("true") : str8_lit("false"));
-  // A newer saved setting during recovery cancels the obsolete target.
-  integration_dispatches = 0;
-  uishell_sidebar_restore_display(&display, window); retry = display.display_restores;
-  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("false") : str8_lit("true"));
-  uishell_sidebar_retry_display(&display, window, retry->retry_at);
-  IntegrationCheck(!retry->pending && integration_dispatches == 1);
-  // A successful user toggle also supersedes recovery without another toggle.
-  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("true") : str8_lit("false"));
-  uishell_sidebar_restore_display(&display, window); retry = display.display_restores;
-  it = (UIShell_DisplayControlIterator){display.snapshot};
-  uishell_sidebar_next_persistent_control(&it, &control, &name);
-  IntegrationCheck(andamento_dispatch(display.core, display.snapshot, control.action, 0));
-  uishell_sidebar_refresh(&display);
-  uishell_sidebar_save_display(&display, window);
-  IntegrationCheck(!retry->pending);
-  ws->sidebar = 0;
-  uishell_sidebar_release(&display);
+  failures += integration_display_policy(window, ws);
+  failures += integration_display_policy(window, ws);
   scratch_end(scratch);
   fprintf(stderr, "Docking integration: %u failures\n", failures);
   abort_self(failures ? 1 : 0);

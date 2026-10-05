@@ -103,7 +103,10 @@ test uses Homebrew Python because the system Python predates its
 Display restore recovery (#185) performs at most three attempts: immediately,
 after one second, and after two more seconds. Sleeping wake timers work in local
 and live sidebars without requesting continuous frames; they carry no window,
-state or snapshot pointers. Each attempt refreshes the
+state or snapshot pointers. A reference-counted completion token records a
+fired worker independently of the deadline: an early wake consumes the token
+and re-arms once, while unrelated polls do not spawn more timers. Tokens also
+outlive retired sidebars without referring to them. Each attempt refreshes the
 snapshot and resolves the declaration identity to its current action. A failed
 preference is retained when other controls are saved; exhaustion keeps both
 the saved intent and the surfaced error and performs no further dispatches.

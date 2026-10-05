@@ -101,3 +101,10 @@ On Linux, `python tools/test-docking-integration.py <andamento-lib-dir>
 with a controllable OS size boundary. It covers 127/128/129px body widths, root
 bisection, both parent axes, sibling insertion in all directions, and resizing
 between feedback and commit. CI native builds also run it through `build.sh`.
+
+The runner accepts `--andamento-include <directory>` and `--cleat-include
+<directory>` for non-sibling checkouts. Defaults honor `WHEELHOUSE_ANDAMENTO_DIR`
+and `WHEELHOUSE_CLEAT_DIR`; `build.sh` passes the configured include directories.
+Rendering and measurement share window-edge and panel-inset helpers. A drag
+builds one geometry context from its existing mount; command measurement frees
+its temporary panel tree before returning.

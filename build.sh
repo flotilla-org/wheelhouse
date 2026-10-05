@@ -217,7 +217,8 @@ then
   if [ "${CI:-}" = "true" ] || [ "${WHEELHOUSE_DOCKING_TESTS:-0}" = "1" ]; then
     CC="$compiler" python3 ../tools/test-docking.py
     if [ "$host_os" = "Linux" ]; then
-      CC="$compiler" python3 ../tools/test-docking-integration.py "$andamento_lib_dir" "$cleat_lib_dir"
+      CC="$compiler" python3 ../tools/test-docking-integration.py "$andamento_lib_dir" "$cleat_lib_dir" \
+        --andamento-include "$andamento_dir/crates/andamento-ffi/include" --cleat-include "$cleat_dir/crates/cleat/include"
     fi
   fi
   $compile -c ../src/uishell/uishell_main.c $out uishell_main.o

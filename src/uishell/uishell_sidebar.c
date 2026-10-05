@@ -50,6 +50,18 @@ struct UIShell_HoverCard
   F32 scroll;
 };
 
+typedef struct UIShell_DisplayWake UIShell_DisplayWake;
+struct UIShell_DisplayWake
+{
+  U32 references, fired, delay_ms;
+};
+
+internal void
+uishell_sidebar_display_wake_release(UIShell_DisplayWake *wake)
+{
+  if(wake && ins_atomic_u32_dec_eval(&wake->references) == 0) { free(wake); }
+}
+
 typedef struct UIShell_DisplayRestore UIShell_DisplayRestore;
 struct UIShell_DisplayRestore
 {
@@ -65,6 +77,7 @@ struct UIShell_SidebarState
   Arena *display_restore_arena;
   UIShell_DisplayRestore *display_restores;
   U64 display_wakeup_at;
+  UIShell_DisplayWake *display_wakeup;
   UIShell_SidebarSection *sections;
   UIShell_HoverCard cards[2];
   Rng2F32 rect;
@@ -139,6 +152,7 @@ uishell_sidebar_release(UIShell_SidebarState *state)
   {
     for(U64 i = 0; i < ArrayCount(state->cards); i++)
     { if(state->cards[i].arena) { arena_release(state->cards[i].arena); } }
+    uishell_sidebar_display_wake_release(state->display_wakeup);
     if(state->display_restore_arena) { arena_release(state->display_restore_arena); }
     andamento_snapshot_release(state->snapshot);
     andamento_destroy(state->core);
@@ -228,35 +242,42 @@ uishell_sidebar_save_display(UIShell_SidebarState *state, CFG_Node *window)
   }
 }
 
-// The timer owns only its delay, not sidebar/window/snapshot pointers. WM's
-// wake queue has process lifetime. One sleeping wake per pending retry deadline
-// lets local display restore recover without keeping the render loop running.
+// State and timer each own one reference to a completion token. It contains
+// no sidebar/window/snapshot pointers and outlives a released sidebar. A fired
+// token is consumed even before its deadline, allowing an early wake to re-arm.
 #if OS_WINDOWS
 internal DWORD WINAPI
-uishell_sidebar_display_wakeup(void *delay)
+uishell_sidebar_display_wakeup(void *data)
 #else
 internal void *
-uishell_sidebar_display_wakeup(void *delay)
+uishell_sidebar_display_wakeup(void *data)
 #endif
 {
-  sleep_ms((U32)(U64)delay);
+  UIShell_DisplayWake *wake = data;
+  sleep_ms(wake->delay_ms);
+  ins_atomic_u32_eval_assign(&wake->fired, 1);
   wm_send_wakeup_event();
+  uishell_sidebar_display_wake_release(wake);
   return 0;
 }
 
-internal B32
+internal UIShell_DisplayWake *
 uishell_sidebar_display_wake_after(U32 delay)
 {
+  UIShell_DisplayWake *wake = calloc(1, sizeof(*wake));
+  if(!wake) { return 0; }
+  wake->references = 2; wake->delay_ms = delay;
 #if OS_WINDOWS
-  HANDLE thread = CreateThread(0, 0, uishell_sidebar_display_wakeup, (void *)(U64)delay, 0, 0);
-  if(thread) { CloseHandle(thread); }
-  return thread != 0;
+  HANDLE thread = CreateThread(0, 0, uishell_sidebar_display_wakeup, wake, 0, 0);
+  if(!thread) { free(wake); return 0; }
+  CloseHandle(thread);
 #else
   pthread_t thread;
-  if(pthread_create(&thread, 0, uishell_sidebar_display_wakeup, (void *)(U64)delay) != 0) { return 0; }
+  if(pthread_create(&thread, 0, uishell_sidebar_display_wakeup, wake) != 0)
+  { free(wake); return 0; }
   pthread_detach(thread);
-  return 1;
 #endif
+  return wake;
 }
 
 // Three total attempts, spaced one and two seconds apart. Exhaustion retains
@@ -266,10 +287,16 @@ internal void
 uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64 now)
 {
   if(!state->core || !state->snapshot) { return; }
+  if(state->display_wakeup && ins_atomic_u32_eval(&state->display_wakeup->fired))
+  {
+    uishell_sidebar_display_wake_release(state->display_wakeup);
+    state->display_wakeup = 0;
+    state->display_wakeup_at = 0;
+  }
+  uishell_sidebar_refresh(state);
   for(UIShell_DisplayRestore *r = state->display_restores; r; r = r->next)
   {
     if(!r->pending) { continue; }
-    uishell_sidebar_refresh(state);
     CFG_Node *saved = cfg_node_child_from_string(window, str8_lit("sidebar_display"));
     CFG_Node *value = cfg_node_child_from_string(saved, r->name);
     B32 desired = str8_match(value->first->string, str8_lit("true"), 0);
@@ -285,6 +312,7 @@ uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64
     if(found && !!control.checked != r->observed)
     {
       r->pending = 0;
+      // Saving may settle other entries, but never adds/removes retry nodes.
       uishell_sidebar_save_display(state, window);
       continue;
     }
@@ -307,12 +335,15 @@ uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64
   }
   if(deadline != state->display_wakeup_at)
   {
-    state->display_wakeup_at = deadline;
+    uishell_sidebar_display_wake_release(state->display_wakeup);
+    state->display_wakeup = 0;
+    state->display_wakeup_at = 0;
     if(deadline)
     {
       U64 delay = deadline > now ? deadline-now : 1;
-      if(!uishell_sidebar_display_wake_after((U32)delay))
-      { uishell_sidebar_result(state, 0, 0); }
+      state->display_wakeup = uishell_sidebar_display_wake_after((U32)delay);
+      if(state->display_wakeup) { state->display_wakeup_at = deadline; }
+      else { uishell_sidebar_result(state, 0, 0); }
     }
   }
 }
@@ -2501,7 +2532,6 @@ uishell_sidebar_poll_live(void)
     UIShell_SidebarState *state = uishell_sidebar_init(ws);
     if(state->core != 0)
     {
-      uishell_sidebar_refresh(state);
       uishell_sidebar_retry_display(state, cfg_node_from_id(ws->cfg_id), now);
     }
   }
