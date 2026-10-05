@@ -203,6 +203,29 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     if(frame == 1) { CardCheck(ui_pressed(above), "overlay receives its own pointer press"); }
     if(frame == 2) { CardCheck(ui_clicked(above), "overlay receives its own pointer release"); }
   }
+  // Icon controls must not leak their symbol font into descriptive tooltips.
+  for(U64 frame = 0; frame < 2; frame++)
+  {
+    UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    test->mouse = v2f32(100, 100); MemoryZeroArray(test->hover_card_keys); test->hover_card_extra = 0;
+    UI_Rect(r2f32p(50, 50, 150, 150)) UI_FontSize(12) RD_Font(RD_FontSlot_Icons)
+    { uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Pin], str8_lit("font_fixture"), str8_lit("Pin font fixture")); }
+    ui_end_build();
+    if(frame)
+    {
+      B32 found = 0;
+      for(UI_Box *box = test->tooltip_root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->tooltip_root).next)
+      {
+        if(!str8_match(ui_box_display_string(box), str8_lit("Pin font fixture"), 0)) { continue; }
+        found = 1;
+        CardCheck(fnt_tag_match(box->font, rd_font_from_slot(RD_FontSlot_Main)) &&
+                  box->text_raster_flags == rd_raster_flags_from_slot(RD_FontSlot_Main),
+                  "icon control tooltip uses the main text font and raster settings");
+      }
+      CardCheck(found, "hovering the actual icon control produces its tooltip");
+    }
+  }
   // Two cards can overlap after window-edge clamping. The later card owns
   // the overlap, including children; the exposed part of the lower stays live.
   for(U64 frame = 0; frame < 3; frame++)

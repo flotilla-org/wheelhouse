@@ -427,7 +427,7 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
   UI_Row
   {
     if(interactive) { UI_PrefWidth(ui_px(grip_width, 1)) { uishell_sidebar_card_drag_control(card); } }
-    UI_PrefWidth(ui_em(1.4f, 1)) RD_Font(RD_FontSlot_Icons)
+    UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak") RD_Font(RD_FontSlot_Icons)
     { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_icon(detail.entity.kind)]); }
     UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-grip_width-controls_width), 1)) UI_TagF("weak")
     { ui_label(identity); }
@@ -498,7 +498,7 @@ uishell_sidebar_card_facts(UIShell_SidebarState *state, UIShell_HoverCard *card,
         }
         else
         {
-          UI_PrefWidth(ui_em(1.4f, 1)) RD_Font(RD_FontSlot_Icons) UI_TagF("%S", uishell_sidebar_card_fact_tag(field))
+          UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak") RD_Font(RD_FontSlot_Icons) UI_TagF("%S", uishell_sidebar_card_fact_tag(field))
           { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_fact_icon(field)]); }
           UI_Signal fact = {0};
           UI_PrefWidth(ui_px(Max(0.f, cell_width-ui_top_font_size()*1.4f), 1)) { fact = ui_label(value); }
@@ -633,7 +633,7 @@ uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card
       RD_IconKind icon = str8_match(intent, str8_lit("copy-url"), 0) ? RD_IconKind_FileOutline : RD_IconKind_Window;
       UI_PrefWidth(ui_px(button_width, 1)) UI_Row
       {
-        UI_PrefWidth(ui_em(1.4f, 1)) RD_Font(RD_FontSlot_Icons) { ui_label(rd_icon_kind_text_table[icon]); }
+        UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak") RD_Font(RD_FontSlot_Icons) { ui_label(rd_icon_kind_text_table[icon]); }
         UI_PrefWidth(ui_px(Max(0.f, button_width-ui_top_font_size()*1.4f), 1))
         {
           if(ui_clicked(uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###card_action_%I64u_%S", uishell_sidebar_string(control.label), i, intent))))

@@ -22,12 +22,17 @@ uishell_sidebar_card_request(UIShell_HoverCard *card, UIShell_CardPlacement plac
 internal UI_Signal
 uishell_sidebar_card_icon_button(String8 glyph, String8 key, String8 description)
 {
-  UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|
-    UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DisableTruncatedHover,
-    "%S###%S", glyph, key);
+  UI_Box *box;
+  UI_FontSize(floor_f32(ui_top_font_size()*0.82f))
+  { box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|
+      UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DisableTruncatedHover,
+      "%S###%S", glyph, key); }
   UI_Signal signal = ui_signal_from_box(box);
   if(ui_hovering(signal)) UI_Tooltip
-  { ui_state->tooltip_anchor_key = box->key; ui_label(description); }
+  {
+    ui_state->tooltip_anchor_key = box->key;
+    RD_Font(RD_FontSlot_Main) { ui_label(description); }
+  }
   return signal;
 }
 
