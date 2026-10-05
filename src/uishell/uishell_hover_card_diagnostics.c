@@ -1068,15 +1068,19 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // The raw release is consumed by card ownership before UI events. A
     // former pin's Float grip must release too, or the next build restarts drag.
     fprintf(stderr, "Hover card diagnostics: float raw release\n");
+    Rng2F32 float_window = wm_client_rect_from_window(ws->os);
+    Vec2F32 float_drag_delta = v2f32(dim_2f32(float_window).x+80, 20);
     for(U64 end_kind = 0; end_kind < 3; end_kind++)
     {
       ui_kill_action();
       Vec2F32 float_drag_start = {0}, released_position = {0};
-      for(U64 frame = 0; frame < 5; frame++)
+      // End beyond the window edge to exercise the next frame's legitimate
+      // clamp on every platform. Test cursor motion after that settled frame.
+      for(U64 frame = 0; frame < 6; frame++)
       {
         UI_EventList events = {0};
-        Vec2F32 pointer = frame < 2 ? float_drag_start : add_2f32(float_drag_start, v2f32(80, 20));
-        if(frame == 4) { pointer = add_2f32(pointer, v2f32(40, 30)); }
+        Vec2F32 pointer = frame < 2 ? float_drag_start : add_2f32(float_drag_start, float_drag_delta);
+        if(frame == 5) { pointer = add_2f32(pointer, v2f32(40, 30)); }
         if(frame == 1 || frame == 3)
         {
           WM_Event raw = {.kind = frame == 1 ? WM_EventKind_Press : WM_EventKind_Release,
@@ -1108,12 +1112,18 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         if(frame == 2) { CardCheck(drag_pin->moving && fixture.drag_card == drag_pin, "Float grip starts the real card drag"); }
         if(frame == 3)
         {
-          released_position = drag_pin->rect.p0;
           CardCheck(!drag_pin->moving && !fixture.drag_card && !rd_drag_is_active() &&
             ui_key_match(ui_active_key(UI_MouseButtonKind_Left), ui_key_zero()),
             "raw float release clears both card drag ownership and the active grip");
         }
         if(frame == 4)
+        {
+          released_position = drag_pin->rect.p0;
+          CardCheck(!drag_pin->moving && !fixture.drag_card && !rd_drag_is_active() &&
+            drag_pin->rect.x0 >= float_window.x0+9 && drag_pin->rect.x1 <= float_window.x1-9,
+            "finished float clamps inside the window without restarting its drag");
+        }
+        if(frame == 5)
         { CardCheck(!drag_pin->moving && !fixture.drag_card && !rd_drag_is_active() &&
             length_2f32(sub_2f32(drag_pin->rect.p0, released_position)) < 1,
             "moving the cursor after release neither restarts the float drag nor moves the card"); }
