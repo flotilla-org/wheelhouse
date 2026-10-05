@@ -22,7 +22,8 @@ env:
   # before setup (0.11, jackstay#48, which Porthole capture sessions need).
   # Pinned to jackstay#48's branch commit until it merges; then its squash commit.
   JACKSTAY_REV: 91156bfac2bc2f6df168c928b445c98e002f4950
-  ANDAMENTO_REV: 9718ba15b8f29cf1379d6f4f11320d30dd953fde
+  # Temporary Andamento #129 PR head; replace with its squash merge on main.
+  ANDAMENTO_REV: 1b2b55b49e9ee213f97a8bdfe8cf4a85b8f87dec
 
 jobs:
   daily-driver:
@@ -180,6 +181,8 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/managed-user" --project:"$task_dir/managed-project" --managed_content_diagnostics
           ./build/wheelhouse --user:"$task_dir/glyph-user" --project:"$task_dir/glyph-project" --terminal_glyph_diagnostics --terminal_glyph_fixture_ppm:"$task_dir/terminal.ppm"
           python3 tools/validate-terminal-fixture-ppm.py "$task_dir/terminal.ppm"
+      - name: Headless section placement lifecycle
+        run: python tools/test-section-placement.py
       - name: Windows terminal input regression
         if: runner.os == 'Windows'
         run: python tools/test-windows-terminal-input.py
