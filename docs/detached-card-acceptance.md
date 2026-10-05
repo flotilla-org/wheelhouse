@@ -57,6 +57,11 @@ workspace, under its source, and elsewhere in the sidebar. Scroll and collapse
 the tree with an inline card. Pin the same entity twice, move its area, filter the
 tree, close a pin, and restart with the same disposable profile.
 
+The operator accepted the revised Near styling and confirmed the workspace
+section drop to the top of the sidebar and pinned-card spacing at `10459f5`.
+Broader placement acceptance and the ended-pin timeout choice remain with the
+operator; final settlement waits for the governor's relayed answer.
+
 ## Automated evidence
 
 The macOS debug build uses CI-pinned Cleat `00c072b`, Andamento `08315d2` and
