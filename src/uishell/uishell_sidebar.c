@@ -689,8 +689,7 @@ uishell_sidebar_restore(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     if(kind.size == 0 || id.size == 0) { continue; }
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0};
-      andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
       if(node.state != ANDAMENTO_LIVE && node.activate != ANDAMENTO_NONE &&
          str8_match(kind, uishell_sidebar_string(node.entity_kind), 0) &&
          str8_match(id, uishell_sidebar_string(node.entity_id), 0))
@@ -717,8 +716,7 @@ uishell_sidebar_reveal_target(UIShell_SidebarState *state, U64 workspace_id)
   U64 count = andamento_snapshot_node_count(state->snapshot);
   for(U64 i = 0; i < count; i++)
   {
-    AndamentoNode node = {0};
-      andamento_snapshot_node(state->snapshot, i, &node);
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
     if(node.is_section || node.state != ANDAMENTO_LIVE || node.workspace_id != workspace_id) { continue; }
     U64 depth = 0;
     for(U64 parent = node.parent; parent != ANDAMENTO_NONE; depth++)
@@ -1919,6 +1917,7 @@ uishell_sidebar_prune_regions(CFG_Node *container, UIShell_SectionPlacement *reg
     if(str8_match(c->string, str8_lit("sidebar_section"), 0))
     {
       // CFG nil nodes self-link, so a missing section setting reads as empty.
+      // A View without a declared identity is corrupt saved state; drop it.
       String8 key = cfg_node_child_from_string(c, str8_lit("section"))->first->string;
       if(reset || uishell_sidebar_region_index(regions, count, key) == ANDAMENTO_NONE)
       { cfg_node_release(rd_state->cfg, c); removed = 1; }
@@ -2502,8 +2501,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     B32 live = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0};
-      andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
       if(node.workspace_id == created && node.state == ANDAMENTO_LIVE)
       { live = 1; activate = node.activate; }
     }
@@ -2589,8 +2587,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     // A pending focus whose target disappears must be completed as a failure.
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0};
-      andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
       if(node.workspace_id == created && node.state == ANDAMENTO_LIVE) { activate = node.activate; }
     }
     error = 0;
@@ -2606,8 +2603,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     B32 latent = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0};
-      andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("multi"), 0) && node.state == ANDAMENTO_LATENT)
       { latent = 1; activate = node.activate; }
     }
@@ -2636,8 +2632,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     B32 restored_live = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0};
-      andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
       restored_live |= node.state == ANDAMENTO_LIVE;
     }
     tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
@@ -2662,8 +2657,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     B32 retained_live = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0};
-      andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
       if(node.workspace_id == workspace->id && node.state == ANDAMENTO_LIVE &&
          str8_match(uishell_sidebar_string(node.entity_id), str8_lit("multi"), 0))
       {
