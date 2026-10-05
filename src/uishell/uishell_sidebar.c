@@ -280,13 +280,15 @@ uishell_sidebar_display_wake_after(U32 delay)
   return wake;
 }
 
+enum { UIShell_DisplayRetryLimit = 3, UIShell_DisplayRetryStepMs = 1000 };
+
 // Three total attempts, spaced one and two seconds apart. Exhaustion retains
 // the saved preference and surfaced error until a new explicit restore/session.
 // Reconciliation uses fresh declarations and stops for newer saved/live intent.
 internal void
 uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64 now)
 {
-  if(!state->core || !state->snapshot) { return; }
+  if(!state->core) { return; }
   if(state->display_wakeup && ins_atomic_u32_eval(&state->display_wakeup->fired))
   {
     uishell_sidebar_display_wake_release(state->display_wakeup);
@@ -294,6 +296,7 @@ uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64
     state->display_wakeup_at = 0;
   }
   uishell_sidebar_refresh(state);
+  if(!state->snapshot) { return; }
   for(UIShell_DisplayRestore *r = state->display_restores; r; r = r->next)
   {
     if(!r->pending) { continue; }
@@ -316,7 +319,7 @@ uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64
       uishell_sidebar_save_display(state, window);
       continue;
     }
-    if(r->attempts >= 3 || now < r->retry_at) { continue; }
+    if(r->attempts >= UIShell_DisplayRetryLimit || now < r->retry_at) { continue; }
     r->attempts++;
     char *error = 0;
     B32 ok = found && control.action != ANDAMENTO_NONE &&
@@ -325,12 +328,12 @@ uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64
     uishell_sidebar_refresh(state);
     rd_request_frame();
     if(ok) { r->pending = 0; }
-    else { r->retry_at = now + 1000*r->attempts; }
+    else { r->retry_at = now + UIShell_DisplayRetryStepMs*r->attempts; }
   }
   U64 deadline = 0;
   for(UIShell_DisplayRestore *r = state->display_restores; r; r = r->next)
   {
-    if(r->pending && r->attempts < 3 && (!deadline || r->retry_at < deadline))
+    if(r->pending && r->attempts < UIShell_DisplayRetryLimit && (!deadline || r->retry_at < deadline))
     { deadline = r->retry_at; }
   }
   if(deadline != state->display_wakeup_at)

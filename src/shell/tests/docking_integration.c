@@ -112,7 +112,11 @@ integration_display_policy(CFG_Node *window, RD_WindowState *ws)
   String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
   display.core = andamento_create(daily.str, daily.size, &error);
   IntegrationCheck(uishell_sidebar_result(&display, display.core != 0, error));
-  uishell_sidebar_refresh(&display);
+  // Polling a core whose initial snapshot is absent must acquire it again.
+  display.initialized = 1; ws->sidebar = &display;
+  IntegrationCheck(display.snapshot == 0);
+  uishell_sidebar_poll_live();
+  IntegrationCheck(display.snapshot != 0);
   UIShell_DisplayControlIterator it = {display.snapshot};
   AndamentoControl control = {0}; AndamentoText name = {0};
   IntegrationCheck(uishell_sidebar_next_persistent_control(&it, &control, &name));
@@ -344,6 +348,16 @@ entry_point(CmdLine *cmdline)
   IntegrationCheck(str8_find_needle(resize_log.strings[LogMsgKind_UserError], 0, explanation, 0) !=
                    resize_log.strings[LogMsgKind_UserError].size);
   IntegrationCheck(source->parent == origin && cfg_change_gen() == before_resize);
+  // A destination with no live window reports unavailable geometry explicitly.
+  CFG_Node *unopened = cfg_node_new(rd_state->cfg, user, str8_lit("window"));
+  CFG_Node *unopened_panel = cfg_node_new(rd_state->cfg, unopened, str8_lit("panels"));
+  log_scope_begin();
+  IntegrationCheck(rd_dock_target_width(scratch.arena, unopened_panel, Dir2_Invalid) == 0);
+  LogScopeResult missing_log = log_scope_end(scratch.arena);
+  String8 missing_reason = str8_lit("destination has no live window state");
+  IntegrationCheck(str8_find_needle(missing_log.strings[LogMsgKind_UserError], 0, missing_reason, 0) !=
+                   missing_log.strings[LogMsgKind_UserError].size);
+  cfg_node_release(rd_state->cfg, unopened);
   // Restore retains its structural policy even when geometry is too narrow.
   rd_dock_restore_window(rd_state->cfg, window);
   IntegrationCheck(source->parent == origin);

@@ -3290,7 +3290,11 @@ rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
 {
   RD_DockGeometry result = {.tree = mount->panel_tree};
   RD_WindowState *ws = rd_window_state_from_cfg__existing(mount->owner_cfg);
-  if(ws == &rd_nil_window_state) { return result; }
+  if(ws == &rd_nil_window_state)
+  {
+    log_user_errorf("Docking geometry unavailable: destination has no live window state.");
+    return result;
+  }
   UIShell_RegsScope(.window = mount->window_cfg->id, .panel = 0, .view = 0, .tab = 0)
   {
     F32 font_size = rd_font_size();
