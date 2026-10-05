@@ -242,6 +242,10 @@ entry_point(CmdLine *cmd_line)
       String8 terminal_glyph_fixture_ppm_path = cmd_line_string(cmd_line, str8_lit("terminal_glyph_fixture_ppm"));
       if(cmd_line_has_flag(cmd_line, str8_lit("sidebar_benchmark")))
       {
+        String8 issues = cmd_line_string(cmd_line, str8_lit("sidebar_benchmark_issues"));
+        if(issues.size && (!try_u64_from_str8_c_rules(issues, &uishell_sidebar_benchmark_issues) ||
+                          uishell_sidebar_benchmark_issues > 1000))
+        { fprintf(stderr, "sidebar benchmark issue count must be 0..1000\n"); abort_self(1); }
         uishell_sidebar_benchmark_uncached = cmd_line_has_flag(cmd_line, str8_lit("sidebar_benchmark_uncached"));
         rd_state->frame_diagnostic = uishell_sidebar_benchmark;
       }

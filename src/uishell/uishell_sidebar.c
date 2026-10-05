@@ -12,6 +12,7 @@ global U64 uishell_sidebar_last_tick;
 global B32 uishell_sidebar_benchmark_active;
 global B32 uishell_sidebar_benchmark_uncached;
 global U64 uishell_sidebar_analysis_us, uishell_sidebar_context_us;
+global U64 uishell_sidebar_benchmark_issues = 100;
 // Optional fixture-only hit rectangles for the external mouse/clipboard test.
 global String8 uishell_sidebar_subject_geometry_path;
 global String8List uishell_sidebar_subject_geometry;
@@ -235,10 +236,65 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     if(state->display_restore_arena) { arena_release(state->display_restore_arena); }
     if(state->placement_arena) { arena_release(state->placement_arena); state->placement_arena = 0; }
     uishell_sidebar_labels_invalidate(state);
-    if(state->labels_arena) { arena_release(state->labels_arena); }
+    if(state->labels_arena) { arena_release(state->labels_arena); state->labels_arena = 0; }
     andamento_snapshot_release(state->snapshot);
     andamento_destroy(state->core);
   }
+}
+
+// Generated identities exercise hash collisions and duplicates independently of
+// placement labels. Text remains borrowed until explicit snapshot invalidation.
+internal B32
+uishell_sidebar_labels_diagnostics(void)
+{
+  Temp scratch = scratch_begin(0, 0);
+  B32 saved_uncached = uishell_sidebar_benchmark_uncached, ok = 1;
+  uishell_sidebar_benchmark_uncached = 0;
+  AndamentoNode nodes[6] = {0};
+  UIShell_SidebarState state = {0};
+  String8 first = str8_lit("label-first"), collision = {0};
+  for(U64 i = 0; !collision.size; i++)
+  {
+    String8 candidate = push_str8f(scratch.arena, "label-collision-%I64u", i);
+    if((u64_hash_from_str8(candidate)&15) == (u64_hash_from_str8(first)&15)) { collision = candidate; }
+  }
+  nodes[0] = (AndamentoNode){.is_section = 1, .entity_id = uishell_sidebar_text(first), .label = uishell_sidebar_text(str8_lit("section"))};
+  nodes[1] = (AndamentoNode){.entity_id = uishell_sidebar_text(first), .label = uishell_sidebar_text(str8_lit("first"))};
+  nodes[2] = (AndamentoNode){.entity_id = uishell_sidebar_text(collision), .label = uishell_sidebar_text(str8_lit("collision"))};
+  nodes[3] = (AndamentoNode){.entity_id = uishell_sidebar_text(first), .label = uishell_sidebar_text(str8_lit("later"))};
+  nodes[4] = (AndamentoNode){.entity_id = uishell_sidebar_text(str8_lit("empty-label"))};
+  nodes[5] = (AndamentoNode){.entity_id = uishell_sidebar_text(str8_lit("empty-label")), .label = uishell_sidebar_text(str8_lit("later"))};
+  // First non-section match wins, including an empty label; collisions and
+  // unknown identities must behave exactly like the original linear scan.
+  String8 identities[] = {first, collision, str8_lit("empty-label"), str8_lit("missing"), str8_zero()};
+  for(U64 i = 0; i < ArrayCount(identities); i++)
+  {
+    uishell_sidebar_benchmark_uncached = 1;
+    String8 expected = uishell_sidebar_context_label(&state, nodes, ArrayCount(nodes), identities[i]);
+    uishell_sidebar_benchmark_uncached = 0;
+    String8 actual = uishell_sidebar_context_label(&state, nodes, ArrayCount(nodes), identities[i]);
+    ok &= str8_match(expected, actual, 0);
+  }
+  // Invalidation must drop borrowed labels even when a snapshot's address is
+  // reused. An empty snapshot and a later repopulation also stay correct.
+  uishell_sidebar_labels_invalidate(&state);
+  ok &= !state.labels && !state.labels_capacity && !state.labels_snapshot;
+  nodes[1].label = uishell_sidebar_text(str8_lit("replacement"));
+  ok &= str8_match(uishell_sidebar_context_label(&state, nodes, ArrayCount(nodes), first), str8_lit("replacement"), 0);
+  uishell_sidebar_labels_invalidate(&state);
+  ok &= str8_match(uishell_sidebar_context_label(&state, 0, 0, first), first, 0);
+  uishell_sidebar_labels_invalidate(&state);
+  // Released state can be reused by native fixture lifecycles without a
+  // dangling arena, including an idempotent second release.
+  uishell_sidebar_release(&state);
+  ok &= !state.labels_arena;
+  uishell_sidebar_release(&state);
+  ok &= str8_match(uishell_sidebar_context_label(&state, nodes, ArrayCount(nodes), first), str8_lit("replacement"), 0);
+  uishell_sidebar_release(&state);
+  uishell_sidebar_benchmark_uncached = saved_uncached;
+  scratch_end(scratch);
+  if(!ok) { fprintf(stderr, "FAIL sidebar context labels\n"); }
+  return ok;
 }
 
 internal void
@@ -2517,6 +2573,7 @@ uishell_sidebar_scroll_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
 internal B32
 uishell_sidebar_diagnostics(CFG_Node *window)
 {
+  if(!uishell_sidebar_labels_diagnostics()) { return 0; }
   Temp scratch = scratch_begin(0, 0);
   RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
   if(!uishell_sidebar_disclosure_diagnostics(ws)) { scratch_end(scratch); return 0; }
