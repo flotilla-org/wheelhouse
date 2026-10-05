@@ -27,18 +27,25 @@ env:
 
 jobs:
   daily-driver:
-    name: Daily-driver lifecycle
-    runs-on: ubuntu-24.04
+    name: Daily-driver lifecycle / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python3 tools/test-daily-driver.py
+      - run: python tools/test-daily-driver.py
+      - run: python tools/test-daily-driver-windows.py
       - run: python3 tools/test-build-failures.py
-      - run: python3 tools/test-windows-terminal-input-readiness.py
+        if: runner.os != 'Windows'
+      - run: python tools/test-windows-terminal-input-readiness.py
       - run: bash -n scripts/run-daily-driver.sh
+        if: runner.os != 'Windows'
 
   native:
     name: ${{ matrix.os }} / ${{ matrix.vt }}
