@@ -68,7 +68,7 @@ so cache stripe and worker reservations fit under `prlimit --as=8589934592 --`.
 
 ![Open ended subject remains visible with Show finished off](screenshots/workspace-highlight/ended-open.png)
 
-Companion core revision: `3ebb1a09089e113f676cb91da72e02e130ab5875`
+Companion core revision: `058c1fad941836d8b536b8fddc718ba78877e745`
 ([andamento#131](https://github.com/flotilla-org/andamento/pull/131)). The governor
 applies the matching `ANDAMENTO_REV` workflow pin; replace the temporary PR head
 with the squash-merge revision after the companion merges.
