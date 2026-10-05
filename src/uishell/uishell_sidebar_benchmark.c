@@ -161,11 +161,11 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
 #if OS_LINUX
           if((frame+1)%sample_interval == 0)
           {
-            fprintf(stderr, "SIDEBAR_STORAGE frame=%lu draw=%lu font=%lu ui=%lu\n", frame+1, arena_pos(dr_thread_ctx->arena), arena_pos(fnt_state->frame_arena), arena_pos(ui_state->arena));
+            fprintf(stderr, "SIDEBAR_STORAGE frame=%llu draw=%llu font=%llu ui=%llu\n", (unsigned long long)(frame+1), (unsigned long long)arena_pos(dr_thread_ctx->arena), (unsigned long long)arena_pos(fnt_state->frame_arena), (unsigned long long)arena_pos(ui_state->arena));
             FILE *status = fopen("/proc/self/status", "r");
             char line[256];
             while(status && fgets(line, sizeof(line), status))
-            { if(strncmp(line, "VmRSS:", 6) == 0 || strncmp(line, "VmSize:", 7) == 0) { fprintf(stderr, "SIDEBAR_RSS issues=%lu frame=%lu %s", sizes[size_index], frame+1, line); } }
+            { if(strncmp(line, "VmRSS:", 6) == 0 || strncmp(line, "VmSize:", 7) == 0) { fprintf(stderr, "SIDEBAR_RSS issues=%llu frame=%llu %s", (unsigned long long)sizes[size_index], (unsigned long long)(frame+1), line); } }
             if(status) { fclose(status); }
           }
 #endif

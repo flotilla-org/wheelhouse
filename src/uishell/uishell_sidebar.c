@@ -169,6 +169,7 @@ uishell_sidebar_result(UIShell_SidebarState *state, B32 ok, char *error)
 internal void
 uishell_sidebar_labels_invalidate(UIShell_SidebarState *state)
 {
+  // Deliberately rebuild O(n) on the next lookup after dispatch; borrow only current snapshot labels.
   state->labels_snapshot = 0;
   state->labels = 0;
   state->labels_capacity = 0;

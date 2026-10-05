@@ -160,3 +160,8 @@ daily-driver/build-failure/input-readiness tests, docking and fixture tests,
 27 native sidebar ABI tests, 12 ingress tests (two platform skips), terminal
 environment and Jackstay acceptance checks pass. Local native checks use the
 capped release build; the pinned debug/platform matrix runs in GitHub CI.
+
+Draw storage retains pointers into chained blocks until frame reset. Its flags
+default to zero (no `ArenaFlag_NoChain`); `arena_pos` includes `base_pos`,
+and `arena_pop_to` releases later blocks when resetting to the saved frame
+start. No contiguous span across separately allocated blocks is assumed.
