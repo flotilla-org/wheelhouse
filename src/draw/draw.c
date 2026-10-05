@@ -238,7 +238,8 @@ dr_begin_frame(FNT_Tag icon_font)
 {
   if(dr_thread_ctx == 0)
   {
-    Arena *arena = arena_alloc(.reserve_size = GB(64), .commit_size = MB(8));
+    // Grow in blocks instead of reserving 64 GiB, so capped native runs can start.
+    Arena *arena = arena_alloc(.reserve_size = MB(64), .commit_size = MB(8));
     dr_thread_ctx = push_array(arena, DR_ThreadCtx, 1);
     dr_thread_ctx->arena = arena;
     dr_thread_ctx->arena_frame_start_pos = arena_pos(arena);
