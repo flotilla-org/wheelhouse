@@ -104,6 +104,7 @@
 #include "uishell/uishell_terminal_link_diagnostics.c"
 #include "uishell/uishell_preview_diagnostics.c"
 #include "uishell/uishell_sidebar_docking_diagnostics.c"
+#include "uishell/uishell_sidebar_benchmark.c"
 #include "uishell/uishell_panel_diagnostics.c"
 #include "uishell/uishell_shared_ui_diagnostics.c"
 #include "uishell/uishell_managed_content_diagnostics.c"
@@ -239,6 +240,11 @@ entry_point(CmdLine *cmd_line)
       B32 run_sidebar_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
       B32 run_terminal_glyph_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("terminal_glyph_diagnostics"));
       String8 terminal_glyph_fixture_ppm_path = cmd_line_string(cmd_line, str8_lit("terminal_glyph_fixture_ppm"));
+      if(cmd_line_has_flag(cmd_line, str8_lit("sidebar_benchmark")))
+      {
+        uishell_sidebar_benchmark_uncached = cmd_line_has_flag(cmd_line, str8_lit("sidebar_benchmark_uncached"));
+        rd_state->frame_diagnostic = uishell_sidebar_benchmark;
+      }
       for(B32 quit = 0; !quit;)
       {
         quit = update();

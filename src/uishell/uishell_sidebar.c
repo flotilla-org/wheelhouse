@@ -8,6 +8,10 @@ global B32 uishell_sidebar_live;
 global B32 uishell_sidebar_fixture;
 global B32 uishell_sidebar_subject_fixture;
 global U64 uishell_sidebar_last_tick;
+// Enabled only by the native benchmark; normal frames avoid clock queries.
+global B32 uishell_sidebar_benchmark_active;
+global B32 uishell_sidebar_benchmark_uncached;
+global U64 uishell_sidebar_analysis_us, uishell_sidebar_context_us;
 // Optional fixture-only hit rectangles for the external mouse/clipboard test.
 global String8 uishell_sidebar_subject_geometry_path;
 global String8List uishell_sidebar_subject_geometry;
@@ -50,6 +54,9 @@ struct UIShell_HoverCard
   F32 scroll;
 };
 
+typedef struct UIShell_SidebarLabel UIShell_SidebarLabel;
+struct UIShell_SidebarLabel { String8 identity, label; };
+
 typedef struct UIShell_DisplayWake UIShell_DisplayWake;
 struct UIShell_DisplayWake
 {
@@ -80,6 +87,10 @@ struct UIShell_SidebarState
   UIShell_DisplayRestore *display_restores;
   U64 display_wakeup_at;
   UIShell_DisplayWake *display_wakeup;
+  Arena *labels_arena;
+  UIShell_SidebarLabel *labels;
+  U64 labels_capacity;
+  AndamentoSnapshot *labels_snapshot;
   UIShell_SidebarSection *sections;
   UIShell_HoverCard cards[2];
   Rng2F32 rect;
@@ -151,6 +162,68 @@ uishell_sidebar_result(UIShell_SidebarState *state, B32 ok, char *error)
 
 #include "uishell/uishell_managed_content.c"
 
+// Labels contain borrowed snapshot text. Drop them before replacing/releasing
+// that snapshot, even if an allocator subsequently reuses its address.
+internal void
+uishell_sidebar_labels_invalidate(UIShell_SidebarState *state)
+{
+  state->labels_snapshot = 0;
+  state->labels = 0;
+  state->labels_capacity = 0;
+  if(state->labels_arena) { arena_clear(state->labels_arena); }
+}
+
+internal B32
+uishell_sidebar_dispatch(UIShell_SidebarState *state, size_t action, char **error)
+{
+  uishell_sidebar_labels_invalidate(state);
+  return andamento_dispatch(state->core, state->snapshot, action, error);
+}
+
+// Identity alone is the existing display contract (not kind + identity).
+// Insert in snapshot order, retaining the first non-section placement, including
+// an empty label. Font, width, animations and scroll do not affect this lookup.
+internal String8
+uishell_sidebar_context_label(UIShell_SidebarState *state, AndamentoNode *nodes, U64 count, String8 identity)
+{
+  if(uishell_sidebar_benchmark_uncached)
+  {
+    for(U64 i = 0; i < count; i++)
+    {
+      if(!nodes[i].is_section && str8_match(identity, uishell_sidebar_string(nodes[i].entity_id), 0))
+      { return uishell_sidebar_string(nodes[i].label); }
+    }
+    return identity;
+  }
+  if(state->labels_snapshot != state->snapshot || !state->labels)
+  {
+    uishell_sidebar_labels_invalidate(state);
+    if(!state->labels_arena) { state->labels_arena = arena_alloc(); }
+    U64 capacity = 2;
+    while(capacity < count*2) { capacity *= 2; }
+    state->labels = push_array(state->labels_arena, UIShell_SidebarLabel, capacity);
+    state->labels_capacity = capacity;
+    for(U64 i = 0; i < count; i++)
+    {
+      String8 key = uishell_sidebar_string(nodes[i].entity_id);
+      if(nodes[i].is_section || !key.size) { continue; }
+      U64 slot = u64_hash_from_str8(key)&(capacity-1);
+      while(state->labels[slot].identity.size && !str8_match(state->labels[slot].identity, key, 0))
+      { slot = (slot+1)&(capacity-1); }
+      if(!state->labels[slot].identity.size)
+      { state->labels[slot] = (UIShell_SidebarLabel){key, uishell_sidebar_string(nodes[i].label)}; }
+    }
+    state->labels_snapshot = state->snapshot;
+  }
+  U64 slot = u64_hash_from_str8(identity)&(state->labels_capacity-1);
+  while(state->labels[slot].identity.size)
+  {
+    if(str8_match(state->labels[slot].identity, identity, 0)) { return state->labels[slot].label; }
+    slot = (slot+1)&(state->labels_capacity-1);
+  }
+  return identity;
+}
+
 internal void
 uishell_sidebar_release(UIShell_SidebarState *state)
 {
@@ -161,6 +234,8 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     uishell_sidebar_display_wake_release(state->display_wakeup);
     if(state->display_restore_arena) { arena_release(state->display_restore_arena); }
     if(state->placement_arena) { arena_release(state->placement_arena); state->placement_arena = 0; }
+    uishell_sidebar_labels_invalidate(state);
+    if(state->labels_arena) { arena_release(state->labels_arena); }
     andamento_snapshot_release(state->snapshot);
     andamento_destroy(state->core);
   }
@@ -171,6 +246,7 @@ uishell_sidebar_replace_snapshot(UIShell_SidebarState *state, AndamentoSnapshot 
 {
   // Invalidate before releasing: the allocator may reuse the snapshot address.
   state->placement_snapshot = 0;
+  uishell_sidebar_labels_invalidate(state);
   andamento_snapshot_release(state->snapshot);
   state->snapshot = snapshot;
 }
@@ -339,7 +415,7 @@ uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64
     r->attempts++;
     char *error = 0;
     B32 ok = found && control.action != ANDAMENTO_NONE &&
-      andamento_dispatch(state->core, state->snapshot, control.action, &error);
+      uishell_sidebar_dispatch(state, control.action, &error);
     uishell_sidebar_result(state, ok, error);
     uishell_sidebar_refresh(state);
     rd_request_frame();
@@ -695,7 +771,7 @@ uishell_sidebar_restore(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
          str8_match(id, uishell_sidebar_string(node.entity_id), 0))
       {
         char *error = 0;
-        B32 ok = andamento_dispatch(state->core, state->snapshot, node.activate, &error);
+        B32 ok = uishell_sidebar_dispatch(state, node.activate, &error);
         if(uishell_sidebar_result(state, ok, error)) { uishell_sidebar_effects(state, split); }
         uishell_sidebar_refresh(state);
         break;
@@ -780,7 +856,7 @@ uishell_sidebar_expand_reveal(UIShell_SidebarState *state)
     }
     if(toggle == ANDAMENTO_NONE) { break; }
     char *error = 0;
-    B32 ok = andamento_dispatch(state->core, state->snapshot, toggle, &error);
+    B32 ok = uishell_sidebar_dispatch(state, toggle, &error);
     if(!uishell_sidebar_result(state, ok, error)) { state->reveal_workspace_id = 0; break; }
     uishell_sidebar_refresh(state);
   }
@@ -1213,6 +1289,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       section_panel ? ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", only_section) :
       ui_key_from_string(ui_active_seed_key(), str8_lit("###andamento_sidebar")));
   }
+  U64 analysis_start = uishell_sidebar_benchmark_active ? now_time_us() : 0;
   U64 count = state->snapshot ? andamento_snapshot_node_count(state->snapshot) : 0;
   AndamentoNode *nodes = push_array(scratch.arena, AndamentoNode, count);
   B32 *hidden = push_array(scratch.arena, B32, count);
@@ -1348,6 +1425,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     states[n]->has_controls = nodes[sections[n]].control_count != 0;
     if(!section->collapsed && rows[n] && flexible == section_count) { flexible = n; }
   }
+  if(uishell_sidebar_benchmark_active) { uishell_sidebar_analysis_us += now_time_us()-analysis_start; }
   // Secondary sections have a bounded body; the first expanded section fills
   // the remainder. Headers stay outside all scrolling content.
   // Empty sections have no useful controls or content to reveal.
@@ -1525,11 +1603,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             // label/kind/state fields. Match identities without parsing them.
             if(f >= 3 && value.size && !str8_match(kind, str8_lit("change_request"), 0))
             {
-              for(U64 j = 0; j < count; j++)
-              {
-                if(!nodes[j].is_section && str8_match(value, uishell_sidebar_string(nodes[j].entity_id), 0))
-                { value = uishell_sidebar_string(nodes[j].label); break; }
-              }
+              U64 context_start = uishell_sidebar_benchmark_active ? now_time_us() : 0;
+              value = uishell_sidebar_context_label(state, nodes, count, value);
+              if(uishell_sidebar_benchmark_active) { uishell_sidebar_context_us += now_time_us()-context_start; }
               if(!str8_match(value, label, 0))
               { context = context.size ? push_str8f(scratch.arena, "%S / %S", context, value) : value; }
             }
@@ -1806,7 +1882,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     if(action != ANDAMENTO_NONE)
     {
       char *error = 0;
-      B32 ok = andamento_dispatch(state->core, state->snapshot, action, &error);
+      B32 ok = uishell_sidebar_dispatch(state, action, &error);
       if(uishell_sidebar_result(state, ok, error)) { uishell_sidebar_effects(state, split); }
       uishell_sidebar_refresh(state);
       uishell_sidebar_save_display(state, split->owner_cfg);
@@ -2297,7 +2373,7 @@ uishell_sidebar_motion_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
     {
       andamento_snapshot_node(state->snapshot, project_index, &project);
       char *error = 0;
-      B32 dispatched = andamento_dispatch(state->core, state->snapshot, project.toggle, &error);
+      B32 dispatched = uishell_sidebar_dispatch(state, project.toggle, &error);
       ok &= uishell_sidebar_result(state, dispatched, error);
       uishell_sidebar_refresh(state);
     }
@@ -2478,7 +2554,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     markers_ok = markers_ok && str8_match(uishell_sidebar_status_mark(marker_node, str8_cstring(marks[i].status)),
                           str8_cstring(marks[i].mark), 0);
   }
-  if(ok) { ok = andamento_dispatch(state->core, state->snapshot, activate, &error); }
+  if(ok) { ok = uishell_sidebar_dispatch(state, activate, &error); }
   ok = uishell_sidebar_result(state, ok, error);
   if(ok)
   {
@@ -2508,7 +2584,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = ok && live;
     // A second activation focuses the same workspace without creating another.
     error = 0;
-    ok = ok && andamento_dispatch(state->core, state->snapshot, activate, &error);
+    ok = ok && uishell_sidebar_dispatch(state, activate, &error);
     uishell_sidebar_result(state, ok, error);
     uishell_sidebar_effects(state, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
@@ -2534,7 +2610,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = ok && str8_match(unplaced, str8_lit("Local fallback"), 0) &&
          str8_match(leaf, str8_lit("Local fallback"), 0);
     error = 0;
-    ok = ok && andamento_dispatch(state->core, state->snapshot, reveal_parent.toggle, &error);
+    ok = ok && uishell_sidebar_dispatch(state, reveal_parent.toggle, &error);
     uishell_sidebar_result(state, ok, error);
     uishell_sidebar_refresh(state);
     path = uishell_sidebar_workspace_path(scratch.arena, state, created, str8_lit("Local fallback"), 0);
@@ -2591,7 +2667,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
       if(node.workspace_id == created && node.state == ANDAMENTO_LIVE) { activate = node.activate; }
     }
     error = 0;
-    ok = ok && andamento_dispatch(state->core, state->snapshot, activate, &error);
+    ok = ok && uishell_sidebar_dispatch(state, activate, &error);
     uishell_sidebar_result(state, ok, error);
     cfg_node_release(rd_state->cfg, workspace);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
@@ -2610,7 +2686,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = ok && latent && split.inventory.count == before;
     // Retry after closure/error can create a new presentation of the same entity.
     error = 0;
-    ok = ok && andamento_dispatch(state->core, state->snapshot, activate, &error);
+    ok = ok && uishell_sidebar_dispatch(state, activate, &error);
     uishell_sidebar_result(state, ok, error);
     uishell_sidebar_effects(state, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
@@ -2667,7 +2743,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     }
     ok = ok && retained_live;
     error = 0;
-    retained_call_ok = andamento_dispatch(state->core, state->snapshot, activate, &error);
+    retained_call_ok = uishell_sidebar_dispatch(state, activate, &error);
     ok = uishell_sidebar_result(state, retained_call_ok, error) && ok;
     uishell_sidebar_effects(state, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
