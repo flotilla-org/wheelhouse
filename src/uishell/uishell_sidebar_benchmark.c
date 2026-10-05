@@ -97,6 +97,10 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     ok &= uishell_sidebar_benchmark_label_lifecycle(&state);
     ws->sidebar = &state;
     CFG_Node *old_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+    // The region inventory records intentionally closed sections. Isolate it
+    // with the layout so production reconciliation creates the full fixture.
+    CFG_Node *old_inventory = cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY);
+    cfg_node_unhook(rd_state->cfg, window, old_inventory);
     cfg_node_unhook(rd_state->cfg, window, old_host);
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     CFG_Node *host = uishell_sidebar_dock_layout(&split);
@@ -200,6 +204,8 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     }
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT));
     if(old_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, old_host); }
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY));
+    if(old_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, old_inventory); }
     // A real state owns core/snapshot, labels, cards and display recovery resources.
     // Teardown must clear every owned pointer so repeated release is safe.
     for(U64 i = 0; i < ArrayCount(state.cards); i++)
@@ -210,7 +216,8 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     ok &= state.display_wakeup != 0;
     uishell_sidebar_release(&state);
     B32 released = !state.core && !state.snapshot && !state.labels_arena &&
-      !state.display_restore_arena && !state.display_restores && !state.display_wakeup && !state.display_wakeup_at;
+      !state.display_restore_arena && !state.display_restores && !state.display_wakeup && !state.display_wakeup_at &&
+      !state.placement_arena && !state.placement_snapshot && !state.placement_regions && !state.placement_count;
     for(U64 i = 0; i < ArrayCount(state.cards); i++) { released &= !state.cards[i].arena; }
     ok &= released;
     if(!released) { fprintf(stderr, "FAIL sidebar owned resources remain after release\n"); }

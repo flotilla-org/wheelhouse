@@ -165,3 +165,14 @@ Draw storage retains pointers into chained blocks until frame reset. Its flags
 default to zero (no `ArenaFlag_NoChain`); `arena_pos` includes `base_pos`,
 and `arena_pop_to` releases later blocks when resetting to the saved frame
 start. No contiguous span across separately allocated blocks is assumed.
+
+Rebased again onto `ff35c1e` (saved-layout region hints #191). The new
+placement cache and snapshot replacement helper remain intact; replacement
+invalidates both placement and label caches before releasing borrowed strings.
+Release clears both caches alongside cards and display recovery resources.
+This base updates the workflow Andamento pin to `08315d2`; fresh local
+validation uses that exact revision with the unchanged Cleat/Jackstay pins.
+The benchmark also isolates/restores the section inventory with its temporary
+layout; otherwise the new remembered-closed semantics suppress fixture views.
+The visible-section regression assertion caught this integration mismatch.
+Repeated teardown now checks placement-cache pointers as well.
