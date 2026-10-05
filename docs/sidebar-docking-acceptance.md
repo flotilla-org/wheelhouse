@@ -111,7 +111,8 @@ snapshot and resolves the declaration identity to its current action. A failed
 preference is retained when other controls are saved; exhaustion keeps both
 the saved intent and the surfaced error and performs no further dispatches.
 Changing the saved target during recovery replaces the old intent, while a
-new live user value supersedes recovery. Explicit restoration or the next
+new live user value saved by an explicit UI action supersedes recovery. Polling
+never writes preferences from an externally changed live value. Explicit restoration or the next
 session may start a new bounded attempt sequence. The headless command/drag
 integration suite exercises failure then recovery, snapshot invalidation,
 repeated failure across 1,000 polls, preservation on unrelated saves and newer

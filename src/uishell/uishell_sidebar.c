@@ -67,6 +67,7 @@ struct UIShell_DisplayRestore
 {
   UIShell_DisplayRestore *next;
   String8 name; // declaration identity; never retain snapshot action indices
+  // Pending means unresolved; attempts at the limit stop dispatch, not reconciliation.
   B32 desired, observed, pending;
   U32 attempts;
   U64 retry_at;
@@ -312,13 +313,8 @@ uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64
     while(uishell_sidebar_next_persistent_control(&it, &control, &name))
     { if(str8_match(r->name, uishell_sidebar_string(name), 0)) { found = 1; break; } }
     if(found && !!control.checked == r->desired) { r->pending = 0; continue; }
-    if(found && !!control.checked != r->observed)
-    {
-      r->pending = 0;
-      // Saving may settle other entries, but never adds/removes retry nodes.
-      uishell_sidebar_save_display(state, window);
-      continue;
-    }
+    // Polling observes values, never attributes an external change to user intent.
+    // Explicit UI actions save intent through save_display; retry preserves it.
     if(r->attempts >= UIShell_DisplayRetryLimit || now < r->retry_at) { continue; }
     r->attempts++;
     char *error = 0;
@@ -354,6 +350,8 @@ uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64
 internal void
 uishell_sidebar_restore_display(UIShell_SidebarState *state, CFG_Node *window)
 {
+  if(!state->core) { return; }
+  uishell_sidebar_refresh(state);
   if(!state->snapshot) { return; }
   if(!state->display_restore_arena) { state->display_restore_arena = arena_alloc(); }
   arena_clear(state->display_restore_arena);

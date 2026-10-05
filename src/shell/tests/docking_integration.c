@@ -124,6 +124,8 @@ integration_display_policy(CFG_Node *window, RD_WindowState *ws)
   CFG_Node *saved = cfg_node_new(rd_state->cfg, window, str8_lit("sidebar_display"));
   CFG_Node *value = cfg_node_new(rd_state->cfg, saved, uishell_sidebar_string(name));
   cfg_node_new(rd_state->cfg, value, initial ? str8_lit("false") : str8_lit("true"));
+  // Initial restore must reacquire an absent snapshot and still restore intent.
+  andamento_snapshot_release(display.snapshot); display.snapshot = 0;
   integration_failures_left = 1; integration_dispatches = 0;
   uishell_sidebar_restore_display(&display, window);
   UIShell_DisplayRestore *retry = display.display_restores;
@@ -191,9 +193,21 @@ integration_display_policy(CFG_Node *window, RD_WindowState *ws)
   uishell_sidebar_refresh(&display);
   uishell_sidebar_save_display(&display, window);
   IntegrationCheck(!retry->pending);
+  // A saved change and an external live change can race. Polling must retain
+  // the saved preference rather than treating the external change as user intent.
+  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("false") : str8_lit("true"));
+  uishell_sidebar_restore_display(&display, window); retry = display.display_restores;
+  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("true") : str8_lit("false"));
+  it = (UIShell_DisplayControlIterator){display.snapshot};
+  uishell_sidebar_next_persistent_control(&it, &control, &name);
+  IntegrationCheck(andamento_dispatch(display.core, display.snapshot, control.action, 0));
+  uishell_sidebar_refresh(&display);
+  uishell_sidebar_retry_display(&display, window, retry->retry_at);
+  IntegrationCheck(retry->pending && str8_match(value->first->string,
+                   initial ? str8_lit("true") : str8_lit("false"), 0));
   // Retiring state while a worker is still queued must leave only the token;
   // callbacks after arena/core release cannot touch the retired sidebar.
-  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("false") : str8_lit("true"));
+  cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("true") : str8_lit("false"));
   uishell_sidebar_restore_display(&display, window);
   IntegrationCheck(display.display_wakeup != 0);
   ws->sidebar = 0;
@@ -351,6 +365,14 @@ entry_point(CmdLine *cmdline)
   // A destination with no live window reports unavailable geometry explicitly.
   CFG_Node *unopened = cfg_node_new(rd_state->cfg, user, str8_lit("window"));
   CFG_Node *unopened_panel = cfg_node_new(rd_state->cfg, unopened, str8_lit("panels"));
+  UIShell_WorkspaceMount absent_mount = uishell_workspace_mount_from_cfg(scratch.arena, unopened_panel);
+  log_scope_begin();
+  rd_drag_begin(UIShell_ContextRegSlot_View);
+  RD_DockGeometry absent_geometry = rd_dock_geometry_from_mount(&absent_mount);
+  rd_drag_kill();
+  LogScopeResult drag_log = log_scope_end(scratch.arena);
+  // Active-drag geometry without window state is silent, and zero measured.
+  IntegrationCheck(dim_2f32(absent_geometry.area).x == 0 && drag_log.strings[LogMsgKind_UserError].size == 0);
   log_scope_begin();
   IntegrationCheck(rd_dock_target_width(scratch.arena, unopened_panel, Dir2_Invalid) == 0);
   LogScopeResult missing_log = log_scope_end(scratch.arena);
@@ -358,6 +380,21 @@ entry_point(CmdLine *cmdline)
   IntegrationCheck(str8_find_needle(missing_log.strings[LogMsgKind_UserError], 0, missing_reason, 0) !=
                    missing_log.strings[LogMsgKind_UserError].size);
   cfg_node_release(rd_state->cfg, unopened);
+  // Unrendered floating hosts retain the declared checker: zero-minimum
+  // ordinary Views fit; the 128px fixture refuses measured-zero placement.
+  CFG_Node *floating = cfg_node_new(rd_state->cfg, panels, str8_lit("floating_panels"));
+  cfg_node_new(rd_state->cfg, floating, str8_lit("terminal"));
+  // Current mount builders select rendered panels/sidebar roots. Exercise a
+  // future floating mount explicitly to cover the defensive no-render branch.
+  UIShell_WorkspaceMount floating_mount = {.window_cfg = window, .owner_cfg = window,
+    .panel_tree = cfg_panel_tree_from_panels_cfg(scratch.arena, floating, Axis2_X)};
+  RD_DockGeometry floating_geometry = rd_dock_geometry_from_mount(&floating_mount);
+  F32 floating_width = rd_dock_width_from_geometry(&floating_geometry, floating, Dir2_Invalid);
+  IntegrationCheck(floating_width == 0);
+  IntegrationCheck(rd_dock_placement(source, floating, floating_width) == RD_DockRule_MinimumWidth);
+  CFG_Node *ordinary = origin->last;
+  IntegrationCheck(rd_dock_placement(ordinary, floating, floating_width) == RD_DockRule_Valid);
+  cfg_node_release(rd_state->cfg, floating);
   // Restore retains its structural policy even when geometry is too narrow.
   rd_dock_restore_window(rd_state->cfg, window);
   IntegrationCheck(source->parent == origin);

@@ -5,8 +5,8 @@ share their area and one `+N` menu. Attention retains standalone PR rows, and
 Issues, Show finished and Role attempts retain their existing visibility rules.
 
 At width pressure, the name uses the producer's medium and short labels, then
-elides to about ten characters. Unopened workspace actions fold before quiet issue/PR chips; within each class,
-fold from the end of catalog order.
+elides to about ten characters. Unopened workspace actions fold before quiet
+issue/PR chips; within each class, fold from the end of catalog order.
 Ready-to-merge and CI-failing subjects, selected/pending workspaces and active
 open workspaces remain visible. If those protected chips alone exceed the
 available width, their area scrolls horizontally while the status slot stays

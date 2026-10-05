@@ -3290,11 +3290,7 @@ rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
 {
   RD_DockGeometry result = {.tree = mount->panel_tree};
   RD_WindowState *ws = rd_window_state_from_cfg__existing(mount->owner_cfg);
-  if(ws == &rd_nil_window_state)
-  {
-    log_user_errorf("Docking geometry unavailable: destination has no live window state.");
-    return result;
-  }
+  if(ws == &rd_nil_window_state) { return result; }
   UIShell_RegsScope(.window = mount->window_cfg->id, .panel = 0, .view = 0, .tab = 0)
   {
     F32 font_size = rd_font_size();
@@ -3306,7 +3302,10 @@ rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
     if(kind == RD_DockHostKind_Sidebar) { result.area.x1 = result.area.x0+control_width; }
     else if(kind == RD_DockHostKind_WorkspaceRegion)
     { if(control_width != 0) { result.area.x0 += control_width+1.f; } }
-    else { result.area.x1 = result.area.x0; } // Floating declarations have no rendered host yet.
+    // Current builders select rendered panels/sidebar roots. Defensive future
+    // floating mounts have no rendered body to measure. Zero-minimum
+    // Views remain accepted; constrained Views require a rendered allocation.
+    else { result.area.x1 = result.area.x0; }
     result.inset = rd_panel_inset_px(font_size);
   }
   return result;
@@ -3325,6 +3324,8 @@ rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir)
 {
   Temp temp = temp_begin(arena);
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_cfg(arena, destination);
+  if(rd_window_state_from_cfg__existing(mount.owner_cfg) == &rd_nil_window_state)
+  { log_user_errorf("Docking geometry unavailable: destination has no live window state."); }
   RD_DockGeometry geometry = rd_dock_geometry_from_mount(&mount);
   F32 width = rd_dock_width_from_geometry(&geometry, destination, dir);
   temp_end(temp);
@@ -3335,6 +3336,7 @@ internal void
 rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right, B32 tabs_in_title_bar)
 {
   CFG_PanelTree panel_tree = mount->panel_tree;
+  // Every use below is guarded by active View drag, matching initialization.
   RD_DockGeometry dock_geometry = {0};
   if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View)
   { dock_geometry = rd_dock_geometry_from_mount(mount); }
