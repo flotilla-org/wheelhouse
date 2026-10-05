@@ -9,6 +9,8 @@ placement and the first section on a tie. Visible rows and inline chips carry
 selection. Expanded ancestors do not. Collapse hides descendant chips as well
 as rows, and only the visible collapsed ancestor receives an outline. Section
 headers follow the same rule. Outlines do not alter row geometry.
+The deepest placement keeps selection ownership even when collapsed; a shallower
+visible Attention alias does not take selection from its outlined tree ancestor.
 
 ## Evidence
 
