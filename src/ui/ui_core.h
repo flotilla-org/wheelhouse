@@ -673,6 +673,14 @@ struct UI_BoxHashSlot
 
 //- rjf: main state bundle
 
+typedef struct UI_HoverCardMask UI_HoverCardMask;
+struct UI_HoverCardMask
+{
+  UI_HoverCardMask *next;
+  UI_Key key;
+  Rng2F32 rect;
+};
+
 typedef struct UI_State UI_State;
 struct UI_State
 {
@@ -688,6 +696,7 @@ struct UI_State
   B32 edit_menu_focus;
   // Interactive hover overlays own pointer hits; only a click gives them keys.
   B32 hover_card_focus;
+  UI_HoverCardMask *hover_card_extra;
   UI_Key hover_card_keys[2];
   Rng2F32 hover_card_rects[2];
   U64 edit_owner_view;

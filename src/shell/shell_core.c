@@ -170,6 +170,8 @@ rd_drag_begin(UIShell_ContextRegSlot slot)
     arena_clear(rd_state->drag_drop_arena);
     rd_state->drag_drop_regs = push_array(rd_state->drag_drop_arena, UIShell_Regs, 1);
     rd_state->drag_drop_regs[0] = uishell_regs_copy(rd_state->drag_drop_arena, uishell_regs());
+    rd_state->drag_drop_creation_name = str8_zero();
+    rd_state->drag_drop_commit = 0;
     rd_state->drag_drop_regs_slot = slot;
     rd_state->drag_drop_state = RD_DragDropState_Dragging;
   }
@@ -191,6 +193,15 @@ internal void
 rd_drag_kill(void)
 {
   rd_state->drag_drop_state = RD_DragDropState_Null;
+  rd_state->drag_drop_creation_name = str8_zero();
+  rd_state->drag_drop_commit = 0;
+}
+
+internal void
+rd_drag_kill_from_window(CFG_ID window)
+{
+  if(rd_state->drag_drop_regs && rd_state->drag_drop_regs->window == window)
+  { rd_drag_kill(); }
 }
 
 internal void
@@ -3262,6 +3273,38 @@ rd_panel_frame_segment_list_push_unique(Arena *arena, RD_PanelFrameSegmentList *
   }
 }
 
+internal B32
+rd_panel_drag_target(CFG_Node *view, CFG_Node *destination, F32 width)
+{
+  if(view == &cfg_nil_node && rd_state->drag_drop_creation_name.size)
+  {
+    RD_ViewRegistration *registration = rd_dock_view_from_name(rd_state->drag_drop_creation_name);
+    RD_DockProposal p = {0};
+    p.host = rd_dock_host_from_cfg(destination, width);
+    p.view_level = rd_state->drag_drop_regs->window;
+    p.selected_workspace_region = rd_state->drag_drop_regs->window;
+    p.instances_after = registration && (registration->traits & RD_ViewTrait_Singleton) ?
+      rd_dock_instances(rd_dock_window(destination), registration)+1 : 1;
+    p.control_surfaces_after = registration && (registration->traits & RD_ViewTrait_SelectsWorkspaces) ? 2 : 1;
+    return destination != &cfg_nil_node && rd_dock_check(registration, p) == RD_DockRule_Valid;
+  }
+  return rd_dock_drag_target(view, destination, width);
+}
+
+// Existing Views and creation drags use the same sites, geometry and commands.
+internal void
+rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
+{
+  if(rd_state->drag_drop_commit)
+  { rd_state->drag_drop_commit(destination, direction, previous_tab); }
+  else if(direction != Dir2_Invalid)
+  { uishell_cmd("split_panel", .dst_panel = destination, .panel = rd_state->drag_drop_regs->panel,
+                .view = rd_state->drag_drop_regs->view, .dir2 = direction); }
+  else
+  { uishell_cmd("move_view", .dst_panel = destination, .panel = rd_state->drag_drop_regs->panel,
+                .view = rd_state->drag_drop_regs->view, .prev_tab = previous_tab); }
+}
+
 // Rendering and docking share these chrome allocations.
 internal F32
 rd_window_edge_inset_px(RD_WindowState *ws)
@@ -3278,6 +3321,7 @@ rd_panel_inset_px(F32 font_size)
 typedef struct RD_DockGeometry RD_DockGeometry;
 struct RD_DockGeometry
 {
+  UIShell_WorkspaceMount *mount;
   CFG_PanelTree tree;
   Rng2F32 area;
   F32 inset;
@@ -3288,7 +3332,7 @@ struct RD_DockGeometry
 internal RD_DockGeometry
 rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
 {
-  RD_DockGeometry result = {.tree = mount->panel_tree};
+  RD_DockGeometry result = {.mount = mount, .tree = mount->panel_tree};
   RD_WindowState *ws = rd_window_state_from_cfg__existing(mount->owner_cfg);
   if(ws == &rd_nil_window_state) { return result; }
   UIShell_RegsScope(.window = mount->window_cfg->id, .panel = 0, .view = 0, .tab = 0)
@@ -3316,6 +3360,9 @@ rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
 internal F32
 rd_dock_width_from_geometry(RD_DockGeometry *geometry, CFG_Node *destination, Dir2 dir)
 {
+  // A View can begin a drag midway through the panel-area build. Measure on
+  // the first target query, including queries from later leaves in that frame.
+  if(geometry->tree.root == 0) { *geometry = rd_dock_geometry_from_mount(geometry->mount); }
   return rd_dock_resulting_width(geometry->tree.root,
     cfg_panel_node_from_tree_cfg(geometry->tree.root, destination), geometry->area, dir, geometry->inset);
 }
@@ -3338,10 +3385,9 @@ internal void
 rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right, B32 tabs_in_title_bar)
 {
   CFG_PanelTree panel_tree = mount->panel_tree;
-  // Every use below is guarded by active View drag, matching initialization.
-  RD_DockGeometry dock_geometry = {0};
-  if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View)
-  { dock_geometry = rd_dock_geometry_from_mount(mount); }
+  // Lazy measurement handles drags started by a View during this build and
+  // keeps non-drag frames free of docking geometry work.
+  RD_DockGeometry dock_geometry = {.mount = mount};
   B32 is_preview = ws->active_workspace_surface_entry != 0 && !ws->active_workspace_surface_entry->composite;
   B32 window_layout_reset = ws->window_layout_reset;
   Rng2F32 panel_area_rect = content_rect; // captured before the per-panel `content_rect` shadows it (for tabs-in-title-bar edge detection)
@@ -3405,7 +3451,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
       //
       {
         CFG_Node *drag_view = cfg_node_from_id(rd_state->drag_drop_regs->view);
-        if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_dock_drag_target(drag_view, panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid)))
+        if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_panel_drag_target(drag_view, panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid)))
         {
           //- rjf: params
           F32 drop_site_major_dim_px = ceil_f32(ui_top_font_size()*7.f);
@@ -3426,7 +3472,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
               // Measure the resulting leaf allocation, including insets.
               F32 target_width = rd_dock_width_from_geometry(&dock_geometry, panel->cfg,
                 axis == Axis2_X ? (side == Side_Min ? Dir2_Left : Dir2_Right) : (side == Side_Min ? Dir2_Up : Dir2_Down));
-              if(!rd_dock_drag_target(drag_view, panel->cfg, target_width)) { continue; }
+              if(!rd_panel_drag_target(drag_view, panel->cfg, target_width)) { continue; }
               UI_Key key = ui_key_from_stringf(ui_key_zero(), "root_extra_split_%i", side);
               Rng2F32 site_rect = panel_rect;
               site_rect.p0.v[axis2_flip(axis)] = panel_rect_center.v[axis2_flip(axis)] - drop_site_major_dim_px/2;
@@ -3501,11 +3547,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 if(dir != Dir2_Invalid)
                 {
                   CFG_PanelNode *split_panel = panel;
-                  uishell_cmd("split_panel",
-                         .dst_panel  = split_panel->cfg->id,
-                         .panel      = rd_state->drag_drop_regs->panel,
-                         .view      = rd_state->drag_drop_regs->view,
-                         .dir2       = dir);
+                  rd_panel_drag_drop(split_panel->cfg->id, dir, 0);
                 }
               }
             }
@@ -3523,7 +3565,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             Dir2 target_dir = split_axis == Axis2_X ? (child == &cfg_nil_panel_node ? Dir2_Right : Dir2_Left) :
               (child == &cfg_nil_panel_node ? Dir2_Down : Dir2_Up);
             F32 target_width = rd_dock_width_from_geometry(&dock_geometry, target->cfg, target_dir);
-            if(!rd_dock_drag_target(drag_view, panel->cfg, target_width))
+            if(!rd_panel_drag_target(drag_view, panel->cfg, target_width))
             {
               if(child == &cfg_nil_panel_node) { break; }
               continue;
@@ -3603,11 +3645,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 split_panel = panel->last;
                 dir = (panel->split_axis == Axis2_X ? Dir2_Right : Dir2_Down);
               }
-              uishell_cmd("split_panel",
-                     .dst_panel  = split_panel->cfg->id,
-                     .panel      = rd_state->drag_drop_regs->panel,
-                     .view      = rd_state->drag_drop_regs->view,
-                     .dir2       = dir);
+              rd_panel_drag_drop(split_panel->cfg->id, dir, 0);
             }
             
             // rjf: exit on opl child
@@ -4007,7 +4045,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           if(build_panel)
           {
             CFG_Node *view = cfg_node_from_id(rd_state->drag_drop_regs->view);
-            if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_dock_drag_target(view, panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid)) && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
+            if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_panel_drag_target(view, panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid)) && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
             {
               F32 drop_site_dim_px = ceil_f32(ui_top_font_size()*7.f);
               drop_site_dim_px = Min(drop_site_dim_px, dim_2f32(panel_rect).v[panel->split_axis]/4.f);
@@ -4072,7 +4110,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 Axis2 split_axis = axis2_from_dir2(dir);
                 Side split_side = side_from_dir2(dir);
                 F32 target_width = rd_dock_width_from_geometry(&dock_geometry, panel->cfg, dir);
-                if(!rd_dock_drag_target(view, panel->cfg, target_width)) { continue; }
+                if(!rd_panel_drag_target(view, panel->cfg, target_width)) { continue; }
                 if(dir != Dir2_Invalid && panel->parent != &cfg_nil_panel_node &&
                    split_axis == panel->parent->split_axis)
                 {
@@ -4133,19 +4171,11 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 {
                   if(dir != Dir2_Invalid)
                   {
-                    uishell_cmd("split_panel",
-                           .dst_panel = panel->cfg->id,
-                           .panel = rd_state->drag_drop_regs->panel,
-                           .view = rd_state->drag_drop_regs->view,
-                           .dir2 = dir);
+                    rd_panel_drag_drop(panel->cfg->id, dir, 0);
                   }
                   else
                   {
-                    uishell_cmd("move_view",
-                           .dst_panel = panel->cfg->id,
-                           .panel = rd_state->drag_drop_regs->panel,
-                           .view = rd_state->drag_drop_regs->view,
-                           .prev_tab = cfg_node_ptr_list_last(&panel->tabs)->id);
+                    rd_panel_drag_drop(panel->cfg->id, Dir2_Invalid, cfg_node_ptr_list_last(&panel->tabs)->id);
                   }
                 }
               }
@@ -4185,7 +4215,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //
           UI_Key catchall_drop_site_key = ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panel->cfg);
           if(build_panel && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
-             rd_dock_drag_target(cfg_node_from_id(rd_state->drag_drop_regs->view), panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid))) UI_Rect(panel_rect)
+             rd_panel_drag_target(cfg_node_from_id(rd_state->drag_drop_regs->view), panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid))) UI_Rect(panel_rect)
           {
             UI_Box *catchall_drop_site = ui_build_box_from_key(UI_BoxFlag_DropSite, catchall_drop_site_key);
             ui_signal_from_box(catchall_drop_site);
@@ -4777,11 +4807,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //
           if(tab_drop_is_active && rd_drag_drop() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View)
           {
-            uishell_cmd("move_view",
-                   .dst_panel = panel->cfg->id,
-                   .panel     = rd_state->drag_drop_regs->panel,
-                   .view     = rd_state->drag_drop_regs->view,
-                   .prev_tab  = tab_drop_prev->id);
+            rd_panel_drag_drop(panel->cfg->id, Dir2_Invalid, tab_drop_prev->id);
           }
           
           //////////////////////////
@@ -4863,12 +4889,36 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   F32 footer_height = Min(dim_2f32(rect).y, uishell_sidebar_footer_height(ws));
   Rng2F32 panels_rect = rect;
   panels_rect.y1 -= footer_height;
+  ws->sidebar->pin_before = 0;
   if(root != &cfg_nil_node)
   {
+    if(ws->sidebar->drag_card && mount.panel_tree.root != &cfg_nil_panel_node)
+    {
+      for(CFG_PanelNode *p = mount.panel_tree.root->first; p != &cfg_nil_panel_node; p = p->next)
+      {
+        Rng2F32 target = cfg_target_rect_from_panel_node(panels_rect, mount.panel_tree.root, p);
+        if(ui_mouse().y < center_2f32(target).y) { ws->sidebar->pin_before = p->cfg->id; break; }
+      }
+    }
     uishell_sidebar_size_panels(split, &mount, panels_rect);
     rd_panel_area_ui(scratch, panels_rect, rect, ws, &mount, wm_window_is_focused(ws->os), 0, 0, 0, 0);
   }
   uishell_sidebar_footer_ui(r2f32p(rect.x0, panels_rect.y1, rect.x1, rect.y1), split);
+  // These are control-surface edges, not outer workspace edges. The panel
+  // resolver omits its boundary; the control host owns the top and resize seam.
+  F32 border = floor_f32(Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_border_px")), 4.f));
+  if(border >= 1.f)
+  {
+    Rng2F32 edges[] = {
+      rd_panel_frame_segment_rect(Axis2_Y, Side_Min, rect.y0, r1f32(rect.x0, rect.x1), border),
+      rd_panel_frame_segment_rect(Axis2_X, Side_Max, rect.x1, r1f32(rect.y0, rect.y1), border),
+    };
+    for(U64 i = 0; i < ArrayCount(edges); i++)
+    {
+      ui_set_next_background_color(ui_color_from_name(str8_lit("border")));
+      UI_Rect(edges[i]) { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
+    }
+  }
   scratch_end(scratch);
 }
 
@@ -7680,6 +7730,7 @@ rd_window_frame(void)
       }
     }
     
+    uishell_sidebar_cards_dispatch(ws);
     ui_end_build();
   }
   
@@ -11077,6 +11128,7 @@ rd_frame(void)
         CFG_Node *cfg = cfg_node_from_id(ws->cfg_id);
         if(cfg == &cfg_nil_node || ws->last_frame_index_touched < rd_state->frame_index || rd_state->quit)
         {
+          rd_drag_kill_from_window(ws->cfg_id);
           uishell_sidebar_release(ws->sidebar);
           ui_state_release(ws->ui);
           r_window_unequip(ws->os, ws->r);

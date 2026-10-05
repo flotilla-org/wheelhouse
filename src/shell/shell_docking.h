@@ -100,6 +100,7 @@ struct RD_DockProposal
 // This is also the UI registration list. Adding a View requires declaring its
 // traits here, so enumeration and rendering cannot acquire separate lists.
 #define RD_DOCK_RENDERED_VIEWS(X) \
+  X(pinned_cards, pinned_cards, RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_ControlSplitScope, 0, Sidebar) \
   X(sidebar_section, sidebar_section, RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_ControlSplitScope, 0, Sidebar) \
   X(text, shell_text, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(jackstay, jackstay, RD_ViewTrait_Content, 0, WorkspaceRegion) \

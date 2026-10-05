@@ -41,10 +41,25 @@ struct UIShell_SidebarSection
   B32 collapsed;
 };
 
+typedef enum UIShell_CardPlacement
+{
+  UIShell_CardPlacement_Transient,
+  UIShell_CardPlacement_Float,
+  UIShell_CardPlacement_Inline,
+  UIShell_CardPlacement_Pinned,
+} UIShell_CardPlacement;
+
 typedef struct UIShell_HoverCard UIShell_HoverCard;
 struct UIShell_HoverCard
 {
-  Arena *arena;
+  UIShell_HoverCard *next;
+  UI_HoverCardMask mask;
+  CFG_ID saved;
+  UIShell_CardPlacement placement, requested;
+  B32 move_requested, moving, drag_released;
+  Vec2F32 move_origin;
+  String8 source_key, source_row, retained_label;
+  Arena *arena, *label_arena;
   AndamentoEntity *path;
   AndamentoEntity previous, candidate;
   String8 context;
@@ -53,7 +68,7 @@ struct UIShell_HoverCard
   Rng2F32 source_rect, rect;
   Vec2F32 departure, last_mouse, glide_from;
   B32 open, engaged, focused, contains_current, source_seen, corridor_active, enriched;
-  F32 scroll;
+  F32 scroll, content_height;
 };
 
 typedef struct UIShell_SidebarLabel UIShell_SidebarLabel;
@@ -95,6 +110,12 @@ struct UIShell_SidebarState
   AndamentoSnapshot *labels_snapshot;
   UIShell_SidebarSection *sections;
   UIShell_HoverCard cards[2];
+  UIShell_HoverCard *detached;
+  CFG_ID pin_before, pin_reveal;
+  UIShell_HoverCard *drag_card;
+  CFG_ID card_drop_panel;
+  Dir2 card_drop_direction;
+  U64 pin_cfg_generation;
   Rng2F32 rect;
   B32 card_escape_down;
   AndamentoEntity card_action_target;
@@ -235,6 +256,7 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     for(U64 i = 0; i < ArrayCount(state->cards); i++)
     {
       if(state->cards[i].arena) { arena_release(state->cards[i].arena); }
+      if(state->cards[i].label_arena) { arena_release(state->cards[i].label_arena); }
       MemoryZeroStruct(&state->cards[i]);
     }
     uishell_sidebar_display_wake_release(state->display_wakeup);
@@ -249,6 +271,13 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     state->display_wakeup_at = 0;
     uishell_sidebar_labels_invalidate(state);
     if(state->labels_arena) { arena_release(state->labels_arena); state->labels_arena = 0; }
+
+    for(UIShell_HoverCard *c = state->detached; c; c = c->next)
+    {
+      if(c->arena) { arena_release(c->arena); }
+      if(c->label_arena) { arena_release(c->label_arena); }
+    }
+    state->detached = state->drag_card = 0;
     andamento_snapshot_release(state->snapshot);
     andamento_destroy(state->core);
     state->snapshot = 0;
@@ -301,8 +330,15 @@ uishell_sidebar_labels_diagnostics(void)
   uishell_sidebar_labels_invalidate(&state);
   // Released state can be reused by native fixture lifecycles without a
   // dangling arena, including an idempotent second release.
+  UIShell_HoverCard detached[2] = {0};
+  detached[0].next = &detached[1]; state.detached = &detached[0]; state.drag_card = &detached[1];
+  for(U64 i = 0; i < ArrayCount(detached); i++)
+  {
+    detached[i].arena = arena_alloc(); detached[i].label_arena = arena_alloc();
+    state.cards[i].arena = arena_alloc(); state.cards[i].label_arena = arena_alloc();
+  }
   uishell_sidebar_release(&state);
-  ok &= !state.labels_arena;
+  ok &= !state.labels_arena && !state.detached && !state.drag_card && !state.cards[0].arena && !state.cards[1].label_arena;
   uishell_sidebar_release(&state);
   ok &= str8_match(uishell_sidebar_context_label(&state, nodes, ArrayCount(nodes), first), str8_lit("replacement"), 0);
   uishell_sidebar_release(&state);
@@ -943,6 +979,24 @@ uishell_sidebar_button(String8 text)
   return ui_signal_from_box(box);
 }
 
+// Sections and cards share a left-side grip; the owner supplies the drag action.
+internal UI_Signal
+uishell_sidebar_grip(String8 key, String8 description)
+{
+  UI_Signal signal = {0};
+  UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
+  UI_HoverCursor(WM_Cursor_HandPoint) RD_Font(RD_FontSlot_Main)
+  {
+    UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|
+      UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DisableTruncatedHover,
+      "⋮⋮###%S", key);
+    signal = ui_signal_from_box(box);
+    if(ui_hovering(signal)) UI_Tooltip
+    { ui_state->tooltip_anchor_key = box->key; RD_Font(RD_FontSlot_Main) { ui_label(description); } }
+  }
+  return signal;
+}
+
 // Use the shell's icon-font expander, not a text-font '>' in a narrow label.
 // Padding and truncation are inappropriate for this fixed-size glyph.
 internal UI_Signal
@@ -1344,9 +1398,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     }
   }
   if(!section_panel) { state->rect = rect; }
-  // All sections share one state. The first rendered section consumes a queued
-  // hover-card action; a header/row click is dispatched by its own section.
-  size_t action = uishell_sidebar_card_take_action(state);
+  // A header/row click is dispatched by its own section. Card intent is
+  // consumed after all Views finish rendering, including later pinned areas.
+  size_t action = ANDAMENTO_NONE;
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size(), row_height = floor_f32(em*2.2f);
   F32 minimum_name = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, str8_lit("abcdefghij…")).x+em;
@@ -1483,6 +1537,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       }
       rows[n] += node_rows;
       F32 node_height = node_rows*row_height;
+      node_height += uishell_sidebar_inline_height(state, uishell_sidebar_string(nodes[i].key));
       U64 owner = project_owner[i];
       if(owner != ANDAMENTO_NONE && owner != i)
       {
@@ -1541,6 +1596,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       {
         B32 toggle = 0;
         ui_spacer(ui_em(0.3f, 1));
+        if(section_panel) UI_PrefWidth(ui_em(1.5f, 1))
+        {
+          UI_Signal drag = uishell_sidebar_grip(str8_lit("section_drag"), str8_lit("Drag section"));
+          if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
+          { rd_drag_begin(UIShell_ContextRegSlot_View); }
+        }
         toggle |= ui_clicked(uishell_sidebar_disclosure(!states[n]->collapsed, push_str8f(scratch.arena, "###section_toggle_%S", key)));
         UI_PrefWidth(ui_pct(1, 0))
         { toggle |= ui_clicked(uishell_sidebar_button(push_str8f(scratch.arena, "%S###section_%S", upper_from_str8(scratch.arena, title), key))); }
@@ -1573,9 +1634,6 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           B32 engaged = !ui_box_is_nil(previous) && contains_2f32(previous->rect, ui_mouse());
           UI_PrefWidth(ui_em(1.5f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
           {
-            UI_Signal drag = uishell_sidebar_button(engaged ? str8_lit("↕###section_drag") : str8_lit("###section_drag"));
-            if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
-            { rd_drag_begin(UIShell_ContextRegSlot_View); }
             UI_Signal close = uishell_sidebar_button(engaged ? str8_lit("×###section_close") : str8_lit("###section_close"));
             if(engaged && ui_clicked(close) && rd_dock_can_close(view)) { uishell_cmd("close_tab"); }
           }
@@ -1892,6 +1950,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             ui_pop_parent();
             ui_spacer(ui_px(4.f, 1));
             ui_pop_parent();
+          }
+          if(!node.is_section)
+          {
+            F32 inline_height = uishell_sidebar_inline_height(state, node_key);
+            uishell_sidebar_inline_ui(ws, node_key, Max(0.f, dim_2f32(region.viewport).x-8));
+            row_y += inline_height;
           }
           for(U64 c = 0; !node.is_section && c < node.control_count; c++)
           {
@@ -2247,9 +2311,15 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
     state->placement_count = count;
     state->placement_cache_builds++;
   }
-  // A present immutable snapshot is authoritative, including zero sections.
-  // Only provider acquisition failure (the null guard above) preserves old ids.
-  return uishell_sidebar_reconcile_regions(split->owner_cfg, state->placement_regions, state->placement_count);
+  // Reconcile declared regions first, then deduplicate saved card identities.
+  // Pins are independent Views and survive authoritative section removal.
+  CFG_Node *root = uishell_sidebar_reconcile_regions(split->owner_cfg, state->placement_regions, state->placement_count);
+  if(state->pin_cfg_generation != cfg_change_gen())
+  {
+    uishell_sidebar_pin_deduplicate(split->owner_cfg, split->owner_cfg);
+    state->pin_cfg_generation = cfg_change_gen();
+  }
+  return root;
 }
 
 // Dragging opts into saved ratios. Double-clicking a sidebar boundary or an
