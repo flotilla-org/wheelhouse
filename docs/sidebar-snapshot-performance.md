@@ -176,3 +176,7 @@ The benchmark also isolates/restores the section inventory with its temporary
 layout; otherwise the new remembered-closed semantics suppress fixture views.
 The visible-section regression assertion caught this integration mismatch.
 Repeated teardown now checks placement-cache pointers as well.
+Merged fixtures select Projects/Attention and their partner sections by
+region identity rather than assuming a flat positional panel order; the
+new reconciler can retain nested containers. The visibility assertion also
+caught the old positional merge setup.

@@ -113,17 +113,17 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
       {
         // Pair Projects/Sessions and Attention/Git, keeping both expensive
         // views visible while exercising the production merged-tab host.
-        CFG_Node *destinations[2] = {host->first, host->first->next->next};
-        for(U64 pair = 0; pair < 2; pair++)
+        String8 destinations[] = {str8_lit("tree"), str8_lit("attention")};
+        String8 sources[] = {str8_lit("sessions"), str8_lit("git")};
+        for(U64 pair = 0; pair < ArrayCount(destinations); pair++)
         {
-          CFG_Node *destination = destinations[pair], *source = destination->next;
-          CFG_Node *view = cfg_node_child_from_string(source, str8_lit("sidebar_section"));
-          CFG_Node *selected = cfg_node_child_from_string(destination, str8_lit("sidebar_section"));
-          cfg_node_unhook(rd_state->cfg, source, view);
+          CFG_Node *selected = uishell_sidebar_region_view(window, destinations[pair]);
+          CFG_Node *view = uishell_sidebar_region_view(window, sources[pair]);
+          CFG_Node *destination = selected->parent, *source = view->parent;
           cfg_node_insert_child(rd_state->cfg, destination, destination->last, view);
           cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("selected")));
           cfg_node_child_from_string_or_alloc(rd_state->cfg, selected, str8_lit("selected"));
-          cfg_node_release(rd_state->cfg, source);
+          uishell_sidebar_prune_empty_panel(source);
         }
       }
       for(U64 scrolling = 0; scrolling < inputs; scrolling++)
