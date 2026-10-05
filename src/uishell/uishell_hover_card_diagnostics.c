@@ -319,9 +319,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                 fixture.cards[1].open && fixture.cards[1].focused &&
                 str8_match(uishell_sidebar_string(fixture.cards[1].path[0].id), uishell_sidebar_string(parent.entity_id), 0),
                 "modifier-click opens a separate focused card without changing the original path");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Close"), 0) && !card->open &&
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, rd_icon_kind_text_table[RD_IconKind_X], 0) && !card->open &&
                 fixture.cards[1].open && fixture.cards[1].focused, "closing the original leaves the separate card open and focused");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, &fixture.cards[1], str8_lit("Close"), 0) &&
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, &fixture.cards[1], rd_icon_kind_text_table[RD_IconKind_X], 0) &&
                 !fixture.cards[1].open, "the separate card closes through its own action");
       // Hidden targets navigate by catalog identity, including cycles and
       // modifier-open. No placement-edge fallback may invent a relation.
@@ -350,9 +350,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Unavailable"), 0),
                 "unavailable relation targets do not expose a navigation button");
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
-      CardCheck(!card->enriched && uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Details"), 0) && card->enriched,
+      CardCheck(!card->enriched && uishell_hover_card_test_click(ws, &fixture, card, rd_icon_kind_text_table[RD_IconKind_Info], 0) && card->enriched,
                 "engaged Details button reveals labels and observation ages");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Details"), 0) && !card->enriched,
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, rd_icon_kind_text_table[RD_IconKind_Info], 0) && !card->enriched,
                 "Details button returns to compact mode");
       // Full production layout catches fixed-rectangle scope leakage into
       // fields and buttons, rather than only testing their existence.
@@ -480,8 +480,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                     "keyboard-focused child keeps its focus indication");
           String8 text = ui_box_display_string(hot);
           saw_back |= str8_match(text, str8_lit("← Back"), 0);
-          saw_close |= str8_match(text, str8_lit("Close"), 0);
-          saw_related |= !saw_back && !saw_close && !!(hot->flags & UI_BoxFlag_Clickable);
+          saw_close |= saw_back && saw_related && str8_match(text, rd_icon_kind_text_table[RD_IconKind_X], 0);
+          saw_related |= !saw_back && !saw_close && str8_find_needle(hot->string, 0, str8_lit("###related_"), 0) < hot->string.size;
         }
       }
       CardCheck(saw_related && saw_back && saw_close && !card->open && !test->hover_card_focus,
@@ -684,7 +684,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
               uishell_sidebar_card_target_valid(ws, UIShell_CardPlacement_Inline, 0) &&
               uishell_sidebar_card_target_valid(ws, UIShell_CardPlacement_Pinned, 0),
               "all detached targets use the shared checker with zero minimum width");
-    CardCheck(uishell_hover_card_test_click(ws, &fixture, original, str8_lit("Float"), 0) && original->move_requested,
+    CardCheck(uishell_hover_card_test_click(ws, &fixture, original, rd_icon_kind_text_table[RD_IconKind_Window], 0) && original->move_requested,
               "actual Float control requests detachment");
     uishell_sidebar_detached_finish(ws);
     UIShell_HoverCard *floating = fixture.detached;
@@ -851,11 +851,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       test->mouse = pointer;
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
       { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+      uishell_sidebar_card_drag_finish(ws);
       ui_end_build();
       if(frame == 0)
       {
         for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
-        { if(str8_match(ui_box_display_string(box), str8_lit("↕ Drag"), 0)) { drag_start = center_2f32(box->rect); break; } }
+        { if(str8_match(ui_box_display_string(box), str8_lit("⋮⋮"), 0)) { drag_start = center_2f32(box->rect); break; } }
         CardCheck(drag_start.x > 0, "engaged production overlay exposes the drag control");
       }
       if(frame == 2) { CardCheck(original->moving && original->open, "native drag motion detaches the overlay from its anchor"); }
@@ -950,6 +951,63 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     for(CFG_Node *n = merged_host->first; n != &cfg_nil_node; n = n->next) { sum += (F32)f64_from_str8(n->string); }
     CardCheck(abs_f32(sum-1) < .0001f, "new area normalizes saved panel ratios");
     cfg_node_release(rd_state->cfg, merged_host);
+    cfg_node_insert_child(rd_state->cfg, window, window->last, old_host);
+
+    fprintf(stderr, "Hover card diagnostics: shared panel drops\n");
+    // A center joins its target; directional drops use the ordinary split
+    // command and retain the measured ratios, rather than global rebalancing.
+    cfg_node_unhook(rd_state->cfg, window, old_host);
+    B32 sized_before = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
+    Dir2 directions[] = {Dir2_Invalid, Dir2_Up, Dir2_Down, Dir2_Left, Dir2_Right};
+    for(U64 d = 0; d < ArrayCount(directions); d++)
+    {
+      CFG_Node *host = cfg_node_new(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
+      CFG_Node *existing = cfg_node_new(rd_state->cfg, host, str8_lit("pinned_cards"));
+      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+      original->engaged = original->focused = original->moving = original->drag_released = 1;
+      fixture.drag_card = original;
+      UIShell_RegsScope(.window = window->id, .view = 0, .panel = 0)
+      { rd_drag_begin(UIShell_ContextRegSlot_View); }
+      rd_state->drag_drop_creation_name = str8_lit("pinned_cards");
+      rd_state->drag_drop_commit = uishell_sidebar_card_panel_drop;
+      CardCheck(rd_panel_drag_target(&cfg_nil_node, host, 320), "creation drag uses the registered panel validity checker");
+      rd_state->drag_drop_state = RD_DragDropState_Dropping;
+      UIShell_CmdNode *before_drop = rd_state->cmds[0].last;
+      if(rd_drag_drop()) { rd_panel_drag_drop(host->id, directions[d], existing->id); }
+      UI_EventList drop_events = {0};
+      ui_begin_build(ws->os, &drop_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      test->mouse = v2f32(500, 100);
+      uishell_sidebar_card_drag_finish(ws);
+      ui_end_build();
+      CFG_Node *entry = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0);
+      CFG_Node *area = entry->parent;
+      for(UIShell_CmdNode *n = before_drop ? before_drop->next : rd_state->cmds[0].first; n; n = n->next)
+      {
+        if(str8_match(n->cmd.name, str8_lit("split_panel"), 0)) UIShell_RegsScope()
+        { MemoryCopyStruct(uishell_regs(), n->cmd.regs); uishell_dispatch_panel_command(n->cmd.name); }
+      }
+      CFG_Node *settled_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+      Temp drop_scratch = scratch_begin(0, 0);
+      UIShell_WorkspaceMount drop_mount = uishell_workspace_mount_from_owner_cfg(drop_scratch.arena, window, settled_host);
+      CFG_PanelNode *drop_root = drop_mount.panel_tree.root;
+      CardCheck(entry != &cfg_nil_node && !original->open &&
+        cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node,
+        "accepted card drop pins once and opts into saved panel sizing");
+      if(directions[d] == Dir2_Invalid)
+      { CardCheck(area == existing && drop_root->child_count == 0, "center drop joins the exact existing pinned area"); }
+      else
+      {
+        Side side = side_from_dir2(directions[d]);
+        CFG_PanelNode *placed = side == Side_Min ? drop_root->first : drop_root->last;
+        CardCheck(drop_root->child_count == 2 && drop_root->split_axis == axis2_from_dir2(directions[d]) &&
+          placed->cfg == area->parent && abs_f32(placed->pct_of_parent-.5f) < .0001f,
+          "directional card drop matches the ordinary half-panel split and side");
+      }
+      scratch_end(drop_scratch);
+      cfg_node_release(rd_state->cfg, settled_host);
+      rd_state->drag_drop_creation_name = str8_zero(); rd_state->drag_drop_commit = 0;
+    }
+    uishell_sidebar_manual_sizing(window, sized_before);
     cfg_node_insert_child(rd_state->cfg, window, window->last, old_host);
 
     // The empty ordinary areas are confined to this diagnostic's disposable profile.

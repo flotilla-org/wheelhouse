@@ -935,6 +935,9 @@ struct RD_State
   UIShell_Regs *drag_drop_regs;
   UIShell_ContextRegSlot drag_drop_regs_slot;
   RD_DragDropState drag_drop_state;
+  // Creation drags share panel sites without allocating a saved View until drop.
+  String8 drag_drop_creation_name;
+  void (*drag_drop_commit)(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
 
   // rjf: cfg state
   CFG_State *cfg;

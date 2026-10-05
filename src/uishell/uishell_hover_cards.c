@@ -250,6 +250,9 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
   if(!ws || ws == &rd_nil_window_state || !ws->sidebar || !ws->ui) { return 0; }
   UIShell_SidebarState *state = ws->sidebar;
   uishell_sidebar_detached_bounds(ws);
+  if(state->drag_card && event->kind == WM_EventKind_WindowLoseFocus) { rd_drag_kill(); }
+  if(state->drag_card && event->kind == WM_EventKind_Release && event->key == WM_Key_LeftMouseButton)
+  { state->drag_card->drag_released = 1; rd_request_frame(); return 1; }
   UIShell_HoverCard *float_hit = 0, *section_hit = 0;
   for(UIShell_HoverCard *c = state->detached; c; c = c->next)
   {
@@ -404,6 +407,10 @@ uishell_sidebar_card_role_text(UIShell_SidebarState *state, U64 index, U32 role)
   return str8_zero();
 }
 
+internal UI_Signal uishell_sidebar_card_icon_button(String8 glyph, String8 key, String8 description);
+internal void uishell_sidebar_card_drag_control(UIShell_HoverCard *card);
+internal void uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width);
+
 internal void
 uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card,
                             U64 index, AndamentoDetail detail, F32 width, B32 interactive)
@@ -413,22 +420,17 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
   String8 badge = uishell_sidebar_card_role_text(state, index, ANDAMENTO_DETAIL_STATE);
   if(!identity.size) { identity = uishell_sidebar_string(detail.entity.id); }
   if(!title.size) { title = uishell_sidebar_string(detail.label); }
-  F32 details_width = interactive ? ui_top_font_size()*4.5f : 0;
+  F32 grip_width = interactive ? ui_top_font_size()*1.4f : 0;
+  U64 move_count = card->placement == UIShell_CardPlacement_Transient ? 4 : 3;
+  F32 controls_width = interactive ? ui_top_font_size()*1.4f*(move_count+1) : 0;
   F32 badge_width = badge.size ? Min(width*0.3f, fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, ui_top_tab_size(), badge).x+ui_top_font_size()) : 0;
   UI_Row
   {
+    if(interactive) { UI_PrefWidth(ui_px(grip_width, 1)) { uishell_sidebar_card_drag_control(card); } }
     UI_PrefWidth(ui_em(1.4f, 1)) RD_Font(RD_FontSlot_Icons)
     { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_icon(detail.entity.kind)]); }
-    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-details_width), 1)) UI_TagF("weak")
+    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-grip_width-controls_width), 1)) UI_TagF("weak")
     { ui_label(identity); }
-    if(interactive)
-    {
-      UI_PrefWidth(ui_px(details_width, 1)) UI_TagF("weak")
-      {
-        if(ui_clicked(uishell_sidebar_button(str8_lit("Details###card_details"))))
-        { card->enriched = !card->enriched; rd_request_frame(); }
-      }
-    }
     if(badge.size)
     {
       UI_PrefWidth(ui_px(badge_width, 1)) UI_CornerRadius(ui_top_font_size()*0.3f)
@@ -436,6 +438,17 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
         UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder, "%S###state_badge", badge);
         ui_box_equip_display_string(box, badge);
       }
+    }
+    if(interactive)
+    {
+      UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+      UI_TagF("weak") RD_Font(RD_FontSlot_Icons)
+      {
+        if(ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Info], str8_lit("card_details"),
+          card->enriched ? str8_lit("Hide details") : str8_lit("Show details"))))
+        { card->enriched = !card->enriched; rd_request_frame(); }
+      }
+      uishell_sidebar_card_move_controls(card, width);
     }
   }
   if(!str8_match(identity, title, 0)) { ui_label_multiline(width, title); }
@@ -589,7 +602,6 @@ uishell_sidebar_card_preview(RD_WindowState *ws, U64 slot, AndamentoNode node, F
   }
 }
 
-internal void uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width);
 internal void uishell_sidebar_detached_finish(RD_WindowState *ws);
 
 internal size_t
@@ -597,7 +609,6 @@ uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card
 {
   size_t action = ANDAMENTO_NONE;
   ui_spacer(ui_em(0.5f, 1));
-  uishell_sidebar_card_move_controls(card, width);
   if(card->depth > 1 && ui_clicked(uishell_sidebar_button(str8_lit("← Back###card_back"))))
   {
     card->previous = card->path[card->depth-1]; card->depth--;
@@ -612,7 +623,7 @@ uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card
     AndamentoDetailAction control = {0};
     if(andamento_snapshot_detail_action(state->snapshot, index, i, &control)) { controls[control_count++] = control; }
   }
-  F32 button_width = width/(control_count+1);
+  F32 button_width = control_count ? width/control_count : width;
   UI_Row
   {
     for(U64 i = 0; i < control_count; i++)
@@ -630,8 +641,6 @@ uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card
         }
       }
     }
-    UI_PrefWidth(ui_px(button_width, 1))
-    { if(ui_clicked(uishell_sidebar_button(str8_lit("Close###card_close")))) { uishell_sidebar_card_close(card); rd_request_frame(); } }
   }
   return action;
 }
@@ -713,9 +722,12 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     c->mask.key = ui_key_from_stringf(ui_key_zero(), "###detached_card_%p", c);
     c->mask.rect = c->rect;
     c->mask.next = 0;
-    UI_HoverCardMask **tail = &ui_state->hover_card_extra;
-    while(*tail) { tail = &(*tail)->next; }
-    *tail = &c->mask;
+    if(!c->moving)
+    {
+      UI_HoverCardMask **tail = &ui_state->hover_card_extra;
+      while(*tail) { tail = &(*tail)->next; }
+      *tail = &c->mask;
+    }
   }
   // Seed both previous-frame bounds before building the lower card's controls.
   // Raw WM routing also uses these bounds; each layout refreshes its own mask.
@@ -732,6 +744,12 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
   for(U64 slot = card_count; slot-- > 0;)
   {
     UIShell_HoverCard *card = cards[slot];
+    if(card->moving && state->drag_card == card)
+    {
+      Vec2F32 size = dim_2f32(card->rect), position = add_2f32(card->move_origin, ui_drag_delta());
+      card->rect = r2f32(position, add_2f32(position, size));
+      rd_request_frame();
+    }
     B32 floating = card->placement == UIShell_CardPlacement_Float || card->moving;
     UI_Box *dismissed = ui_box_from_key(card->dismissed);
     if(ui_box_is_nil(dismissed) || !contains_2f32(dismissed->rect, mouse)) { card->dismissed = ui_key_zero(); }
@@ -776,7 +794,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     { pos.x = Clamp(window.x0+10, pos.x, window.x1-width-10); pos.y = Clamp(window.y0+10, pos.y, window.y1-height-10); }
     card->rect = r2f32p(pos.x, pos.y, pos.x+width, pos.y+height);
     if(slot >= ArrayCount(state->cards)) { card->mask.rect = card->rect; }
-    else { ui_state->hover_card_keys[slot] = key; ui_state->hover_card_rects[slot] = card->rect; }
+    else { ui_state->hover_card_keys[slot] = card->moving ? ui_key_zero() : key; ui_state->hover_card_rects[slot] = card->rect; }
     card->last_mouse = mouse;
     size_t action = ANDAMENTO_NONE;
     UI_Parent(ui_state->root) UI_TagF("floating")
@@ -850,16 +868,19 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     }
     if(card->moving)
     {
-      UIShell_CardPlacement destination = uishell_sidebar_card_drag_target(ws, card, mouse);
-      F32 target_width = destination == UIShell_CardPlacement_Float ? width : dim_2f32(state->rect).x;
-      if(uishell_sidebar_card_target_valid(ws, destination, target_width))
+      if(slot < ArrayCount(state->cards)) { ui_state->hover_card_keys[slot] = ui_key_zero(); }
+      else
       {
-        String8 label = destination == UIShell_CardPlacement_Float ? str8_lit("Float") :
-          destination == UIShell_CardPlacement_Inline ? str8_lit("Dock under source") : str8_lit("Pin here");
-        UI_Parent(ui_state->root) UI_TagF("floating") UI_Rect(r2f32p(mouse.x+12, mouse.y+16, mouse.x+180, mouse.y+16+em*2))
-        { UI_Box *feedback = ui_build_box_from_stringf(UI_BoxFlag_DrawText|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder, "###card_drop_%p", card);
-          ui_box_equip_display_string(feedback, label); }
+        for(UI_HoverCardMask **m = &ui_state->hover_card_extra; *m; m = &(*m)->next)
+        { if(*m == &card->mask) { *m = card->mask.next; break; } }
       }
+    }
+    if(card->moving && uishell_sidebar_card_drag_target(ws, card, mouse) == UIShell_CardPlacement_Inline)
+    {
+      UI_Box *source = ui_box_from_key(card->source);
+      if(!ui_box_is_nil(source)) UI_Parent(ui_state->root) UI_TagF("drop_site")
+      UI_Rect(source->rect) UI_CornerRadius(ui_top_font_size()*2.f)
+      { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder, ui_key_zero()); }
     }
     if(action != ANDAMENTO_NONE) { uishell_sidebar_card_queue_action(state, node, action); rd_request_frame(); }
   }
@@ -880,6 +901,7 @@ uishell_sidebar_cards_dispatch(RD_WindowState *ws)
 {
   UIShell_SidebarState *state = ws->sidebar;
   if(!state) { return; }
+  uishell_sidebar_card_drag_finish(ws);
   size_t pending = uishell_sidebar_card_take_action(state);
   if(pending != ANDAMENTO_NONE && state->core)
   {

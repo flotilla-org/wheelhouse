@@ -1,9 +1,12 @@
 # Detached hover cards
 
-Engaged cards expose Drag, Pin, Under source and Float. Dragging past ten points
-releases the card from its hover anchor. The drop label shows the destination:
-Float over the workspace, Dock under source over the visible source, or Pin here
-elsewhere in the sidebar. All three destinations use `rd_dock_check` and the
+Engaged cards expose a dotted drag grip at the left of the header, with compact
+Show details, Float, Dock under source, Pin and Close icons at the right. Hover
+an icon for its label. Detached cards omit their current destination icon.
+Dragging past ten points releases the card from its hover anchor. Sidebar drops
+use the same target widgets and animated highlights as ordinary panel drags.
+A drop over the source docks inline; a release without a selected panel target
+floats over the workspace. All three destinations use `rd_dock_check` and the
 registered card section's zero minimum width.
 
 Floating cards stay open after mouse-out and source removal. Under source inserts
@@ -14,9 +17,12 @@ card. Floats and inline cards last for the current run.
 
 Pinned areas are ordinary `pinned_cards` Views in `control_views`. Their headers
 move the area through the shared docking system; compact tabs appear when areas
-share a panel. A card dragged elsewhere in the sidebar creates an area at that
-position in the root arrangement. Existing merged tabs and panel proportions are
-preserved. Pins save exact kind/id and a fallback label in the RAD-derived layout,
+share a panel. A card dropped on a split target creates an area through the
+ordinary panel split command, including nested layouts. A center drop joins an
+existing pinned area or creates a tab in that panel. The sidebar retains those
+split ratios instead of applying automatic content sizing after the drop.
+Existing merged tabs are preserved. Pins save exact kind/id and a fallback label
+in the RAD-derived layout,
 without changing KDL. Pinning an entity again selects and scrolls to its existing
 card. Moving it to another area keeps the same saved card identity. An area emptied
 by a move remains available for another pin, with a “Drag or pin a card here”
@@ -51,9 +57,9 @@ tree, close a pin, and restart with the same disposable profile.
 
 ## Automated evidence
 
-The macOS debug build uses CI-pinned Cleat `00c072b`, Andamento `9718ba1` and
+The macOS debug build uses CI-pinned Cleat `00c072b`, Andamento `08315d2` and
 Jackstay `91156bf`. Docking validity, generated-source checks, the embedded-fixture
-locale/newline test and all 27 native sidebar ABI tests pass. The ten native
+locale/newline test and all 28 native sidebar ABI tests pass. The ten native
 diagnostic groups pass: shared UI, terminal selection, sidebar, scroll region,
 preview, terminal links, tooltip, panel, managed content and terminal glyphs.
 
@@ -64,6 +70,8 @@ feedback, inline measured height, source removal, the pinned View's measured bod
 and clipped hit geometry, duplicate-pin reveal, moving between areas, copied-layout
 deduplication, saved-layout serialization/reload, missing-subject display, explicit
 pin removal, and preservation of a merged sidebar when another area is added.
+Center and four-direction card drops exercise the shared panel callback, ordinary
+split command, exact destination side and saved split sizing.
 Saved-layout tolerance covers unknown entity kinds, missing identity fields,
 extra fields and duplicate identities through reconciliation, serialization and
 actual pinned View rendering. Unknown or incomplete entries remain closable with

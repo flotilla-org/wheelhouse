@@ -56,7 +56,7 @@ struct UIShell_HoverCard
   UI_HoverCardMask mask;
   CFG_ID saved;
   UIShell_CardPlacement placement, requested;
-  B32 move_requested, moving;
+  B32 move_requested, moving, drag_released;
   Vec2F32 move_origin;
   String8 source_key, source_row, retained_label;
   Arena *arena, *label_arena;
@@ -112,6 +112,9 @@ struct UIShell_SidebarState
   UIShell_HoverCard cards[2];
   UIShell_HoverCard *detached;
   CFG_ID pin_before, pin_reveal;
+  UIShell_HoverCard *drag_card;
+  CFG_ID card_drop_panel;
+  Dir2 card_drop_direction;
   U64 pin_cfg_generation;
   Rng2F32 rect;
   B32 card_escape_down;

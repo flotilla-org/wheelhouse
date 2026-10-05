@@ -1,3 +1,4 @@
+internal void uishell_sidebar_manual_sizing(CFG_Node *window, B32 manual);
 // Detached presentation belongs to the card controller. Pinned areas are
 // ordinary registered Views in the RAD-derived panel tree, never KDL edits.
 internal B32
@@ -16,29 +17,79 @@ internal void
 uishell_sidebar_card_request(UIShell_HoverCard *card, UIShell_CardPlacement placement)
 { card->requested = placement; card->move_requested = 1; rd_request_frame(); }
 
+// Card furniture follows the prototype header: a quiet grip at the left,
+// compact destination icons at the right, and labelled entity actions below.
+internal UI_Signal
+uishell_sidebar_card_icon_button(String8 glyph, String8 key, String8 description)
+{
+  UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|
+    UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DisableTruncatedHover,
+    "%S###%S", glyph, key);
+  UI_Signal signal = ui_signal_from_box(box);
+  if(ui_hovering(signal)) UI_Tooltip
+  { ui_state->tooltip_anchor_key = box->key; ui_label(description); }
+  return signal;
+}
+
+internal void
+uishell_sidebar_card_panel_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
+{
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(cfg_node_from_id(rd_state->drag_drop_regs->window));
+  if(ws == &rd_nil_window_state || !ws->sidebar || !ws->sidebar->drag_card) { return; }
+  ws->sidebar->card_drop_panel = destination;
+  ws->sidebar->card_drop_direction = direction;
+}
+
+internal void
+uishell_sidebar_card_drag_control(UIShell_HoverCard *card)
+{
+  UI_Signal drag;
+  UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
+  UI_HoverCursor(WM_Cursor_HandPoint)
+  { drag = uishell_sidebar_card_icon_button(str8_lit("⋮⋮"), str8_lit("card_drag"), str8_lit("Drag card")); }
+  if(ui_pressed(drag)) { card->move_origin = card->rect.p0; }
+  if(ui_dragging(drag) && length_2f32(ui_drag_delta()) > UIShell_HoverCardDragThresholdPT)
+  {
+    if(!card->moving && !rd_drag_is_active())
+    {
+      RD_WindowState *ws = rd_window_state_from_os_handle(ui_state->window);
+      if(ws != &rd_nil_window_state && ws->sidebar)
+      {
+        ws->sidebar->drag_card = card; ws->sidebar->card_drop_panel = 0;
+        UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = 0, .tab = 0) { rd_drag_begin(UIShell_ContextRegSlot_View); }
+        rd_state->drag_drop_creation_name = str8_lit("pinned_cards");
+        rd_state->drag_drop_commit = uishell_sidebar_card_panel_drop;
+      }
+    }
+    card->moving = 1;
+    Vec2F32 size = dim_2f32(card->rect), pos = add_2f32(card->move_origin, ui_drag_delta());
+    card->rect = r2f32p(pos.x, pos.y, pos.x+size.x, pos.y+size.y);
+    rd_request_frame();
+  }
+  if(ui_released(drag) && card->moving)
+  { card->drag_released = 1; rd_request_frame(); }
+}
+
 internal void
 uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width)
 {
-  UI_Row UI_PrefWidth(ui_px(width/4, 1))
+  UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+  UI_TagF("weak") RD_Font(RD_FontSlot_Icons)
   {
-    UI_Signal drag = uishell_sidebar_button(str8_lit("↕ Drag###card_drag"));
-    if(ui_pressed(drag)) { card->move_origin = card->rect.p0; }
-    if(ui_dragging(drag) && length_2f32(ui_drag_delta()) > UIShell_HoverCardDragThresholdPT)
+    if(card->placement != UIShell_CardPlacement_Float &&
+       ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Window], str8_lit("card_float"), str8_lit("Float"))))
+    { uishell_sidebar_card_request(card, UIShell_CardPlacement_Float); }
+    if(card->placement != UIShell_CardPlacement_Inline)
     {
-      card->moving = 1;
-      Vec2F32 size = dim_2f32(card->rect), pos = add_2f32(card->move_origin, ui_drag_delta());
-      card->rect = r2f32p(pos.x, pos.y, pos.x+size.x, pos.y+size.y);
-      rd_request_frame();
+      UI_Flags(card->source_key.size ? 0 : UI_BoxFlag_Disabled)
+      { if(ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_DownArrow], str8_lit("card_inline"), str8_lit("Dock under source"))))
+        { uishell_sidebar_card_request(card, UIShell_CardPlacement_Inline); } }
     }
-    if(ui_released(drag) && card->moving)
-    { uishell_sidebar_card_request(card, UIShell_CardPlacement_Float); }
-    if(ui_clicked(uishell_sidebar_button(str8_lit("Pin###card_pin"))))
+    if(card->placement != UIShell_CardPlacement_Pinned &&
+       ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Pin], str8_lit("card_pin"), str8_lit("Pin"))))
     { uishell_sidebar_card_request(card, UIShell_CardPlacement_Pinned); }
-    UI_Flags(card->source_key.size ? 0 : UI_BoxFlag_Disabled)
-    { if(ui_clicked(uishell_sidebar_button(str8_lit("Under source###card_inline"))))
-      { uishell_sidebar_card_request(card, UIShell_CardPlacement_Inline); } }
-    if(ui_clicked(uishell_sidebar_button(str8_lit("Float###card_float"))))
-    { uishell_sidebar_card_request(card, UIShell_CardPlacement_Float); }
+    if(ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_X], str8_lit("card_close"), str8_lit("Close"))))
+    { uishell_sidebar_card_close(card); rd_request_frame(); }
   }
 }
 
@@ -166,7 +217,30 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
     { if(c->saved == saved->id) { c->scroll = 0; c->focused = 1; } }
     return saved;
   }
+  CFG_Node *destination = cfg_node_from_id(state->card_drop_panel);
   CFG_Node *area = new_area ? &cfg_nil_node : uishell_sidebar_pin_find(window, (AndamentoEntity){0}, 1);
+  if(new_area && destination != &cfg_nil_node)
+  {
+    if(!rd_dock_can_create(str8_lit("pinned_cards"), destination)) { return &cfg_nil_node; }
+    if(state->card_drop_direction == Dir2_Invalid)
+    {
+      for(CFG_Node *v = destination->first; v != &cfg_nil_node; v = v->next)
+      { if(str8_match(v->string, str8_lit("pinned_cards"), 0)) { area = v; break; } }
+    }
+    if(area == &cfg_nil_node)
+    {
+      area = cfg_node_new(rd_state->cfg, destination, str8_lit("pinned_cards"));
+      uishell_sidebar_pin_set_field(area, str8_lit("label"), str8_lit("Pinned"));
+      cfg_node_new(rd_state->cfg, area, str8_lit("selected"));
+      if(state->card_drop_direction != Dir2_Invalid)
+      {
+        uishell_cmd("split_panel", .window = ws->cfg_id, .dst_panel = destination->id,
+          .panel = destination->id, .view = area->id, .dir2 = state->card_drop_direction);
+      }
+    }
+    // Keep the allocation selected by the same split geometry shown during drag.
+    uishell_sidebar_manual_sizing(window, 1);
+  }
   if(area == &cfg_nil_node)
   {
     B32 root_exists = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT) != &cfg_nil_node;
@@ -247,11 +321,14 @@ uishell_sidebar_detached_content(UIShell_SidebarState *state, RD_WindowState *ws
     uishell_sidebar_card_retain_label(card, label);
     return uishell_sidebar_card_content(state, ws, card, slot, node, index, width, interactive);
   }
-  ui_label_multiline(width, card->retained_label);
+  UI_Row
+  {
+    UI_PrefWidth(ui_em(1.4f, 1)) { uishell_sidebar_card_drag_control(card); }
+    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f*5), 1)) { ui_label(card->retained_label); }
+    uishell_sidebar_card_move_controls(card, width);
+  }
   UI_TagF("weak") { ui_label(str8_lit("No longer present")); }
   ui_label_multiline(width, uishell_sidebar_string(card->path[card->depth-1].id));
-  uishell_sidebar_card_move_controls(card, width);
-  if(ui_clicked(uishell_sidebar_button(str8_lit("Close###card_close")))) { uishell_sidebar_card_close(card); }
   return ANDAMENTO_NONE;
 }
 
@@ -275,7 +352,7 @@ uishell_sidebar_card_drag_target(RD_WindowState *ws, UIShell_HoverCard *card, Ve
 internal void
 uishell_sidebar_detached_apply(RD_WindowState *ws, UIShell_HoverCard *card)
 {
-  if(!card->move_requested || !card->open) { return; }
+  if(!card->move_requested || !card->open || (card->moving && ws->sidebar->drag_card == card)) { return; }
   UIShell_CardPlacement placement = card->requested;
   card->move_requested = 0;
   B32 drag = card->moving;
@@ -337,6 +414,41 @@ uishell_sidebar_detached_bounds(RD_WindowState *ws)
     { if(p->flags & UI_BoxFlag_Clip) { c->rect = intersect_2f32(c->rect, p->rect); } }
   }
   ui_select_state(previous);
+}
+
+internal void
+uishell_sidebar_card_drag_finish(RD_WindowState *ws)
+{
+  UIShell_SidebarState *state = ws->sidebar;
+  UIShell_HoverCard *card = state->drag_card;
+  if(!card) { return; }
+  if(!card->open || (!rd_drag_is_active() && !card->drag_released && !state->card_drop_panel))
+  {
+    if(rd_state->drag_drop_commit == uishell_sidebar_card_panel_drop && rd_state->drag_drop_regs->window == ws->cfg_id)
+    { rd_drag_kill(); }
+    card->moving = card->drag_released = 0;
+    state->drag_card = 0; state->card_drop_panel = 0;
+    return;
+  }
+  if(rd_state->drag_drop_state == RD_DragDropState_Dropping) { card->drag_released = 1; }
+  if(!card->drag_released) { return; }
+  UIShell_CardPlacement placement = uishell_sidebar_card_drag_target(ws, card, ui_mouse());
+  if(placement != UIShell_CardPlacement_Inline)
+  { placement = state->card_drop_panel ? UIShell_CardPlacement_Pinned : UIShell_CardPlacement_Float; }
+  rd_drag_kill();
+  state->drag_card = 0;
+  card->drag_released = 0;
+  // A site creates or joins its exact panel; an unmatched release floats.
+  card->moving = 0;
+  uishell_sidebar_card_request(card, placement);
+  if(placement == UIShell_CardPlacement_Pinned)
+  {
+    CFG_Node *saved = uishell_sidebar_card_pin(ws, card, 1);
+    if(saved != &cfg_nil_node && card->saved != saved->id) { uishell_sidebar_card_close(card); }
+    card->move_requested = 0;
+  }
+  else { uishell_sidebar_detached_apply(ws, card); }
+  state->card_drop_panel = 0;
 }
 
 internal void
