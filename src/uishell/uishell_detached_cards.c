@@ -254,6 +254,7 @@ uishell_sidebar_pin_find(CFG_Node *root, AndamentoEntity entity, B32 area_only)
   return &cfg_nil_node;
 }
 
+// As in pin_find, missing kind/entity fields read as empty through the nil sentinel.
 internal void
 uishell_sidebar_pin_deduplicate(CFG_Node *window, CFG_Node *root)
 {
@@ -439,6 +440,14 @@ uishell_sidebar_card_drag_target(RD_WindowState *ws, UIShell_HoverCard *card, Ve
 }
 
 internal void
+uishell_sidebar_card_saved_release(UIShell_HoverCard *card)
+{
+  CFG_Node *saved = cfg_node_from_id(card->saved);
+  if(saved != &cfg_nil_node) { cfg_node_release(rd_state->cfg, saved); }
+  card->saved = 0;
+}
+
+internal void
 uishell_sidebar_detached_apply(RD_WindowState *ws, UIShell_HoverCard *card)
 {
   if(!card->move_requested || !card->open || (card->moving && ws->sidebar->drag_card == card)) { return; }
@@ -463,7 +472,7 @@ uishell_sidebar_detached_apply(RD_WindowState *ws, UIShell_HoverCard *card)
     if(card->placement == UIShell_CardPlacement_Transient)
     { c = uishell_sidebar_detached_copy(ws, card); uishell_sidebar_card_close(card); }
     if(c->saved)
-    { cfg_node_release(rd_state->cfg, cfg_node_from_id(c->saved)); c->saved = 0; }
+    { uishell_sidebar_card_saved_release(c); }
     c->placement = placement;
     if(placement == UIShell_CardPlacement_Inline)
     {
@@ -551,7 +560,7 @@ uishell_sidebar_detached_finish(RD_WindowState *ws)
     { c->saved = 0; uishell_sidebar_card_close(c); }
     uishell_sidebar_detached_apply(ws, c);
     if(!c->open && c->saved)
-    { cfg_node_release(rd_state->cfg, cfg_node_from_id(c->saved)); c->saved = 0; }
+    { uishell_sidebar_card_saved_release(c); }
     if(c->placement == UIShell_CardPlacement_Inline && c->open)
     {
       B32 present = 0;
