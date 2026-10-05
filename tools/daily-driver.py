@@ -110,18 +110,6 @@ def wait_ready(app, path, timeout=30):
 
 
 def stop(process):
-    if WINDOWS:
-        # The helper owns a kill-on-close job containing the actual process and
-        # its descendants. Stopping the helper releases that entire tree.
-        if process.poll() is None:
-            process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired as error:
-            # kill() is the same TerminateProcess call on Windows. The enclosing
-            # launcher job still closes on unwind and owns the entire tree.
-            raise RuntimeError(f'Windows child {process.pid} did not exit after termination') from error
-        return
     # Children have their own process groups, including producer subprocesses.
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -139,10 +127,12 @@ def run(args, binary, template, state):
         if WINDOWS:
             path = r'\\.\pipe\wheelhouse-daily-' + uuid.uuid4().hex
             processes = stack.enter_context(WindowsProcesses())
+            stop_child = processes.stop
         else:
             # Keep Unix socket paths short even on macOS, where TMPDIR is long.
             runtime = stack.enter_context(tempfile.TemporaryDirectory(prefix='wh-daily-', dir='/tmp'))
             path = runtime + '/facts.sock'
+            stop_child = stop
         env = {**os.environ, 'WHEELHOUSE_SOCKET': path}
         if args.daemon is not None:
             # UI recipe processes inherit the same endpoint as the connector.
@@ -163,7 +153,7 @@ def run(args, binary, template, state):
         app = launch('wheelhouse', [str(binary), '--user:' + str(state / 'user'),
                                    '--project:' + str(state / 'project'),
                                    '--andamento_socket:' + path, '--andamento_config:' + str(template)])
-        stack.callback(stop, app)
+        stack.callback(stop_child, app)
         wait_ready(app, path)
         producers = []
         if args.repo:
@@ -171,7 +161,7 @@ def run(args, binary, template, state):
             for repo in args.repo:
                 command.extend(['--roots', str(repo)])
             process = launch('git', command)
-            stack.callback(stop, process)
+            stack.callback(stop_child, process)
             producers.append(('git', process))
         connector_log_start = 0
 
@@ -194,7 +184,7 @@ def run(args, binary, template, state):
 
         def stop_connector():
             if connector is not None:
-                stop(connector)
+                stop_child(connector)
 
         stack.callback(stop_connector)
         print('Wheelhouse is running. Close the app or press Ctrl-C to stop the daily driver.', flush=True)
@@ -206,7 +196,7 @@ def run(args, binary, template, state):
                 status = connector.returncode
                 if time.monotonic() - connector_started_at >= CONNECTOR_STABLE_SECONDS:
                     backoff = 1
-                stop(connector)
+                stop_child(connector)
                 connector = None
                 with (logs / 'flotilla.log').open('rb') as output:
                     output.seek(connector_log_start)
