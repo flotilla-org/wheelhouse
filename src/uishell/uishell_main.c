@@ -165,6 +165,8 @@ entry_point(CmdLine *cmd_line)
   }
   if(cmd_line_has_flag(cmd_line, str8_lit("edit_command_diagnostics")))
   { abort_self(uishell_edit_command_diagnostics(0) ? 0 : 1); }
+  if(cmd_line_has_flag(cmd_line, str8_lit("section_placement_diagnostics")))
+  { abort_self(uishell_section_placement_diagnostics() ? 0 : 1); }
   ExecMode exec_mode = ExecMode_Normal;
   if(cmd_line_has_flag(cmd_line, str8_lit("?")) ||
      cmd_line_has_flag(cmd_line, str8_lit("help")))

@@ -51,9 +51,9 @@ visibility "wheelhouse/role-attempt" {
   when kind="convoy" visible-when="show-role-attempts"
 }
 
-region "tree" root-template="wheelhouse/projects" form="compact" placement="tree"
-region "sessions" root-template="wheelhouse/sessions" form="compact" placement="sessions"
-region "attention" root-template="wheelhouse/attention" form="compact" placement="attention"
+region "tree" root-template="wheelhouse/projects" form="compact" placement="tree" default-host="sidebar" order=10
+region "sessions" root-template="wheelhouse/sessions" form="compact" placement="sessions" default-host="sidebar" order=20
+region "attention" root-template="wheelhouse/attention" form="compact" placement="attention" default-host="sidebar" order=30
 
 template "wheelhouse/projects" slot="compact" node-kind="entity" {
   field "label" source="literal" value="Projects"
@@ -282,7 +282,7 @@ template "issue/detail" slot="detail" node-kind="entity" {
 }
 
 // Host-independent git producer contract, shared with andamento-git.kdl.
-region "git" root-template="wheelhouse/git" form="compact" placement="git"
+region "git" root-template="wheelhouse/git" form="compact" placement="git" default-host="sidebar" order=40
 template "wheelhouse/git" slot="compact" node-kind="entity" {
   field "label" source="literal" value="Git"
 }

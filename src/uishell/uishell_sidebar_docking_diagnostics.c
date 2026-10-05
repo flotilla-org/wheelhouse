@@ -16,6 +16,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   CFG_Node *saved_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
   cfg_node_unhook(rd_state->cfg, window, saved_host);
+  CFG_Node *saved_positions = cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY);
+  cfg_node_unhook(rd_state->cfg, window, saved_positions);
   U32 failures = 0;
 #define DockFailure(expr) do { if(expr) { failures++; fprintf(stderr, "FAIL sidebar docking line %u: %s\n", __LINE__, #expr); } } while(0)
   CFG_Node *saved_axis = cfg_node_child_from_string(window, str8_lit("control_views_split_x"));
@@ -314,6 +316,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   if(saved_axis != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_axis); }
   if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_sizing); }
   if(saved_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_host); }
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY));
+  if(saved_positions != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_positions); }
   uishell_sidebar_release(state);
   ws->sidebar = saved_sidebar; uishell_sidebar_fixture = saved_fixture; uishell_sidebar_subject_fixture = saved_subject;
   ui_select_state(saved_ui); ui_state_release(test_ui);
@@ -321,4 +325,131 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   fprintf(stderr, "Sidebar docking diagnostics: %u failures\n", failures);
   return failures == 0;
 #undef DockFailure
+}
+
+// Headless lifecycle scenarios use the real native snapshot and config codec.
+internal B32
+uishell_section_placement_diagnostics(void)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_State *saved_rd = rd_state;
+  CFG_Ctx *saved_ctx = cfg_ctx;
+  RD_State state = {0}; rd_state = &state;
+  state.arena = scratch.arena;
+  state.cfg = cfg_state_alloc(); cfg_ctx_select(cfg_state_ctx(state.cfg));
+  CFG_SchemaNode *slot = 0; CFG_SchemaTable schemas = {&slot, 1}; state.cfg_schema_table = &schemas;
+  CFG_Node *user = cfg_node_new(state.cfg, cfg_node_root(), str8_lit("user"));
+  CFG_Node *window = cfg_node_new(state.cfg, user, str8_lit("window"));
+  UIShell_SidebarState sidebar = {.initialized = 1};
+  RD_WindowState ws = {.cfg_id = window->id, .sidebar = &sidebar};
+  state.window_state_last_accessed_id = window->id; state.window_state_last_accessed = &ws;
+  UIShell_ControlledSplit split = {.owner_cfg = window};
+  U32 failures = 0;
+#define PlacementCheck(expr) do { if(!(expr)) { failures++; fprintf(stderr, "FAIL section placement line %u: %s\n", __LINE__, #expr); } } while(0)
+  String8 config = str8_lit(
+    "region \"b\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\" order=20\n"
+    "region \"a\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\" order=10\n");
+  Andamento *core = andamento_create(config.str, config.size, 0);
+  PlacementCheck(core != 0);
+  sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+  CFG_Node *host = uishell_sidebar_dock_layout(&split);
+  CFG_Node *a = uishell_sidebar_region_view(window, str8_lit("a"));
+  CFG_Node *b = uishell_sidebar_region_view(window, str8_lit("b"));
+  // Defaults are stable by hint, regardless of declaration order.
+  PlacementCheck(a != &cfg_nil_node && b != &cfg_nil_node);
+  PlacementCheck(host->first == a->parent && host->last == b->parent);
+  CFG_ID a_id = a->id, b_id = b->id;
+  // A user reorder changes only layout, and reconciliation is idempotent.
+  cfg_node_insert_child(state.cfg, host, &cfg_nil_node, b->parent);
+  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(host->first == b->parent && a->id == a_id && b->id == b_id);
+  U64 generation = cfg_change_gen();
+  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(cfg_change_gen() == generation);
+  // Restart through the actual serializer/parser retains that arrangement.
+  String8 serialized = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), window);
+  CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), serialized);
+  PlacementCheck(loaded.count == 1);
+  CFG_Node *restored = loaded.first->v; cfg_node_insert_child(state.cfg, user, user->last, restored);
+  ws.cfg_id = restored->id; state.window_state_last_accessed_id = restored->id;
+  split.owner_cfg = restored;
+  CFG_Node *restored_host = uishell_sidebar_dock_layout(&split);
+  PlacementCheck(str8_match(cfg_node_child_from_string(restored_host->first->first, str8_lit("section"))->first->string, str8_lit("b"), 0));
+  // Adding a hinted region inserts it without changing the saved pair's order.
+  String8 added = push_str8f(scratch.arena, "%Sregion \"c\" root-template=\"flotilla/region/tree\" order=15\n", config);
+  PlacementCheck(andamento_configure(core, (AndamentoText){added.str, added.size}, 0));
+  andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+  uishell_sidebar_dock_layout(&split);
+  CFG_Node *c = uishell_sidebar_region_view(restored, str8_lit("c"));
+  a = uishell_sidebar_region_view(restored, str8_lit("a")); b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  PlacementCheck(c != &cfg_nil_node && c->parent->next == b->parent && b->parent->next == a->parent);
+  // Closing a known section remains distinguishable from an unseen id.
+  cfg_node_release(state.cfg, c);
+  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("c")) == &cfg_nil_node);
+  CFG_Node *inventory = cfg_node_child_from_string(restored, UISHELL_REGION_INVENTORY);
+  PlacementCheck(cfg_node_child_from_string(cfg_node_child_from_string(inventory, str8_lit("c")), str8_lit("closed")) != &cfg_nil_node);
+  // Closed intent survives the same restart codec as saved positions.
+  serialized = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), restored);
+  loaded = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), serialized);
+  PlacementCheck(loaded.count == 1);
+  restored = loaded.first->v; cfg_node_insert_child(state.cfg, user, user->last, restored);
+  ws.cfg_id = restored->id; state.window_state_last_accessed_id = restored->id; split.owner_cfg = restored;
+  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("c")) == &cfg_nil_node);
+  inventory = cfg_node_child_from_string(restored, UISHELL_REGION_INVENTORY);
+  a = uishell_sidebar_region_view(restored, str8_lit("a"));
+  // Removal drops the View and inventory, retaining the surviving View identity.
+  CFG_ID kept = a->id;
+  String8 removed = str8_lit("region \"a\" root-template=\"flotilla/region/tree\" order=10\n");
+  PlacementCheck(andamento_configure(core, (AndamentoText){removed.str, removed.size}, 0));
+  andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("b")) == &cfg_nil_node);
+  PlacementCheck(cfg_node_child_from_string(inventory, str8_lit("b")) == &cfg_nil_node);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("a"))->id == kept);
+  // Reset clears closes and user positions, restoring all hints.
+  PlacementCheck(andamento_configure(core, (AndamentoText){added.str, added.size}, 0));
+  andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+  uishell_sidebar_reset_regions(restored); restored_host = uishell_sidebar_dock_layout(&split);
+  a = uishell_sidebar_region_view(restored, str8_lit("a")); b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  c = uishell_sidebar_region_view(restored, str8_lit("c"));
+  PlacementCheck(restored_host->first == a->parent && a->parent->next == c->parent && c->parent->next == b->parent);
+  // Generated host/order cases cover absent hints, equal hints, negative order,
+  // opaque unknown hosts and the supported floating host. Every placement
+  // passes the same validity checker used by drag and restore.
+  for(U64 variant = 0; variant < 4; variant++)
+  {
+    char *attributes[] = {"", "default-host=\"unknown\" order=-10", "default-host=\"floating\" order=0", "order=0"};
+    String8 generated = push_str8f(scratch.arena,
+      "region \"x\" root-template=\"flotilla/region/tree\" %s\n"
+      "region \"y\" root-template=\"flotilla/region/tree\" %s\n", attributes[variant], attributes[variant]);
+    PlacementCheck(andamento_configure(core, (AndamentoText){generated.str, generated.size}, 0));
+    andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+    uishell_sidebar_reset_regions(restored); uishell_sidebar_dock_layout(&split);
+    CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
+    CFG_Node *y = uishell_sidebar_region_view(restored, str8_lit("y"));
+    PlacementCheck(x != &cfg_nil_node && y != &cfg_nil_node);
+    PlacementCheck(x->parent->next == y->parent);
+    PlacementCheck(rd_dock_saved_placement_valid(x) && rd_dock_saved_placement_valid(y));
+    PlacementCheck(rd_dock_host_from_cfg(x, RD_DOCK_UNMEASURED_WIDTH).kind ==
+      (variant == 2 ? RD_DockHostKind_FloatingPanel : RD_DockHostKind_Sidebar));
+  }
+  // A provider outage retains the complete saved arrangement. An authoritative
+  // changed declaration removes stale positions; a later declaration is new.
+  CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
+  AndamentoSnapshot *saved_snapshot = sidebar.snapshot; sidebar.snapshot = 0;
+  generation = cfg_change_gen(); uishell_sidebar_dock_layout(&split);
+  PlacementCheck(cfg_change_gen() == generation && uishell_sidebar_region_view(restored, str8_lit("x")) == x);
+  sidebar.snapshot = saved_snapshot;
+  String8 empty = str8_lit("region \"x\" root-template=\"flotilla/region/tree\"\n");
+  PlacementCheck(andamento_configure(core, (AndamentoText){empty.str, empty.size}, 0));
+  andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("y")) == &cfg_nil_node);
+  andamento_snapshot_release(sidebar.snapshot); andamento_destroy(core);
+  cfg_state_release(state.cfg); cfg_ctx_select(saved_ctx); rd_state = saved_rd;
+  fprintf(stderr, "Section placement diagnostics: %s (hints, reorder, restart, add, close, remove, reset)\n", failures ? "FAILED" : "passed");
+#undef PlacementCheck
+  scratch_end(scratch); return failures == 0;
 }

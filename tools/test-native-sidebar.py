@@ -27,6 +27,10 @@ class Node(C.Structure):
         ['selected', 'openable', 'collapsed', 'pinned']] + [(x, Size) for x in
         ['first_field', 'field_count', 'first_detail', 'detail_count', 'first_control', 'control_count', 'activate', 'toggle']]
 
+class RegionHints(C.Structure):
+    _fields_ = [("default_host", Text), ("has_order", U32), ("order", C.c_int64)]
+
+
 class Field(C.Structure):
     _fields_ = [("text", Text), ("class_", U32), ("has_priority", U32), ("priority", C.c_int64)]
 
@@ -51,6 +55,7 @@ def load(path):
         'configure': (U32, [Ptr, Text, Ptr]),
         'tick': (U32, [Ptr, U64, Ptr]),
         'snapshot_is_current': (U32, [Ptr, Ptr, Ptr]),
+        'snapshot_region_hints': (U32, [Ptr, Size, C.POINTER(RegionHints)]),
         'snapshot_field': (U32, [Ptr, Size, C.POINTER(Field)]),
         'snapshot_copy_url_action': (Size, [Ptr, Size]),
         'snapshot_node_loop_key': (U32, [Ptr, Size, C.POINTER(Text)]),
@@ -97,6 +102,22 @@ class NativeSidebarTests(unittest.TestCase):
         for item in facts:
             self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
         self.snapshots = []
+
+    def test_region_hints_match_shipped_order(self):
+        # Shipped placement hints preserve today's order across the native ABI.
+        snapshot = lib.andamento_snapshot_acquire(self.core, None)
+        self.snapshots.append(snapshot)
+        hints_seen = []
+        for index in range(lib.andamento_snapshot_node_count(snapshot)):
+            node, hints = Node(), RegionHints()
+            self.assertEqual(lib.andamento_snapshot_node(snapshot, index, C.byref(node)), 1)
+            if node.is_section:
+                self.assertEqual(lib.andamento_snapshot_region_hints(snapshot, index, C.byref(hints)), 1)
+                hints_seen.append((node.key.string(), hints.default_host.string(), hints.has_order, hints.order))
+            else:
+                self.assertEqual(lib.andamento_snapshot_region_hints(snapshot, index, C.byref(hints)), 0)
+        self.assertEqual(hints_seen, [('tree', 'sidebar', 1, 10), ('sessions', 'sidebar', 1, 20),
+                                     ('attention', 'sidebar', 1, 30), ('git', 'sidebar', 1, 40)])
 
     def open_workspace(self, identity, workspace_id):
         snapshot, nodes = self.snapshot()
