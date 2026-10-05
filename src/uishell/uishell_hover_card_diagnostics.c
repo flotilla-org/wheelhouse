@@ -65,6 +65,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
 {
   U32 failures = 0;
 #define CardCheck(expr, message) do { if(!(expr)) { fprintf(stderr, "FAIL hover card: %s\n", message); failures++; } } while(0)
+  fprintf(stderr, "Hover card diagnostics: start\n");
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
   UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {0};
   ws->sidebar = &fixture;
@@ -252,6 +253,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     if(frame == 1) { CardCheck(!taken && !card->open && ui_pressed(target), "outside dismissal lets the target receive its press"); }
     if(frame == 2) { CardCheck(!taken && ui_clicked(target), "outside dismissal lets the target activate on release"); }
   }
+  fprintf(stderr, "Hover card diagnostics: detail rendering\n");
   // Render current detail fields through the production body in both states.
   // A LIVE observation exercises the existing preview demand and drawing box,
   // without starting a test terminal or altering the daily-driver inventory.
@@ -578,6 +580,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
               str8_match(uishell_sidebar_card_age(0, 100), str8_lit("0s ago"), 0),
               "relative ages use the controller clock and saturate future observations");
 
+    fprintf(stderr, "Hover card diagnostics: retained expiry\n");
     // Exercise retained expiry in an isolated controller with the same native
     // card renderer. The fixture's display filtering cannot affect this path.
     String8 freshness_config = str8_lit(
@@ -648,6 +651,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_release(&freshness);
 
   }
+  fprintf(stderr, "Hover card diagnostics: detached lifecycle\n");
   // Detached lifecycle and saved-layout round-trip use the same transitions
   // that the move controls request. No KDL or producer data is edited.
   if(fixture.snapshot)
@@ -721,7 +725,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(restored != &cfg_nil_node && str8_match(cfg_node_child_from_string(restored, str8_lit("label"))->first->string,
               uishell_sidebar_string(entity.label), 0), "layout serialization and restart preserve pinned identity and label");
     cfg_state_release(loaded_cfg); scratch_end(saved_scratch);
+    fprintf(stderr, "Hover card diagnostics: pinned rendering\n");
     UIShell_HoverCard *pinned = uishell_sidebar_saved_card(ws, saved);
+    F32 nil_scroll_before = ui_nil_box.view_off_target.y;
     for(U64 frame = 0; frame < 3; frame++)
     {
       UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
@@ -730,6 +736,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
       { RD_VIEW_UI_FUNCTION_NAME(pinned_cards)((E_Eval){0}, r2f32p(17, 29, 297, 329)); }
       ui_end_build();
+      CardCheck(ui_nil_box.view_off_target.y == nil_scroll_before,
+                "first-frame pin reveal never writes the shared nil box");
+      if(frame == 0)
+      { CardCheck(fixture.pin_reveal == saved_id && pinned->focused, "new pin keeps its reveal pending until measured"); }
+      if(frame == 1)
+      { CardCheck(!fixture.pin_reveal, "measured new pin completes its reveal on the next frame"); }
       UI_Box *body = ui_box_from_key(pinned->mask.key);
       CardCheck(!ui_box_is_nil(body) && body->rect.y0 >= 29+24 && body->fixed_size.y > 40,
                 "pinned View renders a measured body below its ordinary section header");
@@ -760,9 +772,20 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CFG_Node *area = saved->parent;
     CFG_Node *moved = uishell_sidebar_card_pin(ws, original, 1);
     CardCheck(moved->id == saved_id && moved->parent != area, "dragging to a new pinned area moves the unique card");
+    B32 has_card = 0;
+    for(CFG_Node *n = area->first; n != &cfg_nil_node; n = n->next)
+    { has_card |= str8_match(n->string, str8_lit("card"), 0); }
+    CardCheck(!has_card && cfg_node_from_id(area->id) == area && rd_dock_can_close(area),
+              "moving the last pin preserves an empty area that can be closed");
+    U64 label_pos = arena_pos(pinned->arena);
+    for(U64 change = 0; change < 100; change++)
+    { uishell_sidebar_card_retain_label(pinned, change & 1 ? str8_lit("Live one") : str8_lit("Live two")); }
+    CardCheck(arena_pos(pinned->arena) == label_pos && arena_pos(pinned->label_arena) < 4096,
+              "live labels reuse separate bounded storage without growing the identity arena");
     uishell_sidebar_card_close(pinned); uishell_sidebar_detached_finish(ws);
     CardCheck(uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == &cfg_nil_node,
               "explicit Close removes a pinned card from persisted layout");
+    fprintf(stderr, "Hover card diagnostics: drag control\n");
     // Drive the real drag control through press, motion and release frames.
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
     original->source_rect = r2f32p(20, 20, 120, 50); original->engaged = original->focused = 1;
@@ -807,6 +830,22 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(cfg_node_from_id(copy_id) == &cfg_nil_node && cfg_node_from_id(unique->id) == unique,
               "layout copies reconcile to one pinned card per entity");
     cfg_node_release(rd_state->cfg, unique);
+    // A wrong controlled-split owner rejects creation before any layout edit.
+    CFG_Node *invalid_owner = cfg_node_new(rd_state->cfg, window, str8_lit("invalid_owner"));
+    CFG_Node *invalid_root = cfg_node_new(rd_state->cfg, invalid_owner, RD_DOCK_SIDEBAR_ROOT);
+    cfg_node_new(rd_state->cfg, invalid_root, str8_lit("sidebar_section"));
+    Temp failed_scratch = scratch_begin(0, 0);
+    String8 before_failure = cfg_string_from_tree(failed_scratch.arena, rd_state->cfg_schema_table, str8_zero(), invalid_owner);
+    CFG_ID valid_window_id = ws->cfg_id;
+    ws->cfg_id = invalid_owner->id;
+    CFG_Node *failed_pin = uishell_sidebar_card_pin(ws, original, 1);
+    ws->cfg_id = valid_window_id;
+    String8 after_failure = cfg_string_from_tree(failed_scratch.arena, rd_state->cfg_schema_table, str8_zero(), invalid_owner);
+    CardCheck(failed_pin == &cfg_nil_node && str8_match(before_failure, after_failure, 0),
+              "rejected pin creation preserves merged tabs and panel ratios exactly");
+    scratch_end(failed_scratch);
+    cfg_node_release(rd_state->cfg, invalid_owner);
+    fprintf(stderr, "Hover card diagnostics: merged layout\n");
     // Adding a new area to a merged root leaf preserves its existing tabs.
     CFG_Node *old_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
     cfg_node_unhook(rd_state->cfg, window, old_host);
@@ -826,6 +865,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_card_close(original);
   }
 
+  fprintf(stderr, "Hover card diagnostics: cleanup\n");
   ws->sidebar = saved_sidebar; ws->ui = saved_window_ui;
   uishell_sidebar_release(&fixture); ui_select_state(saved_ui); ui_state_release(test);
   fprintf(stderr, "Hover card diagnostics: %u failures\n", failures);

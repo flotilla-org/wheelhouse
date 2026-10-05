@@ -59,7 +59,7 @@ struct UIShell_HoverCard
   B32 move_requested, moving;
   Vec2F32 move_origin;
   String8 source_key, source_row, retained_label;
-  Arena *arena;
+  Arena *arena, *label_arena;
   AndamentoEntity *path;
   AndamentoEntity previous, candidate;
   String8 context;
@@ -253,6 +253,7 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     for(U64 i = 0; i < ArrayCount(state->cards); i++)
     {
       if(state->cards[i].arena) { arena_release(state->cards[i].arena); }
+      if(state->cards[i].label_arena) { arena_release(state->cards[i].label_arena); }
       MemoryZeroStruct(&state->cards[i]);
     }
     uishell_sidebar_display_wake_release(state->display_wakeup);
@@ -269,7 +270,10 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     if(state->labels_arena) { arena_release(state->labels_arena); state->labels_arena = 0; }
 
     for(UIShell_HoverCard *c = state->detached; c; c = c->next)
-    { if(c->arena) { arena_release(c->arena); } }
+    {
+      if(c->arena) { arena_release(c->arena); }
+      if(c->label_arena) { arena_release(c->label_arena); }
+    }
     andamento_snapshot_release(state->snapshot);
     andamento_destroy(state->core);
     state->snapshot = 0;

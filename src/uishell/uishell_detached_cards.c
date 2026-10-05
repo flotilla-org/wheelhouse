@@ -54,6 +54,7 @@ uishell_sidebar_detached_alloc(RD_WindowState *ws)
   }
   UIShell_HoverCard *next = c->next;
   if(c->arena) { arena_release(c->arena); }
+  if(c->label_arena) { arena_release(c->label_arena); }
   MemoryZeroStruct(c); c->next = next;
   return c;
 }
@@ -68,7 +69,7 @@ uishell_sidebar_detached_copy(RD_WindowState *ws, UIShell_HoverCard *source)
   c->depth = source->depth;
   for(U64 i = 0; i < c->depth; i++) { c->path[i] = uishell_sidebar_card_entity_copy(c->arena, source->path[i]); }
   c->source_key = push_str8_copy(c->arena, source->source_key);
-  c->retained_label = push_str8_copy(c->arena, source->retained_label);
+  uishell_sidebar_card_retain_label(c, source->retained_label);
   c->source = source->source; c->source_rect = source->source_rect; c->rect = source->rect;
   c->open = c->engaged = 1; c->focused = source->focused; c->enriched = source->enriched;
   return c;
@@ -119,6 +120,13 @@ uishell_sidebar_pin_deduplicate(CFG_Node *window, CFG_Node *root)
   }
 }
 
+internal void
+uishell_sidebar_pin_set_field(CFG_Node *node, String8 name, String8 value)
+{
+  CFG_Node *field = cfg_node_child_from_string_or_alloc(rd_state->cfg, node, name);
+  cfg_node_new_replace(rd_state->cfg, field, value);
+}
+
 internal CFG_Node *
 uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_area)
 {
@@ -142,36 +150,55 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
   CFG_Node *area = new_area ? &cfg_nil_node : uishell_sidebar_pin_find(window, (AndamentoEntity){0}, 1);
   if(area == &cfg_nil_node)
   {
+    B32 root_exists = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT) != &cfg_nil_node;
     CFG_Node *root = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
+    // Validate a tentative destination before lifting tabs or changing ratios.
+    CFG_Node *panel = cfg_node_new(rd_state->cfg, root, str8_lit("1"));
+    if(!rd_dock_can_create(str8_lit("pinned_cards"), panel))
+    {
+      cfg_node_release(rd_state->cfg, panel);
+      if(!root_exists) { cfg_node_release(rd_state->cfg, root); }
+      return &cfg_nil_node;
+    }
     // A merged sidebar can be a leaf itself. Preserve its tabs by lifting
     // them into a child before adding a sibling panel.
     B32 split = 0;
     for(CFG_Node *n = root->first; n != &cfg_nil_node; n = n->next)
-    { if(rd_dock_is_container(n)) { split = 1; break; } }
-    if(!split && root->first != &cfg_nil_node)
+    { if(n != panel && rd_dock_is_container(n)) { split = 1; break; } }
+    if(!split && (root->first != panel || panel->next != &cfg_nil_node))
     {
       CFG_Node *old = cfg_node_new(rd_state->cfg, root, str8_lit("1"));
       for(CFG_Node *n = root->first, *next; n != &cfg_nil_node; n = next)
       {
         next = n->next;
-        if(n != old) { cfg_node_insert_child(rd_state->cfg, old, old->last, n); }
+        if(n != old && n != panel) { cfg_node_insert_child(rd_state->cfg, old, old->last, n); }
       }
     }
     F32 total = 0; U64 count = 0;
     for(CFG_Node *n = root->first; n != &cfg_nil_node; n = n->next)
-    { if(rd_dock_is_container(n)) { total += (F32)f64_from_str8(n->string); count++; } }
+    {
+      if(n != panel && rd_dock_is_container(n))
+      {
+        total += (F32)f64_from_str8(n->string);
+        count++;
+      }
+    }
     F32 fraction = 1.f/(count+1);
     for(CFG_Node *n = root->first; n != &cfg_nil_node; n = n->next)
-    { if(rd_dock_is_container(n)) { cfg_node_equip_stringf(rd_state->cfg, n, "%f", (1-fraction)*(total > 0 ? (F32)f64_from_str8(n->string)/total : 1.f/Max(1, count))); } }
+    {
+      if(n != panel && rd_dock_is_container(n))
+      {
+        F32 share = total > 0 ? (F32)f64_from_str8(n->string)/total : 1.f/Max(1, count);
+        cfg_node_equip_stringf(rd_state->cfg, n, "%f", (1-fraction)*share);
+      }
+    }
+    if(root->last != panel) { cfg_node_insert_child(rd_state->cfg, root, root->last, panel); }
     CFG_Node *before = cfg_node_from_id(state->pin_before);
-    CFG_Node *panel = cfg_node_new(rd_state->cfg, root, str8_lit("1"));
     cfg_node_equip_stringf(rd_state->cfg, panel, "%f", fraction);
     if(before != &cfg_nil_node && before->parent == root)
     { cfg_node_insert_child(rd_state->cfg, root, before->prev, panel); }
-    if(!rd_dock_can_create(str8_lit("pinned_cards"), panel))
-    { cfg_node_release(rd_state->cfg, panel); return &cfg_nil_node; }
     area = cfg_node_new(rd_state->cfg, panel, str8_lit("pinned_cards"));
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, area, str8_lit("label")), str8_lit("Pinned"));
+    uishell_sidebar_pin_set_field(area, str8_lit("label"), str8_lit("Pinned"));
     cfg_node_new(rd_state->cfg, area, str8_lit("selected"));
   }
   if(saved != &cfg_nil_node)
@@ -181,12 +208,12 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
     return saved;
   }
   saved = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
-  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, saved, str8_lit("kind")), uishell_sidebar_string(entity.kind));
-  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, saved, str8_lit("entity")), uishell_sidebar_string(entity.id));
+  uishell_sidebar_pin_set_field(saved, str8_lit("kind"), uishell_sidebar_string(entity.kind));
+  uishell_sidebar_pin_set_field(saved, str8_lit("entity"), uishell_sidebar_string(entity.id));
   AndamentoNode node = {0};
   String8 label = uishell_sidebar_card_find(state, entity, &node) != ANDAMENTO_NONE ? uishell_sidebar_string(node.label) : card->retained_label;
-  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, saved, str8_lit("label")), label);
-  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, saved, str8_lit("source")), card->source_key);
+  uishell_sidebar_pin_set_field(saved, str8_lit("label"), label);
+  uishell_sidebar_pin_set_field(saved, str8_lit("source"), card->source_key);
   state->pin_reveal = saved->id;
   return saved;
 }
@@ -198,7 +225,7 @@ uishell_sidebar_detached_content(UIShell_SidebarState *state, RD_WindowState *ws
   if(index != ANDAMENTO_NONE)
   {
     String8 label = uishell_sidebar_string(node.label);
-    if(!str8_match(label, card->retained_label, 0)) { card->retained_label = push_str8_copy(card->arena, label); }
+    uishell_sidebar_card_retain_label(card, label);
     return uishell_sidebar_card_content(state, ws, card, slot, node, index, width, interactive);
   }
   ui_label_multiline(width, card->retained_label);
@@ -333,7 +360,7 @@ uishell_sidebar_saved_card(RD_WindowState *ws, CFG_Node *saved)
                            uishell_sidebar_text(cfg_node_child_from_string(saved, str8_lit("entity"))->first->string)};
   c->path[0] = uishell_sidebar_card_entity_copy(c->arena, entity);
   c->source_key = push_str8_copy(c->arena, cfg_node_child_from_string(saved, str8_lit("source"))->first->string);
-  c->retained_label = push_str8_copy(c->arena, cfg_node_child_from_string(saved, str8_lit("label"))->first->string);
+  uishell_sidebar_card_retain_label(c, cfg_node_child_from_string(saved, str8_lit("label"))->first->string);
   c->saved = saved->id; c->placement = UIShell_CardPlacement_Pinned; c->open = c->engaged = 1;
   return c;
 }
@@ -415,6 +442,7 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
   { if(str8_match(saved->string, str8_lit("card"), 0)) { height += Max(em*4, uishell_sidebar_saved_card(ws, saved)->content_height)+8; } }
   params.content_dim_px = v2f32(width, height);
   UI_ScrollRegion region = ui_scroll_region_layout(params);
+  F32 target = ui_box_is_nil(old) ? 0 : old->view_off_target.y;
   F32 reveal_y = 0; B32 measured = 1;
   for(CFG_Node *saved = view->first; saved != &cfg_nil_node; saved = saved->next)
   {
@@ -423,14 +451,13 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
     measured &= c->content_height > 0;
     if(saved->id == state->pin_reveal)
     {
-      old->view_off_target.y = reveal_y; c->focused = 1;
+      target = reveal_y; c->focused = 1;
       if(measured) { state->pin_reveal = 0; } else { rd_request_frame(); }
       break;
     }
     reveal_y += Max(em*4, c->content_height)+8;
   }
   UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
-  F32 target = old->view_off_target.y;
   axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt((S64)target, target-(S64)target),
     r1s64(0, Max(0, (S64)(height-dim_2f32(region.viewport).y))), (S64)dim_2f32(region.viewport).y};
   UI_ScrollRegionSignal scroll = ui_scroll_region_build(root, key, &region, axes,

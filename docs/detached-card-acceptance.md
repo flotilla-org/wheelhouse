@@ -18,13 +18,14 @@ share a panel. A card dragged elsewhere in the sidebar creates an area at that
 position in the root arrangement. Existing merged tabs and panel proportions are
 preserved. Pins save exact kind/id and a fallback label in the RAD-derived layout,
 without changing KDL. Pinning an entity again selects and scrolls to its existing
-card. Moving it to another area keeps the same saved card identity. Copied or
+card. Moving it to another area keeps the same saved card identity. An area emptied
+by a move remains available for another pin, with a “Drag or pin a card here”
+placeholder; its ordinary section Close control removes the area. Copied or
 restored layouts reconcile duplicate pins within the owning window.
 
 A pinned card whose subject disappears remains visible with “No longer present”.
-The candidate does not automatically expire these cards. The human review asks
-whether to keep them until explicitly closed or introduce a timeout; that policy
-is still awaiting a decision.
+The proposed policy retains ended cards until explicitly closed. The acceptance
+review must record whether to keep that policy or introduce a timeout.
 
 Clicking a transient card still keeps it open until Escape or an outside click.
 Detached cards keep their placement when Escape, outside clicks or window focus
@@ -36,16 +37,10 @@ actions and live previews use the existing card body.
 
 ## Kiwi review
 
-The disposable Near and Outside candidates live at:
-
-- `/tmp/wheelhouse-detached-card-review/Detached Cards Near.app`
-- `/tmp/wheelhouse-detached-card-review/Detached Cards Outside.app`
-
-Each has separate user and project settings under the same directory. The daily
-driver was left alone. The first run was opened on 2026-10-05 with an explicit
-call for physical review. A second run at 11:35 BST uses the final native-tested
-build and includes another call for human review. Human acceptance is pending; synthetic UI input does
-not establish native hover acceptance.
+Build disposable Near and Outside candidates on kiwi, each with separate user
+and project settings, and request physical review for each run. Candidate paths,
+run times, results and the ended-card timeout decision belong in the PR review
+record. Leave the daily driver alone.
 
 Try a subject card in both placements: click it, leave it, Tab and Shift-Tab
 through its controls, then dismiss with Escape and an outside click. Open Example

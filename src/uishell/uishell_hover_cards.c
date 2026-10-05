@@ -32,6 +32,17 @@ uishell_sidebar_card_entity_copy(Arena *arena, AndamentoEntity entity)
                            uishell_sidebar_text(push_str8_copy(arena, uishell_sidebar_string(entity.id)))};
 }
 
+// Labels change independently of the retained navigation path. Reuse their
+// arena so a long-running card does not accumulate every previous live label.
+internal void
+uishell_sidebar_card_retain_label(UIShell_HoverCard *card, String8 label)
+{
+  if(str8_match(card->retained_label, label, 0)) { return; }
+  if(!card->label_arena) { card->label_arena = arena_alloc(); }
+  arena_clear(card->label_arena);
+  card->retained_label = push_str8_copy(card->label_arena, label);
+}
+
 // A detail target need not have any placement. Adapt the catalog's preview
 // identity to the existing preview drawing path without looking for a tree row.
 internal U64
@@ -149,7 +160,7 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, AndamentoNode node, UI_Key sou
   card->depth = 1;
   card->context = push_str8_copy(card->arena, context);
   card->source_key = push_str8_copy(card->arena, uishell_sidebar_string(node.key));
-  card->retained_label = push_str8_copy(card->arena, uishell_sidebar_string(node.label));
+  uishell_sidebar_card_retain_label(card, uishell_sidebar_string(node.label));
   card->contains_current = contains_current;
   card->source = source;
   card->dismissed = ui_key_zero();
@@ -662,6 +673,9 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
   ui_state->hover_card_focus = 0;
   MemoryZeroArray(ui_state->hover_card_keys);
   MemoryZeroArray(ui_state->hover_card_rects);
+  // Masks live in window-owned cards, not the per-build arena. Retain them
+  // until this point so earlier tree controls respect last frame's floats.
+  // Rebuild the entire list every frame, including frames with no floats.
   ui_state->hover_card_extra = 0;
   if(!sidebar_visible)
   {
