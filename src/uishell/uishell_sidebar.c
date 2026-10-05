@@ -232,14 +232,26 @@ uishell_sidebar_release(UIShell_SidebarState *state)
   if(state != 0)
   {
     for(U64 i = 0; i < ArrayCount(state->cards); i++)
-    { if(state->cards[i].arena) { arena_release(state->cards[i].arena); } }
+    {
+      if(state->cards[i].arena) { arena_release(state->cards[i].arena); }
+      MemoryZeroStruct(&state->cards[i]);
+    }
     uishell_sidebar_display_wake_release(state->display_wakeup);
+    state->display_wakeup = 0;
     if(state->display_restore_arena) { arena_release(state->display_restore_arena); }
     if(state->placement_arena) { arena_release(state->placement_arena); state->placement_arena = 0; }
+    state->placement_snapshot = 0;
+    state->placement_regions = 0;
+    state->placement_count = 0;
+    state->display_restore_arena = 0;
+    state->display_restores = 0;
+    state->display_wakeup_at = 0;
     uishell_sidebar_labels_invalidate(state);
     if(state->labels_arena) { arena_release(state->labels_arena); state->labels_arena = 0; }
     andamento_snapshot_release(state->snapshot);
     andamento_destroy(state->core);
+    state->snapshot = 0;
+    state->core = 0;
   }
 }
 

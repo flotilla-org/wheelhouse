@@ -92,6 +92,8 @@ remains the lookup contract; the first non-section placement wins, including an
 empty label. The table borrows snapshot-owned strings and invalidates before every
 dispatch and before replacing a snapshot. Releasing state also clears the freed
 label-arena pointer, allowing the existing native fixtures to reuse their state.
+Release now also resets both card structs and clears the core/snapshot pointers,
+so repeated teardown of a real state is safe.
 The C ABI exposes snapshot currency rather than a revision number, so snapshot
 identity plus explicit invalidation provides the revision boundary. Font metrics
 and viewport width cannot affect labels; they are deliberately absent from this key.
@@ -124,7 +126,9 @@ Native context diagnostics cover generated hash collisions, duplicate placements
 section exclusion, first empty labels, missing/empty identities, empty snapshots,
 repopulation, invalidation with the same snapshot identity, and release/reuse.
 The benchmark also exercises real-core failed dispatch, current-revision refresh,
-label-changing refresh, and restoration of the original catalog.
+label-changing refresh, restoration of the original catalog, and repeated
+release with a real core/snapshot plus both allocated card arenas. The ownership
+regression failed before pointer clearing and passes afterward.
 
 The existing native sidebar diagnostics pass (precise scroll, Git, chip state,
 project motion, reveal, focus, retry, restore and ended retention), as do the
