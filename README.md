@@ -224,7 +224,7 @@ connector processes. Real HTTP/UDS delivery is covered by
 
 ### Daily driver (Windows)
 
-Use Python 3 and an existing Flotilla Windows client with the SSH endpoint from
+Use CPython 3 and an existing Flotilla Windows client with the SSH endpoint from
 flotilla#2639. The remote CLI must provide `daemon-bridge`, and the client must
 match the running daemon's protocol fingerprint. The launcher does not rebuild
 Flotilla or upgrade the remote fleet. A remote candidate executable can be selected
@@ -249,7 +249,8 @@ The PowerShell entrypoint uses `py -3`, falling back to `python`; set
 
 Settings and layouts persist in `%LOCALAPPDATA%\Wheelhouse\daily-driver`;
 `WHEELHOUSE_DAILY_DIR` selects a separate profile. A byte-range lock prevents
-concurrent launchers from using the same profile. Each launch creates a fresh
+concurrent launchers from using the same profile. Custom profile directories
+retain their existing Windows ACLs. Each launch creates a fresh
 `\\.\pipe\wheelhouse-daily-<unique-name>` endpoint. Readiness uses HTTP health
 over the pipe with same-user server verification, matching ADR 0011. The app
 and its terminals inherit `WHEELHOUSE_SOCKET` for additional producers.

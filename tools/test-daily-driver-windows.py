@@ -141,8 +141,12 @@ class WindowsDailyDriverTests(unittest.TestCase):
     def ready(self, process, previous_pids=()):
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            if ('connector ready' in self.log('flotilla') and
-                    not set(previous_pids).intersection(self.pids())):
+            connector = self.log('flotilla')
+            app = self.log('wheelhouse')
+            current_pids = {int(line.split('=', 1)[1]) for line in (app + connector).splitlines()
+                            if line.startswith(('pid=', 'grandchild='))}
+            if ('connector ready' in connector and
+                    not set(previous_pids).intersection(current_pids)):
                 return
             if process.poll() is not None:
                 self.fail(process.stdout.read())
@@ -168,7 +172,7 @@ class WindowsDailyDriverTests(unittest.TestCase):
         first_pipe = self.log('flotilla').split('socket=', 1)[1].splitlines()[0]
         self.assertTrue(first_pipe.startswith(r'\\.\pipe\wheelhouse-daily-'))
         self.assertIn("'pm', 'connect', '--wheelhouse-socket'", self.log('flotilla'))
-        self.assertIn(repr(str(self.connector)), self.log('flotilla'))
+        self.assertIn(repr(str(self.connector.resolve())), self.log('flotilla'))
         self.assertFalse((self.state / 'logs/git.log').exists(), 'Windows defaults to no git watcher')
         pids = self.pids()
         self.assertTrue(all(alive(pid) for pid in pids))
@@ -271,6 +275,16 @@ os._exit(0)
         self.assertEqual(process.wait(timeout=10), 2)
         self.assertIn('Windows requires --daemon', process.stdout.read())
         self.assertFalse(self.state.exists())
+
+    def test_helper_eof_starts_no_unowned_command(self):
+        marker = self.directory / 'unowned-command-started'
+        command = [sys.executable, str(ROOT / 'tools/daily-driver-windows.py'), sys.executable,
+                   '-c', 'from pathlib import Path; import sys; Path(sys.argv[1]).touch()', str(marker)]
+        result = subprocess.run(command, input=b'', capture_output=True, timeout=10,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(b'did not authorize process startup', result.stderr)
+        self.assertFalse(marker.exists())
 
     def test_unsupported_git_discovery_is_explicit(self):
         for options in [['--git-only'], ['--repo', str(ROOT)]]:

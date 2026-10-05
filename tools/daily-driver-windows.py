@@ -53,7 +53,7 @@ class Job:
         self.handle = checked(kernel.CreateJobObjectW(None, None))
         limits = ExtendedLimits(basic=BasicLimits(flags=0x2000))  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         try:
-            checked(kernel.SetInformationJobObject(self.handle, 9, C.byref(limits), C.sizeof(limits)))
+            checked(kernel.SetInformationJobObject(self.handle, 9, C.byref(limits), C.sizeof(limits)))  # ExtendedLimitInformation
         except BaseException:
             self.close()
             raise
@@ -81,7 +81,10 @@ class WindowsProcesses:
         try:
             # Popen retains this exact process handle; opening by PID could race
             # with exit/reuse. Only this platform adapter uses CPython's handle.
-            self.job.assign(int(process._handle))
+            handle = getattr(process, '_handle', None)
+            if handle is None:
+                raise RuntimeError('Windows daily driver requires CPython subprocess handles')
+            self.job.assign(int(handle))
             process.stdin.write(b'G')
             process.stdin.close()
             process.stdin = None

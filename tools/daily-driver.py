@@ -24,6 +24,7 @@ MAX_CONNECTOR_BACKOFF_SECONDS = 30
 
 
 def load_tool(name, filename):
+    # Existing tool filenames use hyphens, so load these adapters by file path.
     spec = importlib.util.spec_from_file_location(name, ROOT / 'tools' / filename)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -114,7 +115,12 @@ def stop(process):
         # its descendants. Stopping the helper releases that entire tree.
         if process.poll() is None:
             process.terminate()
-        process.wait(timeout=5)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired as error:
+            # kill() is the same TerminateProcess call on Windows. The enclosing
+            # launcher job still closes on unwind and owns the entire tree.
+            raise RuntimeError(f'Windows child {process.pid} did not exit after termination') from error
         return
     # Children have their own process groups, including producer subprocesses.
     try:
@@ -259,7 +265,10 @@ def main():
         try:
             lock_profile(lock)
         except OSError as error:
-            if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+            # msvcrt's nonblocking byte lock reports EACCES/EDEADLK; retain
+            # Unix's original BlockingIOError-only contention classification.
+            contended = error.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK) if WINDOWS else isinstance(error, BlockingIOError)
+            if not contended:
                 raise
             parser.error(f'a daily driver is already using {state}')
         if not args.no_build and 'WHEELHOUSE_BIN' not in os.environ:
