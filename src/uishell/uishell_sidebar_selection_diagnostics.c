@@ -55,7 +55,7 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
     "region \"duplicate\" root-template=\"title\" placement=\"tree\"\n");
   state.core = andamento_create(config.str, config.size, &error);
   ok &= uishell_sidebar_result(&state, state.core != 0, error);
-  if(!state.core) { scratch_end(scratch); return 0; }
+  if(!state.core) { uishell_sidebar_release(&state); scratch_end(scratch); return 0; }
   char *kinds[] = {"project", "convoy", "vessel"};
   char *ids[] = {"selection-project", "selection-convoy", "selection-vessel"};
   for(U64 i = 0; i < 3; i++)
@@ -106,7 +106,7 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
     section.collapsed = section_closed;
     CFG_Node *collapsed = cfg_node_child_from_string(view, str8_lit("section_collapsed"));
     if(section_closed && collapsed == &cfg_nil_node) { cfg_node_new(rd_state->cfg, view, str8_lit("section_collapsed")); }
-    if(!section_closed) { cfg_node_release(rd_state->cfg, collapsed); }
+    if(!section_closed && collapsed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, collapsed); }
     split.inventory.selected = selection ? &convoy : &vessel;
     uishell_sidebar_observe(&state, &split);
     ok &= uishell_sidebar_coverage_diagnostics(&state, &split);
@@ -137,7 +137,8 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
     ok &= pass;
     ui_select_state(saved_ui); ui_state_release(test_ui);
   }
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("section_collapsed")));
+  CFG_Node *collapsed = cfg_node_child_from_string(view, str8_lit("section_collapsed"));
+  if(collapsed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, collapsed); }
   ws->sidebar = saved; rd_state->menu_animation_rate = saved_rate;
   uishell_sidebar_release(&state);
   scratch_end(scratch);

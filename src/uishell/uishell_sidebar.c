@@ -1484,6 +1484,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   }
   // One navigation handle per workspace: prefer the deepest selected subject
   // appearance, with stable section order resolving equal-depth duplicates.
+  // nodes follows snapshot section order, then each section's traversal order.
   U64 selected_entry = ANDAMENTO_NONE;
   for(U64 i = 0; i < count; i++)
   {
