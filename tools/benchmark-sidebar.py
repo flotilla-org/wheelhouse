@@ -77,6 +77,9 @@ with tempfile.TemporaryDirectory(prefix='sidebar-benchmark-') as temporary:
             if not config:
                 raise SystemExit(f'{identity}: missing sampling configuration')
             frames, warmup, interval, combinations = map(int, config.groups())
+            worker_cpus = re.search(r'SIDEBAR_CONFIG[^\n]*worker_cpus=(\d+)', output)
+            if not worker_cpus or int(worker_cpus[1]) != 1:
+                raise SystemExit(f'{identity}: worker CPU sizing interposer did not apply')
             if not (0 < warmup < frames and 0 < interval <= frames and combinations > 0):
                 raise SystemExit(f'{identity}: invalid sampling configuration')
             expected_frames = list(range(interval, frames+1, interval))

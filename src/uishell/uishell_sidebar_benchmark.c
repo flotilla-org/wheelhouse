@@ -53,8 +53,8 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
   UIShell_SidebarState *saved = ws->sidebar;
   UI_State *saved_ui = ui_state;
   B32 ok = uishell_sidebar_labels_diagnostics();
-  enum { warmup = 40, frames = 240, sample_interval = 40 };
-  fprintf(stderr, "SIDEBAR_CONFIG frames=%u warmup=%u sample_interval=%u combinations=%u\n", frames, warmup, sample_interval, 4u);
+  enum { warmup = 40, frames = 240, sample_interval = 40, layouts = 2, inputs = 2 };
+  fprintf(stderr, "SIDEBAR_CONFIG frames=%u warmup=%u sample_interval=%u combinations=%u worker_cpus=%u\n", frames, warmup, sample_interval, layouts*inputs, get_system_info()->logical_processor_count);
   U64 sizes[] = {uishell_sidebar_benchmark_issues};
   for(U64 size_index = 0; size_index < ArrayCount(sizes); size_index++)
   {
@@ -103,7 +103,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     U64 sections = 0;
     for(CFG_Node *panel = host->first; panel != &cfg_nil_node; panel = panel->next) { sections++; }
     ok &= sections == 4;
-    for(U64 merged = 0; merged < 2; merged++)
+    for(U64 merged = 0; merged < layouts; merged++)
     {
       if(merged)
       {
@@ -122,7 +122,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
           cfg_node_release(rd_state->cfg, source);
         }
       }
-      for(U64 scrolling = 0; scrolling < 2; scrolling++)
+      for(U64 scrolling = 0; scrolling < inputs; scrolling++)
       {
         UI_State *test_ui = ui_state_alloc();
         ui_select_state(test_ui);
