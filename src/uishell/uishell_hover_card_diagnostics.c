@@ -5,6 +5,27 @@ action_node_copy(UIShell_SidebarState *state, U64 index)
   return andamento_snapshot_detail(state->snapshot, index, &detail) ? detail.copy_url : ANDAMENTO_NONE;
 }
 
+// Commit through the same creation-drag routing and finish phases as a center drop.
+internal void
+uishell_hover_card_test_center_drop(RD_WindowState *ws, UIShell_HoverCard *card, CFG_Node *area)
+{
+  card->open = card->moving = card->drag_released = card->engaged = 1;
+  ws->sidebar->drag_card = card;
+  UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = 0)
+  { rd_drag_begin(UIShell_ContextRegSlot_View); }
+  rd_state->drag_drop_creation_name = str8_lit("pinned_cards");
+  rd_state->drag_drop_commit = uishell_sidebar_card_panel_drop;
+  rd_state->drag_drop_state = RD_DragDropState_Dropping;
+  if(rd_drag_drop()) { rd_panel_drag_drop(area->parent->id, Dir2_Invalid, area->id); }
+  UI_EventList events = {0}; UI_AnimationInfo animation = {0};
+  UI_IconInfo icons = ws->ui->icon_info;
+  ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+  ui_state->mouse = v2f32(500, 100);
+  uishell_sidebar_card_drag_finish(ws);
+  uishell_sidebar_detached_finish(ws);
+  ui_end_build();
+}
+
 // Click an actual related/Back widget through press and release frames.
 internal B32
 uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
@@ -786,6 +807,45 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(saved != &cfg_nil_node && !floating->open, "pin persists entity identity in the saved panel layout");
     CFG_ID saved_id = saved->id;
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+    // A transient card for an already pinned entity, dropped on that area's
+    // center target, must leave the unique saved card reachable and visible.
+    CFG_Node *center_area = saved->parent;
+    CFG_Node *saved_prev = saved->prev, *saved_next = saved->next;
+    CFG_Node *area_first = center_area->first, *area_last = center_area->last;
+    uishell_hover_card_test_center_drop(ws, original, center_area);
+    U64 center_count = 0;
+    B32 center_reachable = 0;
+    for(CFG_Node *n = center_area->first; n != &cfg_nil_node && center_count < 32; n = n->next, center_count++)
+    { center_reachable |= n == saved; }
+    CardCheck(center_reachable && saved->id == saved_id && saved->parent == center_area &&
+      saved->prev != saved && saved->next != saved && !original->open,
+      "center drop of the same entity retains one reachable saved pin instead of emptying its area");
+    // Keep later diagnostics runnable even if this regression corrupts links.
+    if(!center_reachable || saved->prev == saved || saved->next == saved)
+    {
+      center_area->first = area_first; center_area->last = area_last;
+      saved->prev = saved_prev; saved->next = saved_next; saved->parent = center_area;
+      if(saved_prev != &cfg_nil_node) { saved_prev->next = saved; }
+      if(saved_next != &cfg_nil_node) { saved_next->prev = saved; }
+    }
+    CardCheck(uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == saved,
+      "same-entity center drop keeps the pin discoverable by identity");
+    UIShell_HoverCard *center_pin = uishell_sidebar_saved_card(ws, saved);
+    uishell_hover_card_test_center_drop(ws, center_pin, center_area);
+    CardCheck(center_pin->open && !center_pin->moving && center_pin->saved == saved_id &&
+      uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == saved,
+      "dropping the pinned card into its own area preserves its controller and saved identity");
+    AndamentoNode other_entity = entity;
+    other_entity.entity_id = uishell_sidebar_text(str8_lit("center-drop-second"));
+    uishell_sidebar_card_set(original, other_entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+    uishell_hover_card_test_center_drop(ws, original, center_area);
+    CFG_Node *second_pin = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(other_entity), 0);
+    CardCheck(second_pin != &cfg_nil_node && second_pin->parent == center_area &&
+      uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == saved && center_pin->open,
+      "center drop of a different entity appends a second pin without removing the first");
+    uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, second_pin));
+    uishell_sidebar_detached_finish(ws);
+    uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
     CFG_Node *again = uishell_sidebar_card_pin(ws, original, 0);
     CardCheck(again->id == saved_id && fixture.pin_reveal == saved_id, "pinning twice reveals the same card");
     Temp saved_scratch = scratch_begin(0, 0);
@@ -1005,6 +1065,66 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(drag_pin->open && drag_pin->placement == UIShell_CardPlacement_Float &&
       uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == &cfg_nil_node,
       "dragging an existing pin outside its section produces one float and removes the saved pin");
+    // The raw release is consumed by card ownership before UI events. A
+    // former pin's Float grip must release too, or the next build restarts drag.
+    fprintf(stderr, "Hover card diagnostics: float raw release\n");
+    for(U64 end_kind = 0; end_kind < 3; end_kind++)
+    {
+      ui_kill_action();
+      Vec2F32 float_drag_start = {0}, released_position = {0};
+      for(U64 frame = 0; frame < 5; frame++)
+      {
+        UI_EventList events = {0};
+        Vec2F32 pointer = frame < 2 ? float_drag_start : add_2f32(float_drag_start, v2f32(80, 20));
+        if(frame == 4) { pointer = add_2f32(pointer, v2f32(40, 30)); }
+        if(frame == 1 || frame == 3)
+        {
+          WM_Event raw = {.kind = frame == 1 ? WM_EventKind_Press : WM_EventKind_Release,
+            .key = WM_Key_LeftMouseButton, .pos = pointer};
+          if(frame == 3 && end_kind == 1) { raw.kind = WM_EventKind_Press; raw.key = WM_Key_Esc; }
+          if(frame == 3 && end_kind == 2) { raw.kind = WM_EventKind_WindowLoseFocus; }
+          B32 consumed = uishell_sidebar_card_wm_event(ws, &raw);
+          if(frame == 3) { CardCheck(consumed == (end_kind != 2), "float drag end retains raw event ownership"); }
+          if(!consumed && (frame == 1 || end_kind == 0))
+          {
+            UI_Event event = {.kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release,
+              .key = WM_Key_LeftMouseButton, .pos = pointer};
+            ui_event_list_push(test->arena, &events, &event);
+          }
+        }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = pointer;
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+        uishell_sidebar_card_drag_finish(ws);
+        ui_end_build();
+        if(frame == 0)
+        {
+          UI_Box *card_root = ui_box_from_key(drag_pin->mask.key);
+          for(UI_Box *box = card_root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, card_root).next)
+          { if(str8_match(ui_box_display_string(box), str8_lit("⋮⋮"), 0)) { float_drag_start = center_2f32(box->rect); break; } }
+          CardCheck(float_drag_start.x > 0, "former pin exposes its Float grip");
+        }
+        if(frame == 2) { CardCheck(drag_pin->moving && fixture.drag_card == drag_pin, "Float grip starts the real card drag"); }
+        if(frame == 3)
+        {
+          released_position = drag_pin->rect.p0;
+          CardCheck(!drag_pin->moving && !fixture.drag_card && !rd_drag_is_active() &&
+            ui_key_match(ui_active_key(UI_MouseButtonKind_Left), ui_key_zero()),
+            "raw float release clears both card drag ownership and the active grip");
+        }
+        if(frame == 4)
+        { CardCheck(!drag_pin->moving && !fixture.drag_card && !rd_drag_is_active() &&
+            length_2f32(sub_2f32(drag_pin->rect.p0, released_position)) < 1,
+            "moving the cursor after release neither restarts the float drag nor moves the card"); }
+      }
+      rd_drag_kill(); fixture.drag_card = 0; drag_pin->moving = 0; ui_kill_action();
+      if(end_kind == 1)
+      {
+        WM_Event esc_release = {.kind = WM_EventKind_Release, .key = WM_Key_Esc};
+        CardCheck(uishell_sidebar_card_wm_event(ws, &esc_release), "float drag Escape owns its release edge");
+      }
+    }
     uishell_sidebar_card_close(drag_pin);
     cfg_node_insert_child(rd_state->cfg, drag_parent, drag_previous, drag_panel);
     cfg_node_equip_string(rd_state->cfg, drag_panel, drag_share);

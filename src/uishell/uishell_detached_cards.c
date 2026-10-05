@@ -385,7 +385,9 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
   }
   if(saved != &cfg_nil_node)
   {
-    cfg_node_insert_child(rd_state->cfg, area, area->last, saved);
+    // A center drop onto its current area reveals the pin in place. Passing
+    // the last child as both predecessor and inserted node corrupts the list.
+    if(saved->parent != area) { cfg_node_insert_child(rd_state->cfg, area, area->last, saved); }
     state->pin_reveal = saved->id;
     return saved;
   }

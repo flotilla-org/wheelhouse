@@ -95,3 +95,10 @@ creation drag followed by a normal tab drag queues an ordinary move. A workspace
 section drop exercises split dispatch and empty-source cleanup in a nested
 layout; flattening preserves the surviving leaf allocations and restores focus
 to a live leaf rather than the released split container.
+
+Center drops cover a transient copy of the same pinned entity, the pin dropped
+into its own area, and a different entity appended alongside the existing pin.
+The same-area cases retain one saved identity and do not relink it after itself.
+Former pins floated and dragged through the actual grip remain stationary after
+raw mouse release, Escape cancellation, and window focus loss. These raw events
+clear both the card drag owner and its UI grip before the next build.

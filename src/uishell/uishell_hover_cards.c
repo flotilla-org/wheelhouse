@@ -252,6 +252,13 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
   if(!ws || ws == &rd_nil_window_state || !ws->sidebar || !ws->ui) { return 0; }
   UIShell_SidebarState *state = ws->sidebar;
   uishell_sidebar_detached_bounds(ws);
+  // Raw card ownership consumes these events before the UI sees them. Release
+  // the initiating grip too, so the next build cannot restart a finished drag.
+  if(state->drag_card &&
+     ((event->kind == WM_EventKind_Release && event->key == WM_Key_LeftMouseButton) ||
+      (event->kind == WM_EventKind_Press && event->key == WM_Key_Esc) ||
+       event->kind == WM_EventKind_WindowLoseFocus))
+  { ws->ui->active_box_key[UI_MouseButtonKind_Left] = ui_key_zero(); }
   if(state->drag_card && event->kind == WM_EventKind_Press && event->key == WM_Key_Esc)
   {
     rd_drag_kill();
