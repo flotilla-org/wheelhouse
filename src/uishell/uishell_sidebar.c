@@ -1369,9 +1369,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     }
   }
   if(!section_panel) { state->rect = rect; }
-  // All sections share one state. The first rendered section consumes a queued
-  // hover-card action; a header/row click is dispatched by its own section.
-  size_t action = uishell_sidebar_card_take_action(state);
+  // A header/row click is dispatched by its own section. Card intent is
+  // consumed after all Views finish rendering, including later pinned areas.
+  size_t action = ANDAMENTO_NONE;
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size(), row_height = floor_f32(em*2.2f);
   F32 minimum_name = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, str8_lit("abcdefghij…")).x+em;

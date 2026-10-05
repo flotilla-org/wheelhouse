@@ -23,7 +23,7 @@ uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width)
   {
     UI_Signal drag = uishell_sidebar_button(str8_lit("↕ Drag###card_drag"));
     if(ui_pressed(drag)) { card->move_origin = card->rect.p0; }
-    if(ui_dragging(drag) && length_2f32(ui_drag_delta()) > 10)
+    if(ui_dragging(drag) && length_2f32(ui_drag_delta()) > UIShell_HoverCardDragThresholdPT)
     {
       card->moving = 1;
       Vec2F32 size = dim_2f32(card->rect), pos = add_2f32(card->move_origin, ui_drag_delta());
@@ -46,11 +46,30 @@ internal UIShell_HoverCard *
 uishell_sidebar_detached_alloc(RD_WindowState *ws)
 {
   UIShell_HoverCard *c = ws->sidebar->detached;
-  for(; c; c = c->next) { if(!c->open && !c->saved) { break; } }
+  for(; c; c = c->next)
+  {
+    if(c->open || c->saved) { continue; }
+    // A closed float can still protect its painted bounds during this build.
+    // Recycling it would zero mask.next and truncate the live mask chain.
+    B32 linked = 0;
+    for(UI_HoverCardMask *m = ws->ui->hover_card_extra; m; m = m->next)
+    { linked |= m == &c->mask; }
+    if(!linked) { break; }
+  }
   if(!c)
   {
     c = push_array(ws->arena, UIShell_HoverCard, 1);
     c->next = ws->sidebar->detached; ws->sidebar->detached = c;
+  }
+  // Reused slots are newly opened cards too. Put them at the front so the
+  // newest float is both painted and hit-tested above older floats.
+  if(c != ws->sidebar->detached)
+  {
+    UIShell_HoverCard *previous = ws->sidebar->detached;
+    while(previous->next != c) { previous = previous->next; }
+    previous->next = c->next;
+    c->next = ws->sidebar->detached;
+    ws->sidebar->detached = c;
   }
   UIShell_HoverCard *next = c->next;
   if(c->arena) { arena_release(c->arena); }
@@ -247,7 +266,7 @@ uishell_sidebar_card_drag_target(RD_WindowState *ws, UIShell_HoverCard *card, Ve
     Rng2F32 rect = source->rect;
     for(UI_Box *p = source->parent; !ui_box_is_nil(p); p = p->parent)
     { if(p->flags & UI_BoxFlag_Clip) { rect = intersect_2f32(rect, p->rect); } }
-    if(dim_2f32(rect).x > 0 && dim_2f32(rect).y > 0 && contains_2f32(pad_2f32(rect, 12), mouse))
+    if(dim_2f32(rect).x > 0 && dim_2f32(rect).y > 0 && contains_2f32(pad_2f32(rect, UIShell_HoverCardSourceDropPaddingPT), mouse))
     { return UIShell_CardPlacement_Inline; }
   }
   return UIShell_CardPlacement_Pinned;
@@ -374,7 +393,7 @@ uishell_sidebar_inline_height(UIShell_SidebarState *state, String8 key)
   for(UIShell_HoverCard *c = state->detached; c; c = c->next)
   {
     if(c->open && c->placement == UIShell_CardPlacement_Inline && str8_match(c->source_row, key, 0))
-    { height += (c->content_height > 0 ? c->content_height : ui_top_font_size()*8)+8; }
+    { height += (c->content_height > 0 ? c->content_height : ui_top_font_size()*UIShell_HoverCardInlineFallbackHeightEM)+8; }
   }
   return height;
 }
@@ -427,7 +446,7 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
     UI_PrefWidth(ui_em(1.5f, 1))
     {
       UI_Signal drag = uishell_sidebar_button(str8_lit("↕###pinned_drag"));
-      if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > 10)
+      if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_HoverCardDragThresholdPT)
       { rd_drag_begin(UIShell_ContextRegSlot_View); }
       if(ui_clicked(uishell_sidebar_button(str8_lit("×###pinned_close"))) && rd_dock_can_close(view))
       { uishell_cmd("close_tab"); }

@@ -490,12 +490,29 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       // before its controls can enqueue an action without a dispatcher.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
       uishell_sidebar_card_set(&fixture.cards[1], parent, ui_key_zero(), str8_zero(), 0, now_time_us());
-      fixture.cards[1].focused = 1; fixture.card_has_action = 1;
+      fixture.cards[1].focused = 1; fixture.card_escape_down = 1;
+      U64 hidden_index = uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(live), 0);
+      uishell_sidebar_card_queue_action(&fixture, live, action_node_copy(&fixture, hidden_index));
+      CardCheck(fixture.card_has_action && fixture.card_action_intent.size, "hidden sidebar trace starts with real queued intent");
       UI_EventList hidden_events = {0};
       ui_begin_build(ws->os, &hidden_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 0); ui_end_build();
-      CardCheck(!card->open && !fixture.cards[1].open && !fixture.card_has_action && !test->hover_card_focus,
-                "hidden sidebar closes both cards before an action can be emitted");
+      uishell_sidebar_cards_dispatch(ws);
+      CardCheck(!card->open && !fixture.cards[1].open && !fixture.card_has_action && !test->hover_card_focus &&
+                !fixture.card_action_intent.size && !fixture.card_action_target.id.len && !fixture.card_escape_down,
+                "hidden sidebar abandons intent and held Escape before any dispatch");
+      // Pinned/inline controls render after the overlay controller in the shell.
+      UI_EventList late_events = {0};
+      ui_begin_build(ws->os, &late_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1);
+      uishell_sidebar_card_queue_action(&fixture, live, action_node_copy(&fixture, hidden_index));
+      CardCheck(fixture.card_has_action, "late View can queue card intent after the overlay pass");
+      Andamento *dispatch_core = fixture.core; fixture.core = 0;
+      uishell_sidebar_cards_dispatch(ws);
+      fixture.core = dispatch_core;
+      CardCheck(!fixture.card_has_action && !fixture.card_action_intent.size && !fixture.card_action_target.id.len,
+                "window-end card dispatch consumes late View intent before the arena advances");
+      ui_end_build();
       // A reveal/observe refresh can replace the snapshot after the card emits
       // its intent but before sidebar dispatch. Never retain the old index.
       AndamentoNode action_node = {0};
@@ -785,6 +802,39 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_card_close(pinned); uishell_sidebar_detached_finish(ws);
     CardCheck(uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == &cfg_nil_node,
               "explicit Close removes a pinned card from persisted layout");
+    // Float paint order follows the mask and raw-WM priority. A closed card
+    // still linked this build cannot be recycled through its mask.next link.
+    uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+    original->focused = 1;
+    UIShell_HoverCard *lower_float = uishell_sidebar_detached_copy(ws, original);
+    UIShell_HoverCard *upper_float = uishell_sidebar_detached_copy(ws, original);
+    lower_float->placement = upper_float->placement = UIShell_CardPlacement_Float;
+    lower_float->rect = upper_float->rect = r2f32p(400, 100, 800, 400);
+    UI_EventList mask_events = {0};
+    ui_begin_build(ws->os, &mask_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    test->mouse = v2f32(-100, -100);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+    { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+    ui_end_build();
+    U64 paint_index = 0, upper_paint = 0, lower_paint = 0, transient_paint = 0;
+    UI_Key transient_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);
+    for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_post(box, &ui_nil_box).next)
+    {
+      paint_index++;
+      if(ui_key_match(box->key, upper_float->mask.key)) { upper_paint = paint_index; }
+      if(ui_key_match(box->key, lower_float->mask.key)) { lower_paint = paint_index; }
+      if(ui_key_match(box->key, transient_key)) { transient_paint = paint_index; }
+    }
+    CardCheck(upper_paint > lower_paint && lower_paint > transient_paint && transient_paint > 0,
+              "float mask order matches reverse-sibling paint order above transient cards");
+    uishell_sidebar_card_close(upper_float);
+    UI_HoverCardMask *mask_tail = upper_float->mask.next;
+    UIShell_HoverCard *recycled = uishell_sidebar_detached_alloc(ws);
+    CardCheck(recycled != upper_float && upper_float->mask.next == mask_tail && mask_tail == &lower_float->mask,
+              "same-frame allocation skips a closed float still linked above another live float");
+    test->hover_card_extra = 0;
+    uishell_sidebar_card_close(lower_float);
+    uishell_sidebar_card_close(recycled);
     fprintf(stderr, "Hover card diagnostics: drag control\n");
     // Drive the real drag control through press, motion and release frames.
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());

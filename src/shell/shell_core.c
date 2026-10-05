@@ -7686,6 +7686,7 @@ rd_window_frame(void)
       }
     }
     
+    uishell_sidebar_cards_dispatch(ws);
     ui_end_build();
   }
   

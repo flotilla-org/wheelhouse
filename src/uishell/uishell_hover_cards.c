@@ -9,6 +9,9 @@ enum
   UIShell_HoverCardCorridorPaddingPT = 12,
   UIShell_HoverCardNearGapPT = 16,
   UIShell_HoverCardInitialPathCapacity = 32,
+  UIShell_HoverCardDragThresholdPT = 10,
+  UIShell_HoverCardSourceDropPaddingPT = 12,
+  UIShell_HoverCardInlineFallbackHeightEM = 8,
   // ABI 2 detail_action exposes slot 0 (primary) and slot 1 (copy URL).
   UIShell_HoverCardActionCount = 2,
 };
@@ -668,6 +671,12 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
 {
   UIShell_SidebarState *state = ws->sidebar;
   if(!state) { return; }
+  // Abandon unconsumed previous-frame intent before rendering any cards.
+  // Pinned and inline Views render later; all current intent is dispatched
+  // together after the window's Views finish, before the build arena advances.
+  state->card_has_action = 0;
+  state->card_action_target = (AndamentoEntity){0};
+  state->card_action_intent = str8_zero();
   Rng2F32 window = wm_client_rect_from_window(ws->os);
   Vec2F32 mouse = ui_state->mouse;
   ui_state->hover_card_focus = 0;
@@ -679,7 +688,10 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
   ui_state->hover_card_extra = 0;
   if(!sidebar_visible)
   {
-    state->card_has_action = 0;
+    B32 has_float = 0;
+    for(UIShell_HoverCard *c = state->detached; c; c = c->next)
+    { has_float |= c->open && (c->placement == UIShell_CardPlacement_Float || c->moving); }
+    if(!has_float) { state->card_escape_down = 0; }
     // Hidden sources dismiss transient cards; floats remain independently visible.
     // Close before constructing controls, including the source-less second card.
     for(U64 i = 0; i < ArrayCount(state->cards); i++) { uishell_sidebar_card_close(&state->cards[i]); }
@@ -852,6 +864,22 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     if(action != ANDAMENTO_NONE) { uishell_sidebar_card_queue_action(state, node, action); rd_request_frame(); }
   }
   uishell_sidebar_detached_finish(ws);
+  // Buttons can close a card or transfer focus while building its content.
+  // Update before the selected View gets any remaining keyboard events.
+  ui_state->hover_card_focus = 0;
+  for(U64 i = 0; i < ArrayCount(state->cards); i++)
+  { ui_state->hover_card_focus |= state->cards[i].open && state->cards[i].focused; }
+  for(UIShell_HoverCard *c = state->detached; c; c = c->next)
+  { ui_state->hover_card_focus |= c->open && c->focused; }
+}
+
+// Call once after all window Views have built. Resolve semantic intent against
+// the reconciled snapshot while its retained identity still lives in this build.
+internal void
+uishell_sidebar_cards_dispatch(RD_WindowState *ws)
+{
+  UIShell_SidebarState *state = ws->sidebar;
+  if(!state) { return; }
   size_t pending = uishell_sidebar_card_take_action(state);
   if(pending != ANDAMENTO_NONE && state->core)
   {
@@ -863,13 +891,6 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     { uishell_sidebar_effects(state, &split); }
     uishell_sidebar_refresh(state); rd_request_frame(); scratch_end(scratch);
   }
-  // Buttons can close a card or transfer focus while building its content.
-  // Update before the selected View gets any remaining keyboard events.
-  ui_state->hover_card_focus = 0;
-  for(U64 i = 0; i < ArrayCount(state->cards); i++)
-  { ui_state->hover_card_focus |= state->cards[i].open && state->cards[i].focused; }
-  for(UIShell_HoverCard *c = state->detached; c; c = c->next)
-  { ui_state->hover_card_focus |= c->open && c->focused; }
 }
 
 internal void
