@@ -180,3 +180,8 @@ Merged fixtures select Projects/Attention and their partner sections by
 region identity rather than assuming a flat positional panel order; the
 new reconciler can retain nested containers. The visibility assertion also
 caught the old positional merge setup.
+Fresh stepped validation passes at 100/300/1,000 issues after these harness
+updates, with worst within-arrangement post-warmup RSS growth 564 KiB.
+Peak RSS is 125,440/124,928 KiB (100), 153,724/153,660 KiB (300), and
+251,368/251,620 KiB (1,000), linear/lookup. All ten native diagnostics,
+28 sidebar ABI tests and 12 ingress tests (two platform skips) pass.
