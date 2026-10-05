@@ -2,10 +2,13 @@
 $ErrorActionPreference = 'Stop'
 $launcher = Join-Path $PSScriptRoot '..\tools\daily-driver.py'
 if ($env:WHEELHOUSE_PYTHON_BIN) {
-    & $env:WHEELHOUSE_PYTHON_BIN $launcher @args
+    $pythonExecutable = $env:WHEELHOUSE_PYTHON_BIN
 } elseif (Get-Command py -ErrorAction SilentlyContinue) {
-    & py -3 $launcher @args
+    # Resolve once so py.exe does not sit between PowerShell and the owner.
+    $pythonExecutable = & py -3 -c 'import sys; print(sys.executable)'
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot select a Python 3 interpreter with py.exe' }
 } else {
-    & python $launcher @args
+    $pythonExecutable = 'python'
 }
+& $pythonExecutable $launcher @args
 exit $LASTEXITCODE

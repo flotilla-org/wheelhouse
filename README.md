@@ -224,7 +224,8 @@ connector processes. Real HTTP/UDS delivery is covered by
 
 ### Daily driver (Windows)
 
-Use CPython 3 and an existing Flotilla Windows client with the SSH endpoint from
+Use CPython 3 (other Python interpreters are unsupported) and an existing
+Flotilla Windows client with the SSH endpoint from
 flotilla#2639. The remote CLI must provide `daemon-bridge`, and the client must
 match the running daemon's protocol fingerprint. The launcher does not rebuild
 Flotilla or upgrade the remote fleet. A remote candidate executable can be selected
@@ -243,7 +244,8 @@ scripts/run-daily-driver.ps1 --no-build --daemon ssh://udder/home/robert/candida
 UI, its terminals and the connector. Without either, the Windows launcher fails
 before starting Wheelhouse. The default binaries have an `.exe` suffix. Without
 `WHEELHOUSE_BIN` or `--no-build`, the launcher runs `build.bat wheelhouse`.
-The PowerShell entrypoint uses `py -3`, falling back to `python`; set
+The PowerShell entrypoint uses `py -3` to select an interpreter, then runs that
+Python executable directly. It falls back to `python` when `py` is absent; set
 `WHEELHOUSE_PYTHON_BIN` to select a particular Python executable. Running
 `python tools/daily-driver.py` directly supports the same options.
 

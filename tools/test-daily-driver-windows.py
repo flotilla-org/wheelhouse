@@ -297,16 +297,23 @@ os._exit(0)
     def test_powershell_entrypoint_preserves_arguments(self):
         self.command = ['powershell', '-NoProfile', '-File', str(ROOT / 'scripts/run-daily-driver.ps1'), '--no-build']
         endpoint = 'ssh://udder/opt/flotilla tools/flotilla'
-        process = self.start(['--daemon', endpoint])
-        try:
-            self.ready(process)
-            self.assertIn('daemon=' + endpoint, self.log('flotilla'))
-            pids = self.pids()
-        finally:
-            # Let the Python launcher unwind even when the wrapper test fails.
-            self.close_app.touch()
-        self.assertEqual(process.wait(timeout=10), 0)
-        self.assert_stopped(pids)
+        for explicit_python in [True, False]:
+            with self.subTest(explicit_python=explicit_python):
+                self.state = self.directory / ('explicit Python' if explicit_python else 'automatic Python')
+                self.env['WHEELHOUSE_DAILY_DIR'] = str(self.state)
+                if not explicit_python:
+                    self.env.pop('WHEELHOUSE_PYTHON_BIN')
+                    self.close_app.unlink()
+                process = self.start(['--daemon', endpoint])
+                try:
+                    self.ready(process)
+                    self.assertIn('daemon=' + endpoint, self.log('flotilla'))
+                    pids = self.pids()
+                finally:
+                    # Let the Python launcher unwind even when the wrapper test fails.
+                    self.close_app.touch()
+                self.assertEqual(process.wait(timeout=10), 0)
+                self.assert_stopped(pids)
 
 
 if __name__ == '__main__':
