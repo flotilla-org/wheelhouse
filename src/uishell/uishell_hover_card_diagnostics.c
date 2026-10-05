@@ -802,8 +802,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       if(frame == 1)
       { CardCheck(!fixture.pin_reveal, "measured new pin completes its reveal on the next frame"); }
       UI_Box *body = ui_box_from_key(pinned->mask.key);
-      CardCheck(!ui_box_is_nil(body) && body->rect.y0 >= 29+24 && body->fixed_size.y > 40,
-                "pinned View renders a measured body below its ordinary section header");
+      CardCheck(!ui_box_is_nil(body) && body->rect.x0 >= 17+6 && body->rect.x1 <= 297-6 && body->rect.y0 >= 29+24 && body->fixed_size.y > 40,
+                "pinned View renders an inset measured body below its ordinary section header");
       uishell_sidebar_detached_bounds(ws);
       CardCheck(pinned->rect.x0 >= 17 && pinned->rect.x1 <= 297 && pinned->rect.y1 <= 329,
                 "pinned WM hit geometry is clipped to the section viewport");
@@ -897,7 +897,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       ui_end_build();
       if(frame == 0)
       {
-        for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+        UI_Box *card_root = ui_box_from_key(test->hover_card_keys[0]);
+        for(UI_Box *box = card_root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, card_root).next)
         { if(str8_match(ui_box_display_string(box), str8_lit("⋮⋮"), 0)) { drag_start = center_2f32(box->rect); break; } }
         CardCheck(drag_start.x > 0, "engaged production overlay exposes the drag control");
       }
@@ -906,6 +907,77 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(!original->open && fixture.detached->open && fixture.detached->placement == UIShell_CardPlacement_Float,
               "native drag release outside the sidebar creates a float");
     uishell_sidebar_card_close(fixture.detached);
+
+    fprintf(stderr, "Hover card diagnostics: pinned drag with panel targets\n");
+    CFG_Node *drag_pin_entry = uishell_sidebar_card_pin(ws, original, 0);
+    UIShell_HoverCard *drag_pin = uishell_sidebar_saved_card(ws, drag_pin_entry);
+    original->open = 0;
+    // The grip starts a drag in the first View; a later leaf must build drop
+    // sites in that same frame, before the next panel-area entry.
+    CFG_Node *drag_root = cfg_node_new(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
+    CFG_Node *drag_panel = drag_pin_entry->parent->parent;
+    CFG_Node *drag_parent = drag_panel->parent, *drag_previous = drag_panel->prev;
+    String8 drag_share = push_str8_copy(test->arena, drag_panel->string);
+    cfg_node_insert_child(rd_state->cfg, drag_root, &cfg_nil_node, drag_panel);
+    cfg_node_equip_string(rd_state->cfg, drag_panel, str8_lit("0.5"));
+    cfg_node_new(rd_state->cfg, drag_root, str8_lit("0.5"));
+    Vec2F32 pinned_drag_start = {0}, pinned_drag_size = {0};
+    for(U64 frame = 0; frame < 5; frame++)
+    {
+      Vec2F32 pointer = frame < 2 ? pinned_drag_start : add_2f32(pinned_drag_start, v2f32(450, 30));
+      UI_EventList events = {0};
+      if(frame == 1 || frame == 4)
+      {
+        WM_Event raw = {.kind = frame == 1 ? WM_EventKind_Press : WM_EventKind_Release,
+          .key = WM_Key_LeftMouseButton, .pos = pointer};
+        if(!uishell_sidebar_card_wm_event(ws, &raw))
+        {
+          UI_Event event = {.kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release,
+            .key = WM_Key_LeftMouseButton, .pos = pointer};
+          ui_event_list_push(test->arena, &events, &event);
+        }
+      }
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      test->mouse = pointer;
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+      {
+        uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1);
+        Andamento *drag_core = fixture.core; fixture.core = 0;
+        Temp panel_scratch = scratch_begin(0, 0);
+        CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+        UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(panel_scratch.arena, window, host);
+        mount.panel_tree = cfg_panel_tree_from_panels_cfg(panel_scratch.arena, drag_root, Axis2_X);
+        UIShell_RegsScope(.window = window->id)
+        { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
+        scratch_end(panel_scratch);
+        fixture.core = drag_core;
+      }
+      uishell_sidebar_card_drag_finish(ws);
+      ui_end_build();
+      if(frame == 0)
+      {
+        UI_Box *card_root = ui_box_from_key(drag_pin->mask.key);
+        for(UI_Box *box = card_root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, card_root).next)
+        { if(str8_match(ui_box_display_string(box), str8_lit("⋮⋮"), 0)) { pinned_drag_start = center_2f32(box->rect); break; } }
+        uishell_sidebar_detached_bounds(ws);
+        pinned_drag_size = dim_2f32(drag_pin->rect);
+        CardCheck(pinned_drag_start.x > 0, "pinned card exposes its own grip inside the section");
+      }
+      if(frame == 2 || frame == 3)
+      {
+        CardCheck(drag_pin->moving && drag_pin->open && rd_drag_is_active(), "pinned drag stays active while actual panel drop targets build");
+        CardCheck(length_2f32(sub_2f32(dim_2f32(drag_pin->rect), pinned_drag_size)) < 1.f &&
+          length_2f32(sub_2f32(drag_pin->rect.p0, add_2f32(drag_pin->move_origin, v2f32(450,30)))) < 1.f,
+          "moving pin keeps its grabbed size and position instead of being laid out again in its source");
+      }
+    }
+    CardCheck(drag_pin->open && drag_pin->placement == UIShell_CardPlacement_Float &&
+      uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == &cfg_nil_node,
+      "dragging an existing pin outside its section produces one float and removes the saved pin");
+    uishell_sidebar_card_close(drag_pin);
+    cfg_node_insert_child(rd_state->cfg, drag_parent, drag_previous, drag_panel);
+    cfg_node_equip_string(rd_state->cfg, drag_panel, drag_share);
+    cfg_node_release(rd_state->cfg, drag_root);
 
     // A source-bound card closes when its exact placement is removed.
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());

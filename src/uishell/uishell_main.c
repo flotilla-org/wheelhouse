@@ -110,6 +110,14 @@
 #include "uishell/uishell_managed_content_diagnostics.c"
 #include "uishell/uishell_overview_benchmark.c"
 
+// Full card/panel diagnostics need the live frame's View and evaluator registries.
+internal B32
+uishell_tooltip_and_card_diagnostics(RD_WindowState *ws)
+{
+  B32 ok = uishell_tooltip_diagnostics(ws);
+  return uishell_hover_card_diagnostics(ws) && ok;
+}
+
 ////////////////////////////////
 //~ rjf: Top-Level Execution Types
 
@@ -236,7 +244,8 @@ entry_point(CmdLine *cmd_line)
       if(cmd_line_has_flag(cmd_line, str8_lit("preview_diagnostics")))
       { rd_state->frame_diagnostic = uishell_preview_diagnostics; }
       B32 run_scroll_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("scroll_region_diagnostics"));
-      B32 run_tooltip_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("tooltip_diagnostics"));
+      if(cmd_line_has_flag(cmd_line, str8_lit("tooltip_diagnostics")))
+      { rd_state->frame_diagnostic = uishell_tooltip_and_card_diagnostics; }
       B32 run_sidebar_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
       B32 run_terminal_glyph_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("terminal_glyph_diagnostics"));
       String8 terminal_glyph_fixture_ppm_path = cmd_line_string(cmd_line, str8_lit("terminal_glyph_fixture_ppm"));
@@ -252,13 +261,6 @@ entry_point(CmdLine *cmd_line)
       for(B32 quit = 0; !quit;)
       {
         quit = update();
-        if(run_tooltip_diagnostics)
-        {
-          RD_WindowState *ws = rd_state->first_window_state;
-          B32 ok = ws != &rd_nil_window_state && uishell_tooltip_diagnostics(ws);
-          if(ws != &rd_nil_window_state) { ok = uishell_hover_card_diagnostics(ws) && ok; }
-          abort_self(ok ? 0 : 1);
-        }
         if(run_scroll_diagnostics)
         {
           RD_WindowState *ws = rd_state->first_window_state;

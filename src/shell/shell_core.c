@@ -3321,6 +3321,7 @@ rd_panel_inset_px(F32 font_size)
 typedef struct RD_DockGeometry RD_DockGeometry;
 struct RD_DockGeometry
 {
+  UIShell_WorkspaceMount *mount;
   CFG_PanelTree tree;
   Rng2F32 area;
   F32 inset;
@@ -3331,7 +3332,7 @@ struct RD_DockGeometry
 internal RD_DockGeometry
 rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
 {
-  RD_DockGeometry result = {.tree = mount->panel_tree};
+  RD_DockGeometry result = {.mount = mount, .tree = mount->panel_tree};
   RD_WindowState *ws = rd_window_state_from_cfg__existing(mount->owner_cfg);
   if(ws == &rd_nil_window_state) { return result; }
   UIShell_RegsScope(.window = mount->window_cfg->id, .panel = 0, .view = 0, .tab = 0)
@@ -3359,6 +3360,9 @@ rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
 internal F32
 rd_dock_width_from_geometry(RD_DockGeometry *geometry, CFG_Node *destination, Dir2 dir)
 {
+  // A View can begin a drag midway through the panel-area build. Measure on
+  // the first target query, including queries from later leaves in that frame.
+  if(geometry->tree.root == 0) { *geometry = rd_dock_geometry_from_mount(geometry->mount); }
   return rd_dock_resulting_width(geometry->tree.root,
     cfg_panel_node_from_tree_cfg(geometry->tree.root, destination), geometry->area, dir, geometry->inset);
 }
@@ -3381,10 +3385,9 @@ internal void
 rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right, B32 tabs_in_title_bar)
 {
   CFG_PanelTree panel_tree = mount->panel_tree;
-  // Every use below is guarded by active View drag, matching initialization.
-  RD_DockGeometry dock_geometry = {0};
-  if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View)
-  { dock_geometry = rd_dock_geometry_from_mount(mount); }
+  // Lazy measurement handles drags started by a View during this build and
+  // keeps non-drag frames free of docking geometry work.
+  RD_DockGeometry dock_geometry = {.mount = mount};
   B32 is_preview = ws->active_workspace_surface_entry != 0 && !ws->active_workspace_surface_entry->composite;
   B32 window_layout_reset = ws->window_layout_reset;
   Rng2F32 panel_area_rect = content_rect; // captured before the per-panel `content_rect` shadows it (for tabs-in-title-bar edge detection)

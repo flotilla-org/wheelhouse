@@ -792,9 +792,9 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     UI_Key key = slot >= ArrayCount(state->cards) ? card->mask.key : ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", slot);
     UI_Key content_key = ui_key_from_stringf(key, "content");
     UI_Box *old_content = ui_box_from_key(content_key);
-    F32 em = ui_top_font_size(), width = Min(em*34, dim_2f32(window).x-20);
+    F32 em = ui_top_font_size(), width = Min(floating ? dim_2f32(card->rect).x : em*34, dim_2f32(window).x-20);
     F32 content_height = ui_box_is_nil(old_content) ? em*(6+node.detail_count*1.6f) : old_content->fixed_size.y;
-    F32 height = Clamp(em*4, content_height+16, dim_2f32(window).y-20);
+    F32 height = Clamp(em*4, card->moving ? dim_2f32(card->rect).y : content_height+16, dim_2f32(window).y-20);
     F32 x = outside ? state->rect.x1+8 : Min(card->source_rect.x1+8, state->rect.x1-24);
     if(slot) { x = card->source_rect.x1+8; }
     Vec2F32 target = v2f32(Clamp(window.x0+10, x, window.x1-width-10),
@@ -857,7 +857,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
         }
         ui_layout_root(content, Axis2_X); ui_layout_root(content, Axis2_Y);
         F32 measured_height = Clamp(em*4, content->fixed_size.y+16, dim_2f32(window).y-20);
-        if(abs_f32(measured_height-height) > 0.5f)
+        if(!card->moving && abs_f32(measured_height-height) > 0.5f)
         {
           height = measured_height;
           target.y = uishell_sidebar_card_target_y(card, height, window, !outside && slot == 0);
