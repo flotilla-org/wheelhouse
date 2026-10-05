@@ -696,7 +696,7 @@ int main(void) {
 
     # Terminal subject phases retain the workspace in place. A later stale
     # active publication cannot undo an authoritative end for the same identity.
-    def test_finished_open_workspace_follows_show_finished_in_place(self):
+    def test_finished_open_workspace_stays_visible_with_show_finished_off(self):
         self.open_workspace('v', 42)
         for phase in ('landed', 'active'):
             for kind, identity in [('convoy', 'c'), ('vessel', 'v')]:

@@ -5,7 +5,8 @@ dimmed and marked ×, with Show finished off. Focusing uses the original workspa
 ID and preserves panels and tabs. Closing the workspace releases its retained
 path; the row then follows the normal Show finished rule. This records the
 2026-10-05 owner ruling on [#188](https://github.com/flotilla-org/wheelhouse/issues/188),
-which supersedes the older hide-while-open acceptance below.
+which supersedes the historical acceptance below. Current validation and captures
+are in [workspace highlight acceptance](workspace-highlight-acceptance.md).
 
 An open workspace whose subject is unobserved, or whose kind has no placement,
 appears in Other workspaces. Coverage uses workspace IDs and includes collapsed
@@ -24,22 +25,18 @@ expiry decision. Historical search and log navigation remain outside this slice.
 
 ![Ended workspace under its convoy with Show finished enabled](screenshots/retained-workspaces/show-finished.png)
 
-Historical evidence before the #188 ruling: this native Linux sidebar capture was taken under Xvfb with the daily-driver
-KDL. The project, convoy and vessel were published through the real HTTP/UDS
-ingress. The vessel workspace was opened, then the producer published landed
-on its convoy and vessel. With Show finished off, its rows disappeared without
-an Other workspaces fallback; with it on, the same workspace reappeared under
-its convoy. The unrelated Workspace row remains in Other workspaces.
+This older capture has Show finished enabled. It is historical evidence only;
+use the current acceptance link above for the open-ended behavior with the
+filter disabled.
 
 Native entry templates supply fields in label/kind/status order. Custom KDL
 must put status at index 2 for native status glyphs and ended hover text; the
 renderer no longer guesses status from the first non-label/non-kind field.
 
-The acceptance revision below is the latest verified companion. The governor
-must apply its matching `ANDAMENTO_REV` in `.github/workflows/build.yml` before
-consumer CI can pass. Earlier review-thread revisions are superseded.
+## Historical validation before #188
 
-## Validation
+The following results describe the earlier retained-path implementation, not
+the current open-ended visibility rule or companion pin.
 
 - Native Linux build with clang, Cleat's `none` feature set, and the existing
   workflow-pinned Jackstay succeeds.

@@ -411,3 +411,6 @@ and signed/precise scroll traces. `--scroll_region_diagnostics` checks real UI
 event claiming; on macOS it also exercises AppKit wheel events and a real Cleat
 PTY's bracketed-paste bytes. Physical native acceptance is recorded separately
 using [the acceptance checklist](docs/shift-override-acceptance.md).
+
+`tools/run-sidebar-diagnostics.sh` is a Linux-only release-build runner requiring
+`prlimit` and a C compiler; use the platform CI diagnostics on macOS and Windows.
