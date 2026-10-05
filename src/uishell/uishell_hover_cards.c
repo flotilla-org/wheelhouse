@@ -12,6 +12,8 @@ enum
   UIShell_HoverCardDragThresholdPT = 10,
   UIShell_HoverCardSourceDropPaddingPT = 12,
   UIShell_HoverCardInlineFallbackHeightEM = 8,
+  UIShell_HoverCardPinnedMinimumHeightEM = 4,
+  UIShell_HoverCardPinnedGapPT = 8,
   // ABI 2 detail_action exposes slot 0 (primary) and slot 1 (copy URL).
   UIShell_HoverCardActionCount = 2,
 };
@@ -250,6 +252,15 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
   if(!ws || ws == &rd_nil_window_state || !ws->sidebar || !ws->ui) { return 0; }
   UIShell_SidebarState *state = ws->sidebar;
   uishell_sidebar_detached_bounds(ws);
+  if(state->drag_card && event->kind == WM_EventKind_Press && event->key == WM_Key_Esc)
+  {
+    rd_drag_kill();
+    state->drag_card->moving = state->drag_card->drag_released = state->drag_card->focused = 0;
+    state->drag_card = 0; state->card_drop_panel = 0;
+    state->card_escape_down = 1; ws->ui->hover_card_focus = 0;
+    rd_request_frame();
+    return 1;
+  }
   if(state->drag_card && event->kind == WM_EventKind_WindowLoseFocus) { rd_drag_kill(); }
   if(state->drag_card && event->kind == WM_EventKind_Release && event->key == WM_Key_LeftMouseButton)
   { state->drag_card->drag_released = 1; rd_request_frame(); return 1; }

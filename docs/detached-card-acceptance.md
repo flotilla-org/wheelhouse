@@ -78,3 +78,8 @@ Saved-layout tolerance covers unknown entity kinds, missing identity fields,
 extra fields and duplicate identities through reconciliation, serialization and
 actual pinned View rendering. Unknown or incomplete entries remain closable with
 the missing-subject marker.
+
+The native card diagnostics also cancel a live drag through raw Escape, clear
+creation callbacks when the owning window is torn down, reject tentative
+creation with and without an existing root, and execute queued directional
+drops into nested panels while preserving the neighbour and outer allocation.

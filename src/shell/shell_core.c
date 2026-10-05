@@ -198,6 +198,13 @@ rd_drag_kill(void)
 }
 
 internal void
+rd_drag_kill_from_window(CFG_ID window)
+{
+  if(rd_state->drag_drop_regs && rd_state->drag_drop_regs->window == window)
+  { rd_drag_kill(); }
+}
+
+internal void
 rd_set_hover_regs(UIShell_ContextRegSlot slot)
 {
   rd_state->next_hover_regs = push_array(rd_frame_arena(), UIShell_Regs, 1);
@@ -11100,6 +11107,7 @@ rd_frame(void)
         CFG_Node *cfg = cfg_node_from_id(ws->cfg_id);
         if(cfg == &cfg_nil_node || ws->last_frame_index_touched < rd_state->frame_index || rd_state->quit)
         {
+          rd_drag_kill_from_window(ws->cfg_id);
           uishell_sidebar_release(ws->sidebar);
           ui_state_release(ws->ui);
           r_window_unequip(ws->os, ws->r);

@@ -717,6 +717,25 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_card_tick(floating, v2f32(-100, -100), 10000000);
     uishell_sidebar_card_tick(floating, v2f32(-100, -100), 11000000);
     CardCheck(floating->open, "unfocused float survives mouse-out timeout");
+    // Raw Escape is consumed by the card before the generic UI cancel slot.
+    floating->moving = floating->focused = 1; fixture.drag_card = floating;
+    UIShell_RegsScope(.window = ws->cfg_id) { rd_drag_begin(UIShell_ContextRegSlot_View); }
+    rd_state->drag_drop_creation_name = str8_lit("pinned_cards"); rd_state->drag_drop_commit = uishell_sidebar_card_panel_drop;
+    CFG_ID placement_before = floating->saved;
+    WM_Event cancel_drag = {.kind = WM_EventKind_Press, .key = WM_Key_Esc};
+    CardCheck(uishell_sidebar_card_wm_event(ws, &cancel_drag) && floating->open && !floating->moving &&
+      !fixture.drag_card && !rd_drag_is_active() && !rd_state->drag_drop_commit && !rd_state->drag_drop_creation_name.size &&
+      floating->placement == UIShell_CardPlacement_Float && floating->saved == placement_before,
+      "Escape cancels the real card drag without pinning or closing the float");
+    cancel_drag.kind = WM_EventKind_Release;
+    CardCheck(uishell_sidebar_card_wm_event(ws, &cancel_drag), "drag cancel consumes its Escape release");
+    UIShell_RegsScope(.window = ws->cfg_id) { rd_drag_begin(UIShell_ContextRegSlot_View); }
+    rd_state->drag_drop_creation_name = str8_lit("pinned_cards"); rd_state->drag_drop_commit = uishell_sidebar_card_panel_drop;
+    rd_drag_kill_from_window(0);
+    CardCheck(rd_drag_is_active() && rd_state->drag_drop_commit, "teardown of another window preserves the drag owner");
+    rd_drag_kill_from_window(ws->cfg_id);
+    CardCheck(!rd_drag_is_active() && !rd_state->drag_drop_commit && !rd_state->drag_drop_creation_name.size,
+      "owner window teardown clears the creation drag callback and identity");
     for(U64 placement = 0; placement < 2; placement++)
     {
       B32 saved_outside = uishell_hover_cards_outside; uishell_hover_cards_outside = placement;
@@ -946,20 +965,26 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     cfg_node_release(rd_state->cfg, unknown); cfg_node_release(rd_state->cfg, incomplete);
     cfg_node_release(rd_state->cfg, unique);
     // A wrong controlled-split owner rejects creation before any layout edit.
-    CFG_Node *invalid_owner = cfg_node_new(rd_state->cfg, window, str8_lit("invalid_owner"));
-    CFG_Node *invalid_root = cfg_node_new(rd_state->cfg, invalid_owner, RD_DOCK_SIDEBAR_ROOT);
-    cfg_node_new(rd_state->cfg, invalid_root, str8_lit("sidebar_section"));
-    Temp failed_scratch = scratch_begin(0, 0);
-    String8 before_failure = cfg_string_from_tree(failed_scratch.arena, rd_state->cfg_schema_table, str8_zero(), invalid_owner);
-    CFG_ID valid_window_id = ws->cfg_id;
-    ws->cfg_id = invalid_owner->id;
-    CFG_Node *failed_pin = uishell_sidebar_card_pin(ws, original, 1);
-    ws->cfg_id = valid_window_id;
-    String8 after_failure = cfg_string_from_tree(failed_scratch.arena, rd_state->cfg_schema_table, str8_zero(), invalid_owner);
-    CardCheck(failed_pin == &cfg_nil_node && str8_match(before_failure, after_failure, 0),
-              "rejected pin creation preserves merged tabs and panel ratios exactly");
-    scratch_end(failed_scratch);
-    cfg_node_release(rd_state->cfg, invalid_owner);
+    for(U64 root_exists = 0; root_exists < 2; root_exists++)
+    {
+      CFG_Node *invalid_owner = cfg_node_new(rd_state->cfg, window, str8_lit("invalid_owner"));
+      if(root_exists)
+      {
+        CFG_Node *invalid_root = cfg_node_new(rd_state->cfg, invalid_owner, RD_DOCK_SIDEBAR_ROOT);
+        cfg_node_new(rd_state->cfg, invalid_root, str8_lit("sidebar_section"));
+      }
+      Temp failed_scratch = scratch_begin(0, 0);
+      String8 before_failure = cfg_string_from_tree(failed_scratch.arena, rd_state->cfg_schema_table, str8_zero(), invalid_owner);
+      CFG_ID valid_window_id = ws->cfg_id;
+      ws->cfg_id = invalid_owner->id;
+      CFG_Node *failed_pin = uishell_sidebar_card_pin(ws, original, 1);
+      ws->cfg_id = valid_window_id;
+      String8 after_failure = cfg_string_from_tree(failed_scratch.arena, rd_state->cfg_schema_table, str8_zero(), invalid_owner);
+      CardCheck(failed_pin == &cfg_nil_node && str8_match(before_failure, after_failure, 0),
+                "rejected creation removes tentative panels/root and preserves the existing tree");
+      scratch_end(failed_scratch);
+      cfg_node_release(rd_state->cfg, invalid_owner);
+    }
     fprintf(stderr, "Hover card diagnostics: merged layout\n");
     // Adding a new area to a merged root leaf preserves its existing tabs.
     CFG_Node *old_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
@@ -982,10 +1007,23 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     cfg_node_unhook(rd_state->cfg, window, old_host);
     B32 sized_before = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
     Dir2 directions[] = {Dir2_Invalid, Dir2_Up, Dir2_Down, Dir2_Left, Dir2_Right};
+    CFG_Node *saved_drop_axis = cfg_node_child_from_string(window, str8_lit("control_views_split_x"));
+    cfg_node_unhook(rd_state->cfg, window, saved_drop_axis);
+    for(U64 nested = 0; nested < 2; nested++)
     for(U64 d = 0; d < ArrayCount(directions); d++)
     {
+      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("control_views_split_x")));
+      if(nested && axis2_from_dir2(directions[d]) == Axis2_Y)
+      { cfg_node_new(rd_state->cfg, window, str8_lit("control_views_split_x")); }
       CFG_Node *host = cfg_node_new(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
-      CFG_Node *existing = cfg_node_new(rd_state->cfg, host, str8_lit("pinned_cards"));
+      CFG_Node *destination = host, *neighbour = &cfg_nil_node;
+      if(nested)
+      {
+        destination = cfg_node_new(rd_state->cfg, host, str8_lit("0.6"));
+        neighbour = cfg_node_new(rd_state->cfg, host, str8_lit("0.4"));
+        cfg_node_new(rd_state->cfg, neighbour, str8_lit("sidebar_section"));
+      }
+      CFG_Node *existing = cfg_node_new(rd_state->cfg, destination, str8_lit("pinned_cards"));
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
       original->engaged = original->focused = original->moving = original->drag_released = 1;
       fixture.drag_card = original;
@@ -993,10 +1031,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       { rd_drag_begin(UIShell_ContextRegSlot_View); }
       rd_state->drag_drop_creation_name = str8_lit("pinned_cards");
       rd_state->drag_drop_commit = uishell_sidebar_card_panel_drop;
-      CardCheck(rd_panel_drag_target(&cfg_nil_node, host, 320), "creation drag uses the registered panel validity checker");
+      CardCheck(rd_panel_drag_target(&cfg_nil_node, destination, 320), "creation drag uses the registered panel validity checker");
       rd_state->drag_drop_state = RD_DragDropState_Dropping;
       UIShell_CmdNode *before_drop = rd_state->cmds[0].last;
-      if(rd_drag_drop()) { rd_panel_drag_drop(host->id, directions[d], existing->id); }
+      if(rd_drag_drop()) { rd_panel_drag_drop(destination->id, directions[d], existing->id); }
       UI_EventList drop_events = {0};
       ui_begin_build(ws->os, &drop_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       test->mouse = v2f32(500, 100);
@@ -1016,13 +1054,17 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(entry != &cfg_nil_node && !original->open &&
         cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node,
         "accepted card drop pins once and opts into saved panel sizing");
+      CFG_PanelNode *target_root = nested ? drop_root->first : drop_root;
+      if(nested)
+      { CardCheck(drop_root->child_count == 2 && drop_root->last->cfg == neighbour &&
+          abs_f32(drop_root->last->pct_of_parent-.4f) < .0001f, "nested drop preserves the other panel and outer allocation"); }
       if(directions[d] == Dir2_Invalid)
-      { CardCheck(area == existing && drop_root->child_count == 0, "center drop joins the exact existing pinned area"); }
+      { CardCheck(area == existing && target_root->child_count == 0, "center drop joins the exact existing pinned area"); }
       else
       {
         Side side = side_from_dir2(directions[d]);
-        CFG_PanelNode *placed = side == Side_Min ? drop_root->first : drop_root->last;
-        CardCheck(drop_root->child_count == 2 && drop_root->split_axis == axis2_from_dir2(directions[d]) &&
+        CFG_PanelNode *placed = side == Side_Min ? target_root->first : target_root->last;
+        CardCheck(target_root->child_count == 2 && target_root->split_axis == axis2_from_dir2(directions[d]) &&
           placed->cfg == area->parent && abs_f32(placed->pct_of_parent-.5f) < .0001f,
           "directional card drop matches the ordinary half-panel split and side");
       }
@@ -1030,6 +1072,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       cfg_node_release(rd_state->cfg, settled_host);
       rd_state->drag_drop_creation_name = str8_zero(); rd_state->drag_drop_commit = 0;
     }
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("control_views_split_x")));
+    if(saved_drop_axis != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_drop_axis); }
     uishell_sidebar_manual_sizing(window, sized_before);
     cfg_node_insert_child(rd_state->cfg, window, window->last, old_host);
 

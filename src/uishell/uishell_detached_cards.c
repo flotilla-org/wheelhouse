@@ -15,7 +15,11 @@ uishell_sidebar_card_target_valid(RD_WindowState *ws, UIShell_CardPlacement plac
 
 internal void
 uishell_sidebar_card_request(UIShell_HoverCard *card, UIShell_CardPlacement placement)
-{ card->requested = placement; card->move_requested = 1; rd_request_frame(); }
+{
+  card->requested = placement;
+  card->move_requested = 1;
+  rd_request_frame();
+}
 
 // Card furniture follows the prototype header: a quiet grip at the left,
 // compact destination icons at the right, and labelled entity actions below.
@@ -96,6 +100,8 @@ uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width)
 internal UIShell_HoverCard *
 uishell_sidebar_detached_alloc(RD_WindowState *ws)
 {
+  // Window-arena slots track the peak simultaneous detached-card count and
+  // are reused thereafter. Keep them uncapped so opening a card never evicts one.
   UIShell_HoverCard *c = ws->sidebar->detached;
   for(; c; c = c->next)
   {
@@ -206,7 +212,8 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
   CFG_Node *saved = uishell_sidebar_pin_find(window, entity, 0);
   if(saved != &cfg_nil_node && !new_area)
   {
-    // Pinning an entity twice selects its existing area and resets its scroll.
+    // Revealing an existing tab changes selection, not placement: clear its
+    // siblings (including non-pinned tabs) without a creation/close check.
     CFG_Node *area = saved->parent;
     state->pin_reveal = saved->id;
     for(CFG_Node *v = area->parent->first; v != &cfg_nil_node; v = v->next)
@@ -324,7 +331,8 @@ uishell_sidebar_detached_content(UIShell_SidebarState *state, RD_WindowState *ws
   UI_Row UI_FontSize(floor_f32(ui_top_font_size()*0.82f)) UI_TagF("weak") RD_Font(RD_FontSlot_Main)
   {
     UI_PrefWidth(ui_em(1.4f, 1)) { uishell_sidebar_card_drag_control(card); }
-    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f*5), 1)) { ui_label(card->retained_label); }
+    U64 control_count = card->placement == UIShell_CardPlacement_Transient ? 4 : 3;
+    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f*(control_count+1)), 1)) { ui_label(card->retained_label); }
     uishell_sidebar_card_move_controls(card, width);
   }
   UI_TagF("weak") { ui_label(str8_lit("No longer present")); }
@@ -541,6 +549,12 @@ uishell_sidebar_inline_ui(RD_WindowState *ws, String8 key, F32 width)
   }
 }
 
+internal F32
+uishell_sidebar_pinned_card_extent(UIShell_HoverCard *card, F32 em)
+{
+  return Max(em*UIShell_HoverCardPinnedMinimumHeightEM, card->content_height)+UIShell_HoverCardPinnedGapPT;
+}
+
 RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
 {
   CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
@@ -549,10 +563,11 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
   if(!state) { return; }
   if(state->core) { uishell_sidebar_refresh(state); }
   F32 width = dim_2f32(rect).x, em = ui_top_font_size();
+  F32 header_height = floor_f32(em*2.2f);
   UI_Box *root;
   UI_Rect(rect) UI_ChildLayoutAxis(Axis2_Y)
   { root = ui_build_box_from_stringf(UI_BoxFlag_Clip, "###pinned_area_%I64u", view->id); }
-  UI_Parent(root) UI_PrefHeight(ui_px(floor_f32(em*2.2f), 1)) UI_Row
+  UI_Parent(root) UI_PrefHeight(ui_px(header_height, 1)) UI_Row
   UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak") RD_Font(RD_FontSlot_Main)
   {
     ui_spacer(ui_em(0.3f, 1));
@@ -570,13 +585,13 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
     }
     ui_spacer(ui_px(4.f, 1));
   }
-  UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, em*2.2f, width, dim_2f32(rect).y),
+  UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, header_height, width, dim_2f32(rect).y),
     UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);
   UI_Key key = ui_key_from_stringf(root->key, "body");
   UI_Box *old = ui_box_from_key(key);
   F32 height = 0;
   for(CFG_Node *saved = view->first; saved != &cfg_nil_node; saved = saved->next)
-  { if(str8_match(saved->string, str8_lit("card"), 0)) { height += Max(em*4, uishell_sidebar_saved_card(ws, saved)->content_height)+8; } }
+  { if(str8_match(saved->string, str8_lit("card"), 0)) { height += uishell_sidebar_pinned_card_extent(uishell_sidebar_saved_card(ws, saved), em); } }
   params.content_dim_px = v2f32(width, height);
   UI_ScrollRegion region = ui_scroll_region_layout(params);
   F32 target = ui_box_is_nil(old) ? 0 : old->view_off_target.y;
@@ -592,7 +607,7 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
       if(measured) { state->pin_reveal = 0; } else { rd_request_frame(); }
       break;
     }
-    reveal_y += Max(em*4, c->content_height)+8;
+    reveal_y += uishell_sidebar_pinned_card_extent(c, em);
   }
   UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
   axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt((S64)target, target-(S64)target),
