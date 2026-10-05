@@ -83,3 +83,10 @@ The native card diagnostics also cancel a live drag through raw Escape, clear
 creation callbacks when the owning window is torn down, reject tentative
 creation with and without an existing root, and execute queued directional
 drops into nested panels while preserving the neighbour and outer allocation.
+
+Translated pinned-View parents retain a six-point inset and eight-point gaps
+between two cards, independent of the panel's window offset. An Escape-cancelled
+creation drag followed by a normal tab drag queues an ordinary move. A workspace
+section drop exercises split dispatch and empty-source cleanup in a nested
+layout; flattening preserves the surviving leaf allocations and restores focus
+to a live leaf rather than the released split container.

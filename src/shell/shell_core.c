@@ -4889,18 +4889,36 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   F32 footer_height = Min(dim_2f32(rect).y, uishell_sidebar_footer_height(ws));
   Rng2F32 panels_rect = rect;
   panels_rect.y1 -= footer_height;
+  ws->sidebar->pin_before = 0;
   if(root != &cfg_nil_node)
   {
-    ws->sidebar->pin_before = 0;
-    for(CFG_PanelNode *p = mount.panel_tree.root->first; p != &cfg_nil_panel_node; p = p->next)
+    if(ws->sidebar->drag_card && mount.panel_tree.root != &cfg_nil_panel_node)
     {
-      Rng2F32 target = cfg_target_rect_from_panel_node(panels_rect, mount.panel_tree.root, p);
-      if(ui_mouse().y < center_2f32(target).y) { ws->sidebar->pin_before = p->cfg->id; break; }
+      for(CFG_PanelNode *p = mount.panel_tree.root->first; p != &cfg_nil_panel_node; p = p->next)
+      {
+        Rng2F32 target = cfg_target_rect_from_panel_node(panels_rect, mount.panel_tree.root, p);
+        if(ui_mouse().y < center_2f32(target).y) { ws->sidebar->pin_before = p->cfg->id; break; }
+      }
     }
     uishell_sidebar_size_panels(split, &mount, panels_rect);
     rd_panel_area_ui(scratch, panels_rect, rect, ws, &mount, wm_window_is_focused(ws->os), 0, 0, 0, 0);
   }
   uishell_sidebar_footer_ui(r2f32p(rect.x0, panels_rect.y1, rect.x1, rect.y1), split);
+  // These are control-surface edges, not outer workspace edges. The panel
+  // resolver omits its boundary; the control host owns the top and resize seam.
+  F32 border = floor_f32(Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_border_px")), 4.f));
+  if(border >= 1.f)
+  {
+    Rng2F32 edges[] = {
+      rd_panel_frame_segment_rect(Axis2_Y, Side_Min, rect.y0, r1f32(rect.x0, rect.x1), border),
+      rd_panel_frame_segment_rect(Axis2_X, Side_Max, rect.x1, r1f32(rect.y0, rect.y1), border),
+    };
+    for(U64 i = 0; i < ArrayCount(edges); i++)
+    {
+      ui_set_next_background_color(ui_color_from_name(str8_lit("border")));
+      UI_Rect(edges[i]) { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
+    }
+  }
   scratch_end(scratch);
 }
 

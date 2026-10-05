@@ -1264,6 +1264,11 @@ uishell_dispatch_panel_command(String8 name)
         CFG_PanelNode *grandparent = parent->parent;
         CFG_PanelNode *parent_prev = parent->prev;
         F32 pct_of_parent = parent->pct_of_parent;
+        // Flattening can release keep_child's split container. Retain a leaf
+        // that survives both the collapse and the same-axis merge for focus.
+        CFG_Node *focus_cfg = keep_child->cfg;
+        for(CFG_PanelNode *p = keep_child; p != &cfg_nil_panel_node; p = p->first)
+        { focus_cfg = p->cfg; }
 
         cfg_node_unhook(rd_state->cfg, parent->cfg, keep_child->cfg);
         if(grandparent != &cfg_nil_panel_node)
@@ -1310,9 +1315,9 @@ uishell_dispatch_panel_command(String8 name)
 
         if(panel_tree.focused == discard_child)
         {
-          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, keep_child->cfg);
+          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, focus_cfg);
           CFG_PanelTree new_panel_tree = new_workspace_mount.panel_tree;
-          CFG_PanelNode *new_focused = cfg_panel_node_from_tree_cfg(new_panel_tree.root, keep_child->cfg);
+          CFG_PanelNode *new_focused = cfg_panel_node_from_tree_cfg(new_panel_tree.root, focus_cfg);
           for(CFG_PanelNode *grandchild = new_focused; grandchild != &cfg_nil_panel_node; grandchild = grandchild->first)
           {
             new_focused = grandchild;

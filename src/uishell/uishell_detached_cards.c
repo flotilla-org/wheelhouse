@@ -227,6 +227,8 @@ uishell_sidebar_detached_copy(RD_WindowState *ws, UIShell_HoverCard *source)
   return c;
 }
 
+// Missing identity fields resolve through CFG's nil sentinel to empty strings;
+// malformed saved entries stay available to render their retained/missing label.
 internal CFG_Node *
 uishell_sidebar_pin_find(CFG_Node *root, AndamentoEntity entity, B32 area_only)
 {
@@ -293,7 +295,10 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
     CFG_Node *area = saved->parent;
     state->pin_reveal = saved->id;
     for(CFG_Node *v = area->parent->first; v != &cfg_nil_node; v = v->next)
-    { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(v, str8_lit("selected"))); }
+    {
+      CFG_Node *selected = cfg_node_child_from_string(v, str8_lit("selected"));
+      if(selected != &cfg_nil_node) { cfg_node_release(rd_state->cfg, selected); }
+    }
     cfg_node_child_from_string_or_alloc(rd_state->cfg, area, str8_lit("selected"));
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(area, str8_lit("section_collapsed")));
     for(UIShell_HoverCard *c = state->detached; c; c = c->next)
@@ -652,7 +657,8 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
   F32 width = dim_2f32(rect).x, em = ui_top_font_size();
   F32 header_height = floor_f32(em*2.2f);
   UI_Box *root;
-  UI_Rect(rect) UI_ChildLayoutAxis(Axis2_Y)
+  // The View parent already sits at rect.p0 in window coordinates.
+  UI_Rect(r2f32p(0, 0, width, dim_2f32(rect).y)) UI_ChildLayoutAxis(Axis2_Y)
   { root = ui_build_box_from_stringf(UI_BoxFlag_Clip, "###pinned_area_%I64u", view->id); }
   UI_Parent(root) UI_PrefHeight(ui_px(header_height, 1)) UI_Row
   UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak") RD_Font(RD_FontSlot_Main)

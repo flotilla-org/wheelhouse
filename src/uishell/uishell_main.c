@@ -110,14 +110,6 @@
 #include "uishell/uishell_managed_content_diagnostics.c"
 #include "uishell/uishell_overview_benchmark.c"
 
-// Full card/panel diagnostics need the live frame's View and evaluator registries.
-internal B32
-uishell_tooltip_and_card_diagnostics(RD_WindowState *ws)
-{
-  B32 ok = uishell_tooltip_diagnostics(ws);
-  return uishell_hover_card_diagnostics(ws) && ok;
-}
-
 ////////////////////////////////
 //~ rjf: Top-Level Execution Types
 
