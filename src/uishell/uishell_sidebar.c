@@ -72,6 +72,7 @@ struct UIShell_DisplayRestore
   U32 attempts;
   U64 retry_at;
 };
+typedef struct UIShell_SectionPlacement UIShell_SectionPlacement;
 
 struct UIShell_SidebarState
 {
@@ -88,6 +89,10 @@ struct UIShell_SidebarState
   B32 card_has_action;
   Andamento *core;
   AndamentoSnapshot *snapshot;
+  Arena *placement_arena;
+  AndamentoSnapshot *placement_snapshot;
+  UIShell_SectionPlacement *placement_regions;
+  U64 placement_count, placement_cache_builds;
   U64 topology_hash;
   U64 workdirs_hash;
   U64 workdirs_retry_at;
@@ -155,9 +160,19 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     { if(state->cards[i].arena) { arena_release(state->cards[i].arena); } }
     uishell_sidebar_display_wake_release(state->display_wakeup);
     if(state->display_restore_arena) { arena_release(state->display_restore_arena); }
+    if(state->placement_arena) { arena_release(state->placement_arena); state->placement_arena = 0; }
     andamento_snapshot_release(state->snapshot);
     andamento_destroy(state->core);
   }
+}
+
+internal void
+uishell_sidebar_replace_snapshot(UIShell_SidebarState *state, AndamentoSnapshot *snapshot)
+{
+  // Invalidate before releasing: the allocator may reuse the snapshot address.
+  state->placement_snapshot = 0;
+  andamento_snapshot_release(state->snapshot);
+  state->snapshot = snapshot;
 }
 
 internal void
@@ -170,8 +185,7 @@ uishell_sidebar_refresh(UIShell_SidebarState *state)
   AndamentoSnapshot *next = andamento_snapshot_acquire_details(state->core, &error);
   if(uishell_sidebar_result(state, next != 0, error))
   {
-    andamento_snapshot_release(state->snapshot);
-    state->snapshot = next;
+    uishell_sidebar_replace_snapshot(state, next);
     state->managed_dirty = 1;
   }
 }
@@ -1856,7 +1870,6 @@ uishell_sidebar_find_view(CFG_Node *container, String8 key)
 // roots. A known id with no View records an intentional close, not a new region.
 #define UISHELL_REGION_INVENTORY str8_lit("section_positions")
 
-typedef struct UIShell_SectionPlacement UIShell_SectionPlacement;
 struct UIShell_SectionPlacement
 {
   String8 key, title, default_host;
@@ -1903,6 +1916,7 @@ uishell_sidebar_prune_regions(CFG_Node *container, UIShell_SectionPlacement *reg
     next = c->next;
     if(str8_match(c->string, str8_lit("sidebar_section"), 0))
     {
+      // CFG nil nodes self-link, so a missing section setting reads as empty.
       String8 key = cfg_node_child_from_string(c, str8_lit("section"))->first->string;
       if(reset || uishell_sidebar_region_index(regions, count, key) == ANDAMENTO_NONE)
       { cfg_node_release(rd_state->cfg, c); removed = 1; }
@@ -1911,8 +1925,10 @@ uishell_sidebar_prune_regions(CFG_Node *container, UIShell_SectionPlacement *reg
     {
       B32 child_removed = uishell_sidebar_prune_regions(c, regions, count, reset);
       removed |= child_removed;
-      if(!uishell_sidebar_panel_has_content(c))
-      { cfg_node_release(rd_state->cfg, c); }
+      CFG_Node *cleanup = cfg_node_child_from_string(c, str8_lit("section_hint_cleanup"));
+      if((child_removed || reset || cleanup != &cfg_nil_node) && !uishell_sidebar_panel_has_content(c))
+      { cfg_node_release(rd_state->cfg, c); removed = 1; }
+      else if(cleanup != &cfg_nil_node) { cfg_node_release(rd_state->cfg, cleanup); }
     }
   }
   return removed;
@@ -1927,6 +1943,7 @@ uishell_sidebar_reset_regions(CFG_Node *owner)
   uishell_sidebar_prune_regions(sidebar, 0, 0, 1);
   uishell_sidebar_prune_regions(floating, 0, 0, 1);
   if(sidebar != &cfg_nil_node && sidebar->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, sidebar); }
+  if(floating != &cfg_nil_node && floating->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, floating); }
   CFG_Node *inventory = cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY);
   if(inventory != &cfg_nil_node) { cfg_node_release(rd_state->cfg, inventory); }
   // Empty inventory makes every declared id new even if unrelated tabs keep
@@ -2021,6 +2038,12 @@ uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *reg
       if(hint_pending != &cfg_nil_node && rd_dock_saved_placement_valid(view))
       { cfg_node_release(rd_state->cfg, hint_pending); }
     }
+    if(view != &cfg_nil_node)
+    {
+      CFG_Node *label = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("label"));
+      if(!str8_match(label->first->string, regions[r].title, 0))
+      { cfg_node_new_replace(rd_state->cfg, label, regions[r].title); }
+    }
     CFG_Node *closed = cfg_node_child_from_string(record, str8_lit("closed"));
     if(view == &cfg_nil_node && closed == &cfg_nil_node) { cfg_node_new(rd_state->cfg, record, str8_lit("closed")); }
     if(view != &cfg_nil_node && closed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, closed); }
@@ -2034,25 +2057,41 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
   if(!state->snapshot) { return cfg_node_child_from_string(split->owner_cfg, RD_DOCK_SIDEBAR_ROOT); }
-  Temp scratch = scratch_begin(0, 0);
-  U64 nodes = andamento_snapshot_node_count(state->snapshot), count = 0;
-  UIShell_SectionPlacement *regions = push_array(scratch.arena, UIShell_SectionPlacement, nodes);
-  for(U64 i = 0; i < nodes; i++)
+  if(state->placement_snapshot != state->snapshot)
   {
-    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
-    if(!node.is_section) { continue; }
-    AndamentoRegionHints hints = {0}; andamento_snapshot_region_hints(state->snapshot, i, &hints);
-    UIShell_SectionPlacement region = {uishell_sidebar_string(node.key), uishell_sidebar_string(node.label),
-      uishell_sidebar_string(hints.default_host), hints.has_order ? hints.order : (S64)count};
-    if(node.field_count)
-    { AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field, &field); region.title = uishell_sidebar_string(field.text); }
-    U64 at = count;
-    // Stable insertion: equal and absent hints retain declaration order.
-    while(at && regions[at-1].order > region.order) { regions[at] = regions[at-1]; at--; }
-    regions[at] = region; count++;
+    if(!state->placement_arena) { state->placement_arena = arena_alloc(); }
+    else { arena_clear(state->placement_arena); }
+    Arena *arena = state->placement_arena;
+    U64 nodes = andamento_snapshot_node_count(state->snapshot), capacity = 0, count = 0;
+    for(U64 i = 0; i < nodes; i++)
+    { AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node); capacity += !!node.is_section; }
+    UIShell_SectionPlacement *regions = push_array(arena, UIShell_SectionPlacement, capacity);
+    for(U64 i = 0; i < nodes; i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      if(!node.is_section) { continue; }
+      AndamentoRegionHints hints = {0}; andamento_snapshot_region_hints(state->snapshot, i, &hints);
+      UIShell_SectionPlacement region = {
+        push_str8_copy(arena, uishell_sidebar_string(node.key)),
+        uishell_sidebar_string(node.label),
+        push_str8_copy(arena, uishell_sidebar_string(hints.default_host)),
+        hints.has_order ? hints.order : (S64)count};
+      if(node.field_count)
+      { AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field, &field); region.title = uishell_sidebar_string(field.text); }
+      region.title = push_str8_copy(arena, region.title);
+      U64 at = count;
+      // Stable insertion: equal and absent hints retain declaration order.
+      while(at && regions[at-1].order > region.order) { regions[at] = regions[at-1]; at--; }
+      regions[at] = region; count++;
+    }
+    state->placement_snapshot = state->snapshot;
+    state->placement_regions = regions;
+    state->placement_count = count;
+    state->placement_cache_builds++;
   }
-  CFG_Node *root = uishell_sidebar_reconcile_regions(split->owner_cfg, regions, count);
-  scratch_end(scratch); return root;
+  // A present immutable snapshot is authoritative, including zero sections.
+  // Only provider acquisition failure (the null guard above) preserves old ids.
+  return uishell_sidebar_reconcile_regions(split->owner_cfg, state->placement_regions, state->placement_count);
 }
 
 // Dragging opts into saved ratios. Double-clicking a sidebar boundary or an

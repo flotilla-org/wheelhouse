@@ -17,7 +17,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   CFG_Node *saved_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
   cfg_node_unhook(rd_state->cfg, window, saved_host);
   CFG_Node *saved_positions = cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY);
-  cfg_node_unhook(rd_state->cfg, window, saved_positions);
+  if(saved_positions != &cfg_nil_node) { cfg_node_unhook(rd_state->cfg, window, saved_positions); }
   U32 failures = 0;
 #define DockFailure(expr) do { if(expr) { failures++; fprintf(stderr, "FAIL sidebar docking line %u: %s\n", __LINE__, #expr); } } while(0)
   CFG_Node *saved_axis = cfg_node_child_from_string(window, str8_lit("control_views_split_x"));
@@ -316,7 +316,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   if(saved_axis != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_axis); }
   if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_sizing); }
   if(saved_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_host); }
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY));
+  CFG_Node *test_positions = cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY);
+  if(test_positions != &cfg_nil_node) { cfg_node_release(rd_state->cfg, test_positions); }
   if(saved_positions != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_positions); }
   uishell_sidebar_release(state);
   ws->sidebar = saved_sidebar; uishell_sidebar_fixture = saved_fixture; uishell_sidebar_subject_fixture = saved_subject;
@@ -369,7 +370,7 @@ uishell_section_placement_diagnostics(String8 source_path)
         PlacementCheck(text.size != 0);
       }
       uishell_sidebar_reset_regions(window);
-      andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = 0;
+      uishell_sidebar_replace_snapshot(&sidebar, 0);
       andamento_destroy(source_core);
     }
   }
@@ -390,9 +391,15 @@ uishell_section_placement_diagnostics(String8 source_path)
   cfg_node_insert_child(state.cfg, host, &cfg_nil_node, b->parent);
   uishell_sidebar_dock_layout(&split);
   PlacementCheck(host->first == b->parent && a->id == a_id && b->id == b_id);
-  U64 generation = cfg_change_gen();
+  U64 generation = cfg_change_gen(), cache_builds = sidebar.placement_cache_builds;
   uishell_sidebar_dock_layout(&split);
-  PlacementCheck(cfg_change_gen() == generation);
+  PlacementCheck(cfg_change_gen() == generation && sidebar.placement_cache_builds == cache_builds);
+  // Reconciliation must retain an unrelated intentionally empty saved panel.
+  CFG_Node *reserved_panel = cfg_node_new(state.cfg, host, str8_lit("0.25"));
+  CFG_ID reserved_id = reserved_panel->id;
+  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(cfg_node_from_id(reserved_id) == reserved_panel);
+  cfg_node_release(state.cfg, reserved_panel);
   // Restart through the actual serializer/parser retains that arrangement.
   String8 serialized = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), window);
   CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), serialized);
@@ -405,7 +412,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   // Adding a hinted region inserts it without changing the saved pair's order.
   String8 added = push_str8f(scratch.arena, "%Sregion \"c\" root-template=\"flotilla/region/tree\" order=15\n", config);
   PlacementCheck(andamento_configure(core, (AndamentoText){added.str, added.size}, 0));
-  andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
   uishell_sidebar_dock_layout(&split);
   CFG_Node *c = uishell_sidebar_region_view(restored, str8_lit("c"));
   a = uishell_sidebar_region_view(restored, str8_lit("a")); b = uishell_sidebar_region_view(restored, str8_lit("b"));
@@ -430,14 +437,14 @@ uishell_section_placement_diagnostics(String8 source_path)
   CFG_ID kept = a->id;
   String8 removed = str8_lit("region \"a\" root-template=\"flotilla/region/tree\" order=10\n");
   PlacementCheck(andamento_configure(core, (AndamentoText){removed.str, removed.size}, 0));
-  andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
   uishell_sidebar_dock_layout(&split);
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("b")) == &cfg_nil_node);
   PlacementCheck(cfg_node_child_from_string(inventory, str8_lit("b")) == &cfg_nil_node);
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("a"))->id == kept);
   // Reset clears closes and user positions, restoring all hints.
   PlacementCheck(andamento_configure(core, (AndamentoText){added.str, added.size}, 0));
-  andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
   uishell_sidebar_reset_regions(restored); restored_host = uishell_sidebar_dock_layout(&split);
   a = uishell_sidebar_region_view(restored, str8_lit("a")); b = uishell_sidebar_region_view(restored, str8_lit("b"));
   c = uishell_sidebar_region_view(restored, str8_lit("c"));
@@ -450,7 +457,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   cfg_node_insert_child(state.cfg, nested, nested->last, nested_b);
   String8 nested_added = push_str8f(scratch.arena, "%Sregion \"d\" root-template=\"flotilla/region/tree\" order=17\n", added);
   PlacementCheck(andamento_configure(core, (AndamentoText){nested_added.str, nested_added.size}, 0));
-  andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
   uishell_sidebar_dock_layout(&split);
   CFG_Node *d = uishell_sidebar_region_view(restored, str8_lit("d"));
   PlacementCheck(d != &cfg_nil_node && d->parent->next == nested);
@@ -479,7 +486,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("d")) == &cfg_nil_node);
   String8 post_upgrade = push_str8f(scratch.arena, "%Sregion \"e\" root-template=\"flotilla/region/tree\" order=25\n", nested_added);
   PlacementCheck(andamento_configure(core, (AndamentoText){post_upgrade.str, post_upgrade.size}, 0));
-  andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
   uishell_sidebar_dock_layout(&split);
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("e")) != &cfg_nil_node);
   // The empty authoritative declaration is a valid reconciler input, unlike a
@@ -500,7 +507,7 @@ uishell_section_placement_diagnostics(String8 source_path)
       "region \"x\" root-template=\"flotilla/region/tree\" %s\n"
       "region \"y\" root-template=\"flotilla/region/tree\" %s\n", attributes[variant], attributes[variant]);
     PlacementCheck(andamento_configure(core, (AndamentoText){generated.str, generated.size}, 0));
-    andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+    uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
     uishell_sidebar_reset_regions(restored); uishell_sidebar_dock_layout(&split);
     CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
     CFG_Node *y = uishell_sidebar_region_view(restored, str8_lit("y"));
@@ -530,6 +537,22 @@ uishell_section_placement_diagnostics(String8 source_path)
       PlacementCheck(cfg_node_child_from_string(x, str8_lit("section_hint_pending")) == &cfg_nil_node);
     }
   }
+  // Updating a default host does not move a valid saved position; KDL-owned
+  // titles do refresh. Removing a region also removes its pending hint marker.
+  CFG_Node *saved_x = uishell_sidebar_region_view(restored, str8_lit("x"));
+  CFG_ID saved_x_id = saved_x->id;
+  CFG_Node *removed_y = uishell_sidebar_region_view(restored, str8_lit("y"));
+  CFG_ID removed_y_id = removed_y->id;
+  cfg_node_new(state.cfg, removed_y, str8_lit("section_hint_pending"));
+  String8 retitled = str8_lit(
+    "region \"x\" root-template=\"renamed\" form=\"compact\" default-host=\"floating\"\n"
+    "template \"renamed\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Renamed\"; }\n");
+  PlacementCheck(andamento_configure(core, (AndamentoText){retitled.str, retitled.size}, 0));
+  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
+  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(saved_x->id == saved_x_id && rd_dock_host_from_cfg(saved_x, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar);
+  PlacementCheck(str8_match(cfg_node_child_from_string(saved_x, str8_lit("label"))->first->string, str8_lit("Renamed"), 0));
+  PlacementCheck(cfg_node_from_id(removed_y_id) == &cfg_nil_node);
   // A provider outage retains the complete saved arrangement. An authoritative
   // changed declaration removes stale positions; a later declaration is new.
   CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
@@ -539,10 +562,11 @@ uishell_section_placement_diagnostics(String8 source_path)
   sidebar.snapshot = saved_snapshot;
   String8 empty = str8_lit("region \"x\" root-template=\"flotilla/region/tree\"\n");
   PlacementCheck(andamento_configure(core, (AndamentoText){empty.str, empty.size}, 0));
-  andamento_snapshot_release(sidebar.snapshot); sidebar.snapshot = andamento_snapshot_acquire(core, 0);
+  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
   uishell_sidebar_dock_layout(&split);
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("y")) == &cfg_nil_node);
   andamento_snapshot_release(sidebar.snapshot); andamento_destroy(core);
+  if(sidebar.placement_arena) { arena_release(sidebar.placement_arena); }
   cfg_state_release(state.cfg); cfg_ctx_select(saved_ctx); rd_state = saved_rd;
   fprintf(stderr, "Section placement diagnostics: %s (hints, reorder, restart, add, close, remove, reset)\n", failures ? "FAILED" : "passed");
 #undef PlacementCheck

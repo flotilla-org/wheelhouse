@@ -16,7 +16,10 @@ sidebar. Explicit orders sort lower first; an omitted order uses the region's
 zero-based declaration index. Ties preserve declaration order. New sections
 are inserted before their next hinted neighbour in the same host, keeping the
 saved sections' relative order and identities. Existing nested panel trees
-remain intact.
+remain intact. Unrelated empty saved panels are retained. KDL title changes
+refresh existing View labels without moving their saved positions. Placement
+hints are copied and sorted once per immutable snapshot; saved layout changes
+still reconcile against that cached declaration.
 
 A legacy saved host without an inventory is adopted once in place. Its
 currently declared missing Views are recorded as intentional closes because
