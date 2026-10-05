@@ -56,6 +56,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc();
   ui_select_state(test_ui);
   CFG_ID saved_sidebar_focus = ws->active_panel_id;
+  // Reconciliation also places the synthetic unplaced-workspaces region after
+  // fixture observation. Leave room for all four headers and scroll bodies.
   F32 expected[2] = {0};
   U64 settled_cfg_gen = 0;
   for(U32 frame = 0; frame < 36; frame++)
@@ -75,7 +77,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = node.v.pos;
     UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
-    { uishell_control_surface_ui(r2f32p(17, 29, 337, 149), &split); }
+    { uishell_control_surface_ui(r2f32p(17, 29, 337, 229), &split); }
     ui_end_build();
     for(U32 i = 0; i < 2; i++)
     {
@@ -83,7 +85,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       DockFailure(ui_box_is_nil(body));
       if(!ui_box_is_nil(body))
       {
-        DockFailure(body->rect.x0 < 17 || body->rect.x1 > 337 || body->rect.y0 < 29 || body->rect.y1 > 149);
+        DockFailure(body->rect.x0 < 17 || body->rect.x1 > 337 || body->rect.y0 < 29 || body->rect.y1 > 229);
         if(frame >= 4 && abs_f32(body->view_off_target.y-expected[i]) > .00001f)
         { fprintf(stderr, "FAIL dock scroll frame %u section %u: %g != %g\n", frame, i, body->view_off_target.y, expected[i]); failures++; }
       }
@@ -118,7 +120,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = events.count ? event.v.pos : v2f32(-100, -100);
     UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
-    { uishell_control_surface_ui(r2f32p(17, 29, 337, 149), &split); }
+    { uishell_control_surface_ui(r2f32p(17, 29, 337, 229), &split); }
     ui_end_build();
     if(frame == 4)
     {
@@ -134,7 +136,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       DockFailure(!str8_match(restored_root->first->string, first_panel->string, 0));
       UIShell_ControlledSplit restored_split = {.owner_cfg = restored_window};
       UIShell_WorkspaceMount restored_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, restored_window, restored_root);
-      uishell_sidebar_size_panels(&restored_split, &restored_mount, r2f32p(17, 29, 337, 149));
+      uishell_sidebar_size_panels(&restored_split, &restored_mount, r2f32p(17, 29, 337, 229));
       DockFailure(!str8_match(restored_root->first->string, first_panel->string, 0));
       cfg_state_release(loaded_cfg);
     }
@@ -535,8 +537,42 @@ uishell_section_placement_diagnostics(String8 source_path)
       PlacementCheck(rd_dock_host_from_cfg(x, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_FloatingPanel);
       PlacementCheck(cfg_node_from_id(bad_id) == &cfg_nil_node);
       PlacementCheck(cfg_node_child_from_string(x, str8_lit("section_hint_pending")) == &cfg_nil_node);
+      String8 changed_host = str8_lit("region \"x\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\"\nregion \"y\" root-template=\"flotilla/region/tree\"\n");
+      PlacementCheck(andamento_configure(core, (AndamentoText){changed_host.str, changed_host.size}, 0));
+      uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
+      uishell_sidebar_dock_layout(&split);
+      PlacementCheck(x->id == x_id && rd_dock_host_from_cfg(x, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_FloatingPanel);
     }
   }
+  // Rejected placement checks must leave no hosts/panels or generation churn.
+  CFG_Node *reject_owner = cfg_node_new(state.cfg, user, str8_lit("window"));
+  CFG_Node *unknown_view = cfg_node_new(state.cfg, reject_owner, str8_lit("unknown_view"));
+  UIShell_SectionPlacement rejected = {str8_lit("reject"), str8_lit("Reject"), str8_lit("floating"), 0};
+  U64 reject_generation = cfg_change_gen();
+  for(U32 attempt = 0; attempt < 2; attempt++)
+  { PlacementCheck(uishell_sidebar_place_region(reject_owner, &rejected, 1, 0, unknown_view) == unknown_view); }
+  PlacementCheck(cfg_change_gen() == reject_generation && reject_owner->first == unknown_view && unknown_view->next == &cfg_nil_node);
+  cfg_node_release(state.cfg, reject_owner);
+  // Unusual numeric and reserved-looking ids survive the actual config codec.
+  UIShell_SectionPlacement unusual[] = {{str8_lit("123"), str8_lit("Number"), str8_zero(), 0},
+                                      {str8_lit("closed"), str8_lit("Closed"), str8_zero(), 1}};
+  CFG_Node *id_owner = cfg_node_new(state.cfg, user, str8_lit("window"));
+  uishell_sidebar_reconcile_regions(id_owner, unusual, ArrayCount(unusual));
+  uishell_sidebar_reset_regions(id_owner);
+  uishell_sidebar_reconcile_regions(id_owner, unusual, ArrayCount(unusual));
+  for(U32 restart = 0; restart < 2; restart++)
+  {
+    String8 roundtrip = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), id_owner);
+    CFG_NodePtrList parsed = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), roundtrip);
+    PlacementCheck(parsed.first != 0);
+    CFG_Node *next_owner = parsed.first->v;
+    cfg_node_insert_child(state.cfg, user, user->last, next_owner);
+    cfg_node_release(state.cfg, id_owner); id_owner = next_owner;
+    for(U64 i = 0; i < ArrayCount(unusual); i++)
+    { PlacementCheck(uishell_sidebar_region_view(id_owner, unusual[i].key) != &cfg_nil_node); }
+    uishell_sidebar_reconcile_regions(id_owner, unusual, ArrayCount(unusual));
+  }
+  cfg_node_release(state.cfg, id_owner);
   // Updating a default host does not move a valid saved position; KDL-owned
   // titles do refresh. Removing a region also removes its pending hint marker.
   CFG_Node *saved_x = uishell_sidebar_region_view(restored, str8_lit("x"));

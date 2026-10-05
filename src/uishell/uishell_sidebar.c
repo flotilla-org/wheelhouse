@@ -689,7 +689,8 @@ uishell_sidebar_restore(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     if(kind.size == 0 || id.size == 0) { continue; }
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0};
+      andamento_snapshot_node(state->snapshot, i, &node);
       if(node.state != ANDAMENTO_LIVE && node.activate != ANDAMENTO_NONE &&
          str8_match(kind, uishell_sidebar_string(node.entity_kind), 0) &&
          str8_match(id, uishell_sidebar_string(node.entity_id), 0))
@@ -716,7 +717,8 @@ uishell_sidebar_reveal_target(UIShell_SidebarState *state, U64 workspace_id)
   U64 count = andamento_snapshot_node_count(state->snapshot);
   for(U64 i = 0; i < count; i++)
   {
-    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    AndamentoNode node = {0};
+      andamento_snapshot_node(state->snapshot, i, &node);
     if(node.is_section || node.state != ANDAMENTO_LIVE || node.workspace_id != workspace_id) { continue; }
     U64 depth = 0;
     for(U64 parent = node.parent; parent != ANDAMENTO_NONE; depth++)
@@ -1967,19 +1969,21 @@ uishell_sidebar_place_region(CFG_Node *owner, UIShell_SectionPlacement *regions,
 {
   UIShell_SectionPlacement region = regions[index];
   String8 host_name = str8_match(region.default_host, str8_lit("floating"), 0) ? str8_lit("floating_panels") : RD_DOCK_SIDEBAR_ROOT;
+  // Check the prospective ancestry before mutating saved configuration. The
+  // checker reads host/owner traits; allocation is only needed after acceptance.
+  B32 valid = 0;
+  for(U32 attempt = 0; attempt < 2; attempt++)
+  {
+    CFG_Node prospective_host = {.string = host_name, .parent = owner};
+    CFG_Node prospective_panel = {.string = str8_lit("1"), .parent = &prospective_host};
+    valid = view == &cfg_nil_node ? rd_dock_can_create(str8_lit("sidebar_section"), &prospective_panel) :
+      rd_dock_drag_target(view, &prospective_panel, RD_DOCK_UNMEASURED_WIDTH);
+    if(valid || str8_match(host_name, RD_DOCK_SIDEBAR_ROOT, 0)) { break; }
+    host_name = RD_DOCK_SIDEBAR_ROOT;
+  }
+  if(!valid) { return view; }
   CFG_Node *host = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner, host_name);
   CFG_Node *panel = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
-  B32 valid = view == &cfg_nil_node ? rd_dock_can_create(str8_lit("sidebar_section"), panel) :
-    rd_dock_drag_target(view, panel, RD_DOCK_UNMEASURED_WIDTH);
-  if(!valid)
-  {
-    cfg_node_release(rd_state->cfg, panel);
-    host = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner, RD_DOCK_SIDEBAR_ROOT);
-    panel = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
-    valid = view == &cfg_nil_node ? rd_dock_can_create(str8_lit("sidebar_section"), panel) :
-      rd_dock_drag_target(view, panel, RD_DOCK_UNMEASURED_WIDTH);
-  }
-  if(!valid) { cfg_node_release(rd_state->cfg, panel); return view; }
   if(view == &cfg_nil_node)
   {
     view = cfg_node_new(rd_state->cfg, panel, str8_lit("sidebar_section"));
@@ -2040,6 +2044,7 @@ uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *reg
     }
     if(view != &cfg_nil_node)
     {
+      // KDL owns titles; a future user rename needs a separate explicit override.
       CFG_Node *label = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("label"));
       if(!str8_match(label->first->string, regions[r].title, 0))
       { cfg_node_new_replace(rd_state->cfg, label, regions[r].title); }
@@ -2063,14 +2068,21 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
     else { arena_clear(state->placement_arena); }
     Arena *arena = state->placement_arena;
     U64 nodes = andamento_snapshot_node_count(state->snapshot), capacity = 0, count = 0;
-    for(U64 i = 0; i < nodes; i++)
-    { AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node); capacity += !!node.is_section; }
-    UIShell_SectionPlacement *regions = push_array(arena, UIShell_SectionPlacement, capacity);
+    // Count first so retained storage scales with regions, not all entity rows.
     for(U64 i = 0; i < nodes; i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0};
+      andamento_snapshot_node(state->snapshot, i, &node);
+      capacity += !!node.is_section;
+    }
+    UIShell_SectionPlacement *regions = capacity ? push_array(arena, UIShell_SectionPlacement, capacity) : 0;
+    for(U64 i = 0; i < nodes; i++)
+    {
+      AndamentoNode node = {0};
+      andamento_snapshot_node(state->snapshot, i, &node);
       if(!node.is_section) { continue; }
-      AndamentoRegionHints hints = {0}; andamento_snapshot_region_hints(state->snapshot, i, &hints);
+      AndamentoRegionHints hints = {0};
+      andamento_snapshot_region_hints(state->snapshot, i, &hints);
       UIShell_SectionPlacement region = {
         push_str8_copy(arena, uishell_sidebar_string(node.key)),
         uishell_sidebar_string(node.label),
@@ -2577,7 +2589,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     // A pending focus whose target disappears must be completed as a failure.
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0};
+      andamento_snapshot_node(state->snapshot, i, &node);
       if(node.workspace_id == created && node.state == ANDAMENTO_LIVE) { activate = node.activate; }
     }
     error = 0;
@@ -2593,7 +2606,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     B32 latent = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0};
+      andamento_snapshot_node(state->snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("multi"), 0) && node.state == ANDAMENTO_LATENT)
       { latent = 1; activate = node.activate; }
     }
@@ -2622,7 +2636,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     B32 restored_live = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0};
+      andamento_snapshot_node(state->snapshot, i, &node);
       restored_live |= node.state == ANDAMENTO_LIVE;
     }
     tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
@@ -2647,7 +2662,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     B32 retained_live = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0};
+      andamento_snapshot_node(state->snapshot, i, &node);
       if(node.workspace_id == workspace->id && node.state == ANDAMENTO_LIVE &&
          str8_match(uishell_sidebar_string(node.entity_id), str8_lit("multi"), 0))
       {

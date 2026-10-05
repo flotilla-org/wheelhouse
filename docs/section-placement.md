@@ -13,7 +13,8 @@ their inventory entries, and places new ids at their hints. The shared docking
 checker validates restored and new positions. Wheelhouse recognises `sidebar`
 and `floating` host hints; absent, unknown or rejected hosts fall back to the
 sidebar. Explicit orders sort lower first; an omitted order uses the region's
-zero-based declaration index. Ties preserve declaration order. New sections
+zero-based declaration index. Ties preserve declaration order. An unhinted region at index 2 sorts before
+order=10, but after order=1; hint all regions or none to avoid mixed scales. New sections
 are inserted before their next hinted neighbour in the same host, keeping the
 saved sections' relative order and identities. Existing nested panel trees
 remain intact. Unrelated empty saved panels are retained. KDL title changes
@@ -21,7 +22,9 @@ refresh existing View labels without moving their saved positions. Placement
 hints are copied and sorted once per immutable snapshot; saved layout changes
 still reconcile against that cached declaration.
 
-A legacy saved host without an inventory is adopted once in place. Its
+A legacy saved sidebar host without an inventory is adopted once in place.
+Even an empty saved sidebar root counts as legacy; a floating-only layout
+without that root is treated as a fresh declaration inventory. Its
 currently declared missing Views are recorded as intentional closes because
 older Wheelhouse used the presence of the saved host to prevent reopening
 them. Regions first declared on later updates are new inventory ids and appear
