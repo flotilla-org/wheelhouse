@@ -1,9 +1,16 @@
 # Retained subject workspaces
 
-A workspace opened from a sidebar subject stays linked to that subject when
-it ends. Show finished exposes it with a × marker and Ended workspace hover text. Focusing
-it uses its original workspace ID; its panels and tabs are not recreated.
-Other workspaces still contains ordinary workspaces without subjects.
+An open workspace of an ended subject keeps its original subject row visible,
+dimmed and marked ×, with Show finished off. Focusing uses the original workspace
+ID and preserves panels and tabs. Closing the workspace releases its retained
+path; the row then follows the normal Show finished rule. This records the
+2026-10-05 owner ruling on [#188](https://github.com/flotilla-org/wheelhouse/issues/188),
+which supersedes the older hide-while-open acceptance below.
+
+An open workspace whose subject is unobserved, or whose kind has no placement,
+appears in Other workspaces. Coverage uses workspace IDs and includes collapsed
+descendants. A restart without subject facts also falls back there; it does not
+infer project or role placement (the latter remains andamento#105).
 
 Published convoy phases `landed`, `abandoned`, and `cancelled`, superseded
 generations, and producer identity retractions are authoritative ends. Fact
@@ -17,7 +24,7 @@ expiry decision. Historical search and log navigation remain outside this slice.
 
 ![Ended workspace under its convoy with Show finished enabled](screenshots/retained-workspaces/show-finished.png)
 
-This native Linux sidebar capture was taken under Xvfb with the daily-driver
+Historical evidence before the #188 ruling: this native Linux sidebar capture was taken under Xvfb with the daily-driver
 KDL. The project, convoy and vessel were published through the real HTTP/UDS
 ingress. The vessel workspace was opened, then the producer published landed
 on its convoy and vessel. With Show finished off, its rows disappeared without

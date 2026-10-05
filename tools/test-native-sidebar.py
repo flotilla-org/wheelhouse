@@ -546,9 +546,8 @@ int main(void) {
                             'workspace.primary.state', 'workspace.primary.target']
         self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(removed)), None), 1)
         _, nodes = self.snapshot()
-        self.assertFalse(any(n.entity_id.string() == 'p/governor' for n in nodes))
-        # A producer removal hides the retained role until Show finished.
-        self.assertFalse(any(n.workspace_id == 44 for n in nodes))
+        # An open removed role remains visible with its ended marker.
+        self.assertTrue(any(n.entity_id.string() == 'p/governor' and n.workspace_id == 44 for n in nodes))
         self.toggle_variable('Show finished')
         snapshot, nodes = self.snapshot()
         role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
@@ -590,7 +589,7 @@ int main(void) {
                             'flotilla.convoy', 'flotilla.vessel', 'action.primary.recipe', 'status.attention']
         self.assertTrue(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(removal)), None))
         _, nodes = self.snapshot()
-        self.assertFalse(any(n.workspace_id == 42 for n in nodes))
+        self.assertTrue(any(n.workspace_id == 42 for n in nodes))
         self.toggle_variable('Show finished')
         snapshot, nodes = self.snapshot()
         retained = next(n for n in nodes if n.workspace_id == 42 and n.entity_id.string() == 'v')
@@ -605,6 +604,21 @@ int main(void) {
         self.assertTrue(lib.andamento_observe(self.core, None, 0, None, 0, None))
         _, nodes = self.snapshot()
         self.assertFalse(any(n.workspace_id == 42 for n in nodes))
+
+    def test_open_ended_subject_is_visible_with_show_finished_off(self):
+        # Owner ruling on #188: the open ended subject remains reachable in its
+        # original project path, marked ended, without enabling Show finished.
+        self.open_workspace('v', 42)
+        update = patch('vessel', 'v', **{'flotilla.convoy.phase': 'landed'})
+        self.assertTrue(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None))
+        snapshot, nodes = self.snapshot()
+        live = [n for n in nodes if n.workspace_id == 42]
+        self.assertTrue(live, 'open ended workspace has no sidebar entry')
+        self.assertTrue(any(n.entity_kind.string() == 'vessel' for n in live))
+        self.assertEqual(self.values(snapshot, next(n for n in live if n.entity_kind.string() == 'vessel'))[2], 'ended')
+        self.assertTrue(lib.andamento_observe(self.core, None, 0, None, 0, None))
+        _, nodes = self.snapshot()
+        self.assertFalse(any(n.entity_id.string() == 'v' for n in nodes))
 
     def test_local_sidebar_has_only_observed_workspaces(self):
         lib.andamento_destroy(self.core)
@@ -628,6 +642,40 @@ int main(void) {
         self.assertEqual(lib.andamento_observe(self.core, workspaces, 1, None, 0, None), 1)
         _, nodes = self.snapshot()
         self.assertEqual([(n.workspace_id, n.label.string()) for n in nodes if not n.is_section], [(70, 'Renamed')])
+
+    def test_coverage_after_expiry_restart_and_unplaced_kind(self):
+        # Unobserved subjects and unplaced kinds retain exact inventory IDs in
+        # Other workspaces, including after a fresh core simulates daemon restart.
+        for scenario in ('expired', 'restart', 'unplaced-kind'):
+            with self.subTest(scenario=scenario):
+                if scenario == 'restart':
+                    lib.andamento_destroy(self.core)
+                    config = (ROOT / 'data/sidebar/daily-driver.kdl').read_bytes()
+                    self.core = lib.andamento_create(config, len(config), None)
+                kind = 'unplaced' if scenario == 'unplaced-kind' else 'vessel'
+                identity = 'missing'
+                update = patch(kind, identity, **{'flotilla.project': 'p', 'action.primary.recipe': 'exec sh'})
+                if scenario == 'expired':
+                    for entry in update['set'].values():
+                        entry['ttl_ms'] = 1
+                    self.assertTrue(lib.andamento_apply_patch_json(self.core, 10, Text.of(json.dumps(update)), None))
+                    self.assertTrue(lib.andamento_tick(self.core, 12, None))
+                elif scenario == 'unplaced-kind':
+                    self.assertTrue(lib.andamento_apply_patch_json(self.core, 12, Text.of(json.dumps(update)), None))
+                binding = patch(kind, identity)
+                binding['target'] = {'kind': 'tab', 'value': 70}
+                self.assertTrue(lib.andamento_apply_patch_json(self.core, 12, Text.of(json.dumps(binding)), None))
+                workspace = Workspace(70, 0, Text.of('Open workspace'), 1)
+                self.assertTrue(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None))
+                snapshot, nodes = self.snapshot()
+                entries = [n for n in nodes if n.workspace_id == 70]
+                self.assertEqual(len(entries), 1)
+                self.assertEqual((entries[0].entity_kind.string(), entries[0].selected), ('andamento.workspace', 1))
+                self.assertEqual(self.values(snapshot, nodes[entries[0].parent]), ['Other workspaces'])
+                kind, request, identity, _ = self.dispatch(snapshot, entries[0].activate)
+                self.assertEqual((kind, identity), (0, 70))
+                self.assertTrue(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None))
+                self.assertTrue(lib.andamento_observe(self.core, None, 0, None, 0, None))
 
     def test_unplaced_workspaces_focus_exact_ids_and_reject_stale_actions(self):
         workspaces = (Workspace * 2)(Workspace(70, 0, Text.of('local'), 0),
@@ -655,7 +703,7 @@ int main(void) {
                 update = patch(kind, identity, **{'flotilla.convoy.phase': phase})
                 self.assertTrue(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None))
             _, nodes = self.snapshot()
-            self.assertFalse(any(n.workspace_id == 42 for n in nodes))
+            self.assertTrue(any(n.workspace_id == 42 for n in nodes))
         self.toggle_variable('Show finished')
         snapshot, nodes = self.snapshot()
         live = next(n for n in nodes if n.entity_id.string() == 'v' and n.workspace_id == 42)
@@ -730,6 +778,33 @@ int main(void) {
         kind, _, identity, _ = self.dispatch(snapshot, review.activate)
         self.assertEqual((kind, identity), (0, 43))
 
+    def test_subject_selection_with_convoy_and_vessel_workspaces(self):
+        # A convoy and its vessel can both own open workspaces even when the
+        # convoy action subsequently aliases the vessel. Only the subject owns selection.
+        update = patch('convoy', 'c', **{'action.primary.target': 'convoy:c'})
+        self.assertTrue(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None))
+        self.open_workspace('c', 43)
+        self.open_workspace('v', 42)
+        update = patch('convoy', 'c', **{'action.primary.target': 'vessel:v'})
+        self.assertTrue(lib.andamento_apply_patch_json(self.core, 2, Text.of(json.dumps(update)), None))
+        for selected in (42, 43):
+            for project_closed in (False, True):
+                for convoy_closed in (False, True):
+                    with self.subTest(selected=selected, project=project_closed, convoy=convoy_closed):
+                        for identity, closed in [('p', project_closed), ('c', convoy_closed)]:
+                            snap, nodes = self.snapshot()
+                            node = next(n for n in nodes if n.entity_id.string() == identity)
+                            if bool(node.collapsed) != closed:
+                                self.assertTrue(lib.andamento_dispatch(self.core, snap, node.toggle, None))
+                        workspaces = (Workspace * 2)(Workspace(42, 0, Text.of('v'), selected == 42),
+                                                     Workspace(43, 1, Text.of('c'), selected == 43))
+                        self.assertTrue(lib.andamento_observe(self.core, workspaces, 2, None, 0, None))
+                        _, nodes = self.snapshot()
+                        convoy = next(n for n in nodes if n.entity_id.string() == 'c')
+                        vessels = [n for n in nodes if n.entity_id.string() == 'v']
+                        self.assertEqual((convoy.workspace_id, bool(convoy.selected)), (43, selected == 43))
+                        self.assertTrue(all(n.workspace_id == 42 and bool(n.selected) == (selected == 42) for n in vessels))
+
     def test_open_from_attention_then_focus_from_tree(self):
         snapshot, nodes = self.snapshot()
         vessels = [n for n in nodes if n.entity_id.string() == 'v']
@@ -744,7 +819,7 @@ int main(void) {
         vessels = [n for n in nodes if n.entity_id.string() == 'v']
         self.assertTrue(all(n.state == 3 and n.workspace_id == 42 and n.selected for n in vessels))
         convoy = next(n for n in nodes if n.entity_id.string() == 'c')
-        self.assertEqual((convoy.state, convoy.workspace_id, convoy.selected), (3, 42, 1))
+        self.assertEqual((convoy.state, convoy.workspace_id, convoy.selected), (3, 42, 0))
         kind, _, workspace_id, _ = self.dispatch(snapshot, vessels[0].activate)
         self.assertEqual((kind, workspace_id), (0, 42))  # focus, no duplicate
 
