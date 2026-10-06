@@ -49,6 +49,13 @@ uishell_sidebar_card_retain_label(UIShell_HoverCard *card, String8 label)
 
 // A detail target need not have any placement. Adapt the catalog's preview
 // identity to the existing preview drawing path without looking for a tree row.
+// UI-thread only: a request mutates the snapshot by appending details. Borrowed
+// heap-backed strings remain valid across appends (Andamento ABI guarantee),
+// until snapshot release. Missing targets return error-free NONE and append
+// nothing. Core revision caching bounds repeat-miss cost; see
+// docs/sidebar-snapshot-performance.md (Demand-driven catalog details) for
+// BTreeMap lookup cost, the shared 64-identity bound and eviction policy.
+// Measure repeated misses before introducing frontend negative caching.
 internal U64
 uishell_sidebar_card_find(UIShell_SidebarState *state, AndamentoEntity entity, AndamentoNode *out)
 {

@@ -182,6 +182,9 @@ uishell_sidebar_set_error(UIShell_SidebarState *state, String8 message)
   state->error[size] = 0;
 }
 
+// Copy failures into the fixed status buffer, then free the owned ABI error
+// with andamento_string_free. Repeated errors overwrite the same buffer; this
+// helper neither emits a log nor appends status entries.
 internal B32
 uishell_sidebar_result(UIShell_SidebarState *state, B32 ok, char *error)
 {

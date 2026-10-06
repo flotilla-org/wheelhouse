@@ -204,8 +204,19 @@ action indices remain snapshot-owned. Relation rows use the newly requested targ
 label and index, including hidden entities. A disappeared held target is unavailable
 on the fresh revision; old actions are rejected before snapshot replacement.
 
+The host lookup mutates snapshots on the UI thread. Borrowed heap-backed text
+survives detail appends until snapshot release, as guaranteed and tested by the
+Andamento ABI. Missing identities return error-free `NONE` and append no cards.
+The core detail cache holds hits and misses per revision, sharing a 64-identity
+bound: its `BTreeMap` lookup is O(log n), and a cached miss does not repeat
+catalog evaluation. More
+than 64 identities can evict entries. Measure before adding frontend negative
+caching. ABI errors are copied into a fixed host status buffer and freed with
+`andamento_string_free`; repeated failures overwrite that buffer without emitting
+logs or appending status entries.
+
 Shared-core release C-ABI measurements are in Andamento's
-[report](https://github.com/flotilla-org/andamento/blob/b6f104dbaa12fc8ea65511bb74adcf90578e9f88/docs/snapshot-evaluation-performance.md).
+[report](https://github.com/flotilla-org/andamento/blob/db12903517c90de645793560c3b53642b00ebe0a/docs/snapshot-evaluation-performance.md).
 For the scripted 1,000-entity stream, plain acquisition medians were 74.687 ms
 before and 63.503 ms after; detailed acquisition was 113.890 ms before and
 83.249 ms after. Plain acquisition plus two demanded cards was 61.051 ms.
@@ -213,7 +224,9 @@ These are shared-host Linux core/ABI timings with substantial scheduling noise,
 not daily-driver CPU or frame-rate forecasts. The macOS captured catalog is not
 available in this checkout; no corresponding GUI idle-CPU claim is made.
 
-Fresh Linux/Xvfb release verification uses Andamento `b6f104d`, Cleat `00c072b`
+The final Andamento pin is `db12903517c90de645793560c3b53642b00ebe0a`,
+whose tree is identical to the tested `b6f104d`. Fresh Linux/Xvfb release
+verification used that tree, Cleat `00c072b`
 with no Ghostty feature, and Jackstay `91156bf`. The existing capped benchmark
 again steps through 100, 300 and 1,000 issues. This is a **fixed-snapshot UI and
 memory check**, separate from the changed-revision acquisition stream above;
@@ -237,8 +250,9 @@ Mutation checks: restoring eager refresh fails five named demand-count/lifecycle
 checks, reproducing the previous refresh behavior. Removing the demand branch fails
 exact-identity, current-output and card-rendering checks (the deliberately broken
 fixture later aborts). Both mutations were reverted, and the production tooltip/card
-diagnostics pass again. No workflow file is committed by the crew; the dependency
-pin diff is provided in the PR body for the governor.
+diagnostics pass again. Crew code commit `39c88ca` supplied the host demand seam and
+diagnostics; the governor separately applied workflow commit `c8ac112` with the
+final dependency pin. No workflow file was committed by the crew.
 
 ## Long-window memory gate (#212)
 
