@@ -786,6 +786,17 @@ struct UIShell_WatchCellList
   F32 pct_sum;
 };
 
+// Schema runtime rows are presentation-only: they never edit or serialize cfg.
+// Providers supply a live value and an optional command for the owning view.
+typedef struct UIShell_RuntimeSetting UIShell_RuntimeSetting;
+struct UIShell_RuntimeSetting
+{
+  String8 value;
+  String8 action;
+  String8 command;
+};
+internal UIShell_RuntimeSetting uishell_runtime_setting(Arena *arena, CFG_Node *cfg, String8 name);
+
 typedef struct UIShell_WatchRowInfo UIShell_WatchRowInfo;
 struct UIShell_WatchRowInfo
 {
@@ -1239,17 +1250,6 @@ uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
   return info;
 }
 
-// Schema runtime rows are presentation-only: they never edit or serialize cfg.
-// Providers supply a live value and an optional command for the owning view.
-typedef struct UIShell_RuntimeSetting UIShell_RuntimeSetting;
-struct UIShell_RuntimeSetting
-{
-  String8 value;
-  String8 action;
-  String8 command;
-};
-internal UIShell_RuntimeSetting uishell_runtime_setting(Arena *arena, CFG_Node *cfg, String8 name);
-
 internal MD_Node *
 uishell_runtime_setting_schema(Arena *arena, E_Space space)
 {
@@ -1261,6 +1261,8 @@ uishell_runtime_setting_schema(Arena *arena, E_Space space)
     for(MD_NodePtrNode *n = schemas.first; n != 0; n = n->next)
     {
       MD_Node *child = md_child_from_string(n->v, e_string_from_id(space.u64s[1]), 0);
+      // Runtime value and action are separate rows. If both tags are supplied,
+      // the renderer deliberately gives the read-only value precedence.
       if(md_node_has_tag(child, str8_lit("runtime_value"), 0) ||
          md_node_has_tag(child, str8_lit("runtime_action"), 0))
       {
@@ -2155,6 +2157,9 @@ uishell_watch_view_ui(Rng2F32 rect)
         {
           EV_Row *row = &row_node->row;
           UIShell_WatchRowInfo *row_info = &row_infos[local_row_idx];
+          // The ordinary expression/value cells share a row's config space.
+          // Resolve static runtime tags once for the row, outside the cell loop.
+          MD_Node *row_runtime_schema = uishell_runtime_setting_schema(scratch.arena, row->eval.space);
           U64 row_hash = ev_hash_from_key(row->key);
           U64 row_depth = ev_depth_from_block(row->block);
           B32 row_selected = (selection_tbl.min.y <= global_row_idx+1 && global_row_idx+1 <= selection_tbl.max.y);
@@ -2273,7 +2278,10 @@ uishell_watch_view_ui(Rng2F32 rect)
                 RD_Font(RD_FontSlot_Code)
                 UI_TagF("weak")
               {
-                MD_Node *runtime_schema = uishell_runtime_setting_schema(scratch.arena, cell->eval.space);
+                MD_Node *runtime_schema = row_runtime_schema;
+                // Custom table columns can evaluate different config members.
+                if(!MemoryMatch(&cell->eval.space, &row->eval.space, sizeof(E_Space)))
+                { runtime_schema = uishell_runtime_setting_schema(scratch.arena, cell->eval.space); }
                 if(!md_node_is_nil(runtime_schema))
                 {
                   MD_Node *value_tag = md_tag_from_string(runtime_schema, str8_lit("runtime_value"), 0);
@@ -3986,6 +3994,12 @@ uishell_terminal_move(UIShell_TerminalViewState *tv, B32 adopt)
   rd_request_frame();
 }
 
+internal B32
+uishell_terminal_hosting_is_daemon(String8 hosting)
+{
+  return str8_match(str8_prefix(hosting, 7), str8_lit("daemon:"), 0);
+}
+
 internal UIShell_RuntimeSetting
 uishell_terminal_hosting_setting(Arena *arena, String8 hosting)
 {
@@ -3993,7 +4007,7 @@ uishell_terminal_hosting_setting(Arena *arena, String8 hosting)
   if(hosting.size != 0)
   {
     result.value = push_str8_copy(arena, hosting);
-    B32 daemon_hosted = str8_match(str8_prefix(result.value, 7), str8_lit("daemon:"), 0);
+    B32 daemon_hosted = uishell_terminal_hosting_is_daemon(result.value);
     result.action = daemon_hosted ? str8_lit("Adopt") : str8_lit("Hand to daemon");
     result.command = daemon_hosted ? str8_lit("terminal_adopt") : str8_lit("terminal_transfer");
   }
@@ -4007,7 +4021,10 @@ uishell_runtime_setting(Arena *arena, CFG_Node *cfg, String8 name)
   if(str8_match(name, str8_lit("terminal_hosting"), 0) &&
      str8_match(cfg->string, str8_lit("terminal"), 0))
   {
-    UIShell_TerminalViewState *tv = rd_view_state_from_cfg(cfg)->user_data;
+    // The accessor allocates a zero-initialized view state for untouched tabs.
+    // Still guard both the accessor result and its optional runtime data.
+    RD_ViewState *state = rd_view_state_from_cfg(cfg);
+    UIShell_TerminalViewState *tv = state != 0 && state != &rd_nil_view_state ? state->user_data : 0;
     cleat_str hosting = {0};
     if(tv != 0 && tv->session != 0 && cleat_session_hosting(tv->session, &hosting) && hosting.len != 0)
     {
@@ -4172,7 +4189,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
   }
   cleat_str hosting = {0};
   B32 daemon_hosted = session_ready && cleat_session_hosting(tv->session, &hosting) &&
-                      str8_match(str8_prefix(str8((U8 *)hosting.ptr, hosting.len), 7), str8_lit("daemon:"), 0);
+                      uishell_terminal_hosting_is_daemon(str8((U8 *)hosting.ptr, hosting.len));
   if(session_ready && (tv->cols != cols || tv->rows != rows))
   {
     uishell_terminal_clear_selection(tv);

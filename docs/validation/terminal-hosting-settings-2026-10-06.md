@@ -23,7 +23,7 @@ Built the native Linux executable with the CI-pinned Jackstay checkout and
 `--hosting_diagnostics` under Xvfb with software OpenGL. The diagnostics use
 production schema evaluation, the settings lister, the terminal canvas, a real
 in-process Cleat session, and synthetic pointer events. They cover unavailable
-hosting, in-process and daemon action selection, exact daemon identity retention,
+hosting (including an untouched, never-built hidden terminal), in-process and daemon action selection, exact daemon identity retention,
 noneditable settings rows, per-view default/override behavior, off/on/off canvas
 visibility, and action routing to the owning terminal.
 
@@ -37,3 +37,7 @@ or a live daemon transfer/adopt round trip. The operator should open Selected Ta
 Settings on a live terminal, transfer it, inspect its daemon identity, adopt it,
 and toggle Show Hosting Overlay. Confirm the connection/role status pill still
 appears when its status requires it. No desktop visual acceptance is claimed.
+
+CI wiring follow-up: [#233](https://github.com/flotilla-org/wheelhouse/issues/233).
+The injected GitHub App token cannot update workflows; this PR provides the
+native diagnostic command and a runner with an explicit `xvfb-run` example.

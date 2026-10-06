@@ -20,6 +20,19 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   CFG_Node *panel = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
   CFG_Node *view = rd_cfg_new_view_tab(panel, str8_lit("terminal"), str8_zero(), 1);
+  // A never-built, unselected terminal has no runtime state. Hosting lookup
+  // must safely report unavailable and leave the action disabled.
+  CFG_Node *untouched = rd_cfg_new_view_tab(panel, str8_lit("terminal"), str8_zero(), 0);
+  B32 had_state = 0;
+  for(U64 slot = 0; slot < rd_state->view_state_slots_count; slot++)
+  {
+    for(RD_ViewState *state = rd_state->view_state_slots[slot].first; state; state = state->hash_next)
+    { had_state |= state->cfg_id == untouched->id; }
+  }
+  HostingCheck(!had_state, "untouched terminal begins without view state");
+  UIShell_RuntimeSetting untouched_setting = uishell_runtime_setting(scratch.arena, untouched, str8_lit("terminal_hosting"));
+  HostingCheck(str8_match(untouched_setting.value, str8_lit("unavailable"), 0) && untouched_setting.command.size == 0,
+               "never-built hidden terminal is unavailable with no action");
   UIShell_RegsScope(.window = ws->cfg_id, .panel = panel->id, .tab = view->id, .view = view->id)
   {
     // Issue #109: hosting overlay is per-view and absent means off.
