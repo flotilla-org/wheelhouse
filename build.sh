@@ -66,6 +66,7 @@ if [ -n "${wheelhouse+x}" ]; then
   andamento_target=$(rustc -vV | sed -n 's/^host: //p')
   andamento_target_dir="${WHEELHOUSE_ANDAMENTO_TARGET_DIR:-${CARGO_TARGET_DIR:-$andamento_dir/target}}"
   python3 tools/prepare-andamento-build.py "$andamento_dir"
+  # DAILY_DRIVER_WATCHER: daily-driver.py relies on this build including the native git watcher.
   cargo build --manifest-path "$repo_root/build/andamento/Cargo.toml" -p andamento-ffi -p wheelhouse-native-deps -p andamento-git-watcher --locked --target "$andamento_target" --target-dir "$andamento_target_dir" $cargo_profile_flags
   andamento_lib_dir="$andamento_target_dir/$andamento_target/$cargo_profile"
   auto_compile_flags="$auto_compile_flags -I$andamento_dir/crates/andamento-ffi/include"

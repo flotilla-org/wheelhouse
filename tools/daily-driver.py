@@ -261,10 +261,16 @@ def main():
             if not contended:
                 raise
             parser.error(f'a daily driver is already using {state}')
+        watcher_built = False
         if not args.no_build and 'WHEELHOUSE_BIN' not in os.environ:
             build = [str(ROOT / 'build.bat'), 'wheelhouse'] if WINDOWS else ['bash', 'build.sh', 'wheelhouse']
-            subprocess.run(build, cwd=ROOT,
-                           env={**os.environ, 'WHEELHOUSE_ANDAMENTO_DIR': str(andamento)}, check=True)
+            # Build scripts treat an inherited release selector as a profile request.
+            # The launcher selects debug artifacts; Windows env keys are case-insensitive.
+            build_env = {key: value for key, value in os.environ.items() if key.lower() != 'release'}
+            build_env['WHEELHOUSE_ANDAMENTO_DIR'] = str(andamento)
+            subprocess.run(build, cwd=ROOT, env=build_env, check=True)
+            # The native Wheelhouse build includes andamento-git-watcher.
+            watcher_built = True
         if args.repo:
             if 'ANDAMENTO_GIT_WATCHER_BIN' in os.environ:
                 args.watcher = Path(os.environ['ANDAMENTO_GIT_WATCHER_BIN']).resolve()
@@ -273,8 +279,9 @@ def main():
                 host = next(line.split(': ', 1)[1] for line in version.splitlines() if line.startswith('host: '))
                 target = Path(os.environ.get('WHEELHOUSE_ANDAMENTO_TARGET_DIR',
                               os.environ.get('CARGO_TARGET_DIR', andamento / 'target'))).resolve()
+                # The host build above uses the default debug profile; keep this path in sync.
                 args.watcher = target / host / ('debug/andamento-git-watcher' + EXE)
-                if not args.no_build:
+                if not args.no_build and not watcher_built:
                     subprocess.run([sys.executable, str(ROOT / 'tools/prepare-andamento-build.py'), str(andamento)], check=True)
                     subprocess.run(['cargo', 'build', '--manifest-path', str(ROOT / 'build/andamento/Cargo.toml'),
                                     '-p', 'andamento-git-watcher', '--bin', 'andamento-git-watcher', '--locked', '--target', host,
