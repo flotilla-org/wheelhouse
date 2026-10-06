@@ -2112,7 +2112,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                   {
                     UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###close_%S",
                       close == UIShell_SidebarCloseKind_Destroy ? str8_lit("×") : str8_zero(), node_key));
-                    if(close == UIShell_SidebarCloseKind_Detach) { ui_box_equip_custom_draw(sig.box, rd_workspace_detach_icon_draw, &rd_workspace_detach_icon_compact); }
+                    if(close == UIShell_SidebarCloseKind_Detach) { ui_box_equip_custom_draw(sig.box, rd_workspace_detach_icon_draw, 0); }
                     if(ui_hovering(sig)) UI_Tooltip
                     {
                       ui_state->tooltip_anchor_key = sig.box->key;

@@ -594,7 +594,6 @@ internal UI_Signal rd_chrome_build_overview_toggle(RD_WindowState *ws);
 internal UI_Signal rd_chrome_build_reveal_workspace(CFG_Node *owner_cfg);
 // the detach glyph: a plug pulled apart, drawn in the box's text colour
 internal UI_BOX_CUSTOM_DRAW(rd_workspace_detach_icon_draw);
-global B32 rd_workspace_detach_icon_compact;
 internal UI_Signal rd_chrome_build_sidebar_collapse(CFG_Node *owner_cfg);
 
 typedef struct UIShell_SidebarState UIShell_SidebarState;

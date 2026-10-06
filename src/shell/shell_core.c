@@ -5064,25 +5064,19 @@ rd_chrome_build_overview_toggle(RD_WindowState *ws)
 }
 
 // A separated plug/socket distinguishes workspace detachment from window close.
-// Passing &rd_workspace_detach_icon_compact as user data drops the cords, so
-// the glyph fits a narrow status slot (12 units wide rather than 18).
-global B32 rd_workspace_detach_icon_compact = 1;
-
+// 12 units wide so it fits the sidebar's 1.2em status slot.
 internal UI_BOX_CUSTOM_DRAW(rd_workspace_detach_icon_draw)
 {
-  B32 compact = user_data == &rd_workspace_detach_icon_compact;
   F32 unit = Max(1.f, floor_f32(box->font_size/12.f));
-  F32 first = compact ? 3.f : 0.f, width = compact ? 12.f : 18.f;
-  Vec2F32 origin = v2f32(floor_f32((box->rect.x0+box->rect.x1-width*unit)*0.5f - first*unit),
+  Vec2F32 origin = v2f32(floor_f32((box->rect.x0+box->rect.x1-12.f*unit)*0.5f),
                          floor_f32((box->rect.y0+box->rect.y1-12.f*unit)*0.5f));
   String8 color_tags[] = {str8_lit("weak"), str8_lit("text")};
   Vec4F32 color = ui_color_from_tags_key_extras(box->tags_key, (String8Array){color_tags, ArrayCount(color_tags)});
   Rng2F32 parts[] = {
-    {3, 2, 7, 10}, {7, 3, 10, 4}, {7, 8, 10, 9},
-    {12, 2, 13, 10}, {13, 2, 15, 3}, {13, 9, 15, 10},
-    {0, 5, 3, 7}, {15, 5, 18, 7}, // cords
+    {0, 2, 4, 10}, {4, 3, 7, 4}, {4, 8, 7, 9},
+    {9, 2, 10, 10}, {10, 2, 12, 3}, {10, 9, 12, 10},
   };
-  for(U64 i = 0; i < ArrayCount(parts) - (compact ? 2 : 0); i++)
+  for(U64 i = 0; i < ArrayCount(parts); i++)
   {
     Rng2F32 r = parts[i];
     dr_rect(r2f32p(origin.x+r.x0*unit, origin.y+r.y0*unit,

@@ -1608,15 +1608,25 @@ uishell_dispatch_font_command(String8 name)
 }
 
 // A subjectless workspace, selected, with default panels. Window sidebar
-// regions are left alone; they are not part of the new workspace.
+// regions are left alone; they are not part of the new workspace. Its default
+// name takes the lowest number no open workspace uses, so closing workspaces
+// never leads to two with the same name.
 internal CFG_Node *
 uishell_new_workspace(CFG_Node *window)
 {
   Temp scratch = scratch_begin(0, 0);
   CFG_NodePtrList workspaces = cfg_node_child_list_from_string(scratch.arena, window, str8_lit("workspace"));
+  U64 number = 1;
+  for(B32 taken = 1; taken; number += taken)
+  {
+    taken = 0;
+    String8 name = push_str8f(scratch.arena, "Workspace %I64u", number);
+    for(CFG_NodePtrNode *n = workspaces.first; n != 0 && !taken; n = n->next)
+    { taken = str8_match(rd_label_from_cfg(n->v), name, 0); }
+  }
   CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
   CFG_Node *label = cfg_node_new(rd_state->cfg, workspace, str8_lit("label"));
-  cfg_node_newf(rd_state->cfg, label, "Workspace %I64u", workspaces.count+1);
+  cfg_node_newf(rd_state->cfg, label, "Workspace %I64u", number);
   RD_WindowState *ws = rd_window_state_from_cfg(window);
   if(ws != &rd_nil_window_state)
   {
@@ -1692,7 +1702,8 @@ uishell_dispatch_window_command(String8 name)
           str8_match(name, str8_lit("detach_workspace"), 0))
   {
     // Detach keeps a subject workspace's layout for the next materialization;
-    // close, or detaching a subjectless workspace, destroys it.
+    // detaching a subjectless workspace destroys it. Close always destroys,
+    // including a subject workspace, whose row then opens a fresh layout.
     B32 detach = str8_match(name, str8_lit("detach_workspace"), 0);
     Temp scratch = scratch_begin(0, 0);
     CFG_Node *workspace = cfg_node_from_id(uishell_regs()->cfg);
@@ -1735,6 +1746,8 @@ uishell_dispatch_window_command(String8 name)
         }
         else if(detach && uishell_workspace_cfg_has_subject(workspace))
         {
+          // TODO(#159): a detached node whose subject never returns is kept
+          // forever; prune it with the retained-workspace expiry policy.
           cfg_node_equip_string(rd_state->cfg, workspace, str8_lit("detached_workspace"));
         }
         else

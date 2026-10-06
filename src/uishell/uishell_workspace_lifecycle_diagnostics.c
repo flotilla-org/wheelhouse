@@ -164,6 +164,20 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   UIShell_RegsScope(.window = window->id, .cfg = loose_id) { uishell_dispatch_window_command(str8_lit("detach_workspace")); }
   LifecycleCheck(cfg_node_from_id(loose_id) == &cfg_nil_node, "detaching a subjectless workspace destroys it");
 
+  //- Default names never repeat an open workspace's name, even after a close.
+  {
+    CFG_Node *first = uishell_new_workspace(window);
+    uishell_new_workspace(window);
+    cfg_node_release(rd_state->cfg, first);
+    uishell_new_workspace(window);
+    CFG_NodePtrList named = cfg_node_child_list_from_string(scratch.arena, window, str8_lit("workspace"));
+    B32 distinct = 1;
+    for(CFG_NodePtrNode *a = named.first; a; a = a->next)
+      for(CFG_NodePtrNode *b = a->next; b; b = b->next)
+    { distinct = distinct && !str8_match(rd_label_from_cfg(a->v), rd_label_from_cfg(b->v), 0); }
+    LifecycleCheck(distinct, "new workspace names are unique among open workspaces");
+  }
+
   //- Closing every workspace leaves exactly one fresh subjectless workspace.
   split = uishell_root_controlled_split_from_window(scratch.arena, window);
   U64 closing_count = split.inventory.count;
@@ -179,7 +193,19 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
                  !uishell_workspace_cfg_has_subject(split.inventory.first->mount.workspace_cfg),
                  "closing the last workspace leaves one fresh subjectless workspace");
 
-  fprintf(stderr, "Workspace lifecycle diagnostics: %s (detach/reopen, palette target, hover affordance, destroy, header new-workspace, last close)\n",
+  //- The window-backed legacy workspace can be the last one too: closing it
+  //  removes the window's panels and leaves a fresh workspace child.
+  cfg_node_release(rd_state->cfg, split.inventory.first->mount.workspace_cfg);
+  uishell_default_workspace_panels(window, window);
+  split = uishell_root_controlled_split_from_window(scratch.arena, window);
+  LifecycleCheck(split.inventory.count == 1 && split.inventory.first->id == window->id, "legacy window workspace is the only one");
+  UIShell_RegsScope(.window = window->id, .cfg = window->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); }
+  split = uishell_root_controlled_split_from_window(scratch.arena, window);
+  LifecycleCheck(split.inventory.count == 1 && split.inventory.first->mount.workspace_cfg != &cfg_nil_node &&
+                 cfg_node_child_from_string(window, str8_lit("panels")) == &cfg_nil_node,
+                 "closing the last, window-backed workspace leaves one fresh workspace");
+
+  fprintf(stderr, "Workspace lifecycle diagnostics: %s (detach/reopen, palette target, hover affordance, destroy, header new-workspace, unique names, last close, legacy last close)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

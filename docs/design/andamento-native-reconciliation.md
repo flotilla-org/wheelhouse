@@ -303,8 +303,8 @@ workspace's sidebar row, and the affordance says what is lost:
 - A subjectless workspace, or one whose subject has ended, is **closed**:
   `close_workspace` releases the node.
 
-Hovering a row turns its status mark into the detach glyph (compact variant,
-fitting the 1.2em slot) or `×`; the rest of the row still focuses. Row and chip
+Hovering a row turns its status mark into the detach glyph (drawn 12 units
+wide to fit the 1.2em slot) or `×`; the rest of the row still focuses. Row and chip
 context menus offer the same item. From the palette both commands act on the
 Visible Workspace. Closing the last workspace is allowed: it leaves a fresh
 subjectless workspace until a permanent home workspace exists.
