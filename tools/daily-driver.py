@@ -276,6 +276,7 @@ def main():
                 host = next(line.split(': ', 1)[1] for line in version.splitlines() if line.startswith('host: '))
                 target = Path(os.environ.get('WHEELHOUSE_ANDAMENTO_TARGET_DIR',
                               os.environ.get('CARGO_TARGET_DIR', andamento / 'target'))).resolve()
+                # The host build above uses the default debug profile; keep this path in sync.
                 args.watcher = target / host / ('debug/andamento-git-watcher' + EXE)
                 if not args.no_build and not watcher_built:
                     subprocess.run([sys.executable, str(ROOT / 'tools/prepare-andamento-build.py'), str(andamento)], check=True)
