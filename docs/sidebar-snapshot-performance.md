@@ -116,8 +116,9 @@ xvfb-run -a python3 tools/benchmark-sidebar.py
 ```
 
 The runner caps every process, saves raw logs under `build/sidebar-benchmark`,
-checks bounded RSS at each size, and stops immediately on a failure. An alternative
-GNU time path can be provided with `--time`; increase `--timeout` on slower hosts.
+checks bounded app-owned frame storage and sustained RSS slope at each size, and stops immediately on a failure. An alternative
+GNU time path can be provided with `--time`; each 5,000-frame native run has a
+600-second timeout, adjustable with `--timeout` on slower hosts.
 Timeouts terminate the entire process group and preserve partial logs; `--sizes 100 300` is a shorter run.
 The governor-applied `sidebar-memory.yml` workflow runs this benchmark weekly,
 through `workflow_dispatch`, and on PRs changing its workflow or benchmark
@@ -127,7 +128,7 @@ Xvfb, and retains complete or partial logs (including GNU time peak RSS).
 The first [CI benchmark run](https://github.com/flotilla-org/wheelhouse/actions/runs/37448974329)
 passed on the governor-applied commit `bfd5ac1`, including the RSS plateau gates
 and log upload.
-The runner enforces the 8 GiB cap and RSS plateau before increasing the catalog;
+The runner enforces the 8 GiB cap and the storage/slope gate before increasing the catalog;
 there is no absolute timing threshold on shared runners.
 
 Native context diagnostics cover generated hash collisions, duplicate placements,
@@ -238,3 +239,44 @@ exact-identity, current-output and card-rendering checks (the deliberately broke
 fixture later aborts). Both mutations were reverted, and the production tooltip/card
 diagnostics pass again. No workflow file is committed by the crew; the dependency
 pin diff is provided in the PR body for the governor.
+
+## Long-window memory gate (#212)
+
+Three CI failures showed a single roughly 6.4 MiB RSS step between frames 120
+and 200 while draw, font and UI arena positions stayed flat. RSS includes library
+allocators, background work and page residency; an endpoint subtraction cannot
+identify that step as a leak. The runner now measures 5,000 frames per combination,
+with 1,000 warm-up frames and samples every 200 frames. It requires a complete
+4,000-frame post-warmup window for all four panel/input combinations.
+
+Draw, font, persistent UI and shell frame arena positions may each grow at most
+one MiB above their post-warmup baseline at any sample. Independently, the RSS gate
+subtracts at most the largest single positive interval and divides the remaining
+positive increments by the remaining frame span. The allowed sustained slope is 0.5 KiB
+per frame. A single residency step therefore does not fail the gate, while a
+continuous leak contributes in every remaining interval and repeated large steps
+still fail. Negative RSS drops cannot cancel positive growth. This is not an attribution of the original step to a particular
+library; it separates a bounded step from sustained growth and keeps the
+app-owned storage assertion independent. The runner prints the excluded step
+and residual slope; native/GNU time logs remain uploaded even on failure.
+
+A capped 100-issue characterization before the fix ran all four combinations for
+5,000 frames. Between frames 1,000 and 5,000, RSS grew by 8,060/8,100 KiB in the
+four-panel cases and 10,748/10,772 KiB in the merged cases. The shell frame arena
+grew by exactly 2,064 and 2,752 bytes per frame respectively, matching the RSS
+slopes (2.015–2.693 KiB/frame). Draw, font and persistent UI storage stayed flat.
+The smaller creep seen in the 240-frame fixture was not a plateau.
+
+The cause was in the Wheelhouse benchmark: it runs many synthetic builds inside
+one `update()`, but each register scope allocates in `rd_frame_arena()` and the
+usual update boundary never retired those allocations. Every synthetic frame now
+restores the enclosing shell arena position after its build and resets draw/font
+frame storage as a normal update does. This preserves the surrounding update's
+allocations and leaves production register ownership unchanged.
+
+The gate tests generate single steps across the entire sampling window, including
+zero and large steps, and slopes just below/at/above the limit. They also reject
+multiple steps, app-owned arena growth with flat RSS, missing/duplicate samples,
+short windows and ineffective CPU sizing. Disabling either the slope assertion
+or the storage assertion makes the suite fail. The captured pre-fix native run
+fails the sustained-slope gate.

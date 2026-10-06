@@ -53,7 +53,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
   UIShell_SidebarState *saved = ws->sidebar;
   UI_State *saved_ui = ui_state;
   B32 ok = uishell_sidebar_labels_diagnostics();
-  enum { warmup = 40, frames = 240, sample_interval = 40, layouts = 2, inputs = 2 };
+  enum { warmup = 1000, frames = 5000, sample_interval = 200, layouts = 2, inputs = 2 };
   fprintf(stderr, "SIDEBAR_CONFIG frames=%u warmup=%u sample_interval=%u combinations=%u worker_cpus=%u\n", frames, warmup, sample_interval, layouts*inputs, get_system_info()->logical_processor_count);
   U64 sizes[] = {uishell_sidebar_benchmark_issues};
   for(U64 size_index = 0; size_index < ArrayCount(sizes); size_index++)
@@ -133,8 +133,11 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
         U64 elapsed = 0, analysis = 0, context = 0, font_baseline = 0;
         for(U64 frame = 0; frame < frames; frame++)
         {
-          // update() normally owns this boundary. This diagnostic builds many
-          // frames inside one update, so retire the preceding frame's font runs.
+          // update() normally retires shell registers and draw/font runs.
+          // This diagnostic builds many frames inside one update: restore the
+          // enclosing frame's arena position after every synthetic build.
+          Temp shell_frame = temp_begin(rd_frame_arena());
+          dr_begin_frame(rd_font_from_slot(RD_FontSlot_Icons));
           fnt_frame();
           UI_IconInfo icons = ws->ui->icon_info;
           UI_AnimationInfo animation = {0}; animation.scroll_animation_rate = .5f;
@@ -157,6 +160,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
           { uishell_control_surface_ui(r2f32p(0, 0, 400, 800), &split); }
           ui_end_build();
           U64 frame_elapsed = now_time_us()-start;
+          temp_end(shell_frame);
           // Repeated native frames at a fixed catalog must bound transient font
           // storage. Allow one MiB for scroll-dependent text after warmup.
           if(frame+1 == warmup) { font_baseline = arena_pos(fnt_state->frame_arena); }
@@ -165,7 +169,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
 #if OS_LINUX
           if((frame+1)%sample_interval == 0)
           {
-            fprintf(stderr, "SIDEBAR_STORAGE frame=%llu draw=%llu font=%llu ui=%llu\n", (unsigned long long)(frame+1), (unsigned long long)arena_pos(dr_thread_ctx->arena), (unsigned long long)arena_pos(fnt_state->frame_arena), (unsigned long long)arena_pos(ui_state->arena));
+            fprintf(stderr, "SIDEBAR_STORAGE frame=%llu draw=%llu font=%llu ui=%llu shell=%llu\n", (unsigned long long)(frame+1), (unsigned long long)arena_pos(dr_thread_ctx->arena), (unsigned long long)arena_pos(fnt_state->frame_arena), (unsigned long long)arena_pos(ui_state->arena), (unsigned long long)arena_pos(rd_frame_arena()));
             FILE *status = fopen("/proc/self/status", "r");
             char line[256];
             while(status && fgets(line, sizeof(line), status))
