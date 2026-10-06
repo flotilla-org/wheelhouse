@@ -143,13 +143,15 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
       }
       if(phase == 0)
       {
-        UI_Box *viewport = &ui_nil_box, *first = &ui_nil_box, *last = &ui_nil_box;
+        UI_Box *viewport = &ui_nil_box, *first = &ui_nil_box, *last = &ui_nil_box, *overflow = &ui_nil_box;
         for(UI_Box *box = row; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, row).next)
         {
           if(box->flags & UI_BoxFlag_ViewScrollX) { viewport = box; }
         }
         for(UI_Box *box = viewport->first; !ui_box_is_nil(box); box = box->next)
         {
+          String8 display = ui_box_display_string(box);
+          if(display.size && display.str[0] == '+') { overflow = box; }
           String8 label = ui_box_display_string(box->first);
           if(box->flags & UI_BoxFlag_Clickable &&
              (str8_match(label, str8_lit("漢!281"), 0) || str8_match(label, str8_lit("c!1000"), 0)))
@@ -161,12 +163,16 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
         { ok = 0; fprintf(stderr, "FAIL chip navigation viewport at width %g\n", widths[w]); }
         else
         {
-          UI_Key last_key = last->key;
+          UI_Key last_key = last->key, viewport_key = viewport->key, nav_key = nav->key;
+          UI_Key row_key = row->key, overflow_key = overflow->key;
           nav->default_nav_focus_next_hot_key = first->key;
           UI_Box *body = viewport->parent;
           while(!ui_box_is_nil(body) && !(body->flags & UI_BoxFlag_ViewScrollY)) { body = body->parent; }
+          UI_Key body_key = body->key;
           F32 body_offset = body->view_off_target.y;
-          for(U32 frame = 0; frame < 14; frame++)
+          // Scroll animation is disabled (rate=1): frames sequence native
+          // events and retained layout, not a timed animation assumption.
+          for(U32 frame = 0; frame < 30; frame++)
           {
             UI_IconInfo icons = ws->ui->icon_info;
             UI_AnimationInfo animation = {.scroll_animation_rate = 1};
@@ -176,20 +182,51 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
             // directly assigning the final focus or offset under test.
             if(frame > 0 && frame < 5 && !ui_key_match(nav->default_nav_focus_hot_key, last_key))
             { event.v = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Tab}; }
+            if(frame >= 19 && frame < 25 && !ui_box_is_nil(overflow) &&
+               !ui_key_match(nav->default_nav_focus_hot_key, overflow->key))
+            { event.v = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Tab}; }
             if(frame == 10)
             { event.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(viewport->rect), .delta_2f32 = {-1000, 0}, .scroll_is_precise = 1}; }
             if(event.v.kind != UI_EventKind_Null) { events.first = events.last = &event; events.count = 1; }
             ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-            ui_state->mouse = center_2f32(viewport->rect);
+            ui_state->mouse = frame == 15 ? v2f32(-100, -100) : center_2f32(viewport->rect);
             UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
-            { uishell_sidebar_ui(r2f32p(0, 0, frame >= 6 ? Max(80.f, widths[w]-30.f) : widths[w], 900), split); }
+            {
+              // Remove the sidebar for one build, then refocus the same chip
+              // at the same width. Its cached key must not suppress reveal.
+              if(frame != 14) { uishell_sidebar_ui(r2f32p(0, 0, frame >= 6 ? Max(80.f, widths[w]-30.f) : widths[w], 900), split); }
+              else { viewport->view_off.x = viewport->view_off_target.x = 0; }
+            }
             ui_end_build();
-            if(frame == 9)
+            if(frame != 14)
+            {
+              // Removed boxes are reclaimed by ui_end_build. Resolve retained
+              // keys again instead of reading pointers from before the rebuild.
+              body = ui_box_from_key(body_key);
+              row = ui_box_from_key(row_key);
+              viewport = ui_box_from_key(viewport_key);
+              nav = ui_box_from_key(nav_key);
+              last = ui_box_from_key(last_key);
+              overflow = ui_box_from_key(overflow_key);
+            }
+            if(frame == 15)
+            {
+              test->default_nav_root_key = nav_key;
+              nav->default_nav_focus_next_hot_key = last_key;
+            }
+            if(frame == 9 || frame == 18)
             {
               F32 visible = Min(dim_2f32(last->rect).x, dim_2f32(viewport->rect).x);
               if(!ui_key_match(nav->default_nav_focus_hot_key, last_key) ||
                  Min(last->rect.x1, viewport->rect.x1)-Max(last->rect.x0, viewport->rect.x0) < visible-1)
               { ok = 0; fprintf(stderr, "FAIL Tab chip reveal at width %g: focus=%d chip=[%g,%g] viewport=[%g,%g] offset=%g target=%g\n", widths[w], ui_key_match(nav->default_nav_focus_hot_key, last_key), last->rect.x0, last->rect.x1, viewport->rect.x0, viewport->rect.x1, viewport->view_off.x, viewport->view_off_target.x); }
+            }
+            if(frame == 25 && !ui_box_is_nil(overflow))
+            {
+              if(overflow->parent != viewport || !ui_key_match(nav->default_nav_focus_hot_key, overflow->key) ||
+                 Min(overflow->rect.x1, viewport->rect.x1)-Max(overflow->rect.x0, viewport->rect.x0) <
+                   Min(dim_2f32(overflow->rect).x, dim_2f32(viewport->rect).x)-1)
+              { ok = 0; fprintf(stderr, "FAIL overflow chip focus/reveal at width %g\n", widths[w]); }
             }
             if(frame == 12 && (viewport->view_off_target.x != 0 || viewport->view_off.x != 0))
             { ok = 0; fprintf(stderr, "FAIL precise horizontal chip scroll at width %g\n", widths[w]); }

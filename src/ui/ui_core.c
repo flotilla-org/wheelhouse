@@ -1351,6 +1351,8 @@ ui_end_build(void)
         anchor_box->rect.x0 + ui_state->ctx_menu_anchor_off.x,
         anchor_box->rect.y0 + ui_state->ctx_menu_anchor_off.y,
       };
+      // Resolve upward placement after measuring all rows and menu padding.
+      if(ui_state->ctx_menu_anchor_above) { pos.y -= dim_2f32(root_rect).y; }
       Vec2F32 shift = sub_2f32(pos, root_rect.p0);
       Rng2F32 new_root_rect = shift_2f32(root_rect, shift);
       ui_state->ctx_menu_root->fixed_position = new_root_rect.p0;
@@ -2172,10 +2174,18 @@ ui_ctx_menu_open(UI_Key key, UI_Key anchor_box_key, Vec2F32 anchor_off)
   ui_state->ctx_menu_key = key;
   ui_state->next_ctx_menu_anchor_key = anchor_box_key;
   ui_state->ctx_menu_anchor_off = anchor_off;
+  ui_state->ctx_menu_anchor_above = 0;
   ui_state->ctx_menu_touched_this_frame = 1;
   ui_state->ctx_menu_anchor_box_last_pos = v2f32(0, 0);
   ui_state->ctx_menu_root->default_nav_focus_active_key = ui_key_zero();
   ui_state->ctx_menu_root->default_nav_focus_next_active_key = ui_key_zero();
+}
+
+internal void
+ui_ctx_menu_open_above(UI_Key key, UI_Key anchor_box_key)
+{
+  ui_ctx_menu_open(key, anchor_box_key, v2f32(0, 0));
+  ui_state->ctx_menu_anchor_above = 1;
 }
 
 internal void

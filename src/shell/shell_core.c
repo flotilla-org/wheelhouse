@@ -4590,7 +4590,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                       {
                         UI_Signal grip = uishell_sidebar_grip(str8_lit("tab_drag"), str8_lit("Drag tab"));
                         if(ui_pressed(grip)) { uishell_cmd("focus_tab"); uishell_cmd("focus_panel"); }
-                        if(ui_dragging(grip) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
+                        if(ui_dragging(grip) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_HoverCardDragThresholdPT)
                         { rd_drag_begin(UIShell_ContextRegSlot_View); }
                       }
                       UI_PrefWidth(ui_text_dim(10, 0))
@@ -4661,7 +4661,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                       uishell_cmd("focus_tab");
                       uishell_cmd("focus_panel");
                     }
-                    else if(ui_dragging(sig) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
+                    else if(ui_dragging(sig) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_HoverCardDragThresholdPT)
                     {
                       rd_drag_begin(UIShell_ContextRegSlot_View);
                     }

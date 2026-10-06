@@ -792,6 +792,7 @@ struct UI_State
   UI_Key next_ctx_menu_anchor_key;
   Vec2F32 ctx_menu_anchor_box_last_pos;
   Vec2F32 ctx_menu_anchor_off;
+  B32 ctx_menu_anchor_above;
   B32 ctx_menu_open;
   B32 next_ctx_menu_open;
   F32 ctx_menu_open_t;
@@ -956,6 +957,7 @@ internal void              ui_tooltip_end(void);
 
 //- rjf: context menus
 internal void              ui_ctx_menu_open(UI_Key key, UI_Key anchor_box_key, Vec2F32 anchor_off);
+internal void              ui_ctx_menu_open_above(UI_Key key, UI_Key anchor_box_key);
 internal void              ui_ctx_menu_close(void);
 internal B32               ui_begin_ctx_menu(UI_Key key);
 internal void              ui_end_ctx_menu(void);
