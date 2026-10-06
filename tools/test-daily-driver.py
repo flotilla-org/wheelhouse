@@ -74,13 +74,15 @@ class WatcherBuildTests(unittest.TestCase):
     def test_build_ownership_and_bypasses(self):
         # Issue #138: the normal host build owns the watcher; an existing host
         # binary needs a standalone build unless overridden or builds/git are off.
-        # Exhaust all 16 combinations of the four independent launcher switches.
+        # Exhaust all 16 launcher switch combinations with release absent, empty, or set.
+        # The launcher uses debug artifacts even when release is exported in the parent.
         spec = importlib.util.spec_from_file_location('daily_driver', ROOT / 'tools/daily-driver.py')
         launcher = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(launcher)
-        for supplied_host, supplied_watcher, no_build, no_git in itertools.product((False, True), repeat=4):
+        for supplied_host, supplied_watcher, no_build, no_git, release_value in itertools.product(
+                (False, True), (False, True), (False, True), (False, True), (None, '', '1')):
             with self.subTest(supplied_host=supplied_host, supplied_watcher=supplied_watcher,
-                              no_build=no_build, no_git=no_git), tempfile.TemporaryDirectory() as directory:
+                              no_build=no_build, no_git=no_git, release=release_value), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / 'data/sidebar').mkdir(parents=True)
                 (root / 'data/sidebar/daily-driver.kdl').write_text('')
@@ -99,6 +101,8 @@ class WatcherBuildTests(unittest.TestCase):
                 environment = {'FLOTILLA_BIN': str(flotilla), 'WHEELHOUSE_DAILY_DIR': str(root / 'state'),
                                'WHEELHOUSE_ANDAMENTO_DIR': str(root / 'andamento'),
                                'WHEELHOUSE_ANDAMENTO_TARGET_DIR': str(target)}
+                if release_value is not None:
+                    environment['release'] = release_value
                 if supplied_host:
                     environment['WHEELHOUSE_BIN'] = str(binary)
                 if supplied_watcher:
@@ -117,6 +121,9 @@ class WatcherBuildTests(unittest.TestCase):
                 expected = []
                 if not no_build and not supplied_host:
                     expected.append(['bash', 'build.sh', 'wheelhouse'])
+                    host_build = next(call for call in commands.call_args_list
+                                      if call.args[0][:2] == ['bash', 'build.sh'])
+                    self.assertNotIn('release', host_build.kwargs['env'])
                 if supplied_host and not (supplied_watcher or no_build or no_git):
                     expected.extend([
                         [sys.executable, str(root / 'tools/prepare-andamento-build.py'), str(root / 'andamento')],
@@ -131,6 +138,7 @@ class WatcherBuildTests(unittest.TestCase):
                                   or call.args[0][:2] == [sys.executable, str(root / 'tools/prepare-andamento-build.py')]]
                 self.assertEqual(build_commands, expected)
                 self.assertEqual(rustc.call_count, int(not (supplied_watcher or no_git)))
+                launch.assert_called_once()
                 args, actual_binary, _, _ = launch.call_args.args
                 self.assertEqual(actual_binary, binary)
                 if not no_git:

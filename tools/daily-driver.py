@@ -264,8 +264,11 @@ def main():
         watcher_built = False
         if not args.no_build and 'WHEELHOUSE_BIN' not in os.environ:
             build = [str(ROOT / 'build.bat'), 'wheelhouse'] if WINDOWS else ['bash', 'build.sh', 'wheelhouse']
-            subprocess.run(build, cwd=ROOT,
-                           env={**os.environ, 'WHEELHOUSE_ANDAMENTO_DIR': str(andamento)}, check=True)
+            # Build scripts treat an inherited release selector as a profile request.
+            # The launcher selects debug artifacts; Windows env keys are case-insensitive.
+            build_env = {key: value for key, value in os.environ.items() if key.lower() != 'release'}
+            build_env['WHEELHOUSE_ANDAMENTO_DIR'] = str(andamento)
+            subprocess.run(build, cwd=ROOT, env=build_env, check=True)
             # The native Wheelhouse build includes andamento-git-watcher.
             watcher_built = True
         if args.repo:
