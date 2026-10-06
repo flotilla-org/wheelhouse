@@ -299,6 +299,40 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   }
   fprintf(stderr, "Hover card diagnostics: detail rendering\n");
   // Render current detail fields through the production body in both states.
+  // Real host demand lifecycle: card identities survive a changed revision,
+  // while snapshot-owned output and action currency remain core-owned.
+  UIShell_SidebarState demand = {0};
+  demand.core = andamento_create(0, 0, 0);
+  AndamentoEntity demand_entity = {uishell_sidebar_text(str8_lit("issue")), uishell_sidebar_text(str8_lit("demand-only"))};
+  AndamentoFact demand_fact = {.key = uishell_sidebar_text(str8_lit("display.label")), .kind = ANDAMENTO_FACT_TEXT,
+                              .text = uishell_sidebar_text(str8_lit("Before"))};
+  CardCheck(andamento_apply_entity(demand.core, 0, demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
+            "demand-only target is published");
+  uishell_sidebar_refresh(&demand);
+  CardCheck(andamento_snapshot_detail_count(demand.snapshot) == 0, "plain revision starts without details");
+  AndamentoNode demand_node = {0};
+  CardCheck(uishell_sidebar_card_find(&demand, demand_entity, &demand_node) != ANDAMENTO_NONE,
+            "identity without placement can be demanded");
+  uishell_sidebar_card_set(&demand.cards[0], demand_node, ui_key_zero(), str8_zero(), 0, now_time_us());
+  demand_fact.text = uishell_sidebar_text(str8_lit("After"));
+  CardCheck(andamento_apply_entity(demand.core, 1, demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
+            "held target label changes");
+  CardCheck(str8_match(uishell_sidebar_string(demand_node.label), str8_lit("Before"), 0) &&
+            !andamento_dispatch(demand.core, demand.snapshot, demand_node.activate, 0),
+            "old output remains readable with stale actions rejected");
+  uishell_sidebar_refresh(&demand);
+  CardCheck(andamento_snapshot_detail_count(demand.snapshot) == 0 &&
+            uishell_sidebar_card_find(&demand, demand.cards[0].path[0], &demand_node) != ANDAMENTO_NONE &&
+            str8_match(uishell_sidebar_string(demand_node.label), str8_lit("After"), 0),
+            "held exact identity demands current output after refresh");
+  String8 demand_remove = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"issue\",\"id\":\"demand-only\"}},\"source_id\":\"demand\",\"unset\":[\"display.label\"]}");
+  CardCheck(andamento_apply_patch_json(demand.core, 2, uishell_sidebar_text(demand_remove), 0), "held target is removed");
+  uishell_sidebar_refresh(&demand);
+  CardCheck(uishell_sidebar_card_find(&demand, demand.cards[0].path[0], 0) == ANDAMENTO_NONE &&
+            andamento_snapshot_detail_count(demand.snapshot) == 0,
+            "disappearing held identity is unavailable without eager details");
+  uishell_sidebar_release(&demand);
+
   // A LIVE observation exercises the existing preview demand and drawing box,
   // without starting a test terminal or altering the daily-driver inventory.
   String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
@@ -316,6 +350,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     }
     uishell_sidebar_refresh(&fixture);
     CardCheck(fixture.snapshot != 0, "render snapshot exists");
+    CardCheck(andamento_snapshot_detail_count(fixture.snapshot) == 0,
+              "refresh without live cards resolves no catalog details");
     U64 index = ANDAMENTO_NONE; AndamentoNode live = {0};
     for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
     {
@@ -327,6 +363,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     if(index != ANDAMENTO_NONE)
     {
       index = uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(live), 0);
+      CardCheck(index != ANDAMENTO_NONE && andamento_snapshot_detail_count(fixture.snapshot) == 1,
+                "first card resolves only its exact identity");
+      CardCheck(uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(live), 0) == index &&
+                andamento_snapshot_detail_count(fixture.snapshot) == 1,
+                "repeated card lookup reuses snapshot-owned detail");
       live.state = ANDAMENTO_LIVE; live.workspace_id = 123456;
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, 4000000);
       for(U64 engaged = 0; engaged < 2; engaged++)

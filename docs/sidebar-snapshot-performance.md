@@ -185,3 +185,50 @@ updates, with worst within-arrangement post-warmup RSS growth 564 KiB.
 Peak RSS is 125,440/124,928 KiB (100), 153,724/153,660 KiB (300), and
 251,368/251,620 KiB (1,000), linear/lookup. All ten native diagnostics,
 28 sidebar ABI tests and 12 ingress tests (two platform skips) pass.
+
+## Demand-driven catalog details (Andamento #96)
+
+Wheelhouse now acquires plain snapshots on stale revisions and requests structured
+cards at its shared exact-identity lookup. Current, outgoing cross-fade, navigated,
+related, pinned/docked and detached targets use that same seam. A card-free refresh
+materializes zero catalog cards; the first request materializes one; repeat lookup
+reuses it. The core retains catalog/evaluation ownership, and all requested text and
+action indices remain snapshot-owned. Relation rows use the newly requested target's
+label and index, including hidden entities. A disappeared held target is unavailable
+on the fresh revision; old actions are rejected before snapshot replacement.
+
+Shared-core release C-ABI measurements are in Andamento's
+[report](https://github.com/flotilla-org/andamento/blob/b6f104dbaa12fc8ea65511bb74adcf90578e9f88/docs/snapshot-evaluation-performance.md).
+For the scripted 1,000-entity stream, plain acquisition medians were 74.687 ms
+before and 63.503 ms after; detailed acquisition was 113.890 ms before and
+83.249 ms after. Plain acquisition plus two demanded cards was 61.051 ms.
+These are shared-host Linux core/ABI timings with substantial scheduling noise,
+not daily-driver CPU or frame-rate forecasts. The macOS captured catalog is not
+available in this checkout; no corresponding GUI idle-CPU claim is made.
+
+Fresh Linux/Xvfb release verification uses Andamento `b6f104d`, Cleat `00c072b`
+with no Ghostty feature, and Jackstay `91156bf`. The existing capped benchmark
+again steps through 100, 300 and 1,000 issues. This is a **fixed-snapshot UI and
+memory check**, separate from the changed-revision acquisition stream above;
+acquisition is outside its frame timer. Both linear and lookup label modes remain
+available and frontend relation/path caching is unchanged.
+
+| Issues | Peak RSS linear KiB | Peak RSS lookup KiB | Largest post-warmup RSS change KiB |
+| ---: | ---: | ---: | ---: |
+| 100 | 123388 | 122656 | 564 |
+| 300 | 147496 | 148044 | 556 |
+| 1000 | 236552 | 236588 | 560 |
+
+All six capped runs pass the two-MiB plateau gate. Sidebar, tooltip/card,
+scroll-region, preview and panel diagnostics pass, including hidden relation clicks,
+current/outgoing card bodies, pinned/docked and detached lifecycles, retained expiry,
+ended subjects, stale intent and held targets changing/disappearing. Native ABI tests
+(31), generated-source verification, fixture embedding, section placement, docking
+validity and build-failure tests also pass.
+
+Mutation checks: restoring eager refresh fails five named demand-count/lifecycle
+checks, reproducing the previous refresh behavior. Removing the demand branch fails
+exact-identity, current-output and card-rendering checks (the deliberately broken
+fixture later aborts). Both mutations were reverted, and the production tooltip/card
+diagnostics pass again. No workflow file is committed by the crew; the dependency
+pin diff is provided in the PR body for the governor.
