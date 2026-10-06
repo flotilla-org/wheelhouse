@@ -53,8 +53,10 @@ E_TYPE_ACCESS_FUNCTION_DEF(schema)
       CFG_Node *child = cfg_node_child_from_string(cfg, child_schema->string);
       E_TypeKey child_type_key = zero_struct;
       B32 wrap_child_w_meta_expr = 0;
-      B32 is_query_child = md_node_has_tag(child_schema, str8_lit("query"), 0);
-      E_TypeFlags type_flags = (!!is_query_child * E_TypeFlag_IsNotEditable);
+      B32 is_read_only_child = md_node_has_tag(child_schema, str8_lit("query"), 0) ||
+                           md_node_has_tag(child_schema, str8_lit("runtime_value"), 0) ||
+                           md_node_has_tag(child_schema, str8_lit("runtime_action"), 0);
+      E_TypeFlags type_flags = (!!is_read_only_child * E_TypeFlag_IsNotEditable);
       if(0){}
       
       //- rjf: cfg members

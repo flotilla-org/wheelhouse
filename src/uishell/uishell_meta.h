@@ -133,6 +133,9 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
   {str8_lit_comp("terminal"), 1, str8_lit_comp(
     "@inherit(tab)"
     "x:{"
+    "@no_callee_helper @runtime_value(terminal_hosting) @display_name('Hosting') 'hosting': string,"
+    "@no_callee_helper @runtime_action(terminal_hosting) @display_name('Hosting Action') @description('Hand to daemon or Adopt the current terminal.') 'hosting_action': string,"
+    "@no_callee_helper @default(0) @display_name('Show Hosting Overlay') @description('Show terminal hosting metadata and its action on the canvas.') 'show_hosting_overlay': bool,"
     "@optional @description(\"The command to run when a provider is attached.\") 'command': string,"
     "@optional @description(\"The working directory to use when a provider is attached.\") 'cwd': path,"
     "}"

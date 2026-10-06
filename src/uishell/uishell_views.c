@@ -1239,6 +1239,39 @@ uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
   return info;
 }
 
+// Schema runtime rows are presentation-only: they never edit or serialize cfg.
+// Providers supply a live value and an optional command for the owning view.
+typedef struct UIShell_RuntimeSetting UIShell_RuntimeSetting;
+struct UIShell_RuntimeSetting
+{
+  String8 value;
+  String8 action;
+  String8 command;
+};
+internal UIShell_RuntimeSetting uishell_runtime_setting(Arena *arena, CFG_Node *cfg, String8 name);
+
+internal MD_Node *
+uishell_runtime_setting_schema(Arena *arena, E_Space space)
+{
+  MD_Node *result = &md_nil_node;
+  if(space.kind == RD_EvalSpaceKind_MetaCfg && space.u64s[1] != 0)
+  {
+    CFG_Node *cfg = rd_cfg_from_eval_space(space);
+    MD_NodePtrList schemas = cfg_schemas_from_name(arena, rd_state->cfg_schema_table, cfg->string);
+    for(MD_NodePtrNode *n = schemas.first; n != 0; n = n->next)
+    {
+      MD_Node *child = md_child_from_string(n->v, e_string_from_id(space.u64s[1]), 0);
+      if(md_node_has_tag(child, str8_lit("runtime_value"), 0) ||
+         md_node_has_tag(child, str8_lit("runtime_action"), 0))
+      {
+        result = child;
+        break;
+      }
+    }
+  }
+  return result;
+}
+
 internal UIShell_WatchRowCellInfo
 uishell_info_from_watch_row_cell(Arena *arena, EV_Row *row, EV_StringFlags string_flags, UIShell_WatchRowInfo *row_info, UIShell_WatchCell *cell, FNT_Tag font, F32 font_size, F32 max_size_px)
 {
@@ -2240,7 +2273,33 @@ uishell_watch_view_ui(Rng2F32 rect)
                 RD_Font(RD_FontSlot_Code)
                 UI_TagF("weak")
               {
-                if(cell->kind == UIShell_WatchCellKind_ViewUI && cell_info.view_ui_rule != &rd_nil_view_ui_rule)
+                MD_Node *runtime_schema = uishell_runtime_setting_schema(scratch.arena, cell->eval.space);
+                if(!md_node_is_nil(runtime_schema))
+                {
+                  MD_Node *value_tag = md_tag_from_string(runtime_schema, str8_lit("runtime_value"), 0);
+                  MD_Node *action_tag = md_tag_from_string(runtime_schema, str8_lit("runtime_action"), 0);
+                  CFG_Node *owner = rd_cfg_from_eval_space(cell->eval.space);
+                  UIShell_RuntimeSetting setting = uishell_runtime_setting(scratch.arena, owner,
+                                                    md_node_is_nil(value_tag) ? action_tag->first->string : value_tag->first->string);
+                  // Runtime rows bypass the editable/lister cell path entirely.
+                  if(!md_node_is_nil(value_tag))
+                  {
+                    String8 label = md_tag_from_string(runtime_schema, str8_lit("display_name"), 0)->first->string;
+                    RD_Font(RD_FontSlot_Main) ui_labelf("%S: %S", label, setting.value);
+                  }
+                  else UI_Flags(setting.command.size == 0 ? UI_BoxFlag_Disabled : 0)
+                  {
+                    if(ui_clicked(ui_buttonf("%S###runtime_%I64x", setting.action, row_hash)))
+                    {
+                      UIShell_RegsScope(.tab = owner->id, .view = owner->id, .cfg = owner->id)
+                      {
+                        uishell_push_cmd_current(setting.command);
+                      }
+                    }
+                  }
+                  cell_info.flags &= ~UIShell_WatchCellFlag_CanEdit;
+                }
+                else if(cell->kind == UIShell_WatchCellKind_ViewUI && cell_info.view_ui_rule != &rd_nil_view_ui_rule)
                 {
                   Rng2F32 cell_rect = r2f32p(cell_x_px, 0, next_cell_x_px, row_height_px*row->visual_size);
                   UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clip|UI_BoxFlag_Clickable, "###val_%I64x", row_hash);
@@ -3927,6 +3986,37 @@ uishell_terminal_move(UIShell_TerminalViewState *tv, B32 adopt)
   rd_request_frame();
 }
 
+internal UIShell_RuntimeSetting
+uishell_terminal_hosting_setting(Arena *arena, String8 hosting)
+{
+  UIShell_RuntimeSetting result = {str8_lit("unavailable"), str8_lit("Hosting unavailable"), {0}};
+  if(hosting.size != 0)
+  {
+    result.value = push_str8_copy(arena, hosting);
+    B32 daemon_hosted = str8_match(str8_prefix(result.value, 7), str8_lit("daemon:"), 0);
+    result.action = daemon_hosted ? str8_lit("Adopt") : str8_lit("Hand to daemon");
+    result.command = daemon_hosted ? str8_lit("terminal_adopt") : str8_lit("terminal_transfer");
+  }
+  return result;
+}
+
+internal UIShell_RuntimeSetting
+uishell_runtime_setting(Arena *arena, CFG_Node *cfg, String8 name)
+{
+  UIShell_RuntimeSetting result = {str8_lit("unavailable"), str8_lit("Hosting unavailable"), {0}};
+  if(str8_match(name, str8_lit("terminal_hosting"), 0) &&
+     str8_match(cfg->string, str8_lit("terminal"), 0))
+  {
+    UIShell_TerminalViewState *tv = rd_view_state_from_cfg(cfg)->user_data;
+    cleat_str hosting = {0};
+    if(tv != 0 && tv->session != 0 && cleat_session_hosting(tv->session, &hosting) && hosting.len != 0)
+    {
+      result = uishell_terminal_hosting_setting(arena, str8((U8 *)hosting.ptr, hosting.len));
+    }
+  }
+  return result;
+}
+
 RD_VIEW_UI_FUNCTION_DEF(terminal)
 {
   (void)eval;
@@ -4101,7 +4191,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     terminal_root_box = ui_build_box_from_string(0, str8_lit("terminal_root"));
   }
 
-  if(session_ready && hosting.len != 0)
+  if(session_ready && hosting.len != 0 && rd_view_setting_b32_from_name(str8_lit("show_hosting_overlay")))
   {
     String8 title = push_str8f(scratch.arena, "%S · %s", str8((U8 *)hosting.ptr, hosting.len),
                               daemon_hosted ? "Adopt" : "Hand to daemon");

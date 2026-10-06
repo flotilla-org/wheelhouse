@@ -107,6 +107,7 @@
 #include "uishell/uishell_sidebar_benchmark.c"
 #include "uishell/uishell_border_diagnostics.c"
 #include "uishell/uishell_panel_diagnostics.c"
+#include "uishell/uishell_hosting_diagnostics.c"
 #include "uishell/uishell_shared_ui_diagnostics.c"
 #include "uishell/uishell_managed_content_diagnostics.c"
 #include "uishell/uishell_overview_benchmark.c"
@@ -243,6 +244,8 @@ entry_point(CmdLine *cmd_line)
         { fprintf(stderr, "shared UI diagnostics require --shared_ui_fixture_dir:DIR\n"); abort_self(1); }
         rd_state->frame_diagnostic = uishell_shared_ui_diagnostics;
       }
+      if(cmd_line_has_flag(cmd_line, str8_lit("hosting_diagnostics")))
+      { rd_state->frame_diagnostic = uishell_hosting_diagnostics; }
       if(cmd_line_has_flag(cmd_line, str8_lit("panel_diagnostics")))
       { rd_state->frame_diagnostic = uishell_panel_diagnostics; }
       if(cmd_line_has_flag(cmd_line, str8_lit("preview_diagnostics")))
