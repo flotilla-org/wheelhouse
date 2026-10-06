@@ -1103,6 +1103,22 @@ uishell_sidebar_close_kind(AndamentoNode node, String8 status)
   return UIShell_SidebarCloseKind_Detach;
 }
 
+// Whether the sidebar shows this open workspace's subject as authoritatively
+// ended. Commands use it so a palette detach never keeps an unreachable layout.
+internal B32
+uishell_sidebar_workspace_subject_ended(RD_WindowState *ws, CFG_ID workspace_id)
+{
+  UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
+  for(U64 i = 0; state && state->snapshot && i < andamento_snapshot_node_count(state->snapshot); i++)
+  {
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    if(!node.is_section && node.state == ANDAMENTO_LIVE && node.workspace_id == workspace_id &&
+       str8_match(uishell_sidebar_node_status(state, node), str8_lit("ended"), 0))
+    { return 1; }
+  }
+  return 0;
+}
+
 internal String8
 uishell_sidebar_close_label(UIShell_SidebarCloseKind kind)
 {

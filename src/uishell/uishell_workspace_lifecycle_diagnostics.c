@@ -164,6 +164,55 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   UIShell_RegsScope(.window = window->id, .cfg = loose_id) { uishell_dispatch_window_command(str8_lit("detach_workspace")); }
   LifecycleCheck(cfg_node_from_id(loose_id) == &cfg_nil_node, "detaching a subjectless workspace destroys it");
 
+  //- A detached workspace keeps its name reserved: it reopens under it.
+  {
+    CFG_Node *label = cfg_node_child_from_string(subject, str8_lit("label"));
+    LifecycleCheck(label != &cfg_nil_node, "subject workspace has a label");
+    String8 saved = push_str8_copy(scratch.arena, rd_label_from_cfg(subject));
+    cfg_node_equip_string(rd_state->cfg, label->first, str8_lit("Workspace 1"));
+    UIShell_RegsScope(.window = window->id, .cfg = subject_id) { uishell_dispatch_window_command(str8_lit("detach_workspace")); }
+    CFG_Node *fresh = uishell_new_workspace(window);
+    LifecycleCheck(str8_match(subject->string, str8_lit("detached_workspace"), 0) &&
+                   !str8_match(rd_label_from_cfg(fresh), str8_lit("Workspace 1"), 0),
+                   "a new default name skips a detached workspace's name");
+    cfg_node_release(rd_state->cfg, fresh);
+    cfg_node_equip_string(rd_state->cfg, label->first, saved);
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+    uishell_workspace_lifecycle_find(state, str8_lit("multi"), 0, &node);
+    LifecycleCheck(uishell_sidebar_dispatch(state, node.activate, 0), "reopen subject after name check");
+    uishell_sidebar_effects(state, &split);
+    LifecycleCheck(str8_match(subject->string, str8_lit("workspace"), 0), "subject reopened after name check");
+  }
+
+  //- Detaching a workspace whose subject ended destroys it, even from the palette:
+  //  its row will never open it again.
+  {
+    // Native status is field 2 (label/kind/status). The fixture's vessel line
+    // omits kind, so give it the production field order for this check.
+    String8 config = str8_cstring((char *)uishell_sidebar_fixture_config);
+    String8 status_field = str8_lit("field \"status\" key=\"status.state\"");
+    U64 at = str8_find_needle(config, 0, status_field, 0);
+    LifecycleCheck(at < config.size, "fixture vessel template has a status field");
+    String8 ordered = push_str8f(scratch.arena, "%S field \"kind\" source=\"literal\" value=\"vessel\"\n  %S",
+                                 str8_prefix(config, at), str8_skip(config, at));
+    LifecycleCheck(andamento_configure(state->core, uishell_sidebar_text(ordered), 0), "reconfigure with native field order");
+    AndamentoFact end_fact = {0};
+    end_fact.key = uishell_sidebar_text(str8_lit("flotilla.convoy.phase"));
+    end_fact.kind = ANDAMENTO_FACT_TEXT;
+    end_fact.text = uishell_sidebar_text(str8_lit("landed"));
+    LifecycleCheck(andamento_apply_entity(state->core, 0, uishell_sidebar_text(str8_lit("vessel")), uishell_sidebar_text(str8_lit("multi")),
+                                          uishell_sidebar_text(str8_lit("fixture")), &end_fact, 1, 0), "end the fixture subject");
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+    LifecycleCheck(uishell_sidebar_workspace_subject_ended(ws, subject_id), "sidebar reports the subject ended");
+    ws->root_controlled_split_selected_workspace_id = subject_id;
+    UIShell_RegsScope(.window = window->id) { uishell_dispatch_window_command(str8_lit("detach_workspace")); }
+    LifecycleCheck(cfg_node_from_id(subject_id) == &cfg_nil_node, "detaching an ended subject's workspace destroys it");
+  }
+
   //- Default names never repeat an open workspace's name, even after a close.
   {
     CFG_Node *first = uishell_new_workspace(window);
@@ -205,7 +254,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
                  cfg_node_child_from_string(window, str8_lit("panels")) == &cfg_nil_node,
                  "closing the last, window-backed workspace leaves one fresh workspace");
 
-  fprintf(stderr, "Workspace lifecycle diagnostics: %s (detach/reopen, palette target, hover affordance, destroy, header new-workspace, unique names, last close, legacy last close)\n",
+  fprintf(stderr, "Workspace lifecycle diagnostics: %s (detach/reopen, palette target, hover affordance, destroy, header new-workspace, reserved names, ended detach, unique names, last close, legacy last close)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

@@ -2960,6 +2960,7 @@ uishell_controlled_split_workspace_can_close(UIShell_ControlledSplit *split, UIS
 internal B32
 uishell_workspace_cfg_has_subject(CFG_Node *workspace)
 {
+  // A missing child is cfg_nil_node, whose first is also nil with an empty string.
   return (cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string.size != 0 &&
           cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string.size != 0);
 }
