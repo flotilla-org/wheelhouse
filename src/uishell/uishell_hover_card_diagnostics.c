@@ -297,8 +297,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     if(frame == 1) { CardCheck(!taken && !card->open && ui_pressed(target), "outside dismissal lets the target receive its press"); }
     if(frame == 2) { CardCheck(!taken && ui_clicked(target), "outside dismissal lets the target activate on release"); }
   }
-  fprintf(stderr, "Hover card diagnostics: detail rendering\n");
-  // Render current detail fields through the production body in both states.
+  fprintf(stderr, "Hover card diagnostics: demand lifecycle\n");
   // Real host demand lifecycle: card identities survive a changed revision,
   // while snapshot-owned output and action currency remain core-owned.
   UIShell_SidebarState demand = {0};
@@ -313,6 +312,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   AndamentoNode demand_node = {0};
   CardCheck(uishell_sidebar_card_find(&demand, demand_entity, &demand_node) != ANDAMENTO_NONE,
             "identity without placement can be demanded");
+  // One held card, with no navigation: slot cards[0] and root path[0] are
+  // deliberate. The host clock supplies only the UI transition timestamp;
+  // explicit core times 0/1/2 determine revision/action currency. Each snapshot
+  // fixes its core clock at acquisition, including subsequently demanded cards.
   uishell_sidebar_card_set(&demand.cards[0], demand_node, ui_key_zero(), str8_zero(), 0, now_time_us());
   demand_fact.text = uishell_sidebar_text(str8_lit("After"));
   CardCheck(andamento_apply_entity(demand.core, 1, demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
@@ -333,6 +336,52 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
             "disappearing held identity is unavailable without eager details");
   uishell_sidebar_release(&demand);
 
+  // Real core/ABI scenario: four changed revisions with no held cards. A
+  // never-published identity must stay error-free and append nothing on every
+  // repeated host request, while ordinary entities ensure a nonempty catalog.
+  UIShell_SidebarState missing = {0};
+  missing.core = andamento_create(0, 0, 0);
+  CardCheck(missing.core != 0, "missing-target fixture initializes");
+  if(missing.core)
+  {
+    AndamentoEntity absent = {uishell_sidebar_text(str8_lit("issue")), uishell_sidebar_text(str8_lit("never-existing"))};
+    for(U64 revision = 0; revision < 4; revision++)
+    {
+      demand_fact.text = uishell_sidebar_text(revision % 2 ? str8_lit("Odd") : str8_lit("Even"));
+      CardCheck(andamento_apply_entity(missing.core, revision, demand_entity.kind, demand_entity.id,
+                                      uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
+                "card-free fixture advances revision");
+      uishell_sidebar_refresh(&missing);
+      CardCheck(andamento_snapshot_detail_count(missing.snapshot) == 0,
+                "card-free refresh stays plain across revisions");
+      for(U64 repeat = 0; repeat < 3; repeat++)
+      {
+        CardCheck(uishell_sidebar_card_find(&missing, absent, 0) == ANDAMENTO_NONE,
+                  "never-existing host identity repeatedly returns NONE");
+        CardCheck(missing.error[0] == 0, "never-existing host identity has no error");
+        CardCheck(andamento_snapshot_detail_count(missing.snapshot) == 0,
+                  "never-existing host identity appends zero cards");
+      }
+    }
+    // Real ABI failures own their strings. Identical failures must overwrite
+    // the fixed status buffer with stable text rather than accumulate entries.
+    char first_error[sizeof(missing.error)] = {0};
+    for(U64 repeat = 0; repeat < 3; repeat++)
+    {
+      char *error = 0;
+      B32 accepted = andamento_apply_patch_json(missing.core, 4, uishell_sidebar_text(str8_lit("{")), &error);
+      CardCheck(!accepted && error != 0, "malformed patch returns an owned ABI error");
+      CardCheck(!uishell_sidebar_result(&missing, accepted, error), "host reports repeated ABI failure");
+      CardCheck(missing.error[0] != 0, "ABI failure populates fixed status buffer");
+      if(repeat == 0) { MemoryCopy(first_error, missing.error, sizeof(first_error)); }
+      CardCheck(str8_match(str8_cstring(first_error), str8_cstring((char *)missing.error), 0),
+                "identical failures keep stable status text");
+    }
+    uishell_sidebar_release(&missing);
+  }
+
+  fprintf(stderr, "Hover card diagnostics: detail rendering\n");
+  // Render current detail fields through the production body in both states.
   // A LIVE observation exercises the existing preview demand and drawing box,
   // without starting a test terminal or altering the daily-driver inventory.
   String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
