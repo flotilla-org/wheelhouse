@@ -98,6 +98,7 @@
 #include "uishell/uishell_terminal_clipboard_diagnostics.c"
 #include "uishell/uishell_terminal_selection_diagnostics.c"
 #include "uishell/uishell_edit_diagnostics.c"
+#include "uishell/uishell_query_diagnostics.c"
 #include "uishell/uishell_scroll_diagnostics.c"
 #include "uishell/uishell_tooltip_diagnostics.c"
 #include "uishell/uishell_hover_card_diagnostics.c"

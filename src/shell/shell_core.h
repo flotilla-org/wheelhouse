@@ -538,6 +538,15 @@ struct RD_SurfaceCacheNode
 ////////////////////////////////
 //~ rjf: Chrome Placement (ADR-0006)
 
+// Per-window #152 latch distinguishes edit chords (one action per press)
+// from shell commands (autorepeat still dispatches); both suppress source text.
+typedef enum UIShell_ConsumedChord
+{
+  UIShell_ConsumedChord_None,
+  UIShell_ConsumedChord_Edit,
+  UIShell_ConsumedChord_Command,
+} UIShell_ConsumedChord;
+
 typedef struct RD_WindowState RD_WindowState;
 
 // Chrome niches: anchored slots across the chrome hosts an element may land in.
@@ -644,7 +653,7 @@ struct RD_WindowState
   F32 chrome_trailing_px; // pixel extent of the right zone (trailing buttons + window controls)
 
   // rjf: menu bar state
-  B32 edit_chord_held[WM_Key_COUNT];
+  UIShell_ConsumedChord edit_chord_held[WM_Key_COUNT];
   B32 menu_bar_focused;
   B32 menu_bar_focused_on_press;
   B32 menu_bar_key_held;

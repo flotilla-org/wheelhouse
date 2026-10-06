@@ -9982,8 +9982,16 @@ uishell_route_edit_activation(Arena *arena, RD_WindowState *ws, WM_Event *event,
   if(event->key > WM_Key_Null && event->key < WM_Key_COUNT && ws->edit_chord_held[event->key] &&
      (event->kind == WM_EventKind_Press || event->kind == WM_EventKind_Release))
   {
-    if(event->kind == WM_EventKind_Release) { ws->edit_chord_held[event->key] = 0; }
-    return 1;
+    if(event->kind == WM_EventKind_Release)
+    {
+      B32 edit_release = (ws->edit_chord_held[event->key] == UIShell_ConsumedChord_Edit);
+      ws->edit_chord_held[event->key] = UIShell_ConsumedChord_None;
+      // Shell-command key-up still belongs to downstream consumers (including
+      // terminal paging ownership and menu-bar modifiers), as before extraction.
+      if(edit_release) { return 1; }
+    }
+    // Ordinary shell shortcuts retain their previous autorepeat policy.
+    if(ws->edit_chord_held[event->key] == UIShell_ConsumedChord_Edit) { return 1; }
   }
   if(event->kind == WM_EventKind_Text && event->source_key > WM_Key_Null &&
      event->source_key < WM_Key_COUNT && ws->edit_chord_held[event->source_key]) { return 1; }
@@ -9993,10 +10001,68 @@ uishell_route_edit_activation(Arena *arena, RD_WindowState *ws, WM_Event *event,
      (event->kind == WM_EventKind_Press &&
       (!terminal || cfg_terminal_edit_binding_eligible((CFG_Binding){event->key, event->modifiers}))));
   if(!host_edit) { return 0; }
-  if(event->kind == WM_EventKind_Press) { ws->edit_chord_held[event->key] = 1; }
+  if(event->kind == WM_EventKind_Press) { ws->edit_chord_held[event->key] = UIShell_ConsumedChord_Edit; }
   UIShell_RegsScope(.window = ws->cfg_id)
   { uishell_cmd("run_command", .cmd_name = command); }
   return 1;
+}
+
+// The shell's single non-edit shortcut dispatcher. Event ownership still goes
+// through uishell_route_edit_activation first, including its consumed-chord latch.
+internal B32
+uishell_route_command_activation(Arena *arena, RD_WindowState *ws, WM_Event *event,
+                                 B32 terminal, B32 allow_text)
+{
+  B32 take = 0;
+  if(event->kind == WM_EventKind_MenuCommand && event->string.size != 0)
+  {
+    if(ws != &rd_nil_window_state && str8_match(event->string, str8_lit("window_close_menu"), 0))
+    { uishell_cmd("close_window"); }
+    else
+    { uishell_cmd("run_command", .cmd_name = cfg_command_from_menu_or_binding(arena, rd_state->key_map, event)); }
+    rd_request_frame();
+    return 1;
+  }
+  if(!ws || ws == &rd_nil_window_state ||
+     (!wm_window_match(event->window, wm_window_zero()) && !wm_window_match(event->window, ws->os))) { return 0; }
+  if(event->kind == WM_EventKind_Press && event->key > WM_Key_Null && event->key < WM_Key_COUNT &&
+     (!terminal || (event->modifiers & WM_Modifier_Super)))
+  {
+    String8 binding_command = cfg_command_from_menu_or_binding(arena, rd_state->key_map, event);
+    if(binding_command.size != 0 && !uishell_is_edit_command(binding_command))
+    {
+      U32 hit_char = wm_codepoint_from_modifiers_and_key(event->modifiers, event->key);
+      if(hit_char == 0 || allow_text)
+      {
+        String8 cmd_name = binding_command;
+        for(U64 idx = 0; idx < ArrayCount(RD_APP_BINDING_VERSION_REMAP_OLD_NAME_TABLE); idx += 1)
+        {
+          if(str8_match(RD_APP_BINDING_VERSION_REMAP_OLD_NAME_TABLE[idx], cmd_name, StringMatchFlag_CaseInsensitive))
+          {
+            cmd_name = RD_APP_BINDING_VERSION_REMAP_NEW_NAME_TABLE[idx];
+          }
+        }
+        // rd_frame derives focused_view from this same current view register.
+        if(terminal)
+        { uishell_terminal_page_binding_accept(ws, event->key, cmd_name, uishell_regs()->view); }
+        uishell_cmd("run_command", .cmd_name = cmd_name);
+        // Reuse #152's per-window latch. Only correlated physical text is
+        // consumed; no codepoint search may eat later typing or composition.
+        ws->edit_chord_held[event->key] = UIShell_ConsumedChord_Command;
+        take = 1;
+        if(event->modifiers & WM_Modifier_Alt)
+        {
+          ws->menu_bar_focus_press_started = 0;
+        }
+      }
+    }
+    else if(WM_Key_F1 <= event->key && event->key <= WM_Key_F19)
+    {
+      ws->menu_bar_focus_press_started = 0;
+    }
+    rd_request_frame();
+  }
+  return take;
 }
 
 internal void
@@ -10442,18 +10508,10 @@ rd_frame(void)
         uishell_cmd("exit");
       }
 
-      if(!take && event->kind == WM_EventKind_MenuCommand && event->string.size != 0)
+      if(!take && event->kind == WM_EventKind_MenuCommand)
       {
-        take = 1;
-        if(ws != &rd_nil_window_state && str8_match(event->string, str8_lit("window_close_menu"), 0))
-        {
-          uishell_cmd("close_window");
-        }
-        else
-        {
-          uishell_cmd("run_command", .cmd_name = cfg_command_from_menu_or_binding(scratch.arena, rd_state->key_map, event));
-        }
-        rd_request_frame();
+        take = uishell_route_command_activation(scratch.arena, ws, event,
+                                                terminal_input_is_focused, allow_text_hotkeys);
       }
 
       //- try menu bar operations
@@ -10495,44 +10553,12 @@ rd_frame(void)
       }
       
       //- rjf: try hotkey presses
-      if(!take && event->kind == WM_EventKind_Press && !terminal_claims_keyboard_input)
+      if(!take)
       {
-        String8 binding_command = cfg_command_from_menu_or_binding(scratch.arena, rd_state->key_map, event);
-        if(binding_command.size != 0 && !uishell_is_edit_command(binding_command))
-        {
-          U32 hit_char = wm_codepoint_from_modifiers_and_key(event->modifiers, event->key);
-          if(hit_char == 0 || allow_text_hotkeys)
-          {
-            String8 cmd_name = binding_command;
-            for(U64 idx = 0; idx < ArrayCount(RD_APP_BINDING_VERSION_REMAP_OLD_NAME_TABLE); idx += 1)
-            {
-              if(str8_match(RD_APP_BINDING_VERSION_REMAP_OLD_NAME_TABLE[idx], cmd_name, StringMatchFlag_CaseInsensitive))
-              {
-                cmd_name = RD_APP_BINDING_VERSION_REMAP_NEW_NAME_TABLE[idx];
-              }
-            }
-            if(terminal_input_is_focused)
-            { uishell_terminal_page_binding_accept(ws, event->key, cmd_name, focused_view->id); }
-            uishell_cmd("run_command", .cmd_name = cmd_name);
-            if(allow_text_hotkeys)
-            {
-              wm_text(&events, event->window, hit_char);
-              next = event->next;
-            }
-            take = 1;
-            if(event->modifiers & WM_Modifier_Alt)
-            {
-              ws->menu_bar_focus_press_started = 0;
-            }
-          }
-        }
-        else if(WM_Key_F1 <= event->key && event->key <= WM_Key_F19)
-        {
-          ws->menu_bar_focus_press_started = 0;
-        }
-        rd_request_frame();
+        take = uishell_route_command_activation(scratch.arena, ws, event,
+                                                terminal_input_is_focused, allow_text_hotkeys);
       }
-      
+
       //- rjf: try text events
       if(!take && event->kind == WM_EventKind_Text && (event->modifiers & WM_Modifier_Super))
       {

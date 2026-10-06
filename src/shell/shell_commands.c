@@ -1954,57 +1954,70 @@ uishell_dispatch_query_command(String8 name)
         }
       }
 
-      // rjf: choose initial input string
-      String8 initial_input = {0};
-      if(cmd_name.size != 0)
-      {
-        if(cmd_kind_info.query_slot == UIShell_AppRegSlot_FilePath)
-        {
-          CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
-          CFG_Node *current_path = cfg_node_child_from_string(user, str8_lit("current_path"));
-          String8 current_path_string = current_path->first->string;
-          if(current_path_string.size == 0)
-          {
-            current_path_string = path_normalized_from_string(scratch.arena, get_current_path(scratch.arena));
-          }
-          initial_input = current_path_string;
-          initial_input = push_str8f(scratch.arena, "%S/", initial_input);
-        }
-        else if(cmd_kind_info.query_flags & UIShell_QueryFlag_KeepOldInput)
-        {
-          initial_input = input->first->string;
-        }
-      }
-
-      // rjf: build query state
-      String8 current_query_cmd_name = cmd->first->string;
-      cfg_node_new_replace(rd_state->cfg, input, initial_input);
-      cfg_node_new_replace(rd_state->cfg, cmd, cmd_name);
       RD_ViewState *vs = rd_view_state_from_cfg(view);
-      if(cmd_name.size != 0)
+      String8 current_query_cmd_name = cmd->first->string;
+      // Adapted from RAD a7163099 (MIT). Embedded repeats restore input focus
+      // before initialization, including file-path defaults. Cursor/mark columns
+      // are one-based UTF-8 byte offsets.
+      B32 reactivate = (!is_floating && vs->query_is_open &&
+                        str8_match(current_query_cmd_name, cmd_name, 0));
+      if(reactivate)
       {
-        if(!vs->query_is_open && cmd_kind_info.query_flags & UIShell_QueryFlag_SelectOldInput)
+        vs->query_cursor = txt_pt(1, input->first->string.size+1);
+        vs->query_mark = txt_pt(1, 1);
+      }
+      else
+      {
+        // rjf: choose initial input string
+        String8 initial_input = {0};
+        if(cmd_name.size != 0)
         {
-          vs->query_cursor = txt_pt(1, 1+input->first->string.size);
-          vs->query_mark = txt_pt(1, 1);
+          if(cmd_kind_info.query_slot == UIShell_AppRegSlot_FilePath)
+          {
+            CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+            CFG_Node *current_path = cfg_node_child_from_string(user, str8_lit("current_path"));
+            String8 current_path_string = current_path->first->string;
+            if(current_path_string.size == 0)
+            {
+              current_path_string = path_normalized_from_string(scratch.arena, get_current_path(scratch.arena));
+            }
+            initial_input = current_path_string;
+            initial_input = push_str8f(scratch.arena, "%S/", initial_input);
+          }
+          else if(cmd_kind_info.query_flags & UIShell_QueryFlag_KeepOldInput)
+          {
+            initial_input = input->first->string;
+          }
         }
-        else
+
+        // rjf: build query state
+        cfg_node_new_replace(rd_state->cfg, input, initial_input);
+        cfg_node_new_replace(rd_state->cfg, cmd, cmd_name);
+        if(cmd_name.size != 0)
         {
-          vs->query_cursor = txt_pt(1, 1+input->first->string.size);
-          vs->query_mark = vs->query_cursor;
+          if(!vs->query_is_open && cmd_kind_info.query_flags & UIShell_QueryFlag_SelectOldInput)
+          {
+            vs->query_cursor = txt_pt(1, 1+input->first->string.size);
+            vs->query_mark = txt_pt(1, 1);
+          }
+          else
+          {
+            vs->query_cursor = txt_pt(1, 1+input->first->string.size);
+            vs->query_mark = vs->query_cursor;
+          }
+          if(!str8_match(current_query_cmd_name, cmd_name, 0))
+          {
+            vs->query_is_open = 1;
+          }
+          else
+          {
+            vs->query_is_open ^= 1;
+          }
         }
-        if(!str8_match(current_query_cmd_name, cmd_name, 0))
+        if(uishell_regs()->do_lister)
         {
           vs->query_is_open = 1;
         }
-        else
-        {
-          vs->query_is_open ^= 1;
-        }
-      }
-      if(uishell_regs()->do_lister)
-      {
-        vs->query_is_open = 1;
       }
       vs->contents_are_focused = 0;
     }
