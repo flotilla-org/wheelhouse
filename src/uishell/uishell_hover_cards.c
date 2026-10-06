@@ -54,6 +54,14 @@ internal U64
 uishell_sidebar_card_find(UIShell_SidebarState *state, AndamentoEntity entity, AndamentoNode *out)
 {
   U64 index = state->snapshot ? andamento_snapshot_detail_find(state->snapshot, entity.kind, entity.id) : ANDAMENTO_NONE;
+  // Every card path funnels through exact identity lookup: current, outgoing,
+  // navigated, related, pinned/docked and detached targets all demand here.
+  if(index == ANDAMENTO_NONE && state->snapshot && state->core)
+  {
+    char *error = 0;
+    index = andamento_snapshot_detail_request(state->core, state->snapshot, entity.kind, entity.id, &error);
+    if(error) { uishell_sidebar_result(state, 0, error); }
+  }
   AndamentoDetail detail = {0};
   if(index == ANDAMENTO_NONE) { return ANDAMENTO_NONE; }
   if(out)
@@ -568,7 +576,15 @@ uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *car
       occupied[bucket] = 1; seen[bucket] = relation.entity;
       if(!related_label) { UI_TagF("weak") { ui_label(str8_lit("Related")); } related_label = 1; }
       AndamentoNode related = {0};
-      B32 available = uishell_sidebar_card_find(state, relation.entity, &related) != ANDAMENTO_NONE;
+      U64 related_index = uishell_sidebar_card_find(state, relation.entity, &related);
+      B32 available = related_index != ANDAMENTO_NONE;
+      if(available)
+      {
+        // Relation lookup preceded demand, so use the requested target's label
+        // and detail index rather than its unloaded ID/NONE fallback.
+        relation.display_text = related.label;
+        relation.detail = related_index;
+      }
       UI_Row
       {
         UI_PrefWidth(ui_em(1.5f, 1)) RD_Font(RD_FontSlot_Icons)

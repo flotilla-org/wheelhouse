@@ -365,7 +365,7 @@ uishell_sidebar_refresh(UIShell_SidebarState *state)
   B32 current = andamento_snapshot_is_current(state->core, state->snapshot, &error);
   if(error != 0) { uishell_sidebar_result(state, 0, error); return; }
   if(current) { return; }
-  AndamentoSnapshot *next = andamento_snapshot_acquire_details(state->core, &error);
+  AndamentoSnapshot *next = andamento_snapshot_acquire(state->core, &error);
   if(uishell_sidebar_result(state, next != 0, error))
   {
     uishell_sidebar_replace_snapshot(state, next);
