@@ -673,14 +673,15 @@ uishell_section_placement_diagnostics(String8 source_path)
   split.owner_cfg = restored;
   CFG_Node *restored_host = uishell_sidebar_dock_layout(&split);
   PlacementCheck(str8_match(cfg_node_child_from_string(restored_host->first->first, str8_lit("section"))->first->string, str8_lit("b"), 0));
-  PlacementCheck(uishell_sidebar_find_view(restored_host->last, str8_lit("a")) == &cfg_nil_node);
-  PlacementCheck(str8_match(restored_host->last->string, str8_lit("0.125"), 0));
-  PlacementCheck(str8_match(restored_host->last->first->string, str8_lit("text"), 0));
-  PlacementCheck(str8_match(cfg_node_child_from_string(restored_host->last->first, str8_lit("label"))->first->string, str8_lit("unrelated"), 0));
+  CFG_Node *restored_unrelated_panel = restored_host->last;
+  PlacementCheck(uishell_sidebar_find_view(restored_unrelated_panel, str8_lit("a")) == &cfg_nil_node);
+  PlacementCheck(str8_match(restored_unrelated_panel->string, str8_lit("0.125"), 0));
+  PlacementCheck(str8_match(restored_unrelated_panel->first->string, str8_lit("text"), 0));
+  PlacementCheck(str8_match(cfg_node_child_from_string(restored_unrelated_panel->first, str8_lit("label"))->first->string, str8_lit("unrelated"), 0));
   generation = cfg_change_gen();
   uishell_sidebar_dock_layout(&split);
   PlacementCheck(cfg_change_gen() == generation);
-  cfg_node_release(state.cfg, restored_host->last); // Remove this scenario's unrelated fixture.
+  cfg_node_release(state.cfg, restored_unrelated_panel); // Remove this scenario's unrelated fixture.
   // Adding a hinted region inserts it without changing the saved pair's order.
   String8 added = push_str8f(scratch.arena, "%Sregion \"c\" root-template=\"flotilla/region/tree\" order=15\n", config);
   PlacementCheck(andamento_configure(core, (AndamentoText){added.str, added.size}, 0));

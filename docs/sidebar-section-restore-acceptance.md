@@ -8,10 +8,11 @@ Existing panels keep their relative allocations and nested structure; malformed
 or zero saved weights receive a positive minimum before normalization. Existing
 Views are never duplicated. Malformed saved duplicates retain the first valid
 View per section id at its owning Controlled Split; extra copies are removed
-without changing unrelated panel contents or saved ratios. Intentional closes remain closed across restart.
+without changing unrelated panel contents or saved ratios. Intentional closes
+remain closed across restart.
 Restore failures leave the menu open and show a footer notice; native diagnostics
-exercise both failure and success through the production footer action. Menu width grows
-with declaration titles, bounded by the window width.
+exercise both failure and success through the production footer action. Menu
+width grows with declaration titles, bounded by the window width.
 
 Empty placed sections retain their header. Flat vertical manual stacks repair
 undersized leaves to keep headers visible while preserving healthy sibling
@@ -40,5 +41,6 @@ compact-tab and narrow trackpad/keyboard answers were requested but not relayed;
 the merge report does not constitute explicit acceptance of those interactions.
 
 Short native macOS diagnostics and capped Linux diagnostics passed. No successful
-macOS address-space cap or final physical input acceptance is claimed. Historical candidate paths, host details and per-run notes are preserved in the
+macOS address-space cap or final physical input acceptance is claimed. Historical
+candidate paths, host details and per-run notes are preserved in the
 [#215 validation record](https://github.com/flotilla-org/wheelhouse/issues/215#issuecomment-6023625179).

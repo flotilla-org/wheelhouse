@@ -2142,6 +2142,14 @@ RD_VIEW_UI_FUNCTION_DEF(sidebar_section)
   scratch_end(scratch);
 }
 
+// CFG nil nodes self-link: an absent section setting or value yields an empty
+// key, which reconciliation treats as an undeclared/corrupt saved View.
+internal String8
+uishell_sidebar_section_key(CFG_Node *view)
+{
+  return cfg_node_child_from_string(view, str8_lit("section"))->first->string;
+}
+
 // Saved arrangements use the same panel tree as Workspace Regions. Section
 // identity comes from the snapshot; no placement hints are written into KDL.
 internal CFG_Node *
@@ -2150,7 +2158,7 @@ uishell_sidebar_find_view(CFG_Node *container, String8 key)
   for(CFG_Node *c = container->first; c != &cfg_nil_node; c = c->next)
   {
     if(str8_match(c->string, str8_lit("sidebar_section"), 0) &&
-       str8_match(cfg_node_child_from_string(c, str8_lit("section"))->first->string, key, 0)) { return c; }
+       str8_match(uishell_sidebar_section_key(c), key, 0)) { return c; }
     if(rd_dock_is_container(c))
     {
       CFG_Node *found = uishell_sidebar_find_view(c, key);
@@ -2224,7 +2232,7 @@ uishell_sidebar_prune_regions(CFG_Node *container, UIShell_SectionPlacement *reg
     {
       // CFG nil nodes self-link, so a missing section setting reads as empty.
       // A View without a declared identity is corrupt saved state; drop it.
-      String8 key = cfg_node_child_from_string(c, str8_lit("section"))->first->string;
+      String8 key = uishell_sidebar_section_key(c);
       if(reset || uishell_sidebar_region_index(regions, count, key) == ANDAMENTO_NONE)
       { cfg_node_release(rd_state->cfg, c); removed = 1; }
     }
@@ -2321,7 +2329,7 @@ uishell_sidebar_choose_region(CFG_Node *container, String8 key, CFG_Node **keepe
   for(CFG_Node *c = container->first; c != &cfg_nil_node; c = c->next)
   {
     if(str8_match(c->string, str8_lit("sidebar_section"), 0) &&
-       str8_match(cfg_node_child_from_string(c, str8_lit("section"))->first->string, key, 0))
+       str8_match(uishell_sidebar_section_key(c), key, 0))
     {
       if(*keeper == &cfg_nil_node ||
          (!rd_dock_saved_placement_valid(*keeper) && rd_dock_saved_placement_valid(c))) { *keeper = c; }
@@ -2338,7 +2346,7 @@ uishell_sidebar_prune_region_duplicates(CFG_Node *container, String8 key, CFG_No
   {
     next = c->next;
     if(str8_match(c->string, str8_lit("sidebar_section"), 0) && c != keeper &&
-       str8_match(cfg_node_child_from_string(c, str8_lit("section"))->first->string, key, 0))
+       str8_match(uishell_sidebar_section_key(c), key, 0))
     { cfg_node_release(rd_state->cfg, c); removed = 1; }
     else if(rd_dock_is_container(c))
     {
