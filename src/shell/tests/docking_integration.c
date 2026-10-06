@@ -383,7 +383,6 @@ entry_point(CmdLine *cmdline)
       cfg_node_equip_string(rd_state->cfg, destination, str8_lit("0.63"));
       CFG_Node *extra = cfg_node_new(rd_state->cfg, panels, str8_lit("0.1"));
       cfg_node_new(rd_state->cfg, extra, str8_lit("terminal"));
-
       U64 changed_layout_gen = cfg_change_gen();
       IntegrationCheck(integration_width(destination, dir) < 128);
       UIShell_RegsScope(.window = window->id, .panel = origin->id, .view = source->id,
