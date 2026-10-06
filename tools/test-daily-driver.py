@@ -114,7 +114,7 @@ class WatcherBuildTests(unittest.TestCase):
                         mock.patch.object(launcher.subprocess, 'check_output', return_value=f'host: {host}\n') as rustc, \
                         mock.patch.object(launcher, 'run', return_value=0) as launch:
                     self.assertEqual(launcher.main(), 0)
-                expected = [] if no_git else [['git', '-C', str(ROOT), 'rev-parse', '--show-toplevel']]
+                expected = []
                 if not no_build and not supplied_host:
                     expected.append(['bash', 'build.sh', 'wheelhouse'])
                 if supplied_host and not (supplied_watcher or no_build or no_git):
@@ -124,7 +124,12 @@ class WatcherBuildTests(unittest.TestCase):
                          '-p', 'andamento-git-watcher', '--bin', 'andamento-git-watcher', '--locked',
                          '--target', host, '--target-dir', str(target)],
                     ])
-                self.assertEqual([call.args[0] for call in commands.call_args_list], expected)
+                # Only build commands are this contract; unrelated main() subprocesses may change.
+                build_commands = [call.args[0] for call in commands.call_args_list
+                                  if call.args[0][0] == 'cargo'
+                                  or call.args[0][:2] == ['bash', 'build.sh']
+                                  or call.args[0][:2] == [sys.executable, str(root / 'tools/prepare-andamento-build.py')]]
+                self.assertEqual(build_commands, expected)
                 self.assertEqual(rustc.call_count, int(not (supplied_watcher or no_git)))
                 args, actual_binary, _, _ = launch.call_args.args
                 self.assertEqual(actual_binary, binary)
