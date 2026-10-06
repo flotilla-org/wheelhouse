@@ -176,7 +176,11 @@ impl Rotating {
                 .iter()
                 .rposition(|b| *b == b'\n')
                 .map_or(0, |i| i + 1) as u64;
-            file.set_len(complete)?;
+            // Windows append-only handles cannot truncate; repair with write access.
+            OpenOptions::new()
+                .write(true)
+                .open(&path)?
+                .set_len(complete)?;
             complete
         } else {
             previous.len() as u64
