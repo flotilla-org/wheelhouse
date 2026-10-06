@@ -217,7 +217,18 @@ entry_point(CmdLine *cmd_line)
           abort_self(1);
         }
         andamento_destroy(probe);
-        uishell_ingress = wheelhouse_ingress_start(socket_path.str, socket_path.size, wm_send_wakeup_event, error, sizeof(error));
+        String8 recording_path = str8_zero();
+        U64 recording_bytes = 4*1024*1024, recording_files = 4;
+        if(cmd_line_has_flag(cmd_line, str8_lit("ingress_record")))
+        {
+          recording_path = push_str8f(rd_state->arena, "%S/ingress.jsonl", str8_chop_last_slash(rd_state->log_path));
+          String8 bytes = cmd_line_string(cmd_line, str8_lit("ingress_record_bytes"));
+          String8 files = cmd_line_string(cmd_line, str8_lit("ingress_record_files"));
+          if(bytes.size) { recording_bytes = str8_is_integer(bytes, 10) ? u64_from_str8(bytes, 10) : 0; }
+          if(files.size) { recording_files = str8_is_integer(files, 10) ? u64_from_str8(files, 10) : 0; }
+        }
+        uishell_ingress = wheelhouse_ingress_start_recorded(socket_path.str, socket_path.size, wm_send_wakeup_event,
+          recording_path.str, recording_path.size, recording_bytes, recording_files, error, sizeof(error));
         if(uishell_ingress == 0) { fprintf(stderr, "Sidebar ingress: %s\n", error); abort_self(1); }
       }
 #if OS_MAC || OS_LINUX

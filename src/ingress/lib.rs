@@ -1,6 +1,9 @@
 //! Wheelhouse's HTTP ingress. UI state stays on the C host's main thread.
 use std::ffi::c_void;
 
+#[cfg(any(unix, windows))]
+mod recording;
+
 pub type Wake = extern "C" fn();
 #[repr(C)]
 pub struct Text {
@@ -128,7 +131,11 @@ mod transport {
         }
     }
     impl Ingress {
-        pub fn start(path: PathBuf, wake: Wake) -> Result<Self, String> {
+        pub fn start(
+            path: PathBuf,
+            wake: Wake,
+            recording: Option<(PathBuf, u64, usize)>,
+        ) -> Result<Self, String> {
             #[cfg(unix)]
             let (listener, guard) = {
                 let parent = path
@@ -179,12 +186,19 @@ mod transport {
                         #[cfg(unix)]
                         let listener = tokio::net::UnixListener::from_std(listener)
                             .expect("registered Unix listener");
-                        let app = Router::new()
+                        let mut app = Router::new()
                             .route("/v1/health", get(|| async { StatusCode::NO_CONTENT }))
                             .route("/v1/metadata/patch", post(patch))
                             .route("/v1/observed/workdirs", get(workdirs))
-                            .layer(DefaultBodyLimit::max(1024 * 1024))
                             .with_state(Shared { queue, wake });
+                        if let Some((path, bytes, files)) = recording {
+                            let recorder = crate::recording::Recorder::start(path, bytes, files);
+                            app = app.layer(axum::middleware::from_fn_with_state(
+                                recorder,
+                                crate::recording::capture,
+                            ));
+                        }
+                        let app = app.layer(DefaultBodyLimit::max(1024 * 1024));
                         let server = axum::serve(listener, app);
                         let ticks = async {
                             loop {
@@ -373,13 +387,43 @@ pub unsafe extern "C" fn wheelhouse_ingress_start(
     error: *mut u8,
     capacity: usize,
 ) -> *mut Ingress {
+    wheelhouse_ingress_start_recorded(path, len, wake, std::ptr::null(), 0, 0, 0, error, capacity)
+}
+
+/// Start with optional UTF-8 recording file and retention limits; NULL disables recording.
+/// # Safety
+/// Same requirements as start; recording_path must be valid for recording_len bytes.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_ingress_start_recorded(
+    path: *const u8,
+    len: usize,
+    wake: Wake,
+    recording_path: *const u8,
+    recording_len: usize,
+    bytes: u64,
+    files: usize,
+    error: *mut u8,
+    capacity: usize,
+) -> *mut Ingress {
     #[cfg(any(unix, windows))]
     let result = if path.is_null() || len == 0 {
         Err("socket path must not be null or empty".into())
     } else {
         std::str::from_utf8(std::slice::from_raw_parts(path, len))
             .map_err(|e| e.to_string())
-            .and_then(|p| Ingress::start(p.into(), wake))
+            .and_then(|p| {
+                let recording = if recording_path.is_null() {
+                    None
+                } else {
+                    let path = std::str::from_utf8(std::slice::from_raw_parts(
+                        recording_path,
+                        recording_len,
+                    ))
+                    .map_err(|e| e.to_string())?;
+                    Some((path.into(), bytes, files))
+                };
+                Ingress::start(p.into(), wake, recording)
+            })
     };
     #[cfg(not(any(unix, windows)))]
     let result: Result<Ingress, String> = {

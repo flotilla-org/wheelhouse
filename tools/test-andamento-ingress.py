@@ -110,6 +110,10 @@ core.andamento_snapshot_node_count.argtypes = [C.c_void_p]
 core.andamento_snapshot_node_count.restype = C.c_size_t
 core.andamento_snapshot_release.argtypes = [C.c_void_p]
 
+lib.wheelhouse_ingress_start_recorded.argtypes = [C.c_char_p, C.c_size_t, WAKE,
+    C.c_char_p, C.c_size_t, C.c_uint64, C.c_size_t, C.c_void_p, C.c_size_t]
+lib.wheelhouse_ingress_start_recorded.restype = C.c_void_p
+
 class IngressTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory(prefix='wh-', dir=None if WINDOWS else '/tmp')
@@ -168,6 +172,148 @@ class IngressTests(unittest.TestCase):
                 lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
             time.sleep(.005)
         return future.result(timeout=1)
+
+    def enable_recording(self, path, size=4*1024*1024, files=4):
+        lib.wheelhouse_ingress_stop(self.server)
+        self.server = None
+        error = C.create_string_buffer(512)
+        encoded = str(path).encode()
+        self.server = lib.wheelhouse_ingress_start_recorded(self.path.encode(), len(self.path.encode()),
+            self.wake, encoded, len(encoded), size, files, error, len(error))
+        self.assertTrue(self.server, error.value)
+        wait_ready(self.path)
+
+    def capture(self):
+        lib.wheelhouse_ingress_stop(self.server)
+        self.server = None
+        return [json.loads(line) for line in (Path(self.dir.name) / 'ingress.jsonl').read_text().splitlines()]
+
+    def test_recording_off_creates_no_files(self):
+        # Issue #223: ordinary ingress never creates recording files.
+        self.assertEqual(self.request(json.dumps(patch('project', 'p', {})).encode()), 204)
+        self.assertFalse(list(Path(self.dir.name).glob('ingress.jsonl*')))
+
+    def test_recorded_fixture_replays_to_identical_sidebar(self):
+        # Issue #223: pm-connect and git-watcher style sources retain byte-exact
+        # messages and replay every intermediate state through the shipped ABI.
+        spec = importlib.util.spec_from_file_location('replay_ingress', ROOT / 'tools/replay-ingress.py')
+        replay = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(replay)
+        core.andamento_destroy(self.core)
+        config = (ROOT / 'data/sidebar/daily-driver.kdl').read_bytes()
+        self.core = core.andamento_create(config, len(config), None)
+        self.assertTrue(self.core)
+        self.enable_recording(Path(self.dir.name) / 'ingress.jsonl')
+        fixtures = []
+        for index, line in enumerate((ROOT / 'data/sidebar/fixture.jsonl').read_text().splitlines()):
+            item = json.loads(line)
+            item['type'] = 'metadata-patch'
+            item['source_id'] = 'andamento-git-watcher' if any(k.startswith('git.') for k in item['set']) else 'pm-connect'
+            fixtures.append(item)
+            body = json.dumps(item, ensure_ascii=False, indent=1).encode()
+            self.assertEqual(self.request(body), 204)
+            self.assertEqual(self.received[-1], body)
+        if not WINDOWS:
+            # Real producer subprocess boundary: it uses git and curl against our
+            # actual Unix endpoint while the same real ABI host drains requests.
+            watcher = LIBDIR / 'andamento-git-watcher'
+            self.assertTrue(watcher.is_file(), 'build andamento-git-watcher alongside the ABI')
+            future = self.pool.submit(subprocess.run, [str(watcher.resolve()), '--transport', 'wheelhouse',
+                '--socket', self.path, '--roots', str(ROOT), '--once'], capture_output=True, timeout=20)
+            deadline = time.monotonic() + 20
+            while not future.done() and time.monotonic() < deadline:
+                lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
+                time.sleep(.005)
+            completed = future.result(timeout=1)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            fixtures = [json.loads(body) for body in self.received]
+            self.assertTrue(any(p['source_id'] == 'andamento-git-watcher' for p in fixtures))
+        records = self.capture()
+        patches = [r for r in records if r['path'] == '/v1/metadata/patch']
+        self.assertEqual([r['body'] for r in patches], fixtures)
+        self.assertEqual([r['producer'] for r in patches], [p['source_id'] for p in fixtures])
+        self.assertEqual([r['body_utf8'].encode() for r in patches], self.received)
+        library = LIBDIR / (PREFIX + 'andamento_ffi' + SUFFIX)
+        direct = list(replay.replay(fixtures, library))
+        captured = list(replay.replay(records, library))
+        self.assertEqual([r['nodes'] for r in captured], [r['nodes'] for r in direct])
+        abi, native = replay.native_api(library)
+        self.assertEqual(captured[-1]['nodes'], replay.snapshot_nodes(abi, native, self.core))
+        self.assertTrue(any(n['kind'] == 'role' for n in captured[-1]['nodes']))
+        self.assertTrue(any(n['kind'] == 'convoy' for n in captured[-1]['nodes']))
+        redacted = list(replay.replay(list(replay.redact(records)), library))
+        identity = lambda frames: [sorted((n['kind'], n['id'], n['state']) for n in f['nodes']) for f in frames]
+        self.assertEqual(identity(redacted), identity(captured))
+        # A listener restart begins with fresh state and resets monotonic time.
+        update = patch('project', 'fresh', {'flotilla.project': 'fresh'})
+        restarted = dict(recording_id='next-run', sequence=0, timestamp_ms=0,
+                         received_ms=0, path='/v1/metadata/patch', status=204,
+                         body=update, body_utf8=json.dumps(update))
+        combined = list(replay.replay(records + [restarted], library))
+        alone = list(replay.replay([restarted], library))
+        self.assertEqual(combined[-1]['nodes'], alone[-1]['nodes'])
+
+    def test_recording_rotation_bounds_at_http_boundary(self):
+        # Issue #223: generate varying entry sizes and retention counts through
+        # the real endpoint; every retained line is complete and total size bounded.
+        for files in (1, 2, 4):
+            path = Path(self.dir.name) / f'rotation-{files}.jsonl'
+            limit = 4096
+            self.enable_recording(path, size=limit, files=files)
+            last = None
+            for index in range(20):
+                last = patch('project', 'p', {'display.label': 'x' * (index % 5 * 64) + '/東京'})
+                self.assertEqual(self.request(json.dumps(last).encode()), 204)
+            lib.wheelhouse_ingress_stop(self.server)
+            self.server = None
+            paths = list(Path(self.dir.name).glob(f'rotation-{files}.jsonl*'))
+            self.assertEqual(len(paths), files)
+            self.assertLessEqual(sum(p.stat().st_size for p in paths), limit * files)
+            entries = []
+            for recording in paths:
+                self.assertLessEqual(recording.stat().st_size, limit)
+                if not WINDOWS:
+                    self.assertEqual(recording.stat().st_mode & 0o777, 0o600)
+                data = recording.read_bytes()
+                self.assertTrue(data.endswith(b'\n'))
+                entries.extend(json.loads(line) for line in data.splitlines())
+            self.assertEqual(max(entries, key=lambda r: r['sequence'])['body'], last)
+
+    def test_body_limit_is_identical_with_recording_on_and_off(self):
+        # Review #226: the same 1 MiB decoded-body limit applies before capture
+        # and before the ordinary handler, at below/exact/above boundaries.
+        limit = 1024 * 1024
+        message = json.dumps(patch('project', 'boundary', {})).encode()
+        for enabled in (False, True):
+            if enabled:
+                self.enable_recording(Path(self.dir.name) / 'ingress.jsonl')
+            statuses = [self.request(message + b' ' * (size - len(message)))
+                        for size in (limit - 1, limit, limit + 1)]
+            self.assertEqual(statuses, [204, 204, 413])
+            self.assertEqual(self.request(message), 204)
+        entries = [r for r in self.capture() if r['path'] == '/v1/metadata/patch']
+        self.assertEqual([r['status'] for r in sorted(entries, key=lambda r: r['sequence'])], [204, 204, 413, 204])
+        rejected = next(r for r in entries if r['status'] == 413)
+        self.assertIsNone(rejected['body'])
+        self.assertIsNone(rejected['body_utf8'])
+
+    def test_recording_preserves_error_statuses_and_write_failure(self):
+        # Issue #223: recording preserves rejection/unavailability statuses;
+        # even an impossible output path leaves healthy requests usable.
+        path = Path(self.dir.name) / 'ingress.jsonl'
+        self.enable_recording(path)
+        bodies = [b'broken', b'{}', json.dumps(patch('project', 'p', {})).encode()]
+        expected = [400, 400, 415]
+        for body, status in zip(bodies, expected):
+            self.assertEqual(self.request(body, content_type='text/plain' if status == 415 else 'application/json'), status)
+        invalid = {'type': 'metadata-patch'}
+        self.assertEqual(self.request(json.dumps(invalid).encode()), 422)
+        self.assertEqual(self.request(b'x' * (1024*1024 + 1)), 413)
+        self.assertEqual(self.request(json.dumps(patch('project', 'p', {})).encode(), poll=False), 503)
+        records = [r for r in self.capture() if r['path'] == '/v1/metadata/patch']
+        self.assertEqual([r['status'] for r in sorted(records, key=lambda r: r['sequence'])], expected + [422, 413, 503])
+        self.enable_recording(Path(self.dir.name)) # a directory cannot be opened as a log
+        self.assertEqual(self.request(json.dumps(patch('project', 'p', {})).encode()), 204)
 
     def test_observed_directories_change_and_omit_unknown_views(self):
         self.workdirs = [
@@ -271,7 +417,9 @@ class IngressTests(unittest.TestCase):
             process = subprocess.Popen([binary, '--user:' + self.dir.name + '/user',
                                         '--project:' + self.dir.name + '/project',
                                         '--andamento_socket:' + path,
-                                        '--andamento_config:' + str(ROOT / 'data/sidebar/fixture.kdl')],
+                                        '--andamento_config:' + str(ROOT / 'data/sidebar/fixture.kdl'),
+                                        '--ingress_record', '--ingress_record_bytes:1048576',
+                                        '--ingress_record_files:2'],
                                        stdout=log, stderr=log)
             try:
                 try:
@@ -311,6 +459,28 @@ class IngressTests(unittest.TestCase):
                 time.sleep(1)
                 publish(path, patch('project', 'native', {
                     'display.label': 'Updated while idle', 'flotilla.project': 'native'}))
+                # Issue #223: the real native flag writes beside the isolated UI log.
+                capture_path = Path(self.dir.name) / 'logs/ingress.jsonl'
+                deadline = time.monotonic() + 2
+                captured = []
+                while time.monotonic() < deadline:
+                    try:
+                        captured = [json.loads(line) for line in capture_path.read_text().splitlines()]
+                    except (FileNotFoundError, json.JSONDecodeError):
+                        pass
+                    if any(r.get('body', {}).get('set', {}).get('display.label', {}).get('value', {}).get('value') ==
+                           'Updated while idle' for r in captured if isinstance(r.get('body'), dict)):
+                        break
+                    time.sleep(.01)
+                self.assertTrue(captured)
+                self.assertTrue(any(r.get('body', {}).get('set', {}).get('display.label', {}).get('value', {}).get('value') ==
+                                    'Updated while idle' for r in captured if isinstance(r.get('body'), dict)))
+                self.assertTrue(any(r['status'] == 422 for r in captured))
+                self.assertTrue(any(r['producer'] == 'ingress.test' and r['status'] == 204 for r in captured))
+                self.assertTrue((capture_path.parent / 'ui_thread.uishell_log').is_file())
+                recordings = list(capture_path.parent.glob('ingress.jsonl*'))
+                self.assertLessEqual(len(recordings), 2)
+                self.assertLessEqual(sum(p.stat().st_size for p in recordings), 2*1048576)
             finally:
                 process.terminate()
                 try:
@@ -421,6 +591,15 @@ class IngressTests(unittest.TestCase):
             self.assertFalse(os.path.exists(self.path))
         self.server = self.start()
         self.assertEqual(self.request(json.dumps(patch('project', 'p', {'display.label': 'restart'})).encode()), 204)
+
+def load_tests(loader, tests, pattern):
+    # Keep pure redaction/order invariants in the existing cross-platform native
+    # ingress entry point, alongside the real-ABI capture/replay scenarios.
+    spec = importlib.util.spec_from_file_location('test_replay_ingress', ROOT / 'tools/test-replay-ingress.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    tests.addTests(loader.loadTestsFromModule(module))
+    return tests
 
 if __name__ == '__main__':
     unittest.main()

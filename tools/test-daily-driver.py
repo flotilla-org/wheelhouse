@@ -28,6 +28,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         print('patch received', flush=True)
         self.send_response(204); self.end_headers()
     def log_message(self, *args): pass
+print('args=' + repr(sys.argv[1:]), flush=True)
 print('pid=' + str(os.getpid()), flush=True)
 print('daemon=' + os.environ.get('FLOTILLA_DAEMON', ''), flush=True)
 with socketserver.UnixStreamServer(path, Handler) as server:
@@ -196,9 +197,19 @@ class DailyDriverTests(unittest.TestCase):
             time.sleep(.05)
         self.fail('git producer did not reach the UI')
 
+    def test_ingress_recording_flags_reach_app(self):
+        # Issue #223: daily-driver operators can opt in without launching by hand.
+        process = self.start(['--ingress-record', '--ingress-record-bytes', '1024', '--ingress-record-files', '2'])
+        self.ready(process)
+        app_log = self.log('wheelhouse')
+        self.assertIn("'--ingress_record'", app_log)
+        self.assertIn("'--ingress_record_bytes:1024'", app_log)
+        self.assertIn("'--ingress_record_files:2'", app_log)
+
     def test_full_launch_lock_signal_cleanup_and_restart(self):
         process = self.start()
         self.ready(process, connector=True)
+        self.assertNotIn("--ingress_record", self.log("wheelhouse"))
         watcher = self.log('git')
         self.assertIn("'--transport', 'wheelhouse', '--socket'", watcher)
         self.assertIn("'--roots', " + repr(str(ROOT)), watcher)
