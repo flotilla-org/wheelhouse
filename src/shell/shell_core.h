@@ -550,6 +550,7 @@ typedef enum RD_ChromeNiche
   RD_ChromeNiche_TitleBarLeading,   // leading buttons ("a")
   RD_ChromeNiche_TitleBarTrailing,  // trailing buttons ("b")
   RD_ChromeNiche_SidebarActions,    // the control surface's action row (relocation fallback)
+  RD_ChromeNiche_SectionHeader,     // the Other workspaces section header in the sidebar
   RD_ChromeNiche_COUNT
 }
 RD_ChromeNiche;
@@ -563,7 +564,6 @@ typedef enum RD_ChromeElementKind
   RD_ChromeElementKind_WorkspacePath,
   RD_ChromeElementKind_OverviewToggle,
   RD_ChromeElementKind_RevealWorkspace,
-  RD_ChromeElementKind_CloseWorkspace,
   RD_ChromeElementKind_COUNT
 }
 RD_ChromeElementKind;
@@ -591,7 +591,10 @@ internal void rd_chrome_resolve(RD_ChromeElement *elements, U64 count, F32 title
 // client area so the window manager doesn't eat clicks as window drags)
 internal UI_Signal rd_chrome_build_new_workspace(CFG_Node *owner_cfg);
 internal UI_Signal rd_chrome_build_overview_toggle(RD_WindowState *ws);
-internal UI_Signal rd_chrome_build_workspace_action(CFG_Node *owner_cfg, B32 close);
+internal UI_Signal rd_chrome_build_reveal_workspace(CFG_Node *owner_cfg);
+// the detach glyph: a plug pulled apart, drawn in the box's text colour
+internal UI_BOX_CUSTOM_DRAW(rd_workspace_detach_icon_draw);
+global B32 rd_workspace_detach_icon_compact;
 internal UI_Signal rd_chrome_build_sidebar_collapse(CFG_Node *owner_cfg);
 
 typedef struct UIShell_SidebarState UIShell_SidebarState;
@@ -640,6 +643,7 @@ struct RD_WindowState
   // rjf: chrome placement (recomputed each frame, before the title bar & the
   // control surface build, so both read the same resolution) — ADR-0006
   RD_ChromeNiche chrome_niche[RD_ChromeElementKind_COUNT];
+  U64 chrome_section_header_frame; // last frame the sidebar built the section-header niche
   F32 chrome_leading_px;  // pixel extent of the title bar's left zone (decorations + leading buttons)
   F32 chrome_trailing_px; // pixel extent of the right zone (trailing buttons + window controls)
 
@@ -1205,6 +1209,7 @@ internal UIShell_WorkspaceMount uishell_workspace_mount_from_current_regs(Arena 
 internal UIShell_ControlledSplit uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window);
 internal void uishell_sidebar_reset_regions(CFG_Node *owner);
 internal B32 uishell_controlled_split_workspace_can_close(UIShell_ControlledSplit *split, UIShell_MaterializedWorkspace *workspace);
+internal B32 uishell_workspace_cfg_has_subject(CFG_Node *workspace);
 internal UIShell_WorkspaceMount *uishell_controlled_split_selected_mount(UIShell_ControlledSplit *split);
 internal Rng2F32 uishell_controlled_split_control_rect(UIShell_ControlledSplit *split, Rng2F32 rect);
 internal Rng2F32 uishell_controlled_split_workspace_rect(UIShell_ControlledSplit *split, Rng2F32 rect);
