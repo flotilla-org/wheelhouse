@@ -47,6 +47,18 @@ jobs:
             use CONTEXT.md and the relevant design notes. Shell commands other than
             the allowed `gh` commands are not available in this review workflow.
 
+            RE-REVIEWS: if this PR already has a review comment from you, this run is a
+            re-review of a new push. Converge instead of starting over:
+              * Use `gh pr view --json commits,comments` to find the head your last review
+                covered. Review only what changed since then, and check whether your earlier
+                findings and the implementor's replies resolve them.
+              * Raise a NEW finding on code your earlier review already covered only if it
+                is a correctness, security or data-loss defect. Put style, naming, extra
+                hardening and test ideas for already-reviewed code under "Optional"
+                and do not repeat them in later rounds.
+              * Label every finding Blocking, Should-fix or Optional. If nothing is Blocking
+                or Should-fix, say plainly that the PR has converged.
+
             AFTER reviewing, 
               * CHECK your findings against the existing comments and replies on the PR. e.g if followup issues are filed or the implementor pushed back, make sure that is 
               correct: drop issues that are already addressed, repeat issues that still need to be dealt with with an explanation.

@@ -44,6 +44,7 @@ jobs:
       - run: python3 tools/test-build-failures.py
         if: runner.os != 'Windows'
       - run: python tools/test-windows-terminal-input-readiness.py
+      - run: python tools/test-embed-sidebar-fixture.py
       - run: bash -n scripts/run-daily-driver.sh
         if: runner.os != 'Windows'
 
