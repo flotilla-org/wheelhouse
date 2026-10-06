@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Check the shipped native template against Andamento's real typed C ABI."""
 import ctypes as C
-import json
 import itertools
+import json
 import os
 import shutil
 from pathlib import Path
@@ -350,6 +350,7 @@ int main(void) {
         config = (ROOT / 'data/sidebar/daily-driver.kdl').read_bytes()
         self.core = lib.andamento_create(config, len(config), None)
         self.assertTrue(self.core)
+        # These governor scenarios need only a project, unlike the broader setUp fixture.
         self.apply_fact(patch('project', 'p', **{'flotilla.project': 'p'}))
 
     def apply_fact(self, item):
@@ -358,6 +359,7 @@ int main(void) {
     def assert_running_governor(self, workspace_id=None, current=None):
         snapshot, nodes = self.snapshot()
         role = next(n for n in nodes if n.entity_kind.string() == 'role' and n.entity_id.string() == 'p/governor')
+        # label/kind/status positions are the native renderer contract (node_status reads field 2).
         self.assertEqual(self.values(snapshot, role)[2], 'running')
         if workspace_id is not None:
             self.assertEqual((role.state, role.workspace_id, role.selected), (3, workspace_id, 1))
@@ -445,7 +447,7 @@ int main(void) {
 
                 # Save only the subject identity the host stores, then start a fresh
                 # core and replay the current producer facts before restoring it.
-                saved = json.loads(json.dumps({'kind': 'role', 'id': 'p/governor', 'workspace_id': 44}))
+                saved = {'kind': 'role', 'id': 'p/governor', 'workspace_id': 44}
                 self.reset_core()
                 for item in facts.values():
                     self.apply_fact(item)
@@ -465,14 +467,16 @@ int main(void) {
 
                 # Deleting terminal catalog records must leave the same live role
                 # and workspace; check each removal, as in the operator's cure.
-                for (kind, resource), item in list(facts.items()):
-                    if resource not in ('A', 'A-v', 'B', 'B-v'):
+                abandoned_resources = {resource for identity in attempts[:-1]
+                                       for resource in (identity, identity + '-v')}
+                for (_, resource), item in facts.items():
+                    if resource not in abandoned_resources:
                         continue
                     self.apply_fact({'target': item['target'], 'source_id': 'native-test',
                                      'set': {}, 'unset': list(item['set'])})
                     self.assert_running_governor(44)
-                snapshot, nodes = self.snapshot()
-                self.assertFalse(any(n.entity_id.string() in ('A', 'A-v', 'B', 'B-v') for n in nodes))
+                _, nodes = self.snapshot()
+                self.assertFalse(any(n.entity_id.string() in abandoned_resources for n in nodes))
 
     def test_git_fixture_groups_and_materializes_worktrees(self):
         for line in (ROOT / 'data/sidebar/git-fixture.jsonl').read_text().splitlines():
