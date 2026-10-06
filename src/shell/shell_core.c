@@ -2995,7 +2995,20 @@ uishell_controlled_split_control_width_range_px(UIShell_ControlledSplit *split, 
   return result;
 }
 
-// Settled allocation is also available to commands before any UI build.
+// Keep the shared absolute boundary on the pixel grid and inside its allocation
+// range. Clamping a width after rounding could reintroduce a fractional seam.
+internal F32
+uishell_controlled_split_snap_control_width(Rng2F32 rect, F32 width, Rng1F32 range)
+{
+  if(width <= 0.f) { return 0.f; }
+  F32 min_edge = ceil_f32(rect.x0 + range.min);
+  F32 max_edge = floor_f32(rect.x0 + range.max);
+  if(max_edge < min_edge) { return 0.f; }
+  return Max(0.f, Clamp(min_edge, round_f32(rect.x0 + width), max_edge) - rect.x0);
+}
+
+// Settled allocation is also available to commands before any UI build, and
+// shares the rendered seam's pixel alignment when collapse is not animating.
 internal F32
 uishell_controlled_split_settled_control_width(UIShell_ControlledSplit *split, Rng2F32 rect, F32 font_size)
 {
@@ -3005,7 +3018,7 @@ uishell_controlled_split_settled_control_width(UIShell_ControlledSplit *split, R
   F32 width = uishell_controlled_split_default_control_width_px(split, rect, font_size);
   CFG_Node *pct = cfg_node_child_from_string(split->owner_cfg, str8_lit("control_split_pct"));
   if(pct->first != &cfg_nil_node) { width = rect_width*(F32)f64_from_str8(pct->first->string); }
-  return Clamp(range.min, width, range.max);
+  return uishell_controlled_split_snap_control_width(rect, Clamp(range.min, width, range.max), range);
 }
 
 internal F32
@@ -3025,7 +3038,9 @@ uishell_controlled_split_control_width_px(UIShell_ControlledSplit *split, Rng2F3
   // boundary. Independently flooring UI boxes and rounding frame edges can
   // otherwise paint over the seam at fractional drag/collapse positions.
   F32 animated_width = width*collapse_t;
-  return animated_width == 0.f ? 0.f : Max(0.f, round_f32(rect.x0 + animated_width) - rect.x0);
+  Rng1F32 range = uishell_controlled_split_control_width_range_px(split, rect, ui_top_font_size());
+  // Collapse may allocate less than the settled minimum; exact zero stays zero.
+  return uishell_controlled_split_snap_control_width(rect, animated_width, r1f32(0, range.max));
 }
 
 internal Rng2F32
