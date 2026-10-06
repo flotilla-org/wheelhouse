@@ -181,7 +181,7 @@ int main(void) {
   // nonnegative name/viewport widths and the same caller-owned status slot.
   r = uishell_chip_layout(50, names, 80, chips, 4, 30);
   assert(!chips[0].folded && !chips[1].folded && !chips[3].folded);
-  assert(r.name_width >= 0 && r.chip_width >= 0);
+  assert(r.name_width == 0 && r.chip_width == 50);
   r = uishell_chip_layout(400, names, 80, chips, 4, 30);
   assert(r.folded == 0 && !chips[2].folded);
   // Owner policy: an unopened action folds before a later quiet issue.

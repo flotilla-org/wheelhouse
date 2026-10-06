@@ -9,7 +9,6 @@ enum
   UIShell_HoverCardCorridorPaddingPT = 12,
   UIShell_HoverCardNearGapPT = 16,
   UIShell_HoverCardInitialPathCapacity = 32,
-  UIShell_HoverCardDragThresholdPT = 10,
   UIShell_HoverCardSourceDropPaddingPT = 12,
   UIShell_HoverCardInlineFallbackHeightEM = 8,
   UIShell_HoverCardPinnedMinimumHeightEM = 4,

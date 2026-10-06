@@ -1312,5 +1312,6 @@ internal void rd_init(CmdLine *cmdln);
 internal void rd_frame(void);
 
 internal F32 rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir);
+internal F32 rd_panel_inset_px(F32 font_size);
 
 #endif // SHELL_CORE_H

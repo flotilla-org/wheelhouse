@@ -2,6 +2,8 @@
 #include "andamento.h"
 #include "uishell/uishell_sidebar_chips.h"
 #include "ingress/ingress.h"
+enum { UIShell_DragThresholdPT = 10 };
+read_only global F32 UIShell_GripWidthEM = 1.5f;
 global WheelhouseIngress *uishell_ingress;
 global String8 uishell_sidebar_live_config;
 global B32 uishell_sidebar_live;
@@ -127,6 +129,9 @@ struct UIShell_SidebarState
   AndamentoSnapshot *placement_snapshot;
   UIShell_SectionPlacement *placement_regions;
   U64 placement_count, placement_cache_builds;
+  UI_Key revealed_chip;
+  F32 revealed_chip_width;
+  U64 revealed_chip_build_index;
   U64 topology_hash;
   U64 workdirs_hash;
   U64 workdirs_retry_at;
@@ -169,15 +174,20 @@ uishell_sidebar_subject_hit(AndamentoNode node, UI_Box *box, char *action, B32 m
     box->rect.x0, box->rect.y0, box->rect.x1, box->rect.y1);
 }
 
+internal void
+uishell_sidebar_set_error(UIShell_SidebarState *state, String8 message)
+{
+  U64 size = Min(message.size, sizeof(state->error)-1);
+  MemoryCopy(state->error, message.str, size); state->error[size] = 0;
+}
+
 internal B32
 uishell_sidebar_result(UIShell_SidebarState *state, B32 ok, char *error)
 {
   if(!ok)
   {
     String8 message = error ? str8_cstring(error) : str8_lit("Sidebar operation failed");
-    U64 size = Min(message.size, sizeof(state->error)-1);
-    MemoryCopy(state->error, message.str, size);
-    state->error[size] = 0;
+    uishell_sidebar_set_error(state, message);
   }
   andamento_string_free(error);
   return ok;
@@ -1278,6 +1288,34 @@ uishell_sidebar_chip_width(UIShell_SidebarState *state, AndamentoNode node)
     fnt_dim_from_tag_size_string(ui_top_font(), em*0.9f, 0, 0, label).x+em*0.9f+4.f : em*2.f+4.f;
 }
 
+// Reveal keyboard targets in the chip viewport, including its overflow button.
+// A stationary focus does not counteract pointer scrolling.
+internal void
+uishell_sidebar_reveal_chip(UIShell_SidebarState *state, UI_Box *box)
+{
+  if((box->flags & UI_BoxFlag_FocusHot) && !(box->flags & UI_BoxFlag_FocusHotDisabled))
+  {
+    UI_Box *viewport = box->parent;
+    if(ui_box_is_nil(viewport) || !(viewport->flags & UI_BoxFlag_ViewScrollX)) { return; }
+    F32 width = dim_2f32(viewport->rect).x;
+    if(!ui_key_match(state->revealed_chip, box->key) || state->revealed_chip_width != width ||
+       state->revealed_chip_build_index+1 != ui_state->build_index)
+    {
+      state->revealed_chip = box->key;
+      state->revealed_chip_width = width;
+      // Rects retain the preceding layout. Apply its offset before revealing
+      // the focused chip, including focus reached through a clipped edge.
+      F32 left = box->rect.x0-viewport->rect.x0+floor_f32(viewport->view_off.x);
+      F32 right = box->rect.x1-viewport->rect.x0+floor_f32(viewport->view_off.x);
+      viewport->view_off_target.x = Max(0.f, Min(left, Max(viewport->view_off_target.x, right-width)));
+      rd_request_frame();
+    }
+    // A missing or unfocused frame invalidates the cached reveal, even when
+    // a rebuilt section later reuses the same chip key and viewport width.
+    state->revealed_chip_build_index = ui_state->build_index;
+  }
+}
+
 internal size_t
 uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
                               AndamentoNode node, U64 node_index, String8 context, F32 row_height, B32 menu)
@@ -1314,6 +1352,7 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
     }
     if(!subject && node.state == ANDAMENTO_LIVE) { box->flags |= UI_BoxFlag_DrawSideLeft; }
     sig = ui_signal_from_box(box);
+    if(!menu) { uishell_sidebar_reveal_chip(state, box); }
   }
   size_t action = uishell_sidebar_entry_signal(state, ws, node, node_index, sig, context, 0, menu);
   scratch_end(scratch);
@@ -1425,6 +1464,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       section_panel ? ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", only_section) :
       ui_key_from_string(ui_active_seed_key(), str8_lit("###andamento_sidebar")));
   }
+  if(ui_key_match(ui_state->default_nav_root_key, root->key) &&
+     !ui_key_match(root->default_nav_focus_hot_key, state->revealed_chip))
+  { state->revealed_chip = ui_key_zero(); }
   U64 analysis_start = uishell_sidebar_benchmark_active ? now_time_us() : 0;
   U64 count = state->snapshot ? andamento_snapshot_node_count(state->snapshot) : 0;
   AndamentoNode *nodes = push_array(scratch.arena, AndamentoNode, count);
@@ -1617,10 +1659,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       {
         B32 toggle = 0;
         ui_spacer(ui_em(0.3f, 1));
-        if(section_panel) UI_PrefWidth(ui_em(1.5f, 1))
+        if(section_panel) UI_PrefWidth(ui_em(UIShell_GripWidthEM, 1))
         {
           UI_Signal drag = uishell_sidebar_grip(str8_lit("section_drag"), str8_lit("Drag section"));
-          if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
+          if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
           { rd_drag_begin(UIShell_ContextRegSlot_View); }
         }
         toggle |= ui_clicked(uishell_sidebar_disclosure(!states[n]->collapsed, push_str8f(scratch.arena, "###section_toggle_%S", key)));
@@ -1863,7 +1905,15 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                 if(str8_match(kind, str8_lit("project"), 0)) { icon = RD_IconKind_FolderClosedOutline; }
                 else if(str8_match(kind, str8_lit("convoy"), 0) || str8_match(kind, str8_lit("role"), 0)) { icon = RD_IconKind_Threads; }
                 else if(str8_match(kind, str8_lit("vessel"), 0) || str8_match(kind, str8_lit("session"), 0)) { icon = RD_IconKind_Machine; }
-                ui_label(rd_icon_kind_text_table[icon]);
+                if(chip_count && chip_layout.name_width == 0)
+                {
+                  // Keep the full row identity and its rich hover card reachable
+                  // through the fixed icon when chips consume the name column.
+                  UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###identity_%S", rd_icon_kind_text_table[icon], node_key));
+                  size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0);
+                  if(requested != ANDAMENTO_NONE) { action = requested; }
+                }
+                else { ui_label(rd_icon_kind_text_table[icon]); }
               }
               UI_PrefWidth(ui_pct(1, 0))
               {
@@ -1939,6 +1989,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                     {
                       ui_set_next_border_color(uishell_sidebar_action_border());
                       UI_Signal sig = ui_button(push_str8f(scratch.arena, "+%I64u###overflow_%S", chip_layout.folded, node_key));
+                      uishell_sidebar_reveal_chip(state, sig.box);
                       if(ui_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, row_height)); }
                     }
                   }
@@ -2345,6 +2396,78 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
   return root;
 }
 
+// Explicit restore uses this owner's live declarations and the same placement
+// checker as initial creation. A saved View, including a floating one, wins.
+internal B32
+uishell_sidebar_restore_region(UIShell_ControlledSplit *split, String8 key)
+{
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
+  if(ws == &rd_nil_window_state || !ws->sidebar) { return 0; }
+  uishell_sidebar_dock_layout(split);
+  UIShell_SidebarState *state = ws->sidebar;
+  if(!state->snapshot) { return 0; }
+  U64 index = uishell_sidebar_region_index(state->placement_regions, state->placement_count, key);
+  if(index == ANDAMENTO_NONE) { return 0; }
+  CFG_Node *view = uishell_sidebar_region_view(split->owner_cfg, key);
+  // Reconciliation above clears any stale closed record for an existing
+  // View. Returning success adds no further placement mutation or duplicate.
+  if(view != &cfg_nil_node) { return 1; }
+  view = uishell_sidebar_place_region(split->owner_cfg, state->placement_regions, state->placement_count, index, &cfg_nil_node);
+  if(view == &cfg_nil_node) { return 0; }
+  CFG_Node *panel = view->parent, *host = panel->parent;
+  // A merged host may be a leaf itself. Lift its tabs and leaf options
+  // (tabs_on_bottom and panel selected) together. config_panels.c reads
+  // these on the leaf; host axis and sizing settings live on owner_cfg.
+  B32 split_host = 0;
+  for(CFG_Node *n = host->first; n != &cfg_nil_node; n = n->next)
+  { if(n != panel && rd_dock_is_container(n)) { split_host = 1; break; } }
+  if(!split_host && (host->first != panel || panel->next != &cfg_nil_node))
+  {
+    CFG_Node *old = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
+    for(CFG_Node *n = host->first, *next; n != &cfg_nil_node; n = next)
+    {
+      next = n->next;
+      if(n != old && n != panel) { cfg_node_insert_child(rd_state->cfg, old, old->last, n); }
+    }
+  }
+  // Match ordinary sibling insertion: allocate one share to the restored
+  // panel and scale saved sibling shares together, including nested splits.
+  F32 total = 0; U64 count = 0;
+  for(CFG_Node *n = host->first; n != &cfg_nil_node; n = n->next)
+  {
+    if(n != panel && rd_dock_is_container(n))
+    { total += Max(.01f, (F32)f64_from_str8(n->string)); count++; }
+  }
+  F32 fraction = 1.f/(count+1);
+  for(CFG_Node *n = host->first; n != &cfg_nil_node; n = n->next)
+  {
+    if(n != panel && rd_dock_is_container(n))
+    {
+      // Saved numeric tokens can be malformed or zero. Give each sibling
+      // a positive weight before normalization so none becomes unreachable.
+      F32 share = Max(.01f, (F32)f64_from_str8(n->string))/total;
+      cfg_node_equip_stringf(rd_state->cfg, n, "%f", (1-fraction)*share);
+    }
+  }
+  cfg_node_equip_stringf(rd_state->cfg, panel, "%f", fraction);
+  CFG_Node *record = cfg_node_child_from_string(cfg_node_child_from_string(split->owner_cfg, UISHELL_REGION_INVENTORY), key);
+  CFG_Node *closed = cfg_node_child_from_string(record, str8_lit("closed"));
+  if(closed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, closed); }
+  rd_request_frame();
+  return 1;
+}
+
+// Keep failed restoration visible through the same footer action used by UI.
+internal B32
+uishell_sidebar_restore_from_menu(UIShell_ControlledSplit *split, String8 key)
+{
+  if(uishell_sidebar_restore_region(split, key)) { ui_ctx_menu_close(); return 1; }
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
+  if(ws != &rd_nil_window_state && ws->sidebar)
+  { uishell_sidebar_set_error(ws->sidebar, str8_lit("Section could not be restored")); }
+  rd_request_frame(); return 0;
+}
+
 // Dragging opts into saved ratios. Double-clicking a sidebar boundary or an
 // explicit panel reset returns the window to content-based default sizing.
 internal void
@@ -2362,13 +2485,53 @@ uishell_sidebar_manual_sizing(CFG_Node *window, B32 manual)
 internal void
 uishell_sidebar_size_panels(UIShell_ControlledSplit *split, UIShell_WorkspaceMount *mount, Rng2F32 rect)
 {
-  if(cfg_node_child_from_string(split->owner_cfg, str8_lit("sidebar_layout_sized")) != &cfg_nil_node) { return; }
+  B32 manual = cfg_node_child_from_string(split->owner_cfg, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
   CFG_PanelNode *root = mount->panel_tree.root;
   if(root->split_axis != Axis2_Y || root->child_count == 0) { return; }
   U64 count = root->child_count;
   Temp scratch = scratch_begin(0, 0);
   UIShell_SidebarState *state = rd_window_state_from_cfg__existing(split->owner_cfg)->sidebar;
   F32 row_height = floor_f32(ui_top_font_size()*2.2f);
+  if(manual)
+  {
+    // Repair undersized saved leaves in a simple vertical stack. Keep all
+    // valid siblings proportional while reserving a visible header per leaf.
+    F32 minimum = Min(1.f/Max(1, count), (row_height+2*rd_panel_inset_px(ui_top_font_size()))/Max(1.f, dim_2f32(rect).y));
+    F32 total = 0; B32 repair = 0;
+    for(CFG_PanelNode *panel = root->first; panel != &cfg_nil_panel_node; panel = panel->next)
+    {
+      if(panel->first != &cfg_nil_panel_node || panel->tabs.count != 1) { scratch_end(scratch); return; }
+      total += Max(0.f, panel->pct_of_parent);
+      // Config shares are serialized with six decimals. Ignore sub-pixel
+      // roundtrip differences so repaired layouts stay idle on later frames.
+      repair |= panel->pct_of_parent < minimum-.000001f;
+    }
+    repair |= abs_f32(total-1.f) > .0001f;
+    if(!repair) { scratch_end(scratch); return; }
+    B32 *fixed = push_array(scratch.arena, B32, count);
+    F32 remaining = 1, weight = total; U64 unfixed = count;
+    for(U64 pass = 0; pass < count; pass++)
+    {
+      B32 changed = 0; U64 i = 0;
+      F32 scale = weight > 0 ? remaining/weight : 0;
+      F32 equal = remaining/Max(1, unfixed);
+      for(CFG_PanelNode *panel = root->first; panel != &cfg_nil_panel_node; panel = panel->next, i++)
+      {
+        F32 share = weight > 0 ? Max(0.f, panel->pct_of_parent)*scale : equal;
+        if(!fixed[i] && share < minimum)
+        { fixed[i] = 1; remaining -= minimum; weight -= Max(0.f, panel->pct_of_parent); unfixed--; changed = 1; }
+      }
+      if(!changed) { break; }
+    }
+    U64 i = 0;
+    for(CFG_PanelNode *panel = root->first; panel != &cfg_nil_panel_node; panel = panel->next, i++)
+    {
+      F32 share = fixed[i] ? minimum : weight > 0 ? Max(0.f, panel->pct_of_parent)*remaining/weight : remaining/Max(1, unfixed);
+      panel->pct_of_parent = share;
+      cfg_node_equip_stringf(rd_state->cfg, panel->cfg, "%f", share);
+    }
+    scratch_end(scratch); return;
+  }
   F32 *heights = push_array(scratch.arena, F32, count);
   F32 *contents = push_array(scratch.arena, F32, count);
   F32 *headers = push_array(scratch.arena, F32, count);
@@ -2387,7 +2550,9 @@ uishell_sidebar_size_panels(UIShell_ControlledSplit *split, UIShell_WorkspaceMou
       if(str8_match(section->key, key, 0)) { break; }
     }
     contents[n] = section ? section->content_height : 7*row_height;
-    headers[n] = !section || contents[n] > 0 || section->has_controls ? row_height : 0;
+    // A placed section still needs its title, movement and close controls
+    // when it has no content. Closing its View is the explicit way to hide it.
+    headers[n] = row_height;
     available -= headers[n];
     if(!collapsed[n] && contents[n] > 0 && flexible == count) { flexible = n; }
   }
@@ -2425,6 +2590,7 @@ internal void
 uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 {
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
+  if(ws == &rd_nil_window_state || !ws->sidebar) { return; }
   UIShell_SidebarState *state = ws->sidebar;
   F32 row_height = floor_f32(ui_top_font_size()*2.2f), footer = row_height;
   F32 chrome_height = uishell_sidebar_footer_height(ws)-footer;
@@ -2435,7 +2601,8 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   if(state->snapshot && andamento_snapshot_diagnostic_count(state->snapshot))
   { andamento_snapshot_diagnostic(state->snapshot, 0, &diagnostic); }
   UI_Box *root;
-  UI_Rect(rect) { root = ui_build_box_from_string(UI_BoxFlag_Clip, str8_lit("###sidebar_footer")); }
+  UI_Focus(UI_FocusKind_On) UI_Rect(rect)
+  { root = ui_build_box_from_string(UI_BoxFlag_Clip|UI_BoxFlag_DefaultFocusNav, str8_lit("###sidebar_footer")); }
   UI_Parent(root)
   {
     if(chrome_controls)
@@ -2453,18 +2620,58 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         }
       }
     }
+    UI_Box *notice;
     UI_Rect(r2f32p(0, dim.y-controls_height-footer, dim.x, dim.y-controls_height)) UI_ChildLayoutAxis(Axis2_X)
+    { notice = ui_build_box_from_string(UI_BoxFlag_DrawSideTop, str8_lit("###sidebar_notice")); }
+    // Only the notice uses that absolute rectangle. Its controls and popup
+    // must use their own layout, otherwise they inherit a clipped hit area.
+    UI_Parent(notice) UI_PrefHeight(ui_pct(1, 1))
     {
-      UI_Box *notice = ui_build_box_from_string(UI_BoxFlag_DrawSideTop, str8_lit("###sidebar_notice"));
-      UI_Parent(notice) UI_PrefHeight(ui_pct(1, 1))
+      String8 message = state->error[0] ? str8_cstring((char *)state->error) : state->inspection[0] ? str8_cstring((char *)state->inspection) : uishell_sidebar_string(diagnostic);
+      // The footer survives an empty control_views tree. Section restoration
+      // must remain reachable after closing the last selector section too.
+      UI_Key menu_key = ui_key_from_string(root->key, str8_lit("section_restore_menu"));
+      F32 menu_width = ui_top_font_size()*24.f;
+      for(U64 i = 0; state->snapshot && i < state->placement_count; i++)
       {
-        String8 message = state->error[0] ? str8_cstring((char *)state->error) : state->inspection[0] ? str8_cstring((char *)state->inspection) : uishell_sidebar_string(diagnostic);
-        UI_PrefWidth(ui_pct(1, 0)) { ui_label(message); }
-        UI_PrefWidth(ui_em(1.5f, 1))
+        UIShell_SectionPlacement region = state->placement_regions[i];
+        if(uishell_sidebar_region_view(split->owner_cfg, region.key) != &cfg_nil_node) { continue; }
+        String8 text = push_str8f(ui_build_arena(), "Restore %S", region.title);
+        menu_width = Max(menu_width, fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, text).x+2*ui_top_text_padding());
+      }
+      menu_width = Min(menu_width, dim_2f32(wm_client_rect_from_window(ws->os)).x);
+      // Do not wrap UI_CtxMenu in UI_Rect: fixed layout stacks would leak
+      // the notice rectangle into its popup rows and clip their hit areas.
+      UI_CtxMenu(menu_key) UI_PrefWidth(ui_px(menu_width, 1)) UI_PrefHeight(ui_px(row_height, 1))
+      {
+        B32 available = 0;
+        for(U64 i = 0; state->snapshot && i < state->placement_count; i++)
         {
-          if((state->error[0] || state->inspection[0]) && ui_clicked(uishell_sidebar_button(str8_lit("×###sidebar_dismiss"))))
-          { state->inspection[0] = state->error[0] = 0; rd_request_frame(); }
+          UIShell_SectionPlacement region = state->placement_regions[i];
+          if(uishell_sidebar_region_view(split->owner_cfg, region.key) != &cfg_nil_node) { continue; }
+          available = 1;
+          UI_Signal restore = uishell_sidebar_button(push_str8f(ui_build_arena(), "Restore %S###restore_%S", region.title, region.key));
+          if(ui_clicked(restore))
+          {
+            uishell_sidebar_restore_from_menu(split, region.key);
+          }
         }
+        if(!available) UI_TagF("weak") { ui_label(state->snapshot ? str8_lit("All sections are open") : str8_lit("Sections unavailable")); }
+      }
+      UI_PrefWidth(ui_text_dim(8, 1))
+      {
+        UI_Signal sections = uishell_sidebar_button(str8_lit("Sections…###section_restore"));
+        if(ui_clicked(sections))
+        {
+          ui_ctx_menu_open_above(menu_key, sections.box->key);
+          rd_request_frame();
+        }
+      }
+      UI_PrefWidth(ui_pct(1, 0)) { ui_label(message); }
+      UI_PrefWidth(ui_em(1.5f, 1))
+      {
+        if((state->error[0] || state->inspection[0]) && ui_clicked(uishell_sidebar_button(str8_lit("×###sidebar_dismiss"))))
+        { state->inspection[0] = state->error[0] = 0; rd_request_frame(); }
       }
     }
   }
