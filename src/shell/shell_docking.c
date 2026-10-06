@@ -93,6 +93,8 @@ rd_dock_host_from_cfg(CFG_Node *cfg, F32 width)
   return host;
 }
 
+// Split/leaf discriminator: recurse through layout containers, never through
+// a View's settings, even when their keys resemble layout node names.
 internal B32
 rd_dock_is_container(CFG_Node *cfg)
 {
