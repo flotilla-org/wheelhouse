@@ -374,8 +374,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(!uishell_sidebar_result(&missing, accepted, error), "host reports repeated ABI failure");
       CardCheck(missing.error[0] != 0, "ABI failure populates fixed status buffer");
       if(repeat == 0) { MemoryCopy(first_error, missing.error, sizeof(first_error)); }
-      CardCheck(str8_match(str8_cstring(first_error), str8_cstring((char *)missing.error), 0),
-                "identical failures keep stable status text");
+      else
+      {
+        CardCheck(str8_match(str8_cstring(first_error), str8_cstring((char *)missing.error), 0),
+                  "identical failures keep stable status text");
+      }
     }
     uishell_sidebar_release(&missing);
   }
