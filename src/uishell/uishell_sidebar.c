@@ -2352,6 +2352,8 @@ uishell_sidebar_prune_region_duplicates(CFG_Node *container, String8 key, CFG_No
     {
       B32 child_removed = uishell_sidebar_prune_region_duplicates(c, key, keeper);
       removed |= child_removed;
+      // Authoritative prune_regions runs first and consumes saved
+      // section_hint_cleanup markers before this duplicate-repair pass.
       removed |= uishell_sidebar_cleanup_region_panel(c, child_removed);
     }
   }
