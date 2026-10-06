@@ -1312,7 +1312,8 @@ internal void rd_init(CmdLine *cmdln);
 internal void rd_frame(void);
 
 internal F32 rd_panel_inset_px(F32 font_size);
-internal F32 rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir, CFG_Node *view);
+internal F32 rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir, CFG_Node *view, B32 *unavailable);
+
 internal B32 rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, CFG_Node *destination, Dir2 dir);
 
 

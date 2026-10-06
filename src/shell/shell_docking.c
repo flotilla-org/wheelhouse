@@ -357,6 +357,15 @@ rd_dock_allocated_fraction(F32 fraction)
   return result;
 }
 
+// A hand-edited source may consume the whole parent despite siblings. Give
+// the survivors equal allocations when the normal denominator is nonpositive;
+// commands and geometry must use the same finite recovery policy.
+internal F32
+rd_dock_remaining_fraction(F32 fraction, F32 removed, U64 count)
+{
+  return rd_dock_allocated_fraction(removed < 1.f ? fraction/(1.f-removed) : 1.f/count);
+}
+
 // Compute the new leaf's settled body width using the same allocation as
 // split_panel: insert a sibling into a matching parent, otherwise bisect.
 // Tabs occupy vertical chrome only; the panel inset consumes both X edges.
@@ -501,7 +510,7 @@ rd_dock_moving_width(CFG_PanelNode *root, CFG_PanelNode *panel,
     DLLRemove_NPZ(&cfg_nil_panel_node, parent->first, parent->last, origin, next, prev);
     parent->child_count--;
     for(CFG_PanelNode *c = parent->first; c != &cfg_nil_panel_node; c = c->next)
-    { c->pct_of_parent = rd_dock_allocated_fraction(c->pct_of_parent/(1.f-origin->pct_of_parent)); }
+    { c->pct_of_parent = rd_dock_remaining_fraction(c->pct_of_parent, origin->pct_of_parent, parent->child_count); }
   }
   F32 result = rd_dock_resulting_width(copy, target, area, Dir2_Invalid, inset);
   scratch_end(scratch);

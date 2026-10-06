@@ -251,4 +251,5 @@ and WM wake posting. It links the real parser, settings, mount, panel renderer,
 command routes, placement checker, snapshot refresh and retry worker. Review
 new call sites at these boundaries when extending the production amalgamation;
 otherwise they may bypass the deterministic harness adapters. The harness
-uses release arena bookkeeping so native runs fit the 8 GiB address-space cap.
+keeps debug assertions enabled while disabling only the arena inspection table
+(which reserves 256 GiB), so native runs fit the 8 GiB address-space cap.

@@ -3366,6 +3366,8 @@ rd_dock_width_from_geometry_for_view(RD_DockGeometry *geometry, CFG_Node *destin
   CFG_Node *view = moving_view;
   CFG_PanelNode *origin = cfg_panel_node_from_tree_cfg(geometry->tree.root, view->parent);
   B32 empty = origin != &cfg_nil_panel_node && view != &cfg_nil_node;
+  // move_view closes when no unfiltered tabs remain; split_panel closes
+  // only when there are no tabs at all. Mirror those distinct command rules.
   for(CFG_NodePtrNode *n = origin->tabs.first; n; n = n->next)
   {
     if(n->v != view && (dir != Dir2_Invalid || !rd_cfg_is_project_filtered(n->v))) { empty = 0; }
@@ -3384,10 +3386,11 @@ rd_dock_width_from_geometry(RD_DockGeometry *geometry, CFG_Node *destination, Di
 
 // Commands build and release their temporary tree and remeasure current size.
 internal F32
-rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir, CFG_Node *view)
+rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir, CFG_Node *view, B32 *unavailable)
 {
   Temp temp = temp_begin(arena);
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_cfg(arena, destination);
+  if(unavailable) { *unavailable = rd_window_state_from_cfg__existing(mount.owner_cfg) == &rd_nil_window_state; }
   RD_DockGeometry geometry = rd_dock_geometry_from_mount(&mount);
   F32 width = rd_dock_width_from_geometry_for_view(&geometry, destination, dir, view);
   temp_end(temp);

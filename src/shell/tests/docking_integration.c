@@ -49,7 +49,7 @@ internal F32
 integration_width(CFG_Node *destination, Dir2 dir)
 {
   Temp scratch = scratch_begin(0, 0);
-  F32 width = rd_dock_target_width(scratch.arena, destination, dir, &cfg_nil_node);
+  F32 width = rd_dock_target_width(scratch.arena, destination, dir, &cfg_nil_node, 0);
   scratch_end(scratch);
   return width;
 }
@@ -104,6 +104,41 @@ integration_drag_site(RD_WindowState *ws, CFG_Node *source, CFG_Node *destinatio
   return exists;
 }
 #define IntegrationCheck(x) do { if(!(x)) { fprintf(stderr, "FAIL integration line %d: %s\n", __LINE__, #x); failures++; } } while(0)
+// Reset the saved tree through the real config API between generated cases.
+internal CFG_Node *
+integration_reset_panels(CFG_Node *window, Axis2 axis)
+{
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
+  if(axis == Axis2_X) { cfg_node_new(rd_state->cfg, window, str8_lit("split_x")); }
+  return cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
+}
+
+internal UIShell_CmdNode *
+integration_move(CFG_Node *window, CFG_Node *source, CFG_Node *destination, Dir2 dir)
+{
+  UIShell_CmdNode *before = rd_state->cmds[0].last;
+  UIShell_RegsScope(.window = window->id, .panel = source->parent->id, .view = source->id,
+                   .dst_panel = destination->id, .dir2 = dir)
+  {
+    if(dir == Dir2_Invalid) { uishell_dispatch_tab_command(str8_lit("move_view")); }
+    else { uishell_dispatch_panel_command(str8_lit("split_panel")); }
+  }
+  return before;
+}
+
+// Source closure is queued by the production command; dispatch that command
+// rather than modelling closure in the harness.
+internal void
+integration_close_queued(UIShell_CmdNode *before)
+{
+  for(UIShell_CmdNode *n = before ? before->next : rd_state->cmds[0].first; n; n = n->next)
+  {
+    if(str8_match(n->cmd.name, str8_lit("close_panel"), 0)) UIShell_RegsScope()
+    { MemoryCopyStruct(uishell_regs(), n->cmd.regs); uishell_dispatch_panel_command(n->cmd.name); break; }
+  }
+}
+
 internal U32
 integration_display_policy(CFG_Node *window, RD_WindowState *ws)
 {
@@ -288,10 +323,7 @@ entry_point(CmdLine *cmdline)
   for(U32 boundary = 127; boundary <= 129; boundary++)
   {
     if(shape == 0 && direction == 0) { continue; }
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
-    if(axis == Axis2_X) { cfg_node_new(rd_state->cfg, window, str8_lit("split_x")); }
-    panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
+    panels = integration_reset_panels(window, axis);
     CFG_Node *origin = shape ? cfg_node_new(rd_state->cfg, panels, str8_lit("0.3")) : panels;
     CFG_Node *destination = shape ? cfg_node_new(rd_state->cfg, panels, str8_lit("0.7")) : panels;
     source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
@@ -376,10 +408,7 @@ entry_point(CmdLine *cmdline)
   for(U32 direction = 0; direction < ArrayCount(directions); direction++)
   for(U32 boundary = 127; boundary <= 129; boundary++)
   {
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
-    if(axis == Axis2_X) { cfg_node_new(rd_state->cfg, window, str8_lit("split_x")); }
-    panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
+    panels = integration_reset_panels(window, axis);
     CFG_Node *origin = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
     CFG_Node *destination = cfg_node_new(rd_state->cfg, panels, str8_lit("0.7"));
     source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
@@ -403,48 +432,32 @@ entry_point(CmdLine *cmdline)
       if(Max(0.f, round_f32(round_f32(end)-inset)-round_f32(round_f32(start)+inset)) == boundary) { break; }
     }
     B32 last_site = integration_drag_site(ws, source, destination, dir, 0);
-    if(last_site != (boundary >= 128)) { fprintf(stderr, "last axis=%u dir=%u boundary=%u pixels=%g measured=%g\n", axis, direction, boundary, integration_rect.x1, rd_dock_target_width(scratch.arena, destination, dir, source)); }
     IntegrationCheck(last_site == (boundary >= 128));
     U64 before_gen = cfg_change_gen();
-    UIShell_CmdNode *before_cmd = rd_state->cmds[0].last;
-    UIShell_RegsScope(.window = window->id, .panel = origin->id, .view = source->id,
-                     .dst_panel = destination->id, .dir2 = dir)
-    {
-      if(dir == Dir2_Invalid) { uishell_dispatch_tab_command(str8_lit("move_view")); }
-      else { uishell_dispatch_panel_command(str8_lit("split_panel")); }
-    }
+    UIShell_CmdNode *before_cmd = integration_move(window, source, destination, dir);
     IntegrationCheck((source->parent != origin) == (boundary >= 128));
     if(boundary < 128) { IntegrationCheck(cfg_change_gen() == before_gen); }
     else
     {
-      // Source closure is queued by the real command; run that same command.
-      for(UIShell_CmdNode *n = before_cmd ? before_cmd->next : rd_state->cmds[0].first; n; n = n->next)
-      {
-        if(str8_match(n->cmd.name, str8_lit("close_panel"), 0)) UIShell_RegsScope()
-        { MemoryCopyStruct(uishell_regs(), n->cmd.regs); uishell_dispatch_panel_command(n->cmd.name); break; }
-      }
+      integration_close_queued(before_cmd);
       F32 rendered = 0;
       integration_drag_site(ws, source, source->parent, Dir2_Invalid, &rendered);
-      if(rendered != boundary) { fprintf(stderr, "render axis=%u dir=%u boundary=%u rendered=%g\n", axis, direction, boundary, rendered); }
       IntegrationCheck(rendered == boundary && integration_width(source->parent, Dir2_Invalid) == rendered);
     }
   }
   // Additional removal shapes exercise sibling rescaling and nested parent
   // collapse/flattening. Prediction must equal the committed rendered body,
   // and feedback must never modify the saved tree.
-  for(U32 shape = 0; shape < 2; shape++)
+  for(U32 shape = 0; shape < 5; shape++)
   for(U32 axis = 0; axis < 2; axis++)
   for(U32 direction = 0; direction < ArrayCount(directions); direction++)
   {
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
-    if(axis == Axis2_X) { cfg_node_new(rd_state->cfg, window, str8_lit("split_x")); }
-    panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
+    panels = integration_reset_panels(window, axis);
     CFG_Node *origin = cfg_node_new(rd_state->cfg, panels, str8_lit("0.2"));
     CFG_Node *destination = cfg_node_new(rd_state->cfg, panels, str8_lit("0.5"));
     CFG_Node *extra = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
     cfg_node_new(rd_state->cfg, extra, str8_lit("terminal"));
-    if(shape)
+    if(shape == 1)
     {
       CFG_Node *container = origin;
       origin = cfg_node_new(rd_state->cfg, container, str8_lit("0.4"));
@@ -454,24 +467,37 @@ entry_point(CmdLine *cmdline)
     }
     source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
     cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
+    CFG_ID origin_id = origin->id;
+    if(shape == 2)
+    {
+      // move_view ignores project-filtered sibling tabs for source closure;
+      // split_panel retains a source with any tab. Both outcomes must match UI.
+      CFG_Node *hidden = cfg_node_new(rd_state->cfg, origin, str8_lit("terminal"));
+      cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, hidden, str8_lit("project")), str8_lit("/unselected-project"));
+      IntegrationCheck(rd_cfg_is_project_filtered(hidden));
+    }
+    if(shape >= 3)
+    {
+      // Hand-edited full/overfull source allocations recover finitely after
+      // closure, rather than divide by zero or produce negative allocations.
+      cfg_node_equip_string(rd_state->cfg, origin, shape == 3 ? str8_lit("1") : str8_lit("1.1"));
+      cfg_node_equip_string(rd_state->cfg, destination, str8_lit("0"));
+      cfg_node_equip_string(rd_state->cfg, extra, str8_lit("0"));
+    }
     integration_rect.x1 = 1200;
     Dir2 dir = directions[direction];
     U64 before_gen = cfg_change_gen();
-    F32 predicted = rd_dock_target_width(scratch.arena, destination, dir, source);
-    IntegrationCheck(predicted >= 128 && integration_drag_site(ws, source, destination, dir, 0));
+    F32 predicted = rd_dock_target_width(scratch.arena, destination, dir, source, 0);
+    IntegrationCheck(predicted >= 128);
+    if(shape < 3) { IntegrationCheck(integration_drag_site(ws, source, destination, dir, 0)); }
+    // Malformed zero-sized destinations have no reachable UI hit region;
+    // validate the production feedback checker with the measured proposal.
+    else { IntegrationCheck(rd_dock_drag_target(source, destination, predicted)); }
     IntegrationCheck(cfg_change_gen() == before_gen);
-    UIShell_CmdNode *before_cmd = rd_state->cmds[0].last;
-    UIShell_RegsScope(.window = window->id, .panel = origin->id, .view = source->id,
-                     .dst_panel = destination->id, .dir2 = dir)
-    {
-      if(dir == Dir2_Invalid) { uishell_dispatch_tab_command(str8_lit("move_view")); }
-      else { uishell_dispatch_panel_command(str8_lit("split_panel")); }
-    }
-    for(UIShell_CmdNode *n = before_cmd ? before_cmd->next : rd_state->cmds[0].first; n; n = n->next)
-    {
-      if(str8_match(n->cmd.name, str8_lit("close_panel"), 0)) UIShell_RegsScope()
-      { MemoryCopyStruct(uishell_regs(), n->cmd.regs); uishell_dispatch_panel_command(n->cmd.name); break; }
-    }
+    UIShell_CmdNode *before_cmd = integration_move(window, source, destination, dir);
+    integration_close_queued(before_cmd);
+    if(shape == 2)
+    { IntegrationCheck((cfg_node_from_id(origin_id) == &cfg_nil_node) == (dir == Dir2_Invalid)); }
     F32 rendered = 0;
     integration_drag_site(ws, source, source->parent, Dir2_Invalid, &rendered);
     IntegrationCheck(rendered == predicted);

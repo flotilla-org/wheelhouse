@@ -698,13 +698,11 @@ rd_dock_command_allowed(char *action, String8 view, RD_DockRule rule)
 internal B32
 rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, CFG_Node *destination, Dir2 dir)
 {
-  RD_DockRule rule = rd_dock_placement(view, destination, rd_dock_target_width(arena, destination, dir, view));
-  if(rule == RD_DockRule_MinimumWidth)
-  {
-    UIShell_WorkspaceMount mount = uishell_workspace_mount_from_cfg(arena, destination);
-    if(rd_window_state_from_cfg__existing(mount.owner_cfg) == &rd_nil_window_state)
-    { log_user_errorf("Docking geometry unavailable: destination has no live window state."); }
-  }
+  B32 unavailable = 0;
+  F32 width = rd_dock_target_width(arena, destination, dir, view, &unavailable);
+  RD_DockRule rule = rd_dock_placement(view, destination, width);
+  if(rule == RD_DockRule_MinimumWidth && unavailable)
+  { log_user_errorf("Docking geometry unavailable: destination has no live window state."); }
   return rd_dock_command_allowed(operation, view->string, rule);
 }
 
@@ -1357,7 +1355,7 @@ uishell_dispatch_panel_command(String8 name)
           {
             CFG_Node *cfg = child->cfg;
             F32 old_pct = child->pct_of_parent;
-            F32 new_pct = old_pct / (1.f-removed_size_pct);
+            F32 new_pct = rd_dock_remaining_fraction(old_pct, removed_size_pct, new_parent->child_count);
             cfg_node_equip_stringf(rd_state->cfg, cfg, "%f", new_pct);
           }
         }
