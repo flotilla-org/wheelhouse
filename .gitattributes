@@ -1,1 +1,3 @@
 *.sh text=auto eol=lf
+# Byte-compared against generator output by tools/test-embed-sidebar-fixture.py
+src/uishell/generated/sidebar_fixture.h text eol=lf
