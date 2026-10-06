@@ -155,7 +155,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     LifecycleCheck(!close_seen[0], "no close affordance without hover");
     LifecycleCheck(close_seen[1] && detach_drawn[1], "hovering a subject row shows detach");
     LifecycleCheck(close_seen[2] && x_drawn[2], "hovering a subjectless row shows ×");
-    LifecycleCheck(ws->chrome_section_header_frame == rd_state->frame_index, "header records the frame it hosted chrome");
+    LifecycleCheck(ws->chrome_section_header_frame == rd_state->frame_index+1, "header records the frame it hosted chrome");
     LifecycleCheck(header_button, "new-workspace is built in the Other workspaces header");
     ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] = saved_niche;
     ui_select_state(saved_ui); ui_state_release(test);

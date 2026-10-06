@@ -1738,6 +1738,7 @@ uishell_dispatch_window_command(String8 name)
         }
         if(workspace == window)
         {
+          // Detach does not apply here: the legacy workspace has no subject.
           // The window-backed workspace is the window's legacy layout payload.
           // Closing it removes that payload; window-level metadata such as
           // `label` intentionally remains attached to the window node.

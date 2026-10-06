@@ -1768,7 +1768,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         if(uishell_sidebar_section_hosts_chrome(key))
         {
           // Chrome resolution reads this next frame (ADR-0006).
-          ws->chrome_section_header_frame = rd_state->frame_index;
+          ws->chrome_section_header_frame = rd_state->frame_index+1;
           if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SectionHeader)
             UI_PrefWidth(ui_em(1.7f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("")
           { rd_chrome_build_new_workspace(split->owner_cfg); }

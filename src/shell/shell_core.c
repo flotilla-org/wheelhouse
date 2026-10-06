@@ -6683,7 +6683,7 @@ rd_window_frame(void)
         // new-workspace sits on the Other workspaces header, where its result
         // appears. that niche exists only while the sidebar drew it last
         // frame; otherwise the sidebar action row takes the button.
-        B32 section_header = ws->chrome_section_header_frame+1 >= rd_state->frame_index;
+        B32 section_header = ws->chrome_section_header_frame != 0 && ws->chrome_section_header_frame >= rd_state->frame_index;
         chrome_elements[chrome_element_count++] = (RD_ChromeElement){
           RD_ChromeElementKind_NewWorkspace, icon_button_w, 2,
           {section_header ? RD_ChromeNiche_SectionHeader : RD_ChromeNiche_SidebarActions}, 1};
