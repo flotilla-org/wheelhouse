@@ -64,10 +64,11 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
     ui_end_build();
     if(frame == 0)
     {
+      UI_Key footer_key = ui_key_from_string(short_test->root->key, str8_lit("###sidebar_footer"));
       for(UI_Box *box = short_test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, short_test->root).next)
       {
         if(str8_match(ui_box_display_string(box), str8_lit("Sections…"), 0))
-        { ui_ctx_menu_open_above(ui_key_from_string(box->parent->parent->key, str8_lit("section_restore_menu")), box->key); break; }
+        { ui_ctx_menu_open_above(ui_key_from_string(footer_key, str8_lit("section_restore_menu")), box->key); break; }
       }
     }
   }
