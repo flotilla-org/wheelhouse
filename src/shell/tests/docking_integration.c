@@ -263,6 +263,21 @@ integration_display_policy(CFG_Node *window, RD_WindowState *ws)
   }
   uishell_sidebar_retry_display(&display, window, missing.retry_at+10000);
   IntegrationCheck(missing.attempts == UIShell_DisplayRetryLimit && integration_dispatches == before_missing);
+  // Long absent identities are truncated by the shared error setter, with
+  // NUL termination on every retry even when the prior buffer is nonzero.
+  U8 long_name[2048]; MemorySet(long_name, 'x', sizeof(long_name));
+  missing = (UIShell_DisplayRestore){.name = str8(long_name, sizeof(long_name)), .desired = 1, .pending = 1};
+  cfg_node_equip_string(rd_state->cfg, missing_saved, missing.name);
+  for(U32 attempt = 1; attempt <= UIShell_DisplayRetryLimit; attempt++)
+  {
+    MemorySet(display.error, '!', sizeof(display.error));
+    uishell_sidebar_retry_display(&display, window, missing.retry_at);
+    IntegrationCheck(display.error[sizeof(display.error)-1] == 0);
+    IntegrationCheck(strnlen((char *)display.error, sizeof(display.error)) == sizeof(display.error)-1);
+    IntegrationCheck(strncmp((char *)display.error, "Sidebar display declaration unavailable: x", 41) == 0);
+    IntegrationCheck(missing.pending && missing.attempts == attempt && integration_dispatches == before_missing);
+    IntegrationCheck(str8_match(missing_saved->first->string, str8_lit("true"), 0));
+  }
   cfg_node_release(rd_state->cfg, missing_saved);
   display.display_restores = 0;
   // Retiring state while a worker is still queued must leave only the token;

@@ -541,7 +541,10 @@ uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64
       uishell_sidebar_set_error(state, message);
       scratch_end(scratch);
     }
-    else { uishell_sidebar_result(state, ok, error); }
+    else
+    {
+      uishell_sidebar_result(state, ok, error);
+    }
     uishell_sidebar_refresh(state);
     rd_request_frame();
     if(ok) { r->pending = 0; }

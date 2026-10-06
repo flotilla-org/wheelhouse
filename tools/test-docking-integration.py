@@ -33,7 +33,9 @@ cleat = args.cleat_lib.resolve()
 # entry point. This keeps the command routing and UI collaborators real.
 main = (ROOT / 'src/uishell/uishell_main.c').read_text()
 prefix = main[:main.index('internal void\nentry_point(CmdLine *cmd_line)')]
-prefix = prefix.replace('#define ARENA_TABLE_DEBUG BUILD_DEBUG', '#define ARENA_TABLE_DEBUG 0')
+arena_table_definition = '#define ARENA_TABLE_DEBUG BUILD_DEBUG'
+assert arena_table_definition in prefix, 'production arena table definition changed; review the capped harness boundary'
+prefix = prefix.replace(arena_table_definition, '#define ARENA_TABLE_DEBUG 0')
 prefix = re.sub(r'^#include "uishell/[^"]*diagnostics.c"\n', '', prefix, flags=re.M)
 prefix = prefix.replace('#include "shell/shell_inc.c"', '''
 #include "andamento.h"
