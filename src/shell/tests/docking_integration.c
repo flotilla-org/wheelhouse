@@ -383,6 +383,7 @@ entry_point(CmdLine *cmdline)
       cfg_node_equip_string(rd_state->cfg, destination, str8_lit("0.63"));
       CFG_Node *extra = cfg_node_new(rd_state->cfg, panels, str8_lit("0.1"));
       cfg_node_new(rd_state->cfg, extra, str8_lit("terminal"));
+
       U64 changed_layout_gen = cfg_change_gen();
       IntegrationCheck(integration_width(destination, dir) < 128);
       UIShell_RegsScope(.window = window->id, .panel = origin->id, .view = source->id,
@@ -415,6 +416,29 @@ entry_point(CmdLine *cmdline)
       integration_drag_site(ws, source, source->parent, Dir2_Invalid, &rendered);
       IntegrationCheck(actual == boundary && rendered == actual);
     }
+  }
+  // A last-View self split deliberately keeps its now-empty original Panel.
+  // Generate both parent axes and all directions; predicted body width must
+  // match command execution and the real renderer, without queued closure.
+  for(U32 axis = 0; axis < 2; axis++)
+  for(U32 direction = 1; direction < ArrayCount(directions); direction++)
+  {
+    panels = integration_reset_panels(window, axis);
+    CFG_Node *origin = cfg_node_new(rd_state->cfg, panels, str8_lit("0.5"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, panels, str8_lit("0.5")), str8_lit("terminal"));
+    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
+    CFG_ID origin_id = origin->id;
+    integration_rect.x1 = 1200;
+    Dir2 dir = directions[direction];
+    F32 predicted = rd_dock_target_width(scratch.arena, origin, dir, source, 0);
+    U64 before_gen = cfg_change_gen();
+    IntegrationCheck(predicted >= 128 && cfg_change_gen() == before_gen);
+    UIShell_CmdNode *before_cmd = integration_move(window, source, origin, dir);
+    integration_close_queued(before_cmd);
+    IntegrationCheck(source->parent != origin && cfg_node_from_id(origin_id) == origin);
+    F32 rendered = 0;
+    integration_drag_site(ws, source, source->parent, Dir2_Invalid, &rendered);
+    IntegrationCheck(rendered == predicted);
   }
   // Moving the last View measures insertion followed by source removal.
   // Generate both axes, every direction and inclusive minimum boundaries;
@@ -463,6 +487,10 @@ entry_point(CmdLine *cmdline)
   // Additional removal shapes exercise sibling rescaling and nested parent
   // collapse/flattening. Prediction must equal the committed rendered body,
   // and feedback must never modify the saved tree.
+  // Reproducible pseudo-random positive allocations across flat/nested trees,
+  // both axes and every direction compare the copied proposal to real commands.
+  U32 allocation_seed = 0x196206;
+  for(U32 variation = 0; variation < 8; variation++)
   for(U32 shape = 0; shape < 5; shape++)
   for(U32 axis = 0; axis < 2; axis++)
   for(U32 direction = 0; direction < ArrayCount(directions); direction++)
@@ -472,6 +500,18 @@ entry_point(CmdLine *cmdline)
     CFG_Node *destination = cfg_node_new(rd_state->cfg, panels, str8_lit("0.5"));
     CFG_Node *extra = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
     cfg_node_new(rd_state->cfg, extra, str8_lit("terminal"));
+    if(variation)
+    {
+      CFG_Node *siblings[] = {origin, destination, extra};
+      U32 weights[3], total = 0;
+      for(U32 i = 0; i < ArrayCount(weights); i++)
+      {
+        allocation_seed = allocation_seed*1664525u+1013904223u;
+        weights[i] = 200+(allocation_seed%400); total += weights[i];
+      }
+      for(U32 i = 0; i < ArrayCount(weights); i++)
+      { cfg_node_equip_stringf(rd_state->cfg, siblings[i], "%f", (F64)weights[i]/total); }
+    }
     if(shape == 1)
     {
       CFG_Node *container = origin;
@@ -499,7 +539,7 @@ entry_point(CmdLine *cmdline)
       cfg_node_equip_string(rd_state->cfg, destination, str8_lit("0"));
       cfg_node_equip_string(rd_state->cfg, extra, str8_lit("0"));
     }
-    integration_rect.x1 = 1200;
+    integration_rect = r2f32p(0, 0, 2400, 1600);
     Dir2 dir = directions[direction];
     U64 before_gen = cfg_change_gen();
     F32 predicted = rd_dock_target_width(scratch.arena, destination, dir, source, 0);
@@ -517,6 +557,7 @@ entry_point(CmdLine *cmdline)
     integration_drag_site(ws, source, source->parent, Dir2_Invalid, &rendered);
     IntegrationCheck(rendered == predicted);
   }
+  integration_rect.y1 = 480;
   // A shown target is remeasured when the drop is committed after a resize.
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
   panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));

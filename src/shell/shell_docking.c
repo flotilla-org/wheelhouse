@@ -432,6 +432,8 @@ internal F32
 rd_dock_moving_width(CFG_PanelNode *root, CFG_PanelNode *panel,
                      CFG_PanelNode *origin, Rng2F32 area, Dir2 dir, F32 inset)
 {
+  // split_panel deliberately retains an emptied source when it is also the
+  // split target; insertion-only geometry is correct for that self split.
   if(origin == &cfg_nil_panel_node || origin == panel || origin->parent == &cfg_nil_panel_node)
   { return rd_dock_resulting_width(root, panel, area, dir, inset); }
   Temp scratch = scratch_begin(0, 0);

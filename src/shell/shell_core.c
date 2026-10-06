@@ -3363,6 +3363,8 @@ rd_dock_width_from_geometry_for_view(RD_DockGeometry *geometry, CFG_Node *destin
   // A View can begin a drag midway through the panel-area build. Measure on
   // the first target query, including queries from later leaves in that frame.
   if(geometry->tree.root == 0) { *geometry = rd_dock_geometry_from_mount(geometry->mount); }
+  // Nil CFG nodes self-link; the nil panel sentinel has an empty tabs list.
+  // Thus a nil View safely selects insertion-only measurement below.
   CFG_Node *view = moving_view;
   CFG_PanelNode *origin = cfg_panel_node_from_tree_cfg(geometry->tree.root, view->parent);
   B32 empty = origin != &cfg_nil_panel_node && view != &cfg_nil_node;

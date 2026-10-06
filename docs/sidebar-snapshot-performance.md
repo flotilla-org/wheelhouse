@@ -252,10 +252,10 @@ with 1,000 warm-up frames and samples every 200 frames. It requires a complete
 Draw, font, persistent UI and shell frame arena positions may each grow at most
 one MiB above their post-warmup baseline at any sample. Independently, the RSS gate
 subtracts at most the largest single positive interval and divides the remaining
-positive increments by the remaining frame span. The allowed sustained slope is 0.5 KiB
+net growth by the remaining frame span. The allowed sustained slope is 0.5 KiB
 per frame. A single residency step therefore does not fail the gate, while a
 continuous leak contributes in every remaining interval and repeated large steps
-still fail. Negative RSS drops cannot cancel positive growth. This is not an attribution of the original step to a particular
+still fail. RSS decommit and re-residency are assessed as net memory, rather than allocation churn. This is not an attribution of the original step to a particular
 library; it separates a bounded step from sustained growth and keeps the
 app-owned storage assertion independent. The runner prints the excluded step
 and residual slope; native/GNU time logs remain uploaded even on failure.
@@ -280,3 +280,11 @@ multiple steps, app-owned arena growth with flat RSS, missing/duplicate samples,
 short windows and ineffective CPU sizing. Disabling either the slope assertion
 or the storage assertion makes the suite fail. The captured pre-fix native run
 fails the sustained-slope gate.
+
+On the pinned Linux/Xvfb release fixture, the long runs took 19.62–21.84 seconds
+at 100 issues and 75.20–78.33 seconds at 300 issues. The 1,000-issue linear
+characterization takes several minutes. Each native process has a 600-second
+timeout, and the existing CI job has a 30-minute overall timeout. The four smaller
+runs consume about 3.3 minutes; even budgeting ten minutes for each 1,000-issue
+mode leaves about 6.7 minutes for dependency/build setup in that job. Shared-runner
+speed varies; process/job timeouts and always-uploaded partial logs remain active.

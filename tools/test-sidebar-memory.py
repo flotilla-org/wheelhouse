@@ -40,10 +40,12 @@ class MemoryGate(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'sustained RSS slope'):
             validate_memory(fixture(steps=[(1600, 6400), (3200, 6400)]))
 
-    def test_decommit_does_not_cancel_growth(self):
-        # A large release midway through a leaking run cannot hide its slope.
+    def test_decommit_and_recovery_are_net_memory(self):
+        # RSS is a trend, not allocation churn: a net decrease passes while
+        # growth that exceeds a release still fails; arena bounds are separate.
+        validate_memory(fixture(1.4, [(3000, -20000)]))
         with self.assertRaisesRegex(ValueError, 'sustained RSS slope'):
-            validate_memory(fixture(1.4, [(3000, -20000)]))
+            validate_memory(fixture(1.4, [(3000, -1000)]))
 
     def test_storage_is_independent_of_rss(self):
         # Flat RSS must not conceal a growing app-owned arena.

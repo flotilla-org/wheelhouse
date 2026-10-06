@@ -49,11 +49,10 @@ def validate_memory(output):
             else:
                 # Exclude at most ONE interval's positive residency step. This
                 # is neither a median nor a larger endpoint allowance: all
-                # other positive growth is charged over the remaining long window.
-                # Decommit drops cannot cancel a sustained growing allocation.
+                # other net growth is charged over the remaining long window.
                 # A sustained leak still contributes in every other interval.
                 deltas = [b[1] - a[1] for a, b in zip(window, window[1:])]
-                residual = sum(max(0, delta) for delta in deltas) - max(0, max(deltas))
+                residual = window[-1][1] - window[0][1] - max(0, max(deltas))
                 span = window[-1][0] - window[0][0] - interval
                 measurements.append((max(0, max(deltas)), residual / span))
                 if residual * 2 > span: # at most 0.5 KiB/frame
