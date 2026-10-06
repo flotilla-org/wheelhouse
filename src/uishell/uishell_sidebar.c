@@ -873,7 +873,9 @@ uishell_sidebar_restore(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
       AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
-      if(node.state != ANDAMENTO_LIVE && node.activate != ANDAMENTO_NONE &&
+      // Inspect cannot rebind a saved workspace. Wait for a recipe rather
+      // than invalidating the snapshot on every producer heartbeat.
+      if(node.state == ANDAMENTO_LATENT && node.openable && node.activate != ANDAMENTO_NONE &&
          str8_match(kind, uishell_sidebar_string(node.entity_kind), 0) &&
          str8_match(id, uishell_sidebar_string(node.entity_id), 0))
       {
@@ -2919,6 +2921,65 @@ uishell_sidebar_diagnostics(CFG_Node *window)
          ws->root_controlled_split_selected_workspace_id == workspace->id &&
          tree.root->last->selected_tab->id == tools_id &&
          tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 2;
+
+    // A saved identity may arrive before its recipe (or lose the recipe).
+    // Repeated ingress must not turn restoration into Inspect actions that
+    // invalidate snapshots without binding the workspace. A later recipe
+    // must still restore the existing layout rather than create another one.
+    uishell_sidebar_release(state);
+    MemoryZeroStruct(state);
+    state = uishell_sidebar_init(ws);
+    String8 unavailable_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"multi\"}},\"source_id\":\"fixture\",\"set\":{},\"unset\":[\"action.primary.recipe\"]}");
+    error = 0;
+    B32 restore_ok = andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(unavailable_patch), &error);
+    restore_ok = uishell_sidebar_result(state, restore_ok, error);
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+    B32 unavailable_seen = 0;
+    for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("multi"), 0))
+      { unavailable_seen |= node.state == ANDAMENTO_LATENT && !node.openable; }
+    }
+    restore_ok = unavailable_seen && restore_ok;
+    uishell_sidebar_restore(state, &split);
+    state->inspection[0] = 0;
+    for(U64 cycle = 0; cycle < 3; cycle++)
+    {
+      error = 0;
+      B32 accepted = andamento_apply_patch_json(state->core, cycle+1, uishell_sidebar_text(unavailable_patch), &error);
+      restore_ok = uishell_sidebar_result(state, accepted, error) && restore_ok;
+      state->restored = 0; // The live ingress callback resets this flag.
+      uishell_sidebar_refresh(state);
+      AndamentoSnapshot *stable = state->snapshot;
+      uishell_sidebar_restore(state, &split);
+      restore_ok = restore_ok && state->snapshot == stable && !state->inspection[0];
+    }
+    AndamentoFact recipe = {0};
+    recipe.key = uishell_sidebar_text(str8_lit("action.primary.recipe"));
+    recipe.kind = ANDAMENTO_FACT_TEXT;
+    recipe.text = uishell_sidebar_text(str8_lit("restore-existing-only"));
+    error = 0;
+    B32 accepted = andamento_apply_entity(state->core, 4, uishell_sidebar_text(str8_lit("vessel")),
+      uishell_sidebar_text(str8_lit("multi")), uishell_sidebar_text(str8_lit("fixture")), &recipe, 1, &error);
+    restore_ok = uishell_sidebar_result(state, accepted, error) && restore_ok;
+    state->restored = 0;
+    uishell_sidebar_refresh(state);
+    uishell_sidebar_restore(state, &split);
+    B32 recipe_restored = 0;
+    for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("multi"), 0))
+      { recipe_restored |= node.state == ANDAMENTO_LIVE && node.workspace_id == workspace->id; }
+    }
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
+    restore_ok = restore_ok && recipe_restored && split.inventory.count == before+1 &&
+                 tree.root->last->selected_tab->id == tools_id;
+    fprintf(stderr, "Sidebar unavailable restore diagnostics: %s\n", restore_ok ? "passed" : "FAILED");
+    ok = restore_ok && ok;
   }
   ok = markers_ok && ok;
   ok = ok && selection_ok && coverage_ok;
