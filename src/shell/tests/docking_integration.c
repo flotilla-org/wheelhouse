@@ -49,7 +49,7 @@ internal F32
 integration_width(CFG_Node *destination, Dir2 dir)
 {
   Temp scratch = scratch_begin(0, 0);
-  F32 width = rd_dock_target_width(scratch.arena, destination, dir);
+  F32 width = rd_dock_target_width(scratch.arena, destination, dir, &cfg_nil_node);
   scratch_end(scratch);
   return width;
 }
@@ -212,6 +212,24 @@ integration_display_policy(CFG_Node *window, RD_WindowState *ws)
   uishell_sidebar_retry_display(&display, window, retry->retry_at);
   IntegrationCheck(retry->pending && str8_match(value->first->string,
                    initial ? str8_lit("true") : str8_lit("false"), 0));
+  // A declaration disappearing from a refreshed snapshot names its identity
+  // on every bounded attempt, preserves saved intent and stops dispatching.
+  UIShell_DisplayRestore missing = {.name = str8_lit("missing-display-declaration"), .desired = 1, .pending = 1};
+  CFG_Node *missing_saved = cfg_node_new(rd_state->cfg, saved, missing.name);
+  cfg_node_new(rd_state->cfg, missing_saved, str8_lit("true"));
+  display.display_restores = &missing;
+  U32 before_missing = integration_dispatches;
+  for(U32 attempt = 1; attempt <= UIShell_DisplayRetryLimit; attempt++)
+  {
+    uishell_sidebar_retry_display(&display, window, missing.retry_at);
+    IntegrationCheck(missing.attempts == attempt && missing.pending);
+    IntegrationCheck(strstr((char *)display.error, "missing-display-declaration") != 0);
+    IntegrationCheck(str8_match(missing_saved->first->string, str8_lit("true"), 0));
+  }
+  uishell_sidebar_retry_display(&display, window, missing.retry_at+10000);
+  IntegrationCheck(missing.attempts == UIShell_DisplayRetryLimit && integration_dispatches == before_missing);
+  cfg_node_release(rd_state->cfg, missing_saved);
+  display.display_restores = 0;
   // Retiring state while a worker is still queued must leave only the token;
   // callbacks after arena/core release cannot touch the retired sidebar.
   cfg_node_new_replace(rd_state->cfg, value, initial ? str8_lit("true") : str8_lit("false"));
@@ -351,6 +369,113 @@ entry_point(CmdLine *cmdline)
       IntegrationCheck(actual == boundary && rendered == actual);
     }
   }
+  // Moving the last View measures insertion followed by source removal.
+  // Generate both axes, every direction and inclusive minimum boundaries;
+  // compare feedback and refusal with the final production-rendered body.
+  for(U32 axis = 0; axis < 2; axis++)
+  for(U32 direction = 0; direction < ArrayCount(directions); direction++)
+  for(U32 boundary = 127; boundary <= 129; boundary++)
+  {
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
+    if(axis == Axis2_X) { cfg_node_new(rd_state->cfg, window, str8_lit("split_x")); }
+    panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
+    CFG_Node *origin = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
+    CFG_Node *destination = cfg_node_new(rd_state->cfg, panels, str8_lit("0.7"));
+    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
+    cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
+    Dir2 dir = directions[direction];
+    // With two siblings: a center move fills the root; matching-axis
+    // insertion allocates 1/3 then removes the source's serialized 1/5,
+    // leaving 5/12. Cross-axis bisection fills the root's width (Y), or half (X).
+    F32 fraction = dir == Dir2_Invalid ? 1.f :
+      axis2_from_dir2(dir) == Axis2_X ? (axis == Axis2_X ? 0.416666f : 0.5f) : 1.f;
+    F32 inset = 0;
+    UIShell_RegsScope(.window = window->id, .panel = 0, .view = 0, .tab = 0)
+    { inset = rd_panel_inset_px(rd_font_size()); }
+    for(U32 pixels = 100; pixels < 1600; pixels++)
+    {
+      integration_rect.x1 = pixels;
+      F32 edge = rd_window_edge_inset_px(ws);
+      F32 start = edge;
+      if(dir == Dir2_Right) { start += (pixels-2*edge)*(1-fraction); }
+      F32 end = start+(pixels-2*edge)*fraction;
+      if(Max(0.f, round_f32(round_f32(end)-inset)-round_f32(round_f32(start)+inset)) == boundary) { break; }
+    }
+    B32 last_site = integration_drag_site(ws, source, destination, dir, 0);
+    if(last_site != (boundary >= 128)) { fprintf(stderr, "last axis=%u dir=%u boundary=%u pixels=%g measured=%g\n", axis, direction, boundary, integration_rect.x1, rd_dock_target_width(scratch.arena, destination, dir, source)); }
+    IntegrationCheck(last_site == (boundary >= 128));
+    U64 before_gen = cfg_change_gen();
+    UIShell_CmdNode *before_cmd = rd_state->cmds[0].last;
+    UIShell_RegsScope(.window = window->id, .panel = origin->id, .view = source->id,
+                     .dst_panel = destination->id, .dir2 = dir)
+    {
+      if(dir == Dir2_Invalid) { uishell_dispatch_tab_command(str8_lit("move_view")); }
+      else { uishell_dispatch_panel_command(str8_lit("split_panel")); }
+    }
+    IntegrationCheck((source->parent != origin) == (boundary >= 128));
+    if(boundary < 128) { IntegrationCheck(cfg_change_gen() == before_gen); }
+    else
+    {
+      // Source closure is queued by the real command; run that same command.
+      for(UIShell_CmdNode *n = before_cmd ? before_cmd->next : rd_state->cmds[0].first; n; n = n->next)
+      {
+        if(str8_match(n->cmd.name, str8_lit("close_panel"), 0)) UIShell_RegsScope()
+        { MemoryCopyStruct(uishell_regs(), n->cmd.regs); uishell_dispatch_panel_command(n->cmd.name); break; }
+      }
+      F32 rendered = 0;
+      integration_drag_site(ws, source, source->parent, Dir2_Invalid, &rendered);
+      if(rendered != boundary) { fprintf(stderr, "render axis=%u dir=%u boundary=%u rendered=%g\n", axis, direction, boundary, rendered); }
+      IntegrationCheck(rendered == boundary && integration_width(source->parent, Dir2_Invalid) == rendered);
+    }
+  }
+  // Additional removal shapes exercise sibling rescaling and nested parent
+  // collapse/flattening. Prediction must equal the committed rendered body,
+  // and feedback must never modify the saved tree.
+  for(U32 shape = 0; shape < 2; shape++)
+  for(U32 axis = 0; axis < 2; axis++)
+  for(U32 direction = 0; direction < ArrayCount(directions); direction++)
+  {
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
+    if(axis == Axis2_X) { cfg_node_new(rd_state->cfg, window, str8_lit("split_x")); }
+    panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
+    CFG_Node *origin = cfg_node_new(rd_state->cfg, panels, str8_lit("0.2"));
+    CFG_Node *destination = cfg_node_new(rd_state->cfg, panels, str8_lit("0.5"));
+    CFG_Node *extra = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
+    cfg_node_new(rd_state->cfg, extra, str8_lit("terminal"));
+    if(shape)
+    {
+      CFG_Node *container = origin;
+      origin = cfg_node_new(rd_state->cfg, container, str8_lit("0.4"));
+      CFG_Node *keep = cfg_node_new(rd_state->cfg, container, str8_lit("0.6"));
+      for(U32 child = 0; child < 2; child++)
+      { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, keep, str8_lit("0.5")), str8_lit("terminal")); }
+    }
+    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
+    cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
+    integration_rect.x1 = 1200;
+    Dir2 dir = directions[direction];
+    U64 before_gen = cfg_change_gen();
+    F32 predicted = rd_dock_target_width(scratch.arena, destination, dir, source);
+    IntegrationCheck(predicted >= 128 && integration_drag_site(ws, source, destination, dir, 0));
+    IntegrationCheck(cfg_change_gen() == before_gen);
+    UIShell_CmdNode *before_cmd = rd_state->cmds[0].last;
+    UIShell_RegsScope(.window = window->id, .panel = origin->id, .view = source->id,
+                     .dst_panel = destination->id, .dir2 = dir)
+    {
+      if(dir == Dir2_Invalid) { uishell_dispatch_tab_command(str8_lit("move_view")); }
+      else { uishell_dispatch_panel_command(str8_lit("split_panel")); }
+    }
+    for(UIShell_CmdNode *n = before_cmd ? before_cmd->next : rd_state->cmds[0].first; n; n = n->next)
+    {
+      if(str8_match(n->cmd.name, str8_lit("close_panel"), 0)) UIShell_RegsScope()
+      { MemoryCopyStruct(uishell_regs(), n->cmd.regs); uishell_dispatch_panel_command(n->cmd.name); break; }
+    }
+    F32 rendered = 0;
+    integration_drag_site(ws, source, source->parent, Dir2_Invalid, &rendered);
+    IntegrationCheck(rendered == predicted);
+  }
   // A shown target is remeasured when the drop is committed after a resize.
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
   panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
@@ -375,6 +500,8 @@ entry_point(CmdLine *cmdline)
   // A destination with no live window reports unavailable geometry explicitly.
   CFG_Node *unopened = cfg_node_new(rd_state->cfg, user, str8_lit("window"));
   CFG_Node *unopened_panel = cfg_node_new(rd_state->cfg, unopened, str8_lit("panels"));
+  CFG_Node *unopened_origin = cfg_node_new(rd_state->cfg, unopened_panel, str8_lit("0.5"));
+  unopened_panel = cfg_node_new(rd_state->cfg, unopened_panel, str8_lit("0.5"));
   UIShell_WorkspaceMount absent_mount = uishell_workspace_mount_from_cfg(scratch.arena, unopened_panel);
   log_scope_begin();
   rd_drag_begin(UIShell_ContextRegSlot_View);
@@ -383,12 +510,20 @@ entry_point(CmdLine *cmdline)
   LogScopeResult drag_log = log_scope_end(scratch.arena);
   // Active-drag geometry without window state is silent, and zero measured.
   IntegrationCheck(dim_2f32(absent_geometry.area).x == 0 && drag_log.strings[LogMsgKind_UserError].size == 0);
+  CFG_Node *unopened_source = cfg_node_new(rd_state->cfg, unopened_origin, str8_lit("scroll_region_fixture"));
   log_scope_begin();
-  IntegrationCheck(rd_dock_target_width(scratch.arena, unopened_panel, Dir2_Invalid) == 0);
+  IntegrationCheck(!rd_dock_move_allowed(scratch.arena, "move", unopened_source, unopened_panel, Dir2_Invalid));
   LogScopeResult missing_log = log_scope_end(scratch.arena);
   String8 missing_reason = str8_lit("destination has no live window state");
   IntegrationCheck(str8_find_needle(missing_log.strings[LogMsgKind_UserError], 0, missing_reason, 0) !=
                    missing_log.strings[LogMsgKind_UserError].size);
+  // Zero-minimum commands into an unopened host succeed without an error.
+  CFG_Node *unconstrained = cfg_node_new(rd_state->cfg, unopened_origin, str8_lit("terminal"));
+  log_scope_begin();
+  UIShell_RegsScope(.window = window->id, .panel = unopened_origin->id, .view = unconstrained->id, .dst_panel = unopened_panel->id)
+  { uishell_dispatch_tab_command(str8_lit("move_view")); }
+  LogScopeResult accepted_log = log_scope_end(scratch.arena);
+  IntegrationCheck(unconstrained->parent == unopened_panel && accepted_log.strings[LogMsgKind_UserError].size == 0);
   cfg_node_release(rd_state->cfg, unopened);
   // Unrendered floating hosts retain the declared checker: zero-minimum
   // ordinary Views fit; the 128px fixture refuses measured-zero placement.

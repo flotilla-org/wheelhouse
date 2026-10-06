@@ -2,6 +2,10 @@
 """Compile real shell command/drag/restore code with OS and FFI fault boundaries.
 
 Pass the built Andamento and Cleat library directories; no display is required.
+Interception boundaries: WM client rectangle, Andamento action dispatch, clock,
+worker creation/detach/sleep, and WM wake posting. Review new production call
+sites at these boundaries; parser, settings, mounts, renderer, commands,
+checker, snapshot refresh and retry worker remain real linked collaborators.
 """
 import argparse
 import os
@@ -56,7 +60,8 @@ internal U32 integration_dispatch(Andamento *core, const AndamentoSnapshot *snap
 source = BUILD / 'docking_integration.c'
 source.write_text(prefix + '\n#include "shell/tests/docking_integration.c"\n')
 command = shlex.split(os.environ.get('CC', 'clang')) + [
-    '-g', '-O0', '-D_GNU_SOURCE', '-DBUILD_DEBUG=1', '-DNO_ASYNC=1',
+    # Release arena bookkeeping avoids the debug table's 256 GiB reservation.
+    '-g', '-O0', '-D_GNU_SOURCE', '-DBUILD_DEBUG=0', '-DNO_ASYNC=1',
     '-DWM_STUB=1', '-DR_BACKEND=0', '-DFP_BACKEND=0', '-ffunction-sections', '-fdata-sections',
     '-Wno-initializer-overrides', '-Wno-unused-value',
     '-Wno-incompatible-pointer-types-discards-qualifiers',
@@ -66,4 +71,4 @@ command = shlex.split(os.environ.get('CC', 'clang')) + [
     '-L'+str(cleat), '-lcleat', '-Wl,-rpath,'+str(cleat), '-lpthread', '-lm', '-ldl',
     '-Wl,--gc-sections', '-o', str(BUILD/'docking_integration')]
 subprocess.run(command, check=True)
-subprocess.run([str(BUILD/'docking_integration')], cwd=ROOT, check=True, timeout=45)
+subprocess.run([str(BUILD/'docking_integration'), '--async_thread_count:1'], cwd=ROOT, check=True, timeout=45)

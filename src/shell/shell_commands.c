@@ -696,6 +696,19 @@ rd_dock_command_allowed(char *action, String8 view, RD_DockRule rule)
 }
 
 internal B32
+rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, CFG_Node *destination, Dir2 dir)
+{
+  RD_DockRule rule = rd_dock_placement(view, destination, rd_dock_target_width(arena, destination, dir, view));
+  if(rule == RD_DockRule_MinimumWidth)
+  {
+    UIShell_WorkspaceMount mount = uishell_workspace_mount_from_cfg(arena, destination);
+    if(rd_window_state_from_cfg__existing(mount.owner_cfg) == &rd_nil_window_state)
+    { log_user_errorf("Docking geometry unavailable: destination has no live window state."); }
+  }
+  return rd_dock_command_allowed(operation, view->string, rule);
+}
+
+internal B32
 uishell_dispatch_tab_command(String8 name)
 {
   B32 result = 1;
@@ -942,7 +955,7 @@ uishell_dispatch_tab_command(String8 name)
     CFG_Node *prev_tab = cfg_node_from_id(uishell_regs()->prev_tab);
     CFG_Node *src_panel = view->parent;
     CFG_Node *dst_panel = cfg_node_from_id(uishell_regs()->dst_panel);
-    if(dst_panel != &cfg_nil_node && prev_tab != view && rd_dock_command_allowed("move", view->string, rd_dock_placement(view, dst_panel, rd_dock_target_width(scratch.arena, dst_panel, Dir2_Invalid))))
+    if(dst_panel != &cfg_nil_node && prev_tab != view && rd_dock_move_allowed(scratch.arena, "move", view, dst_panel, Dir2_Invalid))
     {
       cfg_node_unhook(rd_state->cfg, src_panel, view);
       cfg_node_insert_child(rd_state->cfg, dst_panel, prev_tab, view);
@@ -1074,8 +1087,7 @@ uishell_dispatch_panel_command(String8 name)
         split_panel = cfg_node_from_id(uishell_regs()->panel);
       }
       CFG_Node *moving_view = cfg_node_from_id(uishell_regs()->view);
-      if(do_dragdrop_split && !rd_dock_command_allowed("split with", moving_view->string,
-          rd_dock_placement(moving_view, split_panel, rd_dock_target_width(scratch.arena, split_panel, split_dir))))
+      if(do_dragdrop_split && !rd_dock_move_allowed(scratch.arena, "split with", moving_view, split_panel, split_dir))
       { scratch_end(scratch); return 1; }
       CFG_Node *new_panel_cfg = &cfg_nil_node;
       UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, split_panel);

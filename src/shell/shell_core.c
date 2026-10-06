@@ -3358,25 +3358,38 @@ rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
 }
 
 internal F32
-rd_dock_width_from_geometry(RD_DockGeometry *geometry, CFG_Node *destination, Dir2 dir)
+rd_dock_width_from_geometry_for_view(RD_DockGeometry *geometry, CFG_Node *destination, Dir2 dir, CFG_Node *moving_view)
 {
   // A View can begin a drag midway through the panel-area build. Measure on
   // the first target query, including queries from later leaves in that frame.
   if(geometry->tree.root == 0) { *geometry = rd_dock_geometry_from_mount(geometry->mount); }
-  return rd_dock_resulting_width(geometry->tree.root,
-    cfg_panel_node_from_tree_cfg(geometry->tree.root, destination), geometry->area, dir, geometry->inset);
+  CFG_Node *view = moving_view;
+  CFG_PanelNode *origin = cfg_panel_node_from_tree_cfg(geometry->tree.root, view->parent);
+  B32 empty = origin != &cfg_nil_panel_node && view != &cfg_nil_node;
+  for(CFG_NodePtrNode *n = origin->tabs.first; n; n = n->next)
+  {
+    if(n->v != view && (dir != Dir2_Invalid || !rd_cfg_is_project_filtered(n->v))) { empty = 0; }
+  }
+  return rd_dock_moving_width(geometry->tree.root,
+    cfg_panel_node_from_tree_cfg(geometry->tree.root, destination),
+    empty ? origin : &cfg_nil_panel_node, geometry->area, dir, geometry->inset);
+}
+
+internal F32
+rd_dock_width_from_geometry(RD_DockGeometry *geometry, CFG_Node *destination, Dir2 dir)
+{
+  CFG_Node *view = rd_drag_is_active() ? cfg_node_from_id(rd_state->drag_drop_regs->view) : &cfg_nil_node;
+  return rd_dock_width_from_geometry_for_view(geometry, destination, dir, view);
 }
 
 // Commands build and release their temporary tree and remeasure current size.
 internal F32
-rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir)
+rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir, CFG_Node *view)
 {
   Temp temp = temp_begin(arena);
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_cfg(arena, destination);
-  if(rd_window_state_from_cfg__existing(mount.owner_cfg) == &rd_nil_window_state)
-  { log_user_errorf("Docking geometry unavailable: destination has no live window state."); }
   RD_DockGeometry geometry = rd_dock_geometry_from_mount(&mount);
-  F32 width = rd_dock_width_from_geometry(&geometry, destination, dir);
+  F32 width = rd_dock_width_from_geometry_for_view(&geometry, destination, dir, view);
   temp_end(temp);
   return width;
 }

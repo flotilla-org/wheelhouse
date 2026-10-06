@@ -145,4 +145,7 @@ internal void rd_dock_restore_window(CFG_State *state, CFG_Node *window);
 internal F32 rd_dock_resulting_width(CFG_PanelNode *root, CFG_PanelNode *panel,
                                     Rng2F32 area, Dir2 dir, F32 inset);
 
+internal F32 rd_dock_moving_width(CFG_PanelNode *root, CFG_PanelNode *panel,
+                                 CFG_PanelNode *origin, Rng2F32 area, Dir2 dir, F32 inset);
+
 #endif

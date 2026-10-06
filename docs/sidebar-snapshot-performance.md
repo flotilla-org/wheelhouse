@@ -119,10 +119,12 @@ The runner caps every process, saves raw logs under `build/sidebar-benchmark`,
 checks bounded RSS at each size, and stops immediately on a failure. An alternative
 GNU time path can be provided with `--time`; increase `--timeout` on slower hosts.
 Timeouts terminate the entire process group and preserve partial logs; `--sizes 100 300` is a shorter run.
-Automating the full memory benchmark in CI is tracked in
-[Wheelhouse #199](https://github.com/flotilla-org/wheelhouse/issues/199); the existing
-CI native sidebar diagnostics already cover label correctness.
-Release mode is necessary: the debug arena inspection table reserves 256 GiB.
+The governor-applied `sidebar-memory.yml` workflow runs this benchmark on a
+weekly schedule and through `workflow_dispatch`, independently of PR gates.
+It builds a release binary, runs 100 → 300 → 1,000 issues under Xvfb, and
+retains complete or partial logs (including GNU time peak RSS) on failure.
+The runner enforces the 8 GiB cap and RSS plateau before increasing the catalog;
+there is no absolute timing threshold on shared runners.
 
 Native context diagnostics cover generated hash collisions, duplicate placements,
 section exclusion, first empty labels, missing/empty identities, empty snapshots,
