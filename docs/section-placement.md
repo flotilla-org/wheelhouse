@@ -30,8 +30,15 @@ older Wheelhouse used the presence of the saved host to prevent reopening
 them. Regions first declared on later updates are new inventory ids and appear
 normally. Reset To Default Panel Layout (and the compact/simple variants)
 clears section positions and closes at the root Controlled Split, restoring
-current hints. Child Workspace layouts keep their own ownership. Reopening
-individual closed sections is deferred to #183.
+current hints. Child Workspace layouts keep their own ownership. The persistent sidebar
+footer's Sections menu lists declarations without a View at this level. Restore
+clears that declaration's closed record and uses the shared placement checker
+and current host hint. An existing docked or floating View is never duplicated.
+The restored panel receives a sibling share, preserving the other panels'
+relative allocations and lifting a merged leaf's existing tabs when needed.
+The menu remains available when every fleet section, including Other workspaces,
+is closed. A missing snapshot disables restoration without changing the saved
+arrangement.
 
 Run `python tools/test-section-placement.py` after building for the headless
 native lifecycle scenarios and KDL source-integrity check. These exercise the

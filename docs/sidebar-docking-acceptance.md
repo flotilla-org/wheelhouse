@@ -33,8 +33,14 @@ startup failure cannot save an empty host. Regions added by later templates are
 not inserted into an existing saved arrangement; placement hints and migration
 policy remain #162's work.
 
-Restoring intentionally closed sections is the human-requested follow-up #183.
-Consistent movement affordances for section headers and tabs are #184. Failed
+The persistent footer's Sections menu restores intentionally closed sections
+(#183); it remains outside the saved panels when all of them are closed.
+Singleton section headers, compact tabs and ordinary tabs share the left-side
+dotted grip and ten-point drag threshold (#184). The operator accepted the grips
+in the 2026-10-06 kiwi review. Restored sections retain their declared header
+controls. Protected chips use horizontal scrolling and reveal keyboard focus
+when Tab/Shift-Tab enters a clipped chip or overflow button (#174). At widths
+below the normal name budget, the name gives space to the chip viewport. Failed
 display-value restore reconciliation is tracked separately in #185.
 
 Boolean display controls use the declared glyph and tooltip label. A checked

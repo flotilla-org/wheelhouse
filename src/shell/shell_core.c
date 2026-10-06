@@ -3864,13 +3864,13 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
               TabTask *t = push_array(scratch.arena, TabTask, 1);
               t->tab = tab;
               t->fstrs = rd_title_fstrs_from_cfg(scratch.arena, tab, 0);
-              F32 tab_width_target = dr_dim_from_fstrs(ui_top_tab_size(), &t->fstrs).x + tab_close_width_px + ui_top_font_size()*1.f;
+              F32 tab_width_target = dr_dim_from_fstrs(ui_top_tab_size(), &t->fstrs).x + tab_close_width_px + ui_top_font_size()*2.5f;
               if(plan->presentation == RD_DockPresentation_Tabs && tab_is_selected && panel_tree.focused == panel)
               {
                 tab_width_target += tab_close_width_px;
               }
               if(plan->presentation == RD_DockPresentation_CompactTabs)
-              { max_tab_width_px = Max(tab_close_width_px, (dim_2f32(plan->tab_bar_rect).x-plan->tab_bar_vheight-tab_gap_px*(panel->tabs.count+1))/Max(1, panel->tabs.count)); }
+              { max_tab_width_px = Max(tab_close_width_px+ui_top_font_size()*1.5f, (dim_2f32(plan->tab_bar_rect).x-plan->tab_bar_vheight-tab_gap_px*(panel->tabs.count+1))/Max(1, panel->tabs.count)); }
               tab_width_target = Min(max_tab_width_px, tab_width_target);
               t->tab_width = floor_f32(ui_anim(ui_key_from_stringf(ui_key_zero(), "tab_width_%p", tab), tab_width_target, .initial = reset ? tab_width_target : 0, .rate = rd_state->menu_animation_rate));
               SLLQueuePush(plan->first_tab_task, plan->last_tab_task, t);
@@ -4586,7 +4586,13 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                   {
                     UI_WidthFill UI_Row
                     {
-                      ui_spacer(ui_em(0.5f, 1.f));
+                      UI_PrefWidth(ui_em(1.5f, 1))
+                      {
+                        UI_Signal grip = uishell_sidebar_grip(str8_lit("tab_drag"), str8_lit("Drag tab"));
+                        if(ui_pressed(grip)) { uishell_cmd("focus_tab"); uishell_cmd("focus_panel"); }
+                        if(ui_dragging(grip) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
+                        { rd_drag_begin(UIShell_ContextRegSlot_View); }
+                      }
                       UI_PrefWidth(ui_text_dim(10, 0))
                       {
                         UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());

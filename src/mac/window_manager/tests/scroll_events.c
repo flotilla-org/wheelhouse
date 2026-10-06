@@ -15,9 +15,10 @@ entry_point(CmdLine *cmdline)
   @autoreleasepool
   {
     for(U32 precise = 0; precise < 2; precise += 1)
+    for(U32 horizontal = 0; horizontal < 2; horizontal += 1)
     {
       wm_get_events(scratch.arena, 0);
-      CGEventRef cg = CGEventCreateScrollWheelEvent(0, precise ? kCGScrollEventUnitPixel : kCGScrollEventUnitLine, 1, 1);
+      CGEventRef cg = CGEventCreateScrollWheelEvent(0, precise ? kCGScrollEventUnitPixel : kCGScrollEventUnitLine, 2, horizontal ? 0 : 1, horizontal ? 1 : 0);
       NSEvent *native = [NSEvent eventWithCGEvent:cg];
       [NSApp postEvent:native atStart:NO];
       WM_EventList translated = wm_get_events(scratch.arena, 0);
@@ -27,7 +28,8 @@ entry_point(CmdLine *cmdline)
         if(e->kind == WM_EventKind_Scroll)
         {
           count += 1;
-          Check(e->scroll_is_precise == precise && e->delta.y == -(F32)[native scrollingDeltaY],
+          Check(e->scroll_is_precise == precise && e->delta.y == -(F32)[native scrollingDeltaY] &&
+                e->delta.x == -(F32)[native scrollingDeltaX],
                 "AppKit scroll units and distance survive WM translation");
         }
       }

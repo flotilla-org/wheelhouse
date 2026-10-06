@@ -78,7 +78,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   }
   ws->sidebar = &fixture;
   ui_select_state(test);
-  F32 widths[] = {240, 320, 600};
+  F32 widths[] = {90, 140, 240, 320, 600};
   for(U64 w = 0; w < ArrayCount(widths); w++)
   {
     F32 status_x = 0;
@@ -140,6 +140,64 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
         fprintf(stderr, "FAIL chip status geometry: width %g phase %llu status [%g,%g], original %g row end %g\n",
           widths[w], (unsigned long long)phase, status->rect.x0, status->rect.x1, status_x, row->rect.x1);
         ok = 0;
+      }
+      if(phase == 0)
+      {
+        UI_Box *viewport = &ui_nil_box, *first = &ui_nil_box, *last = &ui_nil_box;
+        for(UI_Box *box = row; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, row).next)
+        {
+          if(box->flags & UI_BoxFlag_ViewScrollX) { viewport = box; }
+        }
+        for(UI_Box *box = viewport->first; !ui_box_is_nil(box); box = box->next)
+        {
+          String8 label = ui_box_display_string(box->first);
+          if(box->flags & UI_BoxFlag_Clickable &&
+             (str8_match(label, str8_lit("漢!281"), 0) || str8_match(label, str8_lit("c!1000"), 0)))
+          { if(ui_box_is_nil(first)) { first = box; } last = box; }
+        }
+        UI_Box *nav = viewport;
+        while(!ui_box_is_nil(nav) && !(nav->flags & UI_BoxFlag_DefaultFocusNav)) { nav = nav->parent; }
+        if(ui_box_is_nil(first) || ui_box_is_nil(nav) || dim_2f32(viewport->rect).x <= 0)
+        { ok = 0; fprintf(stderr, "FAIL chip navigation viewport at width %g\n", widths[w]); }
+        else
+        {
+          UI_Key last_key = last->key;
+          nav->default_nav_focus_next_hot_key = first->key;
+          UI_Box *body = viewport->parent;
+          while(!ui_box_is_nil(body) && !(body->flags & UI_BoxFlag_ViewScrollY)) { body = body->parent; }
+          F32 body_offset = body->view_off_target.y;
+          for(U32 frame = 0; frame < 14; frame++)
+          {
+            UI_IconInfo icons = ws->ui->icon_info;
+            UI_AnimationInfo animation = {.scroll_animation_rate = 1};
+            UI_EventList events = {0};
+            UI_EventNode event = {0};
+            // Native Tab navigation passes through ui_begin_build, rather than
+            // directly assigning the final focus or offset under test.
+            if(frame > 0 && frame < 5 && !ui_key_match(nav->default_nav_focus_hot_key, last_key))
+            { event.v = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Tab}; }
+            if(frame == 10)
+            { event.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(viewport->rect), .delta_2f32 = {-1000, 0}, .scroll_is_precise = 1}; }
+            if(event.v.kind != UI_EventKind_Null) { events.first = events.last = &event; events.count = 1; }
+            ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+            ui_state->mouse = center_2f32(viewport->rect);
+            UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+            { uishell_sidebar_ui(r2f32p(0, 0, frame >= 6 ? Max(80.f, widths[w]-30.f) : widths[w], 900), split); }
+            ui_end_build();
+            if(frame == 9)
+            {
+              F32 visible = Min(dim_2f32(last->rect).x, dim_2f32(viewport->rect).x);
+              if(!ui_key_match(nav->default_nav_focus_hot_key, last_key) ||
+                 Min(last->rect.x1, viewport->rect.x1)-Max(last->rect.x0, viewport->rect.x0) < visible-1)
+              { ok = 0; fprintf(stderr, "FAIL Tab chip reveal at width %g: focus=%d chip=[%g,%g] viewport=[%g,%g] offset=%g target=%g\n", widths[w], ui_key_match(nav->default_nav_focus_hot_key, last_key), last->rect.x0, last->rect.x1, viewport->rect.x0, viewport->rect.x1, viewport->view_off.x, viewport->view_off_target.x); }
+            }
+            if(frame == 12 && (viewport->view_off_target.x != 0 || viewport->view_off.x != 0))
+            { ok = 0; fprintf(stderr, "FAIL precise horizontal chip scroll at width %g\n", widths[w]); }
+          }
+          if(body->view_off_target.y != body_offset)
+          { ok = 0; fprintf(stderr, "FAIL horizontal chip scroll changed outer offset\n"); }
+          nav->default_nav_focus_next_hot_key = ui_key_zero();
+        }
       }
       if(phase < 2)
       {
@@ -237,6 +295,6 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   ui_select_state(saved_ui); ui_state_release(test);
   uishell_sidebar_release(&fixture);
   scratch_end(scratch);
-  fprintf(stderr, "Chip sidebar diagnostics: %s (240/320/600px, latent/pending/removed, fixed status, ended precedence)\n", ok ? "passed" : "FAILED");
+  fprintf(stderr, "Chip sidebar diagnostics: %s (90/140/240/320/600px, Tab reveal, precise horizontal scroll, latent/pending/removed, fixed status, ended precedence)\n", ok ? "passed" : "FAILED");
   return ok;
 }

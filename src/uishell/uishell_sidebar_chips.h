@@ -40,7 +40,12 @@ uishell_chip_layout(float width, const float names[3], float minimum_name,
   }
   // If attention alone exceeds the viewport, retain it in a horizontally
   // scrollable chip area. It must not displace the trailing status slot.
+  // At widths below the normal name floor, give the chip viewport room to
+  // scroll. Retaining a name budget here previously made it zero pixels wide.
+  if(width <= name && total > 0) { name = 0; }
   float available = width > name ? width-name : 0;
+  if(total > available && available < overflow_width)
+  { available = width < overflow_width ? width : overflow_width; }
   result.chip_width = total < available ? total : available;
   result.content_width = total;
   result.name_width = width > result.chip_width ? width-result.chip_width : 0;

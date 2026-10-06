@@ -32,8 +32,9 @@ placeholder; its ordinary section Close control removes the area. Copied or
 restored layouts reconcile duplicate pins within the owning window.
 
 A pinned card whose subject disappears remains visible with “No longer present”.
-The proposed policy retains ended cards until explicitly closed. The acceptance
-review must record whether to keep that policy or introduce a timeout.
+On 2026-10-06, the operator chose to retain ended cards until explicitly closed
+in the #183/#184/#174 polish review (#202). No timeout applies, including after
+restart.
 
 Clicking a transient card still keeps it open until Escape or an outside click.
 Detached cards keep their placement when Escape, outside clicks or window focus
@@ -59,8 +60,8 @@ tree, close a pin, and restart with the same disposable profile.
 
 The operator accepted the revised Near styling and confirmed the workspace
 section drop to the top of the sidebar and pinned-card spacing at `10459f5`.
-Broader placement acceptance and the ended-pin timeout choice remain with the
-operator; final settlement waits for the governor's relayed answer.
+Broader placement acceptance remains with the operator. The operator selected
+retention until explicit close on 2026-10-06 (#202).
 
 ## Automated evidence
 
