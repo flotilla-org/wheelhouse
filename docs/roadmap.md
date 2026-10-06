@@ -1,6 +1,6 @@
 # Wheelhouse roadmap
 
-Current as of 4 October 2026. This page is the entry point for Wheelhouse's
+Current as of 6 October 2026. This page is the entry point for Wheelhouse's
 direction and work order. [Map issue #17](https://github.com/flotilla-org/wheelhouse/issues/17)
 holds the broader destination and decisions; the linked issues hold acceptance
 criteria. The design and validation notes below explain the current implementation.
@@ -23,53 +23,70 @@ presentation choices over stable entity and workspace identities.
 
 ## Landed since the previous roadmap
 
-The toolbar breadcrumb (#47), standing project-role actions (#48), and complete
-project repository membership (Flotilla #1897) have landed. Managed workspaces
-reconcile one primary terminal against a stable opening intent; see
-[managed primary content](design/managed-primary-content.md).
+Terminal interaction: the Edit menu and unified clipboard commands (#152) and
+OSC 52 delivery to the desktop clipboard (#71) have landed. #71 adopted Cleat's
+provider ABI 11 and packet protocol 12, so a Wheelhouse built at the current
+`CLEAT_REV` attaches only to protocol-12 daemons. The daily driver and the
+fleet's Cleat move across that boundary together.
 
-Terminal fixes now include selection lifetime (#72, PR #154), rectangular
-selection (#73), wrap-aware Copy (#151, PR #153), hyperlinks (#77), and Shift
-scrolling/middle-Paste overrides (#70, PR #156). Cursor flicker (#75), the
-stopped/disconnected lifecycle design (#88), and stable-handle hosting transfer
-(#81) are closed. The shared stopped-document provider API remains open in
-[Cleat #277](https://github.com/flotilla-org/cleat/issues/277). Shift override
-physical acceptance is still recorded as pending in
-[its checklist](shift-override-acceptance.md).
+Sidebar presentation, following the
+[sidebar rows, cards and docking design](design/sidebar-cards-and-docking.md):
 
-Convoy PR/issue subjects and role history landed in PR #148; PR #155 restores
-standing roles as project-row actions while history is hidden. Daily-driver
-binary selection (#30) now defaults to the installed fleet. New terminal
-processes discard inherited runner/agent and colour override flags (PR #154).
+- **Rows:** convoy rows carry compact PR and issue chips (#160). Unopened
+  workspace actions fold into `+N` before quiet issue chips (#175).
+- **Ended subjects:** an ended subject's workspace is retained, marked ended
+  (#123). While that workspace is open, its subject row stays visible even with
+  Show finished off. Every open workspace has exactly one reachable sidebar
+  entry, and selection highlights one row or the nearest collapsed ancestor
+  (#188, #189). Restoration no longer re-inspects unavailable saved workspaces
+  on every patch (#204).
+- **Hover cards:** peek and engaged hover cards (#165), structured from
+  Andamento's typed detail roles (#177). Cards can be detached to float, docked
+  under their source, or pinned (#166).
+- **Docked sections:** sidebar sections are docked Views with compact display
+  toggles in their headers (#163, #80; the history toggle is **Role history**).
+  Docking validity uses one checker (#161) against measured drop geometry
+  (#180). Andamento regions declare `default-host` and `order` hints, and
+  Wheelhouse's saved layout stores where sections actually are (#162).
+- **Performance:** a capped native benchmark and a snapshot-scoped
+  context-label lookup (#182, #29). A shared section-geometry cache was declined
+  on measurements.
 
 ## Current work order
 
 This is the maintenance order, not a claim that every investigation is ready to
 implement. Later design items below are deferred, not blockers for current fixes.
 
-1. **Finish terminal reliability follow-through.**
-   [Cleat admission adoption #97](https://github.com/flotilla-org/wheelhouse/issues/97)
-   remains open for rollout/acceptance evidence. The current Cleat pin already
-   includes output-cycle admission; do not describe it as an unimplemented pin
-   bump. Daemon/client and containing-session restarts remain a coordinated
-   boundary. The [stopped/disconnected lifecycle note](design/stopped-and-disconnected-terminals.md)
-   records the design; Cleat #277 owns the remaining shared lifecycle API.
-2. **Complete clipboard and edit commands through the current attach path.**
-   [Edit menu #152](https://github.com/flotilla-org/wheelhouse/issues/152) and
-   [OSC 52 clipboard #71](https://github.com/flotilla-org/wheelhouse/issues/71)
-   remain open. The [terminal clipboard review](design/terminal-clipboard.md)
-   records the landed selection/copy fixes, ownership rules and delivery order.
-   Cleat #240's shared clipboard transport has merged as Cleat PR #304; #71
-   must adopt that ABI/protocol boundary and implement the desktop consumer.
-   These should not wait for native remote attachment. Ghostty-style tracked
-   history selection remains deferred design in Cleat #300.
-3. **Continue sidebar presentation and explanations.**
-   [Compact display controls #80](https://github.com/flotilla-org/wheelhouse/issues/80)
-   and [unavailable-attachment explanations #69](https://github.com/flotilla-org/wheelhouse/issues/69)
-   remain open. The [sidebar rows, cards and docking design](design/sidebar-cards-and-docking.md)
-   records the accepted next direction and its tickets: compact subject chips,
-   structured hover cards, docked section Views and recursive Controlled Splits.
-   Keep shared interpretation in Andamento and native geometry in Wheelhouse.
+1. **Sidebar polish round (kiwi, with the owner):** restoring closed sections
+   (#183), consistent movement affordances (#184) and chip reachability (#174),
+   plus the retention policy for ended pinned cards (#202).
+2. **Docking tidy (headless):** emptied-source removal in drop geometry (#196,
+   which gates any View declaring a minimum width), diagnostics (#197), one
+   canonical acceptance note (#198) and the memory benchmark as a scheduled CI
+   check (#199).
+3. **Snapshot cost:** shared evaluation and demand-driven details in
+   [Andamento #96](https://github.com/flotilla-org/andamento/issues/96), then
+   Wheelhouse requests details only for live card targets. The release daily
+   driver measured about 70% of a core while idle, mostly in detailed snapshot
+   acquisition. Re-measure hover-card relation caching (#179) afterwards.
+4. **Overview and Workspace Subject (kiwi, Opus):** the overview brainstorm
+   ([#190](https://github.com/flotilla-org/wheelhouse/issues/190)) shapes what a
+   Workspace Subject carries for titles, grouping and colour. Then the subject
+   toolbar and `+` menu ([#122](https://github.com/flotilla-org/wheelhouse/issues/122)),
+   then nested Controlled Splits (#164).
+5. **Notices and hosting status:** route notices by visible affordance (#110),
+   with hosting failures (#108) and hosting actions in tab settings (#109).
+
+[Cleat admission adoption #97](https://github.com/flotilla-org/wheelhouse/issues/97)
+remains open for rollout and acceptance evidence. Cleat #277 owns the remaining
+stopped-document lifecycle API; the
+[stopped/disconnected lifecycle note](design/stopped-and-disconnected-terminals.md)
+records the design.
+
+**Blocked upstream:** unavailable-attachment explanations (#69) wait on
+Flotilla #1961. A governor dropping off its project row across a roll or daemon
+restart ([Andamento #105](https://github.com/flotilla-org/andamento/issues/105))
+is a Flotilla projection defect; its regression fixtures are in Andamento #130.
 
 The [Windows map #53](https://github.com/flotilla-org/wheelhouse/issues/53)
 tracks that work separately, including remaining packaging, emoji and input
@@ -80,9 +97,9 @@ issues. Linux clipboard targets/PRIMARY/large transfers remain tracked in
 
 [Preview isolation #11](https://github.com/flotilla-org/wheelhouse/issues/11)
 and [terminal dirtiness #9](https://github.com/flotilla-org/wheelhouse/issues/9)
-remain open despite narrower fixes. Recheck them before expanding preview use.
-[Sidebar context scans #29](https://github.com/flotilla-org/wheelhouse/issues/29)
-are a performance follow-up. [Window/tab geometry #91](https://github.com/flotilla-org/wheelhouse/issues/91)
+remain open despite narrower fixes. Recheck them before expanding preview use,
+including the overview work in #190.
+[Window/tab geometry #91](https://github.com/flotilla-org/wheelhouse/issues/91)
 requires fresh screenshots before classifying the older observations as current
 bugs; [GPU regression coverage #41](https://github.com/flotilla-org/wheelhouse/issues/41)
 tracks thin borders and popup blur.
@@ -92,10 +109,9 @@ Other open defects and CI work remain on the
 
 ## Upstream ownership
 
-- [Cleat #240](https://github.com/flotilla-org/cleat/issues/240) owns OSC 52 effect
-  transport, merged in Cleat PR #304; Wheelhouse #71 owns pin adoption and desktop
-  integration. The provider ABI moves from 10 to 11 and packet protocol from 11
-  to 12, rejecting older counterparts.
+- [Cleat #240](https://github.com/flotilla-org/cleat/issues/240) owned OSC 52 effect
+  transport (Cleat PR #304); Wheelhouse #71 delivered pin adoption and desktop
+  integration across provider ABI 11 and packet protocol 12.
 - [Cleat #241](https://github.com/flotilla-org/cleat/issues/241) owns nested
   attachment scrollback semantics; Wheelhouse #70 delivered the outer native
   override. That does not expose all inner Cleat history.
