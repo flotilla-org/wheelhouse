@@ -308,6 +308,7 @@ uishell_positioned_list_diagnostics(RD_WindowState *ws)
   UI_ScrollBarStyle saved_style = ui_active_scroll_bar_style();
   ui_select_state(test);
   U32 failures = 0;
+#define PositionedCheck(c, n) do { if(!(c)) { fprintf(stderr, "FAIL: positioned list frame=%u style=%u: %s\n", frame, (U32)style, n); failures++; } } while(0)
   UI_ScrollPt pt = ui_scroll_pt(4, 0);
   pt.target_off = 0.5f;
   for(U32 frame = 0; frame < 12; frame++)
@@ -350,10 +351,14 @@ uishell_positioned_list_diagnostics(RD_WindowState *ws)
             if(frame == 3 || frame == 9)
             {
               UI_Key bar = ui_key_from_stringf(content->key, "scroll_region_bar_%i", Axis2_Y);
-              if(ui_box_is_nil(ui_box_from_key(bar))) { fprintf(stderr, "FAIL: positioned nested list overlay hover\n"); failures++; }
+              PositionedCheck(!ui_box_is_nil(ui_box_from_key(bar)), "nested overlay hover reveals scrollbar");
             }
             // Fractional content translation and virtual rows agree before input.
-            if(frame <= 10 && (content->view_off.y != 10 || rows.min != 4)) { failures++; }
+            if(frame <= 10)
+            {
+              PositionedCheck(content->view_off.y == 10, "fractional content translation remains 10px");
+              PositionedCheck(rows.min == 4, "virtualized rows start at index 4");
+            }
             for(S64 row = rows.min; row < rows.max; row++) { ui_spacer(ui_px(20, 1)); }
           }
         }
@@ -361,13 +366,17 @@ uishell_positioned_list_diagnostics(RD_WindowState *ws)
     }
     ui_end_build();
     // Switching styles changes the viewport only, retaining the fractional target.
-    if(dim_2f32(content->rect).x != (style == UI_ScrollBarStyle_Overlay ? 200 : 176)) { failures++; }
-    if(pt.idx != 4 || pt.target_off != (frame >= 10 ? 0.75f : 0.5f) || events.count != 0) { failures++; }
+    PositionedCheck(dim_2f32(content->rect).x == (style == UI_ScrollBarStyle_Overlay ? 200 : 176),
+                    "viewport width follows selected scrollbar style");
+    PositionedCheck(pt.idx == 4 && pt.target_off == (frame >= 10 ? 0.75f : 0.5f),
+                    "style changes retain target and precise input adds one quarter row");
+    PositionedCheck(events.count == 0, "list consumes precise wheel event exactly once");
   }
   ui_set_active_scroll_bar_style(saved_style);
   ui_select_state(saved);
   ui_state_release(test);
   fprintf(stderr, "Positioned list diagnostics: %u failures\n", failures);
+#undef PositionedCheck
   return failures == 0;
 }
 
