@@ -116,13 +116,20 @@ xvfb-run -a python3 tools/benchmark-sidebar.py
 ```
 
 The runner caps every process, saves raw logs under `build/sidebar-benchmark`,
-checks bounded RSS at each size, and stops immediately on a failure. An alternative
-GNU time path can be provided with `--time`; increase `--timeout` on slower hosts.
+checks bounded app-owned frame storage and sustained RSS slope at each size, and stops immediately on a failure. An alternative
+GNU time path can be provided with `--time`; each 5,000-frame native run has a
+600-second timeout, adjustable with `--timeout` on slower hosts.
 Timeouts terminate the entire process group and preserve partial logs; `--sizes 100 300` is a shorter run.
-Automating the full memory benchmark in CI is tracked in
-[Wheelhouse #199](https://github.com/flotilla-org/wheelhouse/issues/199); the existing
-CI native sidebar diagnostics already cover label correctness.
-Release mode is necessary: the debug arena inspection table reserves 256 GiB.
+The governor-applied `sidebar-memory.yml` workflow runs this benchmark weekly,
+through `workflow_dispatch`, and on PRs changing its workflow or benchmark
+sources. It is not a required merge gate. Dependency pins are read from
+`build.yml`. It builds a release binary, runs 100 → 300 → 1,000 issues under
+Xvfb, and retains complete or partial logs (including GNU time peak RSS).
+The first [CI benchmark run](https://github.com/flotilla-org/wheelhouse/actions/runs/37448974329)
+passed on the governor-applied commit `bfd5ac1`, including the RSS plateau gates
+and log upload.
+The runner enforces the 8 GiB cap and the storage/slope gate before increasing the catalog;
+there is no absolute timing threshold on shared runners.
 
 Native context diagnostics cover generated hash collisions, duplicate placements,
 section exclusion, first empty labels, missing/empty identities, empty snapshots,
@@ -232,3 +239,86 @@ exact-identity, current-output and card-rendering checks (the deliberately broke
 fixture later aborts). Both mutations were reverted, and the production tooltip/card
 diagnostics pass again. No workflow file is committed by the crew; the dependency
 pin diff is provided in the PR body for the governor.
+
+## Long-window memory gate (#212)
+
+Three CI failures showed a single roughly 6.4 MiB RSS step between frames 120
+and 200 while draw, font and UI arena positions stayed flat. RSS includes library
+allocators, background work and page residency; an endpoint subtraction cannot
+identify that step as a leak. The runner now measures 5,000 frames per combination,
+with 1,000 warm-up frames and samples every 200 frames. All four panel/input
+combinations must provide complete long-window samples.
+
+Draw, font, persistent UI and shell frame arena positions may each grow at most
+one MiB above their post-warmup baseline in **each** fixed configuration. RSS is
+process-wide, so its samples are placed on a monotonically increasing native
+frame counter spanning all four configurations. This includes resource releases
+between configurations, instead of resetting RSS baselines and misclassifying
+bounded cache residency as process retention. The full window spans 19,000 frames;
+its latter half spans 9,000 frames. Both must exceed 0.5 KiB/frame to classify
+process growth as sustained.
+
+At most the largest single positive RSS interval is excluded, with its actual
+frame span removed from the slope denominator. Both windows exclude the same
+interval: a second step is never discarded. There is no median or increased
+slope threshold. Continuous process growth and continuing repeated steps still
+fail; per-configuration app-owned storage remains independently bounded even
+if process RSS declines. This does not attribute residency changes to a specific
+library. Native/GNU time logs retain every sample, and the runner reports the
+excluded interval and both process slopes before increasing catalog size.
+
+A capped 100-issue characterization before the fix ran all four combinations for
+5,000 frames. Between frames 1,000 and 5,000, RSS grew by 8,060/8,100 KiB in the
+four-panel cases and 10,748/10,772 KiB in the merged cases. The shell frame arena
+grew by exactly 2,064 and 2,752 bytes per frame respectively, matching the RSS
+slopes (2.015–2.693 KiB/frame). Draw, font and persistent UI storage stayed flat.
+The smaller creep seen in the 240-frame fixture was not a plateau.
+
+The cause was in the Wheelhouse benchmark: it runs many synthetic builds inside
+one `update()`, but each register scope allocates in `rd_frame_arena()` and the
+usual update boundary never retired those allocations. Every synthetic frame now
+restores the enclosing shell arena position after its build and resets draw/font
+frame storage as a normal update does. This preserves the surrounding update's
+allocations and leaves production register ownership unchanged.
+
+The gate tests generate single steps across the entire sampling window, including
+zero and large steps, and slopes just below/at/above the limit. They also reject
+multiple steps, app-owned arena growth with flat RSS, missing/duplicate samples,
+short windows and ineffective CPU sizing. Disabling either the slope assertion
+or the storage assertion makes the suite fail. The captured pre-fix native run
+fails the sustained-slope gate.
+
+On the pinned Linux/Xvfb release fixture, the long runs took 19.62–21.84 seconds
+at 100 issues and 75.20–78.33 seconds at 300 issues. The 1,000-issue linear
+characterization took 330.11 seconds (5.5 minutes). Each native process has a 600-second
+timeout, and the existing CI job has a 30-minute overall timeout. The four smaller
+runs consume about 3.3 minutes; even budgeting ten minutes for each 1,000-issue
+mode leaves about 6.7 minutes for dependency/build setup in that job. Shared-runner
+speed varies; process/job timeouts and always-uploaded partial logs remain active.
+
+The completed 1,000-issue linear run made two early residency steps in one
+configuration and then remained flat for its final 2,000 frames. The lookup run
+made three steps late in a configuration, followed by a roughly 60 MiB release
+in the next one. All measured frame arenas stayed flat. This motivates keeping
+per-configuration arena bounds and assessing RSS over the entire native process
+lifecycle, rather than treating each UI state's RSS as an independent process.
+
+All six captured native runs pass the final storage/process-slope gate:
+
+| Issues/mode | Excluded interval KiB | Full RSS slope KiB/frame | Latter-half slope KiB/frame |
+|---|---:|---:|---:|
+| 100 linear | 10452 | 0.003830 | 0.002273 |
+| 100 lookup | 36 | 0.001915 | 0.002222 |
+| 300 linear | 96 | -3.331702 | -0.130222 |
+| 300 lookup | 96 | -3.435745 | -0.006222 |
+| 1000 linear | 12088 | 0.332128 | 0.371364 |
+| 1000 lookup | 12112 | -3.042553 | -7.166667 |
+
+The 1,000-issue lookup run took 384.62 seconds. Total native time across all six
+runs was about 15.2 minutes, leaving setup/build headroom in the 30-minute CI job.
+The gate tests model leaks on the monotonic process frame counter, generate single
+steps throughout all configurations, and cover continuing repeated steps, bounded
+early recovery followed by a plateau, net decommit, per-configuration storage
+growth and malformed samples. Disabling process-slope/storage assertions produces
+578/4 failing cases; removing the latter-half condition rejects the bounded-recovery
+fixture. All mutants are reverted.

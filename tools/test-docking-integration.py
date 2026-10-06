@@ -2,6 +2,12 @@
 """Compile real shell command/drag/restore code with OS and FFI fault boundaries.
 
 Pass the built Andamento and Cleat library directories; no display is required.
+Interception boundaries: WM client rectangle, Andamento action dispatch, clock,
+worker creation/detach/sleep, and WM wake posting. Review new production call
+sites at these boundaries; parser, settings, mounts, renderer, commands,
+checker, snapshot refresh and retry worker remain real linked collaborators.
+Debug assertions stay enabled. Only the debug arena inspection table is
+excluded: its 256 GiB virtual reservation exceeds the native 8 GiB cap.
 """
 import argparse
 import os
@@ -27,6 +33,9 @@ cleat = args.cleat_lib.resolve()
 # entry point. This keeps the command routing and UI collaborators real.
 main = (ROOT / 'src/uishell/uishell_main.c').read_text()
 prefix = main[:main.index('internal void\nentry_point(CmdLine *cmd_line)')]
+arena_table_definition = '#define ARENA_TABLE_DEBUG BUILD_DEBUG'
+assert arena_table_definition in prefix, 'production arena table definition changed; review the capped harness boundary'
+prefix = prefix.replace(arena_table_definition, '#define ARENA_TABLE_DEBUG 0')
 prefix = re.sub(r'^#include "uishell/[^"]*diagnostics.c"\n', '', prefix, flags=re.M)
 prefix = prefix.replace('#include "shell/shell_inc.c"', '''
 #include "andamento.h"
@@ -56,6 +65,7 @@ internal U32 integration_dispatch(Andamento *core, const AndamentoSnapshot *snap
 source = BUILD / 'docking_integration.c'
 source.write_text(prefix + '\n#include "shell/tests/docking_integration.c"\n')
 command = shlex.split(os.environ.get('CC', 'clang')) + [
+    # Keep debug assertions; the generated prefix excludes arena inspection only.
     '-g', '-O0', '-D_GNU_SOURCE', '-DBUILD_DEBUG=1', '-DNO_ASYNC=1',
     '-DWM_STUB=1', '-DR_BACKEND=0', '-DFP_BACKEND=0', '-ffunction-sections', '-fdata-sections',
     '-Wno-initializer-overrides', '-Wno-unused-value',
@@ -66,4 +76,4 @@ command = shlex.split(os.environ.get('CC', 'clang')) + [
     '-L'+str(cleat), '-lcleat', '-Wl,-rpath,'+str(cleat), '-lpthread', '-lm', '-ldl',
     '-Wl,--gc-sections', '-o', str(BUILD/'docking_integration')]
 subprocess.run(command, check=True)
-subprocess.run([str(BUILD/'docking_integration')], cwd=ROOT, check=True, timeout=45)
+subprocess.run([str(BUILD/'docking_integration'), '--async_thread_count:1'], cwd=ROOT, check=True, timeout=45)

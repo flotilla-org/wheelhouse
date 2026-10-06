@@ -178,7 +178,8 @@ internal void
 uishell_sidebar_set_error(UIShell_SidebarState *state, String8 message)
 {
   U64 size = Min(message.size, sizeof(state->error)-1);
-  MemoryCopy(state->error, message.str, size); state->error[size] = 0;
+  MemoryCopy(state->error, message.str, size);
+  state->error[size] = 0;
 }
 
 internal B32
@@ -533,7 +534,17 @@ uishell_sidebar_retry_display(UIShell_SidebarState *state, CFG_Node *window, U64
     char *error = 0;
     B32 ok = found && control.action != ANDAMENTO_NONE &&
       uishell_sidebar_dispatch(state, control.action, &error);
-    uishell_sidebar_result(state, ok, error);
+    if(!found)
+    {
+      Temp scratch = scratch_begin(0, 0);
+      String8 message = push_str8f(scratch.arena, "Sidebar display declaration unavailable: %S", r->name);
+      uishell_sidebar_set_error(state, message);
+      scratch_end(scratch);
+    }
+    else
+    {
+      uishell_sidebar_result(state, ok, error);
+    }
     uishell_sidebar_refresh(state);
     rd_request_frame();
     if(ok) { r->pending = 0; }

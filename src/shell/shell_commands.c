@@ -696,6 +696,17 @@ rd_dock_command_allowed(char *action, String8 view, RD_DockRule rule)
 }
 
 internal B32
+rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, CFG_Node *destination, Dir2 dir)
+{
+  B32 unavailable = 0;
+  F32 width = rd_dock_target_width(arena, destination, dir, view, &unavailable);
+  RD_DockRule rule = rd_dock_placement(view, destination, width);
+  if(rule == RD_DockRule_MinimumWidth && unavailable)
+  { log_user_errorf("Docking geometry unavailable: destination has no live window state."); }
+  return rd_dock_command_allowed(operation, view->string, rule);
+}
+
+internal B32
 uishell_dispatch_tab_command(String8 name)
 {
   B32 result = 1;
@@ -942,7 +953,7 @@ uishell_dispatch_tab_command(String8 name)
     CFG_Node *prev_tab = cfg_node_from_id(uishell_regs()->prev_tab);
     CFG_Node *src_panel = view->parent;
     CFG_Node *dst_panel = cfg_node_from_id(uishell_regs()->dst_panel);
-    if(dst_panel != &cfg_nil_node && prev_tab != view && rd_dock_command_allowed("move", view->string, rd_dock_placement(view, dst_panel, rd_dock_target_width(scratch.arena, dst_panel, Dir2_Invalid))))
+    if(dst_panel != &cfg_nil_node && prev_tab != view && rd_dock_move_allowed(scratch.arena, "move", view, dst_panel, Dir2_Invalid))
     {
       cfg_node_unhook(rd_state->cfg, src_panel, view);
       cfg_node_insert_child(rd_state->cfg, dst_panel, prev_tab, view);
@@ -1074,9 +1085,10 @@ uishell_dispatch_panel_command(String8 name)
         split_panel = cfg_node_from_id(uishell_regs()->panel);
       }
       CFG_Node *moving_view = cfg_node_from_id(uishell_regs()->view);
-      if(do_dragdrop_split && !rd_dock_command_allowed("split with", moving_view->string,
-          rd_dock_placement(moving_view, split_panel, rd_dock_target_width(scratch.arena, split_panel, split_dir))))
+      if(do_dragdrop_split && !rd_dock_move_allowed(scratch.arena, "split with", moving_view, split_panel, split_dir))
       { scratch_end(scratch); return 1; }
+      // rd_dock_moving_width mirrors this insertion/bisection before closure;
+      // preserve agreement with the command/render differential scenarios.
       CFG_Node *new_panel_cfg = &cfg_nil_node;
       UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, split_panel);
       CFG_PanelTree panel_tree = workspace_mount.panel_tree;
@@ -1243,6 +1255,7 @@ uishell_dispatch_panel_command(String8 name)
     }
     scratch_end(scratch);
   }
+  // rd_dock_moving_width mirrors this closure/rescale/collapse/flatten path.
   else if(str8_match(name, str8_lit("close_panel"), 0))
   {
     Temp scratch = scratch_begin(0, 0);
@@ -1345,7 +1358,7 @@ uishell_dispatch_panel_command(String8 name)
           {
             CFG_Node *cfg = child->cfg;
             F32 old_pct = child->pct_of_parent;
-            F32 new_pct = old_pct / (1.f-removed_size_pct);
+            F32 new_pct = rd_dock_remaining_fraction(old_pct, removed_size_pct, new_parent->child_count);
             cfg_node_equip_stringf(rd_state->cfg, cfg, "%f", new_pct);
           }
         }

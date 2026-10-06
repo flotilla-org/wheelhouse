@@ -357,6 +357,16 @@ rd_dock_allocated_fraction(F32 fraction)
   return result;
 }
 
+// A hand-edited source may consume the whole parent despite siblings. Give
+// the survivors equal allocations when the normal denominator is nonpositive;
+// commands and geometry must use the same finite recovery policy.
+internal F32
+rd_dock_remaining_fraction(F32 fraction, F32 removed, U64 count)
+{
+  Assert(count > 0); // Source closure always leaves at least one sibling.
+  return rd_dock_allocated_fraction(removed < 1.f ? fraction/(1.f-removed) : 1.f/Max(count, 1));
+}
+
 // Compute the new leaf's settled body width using the same allocation as
 // split_panel: insert a sibling into a matching parent, otherwise bisect.
 // Tabs occupy vertical chrome only; the panel inset consumes both X edges.
@@ -396,4 +406,130 @@ rd_dock_resulting_width(CFG_PanelNode *root, CFG_PanelNode *panel,
   }
   rect.x0 = round_f32(rect.x0); rect.x1 = round_f32(rect.x1);
   return Max(0.f, round_f32(rect.x1-inset)-round_f32(rect.x0+inset));
+}
+
+// Copy only layout nodes: proposals never mutate configuration or the frame's
+// shared tree. Tab/config identities stay borrowed for lookup.
+// Copy saved split chains without growing the C call stack. Tabs/config remain
+// borrowed and immutable; only layout links need independent storage.
+internal CFG_PanelNode *
+rd_dock_copy_tree(Arena *arena, CFG_PanelNode *node)
+{
+  if(node == &cfg_nil_panel_node) { return node; }
+  CFG_PanelNode *root = &cfg_nil_panel_node, *parent = &cfg_nil_panel_node;
+  for(CFG_PanelNode *source = node;;)
+  {
+    CFG_PanelNode *copy = push_array(arena, CFG_PanelNode, 1);
+    *copy = *source;
+    copy->parent = parent;
+    copy->next = copy->prev = copy->first = copy->last = &cfg_nil_panel_node;
+    if(parent == &cfg_nil_panel_node) { root = copy; }
+    else { DLLPushBack_NPZ(&cfg_nil_panel_node, parent->first, parent->last, copy, next, prev); }
+    if(source->first != &cfg_nil_panel_node)
+    { source = source->first; parent = copy; }
+    else
+    {
+      while(source != node && source->next == &cfg_nil_panel_node)
+      { source = source->parent; parent = parent->parent; }
+      if(source == node) { break; }
+      source = source->next;
+    }
+  }
+  return root;
+}
+
+// Match command order: insert first, then close the emptied source. Closing
+// rescales remaining siblings, or collapses a two-child parent and flattens
+// matching axes. Every written fraction uses the config formatter precision.
+internal F32
+rd_dock_moving_width(CFG_PanelNode *root, CFG_PanelNode *panel,
+                     CFG_PanelNode *origin, Rng2F32 area, Dir2 dir, F32 inset)
+{
+  // split_panel deliberately retains an emptied source when it is also the
+  // split target; insertion-only geometry is correct for that self split.
+  if(origin == &cfg_nil_panel_node || origin == panel || origin->parent == &cfg_nil_panel_node)
+  { return rd_dock_resulting_width(root, panel, area, dir, inset); }
+  Temp scratch = scratch_begin(0, 0);
+  CFG_PanelNode *copy = rd_dock_copy_tree(scratch.arena, root);
+  origin = cfg_panel_node_from_tree_cfg(copy, origin->cfg);
+  panel = cfg_panel_node_from_tree_cfg(copy, panel->cfg);
+  CFG_PanelNode *target = panel;
+  if(dir != Dir2_Invalid)
+  {
+    Axis2 axis = axis2_from_dir2(dir);
+    Side side = side_from_dir2(dir);
+    CFG_PanelNode *parent = panel->parent;
+    target = push_array(scratch.arena, CFG_PanelNode, 1);
+    *target = cfg_nil_panel_node;
+    if(parent != &cfg_nil_panel_node && parent->split_axis == axis)
+    {
+      target->pct_of_parent = rd_dock_allocated_fraction(1.f/(parent->child_count+1));
+      F32 scale = (F32)parent->child_count/(parent->child_count+1);
+      for(CFG_PanelNode *c = parent->first; c != &cfg_nil_panel_node; c = c->next)
+      { c->pct_of_parent = rd_dock_allocated_fraction(c->pct_of_parent*scale); }
+      CFG_PanelNode *previous = side == Side_Max ? panel : panel->prev;
+      DLLInsert_NPZ(&cfg_nil_panel_node, parent->first, parent->last, previous, target, next, prev);
+      target->parent = parent; parent->child_count++;
+    }
+    else
+    {
+      CFG_PanelNode *split = push_array(scratch.arena, CFG_PanelNode, 1);
+      *split = cfg_nil_panel_node;
+      split->split_axis = axis; split->pct_of_parent = panel->pct_of_parent;
+      split->parent = parent; split->child_count = 2;
+      if(parent == &cfg_nil_panel_node) { copy = split; }
+      else
+      {
+        CFG_PanelNode *previous = panel->prev;
+        DLLRemove_NPZ(&cfg_nil_panel_node, parent->first, parent->last, panel, next, prev);
+        DLLInsert_NPZ(&cfg_nil_panel_node, parent->first, parent->last, previous, split, next, prev);
+      }
+      panel->parent = target->parent = split;
+      panel->pct_of_parent = target->pct_of_parent = 0.5f;
+      CFG_PanelNode *first = side == Side_Min ? target : panel;
+      CFG_PanelNode *last = side == Side_Min ? panel : target;
+      DLLPushBack_NPZ(&cfg_nil_panel_node, split->first, split->last, first, next, prev);
+      DLLPushBack_NPZ(&cfg_nil_panel_node, split->first, split->last, last, next, prev);
+    }
+  }
+  CFG_PanelNode *parent = origin->parent;
+  if(parent->child_count == 2)
+  {
+    CFG_PanelNode *keep = origin == parent->first ? parent->last : parent->first;
+    CFG_PanelNode *grandparent = parent->parent;
+    keep->pct_of_parent = rd_dock_allocated_fraction(parent->pct_of_parent);
+    keep->parent = grandparent;
+    if(grandparent == &cfg_nil_panel_node)
+    { copy = keep; keep->next = keep->prev = &cfg_nil_panel_node; }
+    else
+    {
+      CFG_PanelNode *previous = parent->prev;
+      DLLRemove_NPZ(&cfg_nil_panel_node, grandparent->first, grandparent->last, parent, next, prev);
+      if(grandparent->split_axis == keep->split_axis && keep->child_count)
+      {
+        grandparent->child_count += keep->child_count-1;
+        for(CFG_PanelNode *c = keep->first, *next; c != &cfg_nil_panel_node; c = next)
+        {
+          next = c->next; c->parent = grandparent;
+          // keep inherits this parent allocation above; scale by the original
+          // parent percentage, exactly as close_panel scales flattened children.
+          c->pct_of_parent = rd_dock_allocated_fraction(c->pct_of_parent*parent->pct_of_parent);
+          DLLInsert_NPZ(&cfg_nil_panel_node, grandparent->first, grandparent->last, previous, c, next, prev);
+          previous = c;
+        }
+      }
+      else
+      { DLLInsert_NPZ(&cfg_nil_panel_node, grandparent->first, grandparent->last, previous, keep, next, prev); }
+    }
+  }
+  else
+  {
+    DLLRemove_NPZ(&cfg_nil_panel_node, parent->first, parent->last, origin, next, prev);
+    parent->child_count--;
+    for(CFG_PanelNode *c = parent->first; c != &cfg_nil_panel_node; c = c->next)
+    { c->pct_of_parent = rd_dock_remaining_fraction(c->pct_of_parent, origin->pct_of_parent, parent->child_count); }
+  }
+  F32 result = rd_dock_resulting_width(copy, target, area, Dir2_Invalid, inset);
+  scratch_end(scratch);
+  return result;
 }

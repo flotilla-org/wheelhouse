@@ -142,7 +142,11 @@ internal B32 rd_dock_can_create(String8 name, CFG_Node *destination);
 internal B32 rd_dock_can_close(CFG_Node *view);
 internal void rd_dock_restore_window(CFG_State *state, CFG_Node *window);
 
+internal F32 rd_dock_remaining_fraction(F32 fraction, F32 removed, U64 count);
 internal F32 rd_dock_resulting_width(CFG_PanelNode *root, CFG_PanelNode *panel,
                                     Rng2F32 area, Dir2 dir, F32 inset);
+
+internal F32 rd_dock_moving_width(CFG_PanelNode *root, CFG_PanelNode *panel,
+                                 CFG_PanelNode *origin, Rng2F32 area, Dir2 dir, F32 inset);
 
 #endif
