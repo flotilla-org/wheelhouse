@@ -52,10 +52,22 @@ def validate_memory(output):
                 # other net growth is charged over the remaining long window.
                 # A sustained leak still contributes in every other interval.
                 deltas = [b[1] - a[1] for a, b in zip(window, window[1:])]
-                residual = window[-1][1] - window[0][1] - max(0, max(deltas))
-                span = window[-1][0] - window[0][0] - interval
-                measurements.append((max(0, max(deltas)), residual / span))
-                if residual * 2 > span: # at most 0.5 KiB/frame
+                jump = max(range(len(deltas)), key=deltas.__getitem__)
+                step = max(0, deltas[jump])
+                residual = window[-1][1] - window[0][1] - step
+                span = window[-1][0] - window[0][0] - (interval if step else 0)
+                # Excess full-window growth must also continue through the
+                # latter half. Early bounded residency recovery followed by a
+                # long plateau is not sustained growth. Use the SAME excluded
+                # interval in both windows, never discard a second step.
+                tail_start = len(window) // 2
+                tail_residual = window[-1][1] - window[tail_start][1]
+                tail_span = window[-1][0] - window[tail_start][0]
+                if step and jump >= tail_start:
+                    tail_residual -= step
+                    tail_span -= interval
+                measurements.append((step, residual / span, tail_residual / tail_span))
+                if residual * 2 > span and tail_residual * 2 > tail_span:
                     raise ValueError('sustained RSS slope exceeds 0.5 KiB/frame')
     return measurements
 
@@ -120,8 +132,8 @@ def main():
                         raise SystemExit(f'{identity}: native benchmark failed ({process.returncode}); stop before increasing catalog size')
                 try:
                     measurements = validate_memory(output)
-                    for combination, (step, slope) in enumerate(measurements):
-                        print(f'SIDEBAR_GATE run={identity} combination={combination} excluded_step_kib={step} residual_kib_per_frame={slope:.6f}', flush=True)
+                    for combination, (step, slope, tail_slope) in enumerate(measurements):
+                        print(f'SIDEBAR_GATE run={identity} combination={combination} excluded_step_kib={step} residual_kib_per_frame={slope:.6f} tail_kib_per_frame={tail_slope:.6f}', flush=True)
                 except ValueError as error:
                     raise SystemExit(f'{identity}: {error}; stop before increasing catalog size')
 

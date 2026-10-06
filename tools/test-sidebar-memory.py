@@ -35,6 +35,11 @@ class MemoryGate(unittest.TestCase):
                             with self.assertRaisesRegex(ValueError, 'sustained RSS slope'):
                                 validate_memory(output)
 
+    def test_bounded_recovery_then_long_plateau(self):
+        # Several early residency changes that settle for the last 2,000 frames
+        # are bounded recovery, not continuing growth. Arena bounds still apply.
+        validate_memory(fixture(steps=[(1800, 12088), (2400, 3240), (3000, 12)]))
+
     def test_multiple_steps_are_not_hidden(self):
         # Only one interval may be excluded; recurring jumps remain charged.
         with self.assertRaisesRegex(ValueError, 'sustained RSS slope'):

@@ -363,6 +363,7 @@ rd_dock_allocated_fraction(F32 fraction)
 internal F32
 rd_dock_remaining_fraction(F32 fraction, F32 removed, U64 count)
 {
+  Assert(count > 0); // Source closure always leaves at least one sibling.
   return rd_dock_allocated_fraction(removed < 1.f ? fraction/(1.f-removed) : 1.f/count);
 }
 
@@ -498,6 +499,8 @@ rd_dock_moving_width(CFG_PanelNode *root, CFG_PanelNode *panel,
         for(CFG_PanelNode *c = keep->first, *next; c != &cfg_nil_panel_node; c = next)
         {
           next = c->next; c->parent = grandparent;
+          // keep inherits this parent allocation above; scale by the original
+          // parent percentage, exactly as close_panel scales flattened children.
           c->pct_of_parent = rd_dock_allocated_fraction(c->pct_of_parent*parent->pct_of_parent);
           DLLInsert_NPZ(&cfg_nil_panel_node, grandparent->first, grandparent->last, previous, c, next, prev);
           previous = c;

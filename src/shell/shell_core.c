@@ -3382,6 +3382,8 @@ rd_dock_width_from_geometry_for_view(RD_DockGeometry *geometry, CFG_Node *destin
 internal F32
 rd_dock_width_from_geometry(RD_DockGeometry *geometry, CFG_Node *destination, Dir2 dir)
 {
+  // Only layout is cached; read the active View anew and copy/simulate its
+  // proposal on every query, including a cancelled/restarted drag this frame.
   CFG_Node *view = rd_drag_is_active() ? cfg_node_from_id(rd_state->drag_drop_regs->view) : &cfg_nil_node;
   return rd_dock_width_from_geometry_for_view(geometry, destination, dir, view);
 }

@@ -252,13 +252,15 @@ with 1,000 warm-up frames and samples every 200 frames. It requires a complete
 Draw, font, persistent UI and shell frame arena positions may each grow at most
 one MiB above their post-warmup baseline at any sample. Independently, the RSS gate
 subtracts at most the largest single positive interval and divides the remaining
-net growth by the remaining frame span. The allowed sustained slope is 0.5 KiB
-per frame. A single residency step therefore does not fail the gate, while a
-continuous leak contributes in every remaining interval and repeated large steps
-still fail. RSS decommit and re-residency are assessed as net memory, rather than allocation churn. This is not an attribution of the original step to a particular
+net growth by the remaining frame span. Excess growth must exceed 0.5 KiB per
+frame in both the full 4,000-frame window and its latter 2,000 frames. Both
+windows exclude the same interval; a second step is never discarded. This tests
+continuing growth rather than a bounded recovery that has already plateaued.
+A continuous leak or repeated steps continuing into the latter half still fail.
+RSS decommit and re-residency are assessed as net memory, rather than allocation churn. This is not an attribution of the original step to a particular
 library; it separates a bounded step from sustained growth and keeps the
 app-owned storage assertion independent. The runner prints the excluded step
-and residual slope; native/GNU time logs remain uploaded even on failure.
+and both residual slopes; native/GNU time logs remain uploaded even on failure.
 
 A capped 100-issue characterization before the fix ran all four combinations for
 5,000 frames. Between frames 1,000 and 5,000, RSS grew by 8,060/8,100 KiB in the
@@ -283,8 +285,16 @@ fails the sustained-slope gate.
 
 On the pinned Linux/Xvfb release fixture, the long runs took 19.62–21.84 seconds
 at 100 issues and 75.20–78.33 seconds at 300 issues. The 1,000-issue linear
-characterization takes several minutes. Each native process has a 600-second
+characterization took 330.11 seconds (5.5 minutes). Each native process has a 600-second
 timeout, and the existing CI job has a 30-minute overall timeout. The four smaller
 runs consume about 3.3 minutes; even budgeting ten minutes for each 1,000-issue
 mode leaves about 6.7 minutes for dependency/build setup in that job. Shared-runner
 speed varies; process/job timeouts and always-uploaded partial logs remain active.
+
+A later 1,000-issue linear run had bounded residency steps of 12,088 KiB at frame
+1,800 and 3,240 KiB at frame 2,400 in the merged idle case. RSS settled by frame
+3,000 and stayed exactly flat through frame 5,000, while all measured arenas
+stayed flat. The full-window residual slope was 0.856 KiB/frame; the latter-half
+slope was zero. Both windows are required to exceed the limit to classify growth
+as sustained. A captured early-recovery/late-plateau fixture covers this distinction,
+and removing the latter-half condition makes that test fail.

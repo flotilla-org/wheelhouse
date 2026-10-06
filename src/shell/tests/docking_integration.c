@@ -417,6 +417,35 @@ entry_point(CmdLine *cmdline)
       IntegrationCheck(actual == boundary && rendered == actual);
     }
   }
+  // Cancelling and restarting a drag reuses only the immutable layout tree;
+  // the active View's distinct source allocation is read anew on every query.
+  panels = integration_reset_panels(window, Axis2_X);
+  CFG_Node *drag_origins[] = {
+    cfg_node_new(rd_state->cfg, panels, str8_lit("0.2")),
+    cfg_node_new(rd_state->cfg, panels, str8_lit("0.3")),
+  };
+  CFG_Node *drag_destination = cfg_node_new(rd_state->cfg, panels, str8_lit("0.5"));
+  cfg_node_new(rd_state->cfg, drag_destination, str8_lit("terminal"));
+  integration_rect.x1 = 1200;
+  CFG_Node *drag_views[] = {
+    cfg_node_new(rd_state->cfg, drag_origins[0], str8_lit("scroll_region_fixture")),
+    cfg_node_new(rd_state->cfg, drag_origins[1], str8_lit("scroll_region_fixture")),
+  };
+  UIShell_WorkspaceMount drag_mount = uishell_workspace_mount_from_cfg(scratch.arena, drag_destination);
+  RD_DockGeometry drag_geometry = rd_dock_geometry_from_mount(&drag_mount);
+  F32 drag_widths[2] = {0};
+  for(U32 i = 0; i < ArrayCount(drag_origins); i++)
+  {
+    CFG_Node *drag_view = drag_views[i];
+    UIShell_RegsScope(.window = window->id, .panel = drag_origins[i]->id, .view = drag_view->id)
+    {
+      rd_drag_begin(UIShell_ContextRegSlot_View);
+      drag_widths[i] = rd_dock_width_from_geometry(&drag_geometry, drag_destination, Dir2_Invalid);
+      IntegrationCheck(drag_widths[i] == rd_dock_target_width(scratch.arena, drag_destination, Dir2_Invalid, drag_view, 0));
+      rd_drag_kill();
+    }
+  }
+  IntegrationCheck(drag_widths[0] != drag_widths[1]);
   // A last-View self split deliberately keeps its now-empty original Panel.
   // Generate both parent axes and all directions; predicted body width must
   // match command execution and the real renderer, without queued closure.
@@ -525,6 +554,11 @@ entry_point(CmdLine *cmdline)
     CFG_ID origin_id = origin->id;
     if(shape == 2)
     {
+      // Keep three sibling Panels beside the filtered-tab source, exercising
+      // multi-sibling rescaling as well as the move/split close-rule difference.
+      for(CFG_Node *child = panels->first; child != &cfg_nil_node; child = child->next)
+      { cfg_node_equip_stringf(rd_state->cfg, child, "%f", f64_from_str8(child->string)*.8); }
+      cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, panels, str8_lit("0.2")), str8_lit("terminal"));
       // move_view ignores project-filtered sibling tabs for source closure;
       // split_panel retains a source with any tab. Both outcomes must match UI.
       CFG_Node *hidden = cfg_node_new(rd_state->cfg, origin, str8_lit("terminal"));
