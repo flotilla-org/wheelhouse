@@ -272,10 +272,30 @@ class IngressTests(unittest.TestCase):
             entries = []
             for recording in paths:
                 self.assertLessEqual(recording.stat().st_size, limit)
+                if not WINDOWS:
+                    self.assertEqual(recording.stat().st_mode & 0o777, 0o600)
                 data = recording.read_bytes()
                 self.assertTrue(data.endswith(b'\n'))
                 entries.extend(json.loads(line) for line in data.splitlines())
             self.assertEqual(max(entries, key=lambda r: r['sequence'])['body'], last)
+
+    def test_body_limit_is_identical_with_recording_on_and_off(self):
+        # Review #226: the same 1 MiB decoded-body limit applies before capture
+        # and before the ordinary handler, at below/exact/above boundaries.
+        limit = 1024 * 1024
+        message = json.dumps(patch('project', 'boundary', {})).encode()
+        for enabled in (False, True):
+            if enabled:
+                self.enable_recording(Path(self.dir.name) / 'ingress.jsonl')
+            statuses = [self.request(message + b' ' * (size - len(message)))
+                        for size in (limit - 1, limit, limit + 1)]
+            self.assertEqual(statuses, [204, 204, 413])
+            self.assertEqual(self.request(message), 204)
+        entries = [r for r in self.capture() if r['path'] == '/v1/metadata/patch']
+        self.assertEqual([r['status'] for r in sorted(entries, key=lambda r: r['sequence'])], [204, 204, 413, 204])
+        rejected = next(r for r in entries if r['status'] == 413)
+        self.assertIsNone(rejected['body'])
+        self.assertIsNone(rejected['body_utf8'])
 
     def test_recording_preserves_error_statuses_and_write_failure(self):
         # Issue #223: recording preserves rejection/unavailability statuses;

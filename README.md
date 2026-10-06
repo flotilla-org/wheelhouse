@@ -312,7 +312,12 @@ data folder (beside an explicit `--user` file, or in daily-driver settings).
 Rotation retains four files of up to 4 MiB each, 16 MiB total. Override with
 `--ingress_record_bytes:<bytes>` / `--ingress_record_files:<count>`; launcher
 options are `--ingress-record-bytes <bytes>` / `--ingress-record-files <count>`.
-Write failures disable recording with one warning while requests continue.
+Write failures, a full 64-entry writer queue, or a serialized entry larger than
+one file permanently disable recording for that listener run, with one warning
+while requests continue. Restart the listener to begin a fresh capture.
+Reduced retention limits delete existing captures outside the new size/count
+bounds on startup; copy any captures you want to keep before reducing limits.
+Unix capture files use mode 0600, including retained archives.
 
 `python3 tools/replay-ingress.py <logs/ingress.jsonl...> --library <Andamento shared library>`
 replays patches through the shipped sidebar template and reports per-patch

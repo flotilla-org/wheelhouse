@@ -88,7 +88,8 @@ Archives are `ingress.jsonl.1` (newest) through `.3` (oldest). Configure with
 `--ingress_record_bytes:<bytes>` and `--ingress_record_files:<count>` (1–100);
 the launcher uses `--ingress-record-bytes <bytes>` and
 `--ingress-record-files <count>`. Reduced bounds also prune existing recordings
-on startup. Lines are never split between files. An entry larger than the file
+on startup (copy captures you want to keep before reducing limits). Unix capture
+files and retained archives use mode 0600. Lines are never split between files. An entry larger than the file
 limit disables recording rather than exceeding the bound.
 
 Each JSONL entry carries `recording_id` (one listener run), `sequence` (complete
@@ -103,7 +104,8 @@ out of order, so replay sorts by recording/run and sequence, not file order.
 Recording uses a separate filesystem worker with a bounded 64-entry queue.
 Requests never wait for that worker and retain their existing application
 status and five-second deadline. A write/start failure, oversized entry, or full
-writer queue disables recording with one stderr warning; requests continue.
+writer queue permanently disables recording for that listener run with one stderr
+warning; requests continue. Restart the listener to begin a new capture.
 This is a diagnostic capture, not a delivery journal: abrupt process termination
 can lose queued entries, and a disabled recorder leaves an incomplete capture.
 

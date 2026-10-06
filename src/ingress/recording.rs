@@ -128,6 +128,28 @@ impl Drop for Recorder {
         }
     }
 }
+fn open_recording(path: &std::path::Path, truncate: bool) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.create(true).write(true);
+    if truncate {
+        options.truncate(true);
+    } else {
+        options.append(true);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(file)
+}
+
 struct Rotating {
     path: PathBuf,
     bytes: u64,
@@ -163,12 +185,22 @@ impl Rotating {
                     .and_then(|suffix| suffix.parse::<usize>().ok())
             };
             if let Some(n) = generation {
+                // Invalid output targets must not alter directories/socket access.
+                if !entry.file_type()?.is_file() {
+                    return Err(io::Error::other("recording target must be a regular file"));
+                }
                 if n >= files || entry.metadata()?.len() > bytes {
                     fs::remove_file(entry.path())?;
+                } else {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        fs::set_permissions(entry.path(), fs::Permissions::from_mode(0o600))?;
+                    }
                 }
             }
         }
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let file = open_recording(&path, false)?;
         // An interrupted write from an earlier run must not join two JSONL entries.
         let previous = fs::read(&path)?;
         let size = if previous.last().is_some_and(|last| *last != b'\n') {
@@ -219,19 +251,85 @@ impl Rotating {
                     fs::rename(src, dst)?;
                 }
             }
-            self.file = Some(
-                OpenOptions::new()
-                    .create(true)
-                    .truncate(true)
-                    .write(true)
-                    .open(&self.path)?,
-            );
+            self.file = Some(open_recording(&self.path, true)?);
             self.size = 0;
         }
         self.file.as_mut().unwrap().write_all(line)?;
         self.size += line.len() as u64;
         Ok(())
     }
+}
+
+/// Installed only when opted in; the ordinary router has no recording work.
+pub async fn capture(
+    axum::extract::State(recorder): axum::extract::State<Arc<Recorder>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::{extract::FromRequest, response::IntoResponse};
+    let path = request.uri().path().to_owned();
+    let method = request.method().to_string();
+    let (parts, body) = request.into_parts();
+    if method != "POST" || path != "/v1/metadata/patch" {
+        let (received_ms, timestamp_ms) = received_time();
+        let sequence = recorder.sequence.fetch_add(1, Ordering::Relaxed);
+        let response = next
+            .run(axum::extract::Request::from_parts(parts, body))
+            .await;
+        recorder.record(Record::Request {
+            recording_id: recorder.recording_id.clone(),
+            sequence,
+            received_ms,
+            timestamp_ms,
+            path,
+            method,
+            body: None,
+            status: response.status().as_u16(),
+        });
+        return response;
+    }
+    let bytes = axum::body::Bytes::from_request(
+        axum::extract::Request::from_parts(parts.clone(), body),
+        &(),
+    )
+    .await;
+    // Assign order/time when a complete request reaches the router, before admission.
+    let (received_ms, timestamp_ms) = received_time();
+    let sequence = recorder.sequence.fetch_add(1, Ordering::Relaxed);
+    let (body, response) = match bytes {
+        Ok(bytes) => {
+            let copy = bytes.clone();
+            let response = next
+                .run(axum::extract::Request::from_parts(
+                    parts,
+                    axum::body::Body::from(bytes),
+                ))
+                .await;
+            (Some(copy), response)
+        }
+        Err(error) => (None, error.into_response()),
+    };
+    recorder.record(Record::Request {
+        recording_id: recorder.recording_id.clone(),
+        sequence,
+        received_ms,
+        timestamp_ms,
+        path,
+        method,
+        body,
+        status: response.status().as_u16(),
+    });
+    response
+}
+
+fn received_time() -> (u64, u64) {
+    (
+        crate::wheelhouse_ingress_now_ms(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+    )
 }
 
 #[cfg(test)]
@@ -317,7 +415,7 @@ mod tests {
     #[test]
     fn saturated_queue_disables_recording_without_waiting() {
         // Issue #223: pressure at the filesystem boundary never blocks ingress.
-        let (sender, _receiver) = mpsc::sync_channel(1);
+        let (sender, receiver) = mpsc::sync_channel(64);
         let recorder = Recorder {
             sender: Some(sender),
             worker: None,
@@ -325,10 +423,16 @@ mod tests {
             sequence: AtomicU64::new(0),
             recording_id: "test".into(),
         };
-        recorder.record(Record::Value(serde_json::json!({"first": 1})));
-        assert!(!recorder.disabled.load(Ordering::Relaxed));
-        recorder.record(Record::Value(serde_json::json!({"second": 2})));
+        for sequence in 0..64 {
+            recorder.record(Record::Value(serde_json::json!({"sequence": sequence})));
+            assert!(!recorder.disabled.load(Ordering::Relaxed));
+        }
+        recorder.record(Record::Value(serde_json::json!({"overflow": true})));
         assert!(recorder.disabled.load(Ordering::Relaxed));
+        // Draining the queue does not silently resume an incomplete capture.
+        assert_eq!(receiver.try_iter().count(), 64);
+        recorder.record(Record::Value(serde_json::json!({"later": true})));
+        assert!(receiver.try_recv().is_err());
     }
     #[test]
     fn writer_failure_disables_once_without_affecting_caller() {
@@ -345,6 +449,83 @@ mod tests {
         assert!(recorder.disabled.load(Ordering::Relaxed));
         recorder.record(Record::Value(serde_json::json!({"status": 422})));
         drop(recorder);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn oversized_entry_permanently_disables_worker_without_exceeding_bound() {
+        // Review #226: serialization amplification/low configured limits cannot
+        // exceed retention, and an oversized entry ends this listener's capture.
+        let dir = directory();
+        let path = dir.join("ingress.jsonl");
+        let recorder = Recorder::start(path.clone(), 16, 2);
+        recorder.record(Record::Value(serde_json::json!({"large": "x".repeat(64)})));
+        for _ in 0..100 {
+            if recorder.disabled.load(Ordering::Relaxed) {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(recorder.disabled.load(Ordering::Relaxed));
+        recorder.record(Record::Value(serde_json::json!({"ok": 1})));
+        drop(recorder);
+        assert_eq!(fs::read(path).unwrap(), b"");
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn invalid_directory_output_cannot_change_ingress_access() {
+        // Issue #223: recording failure must leave request access unchanged,
+        // even when the configured output is an existing endpoint directory.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = directory();
+        let original = fs::metadata(&dir).unwrap().permissions().mode();
+        let recorder = Recorder::start(dir.clone(), 4 * 1024 * 1024, 4);
+        for _ in 0..100 {
+            if recorder.disabled.load(Ordering::Relaxed) {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(recorder.disabled.load(Ordering::Relaxed));
+        assert_eq!(fs::metadata(&dir).unwrap().permissions().mode(), original);
+        drop(recorder);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn startup_and_rotation_secure_new_and_existing_captures() {
+        // Review #226: sensitive captures must be owner-readable/writable only,
+        // including retained archives and files from an earlier permissive run.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = directory();
+        let path = dir.join("ingress.jsonl");
+        for name in ["ingress.jsonl", "ingress.jsonl.1", "unrelated.log"] {
+            fs::write(dir.join(name), b"1234\n").unwrap();
+            fs::set_permissions(dir.join(name), fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let mut writer = Rotating::new(path.clone(), 8, 3).unwrap();
+        for _ in 0..4 {
+            writer.write(b"5678\n").unwrap();
+        }
+        for n in 0..3 {
+            assert_eq!(
+                fs::metadata(writer.numbered(n))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        assert_eq!(
+            fs::metadata(dir.join("unrelated.log"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644
+        );
+        drop(writer);
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -371,76 +552,4 @@ mod tests {
         }
         fs::remove_dir_all(dir).unwrap();
     }
-}
-
-/// Installed only when opted in; the ordinary router has no recording work.
-pub async fn capture(
-    axum::extract::State(recorder): axum::extract::State<Arc<Recorder>>,
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    use axum::{extract::FromRequest, response::IntoResponse};
-    let path = request.uri().path().to_owned();
-    let method = request.method().to_string();
-    let (parts, body) = request.into_parts();
-    if method != "POST" || path != "/v1/metadata/patch" {
-        let (received_ms, timestamp_ms) = received_time();
-        let sequence = recorder.sequence.fetch_add(1, Ordering::Relaxed);
-        let response = next
-            .run(axum::extract::Request::from_parts(parts, body))
-            .await;
-        recorder.record(Record::Request {
-            recording_id: recorder.recording_id.clone(),
-            sequence,
-            received_ms,
-            timestamp_ms,
-            path,
-            method,
-            body: None,
-            status: response.status().as_u16(),
-        });
-        return response;
-    }
-    let bytes = axum::body::Bytes::from_request(
-        axum::extract::Request::from_parts(parts.clone(), body),
-        &(),
-    )
-    .await;
-    // Assign order/time when a complete request reaches the router, before admission.
-    let (received_ms, timestamp_ms) = received_time();
-    let sequence = recorder.sequence.fetch_add(1, Ordering::Relaxed);
-    let (body, response) = match bytes {
-        Ok(bytes) => {
-            let copy = bytes.clone();
-            let response = next
-                .run(axum::extract::Request::from_parts(
-                    parts,
-                    axum::body::Body::from(bytes),
-                ))
-                .await;
-            (Some(copy), response)
-        }
-        Err(error) => (None, error.into_response()),
-    };
-    recorder.record(Record::Request {
-        recording_id: recorder.recording_id.clone(),
-        sequence,
-        received_ms,
-        timestamp_ms,
-        path,
-        method,
-        body,
-        status: response.status().as_u16(),
-    });
-    response
-}
-
-fn received_time() -> (u64, u64) {
-    (
-        crate::wheelhouse_ingress_now_ms(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64,
-    )
 }
