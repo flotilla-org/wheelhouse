@@ -101,6 +101,23 @@ uishell_edit_set_window(RD_WindowState *ws, CFG_ID view)
   ws->ui->events = &ws->ui_events;
 }
 
+// Metadata fixture exercises combinations no application command currently uses
+// (in particular embedded file paths), through the production query dispatcher.
+global UIShell_QueryFlags uishell_query_fixture_flags;
+global UIShell_AppRegSlot uishell_query_fixture_slot;
+internal UIShell_AppCmdInfo
+uishell_query_fixture_info(String8 name)
+{
+  UIShell_AppCmdInfo info = {0};
+  if(str8_match(name, str8_lit("query_fixture"), 0))
+  {
+    info.string = name;
+    info.query_flags = UIShell_QueryFlag_Required|uishell_query_fixture_flags;
+    info.query_slot = uishell_query_fixture_slot;
+  }
+  return info;
+}
+
 internal B32
 uishell_edit_command_diagnostics(B32 native)
 {
@@ -150,11 +167,195 @@ uishell_edit_command_diagnostics(B32 native)
   slot.first = &windows[0]; slot.last = &windows[1];
   state.window_state_slots_count = 1; state.window_state_slots = &slot;
   if(saved_rd) { state.first_cmd_pack = saved_rd->first_cmd_pack; state.last_cmd_pack = saved_rd->last_cmd_pack; }
-  else { uishell_register_shell_cmd_packs(); }
+  else { UISHELL_APP_REGISTER_CMD_PACKS(); uishell_register_shell_cmd_packs(); }
   UIShell_EditClipboard clip = {0};
   wm_clipboard_io = (WM_ClipboardIO){&clip, uishell_edit_clip_write, uishell_edit_clip_read};
   B32 ok = 1;
 #define EditCheck(expr) do { if(!(expr)) { fprintf(stderr, "FAIL Edit trace %d: %s\n", __LINE__, #expr); ok = 0; } } while(0)
+
+  // Scenario generator: embedded search and cursor/address queries span empty,
+  // ASCII and multibyte edited inputs, both focus states, two views and windows.
+  // Repeating an open query preserves text/identity/owner and selects all bytes.
+  RD_ViewStateSlot query_slots[1] = {0};
+  state.view_state_slots_count = ArrayCount(query_slots);
+  state.view_state_slots = query_slots;
+  String8 query_commands[] = {str8_lit("search"), str8_lit("goto_line"), str8_lit("goto_address")};
+  String8 query_inputs[] = {str8_zero(), str8_lit("edited"), str8_lit("a \xce\xbb\xf0\x9f\x98\x80")};
+  for(U64 w = 0; w < 2; w++)
+  for(U64 p = 0; p < 2; p++)
+  for(U64 c = 0; c < ArrayCount(query_commands); c++)
+  for(U64 t = 0; t < ArrayCount(query_inputs); t++)
+  for(U64 contents = 0; contents < 2; contents++)
+  {
+    RD_WindowState *ws = &windows[w];
+    uishell_edit_set_window(ws, views[w][p]->id);
+    RD_ViewState *vs = rd_view_state_from_cfg(views[w][p]);
+    vs->query_is_open = 0;
+    uishell_cmd("run_command", .cmd_name = query_commands[c]);
+    uishell_edit_drain_commands();
+    EditCheck(vs->query_is_open && !vs->contents_are_focused);
+    EditCheck(str8_match(rd_view_query_cmd(), query_commands[c], 0));
+    uishell_cmd("update_query", .string = query_inputs[t]);
+    uishell_edit_drain_commands();
+    RD_ViewState other_states[2][2] = {0};
+    String8 other_text[2][2] = {0}, other_command[2][2] = {0};
+    for(U64 ow = 0; ow < 2; ow++) for(U64 op = 0; op < 2; op++)
+    {
+      other_states[ow][op] = *rd_view_state_from_cfg(views[ow][op]);
+      UIShell_RegsScope(.view = views[ow][op]->id)
+      {
+        other_text[ow][op] = push_str8_copy(arena, rd_view_query_input());
+        other_command[ow][op] = push_str8_copy(arena, rd_view_query_cmd());
+      }
+    }
+    vs->contents_are_focused = contents;
+    uishell_cmd("run_command", .cmd_name = query_commands[c]);
+    uishell_edit_drain_commands();
+    EditCheck(vs->query_is_open && !vs->contents_are_focused);
+    EditCheck(vs->query_cursor.line == 1 && vs->query_cursor.column == query_inputs[t].size+1);
+    EditCheck(vs->query_mark.line == 1 && vs->query_mark.column == 1);
+    EditCheck(str8_match(rd_view_query_input(), query_inputs[t], 0));
+    EditCheck(str8_match(rd_view_query_cmd(), query_commands[c], 0));
+    EditCheck(uishell_regs()->view == views[w][p]->id && uishell_regs()->window == ws->cfg_id);
+    for(U64 ow = 0; ow < 2; ow++) for(U64 op = 0; op < 2; op++)
+    {
+      if(ow == w && op == p) { continue; }
+      RD_ViewState *other = rd_view_state_from_cfg(views[ow][op]);
+      EditCheck(other->query_is_open == other_states[ow][op].query_is_open &&
+                other->contents_are_focused == other_states[ow][op].contents_are_focused);
+      EditCheck(other->query_cursor.column == other_states[ow][op].query_cursor.column &&
+                other->query_mark.column == other_states[ow][op].query_mark.column);
+      UIShell_RegsScope(.view = views[ow][op]->id)
+      {
+        EditCheck(str8_match(rd_view_query_input(), other_text[ow][op], 0));
+        EditCheck(str8_match(rd_view_query_cmd(), other_command[ow][op], 0));
+      }
+    }
+    // A different query still initializes by its own flags, even while open.
+    uishell_cmd("run_command", .cmd_name = str8_lit("goto_line"));
+    if(c == 1) { uishell_cmd("run_command", .cmd_name = str8_lit("goto_address")); }
+    uishell_edit_drain_commands();
+    EditCheck(vs->query_is_open && rd_view_query_input().size == 0);
+    // A different KeepOldInput query preserves input but does not select it
+    // while already open; SelectOldInput applies to closed initialization only.
+    uishell_cmd("update_query", .string = query_inputs[t]); uishell_edit_drain_commands();
+    uishell_cmd("run_command", .cmd_name = str8_lit("search_backwards")); uishell_edit_drain_commands();
+    EditCheck(vs->query_is_open && str8_match(rd_view_query_input(), query_inputs[t], 0));
+    EditCheck(str8_match(rd_view_query_cmd(), str8_lit("search_backwards"), 0));
+    EditCheck(vs->query_mark.column == vs->query_cursor.column && vs->query_cursor.column == query_inputs[t].size+1);
+  }
+
+  // Flags are exhaustively generated at the real metadata/dispatch seam.
+  // Closed queries retain initialization rules; open repeats never reset paths.
+  UIShell_CmdPack fixture_pack = {.next = state.first_cmd_pack, .cmd_info_from_string = uishell_query_fixture_info};
+  state.first_cmd_pack = &fixture_pack;
+  for(U64 file = 0; file < 2; file++)
+  for(U64 keep = 0; keep < 2; keep++)
+  for(U64 select = 0; select < 2; select++)
+  {
+    uishell_query_fixture_flags = keep*UIShell_QueryFlag_KeepOldInput|select*UIShell_QueryFlag_SelectOldInput;
+    uishell_query_fixture_slot = file ? UIShell_AppRegSlot_FilePath : UIShell_AppRegSlot_String;
+    RD_WindowState *ws = &windows[0];
+    uishell_edit_set_window(ws, views[0][0]->id);
+    RD_ViewState *vs = rd_view_state_from_cfg(views[0][0]);
+    vs->query_is_open = 0;
+    uishell_cmd("update_query", .string = str8_lit("old")); uishell_edit_drain_commands();
+    uishell_cmd("push_query", .cmd_name = str8_lit("query_fixture")); uishell_edit_drain_commands();
+    String8 initialized = rd_view_query_input();
+    EditCheck(vs->query_is_open && !vs->contents_are_focused);
+    EditCheck(file ? initialized.size > 0 && initialized.str[initialized.size-1] == '/' :
+              str8_match(initialized, keep ? str8_lit("old") : str8_zero(), 0));
+    EditCheck(vs->query_cursor.column == initialized.size+1 && vs->query_mark.column == (select ? 1 : initialized.size+1));
+    uishell_cmd("update_query", .string = str8_lit("/edited/\xce\xbb")); uishell_edit_drain_commands();
+    uishell_cmd("push_query", .cmd_name = str8_lit("query_fixture")); uishell_edit_drain_commands();
+    EditCheck(vs->query_is_open && str8_match(rd_view_query_input(), str8_lit("/edited/\xce\xbb"), 0));
+    EditCheck(vs->query_cursor.column == sizeof("/edited/\xce\xbb") && vs->query_mark.column == 1);
+    // Listers retain their command, input, focus and selection on push_query.
+    cfg_node_new(state.cfg, views[0][0], str8_lit("lister"));
+    vs->contents_are_focused = 1; vs->query_mark = vs->query_cursor;
+    uishell_cmd("push_query", .cmd_name = str8_lit("goto_line")); uishell_edit_drain_commands();
+    EditCheck(str8_match(rd_view_query_cmd(), str8_lit("query_fixture"), 0) && vs->contents_are_focused);
+    EditCheck(vs->query_mark.column == vs->query_cursor.column);
+    cfg_node_release(state.cfg, cfg_node_child_from_string(views[0][0], str8_lit("lister")));
+  }
+  state.first_cmd_pack = fixture_pack.next;
+
+  // Synthetic events drive the shell's real binding resolver, command expansion,
+  // #152 latch and text consumer. Only activation text belongs to the shortcut.
+  for(U64 w = 0; w < 2; w++)
+  {
+    uishell_edit_bindings(arena, state.cfg, user, 0);
+    CFG_Node *bindings = cfg_node_child_from_string(user, str8_lit("keybindings"));
+    CFG_Node *binding = cfg_node_new(state.cfg, bindings, str8_zero());
+    cfg_node_new(state.cfg, binding, str8_lit("search"));
+    cfg_node_new(state.cfg, binding, str8_lit("k"));
+    cfg_node_new(state.cfg, binding, str8_lit("alt"));
+    state.key_map = cfg_key_map_from_cfg(arena);
+    RD_WindowState *ws = &windows[w];
+    uishell_edit_set_window(ws, views[w][0]->id);
+    RD_ViewState *vs = rd_view_state_from_cfg(views[w][0]);
+    vs->query_is_open = 0;
+    WM_Event press = {.kind = WM_EventKind_Press, .window = ws->os, .key = WM_Key_K, .modifiers = WM_Modifier_Alt};
+    EditCheck(!uishell_route_edit_activation(arena, ws, &press, 0));
+    EditCheck(uishell_route_command_activation(arena, ws, &press, 0, 1));
+    uishell_edit_drain_commands();
+    EditCheck(vs->query_is_open && str8_match(rd_view_query_cmd(), str8_lit("search"), 0));
+    uishell_cmd("update_query", .string = str8_lit("edited")); uishell_edit_drain_commands();
+    vs->contents_are_focused = 1;
+    press.is_repeat = 1;
+    EditCheck(!uishell_route_edit_activation(arena, ws, &press, 0));
+    EditCheck(uishell_route_command_activation(arena, ws, &press, 0, 1));
+    uishell_edit_drain_commands();
+    EditCheck(vs->query_is_open && !vs->contents_are_focused && vs->query_mark.column == 1);
+    WM_Event texts[] = {
+      {.kind = WM_EventKind_Text, .window = ws->os, .source_key = WM_Key_K, .modifiers = WM_Modifier_Alt, .character = 'k'},
+      {.kind = WM_EventKind_Text, .window = ws->os, .source_key = WM_Key_J, .character = 'j'},
+      {.kind = WM_EventKind_Text, .window = windows[1-w].os, .source_key = WM_Key_K, .character = 'k'},
+      {.kind = WM_EventKind_Text, .window = ws->os, .source_key = WM_Key_Null, .character = 0x03bb},
+    };
+    WM_EventList queued = {0};
+    for(U64 t = 0; t < ArrayCount(texts); t++)
+    {
+      WM_Event *node = wm_event_list_push_new(arena, &queued, WM_EventKind_Text);
+      node->window = texts[t].window; node->source_key = texts[t].source_key;
+      node->modifiers = texts[t].modifiers; node->character = texts[t].character;
+    }
+    U64 activation_text_count = 0;
+    for(WM_Event *node = queued.first, *next = 0; node; node = next)
+    {
+      next = node->next;
+      if(uishell_route_edit_activation(arena, ws, node, 0))
+      { activation_text_count++; wm_eat_event(&queued, node); }
+    }
+    EditCheck(activation_text_count == 1 && queued.count == 3);
+    EditCheck(queued.first->source_key == WM_Key_J && queued.last->source_key == WM_Key_Null);
+    EditCheck(wm_window_match(queued.first->next->window, windows[1-w].os));
+    // A second pass cannot consume the activation again or eat surviving text.
+    for(WM_Event *node = queued.first; node; node = node->next)
+    { EditCheck(!uishell_route_edit_activation(arena, ws, node, 0)); }
+    for(WM_Event *node = queued.first; node; node = node->next)
+    {
+      if(wm_window_match(node->window, ws->os))
+      {
+        String32 cp = str32(&node->character, 1);
+        uishell_cmd("insert_text", .string = str8_from_32(arena, cp));
+      }
+    }
+    uishell_edit_drain_commands();
+    U8 buffer[64] = "edited"; U64 size = 6;
+    ui_consume_text_edit_events(ui_key_make(345+w), buffer, sizeof(buffer), &size, &vs->query_cursor, &vs->query_mark, 0);
+    EditCheck(str8_match(str8(buffer, size), str8_lit("j\xce\xbb"), 0));
+    EditCheck(ws->ui_events.count == 0);
+    WM_Event release = {.kind = WM_EventKind_Release, .window = ws->os, .key = WM_Key_K};
+    EditCheck(uishell_route_edit_activation(arena, ws, &release, 0));
+    EditCheck(!uishell_route_edit_activation(arena, ws, &release, 0));
+    EditCheck(!uishell_route_edit_activation(arena, ws, &texts[0], 0));
+    // Losing focus clears stale chords, and the other view/window never changes.
+    uishell_route_command_activation(arena, ws, &press, 0, 1); uishell_edit_drain_commands();
+    WM_Event lost = {.kind = WM_EventKind_WindowLoseFocus, .window = ws->os};
+    uishell_route_edit_activation(arena, ws, &lost, 0);
+    EditCheck(!ws->edit_chord_held[WM_Key_K]);
+  }
 
   // Exhaustive scenario generator spans two windows, two panels, default/rebound
   // bindings, menu activation and every modifier combination on the matching release.
@@ -534,6 +735,8 @@ uishell_edit_command_diagnostics(B32 native)
     if(native) { wm_window_close(windows[w].os); }
     ui_state_release(windows[w].ui);
   }
+  for(RD_ViewState *vs = query_slots[0].first; vs; vs = vs->hash_next)
+  { arena_release(vs->arena); ev_view_release(vs->ev_view); }
   cfg_state_release(state.cfg);
   arena_release(arena);
   rd_state = saved_rd; cfg_ctx_select(saved_cfg); ui_select_state(saved_ui); wm_clipboard_io = saved_clip;
