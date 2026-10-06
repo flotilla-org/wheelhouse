@@ -364,7 +364,7 @@ internal F32
 rd_dock_remaining_fraction(F32 fraction, F32 removed, U64 count)
 {
   Assert(count > 0); // Source closure always leaves at least one sibling.
-  return rd_dock_allocated_fraction(removed < 1.f ? fraction/(1.f-removed) : 1.f/count);
+  return rd_dock_allocated_fraction(removed < 1.f ? fraction/(1.f-removed) : 1.f/Max(count, 1));
 }
 
 // Compute the new leaf's settled body width using the same allocation as
@@ -410,22 +410,32 @@ rd_dock_resulting_width(CFG_PanelNode *root, CFG_PanelNode *panel,
 
 // Copy only layout nodes: proposals never mutate configuration or the frame's
 // shared tree. Tab/config identities stay borrowed for lookup.
-// Each nested Panel split consumes one call frame; tabs do not increase depth.
-// Interactive layouts are expected to be shallow; no proposal-only limit is imposed.
+// Copy saved split chains without growing the C call stack. Tabs/config remain
+// borrowed and immutable; only layout links need independent storage.
 internal CFG_PanelNode *
 rd_dock_copy_tree(Arena *arena, CFG_PanelNode *node)
 {
   if(node == &cfg_nil_panel_node) { return node; }
-  CFG_PanelNode *copy = push_array(arena, CFG_PanelNode, 1);
-  *copy = *node;
-  copy->parent = copy->next = copy->prev = copy->first = copy->last = &cfg_nil_panel_node;
-  for(CFG_PanelNode *child = node->first; child != &cfg_nil_panel_node; child = child->next)
+  CFG_PanelNode *root = &cfg_nil_panel_node, *parent = &cfg_nil_panel_node;
+  for(CFG_PanelNode *source = node;;)
   {
-    CFG_PanelNode *c = rd_dock_copy_tree(arena, child);
-    c->parent = copy;
-    DLLPushBack_NPZ(&cfg_nil_panel_node, copy->first, copy->last, c, next, prev);
+    CFG_PanelNode *copy = push_array(arena, CFG_PanelNode, 1);
+    *copy = *source;
+    copy->parent = parent;
+    copy->next = copy->prev = copy->first = copy->last = &cfg_nil_panel_node;
+    if(parent == &cfg_nil_panel_node) { root = copy; }
+    else { DLLPushBack_NPZ(&cfg_nil_panel_node, parent->first, parent->last, copy, next, prev); }
+    if(source->first != &cfg_nil_panel_node)
+    { source = source->first; parent = copy; }
+    else
+    {
+      while(source != node && source->next == &cfg_nil_panel_node)
+      { source = source->parent; parent = parent->parent; }
+      if(source == node) { break; }
+      source = source->next;
+    }
   }
-  return copy;
+  return root;
 }
 
 // Match command order: insert first, then close the emptied source. Closing

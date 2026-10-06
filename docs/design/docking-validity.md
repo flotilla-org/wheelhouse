@@ -253,3 +253,10 @@ new call sites at these boundaries when extending the production amalgamation;
 otherwise they may bypass the deterministic harness adapters. The harness
 keeps debug assertions enabled while disabling only the arena inspection table
 (which reserves 256 GiB), so native runs fit the 8 GiB address-space cap.
+
+Proposal layout copies use iterative traversal, so hand-edited deeply nested split
+chains consume scratch storage proportional to Panel count without increasing
+C call-stack depth. The headless integration suite copies a 250,000-level chain,
+checks independent links and preserved values, and verifies the source is unchanged.
+The real split/close commands point back to the proposal simulation; seeded
+command/render differential cases keep insertion, collapse and flattening aligned.
