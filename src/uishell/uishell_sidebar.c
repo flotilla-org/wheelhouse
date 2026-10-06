@@ -2,8 +2,6 @@
 #include "andamento.h"
 #include "uishell/uishell_sidebar_chips.h"
 #include "ingress/ingress.h"
-enum { UIShell_DragThresholdPT = 10 };
-read_only global F32 UIShell_GripWidthEM = 1.5f;
 global WheelhouseIngress *uishell_ingress;
 global String8 uishell_sidebar_live_config;
 global B32 uishell_sidebar_live;
@@ -2203,6 +2201,18 @@ uishell_sidebar_prune_empty_panel(CFG_Node *panel)
   }
 }
 
+// Reconciliation and duplicate repair share empty-wrapper cleanup. Keep
+// unrelated contents and their saved allocations; do not rescale siblings.
+internal B32
+uishell_sidebar_cleanup_region_panel(CFG_Node *panel, B32 removed)
+{
+  CFG_Node *cleanup = cfg_node_child_from_string(panel, str8_lit("section_hint_cleanup"));
+  if((removed || cleanup != &cfg_nil_node) && !uishell_sidebar_panel_has_content(panel))
+  { cfg_node_release(rd_state->cfg, panel); return 1; }
+  if(cleanup != &cfg_nil_node) { cfg_node_release(rd_state->cfg, cleanup); }
+  return 0;
+}
+
 internal B32
 uishell_sidebar_prune_regions(CFG_Node *container, UIShell_SectionPlacement *regions, U64 count, B32 reset)
 {
@@ -2222,10 +2232,7 @@ uishell_sidebar_prune_regions(CFG_Node *container, UIShell_SectionPlacement *reg
     {
       B32 child_removed = uishell_sidebar_prune_regions(c, regions, count, reset);
       removed |= child_removed;
-      CFG_Node *cleanup = cfg_node_child_from_string(c, str8_lit("section_hint_cleanup"));
-      if((child_removed || reset || cleanup != &cfg_nil_node) && !uishell_sidebar_panel_has_content(c))
-      { cfg_node_release(rd_state->cfg, c); removed = 1; }
-      else if(cleanup != &cfg_nil_node) { cfg_node_release(rd_state->cfg, cleanup); }
+      removed |= uishell_sidebar_cleanup_region_panel(c, child_removed || reset);
     }
   }
   return removed;
@@ -2306,6 +2313,43 @@ uishell_sidebar_place_region(CFG_Node *owner, UIShell_SectionPlacement *regions,
   return view;
 }
 
+// Prefer the first valid saved View in sidebar-then-floating depth-first order.
+// Only this owner's hosts participate; child Workspace Regions are independent.
+internal void
+uishell_sidebar_choose_region(CFG_Node *container, String8 key, CFG_Node **keeper)
+{
+  for(CFG_Node *c = container->first; c != &cfg_nil_node; c = c->next)
+  {
+    if(str8_match(c->string, str8_lit("sidebar_section"), 0) &&
+       str8_match(cfg_node_child_from_string(c, str8_lit("section"))->first->string, key, 0))
+    {
+      if(*keeper == &cfg_nil_node ||
+         (!rd_dock_saved_placement_valid(*keeper) && rd_dock_saved_placement_valid(c))) { *keeper = c; }
+    }
+    else if(rd_dock_is_container(c)) { uishell_sidebar_choose_region(c, key, keeper); }
+  }
+}
+
+internal B32
+uishell_sidebar_prune_region_duplicates(CFG_Node *container, String8 key, CFG_Node *keeper)
+{
+  B32 removed = 0;
+  for(CFG_Node *c = container->first, *next; c != &cfg_nil_node; c = next)
+  {
+    next = c->next;
+    if(str8_match(c->string, str8_lit("sidebar_section"), 0) && c != keeper &&
+       str8_match(cfg_node_child_from_string(c, str8_lit("section"))->first->string, key, 0))
+    { cfg_node_release(rd_state->cfg, c); removed = 1; }
+    else if(rd_dock_is_container(c))
+    {
+      B32 child_removed = uishell_sidebar_prune_region_duplicates(c, key, keeper);
+      removed |= child_removed;
+      removed |= uishell_sidebar_cleanup_region_panel(c, child_removed);
+    }
+  }
+  return removed;
+}
+
 // An authoritative empty declaration removes stale Views and close records.
 // Missing provider snapshots never reach this function and preserve layout.
 internal CFG_Node *
@@ -2326,7 +2370,12 @@ uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *reg
   {
     String8 key = regions[r].key;
     CFG_Node *record = cfg_node_child_from_string(inventory, key);
-    CFG_Node *view = uishell_sidebar_region_view(owner, key);
+    CFG_Node *view = &cfg_nil_node;
+    CFG_Node *floating = cfg_node_child_from_string(owner, str8_lit("floating_panels"));
+    uishell_sidebar_choose_region(root, key, &view);
+    uishell_sidebar_choose_region(floating, key, &view);
+    uishell_sidebar_prune_region_duplicates(root, key, view);
+    uishell_sidebar_prune_region_duplicates(floating, key, view);
     B32 known = record != &cfg_nil_node;
     if(!known) { record = cfg_node_new(rd_state->cfg, inventory, key); }
     CFG_Node *hint_pending = cfg_node_child_from_string(view, str8_lit("section_hint_pending"));
@@ -2521,6 +2570,8 @@ uishell_sidebar_size_panels(UIShell_ControlledSplit *split, UIShell_WorkspaceMou
     if(!repair) { scratch_end(scratch); return; }
     B32 *fixed = push_array(scratch.arena, B32, count);
     F32 remaining = 1, weight = total; U64 unfixed = count;
+    // Each fixed-point pass recomputes the scale from remaining weights: a
+    // newly clamped leaf can push another proportional share below minimum.
     for(U64 pass = 0; pass < count; pass++)
     {
       B32 changed = 0; U64 i = 0;
@@ -2643,14 +2694,17 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       // must remain reachable after closing the last selector section too.
       UI_Key menu_key = ui_key_from_string(root->key, str8_lit("section_restore_menu"));
       F32 menu_width = ui_top_font_size()*24.f;
-      for(U64 i = 0; state->snapshot && i < state->placement_count; i++)
+      if(ui_ctx_menu_is_open(menu_key))
       {
-        UIShell_SectionPlacement region = state->placement_regions[i];
-        if(uishell_sidebar_region_view(split->owner_cfg, region.key) != &cfg_nil_node) { continue; }
-        String8 text = push_str8f(ui_build_arena(), "Restore %S", region.title);
-        menu_width = Max(menu_width, fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, text).x+2*ui_top_text_padding());
+        for(U64 i = 0; state->snapshot && i < state->placement_count; i++)
+        {
+          UIShell_SectionPlacement region = state->placement_regions[i];
+          if(uishell_sidebar_region_view(split->owner_cfg, region.key) != &cfg_nil_node) { continue; }
+          String8 text = push_str8f(ui_build_arena(), "Restore %S", region.title);
+          menu_width = Max(menu_width, fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, text).x+2*ui_top_text_padding());
+        }
+        menu_width = Min(menu_width, dim_2f32(wm_client_rect_from_window(ws->os)).x);
       }
-      menu_width = Min(menu_width, dim_2f32(wm_client_rect_from_window(ws->os)).x);
       // Do not wrap UI_CtxMenu in UI_Rect: fixed layout stacks would leak
       // the notice rectangle into its popup rows and clip their hit areas.
       UI_CtxMenu(menu_key) UI_PrefWidth(ui_px(menu_width, 1)) UI_PrefHeight(ui_px(row_height, 1))

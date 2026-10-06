@@ -4,6 +4,10 @@
 #ifndef UISHELL_VIEWS_H
 #define UISHELL_VIEWS_H
 
+// Shared by sidebar, card and ordinary tab grips in the unity build.
+enum { UIShell_DragThresholdPT = 10 };
+read_only global F32 UIShell_GripWidthEM = 1.5f;
+
 // Optional terminal measurements, independent of the workload driving the views.
 // The collector owns storage and resets it at the start of each measured frame.
 typedef struct UIShell_TerminalMetrics UIShell_TerminalMetrics;

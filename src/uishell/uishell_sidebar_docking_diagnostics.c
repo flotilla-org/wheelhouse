@@ -27,6 +27,7 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
     }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = mouse;
+    if(frame == 6) { state->placement_regions[0].title = str8_lit("Changed long section declaration with a deliberately extended title for review"); }
     // Changing font size while open changes both row size and toolkit padding.
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(frame >= 6 ? 15 : 11) UI_TextPadding(3)
     { uishell_sidebar_footer_ui(r2f32p(100, 200, 400, 250), split); }
@@ -35,13 +36,51 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
     { if(str8_match(ui_box_display_string(box), str8_lit("Sections…"), 0)) { button = box; break; } }
     if(frame == 4 && !test->next_ctx_menu_open)
     { ok = 0; fprintf(stderr, "FAIL section restore footer activation: button [%g,%g,%g,%g]\n", button->rect.x0, button->rect.y0, button->rect.x1, button->rect.y1); }
+    // First open must already use measured title width, without a warm cache.
+    if(frame == 5 && dim_2f32(test->ctx_menu_root->rect).x <= 11.f*24.f)
+    { ok = 0; fprintf(stderr, "FAIL first-open section title measurement\n"); }
     if(frame == 7 && (!test->ctx_menu_open || test->ctx_menu_root->rect.y1 > button->rect.y0+1))
     { ok = 0; fprintf(stderr, "FAIL section restore footer menu placement/open\n"); }
   }
-  UI_Box *restore = test->ctx_menu_root->first->next;
+  UI_Box *restore = ui_box_from_key(ui_key_from_stringf(test->ctx_menu_root->key, "###restore_%S", state->placement_regions[0].key));
   F32 text_width = fnt_dim_from_tag_size_string(restore->font, restore->font_size, 0, 0, ui_box_display_string(restore)).x;
   if(dim_2f32(restore->rect).x < text_width || dim_2f32(restore->rect).x <= restore->font_size*24.f)
   { ok = 0; fprintf(stderr, "FAIL long section restore menu title width\n"); }
+  // A short native window forces the upward anchor above y=0; ui_end_build
+  // must contain the popup after anchoring, leaving the restore row reachable.
+  WM_Window short_window = wm_window_open(r2f32p(0, 0, 360, 80), 0, str8_lit("Restore containment diagnostic"));
+  UI_State *short_test = ui_state_alloc();
+  ui_select_state(short_test);
+  WM_Window original_window = ws->os;
+  ws->os = short_window;
+  for(U32 frame = 0; frame < 3; frame++)
+  {
+    UI_EventList events = {0};
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {.menu_animation_rate = 1};
+    ui_begin_build(short_window, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_sidebar_footer_ui(r2f32p(0, 0, 360, 50), split); }
+    ui_end_build();
+    if(frame == 0)
+    {
+      for(UI_Box *box = short_test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, short_test->root).next)
+      {
+        if(str8_match(ui_box_display_string(box), str8_lit("Sections…"), 0))
+        { ui_ctx_menu_open_above(ui_key_from_string(box->parent->parent->key, str8_lit("section_restore_menu")), box->key); break; }
+      }
+    }
+  }
+  Rng2F32 bounds = wm_client_rect_from_window(short_window);
+  restore = ui_box_from_key(ui_key_from_stringf(short_test->ctx_menu_root->key, "###restore_%S", state->placement_regions[0].key));
+  if(!short_test->ctx_menu_open || ui_box_is_nil(restore) || short_test->ctx_menu_root->rect.y0 < bounds.y0 ||
+     short_test->ctx_menu_root->rect.x0 < bounds.x0 || restore->rect.y0 < bounds.y0 ||
+     restore->rect.y1 > bounds.y1 || restore->rect.x1 > bounds.x1)
+  { ok = 0; fprintf(stderr, "FAIL short-window upward restore menu containment/reachability\n"); }
+  ws->os = original_window;
+  wm_window_close(short_window);
+  ui_select_state(test);
+  ui_state_release(short_test);
   state->placement_regions[0].title = saved_title;
   cfg_node_insert_child(rd_state->cfg, parent, prev, view);
   uishell_sidebar_dock_layout(split);
@@ -79,7 +118,7 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
     }
     ws->window_layout_reset = 1;
     UI_Box *bar = &ui_nil_box;
-    UI_Box *last_grip = &ui_nil_box;
+    UI_Box *last_grip = &ui_nil_box, *last_close = &ui_nil_box;
     for(U32 frame = 0; frame < 8; frame++)
     {
       UI_EventList events = {0}; UI_EventNode event = {0};
@@ -102,6 +141,7 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
       UI_Key tab = ui_key_from_stringf(column, "tab_%p", last);
       UI_Box *tab_box = ui_box_from_key(tab);
       UI_Box *column_box = ui_box_from_key(column);
+      last_close = ui_box_from_key(ui_key_from_stringf(tab, "###close_view_%p", last));
       if(compact && !ui_box_is_nil(column_box) && dim_2f32(column_box->rect).x < floor_f32(11.f*(1.6f+UIShell_GripWidthEM)))
       { ok = 0; fprintf(stderr, "FAIL compact tab grip/close minimum width\n"); }
       for(UI_Box *box = tab_box; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, tab_box).next)
@@ -110,6 +150,12 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
     if(ui_box_is_nil(bar) || ui_box_is_nil(last_grip) || bar->view_off_target.x <= 0 ||
        last_grip->rect.x0 < bar->rect.x0-1 || last_grip->rect.x1 > bar->rect.x1+1)
     { ok = 0; fprintf(stderr, "FAIL %s many-tab scroll/grip reachability: offset=%g bar=[%g,%g] grip=[%g,%g]\n", compact ? "compact" : "ordinary", bar->view_off_target.x, bar->rect.x0, bar->rect.x1, last_grip->rect.x0, last_grip->rect.x1); }
+    // Compact controls must have actual, disjoint hit rectangles and remain
+    // visible after scrolling to the final tab, beyond the allocation floor.
+    if(compact && (ui_box_is_nil(last_close) || dim_2f32(last_grip->rect).x < 11.f*UIShell_GripWidthEM-1 ||
+       dim_2f32(last_close->rect).x < 11.f*1.6f-1 || last_grip->rect.x1 > last_close->rect.x0+1 ||
+       last_close->rect.x1 > bar->rect.x1+1 || last_close->rect.x0 < bar->rect.x0-1))
+    { ok = 0; fprintf(stderr, "FAIL compact tab actual grip/close geometry and reachability\n"); }
     cfg_node_release(rd_state->cfg, owner);
   }
   ui_select_state(saved); ui_state_release(test); scratch_end(scratch);
@@ -601,6 +647,23 @@ uishell_section_placement_diagnostics(String8 source_path)
   uishell_sidebar_dock_layout(&split);
   PlacementCheck(cfg_node_from_id(reserved_id) == reserved_panel);
   cfg_node_release(state.cfg, reserved_panel);
+  // An invalid copy preceding the original must not displace a valid saved
+  // View. The nested panels node belongs to a different docking level.
+  CFG_Node *duplicate_invalid_panel = cfg_node_new(state.cfg, host, str8_lit("panels"));
+  cfg_node_insert_child(state.cfg, host, &cfg_nil_node, duplicate_invalid_panel);
+  CFG_Node *invalid_copy = cfg_node_new(state.cfg, duplicate_invalid_panel, str8_lit("sidebar_section"));
+  cfg_node_new(state.cfg, cfg_node_new(state.cfg, invalid_copy, str8_lit("section")), str8_lit("a"));
+  PlacementCheck(!rd_dock_saved_placement_valid(invalid_copy));
+  // Malformed saved ids survive the real codec. Keep the first valid copy,
+  // prune empty wrappers, and preserve unrelated content and saved ratios.
+  CFG_Node *duplicate_panel = cfg_node_new(state.cfg, host, str8_lit("0.125"));
+  CFG_Node *duplicate = cfg_node_new(state.cfg, duplicate_panel, str8_lit("sidebar_section"));
+  cfg_node_new(state.cfg, cfg_node_new(state.cfg, duplicate, str8_lit("section")), str8_lit("a"));
+  CFG_Node *unrelated = cfg_node_new(state.cfg, duplicate_panel, str8_lit("text"));
+  cfg_node_new(state.cfg, cfg_node_new(state.cfg, unrelated, str8_lit("label")), str8_lit("unrelated"));
+  CFG_Node *empty_duplicate_panel = cfg_node_new(state.cfg, host, str8_lit("0.0625"));
+  duplicate = cfg_node_new(state.cfg, empty_duplicate_panel, str8_lit("sidebar_section"));
+  cfg_node_new(state.cfg, cfg_node_new(state.cfg, duplicate, str8_lit("section")), str8_lit("a"));
   // Restart through the actual serializer/parser retains that arrangement.
   String8 serialized = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), window);
   CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), serialized);
@@ -610,6 +673,14 @@ uishell_section_placement_diagnostics(String8 source_path)
   split.owner_cfg = restored;
   CFG_Node *restored_host = uishell_sidebar_dock_layout(&split);
   PlacementCheck(str8_match(cfg_node_child_from_string(restored_host->first->first, str8_lit("section"))->first->string, str8_lit("b"), 0));
+  PlacementCheck(uishell_sidebar_find_view(restored_host->last, str8_lit("a")) == &cfg_nil_node);
+  PlacementCheck(str8_match(restored_host->last->string, str8_lit("0.125"), 0));
+  PlacementCheck(str8_match(restored_host->last->first->string, str8_lit("text"), 0));
+  PlacementCheck(str8_match(cfg_node_child_from_string(restored_host->last->first, str8_lit("label"))->first->string, str8_lit("unrelated"), 0));
+  generation = cfg_change_gen();
+  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(cfg_change_gen() == generation);
+  cfg_node_release(state.cfg, restored_host->last); // Remove this scenario's unrelated fixture.
   // Adding a hinted region inserts it without changing the saved pair's order.
   String8 added = push_str8f(scratch.arena, "%Sregion \"c\" root-template=\"flotilla/region/tree\" order=15\n", config);
   PlacementCheck(andamento_configure(core, (AndamentoText){added.str, added.size}, 0));
