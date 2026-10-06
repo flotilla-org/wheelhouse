@@ -1,0 +1,79 @@
+name: Sidebar memory regression
+
+# Capped native sidebar benchmark (#195, #199): a scheduled and on-demand
+# regression check, not a required gate. Pins come from build.yml so the two
+# workflows cannot drift.
+on:
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/sidebar-memory.yml
+      - tools/benchmark-sidebar.py
+      - src/uishell/uishell_sidebar_benchmark.c
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sidebar-memory-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sidebar-memory:
+    name: Scheduled sidebar memory regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      WHEELHOUSE_CLEAT_FEATURES: none
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    defaults:
+      run:
+        working-directory: wheelhouse
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: wheelhouse
+      - name: Read dependency pins from build.yml
+        run: |
+          for name in CLEAT_REV JACKSTAY_REV ANDAMENTO_REV; do
+            value=$(sed -n "s/^  ${name}: *\([0-9a-f]\{40\}\).*/\1/p" .github/workflows/build.yml)
+            test -n "$value" || { echo "missing $name in build.yml" >&2; exit 1; }
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+      - uses: actions/checkout@v4
+        with:
+          repository: flotilla-org/cleat
+          ref: ${{ env.CLEAT_REV }}
+          path: cleat
+      - uses: actions/checkout@v4
+        with:
+          repository: flotilla-org/jackstay
+          ref: ${{ env.JACKSTAY_REV }}
+          path: jackstay
+      - uses: actions/checkout@v4
+        with:
+          repository: flotilla-org/andamento
+          ref: ${{ env.ANDAMENTO_REV }}
+          path: andamento
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build, display and measurement dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang pkg-config libx11-dev libxext-dev libgl1-mesa-dev libegl1-mesa-dev libfreetype6-dev xvfb xauth time util-linux
+      - name: Build release binary
+        run: bash build.sh wheelhouse release
+      - name: Capped sidebar memory regression
+        run: xvfb-run -a python3 tools/benchmark-sidebar.py --sizes 100 300 1000 --output build/sidebar-benchmark
+      - name: Retain complete and partial benchmark logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidebar-memory-${{ github.run_id }}-${{ github.run_attempt }}
+          path: wheelhouse/build/sidebar-benchmark/*.log
+          if-no-files-found: warn
