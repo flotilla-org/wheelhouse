@@ -356,7 +356,7 @@ int main(void) {
     def apply_fact(self, item):
         self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
 
-    def assert_running_governor(self, workspace_id=None, current=None):
+    def assert_running_governor(self, workspace_id=None, current=None, expect_history=False):
         snapshot, nodes = self.snapshot()
         role = next(n for n in nodes if n.entity_kind.string() == 'role' and n.entity_id.string() == 'p/governor')
         # label/kind/status positions are the native renderer contract (node_status reads field 2).
@@ -369,9 +369,9 @@ int main(void) {
             self.assertIn('Current attempt: governor', self.values(snapshot, role, detail=True))
             # History rows retain distinct resource IDs even with identical names.
             attempts = self.children(nodes, 'p/governor')
-            if attempts:
-                self.assertEqual([n.entity_id.string() for n in attempts], current)
-                self.assertEqual(len({n.key.string() for n in attempts}), len(current))
+            expected = current if expect_history else []
+            self.assertEqual([n.entity_id.string() for n in attempts], expected)
+            self.assertEqual(len({n.key.string() for n in attempts}), len(expected))
 
     # Issue #213: one running and two abandoned same-address governors keep the
     # role running in every catalog order. Six permutations cover order collisions.
@@ -392,7 +392,7 @@ int main(void) {
                 self.assertEqual(self.children(self.snapshot()[1], 'p/governor'), [])
                 self.open_workspace('p/governor', 44)
                 self.toggle_variable('Role history')
-                self.assert_running_governor(44, list(identities))
+                self.assert_running_governor(44, list(identities), expect_history=True)
                 self.assertEqual(len(self.children(self.snapshot()[1], 'p/governor')), 3)
 
     # A workspace opened during attempt A follows the role through A -> B -> C.
@@ -432,7 +432,7 @@ int main(void) {
                 if history:
                     self.toggle_variable('Role history')
                 self.open_workspace('p/governor', 44)
-                self.assert_running_governor(44, attempts)
+                self.assert_running_governor(44, attempts, expect_history=history)
                 for identity in ('B', 'C'):
                     previous = attempts[-1]
                     if abandon_first:
@@ -443,7 +443,7 @@ int main(void) {
                     update_role()
                     if not abandon_first:
                         publish(previous, 'abandoned')
-                    self.assert_running_governor(44, attempts)
+                    self.assert_running_governor(44, attempts, expect_history=history)
 
                 # Save only the subject identity the host stores, then start a fresh
                 # core and replay the current producer facts before restoring it.
@@ -463,7 +463,7 @@ int main(void) {
                 self.assertTrue(lib.andamento_complete(self.core, request, 1, saved['workspace_id'], Text.of(''), None))
                 workspace = Workspace(saved['workspace_id'], 0, Text.of('governor'), 1)
                 self.assertTrue(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None))
-                self.assert_running_governor(44, attempts)
+                self.assert_running_governor(44, attempts, expect_history=history)
 
                 # Deleting terminal catalog records must leave the same live role
                 # and workspace; check each removal, as in the operator's cure.
