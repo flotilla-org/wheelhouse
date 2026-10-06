@@ -2121,7 +2121,9 @@ uishell_watch_view_ui(Rng2F32 rect)
     
     B32 pressed = 0;
     Vec2F32 rect_dim = dim_2f32(rect);
-    F32 contents_width_px = Max(0, rect_dim.x - floor_f32(ui_bottom_font_size()*1.5f));
+    UI_ScrollRegion list_region = ui_scroll_region_layout(ui_scroll_region_params(r2f32p(0, 0, rect_dim.x, rect_dim.y),
+                                                                                UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always));
+    F32 contents_width_px = dim_2f32(list_region.viewport).x;
     Rng1S64 visible_row_rng = {0};
     UI_ScrollListParams scroll_list_params = {0};
     scroll_list_params.flags = UI_ScrollListFlag_All;
