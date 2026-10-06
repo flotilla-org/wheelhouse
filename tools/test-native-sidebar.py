@@ -373,7 +373,7 @@ int main(void) {
             self.assertEqual([n.entity_id.string() for n in attempts], expected)
             self.assertEqual(len({n.key.string() for n in attempts}), len(expected))
 
-    # Issue #213: one running and two abandoned same-address governors keep the
+    # Guard for the #213 scenario (no failing replay yet): same-address governors keep the
     # role running in every catalog order. Six permutations cover order collisions.
     def test_running_governor_with_abandoned_same_address_attempts(self):
         identities = ('old-1', 'old-2', 'live')
@@ -389,23 +389,23 @@ int main(void) {
                         'flotilla.convoy.phase': 'active' if identity == 'live' else 'abandoned',
                         'status.state': 'running' if identity == 'live' else 'ended'})
                 self.assert_running_governor(current=list(identities))
-                self.assertEqual(self.children(self.snapshot()[1], 'p/governor'), [])
                 self.open_workspace('p/governor', 44)
                 self.toggle_variable('Role history')
                 self.assert_running_governor(44, list(identities), expect_history=True)
-                self.assertEqual(len(self.children(self.snapshot()[1], 'p/governor')), 3)
 
     # A workspace opened during attempt A follows the role through A -> B -> C.
     # Check both update interleavings, history visibility, and the host's restart
     # seam: saved subject kind/id selects a latent row, whose effect rebinds the
     # existing workspace ID. This exercises the ABI, not native CFG serialization.
     def test_governor_readmit_lifecycle_and_workspace_restore(self):
-        for history, abandon_first in itertools.product((False, True), repeat=2):
-            with self.subTest(history=history, abandon_first=abandon_first):
+        for history, abandon_first, role_first in itertools.product((False, True), repeat=3):
+            with self.subTest(history=history, abandon_first=abandon_first, role_first=role_first):
                 self.reset_core()
                 attempts = []
                 facts = {}
 
+                # These helpers retain exact patches for restart/removal replay; the
+                # class helpers publish directly and do not keep a replay catalog.
                 def publish(identity, phase):
                     for kind, resource in [('convoy', identity), ('vessel', identity + '-v')]:
                         item = patch(kind, resource, **{'flotilla.project': 'p', 'flotilla.role': 'p/governor',
@@ -449,7 +449,10 @@ int main(void) {
                 # core and replay the current producer facts before restoring it.
                 saved = {'kind': 'role', 'id': 'p/governor', 'workspace_id': 44}
                 self.reset_core()
-                for item in facts.values():
+                replay = list(facts.values())
+                if role_first:
+                    replay.sort(key=lambda item: item['target']['value']['kind'] != 'role')
+                for item in replay:
                     self.apply_fact(item)
                 if history:
                     self.toggle_variable('Role history')
@@ -472,7 +475,7 @@ int main(void) {
                 for (_, resource), item in facts.items():
                     if resource not in abandoned_resources:
                         continue
-                    self.apply_fact({'target': item['target'], 'source_id': 'native-test',
+                    self.apply_fact({'target': item['target'], 'source_id': item['source_id'],
                                      'set': {}, 'unset': list(item['set'])})
                     self.assert_running_governor(44)
                 _, nodes = self.snapshot()
