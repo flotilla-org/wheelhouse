@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check the shipped native template against Andamento's real typed C ABI."""
 import ctypes as C
+import itertools
 import json
 import os
 import shutil
@@ -320,25 +321,165 @@ int main(void) {
         role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
         self.assertTrue(role.openable)
         self.assertEqual(role.layout.string(), 'inline')
-        self.assertIn('waiting', self.values(snapshot, role))
+        self.assertIn('running', self.values(snapshot, role))
         details = self.values(snapshot, role, detail=True)
-        self.assertIn('Current attempt: Governor attempt 2', details)
+        self.assertIn('Current attempt: governor', details)
         self.assertIn('Attempt phase: active', details)
         self.assertIn('Attachment: ready', details)
         self.assertEqual(self.children(nodes, 'p/governor'), [])
         self.toggle_variable('Role history')
         _, nodes = self.snapshot()
-        self.assertEqual([n.entity_id.string() for n in self.children(nodes, 'p/governor')], ['z-attempt-1', 'a-attempt-2'])
+        self.assertEqual([n.entity_id.string() for n in self.children(nodes, 'p/governor')], ['z-attempt-1', 'abandoned-1', 'abandoned-2', 'a-attempt-2'])
         self.toggle_variable('Show finished')
         _, nodes = self.snapshot()
         # Attempts have one placement under the role, including when finished work is shown.
-        for identity in ('z-attempt-1', 'a-attempt-2'):
+        for identity in ('z-attempt-1', 'abandoned-1', 'abandoned-2', 'a-attempt-2'):
             instances = [n for n in nodes if n.entity_id.string() == identity]
             self.assertEqual(len(instances), 1)
             self.assertEqual(nodes[instances[0].parent].entity_id.string(), 'p/governor')
         self.toggle_variable('Role history')
         _, nodes = self.snapshot()
         self.assertEqual(self.children(nodes, 'p/governor'), [])
+
+    def reset_core(self):
+        # A fresh core is the process boundary used by the host restart path.
+        for snapshot in self.snapshots:
+            lib.andamento_snapshot_release(snapshot)
+        self.snapshots.clear()
+        lib.andamento_destroy(self.core)
+        config = (ROOT / 'data/sidebar/daily-driver.kdl').read_bytes()
+        self.core = lib.andamento_create(config, len(config), None)
+        self.assertTrue(self.core)
+        # These governor scenarios need only a project, unlike the broader setUp fixture.
+        self.apply_fact(patch('project', 'p', **{'flotilla.project': 'p'}))
+
+    def apply_fact(self, item):
+        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+
+    def assert_running_governor(self, workspace_id=None, current=None, expect_history=False):
+        snapshot, nodes = self.snapshot()
+        role = next(n for n in nodes if n.entity_kind.string() == 'role' and n.entity_id.string() == 'p/governor')
+        # label/kind/status positions are the native renderer contract (node_status reads field 2).
+        self.assertEqual(self.values(snapshot, role)[2], 'running')
+        if workspace_id is not None:
+            self.assertEqual((role.state, role.workspace_id, role.selected), (3, workspace_id, 1))
+        if current is not None:
+            self.assertEqual([v for v in self.values(snapshot, role, detail=True) if v.startswith('Attempt phase:')],
+                             ['Attempt phase: active'])
+            self.assertIn('Current attempt: governor', self.values(snapshot, role, detail=True))
+            # History rows retain distinct resource IDs even with identical names.
+            attempts = self.children(nodes, 'p/governor')
+            expected = current if expect_history else []
+            self.assertEqual([n.entity_id.string() for n in attempts], expected)
+            self.assertEqual(len({n.key.string() for n in attempts}), len(expected))
+
+    # Guard for the #213 scenario (no failing replay yet): same-address governors keep the
+    # role running in every catalog order. Six permutations cover order collisions.
+    def test_running_governor_with_abandoned_same_address_attempts(self):
+        identities = ('old-1', 'old-2', 'live')
+        for order in itertools.permutations(identities):
+            with self.subTest(order=order):
+                self.reset_core()
+                self.publish_role('governor', attempt='live-v', **{'status.state': 'running',
+                    'flotilla.role.current_attempt': [{'kind': 'convoy', 'id': 'live'}],
+                    'flotilla.role.attempts': [{'kind': 'convoy', 'id': i} for i in identities]})
+                for identity in order:
+                    self.publish_attempt(identity, 'governor', **{'display.label': 'governor',
+                        'flotilla.convoy': 'governor',
+                        'flotilla.convoy.phase': 'active' if identity == 'live' else 'abandoned',
+                        'status.state': 'running' if identity == 'live' else 'ended'})
+                self.assert_running_governor(current=list(identities))
+                self.open_workspace('p/governor', 44)
+                self.toggle_variable('Role history')
+                self.assert_running_governor(44, list(identities), expect_history=True)
+
+    # A workspace opened during attempt A follows the role through A -> B -> C.
+    # Check both update interleavings, history visibility, and the host's restart
+    # seam: saved subject kind/id selects a latent row, whose effect rebinds the
+    # existing workspace ID. This exercises the ABI, not native CFG serialization.
+    def test_governor_readmit_lifecycle_and_workspace_restore(self):
+        for history, abandon_first, role_first in itertools.product((False, True), repeat=3):
+            with self.subTest(history=history, abandon_first=abandon_first, role_first=role_first):
+                self.reset_core()
+                attempts = []
+                facts = {}
+
+                # These helpers retain exact patches for restart/removal replay; the
+                # class helpers publish directly and do not keep a replay catalog.
+                def publish(identity, phase):
+                    for kind, resource in [('convoy', identity), ('vessel', identity + '-v')]:
+                        item = patch(kind, resource, **{'flotilla.project': 'p', 'flotilla.role': 'p/governor',
+                            'flotilla.convoy': 'governor', 'display.label': 'governor',
+                            'flotilla.convoy.phase': phase,
+                            'status.state': 'running' if phase == 'active' else 'ended'})
+                        facts[(kind, resource)] = item
+                        self.apply_fact(item)
+
+                def update_role():
+                    item = patch('role', 'p/governor', **{'flotilla.project': 'p',
+                        'flotilla.role': 'p/governor', 'flotilla.role.name': 'governor',
+                        'display.label': 'governor', 'status.state': 'running',
+                        'action.primary.target': 'role:p/governor', 'action.primary.recipe': 'exec sh',
+                        'workspace.primary.state': 'ready', 'workspace.primary.target': 'vessel:' + attempts[-1] + '-v',
+                        'flotilla.role.current_attempt': [{'kind': 'convoy', 'id': attempts[-1]}],
+                        'flotilla.role.attempts': [{'kind': 'convoy', 'id': i} for i in attempts]})
+                    facts[('role', 'p/governor')] = item
+                    self.apply_fact(item)
+
+                attempts.append('A')
+                publish('A', 'active')
+                update_role()
+                if history:
+                    self.toggle_variable('Role history')
+                self.open_workspace('p/governor', 44)
+                self.assert_running_governor(44, attempts, expect_history=history)
+                for identity in ('B', 'C'):
+                    previous = attempts[-1]
+                    if abandon_first:
+                        publish(previous, 'abandoned')
+                        self.assert_running_governor(44)
+                    attempts.append(identity)
+                    publish(identity, 'active')
+                    update_role()
+                    if not abandon_first:
+                        publish(previous, 'abandoned')
+                    self.assert_running_governor(44, attempts, expect_history=history)
+
+                # Save only the subject identity the host stores, then start a fresh
+                # core and replay the current producer facts before restoring it.
+                saved = {'kind': 'role', 'id': 'p/governor', 'workspace_id': 44}
+                self.reset_core()
+                replay = list(facts.values())
+                if role_first:
+                    replay.sort(key=lambda item: item['target']['value']['kind'] != 'role')
+                for item in replay:
+                    self.apply_fact(item)
+                if history:
+                    self.toggle_variable('Role history')
+                snapshot, nodes = self.snapshot()
+                node = next(n for n in nodes if (n.entity_kind.string(), n.entity_id.string()) ==
+                            (saved['kind'], saved['id']))
+                self.assertTrue(node.openable)
+                self.assertEqual(node.state, 1)  # latent, before host restore
+                kind, request, _, _ = self.dispatch(snapshot, node.activate)
+                self.assertEqual(kind, 1)
+                self.assertTrue(lib.andamento_complete(self.core, request, 1, saved['workspace_id'], Text.of(''), None))
+                workspace = Workspace(saved['workspace_id'], 0, Text.of('governor'), 1)
+                self.assertTrue(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None))
+                self.assert_running_governor(44, attempts, expect_history=history)
+
+                # Deleting terminal catalog records must leave the same live role
+                # and workspace; check each removal, as in the operator's cure.
+                abandoned_resources = {resource for identity in attempts[:-1]
+                                       for resource in (identity, identity + '-v')}
+                for (_, resource), item in facts.items():
+                    if resource not in abandoned_resources:
+                        continue
+                    self.apply_fact({'target': item['target'], 'source_id': item['source_id'],
+                                     'set': {}, 'unset': list(item['set'])})
+                    self.assert_running_governor(44)
+                _, nodes = self.snapshot()
+                self.assertFalse(any(n.entity_id.string() in abandoned_resources for n in nodes))
 
     def test_git_fixture_groups_and_materializes_worktrees(self):
         for line in (ROOT / 'data/sidebar/git-fixture.jsonl').read_text().splitlines():
