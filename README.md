@@ -305,6 +305,23 @@ supplied recipe in an ordinary Terminal View; Flotilla's recipes use `flotilla a
 or `flotilla view`. Resource enumeration and dynamic overflow tabs remain follow-up
 work. A new window receives facts on the producer's next periodic reassertion.
 
+To capture lifecycle bugs, add `--ingress_record` to Wheelhouse or run the daily
+driver with `scripts/run-daily-driver.sh --ingress-record`. Recording is off by
+default. It writes `logs/ingress.jsonl` beside `ui_thread.uishell_log` in the app
+data folder (beside an explicit `--user` file, or in daily-driver settings).
+Rotation retains four files of up to 4 MiB each, 16 MiB total. Override with
+`--ingress_record_bytes:<bytes>` / `--ingress_record_files:<count>`; launcher
+options are `--ingress-record-bytes <bytes>` / `--ingress-record-files <count>`.
+Write failures disable recording with one warning while requests continue.
+
+`python3 tools/replay-ingress.py <logs/ingress.jsonl...> --library <Andamento shared library>`
+replays patches through the shipped sidebar template and reports per-patch
+role/convoy fields. Before sharing, run
+`python3 tools/replay-ingress.py <logs/ingress.jsonl...> --redact > ingress-redacted.jsonl`
+to hash paths, hosts and labels while retaining identities and ingress order.
+See the [recording contract](docs/protocol/pm-connect.md#opt-in-ingress-recording-and-replay)
+for replay limits and redaction details.
+
 Producers discover terminal directories with `GET /v1/observed/workdirs` on that same
 Unix socket. A successful response is `200 application/json` with `Cache-Control:
 no-store`:

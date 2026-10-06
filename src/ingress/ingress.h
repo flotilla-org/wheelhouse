@@ -12,6 +12,9 @@
 // stop joins the worker and invalidates the handle. NULL is accepted.
 typedef struct WheelhouseIngress WheelhouseIngress;
 extern WheelhouseIngress *wheelhouse_ingress_start(const uint8_t *, size_t, void (*)(void), uint8_t *, size_t);
+// Optional recorder; NULL recording path disables it. Limits include the active file.
+extern WheelhouseIngress *wheelhouse_ingress_start_recorded(const uint8_t *, size_t, void (*)(void),
+  const uint8_t *, size_t, uint64_t, size_t, uint8_t *, size_t);
 extern void wheelhouse_ingress_poll(WheelhouseIngress *, uint32_t (*)(void *, const uint8_t *, size_t), void *);
 typedef struct { const uint8_t *data; size_t len; } WheelhouseIngressText;
 typedef struct {

@@ -71,3 +71,70 @@ This endpoint does not register a presentation manager. Future registration
 must allow one client to advertise multiple capability subsets; it must not
 assume one capability per connection. Native pane identity generalization
 and dynamic terminal resources are separate work.
+
+## Opt-in ingress recording and replay
+
+Add `--ingress_record` to Wheelhouse, or `--ingress-record` to
+`scripts/run-daily-driver.sh` (also supported by the Windows Python launcher).
+It is off by default: the ordinary router installs no recorder, performs no
+recording work, and creates no recording files. All producers use the same
+recorder on Unix sockets and Windows named pipes; no producer changes are needed.
+
+The active file is `logs/ingress.jsonl`, beside `ui_thread.uishell_log` in the app
+data folder. With an explicit `--user:<file>`, both logs live beside that file;
+the daily driver uses its persistent settings folder. Default retention is four
+files of at most 4 MiB each (16 MiB total), including the active file.
+Archives are `ingress.jsonl.1` (newest) through `.3` (oldest). Configure with
+`--ingress_record_bytes:<bytes>` and `--ingress_record_files:<count>` (1–100);
+the launcher uses `--ingress-record-bytes <bytes>` and
+`--ingress-record-files <count>`. Reduced bounds also prune existing recordings
+on startup. Lines are never split between files. An entry larger than the file
+limit disables recording rather than exceeding the bound.
+
+Each JSONL entry carries `recording_id` (one listener run), `sequence` (complete
+request receive order), `timestamp_ms` (Unix receive time), `received_ms`
+(process monotonic receive time), `method`, `path`, `producer` (`source_id` when
+present), decoded `body`, original byte-preserving `body_utf8`, and response
+`status`. Producer identity is self-reported; peer identity is not inferred.
+Non-patch requests, including health and discovery GETs, have null bodies.
+Invalid UTF-8 and oversized bodies have no captured body. Responses can finish
+out of order, so replay sorts by recording/run and sequence, not file order.
+
+Recording uses a separate filesystem worker with a bounded 64-entry queue.
+Requests never wait for that worker and retain their existing application
+status and five-second deadline. A write/start failure, oversized entry, or full
+writer queue disables recording with one stderr warning; requests continue.
+This is a diagnostic capture, not a delivery journal: abrupt process termination
+can lose queued entries, and a disabled recorder leaves an incomplete capture.
+
+Replay accepted patches through the real Andamento C ABI and shipped template:
+
+```sh
+python3 tools/replay-ingress.py /path/to/logs/ingress.jsonl* \
+  --library /path/to/libandamento_ffi.so > sidebar-states.jsonl
+```
+
+Use `.dylib` on macOS or `andamento_ffi.dll` on Windows. `--template <file>`
+selects another template. Output includes every visible node's kind, id, label,
+state and rendered fields after each accepted patch, including role and convoy
+statuses. `data/sidebar/fixture.jsonl` is also accepted directly. Rejected
+requests remain in the capture but do not apply during replay. A 422/503 can
+represent partial application across windows or a timeout race, so a recording
+alone cannot reconstruct those host-specific effects or UI-local selection,
+collapse and workspace observations. Replay starts a fresh core for each listener run; rotated files may be supplied
+in any order. A retained tail can lack initial facts until a producer reasserts them.
+
+Before attaching a capture to an issue, redact it:
+
+```sh
+python3 tools/replay-ingress.py /path/to/logs/ingress.jsonl* --redact > ingress-redacted.jsonl
+```
+
+Redaction replaces paths, hosts, labels, recipes, URLs and other private text
+facts with deterministic SHA-256 tokens, including string lists and group-path
+labels/values. It preserves target/resource references, source ids, fact keys,
+lifecycle/status facts, numbers, booleans and ingress ordering. The original
+body is rebuilt from the redacted body; malformed bodies are removed. Resource
+and source identities are intentionally retained even if they contain a path or
+hostname. Hashing is deterministic pseudonymization, not encryption. Redacted
+labels may sort differently in the sidebar; patch order is unchanged.

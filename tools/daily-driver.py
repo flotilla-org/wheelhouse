@@ -150,9 +150,13 @@ def run(args, binary, template, state):
                 return subprocess.Popen(command, start_new_session=True, **options)
 
         print(f'Daily-driver settings: {state}\nLogs: {logs}\nWHEELHOUSE_SOCKET={path}', flush=True)
+        recording_args = []
+        if args.ingress_record:
+            recording_args = ['--ingress_record', '--ingress_record_bytes:' + str(args.ingress_record_bytes),
+                              '--ingress_record_files:' + str(args.ingress_record_files)]
         app = launch('wheelhouse', [str(binary), '--user:' + str(state / 'user'),
                                    '--project:' + str(state / 'project'),
-                                   '--andamento_socket:' + path, '--andamento_config:' + str(template)])
+                                   '--andamento_socket:' + path, '--andamento_config:' + str(template)] + recording_args)
         stack.callback(stop_child, app)
         wait_ready(app, path)
         producers = []
@@ -231,6 +235,9 @@ def main():
     parser.add_argument('--git-only', action='store_true', help='omit Flotilla; publish only local git facts')
     parser.add_argument('--daemon', help='remote daemon endpoint; overrides FLOTILLA_DAEMON and is inherited by the UI')
     parser.add_argument('--repo', type=Path, action='append', help='Unix git checkout to watch; repeatable, defaults to current directory')
+    parser.add_argument('--ingress-record', action='store_true', help='record metadata ingress beside the daily-driver logs')
+    parser.add_argument('--ingress-record-bytes', type=int, default=4*1024*1024, help='maximum bytes per ingress file')
+    parser.add_argument('--ingress-record-files', type=int, default=4, help='retained ingress files including active file')
     args = parser.parse_args()
     if args.no_git and (args.git_only or args.repo):
         parser.error('--no-git cannot be combined with --git-only or --repo')
