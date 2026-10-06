@@ -9984,8 +9984,11 @@ uishell_route_edit_activation(Arena *arena, RD_WindowState *ws, WM_Event *event,
   {
     if(event->kind == WM_EventKind_Release)
     {
+      B32 edit_release = (ws->edit_chord_held[event->key] == UIShell_ConsumedChord_Edit);
       ws->edit_chord_held[event->key] = UIShell_ConsumedChord_None;
-      return 1;
+      // Shell-command key-up still belongs to downstream consumers (including
+      // terminal paging ownership and menu-bar modifiers), as before extraction.
+      if(edit_release) { return 1; }
     }
     // Ordinary shell shortcuts retain their previous autorepeat policy.
     if(ws->edit_chord_held[event->key] == UIShell_ConsumedChord_Edit) { return 1; }
@@ -10010,19 +10013,20 @@ internal B32
 uishell_route_command_activation(Arena *arena, RD_WindowState *ws, WM_Event *event,
                                  B32 terminal, B32 allow_text)
 {
-  if(!ws || ws == &rd_nil_window_state ||
-     (!wm_window_match(event->window, wm_window_zero()) && !wm_window_match(event->window, ws->os))) { return 0; }
   B32 take = 0;
   if(event->kind == WM_EventKind_MenuCommand && event->string.size != 0)
   {
-    if(str8_match(event->string, str8_lit("window_close_menu"), 0))
+    if(ws != &rd_nil_window_state && str8_match(event->string, str8_lit("window_close_menu"), 0))
     { uishell_cmd("close_window"); }
     else
     { uishell_cmd("run_command", .cmd_name = cfg_command_from_menu_or_binding(arena, rd_state->key_map, event)); }
     rd_request_frame();
     return 1;
   }
-  if(event->kind == WM_EventKind_Press && (!terminal || (event->modifiers & WM_Modifier_Super)))
+  if(!ws || ws == &rd_nil_window_state ||
+     (!wm_window_match(event->window, wm_window_zero()) && !wm_window_match(event->window, ws->os))) { return 0; }
+  if(event->kind == WM_EventKind_Press && event->key > WM_Key_Null && event->key < WM_Key_COUNT &&
+     (!terminal || (event->modifiers & WM_Modifier_Super)))
   {
     String8 binding_command = cfg_command_from_menu_or_binding(arena, rd_state->key_map, event);
     if(binding_command.size != 0 && !uishell_is_edit_command(binding_command))
@@ -10038,6 +10042,7 @@ uishell_route_command_activation(Arena *arena, RD_WindowState *ws, WM_Event *eve
             cmd_name = RD_APP_BINDING_VERSION_REMAP_NEW_NAME_TABLE[idx];
           }
         }
+        // rd_frame derives focused_view from this same current view register.
         if(terminal)
         { uishell_terminal_page_binding_accept(ws, event->key, cmd_name, uishell_regs()->view); }
         uishell_cmd("run_command", .cmd_name = cmd_name);

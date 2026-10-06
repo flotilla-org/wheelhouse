@@ -347,7 +347,8 @@ uishell_edit_command_diagnostics(B32 native)
     EditCheck(str8_match(str8(buffer, size), str8_lit("j\xce\xbb"), 0));
     EditCheck(ws->ui_events.count == 0);
     WM_Event release = {.kind = WM_EventKind_Release, .window = ws->os, .key = WM_Key_K};
-    EditCheck(uishell_route_edit_activation(arena, ws, &release, 0));
+    EditCheck(!uishell_route_edit_activation(arena, ws, &release, 0));
+    EditCheck(!ws->edit_chord_held[WM_Key_K]);
     EditCheck(!uishell_route_edit_activation(arena, ws, &release, 0));
     EditCheck(!uishell_route_edit_activation(arena, ws, &texts[0], 0));
     // Losing focus clears stale chords, and the other view/window never changes.
@@ -355,6 +356,58 @@ uishell_edit_command_diagnostics(B32 native)
     WM_Event lost = {.kind = WM_EventKind_WindowLoseFocus, .window = ws->os};
     uishell_route_edit_activation(arena, ws, &lost, 0);
     EditCheck(!ws->edit_chord_held[WM_Key_K]);
+  }
+
+  // Native menus remain application actions with no live window or an
+  // unmatched handle. The real command drain creates the requested window CFG.
+  RD_WindowState *menu_windows[] = {0, &rd_nil_window_state, &windows[0]};
+  for(U64 i = 0; i < ArrayCount(menu_windows); i++) UIShell_RegsScope(.window = 0, .view = 0, .tab = 0)
+  {
+    CFG_Node *previous = user->last;
+    WM_Event menu = {.kind = WM_EventKind_MenuCommand, .window = {999}, .string = str8_lit("open_window")};
+    EditCheck(uishell_route_command_activation(arena, menu_windows[i], &menu, 0, 1));
+    uishell_edit_drain_commands();
+    EditCheck(user->last != previous && str8_match(user->last->string, str8_lit("window"), 0));
+    if(user->last != previous)
+    {
+      EditCheck(cfg_node_child_from_string(user->last, str8_lit("panels")) != &cfg_nil_node);
+      cfg_node_release(state.cfg, user->last);
+    }
+  }
+
+  // A shell shortcut's release must still reach the existing terminal paging
+  // owner, clearing its latch even when modifiers change before key-up.
+  {
+    RD_WindowState *ws = &windows[0];
+    uishell_edit_set_window(ws, views[0][0]->id);
+    uishell_edit_bindings(arena, state.cfg, user, 0);
+    CFG_Node *bindings = cfg_node_child_from_string(user, str8_lit("keybindings"));
+    CFG_Node *binding = cfg_node_new(state.cfg, bindings, str8_zero());
+    cfg_node_new(state.cfg, binding, str8_lit("terminal_scroll_page_up"));
+    cfg_node_new(state.cfg, binding, wm_key_cfg_name_table[WM_Key_PageUp]);
+    cfg_node_new(state.cfg, binding, str8_lit("super"));
+    state.key_map = cfg_key_map_from_cfg(arena);
+    WM_Event press = {.kind = WM_EventKind_Press, .window = ws->os, .key = WM_Key_PageUp, .modifiers = WM_Modifier_Super};
+    EditCheck(!uishell_route_edit_activation(arena, ws, &press, 1));
+    EditCheck(uishell_route_command_activation(arena, ws, &press, 1, 1));
+    EditCheck(ws->terminal_page_views[WM_Key_PageUp] == views[0][0]->id);
+    uishell_edit_drain_commands();
+    WM_Event release = {.kind = WM_EventKind_Release, .window = ws->os, .key = WM_Key_PageUp};
+    B32 take = uishell_route_edit_activation(arena, ws, &release, 1);
+    EditCheck(!take);
+    String8 repeat = {0};
+    if(!take) { take = uishell_terminal_page_binding_event(ws, &release, views[0][0]->id, &repeat); }
+    EditCheck(take);
+    EditCheck(!ws->terminal_page_keys[WM_Key_PageUp] && !ws->terminal_page_views[WM_Key_PageUp]);
+    EditCheck(!ws->edit_chord_held[WM_Key_PageUp]);
+  }
+
+  // Synthetic/invalid keys cannot activate commands or index a chord latch.
+  WM_Key invalid_keys[] = {WM_Key_Null, WM_Key_COUNT, WM_Key_COUNT+1};
+  for(U64 i = 0; i < ArrayCount(invalid_keys); i++)
+  {
+    WM_Event press = {.kind = WM_EventKind_Press, .window = windows[0].os, .key = invalid_keys[i]};
+    EditCheck(!uishell_route_command_activation(arena, &windows[0], &press, 0, 1));
   }
 
   // Exhaustive scenario generator spans two windows, two panels, default/rebound
