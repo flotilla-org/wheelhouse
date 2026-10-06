@@ -105,6 +105,7 @@
 #include "uishell/uishell_preview_diagnostics.c"
 #include "uishell/uishell_sidebar_docking_diagnostics.c"
 #include "uishell/uishell_sidebar_benchmark.c"
+#include "uishell/uishell_border_diagnostics.c"
 #include "uishell/uishell_panel_diagnostics.c"
 #include "uishell/uishell_shared_ui_diagnostics.c"
 #include "uishell/uishell_managed_content_diagnostics.c"

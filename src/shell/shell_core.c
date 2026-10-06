@@ -3018,10 +3018,14 @@ uishell_controlled_split_control_width_px(UIShell_ControlledSplit *split, Rng2F3
   // animate collapse/expand: the open width above is instant (so divider drags
   // don't lag), and a separate 0..1 factor slides the sidebar in/out from the
   // left. downstream the workspace edge (main_workspace_rect.p0.x) follows this,
-  // so the title-bar tab strip glides with it rather than snapping.
+  // so the title-bar tab strip follows the same moving boundary.
   F32 collapse_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "control_split_collapse_t_%p", split->owner_cfg),
                            collapsed ? 0.f : 1.f, .initial = collapsed ? 0.f : 1.f, .rate = rd_state->menu_animation_rate);
-  return width*collapse_t;
+  // The seam, panel layout and workspace surface must agree on one pixel
+  // boundary. Independently flooring UI boxes and rounding frame edges can
+  // otherwise paint over the seam at fractional drag/collapse positions.
+  F32 animated_width = width*collapse_t;
+  return animated_width == 0.f ? 0.f : Max(0.f, round_f32(rect.x0 + animated_width) - rect.x0);
 }
 
 internal Rng2F32
