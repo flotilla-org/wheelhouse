@@ -180,6 +180,197 @@ uishell_precise_list_diagnostics(RD_WindowState *ws)
   return failures == 0;
 }
 
+// Real widget geometry and event consumption must follow the displayed
+// fractional position on both axes, and page controls must move one viewport.
+internal B32
+uishell_scroll_controls_diagnostics(RD_WindowState *ws)
+{
+  U32 failures = 0;
+#define ControlCheck(c, n) do { if(!(c)) { fprintf(stderr, "FAIL: %s\n", n); failures++; } } while(0)
+  UI_State *saved = ui_state;
+  // Generator: both styles/axes and lower, fractional interior, upper bounds.
+  for(U32 style = 0; style < 2; style++)
+  for EachEnumVal(Axis2, axis)
+  {
+    UI_State *test = ui_state_alloc();
+    ui_select_state(test);
+    UI_ScrollRegionParams params = {.rect = {100, 100, 500, 400}, .style = style,
+      .axis = {UI_ScrollAxisPolicy_Always, UI_ScrollAxisPolicy_Always},
+      .gutter_px = 24, .overlay_rest_px = 7, .overlay_hover_px = 14, .overlay_inset_px = 3};
+    UI_ScrollRegion region = ui_scroll_region_layout(params);
+    UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
+    axes[axis] = (UI_ScrollRegionAxis){ui_scroll_pt(0, 0), r1s64(0, 4), 2};
+    UI_Key bar_key = ui_key_from_stringf(ui_key_make(1001), "scroll_region_bar_%i", axis);
+    UI_Key track_key = ui_key_from_stringf(bar_key, "##_scroll_area_%i", axis);
+    UI_Key thumb_key = ui_key_from_stringf(track_key, "##_scroller_%i", axis);
+    UI_Signal content = {0};
+    UI_Event none = {0};
+    Vec2F32 mouse = v2f32(200, 200);
+    for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_frame(ws, &region, axes, mouse, none, &content); }
+    F32 integer_start = ui_box_from_key(thumb_key)->rect.p0.v[axis];
+    axes[axis].position.target_off = 0.5f;
+    axes[axis].position.off = 1.f;
+    for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_frame(ws, &region, axes, mouse, none, &content); }
+    UI_Box *thumb = ui_box_from_key(thumb_key);
+    F32 travel = dim_2f32(thumb->parent->rect).v[axis] - dim_2f32(thumb->rect).v[axis];
+    // The thumb represents content's current 1.5-unit position, including animation.
+    ControlCheck(abs_f32(thumb->rect.p0.v[axis] - integer_start - travel*1.5f/4) <= 2,
+                 "thumb matches fractional animated content");
+    mouse = center_2f32(thumb->rect);
+    for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_frame(ws, &region, axes, mouse, none, &content); }
+    mouse = center_2f32(ui_box_from_key(thumb_key)->rect);
+    UI_Event press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = mouse};
+    UI_ScrollRegionSignal sig = uishell_scroll_test_frame(ws, &region, axes, mouse, press, &content);
+    // A stationary grab freezes the displayed position without a content jump.
+    ControlCheck(sig.position.v[axis].idx == 1 && sig.position.v[axis].target_off == 0.5f && sig.position.v[axis].off == 0,
+                 "drag begins at displayed fractional position");
+    axes[axis].position = sig.position.v[axis];
+    mouse.v[axis] += 10;
+    sig = uishell_scroll_test_frame(ws, &region, axes, mouse, none, &content);
+    axes[axis].position = sig.position.v[axis];
+    UI_ScrollPt dragged = axes[axis].position;
+    UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = mouse};
+    sig = uishell_scroll_test_frame(ws, &region, axes, mouse, release, &content);
+    // Release retains the exact resulting target, rather than restoring drag origin.
+    ControlCheck(sig.position.v[axis].idx == dragged.idx && sig.position.v[axis].target_off == dragged.target_off,
+                 "release preserves fractional drag target");
+    if(style == UI_ScrollBarStyle_Classic)
+    {
+      for(U32 direction = 0; direction < 2; direction++)
+      for(U32 page = 0; page < 2; page++)
+      for(U32 boundary = 0; boundary < 3; boundary++)
+      {
+        S64 starts[] = {0, 2, 4};
+        axes[axis].position = ui_scroll_pt(starts[boundary], 0);
+        mouse = v2f32(200, 200);
+        for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_frame(ws, &region, axes, mouse, none, &content); }
+        UI_Box *control;
+        if(page)
+        {
+          control = ui_box_from_key(ui_key_from_string(track_key, direction ? str8_lit("##scroll_area_after") : str8_lit("##scroll_area_before")));
+        }
+        else
+        {
+          String8 arrow = ui_icon_string_from_kind(axis == Axis2_X ? (direction ? UI_IconKind_RightArrow : UI_IconKind_LeftArrow) : (direction ? UI_IconKind_DownArrow : UI_IconKind_UpArrow));
+          control = ui_box_from_key(ui_key_from_stringf(bar_key, direction ? "%S##_max_scroll_%i" : "%S##_min_scroll_%i", arrow, axis));
+          // Classic arrows retain smooth glyphs and the weak theme's draw colors.
+          B32 weak = 0;
+          UI_TagsCacheSlot *slot = &test->tags_cache_slots[control->tags_key.u64[0]%test->tags_cache_slots_count];
+          for(UI_TagsCacheNode *node = slot->first; node; node = node->next)
+          if(ui_key_match(node->key, control->tags_key))
+          for(U64 i = 0; i < node->tags.count; i++) { weak |= str8_match(node->tags.v[i], str8_lit("weak"), 0); }
+          ControlCheck(weak && control->text_raster_flags == FNT_RasterFlag_Smooth,
+                       "classic arrows retain weak smooth styling");
+          Vec4F32 color = ui_color_from_tags_key_name(control->tags_key, str8_lit("background"));
+          ControlCheck(MemoryMatch(&color, &control->background_color, sizeof(color)) &&
+                       (control->flags & (UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder)) == (UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder),
+                       "classic arrow background and border draw state");
+        }
+        if(dim_2f32(control->rect).v[axis] <= 0) { continue; } // No page area at its bound.
+        mouse = center_2f32(control->rect);
+        press.pos = mouse;
+        sig = uishell_scroll_test_frame(ws, &region, axes, mouse, press, &content);
+        S64 expected = Clamp(0, starts[boundary] + (direction ? 1 : -1)*(page ? 2 : 1), 4);
+        ControlCheck(sig.position.v[axis].idx == expected && !ui_pressed(content), "classic page/arrow distance and hit ownership");
+        axes[axis].position = sig.position.v[axis];
+        release.pos = mouse;
+        uishell_scroll_test_frame(ws, &region, axes, mouse, release, &content);
+      }
+    }
+    // Shrink and empty content discard stale motion before drawing controls.
+    for(U32 empty = 0; empty < 2; empty++)
+    {
+      axes[axis].range.max = empty ? 0 : 1;
+      axes[axis].position = (UI_ScrollPt){.idx = 4, .target_off = 0.75f, .off = -1, .remainder = 0.5f};
+      UI_ScrollRegionSignal shrunk = uishell_scroll_test_frame(ws, &region, axes, v2f32(200, 200), none, &content);
+      ControlCheck(shrunk.position.v[axis].idx == axes[axis].range.max && shrunk.position.v[axis].target_off == 0 &&
+                   shrunk.position.v[axis].off == 0 && shrunk.position.v[axis].remainder == 0, "controls clamp after content shrink/empty");
+      if(empty && style == UI_ScrollBarStyle_Classic)
+      {
+        UI_Box *disabled_thumb = ui_box_from_key(thumb_key);
+        ControlCheck(disabled_thumb->flags & UI_BoxFlag_Disabled, "empty classic thumb is disabled");
+      }
+    }
+    ui_select_state(saved);
+    ui_state_release(test);
+  }
+  fprintf(stderr, "Scroll controls diagnostics: %u failures\n", failures);
+#undef ControlCheck
+  return failures == 0;
+}
+
+// Positioned lists use an unkeyed container; hover must use persistent content
+// geometry. Exercise nested positioning and style changes through begin/end.
+internal B32
+uishell_positioned_list_diagnostics(RD_WindowState *ws)
+{
+  UI_State *saved = ui_state, *test = ui_state_alloc();
+  UI_ScrollBarStyle saved_style = ui_active_scroll_bar_style();
+  ui_select_state(test);
+  U32 failures = 0;
+  UI_ScrollPt pt = ui_scroll_pt(4, 0);
+  pt.target_off = 0.5f;
+  for(U32 frame = 0; frame < 12; frame++)
+  {
+    UI_ScrollBarStyle style = frame < 4 || frame >= 8 ? UI_ScrollBarStyle_Overlay : UI_ScrollBarStyle_Classic;
+    ui_set_active_scroll_bar_style(style);
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0};
+    animation.scroll_animation_rate = animation.hot_animation_rate = 1;
+    UI_EventList events = {0};
+    UI_EventNode wheel = {.v = {.kind = UI_EventKind_Scroll, .pos = {350, 250},
+                               .delta_2f32 = {0, 5}, .scroll_is_precise = 1}};
+    if(frame == 10) { events.first = events.last = &wheel; events.count = 1; }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = v2f32(350, 250);
+    UI_Box *content = 0;
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(16)
+    {
+      ui_set_next_rect(r2f32p(100, 100, 600, 500));
+      UI_Box *outer = ui_build_box_from_key(0, ui_key_make(3100));
+      UI_ScrollRegionParams outer_params = ui_scroll_region_params(r2f32p(0, 0, 500, 400), UI_ScrollAxisPolicy_Always, UI_ScrollAxisPolicy_Always);
+      UI_ScrollRegion outer_region = ui_scroll_region_layout(outer_params);
+      UI_ScrollRegionAxis outer_axes[Axis2_COUNT] = {0};
+      outer_axes[0] = outer_axes[1] = (UI_ScrollRegionAxis){ui_scroll_pt(0, 0), r1s64(0, 1000), 400};
+      UI_ScrollRegionSignal outer_sig = ui_scroll_region_build(outer, ui_key_make(3102), &outer_region, outer_axes, UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise);
+      UI_Parent(outer_sig.content_box)
+      {
+        ui_set_next_rect(r2f32p(50, 50, 450, 350));
+        UI_Box *nested = ui_build_box_from_key(0, ui_key_make(3101));
+        UI_Parent(nested)
+        {
+          ui_set_next_fixed_x(150);
+          ui_set_next_fixed_y(50);
+          UI_ScrollListParams list = {.dim_px = {200, 100}, .row_height_px = 20, .item_range = {0, 100}};
+          Rng1S64 rows = {0};
+          UI_ScrollList(&list, &pt, 0, 0, &rows, 0)
+          {
+            content = ui_top_parent();
+            // The actual positioned viewport, not the origin, reveals overlays.
+            if(frame == 3 || frame == 9)
+            {
+              UI_Key bar = ui_key_from_stringf(content->key, "scroll_region_bar_%i", Axis2_Y);
+              if(ui_box_is_nil(ui_box_from_key(bar))) { fprintf(stderr, "FAIL: positioned nested list overlay hover\n"); failures++; }
+            }
+            // Fractional content translation and virtual rows agree before input.
+            if(frame <= 10 && (content->view_off.y != 10 || rows.min != 4)) { failures++; }
+            for(S64 row = rows.min; row < rows.max; row++) { ui_spacer(ui_px(20, 1)); }
+          }
+        }
+      }
+    }
+    ui_end_build();
+    // Switching styles changes the viewport only, retaining the fractional target.
+    if(dim_2f32(content->rect).x != (style == UI_ScrollBarStyle_Overlay ? 200 : 176)) { failures++; }
+    if(pt.idx != 4 || pt.target_off != (frame >= 10 ? 0.75f : 0.5f) || events.count != 0) { failures++; }
+  }
+  ui_set_active_scroll_bar_style(saved_style);
+  ui_select_state(saved);
+  ui_state_release(test);
+  fprintf(stderr, "Positioned list diagnostics: %u failures\n", failures);
+  return failures == 0;
+}
+
 internal B32
 uishell_scroll_region_diagnostics(RD_WindowState *ws)
 {
@@ -335,6 +526,16 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
         uishell_scroll_test_frame(ws, &region, axes, mouse, none, &content);
       }
     }
+    // The two-axis corner is content in overlay mode and empty furniture in
+    // classic mode; neither axis may capture it as a scrollbar drag.
+    Vec2F32 corner = v2f32(398, 298);
+    UI_Event corner_press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = corner};
+    uishell_scroll_test_frame(ws, &region, axes, corner, corner_press, &content);
+    ScrollCheck(ui_pressed(content) == (style == UI_ScrollBarStyle_Overlay), "corner hit follows viewport style");
+    ScrollCheck(ui_key_match(ui_active_key(UI_MouseButtonKind_Left), style == UI_ScrollBarStyle_Overlay ? content.box->key : ui_key_zero()),
+                "two-axis corner cannot steal a scrollbar drag");
+    UI_Event corner_release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = corner};
+    uishell_scroll_test_frame(ws, &region, axes, corner, corner_release, &content);
     UI_Event wheel = {.kind = UI_EventKind_Scroll, .pos = mouse, .delta_2f32 = {0, 30}};
     uishell_scroll_test_frame(ws, &region, axes, mouse, wheel, &content);
     ScrollCheck(content.scroll.y == 1 && content.scroll.x == 0, "content receives wheel exactly once");
@@ -370,6 +571,8 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
 #endif
   failures += !uishell_scroll_preview_diagnostics(ws);
   failures += !uishell_precise_list_diagnostics(ws);
+  failures += !uishell_positioned_list_diagnostics(ws);
+  failures += !uishell_scroll_controls_diagnostics(ws);
   fprintf(stderr, "Scroll region diagnostics: %u failures\n", failures);
 #undef ScrollCheck
   return failures == 0;

@@ -1244,7 +1244,7 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
   S64 idx_range_dim = Max(dim_1s64(idx_range), 1);
   F32 thumb_fraction = Clamp(0.05f, (F32)((F64)Max(view_num_indices, 1)/((F64)idx_range_dim + Max(view_num_indices, 1))), 1.f);
   if(idx_range.min == idx_range.max) { thumb_fraction = 1.f; }
-  F32 position_fraction = Clamp(0.f, (F32)(((F64)(pt.idx-idx_range.min) + pt.target_off)/(F64)idx_range_dim), 1.f);
+  F32 position_fraction = Clamp(0.f, (F32)(((F64)(pt.idx-idx_range.min) + ui_scroll_pt_offset(pt))/(F64)idx_range_dim), 1.f);
 
   //- rjf: produce extra flags for cases in which scrolling is disabled
   UI_BoxFlags disabled_flags = 0;
@@ -1266,6 +1266,8 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
     UI_Flags(UI_BoxFlag_DrawBorder|disabled_flags)
     UI_TextAlignment(UI_TextAlign_Center)
     UI_Font(ui_icon_font())
+    UI_TextRasterFlags(FNT_RasterFlag_Smooth)
+    UI_TagF("weak")
   {
     String8 arrow_string = ui_icon_string_from_kind(axis == Axis2_X ? UI_IconKind_LeftArrow : UI_IconKind_UpArrow);
     min_scroll_sig = ui_buttonf("%S##_min_scroll_%i", arrow_string, axis);
@@ -1339,6 +1341,8 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
     UI_Flags(UI_BoxFlag_DrawBorder|disabled_flags)
     UI_TextAlignment(UI_TextAlign_Center)
     UI_Font(ui_icon_font())
+    UI_TextRasterFlags(FNT_RasterFlag_Smooth)
+    UI_TagF("weak")
   {
     String8 arrow_string = ui_icon_string_from_kind(axis == Axis2_X ? UI_IconKind_RightArrow : UI_IconKind_DownArrow);
     max_scroll_sig = ui_buttonf("%S##_max_scroll_%i", arrow_string, axis);
@@ -1357,7 +1361,11 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
     {
       if(ui_pressed(scroller_sig))
       {
-        UI_ScrollBarDragData drag_data = {pt, (floor_f32(dim_2f32(scroll_area_box->rect).v[axis])-floor_f32(dim_2f32(scroller_box->rect).v[axis]))};
+        // Begin at the displayed position, including animation displacement.
+        UI_ScrollPt displayed_pt = pt;
+        ui_scroll_pt_scroll(&displayed_pt, pt.off, idx_range, 0);
+        displayed_pt.off = 0;
+        UI_ScrollBarDragData drag_data = {displayed_pt, (floor_f32(dim_2f32(scroll_area_box->rect).v[axis])-floor_f32(dim_2f32(scroller_box->rect).v[axis]))};
         ui_store_drag_struct(&drag_data);
       }
       UI_ScrollBarDragData *drag_data = ui_get_drag_struct(UI_ScrollBarDragData);
@@ -1373,13 +1381,13 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
     }
     if(ui_dragging(min_scroll_sig) || ui_dragging(space_before_sig))
     {
-      S64 new_idx = new_pt.idx-1;
+      S64 new_idx = new_pt.idx - (ui_dragging(space_before_sig) ? Max(view_num_indices, 1) : 1);
       new_idx = Clamp(idx_range.min, new_idx, idx_range.max);
       ui_scroll_pt_target_idx(&new_pt, new_idx);
     }
     if(ui_dragging(max_scroll_sig) || ui_dragging(space_after_sig))
     {
-      S64 new_idx = new_pt.idx+1;
+      S64 new_idx = new_pt.idx + (ui_dragging(space_after_sig) ? Max(view_num_indices, 1) : 1);
       new_idx = Clamp(idx_range.min, new_idx, idx_range.max);
       ui_scroll_pt_target_idx(&new_pt, new_idx);
     }
