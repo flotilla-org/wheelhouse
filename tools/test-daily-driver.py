@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Exercise launcher lifecycle with controlled UI, watcher, and connector processes."""
+import importlib.util
+import itertools
 import os
 from pathlib import Path
 import shutil
@@ -9,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 FAKE_APP = '''#!/usr/bin/env python3
@@ -64,6 +67,71 @@ print('wire generation mismatch: client fingerprint old speaks proto 21 (build o
       'daemon fingerprint new speaks proto 21 (build new)', file=sys.stderr)
 sys.exit(1)
 '''
+
+
+@unittest.skipIf(sys.platform == 'win32', 'native watcher builds are Unix-only')
+class WatcherBuildTests(unittest.TestCase):
+    def test_build_ownership_and_bypasses(self):
+        # Issue #138: the normal host build owns the watcher; an existing host
+        # binary needs a standalone build unless overridden or builds/git are off.
+        # Exhaust all 16 combinations of the four independent launcher switches.
+        spec = importlib.util.spec_from_file_location('daily_driver', ROOT / 'tools/daily-driver.py')
+        launcher = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(launcher)
+        for supplied_host, supplied_watcher, no_build, no_git in itertools.product((False, True), repeat=4):
+            with self.subTest(supplied_host=supplied_host, supplied_watcher=supplied_watcher,
+                              no_build=no_build, no_git=no_git), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'data/sidebar').mkdir(parents=True)
+                (root / 'data/sidebar/daily-driver.kdl').write_text('')
+                host = 'test-native-host'
+                target = root / 'native outputs'
+                default_watcher = target / host / 'debug/andamento-git-watcher'
+                binary = root / 'build/wheelhouse'
+                watcher = root / 'supplied watcher' if supplied_watcher else default_watcher
+                if supplied_host:
+                    binary = root / 'supplied wheelhouse'
+                flotilla = root / 'flotilla'
+                for path in (binary, watcher, flotilla):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.touch()
+                    path.chmod(0o755)
+                environment = {'FLOTILLA_BIN': str(flotilla), 'WHEELHOUSE_DAILY_DIR': str(root / 'state'),
+                               'WHEELHOUSE_ANDAMENTO_DIR': str(root / 'andamento'),
+                               'WHEELHOUSE_ANDAMENTO_TARGET_DIR': str(target)}
+                if supplied_host:
+                    environment['WHEELHOUSE_BIN'] = str(binary)
+                if supplied_watcher:
+                    environment['ANDAMENTO_GIT_WATCHER_BIN'] = str(watcher)
+                options = ['daily-driver.py', '--no-git'] if no_git else ['daily-driver.py', '--repo', str(ROOT)]
+                if no_build:
+                    options.append('--no-build')
+                # Doubles stand at compiler/git subprocess and UI/producer launch boundaries.
+                with mock.patch.object(launcher, 'ROOT', root), \
+                        mock.patch.dict(os.environ, environment, clear=True), \
+                        mock.patch.object(sys, 'argv', options), \
+                        mock.patch.object(launcher.subprocess, 'run') as commands, \
+                        mock.patch.object(launcher.subprocess, 'check_output', return_value=f'host: {host}\n') as rustc, \
+                        mock.patch.object(launcher, 'run', return_value=0) as launch:
+                    self.assertEqual(launcher.main(), 0)
+                expected = [] if no_git else [['git', '-C', str(ROOT), 'rev-parse', '--show-toplevel']]
+                if not no_build and not supplied_host:
+                    expected.append(['bash', 'build.sh', 'wheelhouse'])
+                if supplied_host and not (supplied_watcher or no_build or no_git):
+                    expected.extend([
+                        [sys.executable, str(root / 'tools/prepare-andamento-build.py'), str(root / 'andamento')],
+                        ['cargo', 'build', '--manifest-path', str(root / 'build/andamento/Cargo.toml'),
+                         '-p', 'andamento-git-watcher', '--bin', 'andamento-git-watcher', '--locked',
+                         '--target', host, '--target-dir', str(target)],
+                    ])
+                self.assertEqual([call.args[0] for call in commands.call_args_list], expected)
+                self.assertEqual(rustc.call_count, int(not (supplied_watcher or no_git)))
+                args, actual_binary, _, _ = launch.call_args.args
+                self.assertEqual(actual_binary, binary)
+                if not no_git:
+                    self.assertEqual(args.watcher, watcher)
+                else:
+                    self.assertEqual(args.repo, [])
 
 
 @unittest.skipIf(sys.platform == 'win32', 'Unix fixtures; Windows has native pipe/job lifecycle contracts')
