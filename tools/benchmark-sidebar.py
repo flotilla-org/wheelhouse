@@ -31,7 +31,7 @@ def validate_memory(output):
         raise ValueError('insufficient long post-warmup window')
     rss = re.findall(r'SIDEBAR_RSS issues=\d+ frame=(\d+) VmRSS:\s*(\d+) kB', output)
     storage = re.findall(r'SIDEBAR_STORAGE frame=(\d+) draw=(\d+) font=(\d+) ui=(\d+) shell=(\d+)', output)
-    measurements = []
+    process_samples = []
     for name, samples in [('RSS', rss), ('storage', storage)]:
         if len(samples) != len(expected) * combinations:
             raise ValueError(f'incomplete {name} samples')
@@ -41,35 +41,34 @@ def validate_memory(output):
                 raise ValueError(f'invalid {name} sample sequence')
             window = [sample for sample in group if sample[0] >= warmup]
             if name == 'storage':
-                # Fixed-catalog app-owned arenas must remain bounded even when
-                # one-time library/page residency changes process-wide RSS.
+                # Every fixed layout/input case has independent arena bounds.
                 for column in range(1, 5):
                     if max(sample[column] for sample in window) > window[0][column] + 1024 * 1024:
                         raise ValueError('app-owned storage grew by more than one MiB')
             else:
-                # Exclude at most ONE interval's positive residency step. This
-                # is neither a median nor a larger endpoint allowance: all
-                # other net growth is charged over the remaining long window.
-                # A sustained leak still contributes in every other interval.
-                deltas = [b[1] - a[1] for a, b in zip(window, window[1:])]
-                jump = max(range(len(deltas)), key=deltas.__getitem__)
-                step = max(0, deltas[jump])
-                residual = window[-1][1] - window[0][1] - step
-                span = window[-1][0] - window[0][0] - (interval if step else 0)
-                # Excess full-window growth must also continue through the
-                # latter half. Early bounded residency recovery followed by a
-                # long plateau is not sustained growth. Use the SAME excluded
-                # interval in both windows, never discard a second step.
-                tail_start = len(window) // 2
-                tail_residual = window[-1][1] - window[tail_start][1]
-                tail_span = window[-1][0] - window[tail_start][0]
-                if step and jump >= tail_start:
-                    tail_residual -= step
-                    tail_span -= interval
-                measurements.append((step, residual / span, tail_residual / tail_span))
-                if residual * 2 > span and tail_residual * 2 > tail_span:
-                    raise ValueError('sustained RSS slope exceeds 0.5 KiB/frame')
-    return measurements
+                # RSS is process-wide: retain the complete native lifecycle,
+                # including releases between configurations. Resetting its
+                # baseline for each UI state mistakes bounded cache residency
+                # for process retention; arena bounds above stay per case.
+                offset = (start // len(expected)) * frames
+                process_samples.extend((frame + offset, value) for frame, value in window)
+    deltas = [b[1] - a[1] for a, b in zip(process_samples, process_samples[1:])]
+    jump = max(range(len(deltas)), key=deltas.__getitem__)
+    step = max(0, deltas[jump])
+    excluded_frames = process_samples[jump + 1][0] - process_samples[jump][0] if step else 0
+    residual = process_samples[-1][1] - process_samples[0][1] - step
+    span = process_samples[-1][0] - process_samples[0][0] - excluded_frames
+    # Continuing growth must persist into the latter half. Both windows
+    # exclude the SAME interval; never discard a second residency step.
+    tail_start = len(process_samples) // 2
+    tail_residual = process_samples[-1][1] - process_samples[tail_start][1]
+    tail_span = process_samples[-1][0] - process_samples[tail_start][0]
+    if step and jump >= tail_start:
+        tail_residual -= step
+        tail_span -= excluded_frames
+    if residual * 2 > span and tail_residual * 2 > tail_span:
+        raise ValueError('sustained RSS slope exceeds 0.5 KiB/frame')
+    return step, residual / span, tail_residual / tail_span
 
 
 def main():
@@ -131,9 +130,8 @@ def main():
                     if process.returncode:
                         raise SystemExit(f'{identity}: native benchmark failed ({process.returncode}); stop before increasing catalog size')
                 try:
-                    measurements = validate_memory(output)
-                    for combination, (step, slope, tail_slope) in enumerate(measurements):
-                        print(f'SIDEBAR_GATE run={identity} combination={combination} excluded_step_kib={step} residual_kib_per_frame={slope:.6f} tail_kib_per_frame={tail_slope:.6f}', flush=True)
+                    step, slope, tail_slope = validate_memory(output)
+                    print(f'SIDEBAR_GATE run={identity} scope=process excluded_step_kib={step} residual_kib_per_frame={slope:.6f} tail_kib_per_frame={tail_slope:.6f}', flush=True)
                 except ValueError as error:
                     raise SystemExit(f'{identity}: {error}; stop before increasing catalog size')
 

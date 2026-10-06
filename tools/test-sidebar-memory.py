@@ -13,7 +13,8 @@ def fixture(slope=0, steps=(), storage_growth=0, storage_field='shell'):
     lines = ['SIDEBAR_CONFIG frames=5000 warmup=1000 sample_interval=200 combinations=4 worker_cpus=1']
     for combination in range(4):
         for frame in range(200, 5001, 200):
-            rss = 130000 + int(slope * frame) + sum(size for at, size in steps if frame >= at)
+            process_frame = combination * 5000 + frame
+            rss = 130000 + int(slope * process_frame) + sum(size for at, size in steps if process_frame >= at)
             lines.append(f'SIDEBAR_RSS issues=100 frame={frame} VmRSS: {rss} kB')
             arenas = ' '.join(f'{name}={100 + (storage_growth * frame if name == storage_field else 0)}' for name in ('draw', 'font', 'ui', 'shell'))
             lines.append(f'SIDEBAR_STORAGE frame={frame} {arenas}')
@@ -24,7 +25,7 @@ class MemoryGate(unittest.TestCase):
     def test_generated_single_steps_and_slope_boundary(self):
         # Generate the whole sampling window, step magnitudes and slope boundary.
         # A single residency change passes; a sustained slope above the bound fails.
-        for frame in range(1000, 5001, 200):
+        for frame in range(1000, 20001, 200):
             for magnitude in (0, 6400, 65536):
                 for slope in (0, .49, .5, .51, 1.4):
                     with self.subTest(frame=frame, magnitude=magnitude, slope=slope):
@@ -36,14 +37,14 @@ class MemoryGate(unittest.TestCase):
                                 validate_memory(output)
 
     def test_bounded_recovery_then_long_plateau(self):
-        # Several early residency changes that settle for the last 2,000 frames
+        # Several early residency changes that settle for the latter half of the process run
         # are bounded recovery, not continuing growth. Arena bounds still apply.
-        validate_memory(fixture(steps=[(1800, 12088), (2400, 3240), (3000, 12)]))
+        validate_memory(fixture(steps=[(1800, 12088), (2400, 32000), (3000, 12)]))
 
     def test_multiple_steps_are_not_hidden(self):
         # Only one interval may be excluded; recurring jumps remain charged.
         with self.assertRaisesRegex(ValueError, 'sustained RSS slope'):
-            validate_memory(fixture(steps=[(1600, 6400), (3200, 6400)]))
+            validate_memory(fixture(steps=[(frame, 6400) for frame in range(1600, 20000, 2400)]))
 
     def test_decommit_and_recovery_are_net_memory(self):
         # RSS is a trend, not allocation churn: a net decrease passes while

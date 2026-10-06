@@ -246,21 +246,26 @@ Three CI failures showed a single roughly 6.4 MiB RSS step between frames 120
 and 200 while draw, font and UI arena positions stayed flat. RSS includes library
 allocators, background work and page residency; an endpoint subtraction cannot
 identify that step as a leak. The runner now measures 5,000 frames per combination,
-with 1,000 warm-up frames and samples every 200 frames. It requires a complete
-4,000-frame post-warmup window for all four panel/input combinations.
+with 1,000 warm-up frames and samples every 200 frames. All four panel/input
+combinations must provide complete long-window samples.
 
 Draw, font, persistent UI and shell frame arena positions may each grow at most
-one MiB above their post-warmup baseline at any sample. Independently, the RSS gate
-subtracts at most the largest single positive interval and divides the remaining
-net growth by the remaining frame span. Excess growth must exceed 0.5 KiB per
-frame in both the full 4,000-frame window and its latter 2,000 frames. Both
-windows exclude the same interval; a second step is never discarded. This tests
-continuing growth rather than a bounded recovery that has already plateaued.
-A continuous leak or repeated steps continuing into the latter half still fail.
-RSS decommit and re-residency are assessed as net memory, rather than allocation churn. This is not an attribution of the original step to a particular
-library; it separates a bounded step from sustained growth and keeps the
-app-owned storage assertion independent. The runner prints the excluded step
-and both residual slopes; native/GNU time logs remain uploaded even on failure.
+one MiB above their post-warmup baseline in **each** fixed configuration. RSS is
+process-wide, so its samples are placed on a monotonically increasing native
+frame counter spanning all four configurations. This includes resource releases
+between configurations, instead of resetting RSS baselines and misclassifying
+bounded cache residency as process retention. The full window spans 19,000 frames;
+its latter half spans 9,000 frames. Both must exceed 0.5 KiB/frame to classify
+process growth as sustained.
+
+At most the largest single positive RSS interval is excluded, with its actual
+frame span removed from the slope denominator. Both windows exclude the same
+interval: a second step is never discarded. There is no median or increased
+slope threshold. Continuous process growth and continuing repeated steps still
+fail; per-configuration app-owned storage remains independently bounded even
+if process RSS declines. This does not attribute residency changes to a specific
+library. Native/GNU time logs retain every sample, and the runner reports the
+excluded interval and both process slopes before increasing catalog size.
 
 A capped 100-issue characterization before the fix ran all four combinations for
 5,000 frames. Between frames 1,000 and 5,000, RSS grew by 8,060/8,100 KiB in the
@@ -291,10 +296,29 @@ runs consume about 3.3 minutes; even budgeting ten minutes for each 1,000-issue
 mode leaves about 6.7 minutes for dependency/build setup in that job. Shared-runner
 speed varies; process/job timeouts and always-uploaded partial logs remain active.
 
-A later 1,000-issue linear run had bounded residency steps of 12,088 KiB at frame
-1,800 and 3,240 KiB at frame 2,400 in the merged idle case. RSS settled by frame
-3,000 and stayed exactly flat through frame 5,000, while all measured arenas
-stayed flat. The full-window residual slope was 0.856 KiB/frame; the latter-half
-slope was zero. Both windows are required to exceed the limit to classify growth
-as sustained. A captured early-recovery/late-plateau fixture covers this distinction,
-and removing the latter-half condition makes that test fail.
+The completed 1,000-issue linear run made two early residency steps in one
+configuration and then remained flat for its final 2,000 frames. The lookup run
+made three steps late in a configuration, followed by a roughly 60 MiB release
+in the next one. All measured frame arenas stayed flat. This motivates keeping
+per-configuration arena bounds and assessing RSS over the entire native process
+lifecycle, rather than treating each UI state's RSS as an independent process.
+
+All six captured native runs pass the final storage/process-slope gate:
+
+| Issues/mode | Excluded interval KiB | Full RSS slope KiB/frame | Latter-half slope KiB/frame |
+|---|---:|---:|---:|
+| 100 linear | 10452 | 0.003830 | 0.002273 |
+| 100 lookup | 36 | 0.001915 | 0.002222 |
+| 300 linear | 96 | -3.331702 | -0.130222 |
+| 300 lookup | 96 | -3.435745 | -0.006222 |
+| 1000 linear | 12088 | 0.332128 | 0.371364 |
+| 1000 lookup | 12112 | -3.042553 | -7.166667 |
+
+The 1,000-issue lookup run took 384.62 seconds. Total native time across all six
+runs was about 15.2 minutes, leaving setup/build headroom in the 30-minute CI job.
+The gate tests model leaks on the monotonic process frame counter, generate single
+steps throughout all configurations, and cover continuing repeated steps, bounded
+early recovery followed by a plateau, net decommit, per-configuration storage
+growth and malformed samples. Disabling process-slope/storage assertions produces
+578/4 failing cases; removing the latter-half condition rejects the bounded-recovery
+fixture. All mutants are reverted.

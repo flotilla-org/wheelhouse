@@ -410,8 +410,8 @@ rd_dock_resulting_width(CFG_PanelNode *root, CFG_PanelNode *panel,
 
 // Copy only layout nodes: proposals never mutate configuration or the frame's
 // shared tree. Tab/config identities stay borrowed for lookup.
-// Depth is nested Panel splits (not View count); this follows the existing
-// layout tree recursion rather than imposing a separate proposal depth limit.
+// Each nested Panel split consumes one call frame; tabs do not increase depth.
+// Interactive layouts are expected to be shallow; no proposal-only limit is imposed.
 internal CFG_PanelNode *
 rd_dock_copy_tree(Arena *arena, CFG_PanelNode *node)
 {
