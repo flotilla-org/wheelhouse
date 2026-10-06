@@ -664,6 +664,16 @@ uishell_section_placement_diagnostics(String8 source_path)
   CFG_Node *empty_duplicate_panel = cfg_node_new(state.cfg, host, str8_lit("0.0625"));
   duplicate = cfg_node_new(state.cfg, empty_duplicate_panel, str8_lit("sidebar_section"));
   cfg_node_new(state.cfg, cfg_node_new(state.cfg, duplicate, str8_lit("section")), str8_lit("a"));
+  // Copies split across both owning-level hosts must prefer the valid sidebar
+  // originals, preserve unrelated floating content and remove empty wrappers.
+  CFG_Node *duplicate_floating = cfg_node_child_from_string_or_alloc(state.cfg, window, str8_lit("floating_panels"));
+  for(U32 i = 0; i < 2; i++)
+  {
+    CFG_Node *floating_panel = cfg_node_new(state.cfg, duplicate_floating, i ? str8_lit("0.25") : str8_lit("0.5"));
+    CFG_Node *floating_copy = cfg_node_new(state.cfg, floating_panel, str8_lit("sidebar_section"));
+    cfg_node_new(state.cfg, cfg_node_new(state.cfg, floating_copy, str8_lit("section")), i ? str8_lit("b") : str8_lit("a"));
+    if(!i) { cfg_node_new(state.cfg, floating_panel, str8_lit("text")); }
+  }
   // Restart through the actual serializer/parser retains that arrangement.
   String8 serialized = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), window);
   CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), serialized);
@@ -673,14 +683,21 @@ uishell_section_placement_diagnostics(String8 source_path)
   split.owner_cfg = restored;
   CFG_Node *restored_host = uishell_sidebar_dock_layout(&split);
   PlacementCheck(str8_match(cfg_node_child_from_string(restored_host->first->first, str8_lit("section"))->first->string, str8_lit("b"), 0));
-  CFG_Node *restored_unrelated_panel = restored_host->last;
+  CFG_Node *restored_unrelated_panel = cfg_node_child_from_string(restored_host, str8_lit("0.125"));
   PlacementCheck(uishell_sidebar_find_view(restored_unrelated_panel, str8_lit("a")) == &cfg_nil_node);
   PlacementCheck(str8_match(restored_unrelated_panel->string, str8_lit("0.125"), 0));
   PlacementCheck(str8_match(restored_unrelated_panel->first->string, str8_lit("text"), 0));
   PlacementCheck(str8_match(cfg_node_child_from_string(restored_unrelated_panel->first, str8_lit("label"))->first->string, str8_lit("unrelated"), 0));
+  CFG_Node *restored_floating = cfg_node_child_from_string(restored, str8_lit("floating_panels"));
+  PlacementCheck(uishell_sidebar_find_view(restored_floating, str8_lit("a")) == &cfg_nil_node);
+  PlacementCheck(uishell_sidebar_find_view(restored_floating, str8_lit("b")) == &cfg_nil_node);
+  PlacementCheck(restored_floating->first == restored_floating->last);
+  PlacementCheck(str8_match(restored_floating->first->string, str8_lit("0.5"), 0));
+  PlacementCheck(str8_match(restored_floating->first->first->string, str8_lit("text"), 0));
   generation = cfg_change_gen();
   uishell_sidebar_dock_layout(&split);
   PlacementCheck(cfg_change_gen() == generation);
+  cfg_node_release(state.cfg, restored_floating); // Remove the floating fixture.
   cfg_node_release(state.cfg, restored_unrelated_panel); // Remove this scenario's unrelated fixture.
   // Adding a hinted region inserts it without changing the saved pair's order.
   String8 added = push_str8f(scratch.arena, "%Sregion \"c\" root-template=\"flotilla/region/tree\" order=15\n", config);

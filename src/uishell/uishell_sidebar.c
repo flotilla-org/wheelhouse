@@ -2322,6 +2322,7 @@ uishell_sidebar_place_region(CFG_Node *owner, UIShell_SectionPlacement *regions,
 }
 
 // Prefer the first valid saved View in sidebar-then-floating depth-first order.
+// If none is valid, keep the first invalid copy for existing placement repair.
 // Only this owner's hosts participate; child Workspace Regions are independent.
 internal void
 uishell_sidebar_choose_region(CFG_Node *container, String8 key, CFG_Node **keeper)
