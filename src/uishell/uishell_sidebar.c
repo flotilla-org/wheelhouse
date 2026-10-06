@@ -2394,8 +2394,10 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
 internal B32
 uishell_sidebar_restore_region(UIShell_ControlledSplit *split, String8 key)
 {
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
+  if(ws == &rd_nil_window_state || !ws->sidebar) { return 0; }
   uishell_sidebar_dock_layout(split);
-  UIShell_SidebarState *state = rd_window_state_from_cfg__existing(split->owner_cfg)->sidebar;
+  UIShell_SidebarState *state = ws->sidebar;
   if(!state->snapshot) { return 0; }
   U64 index = uishell_sidebar_region_index(state->placement_regions, state->placement_count, key);
   if(index == ANDAMENTO_NONE) { return 0; }
@@ -2528,6 +2530,7 @@ internal void
 uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 {
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
+  if(ws == &rd_nil_window_state || !ws->sidebar) { return; }
   UIShell_SidebarState *state = ws->sidebar;
   F32 row_height = floor_f32(ui_top_font_size()*2.2f), footer = row_height;
   F32 chrome_height = uishell_sidebar_footer_height(ws)-footer;
@@ -2568,9 +2571,18 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       // The footer survives an empty control_views tree. Section restoration
       // must remain reachable after closing the last selector section too.
       UI_Key menu_key = ui_key_from_string(root->key, str8_lit("section_restore_menu"));
+      F32 menu_width = ui_top_font_size()*24.f;
+      for(U64 i = 0; state->snapshot && i < state->placement_count; i++)
+      {
+        UIShell_SectionPlacement region = state->placement_regions[i];
+        if(uishell_sidebar_region_view(split->owner_cfg, region.key) != &cfg_nil_node) { continue; }
+        String8 text = push_str8f(ui_build_arena(), "Restore %S", region.title);
+        menu_width = Max(menu_width, fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, text).x+2*ui_top_text_padding());
+      }
+      menu_width = Min(menu_width, dim_2f32(wm_client_rect_from_window(ws->os)).x);
       // Do not wrap UI_CtxMenu in UI_Rect: fixed layout stacks would leak
       // the notice rectangle into its popup rows and clip their hit areas.
-      UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(24.f, 1)) UI_PrefHeight(ui_px(row_height, 1))
+      UI_CtxMenu(menu_key) UI_PrefWidth(ui_px(menu_width, 1)) UI_PrefHeight(ui_px(row_height, 1))
       {
         B32 available = 0;
         for(U64 i = 0; state->snapshot && i < state->placement_count; i++)
@@ -2581,8 +2593,13 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           UI_Signal restore = uishell_sidebar_button(push_str8f(ui_build_arena(), "Restore %S###restore_%S", region.title, region.key));
           if(ui_clicked(restore))
           {
-            uishell_sidebar_restore_region(split, region.key);
-            ui_ctx_menu_close();
+            if(uishell_sidebar_restore_region(split, region.key)) { ui_ctx_menu_close(); }
+            else
+            {
+              String8 error = str8_lit("Section could not be restored");
+              MemoryCopy(state->error, error.str, error.size); state->error[error.size] = 0;
+              rd_request_frame();
+            }
           }
         }
         if(!available) UI_TagF("weak") { ui_label(state->snapshot ? str8_lit("All sections are open") : str8_lit("Sections unavailable")); }

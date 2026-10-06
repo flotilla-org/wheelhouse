@@ -6,6 +6,12 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   UI_State *saved = ui_state, *test = ui_state_alloc();
   ui_select_state(test);
   UI_Box *button = &ui_nil_box;
+  UIShell_SidebarState *state = ws->sidebar;
+  String8 saved_title = state->placement_regions[0].title;
+  CFG_Node *view = uishell_sidebar_region_view(split->owner_cfg, state->placement_regions[0].key);
+  CFG_Node *parent = view->parent, *prev = view->prev;
+  cfg_node_unhook(rd_state->cfg, parent, view);
+  state->placement_regions[0].title = str8_lit("Long section declaration with a deliberately extended title for review");
   B32 ok = 1;
   for(U32 frame = 0; frame < 8; frame++)
   {
@@ -32,6 +38,12 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
     if(frame == 7 && (!test->ctx_menu_open || test->ctx_menu_root->rect.y1 > button->rect.y0+1))
     { ok = 0; fprintf(stderr, "FAIL section restore footer menu placement/open\n"); }
   }
+  UI_Box *restore = test->ctx_menu_root->first->next;
+  F32 text_width = fnt_dim_from_tag_size_string(restore->font, restore->font_size, 0, 0, ui_box_display_string(restore)).x;
+  if(dim_2f32(restore->rect).x < text_width || dim_2f32(restore->rect).x <= restore->font_size*24.f)
+  { ok = 0; fprintf(stderr, "FAIL long section restore menu title width\n"); }
+  state->placement_regions[0].title = saved_title;
+  cfg_node_insert_child(rd_state->cfg, parent, prev, view);
   ui_select_state(saved); ui_state_release(test);
   return ok;
 }
@@ -56,6 +68,7 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
       last = cfg_node_new(rd_state->cfg, panel, str8_lit("text"));
       if(i == 0) { cfg_node_new(rd_state->cfg, last, str8_lit("selected")); }
     }
+    ws->window_layout_reset = 1;
     UI_Box *bar = &ui_nil_box;
     UI_Box *last_grip = &ui_nil_box;
     for(U32 frame = 0; frame < 8; frame++)
@@ -79,6 +92,9 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
       UI_Key column = ui_key_from_stringf(bar->key, "tab_column_%p", last);
       UI_Key tab = ui_key_from_stringf(column, "tab_%p", last);
       UI_Box *tab_box = ui_box_from_key(tab);
+      UI_Box *column_box = ui_box_from_key(column);
+      if(compact && !ui_box_is_nil(column_box) && dim_2f32(column_box->rect).x < floor_f32(11.f*(1.6f+1.5f)))
+      { ok = 0; fprintf(stderr, "FAIL compact tab grip/close minimum width\n"); }
       for(UI_Box *box = tab_box; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, tab_box).next)
       { if(str8_match(ui_box_display_string(box), str8_lit("⋮⋮"), 0)) { last_grip = box; break; } }
     }
@@ -746,6 +762,9 @@ uishell_section_placement_diagnostics(String8 source_path)
   saved_snapshot = sidebar.snapshot; sidebar.snapshot = 0;
   generation = cfg_change_gen();
   PlacementCheck(!uishell_sidebar_restore_region(&split, str8_lit("x")) && cfg_change_gen() == generation);
+  ws.sidebar = 0;
+  PlacementCheck(!uishell_sidebar_restore_region(&split, str8_lit("x")) && cfg_change_gen() == generation);
+  ws.sidebar = &sidebar;
   sidebar.snapshot = saved_snapshot;
   PlacementCheck(uishell_sidebar_restore_region(&split, str8_lit("x")));
   x = uishell_sidebar_region_view(restored, str8_lit("x"));

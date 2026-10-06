@@ -7,6 +7,8 @@ checker, clears its closed record, and allocates the new panel a sibling share.
 Existing panels keep their relative allocations and nested structure; malformed
 or zero saved weights receive a positive minimum before normalization. Existing
 Views are never duplicated. Intentional closes remain closed across restart.
+Restore failures leave the menu open and show a footer notice. Menu width grows
+with declaration titles, bounded by the window width.
 
 All tab presentations use the existing dotted left-side grip with the same
 ten-point threshold. Selection, collapse, display controls and close remain
@@ -53,8 +55,9 @@ arrangements, malformed/zero sibling allocations and a merged host with leaf
 settings, selected tab and focused panel preserved. Panel diagnostics drive the
 footer's actual press/release path and check that the menu stays above its anchor
 using the measured menu height, including a font-size change
-while open. Twelve-tab ordinary and compact strips accept precise horizontal
-scrolling and reveal the final tab grip.
+while open and a title wider than the default menu. Twelve-tab ordinary and compact strips accept precise horizontal
+scrolling and reveal the final tab grip; compact widths explicitly retain the
+grip and close-control floor.
 Chip diagnostics cover protected focus, horizontal precise input, nested scroll
 ownership, overflow-button focus, removal/rebuild refocus, resize and fixed
 status geometry at 90, 140, 240, 320 and 600 pixels.
