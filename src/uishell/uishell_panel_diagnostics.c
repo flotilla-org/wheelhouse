@@ -164,6 +164,7 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   cfg_node_release(rd_state->cfg, owner);
   scratch_end(scratch);
   failures += !uishell_sidebar_docking_diagnostics(ws);
+  failures += !uishell_border_diagnostics(ws);
   fprintf(stderr, "Panel diagnostics: %u failures\n", failures);
   return failures == 0;
 }
