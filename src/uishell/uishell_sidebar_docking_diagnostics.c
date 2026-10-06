@@ -44,6 +44,15 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   { ok = 0; fprintf(stderr, "FAIL long section restore menu title width\n"); }
   state->placement_regions[0].title = saved_title;
   cfg_node_insert_child(rd_state->cfg, parent, prev, view);
+  uishell_sidebar_dock_layout(split);
+  U64 generation = cfg_change_gen();
+  U8 saved_error[sizeof(state->error)]; MemoryCopy(saved_error, state->error, sizeof(saved_error));
+  if(uishell_sidebar_restore_from_menu(split, str8_lit("not-declared")) || !test->next_ctx_menu_open ||
+     !state->error[0] || cfg_change_gen() != generation)
+  { ok = 0; fprintf(stderr, "FAIL failed section restore must leave menu open with a notice\n"); }
+  if(!uishell_sidebar_restore_from_menu(split, state->placement_regions[0].key) || test->next_ctx_menu_open)
+  { ok = 0; fprintf(stderr, "FAIL successful section restore must close menu\n"); }
+  MemoryCopy(state->error, saved_error, sizeof(saved_error));
   ui_select_state(saved); ui_state_release(test);
   return ok;
 }
@@ -93,7 +102,7 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
       UI_Key tab = ui_key_from_stringf(column, "tab_%p", last);
       UI_Box *tab_box = ui_box_from_key(tab);
       UI_Box *column_box = ui_box_from_key(column);
-      if(compact && !ui_box_is_nil(column_box) && dim_2f32(column_box->rect).x < floor_f32(11.f*(1.6f+1.5f)))
+      if(compact && !ui_box_is_nil(column_box) && dim_2f32(column_box->rect).x < floor_f32(11.f*(1.6f+UIShell_GripWidthEM)))
       { ok = 0; fprintf(stderr, "FAIL compact tab grip/close minimum width\n"); }
       for(UI_Box *box = tab_box; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, tab_box).next)
       { if(str8_match(ui_box_display_string(box), str8_lit("⋮⋮"), 0)) { last_grip = box; break; } }
@@ -103,6 +112,82 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
     { ok = 0; fprintf(stderr, "FAIL %s many-tab scroll/grip reachability: offset=%g bar=[%g,%g] grip=[%g,%g]\n", compact ? "compact" : "ordinary", bar->view_off_target.x, bar->rect.x0, bar->rect.x1, last_grip->rect.x0, last_grip->rect.x1); }
     cfg_node_release(rd_state->cfg, owner);
   }
+  ui_select_state(saved); ui_state_release(test); scratch_end(scratch);
+  return ok;
+}
+
+// Reproduce saved manual layouts with zero-height Sessions and Git panels.
+// Their headers must remain visible without a boundary drag after startup.
+internal B32
+uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *split, B32 manual_sizing)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *owner = split->owner_cfg;
+  CFG_Node *saved_host = cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT);
+  CFG_Node *saved_inventory = cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY);
+  CFG_Node *saved_sizing = cfg_node_child_from_string(owner, str8_lit("sidebar_layout_sized"));
+  cfg_node_unhook(rd_state->cfg, owner, saved_host);
+  cfg_node_unhook(rd_state->cfg, owner, saved_inventory);
+  cfg_node_unhook(rd_state->cfg, owner, saved_sizing);
+  UIShell_SidebarState *saved_sidebar = ws->sidebar;
+  UIShell_SidebarState fixture = {.initialized = 1};
+  String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
+  char *error = 0;
+  fixture.core = andamento_create(daily.str, daily.size, &error);
+  B32 ok = uishell_sidebar_result(&fixture, fixture.core != 0, error);
+  uishell_sidebar_refresh(&fixture);
+  ws->sidebar = &fixture;
+  CFG_Node *host = uishell_sidebar_dock_layout(split);
+  String8 keys[] = {str8_lit("sessions"), str8_lit("git")};
+  for(U32 i = 0; i < ArrayCount(keys); i++)
+  {
+    if(uishell_sidebar_region_view(owner, keys[i]) == &cfg_nil_node)
+    { ok = 0; fprintf(stderr, "FAIL saved header fixture must declare %.*s\n", (int)keys[i].size, keys[i].str); }
+  }
+  CFG_NodePtrList panels = {0};
+  for(CFG_Node *panel = host->first; panel != &cfg_nil_node; panel = panel->next)
+  {
+    cfg_node_ptr_list_push(scratch.arena, &panels, panel);
+    String8 key = cfg_node_child_from_string(cfg_node_child_from_string(panel, str8_lit("sidebar_section")), str8_lit("section"))->first->string;
+    cfg_node_equip_stringf(rd_state->cfg, panel, "%f", str8_match(key, keys[0], 0) || str8_match(key, keys[1], 0) ? 0.f : 1.f/Max(1, panels.count));
+  }
+  // Normalize only the fixture's healthy shares. Keep the reported zeros.
+  F32 total = 0;
+  for(CFG_NodePtrNode *n = panels.first; n; n = n->next) { total += (F32)f64_from_str8(n->v->string); }
+  for(CFG_NodePtrNode *n = panels.first; n; n = n->next)
+  { cfg_node_equip_stringf(rd_state->cfg, n->v, "%f", (F32)f64_from_str8(n->v->string)/Max(.01f, total)); }
+  CFG_Node *manual = manual_sizing ? cfg_node_new(rd_state->cfg, split->owner_cfg, str8_lit("sidebar_layout_sized")) : &cfg_nil_node;
+  UI_State *saved = ui_state, *test = ui_state_alloc(); ui_select_state(test);
+  U64 settled_generation = 0;
+  for(U32 frame = 0; frame < 5; frame++)
+  {
+    UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UIShell_RegsScope(.window = split->owner_cfg->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_control_surface_ui(r2f32p(17, 29, 337, 769), split); }
+    ui_end_build();
+    if(frame == 3) { settled_generation = cfg_change_gen(); }
+    if(frame == 4 && cfg_change_gen() != settled_generation)
+    { ok = 0; fprintf(stderr, "FAIL header repair must stay idle after settling\n"); }
+  }
+  for(U32 i = 0; i < ArrayCount(keys); i++)
+  {
+    UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", keys[i]);
+    UI_Box *header = ui_box_from_key(ui_key_from_stringf(root_key, "###section_header_%S", keys[i]));
+    Rng2F32 visible = header->rect;
+    for(UI_Box *parent = header->parent; !ui_box_is_nil(parent); parent = parent->parent)
+    { if(parent->flags & UI_BoxFlag_Clip) { visible = intersect_2f32(visible, parent->rect); } }
+    if(ui_box_is_nil(header) || dim_2f32(visible).y < 24.f-1)
+    { ok = 0; fprintf(stderr, "FAIL saved section header %.*s: visible height %g\n", (int)keys[i].size, keys[i].str, dim_2f32(visible).y); }
+  }
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT));
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY));
+  if(manual != &cfg_nil_node) { cfg_node_release(rd_state->cfg, manual); }
+  if(saved_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, owner, owner->last, saved_host); }
+  if(saved_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, owner, owner->last, saved_inventory); }
+  if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, owner, owner->last, saved_sizing); }
+  ws->sidebar = saved_sidebar;
+  uishell_sidebar_release(&fixture);
   ui_select_state(saved); ui_state_release(test); scratch_end(scratch);
   return ok;
 }
@@ -154,6 +239,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(host == &cfg_nil_node);
   DockFailure(!uishell_sidebar_restore_menu_diagnostics(ws, &split));
   DockFailure(!uishell_sidebar_tab_overflow_diagnostics(ws));
+  DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 1));
+  DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 0));
   CFG_Node *first_panel = host->first, *second_panel = first_panel->next;
   CFG_Node *view = cfg_node_child_from_string(first_panel, str8_lit("sidebar_section"));
   CFG_Node *second_view = cfg_node_child_from_string(second_panel, str8_lit("sidebar_section"));
@@ -247,7 +334,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       DockFailure(!str8_match(restored_root->first->string, first_panel->string, 0));
       UIShell_ControlledSplit restored_split = {.owner_cfg = restored_window};
       UIShell_WorkspaceMount restored_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, restored_window, restored_root);
-      uishell_sidebar_size_panels(&restored_split, &restored_mount, r2f32p(17, 29, 337, 229));
+      UI_FontSize(11)
+      { uishell_sidebar_size_panels(&restored_split, &restored_mount, r2f32p(17, 29, 337, 229-uishell_sidebar_footer_height(ws))); }
       DockFailure(!str8_match(restored_root->first->string, first_panel->string, 0));
       cfg_state_release(loaded_cfg);
     }
@@ -564,6 +652,11 @@ uishell_section_placement_diagnostics(String8 source_path)
   { if(rd_dock_is_container(n)) { restored_sum += (F32)f64_from_str8(n->string); } }
   PlacementCheck(abs_f32(restored_sum-1.f) < .00001f);
   CFG_ID restored_c_id = c->id;
+  CFG_Node *stale_closed = cfg_node_child_from_string_or_alloc(state.cfg,
+    cfg_node_child_from_string(cfg_node_child_from_string(restored, UISHELL_REGION_INVENTORY), str8_lit("c")), str8_lit("closed"));
+  PlacementCheck(stale_closed != &cfg_nil_node);
+  PlacementCheck(uishell_sidebar_restore_region(&split, str8_lit("c")) && c->id == restored_c_id);
+  PlacementCheck(cfg_node_child_from_string(cfg_node_child_from_string(cfg_node_child_from_string(restored, UISHELL_REGION_INVENTORY), str8_lit("c")), str8_lit("closed")) == &cfg_nil_node);
   generation = cfg_change_gen();
   PlacementCheck(uishell_sidebar_restore_region(&split, str8_lit("c")));
   PlacementCheck(c->id == restored_c_id && cfg_change_gen() == generation);
@@ -658,6 +751,10 @@ uishell_section_placement_diagnostics(String8 source_path)
     uishell_sidebar_reset_regions(restored); uishell_sidebar_dock_layout(&split);
     CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
     CFG_Node *y = uishell_sidebar_region_view(restored, str8_lit("y"));
+    CFG_ID existing_x = x->id;
+    U64 existing_generation = cfg_change_gen();
+    PlacementCheck(uishell_sidebar_restore_region(&split, str8_lit("x")));
+    PlacementCheck(x->id == existing_x && cfg_change_gen() == existing_generation);
     PlacementCheck(x != &cfg_nil_node && y != &cfg_nil_node);
     PlacementCheck(x->parent->next == y->parent);
     PlacementCheck(rd_dock_saved_placement_valid(x) && rd_dock_saved_placement_valid(y));

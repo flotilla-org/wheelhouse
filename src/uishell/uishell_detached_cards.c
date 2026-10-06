@@ -131,7 +131,7 @@ uishell_sidebar_card_drag_control(UIShell_HoverCard *card)
 {
   UI_Signal drag = uishell_sidebar_grip(str8_lit("card_drag"), str8_lit("Drag card"));
   if(ui_pressed(drag)) { card->move_origin = card->rect.p0; }
-  if(ui_dragging(drag) && length_2f32(ui_drag_delta()) > UIShell_HoverCardDragThresholdPT)
+  if(ui_dragging(drag) && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
   {
     if(!card->moving && !rd_drag_is_active())
     {
@@ -687,10 +687,10 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
   UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak") RD_Font(RD_FontSlot_Main)
   {
     ui_spacer(ui_em(0.3f, 1));
-    UI_PrefWidth(ui_em(1.5f, 1))
+    UI_PrefWidth(ui_em(UIShell_GripWidthEM, 1))
     {
       UI_Signal drag = uishell_sidebar_grip(str8_lit("pinned_drag"), str8_lit("Drag pinned area"));
-      if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_HoverCardDragThresholdPT)
+      if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
       { rd_drag_begin(UIShell_ContextRegSlot_View); }
     }
     UI_PrefWidth(ui_pct(1, 0)) { ui_label(str8_lit("PINNED")); }

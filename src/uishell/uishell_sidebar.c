@@ -2,6 +2,8 @@
 #include "andamento.h"
 #include "uishell/uishell_sidebar_chips.h"
 #include "ingress/ingress.h"
+enum { UIShell_DragThresholdPT = 10 };
+read_only global F32 UIShell_GripWidthEM = 1.5f;
 global WheelhouseIngress *uishell_ingress;
 global String8 uishell_sidebar_live_config;
 global B32 uishell_sidebar_live;
@@ -172,15 +174,20 @@ uishell_sidebar_subject_hit(AndamentoNode node, UI_Box *box, char *action, B32 m
     box->rect.x0, box->rect.y0, box->rect.x1, box->rect.y1);
 }
 
+internal void
+uishell_sidebar_set_error(UIShell_SidebarState *state, String8 message)
+{
+  U64 size = Min(message.size, sizeof(state->error)-1);
+  MemoryCopy(state->error, message.str, size); state->error[size] = 0;
+}
+
 internal B32
 uishell_sidebar_result(UIShell_SidebarState *state, B32 ok, char *error)
 {
   if(!ok)
   {
     String8 message = error ? str8_cstring(error) : str8_lit("Sidebar operation failed");
-    U64 size = Min(message.size, sizeof(state->error)-1);
-    MemoryCopy(state->error, message.str, size);
-    state->error[size] = 0;
+    uishell_sidebar_set_error(state, message);
   }
   andamento_string_free(error);
   return ok;
@@ -1652,10 +1659,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       {
         B32 toggle = 0;
         ui_spacer(ui_em(0.3f, 1));
-        if(section_panel) UI_PrefWidth(ui_em(1.5f, 1))
+        if(section_panel) UI_PrefWidth(ui_em(UIShell_GripWidthEM, 1))
         {
           UI_Signal drag = uishell_sidebar_grip(str8_lit("section_drag"), str8_lit("Drag section"));
-          if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_HoverCardDragThresholdPT)
+          if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
           { rd_drag_begin(UIShell_ContextRegSlot_View); }
         }
         toggle |= ui_clicked(uishell_sidebar_disclosure(!states[n]->collapsed, push_str8f(scratch.arena, "###section_toggle_%S", key)));
@@ -2402,8 +2409,8 @@ uishell_sidebar_restore_region(UIShell_ControlledSplit *split, String8 key)
   U64 index = uishell_sidebar_region_index(state->placement_regions, state->placement_count, key);
   if(index == ANDAMENTO_NONE) { return 0; }
   CFG_Node *view = uishell_sidebar_region_view(split->owner_cfg, key);
-  // An existing View wins over a stale closed record. Leave this no-op
-  // mutation-free; reconciliation only consults closed when no View exists.
+  // Reconciliation above clears any stale closed record for an existing
+  // View. Returning success adds no further placement mutation or duplicate.
   if(view != &cfg_nil_node) { return 1; }
   view = uishell_sidebar_place_region(split->owner_cfg, state->placement_regions, state->placement_count, index, &cfg_nil_node);
   if(view == &cfg_nil_node) { return 0; }
@@ -2450,6 +2457,17 @@ uishell_sidebar_restore_region(UIShell_ControlledSplit *split, String8 key)
   return 1;
 }
 
+// Keep failed restoration visible through the same footer action used by UI.
+internal B32
+uishell_sidebar_restore_from_menu(UIShell_ControlledSplit *split, String8 key)
+{
+  if(uishell_sidebar_restore_region(split, key)) { ui_ctx_menu_close(); return 1; }
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
+  if(ws != &rd_nil_window_state && ws->sidebar)
+  { uishell_sidebar_set_error(ws->sidebar, str8_lit("Section could not be restored")); }
+  rd_request_frame(); return 0;
+}
+
 // Dragging opts into saved ratios. Double-clicking a sidebar boundary or an
 // explicit panel reset returns the window to content-based default sizing.
 internal void
@@ -2467,13 +2485,53 @@ uishell_sidebar_manual_sizing(CFG_Node *window, B32 manual)
 internal void
 uishell_sidebar_size_panels(UIShell_ControlledSplit *split, UIShell_WorkspaceMount *mount, Rng2F32 rect)
 {
-  if(cfg_node_child_from_string(split->owner_cfg, str8_lit("sidebar_layout_sized")) != &cfg_nil_node) { return; }
+  B32 manual = cfg_node_child_from_string(split->owner_cfg, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
   CFG_PanelNode *root = mount->panel_tree.root;
   if(root->split_axis != Axis2_Y || root->child_count == 0) { return; }
   U64 count = root->child_count;
   Temp scratch = scratch_begin(0, 0);
   UIShell_SidebarState *state = rd_window_state_from_cfg__existing(split->owner_cfg)->sidebar;
   F32 row_height = floor_f32(ui_top_font_size()*2.2f);
+  if(manual)
+  {
+    // Repair undersized saved leaves in a simple vertical stack. Keep all
+    // valid siblings proportional while reserving a visible header per leaf.
+    F32 minimum = Min(1.f/Max(1, count), (row_height+2*rd_panel_inset_px(ui_top_font_size()))/Max(1.f, dim_2f32(rect).y));
+    F32 total = 0; B32 repair = 0;
+    for(CFG_PanelNode *panel = root->first; panel != &cfg_nil_panel_node; panel = panel->next)
+    {
+      if(panel->first != &cfg_nil_panel_node || panel->tabs.count != 1) { scratch_end(scratch); return; }
+      total += Max(0.f, panel->pct_of_parent);
+      // Config shares are serialized with six decimals. Ignore sub-pixel
+      // roundtrip differences so repaired layouts stay idle on later frames.
+      repair |= panel->pct_of_parent < minimum-.000001f;
+    }
+    repair |= abs_f32(total-1.f) > .0001f;
+    if(!repair) { scratch_end(scratch); return; }
+    B32 *fixed = push_array(scratch.arena, B32, count);
+    F32 remaining = 1, weight = total; U64 unfixed = count;
+    for(U64 pass = 0; pass < count; pass++)
+    {
+      B32 changed = 0; U64 i = 0;
+      F32 scale = weight > 0 ? remaining/weight : 0;
+      F32 equal = remaining/Max(1, unfixed);
+      for(CFG_PanelNode *panel = root->first; panel != &cfg_nil_panel_node; panel = panel->next, i++)
+      {
+        F32 share = weight > 0 ? Max(0.f, panel->pct_of_parent)*scale : equal;
+        if(!fixed[i] && share < minimum)
+        { fixed[i] = 1; remaining -= minimum; weight -= Max(0.f, panel->pct_of_parent); unfixed--; changed = 1; }
+      }
+      if(!changed) { break; }
+    }
+    U64 i = 0;
+    for(CFG_PanelNode *panel = root->first; panel != &cfg_nil_panel_node; panel = panel->next, i++)
+    {
+      F32 share = fixed[i] ? minimum : weight > 0 ? Max(0.f, panel->pct_of_parent)*remaining/weight : remaining/Max(1, unfixed);
+      panel->pct_of_parent = share;
+      cfg_node_equip_stringf(rd_state->cfg, panel->cfg, "%f", share);
+    }
+    scratch_end(scratch); return;
+  }
   F32 *heights = push_array(scratch.arena, F32, count);
   F32 *contents = push_array(scratch.arena, F32, count);
   F32 *headers = push_array(scratch.arena, F32, count);
@@ -2492,7 +2550,9 @@ uishell_sidebar_size_panels(UIShell_ControlledSplit *split, UIShell_WorkspaceMou
       if(str8_match(section->key, key, 0)) { break; }
     }
     contents[n] = section ? section->content_height : 7*row_height;
-    headers[n] = !section || contents[n] > 0 || section->has_controls ? row_height : 0;
+    // A placed section still needs its title, movement and close controls
+    // when it has no content. Closing its View is the explicit way to hide it.
+    headers[n] = row_height;
     available -= headers[n];
     if(!collapsed[n] && contents[n] > 0 && flexible == count) { flexible = n; }
   }
@@ -2593,13 +2653,7 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
           UI_Signal restore = uishell_sidebar_button(push_str8f(ui_build_arena(), "Restore %S###restore_%S", region.title, region.key));
           if(ui_clicked(restore))
           {
-            if(uishell_sidebar_restore_region(split, region.key)) { ui_ctx_menu_close(); }
-            else
-            {
-              String8 error = str8_lit("Section could not be restored");
-              MemoryCopy(state->error, error.str, error.size); state->error[error.size] = 0;
-              rd_request_frame();
-            }
+            uishell_sidebar_restore_from_menu(split, region.key);
           }
         }
         if(!available) UI_TagF("weak") { ui_label(state->snapshot ? str8_lit("All sections are open") : str8_lit("Sections unavailable")); }

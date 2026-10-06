@@ -7,7 +7,8 @@ checker, clears its closed record, and allocates the new panel a sibling share.
 Existing panels keep their relative allocations and nested structure; malformed
 or zero saved weights receive a positive minimum before normalization. Existing
 Views are never duplicated. Intentional closes remain closed across restart.
-Restore failures leave the menu open and show a footer notice. Menu width grows
+Restore failures leave the menu open and show a footer notice; native diagnostics
+exercise both failure and success through the production footer action. Menu width grows
 with declaration titles, bounded by the window width.
 
 All tab presentations use the existing dotted left-side grip with the same
@@ -41,8 +42,21 @@ upward. Restoring Attention in the refreshed candidate also exposed an excessive
 allocation in a manually sized layout, which is covered by the sibling-share
 normalization check.
 
-Final restoration, merged-tab and narrow trackpad/keyboard acceptance is pending
-on the corrected candidate.
+The next report found Sessions and Git squashed below the visible area until
+panel boundaries were resized. The saved profile contained zero shares for both.
+Automatic sizing also omitted headers for empty sections. Empty placed sections
+now keep a header row; flat vertical manual stacks repair undersized leaves while
+preserving healthy sibling proportions. The native fixture declares both sections,
+checks their clipped header rectangles and verifies idle config generation after
+repair. Replaying the old sizing code makes both headers fail in manual and
+automatic modes; the corrected code passes. Nested or horizontal manual layouts
+retain their saved sizing.
+
+The refreshed candidate uses `/tmp/wheelhouse-restore-review/header-user`, copied
+from the original squashed profile. The operator's resized profile is preserved
+as `/tmp/wheelhouse-restore-review/user.owner-resized`. Both headers are visible
+on launch in the agent's screenshot. Final restoration, merged-tab and narrow
+trackpad/keyboard acceptance is pending on this candidate.
 
 ## Automated evidence
 
@@ -62,9 +76,11 @@ Chip diagnostics cover protected focus, horizontal precise input, nested scroll
 ownership, overflow-button focus, removal/rebuild refocus, resize and fixed
 status geometry at 90, 140, 240, 320 and 600 pixels.
 The native ABI suite, docking policy suite, section placement, sidebar and panel
-diagnostics pass. The macOS candidate debug build also passes.
+diagnostics pass. Short macOS panel, sidebar, section-placement, scroll-region
+and shared-UI diagnostics pass, as does the AppKit event translation fixture.
 
 macOS rejects `ulimit -v` and `ulimit -d` with Invalid argument. No successful
-macOS address-space cap is claimed. Its automated diagnostic execution remains
-pending the operator's watchdog choice. The AppKit translation fixture now
+macOS address-space cap is claimed. The governor ruled that the cap applies only on Linux. Kiwi runs short native
+diagnostics and candidate builds without an RSS watchdog. The large-catalog
+benchmark runs capped in Linux CI via #199 and is not run on macOS. The AppKit translation fixture now
 covers horizontal and vertical axes in both precise and line units.
