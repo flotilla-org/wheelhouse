@@ -578,6 +578,43 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     UI_Box *button = ui_box_from_key(ui_key_from_stringf(controls_key, "###control_%S_0", key));
     DockFailure(!!(button->flags & UI_BoxFlag_DrawBackground) != !!control.checked);
   }
+  // A docked section's title is its drag handle: a press that moves past the
+  // shared threshold starts this View's docking drag, and a still click on
+  // the title keeps collapsing it (drag-model.md, Gesture).
+  for(U32 moved = 0; moved < 2; moved++)
+  {
+    B32 collapsed_before = cfg_node_child_from_string(view, str8_lit("section_collapsed")) != &cfg_nil_node;
+    UI_Key title_key = ui_key_from_stringf(header_key, "###section_%S", key);
+    Vec2F32 start = {0};
+    B32 started = 0;
+    for(U32 frame = 0; frame < 5; frame++)
+    {
+      UI_IconInfo icons = ws->ui->icon_info;
+      UI_AnimationInfo animation = {0};
+      UI_EventList events = {0}; UI_EventNode event = {0};
+      Vec2F32 pointer = frame < 2 ? start : add_2f32(start, v2f32(moved ? 3*UIShell_DragThresholdPT : 0, moved ? UIShell_DragThresholdPT : 0));
+      if(frame == 1 || frame == 3)
+      {
+        event.v = (UI_Event){.kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release,
+                            .key = WM_Key_LeftMouseButton, .pos = pointer};
+        events.first = events.last = &event; events.count = 1;
+      }
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = frame == 0 ? v2f32(-100, -100) : pointer;
+      UIShell_RegsScope(.window = window->id, .panel = view->parent->id, .view = view->id)
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_sidebar_render(r2f32p(0, 0, 320, 180), &split,
+                                (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, key}); }
+      ui_end_build();
+      if(frame == 0) { start = center_2f32(ui_box_from_key(title_key)->rect); }
+      if(frame == 2) { started = rd_drag_is_active() && rd_state->drag_drop_regs->view == view->id; }
+    }
+    B32 collapsed_after = cfg_node_child_from_string(view, str8_lit("section_collapsed")) != &cfg_nil_node;
+    if(moved) { DockFailure(!started); DockFailure(collapsed_after != collapsed_before); }
+    else { DockFailure(started); DockFailure(collapsed_after == collapsed_before); }
+    rd_drag_kill(); ui_kill_action();
+  }
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("section_collapsed")));
   ws->sidebar = state;
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_display")));
   String8 persisted = str8_lit("display-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role history\" icon=\"R\" persist=true");

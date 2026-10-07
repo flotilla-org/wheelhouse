@@ -1796,8 +1796,16 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           else { ui_spacer(ui_em(UIShell_GripWidthEM, 1)); }
         }
         // The title holds its width; the spacer after the indicator absorbs slack.
+        // A docked section's title is also its drag handle: past the shared
+        // threshold it starts the section's docking drag, and a plain click
+        // still collapses (drag-model.md, Gesture).
         UI_PrefWidth(ui_text_dim(4.f, 1))
-        { toggle |= ui_clicked(uishell_sidebar_button(push_str8f(scratch.arena, "%S###section_%S", upper_from_str8(scratch.arena, title), key))); }
+        {
+          UI_Signal title_sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###section_%S", upper_from_str8(scratch.arena, title), key));
+          if(section_panel && ui_dragging(title_sig) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
+          { rd_drag_begin(UIShell_ContextRegSlot_View); }
+          toggle |= ui_clicked(title_sig) && !rd_drag_is_active();
+        }
         if(states[n]->collapsed) UI_PrefWidth(ui_text_dim(4.f, 1)) UI_TextColor(uishell_sidebar_ended_color())
         { ui_label(push_str8f(scratch.arena, "%I64u", entries[n])); }
         toggle |= ui_clicked(uishell_sidebar_disclosure(!states[n]->collapsed, push_str8f(scratch.arena, "###section_toggle_%S", key)));

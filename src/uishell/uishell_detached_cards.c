@@ -126,10 +126,12 @@ uishell_sidebar_card_panel_drop(CFG_ID destination, Dir2 direction, CFG_ID previ
   ws->sidebar->card_drop_direction = direction;
 }
 
+// A card drags from its grip or its title line, past the shared threshold
+// (drag-model.md, decision 4). Card focus is decided from raw press events
+// over the card's rect, so a clickable title does not change it.
 internal void
-uishell_sidebar_card_drag_control(UIShell_HoverCard *card)
+uishell_sidebar_card_drag_from(UIShell_HoverCard *card, UI_Signal drag)
 {
-  UI_Signal drag = uishell_sidebar_grip(str8_lit("card_drag"), str8_lit("Drag card"));
   if(ui_pressed(drag)) { card->move_origin = card->rect.p0; }
   if(ui_dragging(drag) && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
   {
@@ -151,6 +153,21 @@ uishell_sidebar_card_drag_control(UIShell_HoverCard *card)
   }
   if(ui_released(drag) && card->moving)
   { card->drag_released = 1; rd_request_frame(); }
+}
+
+internal void
+uishell_sidebar_card_drag_control(UIShell_HoverCard *card)
+{
+  uishell_sidebar_card_drag_from(card, uishell_sidebar_grip(str8_lit("card_drag"), str8_lit("Drag card")));
+}
+
+// The card's title line: mouse-only (keyboard keeps the grip and buttons),
+// drawn like the label it replaces.
+internal void
+uishell_sidebar_card_title_handle(UIShell_HoverCard *card, String8 text)
+{
+  UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|UI_BoxFlag_MouseClickable, "%S###card_title", text);
+  uishell_sidebar_card_drag_from(card, ui_signal_from_box(box));
 }
 
 internal void
@@ -421,7 +438,7 @@ uishell_sidebar_detached_content(UIShell_SidebarState *state, RD_WindowState *ws
   {
     UI_PrefWidth(ui_em(1.4f, 1)) { uishell_sidebar_card_drag_control(card); }
     U64 control_count = card->placement == UIShell_CardPlacement_Transient ? 4 : 3;
-    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f*(control_count+1)), 1)) { ui_label(card->retained_label); }
+    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f*(control_count+1)), 1)) { uishell_sidebar_card_title_handle(card, card->retained_label); }
     uishell_sidebar_card_move_controls(card, width);
   }
   UI_TagF("weak") { ui_label(str8_lit("No longer present")); }
@@ -702,7 +719,14 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
       }
       else { ui_spacer(ui_em(UIShell_GripWidthEM, 1)); }
     }
-    UI_PrefWidth(ui_pct(1, 0)) { ui_label(str8_lit("PINNED")); }
+    // The title drags the area too (#210); the grip is only a hover hint.
+    UI_PrefWidth(ui_pct(1, 0))
+    {
+      UI_Box *title = ui_build_box_from_stringf(UI_BoxFlag_DrawText|UI_BoxFlag_MouseClickable, "PINNED###pinned_title");
+      UI_Signal drag = ui_signal_from_box(title);
+      if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
+      { rd_drag_begin(UIShell_ContextRegSlot_View); }
+    }
     if(ui_clicked(uishell_sidebar_header_button(str8_lit("×"), str8_lit("pinned_close"), 0, engaged,
                                                 str8_lit("Close pinned area"), str8_lit("Pins are kept; restore it from Sections…"))) &&
        rd_dock_can_close(view))
