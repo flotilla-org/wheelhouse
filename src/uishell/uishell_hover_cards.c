@@ -441,6 +441,7 @@ uishell_sidebar_card_role_text(UIShell_SidebarState *state, U64 index, U32 role)
 
 internal UI_Signal uishell_sidebar_card_icon_button(String8 glyph, String8 key, String8 description);
 internal void uishell_sidebar_card_drag_control(UIShell_HoverCard *card);
+internal void uishell_sidebar_card_title_handle(UIShell_HoverCard *card, String8 text);
 internal void uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width);
 
 internal void
@@ -463,7 +464,7 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
     UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak") RD_Font(RD_FontSlot_Icons)
     { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_icon(detail.entity.kind)]); }
     UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-grip_width-controls_width), 1)) UI_TagF("weak")
-    { ui_label(identity); }
+    { if(interactive) { uishell_sidebar_card_title_handle(card, identity); } else { ui_label(identity); } }
     if(badge.size)
     {
       UI_PrefWidth(ui_px(badge_width, 1)) UI_CornerRadius(ui_top_font_size()*0.3f)

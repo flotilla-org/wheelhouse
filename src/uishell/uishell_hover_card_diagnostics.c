@@ -1172,6 +1172,97 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(drag_pin->open && drag_pin->placement == UIShell_CardPlacement_Float &&
       uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == &cfg_nil_node,
       "dragging an existing pin outside its section produces one float and removes the saved pin");
+    // The title line drags a card too (drag-model.md, decision 4): the float
+    // follows a title drag exactly as it follows the grip.
+    {
+      ui_kill_action();
+      UI_Key title_seed = ui_key_zero();
+      Vec2F32 title_start = {0}, title_origin = {0};
+      for(U64 frame = 0; frame < 5; frame++)
+      {
+        Vec2F32 pointer = frame < 2 ? title_start : add_2f32(title_start, v2f32(60, 40));
+        UI_EventList events = {0};
+        if(frame == 1 || frame == 4)
+        {
+          WM_Event raw = {.kind = frame == 1 ? WM_EventKind_Press : WM_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = pointer};
+          if(!uishell_sidebar_card_wm_event(ws, &raw))
+          {
+            UI_Event event = {.kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = pointer};
+            ui_event_list_push(test->arena, &events, &event);
+          }
+        }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = pointer;
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+        uishell_sidebar_card_drag_finish(ws);
+        ui_end_build();
+        if(frame == 0)
+        {
+          UI_Box *card_root = ui_box_from_key(drag_pin->mask.key);
+          // Rows are unkeyed, so the title's key is seeded by a keyed ancestor.
+          for(UI_Box *box = card_root; !ui_box_is_nil(box) && title_start.x == 0; box = ui_box_rec_df_pre(box, card_root).next)
+          {
+            for(UI_Box *a = box->parent; !ui_box_is_nil(a); a = a->parent)
+            { if(ui_key_match(box->key, ui_key_from_string(a->key, str8_lit("###card_title")))) { title_start = center_2f32(box->rect); title_seed = box->key; break; } }
+          }
+          title_origin = drag_pin->rect.p0;
+          CardCheck(title_start.x > 0, "a card exposes its title line as a drag handle");
+        }
+        if(frame == 2 || frame == 3)
+        {
+          CardCheck(drag_pin->moving && length_2f32(sub_2f32(drag_pin->rect.p0, add_2f32(title_origin, v2f32(60, 40)))) < 1.f,
+                    "dragging a card's title moves it like the grip");
+        }
+      }
+      CardCheck(drag_pin->open && !drag_pin->moving && drag_pin->placement == UIShell_CardPlacement_Float,
+                "a title drag of a float ends as a float");
+      (void)title_seed;
+    }
+    // The pinned area's title drags the area View, as a section title does.
+    {
+      ui_kill_action(); rd_drag_kill();
+      CFG_Node *area_view = cfg_node_child_from_string(drag_panel, str8_lit("pinned_cards"));
+      CardCheck(area_view != &cfg_nil_node, "the emptied pinned area remains as a View");
+      Vec2F32 area_start = {0};
+      B32 area_drag = 0;
+      for(U64 frame = 0; frame < 4; frame++)
+      {
+        Vec2F32 pointer = frame < 2 ? area_start : add_2f32(area_start, v2f32(3*UIShell_DragThresholdPT, UIShell_DragThresholdPT));
+        UI_EventList events = {0};
+        if(frame == 1)
+        {
+          UI_Event event = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = pointer};
+          ui_event_list_push(test->arena, &events, &event);
+        }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = frame == 0 ? v2f32(-100, -100) : pointer;
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        {
+          Andamento *area_core = fixture.core; fixture.core = 0;
+          Temp panel_scratch = scratch_begin(0, 0);
+          CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+          UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(panel_scratch.arena, window, host);
+          mount.panel_tree = cfg_panel_tree_from_panels_cfg(panel_scratch.arena, drag_root, Axis2_X);
+          UIShell_RegsScope(.window = window->id)
+          { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
+          scratch_end(panel_scratch);
+          fixture.core = area_core;
+        }
+        ui_end_build();
+        if(frame == 0)
+        {
+          for(UI_Box *box = test->root; !ui_box_is_nil(box) && area_start.x == 0; box = ui_box_rec_df_pre(box, test->root).next)
+          {
+            for(UI_Box *a = box->parent; !ui_box_is_nil(a); a = a->parent)
+            { if(ui_key_match(box->key, ui_key_from_string(a->key, str8_lit("###pinned_title")))) { area_start = center_2f32(box->rect); break; } }
+          }
+          CardCheck(area_start.x > 0, "the pinned area exposes its title as a drag handle");
+        }
+        if(frame == 3) { area_drag = rd_drag_is_active() && rd_state->drag_drop_regs->view == area_view->id; }
+      }
+      CardCheck(area_drag, "dragging the pinned area's title starts the area View's docking drag");
+      rd_drag_kill(); ui_kill_action();
+    }
     // The raw release is consumed by card ownership before UI events. A
     // former pin's Float grip must release too, or the next build restarts drag.
     fprintf(stderr, "Hover card diagnostics: float raw release\n");
