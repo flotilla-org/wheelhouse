@@ -122,7 +122,7 @@ A section's name can therefore come from you, from its single group, or from a n
 
 Floating and pinned cards already exist (`uishell_detached_cards.c`, `docs/detached-card-acceptance.md`). The model must keep the following invariants:
 
-- A pin is identified by `(kind, entity)` and is unique per window. Pinning again reveals the existing pin, moving a pin keeps the same node, and copied layouts are deduplicated.
+- Today a pin is identified by `(kind, entity)` and is unique per window. Pinning again reveals the existing pin, moving a pin keeps the same node, and copied layouts are deduplicated. Decision 1 below deliberately relaxes the uniqueness.
 - Pins are stored as `card{kind, entity, label, source}` inside a `pinned_cards` View in the window's sidebar dock tree. Unknown or incomplete entries are tolerated.
 - Only an explicit Close removes a pin. A missing subject shows "No longer present", with no timeout. This is the same as the ghost lifecycle above.
 - Every target goes through `rd_dock_check` and `rd_dock_can_create`. A centre drop joins or creates an area, and a directional drop splits the panel.
@@ -132,7 +132,13 @@ Floating and pinned cards already exist (`uishell_detached_cards.c`, `docs/detac
 
 Where the model and today's behaviour differed, the operator agreed the following on 2026-10-07:
 
-1. **One ghost per entity per window.** Ghosting an entity that already has a ghost reveals the existing one. Dragging that ghost to another group moves it. This keeps today's deduplication and storage keys, and "Pinned" groups migrate from the existing `card` nodes unchanged.
+1. **An entity may have several ghosts.** Different views of one subject serve different purposes, for example a live Watch card for monitoring alongside a compact reminder row. A ghost therefore needs its own identity:
+   - a ghost id stored on the `card` node, next to the existing `kind` and `entity`;
+   - migration gives each existing pin a ghost id, so current layouts load unchanged;
+   - layout deduplication keys on the ghost id rather than `(kind, entity)`, so copied layouts still don't double up;
+   - dropping or pinning a subject that already has a ghost creates a new ghost. The menu also offers "Reveal existing" when one exists.
+
+   Dragging a ghost to another group moves that ghost, as before.
 2. **"Dock under source" becomes the row's own expand-in-place.** It is an action, not a drop target: the card's dock button, or the row's ⤢. Expansion replaces the row with the card (see the card prototype). A ghost dropped on its source's home therefore stays an invalid target.
 3. **The workspace area is an explicit Float target.** Releasing a card over the workspace floats it, as it does today, and the area highlights as a valid target. Releasing over empty sidebar space snaps back.
 4. **Cards drag from the title line,** past the threshold. A click on the card body keeps its focus or keep-open meaning, and the card's action buttons never start a drag.
