@@ -149,7 +149,7 @@ Where the model and today's behaviour differed, the operator agreed the followin
 
    Dragging a ghost to another group moves that ghost, as before.
 2. **"Dock under source" becomes the row's own expand-in-place.** It is an action, not a drop target: the card's dock button, or the row's ⤢. Expansion replaces the row with the card (see the card prototype). A ghost dropped on its source's home therefore stays an invalid target.
-3. **The workspace area is an explicit Float target.** Releasing a card over the workspace floats it, as it does today, and the area highlights as a valid target. Releasing over empty sidebar space snaps back.
+3. **Floating stays exactly as it is today.** You drag the card itself and release it where you want it; releasing outside the sidebar floats it there. There are no new float targets or visuals. "Releasing over nothing valid snaps back" applies only inside the sidebar.
 4. **Cards drag from the title line,** past the threshold. A click on the card body keeps its focus or keep-open meaning, and the card's action buttons never start a drag.
 
 ### Card settings
@@ -174,7 +174,7 @@ Card features and profiles (`card-features-prototype.html`) can reuse RAD's per-
 
 ## Open
 
-- **Drag-target visuals:** prototype the sidebar previews and the three section zones in `sidebar-header-controls-prototype.html`.
+- **Drag-target visuals.** The sidebar previews are prototyped in `sidebar-header-controls-prototype.html`. The three section zones, tabs, splits and floating are RAD docking and are designed in the native code; an HTML prototype would either rebuild RAD's drop system or mislead.
 - **Interactive View ghosts** and the "upgrade" to a fresh instance.
 - **Dragging between windows.** Ephemeral OS windows, with floating things promoted to real OS windows when dragged out. The likely first use is an overview on a second monitor.
 - **Automatic naming and layout through a delegate.**
