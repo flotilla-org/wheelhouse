@@ -24,7 +24,7 @@ env:
   JACKSTAY_REV: 91156bfac2bc2f6df168c928b445c98e002f4950
   # Pinned to andamento#137's branch commit (host-owned sibling order) until it
   # merges; then its squash commit.
-  ANDAMENTO_REV: 81362829a0ac59b155a23142fcf4914bd9e9302e
+  ANDAMENTO_REV: 02f0c0cb6151e65deee328c7ce00d8c8bc67a3e3
 
 jobs:
   daily-driver:
