@@ -48,14 +48,24 @@ struct UIShell_ReorderDrag
   B32 started, line, menu;
 };
 
+typedef enum UIShell_ReorderMode
+{
+  UIShell_ReorderMode_Drag,
+  UIShell_ReorderMode_RightClick,
+  // Cancel as the shared Esc handler does, then release over the source row.
+  UIShell_ReorderMode_Cancel,
+}
+UIShell_ReorderMode;
+
 // Press on a row, move by `offset` or to a fraction down row `to_id` (from last
-// frame's layout), then release. right_click opens the row menu instead.
+// frame's layout), then release.
 internal UIShell_ReorderDrag
 uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *split, CFG_Node *view,
                                 UIShell_SidebarState *state, String8 id, Vec2F32 offset, String8 to_id,
-                                F32 to_fraction, B32 right_click)
+                                F32 to_fraction, UIShell_ReorderMode mode)
 {
   UIShell_ReorderDrag result = {0};
+  B32 right_click = mode == UIShell_ReorderMode_RightClick;
   UI_State *saved_ui = ui_state;
   UI_State *test_ui = ui_state_alloc(); ui_select_state(test_ui);
   UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0};
@@ -67,7 +77,8 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
   for(U32 frame = 0; frame < 6; frame++)
   {
     UI_EventList events = {0}; UI_EventNode event = {0};
-    if(frame >= 2 && !right_click)
+    if(frame == 4 && mode == UIShell_ReorderMode_Cancel) { pointer = start; }
+    else if(frame >= 2 && !right_click)
     {
       UI_Box *to = to_key.size ? uishell_sidebar_reorder_box(test_ui->root, push_str8f(ui_build_arena(), "###entry_%S", to_key)) : &ui_nil_box;
       pointer = ui_box_is_nil(to) ? add_2f32(start, offset) :
@@ -95,6 +106,7 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
     {
       result.started = rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_UIKey;
       result.line = !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")));
+      if(mode == UIShell_ReorderMode_Cancel) { rd_drag_kill(); ui_kill_action(); }
     }
     if(frame == 5) { result.menu = ui_any_ctx_menu_is_open(); }
   }
@@ -143,13 +155,23 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   String8 convoy = str8_lit("convoy"), project = str8_lit("project");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c1 c2 c3"), 0), "data order");
 
-  // Within the threshold nothing drags, and a click never reorders.
-  UIShell_ReorderDrag still = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 3), str8_zero(), 0, 0);
+  // Within the threshold nothing drags, and a click never reorders. These
+  // rows have no recipe, so an activation leaves an inspection message.
+  state.inspection[0] = 0;
+  UIShell_ReorderDrag still = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 3), str8_zero(), 0, UIShell_ReorderMode_Drag);
   ReorderCheck(!still.started && !still.line, "sub-threshold press stays a click");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c1 c2 c3"), 0), "click keeps order");
+  ReorderCheck(state.inspection[0] != 0, "a click activates the row");
+
+  // Esc mid-drag, then a release back over the row: no reorder, no activation.
+  state.inspection[0] = 0;
+  UIShell_ReorderDrag cancel = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 0), str8_lit("c3"), 0.8f, UIShell_ReorderMode_Cancel);
+  ReorderCheck(cancel.started, "cancelled drag had started");
+  ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c1 c2 c3"), 0), "cancel keeps order");
+  ReorderCheck(state.inspection[0] == 0, "release after cancel doesn't activate");
 
   // Below c3's midpoint lands c1 last; the drag shows the line meanwhile.
-  UIShell_ReorderDrag down = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 0), str8_lit("c3"), 0.8f, 0);
+  UIShell_ReorderDrag down = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 0), str8_lit("c3"), 0.8f, UIShell_ReorderMode_Drag);
   ReorderCheck(down.started, "row drag starts in the UIKey slot");
   ReorderCheck(down.line, "insertion line while over a moving gap");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c2 c3 c1"), 0), "drop below c3 reorders");
@@ -168,15 +190,15 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     "window saves the run's full order");
 
   // A gap that leaves the row where it is shows no line and changes nothing.
-  UIShell_ReorderDrag same = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(0, 0), str8_lit("c3"), 0.2f, 0);
+  UIShell_ReorderDrag same = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(0, 0), str8_lit("c3"), 0.2f, UIShell_ReorderMode_Drag);
   ReorderCheck(same.started && !same.line, "no line over the row's own gaps");
   // Off to the side of the run is no target, so the release snaps back.
-  UIShell_ReorderDrag away = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(400, 0), str8_zero(), 0, 0);
+  UIShell_ReorderDrag away = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(400, 0), str8_zero(), 0, UIShell_ReorderMode_Drag);
   ReorderCheck(away.started && !away.line, "no line outside the run");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c2 c3 c1"), 0), "snap back keeps order");
 
   // Projects reorder at their own level, keeping their convoys' order.
-  UIShell_ReorderDrag up = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("q"), v2f32(0, 0), str8_lit("p"), 0.2f, 0);
+  UIShell_ReorderDrag up = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("q"), v2f32(0, 0), str8_lit("p"), 0.2f, UIShell_ReorderMode_Drag);
   ReorderCheck(up.line, "line between projects");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, project), str8_lit("q p"), 0), "project drop above p");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c2 c3 c1"), 0), "convoys unaffected");
@@ -208,7 +230,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   cfg_state_release(persisted_cfg);
 
   // A reordered run's row offers Reset order, which returns it to data order.
-  UIShell_ReorderDrag menu = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c3"), v2f32(0, 0), str8_zero(), 0, 1);
+  UIShell_ReorderDrag menu = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c3"), v2f32(0, 0), str8_zero(), 0, UIShell_ReorderMode_RightClick);
   ReorderCheck(menu.menu, "reordered row opens its menu");
   uishell_sidebar_set_order(&state, window, loop, 0, 0);
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c1 c2 c3"), 0), "reset returns data order");
@@ -219,6 +241,6 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   ws->sidebar = saved;
   uishell_sidebar_release(&state);
   scratch_end(scratch);
-  fprintf(stderr, "Sidebar reorder diagnostics: %s (threshold, rows and projects, line, snap back, save, restore and merge, reset)\n", ok ? "passed" : "FAILED");
+  fprintf(stderr, "Sidebar reorder diagnostics: %s (threshold, click, cancel, rows and projects, line, snap back, save, restore and merge, reset)\n", ok ? "passed" : "FAILED");
   return ok;
 }

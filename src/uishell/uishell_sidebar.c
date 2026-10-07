@@ -1391,12 +1391,13 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     }
     if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
   }
-  else if(!menu)
+  else if(!menu && ordered)
   {
+    // `ordered` is only computed on a right click or while a menu is open.
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "order_menu");
     UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
-    { if(ordered) { uishell_sidebar_order_reset_button(state, loop); } }
-    if(ui_right_clicked(sig) && ordered) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
+    { uishell_sidebar_order_reset_button(state, loop); }
+    if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
   }
   uishell_sidebar_card_source(state, node, sig, context, contains_current);
   scratch_end(scratch);
