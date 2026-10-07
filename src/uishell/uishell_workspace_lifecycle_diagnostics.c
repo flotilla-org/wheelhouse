@@ -242,7 +242,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
                                .pos = at, .timestamp_us = 6000000+frame*50000};
           events.first = events.last = &event; events.count = 1;
         }
-        if(frame == 4) { sleep_ms(UIShell_MarginHoldUS/1000+50); }
+        if(frame == 4) { sleep_ms(UIShell_HoldUS/1000+50); }
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         ui_state->mouse = at;
         UIShell_RegsScope(.window = window->id)

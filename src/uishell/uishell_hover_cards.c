@@ -775,7 +775,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
   // Raw WM routing also uses these bounds; each layout refreshes its own mask.
   for(U64 slot = 0; slot < ArrayCount(state->cards); slot++)
   {
-    if(state->cards[slot].open && !ui_any_ctx_menu_is_open())
+    if(state->cards[slot].open && (!ui_any_ctx_menu_is_open() || ui_ctx_menu_is_open(state->cards[slot].menu)))
     {
       ui_state->hover_card_keys[slot] = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", slot);
       ui_state->hover_card_rects[slot] = state->cards[slot].rect;
@@ -799,7 +799,9 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     card->source_seen = 0;
     if(!card->open) { continue; }
     if(!window_focused && floating) { card->focused = 0; }
-    if(!floating && (ui_any_ctx_menu_is_open() || (!window_focused && card->focused)))
+    // Another menu dismisses the card; its own (the Pin menu) keeps it.
+    B32 other_menu = ui_any_ctx_menu_is_open() && !ui_ctx_menu_is_open(card->menu);
+    if(!floating && (other_menu || (!window_focused && card->focused)))
     { uishell_sidebar_card_close(card); continue; }
     AndamentoNode node = {0};
     U64 index = uishell_sidebar_card_find(state, card->path[card->depth-1], &node);

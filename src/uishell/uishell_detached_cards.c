@@ -109,7 +109,8 @@ uishell_sidebar_card_icon_button(String8 glyph, String8 key, String8 description
     { ui_box_equip_custom_draw(box, uishell_sidebar_card_icon_draw, PtrFromInt((U64)kinds[i])); break; }
   }
   UI_Signal signal = ui_signal_from_box(box);
-  if(ui_hovering(signal)) UI_Tooltip
+  // No tooltip over an open menu, or while held (Pin opens its menu on hold).
+  if(ui_hovering(signal) && !ui_dragging(signal) && !ui_any_ctx_menu_is_open()) UI_Tooltip
   {
     ui_state->tooltip_anchor_key = box->key;
     RD_Font(RD_FontSlot_Main) { ui_label(description); }
@@ -170,6 +171,33 @@ uishell_sidebar_card_title_handle(UIShell_HoverCard *card, String8 text)
   uishell_sidebar_card_drag_from(card, ui_signal_from_box(box));
 }
 
+internal CFG_Node *uishell_sidebar_pin_find(CFG_Node *root, AndamentoEntity entity, B32 area_only);
+
+// Pin reveals an existing pin of the subject rather than duplicating it;
+// holding it offers another, since a subject may have any number of pins.
+internal void
+uishell_sidebar_card_pin_control(UIShell_HoverCard *card)
+{
+  RD_WindowState *ws = rd_window_state_from_os_handle(ui_state->window);
+  B32 pinned = ws != &rd_nil_window_state && card->depth &&
+    uishell_sidebar_pin_find(cfg_node_from_id(ws->cfg_id), card->path[card->depth-1], 0) != &cfg_nil_node;
+  UI_Signal sig = uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Pin], str8_lit("card_pin"),
+    pinned ? str8_lit("Show pin · hold to pin another") : str8_lit("Pin"));
+  UI_Key menu_key = ui_key_from_stringf(sig.box->key, "pin_menu");
+  // The menu must not inherit the icon row's font, tags, width or alignment.
+  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(14.f, 1)) UI_PrefHeight(ui_em(1.8f, 1)) RD_Font(RD_FontSlot_Main) UI_TagF(".")
+  UI_TextAlignment(UI_TextAlign_Left) UI_TextPadding(ui_top_font_size()*0.5f)
+  {
+    if(ui_clicked(ui_button(str8_lit("Show existing pin"))))
+    { uishell_sidebar_card_request(card, UIShell_CardPlacement_Pinned); ui_ctx_menu_close(); }
+    if(ui_clicked(ui_button(str8_lit("Pin another"))))
+    { card->pin_another = 1; uishell_sidebar_card_request(card, UIShell_CardPlacement_Pinned); ui_ctx_menu_close(); }
+  }
+  if(pinned && ws->sidebar && uishell_sidebar_held(ws->sidebar, sig))
+  { card->menu = menu_key; ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, sig.box->rect.y1-sig.box->rect.y0)); }
+  if(ui_clicked(sig)) { uishell_sidebar_card_request(card, UIShell_CardPlacement_Pinned); }
+}
+
 internal void
 uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width)
 {
@@ -185,9 +213,7 @@ uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width)
       { if(ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_DownArrow], str8_lit("card_inline"), str8_lit("Dock under source"))))
         { uishell_sidebar_card_request(card, UIShell_CardPlacement_Inline); } }
     }
-    if(card->placement != UIShell_CardPlacement_Pinned &&
-       ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Pin], str8_lit("card_pin"), str8_lit("Pin"))))
-    { uishell_sidebar_card_request(card, UIShell_CardPlacement_Pinned); }
+    if(card->placement != UIShell_CardPlacement_Pinned) { uishell_sidebar_card_pin_control(card); }
     if(ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_X], str8_lit("card_close"), str8_lit("Close"))))
     { uishell_sidebar_card_close(card); rd_request_frame(); }
   }
@@ -274,32 +300,83 @@ uishell_sidebar_pin_find(CFG_Node *root, AndamentoEntity entity, B32 area_only)
   return &cfg_nil_node;
 }
 
-// As in pin_find, missing kind/entity fields read as empty through the nil sentinel.
-internal void
-uishell_sidebar_pin_deduplicate(CFG_Node *window, CFG_Node *root)
-{
-  for(CFG_Node *v = root->first; v != &cfg_nil_node; v = v->next)
-  {
-    if(str8_match(v->string, str8_lit("pinned_cards"), 0))
-    {
-      for(CFG_Node *c = v->first, *next; c != &cfg_nil_node; c = next)
-      {
-        next = c->next;
-        if(!str8_match(c->string, str8_lit("card"), 0)) { continue; }
-        AndamentoEntity entity = {uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("kind"))->first->string),
-                                 uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("entity"))->first->string)};
-        if(uishell_sidebar_pin_find(window, entity, 0) != c) { cfg_node_release(rd_state->cfg, c); }
-      }
-    }
-    else if(rd_dock_is_container(v)) { uishell_sidebar_pin_deduplicate(window, v); }
-  }
-}
-
 internal void
 uishell_sidebar_pin_set_field(CFG_Node *node, String8 name, String8 value)
 {
   CFG_Node *field = cfg_node_child_from_string_or_alloc(rd_state->cfg, node, name);
   cfg_node_new_replace(rd_state->cfg, field, value);
+}
+
+// Each saved card is a ghost: its own object referring to an entity
+// (drag-model.md, decision 1), so any number may refer to one entity. Its
+// ghost id is what copied layouts deduplicate on.
+internal String8
+uishell_sidebar_pin_ghost(CFG_Node *card)
+{
+  return cfg_node_child_from_string(card, str8_lit("ghost"))->first->string;
+}
+
+internal void
+uishell_sidebar_pin_new_ghost(CFG_Node *card)
+{
+  Temp scratch = scratch_begin(0, 0);
+  uishell_sidebar_pin_set_field(card, str8_lit("ghost"), string_from_guid(scratch.arena, make_guid()));
+  scratch_end(scratch);
+}
+
+internal void
+uishell_sidebar_pin_cards(Arena *arena, CFG_Node *root, CFG_NodePtrList *out)
+{
+  for(CFG_Node *v = root->first; v != &cfg_nil_node; v = v->next)
+  {
+    if(str8_match(v->string, str8_lit("pinned_cards"), 0))
+    {
+      for(CFG_Node *c = v->first; c != &cfg_nil_node; c = c->next)
+      { if(str8_match(c->string, str8_lit("card"), 0)) { cfg_node_ptr_list_push(arena, out, c); } }
+    }
+    else if(rd_dock_is_container(v)) { uishell_sidebar_pin_cards(arena, v, out); }
+  }
+}
+
+// Copied layouts duplicate ghost ids; the first of each is kept. Pins saved
+// before ghost ids were unique per entity: the first per entity is kept and
+// given an id. As in pin_find, missing fields read as empty.
+internal void
+uishell_sidebar_pin_deduplicate(CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_NodePtrList cards = {0};
+  uishell_sidebar_pin_cards(scratch.arena, window, &cards);
+  B32 *legacy = push_array(scratch.arena, B32, cards.count);
+  CFG_Node **kept = push_array(scratch.arena, CFG_Node *, cards.count);
+  U64 index = 0, kept_count = 0;
+  for(CFG_NodePtrNode *n = cards.first; n; n = n->next, index++) { legacy[index] = uishell_sidebar_pin_ghost(n->v).size == 0; }
+  index = 0;
+  for(CFG_NodePtrNode *n = cards.first; n; n = n->next, index++)
+  {
+    CFG_Node *c = n->v;
+    AndamentoEntity entity = {uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("kind"))->first->string),
+                              uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("entity"))->first->string)};
+    B32 duplicate = 0;
+    U64 k = 0;
+    for(CFG_NodePtrNode *m = cards.first; m != n && !duplicate; m = m->next, k++)
+    {
+      B32 earlier_kept = 0;
+      for(U64 j = 0; j < kept_count; j++) { earlier_kept |= kept[j] == m->v; }
+      if(!earlier_kept) { continue; }
+      if(legacy[index])
+      {
+        AndamentoEntity other = {uishell_sidebar_text(cfg_node_child_from_string(m->v, str8_lit("kind"))->first->string),
+                                 uishell_sidebar_text(cfg_node_child_from_string(m->v, str8_lit("entity"))->first->string)};
+        duplicate = legacy[k] && uishell_sidebar_card_entity_match(entity, other);
+      }
+      else { duplicate = str8_match(uishell_sidebar_pin_ghost(c), uishell_sidebar_pin_ghost(m->v), 0); }
+    }
+    if(duplicate) { cfg_node_release(rd_state->cfg, c); continue; }
+    if(legacy[index]) { uishell_sidebar_pin_new_ghost(c); }
+    kept[kept_count++] = c;
+  }
+  scratch_end(scratch);
 }
 
 internal CFG_Node *
@@ -308,9 +385,16 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
   UIShell_SidebarState *state = ws->sidebar;
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   AndamentoEntity entity = card->path[card->depth-1];
-  CFG_Node *saved = uishell_sidebar_pin_find(window, entity, 0);
-  if(saved != &cfg_nil_node && !new_area)
+  // A pinned card moves its own ghost. Pin on any other card reveals the
+  // entity's first ghost, unless it asks for another; a drop is explicit
+  // placement, so it always adds one.
+  CFG_Node *saved = card->saved ? cfg_node_from_id(card->saved) : &cfg_nil_node;
+  B32 another = card->pin_another;
+  card->pin_another = 0;
+  CFG_Node *reveal = saved != &cfg_nil_node ? saved : another ? &cfg_nil_node : uishell_sidebar_pin_find(window, entity, 0);
+  if(reveal != &cfg_nil_node && !new_area)
   {
+    saved = reveal;
     // Revealing an existing tab changes selection, not placement: clear its
     // siblings (including non-pinned tabs) without a creation/close check.
     CFG_Node *area = saved->parent;
@@ -414,6 +498,7 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
     return saved;
   }
   saved = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
+  uishell_sidebar_pin_new_ghost(saved);
   uishell_sidebar_pin_set_field(saved, str8_lit("kind"), uishell_sidebar_string(entity.kind));
   uishell_sidebar_pin_set_field(saved, str8_lit("entity"), uishell_sidebar_string(entity.id));
   AndamentoNode node = {0};

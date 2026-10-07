@@ -23,13 +23,18 @@ share a panel. A card dropped on a split target creates an area through the
 ordinary panel split command, including nested layouts. A center drop joins an
 existing pinned area or creates a tab in that panel. The sidebar retains those
 split ratios instead of applying automatic content sizing after the drop.
-Existing merged tabs are preserved. Pins save exact kind/id and a fallback label
-in the RAD-derived layout,
-without changing KDL. Pinning an entity again selects and scrolls to its existing
-card. Moving it to another area keeps the same saved card identity. An area emptied
+Existing merged tabs are preserved. Pins save exact kind/id, a ghost id and a
+fallback label in the RAD-derived layout, without changing KDL. Each pin is a
+ghost: its own reference to the subject, so a subject may have any number of
+pins. Pin on a subject that is already pinned selects and scrolls to its first
+pin; holding Pin offers Show existing pin and Pin another, which adds a pin.
+Dropping a card into a pinned area is explicit placement and always adds one.
+Moving a pinned card to another area keeps the same saved card identity. An area emptied
 by a move remains available for another pin, with a “Drag or pin a card here”
 placeholder; its ordinary section Close control removes the area. Copied or
-restored layouts reconcile duplicate pins within the owning window.
+restored layouts reconcile copies of the same pin (same ghost id) within the
+owning window. Pins saved before ghost ids keep the first per subject, which
+gains an id.
 
 A pinned card whose subject disappears remains visible with “No longer present”.
 On 2026-10-06, the operator chose to retain ended cards until explicitly closed
