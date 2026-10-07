@@ -85,6 +85,16 @@ svg.plot{width:100%;display:block;margin-top:4px;background:#181818;border-radiu
 .pop .acts span{padding:2px 6px;border:1px solid #444;border-radius:4px;color:#ccc;cursor:pointer;font-size:11px}
 .pop .acts span:hover{background:var(--hot)}
 #tip{position:fixed;z-index:80;pointer-events:none;padding:4px 7px;border-radius:4px;font-size:11.5px;background:#2d2d2dee;border:1px solid #4a4a4a;display:none;white-space:pre-line;max-width:240px}
+.line .ex{display:none;color:var(--dim);font-size:13px;width:18px;text-align:center;cursor:pointer;flex:none;border-radius:3px}
+.line .ex:hover{background:var(--hot);color:var(--text)}
+.item:not(.card):hover .line .ex{display:inline-block}
+/* attached cap: looks like the card grew */
+.ctl.cap{background:#262626;border-color:#3c3c3c;box-shadow:0 -6px 12px #0006;justify-content:flex-end;padding:2px 4px}
+.ctl.capt{border-radius:5px 5px 0 0;border-bottom-color:#262626}
+.ctl.capb{border-radius:0 0 5px 5px;border-top-color:#262626;box-shadow:0 6px 12px #0006}
+.item.card.capped-t{border-top-left-radius:0;border-top-right-radius:0;border-top-color:#262626}
+.item.card.capped-b{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom-color:#262626}
+.ctl.cap .pname{margin-right:auto;text-align:left;padding-left:2px}
 </style>
 </head>
 <body>
@@ -93,8 +103,8 @@ svg.plot{width:100%;display:block;margin-top:4px;background:#181818;border-radiu
 <script>
 // ---------- knobs ----------
 const KNOBS = [
-  {k: 'place', label: 'Controls placement', opts: {auto: 'Above, flip below at edge', above: 'Always above', side: 'Right margin strip', inside: 'Overlay inside card'},
-   note: 'Auto flips below when the card is near the top of the sidebar.'},
+  {k: 'place', label: 'Controls placement', opts: {cap: 'Attached cap (card grows)', auto: 'Floating above, flip below', above: 'Always above', side: 'Right margin strip', inside: 'Overlay inside card'},
+   note: 'Attached cap: on hover the card grows a cap holding the controls, overlaying what is above (or below, at the top edge). Nothing reflows.'},
   {k: 'switcher', label: 'Profile switcher', opts: {arrows: '‹ name ›', dots: 'Dots', both: 'Arrows + dots'},
    note: 'With the pointer over an item: [ and ] (or Alt+wheel) also cycle profiles.'},
   {k: 'rowProfile', label: 'Compact row', opts: {profile: 'Is the first profile', separate: 'Separate (click toggles)'},
@@ -102,7 +112,7 @@ const KNOBS = [
   {k: 'pop', label: 'Features popover', opts: {compact: 'Compact', rad: 'RAD view-config style'}},
   {k: 'width', label: 'Sidebar width', opts: {280: '280px', 320: '320px', 380: '380px'}},
 ];
-let K = {place: 'auto', switcher: 'arrows', rowProfile: 'profile', pop: 'compact', width: '320'};
+let K = {place: 'cap', switcher: 'arrows', rowProfile: 'profile', pop: 'compact', width: '320'};
 
 // ---------- features and profiles per subject type ----------
 // A feature is a boolean or a small enum. A profile is a named feature set.
@@ -197,7 +207,10 @@ function profileOf(it) {
   if (c.profile) return c.profile;
   return S.group[it.type] || S.typeDefault[it.type];
 }
-function sourceOf(it) { const c = S.card[it.id]; return c.profile && c.profile !== ROW ? 'this card' : S.group[it.type] ? 'group' : 'type default'; }
+// Provenance: chosen on this card, or inherited from the group or the type.
+function inherited(it) { return S.group[it.type] || S.typeDefault[it.type]; }
+function sourceOf(it) { const c = S.card[it.id]; return c.profile && c.profile !== ROW && c.profile !== inherited(it) ? 'here' : S.group[it.type] ? 'group' : 'type'; }
+function sourceText(it) { const s = sourceOf(it); return s === 'here' ? 'set here' : s === 'group' ? 'group default' : `${it.type.replace('_', ' ')} default`; }
 function features(it) {
   const p = profileOf(it);
   if (p === ROW) return null;
@@ -225,21 +238,25 @@ function itemEl(it) {
   const label = !card ? it.name : f.label === 'full' ? (it.full || it.name) : f.label === 'medium' ? (it.medium || it.name) : it.name;
   const nm = h('span', 'nm' + (card && f.label === 'full' ? ' full' : ''), label);
   line.append(h('span', 'ic', ICON[it.type]), nm, h('span', 'gm', '↗'));
+  if (!card) { const ex = h('span', 'ex', '⤢'); ex.onclick = e => { e.stopPropagation(); toggleCard(it); }; bindTip(ex, 'Expand to card'); line.append(ex); }
   if (!card && it.subj) for (const s of it.subj) line.append(h('span', 'chip', s));
   if (it.status) { const [g, c] = STATUS[it.status]; line.append(h('span', 'st ' + c, g)); }
   el.append(line);
   if (card) el.append(cardBody(it, f));
   // Clicking the line toggles row/card: in profile mode it moves between Row
   // and the last card profile; in separate mode it expands or collapses.
-  line.onclick = () => {
+  line.onclick = () => toggleCard(it);
+  el.onmouseenter = () => { S.hover = it.id; showControls(); };
+  el.onmouseleave = e => { if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.ctl,.pop')) return; S.hover = null; hideControls(); };
+  return el;
+}
+function toggleCard(it) {
+  {
     const c = S.card[it.id];
     if (K.rowProfile === 'separate') { c.expanded = !c.expanded; if (c.expanded) c.profile = S.lastProfile[it.id] || profileNames(it.type)[0]; log(`${it.name}: ${c.expanded ? 'expand' : 'collapse'}`); render(); return; }
     if (profileOf(it) === ROW) { c.profile = S.lastProfile[it.id] || profileNames(it.type)[1]; } else { S.lastProfile[it.id] = profileOf(it); c.profile = ROW; }
     c.edits = {}; log(`${it.name}: ${c.profile === ROW ? 'collapse to row' : 'expand → ' + c.profile}`); render();
-  };
-  el.onmouseenter = () => { S.hover = it.id; showControls(); };
-  el.onmouseleave = e => { if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.ctl,.pop')) return; S.hover = null; hideControls(); };
-  return el;
+  }
 }
 function cardBody(it, f) {
   const b = h('div', 'body');
@@ -304,7 +321,7 @@ setInterval(() => {
 
 // ---------- hover controls: around the item, never reflowing ----------
 let CTL = null;
-function hideControls() { if (CTL) { CTL.remove(); CTL = null; } }
+function hideControls() { if (CTL) { CTL.remove(); CTL = null; } document.querySelectorAll('.capped-t,.capped-b').forEach(e => e.classList.remove('capped-t', 'capped-b')); }
 function showControls() {
   hideControls();
   const it = ITEMS.find(x => x.id === S.hover); if (!it) return;
@@ -320,7 +337,8 @@ function showControls() {
   if (K.switcher !== 'dots') ctl.append(prev, name, next);
   if (K.switcher !== 'arrows') ctl.append(dots);
   const fb = h('span', 'b' + (S.pop === it.id ? ' on' : ''), '⚙'); fb.onclick = e => { e.stopPropagation(); S.pop = S.pop === it.id ? null : it.id; render(); };
-  if (cur !== ROW) ctl.append(fb, h('span', 'src', 'from ' + sourceOf(it)));
+  const shrink = h('span', 'b', '⤡'); shrink.onclick = e => { e.stopPropagation(); toggleCard(it); }; bindTip(shrink, 'Back to row');
+  if (cur !== ROW) { ctl.append(fb); if (sourceOf(it) !== 'type') ctl.append(h('span', 'src', sourceText(it))); ctl.append(shrink); }
   bindTip(fb, 'Features');
   ctl.onmouseleave = e => { if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest(`.item[data-id="${it.id}"],.pop`)) return; S.hover = null; hideControls(); };
   sb.append(ctl);
@@ -330,7 +348,17 @@ function showControls() {
   const top = er.top - sr.top + sb.scrollTop, left = er.left - sr.left;
   const cw = ctl.offsetWidth, ch = ctl.offsetHeight;
   let x = left + er.width - cw, y;
-  if (K.place === 'inside') { y = top + 3; x = left + er.width - cw - 3; }
+  if (K.place === 'cap' && cur !== ROW) {
+    // The cap is part of the card: same width, background and border, joined
+    // along the card's edge. It overlays what is above (or below at the top
+    // edge) instead of pushing it.
+    const below = er.top - sr.top < ch + 4;
+    ctl.classList.add('cap', below ? 'capb' : 'capt'); el.classList.add(below ? 'capped-b' : 'capped-t');
+    ctl.style.width = er.width + 'px';
+    x = left; y = below ? top + er.height - 1 : top - ctl.offsetHeight + 1;
+    ctl.dataset.flip = below ? 'below' : 'above';
+  }
+  else if (K.place === 'inside') { y = top + 3; x = left + er.width - cw - 3; }
   else if (K.place === 'side') { x = left + er.width + 2; y = top; ctl.style.flexDirection = 'column'; ctl.querySelectorAll('.pname,.src').forEach(n => n.remove()); }
   else {
     const roomAbove = er.top - sr.top >= ch + 4;
@@ -349,7 +377,7 @@ function popover() {
   const it = ITEMS.find(x => x.id === S.pop); if (!it) return null;
   const f = features(it); if (!f) return null;
   const p = h('div', 'pop' + (K.pop === 'rad' ? ' rad' : ''));
-  p.append(h('div', 'ph', `<span>${TYPES[it.type] === TYPES.view ? 'Mirror' : it.type.replace('_', ' ')} features</span><span>${profileOf(it)}${modified(it) ? ' (modified)' : ''}</span>`));
+  p.append(h('div', 'ph', `<span>${TYPES[it.type] === TYPES.view ? 'Mirror' : it.type.replace('_', ' ')} features</span><span>${profileOf(it)}${modified(it) ? ' (modified)' : ''} · ${sourceText(it)}</span>`));
   for (const ft of TYPES[it.type].features) {
     const r = h('div', 'fr'); r.append(h('span', '', ft.label));
     if (ft.values) {
@@ -409,7 +437,8 @@ function renderWork() {
   document.getElementById('work').innerHTML = `<h1>Pinned cards: features and profiles</h1>
   <p>Each pinned item is a ghost. Click its line to switch between the compact row and a card; the card <b>replaces</b> the row in place.</p>
   <p>Hover an item for controls that float around it without moving anything: <b>‹ profile ›</b> flicks through the subject type's profiles, and <b>⚙</b> opens its features (switches and small enums). Editing a feature marks the profile modified (<span style="color:#e0b34a">*</span>).</p>
-  <p>"from …" shows where the profile came from: the type default, this group, or this card. The popover can push the current profile up to the group or to every item of that type.</p>
+  <p>⤢ on a hovered row expands it to a card; ⤡ in the card's controls shrinks it back. Clicking the line does the same.</p>
+  <p>When the profile isn't the type's default, the controls say where it comes from: <b>set here</b> (chosen on this card) or <b>group default</b>. The ⚙ popover always shows it, and can push the current profile up to the group or to every item of that type.</p>
   <p>While hovering: <kbd>[</kbd> <kbd>]</kbd> or <kbd>Alt</kbd>+wheel cycle profiles; <kbd>Esc</kbd> closes the popover. Scroll the sidebar so a card is at the top to see the controls flip below.</p>`;
 }
 function renderPanel() {
