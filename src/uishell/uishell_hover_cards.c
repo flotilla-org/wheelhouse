@@ -177,6 +177,9 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, AndamentoNode node, UI_Key sou
   card->path = push_array(card->arena, AndamentoEntity, card->capacity);
   card->path[0] = uishell_sidebar_card_entity_copy(card->arena, uishell_sidebar_card_entity(node));
   card->depth = 1;
+  // A new subject starts without a pending Pin another or its own menu.
+  card->pin_another = 0;
+  card->menu = ui_key_zero();
   card->context = push_str8_copy(card->arena, context);
   card->source_key = push_str8_copy(card->arena, uishell_sidebar_string(node.key));
   uishell_sidebar_card_retain_label(card, uishell_sidebar_string(node.label));

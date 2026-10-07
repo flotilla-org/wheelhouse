@@ -340,7 +340,8 @@ uishell_sidebar_pin_cards(Arena *arena, CFG_Node *root, CFG_NodePtrList *out)
 
 // Copied layouts duplicate ghost ids; the first of each is kept. Pins saved
 // before ghost ids were unique per entity: the first per entity is kept and
-// given an id. As in pin_find, missing fields read as empty.
+// given an id. As in pin_find, missing fields read as empty. Quadratic in the
+// window's pins, which are few; it runs only when the cfg generation changes.
 internal void
 uishell_sidebar_pin_deduplicate(CFG_Node *window)
 {
