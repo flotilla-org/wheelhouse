@@ -11,6 +11,9 @@
   groups move; chips drag their subject; tabs ghost as read-only mirrors;
   groups drag to other sections or into a new section that borrows their name.
   The panel's "Simulate" buttons change the data so ghost states show.
+  Scope: sidebar-level drops only. Panel-level drops (sections as tabs,
+  splits, floating cards) are RAD's docking; they are designed against the
+  native code rather than recreated here.
   Knobs are kept in the URL hash so a combination can be shared.
   Data is a static fixture; clicks change only in-page state (log below the panel).
   Run: serve docs/design over http (file:// blocks some browser APIs), e.g.
@@ -165,21 +168,12 @@ svg.lossplot.big{height:220px;max-width:640px}
 /* drop-target visuals: preview the outcome, one colour family with RAD's drop sites */
 :root{--drop:#e0b34a}
 #work{position:relative}
-#work.float-target{outline:2px dashed var(--drop);outline-offset:-6px;background:#e0b34a08}
 .src-dim{opacity:.35}
 .dropline{position:fixed;z-index:84;pointer-events:none;background:var(--drop);border-radius:1px}
 .dropbox{position:fixed;z-index:83;pointer-events:none;border:1px dashed var(--drop);background:#e0b34a12;border-radius:6px}
 .dropprev{position:fixed;z-index:85;pointer-events:none;display:flex;align-items:center;gap:8px;padding:0 8px;background:#2b2b2bdd;border:1px dashed var(--drop);border-radius:4px;color:#ddd;font-size:12px;box-shadow:0 4px 12px #0008}
 .dropprev .pv{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;opacity:.8}
-.dropprev .tagl,.edgeprev .tagl{flex:none;font-size:10.5px;color:#1e1e1e;background:var(--drop);border-radius:3px;padding:0 5px;font-style:normal}
-.tabprev{border-radius:5px 5px 0 0;border-bottom:none}
-.edgeprev{display:flex;align-items:center;justify-content:center;overflow:hidden;height:4px!important;transition:height .12s,margin-top .12s;border-radius:6px}
-.edgeprev.grown{height:28px!important}
-.floatprev{flex-direction:row}
-.floatcard{position:absolute;width:260px;background:#262626;border:1px solid #4a4a4a;border-radius:6px;box-shadow:0 8px 24px #000a;padding:2px 0;z-index:20}
-.tabstrip{display:flex;align-items:flex-end;height:28px;padding:0 8px;gap:2px;border-bottom:1px solid var(--line)}
-.ptab{padding:4px 10px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);border-radius:5px 5px 0 0;cursor:default}
-.ptab:hover{color:var(--text)} .ptab.on{background:#2a2a2a;color:var(--text)}
+.dropprev .tagl{flex:none;font-size:10.5px;color:#1e1e1e;background:var(--drop);border-radius:3px;padding:0 5px;font-style:normal}
 </style>
 </head>
 <body>
@@ -273,7 +267,6 @@ const S = {
   localGroups: [
     {id: 'default', name: '', kind: 'default', items: ['w:w-1', 'w:w-2']},
     {id: 'pinned', name: 'Pinned', kind: 'local', items: ['g:gh-1']},
-    {id: 'mlruns', name: 'ML runs', kind: 'local', items: []},
   ],
   ghosts: [{id: 'gh-1', of: {type: 'entity', ref: 'c-ml'}, expanded: false, mode: 0}],
   // Sections hold groups. name null = borrows its only group's name.
@@ -281,13 +274,8 @@ const S = {
     {id: 'projects', name: 'Projects', declared: true, groups: ['@projects']},
     {id: 'attention', name: 'Attention', declared: true, groups: ['@attention']},
     {id: 'workspaces', name: 'Workspaces', declared: true, groups: ['default']},
-    // Two sections sharing one panel show as tabs (the three-zone case).
-    {id: 'pinned-sec', name: null, autoNamed: false, groups: ['pinned'], panel: 'p-pin'},
-    {id: 'ml-sec', name: null, autoNamed: false, groups: ['mlruns'], panel: 'p-pin'},
+    {id: 'pinned-sec', name: null, autoNamed: false, groups: ['pinned']},
   ],
-  activeTab: {'p-pin': 'pinned-sec'},
-  // Floating ghost cards over the workspace (the workspace is a Float target).
-  floats: [],
   focus: 'c-ml', focusTab: 'loss graph', loss: [],
 };
 const uid = p => p + '-' + (S.nextId++);
@@ -336,10 +324,7 @@ function act(row, kind) {
   else { row.ws = null; log(`close ${row.name} → destroyed${row.status === 'ended' ? ' (subject ended)' : ''}`); }
   if (![...S.entities, ...S.locals].some(r => r.ws === 'live')) newWorkspace(null, 'last close'); else render();
 }
-function removeItem(key) {
-  for (const g of S.localGroups) { const i = g.items.indexOf(key); if (i >= 0) g.items.splice(i, 1); }
-  S.floats = S.floats.filter(f => 'g:' + f.ghost !== key);
-}
+function removeItem(key) { for (const g of S.localGroups) { const i = g.items.indexOf(key); if (i >= 0) g.items.splice(i, 1); } }
 function newWorkspace(name, why) {
   const w = {id: 'w-' + S.nextWs, name: name || 'Workspace ' + S.nextWs, ws: 'live', group: 'default'};
   S.nextWs++; S.locals.push(w); lgroup('default').items.push('w:' + w.id);
@@ -375,48 +360,6 @@ function fixSectionNames() {
   }
 }
 function sectionTitle(s) { return s.name !== null ? s.name : groupName(s.groups[0]); }
-// Sections sharing a panel form a contiguous run in S.sections.
-function panelRun(s) {
-  const i = S.sections.indexOf(s);
-  if (!s.panel) return [i, i];
-  let a = i, b = i;
-  while (a > 0 && S.sections[a - 1].panel === s.panel) a--;
-  while (b < S.sections.length - 1 && S.sections[b + 1].panel === s.panel) b++;
-  return [a, b];
-}
-function detachGroup(gid) {
-  for (const x of S.sections) x.groups = x.groups.filter(g => g !== gid);
-  S.sections = S.sections.filter(x => x.declared || x.groups.length);
-}
-function placeInNewGroup(p) {
-  const g = {id: uid('lg'), name: 'Group ' + S.localGroups.length, kind: 'local', items: []}; S.localGroups.push(g);
-  if (p.kind === 'ghost') { removeItem('g:' + p.g.id); g.items.push('g:' + p.g.id); }
-  else if (p.kind === 'local') { removeItem('w:' + p.w.id); g.items.push('w:' + p.w.id); p.w.group = g.id; }
-  else {
-    const of = p.kind === 'subject' ? {type: 'subject', ref: p.ref} : p.kind === 'view' ? {type: 'view', ref: p.e.id, tab: p.tab} : {type: 'entity', ref: p.e.id};
-    const id = uid('gh'); S.ghosts.push({id, of, expanded: false, mode: 0}); g.items.push('g:' + id);
-  }
-  return g;
-}
-// Edge drop: a new section above or below the target's whole panel.
-function splitAt(p, target, side) {
-  const g = p.kind === 'lgroup' ? p.g : placeInNewGroup(p);
-  if (p.kind === 'lgroup') detachGroup(g.id);
-  if (!S.sections.includes(target)) { S.sections.push({id: uid('sec'), name: null, autoNamed: false, groups: [g.id]}); render(); return; }
-  const [a, b] = panelRun(target);
-  S.sections.splice(side === 'above' ? a : b + 1, 0, {id: uid('sec'), name: null, autoNamed: false, groups: [g.id]});
-  fixSectionNames(); log(`new section ${side} ${sectionTitle(target)} with ${groupName(g.id)}`);
-}
-// Tab-strip drop: the group becomes its own section, tabbed into the panel.
-function addAsTab(g, target) {
-  detachGroup(g.id);
-  if (!S.sections.includes(target)) return;
-  const pid = target.panel || (target.panel = uid('p'));
-  const [, b] = panelRun(target);
-  const sec = {id: uid('sec'), name: null, autoNamed: false, groups: [g.id], panel: pid};
-  S.sections.splice(b + 1, 0, sec); S.activeTab[pid] = sec.id;
-  fixSectionNames(); log(`add ${groupName(g.id)} as a tab beside ${sectionTitle(target)}`);
-}
 
 // ---------- helpers ----------
 const tip = document.getElementById('tip');
@@ -571,7 +514,6 @@ function clearMarks() {
   document.querySelectorAll('.t-before,.t-into,.t-after').forEach(n => n.classList.remove('t-before', 't-into', 't-after'));
   document.querySelectorAll('.dropprev,.dropline,.dropbox').forEach(n => n.remove());
   document.querySelectorAll('.src-dim').forEach(n => n.classList.remove('src-dim'));
-  const w = document.getElementById('work'); if (w) w.classList.remove('float-target');
 }
 // The source of a move or reorder is dimmed; a ghost leaves its source alone.
 function sourceEl(p) {
@@ -580,11 +522,11 @@ function sourceEl(p) {
   return sel ? document.querySelector(sel) : null;
 }
 // Preview the outcome without reflow: a labelled, faded copy of the item laid
-// over the insertion point, a tab in the strip, a growing edge, or a float.
+// over the insertion point. Sidebar-level only; panel-level drops (tabs,
+// splits, floating) are RAD's docking and are designed natively.
 function drawPreview(t, m) {
   document.querySelectorAll('.dropprev,.dropline,.dropbox').forEach(n => n.remove());
   document.querySelectorAll('.src-dim').forEach(n => n.classList.remove('src-dim'));
-  document.getElementById('work').classList.remove('float-target');
   if (!t) return;
   if (t.op === 'move' || t.op === 'reorder') { const src = sourceEl(DRAG.payload); if (src) src.classList.add('src-dim'); }
   const r = t.at, add = (cls, x, y, w, hgt, html) => { const e = h('div', cls, html); Object.assign(e.style, {left: x + 'px', top: y + 'px', width: w + 'px', height: hgt + 'px'}); document.body.append(e); return e; };
@@ -593,10 +535,6 @@ function drawPreview(t, m) {
   if (t.kind === 'insert') { add('dropline', r.left + 4, r.top - 1, r.width - 8, 2); add('dropprev', r.left + 10, r.top - 11, r.width - 20, 22, copy); }
   else if (t.kind === 'append') { add('dropline', r.left + 4, r.bottom - 3, r.width - 8, 2); add('dropprev', r.left + 10, r.bottom - 13, r.width - 20, 22, copy); }
   else if (t.kind === 'box') { add('dropbox', r.left, r.top, r.width, r.height); add('dropprev', r.left + 10, r.top + 4, Math.min(r.width - 20, 230), 22, copy); }
-  else if (t.kind === 'tab') { add('dropprev tabprev', r.right - 120, r.top + 2, 114, r.height - 4, `<span class="pv">${payloadLabel(DRAG.payload)}</span>`).title = t.label; add('dropbox', r.left, r.top, r.width, r.height); }
-  else if (t.kind === 'edge') { const e = add('dropbox edgeprev', r.left + 6, t.side === 'above' ? r.top - 14 : r.bottom - 14, r.width - 12, 28, `<span class="tagl">${t.label}</span>`); requestAnimationFrame(() => e.classList.add('grown')); }
-  else if (t.kind === 'float') { document.getElementById('work').classList.add('float-target'); add('dropprev floatprev', m.clientX + 8, m.clientY + 8, 220, 46, copy); }
-  else if (t.kind === 'zone') add('dropbox', r.left, r.top, r.width, r.height);
 }
 function payloadLabel(p) {
   return {data: () => p.e.name, attn: () => p.e.name, local: () => p.w.name, ghost: () => '↗ ' + ghostLabel(p.g), subject: () => p.ref + ' ' + (S.subjects[p.ref] || ''),
@@ -612,7 +550,6 @@ function updateTarget(m) {
     clearTimeout(DRAG.spring); DRAG.springKey = key;
     if (key) DRAG.spring = setTimeout(() => {
       if (!DRAG) return;
-      if (key.startsWith('t:')) { const [, pid, sid] = key.split(':'); S.activeTab[pid] = sid; log(`spring-switch tab ${sectionTitle(S.sections.find(x => x.id === sid))}`); render(); return; }
       if (key.startsWith('s:')) S.collapsed[key.slice(2)] = false; else S.pcollapsed[key.slice(2)] = false;
       DRAG.opened.push(key); log(`spring-open ${key.slice(2)}`); render();
     }, 600);
@@ -635,37 +572,6 @@ function targetFor(p, under, m) {
     return Object.assign({el, cls, run, inside: within(el), at, kind, op: 'move', label: 'Move'}, extra || {});
   };
   const dest = el => { const g = el.closest('.grp[data-gid]'); return g ? groupName(g.dataset.gid) : ''; };
-  const itemKinds = ['data', 'attn', 'subject', 'view', 'ghost', 'local'];
-  const asGhost = ['data', 'attn', 'subject', 'view'].includes(p.kind);
-  // Float: the workspace area is an explicit target for anything that can be a ghost card.
-  if (under.closest('#work') && (asGhost || p.kind === 'ghost')) {
-    const work = document.getElementById('work');
-    return {el: work, cls: '', at: work.getBoundingClientRect(), inside: [], kind: 'float', op: asGhost ? 'ghost' : 'move', label: 'Float',
-      run: () => {
-        const wr = work.getBoundingClientRect(); const pos = {x: m.clientX - wr.left, y: m.clientY - wr.top};
-        let g = p.kind === 'ghost' ? p.g : null;
-        if (!g) { const of = p.kind === 'subject' ? {type: 'subject', ref: p.ref} : p.kind === 'view' ? {type: 'view', ref: p.e.id, tab: p.tab} : {type: 'entity', ref: p.e.id};
-                  g = {id: uid('gh'), of, expanded: true, mode: 0}; S.ghosts.push(g); }
-        removeItem('g:' + g.id); g.expanded = true; S.floats.push({ghost: g.id, ...pos});
-        log(`float ${ghostLabel(g)} over the workspace`);
-      }};
-  }
-  // Section zones (#211): edges split; header or tab strip adds as a tab;
-  // the body adds to the section's group.
-  // Edges of every section create a new section there (this replaced a sticky
-  // "new section" zone, which covered the bottom section's own targets).
-  if (sec && (itemKinds.includes(p.kind) || p.kind === 'lgroup')) {
-    const r = sec.getBoundingClientRect();
-    const side = m.clientY < r.top + 7 ? 'above' : m.clientY > r.bottom - 7 ? 'below' : null;
-    const s = S.sections.find(x => x.id === sec.dataset.sid);
-    if (side && s) return {el: sec, cls: '', at: r, inside: [], kind: 'edge', side, op: p.kind === 'lgroup' || p.kind === 'local' || p.kind === 'ghost' ? 'move' : 'ghost',
-      label: side === 'above' ? 'New section above' : 'New section below', run: () => splitAt(p, s, side)};
-    const strip = sec.dataset.sid !== 'attention' && sec.dataset.sid !== 'projects' ? under.closest('.sh,.tabstrip') : null;
-    if (strip && p.kind === 'lgroup' && s && !s.declared && !(s.groups.length === 1 && s.groups[0] === p.g.id)) {
-      return {el: strip, cls: '', at: strip.getBoundingClientRect(), inside: [], kind: 'tab', op: 'move', label: 'Add as tab', run: () => addAsTab(p.g, s)};
-    }
-    if (strip && p.kind !== 'lgroup') return null; // items over a tab strip spring-switch tabs instead
-  }
   const localGrp = grp && (grp.dataset.gkind === 'local' || grp.dataset.gkind === 'default') ? lgroup(grp.dataset.gid) : null;
   const beforeKey = row && localGrp && row.closest('.grp') === grp ? row.dataset.key : null;
   const intoLocal = (run, op) => localGrp && T(beforeKey ? row : grp, beforeKey ? 't-before' : 't-into', () => run(localGrp, beforeKey),
@@ -1016,7 +922,7 @@ function sectionEl(s) {
 function renderWork() {
   const w = document.getElementById('work'); w.replaceChildren();
   const src = entity(S.focus) || local(S.focus);
-  if (!src || src.ws !== 'live') { w.append(h('div', 'wsempty', src ? `${src.name}: no open workspace` : 'Select a workspace')); renderFloats(w); return; }
+  if (!src || src.ws !== 'live') { w.append(h('div', 'wsempty', src ? `${src.name}: no open workspace` : 'Select a workspace')); return; }
   const views = src.views || ['Terminal'];
   if (!views.includes(S.focusTab)) S.focusTab = views[0];
   const strip = h('div', 'tabs');
@@ -1031,14 +937,6 @@ function renderWork() {
   if (S.focusTab === 'loss graph') { body.append(h('div', 'k', 'loss · live'), lossPlot(false)); body.querySelector('svg').classList.add('big'); }
   else body.append(h('pre', 'term', `${src.name} $ cargo test\n   running 128 tests\n   …\n${src.name} $ ▌`));
   w.append(body);
-  renderFloats(w);
-}
-function renderFloats(w) {
-  for (const f of S.floats) {
-    const g = ghost(f.ghost); if (!g) continue;
-    const card = h('div', 'floatcard'); card.style.left = f.x + 'px'; card.style.top = f.y + 'px';
-    card.append(ghostRow(g)); w.append(card);
-  }
 }
 
 // ---------- render ----------
@@ -1047,25 +945,7 @@ function render() {
   const sb = document.getElementById('sidebar'); sb.replaceChildren(); sb.style.width = K.width + 'px';
   let sections = S.sections;
   if (K.layout === 'combined') sections = S.sections.filter(s => s.id !== 'workspaces').map(s => s.id === 'projects' ? {...s, groups: ['@projects', ...S.sections.find(x => x.id === 'workspaces').groups]} : s);
-  for (let i = 0; i < sections.length; i++) {
-    const s = sections[i];
-    const run = s.panel ? sections.filter(x => x.panel === s.panel) : [s];
-    if (run.length < 2) { sb.append(sectionEl(s)); continue; }
-    i += run.length - 1;
-    const active = run.find(x => x.id === S.activeTab[s.panel]) || run[0];
-    const el = sectionEl(active); el.classList.add('tabbed'); el.dataset.panel = s.panel;
-    const strip = h('div', 'tabstrip');
-    for (const x of run) {
-      const tab = h('div', 'ptab' + (x === active ? ' on' : ''), sectionTitle(x));
-      if (x !== active) tab.dataset.spring = 't:' + s.panel + ':' + x.id;
-      const g = x.groups.length === 1 ? lgroup(x.groups[0]) : null;
-      const activate = () => { S.activeTab[s.panel] = x.id; render(); };
-      if (g && g.kind === 'local' && x.name === null) draggable(tab, {kind: 'lgroup', g}, activate); else tab.onclick = activate;
-      strip.append(tab);
-    }
-    el.querySelector('.sh').replaceWith(strip);
-    sb.append(el);
-  }
+  for (const s of sections) sb.append(sectionEl(s));
   renderWork(); renderPanel(); saveKnobs();
 }
 const NOTES_TEXT = [
@@ -1073,11 +953,10 @@ const NOTES_TEXT = [
   'Chips drag their own subject. Attention rows drag out as ghosts; nothing drops into Attention.',
   'Local workspaces move: into a project (annotated "local") or any local group.',
   'Drag the "loss graph" tab onto a local group for a read-only mirror (View ghost).',
-  'Drag a local group header (or a borrowed section title) into another section, onto a tab strip, or to any section edge for a new section. Double-click a title to rename.',
+  'Drag a local group header (or a borrowed section title) into another section. Double-click a title to rename.',
+  'Sidebar-level drops only. Panel-level drops (sections as tabs, splits, floating cards) are RAD docking and are designed in the native code; see docs/design/drag-model.md.',
   'Collapsed sections and projects spring open after 0.6s while dragging. Esc cancels. Right-click headers and rows for menus.',
   'Drop previews show the outcome: a labelled faded copy where the item lands. A move dims the original; a ghost leaves it.',
-  'The Pinned panel holds two sections as tabs (#211 zones): drop into the body to add to the group, onto the tab strip to add as a tab, at an edge to split. Hovering a tab while dragging an item switches to it.',
-  'Drop a ghost, row, chip or tab onto the workspace to float it as a card; drag it back into a group.',
 ];
 const SIMS = [
   ['loss-curve-tuning lands', () => { entity('c-ml').status = 'ended'; }],
