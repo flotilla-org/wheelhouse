@@ -1,0 +1,470 @@
+<!doctype html>
+<!--
+  PROTOTYPE - throwaway. Answers: how should a pinned/ghost card expose dense,
+  easy-to-reveal information? Model under test:
+  - expansion *replaces* the row (the row line becomes the card's title line);
+  - each subject type declares features (booleans and small enums);
+  - profiles are named feature sets per subject type to flick through;
+  - controls appear around the card on hover without reflowing anything,
+    flipping side near the sidebar's edges;
+  - where the effective settings come from is visible (type default, group,
+    or this card), with "save as" choices.
+  Knobs on the right compare control placements and switching inputs.
+  In-memory only. Related: docs/design/drag-model.md (ghosts), #89, #239.
+  Run: python3 -m http.server -d docs/design 8791, then open
+  http://127.0.0.1:8791/card-features-prototype.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card features prototype</title>
+<style>
+:root{--bg:#1e1e1e;--side:#232323;--line:#3a3a3a;--text:#d8d8d8;--dim:#8c8c8c;--faint:#5f5f5f;--hot:#ffffff12;--sel:#3b4048;
+  --good:#8fdc9f;--bad:#f28b82;--warn:#e6c07b;--issue:#9ab8e8;--accent:#e0b34a}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px "Segoe UI",system-ui,-apple-system,sans-serif;overflow:hidden;user-select:none}
+#app{display:flex;height:100%}
+#sidebar{flex:none;background:var(--side);border-right:1px solid var(--line);overflow-y:auto;overflow-x:hidden;position:relative;padding:6px 0 40px}
+#work{flex:1;padding:24px 32px;color:var(--dim);line-height:1.5;overflow:auto}
+#work h1{font-size:15px;color:var(--text);margin:0 0 8px}
+#work kbd{border:1px solid var(--line);border-radius:3px;padding:0 4px;font-size:11px}
+#panel{width:300px;flex:none;border-left:1px solid var(--line);background:#191919;overflow:auto;padding:10px 12px 20px;font-size:12px;color:#bbb}
+#panel h2{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin:14px 0 6px;font-weight:600}
+#panel .k{display:grid;grid-template-columns:120px 1fr;align-items:center;gap:6px;margin:4px 0}
+#panel select{width:100%;background:#262626;color:#ddd;border:1px solid #3a3a3a;border-radius:4px;font:12px system-ui;padding:2px 4px}
+#panel .note{color:var(--faint);font-size:11px;line-height:1.4;margin-top:2px}
+#log{margin-top:10px;font:11px ui-monospace,Menlo,monospace;color:#999;white-space:pre-wrap;background:#141414;border:1px solid #2c2c2c;border-radius:4px;padding:6px;min-height:70px}
+.sh{height:28px;display:flex;align-items:center;padding:0 12px;font-size:11px;letter-spacing:.04em;color:var(--dim);text-transform:uppercase}
+.grp{margin:0 18px 8px;border:1px dashed #3a3a3a;border-radius:6px;padding:2px 0}
+/* item: compact row or card, same slot */
+.item{position:relative;margin:2px 4px;border-radius:4px}
+.item.card{background:#262626;border:1px solid #3c3c3c;margin:4px 4px}
+.item.hover{outline:1px solid #ffffff22}
+.line{display:flex;align-items:center;height:26px;padding:0 6px 0 4px;gap:4px;white-space:nowrap;cursor:default}
+.item:not(.card) .line:hover{background:#ffffff0a}
+.line .ic{width:18px;text-align:center;color:var(--dim);font-size:11px;flex:none}
+.line .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.line .nm.full{white-space:normal;line-height:1.3}
+.line .gm{color:#7fb2e5;font-size:11px;flex:none}
+.st{width:14px;text-align:center;flex:none} .st.live{color:var(--text)} .st.wait{color:var(--warn)} .st.fail{color:var(--bad)} .st.ended{color:var(--faint)}
+.chip{display:inline-flex;align-items:center;height:17px;padding:0 5px;border:1px solid var(--faint);border-radius:9px;font-size:10.5px;color:var(--issue);border-color:#9ab8e880;flex:none}
+.body{padding:0 8px 7px 26px;font-size:12px;line-height:1.45}
+.body .path{color:var(--faint);font-size:11px}
+.body .facts{display:grid;grid-template-columns:auto 1fr;gap:0 8px;margin-top:3px}
+.body .facts .fk{color:var(--dim)} .body .fg{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;margin-top:4px;grid-column:1/-1}
+.body .vessels{margin-top:3px} .body .vessels div{display:flex;gap:6px;align-items:center}
+.body .chks{display:flex;gap:6px;margin-top:3px;font-size:11.5px}
+.ok{color:var(--good)} .no{color:var(--bad)} .pend{color:var(--warn)}
+svg.spark{width:100%;height:18px;display:block;margin-top:3px}
+svg.plot{width:100%;display:block;margin-top:4px;background:#181818;border-radius:3px}
+.excerpt{color:#bdbdbd;margin-top:3px}
+/* hover controls: positioned around the item, never in flow */
+.ctl{position:absolute;z-index:40;display:flex;align-items:center;gap:2px;background:#2f2f2fee;border:1px solid #4a4a4a;border-radius:6px;padding:2px;box-shadow:0 4px 14px #0009;font-size:11.5px;white-space:nowrap}
+.ctl.inside{background:#262626e6;box-shadow:none}
+.ctl .b{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;border-radius:4px;color:var(--dim);cursor:pointer}
+.ctl .b:hover{background:var(--hot);color:var(--text)} .ctl .b.on{color:var(--text);background:#ffffff16}
+.ctl .pname{padding:0 4px;color:var(--text);min-width:56px;text-align:center}
+.ctl .pname .mod{color:var(--accent)}
+.ctl .pname.inherited{color:var(--faint)}
+.ctl .dots{display:flex;gap:3px;padding:0 4px} .ctl .dot{width:6px;height:6px;border-radius:50%;background:#555;cursor:pointer} .ctl .dot.on{background:var(--text)}
+.ctl .src{color:var(--faint);padding:0 4px;font-size:10.5px}
+/* features popover */
+.pop{position:fixed;z-index:60;width:248px;background:#2b2b2b;border:1px solid #4a4a4a;border-radius:7px;box-shadow:0 8px 24px #000a;padding:6px;font-size:12px}
+.pop.rad{width:300px;border-radius:2px;background:#252525;font-size:12.5px}
+.pop .ph{display:flex;justify-content:space-between;color:var(--dim);font-size:11px;padding:0 2px 4px}
+.pop .fr{display:flex;align-items:center;justify-content:space-between;height:24px;padding:0 4px;border-radius:4px}
+.pop.rad .fr{height:30px;border-bottom:1px solid #333;border-radius:0}
+.pop .fr:hover{background:var(--hot)}
+.sw{width:26px;height:14px;border-radius:7px;background:#444;position:relative;cursor:pointer;flex:none}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#bbb;transition:left .1s}
+.sw.on{background:#5b8f68} .sw.on::after{left:14px;background:#fff}
+.seg{display:flex;border:1px solid #444;border-radius:4px;overflow:hidden}
+.seg span{padding:0 6px;height:18px;line-height:18px;font-size:11px;color:var(--dim);cursor:pointer}
+.seg span.on{background:#ffffff1c;color:var(--text)}
+.pop .acts{display:flex;flex-wrap:wrap;gap:4px;border-top:1px solid #3a3a3a;margin-top:5px;padding-top:5px}
+.pop .acts span{padding:2px 6px;border:1px solid #444;border-radius:4px;color:#ccc;cursor:pointer;font-size:11px}
+.pop .acts span:hover{background:var(--hot)}
+#tip{position:fixed;z-index:80;pointer-events:none;padding:4px 7px;border-radius:4px;font-size:11.5px;background:#2d2d2dee;border:1px solid #4a4a4a;display:none;white-space:pre-line;max-width:240px}
+.line .ex{display:none;color:var(--dim);font-size:13px;width:18px;text-align:center;cursor:pointer;flex:none;border-radius:3px}
+.line .ex:hover{background:var(--hot);color:var(--text)}
+.item:not(.card):hover .line .ex{display:inline-block}
+/* attached cap: looks like the card grew */
+.ctl.cap{background:#262626;border-color:#3c3c3c;box-shadow:0 -6px 12px #0006;justify-content:flex-end;padding:2px 4px}
+.ctl.capt{border-radius:5px 5px 0 0;border-bottom-color:#262626}
+.ctl.capb{border-radius:0 0 5px 5px;border-top-color:#262626;box-shadow:0 6px 12px #0006}
+.item.card.capped-t{border-top-left-radius:0;border-top-right-radius:0;border-top-color:#262626}
+.item.card.capped-b{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom-color:#262626}
+.ctl.cap .pname{margin-right:auto;text-align:left;padding-left:2px}
+</style>
+</head>
+<body>
+<div id="app"><div id="sidebar"></div><div id="work"></div><div id="panel"></div></div>
+<div id="tip"></div>
+<script>
+// ---------- knobs ----------
+const KNOBS = [
+  {k: 'place', label: 'Controls placement', opts: {cap: 'Attached cap (card grows)', auto: 'Floating above, flip below', above: 'Always above', side: 'Right margin strip', inside: 'Overlay inside card'},
+   note: 'Attached cap: on hover the card grows a cap holding the controls, overlaying what is above (or below, at the top edge). Nothing reflows.'},
+  {k: 'switcher', label: 'Profile switcher', opts: {arrows: '‹ name ›', dots: 'Dots', both: 'Arrows + dots'},
+   note: 'With the pointer over an item: [ and ] (or Alt+wheel) also cycle profiles.'},
+  {k: 'rowProfile', label: 'Compact row', opts: {profile: 'Is the first profile', separate: 'Separate (click toggles)'},
+   note: '"Is the first profile": cycling goes Row → Glance → … and back. "Separate": click the row to expand into the last-used profile.'},
+  {k: 'pop', label: 'Features popover', opts: {compact: 'Compact', rad: 'RAD view-config style'}},
+  {k: 'width', label: 'Sidebar width', opts: {280: '280px', 320: '320px', 380: '380px'}},
+];
+let K = {place: 'cap', switcher: 'arrows', rowProfile: 'profile', pop: 'compact', width: '320'};
+
+// ---------- features and profiles per subject type ----------
+// A feature is a boolean or a small enum. A profile is a named feature set.
+const TYPES = {
+  convoy: {
+    features: [
+      {k: 'label', label: 'Label', values: ['short', 'medium', 'full']},
+      {k: 'path', label: 'Project path'},
+      {k: 'status', label: 'Status line'},
+      {k: 'subjects', label: 'Subject chips'},
+      {k: 'vessels', label: 'Vessels'},
+      {k: 'activity', label: 'Activity sparkline'},
+      {k: 'facts', label: 'Facts', values: ['none', 'key', 'all']},
+      {k: 'grouped', label: 'Group facts'},
+      {k: 'preview', label: 'Preview', values: ['off', 'small', 'large']},
+    ],
+    profiles: {
+      Glance: {label: 'short', status: true, subjects: true},
+      Status: {label: 'medium', path: true, status: true, subjects: true, vessels: true, activity: true},
+      Detail: {label: 'full', path: true, status: true, subjects: true, vessels: true, facts: 'all', grouped: true},
+      Watch: {label: 'short', status: true, activity: true, preview: 'large'},
+    },
+  },
+  change_request: {
+    features: [
+      {k: 'label', label: 'Title', values: ['short', 'medium', 'full']},
+      {k: 'status', label: 'Readiness'},
+      {k: 'checks', label: 'Checks'},
+      {k: 'review', label: 'Review state'},
+      {k: 'diff', label: 'Diff stats'},
+      {k: 'facts', label: 'Facts', values: ['none', 'key', 'all']},
+    ],
+    profiles: {
+      Glance: {label: 'short', status: true},
+      Review: {label: 'medium', status: true, checks: true, review: true},
+      Detail: {label: 'full', status: true, checks: true, review: true, diff: true, facts: 'all'},
+    },
+  },
+  issue: {
+    features: [
+      {k: 'label', label: 'Title', values: ['short', 'medium', 'full']},
+      {k: 'labels', label: 'Labels'},
+      {k: 'assignee', label: 'Assignee'},
+      {k: 'excerpt', label: 'Body excerpt', values: ['0', '2', '5']},
+    ],
+    profiles: {
+      Glance: {label: 'short'},
+      Triage: {label: 'medium', labels: true, assignee: true},
+      Read: {label: 'full', labels: true, excerpt: '5'},
+    },
+  },
+  view: {
+    features: [
+      {k: 'size', label: 'Mirror size', values: ['small', 'medium', 'large']},
+      {k: 'last', label: 'Last value'},
+      {k: 'axis', label: 'Axis labels'},
+      {k: 'source', label: 'Source path'},
+    ],
+    profiles: {
+      Strip: {size: 'small', last: true},
+      Chart: {size: 'medium', last: true, axis: true, source: true},
+      Big: {size: 'large', last: true, axis: true},
+    },
+  },
+};
+const ROW = 'Row';
+const profileNames = t => (K.rowProfile === 'profile' ? [ROW] : []).concat(Object.keys(TYPES[t].profiles));
+
+// ---------- fixture: ghosts in a local group ----------
+const ITEMS = [
+  {id: 'a', type: 'convoy', name: 'loss-curve-tuning', medium: 'loss-curve-tuning · lr sweep', full: 'loss-curve-tuning · learning-rate sweep over the v3 encoder', project: 'wheelhouse', status: 'live',
+   subj: ['#244'], vessels: [['coder', 'live'], ['reviewer', 'wait']], facts: {Phase: ['working', 'key'], Attempts: ['2', 'key'], Branch: ['lr-sweep', 'git'], Dirty: ['no', 'git'], Age: ['3h', 'time'], 'Last push': ['12m', 'time']}},
+  {id: 'b', type: 'change_request', name: '#235', medium: '#235 Move workspace close…', full: '#235 Move workspace close and creation into the sidebar', status: 'ok',
+   checks: [['macos', 'ok'], ['linux', 'ok'], ['windows', 'pend']], review: 'approved', diff: '+612 −131', facts: {Author: ['rjwittams', 'key'], Base: ['main', 'key'], Mergeable: ['yes', 'key']}},
+  {id: 'c', type: 'issue', name: '#239', medium: '#239 One drag model…', full: '#239 Design: one drag model for rows, groups, sections, cards and tabs', labels: ['enhancement', 'research'], assignee: 'rjwittams',
+   excerpt: 'Several open tickets each define their own dragging and keep raising the same questions. Every drag answers three questions: what can be dragged where, move or ghost, and where the override lives.'},
+  {id: 'd', type: 'view', name: 'loss graph · loss-curve-tuning'},
+  // A second ghost of the same convoy, kept as a large live preview for
+  // monitoring while the first is a status reminder.
+  {id: 'a2', type: 'convoy', name: 'loss-curve-tuning', medium: 'loss-curve-tuning · lr sweep', full: 'loss-curve-tuning · learning-rate sweep over the v3 encoder', project: 'wheelhouse', status: 'live',
+   subj: ['#244'], vessels: [['coder', 'live'], ['reviewer', 'wait']], facts: {Phase: ['working', 'key'], Age: ['3h', 'time']}, start: 'Watch'},
+  {id: 'e', type: 'convoy', name: 'sidebar-header-controls', medium: 'sidebar-header-controls · #110', full: 'sidebar-header-controls · route status notices', project: 'wheelhouse', status: 'fail',
+   subj: ['#110'], vessels: [['coder', 'fail']], facts: {Phase: ['blocked', 'key'], Attempts: ['3', 'key'], Branch: ['notices', 'git'], Age: ['1d', 'time']}},
+];
+// Effective settings: type default profile, optionally overridden for the
+// group, then per card (profile + feature edits). `src` reports which level won.
+const S = {
+  typeDefault: {convoy: 'Glance', change_request: 'Glance', issue: 'Glance', view: 'Strip'},
+  group: {}, card: {}, lastProfile: {}, hover: null, pop: null, log: [],
+};
+for (const it of ITEMS) S.card[it.id] = {profile: it.start || (K.rowProfile === 'profile' ? ROW : null), expanded: !!it.start, edits: {}};
+const log = m => { S.log.unshift(m); S.log = S.log.slice(0, 10); renderLog(); };
+function profileOf(it) {
+  const c = S.card[it.id];
+  if (K.rowProfile === 'separate' && !c.expanded) return ROW;
+  if (c.profile) return c.profile;
+  return S.group[it.type] || S.typeDefault[it.type];
+}
+// Provenance: chosen on this card, or inherited from the group or the type.
+function inherited(it) { return S.group[it.type] || S.typeDefault[it.type]; }
+function sourceOf(it) { const c = S.card[it.id]; return c.profile && c.profile !== ROW && c.profile !== inherited(it) ? 'here' : S.group[it.type] ? 'group' : 'type'; }
+function sourceText(it) { const s = sourceOf(it); return s === 'here' ? 'set here' : s === 'group' ? 'group default' : `${it.type.replace('_', ' ')} default`; }
+function features(it) {
+  const p = profileOf(it);
+  if (p === ROW) return null;
+  return {...TYPES[it.type].profiles[p], ...S.card[it.id].edits};
+}
+const modified = it => Object.keys(S.card[it.id].edits).length > 0;
+function cycle(it, d) {
+  const names = profileNames(it.type), c = S.card[it.id];
+  let cur = profileOf(it);
+  if (K.rowProfile === 'separate' && !c.expanded) { c.expanded = true; c.profile = S.lastProfile[it.id] || names[0]; c.edits = {}; log(`${it.name}: expand → ${c.profile}`); render(); return; }
+  const i = (names.indexOf(cur) + d + names.length) % names.length;
+  c.profile = names[i]; c.edits = {}; S.lastProfile[it.id] = c.profile;
+  log(`${it.name}: profile → ${c.profile}`); render();
+}
+
+// ---------- rendering an item: row or card in the same slot ----------
+const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
+const STATUS = {live: ['•', 'live'], wait: ['◷', 'wait'], fail: ['!', 'fail'], ok: ['✓', 'live']};
+const ICON = {convoy: '≋', change_request: '⎇', issue: '◎', view: '▣'};
+function itemEl(it) {
+  const f = features(it), card = !!f;
+  const el = h('div', 'item' + (card ? ' card' : '') + (S.hover === it.id ? ' hover' : ''));
+  el.dataset.id = it.id;
+  const line = h('div', 'line');
+  const label = !card ? it.name : f.label === 'full' ? (it.full || it.name) : f.label === 'medium' ? (it.medium || it.name) : it.name;
+  const nm = h('span', 'nm' + (card && f.label === 'full' ? ' full' : ''), label);
+  line.append(h('span', 'ic', ICON[it.type]), nm, h('span', 'gm', '↗'));
+  if (!card) { const ex = h('span', 'ex', '⤢'); ex.onclick = e => { e.stopPropagation(); toggleCard(it); }; bindTip(ex, 'Expand to card'); line.append(ex); }
+  if (!card && it.subj) for (const s of it.subj) line.append(h('span', 'chip', s));
+  if (it.status) { const [g, c] = STATUS[it.status]; line.append(h('span', 'st ' + c, g)); }
+  el.append(line);
+  if (card) el.append(cardBody(it, f));
+  // ⤢/⤡ toggle row/card: in profile mode between Row and the last card
+  // profile; in separate mode expand or collapse.
+  // Click focuses the source, as in the real sidebar; ⤢/⤡ change row/card.
+  line.onclick = () => log(`${it.name}: focus source`);
+  el.onmouseenter = () => { S.hover = it.id; showControls(); };
+  el.onmouseleave = e => { if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.ctl,.pop')) return; S.hover = null; hideControls(); };
+  return el;
+}
+function toggleCard(it) {
+  {
+    const c = S.card[it.id];
+    if (K.rowProfile === 'separate') { c.expanded = !c.expanded; if (c.expanded) c.profile = S.lastProfile[it.id] || profileNames(it.type)[0]; log(`${it.name}: ${c.expanded ? 'expand' : 'collapse'}`); render(); return; }
+    if (profileOf(it) === ROW) { c.profile = S.lastProfile[it.id] || profileNames(it.type)[1]; } else { S.lastProfile[it.id] = profileOf(it); c.profile = ROW; }
+    c.edits = {}; log(`${it.name}: ${c.profile === ROW ? 'collapse to row' : 'expand → ' + c.profile}`); render();
+  }
+}
+function cardBody(it, f) {
+  const b = h('div', 'body');
+  if (it.type === 'convoy') {
+    if (f.path) b.append(h('div', 'path', `${it.project} › ${it.name}`));
+    if (f.status) b.append(h('div', '', `<span class="${it.status === 'fail' ? 'no' : 'ok'}">${it.status === 'fail' ? 'blocked' : 'working'}</span> <span style="color:var(--faint)">· ${it.facts.Age[0]}</span>`));
+    if (f.subjects) { const r = h('div', ''); r.style.marginTop = '3px'; for (const s of it.subj) r.append(h('span', 'chip', s)); b.append(r); }
+    if (f.vessels) { const v = h('div', 'vessels'); for (const [role, st] of it.vessels) v.append(h('div', '', `<span class="st ${STATUS[st] ? STATUS[st][1] : ''}">${STATUS[st] ? STATUS[st][0] : '•'}</span>${role}`)); b.append(v); }
+    if (f.activity) b.append(spark(it.id));
+    if (f.facts && f.facts !== 'none') b.append(factsEl(it.facts, f.facts, f.grouped));
+    if (f.preview && f.preview !== 'off') b.append(plot(f.preview === 'large' ? 90 : 44));
+  } else if (it.type === 'change_request') {
+    if (f.status) b.append(h('div', '', `<span class="ok">ready to merge</span>`));
+    if (f.checks) { const c = h('div', 'chks'); for (const [n, s] of it.checks) c.append(h('span', s === 'ok' ? 'ok' : s === 'pend' ? 'pend' : 'no', `${s === 'ok' ? '✓' : s === 'pend' ? '◷' : '✗'} ${n}`)); b.append(c); }
+    if (f.review) b.append(h('div', '', `review: <span class="ok">${it.review}</span>`));
+    if (f.diff) b.append(h('div', 'path', it.diff));
+    if (f.facts && f.facts !== 'none') b.append(factsEl(it.facts, f.facts, false));
+  } else if (it.type === 'issue') {
+    if (f.labels) { const r = h('div', ''); for (const l of it.labels) r.append(h('span', 'chip', l)); b.append(r); }
+    if (f.assignee) b.append(h('div', 'path', '@' + it.assignee));
+    if (f.excerpt && f.excerpt !== '0') { const e = h('div', 'excerpt', it.excerpt); e.style.display = '-webkit-box'; e.style.webkitBoxOrient = 'vertical'; e.style.webkitLineClamp = f.excerpt; e.style.overflow = 'hidden'; b.append(e); }
+  } else if (it.type === 'view') {
+    const hgt = {small: 30, medium: 70, large: 130}[f.size];
+    if (f.source) b.append(h('div', 'path', 'wheelhouse › loss-curve-tuning › loss graph'));
+    const p = plot(hgt, f.axis); b.append(p);
+    if (f.last) b.append(h('div', '', `loss <b class="lastv">${LOSS[LOSS.length - 1].toFixed(3)}</b>`));
+  }
+  if (!b.childNodes.length) b.append(h('div', 'path', 'No features on.'));
+  return b;
+}
+function factsEl(facts, level, grouped) {
+  const g = h('div', 'facts');
+  const entries = Object.entries(facts).filter(([, [, grp]]) => level === 'all' || grp === 'key');
+  const groups = grouped ? [...new Set(entries.map(([, [, grp]]) => grp))] : [null];
+  for (const grp of groups) {
+    if (grp) g.append(h('div', 'fg', grp));
+    for (const [k, [v, gg]] of entries) if (!grp || gg === grp) g.append(h('span', 'fk', k), h('span', '', v));
+  }
+  return g;
+}
+// ---------- live data ----------
+const LOSS = []; for (let i = 0; i < 60; i++) LOSS.push(0.9 * Math.exp(-i / 18) + 0.05 + Math.random() * 0.04);
+const ACT = {a: Array.from({length: 30}, () => Math.random()), e: Array.from({length: 30}, () => Math.random() * 0.3)}; ACT.a2 = ACT.a;
+function plot(height, axis) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.classList.add('plot'); svg.style.height = height + 'px';
+  svg.setAttribute('viewBox', '0 0 200 60'); svg.setAttribute('preserveAspectRatio', 'none'); svg.dataset.axis = axis ? 1 : 0; drawPlot(svg); return svg;
+}
+function drawPlot(svg) {
+  const pts = LOSS.map((v, i) => `${(i / 59) * 200},${60 - v * 55}`).join(' ');
+  svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="#8fdc9f" stroke-width="1.4" vector-effect="non-scaling-stroke"/>` +
+    (svg.dataset.axis === '1' ? '<text x="2" y="9" fill="#777" font-size="7">1.0</text><text x="2" y="58" fill="#777" font-size="7">0</text>' : '');
+}
+function spark(id) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.classList.add('spark'); svg.setAttribute('viewBox', '0 0 120 18'); svg.setAttribute('preserveAspectRatio', 'none');
+  svg.innerHTML = ACT[id].map((v, i) => `<rect x="${i * 4}" y="${18 - v * 16}" width="3" height="${v * 16}" fill="#6b8fb0"/>`).join(''); return svg;
+}
+setInterval(() => {
+  LOSS.shift(); LOSS.push(Math.max(0.03, LOSS[LOSS.length - 1] * 0.995 + (Math.random() - 0.5) * 0.03));
+  document.querySelectorAll('svg.plot').forEach(drawPlot);
+  document.querySelectorAll('.lastv').forEach(e => e.textContent = LOSS[LOSS.length - 1].toFixed(3));
+}, 700);
+
+// ---------- hover controls: around the item, never reflowing ----------
+let CTL = null;
+function hideControls() { if (CTL) { CTL.remove(); CTL = null; } document.querySelectorAll('.capped-t,.capped-b').forEach(e => e.classList.remove('capped-t', 'capped-b')); }
+function showControls() {
+  hideControls();
+  const it = ITEMS.find(x => x.id === S.hover); if (!it) return;
+  const el = document.querySelector(`.item[data-id="${it.id}"]`); if (!el) return;
+  // A row only offers ⤢ inline; profile controls belong to cards.
+  if (profileOf(it) === ROW) return;
+  const sb = document.getElementById('sidebar');
+  const ctl = h('div', 'ctl' + (K.place === 'inside' ? ' inside' : ''));
+  const names = profileNames(it.type), cur = profileOf(it);
+  const prev = h('span', 'b', '‹'), next = h('span', 'b', '›');
+  prev.onclick = e => { e.stopPropagation(); cycle(it, -1); }; next.onclick = e => { e.stopPropagation(); cycle(it, 1); };
+  // The profile name is faded when inherited and normal when set on this card.
+  const name = h('span', 'pname' + (sourceOf(it) === 'here' ? '' : ' inherited'), cur + (modified(it) ? '<span class="mod">*</span>' : ''));
+  bindTip(name, sourceOf(it) === 'here' ? 'Set on this card' : `Inherited: ${sourceText(it)}`);
+  const dots = h('span', 'dots');
+  names.forEach(n => { const d = h('span', 'dot' + (n === cur ? ' on' : '')); d.title = n; d.onclick = e => { e.stopPropagation(); S.card[it.id].profile = n; S.card[it.id].edits = {}; if (n !== ROW) S.lastProfile[it.id] = n; log(`${it.name}: profile → ${n}`); render(); }; dots.append(d); });
+  if (K.switcher !== 'dots') ctl.append(prev, name, next);
+  if (K.switcher !== 'arrows') ctl.append(dots);
+  const fb = h('span', 'b' + (S.pop === it.id ? ' on' : ''), '⚙'); fb.onclick = e => { e.stopPropagation(); S.pop = S.pop === it.id ? null : it.id; render(); };
+  const shrink = h('span', 'b', '⤡'); shrink.onclick = e => { e.stopPropagation(); toggleCard(it); }; bindTip(shrink, 'Back to row');
+  if (cur !== ROW) ctl.append(fb, shrink);
+  bindTip(fb, 'Features');
+  ctl.onmouseleave = e => { if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest(`.item[data-id="${it.id}"],.pop`)) return; S.hover = null; hideControls(); };
+  sb.append(ctl);
+  // Position relative to the sidebar's scrolled content. Auto flips below when
+  // there is no room above within the visible sidebar.
+  const er = el.getBoundingClientRect(), sr = sb.getBoundingClientRect();
+  const top = er.top - sr.top + sb.scrollTop, left = er.left - sr.left;
+  const cw = ctl.offsetWidth, ch = ctl.offsetHeight;
+  let x = left + er.width - cw, y;
+  if (K.place === 'cap' && cur !== ROW) {
+    // The cap is part of the card: same width, background and border, joined
+    // along the card's edge. It overlays what is above (or below at the top
+    // edge) instead of pushing it.
+    const below = er.top - sr.top < ch + 4;
+    ctl.classList.add('cap', below ? 'capb' : 'capt'); el.classList.add(below ? 'capped-b' : 'capped-t');
+    ctl.style.width = er.width + 'px';
+    x = left; y = below ? top + er.height - 1 : top - ctl.offsetHeight + 1;
+    ctl.dataset.flip = below ? 'below' : 'above';
+  }
+  else if (K.place === 'inside') { y = top + 3; x = left + er.width - cw - 3; }
+  else if (K.place === 'side') { x = left + er.width + 2; y = top; ctl.style.flexDirection = 'column'; ctl.querySelectorAll('.pname,.src').forEach(n => n.remove()); }
+  else {
+    const roomAbove = er.top - sr.top >= ch + 4;
+    y = (K.place === 'above' || roomAbove) ? top - ch - 2 : top + er.height + 2;
+    ctl.dataset.flip = roomAbove || K.place === 'above' ? 'above' : 'below';
+  }
+  ctl.style.left = Math.max(2, Math.min(x, sb.clientWidth - ctl.offsetWidth - 2)) + 'px'; ctl.style.top = y + 'px';
+  CTL = ctl;
+}
+// keyboard and wheel cycling while hovering an item
+addEventListener('keydown', e => { const it = ITEMS.find(x => x.id === S.hover); if (!it) return; if (e.key === ']') cycle(it, 1); if (e.key === '[') cycle(it, -1); if (e.key === 'Escape') { S.pop = null; render(); } });
+addEventListener('wheel', e => { const it = ITEMS.find(x => x.id === S.hover); if (!it || !e.altKey) return; e.preventDefault(); cycle(it, e.deltaY > 0 ? 1 : -1); }, {passive: false});
+
+// ---------- features popover ----------
+function popover() {
+  const it = ITEMS.find(x => x.id === S.pop); if (!it) return null;
+  const f = features(it); if (!f) return null;
+  const p = h('div', 'pop' + (K.pop === 'rad' ? ' rad' : ''));
+  p.append(h('div', 'ph', `<span>${TYPES[it.type] === TYPES.view ? 'Mirror' : it.type.replace('_', ' ')} features</span><span>${profileOf(it)}${modified(it) ? ' (modified)' : ''} · ${sourceText(it)}</span>`));
+  for (const ft of TYPES[it.type].features) {
+    const r = h('div', 'fr'); r.append(h('span', '', ft.label));
+    if (ft.values) {
+      const seg = h('span', 'seg');
+      for (const v of ft.values) { const s = h('span', (f[ft.k] || ft.values[0]) === v ? 'on' : '', v); s.onclick = () => edit(it, ft.k, v); seg.append(s); }
+      r.append(seg);
+    } else { const sw = h('span', 'sw' + (f[ft.k] ? ' on' : '')); sw.onclick = () => edit(it, ft.k, !f[ft.k]); r.append(sw); }
+    p.append(r);
+  }
+  const acts = h('div', 'acts');
+  const act = (label, run) => { const s = h('span', '', label); s.onclick = run; acts.append(s); };
+  act('Reset to profile', () => { S.card[it.id].edits = {}; log(`${it.name}: reset to ${profileOf(it)}`); render(); });
+  act(`Save as profile…`, () => log(`save as new profile for all ${it.type}s (not built: would ask for a name)`));
+  act(`Use ${profileOf(it)} for this group`, () => { S.group[it.type] = profileOf(it); for (const x of ITEMS) if (x.type === it.type) S.card[x.id].profile = null; log(`group: ${it.type}s default to ${profileOf(it)}`); render(); });
+  act(`…for all ${it.type}s`, () => { S.typeDefault[it.type] = profileOf(it); delete S.group[it.type]; for (const x of ITEMS) if (x.type === it.type) S.card[x.id].profile = null; log(`type default: ${it.type}s → ${profileOf(it)}`); render(); });
+  p.append(acts);
+  p.onmouseleave = e => { if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.item,.ctl')) return; };
+  return p;
+}
+function edit(it, k, v) {
+  const base = TYPES[it.type].profiles[profileOf(it)];
+  const c = S.card[it.id];
+  if ((base[k] || (TYPES[it.type].features.find(f => f.k === k).values ? TYPES[it.type].features.find(f => f.k === k).values[0] : false)) === v) delete c.edits[k]; else c.edits[k] = v;
+  if (!c.profile) c.profile = profileOf(it);
+  log(`${it.name}: ${k} → ${v}${modified(it) ? ' (profile modified)' : ''}`); render();
+}
+
+// ---------- tooltip, render, panel ----------
+const tip = document.getElementById('tip');
+function bindTip(el, text) {
+  el.addEventListener('mouseenter', () => { tip.textContent = text; tip.style.display = 'block'; const r = el.getBoundingClientRect(); tip.style.left = r.left + 'px'; tip.style.top = (r.bottom + 6) + 'px'; });
+  el.addEventListener('mouseleave', () => tip.style.display = 'none');
+}
+let POP = null;
+function render() {
+  const sb = document.getElementById('sidebar'); const scroll = sb.scrollTop; sb.replaceChildren(); sb.style.width = K.width + 'px';
+  sb.append(h('div', 'sh', 'Pinned'));
+  const g = h('div', 'grp'); for (const it of ITEMS) g.append(itemEl(it)); sb.append(g);
+  sb.append(h('div', 'sh', 'Workspaces'));
+  const g2 = h('div', 'grp'); g2.style.borderColor = 'transparent';
+  for (const n of ['Workspace 1', 'scratch', 'notes', 'deploy', 'ops']) g2.append(h('div', 'item', `<div class="line"><span class="ic">▢</span><span class="nm">${n}</span><span class="st live">•</span></div>`));
+  sb.append(g2);
+  sb.scrollTop = scroll;
+  if (POP) { POP.remove(); POP = null; }
+  const p = popover();
+  if (p) {
+    document.body.append(p); POP = p;
+    const el = document.querySelector(`.item[data-id="${S.pop}"]`), r = el.getBoundingClientRect();
+    const left = Math.min(r.right + 8, innerWidth - p.offsetWidth - 8), top = Math.max(8, Math.min(r.top, innerHeight - p.offsetHeight - 8));
+    p.style.left = left + 'px'; p.style.top = top + 'px';
+  }
+  if (S.hover) showControls(); else hideControls();
+  renderWork(); renderPanel();
+}
+addEventListener('mousedown', e => { if (S.pop && !e.target.closest('.pop,.ctl')) { S.pop = null; render(); } });
+function renderWork() {
+  document.getElementById('work').innerHTML = `<h1>Pinned cards: features and profiles</h1>
+  <p>Each pinned item is a ghost. ⤢ on a hovered row turns it into a card that <b>replaces</b> the row in place; ⤡ in the card's controls turns it back. Clicking an item focuses its source.</p>
+  <p>Hover an item for controls that float around it without moving anything: <b>‹ profile ›</b> flicks through the subject type's profiles, and <b>⚙</b> opens its features (switches and small enums). Editing a feature marks the profile modified (<span style="color:#e0b34a">*</span>).</p>
+  <p>The profile name in the controls is <span style="color:#5f5f5f">faded</span> when inherited (from the type or group default) and normal when set on this card. The ⚙ popover says which, and can push the current profile up to the group or to every item of that type.</p>
+  <p>While hovering: <kbd>[</kbd> <kbd>]</kbd> or <kbd>Alt</kbd>+wheel cycle profiles; <kbd>Esc</kbd> closes the popover. Scroll the sidebar so a card is at the top to see the controls flip below.</p>`;
+}
+function renderPanel() {
+  const p = document.getElementById('panel'); p.replaceChildren(); p.append(h('h2', '', 'Knobs'));
+  for (const kn of KNOBS) {
+    const row = h('div', 'k'); row.append(h('label', '', kn.label));
+    const sel = h('select');
+    for (const [v, l] of Object.entries(kn.opts)) { const o = h('option', '', l); o.value = v; if (K[kn.k] === v) o.selected = true; sel.append(o); }
+    sel.onchange = () => { K[kn.k] = sel.value; if (kn.k === 'rowProfile') for (const it of ITEMS) S.card[it.id] = {profile: K.rowProfile === 'profile' ? ROW : null, expanded: false, edits: {}}; render(); };
+    row.append(sel); p.append(row); if (kn.note) p.append(h('div', 'note', kn.note));
+  }
+  p.append(h('h2', '', 'Effective defaults'));
+  p.append(h('div', 'note', Object.entries(S.typeDefault).map(([t, v]) => `${t}: ${S.group[t] ? S.group[t] + ' (group)' : v}`).join('<br>')));
+  const l = h('div', ''); l.id = 'log'; p.append(l); renderLog();
+}
+function renderLog() { const l = document.getElementById('log'); if (l) l.textContent = 'log\n' + S.log.join('\n'); }
+render();
+</script>
+</body>
+</html>
