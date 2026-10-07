@@ -1129,9 +1129,9 @@ uishell_sidebar_close_label(UIShell_SidebarCloseKind kind)
 internal void
 uishell_sidebar_close_workspace(RD_WindowState *ws, AndamentoNode node, UIShell_SidebarCloseKind kind)
 {
-  if(kind == UIShell_SidebarCloseKind_None) { return; }
-  uishell_cmd(kind == UIShell_SidebarCloseKind_Detach ? "detach_workspace" : "close_workspace",
-              .window = ws->cfg_id, .cfg = node.workspace_id);
+  // uishell_cmd takes a string literal: str8_lit of a ternary is a pointer's size.
+  if(kind == UIShell_SidebarCloseKind_Detach) { uishell_cmd("detach_workspace", .window = ws->cfg_id, .cfg = node.workspace_id); }
+  if(kind == UIShell_SidebarCloseKind_Destroy) { uishell_cmd("close_workspace", .window = ws->cfg_id, .cfg = node.workspace_id); }
 }
 
 internal size_t

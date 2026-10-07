@@ -19,6 +19,18 @@ uishell_workspace_lifecycle_find(UIShell_SidebarState *state, String8 entity_id,
   return 0;
 }
 
+internal U64
+uishell_workspace_lifecycle_queued(String8 name, CFG_ID cfg)
+{
+  U64 count = 0;
+  for(U64 list = 0; list < ArrayCount(rd_state->cmds); list++)
+  {
+    for(UIShell_CmdNode *n = rd_state->cmds[list].first; n; n = n->next)
+    { count += str8_match(n->cmd.name, name, 0) && n->cmd.regs->cfg == cfg; }
+  }
+  return count;
+}
+
 internal B32
 uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
 {
@@ -150,6 +162,48 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
           }
         }
       }
+    }
+    // Clicking the affordance queues its command for that row's workspace:
+    // hover to reveal it, then press and release on the button itself.
+    for(U32 target = 0; target < 2; target++)
+    {
+      // The subject is a tree chip and an Attention row; the row hosts the button.
+      Vec2F32 hover_at = target == 0 ? row_centers[0] : row_centers[1];
+      Vec2F32 button = {0};
+      String8 command = target == 0 ? str8_lit("detach_workspace") : str8_lit("close_workspace");
+      CFG_ID expected = target == 0 ? subject_id : loose_id;
+      U64 queued_before = uishell_workspace_lifecycle_queued(command, expected);
+      // Frames 0-1 hover the row (the affordance follows the previous frame's
+      // row rect), 2 presses and 3 releases on the button, 4 settles.
+      for(U32 frame = 0; frame < 5; frame++)
+      {
+        UI_IconInfo icons = ws->ui->icon_info;
+        UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
+        Vec2F32 at = frame < 2 || button.x == 0 ? hover_at : button;
+        if(frame == 2 || frame == 3)
+        {
+          event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 2 ? UI_EventKind_Press : UI_EventKind_Release,
+                               .pos = at, .timestamp_us = 5000000+frame*50000};
+          events.first = events.last = &event; events.count = 1;
+        }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        ui_state->mouse = at;
+        UIShell_RegsScope(.window = window->id)
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+        { uishell_sidebar_ui(r2f32p(0, 0, 320, 900), &split); }
+        ui_end_build();
+        for(UI_Box *box = test->root; frame == 1 && !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+        {
+          for(U64 r = target == 0 ? 1 : 0; r < (target == 0 ? row_key_count : 1); r++)
+          {
+            if(!ui_box_is_nil(box->parent) && ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###close_%S", row_keys[r])))
+            { button = center_2f32(box->rect); }
+          }
+        }
+      }
+      B32 queued = uishell_workspace_lifecycle_queued(command, expected) > queued_before;
+      LifecycleCheck(button.x > 0, target == 0 ? "detach button has a hit rect" : "close button has a hit rect");
+      LifecycleCheck(queued, target == 0 ? "clicking detach queues detach_workspace" : "clicking × queues close_workspace");
     }
     LifecycleCheck(row_centers[0].x > 0 && row_centers[1].x > 0, "subject and subjectless rows are rendered");
     LifecycleCheck(!close_seen[0], "no close affordance without hover");
