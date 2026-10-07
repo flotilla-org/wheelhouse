@@ -96,8 +96,8 @@ workspaces under Workspaces, which opens with a New workspace row; live catalog
 entries appear when connected to `pm connect`. Hovering a row shows detach or
 close in the margin beside it; hold it for the row's menu. Workspace previews
 are available on hover, with the full overview and Reveal in the toolbar.
-**Window →
-Workspace Settings** edits the current workspace's properties, including its name.
+**Window → Workspace Settings** edits the current workspace's properties,
+including its name.
 Old saved `sidebar_mode` values no longer select a different sidebar.
 
 Hover cards appear after 300 ms, then swap immediately as you scan rows or

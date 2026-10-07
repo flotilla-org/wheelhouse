@@ -1268,8 +1268,6 @@ uishell_sidebar_close_workspace(RD_WindowState *ws, AndamentoNode node, UIShell_
   if(kind == UIShell_SidebarCloseKind_Destroy) { uishell_cmd("close_workspace", .window = ws->cfg_id, .cfg = node.workspace_id); }
 }
 
-// Rows drag from their body past the shared threshold. The UIKey slot keeps
-// docking targets out of it; render places and commits the drop.
 // A detached workspace keeps its layout; its menu also offers to discard it.
 internal void
 uishell_sidebar_discard_button(RD_WindowState *ws, AndamentoNode node, UIShell_SidebarCloseKind close_kind)
@@ -1320,6 +1318,8 @@ uishell_sidebar_margin_close(UIShell_SidebarState *state, RD_WindowState *ws, An
   }
   U64 now = now_time_us();
   if(ui_pressed(sig)) { state->margin_hold_key = sig.box->key; state->margin_hold_us = now; }
+  // Any release ends the hold, including one dragged off the control.
+  if(!ui_dragging(sig) && ui_key_match(state->margin_hold_key, sig.box->key)) { state->margin_hold_key = ui_key_zero(); }
   if(ui_dragging(sig) && ui_key_match(state->margin_hold_key, sig.box->key))
   {
     if(now-state->margin_hold_us >= UIShell_MarginHoldUS)
@@ -1343,6 +1343,8 @@ struct UIShell_RowDragSibling
   Rng2F32 row, extent;
 };
 
+// Rows drag from their body past the shared threshold. The UIKey slot keeps
+// docking targets out of it; render places and commits the drop.
 internal void
 uishell_sidebar_row_drag_from(UIShell_SidebarState *state, RD_WindowState *ws,
                               AndamentoNode node, U64 node_index, UI_Signal sig)
@@ -2265,12 +2267,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         F32 project_children_y = 0;
         ui_spacer(ui_px(body_top_padding, 1));
         F32 row_y = body_top_padding;
+        // A collapsed body isn't built, which leaves new-workspace to the action row.
         if(uishell_sidebar_section_hosts_chrome(key))
         {
           // Chrome resolution reads this next frame (ADR-0006).
           ws->chrome_section_header_frame = rd_state->frame_index+1;
-          if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SectionHeader)
-          { uishell_sidebar_new_workspace_entry(split, row_height, side_margin); }
+          uishell_sidebar_new_workspace_entry(split, row_height, side_margin);
           row_y += row_height;
         }
         for(U64 i = sections[n]; i < end; i++)
