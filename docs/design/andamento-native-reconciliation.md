@@ -250,6 +250,9 @@ parity work.
 
 ### Close and Reveal implemented
 
+> Superseded for Close and new-workspace by [#229](https://github.com/flotilla-org/wheelhouse/issues/229),
+> described under "Detach and close from the sidebar" below. Reveal is unchanged.
+
 Reveal workspace in sidebar, Close current workspace, and Workspace Overview
 form the trailing workspace control cluster. Their measured widths participate in titlebar placement and
 tab-strip insets. If relocated into the sidebar, they use a fixed action row;
@@ -286,6 +289,33 @@ than a far-right X that resembles window close. Its tooltip still names the
 operation and workspace. Closing a provider-backed workspace can leave a latent
 catalog entry; closing a local workspace need not do so. The icon does not change
 those existing close semantics.
+
+### Detach and close from the sidebar
+
+The titlebar no longer carries new-workspace or Close. Closing happens on the
+workspace's sidebar row, and the affordance says what is lost:
+
+- A workspace whose config records a subject (`sidebar_entity_kind`/`id`)
+  **detaches**. `detach_workspace` renames its config node to
+  `detached_workspace`, so it leaves the inventory, its views are released and
+  Andamento sees the row go latent. Materializing that entity again finds the
+  node and renames it back, restoring the layout the user left.
+- A subjectless workspace, or one whose subject has ended, is **closed**:
+  `close_workspace` releases the node.
+
+Hovering a row turns its status mark into the detach glyph (drawn 12 units
+wide to fit the 1.2em slot) or `×`; the rest of the row still focuses. Row and chip
+context menus offer the same item. From the palette both commands act on the
+Visible Workspace. Closing the last workspace is allowed: it leaves a fresh
+subjectless workspace until a permanent home workspace exists.
+
+New-workspace is placed by the chrome placement system in a section-header
+niche on Other workspaces (`andamento.unplaced-workspaces`). The niche counts
+as available when the sidebar drew that header in the previous frame, so a
+closed section falls back to the sidebar action row. Creating a workspace no
+longer resets the window's sidebar regions. Andamento emits the section even
+when empty (andamento#135). It carries no placement hints, so Wheelhouse places
+it after every declared region (see [section placement](../section-placement.md)).
 
 ### Project header separation and collapse motion
 

@@ -27,6 +27,10 @@
 # define UISHELL_APP_RESET_PANELS(window) ((void)(window))
 #endif
 
+#if !defined(UISHELL_APP_DEFAULT_WORKSPACE_PANELS)
+# define UISHELL_APP_DEFAULT_WORKSPACE_PANELS(window, owner) ((void)(window), (void)(owner))
+#endif
+
 #if !defined(UISHELL_APP_SAVE_BEFORE_EXIT)
 # define UISHELL_APP_SAVE_BEFORE_EXIT() ((void)0)
 #endif

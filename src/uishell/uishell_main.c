@@ -111,6 +111,7 @@
 #include "uishell/uishell_hosting_diagnostics.c"
 #include "uishell/uishell_shared_ui_diagnostics.c"
 #include "uishell/uishell_managed_content_diagnostics.c"
+#include "uishell/uishell_workspace_lifecycle_diagnostics.c"
 #include "uishell/uishell_overview_benchmark.c"
 
 ////////////////////////////////
@@ -279,6 +280,7 @@ entry_point(CmdLine *cmd_line)
         {
           RD_WindowState *ws = rd_state->first_window_state;
           B32 ok = ws != &rd_nil_window_state && uishell_sidebar_diagnostics(cfg_node_from_id(ws->cfg_id));
+          ok = ws != &rd_nil_window_state && uishell_workspace_lifecycle_diagnostics(cfg_node_from_id(ws->cfg_id)) && ok;
           abort_self(ok ? 0 : 1);
         }
         if(run_terminal_glyph_diagnostics || terminal_glyph_fixture_ppm_path.size != 0)

@@ -375,12 +375,8 @@ uishell_app_file_menu_specs(void)
 //~ rjf: Shell Default Panels
 
 internal void
-uishell_reset_panels(CFG_Node *window)
+uishell_default_workspace_panels(CFG_Node *window, CFG_Node *panels_owner)
 {
-  Temp scratch = scratch_begin(0, 0);
-  uishell_sidebar_reset_regions(window);
-  UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_window(scratch.arena, window);
-  CFG_Node *panels_owner = workspace_mount.owner_cfg;
   CFG_Node *old_panels = cfg_node_child_from_string(panels_owner, str8_lit("panels"));
   cfg_node_release(rd_state->cfg, old_panels);
   cfg_node_child_from_string_or_alloc(rd_state->cfg, panels_owner, str8_lit("split_x"));
@@ -398,9 +394,20 @@ uishell_reset_panels(CFG_Node *window)
   {
     ws->window_layout_reset = 1;
   }
+}
+
+internal void
+uishell_reset_panels(CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  uishell_sidebar_reset_regions(window);
+  UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_window(scratch.arena, window);
+  uishell_default_workspace_panels(window, workspace_mount.owner_cfg);
   scratch_end(scratch);
 }
 
 #define UISHELL_APP_RESET_PANELS(window) uishell_reset_panels(window)
+// A new workspace gets default panels without resetting the window's sidebar.
+#define UISHELL_APP_DEFAULT_WORKSPACE_PANELS(window, owner) uishell_default_workspace_panels((window), (owner))
 
 #endif // UISHELL_META_H

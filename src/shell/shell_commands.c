@@ -1607,6 +1607,41 @@ uishell_dispatch_font_command(String8 name)
   return result;
 }
 
+// A subjectless workspace, selected, with default panels. Window sidebar
+// regions are left alone; they are not part of the new workspace. Its default
+// name takes the lowest number no open or detached workspace uses, so closing
+// workspaces never leads to two with the same name.
+internal CFG_Node *
+uishell_new_workspace(CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  // Detached workspaces count too: they reopen under their saved name.
+  U64 number = 1;
+  for(B32 taken = 1; taken; number += taken)
+  {
+    taken = 0;
+    String8 name = push_str8f(scratch.arena, "Workspace %I64u", number);
+    for(CFG_Node *n = window->first; n != &cfg_nil_node && !taken; n = n->next)
+    {
+      taken = ((str8_match(n->string, str8_lit("workspace"), 0) || str8_match(n->string, str8_lit("detached_workspace"), 0)) &&
+               str8_match(rd_label_from_cfg(n), name, 0));
+    }
+  }
+  CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+  CFG_Node *label = cfg_node_new(rd_state->cfg, workspace, str8_lit("label"));
+  cfg_node_newf(rd_state->cfg, label, "Workspace %I64u", number);
+  RD_WindowState *ws = rd_window_state_from_cfg(window);
+  if(ws != &rd_nil_window_state)
+  {
+    ws->root_controlled_split_initialized = 1;
+    ws->root_controlled_split_selected_workspace_id = workspace->id;
+    ws->active_panel_id = 0;
+  }
+  UISHELL_APP_DEFAULT_WORKSPACE_PANELS(window, workspace);
+  scratch_end(scratch);
+  return workspace;
+}
+
 internal B32
 uishell_dispatch_window_command(String8 name)
 {
@@ -1643,7 +1678,6 @@ uishell_dispatch_window_command(String8 name)
   }
   else if(str8_match(name, str8_lit("new_workspace"), 0))
   {
-    Temp scratch = scratch_begin(0, 0);
     CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
     if(window == &cfg_nil_node)
     {
@@ -1651,20 +1685,8 @@ uishell_dispatch_window_command(String8 name)
     }
     if(window != &cfg_nil_node)
     {
-      CFG_NodePtrList workspaces = cfg_node_child_list_from_string(scratch.arena, window, str8_lit("workspace"));
-      CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-      CFG_Node *label = cfg_node_new(rd_state->cfg, workspace, str8_lit("label"));
-      cfg_node_newf(rd_state->cfg, label, "Workspace %I64u", workspaces.count+1);
-      RD_WindowState *ws = rd_window_state_from_cfg(window);
-      if(ws != &rd_nil_window_state)
-      {
-        ws->root_controlled_split_initialized = 1;
-        ws->root_controlled_split_selected_workspace_id = workspace->id;
-        ws->active_panel_id = 0;
-      }
-      UISHELL_APP_RESET_PANELS(window);
+      uishell_new_workspace(window);
     }
-    scratch_end(scratch);
   }
   else if(str8_match(name, str8_lit("select_workspace"), 0))
   {
@@ -1679,69 +1701,76 @@ uishell_dispatch_window_command(String8 name)
       ws->window_layout_reset = 1;
     }
   }
-  else if(str8_match(name, str8_lit("close_workspace"), 0))
+  else if(str8_match(name, str8_lit("close_workspace"), 0) ||
+          str8_match(name, str8_lit("detach_workspace"), 0))
   {
+    // Detach keeps a subject workspace's layout for the next materialization;
+    // detaching a subjectless workspace, or one whose subject ended, destroys it. Close always destroys,
+    // including a subject workspace, whose row then opens a fresh layout.
+    B32 detach = str8_match(name, str8_lit("detach_workspace"), 0);
     Temp scratch = scratch_begin(0, 0);
     CFG_Node *workspace = cfg_node_from_id(uishell_regs()->cfg);
     CFG_Node *window = workspace != &cfg_nil_node ? rd_window_from_cfg(workspace) : cfg_node_from_id(uishell_regs()->window);
+    if(workspace == &cfg_nil_node && window != &cfg_nil_node)
+    {
+      // From the command palette, act on the Visible Workspace.
+      UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+      if(split.inventory.selected != 0) { workspace = cfg_node_from_id(split.inventory.selected->id); }
+    }
     if(window != &cfg_nil_node &&
        workspace != &cfg_nil_node &&
        (str8_match(workspace->string, str8_lit("workspace"), 0) ||
         workspace == window))
     {
       UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
-      if(split.inventory.count > 1)
+      UIShell_MaterializedWorkspace *closing = 0;
+      for(UIShell_MaterializedWorkspace *w = split.inventory.first; w != 0; w = w->next)
       {
-        UIShell_MaterializedWorkspace *closing = 0;
-        for(UIShell_MaterializedWorkspace *w = split.inventory.first; w != 0; w = w->next)
+        if(w->id == workspace->id)
         {
-          if(w->id == workspace->id)
-          {
-            closing = w;
-            break;
-          }
+          closing = w;
+          break;
         }
-        if(uishell_controlled_split_workspace_can_close(&split, closing))
+      }
+      if(uishell_controlled_split_workspace_can_close(&split, closing))
+      {
+        UIShell_MaterializedWorkspace *next_selected = split.inventory.selected;
+        if(next_selected == 0 || next_selected == closing)
         {
-          UIShell_MaterializedWorkspace *next_selected = split.inventory.selected;
-          if(next_selected == 0 || next_selected == closing)
-          {
-            next_selected = closing->next;
-            if(next_selected == 0)
-            {
-              next_selected = closing->prev;
-            }
-          }
-          if(next_selected == 0 || next_selected == closing)
-          {
-            for(UIShell_MaterializedWorkspace *w = split.inventory.first; w != 0; w = w->next)
-            {
-              if(w != closing)
-              {
-                next_selected = w;
-                break;
-              }
-            }
-          }
-          RD_WindowState *ws = rd_window_state_from_cfg(window);
-          if(ws != &rd_nil_window_state)
-          {
-            ws->root_controlled_split_initialized = 1;
-            ws->root_controlled_split_selected_workspace_id = next_selected != 0 ? next_selected->id : window->id;
-            ws->window_layout_reset = 1;
-          }
-          if(workspace == window)
-          {
-            // The window-backed workspace is the window's legacy layout payload.
-            // Closing it removes that payload; window-level metadata such as
-            // `label` intentionally remains attached to the window node.
-            cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
-            cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
-          }
-          else
-          {
-            cfg_node_release(rd_state->cfg, workspace);
-          }
+          next_selected = closing->next ? closing->next : closing->prev;
+        }
+        if(workspace == window)
+        {
+          // Detach does not apply here: the legacy workspace has no subject.
+          // The window-backed workspace is the window's legacy layout payload.
+          // Closing it removes that payload; window-level metadata such as
+          // `label` intentionally remains attached to the window node.
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
+        }
+        else if(detach && uishell_workspace_cfg_has_subject(workspace) &&
+                !uishell_sidebar_workspace_subject_ended(rd_window_state_from_cfg(window), workspace->id))
+        {
+          // TODO(#159): a detached node whose subject never returns is kept
+          // forever; prune it with the retained-workspace expiry policy.
+          cfg_node_equip_string(rd_state->cfg, workspace, str8_lit("detached_workspace"));
+        }
+        else
+        {
+          cfg_node_release(rd_state->cfg, workspace);
+        }
+        RD_WindowState *ws = rd_window_state_from_cfg(window);
+        if(next_selected == 0)
+        {
+          // Until a permanent home workspace exists, the last close leaves a
+          // fresh subjectless workspace rather than an empty Workspace Region.
+          uishell_new_workspace(window);
+        }
+        else if(ws != &rd_nil_window_state)
+        {
+          ws->root_controlled_split_initialized = 1;
+          ws->root_controlled_split_selected_workspace_id = next_selected->id;
+          ws->window_layout_reset = 1;
         }
       }
     }

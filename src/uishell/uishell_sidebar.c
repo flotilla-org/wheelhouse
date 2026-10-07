@@ -800,13 +800,16 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     {
       // Reuse a previously created fixture workspace after switching modes or
       // restarting the app; its persisted identity is independent of its label.
+      // A detached workspace reattaches with the layout it was detached with.
       for(CFG_Node *c = split->owner_cfg->first; c != &cfg_nil_node; c = c->next)
       {
-        if(str8_match(c->string, str8_lit("workspace"), 0) &&
+        if((str8_match(c->string, str8_lit("workspace"), 0) || str8_match(c->string, str8_lit("detached_workspace"), 0)) &&
            str8_match(cfg_node_child_from_string(c, str8_lit("sidebar_entity_kind"))->first->string, uishell_sidebar_string(effect.entity_kind), 0) &&
            str8_match(cfg_node_child_from_string(c, str8_lit("sidebar_entity_id"))->first->string, uishell_sidebar_string(effect.entity_id), 0))
         { workspace = c; break; }
       }
+      if(str8_match(workspace->string, str8_lit("detached_workspace"), 0))
+      { cfg_node_equip_string(rd_state->cfg, workspace, str8_lit("workspace")); }
       if(workspace == &cfg_nil_node && effect.recipe.len != 0)
       {
         workspace = cfg_node_new(rd_state->cfg, split->owner_cfg, str8_lit("workspace"));
@@ -1079,6 +1082,58 @@ uishell_sidebar_node_status(UIShell_SidebarState *state, AndamentoNode node)
   return uishell_sidebar_string(field.text);
 }
 
+typedef enum UIShell_SidebarCloseKind
+{
+  UIShell_SidebarCloseKind_None,
+  UIShell_SidebarCloseKind_Detach,
+  UIShell_SidebarCloseKind_Destroy,
+}
+UIShell_SidebarCloseKind;
+
+// The affordance says what closing loses. A workspace with a live or unobserved
+// subject detaches: its row stays and reopens the same layout. An ended subject
+// or a subjectless workspace cannot come back, so closing destroys it.
+internal UIShell_SidebarCloseKind
+uishell_sidebar_close_kind(AndamentoNode node, String8 status)
+{
+  if(node.is_section || node.state != ANDAMENTO_LIVE || node.workspace_id == 0) { return UIShell_SidebarCloseKind_None; }
+  CFG_Node *workspace = cfg_node_from_id(node.workspace_id);
+  if(workspace == &cfg_nil_node) { return UIShell_SidebarCloseKind_None; }
+  if(str8_match(status, str8_lit("ended"), 0) || !uishell_workspace_cfg_has_subject(workspace))
+  { return UIShell_SidebarCloseKind_Destroy; }
+  return UIShell_SidebarCloseKind_Detach;
+}
+
+// Whether the sidebar shows this open workspace's subject as authoritatively
+// ended. Commands use it so a palette detach never keeps an unreachable layout.
+internal B32
+uishell_sidebar_workspace_subject_ended(RD_WindowState *ws, CFG_ID workspace_id)
+{
+  UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
+  for(U64 i = 0; state && state->snapshot && i < andamento_snapshot_node_count(state->snapshot); i++)
+  {
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    if(!node.is_section && node.state == ANDAMENTO_LIVE && node.workspace_id == workspace_id &&
+       str8_match(uishell_sidebar_node_status(state, node), str8_lit("ended"), 0))
+    { return 1; }
+  }
+  return 0;
+}
+
+internal String8
+uishell_sidebar_close_label(UIShell_SidebarCloseKind kind)
+{
+  return kind == UIShell_SidebarCloseKind_Detach ? str8_lit("Detach workspace") : str8_lit("Close workspace");
+}
+
+internal void
+uishell_sidebar_close_workspace(RD_WindowState *ws, AndamentoNode node, UIShell_SidebarCloseKind kind)
+{
+  if(kind == UIShell_SidebarCloseKind_None) { return; }
+  uishell_cmd(kind == UIShell_SidebarCloseKind_Detach ? "detach_workspace" : "close_workspace",
+              .window = ws->cfg_id, .cfg = node.workspace_id);
+}
+
 internal size_t
 uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
                              AndamentoNode node, U64 node_index, UI_Signal sig, String8 context,
@@ -1091,6 +1146,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   B32 subject = str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0);
   size_t copy_url = subject ? andamento_snapshot_copy_url_action(state->snapshot, node_index) : ANDAMENTO_NONE;
   B32 ended = str8_match(uishell_sidebar_node_status(state, node), str8_lit("ended"), 0);
+  UIShell_SidebarCloseKind close_kind = uishell_sidebar_close_kind(node, uishell_sidebar_node_status(state, node));
   B32 can_activate = node.activate != ANDAMENTO_NONE && (node.openable || node.state == ANDAMENTO_LIVE || copy_url != ANDAMENTO_NONE);
   Temp scratch = scratch_begin(0, 0);
   sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
@@ -1123,6 +1179,19 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
         else { wm_set_clipboard_text(full_label); }
         ui_ctx_menu_close();
       }
+      if(close_kind != UIShell_SidebarCloseKind_None && ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
+      { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
+    }
+    if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
+  }
+  else if(close_kind != UIShell_SidebarCloseKind_None)
+  {
+    // Rows show this on hover too; inline action chips have only this menu.
+    UI_Key menu_key = ui_key_from_stringf(sig.box->key, "workspace_menu");
+    UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+    {
+      if(ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
+      { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
     }
     if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
   }
@@ -1432,6 +1501,14 @@ struct UIShell_SidebarRenderParams
 internal F32 uishell_sidebar_footer_height(RD_WindowState *ws);
 internal void uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split);
 
+// Andamento's fallback section holds subjectless workspaces. Its header hosts
+// workspace creation, so it stays visible even with no rows or controls.
+internal B32
+uishell_sidebar_section_hosts_chrome(String8 key)
+{
+  return str8_match(key, str8_lit("andamento.unplaced-workspaces"), 0);
+}
+
 internal void
 uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_SidebarRenderParams params)
 {
@@ -1631,7 +1708,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   // the remainder. Headers stay outside all scrolling content.
   // Empty sections have no useful controls or content to reveal.
   for(U64 n = 0; n < section_count; n++)
-  { if(!rows[n] && !nodes[sections[n]].control_count) { available += row_height; } }
+  {
+    if(!rows[n] && !nodes[sections[n]].control_count &&
+       !uishell_sidebar_section_hosts_chrome(uishell_sidebar_string(nodes[sections[n]].key))) { available += row_height; }
+  }
   F32 remaining = available;
   for(U64 n = 0; n < section_count; n++)
   {
@@ -1653,7 +1733,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     {
       AndamentoNode *section_node = &nodes[sections[n]];
       if(section_panel ? !str8_match(only_section, uishell_sidebar_string(section_node->key), 0) :
-         (!rows[n] && !section_node->control_count)) { continue; }
+         (!rows[n] && !section_node->control_count &&
+          !uishell_sidebar_section_hosts_chrome(uishell_sidebar_string(section_node->key)))) { continue; }
       String8 key = uishell_sidebar_string(section_node->key);
       String8 title = uishell_sidebar_string(section_node->label);
       if(section_node->field_count)
@@ -1700,6 +1781,14 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             if(ui_hovering(sig)) UI_Tooltip
             { ui_state->tooltip_anchor_key = button->key; ui_label(uishell_sidebar_string(control.label)); }
           }
+        }
+        if(uishell_sidebar_section_hosts_chrome(key))
+        {
+          // Chrome resolution reads this next frame (ADR-0006).
+          ws->chrome_section_header_frame = rd_state->frame_index+1;
+          if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SectionHeader)
+            UI_PrefWidth(ui_em(1.7f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("")
+          { rd_chrome_build_new_workspace(split->owner_cfg); }
         }
         if(section_panel)
         {
@@ -2029,7 +2118,31 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                   UI_TextColor(color) { ui_label(badge); }
                 }
                 else if(project) { ui_spacer(ui_em(1.2f, 1)); }
-                else { ui_label(uishell_sidebar_status_mark(node, status)); }
+                else
+                {
+                  // Hovering the row turns its status mark into the close
+                  // affordance: detach keeps the workspace, × destroys it.
+                  UIShell_SidebarCloseKind close = uishell_sidebar_close_kind(node, status);
+                  B32 engaged = close != UIShell_SidebarCloseKind_None && contains_2f32(row->rect, ui_mouse()) &&
+                    !ui_any_ctx_menu_is_open() && !rd_drag_is_active();
+                  if(engaged) UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(3.f)
+                  {
+                    UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###close_%S",
+                      close == UIShell_SidebarCloseKind_Destroy ? str8_lit("×") : str8_zero(), node_key));
+                    if(close == UIShell_SidebarCloseKind_Detach) { ui_box_equip_custom_draw(sig.box, rd_workspace_detach_icon_draw, 0); }
+                    if(ui_hovering(sig)) UI_Tooltip
+                    {
+                      ui_state->tooltip_anchor_key = sig.box->key;
+                      ui_label(uishell_sidebar_close_label(close));
+                      B32 unplaced = str8_match(kind, str8_lit("andamento.workspace"), 0);
+                      ui_label(close == UIShell_SidebarCloseKind_Destroy ? str8_lit("The workspace and its layout are discarded.") :
+                               unplaced ? str8_lit("Its layout reopens when its subject is seen again.") :
+                               str8_lit("Its layout reopens from this entry."));
+                    }
+                    if(ui_clicked(sig)) { uishell_sidebar_close_workspace(ws, node, close); }
+                  }
+                  else { ui_label(uishell_sidebar_status_mark(node, status)); }
+                }
               }
             }
             ui_spacer(ui_px(2.f, 1));
@@ -2446,6 +2559,9 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
         uishell_sidebar_string(node.label),
         push_str8_copy(arena, uishell_sidebar_string(hints.default_host)),
         hints.has_order ? hints.order : (S64)count};
+      // Andamento always emits the unhinted workspace fallback. By index it
+      // would sort before every explicit order, so it goes last instead.
+      if(!hints.has_order && uishell_sidebar_section_hosts_chrome(region.key)) { region.order = max_S64; }
       if(node.field_count)
       { AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field, &field); region.title = uishell_sidebar_string(field.text); }
       region.title = push_str8_copy(arena, region.title);
@@ -2657,8 +2773,7 @@ uishell_sidebar_footer_height(RD_WindowState *ws)
 {
   B32 chrome = ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions ||
     ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions ||
-    ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions ||
-    ws->chrome_niche[RD_ChromeElementKind_CloseWorkspace] == RD_ChromeNiche_SidebarActions;
+    ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions;
   return floor_f32(ui_top_font_size()*2.2f)*(1+chrome);
 }
 
@@ -2690,8 +2805,7 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         {
           if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_new_workspace(split->owner_cfg); }
           ui_spacer(ui_pct(1, 0));
-          if(ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_workspace_action(split->owner_cfg, 0); }
-          if(ws->chrome_niche[RD_ChromeElementKind_CloseWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_workspace_action(split->owner_cfg, 1); }
+          if(ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_reveal_workspace(split->owner_cfg); }
           if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_overview_toggle(ws); }
         }
       }
