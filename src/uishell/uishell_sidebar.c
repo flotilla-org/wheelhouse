@@ -1283,20 +1283,28 @@ uishell_sidebar_discard_button(RD_WindowState *ws, AndamentoNode node, UIShell_S
 // discards it); holding opens the row's menu, which offers the other close.
 enum { UIShell_MarginHoldUS = 450000 };
 
-internal void
-uishell_sidebar_margin_close(UIShell_SidebarState *state, RD_WindowState *ws, AndamentoNode node,
-                             UIShell_SidebarCloseKind close, UI_Key entry_key, UI_Key menu_key)
+// Only the button belongs in the caller's floating, sized scope; the tooltip
+// and menu must not inherit it, so uishell_sidebar_margin_close handles them.
+internal UI_Signal
+uishell_sidebar_margin_button(AndamentoNode node, UIShell_SidebarCloseKind close)
 {
   Temp scratch = scratch_begin(0, 0);
-  String8 node_key = uishell_sidebar_string(node.key);
-  F32 em = ui_top_font_size();
   UI_Signal sig = {0};
   UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(3.f)
   {
     sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###close_%S",
-      close == UIShell_SidebarCloseKind_Destroy ? str8_lit("×") : str8_zero(), node_key));
+      close == UIShell_SidebarCloseKind_Destroy ? str8_lit("×") : str8_zero(), uishell_sidebar_string(node.key)));
   }
   if(close == UIShell_SidebarCloseKind_Detach) { ui_box_equip_custom_draw(sig.box, rd_workspace_detach_icon_draw, 0); }
+  scratch_end(scratch);
+  return sig;
+}
+
+internal void
+uishell_sidebar_margin_close(UIShell_SidebarState *state, RD_WindowState *ws, AndamentoNode node,
+                             UIShell_SidebarCloseKind close, UI_Signal sig, UI_Key entry_key, UI_Key menu_key)
+{
+  F32 em = ui_top_font_size();
   if(ui_hovering(sig) && !ui_dragging(sig)) UI_Tooltip
   {
     ui_state->tooltip_anchor_key = sig.box->key;
@@ -1324,7 +1332,6 @@ uishell_sidebar_margin_close(UIShell_SidebarState *state, RD_WindowState *ws, An
     else { rd_request_frame(); }
   }
   if(ui_clicked(sig)) { uishell_sidebar_close_workspace(ws, node, close); }
-  scratch_end(scratch);
 }
 
 // One sibling of the dragged row as built this frame, with last frame's rects.
@@ -2563,9 +2570,11 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                !ui_any_ctx_menu_is_open() && !rd_drag_is_active() && (held || contains_2f32(zone, ui_mouse())))
             {
               UI_Key menu_key = ui_key_from_stringf(entry_key, uishell_sidebar_is_subject(node) ? "subject_menu" : "workspace_menu");
+              UI_Signal sig = {0};
               UI_Parent(body) UI_FixedX(dim_2f32(region.viewport).x-side_margin) UI_FixedY(slot_y+2.f)
               UI_PrefWidth(ui_px(side_margin-2.f, 1)) UI_PrefHeight(ui_px(row_height-4.f, 1))
-              { uishell_sidebar_margin_close(state, ws, node, close, entry_key, menu_key); }
+              { sig = uishell_sidebar_margin_button(node, close); }
+              uishell_sidebar_margin_close(state, ws, node, close, sig, entry_key, menu_key);
             }
           }
           if(!node.is_section)

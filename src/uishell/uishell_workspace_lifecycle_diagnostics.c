@@ -222,37 +222,51 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     LifecycleCheck(entry_row, "new-workspace is the Workspaces group's entry row, not a header button");
     LifecycleCheck(titled, "the local workspace section is titled Workspaces");
 
-    // Holding the margin control past the threshold opens the row's menu,
-    // and the release that follows doesn't close the workspace.
+    // Hovering the margin control shows its tooltip beside it, at its own
+    // size. Holding it past the threshold opens the row's menu, and the
+    // release that follows doesn't close the workspace.
+    // Frames: 0-1 hover the row, 2 hovers the button, 3 presses, 4 holds,
+    // 5 releases, 6 settles.
     {
       Vec2F32 button = {0};
       U64 queued_before = uishell_workspace_lifecycle_queued(str8_lit("close_workspace"), loose_id);
-      B32 menu_open = 0;
-      for(U32 frame = 0; frame < 6; frame++)
+      B32 menu_open = 0, tip_beside = 0, tip_sized = 0;
+      for(U32 frame = 0; frame < 7; frame++)
       {
         UI_IconInfo icons = ws->ui->icon_info;
         UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
         Vec2F32 at = frame < 2 || button.x == 0 ? row_centers[1] : button;
-        if(frame == 2 || frame == 4)
+        if(frame == 3 || frame == 5)
         {
-          event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 2 ? UI_EventKind_Press : UI_EventKind_Release,
+          event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 3 ? UI_EventKind_Press : UI_EventKind_Release,
                                .pos = at, .timestamp_us = 6000000+frame*50000};
           events.first = events.last = &event; events.count = 1;
         }
-        if(frame == 3) { sleep_ms(UIShell_MarginHoldUS/1000+50); }
+        if(frame == 4) { sleep_ms(UIShell_MarginHoldUS/1000+50); }
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         ui_state->mouse = at;
         UIShell_RegsScope(.window = window->id)
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
         { uishell_sidebar_ui(r2f32p(0, 0, 320, 900), &split); }
         ui_end_build();
-        if(frame == 5) { menu_open = ui_any_ctx_menu_is_open(); }
+        if(frame == 2)
+        {
+          UI_Box *label = &ui_nil_box;
+          for(UI_Box *b = ui_state->tooltip_root; !ui_box_is_nil(b) && ui_box_is_nil(label); b = ui_box_rec_df_pre(b, ui_state->tooltip_root).next)
+          { if(str8_match(ui_box_display_string(b), str8_lit("Close workspace"), 0)) { label = b; } }
+          F32 text = fnt_dim_from_tag_size_string(label->font, label->font_size, 0, 0, str8_lit("Close workspace")).x;
+          tip_sized = !ui_box_is_nil(label) && dim_2f32(label->rect).x >= text;
+          tip_beside = !ui_box_is_nil(label) && abs_f32(label->rect.y0-button.y) < 100.f && label->rect.x0 < button.x+50.f;
+        }
+        if(frame == 6) { menu_open = ui_any_ctx_menu_is_open(); }
         for(UI_Box *box = test->root; frame == 1 && !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
         {
           if(!ui_box_is_nil(box->parent) && ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###close_%S", row_keys[0])))
           { button = center_2f32(box->rect); }
         }
       }
+      LifecycleCheck(tip_sized, "margin control tooltip fits its label");
+      LifecycleCheck(tip_beside, "margin control tooltip sits beside the control");
       LifecycleCheck(menu_open, "holding the margin control opens the row menu");
       LifecycleCheck(uishell_workspace_lifecycle_queued(str8_lit("close_workspace"), loose_id) == queued_before,
         "releasing after a hold doesn't close");
