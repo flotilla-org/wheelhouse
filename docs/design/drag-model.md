@@ -8,7 +8,7 @@ A drop does one of three things. **The target decides which; the gesture never d
 
 - **Reorder.** The thing stays where it lives and changes position among its siblings.
 - **Move.** The thing changes where it lives. Only things Wheelhouse owns can move: Views, sections, local groups and local workspaces.
-- **Ghost.** A linked reference appears at the target, and the original stays where it lives. Ghosts appear only on reference surfaces: local groups, and later the overview.
+- **Ghost.** A linked reference appears at the target, and the original stays where it lives. A ghost is its own object pointing at the source, so one source can have any number of ghosts. Ghosts appear only on reference surfaces: local groups, and later the overview.
 
 Data things never leave their home. A convoy, vessel or other Andamento entity stays where Andamento places it. Inside its home it can only be reordered; anywhere else it can only be ghosted.
 
@@ -132,7 +132,7 @@ Floating and pinned cards already exist (`uishell_detached_cards.c`, `docs/detac
 
 Where the model and today's behaviour differed, the operator agreed the following on 2026-10-07:
 
-1. **An entity may have several ghosts.** Different views of one subject serve different purposes, for example a live Watch card for monitoring alongside a compact reminder row. A ghost therefore needs its own identity:
+1. **An entity may have any number of ghosts.** A ghost is a separate object that holds a reference to its source; it is not a flag on the source, and the source doesn't know its ghosts exist. Different views of one subject serve different purposes, for example a live Watch card for monitoring alongside a compact reminder row. Removing one ghost never affects the source or the other ghosts. Each ghost therefore needs its own identity:
    - a ghost id stored on the `card` node, next to the existing `kind` and `entity`;
    - migration gives each existing pin a ghost id, so current layouts load unchanged;
    - layout deduplication keys on the ghost id rather than `(kind, entity)`, so copied layouts still don't double up;
