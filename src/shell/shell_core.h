@@ -1305,7 +1305,9 @@ internal UIShell_ContextRegSlot uishell_context_reg_slot_from_app_reg_slot(UIShe
 //- rjf: pushing
 internal void uishell_push_stored_cmd(String8 name, UIShell_Regs *regs);
 #define uishell_push_cmd_current(name) uishell_push_stored_cmd((name), &(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP})
-#define uishell_cmd(name, ...) uishell_push_stored_cmd(str8_lit(name), &(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
+// `"" name` only compiles for a string literal; str8_lit of a pointer would
+// silently truncate the command name to sizeof(char *)-1 bytes.
+#define uishell_cmd(name, ...) uishell_push_stored_cmd(str8_lit("" name), &(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP __VA_ARGS__})
 
 //- rjf: iterating
 internal B32 uishell_next_cmd(UIShell_Cmd **cmd);
