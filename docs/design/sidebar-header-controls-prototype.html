@@ -1,0 +1,611 @@
+<!doctype html>
+<!--
+  PROTOTYPE - throwaway. Answers: what should sidebar section-header controls
+  (toggles, new workspace, section close, counts, tooltips, collapse and grab
+  affordances) and the row detach/close affordance look like, and how much
+  horizontal room should project groups get?
+  One sidebar, one knob per decision (panel on the right). Presets set every
+  knob at once; "Current" reproduces today's native sidebar, quirks included.
+  Projects and the workspace list are modelled as one kind of group; the
+  workspace list is the default group. Rows and groups drag as local overrides.
+  Knobs are kept in the URL hash so a combination can be shared.
+  Data is a static fixture; clicks change only in-page state (log below the panel).
+  Run: serve docs/design over http (file:// blocks some browser APIs), e.g.
+    python3 -m http.server -d docs/design 8791
+  then open http://127.0.0.1:8791/sidebar-header-controls-prototype.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidebar header controls prototype</title>
+<style>
+:root{
+  --bg:#1e1e1e; --side:#232323; --line:#3a3a3a; --text:#d8d8d8; --dim:#8c8c8c; --faint:#5f5f5f;
+  --sel:#3b4048; --selfill:#4a4f58; --hot:#ffffff12; --act:#ffffff20;
+  --good:#8fdc9f; --bad:#f28b82; --warn:#e6c07b; --issue:#9ab8e8;
+  --p1:#66a8d4; --p2:#a98cca;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px "Segoe UI",system-ui,-apple-system,sans-serif;overflow:hidden;user-select:none}
+#app{display:flex;height:100%}
+#sidebar{flex:none;background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden}
+#work{flex:1;min-width:0}
+#panel{width:310px;flex:none;border-left:1px solid var(--line);background:#191919;overflow:auto;padding:10px 12px 20px;font-size:12px;color:#bbb}
+#panel h2{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin:14px 0 6px;font-weight:600}
+#panel h2:first-child{margin-top:0}
+#panel .k{display:grid;grid-template-columns:118px 1fr;align-items:center;gap:6px;margin:4px 0}
+#panel select,#panel input[type=range]{width:100%;background:#262626;color:#ddd;border:1px solid #3a3a3a;border-radius:4px;font:12px system-ui;padding:2px 4px}
+#panel .presets{display:flex;flex-wrap:wrap;gap:4px}
+#panel .presets button{background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:4px;padding:3px 8px;font:12px system-ui;cursor:pointer}
+#panel .presets button.on{border-color:#e0b34a;color:#fff}
+#panel .note{color:var(--faint);font-size:11px;line-height:1.4;margin-top:2px}
+#log{margin-top:10px;font:11px ui-monospace,Menlo,monospace;color:#999;white-space:pre-wrap;background:#141414;border:1px solid #2c2c2c;border-radius:4px;padding:6px;min-height:80px}
+/* sections */
+.sec{border-top:1px solid var(--line)}
+.sec:first-child{border-top:none}
+.sec.dragging{outline:1px dashed #e0b34a;outline-offset:-2px;opacity:.7}
+.sh{position:relative;display:flex;align-items:center;gap:2px;height:28px;padding:0 6px 0 4px;font-size:11px;letter-spacing:.04em;color:var(--dim);text-transform:uppercase}
+.sh .grip{width:14px;text-align:center;color:var(--faint);cursor:grab;font-size:10px}
+.sh .grip:hover{color:var(--text)}
+.sh .disc{width:16px;text-align:center;cursor:pointer;font-size:9px;flex:none}
+.sh .title{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;padding:3px 2px;border-radius:3px}
+.sh .title.grab{cursor:grab}
+.sh .title.grab:hover{background:#ffffff08}
+.sh .title .cnt{letter-spacing:0;text-transform:none}
+.sh .acts{display:flex;align-items:center;gap:1px}
+.hb{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 4px;border-radius:4px;color:var(--dim);cursor:pointer;font-size:12px;letter-spacing:0;text-transform:none;border:1px solid transparent}
+.hb:hover{background:var(--hot);color:var(--text)}
+.hb:active{background:var(--act)}
+.hb.on{color:var(--text);background:#ffffff16}
+.st-toolbar .hb{border-color:#555;background:#2c2c2c;border-radius:0}
+.st-toolbar .hb:hover{background:#383838}
+.st-today .hb.tg{border-radius:3px}
+.st-today .hb.tg.on{background:var(--selfill);border-color:#6a6f78}
+.seg{display:flex;border:1px solid #3e3e3e;border-radius:5px;overflow:hidden}
+.seg .hb{border-radius:0;height:20px;border:none}
+/* rows */
+.row{position:relative;display:flex;align-items:center;height:26px;margin:1px 4px;padding-right:2px;border-radius:3px;white-space:nowrap;cursor:default}
+.row:hover{background:#ffffff0a}
+.row.sel{background:var(--sel)}
+.row.ended .nm{color:var(--faint)}
+.row .ind{flex:none}
+.row .tw{width:16px;flex:none;text-align:center;color:var(--dim);font-size:9px;cursor:pointer}
+.row .ic{width:18px;flex:none;color:var(--dim);font-size:11px;text-align:center}
+.row .nm{flex:1;min-width:20px;overflow:hidden;text-overflow:ellipsis}
+.row .chips{display:flex;gap:3px;flex:none;margin-left:6px}
+.chip{display:inline-flex;align-items:center;justify-content:center;height:18px;min-width:22px;padding:0 4px;border:1px solid var(--faint);border-radius:3px;font-size:11px;color:var(--text)}
+.chip.live{border-color:#ffffff40;background:#ffffff14;box-shadow:inset 2px 0 0 var(--text)}
+.chip.subj{border-radius:9px;color:var(--issue);border-color:#9ab8e880}
+.st{width:16px;flex:none;text-align:center;font-size:12px;color:var(--dim)}
+.st.live{color:var(--text)} .st.wait{color:var(--warn)} .st.fail{color:var(--bad)} .st.ended{color:var(--faint)}
+.ab{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:4px;color:var(--dim);cursor:pointer;font-size:13px;flex:none}
+.ab:hover{background:var(--act);color:var(--text)}
+.ab.destroy:hover{color:var(--bad)}
+.detach{display:inline-block;width:14px;height:10px;position:relative}
+.detach::before,.detach::after{content:"";position:absolute;top:0;height:10px;border:1.5px solid currentColor}
+.detach::before{left:0;width:4px;border-right:none;border-radius:2px 0 0 2px}
+.detach::after{right:0;width:4px;border-left:none;border-radius:0 2px 2px 0}
+.gutter{width:24px;flex:none;display:flex;justify-content:center}
+/* project groups */
+.proj{position:relative}
+.proj.rule>.prow::before{content:"";position:absolute;left:0;top:4px;bottom:4px;width:3px;border-radius:2px;background:var(--pc)}
+.proj.card{border:1px solid #343434;border-radius:6px;background:#262626;padding:1px 0}
+.proj.card>.prow::before{content:"";position:absolute;left:0;top:4px;bottom:4px;width:3px;border-radius:2px;background:var(--pc)}
+.proj.indent{border-left:3px solid var(--pc);border-radius:0 0 0 2px}
+.prow .nm{font-weight:500}
+/* tooltip */
+#tip{position:fixed;z-index:60;pointer-events:none;padding:5px 8px;border-radius:4px;font-size:12px;line-height:1.35;max-width:260px;display:none;white-space:pre-line}
+#tip.shell{background:#2d2d2dee;border:1px solid #4a4a4a;color:var(--text);box-shadow:0 4px 14px #0008}
+#tip.opaque{background:#3a3a3a;border:1px solid #5a5a5a;color:#bdbdbd;box-shadow:none;font-size:11px}
+#tip b{font-weight:600;color:#fff}
+#tip .k{color:var(--dim)}
+/* menus */
+.menu{position:fixed;z-index:70;min-width:190px;background:#2b2b2b;border:1px solid #4a4a4a;border-radius:6px;box-shadow:0 8px 24px #000a;padding:4px;font-size:12.5px}
+.menu .mi{display:flex;align-items:center;gap:8px;height:26px;padding:0 8px;border-radius:4px;cursor:pointer}
+.menu .mi:hover{background:var(--hot)}
+.menu .mi .ck{width:14px;text-align:center;color:var(--dim)}
+.menu .sep{height:1px;background:var(--line);margin:4px 2px}
+.menu .mi.destroy{color:var(--bad)}
+.menu .hint{padding:2px 8px 4px;color:var(--faint);font-size:11px}
+/* groups, drag, entry row, margin close */
+.proj.card.bare{border-color:transparent;background:transparent}
+.proj.card.bare>.prow::before{display:none}
+.proj.flush{margin:0}
+.grp.drop-into{outline:1px dashed #e0b34a;outline-offset:-1px}
+.grp.drop-before{box-shadow:0 -2px 0 #e0b34a}
+.grp.drop-after{box-shadow:0 2px 0 #e0b34a}
+[data-row].drop-before{box-shadow:inset 0 2px 0 #e0b34a}
+.drag-src{opacity:.4}
+.ghost{position:fixed;z-index:95;pointer-events:none;background:#2f2f2f;border:1px solid #555;border-radius:4px;padding:2px 8px;font-size:12px;box-shadow:0 4px 12px #0009}
+.row .local{color:#e0b34a;font-size:11px;margin-left:4px;flex:none}
+.newrow{cursor:pointer}
+.newrow .plus{font-size:14px;color:var(--dim)}
+.newrow:hover .plus,.newrow:hover .placeholder{color:var(--text)}
+.placeholder{color:var(--faint)}
+.nameinput{flex:1;min-width:0;background:transparent;border:none;border-bottom:1px solid #e0b34a;color:var(--text);font:inherit;outline:none;padding:0}
+.marginhit{position:absolute;left:100%;top:0;bottom:0;display:flex;align-items:center;justify-content:center}
+.marginhit .ab.marginx{visibility:hidden}
+.row:hover>.marginhit .ab.marginx{visibility:visible}
+.strip{position:absolute;right:2px;top:3px;display:none;gap:1px;padding-left:18px}
+.row:hover>.strip{display:flex}
+.gwrap{display:flex;align-items:center}
+.gwrap .gutter .ab{opacity:0}
+.gwrap:hover .gutter .ab{opacity:1}
+.rowmore{visibility:hidden}
+.row:hover>.rowmore{visibility:visible}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar"></div>
+  <div id="work"></div>
+  <div id="panel"></div>
+</div>
+<div id="tip"></div>
+<script>
+// ---------- knobs ----------
+const KNOBS = [
+  {group: 'Section header'},
+  {k: 'btn', label: 'Button style', opts: {today: 'Today (mixed)', toolbar: 'Toolbar (bordered)', quiet: 'Quiet (borderless)'},
+   note: 'Today: toggles get a selection fill, + is a bordered toolbar button.'},
+  {k: 'toggles', label: 'Toggles', opts: {buttons: 'Separate buttons', segmented: 'Segmented group', menu: 'In ⋯ menu'}},
+  {k: 'vis', label: 'Actions visible', opts: {always: 'Always', hover: 'On header hover', hoverKeepOn: 'Hover; active stay'}},
+  {k: 'plus', label: 'New workspace', opts: {entry: 'First entry ⊕', icon: '+ in header', labelled: '+ New in header', menu: 'In ⋯ menu'},
+   note: 'First entry: click it to name the workspace inline (Enter creates, Esc cancels).'},
+  {k: 'entryPos', label: 'Entry position', opts: {top: 'Top of section', bottom: 'Bottom of section'}},
+  {k: 'secClose', label: 'Section close', opts: {hoverX: '× on hover', dimX: '× always, dim', menu: 'In ⋯ menu'}},
+  {k: 'tipStyle', label: 'Tooltip style', opts: {mixed: 'Mixed (today)', unified: 'Unified'}},
+  {k: 'tipText', label: 'Toggle tooltip', opts: {raw: 'Variable name (today)', label: 'Label', rich: 'Label + state + effect'}},
+  {k: 'count', label: 'Counts', opts: {right: 'Right column (today)', pill: 'Pill in title', collapsed: 'Only when collapsed', none: 'Hidden'}},
+  {k: 'disc', label: 'Collapse indicator', opts: {before: 'Before title', after: 'After title', end: 'Far right', none: 'None (click title)'}},
+  {k: 'grab', label: 'Grab affordance', opts: {grip: 'Grip ⋮⋮', title: 'Title is the handle', gripHover: 'Grip on hover', both: 'Grip + title'},
+   note: 'Drag a section header to see what starts a drag (logged).'},
+  {group: 'Rows'},
+  {k: 'rowClose', label: 'Close / detach', opts: {margin: 'Right margin (hold for menu)', replace: 'Replaces status (today)', strip: 'Hover strip at row end', gutter: 'Gutter column', menu: 'Row ⋯ menu only'},
+   note: 'Right margin: click does the default (detach for a subject, close otherwise); hold for the rest. Right-click always opens the row menu.'},
+  {k: 'status', label: 'Status mark', opts: {trailing: 'Trailing (today)', leading: 'Leading'}},
+  {k: 'both', label: 'Subject rows offer', opts: {detach: 'Detach only', detachClose: 'Detach and close'}},
+  {group: 'Groups'},
+  {k: 'layout', label: 'Sections', opts: {separate: 'Projects + Workspaces', combined: 'One Workspaces section'},
+   note: 'Projects and the workspace list are both groups; the list is the default group.'},
+  {k: 'proj', label: 'Project groups', opts: {rule: 'Accent rule (today)', card: 'Inset card', indent: 'Indented rail'}},
+  {k: 'defaultGroup', label: 'Default group', opts: {cardless: 'Laid out like a card, unbordered', flush: 'Flush (today)'}},
+  {k: 'attention', label: 'Attention rows', opts: {aligned: 'Aligned with groups', flush: 'Flush (today)'}},
+  {k: 'margin', label: 'Side margin', range: [0, 24], unit: 'px'},
+  {k: 'pdisc', label: 'Project disclosure', opts: {before: 'Before name (today)', after: 'After name', none: 'None (click name)'}},
+  {k: 'width', label: 'Sidebar width', range: [220, 420], unit: 'px'},
+  {group: 'Notes'},
+];
+const BASE = {layout: 'separate', defaultGroup: 'flush', entryPos: 'top', attention: 'flush'};
+const PRESETS = {
+  Current: {...BASE, btn: 'today', toggles: 'buttons', vis: 'always', plus: 'icon', secClose: 'hoverX', tipStyle: 'mixed', tipText: 'raw', count: 'right',
+            disc: 'before', grab: 'grip', rowClose: 'replace', status: 'trailing', both: 'detach', proj: 'rule', margin: 0, pdisc: 'before', width: 320},
+  'Quiet + strip': {...BASE, btn: 'quiet', toggles: 'buttons', vis: 'hoverKeepOn', plus: 'icon', secClose: 'hoverX', tipStyle: 'unified', tipText: 'rich', count: 'collapsed',
+            disc: 'before', grab: 'grip', rowClose: 'strip', status: 'leading', both: 'detachClose', proj: 'card', margin: 8, pdisc: 'before', width: 320},
+  'Gutter': {...BASE, btn: 'quiet', toggles: 'segmented', vis: 'always', plus: 'labelled', secClose: 'dimX', tipStyle: 'unified', tipText: 'label', count: 'pill',
+            disc: 'before', grab: 'grip', rowClose: 'gutter', status: 'trailing', both: 'detach', proj: 'indent', margin: 10, pdisc: 'before', width: 320},
+  // Owner's pick, 2026-10-07 (an idea, not a decision).
+  'Picked 07-10': {...BASE, btn: 'quiet', toggles: 'segmented', vis: 'hoverKeepOn', plus: 'icon', secClose: 'hoverX', tipStyle: 'unified', tipText: 'rich', count: 'collapsed',
+            disc: 'after', grab: 'gripHover', rowClose: 'strip', status: 'trailing', both: 'detachClose', proj: 'card', margin: 18, pdisc: 'after', width: 338},
+  // Picked 07-10 plus the follow-up ideas: entry row, default group, margin close.
+  'Workspaces idea': {btn: 'quiet', toggles: 'segmented', vis: 'hoverKeepOn', plus: 'entry', secClose: 'hoverX', tipStyle: 'unified', tipText: 'rich', count: 'collapsed',
+            disc: 'after', grab: 'gripHover', rowClose: 'margin', status: 'trailing', both: 'detachClose', proj: 'card', margin: 18, pdisc: 'after', width: 338,
+            layout: 'separate', defaultGroup: 'cardless', entryPos: 'top', attention: 'aligned'},
+  'Menu first': {...BASE, btn: 'quiet', toggles: 'menu', vis: 'always', plus: 'icon', secClose: 'menu', tipStyle: 'unified', tipText: 'label', count: 'none',
+            disc: 'before', grab: 'title', rowClose: 'menu', status: 'trailing', both: 'detachClose', proj: 'rule', margin: 6, pdisc: 'before', width: 320},
+};
+let K = {...PRESETS['Workspaces idea']};
+try { const h = decodeURIComponent(location.hash.slice(1)); if (h) K = {...PRESETS.Current, ...JSON.parse(h)}; } catch (e) {}
+function saveKnobs() { try { history.replaceState(null, '', '#' + encodeURIComponent(JSON.stringify(K))); } catch (e) {} }
+
+// ---------- fixture model (in memory only) ----------
+// Every group is the same kind of thing. Projects come from Andamento; the
+// default group holds workspaces with no project. Moves are local overrides.
+const S = {
+  vars: {issues: true, finished: false, attempts: false},
+  collapsed: {}, pcollapsed: {}, nextWs: 2, log: [], naming: false,
+  groups: [
+    {id: 'wheelhouse', name: 'wheelhouse', color: 'var(--p1)', kind: 'project', roles: [{glyph: '◆', ws: 'live'}],
+     rows: [
+       {id: 'c-close', kind: 'convoy', name: 'workspace-close-affordances', home: 'wheelhouse', status: 'live', ws: 'live', subj: ['#229']},
+       {id: 'v-fix', kind: 'vessel', name: 'workspace-close-click-fix', home: 'wheelhouse', status: 'wait', ws: 'live', depth: 1},
+       {id: 'c-hdr', kind: 'convoy', name: 'sidebar-header-controls', home: 'wheelhouse', status: 'fail', ws: null, subj: ['#110']},
+       {id: 'c-old', kind: 'convoy', name: 'retained-workspace-paths', home: 'wheelhouse', status: 'ended', ws: 'live'},
+       {id: 'c-done', kind: 'convoy', name: 'chip-overflow', home: 'wheelhouse', status: 'ended', ws: null, finished: true},
+     ]},
+    {id: 'andamento', name: 'andamento', color: 'var(--p2)', kind: 'project', roles: [],
+     rows: [{id: 'c-unpl', kind: 'convoy', name: 'always-emit-unplaced-section', home: 'andamento', status: 'live', ws: null, subj: ['#135']}]},
+    {id: 'default', name: '', kind: 'default', roles: [],
+     rows: [
+       {id: 'w-1', name: 'Workspace 1', kind: 'subjectless', home: 'default', status: 'live', ws: 'live', sel: true},
+       {id: 'w-scratch', name: 'scratch', kind: 'subjectless', home: 'default', status: 'live', ws: 'live'},
+     ]},
+  ],
+  attention: ['v-fix', 'c-hdr'],
+};
+const projects = () => S.groups.filter(g => g.kind === 'project');
+const defaultGroup = () => S.groups.find(g => g.kind === 'default');
+const allRows = () => S.groups.flatMap(g => g.rows);
+const byId = id => allRows().find(r => r.id === id);
+const groupOf = row => S.groups.find(g => g.rows.includes(row));
+const log = m => { S.log.unshift(m); S.log = S.log.slice(0, 12); renderLog(); };
+const closeKind = r => r.ws !== 'live' ? null : (r.kind === 'subjectless' || r.status === 'ended') ? 'destroy' : 'detach';
+function act(row, kind) {
+  if (kind === 'detach') { row.ws = 'detached'; log(`detach ${row.name} → row latent, layout kept`); }
+  else if (row.kind === 'subjectless') { const g = groupOf(row); g.rows.splice(g.rows.indexOf(row), 1); log(`close ${row.name} → destroyed`); }
+  else { row.ws = null; log(`close ${row.name} → destroyed${row.status === 'ended' ? ' (subject ended)' : ''}`); }
+  if (!allRows().some(r => r.ws === 'live')) newWorkspace(null, 'last close'); else render();
+}
+function newWorkspace(name, why) {
+  const w = {id: 'w-' + S.nextWs, name: name || 'Workspace ' + S.nextWs, kind: 'subjectless', home: 'default', status: 'live', ws: 'live'};
+  S.nextWs++; defaultGroup().rows.push(w); log(`new ${w.name}${why ? ' (' + why + ')' : ''}`); render();
+}
+function toggleVar(k) { S.vars[k] = !S.vars[k]; log(`${k} → ${S.vars[k] ? 'on' : 'off'}`); render(); }
+function toggleSec(k) { S.collapsed[k] = !S.collapsed[k]; render(); }
+const VARS = [
+  {k: 'issues', glyph: 'I', raw: 'show-issues', label: 'Issues', on: 'Issue chips shown', off: 'Issue chips hidden'},
+  {k: 'finished', glyph: 'F', raw: 'show-finished', label: 'Show finished', on: 'Finished convoys shown', off: 'Finished convoys hidden'},
+  {k: 'attempts', glyph: 'R', raw: 'show-role-attempts', label: 'Role history', on: 'Role attempts shown', off: 'Role attempts hidden'},
+];
+
+// ---------- helpers ----------
+const tip = document.getElementById('tip');
+const h = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt !== undefined) e.innerHTML = txt; return e; };
+function bindTip(el, html, legacyOpaque) {
+  el.addEventListener('mouseenter', () => {
+    if (DRAG) return;
+    tip.className = K.tipStyle === 'mixed' && legacyOpaque ? 'opaque' : 'shell'; tip.innerHTML = typeof html === 'function' ? html() : html; tip.style.display = 'block';
+    const r = el.getBoundingClientRect();
+    tip.style.left = Math.min(r.left, innerWidth - 270) + 'px'; tip.style.top = (r.bottom + 6) + 'px';
+  });
+  el.addEventListener('mouseleave', () => tip.style.display = 'none');
+}
+let openMenu = null;
+function menu(x, y, items) {
+  closeMenu(); tip.style.display = 'none';
+  const m = h('div', 'menu');
+  for (const it of items) {
+    if (it === '-') { m.append(h('div', 'sep')); continue; }
+    if (it.hint) { m.append(h('div', 'hint', it.hint)); continue; }
+    const d = h('div', 'mi' + (it.destroy ? ' destroy' : ''), `<span class="ck">${it.check === undefined ? (it.icon || '') : it.check ? '✓' : ''}</span>${it.label}`);
+    d.onclick = e => { e.stopPropagation(); closeMenu(); it.run(); };
+    m.append(d);
+  }
+  document.body.append(m);
+  m.style.left = Math.min(x, innerWidth - 200) + 'px'; m.style.top = y + 'px';
+  openMenu = m;
+}
+function closeMenu() { if (openMenu) { openMenu.remove(); openMenu = null; } }
+addEventListener('click', e => { if (!e.target.closest('.menu')) closeMenu(); });
+const STATUS = {live: '•', wait: '◷', fail: '!', ended: '×'};
+
+// ---------- section header ----------
+function header(sec, title, count, opts, secEl) {
+  const sh = h('div', 'sh st-' + K.btn);
+  const hoverOnly = [];
+  if (K.grab !== 'title') {
+    const grip = h('span', 'grip', '⋮⋮'); bindTip(grip, '<b>Drag section</b>'); sh.append(grip);
+    if (K.grab === 'gripHover') hoverOnly.push(grip);
+    dragSection(grip, secEl, title);
+  }
+  const disc = () => { const d = h('span', 'disc', S.collapsed[sec] ? '▶' : '▼'); d.onclick = e => { e.stopPropagation(); toggleSec(sec); }; return d; };
+  if (K.disc === 'before') sh.append(disc());
+  const collapsedNote = S.collapsed[sec] ? `<span class="cnt" style="color:var(--faint);margin-left:6px">${count}</span>` : '';
+  const pill = `<span class="cnt" style="display:inline-block;margin-left:6px;padding:0 5px;border-radius:7px;background:#ffffff0e;color:var(--faint);font-size:10px">${count}</span>`;
+  const t = h('span', 'title' + (K.grab === 'title' || K.grab === 'both' ? ' grab' : ''), title +
+    (K.count === 'pill' ? pill : K.count === 'collapsed' ? collapsedNote : '') + (K.disc === 'after' ? ` <span class="cnt" style="font-size:9px">${S.collapsed[sec] ? '▶' : '▼'}</span>` : ''));
+  if (K.disc === 'after') t.style.flex = '0 1 auto';
+  if (K.grab === 'title' || K.grab === 'both') dragSection(t, secEl, title, () => toggleSec(sec)); else t.onclick = () => toggleSec(sec);
+  sh.append(t);
+  if (K.disc === 'after') { const fill = h('span', ''); fill.style.flex = '1'; sh.append(fill); }
+  if (K.count === 'right') sh.append(h('span', '', `<span style="font-size:10px;letter-spacing:0;margin-right:4px">${count}</span>`));
+  const acts = h('span', 'acts');
+  const menuItems = [];
+  if (opts.toggles) {
+    if (K.toggles === 'menu') {
+      menuItems.push({hint: 'Show'});
+      for (const v of VARS) menuItems.push({label: v.label, check: S.vars[v.k], run: () => toggleVar(v.k)});
+    } else {
+      const box = K.toggles === 'segmented' ? h('span', 'seg') : acts;
+      let anyOn = false;
+      for (const v of VARS) {
+        const b = h('span', 'hb tg' + (S.vars[v.k] ? ' on' : ''), v.glyph);
+        b.onclick = () => toggleVar(v.k);
+        bindTip(b, K.tipText === 'raw' ? v.raw : K.tipText === 'label' ? `<b>${v.label}</b>` :
+          `<b>${v.label}</b>\n<span class="k">${S.vars[v.k] ? v.on : v.off} · click to ${S.vars[v.k] ? 'hide' : 'show'}</span>`, true);
+        anyOn = anyOn || S.vars[v.k];
+        if (K.toggles !== 'segmented' && (K.vis === 'hover' || (K.vis === 'hoverKeepOn' && !S.vars[v.k]))) hoverOnly.push(b);
+        box.append(b);
+      }
+      if (box !== acts) { if (K.vis === 'hover' || (K.vis === 'hoverKeepOn' && !anyOn)) hoverOnly.push(box); acts.append(box); }
+    }
+  }
+  if (opts.plus && K.plus !== 'entry') {
+    if (K.plus === 'menu') menuItems.push('-', {label: 'New workspace', icon: '+', run: () => newWorkspace()});
+    else {
+      const b = h('span', 'hb', K.plus === 'labelled' ? '+ New' : '+'); if (K.plus === 'icon') b.style.fontSize = '15px';
+      b.onclick = () => newWorkspace(); bindTip(b, K.btn === 'today' ? 'New Workspace' : '<b>New workspace</b>\n<span class="k">Opens an empty workspace here</span>');
+      if (K.vis === 'hover') hoverOnly.push(b);
+      acts.append(b);
+    }
+  }
+  if (K.secClose === 'menu') menuItems.push('-', {label: 'Close section', icon: '×', run: () => log(`close section ${title}`)});
+  else {
+    const x = h('span', 'hb', '×'); x.onclick = () => log(`close section ${title}`);
+    if (K.btn !== 'today' || K.tipStyle !== 'mixed') bindTip(x, '<b>Close section</b>\n<span class="k">Restore it from Sections…</span>');
+    if (K.secClose === 'hoverX') hoverOnly.push(x); else x.style.opacity = '.45';
+    if (K.btn === 'toolbar') { x.style.border = 'none'; x.style.background = 'none'; }
+    acts.append(x);
+  }
+  if (menuItems.length) {
+    const more = h('span', 'hb', '⋯');
+    if (K.vis === 'hover') hoverOnly.push(more);
+    more.onclick = e => { e.stopPropagation(); const r = more.getBoundingClientRect(); menu(r.left, r.bottom + 4, menuItems.filter((it, i) => !(it === '-' && i === 0))); };
+    bindTip(more, '<b>Section options</b>'); acts.append(more);
+  }
+  if (K.disc === 'end') acts.append(disc());
+  sh.append(acts);
+  for (const e of hoverOnly) e.style.visibility = 'hidden';
+  sh.onmouseenter = () => hoverOnly.forEach(e => e.style.visibility = 'visible');
+  sh.onmouseleave = () => hoverOnly.forEach(e => e.style.visibility = 'hidden');
+  return sh;
+}
+function dragSection(el, secEl, title, onClick) {
+  el.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    const x0 = e.clientX, y0 = e.clientY; let dragging = false;
+    const move = m => { if (!dragging && Math.hypot(m.clientX - x0, m.clientY - y0) > 4) { dragging = true; secEl.classList.add('dragging'); log(`drag section ${title} (from ${el.classList.contains('grip') ? 'grip' : 'title'})`); } };
+    const up = () => { removeEventListener('mousemove', move); removeEventListener('mouseup', up); secEl.classList.remove('dragging'); if (!dragging && onClick) onClick(); };
+    addEventListener('mousemove', move); addEventListener('mouseup', up);
+  });
+}
+
+// ---------- row and group drag (local arrangement) ----------
+// Rows move within or between groups; project groups reorder. Attention is a
+// projection, so nothing there drags. Every move is a local override.
+let DRAG = null;
+function dragItem(el, item, kind) {
+  el.addEventListener('mousedown', e => {
+    if (e.button !== 0 || e.target.closest('.ab,.tw,.chip,input')) return;
+    const x0 = e.clientX, y0 = e.clientY;
+    const move = m => {
+      if (!DRAG && Math.hypot(m.clientX - x0, m.clientY - y0) > 4) {
+        tip.style.display = 'none';
+        const ghost = h('div', 'ghost', (kind === 'group' ? '▤ ' : '') + item.name); document.body.append(ghost);
+        DRAG = {item, kind, ghost, target: null}; el.classList.add('drag-src');
+      }
+      if (!DRAG) return;
+      DRAG.ghost.style.left = (m.clientX + 12) + 'px'; DRAG.ghost.style.top = (m.clientY + 6) + 'px';
+      document.querySelectorAll('.drop-before,.drop-into,.drop-after').forEach(n => n.classList.remove('drop-before', 'drop-into', 'drop-after'));
+      DRAG.target = dropTarget(m);
+      if (DRAG.target) DRAG.target.el.classList.add(DRAG.target.cls);
+    };
+    const up = () => {
+      removeEventListener('mousemove', move); removeEventListener('mouseup', up);
+      if (!DRAG) return;
+      const d = DRAG; DRAG = null; d.ghost.remove(); el.classList.remove('drag-src');
+      if (d.target) drop(d, d.target);
+      render();
+    };
+    addEventListener('mousemove', move); addEventListener('mouseup', up);
+  });
+}
+function dropTarget(m) {
+  const under = document.elementFromPoint(m.clientX, m.clientY);
+  if (!under) return null;
+  if (DRAG.kind === 'group') {
+    const g = under.closest('.grp[data-g]'); if (!g || g.dataset.g === DRAG.item.id || g.dataset.g === 'default') return null;
+    const r = g.getBoundingClientRect();
+    return {el: g, cls: m.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after', group: g.dataset.g, before: m.clientY < r.top + r.height / 2};
+  }
+  const row = under.closest('[data-row]');
+  if (row && row.dataset.row !== DRAG.item.id) return {el: row, cls: 'drop-before', group: row.closest('.grp').dataset.g, beforeRow: row.dataset.row};
+  const g = under.closest('.grp[data-g]');
+  if (g) return {el: g, cls: 'drop-into', group: g.dataset.g};
+  return null;
+}
+function drop(d, t) {
+  if (d.kind === 'group') {
+    const from = S.groups.indexOf(d.item); S.groups.splice(from, 1);
+    let at = S.groups.findIndex(g => g.id === t.group) + (t.before ? 0 : 1);
+    S.groups.splice(at, 0, d.item); log(`local: reorder group ${d.item.name}`); return;
+  }
+  const row = d.item, src = groupOf(row), dst = S.groups.find(g => g.id === t.group);
+  src.rows.splice(src.rows.indexOf(row), 1);
+  const at = t.beforeRow ? dst.rows.findIndex(r => r.id === t.beforeRow) : dst.rows.length;
+  dst.rows.splice(at < 0 ? dst.rows.length : at, 0, row);
+  if (src === dst) log(`local: reorder ${row.name} in ${dst.name || 'Workspaces'}`);
+  else if (dst.id === row.home) log(`local: ${row.name} back in ${dst.name || 'Workspaces'} (override cleared)`);
+  else log(`local: ${row.name} shown in ${dst.name || 'Workspaces'}${row.kind === 'subjectless' ? '' : ` (Andamento still places it in ${row.home})`}`);
+}
+
+// ---------- rows ----------
+function closeButton(row, kind) {
+  const b = h('span', 'ab' + (kind === 'destroy' ? ' destroy' : ''), kind === 'destroy' ? '×' : '<span class="detach"></span>');
+  bindTip(b, kind === 'destroy' ? '<b>Close workspace</b>\n<span class="k">The workspace and its layout are discarded.</span>'
+                                : '<b>Detach workspace</b>\n<span class="k">The row stays; its layout reopens from here.</span>');
+  b.onclick = e => { e.stopPropagation(); tip.style.display = 'none'; act(row, kind); };
+  return b;
+}
+function rowMenuItems(row) {
+  const k = closeKind(row);
+  const items = [{label: row.ws === 'live' ? 'Focus workspace' : 'Open workspace', icon: '↗', run: () => log(`open ${row.name}`)}];
+  if (k) items.push('-', {label: k === 'detach' ? 'Detach workspace' : 'Close workspace', icon: k === 'detach' ? '⇹' : '×', destroy: k === 'destroy', run: () => act(row, k)});
+  if (k === 'detach') items.push({label: 'Close and discard layout', icon: '×', destroy: true, run: () => act(row, 'destroy')});
+  if (groupOf(row) && groupOf(row).id !== row.home) items.push('-', {label: `Move back to ${row.home === 'default' ? 'Workspaces' : row.home}`, icon: '↩', run: () => {
+    const g = groupOf(row); g.rows.splice(g.rows.indexOf(row), 1); S.groups.find(x => x.id === row.home).rows.push(row); log(`local: ${row.name} moved back`); render(); }});
+  return items;
+}
+// The default action runs on click; holding opens the full row menu.
+function marginButton(row, k) {
+  const b = closeButton(row, k);
+  b.classList.add('marginx'); b.onclick = null;
+  b.addEventListener('mousedown', e => {
+    if (e.button !== 0) return; e.stopPropagation();
+    let held = false;
+    const timer = setTimeout(() => { held = true; const r = b.getBoundingClientRect(); menu(r.left - 170, r.bottom + 2, rowMenuItems(row)); }, 450);
+    const up = () => { clearTimeout(timer); removeEventListener('mouseup', up); if (!held && b.matches(':hover')) { tip.style.display = 'none'; act(row, k); } };
+    addEventListener('mouseup', up);
+  });
+  b.addEventListener('click', e => e.stopPropagation());
+  bindTip(b, () => `<b>${k === 'detach' ? 'Detach workspace' : 'Close workspace'}</b>\n<span class="k">Click: ${k === 'detach' ? 'detach, layout kept' : 'close, layout discarded'} · hold: more</span>`);
+  return b;
+}
+function rowEl(row, depth, draggable) {
+  const k = closeKind(row);
+  const r = h('div', 'row' + (row.sel ? ' sel' : '') + (row.status === 'ended' ? ' ended' : ''));
+  r.dataset.row = row.id;
+  const mark = row.ws === 'live' || row.status !== 'live' ? STATUS[row.status] : '';
+  const st = h('span', 'st ' + ({live: 'live', wait: 'wait', fail: 'fail', ended: 'ended'})[row.status], mark);
+  const ind = h('span', 'ind'); ind.style.width = (depth * 14) + 'px';
+  r.append(ind);
+  if (K.status === 'leading') r.append(st); else r.append(h('span', 'tw'));
+  r.append(h('span', 'ic', row.kind === 'convoy' ? '≋' : row.kind === 'vessel' ? '▭' : '▢'), h('span', 'nm', row.name));
+  if (groupOf(row) && groupOf(row).id !== row.home && draggable) { const l = h('span', 'local', '↷'); bindTip(l, `<b>Local placement</b>\n<span class="k">${row.kind === 'subjectless' ? 'Moved here on this machine' : `Andamento places it in ${row.home}`}</span>`); r.append(l); }
+  const chips = h('span', 'chips'); if (S.vars.issues) for (const s of row.subj || []) chips.append(h('span', 'chip subj', s)); r.append(chips);
+  if (K.status === 'trailing') r.append(st);
+  const buttons = () => { const out = []; if (k === 'detach') out.push(closeButton(row, 'detach')); if (k === 'destroy' || (k === 'detach' && K.both === 'detachClose')) out.push(closeButton(row, 'destroy')); return out; };
+  let outer = r;
+  if (k && K.rowClose === 'margin') {
+    // The hit area runs from the row edge across the margin, so moving the
+    // pointer to the button never leaves the row's hover.
+    const hit = h('span', 'marginhit'); hit.style.width = (5 + K.margin) + 'px';
+    hit.append(marginButton(row, k)); r.append(hit);
+  } else if (k && K.rowClose === 'replace') {
+    const slot = K.status === 'trailing' ? st : r.appendChild(h('span', 'st'));
+    r.onmouseenter = () => slot.replaceChildren(closeButton(row, k));
+    r.onmouseleave = () => { tip.style.display = 'none'; slot.textContent = K.status === 'trailing' ? mark : ''; };
+  } else if (k && K.rowClose === 'strip') {
+    const strip = h('span', 'strip');
+    strip.style.background = `linear-gradient(90deg, transparent, ${row.sel ? 'var(--sel)' : '#2b2b2b'} 16px)`;
+    strip.append(...buttons()); r.append(strip);
+  } else if (K.rowClose === 'gutter') {
+    outer = h('div', 'gwrap');
+    r.style.flex = '1'; r.style.minWidth = '0';
+    const g = h('span', 'gutter'); g.style.width = (K.both === 'detachClose' && k === 'detach' ? 44 : 24) + 'px';
+    if (k) g.append(...buttons());
+    outer.append(r, g); outer.dataset.row = row.id; delete r.dataset.row;
+  } else if (K.rowClose === 'menu') {
+    const more = h('span', 'ab rowmore', '⋯');
+    more.onclick = e => { e.stopPropagation(); const b = more.getBoundingClientRect(); menu(b.left - 150, b.bottom + 2, rowMenuItems(row)); };
+    r.append(more);
+  }
+  r.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); menu(e.clientX, e.clientY, rowMenuItems(row)); };
+  if (draggable) dragItem(outer, row, 'row');
+  return outer;
+}
+function newEntryRow() {
+  const r = h('div', 'row newrow');
+  if (S.naming) {
+    r.append(h('span', 'tw'), h('span', 'ic plus', '⊕'));
+    const input = h('input'); input.placeholder = 'New workspace'; input.className = 'nameinput';
+    input.onkeydown = e => {
+      if (e.key === 'Enter') { S.naming = false; newWorkspace(input.value.trim() || null); }
+      if (e.key === 'Escape') { S.naming = false; render(); }
+    };
+    input.onblur = () => { if (S.naming) { S.naming = false; render(); } };
+    r.append(input); setTimeout(() => input.focus(), 0);
+  } else {
+    r.append(h('span', 'tw'), h('span', 'ic plus', '⊕'), h('span', 'nm placeholder', 'New workspace'));
+    r.onclick = () => { S.naming = true; render(); };
+    bindTip(r, '<b>New workspace</b>\n<span class="k">Click to name it; Enter creates</span>');
+  }
+  return r;
+}
+function groupEl(g) {
+  const isDefault = g.kind === 'default';
+  const style = isDefault ? (K.defaultGroup === 'cardless' ? 'card bare' : 'flush') : K.proj;
+  const el = h('div', 'grp proj ' + style); el.dataset.g = g.id; el.style.setProperty('--pc', g.color || 'transparent');
+  const m = isDefault && K.defaultGroup === 'flush' ? 0 : K.margin;
+  el.style.margin = style.startsWith('card') ? `4px ${m}px 6px` : `2px ${m}px 4px`;
+  if (!isDefault) {
+    const pr = h('div', 'row prow');
+    const toggle = () => { S.pcollapsed[g.id] = !S.pcollapsed[g.id]; render(); };
+    const disc = h('span', 'tw', S.pcollapsed[g.id] ? '▶' : '▼'); disc.onclick = toggle;
+    if (K.pdisc === 'before') pr.append(disc); else pr.append(h('span', 'tw'));
+    const nm = h('span', 'nm', g.name); nm.style.flex = K.pdisc === 'after' ? '0 1 auto' : '1';
+    if (K.pdisc === 'none') { nm.style.cursor = 'pointer'; nm.onclick = toggle; }
+    pr.append(h('span', 'ic', '▤'), nm);
+    if (K.pdisc === 'after') { disc.style.marginLeft = '2px'; const fill = h('span', ''); fill.style.flex = '1'; pr.append(disc, fill); }
+    const roles = h('span', 'chips'); for (const r of g.roles) roles.append(h('span', 'chip' + (r.ws === 'live' ? ' live' : ''), r.glyph)); pr.append(roles);
+    pr.append(h('span', 'st'));
+    el.append(pr);
+    dragItem(pr, g, 'group');
+  }
+  if (!S.pcollapsed[g.id]) for (const row of g.rows.filter(r => S.vars.finished || !r.finished)) el.append(rowEl(row, row.depth || 0, true));
+  if (isDefault && !g.rows.length && K.plus !== 'entry') { const e = h('div', '', 'No workspaces'); Object.assign(e.style, {padding: '4px 30px', color: 'var(--faint)', fontSize: '12px'}); el.append(e); }
+  return el;
+}
+
+// ---------- render ----------
+function section(key, title, count, opts, body) {
+  const s = h('div', 'sec'); s.append(header(key, title, count, opts, s));
+  if (!S.collapsed[key]) { const b = h('div', ''); b.style.padding = '2px 0 6px'; body(b); s.append(b); }
+  return s;
+}
+function render() {
+  closeMenu(); tip.style.display = 'none';
+  const sb = document.getElementById('sidebar'); sb.replaceChildren(); sb.style.width = K.width + 'px';
+  // The new-workspace entry heads or ends the section that holds the default group.
+  const entry = () => { const w = h('div', 'grp proj card bare entrywrap'); w.style.margin = `2px ${K.margin}px`; w.append(newEntryRow()); return w; };
+  const groupsInto = (list, withEntry) => b => {
+    if (withEntry && K.plus === 'entry' && K.entryPos === 'top') b.append(entry());
+    list.forEach(g => b.append(groupEl(g)));
+    if (withEntry && K.plus === 'entry' && K.entryPos === 'bottom') b.append(entry());
+  };
+  const attentionRows = b => {
+    const rows = S.attention.map(byId).filter(Boolean);
+    if (K.attention === 'aligned') { const w = h('div', 'grp proj card bare'); w.style.margin = `4px ${K.margin}px 6px`; rows.forEach(r => w.append(rowEl(r, 0, false))); b.append(w); }
+    else rows.forEach(r => b.append(rowEl(r, 0, false)));
+  };
+  const projectList = S.groups.filter(g => g.kind === 'project');
+  if (K.layout === 'combined') {
+    sb.append(section('workspaces', 'Workspaces', allRows().filter(r => r.ws === 'live').length, {toggles: true, plus: true}, groupsInto(S.groups, true)));
+  } else {
+    sb.append(section('projects', 'Projects', projectList.length, {toggles: true}, groupsInto(projectList)));
+  }
+  sb.append(section('attention', 'Attention', S.attention.length, {}, attentionRows));
+  if (K.layout !== 'combined') sb.append(section('workspaces', 'Workspaces', defaultGroup().rows.length, {plus: true}, groupsInto([defaultGroup()], true)));
+  renderPanel(); saveKnobs();
+}
+const NOTES_TEXT = [
+  'Workspaces is the default group: same layout as a project card, no border or colour.',
+  'Drag rows within or between groups, and drag project headers to reorder. Moves are local (↷); right-click offers "Move back".',
+  'Right-margin close: click does the default, hold ~0.5s for the menu.',
+  'Not modelled yet: Attention activating the workspace that worked on the item; git and sessions sections.',
+  'For implementation: drop the rule under project titles in the native sidebar.',
+];
+function renderPanel() {
+  const p = document.getElementById('panel'); p.replaceChildren();
+  p.append(h('h2', '', 'Presets'));
+  const pr = h('div', 'presets');
+  for (const [name, preset] of Object.entries(PRESETS)) {
+    const same = Object.keys(preset).every(k => K[k] === preset[k]);
+    const b = h('button', same ? 'on' : '', name); b.onclick = () => { K = {...preset}; log(`preset ${name}`); render(); }; pr.append(b);
+  }
+  p.append(pr);
+  for (const kn of KNOBS) {
+    if (kn.group) { p.append(h('h2', '', kn.group)); continue; }
+    const row = h('div', 'k'); row.append(h('label', '', kn.label));
+    let input;
+    if (kn.range) {
+      input = h('input'); input.type = 'range'; input.min = kn.range[0]; input.max = kn.range[1]; input.value = K[kn.k];
+      input.title = K[kn.k] + kn.unit;
+      input.oninput = () => { K[kn.k] = +input.value; render(); };
+    } else {
+      input = h('select');
+      for (const [v, l] of Object.entries(kn.opts)) { const o = h('option', '', l); o.value = v; if (K[kn.k] === v) o.selected = true; input.append(o); }
+      input.onchange = () => { K[kn.k] = input.value; render(); };
+    }
+    row.append(input); p.append(row);
+    if (kn.note) p.append(h('div', 'note', kn.note));
+  }
+  for (const n of NOTES_TEXT) p.append(h('div', 'note', '· ' + n));
+  const l = h('div', ''); l.id = 'log'; p.append(l); renderLog();
+}
+function renderLog() { const l = document.getElementById('log'); if (l) l.textContent = 'log\n' + S.log.join('\n'); }
+render();
+</script>
+</body>
+</html>
