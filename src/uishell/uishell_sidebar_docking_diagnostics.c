@@ -493,6 +493,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   // pressed appearance and dispatch through the native UI event path.
   ws->sidebar = &display; display.initialized = 1;
   UI_Key header_key = ui_key_from_stringf(roots[0], "###section_header_%S", key);
+  // Display toggles sit in one segment inside the header (#210).
+  UI_Key controls_key = ui_key_from_stringf(header_key, "###controls_%S", key);
   F32 widths[] = {260, 600};
   for(U64 w = 0; w < ArrayCount(widths); w++)
   {
@@ -503,7 +505,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       UI_IconInfo icons = ws->ui->icon_info;
       UI_AnimationInfo animation = {0};
       UI_EventList events = {0}; UI_EventNode event = {0};
-      UI_Key button_key = ui_key_from_stringf(header_key, "###control_%S_0", key);
+      UI_Key button_key = ui_key_from_stringf(controls_key, "###control_%S_0", key);
       if(frame == 2 || frame == 3)
       {
         UI_Box *button = ui_box_from_key(button_key);
@@ -524,10 +526,48 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       DockFailure(ui_box_is_nil(close));
       if(frame == 1) { DockFailure(ui_box_display_string(close).size != 0); }
       if(frame == 2) { DockFailure(ui_box_display_string(close).size == 0); }
+      // Header chrome (#210): toggles show on hover or while any is on, the
+      // grip only on hover, the collapse indicator after the title, and a
+      // toggle's tooltip keeps the shell tooltip look instead of the
+      // button's fill.
+      B32 any_on = 0;
+      for(U64 c = 0; c < section.control_count; c++)
+      {
+        AndamentoControl each = {0};
+        andamento_snapshot_control(display.snapshot, section.first_control+c, &each);
+        any_on |= each.value_kind == 1 && each.checked;
+      }
+      UI_Box *first_toggle = ui_box_from_key(ui_key_from_stringf(controls_key, "###control_%S_0", key));
+      UI_Box *grip = ui_box_from_key(ui_key_from_string(header_key, str8_lit("###section_drag")));
+      UI_Box *title = ui_box_from_key(ui_key_from_stringf(header_key, "###section_%S", key));
+      UI_Box *disclosure = ui_box_from_key(ui_key_from_stringf(header_key, "###section_toggle_%S", key));
+      if(frame == 1)
+      {
+        DockFailure((ui_box_display_string(first_toggle).size != 0) != !!any_on);
+        DockFailure(!ui_box_is_nil(grip) && ui_box_display_string(grip).size != 0);
+      }
+      if(frame == 2)
+      {
+        DockFailure(ui_box_display_string(first_toggle).size == 0);
+        DockFailure(ui_box_is_nil(grip) || ui_box_display_string(grip).size == 0);
+        // Find the tooltip holding this toggle's label, then its drawn frame.
+        AndamentoControl first_control = {0};
+        andamento_snapshot_control(display.snapshot, section.first_control, &first_control);
+        UI_Box *tip = &ui_nil_box;
+        for(UI_Box *b = ui_state->tooltip_root; !ui_box_is_nil(b) && ui_box_is_nil(tip); b = ui_box_rec_df_pre(b, ui_state->tooltip_root).next)
+        { if(str8_match(ui_box_display_string(b), uishell_sidebar_string(first_control.label), 0)) { tip = b; } }
+        while(!ui_box_is_nil(tip) && !(tip->flags & UI_BoxFlag_DrawBackground)) { tip = tip->parent; }
+        DockFailure(ui_box_is_nil(tip));
+        // The tooltip keeps the theme's tooltip background for its own tags
+        // (translucent), not a colour inherited from the button's scope.
+        Vec4F32 themed = ui_box_is_nil(tip) ? v4f32(0, 0, 0, 0) : ui_color_from_tags_key_name(tip->tags_key, str8_lit("background"));
+        DockFailure(!ui_box_is_nil(tip) && !MemoryMatchStruct(&tip->background_color, &themed));
+      }
+      if(frame >= 1) { DockFailure(ui_box_is_nil(title) || ui_box_is_nil(disclosure) || disclosure->rect.x0 < title->rect.x1-1); }
       F32 previous_right = 0;
       for(U64 c = 0; c < section.control_count; c++)
       {
-        UI_Box *button = ui_box_from_key(ui_key_from_stringf(header_key, "###control_%S_%I64u", key, c));
+        UI_Box *button = ui_box_from_key(ui_key_from_stringf(controls_key, "###control_%S_%I64u", key, c));
         DockFailure(ui_box_is_nil(button));
         DockFailure(button->rect.x0 < previous_right || button->rect.x1 > widths[w] || dim_2f32(button->rect).x <= 0);
         previous_right = button->rect.x1;
@@ -535,7 +575,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     }
     andamento_snapshot_control(display.snapshot, section.first_control, &control);
     DockFailure(!!control.checked == before_click);
-    UI_Box *button = ui_box_from_key(ui_key_from_stringf(header_key, "###control_%S_0", key));
+    UI_Box *button = ui_box_from_key(ui_key_from_stringf(controls_key, "###control_%S_0", key));
     DockFailure(!!(button->flags & UI_BoxFlag_DrawBackground) != !!control.checked);
   }
   ws->sidebar = state;

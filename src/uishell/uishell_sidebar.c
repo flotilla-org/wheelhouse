@@ -1024,6 +1024,35 @@ uishell_sidebar_grip(String8 key, String8 description)
   return signal;
 }
 
+// Section and pinned-area headers share one quiet control style (#210): no
+// border, a hover fill, a soft fill while on. A hidden control keeps its box
+// and width (so the title never jumps) but draws nothing and takes no input.
+// The tooltip is built outside the control's style scope; inside it, the
+// tooltip inherited the control's background and width.
+internal Vec4F32 uishell_sidebar_selection_fill(B32 exact_action);
+internal UI_Signal
+uishell_sidebar_header_button(String8 glyph, String8 key, B32 on, B32 shown, String8 title, String8 detail)
+{
+  UI_Box *box;
+  UI_PrefWidth(ui_em(1.7f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+  UI_CornerRadius(3.f) UI_BackgroundColor(uishell_sidebar_selection_fill(0))
+  {
+    // DrawText stays set even when hidden: the box keeps its last string
+    // otherwise, and a hidden control would keep showing its glyph.
+    box = ui_build_box_from_stringf(UI_BoxFlag_DisableTruncatedHover|UI_BoxFlag_DrawText|
+      (shown ? UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects : 0)|
+      (shown && on ? UI_BoxFlag_DrawBackground : 0), "%S###%S", shown ? glyph : str8_zero(), key);
+  }
+  UI_Signal sig = ui_signal_from_box(box);
+  if(shown && ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+  {
+    ui_state->tooltip_anchor_key = box->key;
+    ui_label(title);
+    if(detail.size) UI_TagF("weak") { ui_label(detail); }
+  }
+  return sig;
+}
+
 // Use the shell's icon-font expander, not a text-font '>' in a narrow label.
 // Padding and truncation are inappropriate for this fixed-size glyph.
 internal UI_Signal
@@ -1748,59 +1777,74 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       { ui_set_next_border_color(uishell_sidebar_selection_fill(1)); }
       UI_Rect(r2f32p(0, y+(!section_panel && n != flexible && heights[n] > 0 ? 6.f : 0.f), dim.x, y+row_height)) UI_ChildLayoutAxis(Axis2_X)
       { header = ui_build_box_from_stringf(states[n]->collapsed && contains_selected[sections[n]] ? UI_BoxFlag_DrawBorder : 0, "###section_header_%S", key); }
+      // Header chrome (#210): the grip and inactive actions appear while the
+      // header is hovered; the collapse indicator follows the title; the count
+      // shows only when collapsed. `header` still holds last frame's rect.
+      B32 engaged = contains_2f32(header->rect, ui_mouse()) && !rd_drag_is_active();
       UI_Parent(header) UI_PrefHeight(ui_pct(1, 1)) UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak")
       {
         B32 toggle = 0;
         ui_spacer(ui_em(0.3f, 1));
         if(section_panel) UI_PrefWidth(ui_em(UIShell_GripWidthEM, 1))
         {
-          UI_Signal drag = uishell_sidebar_grip(str8_lit("section_drag"), str8_lit("Drag section"));
-          if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
-          { rd_drag_begin(UIShell_ContextRegSlot_View); }
+          if(engaged)
+          {
+            UI_Signal drag = uishell_sidebar_grip(str8_lit("section_drag"), str8_lit("Drag section"));
+            if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
+            { rd_drag_begin(UIShell_ContextRegSlot_View); }
+          }
+          else { ui_spacer(ui_em(UIShell_GripWidthEM, 1)); }
         }
-        toggle |= ui_clicked(uishell_sidebar_disclosure(!states[n]->collapsed, push_str8f(scratch.arena, "###section_toggle_%S", key)));
-        UI_PrefWidth(ui_pct(1, 0))
+        // The title holds its width; the spacer after the indicator absorbs slack.
+        UI_PrefWidth(ui_text_dim(4.f, 1))
         { toggle |= ui_clicked(uishell_sidebar_button(push_str8f(scratch.arena, "%S###section_%S", upper_from_str8(scratch.arena, title), key))); }
-        UI_PrefWidth(ui_text_dim(0.6f, 1)) UI_TextAlignment(UI_TextAlign_Right)
+        if(states[n]->collapsed) UI_PrefWidth(ui_text_dim(4.f, 1)) UI_TextColor(uishell_sidebar_ended_color())
         { ui_label(push_str8f(scratch.arena, "%I64u", entries[n])); }
+        toggle |= ui_clicked(uishell_sidebar_disclosure(!states[n]->collapsed, push_str8f(scratch.arena, "###section_toggle_%S", key)));
+        ui_spacer(ui_pct(1, 0));
+        // Display toggles form one segment. It stays visible while any toggle
+        // is on, so active filters are always shown; otherwise only on hover.
+        B32 any_on = 0;
+        for(U64 c = 0; c < section_node->control_count; c++)
+        {
+          AndamentoControl control = {0};
+          if(andamento_snapshot_control(state->snapshot, section_node->first_control+c, &control) &&
+             control.action != ANDAMENTO_NONE && control.value_kind == 1 && control.checked) { any_on = 1; }
+        }
+        B32 segment_shown = engaged || any_on;
+        UI_Box *segment;
+        UI_PrefWidth(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_X) UI_CornerRadius(4.f)
+        { segment = ui_build_box_from_stringf(segment_shown && section_node->control_count ? UI_BoxFlag_DrawBorder : 0, "###controls_%S", key); }
+        UI_Parent(segment)
         for(U64 c = 0; c < section_node->control_count; c++)
         {
           AndamentoControl control = {0};
           if(!andamento_snapshot_control(state->snapshot, section_node->first_control+c, &control) ||
              control.action == ANDAMENTO_NONE) { continue; }
           B32 checked = control.value_kind == 1 && control.checked;
-          UI_PrefWidth(ui_em(1.7f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
-          UI_CornerRadius(3.f) UI_BackgroundColor(uishell_sidebar_selection_fill(1))
-          {
-            UI_Box *button = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|
-              UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DisableTruncatedHover|
-              (checked ? UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder : 0),
-              "%S###control_%S_%I64u", uishell_sidebar_string(control.glyph), key, c);
-            UI_Signal sig = ui_signal_from_box(button);
-            if(ui_clicked(sig)) { action = control.action; }
-            if(ui_hovering(sig)) UI_Tooltip
-            { ui_state->tooltip_anchor_key = button->key; ui_label(uishell_sidebar_string(control.label)); }
-          }
+          String8 detail = control.value_kind != 1 ? str8_zero() :
+            checked ? str8_lit("On · click to turn off") : str8_lit("Off · click to turn on");
+          UI_Signal sig = uishell_sidebar_header_button(uishell_sidebar_string(control.glyph),
+            push_str8f(scratch.arena, "control_%S_%I64u", key, c), checked, segment_shown,
+            uishell_sidebar_string(control.label), detail);
+          if(ui_clicked(sig)) { action = control.action; }
         }
         if(uishell_sidebar_section_hosts_chrome(key))
         {
           // Chrome resolution reads this next frame (ADR-0006).
           ws->chrome_section_header_frame = rd_state->frame_index+1;
-          if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SectionHeader)
-            UI_PrefWidth(ui_em(1.7f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("")
-          { rd_chrome_build_new_workspace(split->owner_cfg); }
+          if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SectionHeader &&
+             ui_clicked(uishell_sidebar_header_button(str8_lit("+"), str8_lit("new_workspace"), 0, 1,
+                                                      str8_lit("New workspace"), str8_lit("Opens an empty workspace here"))))
+          { uishell_cmd("new_workspace", .window = split->owner_cfg->id); }
         }
         if(section_panel)
         {
           CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-          UI_Key hover_key = ui_key_from_stringf(root->key, "###section_header_%S", key);
-          UI_Box *previous = ui_box_from_key(hover_key);
-          B32 engaged = !ui_box_is_nil(previous) && contains_2f32(previous->rect, ui_mouse());
-          UI_PrefWidth(ui_em(1.5f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
-          {
-            UI_Signal close = uishell_sidebar_button(engaged ? str8_lit("×###section_close") : str8_lit("###section_close"));
-            if(engaged && ui_clicked(close) && rd_dock_can_close(view)) { uishell_cmd("close_tab"); }
-          }
+          if(ui_clicked(uishell_sidebar_header_button(str8_lit("×"), str8_lit("section_close"), 0, engaged,
+                                                      str8_lit("Close section"), str8_lit("Restore it from Sections…"))) &&
+             rd_dock_can_close(view))
+          { uishell_cmd("close_tab"); }
         }
         ui_spacer(ui_px(4.f, 1));
         if(toggle)
