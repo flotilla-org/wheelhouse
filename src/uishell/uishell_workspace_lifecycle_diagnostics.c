@@ -256,7 +256,10 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
           { if(str8_match(ui_box_display_string(b), str8_lit("Close workspace"), 0)) { label = b; } }
           F32 text = fnt_dim_from_tag_size_string(label->font, label->font_size, 0, 0, str8_lit("Close workspace")).x;
           tip_sized = !ui_box_is_nil(label) && dim_2f32(label->rect).x >= text;
-          tip_beside = !ui_box_is_nil(label) && abs_f32(label->rect.y0-button.y) < 100.f && label->rect.x0 < button.x+50.f;
+          // Horizontal only: a window shorter than the sidebar clamps the
+          // tooltip vertically (headless CI), while the inherited floating
+          // position pushed it far to the right.
+          tip_beside = !ui_box_is_nil(label) && label->rect.x0 < button.x+50.f;
         }
         if(frame == 6) { menu_open = ui_any_ctx_menu_is_open(); }
         for(UI_Box *box = test->root; frame == 1 && !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
