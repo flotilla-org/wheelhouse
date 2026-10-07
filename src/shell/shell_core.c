@@ -6700,7 +6700,7 @@ rd_window_frame(void)
         chrome_elements[chrome_element_count++] = (RD_ChromeElement){
           RD_ChromeElementKind_SidebarCollapse, icon_button_w, 5,
           {RD_ChromeNiche_TitleBarLeading}, 1};
-        // new-workspace sits on the Other workspaces header, where its result
+        // new-workspace is the Workspaces group's entry row, where its result
         // appears. that niche exists only while the sidebar drew it last
         // frame; otherwise the sidebar action row takes the button.
         B32 section_header = ws->chrome_section_header_frame != 0 && ws->chrome_section_header_frame >= rd_state->frame_index;

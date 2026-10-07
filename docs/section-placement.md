@@ -15,8 +15,8 @@ and `floating` host hints; absent, unknown or rejected hosts fall back to the
 sidebar. Explicit orders sort lower first; an omitted order uses the region's
 zero-based declaration index. Ties preserve declaration order. An unhinted region at index 2 sorts before
 order=10, but after order=1; hint all regions or none to avoid mixed scales.
-The exception is Andamento's synthetic Other workspaces section
-(`andamento.unplaced-workspaces`). It is always emitted and unhinted, so
+The exception is Andamento's synthetic unplaced-workspaces section
+(`andamento.unplaced-workspaces`, shown as Workspaces). It is always emitted and unhinted, so
 Wheelhouse places it after every declared region unless Andamento gives it an
 order. New sections
 are inserted before their next hinted neighbour in the same host, keeping the
@@ -40,7 +40,7 @@ clears that declaration's closed record and uses the shared placement checker
 and current host hint. An existing docked or floating View is never duplicated.
 The restored panel receives a sibling share, preserving the other panels'
 relative allocations and lifting a merged leaf's existing tabs when needed.
-The menu remains available when every fleet section, including Other workspaces,
+The menu remains available when every fleet section, including Workspaces,
 is closed. A missing snapshot disables restoration without changing the saved
 arrangement.
 

@@ -117,6 +117,9 @@ struct UIShell_SidebarState
   Arena *row_drag_arena;
   String8 row_drag_key, row_drag_loop;
   B32 row_drag_released;
+  // The margin close control held down, and since when (hold opens the menu).
+  UI_Key margin_hold_key;
+  U64 margin_hold_us;
   // A drop or Reset order waits for the end of render, which owns the snapshot.
   B32 order_pending;
   String8 order_loop;
@@ -1267,6 +1270,63 @@ uishell_sidebar_close_workspace(RD_WindowState *ws, AndamentoNode node, UIShell_
 
 // Rows drag from their body past the shared threshold. The UIKey slot keeps
 // docking targets out of it; render places and commits the drop.
+// A detached workspace keeps its layout; its menu also offers to discard it.
+internal void
+uishell_sidebar_discard_button(RD_WindowState *ws, AndamentoNode node, UIShell_SidebarCloseKind close_kind)
+{
+  if(close_kind == UIShell_SidebarCloseKind_Detach && ui_clicked(ui_button(str8_lit("Close and discard layout"))))
+  { uishell_sidebar_close_workspace(ws, node, UIShell_SidebarCloseKind_Destroy); ui_ctx_menu_close(); }
+}
+
+// Rows keep their status mark; close and detach live in the right margin
+// beside the row. A click runs the default (detach keeps the layout, ×
+// discards it); holding opens the row's menu, which offers the other close.
+enum { UIShell_MarginHoldUS = 450000 };
+
+internal void
+uishell_sidebar_margin_close(UIShell_SidebarState *state, RD_WindowState *ws, AndamentoNode node,
+                             UIShell_SidebarCloseKind close, UI_Key entry_key, UI_Key menu_key)
+{
+  Temp scratch = scratch_begin(0, 0);
+  String8 node_key = uishell_sidebar_string(node.key);
+  F32 em = ui_top_font_size();
+  UI_Signal sig = {0};
+  UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(3.f)
+  {
+    sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###close_%S",
+      close == UIShell_SidebarCloseKind_Destroy ? str8_lit("×") : str8_zero(), node_key));
+  }
+  if(close == UIShell_SidebarCloseKind_Detach) { ui_box_equip_custom_draw(sig.box, rd_workspace_detach_icon_draw, 0); }
+  if(ui_hovering(sig) && !ui_dragging(sig)) UI_Tooltip
+  {
+    ui_state->tooltip_anchor_key = sig.box->key;
+    ui_label(uishell_sidebar_close_label(close));
+    B32 unplaced = str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("andamento.workspace"), 0);
+    UI_TagF("weak")
+    {
+      ui_label(close == UIShell_SidebarCloseKind_Destroy ? str8_lit("The workspace and its layout are discarded.") :
+               unplaced ? str8_lit("Its layout reopens when its subject is seen again.") :
+               str8_lit("Its layout reopens from this entry."));
+      ui_label(str8_lit("Hold for more"));
+    }
+  }
+  U64 now = now_time_us();
+  if(ui_pressed(sig)) { state->margin_hold_key = sig.box->key; state->margin_hold_us = now; }
+  if(ui_dragging(sig) && ui_key_match(state->margin_hold_key, sig.box->key))
+  {
+    if(now-state->margin_hold_us >= UIShell_MarginHoldUS)
+    {
+      // The release after a hold is not a click.
+      ui_kill_action();
+      state->margin_hold_key = ui_key_zero();
+      ui_ctx_menu_open(menu_key, entry_key, v2f32(0, em*1.8f));
+    }
+    else { rd_request_frame(); }
+  }
+  if(ui_clicked(sig)) { uishell_sidebar_close_workspace(ws, node, close); }
+  scratch_end(scratch);
+}
+
 // One sibling of the dragged row as built this frame, with last frame's rects.
 // The extent covers the sibling's project box or descendant rows.
 typedef struct UIShell_RowDragSibling UIShell_RowDragSibling;
@@ -1375,6 +1435,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
       }
       if(close_kind != UIShell_SidebarCloseKind_None && ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
       { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
+      uishell_sidebar_discard_button(ws, node, close_kind);
       if(ordered) { uishell_sidebar_order_reset_button(state, loop); }
     }
     if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
@@ -1387,6 +1448,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     {
       if(ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
       { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
+      uishell_sidebar_discard_button(ws, node, close_kind);
       if(ordered) { uishell_sidebar_order_reset_button(state, loop); }
     }
     if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
@@ -1777,6 +1839,48 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
   state->row_drag_released = 0;
 }
 
+// The Workspaces group's first row creates a workspace, which appears in it.
+// It shares the row slot's insets, so it lines up with the rows below.
+internal void
+uishell_sidebar_new_workspace_entry(UIShell_ControlledSplit *split, F32 row_height, F32 side_margin)
+{
+  UI_Signal sig = {0};
+  UI_Box *slot;
+  UI_ChildLayoutAxis(Axis2_X) { slot = ui_build_box_from_stringf(0, "###new_workspace_slot"); }
+  UI_Parent(slot)
+  {
+    ui_spacer(ui_px(4.f, 1));
+    UI_Box *column;
+    UI_ChildLayoutAxis(Axis2_Y) UI_PrefHeight(ui_pct(1, 1)) UI_PrefWidth(ui_pct(1, 0))
+    { column = ui_build_box_from_stringf(0, "###new_workspace_column"); }
+    UI_Parent(column)
+    {
+      ui_spacer(ui_px(2.f, 1));
+      UI_Box *row;
+      UI_PrefHeight(ui_px(row_height-4.f, 1)) UI_CornerRadius(3.f) UI_ChildLayoutAxis(Axis2_X)
+      {
+        row = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
+          "###new_workspace");
+      }
+      sig = ui_signal_from_box(row);
+      UI_Parent(row) UI_PrefHeight(ui_pct(1, 1)) UI_TagF("weak")
+      {
+        ui_spacer(ui_em(0.3f+1.5f, 1));
+        UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) { ui_label(str8_lit("+")); }
+        UI_PrefWidth(ui_pct(1, 0)) { ui_label(str8_lit("New workspace")); }
+      }
+    }
+    ui_spacer(ui_px(4.f+side_margin, 1));
+  }
+  if(ui_hovering(sig)) UI_Tooltip
+  {
+    ui_state->tooltip_anchor_key = sig.box->key;
+    ui_label(str8_lit("New workspace"));
+    UI_TagF("weak") { ui_label(str8_lit("Opens an empty workspace in this group")); }
+  }
+  if(ui_clicked(sig)) { uishell_cmd("new_workspace", .window = split->owner_cfg->id); }
+}
+
 internal void
 uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_SidebarRenderParams params)
 {
@@ -1815,6 +1919,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   F32 em = ui_top_font_size(), row_height = floor_f32(em*2.2f);
   F32 minimum_name = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, str8_lit("abcdefghij…")).x+em;
   F32 project_gap = 6.f, project_padding = 4.f;
+  // Rows and project cards leave a right margin for the close control.
+  F32 side_margin = floor_f32(em*1.5f);
   F32 body_top_padding = 2.f; // Room for the first container's outward border stroke.
   Vec2F32 dim = dim_2f32(rect);
   UI_Box *root;
@@ -1974,6 +2080,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       }
       content_heights[n] += node_height;
     }
+    // The Workspaces group opens with its new-workspace entry row.
+    if(uishell_sidebar_section_hosts_chrome(key)) { rows[n]++; content_heights[n] += row_height; }
     if(rows[n]) { content_heights[n] += body_top_padding; }
     states[n]->content_height = content_heights[n];
     states[n]->has_controls = nodes[sections[n]].control_count != 0;
@@ -2019,6 +2127,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         andamento_snapshot_field(state->snapshot, section_node->first_field, &field);
         title = uishell_sidebar_string(field.text);
       }
+      // The local workspace list is Wheelhouse's Workspaces group (drag-model.md);
+      // Andamento's fallback name describes it relative to projects.
+      if(uishell_sidebar_section_hosts_chrome(key)) { title = str8_lit("Workspaces"); }
       UI_Box *header;
       if(states[n]->collapsed && contains_selected[sections[n]])
       { ui_set_next_border_color(uishell_sidebar_selection_fill(1)); }
@@ -2084,15 +2195,6 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             uishell_sidebar_string(control.label), detail);
           if(ui_clicked(sig)) { action = control.action; }
         }
-        if(uishell_sidebar_section_hosts_chrome(key))
-        {
-          // Chrome resolution reads this next frame (ADR-0006).
-          ws->chrome_section_header_frame = rd_state->frame_index+1;
-          if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SectionHeader &&
-             ui_clicked(uishell_sidebar_header_button(str8_lit("+"), str8_lit("new_workspace"), 0, 1,
-                                                      str8_lit("New workspace"), str8_lit("Opens an empty workspace here"))))
-          { uishell_cmd("new_workspace", .window = split->owner_cfg->id); }
-        }
         if(section_panel)
         {
           CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
@@ -2156,6 +2258,14 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         F32 project_children_y = 0;
         ui_spacer(ui_px(body_top_padding, 1));
         F32 row_y = body_top_padding;
+        if(uishell_sidebar_section_hosts_chrome(key))
+        {
+          // Chrome resolution reads this next frame (ADR-0006).
+          ws->chrome_section_header_frame = rd_state->frame_index+1;
+          if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SectionHeader)
+          { uishell_sidebar_new_workspace_entry(split, row_height, side_margin); }
+          row_y += row_height;
+        }
         for(U64 i = sections[n]; i < end; i++)
         {
           if(project_box && depth[i] <= project_depth)
@@ -2230,7 +2340,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           { name_widths[c] = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, names[c]).x+em; }
           F32 indent = 0.3f+Min(depth[i], (str8_match(kind, str8_lit("role"), 0) || str8_match(kind, str8_lit("convoy"), 0) || uishell_sidebar_is_subject(node)) ? 3 : 1)*0.4f;
           F32 status_width = em*(str8_match(kind, str8_lit("change_request"), 0) ? 10.f : 1.2f);
-          F32 row_width = Max(0.f, dim_2f32(region.viewport).x-8.f-(owner != ANDAMENTO_NONE ? 4.f : 0.f));
+          F32 row_width = Max(0.f, dim_2f32(region.viewport).x-8.f-side_margin-(owner != ANDAMENTO_NONE ? 4.f : 0.f));
           F32 available_width = Max(0.f, row_width-em*(indent+1.5f+1.2f)-status_width-(project ? 3.f : 0.f));
           F32 overflow_width = chip_count ? Max(em*2.5f,
             fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0,
@@ -2245,7 +2355,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           {
             Vec4F32 accent = uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
             // Keep rounded strokes and their antialiasing inside the viewport clip.
-            UI_FixedX(2.f) UI_PrefWidth(ui_px(Max(0.f, dim_2f32(region.viewport).x-4.f), 1))
+            UI_FixedX(2.f) UI_PrefWidth(ui_px(Max(0.f, dim_2f32(region.viewport).x-4.f-side_margin), 1))
             UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y) UI_CornerRadius(5.f)
             UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), accent, 0.035f))
             {
@@ -2258,6 +2368,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             row_y += project_padding;
           }
           B32 contains_current = node.collapsed && contains_selected[i] && !node.selected;
+          UI_Key entry_key = ui_key_zero();
           if(!node.is_section)
           {
             if(i == reveal)
@@ -2267,6 +2378,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               state->reveal_workspace_id = 0;
               rd_request_frame();
             }
+            F32 slot_y = row_y;
             row_y += row_height;
             // Persistent workspace selection remains visible while the terminal
             // has focus, without borrowing the keyboard-focus border.
@@ -2326,6 +2438,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                   // Keep the full row identity and its rich hover card reachable
                   // through the fixed icon when chips consume the name column.
                   UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###identity_%S", rd_icon_kind_text_table[icon], node_key));
+                  entry_key = sig.box->key;
                   size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0);
                   if(requested != ANDAMENTO_NONE) { action = requested; }
                 }
@@ -2349,6 +2462,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                 if(str8_match(status, str8_lit("ended"), 0))
                 { ui_set_next_text_color(uishell_sidebar_ended_color()); }
                 UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###entry_%S", display, node_key));
+                entry_key = sig.box->key;
                 if(project && project_child_heights[i] > 0 && project_open[i] > 0)
                 {
                   UIShell_SidebarProjectRule *rule = push_array(ui_build_arena(), UIShell_SidebarProjectRule, 1);
@@ -2433,38 +2547,26 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                   UI_TextColor(color) { ui_label(badge); }
                 }
                 else if(project) { ui_spacer(ui_em(1.2f, 1)); }
-                else
-                {
-                  // Hovering the row turns its status mark into the close
-                  // affordance: detach keeps the workspace, × destroys it.
-                  UIShell_SidebarCloseKind close = uishell_sidebar_close_kind(node, status);
-                  B32 engaged = close != UIShell_SidebarCloseKind_None && contains_2f32(row->rect, ui_mouse()) &&
-                    !ui_any_ctx_menu_is_open() && !rd_drag_is_active();
-                  if(engaged) UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(3.f)
-                  {
-                    UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###close_%S",
-                      close == UIShell_SidebarCloseKind_Destroy ? str8_lit("×") : str8_zero(), node_key));
-                    if(close == UIShell_SidebarCloseKind_Detach) { ui_box_equip_custom_draw(sig.box, rd_workspace_detach_icon_draw, 0); }
-                    if(ui_hovering(sig)) UI_Tooltip
-                    {
-                      ui_state->tooltip_anchor_key = sig.box->key;
-                      ui_label(uishell_sidebar_close_label(close));
-                      B32 unplaced = str8_match(kind, str8_lit("andamento.workspace"), 0);
-                      ui_label(close == UIShell_SidebarCloseKind_Destroy ? str8_lit("The workspace and its layout are discarded.") :
-                               unplaced ? str8_lit("Its layout reopens when its subject is seen again.") :
-                               str8_lit("Its layout reopens from this entry."));
-                    }
-                    if(ui_clicked(sig)) { uishell_sidebar_close_workspace(ws, node, close); }
-                  }
-                  else { ui_label(uishell_sidebar_status_mark(node, status)); }
-                }
+                else { ui_label(uishell_sidebar_status_mark(node, status)); }
               }
             }
             ui_spacer(ui_px(2.f, 1));
             ui_pop_parent();
-            ui_spacer(ui_px(4.f, 1));
+            // Project cards already stop short of the margin.
+            ui_spacer(ui_px(4.f+(owner == ANDAMENTO_NONE ? side_margin : 0), 1));
             ui_pop_parent();
             if(drag_source) { ui_pop_transparency(); }
+            UIShell_SidebarCloseKind close = uishell_sidebar_close_kind(node, status);
+            Rng2F32 zone = r2f32p(slot->rect.x0, slot->rect.y0, body->rect.x1, slot->rect.y1);
+            B32 held = ui_key_match(state->margin_hold_key, ui_key_from_stringf(body->key, "###close_%S", node_key));
+            if(close != UIShell_SidebarCloseKind_None && !ui_key_match(entry_key, ui_key_zero()) &&
+               !ui_any_ctx_menu_is_open() && !rd_drag_is_active() && (held || contains_2f32(zone, ui_mouse())))
+            {
+              UI_Key menu_key = ui_key_from_stringf(entry_key, uishell_sidebar_is_subject(node) ? "subject_menu" : "workspace_menu");
+              UI_Parent(body) UI_FixedX(dim_2f32(region.viewport).x-side_margin) UI_FixedY(slot_y+2.f)
+              UI_PrefWidth(ui_px(side_margin-2.f, 1)) UI_PrefHeight(ui_px(row_height-4.f, 1))
+              { uishell_sidebar_margin_close(state, ws, node, close, entry_key, menu_key); }
+            }
           }
           if(!node.is_section)
           {

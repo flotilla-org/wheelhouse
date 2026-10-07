@@ -92,9 +92,11 @@ for measurements, reproduction commands and limits.
 ## Sidebar
 
 The Andamento tree is the workspace sidebar. Without a producer, it lists local
-workspaces under Other workspaces; live catalog entries appear when connected to
-`pm connect`. Workspace previews are available on hover, with the full overview
-in the toolbar. Creation, Reveal, and Close also live in the toolbar. **Window →
+workspaces under Workspaces, which opens with a New workspace row; live catalog
+entries appear when connected to `pm connect`. Hovering a row shows detach or
+close in the margin beside it; hold it for the row's menu. Workspace previews
+are available on hover, with the full overview and Reveal in the toolbar.
+**Window →
 Workspace Settings** edits the current workspace's properties, including its name.
 Old saved `sidebar_mode` values no longer select a different sidebar.
 
