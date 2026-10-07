@@ -113,6 +113,15 @@ struct UIShell_SidebarState
   UIShell_HoverCard *detached;
   CFG_ID pin_before, pin_reveal;
   UIShell_HoverCard *drag_card;
+  // Row reorder: the dragged row and its sibling run's loop key, both copied.
+  Arena *row_drag_arena;
+  String8 row_drag_key, row_drag_loop;
+  B32 row_drag_released;
+  // A drop or Reset order waits for the end of render, which owns the snapshot.
+  B32 order_pending;
+  String8 order_loop;
+  AndamentoEntity *order;
+  U64 order_count;
   CFG_ID card_drop_panel;
   Dir2 card_drop_direction;
   U64 pin_cfg_generation;
@@ -274,6 +283,7 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     uishell_sidebar_display_wake_release(state->display_wakeup);
     state->display_wakeup = 0;
     if(state->display_restore_arena) { arena_release(state->display_restore_arena); }
+    if(state->row_drag_arena) { arena_release(state->row_drag_arena); state->row_drag_arena = 0; }
     if(state->placement_arena) { arena_release(state->placement_arena); state->placement_arena = 0; }
     state->placement_snapshot = 0;
     state->placement_regions = 0;
@@ -451,6 +461,97 @@ uishell_sidebar_save_display(UIShell_SidebarState *state, CFG_Node *window)
     String8 text = control.checked ? str8_lit("true") : str8_lit("false");
     if(!str8_match(value->first->string, text, 0)) { cfg_node_new_replace(rd_state->cfg, value, text); }
   }
+}
+
+// Row reorder (drag-model.md, "Reorder"): rows move only among the siblings
+// of one loop invocation. Each window saves a run's full order under
+// sidebar_order, keyed by its loop key, as alternating kind and id leaves.
+// Andamento merges rows the list doesn't name, so it is applied as saved.
+internal String8
+uishell_sidebar_loop_key(AndamentoSnapshot *snapshot, U64 index)
+{
+  AndamentoText loop = {0};
+  if(!snapshot || !andamento_snapshot_node_loop_key(snapshot, index, &loop)) { return str8_zero(); }
+  return uishell_sidebar_string(loop);
+}
+
+// Siblings in displayed order, which is snapshot order for one loop key.
+internal U64
+uishell_sidebar_siblings(Arena *arena, AndamentoSnapshot *snapshot, String8 loop, AndamentoEntity **out)
+{
+  U64 count = 0, total = loop.size ? andamento_snapshot_node_count(snapshot) : 0;
+  for(U64 i = 0; i < total; i++)
+  { if(str8_match(uishell_sidebar_loop_key(snapshot, i), loop, 0)) { count++; } }
+  *out = push_array(arena, AndamentoEntity, count);
+  for(U64 i = 0, n = 0; n < count && i < total; i++)
+  {
+    if(!str8_match(uishell_sidebar_loop_key(snapshot, i), loop, 0)) { continue; }
+    AndamentoNode node = {0}; andamento_snapshot_node(snapshot, i, &node);
+    (*out)[n++] = (AndamentoEntity){node.entity_kind, node.entity_id};
+  }
+  return count;
+}
+
+internal B32
+uishell_sidebar_order_saved(CFG_Node *window, String8 loop)
+{
+  CFG_Node *orders = cfg_node_child_from_string(window, str8_lit("sidebar_order"));
+  return loop.size && cfg_node_child_from_string(orders, loop) != &cfg_nil_node;
+}
+
+// An empty order returns the run to data order and forgets the saved list.
+internal void
+uishell_sidebar_set_order(UIShell_SidebarState *state, CFG_Node *window, String8 loop,
+                          AndamentoEntity *entities, U64 count)
+{
+  if(!state->core || !loop.size) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  String8 *text = push_array(scratch.arena, String8, count*2);
+  for(U64 i = 0; i < count; i++)
+  {
+    text[i*2] = push_str8_copy(scratch.arena, uishell_sidebar_string(entities[i].kind));
+    text[i*2+1] = push_str8_copy(scratch.arena, uishell_sidebar_string(entities[i].id));
+  }
+  loop = push_str8_copy(scratch.arena, loop);
+  char *error = 0;
+  B32 ok = andamento_set_sibling_order(state->core, uishell_sidebar_text(loop), entities, count, &error);
+  if(uishell_sidebar_result(state, ok, error) && window != &cfg_nil_node)
+  {
+    CFG_Node *orders = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("sidebar_order"));
+    CFG_Node *run = cfg_node_child_from_string(orders, loop);
+    if(run != &cfg_nil_node) { cfg_node_release(rd_state->cfg, run); }
+    if(count)
+    {
+      run = cfg_node_new(rd_state->cfg, orders, loop);
+      for(U64 i = 0; i < count*2; i++) { cfg_node_new(rd_state->cfg, run, text[i]); }
+    }
+    else if(orders->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, orders); }
+  }
+  uishell_sidebar_refresh(state);
+  rd_request_frame();
+  scratch_end(scratch);
+}
+
+// Saved orders apply before their rows exist; Andamento keeps them by loop key.
+internal void
+uishell_sidebar_restore_orders(UIShell_SidebarState *state, CFG_Node *window)
+{
+  if(!state->core) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *orders = cfg_node_child_from_string(window, str8_lit("sidebar_order"));
+  for(CFG_Node *run = orders->first; run != &cfg_nil_node; run = run->next)
+  {
+    U64 count = 0;
+    for(CFG_Node *n = run->first; n != &cfg_nil_node && n->next != &cfg_nil_node; n = n->next->next) { count++; }
+    AndamentoEntity *entities = push_array(scratch.arena, AndamentoEntity, count);
+    CFG_Node *n = run->first;
+    for(U64 i = 0; i < count; i++, n = n->next->next)
+    { entities[i] = (AndamentoEntity){uishell_sidebar_text(n->string), uishell_sidebar_text(n->next->string)}; }
+    char *error = 0;
+    B32 ok = count && andamento_set_sibling_order(state->core, uishell_sidebar_text(run->string), entities, count, &error);
+    if(count) { uishell_sidebar_result(state, ok, error); }
+  }
+  scratch_end(scratch);
 }
 
 // State and timer each own one reference to a completion token. It contains
@@ -727,6 +828,7 @@ uishell_sidebar_init(RD_WindowState *ws)
       uishell_sidebar_result(state, ok, error);
       }
 #endif
+      uishell_sidebar_restore_orders(state, cfg_node_from_id(ws->cfg_id));
       uishell_sidebar_refresh(state);
       uishell_sidebar_restore_display(state, cfg_node_from_id(ws->cfg_id));
     }
@@ -1163,6 +1265,59 @@ uishell_sidebar_close_workspace(RD_WindowState *ws, AndamentoNode node, UIShell_
   if(kind == UIShell_SidebarCloseKind_Destroy) { uishell_cmd("close_workspace", .window = ws->cfg_id, .cfg = node.workspace_id); }
 }
 
+// Rows drag from their body past the shared threshold. The UIKey slot keeps
+// docking targets out of it; render places and commits the drop.
+// One sibling of the dragged row as built this frame, with last frame's rects.
+// The extent covers the sibling's project box or descendant rows.
+typedef struct UIShell_RowDragSibling UIShell_RowDragSibling;
+struct UIShell_RowDragSibling
+{
+  U64 index;
+  Rng2F32 row, extent;
+};
+
+internal void
+uishell_sidebar_row_drag_from(UIShell_SidebarState *state, RD_WindowState *ws,
+                              AndamentoNode node, U64 node_index, UI_Signal sig)
+{
+  String8 key = uishell_sidebar_string(node.key);
+  if(ui_dragging(sig) && !rd_drag_is_active() && !state->row_drag_key.size &&
+     length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    String8 loop = uishell_sidebar_loop_key(state->snapshot, node_index);
+    AndamentoEntity *siblings = 0;
+    if(uishell_sidebar_siblings(scratch.arena, state->snapshot, loop, &siblings) > 1)
+    {
+      if(!state->row_drag_arena) { state->row_drag_arena = arena_alloc(); }
+      arena_clear(state->row_drag_arena);
+      state->row_drag_key = push_str8_copy(state->row_drag_arena, key);
+      state->row_drag_loop = push_str8_copy(state->row_drag_arena, loop);
+      state->row_drag_released = 0;
+      UIShell_RegsScope(.window = ws->cfg_id, .ui_key = sig.box->key) { rd_drag_begin(UIShell_ContextRegSlot_UIKey); }
+      UIShell_HoverCard *card = &state->cards[0];
+      if(card->open && card->placement == UIShell_CardPlacement_Transient && !card->focused)
+      { uishell_sidebar_card_close(card); }
+      rd_request_frame();
+    }
+    scratch_end(scratch);
+  }
+  if(ui_released(sig) && state->row_drag_key.size && str8_match(state->row_drag_key, key, 0))
+  { state->row_drag_released = 1; rd_request_frame(); }
+}
+
+internal void
+uishell_sidebar_order_reset_button(UIShell_SidebarState *state, String8 loop)
+{
+  if(ui_clicked(ui_button(str8_lit("Reset order"))))
+  {
+    state->order_pending = 1;
+    state->order_loop = push_str8_copy(ui_build_arena(), loop);
+    state->order = 0; state->order_count = 0;
+    ui_ctx_menu_close();
+  }
+}
+
 internal size_t
 uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
                              AndamentoNode node, U64 node_index, UI_Signal sig, String8 context,
@@ -1179,7 +1334,17 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   B32 can_activate = node.activate != ANDAMENTO_NONE && (node.openable || node.state == ANDAMENTO_LIVE || copy_url != ANDAMENTO_NONE);
   Temp scratch = scratch_begin(0, 0);
   sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
-  if(ui_clicked(sig))
+  // A row drag ends in a release; it must not also activate the row.
+  B32 row_drag = state->row_drag_key.size != 0;
+  if(!menu) { uishell_sidebar_row_drag_from(state, ws, node, node_index, sig); }
+  // A run the window has reordered offers Reset order in the row's menu.
+  String8 loop = str8_zero(); B32 ordered = 0;
+  if(!menu && (ui_right_clicked(sig) || ui_any_ctx_menu_is_open()))
+  {
+    loop = uishell_sidebar_loop_key(state->snapshot, node_index);
+    ordered = uishell_sidebar_order_saved(cfg_node_from_id(ws->cfg_id), loop);
+  }
+  if(ui_clicked(sig) && !row_drag)
   {
     if(can_activate) { action = node.activate; }
     else
@@ -1210,6 +1375,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
       }
       if(close_kind != UIShell_SidebarCloseKind_None && ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
       { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
+      if(ordered) { uishell_sidebar_order_reset_button(state, loop); }
     }
     if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
   }
@@ -1221,8 +1387,16 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     {
       if(ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
       { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
+      if(ordered) { uishell_sidebar_order_reset_button(state, loop); }
     }
     if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
+  }
+  else if(!menu)
+  {
+    UI_Key menu_key = ui_key_from_stringf(sig.box->key, "order_menu");
+    UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+    { if(ordered) { uishell_sidebar_order_reset_button(state, loop); } }
+    if(ui_right_clicked(sig) && ordered) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
   }
   uishell_sidebar_card_source(state, node, sig, context, contains_current);
   scratch_end(scratch);
@@ -1538,6 +1712,70 @@ uishell_sidebar_section_hosts_chrome(String8 key)
   return str8_match(key, str8_lit("andamento.unplaced-workspaces"), 0);
 }
 
+internal B32
+uishell_sidebar_entity_match(AndamentoEntity a, AndamentoEntity b)
+{
+  return str8_match(uishell_sidebar_string(a.kind), uishell_sidebar_string(b.kind), 0) &&
+    str8_match(uishell_sidebar_string(a.id), uishell_sidebar_string(b.id), 0);
+}
+
+// The pointer picks the gap between siblings by their rows' midpoints. Within
+// the run's extent, a gap that moves the row shows an insertion line; a
+// release there saves the run's full new order. Anywhere else snaps back.
+internal void
+uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
+                         UIShell_RowDragSibling *siblings, U64 count, F32 row_height)
+{
+  Vec2F32 mouse = ui_mouse();
+  U64 source = count, target = 0;
+  for(U64 k = 0; k < count; k++)
+  {
+    if(str8_match(uishell_sidebar_string(nodes[siblings[k].index].key), state->row_drag_key, 0)) { source = k; }
+    if(mouse.y > center_2f32(siblings[k].row).y) { target = k+1; }
+  }
+  Rng2F32 span = r2f32p(siblings[0].extent.x0, siblings[0].extent.y0-row_height*0.5f,
+                        siblings[0].extent.x1, siblings[count-1].extent.y1+row_height*0.5f);
+  B32 moves = source < count && contains_2f32(span, mouse) && target != source && target != source+1;
+  if(moves)
+  {
+    F32 y = target == 0 ? siblings[0].extent.y0-1.f :
+      target == count ? siblings[count-1].extent.y1+1.f :
+      (siblings[target-1].extent.y1+siblings[target].extent.y0)*0.5f;
+    Rng2F32 line = r2f32p(span.x0+4.f, y-1.f, span.x1-4.f, y+1.f);
+    UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(line) UI_CornerRadius(1.f)
+    { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")); }
+  }
+  if(!state->row_drag_released) { return; }
+  if(moves)
+  {
+    Arena *arena = ui_build_arena();
+    AndamentoEntity *all = 0;
+    U64 total = uishell_sidebar_siblings(arena, state->snapshot, state->row_drag_loop, &all);
+    AndamentoNode moving = nodes[siblings[source].index];
+    AndamentoEntity item = {moving.entity_kind, moving.entity_id};
+    AndamentoNode anchor = nodes[siblings[target < count ? target : count-1].index];
+    AndamentoEntity at = {anchor.entity_kind, anchor.entity_id};
+    AndamentoEntity *order = push_array(arena, AndamentoEntity, total);
+    U64 n = 0;
+    for(U64 k = 0; k < total; k++)
+    {
+      if(uishell_sidebar_entity_match(all[k], item)) { continue; }
+      B32 here = uishell_sidebar_entity_match(all[k], at);
+      if(here && target < count) { order[n++] = item; }
+      order[n++] = all[k];
+      if(here && target == count) { order[n++] = item; }
+    }
+    if(n < total) { order[n++] = item; }
+    for(U64 k = 0; k < n; k++) { order[k] = uishell_sidebar_card_entity_copy(arena, order[k]); }
+    state->order_pending = 1;
+    state->order_loop = push_str8_copy(arena, state->row_drag_loop);
+    state->order = order; state->order_count = n;
+  }
+  rd_drag_kill();
+  state->row_drag_key = state->row_drag_loop = str8_zero();
+  state->row_drag_released = 0;
+}
+
 internal void
 uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_SidebarRenderParams params)
 {
@@ -1551,6 +1789,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   {
     state->render_ui = ui_state;
     state->render_build_index = ui_state->build_index;
+    // Esc, or a release the row's section never saw, ends a row drag unmoved.
+    if(state->row_drag_key.size && !rd_drag_is_active())
+    { state->row_drag_key = state->row_drag_loop = str8_zero(); state->row_drag_released = 0; }
     uishell_sidebar_restore(state, split);
     if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
     {
@@ -1600,6 +1841,11 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   U64 *project_owner = push_array(scratch.arena, U64, count);
   F32 *project_open = push_array(scratch.arena, F32, count);
   F32 *project_child_heights = push_array(scratch.arena, F32, count);
+  // A drag that starts while building rows collects siblings from the next frame.
+  B32 row_dragging = state->row_drag_key.size != 0;
+  UIShell_RowDragSibling *drag_siblings = push_array(scratch.arena, UIShell_RowDragSibling, row_dragging ? count : 0);
+  U64 drag_sibling_count = 0, drag_depth = 0;
+  B32 drag_subtree = 0;
   for(U64 i = 0; i < count; i++) { inline_first[i] = inline_last[i] = inline_next[i] = ANDAMENTO_NONE; }
   U64 section_count = 0;
   for(U64 i = 0; i < count; i++)
@@ -1927,6 +2173,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           AndamentoNode node = nodes[i];
           B32 children = row_children[i] || inline_count[i];
           String8 node_key = uishell_sidebar_string(node.key);
+          B32 drag_sibling = row_dragging && !node.is_section &&
+            str8_match(uishell_sidebar_loop_key(state->snapshot, i), state->row_drag_loop, 0);
+          B32 drag_source = drag_sibling && str8_match(node_key, state->row_drag_key, 0);
+          if(!drag_sibling && depth[i] <= drag_depth) { drag_subtree = 0; }
           String8 full_label = uishell_sidebar_string(node.label);
           String8 label = full_label;
           String8 kind = uishell_sidebar_string(node.entity_kind);
@@ -2021,8 +2271,20 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             // has focus, without borrowing the keyboard-focus border.
             // Insets keep row selection and action borders inside the container.
             UI_Box *slot;
+            // The dragged row dims in place until the drop lands it.
+            if(drag_source) { ui_push_transparency(0.6f); }
             UI_ChildLayoutAxis(Axis2_X)
             { slot = ui_build_box_from_stringf(0, "###row_slot_%S", node_key); }
+            if(drag_sibling)
+            {
+              drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, slot->rect, project ? project_box->rect : slot->rect};
+              drag_depth = depth[i]; drag_subtree = 1;
+            }
+            else if(drag_subtree && drag_sibling_count && depth[i] > drag_depth)
+            {
+              Rng2F32 *extent = &drag_siblings[drag_sibling_count-1].extent;
+              extent->y1 = Max(extent->y1, slot->rect.y1);
+            }
             ui_push_parent(slot);
             ui_spacer(ui_px(4.f, 1));
             UI_Box *column;
@@ -2201,6 +2463,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             ui_pop_parent();
             ui_spacer(ui_px(4.f, 1));
             ui_pop_parent();
+            if(drag_source) { ui_pop_transparency(); }
           }
           if(!node.is_section)
           {
@@ -2246,6 +2509,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       ui_signal_from_box(body);
       y += heights[n];
     }
+    if(drag_sibling_count)
+    { uishell_sidebar_row_drop(state, nodes, drag_siblings, drag_sibling_count, row_height); }
     if(!section_panel)
     { uishell_sidebar_footer_ui(r2f32p(0, dim.y-footer_height, dim.x, dim.y), split); }
   }
@@ -2273,6 +2538,11 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       uishell_sidebar_refresh(state);
       uishell_sidebar_save_display(state, split->owner_cfg);
       rd_request_frame();
+    }
+    if(state->order_pending)
+    {
+      state->order_pending = 0;
+      uishell_sidebar_set_order(state, split->owner_cfg, state->order_loop, state->order, state->order_count);
     }
     if(prepare || action != ANDAMENTO_NONE)
     {
@@ -3131,6 +3401,7 @@ uishell_sidebar_scroll_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
 #include "uishell/uishell_chip_diagnostics.c"
 
 #include "uishell/uishell_sidebar_selection_diagnostics.c"
+#include "uishell/uishell_sidebar_reorder_diagnostics.c"
 
 internal B32
 uishell_sidebar_diagnostics(CFG_Node *window)
@@ -3148,6 +3419,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
   }
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   B32 selection_ok = uishell_sidebar_selection_diagnostics(ws, &split);
+  B32 reorder_ok = uishell_sidebar_reorder_diagnostics(ws, &split);
   B32 coverage_ok = uishell_sidebar_coverage_diagnostics(state, &split);
   U64 before = split.inventory.count;
   size_t activate = ANDAMENTO_NONE;
@@ -3434,7 +3706,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = restore_ok && ok;
   }
   ok = markers_ok && ok;
-  ok = ok && selection_ok && coverage_ok;
+  ok = ok && selection_ok && reorder_ok && coverage_ok;
   fprintf(stderr, "Sidebar host diagnostics: %s (split layout, overflow selection, project motion, reveal, focus, close, failure, retry, restore, ended retention, status glyphs)\n", ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

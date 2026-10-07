@@ -1,0 +1,224 @@
+// Row reorder (drag-model.md, "Reorder"): drags through the production
+// renderer reorder siblings only, save the run's order per window, restore it
+// into a fresh core, snap back outside the run, and reset from the row menu.
+#define ReorderCheck(cond, what) do { if(!(cond)) { fprintf(stderr, "FAIL reorder: %s\n", what); ok = 0; } } while(0)
+
+internal UI_Box *
+uishell_sidebar_reorder_box(UI_Box *box, String8 needle)
+{
+  for(UI_Box *b = box; !ui_box_is_nil(b); b = b->next)
+  {
+    if(b->string.size >= needle.size && str8_match(str8_postfix(b->string, needle.size), needle, 0)) { return b; }
+    UI_Box *found = uishell_sidebar_reorder_box(b->first, needle);
+    if(!ui_box_is_nil(found)) { return found; }
+  }
+  return &ui_nil_box;
+}
+
+// Entity ids of one kind, in displayed order, joined by spaces.
+internal String8
+uishell_sidebar_reorder_ids(Arena *arena, UIShell_SidebarState *state, String8 kind)
+{
+  String8List ids = {0};
+  for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+  {
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    if(!node.is_section && str8_match(uishell_sidebar_string(node.entity_kind), kind, 0))
+    { str8_list_push(arena, &ids, uishell_sidebar_string(node.entity_id)); }
+  }
+  StringJoin join = {.sep = str8_lit(" ")};
+  return str8_list_join(arena, &ids, &join);
+}
+
+internal AndamentoNode
+uishell_sidebar_reorder_node(UIShell_SidebarState *state, String8 id)
+{
+  AndamentoNode node = {0};
+  for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+  {
+    andamento_snapshot_node(state->snapshot, i, &node);
+    if(!node.is_section && str8_match(uishell_sidebar_string(node.entity_id), id, 0)) { return node; }
+  }
+  return (AndamentoNode){0};
+}
+
+typedef struct UIShell_ReorderDrag UIShell_ReorderDrag;
+struct UIShell_ReorderDrag
+{
+  B32 started, line, menu;
+};
+
+// Press on a row, move by `offset` or to a fraction down row `to_id` (from last
+// frame's layout), then release. right_click opens the row menu instead.
+internal UIShell_ReorderDrag
+uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *split, CFG_Node *view,
+                                UIShell_SidebarState *state, String8 id, Vec2F32 offset, String8 to_id,
+                                F32 to_fraction, B32 right_click)
+{
+  UIShell_ReorderDrag result = {0};
+  UI_State *saved_ui = ui_state;
+  UI_State *test_ui = ui_state_alloc(); ui_select_state(test_ui);
+  UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0};
+  Vec2F32 start = v2f32(-100, -100), pointer = start;
+  // Rendering refreshes the snapshot, so keys are copied.
+  Temp scratch = scratch_begin(0, 0);
+  String8 key = push_str8_copy(scratch.arena, uishell_sidebar_string(uishell_sidebar_reorder_node(state, id).key));
+  String8 to_key = to_id.size ? push_str8_copy(scratch.arena, uishell_sidebar_string(uishell_sidebar_reorder_node(state, to_id).key)) : str8_zero();
+  for(U32 frame = 0; frame < 6; frame++)
+  {
+    UI_EventList events = {0}; UI_EventNode event = {0};
+    if(frame >= 2 && !right_click)
+    {
+      UI_Box *to = to_key.size ? uishell_sidebar_reorder_box(test_ui->root, push_str8f(ui_build_arena(), "###entry_%S", to_key)) : &ui_nil_box;
+      pointer = ui_box_is_nil(to) ? add_2f32(start, offset) :
+        v2f32(start.x, to->rect.y0+dim_2f32(to->rect).y*to_fraction);
+    }
+    if(frame == 1 || frame == 4)
+    {
+      event.v = (UI_Event){.kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release,
+        .key = right_click ? WM_Key_RightMouseButton : WM_Key_LeftMouseButton, .pos = pointer};
+      events.first = events.last = &event; events.count = 1;
+    }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = pointer;
+    state->managed_cfg_generation = cfg_change_gen(); state->managed_dirty = 0;
+    UIShell_RegsScope(.window = split->owner_cfg->id, .view = view->id, .panel = view->parent->id)
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_sidebar_render(r2f32p(0, 0, 320, 600), split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, str8_lit("tree")}); }
+    ui_end_build();
+    if(frame == 0)
+    {
+      UI_Box *entry = uishell_sidebar_reorder_box(test_ui->root, push_str8f(ui_build_arena(), "###entry_%S", key));
+      if(!ui_box_is_nil(entry)) { start = pointer = center_2f32(entry->rect); }
+    }
+    if(frame == 3)
+    {
+      result.started = rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_UIKey;
+      result.line = !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")));
+    }
+    if(frame == 5) { result.menu = ui_any_ctx_menu_is_open(); }
+  }
+  rd_drag_kill(); ui_kill_action(); ui_ctx_menu_close();
+  ui_select_state(saved_ui); ui_state_release(test_ui);
+  scratch_end(scratch);
+  return result;
+}
+
+internal B32
+uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *host_split)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_SidebarState *saved = ws->sidebar;
+  B32 ok = 1;
+  char *error = 0;
+  UIShell_SidebarState state = {.initialized = 1, .restored = 1};
+  String8 config = str8_lit(
+    "region \"tree\" root-template=\"title\" placement=\"tree\"\n"
+    "template \"title\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Projects\"; }\n"
+    "placement \"tree\" { for \"project\" kind=\"project\" { apply-template \"project\"; }; }\n"
+    "template \"project\" { field \"label\" key=\"display.label\"; for \"convoy\" kind=\"convoy\" { match \"flotilla.project\" of=\"project\"; apply-template \"convoy\"; }; }\n"
+    "template \"convoy\" { field \"label\" key=\"display.label\"; }\n");
+  state.core = andamento_create(config.str, config.size, &error);
+  ok &= uishell_sidebar_result(&state, state.core != 0, error);
+  if(!state.core) { uishell_sidebar_release(&state); scratch_end(scratch); return 0; }
+  char *entities[][3] = {{"project", "p", "p"}, {"project", "q", "q"},
+    {"convoy", "c1", "p"}, {"convoy", "c2", "p"}, {"convoy", "c3", "p"}};
+  for(U64 i = 0; i < ArrayCount(entities); i++)
+  {
+    String8 patch = push_str8f(scratch.arena,
+      "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"%s\",\"id\":\"%s\"}},\"source_id\":\"reorder-test\",\"set\":{"
+      "\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}},"
+      "\"flotilla.project\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}}},\"unset\":[]}",
+      entities[i][0], entities[i][1], entities[i][1], entities[i][2]);
+    ok &= andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(patch), 0);
+  }
+  uishell_sidebar_refresh(&state);
+  UIShell_ControlledSplit split = *host_split;
+  MemoryZeroStruct(&split.inventory);
+  UIShell_SidebarSection section = {.key = str8_lit("tree")};
+  state.sections = &section;
+  ws->sidebar = &state;
+  CFG_Node *window = host_split->owner_cfg;
+  CFG_Node *view = uishell_sidebar_region_view(window, str8_lit("tree"));
+  String8 convoy = str8_lit("convoy"), project = str8_lit("project");
+  ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c1 c2 c3"), 0), "data order");
+
+  // Within the threshold nothing drags, and a click never reorders.
+  UIShell_ReorderDrag still = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 3), str8_zero(), 0, 0);
+  ReorderCheck(!still.started && !still.line, "sub-threshold press stays a click");
+  ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c1 c2 c3"), 0), "click keeps order");
+
+  // Below c3's midpoint lands c1 last; the drag shows the line meanwhile.
+  UIShell_ReorderDrag down = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 0), str8_lit("c3"), 0.8f, 0);
+  ReorderCheck(down.started, "row drag starts in the UIKey slot");
+  ReorderCheck(down.line, "insertion line while over a moving gap");
+  ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c2 c3 c1"), 0), "drop below c3 reorders");
+  String8 loop = uishell_sidebar_loop_key(state.snapshot, 0);
+  for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
+  {
+    AndamentoNode node = {0}; andamento_snapshot_node(state.snapshot, i, &node);
+    if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("c1"), 0))
+    { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(state.snapshot, i)); }
+  }
+  CFG_Node *run = cfg_node_child_from_string(cfg_node_child_from_string(window, str8_lit("sidebar_order")), loop);
+  String8List leaves = {0};
+  for(CFG_Node *n = run->first; n != &cfg_nil_node; n = n->next) { str8_list_push(scratch.arena, &leaves, n->string); }
+  StringJoin join = {.sep = str8_lit(" ")};
+  ReorderCheck(str8_match(str8_list_join(scratch.arena, &leaves, &join), str8_lit("convoy c2 convoy c3 convoy c1"), 0),
+    "window saves the run's full order");
+
+  // A gap that leaves the row where it is shows no line and changes nothing.
+  UIShell_ReorderDrag same = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(0, 0), str8_lit("c3"), 0.2f, 0);
+  ReorderCheck(same.started && !same.line, "no line over the row's own gaps");
+  // Off to the side of the run is no target, so the release snaps back.
+  UIShell_ReorderDrag away = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(400, 0), str8_zero(), 0, 0);
+  ReorderCheck(away.started && !away.line, "no line outside the run");
+  ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c2 c3 c1"), 0), "snap back keeps order");
+
+  // Projects reorder at their own level, keeping their convoys' order.
+  UIShell_ReorderDrag up = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("q"), v2f32(0, 0), str8_lit("p"), 0.2f, 0);
+  ReorderCheck(up.line, "line between projects");
+  ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, project), str8_lit("q p"), 0), "project drop above p");
+  ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c2 c3 c1"), 0), "convoys unaffected");
+
+  // The saved text restores into a fresh core, and new rows merge by data order.
+  CFG_State *persisted_cfg = cfg_state_alloc();
+  String8 saved_text = cfg_string_from_tree(scratch.arena, rd_state->cfg_schema_table, str8_zero(), window);
+  CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(scratch.arena, persisted_cfg, rd_state->cfg_schema_table, str8_zero(), saved_text);
+  ReorderCheck(loaded.count == 1, "window text round-trips");
+  UIShell_SidebarState restored = {.initialized = 1, .restored = 1};
+  error = 0; restored.core = andamento_create(config.str, config.size, &error);
+  ok &= uishell_sidebar_result(&restored, restored.core != 0, error);
+  if(restored.core && loaded.count == 1)
+  {
+    uishell_sidebar_restore_orders(&restored, loaded.first->v);
+    for(U64 i = 0; i < ArrayCount(entities)+1; i++)
+    {
+      char **e = i < ArrayCount(entities) ? entities[i] : (char *[]){"convoy", "c4", "p"};
+      String8 patch = push_str8f(scratch.arena,
+        "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"%s\",\"id\":\"%s\"}},\"source_id\":\"reorder-test\",\"set\":{"
+        "\"flotilla.project\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}}},\"unset\":[]}", e[0], e[1], e[2]);
+      ok &= andamento_apply_patch_json(restored.core, 0, uishell_sidebar_text(patch), 0);
+    }
+    uishell_sidebar_refresh(&restored);
+    ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &restored, convoy), str8_lit("c2 c3 c4 c1"), 0), "restored order merges c4 after c3");
+    ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &restored, project), str8_lit("q p"), 0), "restored project order");
+  }
+  uishell_sidebar_release(&restored);
+  cfg_state_release(persisted_cfg);
+
+  // A reordered run's row offers Reset order, which returns it to data order.
+  UIShell_ReorderDrag menu = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c3"), v2f32(0, 0), str8_zero(), 0, 1);
+  ReorderCheck(menu.menu, "reordered row opens its menu");
+  uishell_sidebar_set_order(&state, window, loop, 0, 0);
+  ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c1 c2 c3"), 0), "reset returns data order");
+  ReorderCheck(!uishell_sidebar_order_saved(window, loop), "reset forgets the saved run");
+
+  CFG_Node *orders = cfg_node_child_from_string(window, str8_lit("sidebar_order"));
+  if(orders != &cfg_nil_node) { cfg_node_release(rd_state->cfg, orders); }
+  ws->sidebar = saved;
+  uishell_sidebar_release(&state);
+  scratch_end(scratch);
+  fprintf(stderr, "Sidebar reorder diagnostics: %s (threshold, rows and projects, line, snap back, save, restore and merge, reset)\n", ok ? "passed" : "FAILED");
+  return ok;
+}

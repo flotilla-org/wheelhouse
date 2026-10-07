@@ -205,7 +205,7 @@ uishell_sidebar_card_source_at(UIShell_SidebarState *state, AndamentoNode node,
     if(c->open && c->source_key.size && str8_match(c->source_key, uishell_sidebar_string(node.key), 0))
     { c->source = sig.box->key; c->source_rect = sig.box->rect; }
   }
-  if(ui_any_ctx_menu_is_open() || !ui_hovering(sig)) { return; }
+  if(ui_any_ctx_menu_is_open() || !ui_hovering(sig) || state->row_drag_key.size) { return; }
   UIShell_HoverCard *card = &state->cards[0];
   if(card->focused || ui_key_match(card->dismissed, sig.box->key)) { return; }
   if(card->corridor_active) { return; }
