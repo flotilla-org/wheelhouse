@@ -66,6 +66,7 @@ svg.plot{width:100%;display:block;margin-top:4px;background:#181818;border-radiu
 .ctl .b:hover{background:var(--hot);color:var(--text)} .ctl .b.on{color:var(--text);background:#ffffff16}
 .ctl .pname{padding:0 4px;color:var(--text);min-width:56px;text-align:center}
 .ctl .pname .mod{color:var(--accent)}
+.ctl .pname.inherited{color:var(--faint)}
 .ctl .dots{display:flex;gap:3px;padding:0 4px} .ctl .dot{width:6px;height:6px;border-radius:50%;background:#555;cursor:pointer} .ctl .dot.on{background:var(--text)}
 .ctl .src{color:var(--faint);padding:0 4px;font-size:10.5px}
 /* features popover */
@@ -190,6 +191,10 @@ const ITEMS = [
   {id: 'c', type: 'issue', name: '#239', medium: '#239 One drag model…', full: '#239 Design: one drag model for rows, groups, sections, cards and tabs', labels: ['enhancement', 'research'], assignee: 'rjwittams',
    excerpt: 'Several open tickets each define their own dragging and keep raising the same questions. Every drag answers three questions: what can be dragged where, move or ghost, and where the override lives.'},
   {id: 'd', type: 'view', name: 'loss graph · loss-curve-tuning'},
+  // A second ghost of the same convoy, kept as a large live preview for
+  // monitoring while the first is a status reminder.
+  {id: 'a2', type: 'convoy', name: 'loss-curve-tuning', medium: 'loss-curve-tuning · lr sweep', full: 'loss-curve-tuning · learning-rate sweep over the v3 encoder', project: 'wheelhouse', status: 'live',
+   subj: ['#244'], vessels: [['coder', 'live'], ['reviewer', 'wait']], facts: {Phase: ['working', 'key'], Age: ['3h', 'time']}, start: 'Watch'},
   {id: 'e', type: 'convoy', name: 'sidebar-header-controls', medium: 'sidebar-header-controls · #110', full: 'sidebar-header-controls · route status notices', project: 'wheelhouse', status: 'fail',
    subj: ['#110'], vessels: [['coder', 'fail']], facts: {Phase: ['blocked', 'key'], Attempts: ['3', 'key'], Branch: ['notices', 'git'], Age: ['1d', 'time']}},
 ];
@@ -199,7 +204,7 @@ const S = {
   typeDefault: {convoy: 'Glance', change_request: 'Glance', issue: 'Glance', view: 'Strip'},
   group: {}, card: {}, lastProfile: {}, hover: null, pop: null, log: [],
 };
-for (const it of ITEMS) S.card[it.id] = {profile: K.rowProfile === 'profile' ? ROW : null, expanded: false, edits: {}};
+for (const it of ITEMS) S.card[it.id] = {profile: it.start || (K.rowProfile === 'profile' ? ROW : null), expanded: !!it.start, edits: {}};
 const log = m => { S.log.unshift(m); S.log = S.log.slice(0, 10); renderLog(); };
 function profileOf(it) {
   const c = S.card[it.id];
@@ -243,9 +248,10 @@ function itemEl(it) {
   if (it.status) { const [g, c] = STATUS[it.status]; line.append(h('span', 'st ' + c, g)); }
   el.append(line);
   if (card) el.append(cardBody(it, f));
-  // Clicking the line toggles row/card: in profile mode it moves between Row
-  // and the last card profile; in separate mode it expands or collapses.
-  line.onclick = () => toggleCard(it);
+  // ⤢/⤡ toggle row/card: in profile mode between Row and the last card
+  // profile; in separate mode expand or collapse.
+  // Click focuses the source, as in the real sidebar; ⤢/⤡ change row/card.
+  line.onclick = () => log(`${it.name}: focus source`);
   el.onmouseenter = () => { S.hover = it.id; showControls(); };
   el.onmouseleave = e => { if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.ctl,.pop')) return; S.hover = null; hideControls(); };
   return el;
@@ -299,7 +305,7 @@ function factsEl(facts, level, grouped) {
 }
 // ---------- live data ----------
 const LOSS = []; for (let i = 0; i < 60; i++) LOSS.push(0.9 * Math.exp(-i / 18) + 0.05 + Math.random() * 0.04);
-const ACT = {a: Array.from({length: 30}, () => Math.random()), e: Array.from({length: 30}, () => Math.random() * 0.3)};
+const ACT = {a: Array.from({length: 30}, () => Math.random()), e: Array.from({length: 30}, () => Math.random() * 0.3)}; ACT.a2 = ACT.a;
 function plot(height, axis) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.classList.add('plot'); svg.style.height = height + 'px';
   svg.setAttribute('viewBox', '0 0 200 60'); svg.setAttribute('preserveAspectRatio', 'none'); svg.dataset.axis = axis ? 1 : 0; drawPlot(svg); return svg;
@@ -326,19 +332,23 @@ function showControls() {
   hideControls();
   const it = ITEMS.find(x => x.id === S.hover); if (!it) return;
   const el = document.querySelector(`.item[data-id="${it.id}"]`); if (!el) return;
+  // A row only offers ⤢ inline; profile controls belong to cards.
+  if (profileOf(it) === ROW) return;
   const sb = document.getElementById('sidebar');
   const ctl = h('div', 'ctl' + (K.place === 'inside' ? ' inside' : ''));
   const names = profileNames(it.type), cur = profileOf(it);
   const prev = h('span', 'b', '‹'), next = h('span', 'b', '›');
   prev.onclick = e => { e.stopPropagation(); cycle(it, -1); }; next.onclick = e => { e.stopPropagation(); cycle(it, 1); };
-  const name = h('span', 'pname', cur + (modified(it) ? '<span class="mod">*</span>' : ''));
+  // The profile name is faded when inherited and normal when set on this card.
+  const name = h('span', 'pname' + (sourceOf(it) === 'here' ? '' : ' inherited'), cur + (modified(it) ? '<span class="mod">*</span>' : ''));
+  bindTip(name, sourceOf(it) === 'here' ? 'Set on this card' : `Inherited: ${sourceText(it)}`);
   const dots = h('span', 'dots');
   names.forEach(n => { const d = h('span', 'dot' + (n === cur ? ' on' : '')); d.title = n; d.onclick = e => { e.stopPropagation(); S.card[it.id].profile = n; S.card[it.id].edits = {}; if (n !== ROW) S.lastProfile[it.id] = n; log(`${it.name}: profile → ${n}`); render(); }; dots.append(d); });
   if (K.switcher !== 'dots') ctl.append(prev, name, next);
   if (K.switcher !== 'arrows') ctl.append(dots);
   const fb = h('span', 'b' + (S.pop === it.id ? ' on' : ''), '⚙'); fb.onclick = e => { e.stopPropagation(); S.pop = S.pop === it.id ? null : it.id; render(); };
   const shrink = h('span', 'b', '⤡'); shrink.onclick = e => { e.stopPropagation(); toggleCard(it); }; bindTip(shrink, 'Back to row');
-  if (cur !== ROW) { ctl.append(fb); if (sourceOf(it) !== 'type') ctl.append(h('span', 'src', sourceText(it))); ctl.append(shrink); }
+  if (cur !== ROW) ctl.append(fb, shrink);
   bindTip(fb, 'Features');
   ctl.onmouseleave = e => { if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest(`.item[data-id="${it.id}"],.pop`)) return; S.hover = null; hideControls(); };
   sb.append(ctl);
@@ -435,10 +445,9 @@ function render() {
 addEventListener('mousedown', e => { if (S.pop && !e.target.closest('.pop,.ctl')) { S.pop = null; render(); } });
 function renderWork() {
   document.getElementById('work').innerHTML = `<h1>Pinned cards: features and profiles</h1>
-  <p>Each pinned item is a ghost. Click its line to switch between the compact row and a card; the card <b>replaces</b> the row in place.</p>
+  <p>Each pinned item is a ghost. ⤢ on a hovered row turns it into a card that <b>replaces</b> the row in place; ⤡ in the card's controls turns it back. Clicking an item focuses its source.</p>
   <p>Hover an item for controls that float around it without moving anything: <b>‹ profile ›</b> flicks through the subject type's profiles, and <b>⚙</b> opens its features (switches and small enums). Editing a feature marks the profile modified (<span style="color:#e0b34a">*</span>).</p>
-  <p>⤢ on a hovered row expands it to a card; ⤡ in the card's controls shrinks it back. Clicking the line does the same.</p>
-  <p>When the profile isn't the type's default, the controls say where it comes from: <b>set here</b> (chosen on this card) or <b>group default</b>. The ⚙ popover always shows it, and can push the current profile up to the group or to every item of that type.</p>
+  <p>The profile name in the controls is <span style="color:#5f5f5f">faded</span> when inherited (from the type or group default) and normal when set on this card. The ⚙ popover says which, and can push the current profile up to the group or to every item of that type.</p>
   <p>While hovering: <kbd>[</kbd> <kbd>]</kbd> or <kbd>Alt</kbd>+wheel cycle profiles; <kbd>Esc</kbd> closes the popover. Scroll the sidebar so a card is at the top to see the controls flip below.</p>`;
 }
 function renderPanel() {
