@@ -145,7 +145,7 @@ Where the model and today's behaviour differed, the operator agreed the followin
    - a ghost id stored on the `card` node, next to the existing `kind` and `entity`;
    - migration gives each existing pin a ghost id, so current layouts load unchanged;
    - layout deduplication keys on the ghost id rather than `(kind, entity)`, so copied layouts still don't double up;
-   - dropping or pinning a subject that already has a ghost creates a new ghost. The menu also offers "Reveal existing" when one exists.
+   - dropping a subject into a group is explicit placement, so it always creates a new ghost. Pin on a subject that already has a ghost shows the existing one; holding Pin offers "Pin another" (agreed 2026-10-07, so duplicates stay deliberate).
 
    Dragging a ghost to another group moves that ghost, as before.
 2. **"Dock under source" becomes the row's own expand-in-place.** It is an action, not a drop target: the card's dock button, or the row's ⤢. Expansion replaces the row with the card (see the card prototype). A ghost dropped on its source's home therefore stays an invalid target.
