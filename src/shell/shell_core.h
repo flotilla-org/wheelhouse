@@ -559,7 +559,7 @@ typedef enum RD_ChromeNiche
   RD_ChromeNiche_TitleBarLeading,   // leading buttons ("a")
   RD_ChromeNiche_TitleBarTrailing,  // trailing buttons ("b")
   RD_ChromeNiche_SidebarActions,    // the control surface's action row (relocation fallback)
-  RD_ChromeNiche_SectionHeader,     // the Other workspaces section header in the sidebar
+  RD_ChromeNiche_SectionHeader,     // the Workspaces group's entry row in the sidebar (named for its first home)
   RD_ChromeNiche_COUNT
 }
 RD_ChromeNiche;
@@ -651,7 +651,7 @@ struct RD_WindowState
   // rjf: chrome placement (recomputed each frame, before the title bar & the
   // control surface build, so both read the same resolution) — ADR-0006
   RD_ChromeNiche chrome_niche[RD_ChromeElementKind_COUNT];
-  U64 chrome_section_header_frame; // 1 + last frame the sidebar built the section-header niche; 0 = never
+  U64 chrome_section_header_frame; // 1 + last frame the sidebar built the Workspaces entry niche; 0 = never
   F32 chrome_leading_px;  // pixel extent of the title bar's left zone (decorations + leading buttons)
   F32 chrome_trailing_px; // pixel extent of the right zone (trailing buttons + window controls)
 
