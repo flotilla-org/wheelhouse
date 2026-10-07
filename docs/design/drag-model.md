@@ -118,6 +118,34 @@ A section's name can therefore come from you, from its single group, or from a n
 - **View ghosts** are keyed by the View's runtime identity plus its source workspace.
 - **Drags are never written back into KDL.**
 
+## Compatibility with existing cards
+
+Floating and pinned cards already exist (`uishell_detached_cards.c`, `docs/detached-card-acceptance.md`). The model must keep the following invariants:
+
+- A pin is identified by `(kind, entity)` and is unique per window. Pinning again reveals the existing pin, moving a pin keeps the same node, and copied layouts are deduplicated.
+- Pins are stored as `card{kind, entity, label, source}` inside a `pinned_cards` View in the window's sidebar dock tree. Unknown or incomplete entries are tolerated.
+- Only an explicit Close removes a pin. A missing subject shows "No longer present", with no timeout. This is the same as the ghost lifecycle above.
+- Every target goes through `rd_dock_check` and `rd_dock_can_create`. A centre drop joins or creates an area, and a directional drop splits the panel.
+- An emptied pinned area remains as a placeholder.
+- Floats survive mouse-out and the loss of their source. Inline cards close with their source row. Neither is persisted.
+- `floating_panels` is a placement fallback for sections, not a rendered host. A group in a floating panel would therefore be a new surface, not something being preserved.
+
+Where the model and today's behaviour differed, the operator agreed the following on 2026-10-07:
+
+1. **One ghost per entity per window.** Ghosting an entity that already has a ghost reveals the existing one. Dragging that ghost to another group moves it. This keeps today's deduplication and storage keys, and "Pinned" groups migrate from the existing `card` nodes unchanged.
+2. **"Dock under source" becomes the row's own expand-in-place.** It is an action, not a drop target: the card's dock button, or the row's ⤢. Expansion replaces the row with the card (see the card prototype). A ghost dropped on its source's home therefore stays an invalid target.
+3. **The workspace area is an explicit Float target.** Releasing a card over the workspace floats it, as it does today, and the area highlights as a valid target. Releasing over empty sidebar space snaps back.
+4. **Cards drag from the title line,** past the threshold. A click on the card body keeps its focus or keep-open meaning, and the card's action buttons never start a drag.
+
+### Card settings
+
+Card features and profiles (`card-features-prototype.html`) can reuse RAD's per-View settings:
+
+- **Schemas.** Add schema entries for `pinned_cards` (per-area defaults) and for `card` (per-card overrides). That provides typed storage on the config node, `@default` values, and the existing settings lister as the "all settings" view.
+- **No enum type.** A small enum is a `string` with a lister, or a `u64 @range`.
+- **Profiles.** There is no preset mechanism other than theme presets. Profiles would copy that pattern: a table of named presets plus a string setting.
+- **Popover.** A compact custom popover is the everyday editor; the RAD lister is kept as the full view.
+
 ## Slices
 
 1. **Gesture.** One drag-start rule (threshold, title as handle, chips drag their subject), spring-loading, and Esc to cancel. This is the drag part of #210.
