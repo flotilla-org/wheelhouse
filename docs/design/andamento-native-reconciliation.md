@@ -314,8 +314,8 @@ niche on Other workspaces (`andamento.unplaced-workspaces`). The niche counts
 as available when the sidebar drew that header in the previous frame, so a
 closed section falls back to the sidebar action row. Creating a workspace no
 longer resets the window's sidebar regions. Andamento emits the section even
-when empty (andamento#135). Before the Wheelhouse pin includes that change, the
-button falls back to the action row whenever no workspace is unplaced.
+when empty (andamento#135). It carries no placement hints, so Wheelhouse places
+it after every declared region (see [section placement](../section-placement.md)).
 
 ### Project header separation and collapse motion
 
