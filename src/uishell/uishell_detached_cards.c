@@ -683,22 +683,30 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
   // The View parent already sits at rect.p0 in window coordinates.
   UI_Rect(r2f32p(0, 0, width, dim_2f32(rect).y)) UI_ChildLayoutAxis(Axis2_Y)
   { root = ui_build_box_from_stringf(UI_BoxFlag_Clip, "###pinned_area_%I64u", view->id); }
-  UI_Parent(root) UI_PrefHeight(ui_px(header_height, 1)) UI_Row
+  // Same header chrome as sections (#210): grip and close appear on hover.
+  UI_Box *header;
+  UI_Parent(root) UI_PrefHeight(ui_px(header_height, 1)) UI_PrefWidth(ui_pct(1, 0)) UI_ChildLayoutAxis(Axis2_X)
+  { header = ui_build_box_from_stringf(0, "###pinned_header_%I64u", view->id); }
+  B32 engaged = contains_2f32(header->rect, ui_mouse()) && !rd_drag_is_active();
+  UI_Parent(header) UI_PrefHeight(ui_pct(1, 1))
   UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak") RD_Font(RD_FontSlot_Main)
   {
     ui_spacer(ui_em(0.3f, 1));
     UI_PrefWidth(ui_em(UIShell_GripWidthEM, 1))
     {
-      UI_Signal drag = uishell_sidebar_grip(str8_lit("pinned_drag"), str8_lit("Drag pinned area"));
-      if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
-      { rd_drag_begin(UIShell_ContextRegSlot_View); }
+      if(engaged)
+      {
+        UI_Signal drag = uishell_sidebar_grip(str8_lit("pinned_drag"), str8_lit("Drag pinned area"));
+        if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
+        { rd_drag_begin(UIShell_ContextRegSlot_View); }
+      }
+      else { ui_spacer(ui_em(UIShell_GripWidthEM, 1)); }
     }
     UI_PrefWidth(ui_pct(1, 0)) { ui_label(str8_lit("PINNED")); }
-    UI_PrefWidth(ui_em(1.5f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
-    {
-      if(ui_clicked(uishell_sidebar_button(str8_lit("×###pinned_close"))) && rd_dock_can_close(view))
-      { uishell_cmd("close_tab"); }
-    }
+    if(ui_clicked(uishell_sidebar_header_button(str8_lit("×"), str8_lit("pinned_close"), 0, engaged,
+                                                str8_lit("Close pinned area"), str8_lit("Pins are kept; restore it from Sections…"))) &&
+       rd_dock_can_close(view))
+    { uishell_cmd("close_tab"); }
     ui_spacer(ui_px(4.f, 1));
   }
   UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, header_height, width, dim_2f32(rect).y),
