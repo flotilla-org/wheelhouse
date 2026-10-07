@@ -57,7 +57,16 @@ Dragging a chip drags the chip's own subject (an issue or PR), not the row it si
 - **Cancelling.** Esc cancels the drag. Releasing over nothing valid snaps the item back.
 - **Releasing never removes anything.** Removal is always an explicit action.
 
-How a valid target shows exactly where the drop will land is the next design topic; see "Open" below.
+### Drop-target visuals
+
+- **Panel, tab and split drops keep RAD's visuals:** boundary drop-site pills, and an animated rect that grows into the area the new panel will occupy. They are judged and restyled natively, not recreated in a mock-up.
+- **Sidebar drops preview their outcome,** following RAD's idea: a faded copy of the item at the place it will land, labelled with what will happen ("Reorder", "Ghost → Pinned", "Move → andamento", "New section", "Float"). A move dims the original; a ghost leaves it untouched. Sidebar sites share RAD's `drop_site` colour and animation rate, so both read as one system.
+- **Sections that hold content have three zones,** decided by the pointer's position (agreed 2026-10-07, answering #211's centre-drop question):
+  - *into the body* adds to the section's group, with an insertion preview;
+  - *onto the header or tab strip* adds as a tab, with a tab-shaped preview in the strip;
+  - *at an edge* splits, using RAD's pills and growing rect.
+
+  Sections that accept content have no centre pill. Content panels in the workspace keep RAD's centre pill, where "add as tab" is the only meaning a centre drop has.
 
 ## Reorder
 
@@ -165,7 +174,7 @@ Card features and profiles (`card-features-prototype.html`) can reuse RAD's per-
 
 ## Open
 
-- **Drag-target visuals.** How to make it unmistakable where a drop will land: insertion lines, group highlights, section-creation zones, ghost versus move cues. This is the next design topic, after the prototyping pass.
+- **Drag-target visuals:** prototype the sidebar previews and the three section zones in `sidebar-header-controls-prototype.html`.
 - **Interactive View ghosts** and the "upgrade" to a fresh instance.
 - **Dragging between windows.** Ephemeral OS windows, with floating things promoted to real OS windows when dragged out. The likely first use is an overview on a second monitor.
 - **Automatic naming and layout through a delegate.**
