@@ -116,8 +116,10 @@ class NativeSidebarTests(unittest.TestCase):
                 hints_seen.append((node.key.string(), hints.default_host.string(), hints.has_order, hints.order))
             else:
                 self.assertEqual(lib.andamento_snapshot_region_hints(snapshot, index, C.byref(hints)), 0)
+        # The workspace fallback is always emitted, unhinted; Wheelhouse places it last.
         self.assertEqual(hints_seen, [('tree', 'sidebar', 1, 10), ('sessions', 'sidebar', 1, 20),
-                                     ('attention', 'sidebar', 1, 30), ('git', 'sidebar', 1, 40)])
+                                     ('attention', 'sidebar', 1, 30), ('git', 'sidebar', 1, 40),
+                                     ('andamento.unplaced-workspaces', '', 0, 0)])
 
     def open_workspace(self, identity, workspace_id):
         snapshot, nodes = self.snapshot()

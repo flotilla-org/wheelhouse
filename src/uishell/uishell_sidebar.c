@@ -2496,6 +2496,9 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
         uishell_sidebar_string(node.label),
         push_str8_copy(arena, uishell_sidebar_string(hints.default_host)),
         hints.has_order ? hints.order : (S64)count};
+      // Andamento always emits the unhinted workspace fallback. By index it
+      // would sort before every explicit order, so it goes last instead.
+      if(!hints.has_order && uishell_sidebar_section_hosts_chrome(region.key)) { region.order = max_S64; }
       if(node.field_count)
       { AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field, &field); region.title = uishell_sidebar_string(field.text); }
       region.title = push_str8_copy(arena, region.title);
