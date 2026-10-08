@@ -380,6 +380,25 @@ uishell_sidebar_pin_deduplicate(CFG_Node *window)
   scratch_end(scratch);
 }
 
+// Adds a ghost of `entity` to a pinned area and reveals it. A dropped row
+// becomes a row (`compact`); a pinned card stays a card.
+internal CFG_Node *
+uishell_sidebar_pin_add(UIShell_SidebarState *state, CFG_Node *area, AndamentoEntity entity,
+                        String8 fallback_label, String8 source, B32 compact)
+{
+  CFG_Node *saved = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
+  uishell_sidebar_pin_new_ghost(saved);
+  uishell_sidebar_pin_set_field(saved, str8_lit("kind"), uishell_sidebar_string(entity.kind));
+  uishell_sidebar_pin_set_field(saved, str8_lit("entity"), uishell_sidebar_string(entity.id));
+  AndamentoNode node = {0};
+  String8 label = uishell_sidebar_card_find(state, entity, &node) != ANDAMENTO_NONE ? uishell_sidebar_string(node.label) : fallback_label;
+  uishell_sidebar_pin_set_field(saved, str8_lit("label"), label);
+  uishell_sidebar_pin_set_field(saved, str8_lit("source"), source);
+  if(compact) { cfg_node_new(rd_state->cfg, saved, str8_lit("compact")); }
+  state->pin_reveal = saved->id;
+  return saved;
+}
+
 internal CFG_Node *
 uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_area)
 {
@@ -498,16 +517,7 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
     state->pin_reveal = saved->id;
     return saved;
   }
-  saved = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
-  uishell_sidebar_pin_new_ghost(saved);
-  uishell_sidebar_pin_set_field(saved, str8_lit("kind"), uishell_sidebar_string(entity.kind));
-  uishell_sidebar_pin_set_field(saved, str8_lit("entity"), uishell_sidebar_string(entity.id));
-  AndamentoNode node = {0};
-  String8 label = uishell_sidebar_card_find(state, entity, &node) != ANDAMENTO_NONE ? uishell_sidebar_string(node.label) : card->retained_label;
-  uishell_sidebar_pin_set_field(saved, str8_lit("label"), label);
-  uishell_sidebar_pin_set_field(saved, str8_lit("source"), card->source_key);
-  state->pin_reveal = saved->id;
-  return saved;
+  return uishell_sidebar_pin_add(state, area, entity, card->retained_label, card->source_key, 0);
 }
 
 internal size_t
@@ -943,6 +953,15 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
        rd_dock_can_close(view))
     { uishell_cmd("close_tab"); }
     ui_spacer(ui_px(4.f, 1));
+  }
+  // A row dragged here becomes a ghost (drag-model.md, drop table); the row
+  // drop, built with the row's section, reads the target recorded here.
+  if(state->row_drag_key.size && contains_2f32(rect, ui_mouse()))
+  {
+    state->row_ghost_area = view->id;
+    state->row_ghost_build = ui_state->build_index;
+    UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(pad_2f32(rect, -2.f)) UI_CornerRadius(4.f)
+    { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_Floating, ui_key_from_stringf(ui_key_zero(), "pinned_ghost_target_%I64u", view->id)); }
   }
   UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, header_height, width, dim_2f32(rect).y),
     UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);

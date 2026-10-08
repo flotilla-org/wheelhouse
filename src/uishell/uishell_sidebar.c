@@ -121,6 +121,9 @@ struct UIShell_SidebarState
   Arena *row_drag_arena;
   String8 row_drag_key, row_drag_loop;
   B32 row_drag_released;
+  // A pinned area under a row drag, and the build that recorded it.
+  CFG_ID row_ghost_area;
+  U64 row_ghost_build;
   // The control held down, and since when (see uishell_sidebar_held).
   UI_Key hold_key;
   U64 hold_us;
@@ -1362,7 +1365,8 @@ uishell_sidebar_row_drag_from(UIShell_SidebarState *state, RD_WindowState *ws,
     Temp scratch = scratch_begin(0, 0);
     String8 loop = uishell_sidebar_loop_key(state->snapshot, node_index);
     AndamentoEntity *siblings = 0;
-    if(uishell_sidebar_siblings(scratch.arena, state->snapshot, loop, &siblings) > 1)
+    // A lone row can't reorder but can still be dropped as a ghost.
+    if(uishell_sidebar_siblings(scratch.arena, state->snapshot, loop, &siblings) > 0)
     {
       if(!state->row_drag_arena) { state->row_drag_arena = arena_alloc(); }
       arena_clear(state->row_drag_arena);
@@ -1813,7 +1817,10 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
   }
   Rng2F32 span = r2f32p(siblings[0].extent.x0, siblings[0].extent.y0-row_height*0.5f,
                         siblings[0].extent.x1, siblings[count-1].extent.y1+row_height*0.5f);
-  B32 moves = source < count && contains_2f32(span, mouse) && target != source && target != source+1;
+  // Over a pinned area (recorded this build or the last), the drop is a ghost.
+  CFG_Node *ghost_area = state->row_ghost_area && ui_state->build_index-state->row_ghost_build <= 1 ?
+    cfg_node_from_id(state->row_ghost_area) : &cfg_nil_node;
+  B32 moves = ghost_area == &cfg_nil_node && source < count && contains_2f32(span, mouse) && target != source && target != source+1;
   if(moves)
   {
     F32 y = target == 0 ? siblings[0].extent.y0-1.f :
@@ -1824,7 +1831,13 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
     { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")); }
   }
   if(!state->row_drag_released) { return; }
-  if(moves)
+  if(ghost_area != &cfg_nil_node && source < count)
+  {
+    AndamentoNode dragged = nodes[siblings[source].index];
+    uishell_sidebar_pin_add(state, ghost_area, (AndamentoEntity){dragged.entity_kind, dragged.entity_id},
+      uishell_sidebar_string(dragged.label), uishell_sidebar_string(dragged.key), 1);
+  }
+  else if(moves)
   {
     Arena *arena = ui_build_arena();
     AndamentoEntity *all = 0;
@@ -1852,6 +1865,7 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
   rd_drag_kill();
   state->row_drag_key = state->row_drag_loop = str8_zero();
   state->row_drag_released = 0;
+  state->row_ghost_area = 0;
 }
 
 // The Workspaces group's first row creates a workspace, which appears in it.
@@ -1911,7 +1925,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     state->render_build_index = ui_state->build_index;
     // Esc, or a release the row's section never saw, ends a row drag unmoved.
     if(state->row_drag_key.size && !rd_drag_is_active())
-    { state->row_drag_key = state->row_drag_loop = str8_zero(); state->row_drag_released = 0; }
+    { state->row_drag_key = state->row_drag_loop = str8_zero(); state->row_drag_released = 0; state->row_ghost_area = 0; }
     uishell_sidebar_restore(state, split);
     if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
     {

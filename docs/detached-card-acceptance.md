@@ -39,6 +39,8 @@ gains an id.
 Pinning a card keeps the card. A pinned card's header disclosure collapses it to
 a compact ghost row: the subject's live label and status, a ↗ marker for a
 reference that lives elsewhere, and a disclosure that restores the card.
+Dragging a sidebar row onto a pinned area adds a ghost of it there, as a row; the
+row stays in its home and its siblings keep their order.
 Clicking the row goes to the source. The × in the row's right margin removes the
 pin and never its source; holding it or right-clicking the row opens Go to
 source, Show as card or row, and Remove pin.
