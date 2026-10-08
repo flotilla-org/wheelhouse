@@ -595,7 +595,31 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
                  cfg_node_child_from_string(window, str8_lit("panels")) == &cfg_nil_node,
                  "closing the last, window-backed workspace leaves one fresh workspace");
 
-  fprintf(stderr, "Workspace lifecycle diagnostics: %s (detach/reopen, palette target, margin close and hold menu, destroy, Workspaces entry row, reserved names, ended detach, unique names, last close, legacy last close)\n",
+  //- A workspace whose group is gone lives in the default group, whatever id
+  //  the default group has: as one of its items, not a leftover Andamento
+  //  covers there (its key shows which loop placed it).
+  {
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    CFG_Node *workspace = split.inventory.first->mount.owner_cfg;
+    CFG_Node *home = uishell_sidebar_local_group(window, uishell_sidebar_default_local_id);
+    uishell_sidebar_local_set_field(home, str8_lit("id"), str8_lit("home"));
+    uishell_sidebar_local_set_field(workspace, str8_lit("lives_in"), str8_lit("gone"));
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+    AndamentoNode row = {0};
+    B32 found = uishell_workspace_lifecycle_find(state, uishell_sidebar_local_entity(workspace), 0, &row);
+    AndamentoNode parent = {0};
+    B32 placed = found && row.parent != ANDAMENTO_NONE && andamento_snapshot_node(state->snapshot, row.parent, &parent) &&
+      str8_match(uishell_sidebar_string(parent.entity_id), str8_lit("home"), 0) &&
+      str8_find_needle(uishell_sidebar_string(row.key), 0, str8_lit(".unplaced"), 0) == uishell_sidebar_string(row.key).size;
+    LifecycleCheck(placed, "a workspace whose group is gone lives in the default group, whatever its id");
+    uishell_sidebar_local_set_field(home, str8_lit("id"), uishell_sidebar_default_local_id);
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(workspace, str8_lit("lives_in")));
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+  }
+
+  fprintf(stderr, "Workspace lifecycle diagnostics: %s (detach/reopen, palette target, margin close and hold menu, destroy, Workspaces entry row, reserved names, ended detach, unique names, last close, legacy last close, default group by mark)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;
