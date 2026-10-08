@@ -868,17 +868,22 @@ uishell_sidebar_roles(UIShell_SidebarState *state)
     state->roles[i] = UIShell_SidebarRole_LocalSection;
     state->role_keys[i] = uishell_sidebar_local_key(state->roles_arena, uishell_sidebar_string(node.entity_id));
     state->roles_default_section |= str8_match(state->role_keys[i], uishell_sidebar_default_section_key, 0);
+    // The section loop's parent is the container. Sections don't nest: one
+    // placed inside another would make that one a container instead.
     if(node.parent != ANDAMENTO_NONE) { state->roles[node.parent] = UIShell_SidebarRole_Container; }
   }
+  // A section's only group passes through; only `.group` children count.
   for(U64 i = 0; i < count; i++)
   {
     AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
-    if(node.parent != ANDAMENTO_NONE && state->roles[node.parent] == UIShell_SidebarRole_LocalSection) { groups[node.parent]++; }
+    B32 group = str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".group"), 0);
+    if(group && node.parent != ANDAMENTO_NONE && state->roles[node.parent] == UIShell_SidebarRole_LocalSection) { groups[node.parent]++; }
   }
   for(U64 i = 0; i < count; i++)
   {
     AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
-    if(node.parent != ANDAMENTO_NONE && state->roles[node.parent] == UIShell_SidebarRole_LocalSection && groups[node.parent] == 1)
+    B32 group = str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".group"), 0);
+    if(group && node.parent != ANDAMENTO_NONE && state->roles[node.parent] == UIShell_SidebarRole_LocalSection && groups[node.parent] == 1)
     { state->roles[i] = UIShell_SidebarRole_PassThrough; }
   }
 }
@@ -1061,10 +1066,6 @@ uishell_sidebar_local_keys(String8 kind)
   return str8_lit("\"display.label\",\".position\",\"flotilla.project\",\".group\"");
 }
 
-// Publishes the window's local sections and groups, and each local workspace
-// as a host entity with its home, tagging its tab .host.* so its rows are
-// live there. Entities that went away (a closed workspace, a deleted group)
-// are retracted. Nothing is sent while the patches are unchanged.
 // Whether "kind/id" is already in `ids`: a corrupt layout repeating an id
 // publishes the first and skips the rest, rather than merging them.
 internal B32
@@ -1110,6 +1111,11 @@ uishell_sidebar_local_source_hash(UIShell_ControlledSplit *split)
   return hash;
 }
 
+// Publishes the window's local sections and groups, and each local workspace
+// as a host entity with its home, tagging its tab .host.* so its rows are
+// live there. Entities that went away (a closed workspace, a deleted group)
+// are retracted. Nothing is built while what it reads is unchanged, and
+// nothing is sent while the patches are.
 internal void
 uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
@@ -1163,6 +1169,17 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
       }
     }
   }
+  // A workspace whose group is gone lives in the default group, whatever its
+  // id (local_root makes one only when no group is marked default).
+  String8 default_group_id = uishell_sidebar_default_local_id;
+  for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
+  {
+    for(CFG_Node *g = section->first; g != &cfg_nil_node; g = g->next)
+    {
+      if(str8_match(g->string, str8_lit("group"), 0) && cfg_node_child_from_string(g, str8_lit("default")) != &cfg_nil_node)
+      { default_group_id = uishell_sidebar_local_field(g, str8_lit("id")); }
+    }
+  }
   U64 w_position = 0;
   for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
   {
@@ -1172,7 +1189,7 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
     // One home: a project, else its group, else the default group.
     String8 project = uishell_sidebar_local_home(workspace);
     String8 group = uishell_sidebar_local_field(workspace, str8_lit("lives_in"));
-    if(uishell_sidebar_local_group(window, group) == &cfg_nil_node) { group = uishell_sidebar_default_local_id; }
+    if(uishell_sidebar_local_group(window, group) == &cfg_nil_node) { group = default_group_id; }
     // Workspaces keep their tab order within their home.
     String8 label = uishell_sidebar_json_label(arena, w->display_name, w_position++);
     String8 set = project.size ? push_str8f(arena, "%S,%S", label, uishell_sidebar_json_fact_text(arena, str8_lit("flotilla.project"), project)) :
