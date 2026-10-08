@@ -2449,14 +2449,31 @@ uishell_sidebar_home_claim(UIShell_SidebarState *state, Rng2F32 rect, String8 pr
 
 // An insertion line at `line` (screen space, from last frame's layout) drawn
 // inside a section's body, so it paints above the section rather than under
-// the panels, as a line on the window root would.
+// the panels, as a line on the window root would. A brighter segment sweeps
+// along it so it reads against the lifted row.
 internal void
 uishell_sidebar_drop_line(UI_Box *body, Rng2F32 line, UI_Key key)
 {
   Vec2F32 at = add_2f32(sub_2f32(line.p0, body->rect.p0), body->view_off);
-  UI_Parent(body) UI_TagF("drop_site") UI_FixedX(at.x) UI_FixedY(at.y) UI_CornerRadius(1.f)
-  UI_PrefWidth(ui_px(dim_2f32(line).x, 1)) UI_PrefHeight(ui_px(dim_2f32(line).y, 1))
-  { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, key); }
+  F32 width = dim_2f32(line).x, height = dim_2f32(line).y;
+  F32 sweep = Min(width*0.3f, 48.f);
+  F32 phase = (F32)((now_time_us()/1000) % 1400)/1400.f;
+  F32 sweep_x = at.x + (width+sweep)*phase - sweep;
+  F32 x0 = Max(at.x, sweep_x), x1 = Min(at.x+width, sweep_x+sweep);
+  // The drop-site fill is nearly transparent, made for whole areas; a line
+  // needs the selection accent at full strength.
+  Vec4F32 color = ui_color_from_name(str8_lit("selection"));
+  color.w = 1.f;
+  Vec4F32 bright = mix_4f32(color, ui_color_from_name(str8_lit("text")), 0.6f);
+  bright.w = 1.f;
+  UI_Parent(body) UI_TagF("drop_site") UI_CornerRadius(height*0.5f) UI_PrefHeight(ui_px(height, 1))
+  {
+    UI_FixedX(at.x) UI_FixedY(at.y) UI_PrefWidth(ui_px(width, 1)) UI_BackgroundColor(color)
+    { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, key); }
+    if(x1 > x0) UI_FixedX(x0) UI_FixedY(at.y) UI_PrefWidth(ui_px(x1-x0, 1)) UI_BackgroundColor(bright)
+    { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(key, "sweep")); }
+  }
+  rd_request_frame();
 }
 
 // A sidebar drag over a local group claims the gap between its items under
@@ -2499,7 +2516,7 @@ uishell_sidebar_group_claim(UIShell_SidebarState *state, UI_Box *body, Andamento
   state->group_claim_build = ui_state->build_index;
   state->group_claim_rect = area;
   rd_state->drag_drop_local_panel = uishell_regs()->panel; rd_state->drag_drop_local_frame = rd_state->frame_index;
-  uishell_sidebar_drop_line(body, r2f32p(area.x0+6.f, y-1.f, area.x1-6.f, y+1.f),
+  uishell_sidebar_drop_line(body, r2f32p(area.x0+6.f, y-1.5f, area.x1-6.f, y+1.5f),
     ui_key_from_stringf(ui_key_zero(), "group_drop_line_%S", state->group_claim_id));
 }
 
@@ -2535,7 +2552,7 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, UI_Box *body, AndamentoNod
   F32 y = target == 0 ? siblings[0].extent.y0-1.f :
     target == count ? siblings[count-1].extent.y1+1.f :
     (siblings[target-1].extent.y1+siblings[target].extent.y0)*0.5f;
-  uishell_sidebar_drop_line(body, r2f32p(span.x0+4.f, y-1.f, span.x1-4.f, y+1.f),
+  uishell_sidebar_drop_line(body, r2f32p(span.x0+4.f, y-1.5f, span.x1-4.f, y+1.5f),
     ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line"));
 }
 
@@ -2846,6 +2863,13 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     }
     // The Workspaces group opens with its new-workspace entry row.
     if(uishell_sidebar_section_hosts_chrome(key)) { rows[n]++; content_heights[n] += row_height; }
+    // During a drag an empty local section opens one row, so it has a gap to
+    // drop into.
+    for(U64 i = sections[n]+1; sidebar_dragging && !rows[n] && i < end; i++)
+    {
+      if(nodes[i].parent == sections[n] && str8_match(uishell_sidebar_string(nodes[i].entity_kind), str8_lit(".group"), 0))
+      { rows[n] = 1; content_heights[n] += row_height; }
+    }
     if(rows[n]) { content_heights[n] += body_top_padding; }
     states[n]->content_height = content_heights[n];
     states[n]->has_controls = nodes[sections[n]].control_count != 0;

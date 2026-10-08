@@ -369,6 +369,22 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     cfg_node_release(rd_state->cfg, area->parent);
   }
 
+  // An empty local section opens a row while a drag is over it, so it still
+  // shows an insertion line and takes the drop.
+  {
+    CFG_Node *area = uishell_sidebar_local_new_group(window, str8_lit("Empty"));
+    uishell_sidebar_publish_local(&state, &split);
+    uishell_sidebar_refresh(&state);
+    UIShell_ReorderDrag empty = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(160, 640), str8_zero(), 0, UIShell_ReorderMode_Drag, area);
+    CFG_Node *pin = cfg_node_child_from_string(area, str8_lit("card"));
+    ReorderCheck(empty.ghost_target && dim_2f32(empty.ghost_line).x > 200 && empty.ghost_line.y0 > 620,
+                 "an empty section shows an insertion line in its opened row");
+    ReorderCheck(pin != &cfg_nil_node && str8_match(cfg_node_child_from_string(pin, str8_lit("entity"))->first->string, str8_lit("c2"), 0),
+                 "a drop into an empty section adds the row's ghost");
+    uishell_sidebar_manual_sizing(window, 0);
+    cfg_node_release(rd_state->cfg, area->parent);
+  }
+
   // A row dropped on a docking site makes a new pinned area there holding a
   // ghost of the row, as a row: the same creation drag as a card's.
   {
