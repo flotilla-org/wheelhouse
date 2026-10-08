@@ -901,18 +901,27 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CFG_ID saved_id = saved->id;
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
     // A transient card for an already pinned entity, dropped on that area's
-    // center target, must leave the unique saved card reachable and visible.
+    // center target, adds a second ghost and leaves the first reachable.
     CFG_Node *center_area = saved->parent;
     CFG_Node *saved_prev = saved->prev, *saved_next = saved->next;
     CFG_Node *area_first = center_area->first, *area_last = center_area->last;
     uishell_hover_card_test_center_drop(ws, original, center_area);
-    U64 center_count = 0;
+    U64 center_count = 0, entity_ghosts = 0;
     B32 center_reachable = 0;
+    CFG_Node *dropped_ghost = &cfg_nil_node;
     for(CFG_Node *n = center_area->first; n != &cfg_nil_node && center_count < 32; n = n->next, center_count++)
-    { center_reachable |= n == saved; }
+    {
+      center_reachable |= n == saved;
+      if(str8_match(n->string, str8_lit("card"), 0) &&
+         str8_match(cfg_node_child_from_string(n, str8_lit("entity"))->first->string, uishell_sidebar_string(entity.entity_id), 0))
+      { entity_ghosts++; if(n != saved) { dropped_ghost = n; } }
+    }
     CardCheck(center_reachable && saved->id == saved_id && saved->parent == center_area &&
       saved->prev != saved && saved->next != saved && !original->open,
-      "center drop of the same entity retains one reachable saved pin instead of emptying its area");
+      "center drop of the same entity keeps the first ghost reachable");
+    CardCheck(entity_ghosts == 2 && dropped_ghost != &cfg_nil_node && uishell_sidebar_pin_ghost(dropped_ghost).size &&
+      !str8_match(uishell_sidebar_pin_ghost(dropped_ghost), uishell_sidebar_pin_ghost(saved), 0),
+      "a drop is explicit placement: it adds a second ghost with its own id");
     // Keep later diagnostics runnable even if this regression corrupts links.
     if(!center_reachable || saved->prev == saved || saved->next == saved)
     {
@@ -922,7 +931,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       if(saved_next != &cfg_nil_node) { saved_next->prev = saved; }
     }
     CardCheck(uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == saved,
-      "same-entity center drop keeps the pin discoverable by identity");
+      "same-entity center drop keeps the first ghost found by entity");
+    if(dropped_ghost != &cfg_nil_node)
+    { uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, dropped_ghost)); uishell_sidebar_detached_finish(ws); }
     UIShell_HoverCard *center_pin = uishell_sidebar_saved_card(ws, saved);
     uishell_hover_card_test_center_drop(ws, center_pin, center_area);
     CardCheck(center_pin->open && !center_pin->moving && center_pin->saved == saved_id &&
@@ -939,6 +950,19 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, second_pin));
     uishell_sidebar_detached_finish(ws);
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+    // "Pin another" adds a ghost even though one exists; both render as cards.
+    original->pin_another = 1;
+    CFG_Node *another = uishell_sidebar_card_pin(ws, original, 0);
+    CardCheck(another != &cfg_nil_node && another->id != saved_id && !original->pin_another &&
+      !str8_match(uishell_sidebar_pin_ghost(another), uishell_sidebar_pin_ghost(saved), 0) &&
+      uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == saved,
+      "pin another adds a second ghost of the entity");
+    UIShell_HoverCard *another_card = uishell_sidebar_saved_card(ws, another);
+    UIShell_HoverCard *first_card = uishell_sidebar_saved_card(ws, saved);
+    CardCheck(another_card != first_card && another_card->saved == another->id && first_card->saved == saved_id,
+      "each ghost has its own card");
+    uishell_sidebar_card_close(another_card); uishell_sidebar_detached_finish(ws);
+    CardCheck(cfg_node_from_id(saved_id) == saved, "closing one ghost leaves the other");
     CFG_Node *again = uishell_sidebar_card_pin(ws, original, 0);
     CardCheck(again->id == saved_id && fixture.pin_reveal == saved_id, "pinning twice reveals the same card");
     Temp saved_scratch = scratch_begin(0, 0);
@@ -1027,8 +1051,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(absent && pinned->open && cfg_node_from_id(saved_id) != &cfg_nil_node, "missing subject retains pinned card with an explicit marker");
     fixture.snapshot = snapshot;
     CFG_Node *area = saved->parent;
-    CFG_Node *moved = uishell_sidebar_card_pin(ws, original, 1);
-    CardCheck(moved->id == saved_id && moved->parent != area, "dragging to a new pinned area moves the unique card");
+    CFG_Node *moved = uishell_sidebar_card_pin(ws, pinned, 1);
+    CardCheck(moved->id == saved_id && moved->parent != area, "dragging a pinned card to a new area moves its own ghost");
     B32 has_card = 0;
     for(CFG_Node *n = area->first; n != &cfg_nil_node; n = n->next)
     { has_card |= str8_match(n->string, str8_lit("card"), 0); }
@@ -1105,6 +1129,55 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(!original->open && fixture.detached->open && fixture.detached->placement == UIShell_CardPlacement_Float,
               "native drag release outside the sidebar creates a float");
     uishell_sidebar_card_close(fixture.detached);
+    fprintf(stderr, "Hover card diagnostics: pin hold menu\n");
+    // With the subject already pinned, holding Pin opens its menu (Show
+    // existing pin, Pin another), and the release adds no ghost.
+    {
+      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+      CFG_Node *hold_pin = uishell_sidebar_card_pin(ws, original, 0);
+      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+      original->source_rect = r2f32p(20, 20, 120, 50); original->engaged = original->focused = 1;
+      Temp ghosts_scratch = scratch_begin(0, 0);
+      CFG_NodePtrList before = {0}; uishell_sidebar_pin_cards(ghosts_scratch.arena, window, &before);
+      Vec2F32 pin_at = {0};
+      B32 menu_open = 0, tooltip_over_menu = 0;
+      for(U64 frame = 0; frame < 5; frame++)
+      {
+        UI_EventList events = {0};
+        UI_Event event = {.kind = frame == 3 ? UI_EventKind_Release : UI_EventKind_Press,
+          .key = WM_Key_LeftMouseButton, .pos = pin_at};
+        if(frame == 1 || frame == 3) { ui_event_list_push(test->arena, &events, &event); }
+        if(frame == 2) { sleep_ms(UIShell_HoldUS/1000+50); }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = frame == 0 ? v2f32(-100, -100) : pin_at;
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+        ui_end_build();
+        if(frame == 0)
+        {
+          UI_Box *card_root = ui_box_from_key(test->hover_card_keys[0]);
+          for(UI_Box *box = card_root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, card_root).next)
+          {
+            String8 suffix = str8_lit("###card_pin");
+            if(box->string.size >= suffix.size && str8_match(str8_postfix(box->string, suffix.size), suffix, 0))
+            { pin_at = center_2f32(box->rect); break; }
+          }
+          CardCheck(pin_at.x > 0, "engaged card exposes Pin");
+        }
+        if(frame == 4) { menu_open = ui_any_ctx_menu_is_open(); }
+        // From the hold onwards the menu owns the space under Pin.
+        for(UI_Box *b = test->tooltip_root; frame >= 2 && !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->tooltip_root).next)
+        { tooltip_over_menu |= str8_match(ui_box_display_string(b), str8_lit("Show pin · hold to pin another"), 0); }
+      }
+      CFG_NodePtrList after = {0}; uishell_sidebar_pin_cards(ghosts_scratch.arena, window, &after);
+      CardCheck(menu_open, "holding Pin on a pinned subject opens the pin menu");
+      CardCheck(!tooltip_over_menu, "Pin's tooltip doesn't cover its open menu");
+      CardCheck(after.count == before.count && original->open, "the release after the hold adds no ghost");
+      scratch_end(ghosts_scratch);
+      ui_ctx_menu_close();
+      uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, hold_pin));
+      uishell_sidebar_detached_finish(ws);
+    }
 
     fprintf(stderr, "Hover card diagnostics: pinned drag with panel targets\n");
     CFG_Node *drag_pin_entry = uishell_sidebar_card_pin(ws, original, 0);
@@ -1350,9 +1423,32 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CFG_Node *copy = cfg_node_deep_copy(rd_state->cfg, unique);
     cfg_node_insert_child(rd_state->cfg, unique->parent, unique->parent->last, copy);
     CFG_ID copy_id = copy->id;
-    uishell_sidebar_pin_deduplicate(window, window);
+    uishell_sidebar_pin_deduplicate(window);
     CardCheck(cfg_node_from_id(copy_id) == &cfg_nil_node && cfg_node_from_id(unique->id) == unique,
-              "layout copies reconcile to one pinned card per entity");
+              "layout copies reconcile to one card per ghost");
+    // A second ghost of the same entity is deliberate and survives.
+    CFG_Node *second_ghost = cfg_node_deep_copy(rd_state->cfg, unique);
+    cfg_node_insert_child(rd_state->cfg, unique->parent, unique->parent->last, second_ghost);
+    uishell_sidebar_pin_new_ghost(second_ghost);
+    CFG_ID second_ghost_id = second_ghost->id;
+    uishell_sidebar_pin_deduplicate(window);
+    CardCheck(cfg_node_from_id(second_ghost_id) == second_ghost && cfg_node_from_id(unique->id) == unique,
+              "distinct ghosts of one entity both survive reconciliation");
+    cfg_node_release(rd_state->cfg, second_ghost);
+    // Pins saved before ghost ids keep the first per entity, which gets an id.
+    CFG_Node *legacy = cfg_node_new(rd_state->cfg, unique->parent, str8_lit("card"));
+    uishell_sidebar_pin_set_field(legacy, str8_lit("kind"), str8_lit("workspace"));
+    uishell_sidebar_pin_set_field(legacy, str8_lit("entity"), str8_lit("legacy-pin"));
+    CFG_Node *legacy_copy = cfg_node_deep_copy(rd_state->cfg, legacy);
+    cfg_node_insert_child(rd_state->cfg, unique->parent, unique->parent->last, legacy_copy);
+    CFG_ID legacy_copy_id = legacy_copy->id;
+    uishell_sidebar_pin_deduplicate(window);
+    CardCheck(cfg_node_from_id(legacy_copy_id) == &cfg_nil_node && uishell_sidebar_pin_ghost(legacy).size,
+              "legacy pins keep one per entity and gain a ghost id");
+    String8 legacy_ghost = push_str8_copy(test->arena, uishell_sidebar_pin_ghost(legacy));
+    uishell_sidebar_pin_deduplicate(window);
+    CardCheck(str8_match(uishell_sidebar_pin_ghost(legacy), legacy_ghost, 0), "a ghost id is stable once assigned");
+    cfg_node_release(rd_state->cfg, legacy);
     // Unversioned saved layouts tolerate future kinds, missing identity
     // fields and duplicate exact identities through reconciliation and render.
     CFG_Node *tolerance_area = unique->parent;
@@ -1366,7 +1462,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CFG_ID unknown_copy_id = unknown_copy->id;
     CFG_Node *incomplete = cfg_node_new(rd_state->cfg, tolerance_area, str8_lit("card"));
     uishell_sidebar_pin_set_field(incomplete, str8_lit("label"), str8_lit("Incomplete pin"));
-    uishell_sidebar_pin_deduplicate(window, window);
+    uishell_sidebar_pin_deduplicate(window);
     CardCheck(cfg_node_from_id(unknown_copy_id) == &cfg_nil_node && cfg_node_from_id(unknown->id) == unknown &&
               cfg_node_from_id(incomplete->id) == incomplete && cfg_node_from_id(unique->id) == unique,
               "unknown kinds and incomplete entries tolerate reconciliation without losing valid pins");

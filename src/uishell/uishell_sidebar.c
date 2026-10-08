@@ -57,6 +57,10 @@ struct UIShell_HoverCard
   CFG_ID saved;
   UIShell_CardPlacement placement, requested;
   B32 move_requested, moving, drag_released;
+  // A pin request that adds another ghost instead of revealing an existing one.
+  B32 pin_another;
+  // The card's own context menu, which mustn't dismiss it like other menus.
+  UI_Key menu;
   Vec2F32 move_origin;
   String8 source_key, source_row, retained_label;
   Arena *arena, *label_arena;
@@ -117,9 +121,9 @@ struct UIShell_SidebarState
   Arena *row_drag_arena;
   String8 row_drag_key, row_drag_loop;
   B32 row_drag_released;
-  // The margin close control held down, and since when (hold opens the menu).
-  UI_Key margin_hold_key;
-  U64 margin_hold_us;
+  // The control held down, and since when (see uishell_sidebar_held).
+  UI_Key hold_key;
+  U64 hold_us;
   // A drop or Reset order waits for the end of render, which owns the snapshot.
   B32 order_pending;
   String8 order_loop;
@@ -1204,6 +1208,24 @@ internal UI_BOX_CUSTOM_DRAW(uishell_sidebar_project_rule_draw)
   }
 }
 
+// Press and hold: true on the frame a press on `sig` reaches the hold time,
+// for a control's secondary menu. Any release ends the hold, including one
+// dragged off the control, and the release after a hold is not a click.
+enum { UIShell_HoldUS = 450000 };
+
+internal B32
+uishell_sidebar_held(UIShell_SidebarState *state, UI_Signal sig)
+{
+  U64 now = now_time_us();
+  if(ui_pressed(sig)) { state->hold_key = sig.box->key; state->hold_us = now; }
+  if(!ui_key_match(state->hold_key, sig.box->key)) { return 0; }
+  if(!ui_dragging(sig)) { state->hold_key = ui_key_zero(); return 0; }
+  if(now-state->hold_us < UIShell_HoldUS) { rd_request_frame(); return 0; }
+  ui_kill_action();
+  state->hold_key = ui_key_zero();
+  return 1;
+}
+
 #include "uishell/uishell_hover_cards.c"
 
 // Native entry templates declare label/kind/status before optional context.
@@ -1279,8 +1301,6 @@ uishell_sidebar_discard_button(RD_WindowState *ws, AndamentoNode node, UIShell_S
 // Rows keep their status mark; close and detach live in the right margin
 // beside the row. A click runs the default (detach keeps the layout, ×
 // discards it); holding opens the row's menu, which offers the other close.
-enum { UIShell_MarginHoldUS = 450000 };
-
 // Only the button belongs in the caller's floating, sized scope; the tooltip
 // and menu must not inherit it, so uishell_sidebar_margin_close handles them.
 internal UI_Signal
@@ -1316,21 +1336,7 @@ uishell_sidebar_margin_close(UIShell_SidebarState *state, RD_WindowState *ws, An
       ui_label(str8_lit("Hold for more"));
     }
   }
-  U64 now = now_time_us();
-  if(ui_pressed(sig)) { state->margin_hold_key = sig.box->key; state->margin_hold_us = now; }
-  // Any release ends the hold, including one dragged off the control.
-  if(!ui_dragging(sig) && ui_key_match(state->margin_hold_key, sig.box->key)) { state->margin_hold_key = ui_key_zero(); }
-  if(ui_dragging(sig) && ui_key_match(state->margin_hold_key, sig.box->key))
-  {
-    if(now-state->margin_hold_us >= UIShell_MarginHoldUS)
-    {
-      // The release after a hold is not a click.
-      ui_kill_action();
-      state->margin_hold_key = ui_key_zero();
-      ui_ctx_menu_open(menu_key, entry_key, v2f32(0, em*1.8f));
-    }
-    else { rd_request_frame(); }
-  }
+  if(uishell_sidebar_held(state, sig)) { ui_ctx_menu_open(menu_key, entry_key, v2f32(0, em*1.8f)); }
   if(ui_clicked(sig)) { uishell_sidebar_close_workspace(ws, node, close); }
 }
 
@@ -2567,7 +2573,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             if(drag_source) { ui_pop_transparency(); }
             UIShell_SidebarCloseKind close = uishell_sidebar_close_kind(node, status);
             Rng2F32 zone = r2f32p(slot->rect.x0, slot->rect.y0, body->rect.x1, slot->rect.y1);
-            B32 held = ui_key_match(state->margin_hold_key, ui_key_from_stringf(body->key, "###close_%S", node_key));
+            B32 held = ui_key_match(state->hold_key, ui_key_from_stringf(body->key, "###close_%S", node_key));
             if(close != UIShell_SidebarCloseKind_None && !ui_key_match(entry_key, ui_key_zero()) &&
                !ui_any_ctx_menu_is_open() && !rd_drag_is_active() && (held || contains_2f32(zone, ui_mouse())))
             {
@@ -3016,7 +3022,7 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
   CFG_Node *root = uishell_sidebar_reconcile_regions(split->owner_cfg, state->placement_regions, state->placement_count);
   if(state->pin_cfg_generation != cfg_change_gen())
   {
-    uishell_sidebar_pin_deduplicate(split->owner_cfg, split->owner_cfg);
+    uishell_sidebar_pin_deduplicate(split->owner_cfg);
     state->pin_cfg_generation = cfg_change_gen();
   }
   return root;
