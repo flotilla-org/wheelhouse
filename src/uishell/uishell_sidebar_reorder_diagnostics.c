@@ -290,6 +290,17 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
                  uishell_sidebar_pin_ghost(pins[1]).size && !uishell_sidebar_pin_expanded(pins[1]),
                  "the drop adds a ghost of the row, as a row, at the insertion point");
     ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), before, 0), "a ghost drop leaves the run's order");
+    // An edge site committed in the release frame wins over the list's claim.
+    UIShell_ReorderDrag edge = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), between, str8_zero(), 0, UIShell_ReorderMode_Dock, area);
+    U64 area_pins = 0;
+    for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next) { area_pins += str8_match(c->string, str8_lit("card"), 0); }
+    CFG_Node *split_area = &cfg_nil_node;
+    for(CFG_Node *v = view->parent->first; v != &cfg_nil_node; v = v->next)
+    { if(str8_match(v->string, str8_lit("pinned_cards"), 0)) { split_area = v; } }
+    ReorderCheck(edge.started && area_pins == 3 && cfg_node_child_from_string(split_area, str8_lit("card")) != &cfg_nil_node,
+                 "an edge site taken in the release frame wins over the pinned list's claim");
+    if(split_area != &cfg_nil_node) { cfg_node_release(rd_state->cfg, split_area); }
+    uishell_sidebar_manual_sizing(window, 0);
     cfg_node_release(rd_state->cfg, area);
   }
 

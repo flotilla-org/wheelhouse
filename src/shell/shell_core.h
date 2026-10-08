@@ -1081,6 +1081,9 @@ internal B32 rd_view_name_is_listed_in_app(String8 name);
 //~ rjf: Global Cross-Window UI Interaction State Functions
 
 internal B32 rd_drag_is_active(void);
+internal UI_Key rd_panel_center_drop_site_key(CFG_Node *panel);
+internal UI_Key rd_panel_catchall_drop_site_key(CFG_Node *panel);
+internal B32 rd_panel_drop_claimed_locally(CFG_Node *panel);
 internal void rd_drag_begin(UIShell_ContextRegSlot slot);
 internal B32 rd_drag_drop(void);
 internal void rd_drag_kill(void);

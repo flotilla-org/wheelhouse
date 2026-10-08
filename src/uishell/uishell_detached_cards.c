@@ -431,8 +431,8 @@ uishell_sidebar_drop_claimable(CFG_Node *panel)
 {
   UI_Key hot = ui_drop_hot_key();
   return ui_key_match(hot, ui_key_zero()) ||
-    ui_key_match(hot, ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panel)) ||
-    ui_key_match(hot, ui_key_from_stringf(ui_key_zero(), "drop_split_center_%p", panel));
+    ui_key_match(hot, rd_panel_catchall_drop_site_key(panel)) ||
+    ui_key_match(hot, rd_panel_center_drop_site_key(panel));
 }
 
 // Adds a ghost of `entity` to a pinned area and reveals it. A dropped row
@@ -777,10 +777,14 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   String8 label = card ? card->retained_label : state->row_drag_label;
   String8 source = card ? card->source_key : state->row_drag_key;
   CFG_Node *own = card && card->saved ? cfg_node_from_id(card->saved) : &cfg_nil_node;
-  CFG_Node *area = uishell_sidebar_drop_area(state);
+  // An edge docking site the pointer reached in the release frame wins over
+  // a pinned list's claim from the frame before.
+  CFG_Node *area = state->drop_panel && state->drop_direction != Dir2_Invalid ? &cfg_nil_node : uishell_sidebar_drop_area(state);
   U64 index = state->drop_index;
   UIShell_CardPlacement placement = card ? uishell_sidebar_card_drag_target(ws, card, ui_mouse()) : UIShell_CardPlacement_Float;
   B32 docked = area == &cfg_nil_node && placement != UIShell_CardPlacement_Inline && state->drop_panel;
+  // A site that can't take a pinned area leaves `area` nil: the drop falls
+  // through to the row's or card's own targets below.
   if(docked) { area = uishell_sidebar_pin_area(ws, 1); index = max_U64; }
   if(area != &cfg_nil_node)
   {
