@@ -310,7 +310,7 @@ Visible Workspace. Closing the last workspace is allowed: it leaves a fresh
 subjectless workspace until a permanent home workspace exists.
 
 New-workspace is placed by the chrome placement system in a section-header
-niche on Other workspaces (`andamento.unplaced-workspaces`). The niche counts
+niche on Other workspaces (`.unplaced`). The niche counts
 as available when the sidebar drew that header in the previous frame, so a
 closed section falls back to the sidebar action row. Creating a workspace no
 longer resets the window's sidebar regions. Andamento emits the section even

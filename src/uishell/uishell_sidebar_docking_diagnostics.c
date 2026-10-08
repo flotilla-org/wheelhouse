@@ -686,7 +686,7 @@ uishell_section_placement_diagnostics(String8 source_path)
       CFG_Node *source_host = uishell_sidebar_dock_layout(&split);
       PlacementCheck(source_host != &cfg_nil_node && source_host->first != &cfg_nil_node);
       // The unhinted workspace fallback follows every hinted shipped region.
-      CFG_Node *source_fallback = uishell_sidebar_region_view(window, str8_lit("andamento.unplaced-workspaces"));
+      CFG_Node *source_fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
       PlacementCheck(source_fallback != &cfg_nil_node && source_host->last == source_fallback->parent);
       if(source_host->first != &cfg_nil_node)
       {
@@ -714,7 +714,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   // Defaults are stable by hint, regardless of declaration order.
   PlacementCheck(a != &cfg_nil_node && b != &cfg_nil_node);
   // Andamento always emits the unhinted workspace fallback; it sorts last.
-  CFG_Node *fallback = uishell_sidebar_region_view(window, str8_lit("andamento.unplaced-workspaces"));
+  CFG_Node *fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
   PlacementCheck(fallback != &cfg_nil_node);
   PlacementCheck(host->first == a->parent && a->parent->next == b->parent && host->last == fallback->parent);
   CFG_ID a_id = a->id, b_id = b->id;
@@ -862,7 +862,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   a = uishell_sidebar_region_view(restored, str8_lit("a")); b = uishell_sidebar_region_view(restored, str8_lit("b"));
   c = uishell_sidebar_region_view(restored, str8_lit("c"));
   PlacementCheck(restored_host->first == a->parent && a->parent->next == c->parent && c->parent->next == b->parent);
-  fallback = uishell_sidebar_region_view(restored, str8_lit("andamento.unplaced-workspaces"));
+  fallback = uishell_sidebar_region_view(restored, str8_lit(".unplaced"));
   PlacementCheck(fallback != &cfg_nil_node && b->parent->next == fallback->parent && restored_host->last == fallback->parent);
   // A saved user split remains intact when a new neighbour is hinted before
   // a View within it. The whole subtree is the insertion anchor.

@@ -175,7 +175,7 @@ struct UIShell_SidebarState
   F32 revealed_chip_width;
   U64 revealed_chip_build_index;
   U64 topology_hash;
-  // Local workspaces published as host entities (wheelhouse.workspace), with
+  // Local workspaces published as host entities (.workspace), with
   // the entity ids last published so a closed one can be retracted.
   U64 local_hash;
   Arena *local_arena;
@@ -804,7 +804,7 @@ uishell_sidebar_local_home(CFG_Node *workspace)
 }
 
 // Publishes each local workspace as a host entity: its label and home as
-// facts, and its tab tagged host.entity.* so its rows are live there and a
+// facts, and its tab tagged .host.* so its rows are live there and a
 // template can place it (drag-model.md, "lives with project X"). Entities of
 // workspaces that closed, or gained a subject, are retracted.
 internal void
@@ -823,7 +823,7 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
   }
   if(hash == state->local_hash) { scratch_end(scratch); return; }
   U64 now = wheelhouse_ingress_now_ms();
-  String8 kind = str8_lit("wheelhouse.workspace"), source = str8_lit("wheelhouse.local");
+  String8 kind = str8_lit(".workspace"), source = str8_lit("wheelhouse.local");
   String8 *published = push_array(scratch.arena, String8, split->inventory.count);
   U64 count = 0;
   B32 ok = 1;
@@ -842,8 +842,8 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
       uishell_sidebar_text(source), facts, ArrayCount(facts), &error), error);
     String8 tab = push_str8f(scratch.arena,
       "{\"target\":{\"kind\":\"tab\",\"value\":%I64u},\"source_id\":\"%S\",\"set\":{"
-      "\"host.entity.kind\":{\"value\":{\"type\":\"text\",\"value\":\"%S\"}},"
-      "\"host.entity.id\":{\"value\":{\"type\":\"text\",\"value\":\"%S\"}}},\"unset\":[]}",
+      "\".host.kind\":{\"value\":{\"type\":\"text\",\"value\":\"%S\"}},"
+      "\".host.id\":{\"value\":{\"type\":\"text\",\"value\":\"%S\"}}},\"unset\":[]}",
       w->id, source, kind, id);
     error = 0;
     ok = ok && uishell_sidebar_result(state, andamento_apply_patch_json(state->core, now, uishell_sidebar_text(tab), &error), error);
@@ -1484,7 +1484,7 @@ uishell_sidebar_margin_close(UIShell_SidebarState *state, RD_WindowState *ws, An
   {
     ui_state->tooltip_anchor_key = sig.box->key;
     ui_label(uishell_sidebar_close_label(close));
-    B32 unplaced = str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("andamento.workspace"), 0);
+    B32 unplaced = str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".workspace"), 0);
     UI_TagF("weak")
     {
       ui_label(close == UIShell_SidebarCloseKind_Destroy ? str8_lit("The workspace and its layout are discarded.") :
@@ -1973,7 +1973,7 @@ internal void uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *s
 internal B32
 uishell_sidebar_section_hosts_chrome(String8 key)
 {
-  return str8_match(key, str8_lit("andamento.unplaced-workspaces"), 0);
+  return str8_match(key, str8_lit(".unplaced"), 0);
 }
 
 internal void

@@ -120,7 +120,7 @@ class NativeSidebarTests(unittest.TestCase):
         # The workspace fallback is always emitted, unhinted; Wheelhouse places it last.
         self.assertEqual(hints_seen, [('tree', 'sidebar', 1, 10), ('sessions', 'sidebar', 1, 20),
                                      ('attention', 'sidebar', 1, 30), ('git', 'sidebar', 1, 40),
-                                     ('andamento.unplaced-workspaces', '', 0, 0)])
+                                     ('.unplaced', '', 0, 0)])
 
     def open_workspace(self, identity, workspace_id):
         snapshot, nodes = self.snapshot()
@@ -740,7 +740,7 @@ int main(void) {
         self.assertEqual(self.values(snapshot, retained)[2], 'ended')
         parent = nodes[retained.parent]
         self.assertEqual((parent.entity_kind.string(), parent.entity_id.string()), ('convoy', 'c'))
-        self.assertFalse(any(n.entity_kind.string() == 'andamento.workspace' for n in nodes))
+        self.assertFalse(any(n.entity_kind.string() == '.workspace' for n in nodes))
         kind, request, identity, _ = self.dispatch(snapshot, retained.activate)
         self.assertEqual((kind, identity), (0, 42))
         self.assertTrue(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None))
@@ -776,7 +776,7 @@ int main(void) {
         snapshot, nodes = self.snapshot()
         entries = [n for n in nodes if not n.is_section]
         self.assertEqual([n.workspace_id for n in entries], [70, 71])
-        self.assertTrue(all(n.entity_kind.string() == 'andamento.workspace' for n in entries))
+        self.assertTrue(all(n.entity_kind.string() == '.workspace' for n in entries))
         self.assertTrue(all(n.control_count == 0 for n in nodes))
         kind, request, identity, _ = self.dispatch(snapshot, entries[1].activate)
         self.assertEqual((kind, identity), (0, 71))
@@ -813,7 +813,7 @@ int main(void) {
                 snapshot, nodes = self.snapshot()
                 entries = [n for n in nodes if n.workspace_id == 70]
                 self.assertEqual(len(entries), 1)
-                self.assertEqual((entries[0].entity_kind.string(), entries[0].selected), ('andamento.workspace', 1))
+                self.assertEqual((entries[0].entity_kind.string(), entries[0].selected), ('.workspace', 1))
                 self.assertEqual(self.values(snapshot, nodes[entries[0].parent]), ['Other workspaces'])
                 kind, request, identity, _ = self.dispatch(snapshot, entries[0].activate)
                 self.assertEqual((kind, identity), (0, 70))
@@ -825,7 +825,7 @@ int main(void) {
                                      Workspace(71, 1, Text.of('local'), 1))
         self.assertEqual(lib.andamento_observe(self.core, workspaces, 2, None, 0, None), 1)
         snapshot, nodes = self.snapshot()
-        fallback = [n for n in nodes if n.entity_kind.string() == 'andamento.workspace']
+        fallback = [n for n in nodes if n.entity_kind.string() == '.workspace']
         self.assertEqual([n.workspace_id for n in fallback], [70, 71])
         self.assertEqual([n.selected for n in fallback], [0, 1])
         self.assertNotEqual(fallback[0].key.string(), fallback[1].key.string())
@@ -835,7 +835,7 @@ int main(void) {
         self.assertEqual(lib.andamento_observe(self.core, workspaces, 1, None, 0, None), 1)
         self.assertEqual(lib.andamento_dispatch(self.core, snapshot, fallback[1].activate, None), 0)
         _, nodes = self.snapshot()
-        self.assertEqual([n.workspace_id for n in nodes if n.entity_kind.string() == 'andamento.workspace'], [70])
+        self.assertEqual([n.workspace_id for n in nodes if n.entity_kind.string() == '.workspace'], [70])
 
     # Terminal subject phases retain the workspace in place. A later stale
     # active publication cannot undo an authoritative end for the same identity.

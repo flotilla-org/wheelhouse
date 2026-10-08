@@ -157,10 +157,10 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   //  lives with a project when annotated, and returns to Workspaces without.
   String8 local_id = push_str8_copy(scratch.arena, uishell_sidebar_local_entity(loose));
   {
-    LifecycleCheck(str8_match(uishell_sidebar_string(loose_node.entity_kind), str8_lit("wheelhouse.workspace"), 0) &&
+    LifecycleCheck(str8_match(uishell_sidebar_string(loose_node.entity_kind), str8_lit(".workspace"), 0) &&
                    str8_match(uishell_sidebar_string(loose_node.entity_id), local_id, 0),
                    "a local workspace's row is its host entity");
-    AndamentoEntity local = {uishell_sidebar_text(str8_lit("wheelhouse.workspace")), uishell_sidebar_text(local_id)};
+    AndamentoEntity local = {uishell_sidebar_text(str8_lit(".workspace")), uishell_sidebar_text(local_id)};
     LifecycleCheck(uishell_sidebar_card_find(state, local, 0) != ANDAMENTO_NONE, "a local workspace has details for its hover card");
     CFG_Node *home = cfg_node_child_from_string_or_alloc(rd_state->cfg, loose, str8_lit("lives_with"));
     cfg_node_new(rd_state->cfg, home, str8_lit("p"));
@@ -251,11 +251,11 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
           entry_row = 1;
           for(UI_Box *a = box->parent; !ui_box_is_nil(a) && !ui_box_is_nil(a->parent); a = a->parent)
           {
-            if(ui_key_match(a->key, ui_key_from_string(a->parent->key, str8_lit("###section_header_andamento.unplaced-workspaces"))))
+            if(ui_key_match(a->key, ui_key_from_string(a->parent->key, str8_lit("###section_header_.unplaced"))))
             { entry_row = 0; }
           }
         }
-        if(ui_key_match(box->key, ui_key_from_string(box->parent->key, str8_lit("###section_andamento.unplaced-workspaces"))))
+        if(ui_key_match(box->key, ui_key_from_string(box->parent->key, str8_lit("###section_.unplaced"))))
         { titled = str8_match(ui_box_display_string(box), str8_lit("WORKSPACES"), 0); }
         for(U64 r = 0; r < row_key_count; r++)
         {
@@ -418,7 +418,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     // the niche, so new-workspace moves to the sidebar action row.
     {
       UIShell_SidebarSection *workspaces = state->sections;
-      for(; workspaces && !str8_match(workspaces->key, str8_lit("andamento.unplaced-workspaces"), 0); workspaces = workspaces->next) {}
+      for(; workspaces && !str8_match(workspaces->key, str8_lit(".unplaced"), 0); workspaces = workspaces->next) {}
       LifecycleCheck(workspaces != 0, "Workspaces section state exists");
       if(workspaces)
       {
@@ -454,7 +454,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
     AndamentoNode gone = {0};
-    AndamentoEntity local = {uishell_sidebar_text(str8_lit("wheelhouse.workspace")), uishell_sidebar_text(local_id)};
+    AndamentoEntity local = {uishell_sidebar_text(str8_lit(".workspace")), uishell_sidebar_text(local_id)};
     LifecycleCheck(!uishell_workspace_lifecycle_find(state, local_id, 0, &gone) && uishell_sidebar_card_find(state, local, 0) == ANDAMENTO_NONE,
                    "a destroyed local workspace's entity is retracted");
   }
