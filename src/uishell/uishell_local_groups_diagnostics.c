@@ -205,6 +205,14 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   GroupsCheck(uishell_sidebar_local_group(window, tests_id) == &cfg_nil_node &&
               cfg_node_child_from_string(made, str8_lit("lives_in")) == &cfg_nil_node,
               "deleting a group moves its workspaces to the default group");
+  uishell_local_groups_publish(state, window, arena);
+  B32 retracted = 1;
+  for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+  {
+    AndamentoNode n = {0}; andamento_snapshot_node(state->snapshot, i, &n);
+    retracted &= !str8_match(uishell_sidebar_string(n.entity_id), tests_id, 0);
+  }
+  GroupsCheck(retracted, "a deleted group's entity leaves Andamento's snapshot");
   GroupsCheck(str8_match(uishell_sidebar_local_title(arena, section), str8_lit("CI"), 0), "a name you gave the section sticks with one group again");
   uishell_sidebar_local_rename(section, str8_zero());
   GroupsCheck(str8_match(uishell_sidebar_local_title(arena, section), str8_lit("Nightly"), 0), "clearing the section's name makes it show its group's again");
