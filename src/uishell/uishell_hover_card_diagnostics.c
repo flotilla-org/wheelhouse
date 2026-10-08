@@ -5,18 +5,20 @@ action_node_copy(UIShell_SidebarState *state, U64 index)
   return andamento_snapshot_detail(state->snapshot, index, &detail) ? detail.copy_url : ANDAMENTO_NONE;
 }
 
-// Commit through the same creation-drag routing and finish phases as a center drop.
+// Commit through the same creation-drag routing and finish phases as a center
+// drop on the panel showing local group `area`'s section.
 internal void
 uishell_hover_card_test_center_drop(RD_WindowState *ws, UIShell_HoverCard *card, CFG_Node *area)
 {
+  CFG_Node *view = uishell_sidebar_local_view(cfg_node_from_id(ws->cfg_id), area);
   card->open = card->moving = card->drag_released = card->engaged = 1;
   ws->sidebar->drag_card = card;
   UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = 0)
   { rd_drag_begin(UIShell_ContextRegSlot_View); }
-  rd_state->drag_drop_creation_name = str8_lit("pinned_cards");
+  rd_state->drag_drop_creation_name = str8_lit("sidebar_section");
   rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
   rd_state->drag_drop_state = RD_DragDropState_Dropping;
-  if(rd_drag_drop()) { rd_panel_drag_drop(area->parent->id, Dir2_Invalid, area->id); }
+  if(rd_drag_drop()) { rd_panel_drag_drop(view->parent->id, Dir2_Invalid, view->id); }
   UI_EventList events = {0}; UI_AnimationInfo animation = {0};
   UI_IconInfo icons = ws->ui->icon_info;
   ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
@@ -88,7 +90,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
 #define CardCheck(expr, message) do { if(!(expr)) { fprintf(stderr, "FAIL hover card: %s\n", message); failures++; } } while(0)
   fprintf(stderr, "Hover card diagnostics: start\n");
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
-  UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {0};
+  // Initialized and restored: rendering must use this fixture's own core.
+  UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {.initialized = 1, .restored = 1};
   ws->sidebar = &fixture;
   UI_State *saved_window_ui = ws->ui;
   ws->ui = test;
@@ -819,6 +822,13 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     AndamentoNode entity = {0};
     for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
     { andamento_snapshot_node(fixture.snapshot, i, &entity); if(!entity.is_section && entity.entity_id.len) { break; } }
+    // Rendering sections publishes local sections, which replaces the
+    // snapshot; keep the entity's text in storage the test owns.
+    Arena *entity_arena = arena_alloc();
+    entity.entity_kind = uishell_sidebar_text(push_str8_copy(entity_arena, uishell_sidebar_string(entity.entity_kind)));
+    entity.entity_id = uishell_sidebar_text(push_str8_copy(entity_arena, uishell_sidebar_string(entity.entity_id)));
+    entity.label = uishell_sidebar_text(push_str8_copy(entity_arena, uishell_sidebar_string(entity.label)));
+    entity.key = uishell_sidebar_text(push_str8_copy(entity_arena, uishell_sidebar_string(entity.key)));
     UIShell_HoverCard *original = &fixture.cards[0];
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
     original->rect = r2f32p(400, 100, 800, 400); original->engaged = original->focused = 1;
@@ -840,7 +850,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // Raw Escape is consumed by the card before the generic UI cancel slot.
     floating->moving = floating->focused = 1; fixture.drag_card = floating;
     UIShell_RegsScope(.window = ws->cfg_id) { rd_drag_begin(UIShell_ContextRegSlot_View); }
-    rd_state->drag_drop_creation_name = str8_lit("pinned_cards"); rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
+    rd_state->drag_drop_creation_name = str8_lit("sidebar_section"); rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
     CFG_ID placement_before = floating->saved;
     WM_Event cancel_drag = {.kind = WM_EventKind_Press, .key = WM_Key_Esc};
     CardCheck(uishell_sidebar_card_wm_event(ws, &cancel_drag) && floating->open && !floating->moving &&
@@ -862,7 +872,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       "normal tab drag after Escape queues its move without the cancelled creation callback");
     rd_drag_kill();
     UIShell_RegsScope(.window = ws->cfg_id) { rd_drag_begin(UIShell_ContextRegSlot_View); }
-    rd_state->drag_drop_creation_name = str8_lit("pinned_cards"); rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
+    rd_state->drag_drop_creation_name = str8_lit("sidebar_section"); rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
     rd_drag_kill_from_window(0);
     CardCheck(rd_drag_is_active() && rd_state->drag_drop_commit, "teardown of another window preserves the drag owner");
     rd_drag_kill_from_window(ws->cfg_id);
@@ -956,13 +966,14 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, second_pin));
     uishell_sidebar_detached_finish(ws);
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
-    // "Pin another" adds a ghost even though one exists; both render as cards.
-    original->pin_another = 1;
-    CFG_Node *another = uishell_sidebar_card_pin(ws, original, 0);
-    CardCheck(another != &cfg_nil_node && another->id != saved_id && !original->pin_another &&
+    // A second ghost of the entity (a drop is explicit placement) is its own
+    // object with its own card; Pin keeps revealing the first.
+    CFG_Node *another = uishell_sidebar_pin_add(&fixture, saved->parent, max_U64, uishell_sidebar_card_entity(entity),
+      uishell_sidebar_string(entity.label), uishell_sidebar_string(entity.key), 0);
+    CardCheck(another != &cfg_nil_node && another->id != saved_id &&
       !str8_match(uishell_sidebar_pin_ghost(another), uishell_sidebar_pin_ghost(saved), 0) &&
       uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == saved,
-      "pin another adds a second ghost of the entity");
+      "a second ghost of the entity is its own object");
     UIShell_HoverCard *another_card = uishell_sidebar_saved_card(ws, another);
     UIShell_HoverCard *first_card = uishell_sidebar_saved_card(ws, saved);
     CardCheck(another_card != first_card && another_card->saved == another->id && first_card->saved == saved_id,
@@ -982,6 +993,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     fprintf(stderr, "Hover card diagnostics: pinned rendering\n");
     UIShell_HoverCard *pinned = uishell_sidebar_saved_card(ws, saved);
     CFG_Node *layout_second = cfg_node_new(rd_state->cfg, saved->parent, str8_lit("card"));
+    uishell_sidebar_pin_new_ghost(layout_second);
     uishell_sidebar_pin_set_field(layout_second, str8_lit("kind"), str8_lit("workspace"));
     uishell_sidebar_pin_set_field(layout_second, str8_lit("entity"), str8_lit("layout-second"));
     uishell_sidebar_pin_set_field(layout_second, str8_lit("label"), str8_lit("Second layout card"));
@@ -995,7 +1007,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       Rng2F32 view_rect = r2f32p(17+offset, 29+offset, 17+offset+pinned_widths[frame/5], 329+offset);
       UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       test->mouse = v2f32(-100, -100); test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
-      UIShell_RegsScope(.window = window->id, .view = saved->parent->id)
+      // Pins render in their local section's View, as tree rows and cards.
+      CFG_Node *pin_view = uishell_sidebar_local_view(window, saved->parent);
+      UIShell_RegsScope(.window = window->id, .view = pin_view->id, .panel = pin_view->parent->id)
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
       {
         // A real View receives window coordinates under a parent already at
@@ -1004,28 +1018,40 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         UI_Rect(view_rect)
         { view_parent = ui_build_box_from_key(UI_BoxFlag_Clip, ui_key_make(119166)); }
         UI_Parent(view_parent)
-        { RD_VIEW_UI_FUNCTION_NAME(pinned_cards)((E_Eval){0}, view_rect); }
+        { RD_VIEW_UI_FUNCTION_NAME(sidebar_section)((E_Eval){0}, view_rect); }
       }
       ui_end_build();
       CardCheck(ui_nil_box.view_off_target.y == nil_scroll_before,
                 "first-frame pin reveal never writes the shared nil box");
       if(frame == 0)
       { CardCheck(fixture.pin_reveal == saved_id && pinned->focused, "new pin keeps its reveal pending until measured"); }
-      if(frame == 1)
-      { CardCheck(!fixture.pin_reveal, "measured new pin completes its reveal on the next frame"); }
+      // Published on the first frame, drawn and measured on the second.
+      if(frame == 2)
+      { CardCheck(!fixture.pin_reveal, "measured new pin completes its reveal once drawn"); }
       UI_Box *body = ui_box_from_key(pinned->mask.key);
-      CardCheck(!ui_box_is_nil(body) && abs_f32(body->rect.x0-(view_rect.x0+6)) < 1 && abs_f32(body->rect.y0-(view_rect.y0+floor_f32(12*2.2f))) < 1 && body->rect.x1 <= view_rect.x1-6 && body->fixed_size.y > 40,
-                "translated pinned View places its inset first card immediately below the header without doubling the View offset");
+      // From the first frame the cards are published and placed, the upper
+      // one sits inset in the section, below its header, at the View's
+      // offset only once, and the next follows after the fixed gap.
       UI_Box *second_body = ui_box_from_key(second_layout_card->mask.key);
-      CardCheck(!ui_box_is_nil(second_body) && abs_f32(second_body->rect.y0-body->rect.y1-UIShell_HoverCardPinnedGapPT) < 1,
-                "successive pinned cards retain their fixed gap when the View moves");
+      if(frame >= 1)
+      {
+        Rng2F32 upper = body->rect.y0 <= second_body->rect.y0 ? body->rect : second_body->rect;
+        Rng2F32 lower = body->rect.y0 <= second_body->rect.y0 ? second_body->rect : body->rect;
+        CardCheck(!ui_box_is_nil(body) && !ui_box_is_nil(second_body) && upper.x0 >= view_rect.x0 && upper.x0 <= view_rect.x0+12 &&
+                  upper.y0 >= view_rect.y0+floor_f32(12*2.2f) && upper.y0 <= view_rect.y0+floor_f32(12*2.2f)+8 &&
+                  upper.x1 <= view_rect.x1 && body->fixed_size.y > 40,
+                  "a pinned card sits inset in its section, below the header, without doubling the View offset");
+        CardCheck(abs_f32(lower.y0-upper.y1-UIShell_HoverCardPinnedGapPT) < 1,
+                  "successive pinned cards retain their fixed gap when the View moves");
+      }
       if(frame%5 >= 3)
       { CardCheck(abs_f32(pinned->content_height-previous_height) < .5f,
                   "pinned card height converges after resizing narrow and wide"); }
       previous_height = pinned->content_height;
       uishell_sidebar_detached_bounds(ws);
-      CardCheck(pinned->rect.x0 >= view_rect.x0 && pinned->rect.x1 <= view_rect.x1 && pinned->rect.y1 <= view_rect.y1,
-                "pinned WM hit geometry is clipped to the section viewport");
+      if(frame >= 1)
+      { CardCheck(pinned->rect.x0 >= view_rect.x0 && pinned->rect.x1 <= view_rect.x1 && pinned->rect.y1 <= view_rect.y1,
+                  "pinned WM hit geometry is clipped to the section viewport"); }
       uishell_sidebar_detached_finish(ws);
       CFG_Node *label = cfg_node_child_from_string(saved, str8_lit("label"));
       CardCheck(str8_match(label->first->string, pinned->retained_label, 0),
@@ -1062,21 +1088,24 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     B32 sized_before_move = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
     UIShell_CmdNode *cmds_before_move = rd_state->cmds[0].last; U64 cmd_count_before_move = rd_state->cmds[0].count;
     fixture.drag_card = pinned; pinned->moving = pinned->drag_released = 1;
-    fixture.drop_panel = area->parent->id; fixture.drop_direction = Dir2_Down; fixture.drop_area = 0;
+    CFG_Node *area_view = uishell_sidebar_local_view(window, area);
+    fixture.drop_panel = area_view->parent->id; fixture.drop_direction = Dir2_Down;
     uishell_sidebar_drag_finish(ws);
     CFG_Node *moved = cfg_node_from_id(saved_id);
-    CardCheck(moved != &cfg_nil_node && moved->parent != area && str8_match(moved->parent->string, str8_lit("pinned_cards"), 0) &&
+    CardCheck(moved != &cfg_nil_node && moved->parent != area && str8_match(moved->parent->string, str8_lit("group"), 0) &&
               pinned->open && !fixture.drag_card, "dragging a pinned card to a docking site moves its own ghost to the new area");
     B32 has_card = 0;
     for(CFG_Node *n = area->first; n != &cfg_nil_node; n = n->next)
     { has_card |= str8_match(n->string, str8_lit("card"), 0); }
-    CardCheck(!has_card && cfg_node_from_id(area->id) == area && rd_dock_can_close(area),
-              "moving the last pin preserves an empty area that can be closed");
+    CardCheck(!has_card && cfg_node_from_id(area->id) == area && rd_dock_can_close(area_view),
+              "moving the last pin preserves an empty group whose section can be closed");
     if(moved != &cfg_nil_node && moved->parent != area)
     {
       CFG_Node *new_area = moved->parent;
+      CFG_Node *new_view = uishell_sidebar_local_view(window, new_area);
       cfg_node_insert_child(rd_state->cfg, area, area->last, moved);
-      cfg_node_release(rd_state->cfg, new_area);
+      if(new_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, new_view); }
+      cfg_node_release(rd_state->cfg, new_area->parent);
     }
     if(cmds_before_move) { cmds_before_move->next = 0; } else { rd_state->cmds[0].first = 0; }
     rd_state->cmds[0].last = cmds_before_move; rd_state->cmds[0].count = cmd_count_before_move;
@@ -1160,43 +1189,68 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // Clicking the row goes to its source; × removes the ghost, never the source.
     {
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
-      original->pin_another = 1;
       CFG_Node *ghost = uishell_sidebar_card_pin(ws, original, 0);
       CFG_ID ghost_id = ghost->id;
       UIShell_HoverCard *ghost_card = uishell_sidebar_saved_card(ws, ghost);
       CardCheck(ghost != &cfg_nil_node && uishell_sidebar_pin_expanded(ghost), "pinning a card keeps it as a card");
       uishell_sidebar_ghost_set_expanded(ghost, 0);
       Temp ghost_scratch = scratch_begin(0, 0);
-      String8 row_suffix = push_str8f(ghost_scratch.arena, "###sidebar_row_ghost_%I64u", ghost_id);
-      String8 expand_suffix = push_str8f(ghost_scratch.arena, "###toggle_ghost_%I64u", ghost_id);
-      String8 remove_suffix = push_str8f(ghost_scratch.arena, "###ghost_remove_%I64u", ghost_id);
+      String8 ghost_guid = push_str8_copy(ghost_scratch.arena, uishell_sidebar_pin_ghost(ghost));
       String8 card_suffix = push_str8f(ghost_scratch.arena, "###pinned_card_%I64u", ghost_id);
+      CFG_Node *ghost_view = uishell_sidebar_local_view(window, ghost->parent);
       Rng2F32 view_rect = r2f32p(0, 0, 320, 600);
-      // Frames: 0 lays out; 1-2 click the disclosure; 3 checks the card and
-      // collapses it again; 4 settles; 5-6 click the row; 7 hovers; 8-9 click ×.
-      Vec2F32 expand_at = {0}, row_at = {0}, remove_at = {0};
-      B32 row_seen = 0, card_before = 0, card_after = 0, marker = 0, collapse_control = 0;
+      // Frames: 0 lays out; 1-2 click the disclosure; 3 checks the card;
+      // 4-5 click its ⌄ to collapse it again; 6 settles; 7-8 click the row;
+      // 9 hovers; 10-11 click ×.
+      Vec2F32 expand_at = {0}, row_at = {0}, remove_at = {0}, collapse_at = {0};
+      B32 row_seen = 0, card_before = 0, card_after = 0, marker = 0, collapse_control = 0, row_again = 0;
       fixture.card_has_action = 0;
       B32 queued = 0, hover_offered = 0;
+      // A ghost row's click opens its target, as its home row does.
+      U64 workspaces_before = 0;
+      for(CFG_Node *c = window->first; c != &cfg_nil_node; c = c->next) { workspaces_before += str8_match(c->string, str8_lit("workspace"), 0); }
       uishell_sidebar_card_close(&fixture.cards[0]); fixture.cards[0].candidate = (AndamentoEntity){0};
-      for(U32 frame = 0; frame < 10; frame++)
+      // Two settle frames publish and place the ghost before frame 0.
+      B32 row_lingers = 0;
+      for(U32 step = 0; step < 16; step++)
       {
-        Vec2F32 at = frame == 1 || frame == 2 ? expand_at : frame >= 5 && frame <= 7 ? row_at : frame >= 8 ? remove_at : v2f32(-100, -100);
+        U32 frame = step < 2 ? 0 : step-2;
+        B32 settled = step >= 2;
+        Vec2F32 at = frame == 1 || frame == 2 ? expand_at : frame == 4 || frame == 5 ? collapse_at :
+          frame >= 7 && frame <= 9 ? row_at : frame >= 10 ? remove_at : v2f32(-100, -100);
         UI_EventList events = {0};
-        UI_Event event = {.kind = (frame == 1 || frame == 5 || frame == 8) ? UI_EventKind_Press : UI_EventKind_Release,
+        UI_Event event = {.kind = (frame == 1 || frame == 4 || frame == 7 || frame == 10) ? UI_EventKind_Press : UI_EventKind_Release,
           .key = WM_Key_LeftMouseButton, .pos = at};
-        if(frame == 1 || frame == 2 || frame == 5 || frame == 6 || frame == 8 || frame == 9) { ui_event_list_push(test->arena, &events, &event); }
+        if(settled && (frame == 1 || frame == 2 || frame == 4 || frame == 5 || frame == 7 || frame == 8 || frame == 10 || frame == 11))
+        { ui_event_list_push(test->arena, &events, &event); }
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         test->mouse = at; test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
-        UIShell_RegsScope(.window = window->id, .view = ghost->parent->id)
+        UIShell_RegsScope(.window = window->id, .view = ghost_view->id, .panel = ghost_view->parent->id)
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         {
           UI_Box *view_parent;
           UI_Rect(view_rect) { view_parent = ui_build_box_from_key(UI_BoxFlag_Clip, ui_key_make(119167)); }
-          UI_Parent(view_parent) { RD_VIEW_UI_FUNCTION_NAME(pinned_cards)((E_Eval){0}, view_rect); }
+          UI_Parent(view_parent) { RD_VIEW_UI_FUNCTION_NAME(sidebar_section)((E_Eval){0}, view_rect); }
         }
         ui_end_build();
-        queued |= fixture.card_has_action;
+        // The ghost's tree row is keyed by its placement.
+        String8 node_key = str8_zero();
+        for(U64 i = 0; fixture.snapshot && i < andamento_snapshot_node_count(fixture.snapshot); i++)
+        {
+          AndamentoNode n = {0}; andamento_snapshot_node(fixture.snapshot, i, &n);
+          if(str8_match(uishell_sidebar_string(n.entity_id), ghost_guid, 0)) { node_key = push_str8_copy(ghost_scratch.arena, uishell_sidebar_string(n.key)); }
+        }
+        // After × (frames 10-11), the ghost's row goes too, once republished.
+        if(settled && frame == 13) { row_lingers = node_key.size != 0; }
+        String8 row_suffix = push_str8f(ghost_scratch.arena, "###sidebar_row_%S", node_key);
+        String8 expand_suffix = push_str8f(ghost_scratch.arena, "###toggle_%S", node_key);
+        String8 remove_suffix = push_str8f(ghost_scratch.arena, "###close_%S", node_key);
+        if(settled && frame == 8)
+        {
+          U64 workspaces_after = 0;
+          for(CFG_Node *c = window->first; c != &cfg_nil_node; c = c->next) { workspaces_after += str8_match(c->string, str8_lit("workspace"), 0); }
+          queued = workspaces_after > workspaces_before || fixture.inspection[0] != 0;
+        }
         // Rows and cards draw no text of their own, so match keys by parent seed.
         for(UI_Box *b = test->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->root).next)
         {
@@ -1209,20 +1263,21 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           { row_seen = 1; row_at = v2f32(b->rect.x0+(b->rect.x1-b->rect.x0)*0.6f, (b->rect.y0+b->rect.y1)*0.5f); }
           if(ui_key_match(b->key, ui_key_from_string(seed, expand_suffix))) { expand_at = center_2f32(b->rect); }
           if(ui_key_match(b->key, ui_key_from_string(seed, remove_suffix))) { remove_at = center_2f32(b->rect); }
-          if(frame == 3 && ui_key_match(b->key, ui_key_from_string(seed, str8_lit("###card_collapse")))) { collapse_control = 1; }
+          if(frame == 3 && ui_key_match(b->key, ui_key_from_string(seed, str8_lit("###card_collapse")))) { collapse_control = 1; collapse_at = center_2f32(b->rect); }
+          if(settled && frame == 6 && ui_key_match(b->key, ui_key_from_string(seed, expand_suffix))) { row_again = 1; }
           if(ui_key_match(b->key, ui_key_from_string(seed, card_suffix)))
-          { if(frame == 0) { card_before = 1; } if(frame == 3) { card_after = 1; } }
-          if(frame == 0 && str8_match(ui_box_display_string(b), str8_lit("↗"), 0)) { marker = 1; }
+          { if(settled && frame == 0) { card_before = 1; } if(frame == 3) { card_after = 1; } }
+          if(settled && frame == 0 && str8_match(ui_box_display_string(b), str8_lit("↗"), 0)) { marker = 1; }
         }
-        if(frame == 3 && cfg_node_from_id(ghost_id) != &cfg_nil_node)
-        { uishell_sidebar_ghost_set_expanded(ghost, 0); }
-        if(frame == 7) { hover_offered = uishell_sidebar_card_entity_match(fixture.cards[0].candidate, uishell_sidebar_card_entity(entity)) ||
+        if(settled && frame == 9) { hover_offered = uishell_sidebar_card_entity_match(fixture.cards[0].candidate, uishell_sidebar_card_entity(entity)) ||
           (fixture.cards[0].open && uishell_sidebar_card_entity_match(fixture.cards[0].path[0], uishell_sidebar_card_entity(entity))); }
       }
       uishell_sidebar_detached_finish(ws);
       CardCheck(row_seen && marker && !card_before, "a collapsed ghost shows its row and lives-elsewhere marker, not its card");
       CardCheck(card_after, "the row's disclosure expands the ghost into its card");
       CardCheck(collapse_control, "a pinned card's header can collapse it to its row");
+      CardCheck(row_again, "collapsing the card through its ⌄ gives back its row, with its disclosure");
+      CardCheck(!row_lingers, "a removed ghost's row goes away");
       CardCheck(queued, "clicking a ghost row goes to its source");
       CardCheck(hover_offered, "hovering a ghost row offers its subject's hover card");
       CardCheck(cfg_node_from_id(ghost_id) == &cfg_nil_node && !ghost_card->open, "× on a ghost row removes the ghost");
@@ -1230,29 +1285,31 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       fixture.card_has_action = 0;
       scratch_end(ghost_scratch);
     }
-    fprintf(stderr, "Hover card diagnostics: pin hold menu\n");
-    // With the subject already pinned, holding Pin opens its menu (Show
-    // existing pin, Pin another), and the release adds no ghost.
+    fprintf(stderr, "Hover card diagnostics: pin control\n");
+    // With the subject already pinned in the group Pin uses, Pin says Show pin
+    // and a click reveals it: no menu, and no second ghost. The card runs on
+    // its own clock, starting after its 100ms glide into place, so Pin is
+    // where frame 0 measured it however fast the machine is.
     {
-      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+      U64 t0 = now_time_us();
+      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, t0);
       CFG_Node *hold_pin = uishell_sidebar_card_pin(ws, original, 0);
-      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, t0);
       original->source_rect = r2f32p(20, 20, 120, 50); original->engaged = original->focused = 1;
       Temp ghosts_scratch = scratch_begin(0, 0);
       CFG_NodePtrList before = {0}; uishell_sidebar_pin_cards(ghosts_scratch.arena, window, &before);
       Vec2F32 pin_at = {0};
-      B32 menu_open = 0, tooltip_over_menu = 0;
-      for(U64 frame = 0; frame < 5; frame++)
+      B32 menu_open = 0, show_tip = 0;
+      for(U64 frame = 0; frame < 4; frame++)
       {
         UI_EventList events = {0};
-        UI_Event event = {.kind = frame == 3 ? UI_EventKind_Release : UI_EventKind_Press,
+        UI_Event event = {.kind = frame == 2 ? UI_EventKind_Release : UI_EventKind_Press,
           .key = WM_Key_LeftMouseButton, .pos = pin_at};
-        if(frame == 1 || frame == 3) { ui_event_list_push(test->arena, &events, &event); }
-        if(frame == 2) { sleep_ms(UIShell_HoldUS/1000+50); }
+        if(frame == 1 || frame == 2) { ui_event_list_push(test->arena, &events, &event); }
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         test->mouse = frame == 0 ? v2f32(-100, -100) : pin_at;
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-        { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+        { uishell_sidebar_cards_ui_at(ws, t0 + 1000000 + frame*16667, 1, 1); }
         ui_end_build();
         if(frame == 0)
         {
@@ -1265,19 +1322,49 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           }
           CardCheck(pin_at.x > 0, "engaged card exposes Pin");
         }
-        if(frame == 4) { menu_open = ui_any_ctx_menu_is_open(); }
-        // From the hold onwards the menu owns the space under Pin.
-        for(UI_Box *b = test->tooltip_root; frame >= 2 && !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->tooltip_root).next)
-        { tooltip_over_menu |= str8_match(ui_box_display_string(b), str8_lit("Show pin · hold to pin another"), 0); }
+        for(UI_Box *b = test->tooltip_root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->tooltip_root).next)
+        { show_tip |= str8_match(ui_box_display_string(b), str8_lit("Show pin"), 0); }
+        menu_open |= ui_any_ctx_menu_is_open();
       }
+      uishell_sidebar_detached_finish(ws);
       CFG_NodePtrList after = {0}; uishell_sidebar_pin_cards(ghosts_scratch.arena, window, &after);
-      CardCheck(menu_open, "holding Pin on a pinned subject opens the pin menu");
-      CardCheck(!tooltip_over_menu, "Pin's tooltip doesn't cover its open menu");
-      CardCheck(after.count == before.count && original->open, "the release after the hold adds no ghost");
+      CardCheck(show_tip, "Pin on a subject pinned where Pin goes reads Show pin");
+      CardCheck(!menu_open, "Pin opens no menu");
+      CardCheck(after.count == before.count, "Pin on a subject pinned where Pin goes adds no second ghost");
       scratch_end(ghosts_scratch);
-      ui_ctx_menu_close();
       uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, hold_pin));
       uishell_sidebar_detached_finish(ws);
+    }
+    // Pin goes to the topmost local section that is showing; with none
+    // showing, it makes one at the top of the sidebar.
+    {
+      CFG_Node *root = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+      CFG_Node *top_panel = cfg_node_new(rd_state->cfg, root, str8_lit("0.2"));
+      cfg_node_insert_child(rd_state->cfg, root, &cfg_nil_node, top_panel);
+      CFG_Node *top_group = uishell_sidebar_local_new_group(window, str8_lit("Top"));
+      CFG_Node *top_view = uishell_sidebar_local_new_view(top_panel, top_group->parent);
+      CardCheck(uishell_sidebar_pin_target(window) == top_group, "Pin goes to the topmost showing local section");
+      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(top_view, str8_lit("selected")));
+      CardCheck(uishell_sidebar_pin_target(window) != top_group, "a section that isn't its panel's selected tab isn't where Pin goes");
+      cfg_node_release(rd_state->cfg, top_panel);
+      cfg_node_release(rd_state->cfg, top_group->parent);
+      // Hide every showing local section: Pin makes a new one at the top.
+      CFG_NodePtrList hidden = {0};
+      Temp hide_scratch = scratch_begin(0, 0);
+      for(CFG_Node *g = uishell_sidebar_pin_target(window); g != &cfg_nil_node; g = uishell_sidebar_pin_target(window))
+      {
+        CFG_Node *v = uishell_sidebar_local_view(window, g);
+        cfg_node_release(rd_state->cfg, cfg_node_child_from_string(v, str8_lit("selected")));
+        cfg_node_ptr_list_push(hide_scratch.arena, &hidden, v);
+      }
+      CFG_Node *made = uishell_sidebar_pin_area(ws, 0);
+      CFG_Node *made_view = uishell_sidebar_local_view(window, made);
+      CardCheck(made != &cfg_nil_node && made_view != &cfg_nil_node && root->first == made_view->parent,
+                "with no section showing, Pin makes one at the top of the sidebar");
+      for(CFG_NodePtrNode *n = hidden.first; n; n = n->next) { cfg_node_child_from_string_or_alloc(rd_state->cfg, n->v, str8_lit("selected")); }
+      if(made_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made_view->parent); }
+      if(made != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made->parent); }
+      scratch_end(hide_scratch);
     }
 
     fprintf(stderr, "Hover card diagnostics: pinned drag with panel targets\n");
@@ -1287,7 +1374,17 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // The grip starts a drag in the first View; a later leaf must build drop
     // sites in that same frame, before the next panel-area entry.
     CFG_Node *drag_root = cfg_node_new(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
-    CFG_Node *drag_panel = drag_pin_entry->parent->parent;
+    // The pin's group shows in its section's View; publish it so it's placed.
+    CFG_Node *drag_view = uishell_sidebar_local_view(window, drag_pin_entry->parent);
+    cfg_node_child_from_string_or_alloc(rd_state->cfg, drag_view, str8_lit("selected"));
+    CFG_Node *drag_panel = drag_view->parent;
+    {
+      Temp publish_scratch = scratch_begin(0, 0);
+      UIShell_ControlledSplit publish_split = uishell_root_controlled_split_from_window(publish_scratch.arena, window);
+      uishell_sidebar_publish_local(&fixture, &publish_split);
+      uishell_sidebar_refresh(&fixture);
+      scratch_end(publish_scratch);
+    }
     CFG_Node *drag_parent = drag_panel->parent, *drag_previous = drag_panel->prev;
     String8 drag_share = push_str8_copy(test->arena, drag_panel->string);
     cfg_node_insert_child(rd_state->cfg, drag_root, &cfg_nil_node, drag_panel);
@@ -1393,11 +1490,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                 "a title drag of a float ends as a float");
       (void)title_seed;
     }
-    // The pinned area's title drags the area View, as a section title does.
+    // The pins' section title drags its View, as any section title does.
     {
       ui_kill_action(); rd_drag_kill();
-      CFG_Node *area_view = cfg_node_child_from_string(drag_panel, str8_lit("pinned_cards"));
-      CardCheck(area_view != &cfg_nil_node, "the emptied pinned area remains as a View");
+      CFG_Node *area_view = cfg_node_child_from_string(drag_panel, str8_lit("sidebar_section"));
+      String8 area_title = push_str8f(test->arena, "###section_%S", cfg_node_child_from_string(area_view, str8_lit("section"))->first->string);
+      CardCheck(area_view != &cfg_nil_node, "the emptied pins' section remains as a View");
       Vec2F32 area_start = {0};
       B32 area_drag = 0;
       for(U64 frame = 0; frame < 4; frame++)
@@ -1429,13 +1527,13 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           for(UI_Box *box = test->root; !ui_box_is_nil(box) && area_start.x == 0; box = ui_box_rec_df_pre(box, test->root).next)
           {
             for(UI_Box *a = box->parent; !ui_box_is_nil(a); a = a->parent)
-            { if(ui_key_match(box->key, ui_key_from_string(a->key, str8_lit("###pinned_title")))) { area_start = center_2f32(box->rect); break; } }
+            { if(ui_key_match(box->key, ui_key_from_string(a->key, area_title))) { area_start = center_2f32(box->rect); break; } }
           }
-          CardCheck(area_start.x > 0, "the pinned area exposes its title as a drag handle");
+          CardCheck(area_start.x > 0, "the pins' section exposes its title as a drag handle");
         }
         if(frame == 3) { area_drag = rd_drag_is_active() && rd_state->drag_drop_regs->view == area_view->id; }
       }
-      CardCheck(area_drag, "dragging the pinned area's title starts the area View's docking drag");
+      CardCheck(area_drag, "dragging the pins' section title starts its View's docking drag");
       rd_drag_kill(); ui_kill_action();
     }
     // The raw release is consumed by card ownership before UI events. A
@@ -1580,12 +1678,21 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
               str8_match(cfg_node_child_from_string(future_restored, str8_lit("label"))->first->string, str8_lit("Future pin"), 0),
               "unversioned layout round-trip retains unknown pin kinds and fallback labels");
     cfg_state_release(tolerance_cfg); scratch_end(tolerance_scratch);
+    // Published and placed, they render in their section's View.
+    {
+      Temp publish_scratch = scratch_begin(0, 0);
+      UIShell_ControlledSplit publish_split = uishell_root_controlled_split_from_window(publish_scratch.arena, window);
+      uishell_sidebar_publish_local(&fixture, &publish_split);
+      uishell_sidebar_refresh(&fixture);
+      scratch_end(publish_scratch);
+    }
+    CFG_Node *tolerance_view = uishell_sidebar_local_view(window, tolerance_area);
     UI_EventList tolerance_events = {0};
     ui_begin_build(ws->os, &tolerance_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
-    UIShell_RegsScope(.window = window->id, .view = tolerance_area->id)
+    UIShell_RegsScope(.window = window->id, .view = tolerance_view->id, .panel = tolerance_view->parent->id)
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-    { RD_VIEW_UI_FUNCTION_NAME(pinned_cards)((E_Eval){0}, r2f32p(17, 29, 297, 629)); }
+    { RD_VIEW_UI_FUNCTION_NAME(sidebar_section)((E_Eval){0}, r2f32p(17, 29, 297, 1629)); }
     ui_end_build();
     U64 missing_markers = 0;
     for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
@@ -1653,13 +1760,16 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         neighbour = cfg_node_new(rd_state->cfg, host, str8_lit("0.4"));
         cfg_node_new(rd_state->cfg, neighbour, str8_lit("sidebar_section"));
       }
-      CFG_Node *existing = cfg_node_new(rd_state->cfg, destination, str8_lit("pinned_cards"));
+      U64 sections_before = 0;
+      for(CFG_Node *n = uishell_sidebar_local_root(window)->first; n != &cfg_nil_node; n = n->next) { sections_before++; }
+      CFG_Node *existing_group = uishell_sidebar_local_new_group(window, str8_lit("Pinned"));
+      CFG_Node *existing = uishell_sidebar_local_new_view(destination, existing_group->parent);
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
       original->engaged = original->focused = original->moving = original->drag_released = 1;
       fixture.drag_card = original;
       UIShell_RegsScope(.window = window->id, .view = 0, .panel = 0)
       { rd_drag_begin(UIShell_ContextRegSlot_View); }
-      rd_state->drag_drop_creation_name = str8_lit("pinned_cards");
+      rd_state->drag_drop_creation_name = str8_lit("sidebar_section");
       rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
       CardCheck(rd_panel_drag_target(&cfg_nil_node, destination, 320), "creation drag uses the registered panel validity checker");
       rd_state->drag_drop_state = RD_DragDropState_Dropping;
@@ -1670,7 +1780,23 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       test->mouse = v2f32(500, 100);
       uishell_sidebar_drag_finish(ws);
       ui_end_build();
-      CFG_Node *entry = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0);
+      // The ghost the drop made: in the existing group (centre), or in the
+      // section the site made (an edge); earlier ghosts of the entity stay.
+      CFG_Node *entry = &cfg_nil_node;
+      {
+        CFG_Node *local = uishell_sidebar_local_root(window);
+        U64 index = 0;
+        for(CFG_Node *n = local->first; n != &cfg_nil_node; n = n->next, index++)
+        {
+          if(index < sections_before) { continue; }
+          for(CFG_Node *g = n->first; g != &cfg_nil_node; g = g->next)
+          {
+            if(!str8_match(g->string, str8_lit("group"), 0)) { continue; }
+            CFG_Node *c = cfg_node_child_from_string(g, str8_lit("card"));
+            if(c != &cfg_nil_node && (directions[d] == Dir2_Invalid) == (g == existing_group)) { entry = c; }
+          }
+        }
+      }
       CFG_Node *area = entry->parent;
       for(UIShell_CmdNode *n = before_drop ? before_drop->next : rd_state->cmds[0].first; n; n = n->next)
       {
@@ -1689,17 +1815,22 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       { CardCheck(drop_root->child_count == 2 && drop_root->last->cfg == neighbour &&
           abs_f32(drop_root->last->pct_of_parent-.4f) < .0001f, "nested drop preserves the other panel and outer allocation"); }
       if(directions[d] == Dir2_Invalid)
-      { CardCheck(area == existing && target_root->child_count == 0, "center drop joins the exact existing pinned area"); }
+      { CardCheck(area == existing_group && target_root->child_count == 0, "center drop joins the group of the exact existing section"); }
       else
       {
         Side side = side_from_dir2(directions[d]);
         CFG_PanelNode *placed = side == Side_Min ? target_root->first : target_root->last;
         CardCheck(target_root->child_count == 2 && target_root->split_axis == axis2_from_dir2(directions[d]) &&
-          placed->cfg == area->parent && abs_f32(placed->pct_of_parent-.5f) < .0001f,
+          placed->cfg == uishell_sidebar_local_view(window, area)->parent && abs_f32(placed->pct_of_parent-.5f) < .0001f,
           "directional card drop matches the ordinary half-panel split and side");
       }
       scratch_end(drop_scratch);
       cfg_node_release(rd_state->cfg, settled_host);
+      // The sections this case made go with their Views.
+      CFG_Node *local = uishell_sidebar_local_root(window);
+      U64 index = 0;
+      for(CFG_Node *n = local->first, *next; n != &cfg_nil_node; n = next, index++)
+      { next = n->next; if(index >= sections_before) { cfg_node_release(rd_state->cfg, n); } }
       rd_state->drag_drop_creation_name = str8_zero(); rd_state->drag_drop_commit = 0;
     }
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("control_views_split_x")));
@@ -1764,62 +1895,80 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_card_close(original);
 
     fprintf(stderr, "Hover card diagnostics: positioned card drops\n");
-    // A card released on a pinned area's insertion point adds a ghost there,
-    // as a card; a pinned card dragged there moves its own ghost.
+    // A card released on a local group's insertion point adds a ghost there,
+    // as a card, and the group's order puts it at that index; a pinned card
+    // dragged there moves its own ghost.
     {
-      CFG_Node *area = cfg_node_new(rd_state->cfg, window, str8_lit("pinned_cards"));
+      Temp scratch = scratch_begin(0, 0);
+      CFG_Node *group = uishell_sidebar_local_new_group(window, str8_lit("Drops"));
+      String8 group_id = push_str8_copy(scratch.arena, uishell_sidebar_local_field(group, str8_lit("id")));
       CFG_Node *pins[2];
+      String8 ghosts[3] = {0};
       char *ids[] = {"drop-first", "drop-second"};
       for(U64 i = 0; i < 2; i++)
       {
-        pins[i] = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
+        pins[i] = cfg_node_new(rd_state->cfg, group, str8_lit("card"));
         uishell_sidebar_pin_new_ghost(pins[i]);
         uishell_sidebar_pin_set_field(pins[i], str8_lit("kind"), str8_lit("workspace"));
         uishell_sidebar_pin_set_field(pins[i], str8_lit("entity"), str8_cstring(ids[i]));
+        ghosts[i] = push_str8_copy(scratch.arena, uishell_sidebar_pin_ghost(pins[i]));
       }
+      // Published and placed, the group's items form one run.
+      UIShell_ControlledSplit drop_split = uishell_root_controlled_split_from_window(scratch.arena, window);
+      uishell_sidebar_publish_local(&fixture, &drop_split);
+      uishell_sidebar_refresh(&fixture);
+      String8 loop = str8_zero();
+      for(U64 i = 0; fixture.snapshot && i < andamento_snapshot_node_count(fixture.snapshot); i++)
+      {
+        AndamentoNode n = {0}; andamento_snapshot_node(fixture.snapshot, i, &n);
+        if(str8_match(uishell_sidebar_string(n.entity_id), ghosts[0], 0)) { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(fixture.snapshot, i)); }
+      }
+      CardCheck(loop.size != 0, "a local group's ghosts are placed as one run");
+      if(!fixture.group_claim_arena) { fixture.group_claim_arena = arena_alloc(); }
+      fixture.group_claim_id = group_id; fixture.group_claim_loop = loop;
+      fixture.group_claim_rect = r2f32p(-1e6, -1e6, 1e6, 1e6);
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
       fixture.drag_card = original; original->moving = original->drag_released = 1;
-      fixture.drop_area = area->id; fixture.drop_index = 1; fixture.drop_build = test->build_index; fixture.drop_rect = r2f32p(-1e6, -1e6, 1e6, 1e6);
+      fixture.group_claim_index = 1; fixture.group_claim_build = test->build_index;
       uishell_sidebar_drag_finish(ws);
-      CFG_Node *order[3] = {&cfg_nil_node, &cfg_nil_node, &cfg_nil_node}; U64 n = 0;
-      for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next)
-      { if(str8_match(c->string, str8_lit("card"), 0) && n < 3) { order[n++] = c; } }
-      CardCheck(n == 3 && order[0] == pins[0] && order[2] == pins[1] &&
-        str8_match(cfg_node_child_from_string(order[1], str8_lit("entity"))->first->string, uishell_sidebar_string(entity.entity_id), 0) &&
-        uishell_sidebar_pin_expanded(order[1]) && !original->open && !fixture.drag_card,
-        "a card released on an insertion point becomes a ghost there, as a card");
-      // The first pin's card is dragged after the last pin.
+      CFG_Node *added = group->last;
+      ghosts[2] = push_str8_copy(scratch.arena, uishell_sidebar_pin_ghost(added));
+      B32 ordered = fixture.order_pending && fixture.order_count == 3 &&
+        str8_match(uishell_sidebar_string(fixture.order[0].id), ghosts[0], 0) &&
+        str8_match(uishell_sidebar_string(fixture.order[1].id), ghosts[2], 0) &&
+        str8_match(uishell_sidebar_string(fixture.order[2].id), ghosts[1], 0);
+      CardCheck(added != pins[1] && str8_match(cfg_node_child_from_string(added, str8_lit("entity"))->first->string, uishell_sidebar_string(entity.entity_id), 0) &&
+        uishell_sidebar_pin_expanded(added) && !original->open && !fixture.drag_card && ordered,
+        "a card released on a group's insertion point becomes a ghost there, as a card, at that index");
+      fixture.order_pending = 0;
+      // Down to a middle slot, from the top of [first, second, added]: the
+      // line between second and added is index 2 (counting every item, as the
+      // line does), so first lands between them.
+      uishell_sidebar_publish_local(&fixture, &drop_split);
+      uishell_sidebar_refresh(&fixture);
       UIShell_HoverCard *first = uishell_sidebar_saved_card(ws, pins[0]);
       fixture.drag_card = first; first->moving = first->drag_released = 1;
-      fixture.drop_area = area->id; fixture.drop_index = 3; fixture.drop_build = test->build_index;
+      fixture.group_claim_index = 2; fixture.group_claim_build = test->build_index;
       uishell_sidebar_drag_finish(ws);
-      CardCheck(area->last == pins[0] && cfg_node_from_id(pins[0]->id) == pins[0] && first->open,
-        "a pinned card dragged to an insertion point moves its own ghost there");
-      // Down to a middle slot: with [X, Y, first], the line between X and Y
-      // is index 1 (counting every pin, as the line does); then first moves
-      // down from the top to the line between X and Y, index 2.
-      CFG_Node *x = area->first; while(!str8_match(x->string, str8_lit("card"), 0)) { x = x->next; }
-      fixture.drag_card = first; first->moving = first->drag_released = 1;
-      fixture.drop_area = area->id; fixture.drop_index = 0; fixture.drop_build = test->build_index;
-      uishell_sidebar_drag_finish(ws);
-      fixture.drag_card = first; first->moving = first->drag_released = 1;
-      fixture.drop_area = area->id; fixture.drop_index = 2; fixture.drop_build = test->build_index;
-      uishell_sidebar_drag_finish(ws);
-      CFG_Node *seq[3] = {&cfg_nil_node, &cfg_nil_node, &cfg_nil_node}; U64 m = 0;
-      for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next)
-      { if(str8_match(c->string, str8_lit("card"), 0) && m < 3) { seq[m++] = c; } }
-      CardCheck(m == 3 && seq[0] == x && seq[1] == pins[0],
-        "a pinned card dragged down to a middle insertion point lands there, not one past it");
-      // A stale claim (two builds old) doesn't capture a release.
-      fixture.drop_area = area->id; fixture.drop_index = 0; fixture.drop_build = test->build_index-2;
-      CardCheck(uishell_sidebar_drop_area(&fixture) == &cfg_nil_node, "a stale insertion point doesn't capture a release");
-      fixture.drop_build = test->build_index; fixture.drop_rect = r2f32p(-1e6, -1e6, -1e6+1, -1e6+1);
-      CardCheck(uishell_sidebar_drop_area(&fixture) == &cfg_nil_node, "an insertion point the pointer has left doesn't capture a release");
-      fixture.drop_area = 0;
-      for(UIShell_HoverCard *c = fixture.detached; c; c = c->next) { if(c->saved && cfg_node_from_id(c->saved)->parent == area) { uishell_sidebar_card_close(c); } }
+      CardCheck(fixture.order_pending && fixture.order_count == 3 && cfg_node_from_id(pins[0]->id)->parent == group && first->open &&
+        str8_match(uishell_sidebar_string(fixture.order[1].id), ghosts[0], 0),
+        "a pinned card dragged down to a middle insertion point moves its own ghost there, not one past it");
+      fixture.order_pending = 0;
+      // A stale claim (two builds old), or one the pointer has left, doesn't
+      // capture a release.
+      fixture.group_claim_build = test->build_index-2;
+      CardCheck(!uishell_sidebar_group_claimed(&fixture), "a stale insertion point doesn't capture a release");
+      fixture.group_claim_build = test->build_index; fixture.group_claim_rect = r2f32p(-1e6, -1e6, -1e6+1, -1e6+1);
+      CardCheck(!uishell_sidebar_group_claimed(&fixture), "an insertion point the pointer has left doesn't capture a release");
+      fixture.group_claim_build = 0;
+      for(UIShell_HoverCard *c = fixture.detached; c; c = c->next) { if(c->saved && cfg_node_from_id(c->saved)->parent == group) { uishell_sidebar_card_close(c); } }
       uishell_sidebar_detached_finish(ws);
-      cfg_node_release(rd_state->cfg, area);
+      CFG_Node *drop_view = uishell_sidebar_local_view(window, group);
+      if(drop_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, drop_view); }
+      cfg_node_release(rd_state->cfg, group->parent);
+      scratch_end(scratch);
     }
+    arena_release(entity_arena);
   }
 
   fprintf(stderr, "Hover card diagnostics: cleanup\n");

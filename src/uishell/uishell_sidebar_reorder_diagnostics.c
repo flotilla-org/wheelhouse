@@ -42,10 +42,44 @@ uishell_sidebar_reorder_node(UIShell_SidebarState *state, String8 id)
   return (AndamentoNode){0};
 }
 
+internal U64
+uishell_sidebar_reorder_section_count(CFG_Node *window)
+{
+  U64 count = 0;
+  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  for(CFG_Node *n = root->first; n != &cfg_nil_node; n = n->next) { count += str8_match(n->string, str8_lit("section"), 0); }
+  return count;
+}
+
+// The group of the local section a drop made (the one after `before`), or nil.
+internal CFG_Node *
+uishell_sidebar_reorder_new_group(CFG_Node *window, U64 before)
+{
+  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  U64 index = 0;
+  for(CFG_Node *n = root->first; n != &cfg_nil_node; n = n->next)
+  {
+    if(!str8_match(n->string, str8_lit("section"), 0)) { continue; }
+    if(index++ == before) { return cfg_node_child_from_string(n, str8_lit("group")); }
+  }
+  return &cfg_nil_node;
+}
+
+// Removes a section a test made, and its View.
+internal void
+uishell_sidebar_reorder_drop_section(CFG_Node *window, CFG_Node *group)
+{
+  if(group == &cfg_nil_node) { return; }
+  CFG_Node *view = uishell_sidebar_local_view(window, group);
+  if(view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, view); }
+  cfg_node_release(rd_state->cfg, group->parent);
+}
+
 typedef struct UIShell_ReorderDrag UIShell_ReorderDrag;
 struct UIShell_ReorderDrag
 {
   B32 started, line, menu, ghost_target, lifted, lift_text_inside;
+  Rng2F32 ghost_line;
 };
 
 typedef enum UIShell_ReorderMode
@@ -58,6 +92,9 @@ typedef enum UIShell_ReorderMode
   UIShell_ReorderMode_Dock,
 }
 UIShell_ReorderMode;
+
+// The panel docking site that has the pointer while a local section renders.
+global char *uishell_sidebar_reorder_hot_site = "catchall_drop_site_%p";
 
 // Press on a row, move by `offset` or to a fraction down row `to_id` (from last
 // frame's layout), then release.
@@ -102,15 +139,18 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
     UIShell_RegsScope(.window = split->owner_cfg->id, .view = view->id, .panel = view->parent->id)
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     { uishell_sidebar_render(r2f32p(0, 0, 320, 600), split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, str8_lit("tree")}); }
+    // The local group's section, as its View renders it, in a stand-in panel
+    // (the window) whose own catch-all site has the pointer first, as in a
+    // window.
     if(pinned_area != &cfg_nil_node)
-    UIShell_RegsScope(.window = split->owner_cfg->id, .view = pinned_area->id)
+    UIShell_RegsScope(.window = split->owner_cfg->id, .view = 0, .panel = split->owner_cfg->id)
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     {
-      // As in a window, the area's own catch-all site has the pointer first.
-      ui_state->drop_hot_box_key = ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", pinned_area->parent);
+      ui_state->drop_hot_box_key = ui_key_from_stringf(ui_key_zero(), uishell_sidebar_reorder_hot_site, split->owner_cfg);
+      String8 local_key = push_str8f(ui_build_arena(), ".section:%S", uishell_sidebar_local_field(pinned_area->parent, str8_lit("id")));
       UI_Box *view_parent;
       UI_Rect(pinned_rect) { view_parent = ui_build_box_from_key(UI_BoxFlag_Clip, ui_key_make(119168)); }
-      UI_Parent(view_parent) { RD_VIEW_UI_FUNCTION_NAME(pinned_cards)((E_Eval){0}, pinned_rect); }
+      UI_Parent(view_parent) { uishell_sidebar_render(pinned_rect, split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, local_key}); }
     }
     uishell_sidebar_drag_finish(ws);
     ui_end_build();
@@ -124,8 +164,10 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
       result.started = rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
         rd_state->drag_drop_commit == uishell_sidebar_drag_panel_drop;
       result.line = !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")));
-      result.ghost_target = pinned_area != &cfg_nil_node &&
-        !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "pinned_drop_line_%I64u", pinned_area->id)));
+      UI_Box *ghost_line = pinned_area != &cfg_nil_node ?
+        ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "group_drop_line_%S", uishell_sidebar_local_field(pinned_area, str8_lit("id")))) : &ui_nil_box;
+      result.ghost_target = !ui_box_is_nil(ghost_line);
+      result.ghost_line = ghost_line->rect;
       UI_Box *lift = ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "sidebar_row_lift"));
       result.lifted = !ui_box_is_nil(lift);
       // The copy is the row, drawn as its home row is: its icon and label lay
@@ -160,7 +202,12 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     "template \"title\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Projects\"; }\n"
     "placement \"tree\" { for \"project\" kind=\"project\" { apply-template \"project\"; }; }\n"
     "template \"project\" { field \"label\" key=\"display.label\"; for \"convoy\" kind=\"convoy\" { match \"flotilla.project\" of=\"project\"; apply-template \"convoy\"; }; }\n"
-    "template \"convoy\" { field \"label\" key=\"display.label\"; }\n");
+    "template \"convoy\" { field \"label\" key=\"display.label\"; }\n"
+    "region \"local\" root-template=\"local/title\" placement=\"local\"\n"
+    "template \"local/title\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Local\"; }\n"
+    "placement \"local\" { for \"section\" kind=\".section\" layout=\"section\" { order \".position\" natural=true; apply-template \"section/local\"; }; }\n"
+    "template \"section/local\" { field \"label\" key=\"display.label\"; for \"group\" kind=\".group\" { match \".section\" of=\"section\"; apply-template \"group/local\"; }; }\n"
+    "template \"group/local\" { field \"label\" key=\"display.label\"; for \"item\" { match \".group\" of=\"group\"; order \".position\" natural=true; apply-template \"convoy\"; }; }\n");
   state.core = andamento_create(config.str, config.size, &error);
   ok &= uishell_sidebar_result(&state, state.core != 0, error);
   if(!state.core) { uishell_sidebar_release(&state); scratch_end(scratch); return 0; }
@@ -260,12 +307,13 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   uishell_sidebar_release(&restored);
   cfg_state_release(persisted_cfg);
 
-  // A dragged row lifts and follows the pointer. Over a pinned area it gets
-  // an insertion point between that area's pins; the release adds a ghost of
-  // the row there, as a row, and its run keeps its order.
+  // A dragged row lifts and follows the pointer. Over a local group it gets
+  // an insertion point between that group's items; the release adds a ghost
+  // of the row there, as a row, at that index, and its run keeps its order.
   {
-    CFG_Node *area = cfg_node_new(rd_state->cfg, window, str8_lit("pinned_cards"));
+    CFG_Node *area = uishell_sidebar_local_new_group(window, str8_lit("Pinned"));
     char *existing[] = {"first-pin", "second-pin"};
+    String8 ghosts[2];
     for(U64 i = 0; i < 2; i++)
     {
       CFG_Node *pin = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
@@ -273,53 +321,148 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
       uishell_sidebar_pin_set_field(pin, str8_lit("kind"), str8_lit("convoy"));
       uishell_sidebar_pin_set_field(pin, str8_lit("entity"), str8_cstring(existing[i]));
       cfg_node_new(rd_state->cfg, pin, str8_lit("compact"));
+      ghosts[i] = push_str8_copy(scratch.arena, uishell_sidebar_pin_ghost(pin));
     }
+    uishell_sidebar_publish_local(&state, &split);
+    uishell_sidebar_refresh(&state);
     String8 before = push_str8_copy(scratch.arena, uishell_sidebar_reorder_ids(scratch.arena, &state, convoy));
-    // Two compact pins below a header: just past the first pin's midpoint.
+    // Two compact items below a header: just past the first item's midpoint.
     F32 row = floor_f32(11*2.2f);
-    Vec2F32 between = v2f32(160, 620+row+row*0.5f+3.f);
+    Vec2F32 between = v2f32(160, 620+row+2+row*0.5f+3.f);
     UIShell_ReorderDrag ghost = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), between, str8_zero(), 0, UIShell_ReorderMode_Drag, area);
-    CFG_Node *pins[3] = {&cfg_nil_node, &cfg_nil_node, &cfg_nil_node};
+    CFG_Node *added = &cfg_nil_node;
     U64 pin_count = 0;
     for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next)
-    { if(str8_match(c->string, str8_lit("card"), 0) && pin_count < 3) { pins[pin_count++] = c; } }
+    {
+      if(!str8_match(c->string, str8_lit("card"), 0)) { continue; }
+      pin_count++;
+      if(str8_match(cfg_node_child_from_string(c, str8_lit("entity"))->first->string, str8_lit("c2"), 0)) { added = c; }
+    }
+    // The group's items, in the order it shows them.
+    String8 shown[3] = {0};
+    U64 shown_count = 0;
+    uishell_sidebar_refresh(&state);
+    for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
+    {
+      AndamentoNode n = {0}; andamento_snapshot_node(state.snapshot, i, &n);
+      if(str8_match(uishell_sidebar_string(n.entity_kind), str8_lit(".ref"), 0) && shown_count < 3)
+      { shown[shown_count++] = push_str8_copy(scratch.arena, uishell_sidebar_string(n.entity_id)); }
+    }
     ReorderCheck(ghost.started && ghost.lifted, "a dragged row lifts and follows the pointer");
     ReorderCheck(ghost.lift_text_inside, "the lifted copy is the row: its whole icon and label inside it");
-    ReorderCheck(ghost.ghost_target && !ghost.line, "a pinned area shows an insertion point, not the reorder line");
-    ReorderCheck(pin_count == 3 && str8_match(cfg_node_child_from_string(pins[1], str8_lit("entity"))->first->string, str8_lit("c2"), 0) &&
-                 uishell_sidebar_pin_ghost(pins[1]).size && !uishell_sidebar_pin_expanded(pins[1]),
+    ReorderCheck(ghost.ghost_target && !ghost.line, "a local group shows an insertion point, not the reorder line");
+    // Drawn in the section, at the gap after the first item, across the list.
+    F32 gap_y = 620+row+2+row;
+    ReorderCheck(abs_f32(center_2f32(ghost.ghost_line).y-gap_y) < 3 && ghost.ghost_line.x0 >= 0 && ghost.ghost_line.x1 <= 320 &&
+                 dim_2f32(ghost.ghost_line).x > 200, "the insertion line sits at the gap, inside the section");
+    ReorderCheck(pin_count == 3 && added != &cfg_nil_node && !uishell_sidebar_pin_expanded(added) && shown_count == 3 &&
+                 str8_match(shown[0], ghosts[0], 0) && str8_match(shown[1], uishell_sidebar_pin_ghost(added), 0) && str8_match(shown[2], ghosts[1], 0),
                  "the drop adds a ghost of the row, as a row, at the insertion point");
     ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), before, 0), "a ghost drop leaves the run's order");
-    // An edge site committed in the release frame wins over the list's claim.
+    // An edge site committed in the release frame wins over the group's claim.
+    U64 sections_before = uishell_sidebar_reorder_section_count(window);
     UIShell_ReorderDrag edge = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), between, str8_zero(), 0, UIShell_ReorderMode_Dock, area);
     U64 area_pins = 0;
     for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next) { area_pins += str8_match(c->string, str8_lit("card"), 0); }
-    CFG_Node *split_area = &cfg_nil_node;
-    for(CFG_Node *v = view->parent->first; v != &cfg_nil_node; v = v->next)
-    { if(str8_match(v->string, str8_lit("pinned_cards"), 0)) { split_area = v; } }
-    ReorderCheck(edge.started && area_pins == 3 && cfg_node_child_from_string(split_area, str8_lit("card")) != &cfg_nil_node,
-                 "an edge site taken in the release frame wins over the pinned list's claim");
-    if(split_area != &cfg_nil_node) { cfg_node_release(rd_state->cfg, split_area); }
+    CFG_Node *split_group = uishell_sidebar_reorder_new_group(window, sections_before);
+    ReorderCheck(edge.started && area_pins == 3 && cfg_node_child_from_string(split_group, str8_lit("card")) != &cfg_nil_node,
+                 "an edge site taken in the release frame wins over the group's claim");
+    uishell_sidebar_reorder_drop_section(window, split_group);
     uishell_sidebar_manual_sizing(window, 0);
-    cfg_node_release(rd_state->cfg, area);
+    cfg_node_release(rd_state->cfg, area->parent);
+  }
+
+  // An empty local section opens a row while a drag is over it, so it still
+  // shows an insertion line and takes the drop, even entered over the split
+  // cross.
+  {
+    CFG_Node *area = uishell_sidebar_local_new_group(window, str8_lit("Empty"));
+    uishell_sidebar_publish_local(&state, &split);
+    uishell_sidebar_refresh(&state);
+    // The pointer is over the panel's split cross, which is built before the
+    // View claims and covers most of a short list.
+    uishell_sidebar_reorder_hot_site = "drop_split_up_%p";
+    UIShell_ReorderDrag empty = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(160, 640), str8_zero(), 0, UIShell_ReorderMode_Drag, area);
+    uishell_sidebar_reorder_hot_site = "catchall_drop_site_%p";
+    CFG_Node *pin = cfg_node_child_from_string(area, str8_lit("card"));
+    ReorderCheck(empty.ghost_target && dim_2f32(empty.ghost_line).x > 200 && empty.ghost_line.y0 > 620,
+                 "an empty section shows an insertion line in its opened row");
+    ReorderCheck(pin != &cfg_nil_node && str8_match(cfg_node_child_from_string(pin, str8_lit("entity"))->first->string, str8_lit("c2"), 0),
+                 "a drop into an empty section adds the row's ghost");
+    uishell_sidebar_manual_sizing(window, 0);
+    cfg_node_release(rd_state->cfg, area->parent);
   }
 
   // A row dropped on a docking site makes a new pinned area there holding a
   // ghost of the row, as a row: the same creation drag as a card's.
   {
     String8 before = push_str8_copy(scratch.arena, uishell_sidebar_reorder_ids(scratch.arena, &state, convoy));
-    CFG_Node *panel = view->parent;
+    U64 sections_before = uishell_sidebar_reorder_section_count(window);
     UIShell_ReorderDrag dock = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c3"), v2f32(0, 400), str8_zero(), 0, UIShell_ReorderMode_Dock, &cfg_nil_node);
-    CFG_Node *area = &cfg_nil_node;
-    for(CFG_Node *v = panel->first; v != &cfg_nil_node; v = v->next)
-    { if(str8_match(v->string, str8_lit("pinned_cards"), 0)) { area = v; } }
+    CFG_Node *area = uishell_sidebar_reorder_new_group(window, sections_before);
     CFG_Node *pin = cfg_node_child_from_string(area, str8_lit("card"));
     ReorderCheck(dock.started && !dock.line, "a row drag away from its run claims no reorder");
     ReorderCheck(pin != &cfg_nil_node && str8_match(cfg_node_child_from_string(pin, str8_lit("entity"))->first->string, str8_lit("c3"), 0) &&
-                 !uishell_sidebar_pin_expanded(pin), "a docking-site drop makes a pinned area with the row's ghost, as a row");
+                 !uishell_sidebar_pin_expanded(pin) && uishell_sidebar_local_view(window, area) != &cfg_nil_node,
+                 "a docking-site drop makes a section, in a View there, whose group holds the row's ghost, as a row");
     ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), before, 0), "a docking-site drop leaves the run's order");
-    if(area != &cfg_nil_node) { cfg_node_release(rd_state->cfg, area); }
+    uishell_sidebar_reorder_drop_section(window, area);
     uishell_sidebar_manual_sizing(window, 0);
+  }
+
+  // Labels are published as JSON text, escapes and all; a layout repeating
+  // a section id publishes the first and skips the copy.
+  {
+    CFG_Node *quoted = uishell_sidebar_local_new_group(window, str8_lit("Say \"hi\" \\ there"));
+    String8 id = push_str8_copy(scratch.arena, uishell_sidebar_local_field(quoted->parent, str8_lit("id")));
+    CFG_Node *copy = cfg_node_new(rd_state->cfg, quoted->parent->parent, str8_lit("section"));
+    uishell_sidebar_local_set_field(copy, str8_lit("id"), id);
+    uishell_sidebar_local_set_field(copy, str8_lit("label"), str8_lit("Copy"));
+    uishell_sidebar_publish_local(&state, &split);
+    uishell_sidebar_refresh(&state);
+    U64 published = 0;
+    String8 label = str8_zero();
+    for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
+    {
+      AndamentoNode n = {0}; andamento_snapshot_node(state.snapshot, i, &n);
+      if(!str8_match(uishell_sidebar_string(n.entity_kind), str8_lit(".section"), 0) || !str8_match(uishell_sidebar_string(n.entity_id), id, 0)) { continue; }
+      published++;
+      label = push_str8_copy(scratch.arena, uishell_sidebar_string(n.label));
+    }
+    ReorderCheck(published == 1 && str8_match(label, str8_lit("Say \"hi\" \\ there"), 0),
+                 "a label with quotes and a backslash publishes intact, and a repeated section id publishes once, as the first");
+    cfg_node_release(rd_state->cfg, copy);
+    cfg_node_release(rd_state->cfg, quoted->parent);
+    uishell_sidebar_publish_local(&state, &split);
+  }
+
+  // A saved pinned area migrates in place, even in a floating panel: its
+  // View becomes its section's View, keeping its label, selection and
+  // collapse, and its pins move into the section's one group.
+  {
+    B32 had_floating = cfg_node_child_from_string(window, str8_lit("floating_panels")) != &cfg_nil_node;
+    CFG_Node *floating = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("floating_panels"));
+    CFG_Node *panel = cfg_node_new(rd_state->cfg, floating, str8_lit("1"));
+    CFG_Node *old_area = cfg_node_new(rd_state->cfg, panel, str8_lit("pinned_cards"));
+    uishell_sidebar_local_set_field(old_area, str8_lit("label"), str8_lit("Floating pins"));
+    cfg_node_new(rd_state->cfg, old_area, str8_lit("selected"));
+    cfg_node_new(rd_state->cfg, old_area, str8_lit("section_collapsed"));
+    CFG_Node *pin = cfg_node_new(rd_state->cfg, old_area, str8_lit("card"));
+    uishell_sidebar_local_set_field(pin, str8_lit("ghost"), str8_lit("floating-pin"));
+    uishell_sidebar_local_set_field(pin, str8_lit("kind"), str8_lit("convoy"));
+    uishell_sidebar_local_set_field(pin, str8_lit("entity"), str8_lit("c1"));
+    cfg_node_new(rd_state->cfg, pin, str8_lit("compact"));
+    uishell_sidebar_pin_migrate(window);
+    CFG_Node *migrated = cfg_node_child_from_string(panel, str8_lit("sidebar_section"));
+    CFG_Node *group = uishell_sidebar_local_view_group(window, migrated);
+    ReorderCheck(cfg_node_child_from_string(panel, str8_lit("pinned_cards")) == &cfg_nil_node && migrated != &cfg_nil_node &&
+                 cfg_node_child_from_string(migrated, str8_lit("selected")) != &cfg_nil_node &&
+                 cfg_node_child_from_string(migrated, str8_lit("section_collapsed")) != &cfg_nil_node &&
+                 str8_match(uishell_sidebar_local_field(group->parent, str8_lit("label")), str8_lit("Floating pins"), 0) &&
+                 cfg_node_child_from_string(group, str8_lit("card")) == pin && !uishell_sidebar_pin_expanded(pin),
+                 "a floating pinned area migrates in place into a section and group, keeping its pins and state");
+    if(group != &cfg_nil_node) { cfg_node_release(rd_state->cfg, group->parent); }
+    if(had_floating) { cfg_node_release(rd_state->cfg, panel); } else { cfg_node_release(rd_state->cfg, floating); }
   }
 
   // A reordered run's row offers Reset order, which returns it to data order.

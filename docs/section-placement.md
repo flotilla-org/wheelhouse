@@ -16,7 +16,7 @@ sidebar. Explicit orders sort lower first; an omitted order uses the region's
 zero-based declaration index. Ties preserve declaration order. An unhinted region at index 2 sorts before
 order=10, but after order=1; hint all regions or none to avoid mixed scales.
 The exception is Andamento's synthetic unplaced-workspaces section
-(`andamento.unplaced-workspaces`, shown as Workspaces). It is always emitted and unhinted, so
+(`.unplaced`, shown as Workspaces). It is always emitted and unhinted, so
 Wheelhouse places it after every declared region unless Andamento gives it an
 order. New sections
 are inserted before their next hinted neighbour in the same host, keeping the

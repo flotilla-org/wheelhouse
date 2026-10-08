@@ -17,41 +17,53 @@ and section height allocation. An inline subject chip attaches beneath its ownin
 row. Removing the source placement or the current detail target closes the inline
 card. Floats and inline cards last for the current run.
 
-Pinned areas are ordinary `pinned_cards` Views in `control_views`. Their headers
-move the area through the shared docking system; compact tabs appear when areas
-share a panel. A card dropped on a split target creates an area through the
-ordinary panel split command, including nested layouts. A center drop joins an
-existing pinned area or creates a tab in that panel. The sidebar retains those
-split ratios instead of applying automatic content sizing after the drop.
-Existing merged tabs are preserved. Pins save exact kind/id, a ghost id and a
-fallback label in the RAD-derived layout, without changing KDL. Each pin is a
-ghost: its own reference to the subject, so a subject may have any number of
-pins. Pin on a subject that is already pinned selects and scrolls to its first
-pin; holding Pin offers Show existing pin and Pin another, which adds a pin.
-Dropping a card into a pinned area is explicit placement and always adds one.
-Moving a pinned card to another area keeps the same saved card identity. An area emptied
-by a move remains available for another pin, with a “Drag or pin a card here”
-placeholder; its ordinary section Close control removes the area. Copied or
-restored layouts reconcile copies of the same pin (same ghost id) within the
-owning window. Pins saved before ghost ids keep the first per subject, which
-gains an id.
+Pins are ghosts in local groups (docs/design/drag-model.md, "Sections and
+groups as data"). The window's `sidebar_local` node holds sections someone
+made, each holding groups, and each group's ghosts as `card` nodes with exact
+kind/id, a ghost id, a fallback label and their form; local workspaces name
+their group (`lives_in`). Wheelhouse publishes them to Andamento as `.section`,
+`.group` and `.ref` entities, and the shipped KDL places them, so each section
+is an ordinary docked `sidebar_section` View and its ghosts are tree rows: a
+`.ref` presents its target's label, status, live state and details. The
+default Workspaces section and group always exist; leftover tabs join that
+group. Saved `pinned_cards` areas migrate once into a section and group in
+the View's place.
 
-Pinning a card keeps the card. A pinned card's header disclosure collapses it to
-a compact ghost row: the subject's live label and status, a ↗ marker for a
-reference that lives elsewhere, and a disclosure that restores the card.
+Section headers move the section through the shared docking system; compact
+tabs appear when sections share a panel. A card dropped on a split target
+creates a section and group through the ordinary panel split command,
+including nested layouts. A centre drop joins the first group of a section
+shown in that panel. The sidebar retains those split ratios instead of
+applying automatic content sizing after the drop. Each pin is a ghost: its own
+reference to the subject, so a subject may have any number of pins. Pin on a
+subject that is already pinned selects its section and scrolls to its first
+pin; holding Pin offers Show existing pin and Pin another, which adds a pin.
+Dropping into a group is explicit placement and always adds one. Moving a
+pinned card to another group keeps the same saved card identity. A group
+emptied by a move remains, and its section's Close control hides it. Copied
+or restored layouts reconcile copies of the same pin (same ghost id) within
+the owning window. Pins saved before ghost ids keep the first per subject,
+which gains an id.
+
+Pinning a card keeps the card. A pinned card's header disclosure collapses it
+to a compact ghost row, drawn as its home row is: the subject's icon, live
+label and status, a ↗ marker for a reference that lives elsewhere, and a
+disclosure that restores the card. Hovering it offers the subject's hover
+card.
 Rows and cards are one sidebar drag (`uishell_sidebar_drag_begin` and
-`uishell_sidebar_drag_finish`): the same creation drag of a pinned area, with the
-same targets. A dragged row lifts as a translucent copy above the sidebar; a
-card moves itself. Over a pinned area's list, either shows an insertion line
-between pins, and docking's centre and catch-all sites stand aside (its edge
-sites still split). Releasing there adds a ghost at that point: a row as a row,
-a card as a card; a pinned card moves its own ghost there. A docking site makes
-a new pinned area holding the ghost, for a row as for a card. Over its own
+`uishell_sidebar_drag_finish`), with the same targets. A dragged row lifts as a
+translucent copy above the sidebar; a card moves itself. Over a local group,
+either shows an insertion line between its items, and docking's centre and
+catch-all sites stand aside (its edge sites still split). Releasing there: a
+local workspace moves into the group (Option/Alt adds a ghost of it instead);
+a pinned card, or a ghost's row, moves that ghost; anything else becomes a
+ghost there, a row as a row and a card as a card. The group's order puts it at
+that point. A docking site makes a new section holding the ghost. Over its own
 sibling run a row reorders instead; elsewhere a row snaps back and a card
 floats. The source row stays in its home and its siblings keep their order.
-Clicking the row goes to the source. The × in the row's right margin removes the
-pin and never its source; holding it or right-clicking the row opens Go to
-source, Show as card or row, and Remove pin.
+Clicking a ghost row goes to its source. The × in the row's right margin
+removes the pin and never its source; holding it or right-clicking the row
+opens Go to source, Show as card or row, and Remove pin.
 
 A pinned card whose subject disappears remains visible with “No longer present”.
 On 2026-10-06, the operator chose to retain ended cards until explicitly closed

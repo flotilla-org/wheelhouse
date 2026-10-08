@@ -1,0 +1,315 @@
+<title>Sections and Groups Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: a scenario switcher over a three-pane worked example (stored → Andamento → sidebar), KDL pinned below. */
+:root {
+  --bg: #f3f4f1;
+  --panel: #ffffff;
+  --ink: #1d2320;
+  --muted: #5f6b65;
+  --line: #d7dcd8;
+  --accent: #2f6f5e;
+  --accent-soft: #e2efe9;
+  --ghost: #8a5a14;
+  --sidebar: #1f2422;
+  --sidebar-ink: #e7ece9;
+  --sidebar-muted: #93a19a;
+  --sidebar-line: #343b38;
+  --sidebar-sel: #3a4a44;
+  --project: #c9a14a;
+  --display: "Fraunces", Georgia, serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #151918; --panel: #1c2120; --ink: #e4e9e6; --muted: #9aa7a0; --line: #2e3532;
+  --accent: #7cc2ab; --accent-soft: #23362f; --ghost: #e0b064;
+  --sidebar: #101312; --sidebar-ink: #e7ece9; --sidebar-muted: #8b9892; --sidebar-line: #2a302d; --sidebar-sel: #2f3d38; --project: #d8b25c;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #151918; --panel: #1c2120; --ink: #e4e9e6; --muted: #9aa7a0; --line: #2e3532;
+  --accent: #7cc2ab; --accent-soft: #23362f; --ghost: #e0b064;
+  --sidebar: #101312; --sidebar-ink: #e7ece9; --sidebar-muted: #8b9892; --sidebar-line: #2a302d; --sidebar-sel: #2f3d38; --project: #d8b25c;
+  color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); padding: 28px 20px 60px }
+main { max-width: 1180px; margin: 0 auto; display: grid; gap: 22px }
+h1 { font: 600 clamp(26px, 4vw, 36px)/1.15 var(--display); margin: 0; text-wrap: balance }
+h2 { font: 600 19px/1.3 var(--display); margin: 0 0 6px }
+h3 { font: 600 11px/1 var(--body); letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px }
+p { margin: 0; max-width: 72ch }
+.lede { color: var(--muted) }
+code, .mono { font-family: var(--mono); font-size: 12.5px }
+.kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px }
+.kind { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 4px; min-width: 0 }
+.kind b { font-family: var(--mono); font-size: 13px; color: var(--accent) }
+.kind span { color: var(--muted); font-size: 13.5px }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px }
+.tabs button { font: 500 13.5px var(--body); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 13px; cursor: pointer }
+.tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg) }
+.tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.scenario { display: grid; gap: 14px }
+.scenario .intro { display: grid; gap: 4px }
+.panes { display: grid; grid-template-columns: 1fr 1.15fr 300px; gap: 14px; align-items: start }
+@media (max-width: 980px) { .panes { grid-template-columns: 1fr } }
+.pane { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0 }
+pre { margin: 0; overflow-x: auto; font: 12.5px/1.55 var(--mono); white-space: pre }
+.k { color: var(--accent) } .c { color: var(--muted) } .g { color: var(--ghost) }
+.facts { display: grid; gap: 8px }
+.ent { border-left: 3px solid var(--line); padding-left: 10px; min-width: 0 }
+.ent .id { font: 500 12.5px var(--mono) }
+.ent .id em { font-style: normal; color: var(--accent) }
+.ent .f { font: 12px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere }
+.ent.new { border-left-color: var(--accent) }
+/* sidebar mock */
+.sb { background: var(--sidebar); color: var(--sidebar-ink); border-radius: 8px; padding: 6px 0 10px; font: 13px/1 var(--body); overflow: hidden }
+.sec { border-top: 1px solid var(--sidebar-line); padding: 8px 0 6px }
+.sec:first-child { border-top: 0 }
+.sec-h { font: 600 10.5px var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--sidebar-muted); padding: 2px 12px 7px; display: flex; gap: 6px; align-items: center }
+.sec-h .tag { font: 500 9.5px var(--mono); letter-spacing: 0; text-transform: none; color: var(--sidebar-muted); border: 1px solid var(--sidebar-line); border-radius: 4px; padding: 1px 4px; margin-left: auto }
+.grp { margin: 2px 8px 6px; border-radius: 6px }
+.grp.card { border: 1px solid var(--sidebar-line); padding: 3px 0 4px }
+.grp.project { border-color: color-mix(in srgb, var(--project) 45%, var(--sidebar-line)) }
+.grp-h { font: 600 11px var(--body); color: var(--sidebar-muted); padding: 5px 8px 4px; display: flex; align-items: center; gap: 6px }
+.row { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 4px; margin: 0 2px; white-space: nowrap; min-width: 0 }
+.row .lbl { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0 }
+.row .ic { width: 14px; text-align: center; color: var(--sidebar-muted); font-size: 11px }
+.row .st { color: var(--sidebar-muted); font-size: 11px }
+.row .ref { color: var(--ghost); font-size: 11px }
+.row.sel { background: var(--sidebar-sel) }
+.row.proj .ic { color: var(--project) }
+.row.indent { padding-left: 24px }
+.row.new { outline: 1px dashed var(--accent); outline-offset: -1px }
+.chips { display: flex; gap: 3px; margin-left: auto }
+.chips i { font-style: normal; font-size: 10px; border: 1px solid var(--sidebar-line); border-radius: 3px; padding: 1px 4px; color: var(--sidebar-muted) }
+.ghostcard { margin: 3px 4px; border: 1px solid var(--sidebar-line); border-radius: 5px; padding: 6px 8px; display: grid; gap: 4px; font-size: 12px }
+.ghostcard .t { display: flex; gap: 6px; align-items: center; font-weight: 600 }
+.ghostcard .t .ref { margin-left: auto; color: var(--ghost); font-weight: 400 }
+.ghostcard .m { color: var(--sidebar-muted) }
+.note { font-size: 13.5px; color: var(--muted); display: grid; gap: 6px }
+.note li { margin: 0 }
+.note ul { margin: 0; padding-left: 18px; display: grid; gap: 4px }
+.kdl { display: grid; gap: 8px }
+.open { background: var(--accent-soft); border-radius: 8px; padding: 14px 16px; display: grid; gap: 8px }
+.open ul { margin: 0; padding-left: 18px; display: grid; gap: 4px }
+</style>
+
+<main>
+  <header style="display:grid;gap:8px">
+    <h1>Sections and groups, worked through</h1>
+    <p class="lede">A proposed model for part B of the drag model: user-curated sections and groups as Andamento entities, nested by facts, the way part A put a local workspace in a project. Pick a scenario to see what is saved, what Andamento receives, and what the sidebar shows.</p>
+  </header>
+
+  <section class="kinds" aria-label="Kinds">
+    <div class="kind"><b>.section</b><span>A section you made. Placed by a <code>layout="section"</code> loop, so each is its own docked sidebar View. Facts: <code>display.label</code>.</span></div>
+    <div class="kind"><b>.group</b><span>A group inside a section. Facts: <code>display.label</code>, <code>.section</code> (which section), <code>.refs</code> (its ghosts, in order).</span></div>
+    <div class="kind"><b>.workspace</b><span>A host's local workspace (part A's <code>wheelhouse.workspace</code>, renamed). Lives in a group via <code>.group</code>, or with a project via <code>flotilla.project</code>.</span></div>
+  </section>
+
+  <nav class="tabs" role="tablist" aria-label="Scenarios"></nav>
+  <section class="scenario" aria-live="polite"></section>
+
+  <section class="pane kdl">
+    <h3>KDL that places all of this (once, in the shipped config)</h3>
+<pre><span class="c">// One region holds every section you made. A loop with layout="section"</span>
+<span class="c">// makes each iteration its own section; docking frontends give each one a View.</span>
+<span class="k">region</span> "local" root-template=".local/title" placement="local"
+
+<span class="k">placement</span> "local" {
+  <span class="k">for</span> "section" kind=<span class="g">".section"</span> <span class="g">layout="section"</span> {
+    apply-template ".section/line"
+  }
+}
+<span class="k">template</span> ".section/line" {
+  field "label" key="display.label"
+  <span class="c">// Groups name their section, as convoys name their project.</span>
+  <span class="k">for</span> "group" kind=".group" {
+    match ".section" of="section"
+    apply-template ".group/line"
+  }
+}
+<span class="k">template</span> ".group/line" {
+  field "label" key="display.label"
+  <span class="c">// Workspaces that live in the group.</span>
+  <span class="k">for</span> "workspace" kind=".workspace" {
+    match ".group" of="group"
+    apply-template "wheelhouse/entry"
+  }
+  <span class="c">// Ghosts: the referenced entities themselves, in the group's order.</span>
+  <span class="k">for</span> "ghost" <span class="g">in=".refs" of="group"</span> {
+    apply-template "wheelhouse/entry"
+  }
+}</pre>
+    <p class="note">Two things here are new in Andamento: the <code>layout="section"</code> loop intent (each iteration is its own section; the terminal renderer shows it as a headed section, Wheelhouse gives it its own docked View), and a ghost being placed through a reference list. Roles already use <code>in= … of=</code>, so the second may mostly exist. Names starting with <code>.</code> are Andamento's own system kinds and facts; conventions producers share, such as <code>display.label</code> and <code>flotilla.project</code>, keep theirs.</p>
+  </section>
+
+  <section class="open">
+    <h2>Still open after these examples</h2>
+    <ul>
+      <li><b>Ghost state:</b> each ghost's own id, compact or expanded, and the same entity twice in one group. A plain reference list holds none of that.</li>
+      <li><b>The default Workspaces group:</b> is it a group with a reserved id, and does Wheelhouse set <code>.group</code> on every unhomed workspace, or does Andamento's leftover coverage stay the default?</li>
+      <li><b>Who stores it:</b> Wheelhouse's window layout (published, as now), or Andamento itself, so the terminal frontend could curate too.</li>
+      <li><b>Drop intent:</b> in this model a workspace dropped on a group moves there, and anything else becomes a ghost. Is that enough, or does a workspace sometimes want a ghost?</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+const S = [
+  {
+    id: "today",
+    tab: "Default sidebar",
+    title: "The default sidebar, in this model",
+    text: "Projects and Attention stay KDL regions. Workspaces and Pinned become ordinary sections, each holding one group, so the section shows the group's name and the group header is left out.",
+    stored: `<span class="c">// Window layout (Wheelhouse cfg)</span>
+section "s-ws"  label="Workspaces"
+  group "g-ws"  label="Workspaces"
+section "s-pin" label="Pinned"
+  group "g-pin" label="Pinned"
+    ref convoy/build
+    ref vessel/v  expanded=true
+
+workspace "Workspace 1"  group="g-ws"
+workspace "Workspace 2"  group="g-ws"`,
+    entities: [
+      [".section", "s-ws", "display.label = Workspaces"],
+      [".section", "s-pin", "display.label = Pinned"],
+      [".group", "g-ws", "display.label = Workspaces · .section = s-ws"],
+      [".group", "g-pin", "display.label = Pinned · .section = s-pin · .refs = [convoy/build, vessel/v]"],
+      [".workspace", "w1", "display.label = Workspace 1 · .group = g-ws"],
+      [".workspace", "w2", "display.label = Workspace 2 · .group = g-ws"],
+    ],
+    sidebar: `
+      <div class="sec"><div class="sec-h">Projects</div>
+        <div class="grp card project"><div class="row proj"><span class="ic">▣</span><span class="lbl">Example project</span><span class="chips"><i>▦</i><i>▭</i></span></div></div></div>
+      <div class="sec"><div class="sec-h">Attention</div>
+        <div class="row"><span class="ic">▭</span><span class="lbl">Example terminal</span><span class="st">•</span></div></div>
+      <div class="sec"><div class="sec-h">Workspaces</div><div class="grp">
+        <div class="row sel"><span class="ic">▭</span><span class="lbl">Workspace 1</span><span class="st">•</span></div>
+        <div class="row"><span class="ic">▭</span><span class="lbl">Workspace 2</span><span class="st">•</span></div></div></div>
+      <div class="sec"><div class="sec-h">Pinned</div><div class="grp">
+        <div class="row"><span class="ic">≡</span><span class="lbl">Ship sidebar subjects</span><span class="ref">↗</span><span class="st">•</span></div>
+        <div class="ghostcard"><div class="t"><span>▭</span>Example terminal<span class="ref">↗</span></div><div class="m">waiting · Worker &lt;one&gt;</div></div></div></div>`,
+    notes: ["Ghost rows are the source entities themselves, so status, icon and hover card come from the same place as their home rows.", "↗ marks a row placed by the <code>ghost</code> loop: it lives elsewhere."],
+  },
+  {
+    id: "two-pinned",
+    tab: "Two pinned areas",
+    title: "Two pinned areas",
+    text: "A second pinned area is just another section with its own group. Each is its own docked View, so it can sit in another panel, a split or a tab.",
+    stored: `section "s-pin"  label="Pinned"
+  group "g-pin"  label="Pinned"
+    ref convoy/build
+section "s-pin2" label="Reviews"
+  group "g-pin2" label="Reviews"
+    ref change_request/pr-281
+    ref change_request/pr-1000`,
+    entities: [
+      [".section", "s-pin", "display.label = Pinned"],
+      [".section", "s-pin2", "display.label = Reviews", true],
+      [".group", "g-pin", ".section = s-pin · .refs = [convoy/build]"],
+      [".group", "g-pin2", "display.label = Reviews · .section = s-pin2 · .refs = [change_request/pr-281, change_request/pr-1000]", true],
+    ],
+    sidebar: `
+      <div class="sec"><div class="sec-h">Pinned</div><div class="grp">
+        <div class="row"><span class="ic">≡</span><span class="lbl">Ship sidebar subjects</span><span class="ref">↗</span><span class="st">•</span></div></div></div>
+      <div class="sec"><div class="sec-h">Reviews<span class="tag">new section</span></div><div class="grp">
+        <div class="row new"><span class="ic">⇅</span><span class="lbl">#281 Sidebar subjects</span><span class="ref">↗</span><span class="st">+</span></div>
+        <div class="row new"><span class="ic">⇅</span><span class="lbl">#1000 Adopted change</span><span class="ref">↗</span><span class="st">!</span></div></div></div>`,
+    notes: ["Made by dragging a row or card to a dock edge, as today. The site creates a section and a group in one step.", "Nothing about a second area is special: there is no 'the' pinned area any more."],
+  },
+  {
+    id: "two-groups",
+    tab: "Two groups, one section",
+    title: "One section holding two groups",
+    text: "Several groups can name the same section. They stack inside it like project groups, and each now shows its header, because the section's title no longer names a single group.",
+    stored: `section "s-watch" label="Watching"
+  group "g-builds"  label="Builds"
+    ref convoy/build
+  group "g-reviews" label="Reviews"
+    ref change_request/pr-281
+  workspace "Scratch" group="g-builds"`,
+    entities: [
+      [".section", "s-watch", "display.label = Watching"],
+      [".group", "g-builds", "display.label = Builds · .section = s-watch · .refs = [convoy/build]"],
+      [".group", "g-reviews", "display.label = Reviews · .section = s-watch · .refs = [change_request/pr-281]"],
+      [".workspace", "w3", "display.label = Scratch · .group = g-builds"],
+    ],
+    sidebar: `
+      <div class="sec"><div class="sec-h">Watching</div>
+        <div class="grp card"><div class="grp-h">Builds</div>
+          <div class="row"><span class="ic">▭</span><span class="lbl">Scratch</span><span class="st">•</span></div>
+          <div class="row"><span class="ic">≡</span><span class="lbl">Ship sidebar subjects</span><span class="ref">↗</span><span class="st">•</span></div></div>
+        <div class="grp card"><div class="grp-h">Reviews</div>
+          <div class="row"><span class="ic">⇅</span><span class="lbl">#281 Sidebar subjects</span><span class="ref">↗</span><span class="st">+</span></div></div></div>`,
+    notes: ["<i>Scratch</i> lives in Builds (no ↗). The convoy and the PR are references (↗).", "Moving Reviews to another section changes one fact: its <code>.section</code>."],
+  },
+  {
+    id: "project",
+    tab: "Lives with a project",
+    title: "A workspace that lives with a project (part A, unchanged)",
+    text: "Already merged. A workspace whose home is a project uses flotilla.project instead of .group, and the project's template places it as a row.",
+    stored: `workspace "Scratch"
+  lives_with="p"      <span class="c">// instead of group=…</span>`,
+    entities: [
+      [".workspace", "w3", "display.label = Scratch · flotilla.project = p"],
+    ],
+    sidebar: `
+      <div class="sec"><div class="sec-h">Projects</div>
+        <div class="grp card project"><div class="row proj"><span class="ic">▣</span><span class="lbl">Example project</span><span class="chips"><i>▦</i><i>▭</i></span></div>
+          <div class="row indent"><span class="ic">▭</span><span class="lbl">Scratch</span><span class="st">•</span></div></div></div>
+      <div class="sec"><div class="sec-h">Workspaces</div><div class="grp">
+        <div class="row"><span class="ic">▭</span><span class="lbl">Workspace 1</span><span class="st">•</span></div></div></div>`,
+    notes: ["A workspace has exactly one home: a group (<code>.group</code>) or a project (<code>flotilla.project</code>). Setting one clears the other.", "A project group and a local group differ only in who declares them: KDL for projects, you for local groups."],
+  },
+  {
+    id: "edge",
+    tab: "Group to a dock edge",
+    title: "Dragging a group to a dock edge",
+    text: "Dragging the Reviews group's header out of Watching onto a dock edge creates a section for it. The group moves; nothing is copied.",
+    stored: `section "s-watch" label="Watching"
+  group "g-builds"  label="Builds"
+section "s-new"            <span class="c">// no label: borrows its only group's</span>
+  group "g-reviews" label="Reviews"   <span class="c">// moved</span>`,
+    entities: [
+      [".section", "s-new", "(no display.label)", true],
+      [".group", "g-reviews", ".section = s-new  (was s-watch)", true],
+    ],
+    sidebar: `
+      <div class="sec"><div class="sec-h">Watching</div>
+        <div class="grp card"><div class="grp-h">Builds</div>
+          <div class="row"><span class="ic">≡</span><span class="lbl">Ship sidebar subjects</span><span class="ref">↗</span><span class="st">•</span></div></div></div>
+      <div class="sec"><div class="sec-h">Reviews<span class="tag">borrowed title</span></div><div class="grp">
+        <div class="row"><span class="ic">⇅</span><span class="lbl">#281 Sidebar subjects</span><span class="ref">↗</span><span class="st">+</span></div></div></div>`,
+    notes: ["Watching now holds one group, Builds, but keeps its own name because you gave it one. A section only borrows when it has no label.", "The title rule is a display rule: with one group and no label of its own, show the group's name and omit its header."],
+  },
+];
+
+const tabs = document.querySelector(".tabs"), view = document.querySelector(".scenario");
+function entityHtml([kind, id, facts, isNew]) {
+  return `<div class="ent${isNew ? " new" : ""}"><div class="id"><em>${kind}</em> / ${id}</div><div class="f">${facts}</div></div>`;
+}
+function show(id) {
+  const s = S.find(x => x.id === id) || S[0];
+  for (const b of tabs.children) b.setAttribute("aria-selected", b.dataset.id === s.id);
+  view.innerHTML = `
+    <div class="intro"><h2>${s.title}</h2><p class="lede">${s.text}</p></div>
+    <div class="panes">
+      <div class="pane"><h3>Saved by Wheelhouse</h3><pre>${s.stored}</pre></div>
+      <div class="pane"><h3>Published to Andamento</h3><div class="facts">${s.entities.map(entityHtml).join("")}</div></div>
+      <div><h3>Sidebar</h3><div class="sb">${s.sidebar}</div></div>
+    </div>
+    <div class="note"><ul>${s.notes.map(n => `<li>${n}</li>`).join("")}</ul></div>`;
+  try { localStorage.setItem("scenario", s.id); } catch (e) {}
+}
+for (const s of S) {
+  const b = document.createElement("button");
+  b.type = "button"; b.role = "tab"; b.dataset.id = s.id; b.textContent = s.tab;
+  b.addEventListener("click", () => show(s.id));
+  tabs.appendChild(b);
+}
+let start = location.hash.slice(1);
+try { start = start || localStorage.getItem("scenario"); } catch (e) {}
+show(start);
+</script>

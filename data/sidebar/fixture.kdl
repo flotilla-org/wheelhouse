@@ -32,12 +32,12 @@ template "project/line" {
   // Local workspaces that live with the project (Wheelhouse host entities):
   // rows, as they are contained in the project rather than about it (chips
   // are the project's own workspaces, such as its overview).
-  for "workspace" kind="wheelhouse.workspace" {
+  for "workspace" kind=".workspace" {
     match "flotilla.project" of="project"
     apply-template
   }
 }
-template "wheelhouse.workspace/line" {
+template ".workspace/line" {
   field "label" key="display.label"
 }
 template "vessel/line" {
@@ -50,4 +50,38 @@ placement "attention" {
     match "status.attention" value="true"
     apply-template "vessel/line"
   }
+}
+
+// Sections and groups people make (drag-model.md, "Sections and groups as
+// data"). Wheelhouse publishes them; each .section is its own sidebar section.
+// A group's workspaces and references share one item loop, so one order.
+region "local" root-template="local/title" form="compact" placement="local"
+template "local/title" slot="compact" node-kind="entity" {
+  field "label" source="literal" value="Local"
+}
+placement "local" {
+  for "section" kind=".section" layout="section" {
+    order ".position" natural=true
+    apply-template "section/local"
+  }
+}
+template "section/local" {
+  field "label" key="display.label"
+  for "group" kind=".group" {
+    match ".section" of="section"
+    order ".position" natural=true
+    apply-template "group/local"
+  }
+}
+template "group/local" {
+  field "label" key="display.label"
+  for "item" {
+    match ".group" of="group"
+    order ".position" natural=true
+    apply-template "local/item"
+  }
+}
+template "local/item" {
+  field "label" key="display.label"
+  field "status" key="status.state"
 }
