@@ -4377,8 +4377,77 @@ uishell_sidebar_manual_sizing(CFG_Node *window, B32 manual)
 // Default stacked panels keep secondary sections bounded by their content;
 // the first expanded section receives the remaining space. Manual panel sizing
 // uses the saved split ratios, including nested and horizontal arrangements.
+// Whether `panel` shows only collapsed section headers: a leaf whose selected
+// tab is a collapsed section, or a split whose children all do. If so,
+// *height is what it needs: its headers (and a tab strip where several tabs
+// share a leaf) within the panel insets.
+internal B32
+uishell_sidebar_panel_collapsed(CFG_PanelNode *panel, F32 header, F32 *height)
+{
+  F32 inset = 2*rd_panel_inset_px(ui_top_font_size());
+  if(panel->first == &cfg_nil_panel_node)
+  {
+    CFG_Node *view = panel->selected_tab;
+    *height = header + inset + (panel->tabs.count > 1 ? header : 0.f);
+    return str8_match(view->string, str8_lit("sidebar_section"), 0) &&
+      cfg_node_child_from_string(view, str8_lit("section_collapsed")) != &cfg_nil_node;
+  }
+  F32 most = 0, sum = 0;
+  for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next)
+  {
+    F32 h = 0;
+    if(!uishell_sidebar_panel_collapsed(child, header, &h)) { return 0; }
+    most = Max(most, h); sum += h;
+  }
+  *height = panel->split_axis == Axis2_Y ? sum : most;
+  return 1;
+}
+
+// Collapsed sections give their space back (sidebar-headers.md): along a
+// vertical split, a collapsed child keeps only what its headers need and the
+// open children share the rest in their saved proportions; a side-by-side
+// split shrinks only once all of it is collapsed. In memory only, so saved
+// sizes, set by hand or not, return when a section expands.
+internal void
+uishell_sidebar_collapse_space(CFG_PanelNode *panel, F32 extent, F32 header)
+{
+  if(panel->first == &cfg_nil_panel_node) { return; }
+  if(panel->split_axis == Axis2_Y && extent > 0)
+  {
+    F32 fixed = 0, open_weight = 0; B32 any = 0;
+    for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next)
+    {
+      F32 h = 0;
+      if(uishell_sidebar_panel_collapsed(child, header, &h)) { fixed += h; any = 1; }
+      else { open_weight += Max(0.f, child->pct_of_parent); }
+    }
+    if(any && open_weight > 0 && fixed < extent)
+    {
+      for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next)
+      {
+        F32 h = 0;
+        child->pct_of_parent = uishell_sidebar_panel_collapsed(child, header, &h) ? h/extent :
+          Max(0.f, child->pct_of_parent)/open_weight*(1.f-fixed/extent);
+      }
+    }
+  }
+  for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next)
+  { uishell_sidebar_collapse_space(child, panel->split_axis == Axis2_Y ? extent*child->pct_of_parent : extent, header); }
+}
+
+internal void uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_WorkspaceMount *mount, Rng2F32 rect);
+
 internal void
 uishell_sidebar_size_panels(UIShell_ControlledSplit *split, UIShell_WorkspaceMount *mount, Rng2F32 rect)
+{
+  uishell_sidebar_size_panels_saved(split, mount, rect);
+  uishell_sidebar_collapse_space(mount->panel_tree.root, dim_2f32(rect).y, floor_f32(ui_top_font_size()*2.2f));
+}
+
+// The sizes to lay out from before collapse: manual (saved, repaired) or
+// automatic (from content), written to the config.
+internal void
+uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_WorkspaceMount *mount, Rng2F32 rect)
 {
   B32 manual = cfg_node_child_from_string(split->owner_cfg, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
   CFG_PanelNode *root = mount->panel_tree.root;

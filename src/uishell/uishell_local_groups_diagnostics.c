@@ -664,10 +664,73 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     ui_select_state(saved_ui); ui_state_release(test);
   }
 
+  //- Collapsed sections give their space back in any layout, without
+  //  touching saved sizes: a collapsed leaf keeps its header, a side-by-side
+  //  row shrinks only once all of it is collapsed.
+  {
+    CFG_State *cfg = cfg_state_alloc();
+    CFG_Node *owner = cfg_node_new(cfg, &cfg_nil_node, str8_lit("window"));
+    cfg_node_new(cfg, owner, str8_lit("sidebar_layout_sized"));
+    CFG_Node *root = cfg_node_new(cfg, owner, RD_DOCK_SIDEBAR_ROOT);
+    CFG_Node *leaves[4] = {0};
+    char *shares[] = {"0.25", "0.25", "0.5"};
+    CFG_Node *row = &cfg_nil_node;
+    for(U64 i = 0; i < 3; i++)
+    {
+      CFG_Node *panel = cfg_node_new(cfg, root, str8_cstring(shares[i]));
+      if(i == 1)
+      {
+        row = panel;
+        for(U64 k = 0; k < 2; k++) { leaves[1+k] = cfg_node_new(cfg, panel, str8_lit("0.5")); }
+      }
+      else { leaves[i == 0 ? 0 : 3] = panel; }
+    }
+    for(U64 i = 0; i < 4; i++)
+    {
+      CFG_Node *view = cfg_node_new(cfg, leaves[i], str8_lit("sidebar_section"));
+      cfg_node_new(cfg, cfg_node_new(cfg, view, str8_lit("section")), push_str8f(arena, "test_%I64u", i));
+      cfg_node_new(cfg, view, str8_lit("selected"));
+      if(i == 0 || i == 1) { cfg_node_new(cfg, view, str8_lit("section_collapsed")); }
+    }
+    UIShell_ControlledSplit owner_split = {.owner_cfg = owner};
+    Rng2F32 rect = r2f32p(0, 0, 300, 600);
+    F32 header = 0, collapsed_h = 0;
+    for(U32 pass = 0; pass < 2; pass++)
+    {
+      if(pass == 1) { cfg_node_new(cfg, cfg_node_child_from_string(leaves[2], str8_lit("sidebar_section")), str8_lit("section_collapsed")); }
+      UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(arena, owner, root);
+      UI_FontSize(11)
+      {
+        uishell_sidebar_size_panels(&owner_split, &mount, rect);
+        header = floor_f32(ui_top_font_size()*2.2f);
+        uishell_sidebar_panel_collapsed(mount.panel_tree.root->first, header, &collapsed_h);
+      }
+      CFG_PanelNode *a = mount.panel_tree.root->first, *r = a->next, *d = r->next;
+      F32 sum = a->pct_of_parent + r->pct_of_parent + d->pct_of_parent;
+      if(pass == 0)
+      {
+        GroupsCheck(abs_f32(a->pct_of_parent*600.f - collapsed_h) < 1.f && abs_f32(sum-1.f) < .001f &&
+                    abs_f32(r->pct_of_parent/d->pct_of_parent - 0.5f) < .001f,
+                    "a collapsed section shrinks to its header; the others share the rest in their saved proportions");
+      }
+      else
+      {
+        F32 row_h = 0;
+        UI_FontSize(11) { uishell_sidebar_panel_collapsed(r, header, &row_h); }
+        GroupsCheck(abs_f32(r->pct_of_parent*600.f - row_h) < 1.f && abs_f32(sum-1.f) < .001f,
+                    "a side-by-side row shrinks once all of it is collapsed");
+      }
+    }
+    GroupsCheck(str8_match(root->first->string, str8_lit("0.25"), 0) && str8_match(row->string, str8_lit("0.25"), 0) &&
+                str8_match(root->last->string, str8_lit("0.5"), 0),
+                "collapsing never rewrites the sizes saved by hand");
+    cfg_state_release(cfg);
+  }
+
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, tab strip +)\n",
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, tab strip +, collapse gives space back)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;
