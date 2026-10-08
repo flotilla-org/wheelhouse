@@ -315,7 +315,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       U32 which = (frame/4)%2;
       UI_Box *body = ui_box_from_key(bodies[which]);
       F32 delta = frame < 12 ? .25f : -.125f;
-      node.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(body->rect),
+      // Near the body's left edge: a row's chips scroll sideways and take the wheel.
+      node.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = v2f32(body->rect.x0+6.f, center_2f32(body->rect).y),
                          .delta_2f32 = {0, delta}, .scroll_is_precise = 1};
       events.first = events.last = &node; events.count = 1; expected[which] += delta;
     }

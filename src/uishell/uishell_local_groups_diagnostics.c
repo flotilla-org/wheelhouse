@@ -84,6 +84,23 @@ uishell_local_groups_frame(RD_WindowState *ws, CFG_Node *window, Arena *arena, S
   return !suffix.size || at.x != 0 || at.y != 0;
 }
 
+// The box keyed `suffix` under its nearest keyed ancestor, as last laid out.
+internal UI_Box *
+uishell_local_groups_box(String8 suffix)
+{
+  for(UI_Box *b = ui_state->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui_state->root).next)
+  {
+    UI_Box *keyed = b->parent;
+    while(!ui_box_is_nil(keyed) && ui_key_match(keyed->key, ui_key_zero())) { keyed = keyed->parent; }
+    if(!ui_box_is_nil(keyed) && ui_key_match(b->key, ui_key_from_string(keyed->key, suffix))) { return b; }
+  }
+  return &ui_nil_box;
+}
+
+// A drag starting this far in from the left of the box it starts on, when
+// set; else from its centre.
+global F32 uishell_local_groups_drag_inset = 0;
+
 // Drags the box keyed `from` onto the box keyed `to` (or, with `dock`, onto
 // a docking site below the first View's panel): press, move past the
 // threshold, release, finishing the drag each frame as a window does.
@@ -109,7 +126,11 @@ uishell_local_groups_drag(RD_WindowState *ws, CFG_Node *window, Arena *arena, St
     uishell_local_groups_render(window, &split);
     uishell_sidebar_drag_finish(ws);
     ui_end_build();
-    if(frame == 0) { start = uishell_workspace_lifecycle_center(ui_state, from); }
+    if(frame == 0)
+    {
+      start = uishell_workspace_lifecycle_center(ui_state, from);
+      if(uishell_local_groups_drag_inset > 0) { start.x = uishell_local_groups_box(from)->rect.x0+uishell_local_groups_drag_inset; }
+    }
     if(frame >= 2) { target = dock ? v2f32(-50, -50) : uishell_workspace_lifecycle_center(ui_state, to); }
     if(frame == 3) { started = rd_drag_is_active(); }
   }
@@ -285,8 +306,8 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
     AndamentoNode added_node = uishell_sidebar_reorder_node(state, uishell_sidebar_local_field(added, str8_lit("id")));
     String8 added_entry = push_str8f(arena, "###entry_%S", uishell_sidebar_string(added_node.key));
-    GroupsCheck(!ui_box_is_nil(uishell_sidebar_reorder_box(ui_state->root, str8_lit("New group"))) &&
-                ui_box_is_nil(uishell_sidebar_reorder_box(ui_state->root, added_entry)),
+    UI_Box *added_header = uishell_sidebar_reorder_box(ui_state->root, added_entry);
+    GroupsCheck(!ui_box_is_nil(added_header) && !ui_box_is_nil(uishell_sidebar_reorder_box(added_header->first, str8_lit("New group"))),
                 "the new group's header holds the name field");
     char typed[] = "Releases";
     MemoryCopy(state->rename_text, typed, sizeof(typed)-1); state->rename_size = sizeof(typed)-1;
@@ -337,11 +358,68 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     uishell_local_groups_view2 = uishell_sidebar_local_new_view(bottom, second);
     uishell_local_groups_publish(state, window, arena);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    //- The group header (sidebar-headers.md): a click anywhere on it
+    //  collapses the group and shows its count; double-clicking renames it
+    //  and leaves it open; ⋯ opens its menu.
+    String8 alpha_id = push_str8_copy(arena, uishell_sidebar_local_field(alpha, str8_lit("id")));
+    String8 alpha_header = uishell_local_groups_row(arena, state, alpha_id);
+    UI_Box *header_box = uishell_local_groups_box(alpha_header);
+    GroupsCheck(!ui_box_is_nil(header_box) && ui_box_is_nil(uishell_sidebar_reorder_box(header_box->first, str8_lit("###identity_"))),
+                "a group header is a row with no icon");
+    // Click its middle: empty space past the short title, short of ⋯.
+    F32 saved_inset = uishell_local_groups_drag_inset;
+    {
+      UI_Box *hb = uishell_local_groups_box(alpha_header);
+      Vec2F32 at = center_2f32(hb->rect);
+      for(U32 f = 0; f < 4; f++)
+      {
+        UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
+        UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
+        uishell_local_groups_clock_us += 50000;
+        if(f == 1 || f == 2)
+        {
+          event.v = (UI_Event){.kind = f == 1 ? UI_EventKind_Press : UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = at, .timestamp_us = uishell_local_groups_clock_us};
+          events.first = events.last = &event; events.count = 1;
+        }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        ui_state->mouse = at;
+        uishell_local_groups_render(window, &split);
+        ui_end_build();
+      }
+    }
+    uishell_local_groups_publish(state, window, arena);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    AndamentoNode alpha_node = uishell_sidebar_reorder_node(state, alpha_id);
+    header_box = uishell_local_groups_box(alpha_header);
+    GroupsCheck(alpha_node.collapsed && !ui_box_is_nil(uishell_sidebar_reorder_box(header_box->first, str8_lit("1"))),
+                "a click on the header's empty part collapses the group, which shows its count");
+    uishell_local_groups_click(ws, window, arena, alpha_header, WM_Key_LeftMouseButton);
+    uishell_local_groups_publish(state, window, arena);
+    GroupsCheck(!uishell_sidebar_reorder_node(state, alpha_id).collapsed, "another click opens it again");
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    uishell_local_groups_double_click(ws, window, arena, alpha_header);
+    uishell_local_groups_publish(state, window, arena);
+    GroupsCheck(uishell_sidebar_local_renaming(state, alpha) && !uishell_sidebar_reorder_node(state, alpha_id).collapsed,
+                "double-clicking a group header renames it in place and leaves it open");
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Press, WM_Key_Esc);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    // ⋯ shows while the header is hovered.
+    uishell_local_groups_frame(ws, window, arena, alpha_header, UI_EventKind_Null, 0);
+    uishell_local_groups_frame(ws, window, arena, alpha_header, UI_EventKind_Null, 0);
+    String8 more = push_str8f(arena, "###header_more_%S", uishell_sidebar_string(uishell_sidebar_reorder_node(state, alpha_id).key));
+    B32 more_found = uishell_local_groups_frame(ws, window, arena, more, UI_EventKind_Press, WM_Key_LeftMouseButton);
+    uishell_local_groups_frame(ws, window, arena, more, UI_EventKind_Release, WM_Key_LeftMouseButton);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    GroupsCheck(more_found && ui_any_ctx_menu_is_open(), "a hovered group header's ⋯ opens its menu");
+    ui_ctx_menu_close();
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    uishell_local_groups_drag_inset = 3.f; // from the header's left edge, not its title (#261)
     B32 started = uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, beta_id),
                                             uishell_local_groups_row(arena, state, str8_lit("groups-gamma")), 0);
+    uishell_local_groups_drag_inset = saved_inset;
     GroupsCheck(started && beta->parent == second && beta->prev == gamma && uishell_sidebar_local_group_count(first) == 1 &&
                 cfg_node_child_from_string(beta, str8_lit("card")) != &cfg_nil_node,
-                "a group's header dropped on a group in another section moves it there, after that group, with its items");
+                "a group's header, dragged from its edge, dropped on a group in another section moves it there, after that group, with its items");
     GroupsCheck(str8_match(uishell_sidebar_local_title(arena, second), str8_lit("Gamma, Beta"), 0),
                 "the section it joined shows both groups' names");
     // Back to the first section, then out to a docking site.
@@ -418,7 +496,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, group drag between sections, group to a docking site, one-group section title drag, default group stays, View label follows)\n",
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;
