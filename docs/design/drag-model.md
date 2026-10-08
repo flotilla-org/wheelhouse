@@ -148,6 +148,7 @@ An entity ghost is a reference to an Andamento entity.
 - **Compact form.** By default it appears as a row with live status and the same margin control as other rows.
 - **Expanded form.** It can expand in place into the full card, which is today's detached card.
 - **Presentation modes.** The expanded card offers modes such as details, labels, preview and facts (possibly grouped), with presets to cycle through. The aim is a small control surface that shows what you need and no more. The modes themselves are part of the card design in #89.
+- **Pin.** A card's Pin adds a ghost to the first group, other than Workspaces, of the topmost local section that is showing (its panel's selected tab). With none showing, Pin makes a section at the top of the sidebar. Pin never targets the default Workspaces group. If the entity already has a ghost in that group, Pin reads "Show pin" and reveals it. A ghost in another group doesn't count, so Pin adds one here too: an entity may have any number of ghosts.
 
 ### View ghosts
 
