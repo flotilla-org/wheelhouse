@@ -183,6 +183,10 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   GroupsCheck(str8_match(uishell_local_groups_label(arena, state, str8_lit(".section"), section_id), str8_lit("Nightly, Tests"), 0) &&
               str8_match(uishell_local_groups_label(arena, state, str8_lit(".group"), tests_id), str8_lit("Tests"), 0),
               "with several groups and no name of its own, a section shows their names, joined");
+  uishell_sidebar_local_rename(section, str8_zero());
+  GroupsCheck(str8_match(uishell_sidebar_local_title(arena, section), str8_lit("Nightly, Tests"), 0) &&
+              cfg_node_child_from_string(section, str8_lit("label")) == &cfg_nil_node,
+              "clearing the name of a section showing its groups' names changes nothing");
   uishell_sidebar_local_rename(section, str8_lit("CI"));
   GroupsCheck(str8_match(uishell_sidebar_local_title(arena, section), str8_lit("CI"), 0) &&
               str8_match(uishell_sidebar_local_field(builds, str8_lit("label")), str8_lit("Nightly"), 0),
@@ -222,6 +226,9 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   uishell_sidebar_local_delete_group(window, workspaces);
   uishell_sidebar_local_delete_section(window, workspaces->parent);
   GroupsCheck(uishell_sidebar_local_group(window, uishell_sidebar_default_local_id) == workspaces, "the default section and group stay");
+  CFG_Node *workspaces_section = workspaces->parent;
+  uishell_sidebar_local_move_group(window, workspaces, section, &cfg_nil_node);
+  GroupsCheck(workspaces->parent == workspaces_section, "the default group stays in its section: it can't be moved out");
 
   //- The section menu: right-click its title. New group adds a group and
   //  opens its rename; Enter applies the name typed.
@@ -356,6 +363,11 @@ uishell_local_groups_diagnostics(CFG_Node *window)
                 uishell_sidebar_local_view(window, beta) != &cfg_nil_node,
                 "dropped on a docking site, a group becomes a section of its own, shown there, borrowing its name");
     GroupsCheck(str8_match(uishell_sidebar_local_title(arena, first), str8_lit("Alpha"), 0), "the section it left borrows its remaining group's name");
+    uishell_local_groups_publish(state, window, arena);
+    { UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window); uishell_sidebar_dock_layout(&split); }
+    CFG_Node *beta_view = uishell_sidebar_local_view(window, beta);
+    GroupsCheck(str8_match(cfg_node_child_from_string(beta_view, str8_lit("label"))->first->string, str8_lit("Beta"), 0),
+                "its View's tab label follows the section's title, not the placeholder it was made with");
     CFG_Node *own_view = uishell_sidebar_local_view(window, beta);
     if(own_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, own_view); }
 
@@ -406,7 +418,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, group drag between sections, group to a docking site, one-group section title drag)\n",
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, group drag between sections, group to a docking site, one-group section title drag, default group stays, View label follows)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

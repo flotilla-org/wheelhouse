@@ -54,7 +54,7 @@ Groups are placed with `match ".section" of="section"`, and workspaces and ghost
 - Every local workspace without another home lives there.
 - Andamento covers leftover tabs into it, instead of into a separate section.
 - A subject workspace whose subject vanishes stays where it was until it is closed.
-- It can be renamed, moved and hidden, but not deleted.
+- It can be renamed and hidden, and its section docked anywhere, but it can't be deleted or moved out of its section, which hosts New workspace.
 
 **Drop intent.**
 

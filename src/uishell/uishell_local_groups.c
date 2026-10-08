@@ -93,6 +93,7 @@ uishell_sidebar_local_rename(CFG_Node *node, String8 label)
     if(borrowed && only != &cfg_nil_node) { node = only; }
     else if(!label.size)
     {
+      // Releasing a missing label is a no-op: its groups' names show anyway.
       cfg_node_release(rd_state->cfg, cfg_node_child_from_string(node, str8_lit("label")));
       return;
     }
@@ -183,7 +184,9 @@ internal void
 uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *section, CFG_Node *after)
 {
   CFG_Node *from = group->parent;
-  if(group == after) { return; }
+  // The default group stays in the Workspaces section, which hosts New
+  // workspace; the section itself moves by docking.
+  if(group == after || uishell_sidebar_local_is_default(group)) { return; }
   cfg_node_unhook(rd_state->cfg, from, group);
   cfg_node_insert_child(rd_state->cfg, section, after != &cfg_nil_node ? after : section->last, group);
   if(from != section && uishell_sidebar_local_group_count(from) == 0)
@@ -203,7 +206,8 @@ uishell_sidebar_section_drag_group(CFG_Node *window)
   if(!rd_drag_is_active() || rd_state->drag_drop_regs_slot != UIShell_ContextRegSlot_View ||
      rd_state->drag_drop_regs->window != window->id) { return &cfg_nil_node; }
   CFG_Node *group = uishell_sidebar_local_view_group(window, cfg_node_from_id(rd_state->drag_drop_regs->view));
-  return group != &cfg_nil_node && uishell_sidebar_local_group_count(group->parent) == 1 ? group : &cfg_nil_node;
+  return group != &cfg_nil_node && uishell_sidebar_local_group_count(group->parent) == 1 &&
+    !uishell_sidebar_local_is_default(group) ? group : &cfg_nil_node;
 }
 
 // Opens a new workspace living in `group`.

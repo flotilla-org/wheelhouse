@@ -159,7 +159,7 @@ struct UIShell_SidebarState
   // the edit, and whether the field still needs focus. A delete awaiting
   // confirmation, because workspaces would move.
   CFG_ID rename_node;
-  U8 rename_text[256];
+  U8 rename_text[256];            // a longer name is cut to fit
   U64 rename_size;
   TxtPt rename_cursor, rename_mark;
   B32 rename_focus;
