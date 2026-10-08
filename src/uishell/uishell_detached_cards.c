@@ -374,11 +374,16 @@ uishell_sidebar_pin_deduplicate(CFG_Node *window)
       else { duplicate = str8_match(uishell_sidebar_pin_ghost(c), uishell_sidebar_pin_ghost(m->v), 0); }
     }
     if(duplicate) { cfg_node_release(rd_state->cfg, c); continue; }
-    if(legacy[index]) { uishell_sidebar_pin_new_ghost(c); }
+    // Legacy pins were always shown as cards, so they keep that form.
+    if(legacy[index]) { uishell_sidebar_pin_new_ghost(c); cfg_node_child_from_string_or_alloc(rd_state->cfg, c, str8_lit("expanded")); }
     kept[kept_count++] = c;
   }
   scratch_end(scratch);
 }
+
+// The form new pins take: compact rows. A stand-in for the per-area default
+// that pinned_cards schemas will provide (drag-model.md, "Card settings").
+global B32 uishell_sidebar_new_pins_expanded = 0;
 
 internal CFG_Node *
 uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_area)
@@ -500,6 +505,7 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
   }
   saved = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
   uishell_sidebar_pin_new_ghost(saved);
+  if(uishell_sidebar_new_pins_expanded) { cfg_node_new(rd_state->cfg, saved, str8_lit("expanded")); }
   uishell_sidebar_pin_set_field(saved, str8_lit("kind"), uishell_sidebar_string(entity.kind));
   uishell_sidebar_pin_set_field(saved, str8_lit("entity"), uishell_sidebar_string(entity.id));
   AndamentoNode node = {0};
@@ -773,6 +779,131 @@ uishell_sidebar_pinned_card_extent(UIShell_HoverCard *card, F32 em)
   return Max(em*UIShell_HoverCardPinnedMinimumHeightEM, card->content_height)+UIShell_HoverCardPinnedGapPT;
 }
 
+internal Vec4F32 uishell_sidebar_ended_color(void);
+internal String8 uishell_sidebar_status_mark(AndamentoNode node, String8 status);
+internal String8 uishell_sidebar_chip_status(UIShell_SidebarState *state, AndamentoNode node);
+
+// A ghost is a compact row by default (drag-model.md, "Entity ghosts"); an
+// expanded ghost shows its card beneath the row.
+internal B32
+uishell_sidebar_pin_expanded(CFG_Node *saved)
+{
+  return cfg_node_child_from_string(saved, str8_lit("expanded")) != &cfg_nil_node;
+}
+
+internal F32
+uishell_sidebar_ghost_extent(UIShell_HoverCard *card, CFG_Node *saved, F32 em)
+{
+  return floor_f32(em*2.2f) + (uishell_sidebar_pin_expanded(saved) ? uishell_sidebar_pinned_card_extent(card, em) : 0);
+}
+
+internal void
+uishell_sidebar_ghost_set_expanded(CFG_Node *saved, B32 expanded)
+{
+  if(expanded) { cfg_node_child_from_string_or_alloc(rd_state->cfg, saved, str8_lit("expanded")); }
+  else { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(saved, str8_lit("expanded"))); }
+  rd_request_frame();
+}
+
+// The compact ghost row: live label and status, a marker saying it lives
+// elsewhere, and its source on click. Its margin control removes the ghost
+// and never the source; holding it (or a right click) opens the ghost menu.
+internal void
+uishell_sidebar_ghost_row(UIShell_SidebarState *state, RD_WindowState *ws, UIShell_HoverCard *c,
+                          CFG_Node *saved, F32 width, F32 row_height, F32 margin)
+{
+  Temp scratch = scratch_begin(0, 0);
+  F32 em = ui_top_font_size();
+  AndamentoNode node = {0};
+  B32 present = uishell_sidebar_card_find(state, c->path[c->depth-1], &node) != ANDAMENTO_NONE;
+  String8 status = present ? uishell_sidebar_chip_status(state, node) : str8_zero();
+  B32 ended = str8_match(status, str8_lit("ended"), 0);
+  String8 label = present ? uishell_sidebar_string(node.label) : cfg_node_child_from_string(saved, str8_lit("label"))->first->string;
+  if(!label.size) { label = uishell_sidebar_string(c->path[c->depth-1].id); }
+  B32 expanded = uishell_sidebar_pin_expanded(saved);
+  UI_Box *slot;
+  UI_PrefWidth(ui_px(width, 1)) UI_PrefHeight(ui_px(row_height, 1)) UI_ChildLayoutAxis(Axis2_X)
+  { slot = ui_build_box_from_stringf(0, "###ghost_slot_%I64u", saved->id); }
+  B32 engaged = contains_2f32(slot->rect, ui_mouse()) && !ui_any_ctx_menu_is_open() && !rd_drag_is_active();
+  UI_Key menu_key = ui_key_from_stringf(slot->key, "ghost_menu");
+  UI_Signal row_sig = {0}, close_sig = {0};
+  UI_Parent(slot) UI_PrefHeight(ui_pct(1, 1))
+  {
+    ui_spacer(ui_px(4.f, 1));
+    UI_Box *column;
+    UI_ChildLayoutAxis(Axis2_Y) UI_PrefWidth(ui_pct(1, 0))
+    { column = ui_build_box_from_stringf(0, "###ghost_column_%I64u", saved->id); }
+    UI_Parent(column)
+    {
+      ui_spacer(ui_px(2.f, 1));
+      UI_Box *row;
+      UI_PrefHeight(ui_px(row_height-4.f, 1)) UI_CornerRadius(3.f) UI_ChildLayoutAxis(Axis2_X)
+      {
+        row = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
+          "###ghost_row_%I64u", saved->id);
+      }
+      UI_Parent(row) UI_PrefHeight(ui_pct(1, 1))
+      {
+        ui_spacer(ui_em(0.3f, 1));
+        if(ui_clicked(uishell_sidebar_disclosure(expanded, push_str8f(scratch.arena, "###ghost_expand_%I64u", saved->id))))
+        { uishell_sidebar_ghost_set_expanded(saved, !expanded); }
+        if(ended || !present) { ui_set_next_text_color(uishell_sidebar_ended_color()); }
+        UI_PrefWidth(ui_pct(1, 0)) { ui_label(label); }
+        // Marks a reference that lives elsewhere, not a row in its home.
+        UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
+        { ui_label(str8_lit("↗")); }
+        UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+        { ui_label(present ? uishell_sidebar_status_mark(node, status) : str8_lit("?")); }
+      }
+      // After its children, so the disclosure gets its own clicks.
+      row_sig = ui_signal_from_box(row);
+    }
+    ui_spacer(ui_px(4.f, 1));
+    UI_PrefWidth(ui_px(margin, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(3.f)
+    {
+      if(engaged || ui_key_match(state->hold_key, ui_key_from_stringf(slot->key, "###ghost_remove_%I64u", saved->id)))
+      {
+        UI_Column UI_PrefHeight(ui_px(row_height, 1))
+        {
+          ui_spacer(ui_px(2.f, 1));
+          UI_PrefHeight(ui_px(row_height-4.f, 1))
+          { close_sig = uishell_sidebar_button(push_str8f(scratch.arena, "×###ghost_remove_%I64u", saved->id)); }
+        }
+      }
+      else { ui_spacer(ui_px(margin, 1)); }
+    }
+  }
+  if(ui_hovering(row_sig)) UI_Tooltip
+  {
+    ui_state->tooltip_anchor_key = row_sig.box->key;
+    ui_label(label);
+    UI_TagF("weak")
+    { ui_label(present ? str8_lit("Pinned reference; it lives elsewhere. Click to go to it.") : str8_lit("No longer present")); }
+  }
+  if(close_sig.box && ui_hovering(close_sig) && !ui_dragging(close_sig)) UI_Tooltip
+  {
+    ui_state->tooltip_anchor_key = close_sig.box->key;
+    ui_label(str8_lit("Remove pin"));
+    UI_TagF("weak") { ui_label(str8_lit("Its source is untouched")); ui_label(str8_lit("Hold for more")); }
+  }
+  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(14.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+  {
+    if(present && node.activate != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Go to source"))))
+    { uishell_sidebar_card_queue_action(state, node, node.activate); ui_ctx_menu_close(); }
+    if(ui_clicked(ui_button(expanded ? str8_lit("Show as row") : str8_lit("Show as card"))))
+    { uishell_sidebar_ghost_set_expanded(saved, !expanded); ui_ctx_menu_close(); }
+    if(ui_clicked(ui_button(str8_lit("Remove pin"))))
+    { uishell_sidebar_card_close(c); ui_ctx_menu_close(); rd_request_frame(); }
+  }
+  if(close_sig.box && uishell_sidebar_held(state, close_sig)) { ui_ctx_menu_open(menu_key, row_sig.box->key, v2f32(0, em*1.8f)); }
+  if(ui_right_clicked(row_sig)) { ui_ctx_menu_open(menu_key, row_sig.box->key, v2f32(0, em*1.8f)); }
+  if(close_sig.box && ui_clicked(close_sig)) { uishell_sidebar_card_close(c); rd_request_frame(); }
+  if(ui_clicked(row_sig) && present && node.activate != ANDAMENTO_NONE)
+  { uishell_sidebar_card_queue_action(state, node, node.activate); }
+  if(!expanded && !c->moving) { c->rect = row_sig.box->rect; }
+  scratch_end(scratch);
+}
+
 RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
 {
   CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
@@ -833,7 +964,7 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
   {
     if(!str8_match(saved->string, str8_lit("card"), 0)) { continue; }
     UIShell_HoverCard *c = cards[card_index++] = uishell_sidebar_saved_card(ws, saved);
-    height += uishell_sidebar_pinned_card_extent(c, em);
+    height += uishell_sidebar_ghost_extent(c, saved, em);
   }
   params.content_dim_px = v2f32(width, height);
   UI_ScrollRegion region = ui_scroll_region_layout(params);
@@ -844,14 +975,15 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
   {
     if(!str8_match(saved->string, str8_lit("card"), 0)) { continue; }
     UIShell_HoverCard *c = cards[card_index++];
-    measured &= c->content_height > 0;
+    B32 expanded = uishell_sidebar_pin_expanded(saved);
+    measured &= !expanded || c->content_height > 0;
     if(saved->id == state->pin_reveal)
     {
-      target = reveal_y; c->focused = 1;
+      target = reveal_y; c->focused = expanded;
       if(measured) { state->pin_reveal = 0; } else { rd_request_frame(); }
       break;
     }
-    reveal_y += uishell_sidebar_pinned_card_extent(c, em);
+    reveal_y += uishell_sidebar_ghost_extent(c, saved, em);
   }
   UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
   axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt((S64)target, target-(S64)target),
@@ -870,7 +1002,9 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
       if(!str8_match(saved->string, str8_lit("card"), 0)) { continue; }
       UIShell_HoverCard *c = cards[card_index++];
       // Keep the source allocation while the overlay owns the moving card.
-      if(c->moving) { ui_spacer(ui_px(uishell_sidebar_pinned_card_extent(c, em), 1)); continue; }
+      if(c->moving) { ui_spacer(ui_px(uishell_sidebar_ghost_extent(c, saved, em), 1)); continue; }
+      uishell_sidebar_ghost_row(state, ws, c, saved, Max(0.f, dim_2f32(region.viewport).x), floor_f32(em*2.2f), floor_f32(em*1.5f));
+      if(!uishell_sidebar_pin_expanded(saved)) { continue; }
       UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
       UI_Focus(c->focused ? UI_FocusKind_On : UI_FocusKind_Off) UI_CornerRadius(5.f)
       UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), .025f))

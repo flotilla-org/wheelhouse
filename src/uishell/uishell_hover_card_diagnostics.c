@@ -87,6 +87,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   U32 failures = 0;
 #define CardCheck(expr, message) do { if(!(expr)) { fprintf(stderr, "FAIL hover card: %s\n", message); failures++; } } while(0)
   fprintf(stderr, "Hover card diagnostics: start\n");
+  // These diagnostics exercise pinned cards themselves; ghost rows set it off.
+  B32 saved_pins_expanded = uishell_sidebar_new_pins_expanded;
+  uishell_sidebar_new_pins_expanded = 1;
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
   UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {0};
   ws->sidebar = &fixture;
@@ -979,6 +982,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_pin_set_field(layout_second, str8_lit("kind"), str8_lit("workspace"));
     uishell_sidebar_pin_set_field(layout_second, str8_lit("entity"), str8_lit("layout-second"));
     uishell_sidebar_pin_set_field(layout_second, str8_lit("label"), str8_lit("Second layout card"));
+    cfg_node_new(rd_state->cfg, layout_second, str8_lit("expanded"));
     UIShell_HoverCard *second_layout_card = uishell_sidebar_saved_card(ws, layout_second);
     F32 nil_scroll_before = ui_nil_box.view_off_target.y;
     F32 pinned_widths[] = {280, 160, 460};
@@ -1008,11 +1012,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       if(frame == 1)
       { CardCheck(!fixture.pin_reveal, "measured new pin completes its reveal on the next frame"); }
       UI_Box *body = ui_box_from_key(pinned->mask.key);
-      CardCheck(!ui_box_is_nil(body) && abs_f32(body->rect.x0-(view_rect.x0+6)) < 1 && abs_f32(body->rect.y0-(view_rect.y0+floor_f32(12*2.2f))) < 1 && body->rect.x1 <= view_rect.x1-6 && body->fixed_size.y > 40,
-                "translated pinned View places its inset first card immediately below the header without doubling the View offset");
+      // An expanded ghost's card sits below its row, which sits below the header.
+      CardCheck(!ui_box_is_nil(body) && abs_f32(body->rect.x0-(view_rect.x0+6)) < 1 && abs_f32(body->rect.y0-(view_rect.y0+2*floor_f32(12*2.2f))) < 1 && body->rect.x1 <= view_rect.x1-6 && body->fixed_size.y > 40,
+                "translated pinned View places its inset first card below the header and its row without doubling the View offset");
       UI_Box *second_body = ui_box_from_key(second_layout_card->mask.key);
-      CardCheck(!ui_box_is_nil(second_body) && abs_f32(second_body->rect.y0-body->rect.y1-UIShell_HoverCardPinnedGapPT) < 1,
-                "successive pinned cards retain their fixed gap when the View moves");
+      CardCheck(!ui_box_is_nil(second_body) && abs_f32(second_body->rect.y0-body->rect.y1-UIShell_HoverCardPinnedGapPT-floor_f32(12*2.2f)) < 1,
+                "successive pinned cards retain their fixed gap and row when the View moves");
       if(frame%5 >= 3)
       { CardCheck(abs_f32(pinned->content_height-previous_height) < .5f,
                   "pinned card height converges after resizing narrow and wide"); }
@@ -1129,6 +1134,76 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(!original->open && fixture.detached->open && fixture.detached->placement == UIShell_CardPlacement_Float,
               "native drag release outside the sidebar creates a float");
     uishell_sidebar_card_close(fixture.detached);
+    fprintf(stderr, "Hover card diagnostics: ghost rows\n");
+    // A new pin is a compact ghost row: no card until expanded. Clicking the
+    // row goes to its source; × removes the ghost, never the source.
+    {
+      uishell_sidebar_new_pins_expanded = 0;
+      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+      original->pin_another = 1;
+      CFG_Node *ghost = uishell_sidebar_card_pin(ws, original, 0);
+      uishell_sidebar_new_pins_expanded = 1;
+      CFG_ID ghost_id = ghost->id;
+      UIShell_HoverCard *ghost_card = uishell_sidebar_saved_card(ws, ghost);
+      CardCheck(ghost != &cfg_nil_node && !uishell_sidebar_pin_expanded(ghost), "a new pin starts as a compact row");
+      Temp ghost_scratch = scratch_begin(0, 0);
+      String8 row_suffix = push_str8f(ghost_scratch.arena, "###ghost_row_%I64u", ghost_id);
+      String8 expand_suffix = push_str8f(ghost_scratch.arena, "###ghost_expand_%I64u", ghost_id);
+      String8 remove_suffix = push_str8f(ghost_scratch.arena, "###ghost_remove_%I64u", ghost_id);
+      String8 card_suffix = push_str8f(ghost_scratch.arena, "###pinned_card_%I64u", ghost_id);
+      Rng2F32 view_rect = r2f32p(0, 0, 320, 600);
+      // Frames: 0 lays out; 1-2 click the disclosure; 3 checks the card;
+      // 4-5 click the row; 6 hovers; 7-8 click ×.
+      Vec2F32 expand_at = {0}, row_at = {0}, remove_at = {0};
+      B32 row_seen = 0, card_before = 0, card_after = 0, marker = 0;
+      fixture.card_has_action = 0;
+      B32 queued = 0;
+      for(U32 frame = 0; frame < 9; frame++)
+      {
+        Vec2F32 at = frame == 1 || frame == 2 ? expand_at : frame >= 4 && frame <= 6 ? row_at : frame >= 7 ? remove_at : v2f32(-100, -100);
+        UI_EventList events = {0};
+        UI_Event event = {.kind = (frame == 1 || frame == 4 || frame == 7) ? UI_EventKind_Press : UI_EventKind_Release,
+          .key = WM_Key_LeftMouseButton, .pos = at};
+        if(frame == 1 || frame == 2 || frame == 4 || frame == 5 || frame == 7 || frame == 8) { ui_event_list_push(test->arena, &events, &event); }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = at; test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
+        UIShell_RegsScope(.window = window->id, .view = ghost->parent->id)
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        {
+          UI_Box *view_parent;
+          UI_Rect(view_rect) { view_parent = ui_build_box_from_key(UI_BoxFlag_Clip, ui_key_make(119167)); }
+          UI_Parent(view_parent) { RD_VIEW_UI_FUNCTION_NAME(pinned_cards)((E_Eval){0}, view_rect); }
+        }
+        ui_end_build();
+        queued |= fixture.card_has_action;
+        // Rows and cards draw no text of their own, so match keys by parent seed.
+        for(UI_Box *b = test->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->root).next)
+        {
+          // A key is seeded from its nearest keyed ancestor.
+          UI_Box *keyed = b->parent;
+          while(!ui_box_is_nil(keyed) && ui_key_match(keyed->key, ui_key_zero())) { keyed = keyed->parent; }
+          if(ui_box_is_nil(keyed)) { continue; }
+          UI_Key seed = keyed->key;
+          if(ui_key_match(b->key, ui_key_from_string(seed, row_suffix)))
+          { row_seen = 1; row_at = v2f32(b->rect.x0+(b->rect.x1-b->rect.x0)*0.6f, (b->rect.y0+b->rect.y1)*0.5f); }
+          if(ui_key_match(b->key, ui_key_from_string(seed, expand_suffix))) { expand_at = center_2f32(b->rect); }
+          if(ui_key_match(b->key, ui_key_from_string(seed, remove_suffix))) { remove_at = center_2f32(b->rect); }
+          if(ui_key_match(b->key, ui_key_from_string(seed, card_suffix)))
+          { if(frame == 0) { card_before = 1; } if(frame == 3) { card_after = 1; } }
+          if(frame == 0 && str8_match(ui_box_display_string(b), str8_lit("↗"), 0)) { marker = 1; }
+        }
+        if(frame == 3 && cfg_node_from_id(ghost_id) != &cfg_nil_node)
+        { uishell_sidebar_ghost_set_expanded(ghost, 0); }
+      }
+      uishell_sidebar_detached_finish(ws);
+      CardCheck(row_seen && marker && !card_before, "a compact ghost shows its row and lives-elsewhere marker, not its card");
+      CardCheck(card_after, "the row's disclosure expands the ghost into its card");
+      CardCheck(queued, "clicking a ghost row goes to its source");
+      CardCheck(cfg_node_from_id(ghost_id) == &cfg_nil_node && !ghost_card->open, "× on a ghost row removes the ghost");
+      CardCheck(uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(entity), 0) != ANDAMENTO_NONE, "removing a ghost leaves its source");
+      fixture.card_has_action = 0;
+      scratch_end(ghost_scratch);
+    }
     fprintf(stderr, "Hover card diagnostics: pin hold menu\n");
     // With the subject already pinned, holding Pin opens its menu (Show
     // existing pin, Pin another), and the release adds no ghost.
@@ -1445,6 +1520,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_pin_deduplicate(window);
     CardCheck(cfg_node_from_id(legacy_copy_id) == &cfg_nil_node && uishell_sidebar_pin_ghost(legacy).size,
               "legacy pins keep one per entity and gain a ghost id");
+    CardCheck(uishell_sidebar_pin_expanded(legacy), "legacy pins keep their card form");
     String8 legacy_ghost = push_str8_copy(test->arena, uishell_sidebar_pin_ghost(legacy));
     uishell_sidebar_pin_deduplicate(window);
     CardCheck(str8_match(uishell_sidebar_pin_ghost(legacy), legacy_ghost, 0), "a ghost id is stable once assigned");
@@ -1664,6 +1740,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   fprintf(stderr, "Hover card diagnostics: cleanup\n");
   ws->sidebar = saved_sidebar; ws->ui = saved_window_ui;
   uishell_sidebar_release(&fixture); ui_select_state(saved_ui); ui_state_release(test);
+  uishell_sidebar_new_pins_expanded = saved_pins_expanded;
   fprintf(stderr, "Hover card diagnostics: %u failures\n", failures);
 #undef CardCheck
   return failures == 0;

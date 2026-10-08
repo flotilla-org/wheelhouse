@@ -36,6 +36,13 @@ restored layouts reconcile copies of the same pin (same ghost id) within the
 owning window. Pins saved before ghost ids keep the first per subject, which
 gains an id.
 
+A pin is shown as a compact ghost row by default: the subject's live label and
+status, a ↗ marker for a reference that lives elsewhere, and a disclosure that
+expands it into its card beneath the row. Clicking the row goes to the source.
+The × in the row's right margin removes the pin and never its source; holding
+it or right-clicking the row opens Go to source, Show as card or row, and
+Remove pin. Pins saved before ghost rows keep their card form.
+
 A pinned card whose subject disappears remains visible with “No longer present”.
 On 2026-10-06, the operator chose to retain ended cards until explicitly closed
 in the #183/#184/#174 polish review (#202). No timeout applies, including after
