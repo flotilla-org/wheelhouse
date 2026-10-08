@@ -410,6 +410,32 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     uishell_sidebar_manual_sizing(window, 0);
   }
 
+  // Labels are published as JSON text, escapes and all; a layout repeating
+  // a section id publishes the first and skips the copy.
+  {
+    CFG_Node *quoted = uishell_sidebar_local_new_group(window, str8_lit("Say \"hi\" \\ there"));
+    String8 id = push_str8_copy(scratch.arena, uishell_sidebar_local_field(quoted->parent, str8_lit("id")));
+    CFG_Node *copy = cfg_node_new(rd_state->cfg, quoted->parent->parent, str8_lit("section"));
+    uishell_sidebar_local_set_field(copy, str8_lit("id"), id);
+    uishell_sidebar_local_set_field(copy, str8_lit("label"), str8_lit("Copy"));
+    uishell_sidebar_publish_local(&state, &split);
+    uishell_sidebar_refresh(&state);
+    U64 published = 0;
+    String8 label = str8_zero();
+    for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
+    {
+      AndamentoNode n = {0}; andamento_snapshot_node(state.snapshot, i, &n);
+      if(!str8_match(uishell_sidebar_string(n.entity_kind), str8_lit(".section"), 0) || !str8_match(uishell_sidebar_string(n.entity_id), id, 0)) { continue; }
+      published++;
+      label = push_str8_copy(scratch.arena, uishell_sidebar_string(n.label));
+    }
+    ReorderCheck(published == 1 && str8_match(label, str8_lit("Say \"hi\" \\ there"), 0),
+                 "a label with quotes and a backslash publishes intact, and a repeated section id publishes once, as the first");
+    cfg_node_release(rd_state->cfg, copy);
+    cfg_node_release(rd_state->cfg, quoted->parent);
+    uishell_sidebar_publish_local(&state, &split);
+  }
+
   // A saved pinned area migrates in place, even in a floating panel: its
   // View becomes its section's View, keeping its label, selection and
   // collapse, and its pins move into the section's one group.

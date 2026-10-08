@@ -189,9 +189,13 @@ struct UIShell_SidebarState
   Arena *roles_arena;
   U8 *roles;
   String8 *role_keys;
+  B32 roles_default_section;      // the default local section is placed
   // Local workspaces published as host entities (.workspace), with
   // the entity ids last published so a closed one can be retracted.
   U64 local_hash;
+  // The config generation and topology last published from: publishing
+  // reads only those, so it skips building patches while neither changes.
+  U64 local_cfg_generation, local_topology_hash;
   Arena *local_arena;
   String8 *local_published;
   U64 local_published_count;
@@ -861,6 +865,7 @@ uishell_sidebar_roles(UIShell_SidebarState *state)
   if(!state->roles_arena) { state->roles_arena = arena_alloc(); }
   arena_clear(state->roles_arena);
   state->roles_snapshot = state->snapshot;
+  state->roles_default_section = 0;
   U64 count = state->snapshot ? andamento_snapshot_node_count(state->snapshot) : 0;
   state->roles = push_array(state->roles_arena, U8, count);
   state->role_keys = push_array(state->roles_arena, String8, count);
@@ -871,6 +876,7 @@ uishell_sidebar_roles(UIShell_SidebarState *state)
     if(!str8_match(uishell_sidebar_string(node.layout), str8_lit("section"), 0)) { continue; }
     state->roles[i] = UIShell_SidebarRole_LocalSection;
     state->role_keys[i] = uishell_sidebar_local_key(state->roles_arena, uishell_sidebar_string(node.entity_id));
+    state->roles_default_section |= str8_match(state->role_keys[i], uishell_sidebar_default_section_key, 0);
     if(node.parent != ANDAMENTO_NONE) { state->roles[node.parent] = UIShell_SidebarRole_Container; }
   }
   for(U64 i = 0; i < count; i++)
@@ -903,9 +909,7 @@ uishell_sidebar_leftover_hidden(UIShell_SidebarState *state, U64 i, AndamentoNod
 {
   if(!str8_match(uishell_sidebar_string(node.key), str8_lit(".unplaced"), 0) || uishell_sidebar_has_children(state, i)) { return 0; }
   uishell_sidebar_roles(state);
-  for(U64 k = 0; k < andamento_snapshot_node_count(state->snapshot); k++)
-  { if(str8_match(state->role_keys[k], uishell_sidebar_default_section_key, 0)) { return 1; } }
-  return 0;
+  return state->roles_default_section;
 }
 
 // Reads node `i` as the sidebar shows it (see UIShell_SidebarRole).
@@ -1005,17 +1009,24 @@ uishell_sidebar_local_group(CFG_Node *window, String8 id)
   return &cfg_nil_node;
 }
 
+// JSON string contents: runs of plain bytes are kept as they are, with only
+// quotes, backslashes and control characters escaped.
 internal String8
 uishell_sidebar_json_text(Arena *arena, String8 text)
 {
   String8List parts = {0};
+  U64 run = 0;
   for(U64 i = 0; i < text.size; i++)
   {
     U8 c = text.str[i];
-    if(c == '"' || c == '\\') { str8_list_pushf(arena, &parts, "\\%c", c); }
-    else if(c < 0x20) { str8_list_pushf(arena, &parts, "\\u%04x", c); }
-    else { str8_list_push(arena, &parts, str8(text.str+i, 1)); }
+    if(c != '"' && c != '\\' && c >= 0x20) { continue; }
+    if(i > run) { str8_list_push(arena, &parts, str8(text.str+run, i-run)); }
+    if(c < 0x20) { str8_list_pushf(arena, &parts, "\\u%04x", c); }
+    else { str8_list_pushf(arena, &parts, "\\%c", c); }
+    run = i+1;
   }
+  if(parts.node_count == 0) { return text; }
+  if(text.size > run) { str8_list_push(arena, &parts, str8(text.str+run, text.size-run)); }
   return str8_list_join(arena, &parts, 0);
 }
 
@@ -1066,9 +1077,19 @@ uishell_sidebar_local_keys(String8 kind)
 // as a host entity with its home, tagging its tab .host.* so its rows are
 // live there. Entities that went away (a closed workspace, a deleted group)
 // are retracted. Nothing is sent while the patches are unchanged.
+// Whether "kind/id" is already in `ids`: a corrupt layout repeating an id
+// publishes the first and skips the rest, rather than merging them.
+internal B32
+uishell_sidebar_local_seen(String8List *ids, String8 entry)
+{
+  for(String8Node *n = ids->first; n; n = n->next) { if(str8_match(n->string, entry, 0)) { return 1; } }
+  return 0;
+}
+
 internal void
 uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
+  if(state->local_hash && state->local_cfg_generation == cfg_change_gen() && state->local_topology_hash == state->topology_hash) { return; }
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
   CFG_Node *window = split->owner_cfg;
@@ -1080,21 +1101,23 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
   {
     if(!str8_match(section->string, str8_lit("section"), 0)) { continue; }
     String8 section_id = uishell_sidebar_local_field(section, str8_lit("id"));
-    if(!section_id.size) { continue; }
+    String8 section_entry = push_str8f(arena, "%S/%S", section_kind, section_id);
+    if(!section_id.size || uishell_sidebar_local_seen(&ids, section_entry)) { continue; }
     str8_list_push(arena, &patches, uishell_sidebar_json_entity_patch(arena, section_kind, section_id,
       uishell_sidebar_json_label(arena, uishell_sidebar_local_title(arena, section), section_position++), str8_zero()));
     U64 group_position = 0;
-    str8_list_pushf(arena, &ids, "%S/%S", section_kind, section_id);
+    str8_list_push(arena, &ids, section_entry);
     for(CFG_Node *group = section->first; group != &cfg_nil_node; group = group->next)
     {
       String8 group_id = uishell_sidebar_local_field(group, str8_lit("id"));
-      if(!str8_match(group->string, str8_lit("group"), 0) || !group_id.size) { continue; }
+      String8 group_entry = push_str8f(arena, "%S/%S", group_kind, group_id);
+      if(!str8_match(group->string, str8_lit("group"), 0) || !group_id.size || uishell_sidebar_local_seen(&ids, group_entry)) { continue; }
       B32 is_default = cfg_node_child_from_string(group, str8_lit("default")) != &cfg_nil_node;
       String8 set = push_str8f(arena, "%S,%S,\".default\":{\"value\":{\"type\":\"bool\",\"value\":%s}}",
         uishell_sidebar_json_label(arena, uishell_sidebar_local_field(group, str8_lit("label")), group_position++),
         uishell_sidebar_json_fact_ref(arena, str8_lit(".section"), section_kind, section_id), is_default ? "true" : "false");
       str8_list_push(arena, &patches, uishell_sidebar_json_entity_patch(arena, group_kind, group_id, set, str8_zero()));
-      str8_list_pushf(arena, &ids, "%S/%S", group_kind, group_id);
+      str8_list_push(arena, &ids, group_entry);
       // Its ghosts (pins), as `.ref`s presenting their targets, after its
       // workspaces in data order.
       U64 ref_position = 1000000;
@@ -1103,12 +1126,13 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
         String8 ghost = uishell_sidebar_local_field(card, str8_lit("ghost"));
         String8 target_kind = uishell_sidebar_local_field(card, str8_lit("kind")), target_id = uishell_sidebar_local_field(card, str8_lit("entity"));
         // A pin missing its target still shows, as no longer present.
-        if(!str8_match(card->string, str8_lit("card"), 0) || !ghost.size) { continue; }
+        String8 ref_entry = push_str8f(arena, ".ref/%S", ghost);
+        if(!str8_match(card->string, str8_lit("card"), 0) || !ghost.size || uishell_sidebar_local_seen(&ids, ref_entry)) { continue; }
         String8 ref_set = push_str8f(arena, "%S,%S,\".position\":{\"value\":{\"type\":\"text\",\"value\":\"%I64u\"}}",
           uishell_sidebar_json_fact_ref(arena, str8_lit(".group"), group_kind, group_id),
           uishell_sidebar_json_fact_ref(arena, str8_lit(".target"), target_kind, target_id), ref_position++);
         str8_list_push(arena, &patches, uishell_sidebar_json_entity_patch(arena, str8_lit(".ref"), ghost, ref_set, str8_zero()));
-        str8_list_pushf(arena, &ids, ".ref/%S", ghost);
+        str8_list_push(arena, &ids, ref_entry);
       }
     }
   }
@@ -1137,7 +1161,12 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
   StringJoin join = {.sep = str8_lit("\n")};
   String8 all = str8_list_join(arena, &patches, &join);
   U64 hash = u64_hash_from_str8(all);
-  if(hash == state->local_hash) { scratch_end(scratch); return; }
+  if(hash == state->local_hash)
+  {
+    state->local_cfg_generation = cfg_change_gen(); state->local_topology_hash = state->topology_hash;
+    scratch_end(scratch);
+    return;
+  }
   U64 now = wheelhouse_ingress_now_ms();
   B32 ok = 1;
   for(String8Node *n = patches.first; n && ok; n = n->next)
@@ -1145,7 +1174,7 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
     char *error = 0;
     ok = uishell_sidebar_result(state, andamento_apply_patch_json(state->core, now, uishell_sidebar_text(n->string), &error), error);
   }
-  // Retract what is no longer published ("kind/id").
+  // Retract what is no longer published ("kind/id"; kinds have no '/').
   for(U64 i = 0; ok && i < state->local_published_count; i++)
   {
     B32 kept = 0;
@@ -1167,6 +1196,7 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
     for(String8Node *n = ids.first; n; n = n->next) { state->local_published[count++] = push_str8_copy(state->local_arena, n->string); }
     state->local_published_count = count;
     state->local_hash = hash;
+    state->local_cfg_generation = cfg_change_gen(); state->local_topology_hash = state->topology_hash;
     uishell_sidebar_refresh(state);
     rd_request_frame();
   }
