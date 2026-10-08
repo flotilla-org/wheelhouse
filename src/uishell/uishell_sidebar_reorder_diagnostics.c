@@ -93,6 +93,9 @@ typedef enum UIShell_ReorderMode
 }
 UIShell_ReorderMode;
 
+// The panel docking site that has the pointer while a local section renders.
+global char *uishell_sidebar_reorder_hot_site = "catchall_drop_site_%p";
+
 // Press on a row, move by `offset` or to a fraction down row `to_id` (from last
 // frame's layout), then release.
 internal UIShell_ReorderDrag
@@ -143,7 +146,7 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
     UIShell_RegsScope(.window = split->owner_cfg->id, .view = 0, .panel = split->owner_cfg->id)
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     {
-      ui_state->drop_hot_box_key = ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", split->owner_cfg);
+      ui_state->drop_hot_box_key = ui_key_from_stringf(ui_key_zero(), uishell_sidebar_reorder_hot_site, split->owner_cfg);
       String8 local_key = push_str8f(ui_build_arena(), ".section:%S", uishell_sidebar_local_field(pinned_area->parent, str8_lit("id")));
       UI_Box *view_parent;
       UI_Rect(pinned_rect) { view_parent = ui_build_box_from_key(UI_BoxFlag_Clip, ui_key_make(119168)); }
@@ -370,12 +373,17 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   }
 
   // An empty local section opens a row while a drag is over it, so it still
-  // shows an insertion line and takes the drop.
+  // shows an insertion line and takes the drop, even entered over the split
+  // cross.
   {
     CFG_Node *area = uishell_sidebar_local_new_group(window, str8_lit("Empty"));
     uishell_sidebar_publish_local(&state, &split);
     uishell_sidebar_refresh(&state);
+    // The pointer is over the panel's split cross, which is built before the
+    // View claims and covers most of a short list.
+    uishell_sidebar_reorder_hot_site = "drop_split_up_%p";
     UIShell_ReorderDrag empty = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(160, 640), str8_zero(), 0, UIShell_ReorderMode_Drag, area);
+    uishell_sidebar_reorder_hot_site = "catchall_drop_site_%p";
     CFG_Node *pin = cfg_node_child_from_string(area, str8_lit("card"));
     ReorderCheck(empty.ghost_target && dim_2f32(empty.ghost_line).x > 200 && empty.ghost_line.y0 > 620,
                  "an empty section shows an insertion line in its opened row");

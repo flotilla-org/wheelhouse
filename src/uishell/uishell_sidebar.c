@@ -2440,7 +2440,14 @@ uishell_sidebar_home_claim(UIShell_SidebarState *state, Rng2F32 rect, String8 pr
   state->home_build = ui_state->build_index;
   // The group's own centre docking site stands aside, as for a reorder.
   rd_state->drag_drop_local_panel = uishell_regs()->panel; rd_state->drag_drop_local_frame = rd_state->frame_index;
+  // The drop-site colours are barely visible; the target takes the accent, as
+  // insertion lines do (uishell_sidebar_drop_line).
+  Vec4F32 border = ui_color_from_name(str8_lit("selection"));
+  border.w = 1.f;
+  Vec4F32 fill = border;
+  fill.w = 0.12f;
   UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(rect) UI_CornerRadius(5.f)
+  DeferLoop(ui_push_border_color(border), ui_pop_border_color()) UI_BackgroundColor(fill)
   {
     ui_build_box_from_key(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating,
       ui_key_from_stringf(ui_key_zero(), local ? "sidebar_home_workspaces" : "sidebar_home_project"));

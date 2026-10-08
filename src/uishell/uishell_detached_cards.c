@@ -514,14 +514,18 @@ uishell_sidebar_pin_place(CFG_Node *area, CFG_Node *saved, U64 index)
 }
 
 // A sidebar View may claim a positioned drop unless another docking site has
-// the pointer. Its own panel's centre and catch-all sites don't count: they
-// stand aside once it claims (drag_drop_local_panel), and the catch-all,
-// built before the View, would otherwise always have the pointer first.
+// the pointer. Its own panel's centre, split and catch-all sites don't count:
+// they stand aside once it claims (drag_drop_local_panel), and being built
+// before the View, they'd otherwise have the pointer first, as the split
+// cross does over most of a short or empty list.
 internal B32
 uishell_sidebar_drop_claimable(CFG_Node *panel)
 {
   UI_Key hot = ui_drop_hot_key();
-  return ui_key_match(hot, ui_key_zero()) ||
+  char *splits[] = {"drop_split_up_%p", "drop_split_down_%p", "drop_split_left_%p", "drop_split_right_%p"};
+  B32 split = 0;
+  for(U64 i = 0; i < ArrayCount(splits); i++) { split |= ui_key_match(hot, ui_key_from_stringf(ui_key_zero(), splits[i], panel)); }
+  return split || ui_key_match(hot, ui_key_zero()) ||
     ui_key_match(hot, rd_panel_catchall_drop_site_key(panel)) ||
     ui_key_match(hot, rd_panel_center_drop_site_key(panel));
 }
