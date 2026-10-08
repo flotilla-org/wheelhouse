@@ -199,15 +199,12 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, AndamentoNode node, UI_Key sou
   scratch_end(scratch);
 }
 
+// Hovering `sig` opens the node's hover card after the delay. Any row may
+// offer it; only the node's home row is its source (card_source_at).
 internal void
-uishell_sidebar_card_source_at(UIShell_SidebarState *state, AndamentoNode node,
-                               UI_Signal sig, String8 context, B32 contains_current, U64 now)
+uishell_sidebar_card_hover_at(UIShell_SidebarState *state, AndamentoNode node,
+                              UI_Signal sig, String8 context, B32 contains_current, U64 now)
 {
-  for(UIShell_HoverCard *c = state->detached; c; c = c->next)
-  {
-    if(c->open && c->source_key.size && str8_match(c->source_key, uishell_sidebar_string(node.key), 0))
-    { c->source = sig.box->key; c->source_rect = sig.box->rect; }
-  }
   if(ui_any_ctx_menu_is_open() || !ui_hovering(sig) || state->row_drag_key.size) { return; }
   UIShell_HoverCard *card = &state->cards[0];
   if(card->focused || ui_key_match(card->dismissed, sig.box->key)) { return; }
@@ -233,6 +230,20 @@ uishell_sidebar_card_source_at(UIShell_SidebarState *state, AndamentoNode node,
   card->source_rect = sig.box->rect;
   card->departure = ui_state->mouse;
   rd_request_frame();
+}
+
+// The node's home row: it anchors the node's inline and detached cards, and
+// offers the hover card.
+internal void
+uishell_sidebar_card_source_at(UIShell_SidebarState *state, AndamentoNode node,
+                               UI_Signal sig, String8 context, B32 contains_current, U64 now)
+{
+  for(UIShell_HoverCard *c = state->detached; c; c = c->next)
+  {
+    if(c->open && c->source_key.size && str8_match(c->source_key, uishell_sidebar_string(node.key), 0))
+    { c->source = sig.box->key; c->source_rect = sig.box->rect; }
+  }
+  uishell_sidebar_card_hover_at(state, node, sig, context, contains_current, now);
 }
 
 internal void

@@ -1141,8 +1141,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(ghost != &cfg_nil_node && uishell_sidebar_pin_expanded(ghost), "pinning a card keeps it as a card");
       uishell_sidebar_ghost_set_expanded(ghost, 0);
       Temp ghost_scratch = scratch_begin(0, 0);
-      String8 row_suffix = push_str8f(ghost_scratch.arena, "###ghost_row_%I64u", ghost_id);
-      String8 expand_suffix = push_str8f(ghost_scratch.arena, "###ghost_expand_%I64u", ghost_id);
+      String8 row_suffix = push_str8f(ghost_scratch.arena, "###sidebar_row_ghost_%I64u", ghost_id);
+      String8 expand_suffix = push_str8f(ghost_scratch.arena, "###toggle_ghost_%I64u", ghost_id);
       String8 remove_suffix = push_str8f(ghost_scratch.arena, "###ghost_remove_%I64u", ghost_id);
       String8 card_suffix = push_str8f(ghost_scratch.arena, "###pinned_card_%I64u", ghost_id);
       Rng2F32 view_rect = r2f32p(0, 0, 320, 600);
@@ -1151,7 +1151,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       Vec2F32 expand_at = {0}, row_at = {0}, remove_at = {0};
       B32 row_seen = 0, card_before = 0, card_after = 0, marker = 0, collapse_control = 0;
       fixture.card_has_action = 0;
-      B32 queued = 0;
+      B32 queued = 0, hover_offered = 0;
+      uishell_sidebar_card_close(&fixture.cards[0]); fixture.cards[0].candidate = (AndamentoEntity){0};
       for(U32 frame = 0; frame < 10; frame++)
       {
         Vec2F32 at = frame == 1 || frame == 2 ? expand_at : frame >= 5 && frame <= 7 ? row_at : frame >= 8 ? remove_at : v2f32(-100, -100);
@@ -1189,12 +1190,15 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         }
         if(frame == 3 && cfg_node_from_id(ghost_id) != &cfg_nil_node)
         { uishell_sidebar_ghost_set_expanded(ghost, 0); }
+        if(frame == 7) { hover_offered = uishell_sidebar_card_entity_match(fixture.cards[0].candidate, uishell_sidebar_card_entity(entity)) ||
+          (fixture.cards[0].open && uishell_sidebar_card_entity_match(fixture.cards[0].path[0], uishell_sidebar_card_entity(entity))); }
       }
       uishell_sidebar_detached_finish(ws);
       CardCheck(row_seen && marker && !card_before, "a collapsed ghost shows its row and lives-elsewhere marker, not its card");
       CardCheck(card_after, "the row's disclosure expands the ghost into its card");
       CardCheck(collapse_control, "a pinned card's header can collapse it to its row");
       CardCheck(queued, "clicking a ghost row goes to its source");
+      CardCheck(hover_offered, "hovering a ghost row offers its subject's hover card");
       CardCheck(cfg_node_from_id(ghost_id) == &cfg_nil_node && !ghost_card->open, "× on a ghost row removes the ghost");
       CardCheck(uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(entity), 0) != ANDAMENTO_NONE, "removing a ghost leaves its source");
       fixture.card_has_action = 0;

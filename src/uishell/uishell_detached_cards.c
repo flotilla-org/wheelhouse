@@ -949,68 +949,44 @@ uishell_sidebar_ghost_row(UIShell_SidebarState *state, RD_WindowState *ws, UIShe
   AndamentoNode node = {0};
   B32 present = uishell_sidebar_card_find(state, c->path[c->depth-1], &node) != ANDAMENTO_NONE;
   String8 status = present ? uishell_sidebar_chip_status(state, node) : str8_zero();
-  B32 ended = str8_match(status, str8_lit("ended"), 0);
   String8 label = present ? uishell_sidebar_string(node.label) : cfg_node_child_from_string(saved, str8_lit("label"))->first->string;
   if(!label.size) { label = uishell_sidebar_string(c->path[c->depth-1].id); }
   B32 expanded = uishell_sidebar_pin_expanded(saved);
-  UI_Box *slot;
-  UI_PrefWidth(ui_px(width, 1)) UI_PrefHeight(ui_px(row_height, 1)) UI_ChildLayoutAxis(Axis2_X)
-  { slot = ui_build_box_from_stringf(0, "###ghost_slot_%I64u", saved->id); }
+  // The same row as the subject's home row, marked as a reference (↗).
+  UIShell_SidebarRow r = {.node = node, .present = present, .key = push_str8f(scratch.arena, "ghost_%I64u", saved->id),
+    .text = label, .status = status, .height = row_height, .width = width, .indent = 0.3f,
+    .disclosure = 1, .expanded = expanded, .clickable = 1, .reference = 1};
+  if(!present) { r.node.entity_kind = c->path[c->depth-1].kind; }
+  uishell_sidebar_row_begin(state, &r);
+  uishell_sidebar_row_end(state, &r);
+  UI_Box *slot = r.slot;
+  UI_Signal row_sig = r.row_sig, close_sig = {0};
+  if(ui_clicked(r.toggle)) { uishell_sidebar_ghost_set_expanded(saved, !expanded); }
   B32 engaged = contains_2f32(slot->rect, ui_mouse()) && !ui_any_ctx_menu_is_open() && !rd_drag_is_active();
   UI_Key menu_key = ui_key_from_stringf(slot->key, "ghost_menu");
-  UI_Signal row_sig = {0}, close_sig = {0};
-  UI_Parent(slot) UI_PrefHeight(ui_pct(1, 1))
+  ui_spacer(ui_px(4.f, 1));
+  UI_PrefWidth(ui_px(margin, 1)) UI_PrefHeight(ui_pct(1, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(3.f)
   {
-    ui_spacer(ui_px(4.f, 1));
-    UI_Box *column;
-    UI_ChildLayoutAxis(Axis2_Y) UI_PrefWidth(ui_pct(1, 0))
-    { column = ui_build_box_from_stringf(0, "###ghost_column_%I64u", saved->id); }
-    UI_Parent(column)
+    if(engaged || ui_key_match(state->hold_key, ui_key_from_stringf(slot->key, "###ghost_remove_%I64u", saved->id)))
     {
-      ui_spacer(ui_px(2.f, 1));
-      UI_Box *row;
-      UI_PrefHeight(ui_px(row_height-4.f, 1)) UI_CornerRadius(3.f) UI_ChildLayoutAxis(Axis2_X)
+      UI_Column UI_PrefHeight(ui_px(row_height, 1))
       {
-        row = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
-          "###ghost_row_%I64u", saved->id);
+        ui_spacer(ui_px(2.f, 1));
+        UI_PrefHeight(ui_px(row_height-4.f, 1))
+        { close_sig = uishell_sidebar_button(push_str8f(scratch.arena, "×###ghost_remove_%I64u", saved->id)); }
       }
-      UI_Parent(row) UI_PrefHeight(ui_pct(1, 1))
-      {
-        ui_spacer(ui_em(0.3f, 1));
-        if(ui_clicked(uishell_sidebar_disclosure(expanded, push_str8f(scratch.arena, "###ghost_expand_%I64u", saved->id))))
-        { uishell_sidebar_ghost_set_expanded(saved, !expanded); }
-        if(ended || !present) { ui_set_next_text_color(uishell_sidebar_ended_color()); }
-        UI_PrefWidth(ui_pct(1, 0)) { ui_label(label); }
-        // Marks a reference that lives elsewhere, not a row in its home.
-        UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
-        { ui_label(str8_lit("↗")); }
-        UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
-        { ui_label(present ? uishell_sidebar_status_mark(node, status) : str8_lit("?")); }
-      }
-      // After its children, so the disclosure gets its own clicks.
-      row_sig = ui_signal_from_box(row);
     }
-    ui_spacer(ui_px(4.f, 1));
-    UI_PrefWidth(ui_px(margin, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(3.f)
-    {
-      if(engaged || ui_key_match(state->hold_key, ui_key_from_stringf(slot->key, "###ghost_remove_%I64u", saved->id)))
-      {
-        UI_Column UI_PrefHeight(ui_px(row_height, 1))
-        {
-          ui_spacer(ui_px(2.f, 1));
-          UI_PrefHeight(ui_px(row_height-4.f, 1))
-          { close_sig = uishell_sidebar_button(push_str8f(scratch.arena, "×###ghost_remove_%I64u", saved->id)); }
-        }
-      }
-      else { ui_spacer(ui_px(margin, 1)); }
-    }
+    else { ui_spacer(ui_px(margin, 1)); }
   }
-  if(ui_hovering(row_sig)) UI_Tooltip
+  ui_pop_parent(); // slot
+  // A present subject offers its hover card, as its home row does, without
+  // becoming its home: inline and detached cards stay anchored there.
+  if(present) { uishell_sidebar_card_hover_at(state, node, row_sig, str8_zero(), 0, now_time_us()); }
+  else if(ui_hovering(row_sig)) UI_Tooltip
   {
     ui_state->tooltip_anchor_key = row_sig.box->key;
     ui_label(label);
-    UI_TagF("weak")
-    { ui_label(present ? str8_lit("Pinned reference; it lives elsewhere. Click to go to it.") : str8_lit("No longer present")); }
+    UI_TagF("weak") { ui_label(str8_lit("No longer present")); }
   }
   if(close_sig.box && ui_hovering(close_sig) && !ui_dragging(close_sig)) UI_Tooltip
   {
