@@ -119,12 +119,25 @@ uishell_sidebar_card_icon_button(String8 glyph, String8 key, String8 description
 }
 
 internal void
-uishell_sidebar_card_panel_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
+uishell_sidebar_drag_panel_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
 {
   RD_WindowState *ws = rd_window_state_from_cfg__existing(cfg_node_from_id(rd_state->drag_drop_regs->window));
-  if(ws == &rd_nil_window_state || !ws->sidebar || !ws->sidebar->drag_card) { return; }
-  ws->sidebar->card_drop_panel = destination;
-  ws->sidebar->card_drop_direction = direction;
+  if(ws == &rd_nil_window_state || !ws->sidebar || (!ws->sidebar->drag_card && !ws->sidebar->row_drag_key.size)) { return; }
+  ws->sidebar->drop_panel = destination;
+  ws->sidebar->drop_direction = direction;
+}
+
+// Every sidebar drag, of a card or a row, is one creation drag of a pinned
+// area: RAD's docking sites can make a new area, and pinned areas and the
+// row's sibling run claim positioned drops. uishell_sidebar_drag_finish
+// resolves the release.
+internal void
+uishell_sidebar_drag_begin(RD_WindowState *ws)
+{
+  ws->sidebar->drop_panel = 0; ws->sidebar->drop_area = 0; ws->sidebar->reorder_build = 0;
+  UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = 0, .tab = 0) { rd_drag_begin(UIShell_ContextRegSlot_View); }
+  rd_state->drag_drop_creation_name = str8_lit("pinned_cards");
+  rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
 }
 
 // A card drags from its grip or its title line, past the shared threshold
@@ -141,10 +154,8 @@ uishell_sidebar_card_drag_from(UIShell_HoverCard *card, UI_Signal drag)
       RD_WindowState *ws = rd_window_state_from_os_handle(ui_state->window);
       if(ws != &rd_nil_window_state && ws->sidebar)
       {
-        ws->sidebar->drag_card = card; ws->sidebar->card_drop_panel = 0;
-        UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = 0, .tab = 0) { rd_drag_begin(UIShell_ContextRegSlot_View); }
-        rd_state->drag_drop_creation_name = str8_lit("pinned_cards");
-        rd_state->drag_drop_commit = uishell_sidebar_card_panel_drop;
+        ws->sidebar->drag_card = card;
+        uishell_sidebar_drag_begin(ws);
       }
     }
     card->moving = 1;
@@ -427,6 +438,8 @@ uishell_sidebar_pin_add(UIShell_SidebarState *state, CFG_Node *area, U64 index, 
   return saved;
 }
 
+internal CFG_Node *uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area);
+
 internal CFG_Node *
 uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_area)
 {
@@ -458,12 +471,34 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
     { if(c->saved == saved->id) { c->scroll = 0; c->focused = 1; } }
     return saved;
   }
-  CFG_Node *destination = cfg_node_from_id(state->card_drop_panel);
+  CFG_Node *area = uishell_sidebar_pin_area(ws, new_area);
+  if(area == &cfg_nil_node) { return &cfg_nil_node; }
+  if(saved != &cfg_nil_node)
+  {
+    // A center drop onto its current area reveals the pin in place. Passing
+    // the last child as both predecessor and inserted node corrupts the list.
+    if(saved->parent != area) { cfg_node_insert_child(rd_state->cfg, area, area->last, saved); }
+    state->pin_reveal = saved->id;
+    return saved;
+  }
+  return uishell_sidebar_pin_add(state, area, max_U64, entity, card->retained_label, card->source_key, 0);
+}
+
+// The pinned area a pin goes to: with `new_area`, the one at the drag's
+// docking site (joining a centre drop's existing area), or a new sidebar
+// panel; otherwise the window's first area, or a new panel. Nil when the
+// destination can't take one.
+internal CFG_Node *
+uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area)
+{
+  UIShell_SidebarState *state = ws->sidebar;
+  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  CFG_Node *destination = cfg_node_from_id(state->drop_panel);
   CFG_Node *area = new_area ? &cfg_nil_node : uishell_sidebar_pin_find(window, (AndamentoEntity){0}, 1);
   if(new_area && destination != &cfg_nil_node)
   {
     if(!rd_dock_can_create(str8_lit("pinned_cards"), destination)) { return &cfg_nil_node; }
-    if(state->card_drop_direction == Dir2_Invalid)
+    if(state->drop_direction == Dir2_Invalid)
     {
       for(CFG_Node *v = destination->first; v != &cfg_nil_node; v = v->next)
       { if(str8_match(v->string, str8_lit("pinned_cards"), 0)) { area = v; break; } }
@@ -473,10 +508,10 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
       area = cfg_node_new(rd_state->cfg, destination, str8_lit("pinned_cards"));
       uishell_sidebar_pin_set_field(area, str8_lit("label"), str8_lit("Pinned"));
       cfg_node_new(rd_state->cfg, area, str8_lit("selected"));
-      if(state->card_drop_direction != Dir2_Invalid)
+      if(state->drop_direction != Dir2_Invalid)
       {
         uishell_cmd("split_panel", .window = ws->cfg_id, .dst_panel = destination->id,
-          .panel = destination->id, .view = area->id, .dir2 = state->card_drop_direction);
+          .panel = destination->id, .view = area->id, .dir2 = state->drop_direction);
       }
     }
     // Keep the allocation selected by the same split geometry shown during drag.
@@ -537,15 +572,7 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
     uishell_sidebar_pin_set_field(area, str8_lit("label"), str8_lit("Pinned"));
     cfg_node_new(rd_state->cfg, area, str8_lit("selected"));
   }
-  if(saved != &cfg_nil_node)
-  {
-    // A center drop onto its current area reveals the pin in place. Passing
-    // the last child as both predecessor and inserted node corrupts the list.
-    if(saved->parent != area) { cfg_node_insert_child(rd_state->cfg, area, area->last, saved); }
-    state->pin_reveal = saved->id;
-    return saved;
-  }
-  return uishell_sidebar_pin_add(state, area, max_U64, entity, card->retained_label, card->source_key, 0);
+  return area;
 }
 
 internal size_t
@@ -663,56 +690,98 @@ uishell_sidebar_detached_bounds(RD_WindowState *ws)
 }
 
 internal void
-uishell_sidebar_card_drag_finish(RD_WindowState *ws)
+uishell_sidebar_drag_clear(UIShell_SidebarState *state)
+{
+  if(state->drag_card) { state->drag_card->moving = state->drag_card->drag_released = 0; }
+  state->drag_card = 0;
+  state->row_drag_key = state->row_drag_loop = state->row_drag_label = str8_zero();
+  state->row_drag_entity = (AndamentoEntity){0};
+  state->row_drag_released = 0;
+  state->drop_panel = 0; state->drop_area = 0; state->reorder_build = 0;
+}
+
+// A row's release in its sibling run saves the run's full new order, which
+// render applies (it owns the snapshot).
+internal void
+uishell_sidebar_reorder_commit(UIShell_SidebarState *state)
+{
+  Arena *arena = ui_build_arena();
+  AndamentoEntity *all = 0;
+  U64 total = uishell_sidebar_siblings(arena, state->snapshot, state->row_drag_loop, &all);
+  AndamentoEntity *order = push_array(arena, AndamentoEntity, total+1);
+  U64 n = 0;
+  for(U64 k = 0; k < total; k++)
+  {
+    if(uishell_sidebar_card_entity_match(all[k], state->row_drag_entity)) { continue; }
+    B32 here = uishell_sidebar_card_entity_match(all[k], state->reorder_anchor);
+    if(here && !state->reorder_after) { order[n++] = state->row_drag_entity; }
+    order[n++] = all[k];
+    if(here && state->reorder_after) { order[n++] = state->row_drag_entity; }
+  }
+  if(n < total) { order[n++] = state->row_drag_entity; }
+  for(U64 k = 0; k < n; k++) { order[k] = uishell_sidebar_card_entity_copy(arena, order[k]); }
+  state->order_pending = 1;
+  state->order_loop = push_str8_copy(arena, state->row_drag_loop);
+  state->order = order; state->order_count = n;
+}
+
+// Resolves a sidebar drag's release, of a card or a row, against one set of
+// targets, in order (drag-model.md, drop table):
+//   - a pinned area's insertion point: a ghost there (a row as a row, a card
+//     as a card), or a pinned card's own ghost moves there;
+//   - a card back over its source row: inline;
+//   - a docking site: a new pinned area holding the ghost;
+//   - a row over its sibling run: reorder.
+// Otherwise a card floats and a row snaps back.
+internal void
+uishell_sidebar_drag_finish(RD_WindowState *ws)
 {
   UIShell_SidebarState *state = ws->sidebar;
   UIShell_HoverCard *card = state->drag_card;
-  if(!card) { return; }
-  if(!card->open || (!rd_drag_is_active() && !card->drag_released && !state->card_drop_panel))
+  B32 row = state->row_drag_key.size != 0;
+  if(!card && !row) { return; }
+  B32 released = row ? state->row_drag_released : card->drag_released;
+  if((card && !card->open) || (!rd_drag_is_active() && !released && !state->drop_panel))
   {
-    if(rd_state->drag_drop_commit == uishell_sidebar_card_panel_drop && rd_state->drag_drop_regs->window == ws->cfg_id)
+    if(rd_state->drag_drop_commit == uishell_sidebar_drag_panel_drop && rd_state->drag_drop_regs->window == ws->cfg_id)
     { rd_drag_kill(); }
-    card->moving = card->drag_released = 0;
-    state->drag_card = 0; state->card_drop_panel = 0;
+    uishell_sidebar_drag_clear(state);
     return;
   }
-  if(rd_state->drag_drop_state == RD_DragDropState_Dropping) { card->drag_released = 1; }
-  if(!card->drag_released) { return; }
-  // A pinned area's insertion point takes the card: a pinned card moves its
-  // own ghost there, and any other card adds one there as a card.
-  CFG_Node *drop_area = uishell_sidebar_drop_area(state);
-  if(drop_area != &cfg_nil_node)
+  if(rd_state->drag_drop_state == RD_DragDropState_Dropping) { released = 1; }
+  if(!released) { return; }
+  rd_drag_kill();
+  rd_request_frame();
+  AndamentoEntity entity = card ? card->path[card->depth-1] : state->row_drag_entity;
+  String8 label = card ? card->retained_label : state->row_drag_label;
+  String8 source = card ? card->source_key : state->row_drag_key;
+  CFG_Node *own = card && card->saved ? cfg_node_from_id(card->saved) : &cfg_nil_node;
+  CFG_Node *area = uishell_sidebar_drop_area(state);
+  U64 index = state->drop_index;
+  UIShell_CardPlacement placement = card ? uishell_sidebar_card_drag_target(ws, card, ui_mouse()) : UIShell_CardPlacement_Float;
+  B32 docked = area == &cfg_nil_node && placement != UIShell_CardPlacement_Inline && state->drop_panel;
+  if(docked) { area = uishell_sidebar_pin_area(ws, 1); index = max_U64; }
+  if(area != &cfg_nil_node)
   {
-    rd_drag_kill();
-    state->drag_card = 0; state->card_drop_panel = 0; state->drop_area = 0;
-    card->drag_released = card->moving = 0;
-    CFG_Node *own = card->saved ? cfg_node_from_id(card->saved) : &cfg_nil_node;
-    if(own != &cfg_nil_node) { uishell_sidebar_pin_place(drop_area, own, state->drop_index); state->pin_reveal = own->id; }
+    if(own != &cfg_nil_node) { uishell_sidebar_pin_place(area, own, index); state->pin_reveal = own->id; }
     else
     {
-      uishell_sidebar_pin_add(state, drop_area, state->drop_index, card->path[card->depth-1], card->retained_label, card->source_key, 0);
-      uishell_sidebar_card_close(card);
+      uishell_sidebar_pin_add(state, area, index, entity, label, source, row);
+      if(card) { uishell_sidebar_card_close(card); }
     }
-    rd_request_frame();
-    return;
   }
-  UIShell_CardPlacement placement = uishell_sidebar_card_drag_target(ws, card, ui_mouse());
-  if(placement != UIShell_CardPlacement_Inline)
-  { placement = state->card_drop_panel ? UIShell_CardPlacement_Pinned : UIShell_CardPlacement_Float; }
-  rd_drag_kill();
-  state->drag_card = 0;
-  card->drag_released = 0;
-  // A site creates or joins its exact panel; an unmatched release floats.
-  card->moving = 0;
-  uishell_sidebar_card_request(card, placement);
-  if(placement == UIShell_CardPlacement_Pinned)
+  else if(row)
   {
-    CFG_Node *saved = uishell_sidebar_card_pin(ws, card, 1);
-    if(saved != &cfg_nil_node && card->saved != saved->id) { uishell_sidebar_card_close(card); }
-    card->move_requested = 0;
+    if(state->reorder_build && state->reorder_build+1 >= ui_state->build_index) { uishell_sidebar_reorder_commit(state); }
   }
-  else { uishell_sidebar_detached_apply(ws, card); }
-  state->card_drop_panel = 0;
+  else
+  {
+    if(placement != UIShell_CardPlacement_Inline) { placement = UIShell_CardPlacement_Float; }
+    card->moving = card->drag_released = 0;
+    uishell_sidebar_card_request(card, placement);
+    uishell_sidebar_detached_apply(ws, card);
+  }
+  uishell_sidebar_drag_clear(state);
 }
 
 internal void

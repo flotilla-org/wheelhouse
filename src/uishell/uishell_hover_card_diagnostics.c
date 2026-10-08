@@ -14,14 +14,14 @@ uishell_hover_card_test_center_drop(RD_WindowState *ws, UIShell_HoverCard *card,
   UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = 0)
   { rd_drag_begin(UIShell_ContextRegSlot_View); }
   rd_state->drag_drop_creation_name = str8_lit("pinned_cards");
-  rd_state->drag_drop_commit = uishell_sidebar_card_panel_drop;
+  rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
   rd_state->drag_drop_state = RD_DragDropState_Dropping;
   if(rd_drag_drop()) { rd_panel_drag_drop(area->parent->id, Dir2_Invalid, area->id); }
   UI_EventList events = {0}; UI_AnimationInfo animation = {0};
   UI_IconInfo icons = ws->ui->icon_info;
   ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
   ui_state->mouse = v2f32(500, 100);
-  uishell_sidebar_card_drag_finish(ws);
+  uishell_sidebar_drag_finish(ws);
   uishell_sidebar_detached_finish(ws);
   ui_end_build();
 }
@@ -834,7 +834,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // Raw Escape is consumed by the card before the generic UI cancel slot.
     floating->moving = floating->focused = 1; fixture.drag_card = floating;
     UIShell_RegsScope(.window = ws->cfg_id) { rd_drag_begin(UIShell_ContextRegSlot_View); }
-    rd_state->drag_drop_creation_name = str8_lit("pinned_cards"); rd_state->drag_drop_commit = uishell_sidebar_card_panel_drop;
+    rd_state->drag_drop_creation_name = str8_lit("pinned_cards"); rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
     CFG_ID placement_before = floating->saved;
     WM_Event cancel_drag = {.kind = WM_EventKind_Press, .key = WM_Key_Esc};
     CardCheck(uishell_sidebar_card_wm_event(ws, &cancel_drag) && floating->open && !floating->moving &&
@@ -856,7 +856,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       "normal tab drag after Escape queues its move without the cancelled creation callback");
     rd_drag_kill();
     UIShell_RegsScope(.window = ws->cfg_id) { rd_drag_begin(UIShell_ContextRegSlot_View); }
-    rd_state->drag_drop_creation_name = str8_lit("pinned_cards"); rd_state->drag_drop_commit = uishell_sidebar_card_panel_drop;
+    rd_state->drag_drop_creation_name = str8_lit("pinned_cards"); rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
     rd_drag_kill_from_window(0);
     CardCheck(rd_drag_is_active() && rd_state->drag_drop_commit, "teardown of another window preserves the drag owner");
     rd_drag_kill_from_window(ws->cfg_id);
@@ -1115,7 +1115,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       test->mouse = pointer;
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
       { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
-      uishell_sidebar_card_drag_finish(ws);
+      uishell_sidebar_drag_finish(ws);
       ui_end_build();
       if(frame == 0)
       {
@@ -1294,7 +1294,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         scratch_end(panel_scratch);
         fixture.core = drag_core;
       }
-      uishell_sidebar_card_drag_finish(ws);
+      uishell_sidebar_drag_finish(ws);
       ui_end_build();
       if(frame == 0)
       {
@@ -1339,7 +1339,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         test->mouse = pointer;
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
-        uishell_sidebar_card_drag_finish(ws);
+        uishell_sidebar_drag_finish(ws);
         ui_end_build();
         if(frame == 0)
         {
@@ -1443,7 +1443,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         test->mouse = pointer;
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
-        uishell_sidebar_card_drag_finish(ws);
+        uishell_sidebar_drag_finish(ws);
         ui_end_build();
         if(frame == 0)
         {
@@ -1630,7 +1630,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       UIShell_RegsScope(.window = window->id, .view = 0, .panel = 0)
       { rd_drag_begin(UIShell_ContextRegSlot_View); }
       rd_state->drag_drop_creation_name = str8_lit("pinned_cards");
-      rd_state->drag_drop_commit = uishell_sidebar_card_panel_drop;
+      rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
       CardCheck(rd_panel_drag_target(&cfg_nil_node, destination, 320), "creation drag uses the registered panel validity checker");
       rd_state->drag_drop_state = RD_DragDropState_Dropping;
       UIShell_CmdNode *before_drop = rd_state->cmds[0].last;
@@ -1638,7 +1638,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       UI_EventList drop_events = {0};
       ui_begin_build(ws->os, &drop_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       test->mouse = v2f32(500, 100);
-      uishell_sidebar_card_drag_finish(ws);
+      uishell_sidebar_drag_finish(ws);
       ui_end_build();
       CFG_Node *entry = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0);
       CFG_Node *area = entry->parent;
@@ -1750,7 +1750,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
       fixture.drag_card = original; original->moving = original->drag_released = 1;
       fixture.drop_area = area->id; fixture.drop_index = 1; fixture.drop_build = test->build_index; fixture.drop_rect = r2f32p(-1e6, -1e6, 1e6, 1e6);
-      uishell_sidebar_card_drag_finish(ws);
+      uishell_sidebar_drag_finish(ws);
       CFG_Node *order[3] = {&cfg_nil_node, &cfg_nil_node, &cfg_nil_node}; U64 n = 0;
       for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next)
       { if(str8_match(c->string, str8_lit("card"), 0) && n < 3) { order[n++] = c; } }
@@ -1762,7 +1762,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       UIShell_HoverCard *first = uishell_sidebar_saved_card(ws, pins[0]);
       fixture.drag_card = first; first->moving = first->drag_released = 1;
       fixture.drop_area = area->id; fixture.drop_index = 3; fixture.drop_build = test->build_index;
-      uishell_sidebar_card_drag_finish(ws);
+      uishell_sidebar_drag_finish(ws);
       CardCheck(area->last == pins[0] && cfg_node_from_id(pins[0]->id) == pins[0] && first->open,
         "a pinned card dragged to an insertion point moves its own ghost there");
       // A stale claim (two builds old) doesn't capture a release.

@@ -39,12 +39,16 @@ gains an id.
 Pinning a card keeps the card. A pinned card's header disclosure collapses it to
 a compact ghost row: the subject's live label and status, a ↗ marker for a
 reference that lives elsewhere, and a disclosure that restores the card.
-A dragged sidebar row lifts and follows the pointer. Over a pinned area's list, a
-dragged row or card shows an insertion line between pins, and docking's centre
-and catch-all sites stand aside (its edge sites still split). Releasing there
-adds a ghost at that point: a row as a row, a card as a card; a pinned card
-moves its own ghost there. The source row stays in its home and its siblings
-keep their order.
+Rows and cards are one sidebar drag (`uishell_sidebar_drag_begin` and
+`uishell_sidebar_drag_finish`): the same creation drag of a pinned area, with the
+same targets. A dragged row lifts as a translucent copy above the sidebar; a
+card moves itself. Over a pinned area's list, either shows an insertion line
+between pins, and docking's centre and catch-all sites stand aside (its edge
+sites still split). Releasing there adds a ghost at that point: a row as a row,
+a card as a card; a pinned card moves its own ghost there. A docking site makes
+a new pinned area holding the ghost, for a row as for a card. Over its own
+sibling run a row reorders instead; elsewhere a row snaps back and a card
+floats. The source row stays in its home and its siblings keep their order.
 Clicking the row goes to the source. The × in the row's right margin removes the
 pin and never its source; holding it or right-clicking the row opens Go to
 source, Show as card or row, and Remove pin.

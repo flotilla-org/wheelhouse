@@ -280,7 +280,7 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
   {
     rd_drag_kill();
     state->drag_card->moving = state->drag_card->drag_released = state->drag_card->focused = 0;
-    state->drag_card = 0; state->card_drop_panel = 0;
+    state->drag_card = 0; state->drop_panel = 0;
     state->card_escape_down = 1; ws->ui->hover_card_focus = 0;
     rd_request_frame();
     return 1;
@@ -727,11 +727,15 @@ uishell_sidebar_card_target_y(UIShell_HoverCard *card, F32 height, Rng2F32 windo
   return Clamp(window.y0+10, y, window.y1-height-10);
 }
 
+internal void uishell_sidebar_row_lift(UIShell_SidebarState *state);
+
 internal void
 uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32 sidebar_visible)
 {
   UIShell_SidebarState *state = ws->sidebar;
   if(!state) { return; }
+  // Built first, so it paints over the cards and the Views.
+  uishell_sidebar_row_lift(state);
   // Abandon unconsumed previous-frame intent before rendering any cards.
   // Pinned and inline Views render later; all current intent is dispatched
   // together after the window's Views finish, before the build arena advances.
@@ -955,7 +959,7 @@ uishell_sidebar_cards_dispatch(RD_WindowState *ws)
 {
   UIShell_SidebarState *state = ws->sidebar;
   if(!state) { return; }
-  uishell_sidebar_card_drag_finish(ws);
+  uishell_sidebar_drag_finish(ws);
   size_t pending = uishell_sidebar_card_take_action(state);
   if(pending != ANDAMENTO_NONE && state->core)
   {

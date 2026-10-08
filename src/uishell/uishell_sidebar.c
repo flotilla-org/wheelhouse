@@ -117,10 +117,19 @@ struct UIShell_SidebarState
   UIShell_HoverCard *detached;
   CFG_ID pin_before, pin_reveal;
   UIShell_HoverCard *drag_card;
-  // Row reorder: the dragged row and its sibling run's loop key, both copied.
+  // One sidebar drag at a time, of a card (drag_card) or of a row: the row's
+  // key, sibling run, entity, label and rect, copied when it starts.
   Arena *row_drag_arena;
-  String8 row_drag_key, row_drag_loop;
+  String8 row_drag_key, row_drag_loop, row_drag_label;
+  AndamentoEntity row_drag_entity;
+  Rng2F32 row_drag_rect;
   B32 row_drag_released;
+  // The reorder a row drag claimed over its sibling run: before or after
+  // the anchor sibling (copied into its own arena), and the build.
+  Arena *reorder_arena;
+  AndamentoEntity reorder_anchor;
+  B32 reorder_after;
+  U64 reorder_build;
   // The positioned drop a pinned area claimed for a row or card drag: the
   // area, the insertion index among its pins, and the build that claimed it.
   CFG_ID drop_area;
@@ -134,8 +143,9 @@ struct UIShell_SidebarState
   String8 order_loop;
   AndamentoEntity *order;
   U64 order_count;
-  CFG_ID card_drop_panel;
-  Dir2 card_drop_direction;
+  // The docking site a sidebar drag was dropped on (drag_panel_drop).
+  CFG_ID drop_panel;
+  Dir2 drop_direction;
   U64 pin_cfg_generation;
   Rng2F32 rect;
   B32 card_escape_down;
@@ -296,6 +306,7 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     state->display_wakeup = 0;
     if(state->display_restore_arena) { arena_release(state->display_restore_arena); }
     if(state->row_drag_arena) { arena_release(state->row_drag_arena); state->row_drag_arena = 0; }
+    if(state->reorder_arena) { arena_release(state->reorder_arena); state->reorder_arena = 0; }
     if(state->placement_arena) { arena_release(state->placement_arena); state->placement_arena = 0; }
     state->placement_snapshot = 0;
     state->placement_regions = 0;
@@ -1354,8 +1365,8 @@ struct UIShell_RowDragSibling
   Rng2F32 row, extent;
 };
 
-// Rows drag from their body past the shared threshold. The UIKey slot keeps
-// docking targets out of it; render places and commits the drop.
+// Rows drag from their body past the shared threshold, as the same sidebar
+// drag as cards (uishell_sidebar_drag_begin); render claims a reorder.
 internal void
 uishell_sidebar_row_drag_from(UIShell_SidebarState *state, RD_WindowState *ws,
                               AndamentoNode node, U64 node_index, UI_Signal sig)
@@ -1374,8 +1385,11 @@ uishell_sidebar_row_drag_from(UIShell_SidebarState *state, RD_WindowState *ws,
       arena_clear(state->row_drag_arena);
       state->row_drag_key = push_str8_copy(state->row_drag_arena, key);
       state->row_drag_loop = push_str8_copy(state->row_drag_arena, loop);
+      state->row_drag_label = push_str8_copy(state->row_drag_arena, uishell_sidebar_string(node.label));
+      state->row_drag_entity = uishell_sidebar_card_entity_copy(state->row_drag_arena, (AndamentoEntity){node.entity_kind, node.entity_id});
+      state->row_drag_rect = sig.box->rect;
       state->row_drag_released = 0;
-      UIShell_RegsScope(.window = ws->cfg_id, .ui_key = sig.box->key) { rd_drag_begin(UIShell_ContextRegSlot_UIKey); }
+      uishell_sidebar_drag_begin(ws);
       UIShell_HoverCard *card = &state->cards[0];
       if(card->open && card->placement == UIShell_CardPlacement_Transient && !card->focused)
       { uishell_sidebar_card_close(card); }
@@ -1796,16 +1810,9 @@ uishell_sidebar_section_hosts_chrome(String8 key)
   return str8_match(key, str8_lit("andamento.unplaced-workspaces"), 0);
 }
 
-internal B32
-uishell_sidebar_entity_match(AndamentoEntity a, AndamentoEntity b)
-{
-  return str8_match(uishell_sidebar_string(a.kind), uishell_sidebar_string(b.kind), 0) &&
-    str8_match(uishell_sidebar_string(a.id), uishell_sidebar_string(b.id), 0);
-}
-
 // The pointer picks the gap between siblings by their rows' midpoints. Within
-// the run's extent, a gap that moves the row shows an insertion line; a
-// release there saves the run's full new order. Anywhere else snaps back.
+// the run's extent, a gap that moves the row shows an insertion line and
+// claims the reorder for uishell_sidebar_drag_finish.
 internal void
 uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
                          UIShell_RowDragSibling *siblings, U64 count, F32 row_height)
@@ -1819,73 +1826,48 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
   }
   Rng2F32 span = r2f32p(siblings[0].extent.x0, siblings[0].extent.y0-row_height*0.5f,
                         siblings[0].extent.x1, siblings[count-1].extent.y1+row_height*0.5f);
-  // Over a pinned area (claimed this build or the last), the drop is a ghost
-  // at the area's insertion point.
-  CFG_Node *ghost_area = uishell_sidebar_drop_area(state);
-  B32 moves = ghost_area == &cfg_nil_node && source < count && contains_2f32(span, mouse) && target != source && target != source+1;
-  // The row lifts: a translucent copy follows the pointer while it drags.
-  if(source < count)
+  // A pinned area's insertion point (claimed this build or the last) wins.
+  B32 moves = uishell_sidebar_drop_area(state) == &cfg_nil_node && source < count &&
+    contains_2f32(span, mouse) && target != source && target != source+1;
+  state->reorder_build = 0;
+  if(!moves) { return; }
+  AndamentoNode anchor = nodes[siblings[target < count ? target : count-1].index];
+  if(!state->reorder_arena) { state->reorder_arena = arena_alloc(); }
+  arena_clear(state->reorder_arena);
+  state->reorder_anchor = uishell_sidebar_card_entity_copy(state->reorder_arena, (AndamentoEntity){anchor.entity_kind, anchor.entity_id});
+  state->reorder_after = target == count;
+  state->reorder_build = ui_state->build_index;
+  // The run's own centre docking site stands aside, as for a pinned area.
+  rd_state->drag_drop_local_panel = uishell_regs()->panel; rd_state->drag_drop_local_frame = rd_state->frame_index;
+  F32 y = target == 0 ? siblings[0].extent.y0-1.f :
+    target == count ? siblings[count-1].extent.y1+1.f :
+    (siblings[target-1].extent.y1+siblings[target].extent.y0)*0.5f;
+  Rng2F32 line = r2f32p(span.x0+4.f, y-1.f, span.x1-4.f, y+1.f);
+  UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(line) UI_CornerRadius(1.f)
+  { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")); }
+}
+
+// The dragged row lifts: a translucent copy follows the pointer. It builds
+// with the cards, ahead of the Views, so it paints above them.
+internal void
+uishell_sidebar_row_lift(UIShell_SidebarState *state)
+{
+  if(!state->row_drag_key.size) { return; }
+  Rng2F32 lift = state->row_drag_rect;
+  lift = r2f32(add_2f32(lift.p0, ui_drag_delta()), add_2f32(lift.p1, ui_drag_delta()));
+  UI_Box *box;
+  UI_Parent(ui_state->root) UI_Rect(lift) UI_CornerRadius(3.f) UI_Transparency(0.25f)
+  UI_BackgroundColor(uishell_sidebar_selection_fill(0)) UI_ChildLayoutAxis(Axis2_X)
   {
-    AndamentoNode lifted = nodes[siblings[source].index];
-    Rng2F32 lift = siblings[source].row;
-    lift = r2f32(add_2f32(lift.p0, ui_drag_delta()), add_2f32(lift.p1, ui_drag_delta()));
-    UI_Parent(ui_state->root) UI_Rect(lift) UI_CornerRadius(3.f) UI_Transparency(0.25f)
-    UI_BackgroundColor(uishell_sidebar_selection_fill(0)) UI_ChildLayoutAxis(Axis2_X)
-    {
-      UI_Box *box = ui_build_box_from_key(UI_BoxFlag_Floating|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawDropShadow,
-        ui_key_from_stringf(ui_key_zero(), "sidebar_row_lift"));
-      UI_Parent(box) UI_PrefHeight(ui_pct(1, 1))
-      {
-        ui_spacer(ui_em(0.3f+1.5f+1.2f, 1));
-        UI_PrefWidth(ui_pct(1, 0)) { ui_label(uishell_sidebar_string(lifted.label)); }
-      }
-    }
+    box = ui_build_box_from_key(UI_BoxFlag_Floating|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawDropShadow,
+      ui_key_from_stringf(ui_key_zero(), "sidebar_row_lift"));
   }
-  if(moves)
+  // Children lay out inside the box; they must not inherit its rect.
+  UI_Parent(box) UI_PrefHeight(ui_pct(1, 1))
   {
-    F32 y = target == 0 ? siblings[0].extent.y0-1.f :
-      target == count ? siblings[count-1].extent.y1+1.f :
-      (siblings[target-1].extent.y1+siblings[target].extent.y0)*0.5f;
-    Rng2F32 line = r2f32p(span.x0+4.f, y-1.f, span.x1-4.f, y+1.f);
-    UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(line) UI_CornerRadius(1.f)
-    { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")); }
+    ui_spacer(ui_em(0.3f+1.5f+1.2f, 1));
+    UI_PrefWidth(ui_pct(1, 0)) { ui_label(state->row_drag_label); }
   }
-  if(!state->row_drag_released) { return; }
-  if(ghost_area != &cfg_nil_node && source < count)
-  {
-    AndamentoNode dragged = nodes[siblings[source].index];
-    uishell_sidebar_pin_add(state, ghost_area, state->drop_index, (AndamentoEntity){dragged.entity_kind, dragged.entity_id},
-      uishell_sidebar_string(dragged.label), uishell_sidebar_string(dragged.key), 1);
-  }
-  else if(moves)
-  {
-    Arena *arena = ui_build_arena();
-    AndamentoEntity *all = 0;
-    U64 total = uishell_sidebar_siblings(arena, state->snapshot, state->row_drag_loop, &all);
-    AndamentoNode moving = nodes[siblings[source].index];
-    AndamentoEntity item = {moving.entity_kind, moving.entity_id};
-    AndamentoNode anchor = nodes[siblings[target < count ? target : count-1].index];
-    AndamentoEntity at = {anchor.entity_kind, anchor.entity_id};
-    AndamentoEntity *order = push_array(arena, AndamentoEntity, total);
-    U64 n = 0;
-    for(U64 k = 0; k < total; k++)
-    {
-      if(uishell_sidebar_entity_match(all[k], item)) { continue; }
-      B32 here = uishell_sidebar_entity_match(all[k], at);
-      if(here && target < count) { order[n++] = item; }
-      order[n++] = all[k];
-      if(here && target == count) { order[n++] = item; }
-    }
-    if(n < total) { order[n++] = item; }
-    for(U64 k = 0; k < n; k++) { order[k] = uishell_sidebar_card_entity_copy(arena, order[k]); }
-    state->order_pending = 1;
-    state->order_loop = push_str8_copy(arena, state->row_drag_loop);
-    state->order = order; state->order_count = n;
-  }
-  rd_drag_kill();
-  state->row_drag_key = state->row_drag_loop = str8_zero();
-  state->row_drag_released = 0;
-  state->drop_area = 0;
 }
 
 // The Workspaces group's first row creates a workspace, which appears in it.
@@ -1943,9 +1925,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   {
     state->render_ui = ui_state;
     state->render_build_index = ui_state->build_index;
-    // Esc, or a release the row's section never saw, ends a row drag unmoved.
-    if(state->row_drag_key.size && !rd_drag_is_active())
-    { state->row_drag_key = state->row_drag_loop = str8_zero(); state->row_drag_released = 0; state->drop_area = 0; }
+    // Esc ends a row drag unmoved.
+    if(state->row_drag_key.size && !rd_drag_is_active() && !state->row_drag_released) { uishell_sidebar_drag_clear(state); }
     uishell_sidebar_restore(state, split);
     if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
     {
