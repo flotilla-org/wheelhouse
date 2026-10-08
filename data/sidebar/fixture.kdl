@@ -29,8 +29,10 @@ template "project/line" {
     match "flotilla.project" of="project"
     apply-template
   }
-  // Local workspaces that live with the project (Wheelhouse host entities).
-  for "workspace" kind="wheelhouse.workspace" layout="inline" {
+  // Local workspaces that live with the project (Wheelhouse host entities):
+  // rows, as they are contained in the project rather than about it (chips
+  // are the project's own workspaces, such as its overview).
+  for "workspace" kind="wheelhouse.workspace" {
     match "flotilla.project" of="project"
     apply-template
   }

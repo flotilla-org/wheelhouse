@@ -183,8 +183,8 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
                    str8_match(uishell_sidebar_string(homed.entity_id), local_id, 0), "without its project it returns to Workspaces");
     loose_node = homed;
 
-    //- Dragging it onto the project's group moves it there (Move, not ghost);
-    //  dragging its chip back to the Workspaces group moves it back.
+    //- Dragging it onto the project's group moves it there (Move, not ghost),
+    //  as a row; dragging that row back to the Workspaces group moves it back.
     AndamentoNode project = {0};
     LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_lit("p"), 0, &project), "fixture project row");
     String8 project_box = push_str8f(scratch.arena, "###project_%S", uishell_sidebar_string(project.key));
@@ -196,9 +196,10 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
     found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
-    String8 chip = push_str8f(scratch.arena, "###action_%S", uishell_sidebar_string(homed.key));
-    lit = uishell_workspace_lifecycle_drag(ws, window, scratch.arena, chip, str8_lit("###new_workspace"), str8_lit("sidebar_home_workspaces"));
-    LifecycleCheck(found && lit && !uishell_sidebar_local_home(loose).size, "its chip dragged to the Workspaces group moves it back");
+    LifecycleCheck(found && !str8_match(uishell_sidebar_string(homed.layout), str8_lit("inline"), 0), "it lives in the project's group as a row, not a chip");
+    String8 homed_row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(homed.key));
+    lit = uishell_workspace_lifecycle_drag(ws, window, scratch.arena, homed_row, str8_lit("###new_workspace"), str8_lit("sidebar_home_workspaces"));
+    LifecycleCheck(found && lit && !uishell_sidebar_local_home(loose).size, "its row dragged to the Workspaces group moves it back");
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
