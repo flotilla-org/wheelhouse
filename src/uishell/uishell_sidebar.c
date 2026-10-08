@@ -193,9 +193,9 @@ struct UIShell_SidebarState
   // Local workspaces published as host entities (.workspace), with
   // the entity ids last published so a closed one can be retracted.
   U64 local_hash;
-  // The config generation and topology last published from: publishing
-  // reads only those, so it skips building patches while neither changes.
-  U64 local_cfg_generation, local_topology_hash;
+  // A hash of what publishing reads (uishell_sidebar_local_source_hash),
+  // last published from: it skips building patches while that is unchanged.
+  U64 local_source_hash;
   Arena *local_arena;
   String8 *local_published;
   U64 local_published_count;
@@ -1086,10 +1086,49 @@ uishell_sidebar_local_seen(String8List *ids, String8 entry)
   return 0;
 }
 
+internal U64
+uishell_sidebar_hash_node(U64 hash, CFG_Node *node)
+{
+  for(CFG_Node *n = node->first; n != &cfg_nil_node; n = n->next)
+  {
+    for(U64 i = 0; i < n->string.size; i++) { hash = hash*33 + n->string.str[i]; }
+    hash = hash*33 + '(';
+    hash = uishell_sidebar_hash_node(hash, n);
+    hash = hash*33 + ')';
+  }
+  return hash;
+}
+
+// Everything publishing reads, hashed without allocating: the window's local
+// sections, groups and ghosts in order, and each open workspace's id, name
+// and home. A config generation can't stand in, as moving a node keeps it.
+internal U64
+uishell_sidebar_local_source_hash(UIShell_ControlledSplit *split)
+{
+  U64 hash = uishell_sidebar_hash_node(5381, cfg_node_child_from_string(split->owner_cfg, str8_lit("sidebar_local")));
+  for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
+  {
+    hash = hash*33 + w->id;
+    for(U64 i = 0; i < w->display_name.size; i++) { hash = hash*33 + w->display_name.str[i]; }
+    String8 homes[] = {uishell_sidebar_local_entity(w->mount.owner_cfg), uishell_sidebar_local_home(w->mount.owner_cfg),
+      uishell_sidebar_local_field(w->mount.owner_cfg, str8_lit("lives_in")),
+      uishell_workspace_cfg_has_subject(w->mount.owner_cfg) ? str8_lit("subject") : str8_lit("local")};
+    for(U64 h = 0; h < ArrayCount(homes); h++)
+    {
+      for(U64 i = 0; i < homes[h].size; i++) { hash = hash*33 + homes[h].str[i]; }
+      hash = hash*33 + '|';
+    }
+  }
+  return hash;
+}
+
 internal void
 uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
-  if(state->local_hash && state->local_cfg_generation == cfg_change_gen() && state->local_topology_hash == state->topology_hash) { return; }
+  // The default section and group are made first, so the hash includes them.
+  uishell_sidebar_local_root(split->owner_cfg);
+  U64 source = uishell_sidebar_local_source_hash(split);
+  if(state->local_hash && state->local_source_hash == source) { return; }
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
   CFG_Node *window = split->owner_cfg;
@@ -1163,7 +1202,7 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
   U64 hash = u64_hash_from_str8(all);
   if(hash == state->local_hash)
   {
-    state->local_cfg_generation = cfg_change_gen(); state->local_topology_hash = state->topology_hash;
+    state->local_source_hash = source;
     scratch_end(scratch);
     return;
   }
@@ -1196,7 +1235,7 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
     for(String8Node *n = ids.first; n; n = n->next) { state->local_published[count++] = push_str8_copy(state->local_arena, n->string); }
     state->local_published_count = count;
     state->local_hash = hash;
-    state->local_cfg_generation = cfg_change_gen(); state->local_topology_hash = state->topology_hash;
+    state->local_source_hash = source;
     uishell_sidebar_refresh(state);
     rd_request_frame();
   }
