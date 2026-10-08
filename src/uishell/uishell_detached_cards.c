@@ -851,7 +851,45 @@ uishell_sidebar_drag_clear(UIShell_SidebarState *state)
   state->row_drag_entity = (AndamentoEntity){0};
   state->row_drag_released = 0;
   state->drop_panel = 0; state->drop_area = 0; state->reorder_build = 0;
-  state->row_drag_workspace = 0; state->home_build = 0;
+  state->row_drag_workspace = 0; state->home_build = 0; state->group_claim_build = 0;
+}
+
+// Diagnostics hold Option/Alt here (drop a workspace as a ghost).
+global WM_Modifiers uishell_sidebar_test_modifiers;
+
+// The group insertion point a drag claimed, this build or the last, while the
+// pointer is still over that group.
+internal B32
+uishell_sidebar_group_claimed(UIShell_SidebarState *state)
+{
+  return state->group_claim_build && state->group_claim_build+1 >= ui_state->build_index &&
+    contains_2f32(state->group_claim_rect, ui_mouse());
+}
+
+// Saves the claimed group's item order with `placed` at the claimed index.
+// An empty group has no run yet, and its first item needs no order.
+internal void
+uishell_sidebar_group_order(UIShell_SidebarState *state, AndamentoEntity placed)
+{
+  if(!state->group_claim_loop.size) { return; }
+  Arena *arena = ui_build_arena();
+  AndamentoEntity *all = 0;
+  U64 total = uishell_sidebar_siblings(arena, state->snapshot, state->group_claim_loop, &all);
+  U64 index = state->group_claim_index;
+  AndamentoEntity *order = push_array(arena, AndamentoEntity, total+1);
+  U64 n = 0;
+  for(U64 k = 0; k < total; k++)
+  {
+    // The index counts the item itself where it is, as the line does.
+    if(uishell_sidebar_card_entity_match(all[k], placed)) { if(k < index) { index--; } continue; }
+    order[n++] = uishell_sidebar_card_entity_copy(arena, all[k]);
+  }
+  index = Min(index, n);
+  for(U64 k = n; k > index; k--) { order[k] = order[k-1]; }
+  order[index] = uishell_sidebar_card_entity_copy(arena, placed);
+  state->order_pending = 1;
+  state->order_loop = push_str8_copy(arena, state->group_claim_loop);
+  state->order = order; state->order_count = n+1;
 }
 
 // A row's release in its sibling run saves the run's full new order, which
@@ -911,6 +949,48 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   String8 label = card ? card->retained_label : state->row_drag_label;
   String8 source = card ? card->source_key : state->row_drag_key;
   CFG_Node *own = card && card->saved ? cfg_node_from_id(card->saved) : &cfg_nil_node;
+  // A local group's insertion point (drag-model.md, drop table): a local
+  // workspace moves there (Option/Alt adds a ghost of it instead), a pinned
+  // card moves its own ghost there, and anything else becomes a ghost there,
+  // a row as a row and a card as a card. A committed edge site still wins.
+  B32 edge = state->drop_panel && state->drop_direction != Dir2_Invalid;
+  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  CFG_Node *group = !edge && uishell_sidebar_group_claimed(state) ? uishell_sidebar_local_group(window, state->group_claim_id) : &cfg_nil_node;
+  if(group != &cfg_nil_node)
+  {
+    String8 group_id = uishell_sidebar_local_field(group, str8_lit("id"));
+    CFG_Node *workspace = row ? uishell_sidebar_drag_local(state) : &cfg_nil_node;
+    B32 as_ghost = !!((wm_get_modifiers()|uishell_sidebar_test_modifiers) & WM_Modifier_Alt);
+    AndamentoEntity placed = {0};
+    Temp scratch = scratch_begin(0, 0);
+    if(workspace != &cfg_nil_node && !as_ghost)
+    {
+      // One home: this group.
+      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(workspace, str8_lit("lives_with")));
+      uishell_sidebar_local_set_field(workspace, str8_lit("lives_in"), group_id);
+      placed = (AndamentoEntity){uishell_sidebar_text(str8_lit(".workspace")),
+                                 uishell_sidebar_text(push_str8_copy(scratch.arena, uishell_sidebar_local_entity(workspace)))};
+    }
+    else
+    {
+      // A ghost's own row moves that ghost, as its card does.
+      if(row && str8_match(uishell_sidebar_string(entity.kind), str8_lit(".ref"), 0))
+      { own = uishell_sidebar_pin_by_ghost(window, uishell_sidebar_string(entity.id)); }
+      CFG_Node *saved = own;
+      if(own != &cfg_nil_node) { uishell_sidebar_pin_place(group, own, max_U64); state->pin_reveal = own->id; }
+      else
+      {
+        saved = uishell_sidebar_pin_add(state, group, max_U64, entity, label, source, row);
+        if(card) { uishell_sidebar_card_close(card); }
+      }
+      placed = (AndamentoEntity){uishell_sidebar_text(str8_lit(".ref")),
+                                 uishell_sidebar_text(push_str8_copy(scratch.arena, uishell_sidebar_pin_ghost(saved)))};
+    }
+    uishell_sidebar_group_order(state, placed);
+    scratch_end(scratch);
+    uishell_sidebar_drag_clear(state);
+    return;
+  }
   // An edge docking site the pointer reached in the release frame wins over
   // a pinned list's claim from the frame before.
   CFG_Node *area = state->drop_panel && state->drop_direction != Dir2_Invalid ? &cfg_nil_node : uishell_sidebar_drop_area(state);

@@ -199,8 +199,10 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
     LifecycleCheck(found && !str8_match(uishell_sidebar_string(homed.layout), str8_lit("inline"), 0), "it lives in the project's group as a row, not a chip");
     String8 homed_row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(homed.key));
-    lit = uishell_workspace_lifecycle_drag(ws, window, scratch.arena, homed_row, str8_lit("###new_workspace"), str8_lit("sidebar_home_workspaces"));
-    LifecycleCheck(found && lit && !uishell_sidebar_local_home(loose).size, "its row dragged to the Workspaces group moves it back");
+    lit = uishell_workspace_lifecycle_drag(ws, window, scratch.arena, homed_row, str8_lit("###new_workspace"), str8_lit("group_drop_line_workspaces"));
+    LifecycleCheck(found && lit && !uishell_sidebar_local_home(loose).size &&
+                   str8_match(uishell_sidebar_local_field(loose, str8_lit("lives_in")), uishell_sidebar_default_local_id, 0),
+                   "its row dragged to the Workspaces group moves it back, with an insertion line there");
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
