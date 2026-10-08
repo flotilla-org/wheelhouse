@@ -427,8 +427,8 @@ uishell_sidebar_pin_migrate_container(CFG_Node *window, CFG_Node *container)
     Temp scratch = scratch_begin(0, 0);
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")),
       uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(group->parent, str8_lit("id"))));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_title(scratch.arena, group->parent));
     scratch_end(scratch);
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_field(group->parent, str8_lit("label")));
     if(selected) { cfg_node_new(rd_state->cfg, view, str8_lit("selected")); }
     // The area's own state: its collapsed header. Its other children were
     // its label and selection, carried above; a pin's form travels with it.
@@ -637,7 +637,8 @@ uishell_sidebar_local_view_group(CFG_Node *window, CFG_Node *view)
   return &cfg_nil_node;
 }
 
-// A new local section holding one group, both named `label`; returns the group.
+// A new local section holding one group named `label`, whose name the
+// section borrows (uishell_sidebar_local_title); returns the group.
 internal CFG_Node *
 uishell_sidebar_local_new_group(CFG_Node *window, String8 label)
 {
@@ -645,7 +646,6 @@ uishell_sidebar_local_new_group(CFG_Node *window, String8 label)
   CFG_Node *root = uishell_sidebar_local_root(window);
   CFG_Node *section = cfg_node_new(rd_state->cfg, root, str8_lit("section"));
   uishell_sidebar_local_set_field(section, str8_lit("id"), string_from_guid(scratch.arena, make_guid()));
-  uishell_sidebar_local_set_field(section, str8_lit("label"), label);
   CFG_Node *group = cfg_node_new(rd_state->cfg, section, str8_lit("group"));
   uishell_sidebar_local_set_field(group, str8_lit("id"), string_from_guid(scratch.arena, make_guid()));
   uishell_sidebar_local_set_field(group, str8_lit("label"), label);
@@ -666,7 +666,7 @@ uishell_sidebar_local_new_view(CFG_Node *panel, CFG_Node *section)
   CFG_Node *view = cfg_node_new(rd_state->cfg, panel, str8_lit("sidebar_section"));
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")),
     uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(section, str8_lit("id"))));
-  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_field(section, str8_lit("label")));
+  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_title(scratch.arena, section));
   cfg_node_new(rd_state->cfg, view, str8_lit("selected"));
   scratch_end(scratch);
   return view;
@@ -882,6 +882,8 @@ uishell_sidebar_detached_bounds(RD_WindowState *ws)
 }
 
 internal CFG_Node *uishell_sidebar_drag_local(UIShell_SidebarState *state);
+internal void uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *section, CFG_Node *after);
+internal CFG_Node *uishell_sidebar_section_drag_group(CFG_Node *window);
 
 internal void
 uishell_sidebar_drag_clear(UIShell_SidebarState *state)
@@ -973,7 +975,23 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   UIShell_SidebarState *state = ws->sidebar;
   UIShell_HoverCard *card = state->drag_card;
   B32 row = state->row_drag_key.size != 0;
-  if(!card && !row) { return; }
+  if(!card && !row)
+  {
+    // A one-group section's title dropped where a group claimed it, and no
+    // docking site took it: its group moves into that section.
+    CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *dragged = uishell_sidebar_section_drag_group(window);
+    CFG_Node *target = dragged != &cfg_nil_node && rd_state->drag_drop_state == RD_DragDropState_Dropping &&
+      uishell_sidebar_group_claimed(state) ? uishell_sidebar_local_group(window, state->group_claim_id) : &cfg_nil_node;
+    if(target != &cfg_nil_node && target->parent != dragged->parent)
+    {
+      uishell_sidebar_local_move_group(window, dragged, target->parent, target);
+      rd_drag_kill();
+      state->group_claim_build = 0;
+      rd_request_frame();
+    }
+    return;
+  }
   B32 released = row ? state->row_drag_released : card->drag_released;
   if((card && !card->open) || (!rd_drag_is_active() && !released && !state->drop_panel))
   {
@@ -997,6 +1015,35 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   B32 edge = state->drop_panel && state->drop_direction != Dir2_Invalid;
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   CFG_Node *group = !edge && uishell_sidebar_group_claimed(state) ? uishell_sidebar_local_group(window, state->group_claim_id) : &cfg_nil_node;
+  // A local group's header moves the group: over a group in another
+  // section, into that section after it; on a docking site, into the
+  // section shown there, or a new section of its own, which borrows its
+  // name. Within its own section it reorders, below; it never ghosts.
+  CFG_Node *dragged_group = row && str8_match(uishell_sidebar_string(entity.kind), str8_lit(".group"), 0) ?
+    uishell_sidebar_local_group(window, uishell_sidebar_string(entity.id)) : &cfg_nil_node;
+  if(dragged_group != &cfg_nil_node)
+  {
+    if(group != &cfg_nil_node && group->parent != dragged_group->parent)
+    { uishell_sidebar_local_move_group(window, dragged_group, group->parent, group); uishell_sidebar_drag_clear(state); return; }
+    if(group == &cfg_nil_node && state->drop_panel)
+    {
+      CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+      CFG_Node *last_section = root->last;
+      CFG_Node *made = uishell_sidebar_pin_area(ws, 1);
+      if(made != &cfg_nil_node && made->parent != dragged_group->parent)
+      {
+        // A section made for the drop holds only the group pin_area made for
+        // pins; the dragged group replaces it.
+        CFG_Node *section = made->parent;
+        B32 fresh = section != last_section && root->last == section;
+        if(fresh) { cfg_node_release(rd_state->cfg, made); }
+        uishell_sidebar_local_move_group(window, dragged_group, section, fresh ? &cfg_nil_node : made);
+      }
+      uishell_sidebar_drag_clear(state);
+      return;
+    }
+    group = &cfg_nil_node;
+  }
   if(group != &cfg_nil_node)
   {
     String8 group_id = uishell_sidebar_local_field(group, str8_lit("id"));

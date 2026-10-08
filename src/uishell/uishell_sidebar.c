@@ -155,6 +155,15 @@ struct UIShell_SidebarState
   String8 order_loop;
   AndamentoEntity *order;
   U64 order_count;
+  // Renaming a local section or group (uishell_local_groups.c): its node,
+  // the edit, and whether the field still needs focus. A delete awaiting
+  // confirmation, because workspaces would move.
+  CFG_ID rename_node;
+  U8 rename_text[256];            // a longer name is cut to fit
+  U64 rename_size;
+  TxtPt rename_cursor, rename_mark;
+  B32 rename_focus;
+  CFG_ID confirm_delete;
   // The docking site a sidebar drag was dropped on (drag_panel_drop).
   CFG_ID drop_panel;
   Dir2 drop_direction;
@@ -934,6 +943,8 @@ uishell_sidebar_node_at(UIShell_SidebarState *state, U64 i, AndamentoNode *out)
 read_only global String8 uishell_sidebar_default_local_id = str8_lit_comp("workspaces");
 
 internal void uishell_sidebar_pin_migrate(CFG_Node *window);
+internal String8 uishell_sidebar_local_title(Arena *arena, CFG_Node *section);
+internal void uishell_sidebar_local_borrow_titles(CFG_Node *root);
 
 internal String8
 uishell_sidebar_local_field(CFG_Node *node, String8 name)
@@ -971,6 +982,7 @@ uishell_sidebar_local_root(CFG_Node *window)
     uishell_sidebar_local_set_field(group, str8_lit("label"), str8_lit("Workspaces"));
     cfg_node_new(rd_state->cfg, group, str8_lit("default"));
   }
+  uishell_sidebar_local_borrow_titles(root);
   return root;
 }
 
@@ -1137,7 +1149,7 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
     String8 section_entry = push_str8f(arena, "%S/%S", section_kind, section_id);
     if(!section_id.size || uishell_sidebar_local_seen(&ids, section_entry)) { continue; }
     str8_list_push(arena, &patches, uishell_sidebar_json_entity_patch(arena, section_kind, section_id,
-      uishell_sidebar_json_label(arena, uishell_sidebar_local_field(section, str8_lit("label")), section_position++), str8_zero()));
+      uishell_sidebar_json_label(arena, uishell_sidebar_local_title(arena, section), section_position++), str8_zero()));
     U64 group_position = 0;
     str8_list_push(arena, &ids, section_entry);
     for(CFG_Node *group = section->first; group != &cfg_nil_node; group = group->next)
@@ -1762,14 +1774,40 @@ struct UIShell_SidebarRow
   B32 entry, icon_entry;          // the label, and the icon, are the row's buttons
   B32 clickable;                  // the whole row takes clicks (ghost rows)
   B32 reference;                  // ↗: a reference to a row that lives elsewhere
+  B32 renaming;                   // the label is a field renaming the row (a local group)
   UI_Box *slot, *row;
   UI_Signal toggle, icon_sig, entry_sig, row_sig;
 };
+
+// Sidebar menus are compact: a hairline above and below, as wide as their
+// longest item, with even padding either side of the text, and items styled
+// as the shell's own menus ("implicit": no borders).
+#define UIShell_SidebarMenu(key, width) UI_CtxMenuCompact(key) UI_TagF("implicit") UI_PrefWidth(ui_px((width), 1)) \
+  UI_PrefHeight(ui_em(1.8f, 1)) UI_TextPadding(floor_f32(ui_top_font_size()*0.75f))
+
+internal F32
+uishell_sidebar_menu_width(String8 *labels, U64 count)
+{
+  F32 widest = 0;
+  for(U64 i = 0; i < count; i++)
+  { widest = Max(widest, fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, labels[i]).x); }
+  return ceil_f32(widest + 2*floor_f32(ui_top_font_size()*0.75f) + 2.f);
+}
+
+
+// Opens a menu where a right-click or press happened, inside a large target;
+// a small control's menu opens at its edge instead (offset from its box).
+internal void
+uishell_sidebar_menu_open_at_pointer(UI_Key menu, UI_Box *anchor)
+{
+  ui_ctx_menu_open(menu, anchor->key, sub_2f32(ui_mouse(), anchor->rect.p0));
+}
 
 internal void uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r);
 internal void uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r);
 
 #include "uishell/uishell_hover_cards.c"
+#include "uishell/uishell_local_groups.c"
 
 // Native entry templates declare label/kind/status before optional context.
 internal String8
@@ -1827,6 +1865,28 @@ uishell_sidebar_close_label(UIShell_SidebarCloseKind kind)
 {
   return kind == UIShell_SidebarCloseKind_Detach ? str8_lit("Detach workspace") :
     kind == UIShell_SidebarCloseKind_RemovePin ? str8_lit("Remove pin") : str8_lit("Close workspace");
+}
+
+internal B32 uishell_sidebar_is_subject(AndamentoNode node);
+
+// A row menu's width, from the items that row's menu shows
+// (uishell_sidebar_entry_signal).
+internal F32
+uishell_sidebar_row_menu_width(AndamentoNode node, UIShell_SidebarCloseKind close)
+{
+  String8 labels[6] = {str8_lit("Reset order")};
+  U64 count = 1;
+  if(close == UIShell_SidebarCloseKind_RemovePin)
+  {
+    labels[count++] = str8_lit("Go to source"); labels[count++] = str8_lit("Show as card"); labels[count++] = str8_lit("Remove pin");
+  }
+  else
+  {
+    if(uishell_sidebar_is_subject(node)) { labels[count++] = str8_lit("Open in browser"); labels[count++] = str8_lit("Copy reference"); }
+    if(close != UIShell_SidebarCloseKind_None) { labels[count++] = uishell_sidebar_close_label(close); }
+    if(close == UIShell_SidebarCloseKind_Detach) { labels[count++] = str8_lit("Close and discard layout"); }
+  }
+  return uishell_sidebar_menu_width(labels, count);
 }
 
 internal void
@@ -1889,7 +1949,9 @@ uishell_sidebar_margin_close(UIShell_SidebarState *state, RD_WindowState *ws, An
       ui_label(str8_lit("Hold for more"));
     }
   }
-  if(uishell_sidebar_held(state, sig)) { ui_ctx_menu_open(menu_key, entry_key, v2f32(0, em*1.8f)); }
+  // Below the button, right-aligned to it, so the menu stays over the sidebar.
+  if(uishell_sidebar_held(state, sig))
+  { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(dim_2f32(sig.box->rect).x-uishell_sidebar_row_menu_width(node, close), dim_2f32(sig.box->rect).y)); }
   if(ui_clicked(sig)) { uishell_sidebar_close_workspace(ws, node, close); }
 }
 
@@ -1989,11 +2051,28 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
       rd_request_frame();
     }
   }
-  if(subject)
+  if(!menu && str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".group"), 0))
+  {
+    // A local group's header: its menu (uishell_local_groups.c), with its
+    // items' loop for Reset order.
+    CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+    String8 items_loop = str8_zero();
+    AndamentoNode first = {0};
+    if(andamento_snapshot_node(state->snapshot, node_index+1, &first) && first.parent == node_index)
+    { items_loop = uishell_sidebar_loop_key(state->snapshot, node_index+1); }
+    UI_Key menu_key = ui_key_from_stringf(sig.box->key, "group_menu");
+    CFG_Node *group = uishell_sidebar_local_group(window, uishell_sidebar_string(node.entity_id));
+    uishell_sidebar_local_group_menu(state, window, group, items_loop, menu_key);
+    if(ui_right_clicked(sig)) { state->confirm_delete = 0; uishell_sidebar_menu_open_at_pointer(menu_key, sig.box); }
+    // Double-clicking its name renames it in place.
+    if(ui_double_clicked(sig) && group != &cfg_nil_node)
+    { uishell_sidebar_local_begin_rename(state, group, uishell_sidebar_local_field(group, str8_lit("label"))); }
+  }
+  else if(subject)
   {
     uishell_sidebar_subject_hit(node, sig.box, "subject", menu);
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "subject_menu");
-    UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width(node, close_kind))
     {
       // The retained snapshot gives every placed subject an activate action.
       if(copy_url != ANDAMENTO_NONE && node.activate != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Open in browser"))))
@@ -2011,7 +2090,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
       uishell_sidebar_discard_button(ws, node, close_kind);
       if(ordered) { uishell_sidebar_order_reset_button(state, loop); }
     }
-    if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
+    if(ui_right_clicked(sig)) { uishell_sidebar_menu_open_at_pointer(menu_key, sig.box); }
   }
   else if(close_kind == UIShell_SidebarCloseKind_RemovePin)
   {
@@ -2019,7 +2098,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     CFG_Node *saved = uishell_sidebar_pin_by_ghost(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity_id));
     B32 expanded = saved != &cfg_nil_node && uishell_sidebar_pin_expanded(saved);
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "workspace_menu");
-    UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width(node, close_kind))
     {
       if(node.activate != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Go to source"))))
       { action = node.activate; ui_ctx_menu_close(); }
@@ -2029,28 +2108,28 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
       { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
       if(ordered) { uishell_sidebar_order_reset_button(state, loop); }
     }
-    if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
+    if(ui_right_clicked(sig)) { uishell_sidebar_menu_open_at_pointer(menu_key, sig.box); }
   }
   else if(close_kind != UIShell_SidebarCloseKind_None)
   {
     // Rows show this on hover too; inline action chips have only this menu.
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "workspace_menu");
-    UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width(node, close_kind))
     {
       if(ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
       { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
       uishell_sidebar_discard_button(ws, node, close_kind);
       if(ordered) { uishell_sidebar_order_reset_button(state, loop); }
     }
-    if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
+    if(ui_right_clicked(sig)) { uishell_sidebar_menu_open_at_pointer(menu_key, sig.box); }
   }
   else if(!menu && ordered)
   {
     // `ordered` is only computed on a right click or while a menu is open.
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "order_menu");
-    UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width(node, close_kind))
     { uishell_sidebar_order_reset_button(state, loop); }
-    if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
+    if(ui_right_clicked(sig)) { uishell_sidebar_menu_open_at_pointer(menu_key, sig.box); }
   }
   // A ghost's hover card is its subject's, as on its home row; Pin there
   // pins the subject, not the ghost.
@@ -2456,7 +2535,8 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   UI_PrefWidth(ui_pct(1, 0))
   {
     if(!r->present || str8_match(r->status, str8_lit("ended"), 0)) { ui_set_next_text_color(uishell_sidebar_ended_color()); }
-    if(r->entry) { r->entry_sig = uishell_sidebar_button(push_str8f(arena, "%S###entry_%S", r->text, r->key)); }
+    if(r->renaming) { r->entry_sig = uishell_sidebar_local_rename_field(state, push_str8f(arena, "###rename_%S", r->key)); }
+    else if(r->entry) { r->entry_sig = uishell_sidebar_button(push_str8f(arena, "%S###entry_%S", r->text, r->key)); }
     else { ui_label(r->text); }
   }
 }
@@ -2589,7 +2669,13 @@ uishell_sidebar_group_claim(UIShell_SidebarState *state, UI_Box *body, Andamento
     last = k;
     if(mouse.y > center_2f32(items[k].row).y) { index++; }
   }
+  // A row's own run reorders instead; so does a group header over its own
+  // section's groups.
   if(state->row_drag_key.size && loop.size && str8_match(loop, state->row_drag_loop, 0)) { return; }
+  if(state->row_drag_key.size && str8_match(uishell_sidebar_loop_key(state->snapshot, group), state->row_drag_loop, 0)) { return; }
+  CFG_Node *section_group = uishell_sidebar_section_drag_group(cfg_node_from_id(uishell_regs()->window));
+  if(section_group != &cfg_nil_node &&
+     str8_match(uishell_sidebar_local_field(section_group, str8_lit("id")), uishell_sidebar_string(nodes[group].entity_id), 0)) { return; }
   F32 y = area.y0+row_height*0.5f;
   if(first < item_count)
   {
@@ -2809,7 +2895,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   UIShell_RowDragSibling *drag_siblings = push_array(scratch.arena, UIShell_RowDragSibling, row_dragging ? count : 0);
   // Local groups' items as built this frame (last frame's rects), and their
   // cards' rects, for the insertion point a sidebar drag claims.
-  B32 sidebar_dragging = row_dragging || state->drag_card;
+  // A one-group section dragged by its title is its group's drag too.
+  B32 sidebar_dragging = row_dragging || state->drag_card ||
+    uishell_sidebar_section_drag_group(split->owner_cfg) != &cfg_nil_node;
   UIShell_RowDragSibling *group_items = push_array(scratch.arena, UIShell_RowDragSibling, sidebar_dragging ? count : 0);
   Rng2F32 *group_rects = push_array(scratch.arena, Rng2F32, sidebar_dragging ? count : 0);
   U64 group_item_count = 0;
@@ -3009,8 +3097,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         title = uishell_sidebar_string(field.text);
       }
       // The local workspace list is Wheelhouse's Workspaces group (drag-model.md);
-      // Andamento's fallback name describes it relative to projects.
-      if(uishell_sidebar_section_hosts_chrome(key)) { title = str8_lit("Workspaces"); }
+      // Andamento's fallback name describes it relative to projects. A section
+      // you made, the default one included, is titled by its data instead.
+      CFG_Node *local_section = uishell_sidebar_local_section(split->owner_cfg, uishell_sidebar_local_key_id(key));
+      if(uishell_sidebar_section_hosts_chrome(key) && local_section == &cfg_nil_node) { title = str8_lit("Workspaces"); }
       UI_Box *header;
       if(states[n]->collapsed && contains_selected[sections[n]])
       { ui_set_next_border_color(uishell_sidebar_selection_fill(1)); }
@@ -3020,6 +3110,15 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       // header is hovered; the collapse indicator follows the title; the count
       // shows only when collapsed. `header` still holds last frame's rect.
       B32 engaged = contains_2f32(header->rect, ui_mouse()) && !rd_drag_is_active();
+      // A section you made has a menu (uishell_local_groups.c). Showing one
+      // group, its items' loop gives the menu Reset order.
+      UI_Key section_menu = ui_key_from_stringf(header->key, "section_menu");
+      String8 section_loop = str8_zero();
+      for(U64 i = sections[n]+1; local_section != &cfg_nil_node && i < count && !section_loop.size; i++)
+      {
+        if(nodes[i].parent == ANDAMENTO_NONE || !passed[nodes[i].parent] || nodes[nodes[i].parent].parent != sections[n]) { continue; }
+        section_loop = uishell_sidebar_loop_key(state->snapshot, i);
+      }
       UI_Parent(header) UI_PrefHeight(ui_pct(1, 1)) UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak")
       {
         B32 toggle = 0;
@@ -3038,12 +3137,25 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         // A docked section's title is also its drag handle: past the shared
         // threshold it starts the section's docking drag, and a plain click
         // still collapses (drag-model.md, Gesture).
-        UI_PrefWidth(ui_text_dim(4.f, 1))
+        if(uishell_sidebar_local_renaming(state, local_section)) UI_PrefWidth(ui_pct(1, 0)) UI_TagF("")
+        { uishell_sidebar_local_rename_field(state, str8_lit("###section_rename")); }
+        else UI_PrefWidth(ui_text_dim(4.f, 1))
         {
           UI_Signal title_sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###section_%S", upper_from_str8(scratch.arena, title), key));
           if(section_panel && ui_dragging(title_sig) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
           { rd_drag_begin(UIShell_ContextRegSlot_View); }
           toggle |= ui_clicked(title_sig) && !rd_drag_is_active();
+          if(local_section != &cfg_nil_node && ui_right_clicked(title_sig))
+          { state->confirm_delete = 0; uishell_sidebar_menu_open_at_pointer(section_menu, title_sig.box); }
+          // Double-clicking a section you made renames it in place; the
+          // double click's first click collapsed it, so it opens again.
+          if(local_section != &cfg_nil_node && ui_double_clicked(title_sig))
+          {
+            Temp title_scratch = scratch_begin(0, 0);
+            uishell_sidebar_local_begin_rename(state, local_section, uishell_sidebar_local_title(title_scratch.arena, local_section));
+            scratch_end(title_scratch);
+            toggle = !toggle;
+          }
         }
         if(states[n]->collapsed) UI_PrefWidth(ui_text_dim(4.f, 1)) UI_TextColor(uishell_sidebar_ended_color())
         { ui_label(push_str8f(scratch.arena, "%I64u", entries[n])); }
@@ -3079,10 +3191,23 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         if(section_panel)
         {
           CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-          if(ui_clicked(uishell_sidebar_header_button(str8_lit("×"), str8_lit("section_close"), 0, engaged,
-                                                      str8_lit("Close section"), str8_lit("Restore it from Sections…"))) &&
-             rd_dock_can_close(view))
+          // A section you made: holding × opens its menu (Delete lives there).
+          UI_Signal close = uishell_sidebar_header_button(str8_lit("×"), str8_lit("section_close"), 0, engaged,
+            str8_lit("Close section"), local_section != &cfg_nil_node ? str8_lit("Restore it from Sections… · hold for more") :
+            str8_lit("Restore it from Sections…"));
+          if(local_section != &cfg_nil_node && uishell_sidebar_held(state, close))
+          {
+            state->confirm_delete = 0;
+            F32 width = uishell_sidebar_local_menu_width(state, split->owner_cfg, local_section);
+            ui_ctx_menu_open(section_menu, close.box->key, v2f32(dim_2f32(close.box->rect).x-width, dim_2f32(close.box->rect).y));
+          }
+          else if(ui_clicked(close) && rd_dock_can_close(view))
           { uishell_cmd("close_tab"); }
+        }
+        if(local_section != &cfg_nil_node)
+        {
+          uishell_sidebar_local_section_menu(state, split->owner_cfg, local_section,
+            section_panel ? cfg_node_from_id(uishell_regs()->view) : &cfg_nil_node, section_loop, section_menu);
         }
         ui_spacer(ui_px(4.f, 1));
         if(toggle)
@@ -3315,7 +3440,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               .contains_current = contains_current, .disclosure = (children && node.toggle != ANDAMENTO_NONE) || ghost != &cfg_nil_node,
               .expanded = ghost == &cfg_nil_node && !node.collapsed, .entry = 1, .icon_entry = icon_entry,
               // A ghost is a reference: it lives elsewhere.
-              .reference = ghost != &cfg_nil_node};
+              .reference = ghost != &cfg_nil_node,
+              .renaming = str8_match(kind, str8_lit(".group"), 0) &&
+                uishell_sidebar_local_renaming(state, uishell_sidebar_local_group(split->owner_cfg, uishell_sidebar_string(node.entity_id)))};
             // Persistent workspace selection remains visible while the terminal
             // has focus, without borrowing the keyboard-focus border.
             // Insets keep row selection and action borders inside the container.
@@ -3362,7 +3489,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               // The rich tooltip already includes the full label. Do not also
               // enroll this row in the shell's automatic truncated-text hover.
               sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
-              size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0);
+              size_t requested = r.renaming ? ANDAMENTO_NONE : uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0);
               if(requested != ANDAMENTO_NONE) { action = requested; }
             }
             if(chip_count)

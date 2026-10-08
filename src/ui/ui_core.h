@@ -725,6 +725,9 @@ struct UI_State
   
   //- rjf: build state machine state
   B32 is_in_open_ctx_menu;
+  // A compact context menu has only a hairline above and below its items;
+  // set by UI_CtxMenuCompact for the menu being built.
+  B32 ctx_menu_compact, is_in_compact_ctx_menu;
   String8 autocomplete_string;
   B32 tooltip_can_overflow_window;
   UI_Key tooltip_anchor_key;
@@ -1274,6 +1277,7 @@ internal F32      ui_top_px_height(void);
 
 //- rjf: context menu
 #define UI_CtxMenu(key) DeferLoopChecked(ui_begin_ctx_menu(key), ui_end_ctx_menu())
+#define UI_CtxMenuCompact(key) DeferLoopChecked((ui_state->ctx_menu_compact = 1, ui_begin_ctx_menu(key)), ui_end_ctx_menu())
 
 //- rjf: debug
 #define UI_Debug UI_FlagsAdd(UI_BoxFlag_Debug)

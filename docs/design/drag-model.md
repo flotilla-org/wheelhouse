@@ -54,7 +54,7 @@ Groups are placed with `match ".section" of="section"`, and workspaces and ghost
 - Every local workspace without another home lives there.
 - Andamento covers leftover tabs into it, instead of into a separate section.
 - A subject workspace whose subject vanishes stays where it was until it is closed.
-- It can be renamed, moved and hidden, but not deleted.
+- It can be renamed and hidden, and its section docked anywhere, but it can't be deleted or moved out of its section, which hosts New workspace.
 
 **Drop intent.**
 
@@ -74,13 +74,15 @@ Sections and groups look the same whoever made them.
 
 - A section's × hides it, and it is restored from Sections…. The × may become "minimise", with Sections… as a tray.
 - Deleting is explicit, from the section and group menus:
-  - right-click a header, or hold its ×;
+  - right-click a section's title or hold its ×; right-click a group's header;
   - the menus hold Rename, New group, Hide, Delete, Reset order and New workspace here;
-  - a section showing one group carries that group's actions.
+  - a section showing one group carries that group's actions;
+  - right-click menus open at the pointer; a held × opens its menu at the ×;
+  - Rename… (or double-clicking a title) renames in place: Enter or clicking away applies, Esc cancels.
 - Deleting a group moves its homed workspaces to the default group and drops its ghosts. It asks for confirmation only when workspaces would move.
 - The default section and group can't be deleted.
 
-**Still to design:** where "New group" appears (after a section's groups on hover, or a title-bar button), and "New workspace" per group (a reveal or expansion of the group, like card details).
+**Still to design:** a visible affordance for "New group" (after a section's groups on hover, or a title-bar button) and for "New workspace" per group (a reveal or expansion of the group, like card details). Both are in the menus meanwhile.
 
 **Migration.** Each `pinned_cards` area becomes a section of your own holding one group, keeping its label. Its pins become `.ref`s, keeping their ghost ids and forms. The `pinned_cards` View type is retired. Migration is best-effort: saved layouts aren't precious yet.
 
@@ -174,7 +176,7 @@ A View ghost is a reference to one live pane inside a workspace. Example: a conv
 Each View, section and group shows one title, never two:
 
 - **A section created by dropping a group** has no name of its own. It borrows its only group's name, and that group's header is omitted. Renaming the section's title renames the group.
-- **When a second group joins,** the section takes an editable placeholder name ("Pinned", "Pinned 2", and so on) and both groups show their headers. If you never renamed the section, it borrows again when it drops back to one group. A name you gave it sticks.
+- **When a second group joins,** a section without a name of its own shows its groups' names, joined ("Builds, Tests"), and both groups show their headers. Naming the section replaces that. A name you gave it sticks; clearing it goes back to the groups' names. Later, a namer could suggest what the groups have in common.
 - **A section with a name of its own** (an Andamento-declared region such as Projects, or any section you renamed) always shows its title, and each of its groups shows its own header.
 - **A section shown as a tab** shows its title on the tab only (#211).
 
@@ -245,10 +247,12 @@ Card features and profiles (`card-features-prototype.html`) can reuse RAD's per-
         - the default Workspaces section and group;
         - migrate and retire `pinned_cards`;
         - today's drags on the new model.
-     3. **Wheelhouse, group management:**
+     3. **Wheelhouse, group management** (the group-management PR):
         - section and group menus;
-        - dragging groups between sections and to a dock edge;
+        - dragging a group's header to another section or a dock edge;
         - the title rules.
+
+        A section showing one group has no group header: it is that group, so its title's drag is the group's too. Over another section's group, the group moves in and the emptied section goes; on a docking site it docks as before.
 4. **Entity ghosts.** *Done:* compact ghost rows, the ghost marker, explicit removal, positioned drops (#249). *Left:* the ended and unavailable lifecycle, and Clear ended.
 5. **Group drag and titles.** Folded into step 3.3.
 6. **View ghosts.** Read-only mirrors, after #89's attachment policy.
