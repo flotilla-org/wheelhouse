@@ -891,6 +891,8 @@ uishell_sidebar_node_at(UIShell_SidebarState *state, U64 i, AndamentoNode *out)
 
 read_only global String8 uishell_sidebar_default_local_id = str8_lit_comp("workspaces");
 
+internal void uishell_sidebar_pin_migrate(CFG_Node *window);
+
 internal String8
 uishell_sidebar_local_field(CFG_Node *node, String8 name)
 {
@@ -928,6 +930,17 @@ uishell_sidebar_local_root(CFG_Node *window)
     cfg_node_new(rd_state->cfg, group, str8_lit("default"));
   }
   return root;
+}
+
+// Whether `key` (".section:<id>") names a section in the window's data.
+internal B32
+uishell_sidebar_local_section_exists(CFG_Node *window, String8 key)
+{
+  if(!str8_match(str8_prefix(key, 9), str8_lit(".section:"), 0)) { return 0; }
+  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
+  { if(str8_match(uishell_sidebar_local_field(section, str8_lit("id")), str8_skip(key, 9), 0)) { return 1; } }
+  return 0;
 }
 
 // The local group with this id, or nil.
@@ -999,6 +1012,7 @@ uishell_sidebar_local_keys(String8 kind)
 {
   if(str8_match(kind, str8_lit(".section"), 0)) { return str8_lit("\"display.label\",\".position\""); }
   if(str8_match(kind, str8_lit(".group"), 0)) { return str8_lit("\"display.label\",\".position\",\".section\",\".default\""); }
+  if(str8_match(kind, str8_lit(".ref"), 0)) { return str8_lit("\".position\",\".group\",\".target\""); }
   return str8_lit("\"display.label\",\".position\",\"flotilla.project\",\".group\"");
 }
 
@@ -1035,6 +1049,20 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
         uishell_sidebar_json_fact_ref(arena, str8_lit(".section"), section_kind, section_id), is_default ? "true" : "false");
       str8_list_push(arena, &patches, uishell_sidebar_json_entity_patch(arena, group_kind, group_id, set, str8_zero()));
       str8_list_pushf(arena, &ids, "%S/%S", group_kind, group_id);
+      // Its ghosts (pins), as `.ref`s presenting their targets, after its
+      // workspaces in data order.
+      U64 ref_position = 1000000;
+      for(CFG_Node *card = group->first; card != &cfg_nil_node; card = card->next)
+      {
+        String8 ghost = uishell_sidebar_local_field(card, str8_lit("ghost"));
+        String8 target_kind = uishell_sidebar_local_field(card, str8_lit("kind")), target_id = uishell_sidebar_local_field(card, str8_lit("entity"));
+        if(!str8_match(card->string, str8_lit("card"), 0) || !ghost.size || !target_kind.size) { continue; }
+        String8 ref_set = push_str8f(arena, "%S,%S,\".position\":{\"value\":{\"type\":\"text\",\"value\":\"%I64u\"}}",
+          uishell_sidebar_json_fact_ref(arena, str8_lit(".group"), group_kind, group_id),
+          uishell_sidebar_json_fact_ref(arena, str8_lit(".target"), target_kind, target_id), ref_position++);
+        str8_list_push(arena, &patches, uishell_sidebar_json_entity_patch(arena, str8_lit(".ref"), ghost, ref_set, str8_zero()));
+        str8_list_pushf(arena, &ids, ".ref/%S", ghost);
+      }
     }
   }
   U64 w_position = 0;
@@ -1637,6 +1665,8 @@ typedef enum UIShell_SidebarCloseKind
   UIShell_SidebarCloseKind_None,
   UIShell_SidebarCloseKind_Detach,
   UIShell_SidebarCloseKind_Destroy,
+  // A ghost's margin control removes the ghost, never its source.
+  UIShell_SidebarCloseKind_RemovePin,
 }
 UIShell_SidebarCloseKind;
 
@@ -1646,6 +1676,7 @@ UIShell_SidebarCloseKind;
 internal UIShell_SidebarCloseKind
 uishell_sidebar_close_kind(AndamentoNode node, String8 status)
 {
+  if(str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".ref"), 0)) { return UIShell_SidebarCloseKind_RemovePin; }
   if(node.is_section || node.state != ANDAMENTO_LIVE || node.workspace_id == 0) { return UIShell_SidebarCloseKind_None; }
   CFG_Node *workspace = cfg_node_from_id(node.workspace_id);
   if(workspace == &cfg_nil_node) { return UIShell_SidebarCloseKind_None; }
@@ -1673,7 +1704,8 @@ uishell_sidebar_workspace_subject_ended(RD_WindowState *ws, CFG_ID workspace_id)
 internal String8
 uishell_sidebar_close_label(UIShell_SidebarCloseKind kind)
 {
-  return kind == UIShell_SidebarCloseKind_Detach ? str8_lit("Detach workspace") : str8_lit("Close workspace");
+  return kind == UIShell_SidebarCloseKind_Detach ? str8_lit("Detach workspace") :
+    kind == UIShell_SidebarCloseKind_RemovePin ? str8_lit("Remove pin") : str8_lit("Close workspace");
 }
 
 internal void
@@ -1682,6 +1714,11 @@ uishell_sidebar_close_workspace(RD_WindowState *ws, AndamentoNode node, UIShell_
   // uishell_cmd takes a string literal: str8_lit of a ternary is a pointer's size.
   if(kind == UIShell_SidebarCloseKind_Detach) { uishell_cmd("detach_workspace", .window = ws->cfg_id, .cfg = node.workspace_id); }
   if(kind == UIShell_SidebarCloseKind_Destroy) { uishell_cmd("close_workspace", .window = ws->cfg_id, .cfg = node.workspace_id); }
+  if(kind == UIShell_SidebarCloseKind_RemovePin)
+  {
+    CFG_Node *saved = uishell_sidebar_pin_by_ghost(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity_id));
+    if(saved != &cfg_nil_node) { cfg_node_release(rd_state->cfg, saved); rd_request_frame(); }
+  }
 }
 
 // A detached workspace keeps its layout; its menu also offers to discard it.
@@ -1705,7 +1742,7 @@ uishell_sidebar_margin_button(AndamentoNode node, UIShell_SidebarCloseKind close
   UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(3.f)
   {
     sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###close_%S",
-      close == UIShell_SidebarCloseKind_Destroy ? str8_lit("×") : str8_zero(), uishell_sidebar_string(node.key)));
+      close == UIShell_SidebarCloseKind_Detach ? str8_zero() : str8_lit("×"), uishell_sidebar_string(node.key)));
   }
   if(close == UIShell_SidebarCloseKind_Detach) { ui_box_equip_custom_draw(sig.box, rd_workspace_detach_icon_draw, 0); }
   scratch_end(scratch);
@@ -1724,7 +1761,8 @@ uishell_sidebar_margin_close(UIShell_SidebarState *state, RD_WindowState *ws, An
     B32 unplaced = str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".workspace"), 0);
     UI_TagF("weak")
     {
-      ui_label(close == UIShell_SidebarCloseKind_Destroy ? str8_lit("The workspace and its layout are discarded.") :
+      ui_label(close == UIShell_SidebarCloseKind_RemovePin ? str8_lit("Its source is untouched.") :
+               close == UIShell_SidebarCloseKind_Destroy ? str8_lit("The workspace and its layout are discarded.") :
                unplaced ? str8_lit("Its layout reopens when its subject is seen again.") :
                str8_lit("Its layout reopens from this entry."));
       ui_label(str8_lit("Hold for more"));
@@ -1850,6 +1888,24 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
       if(close_kind != UIShell_SidebarCloseKind_None && ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
       { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
       uishell_sidebar_discard_button(ws, node, close_kind);
+      if(ordered) { uishell_sidebar_order_reset_button(state, loop); }
+    }
+    if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
+  }
+  else if(close_kind == UIShell_SidebarCloseKind_RemovePin)
+  {
+    // A ghost: go to what it refers to, change its form, or remove it.
+    CFG_Node *saved = uishell_sidebar_pin_by_ghost(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity_id));
+    B32 expanded = saved != &cfg_nil_node && uishell_sidebar_pin_expanded(saved);
+    UI_Key menu_key = ui_key_from_stringf(sig.box->key, "workspace_menu");
+    UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+    {
+      if(node.activate != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Go to source"))))
+      { action = node.activate; ui_ctx_menu_close(); }
+      if(saved != &cfg_nil_node && ui_clicked(ui_button(expanded ? str8_lit("Show as row") : str8_lit("Show as card"))))
+      { uishell_sidebar_ghost_set_expanded(saved, !expanded); ui_ctx_menu_close(); }
+      if(ui_clicked(ui_button(str8_lit("Remove pin"))))
+      { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
       if(ordered) { uishell_sidebar_order_reset_button(state, loop); }
     }
     if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
@@ -2418,6 +2474,14 @@ uishell_sidebar_row_lift(UIShell_SidebarState *state)
   }
 }
 
+// The saved ghost a tree row presents (a `.ref`), or nil.
+internal CFG_Node *
+uishell_sidebar_tree_ghost(CFG_Node *window, AndamentoNode node)
+{
+  if(!str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".ref"), 0)) { return &cfg_nil_node; }
+  return uishell_sidebar_pin_by_ghost(window, uishell_sidebar_string(node.entity_id));
+}
+
 // The Workspaces group's first row creates a workspace, which appears in it.
 // It shares the row slot's insets, so it lines up with the rows below.
 internal void
@@ -2651,13 +2715,18 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       if(hidden[i] || inlined[i] || passed[i]) { continue; }
       U64 node_rows = !nodes[i].is_section;
       if(project_owner[i] == i) { content_heights[n] += project_gap+2*project_padding; }
+      // An expanded ghost is its card's height instead of a row's.
+      CFG_Node *ghost = uishell_sidebar_tree_ghost(split->owner_cfg, nodes[i]);
+      F32 card_height = 0;
+      if(ghost != &cfg_nil_node && uishell_sidebar_pin_expanded(ghost))
+      { card_height = uishell_sidebar_ghost_extent(uishell_sidebar_saved_card(ws, ghost), ghost, em); node_rows = 0; rows[n]++; }
       for(U64 c = 0; !nodes[i].is_section && c < nodes[i].control_count; c++)
       {
         AndamentoControl control = {0};
         if(andamento_snapshot_control(state->snapshot, nodes[i].first_control+c, &control) && control.action != ANDAMENTO_NONE) { node_rows++; }
       }
       rows[n] += node_rows;
-      F32 node_height = node_rows*row_height;
+      F32 node_height = node_rows*row_height+card_height;
       node_height += uishell_sidebar_inline_height(state, uishell_sidebar_string(nodes[i].key));
       U64 owner = project_owner[i];
       if(owner != ANDAMENTO_NONE && owner != i)
@@ -2972,6 +3041,22 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               state->reveal_workspace_id = 0;
               rd_request_frame();
             }
+            // An expanded ghost draws its card in its row's place.
+            CFG_Node *ghost = uishell_sidebar_tree_ghost(split->owner_cfg, node);
+            if(ghost != &cfg_nil_node && uishell_sidebar_pin_expanded(ghost))
+            {
+              UIShell_HoverCard *card = uishell_sidebar_saved_card(ws, ghost);
+              F32 extent = uishell_sidebar_ghost_extent(card, ghost, em);
+              // The moving card keeps its place until it lands.
+              if(card->moving) { ui_spacer(ui_px(extent, 1)); }
+              else UI_PrefHeight(ui_children_sum(1))
+              {
+                uishell_sidebar_ghost_card(state, ws, card, ghost, Max(0.f, dim_2f32(region.viewport).x-12.f-side_margin));
+                ui_spacer(ui_px(UIShell_HoverCardPinnedGapPT, 1));
+              }
+              row_y += extent;
+              continue;
+            }
             F32 slot_y = row_y;
             row_y += row_height;
             // Text remains available in the tooltip; terse marks distinguish
@@ -2991,7 +3076,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             UIShell_SidebarRow r = {.node = node, .present = 1, .key = node_key, .text = display, .status = status,
               .height = row_height, .indent = indent, .project = project, .selected = node.selected,
               .contains_current = contains_current, .disclosure = children && node.toggle != ANDAMENTO_NONE,
-              .expanded = !node.collapsed, .entry = 1, .icon_entry = icon_entry};
+              .expanded = !node.collapsed, .entry = 1, .icon_entry = icon_entry,
+              // A ghost is a reference: it lives elsewhere.
+              .reference = ghost != &cfg_nil_node};
             // Persistent workspace selection remains visible while the terminal
             // has focus, without borrowing the keyboard-focus border.
             // Insets keep row selection and action borders inside the container.
@@ -3297,7 +3384,7 @@ uishell_sidebar_cleanup_region_panel(CFG_Node *panel, B32 removed)
 }
 
 internal B32
-uishell_sidebar_prune_regions(CFG_Node *container, UIShell_SectionPlacement *regions, U64 count, B32 reset)
+uishell_sidebar_prune_regions(CFG_Node *owner, CFG_Node *container, UIShell_SectionPlacement *regions, U64 count, B32 reset)
 {
   B32 removed = 0;
   for(CFG_Node *c = container->first, *next; c != &cfg_nil_node; c = next)
@@ -3308,12 +3395,15 @@ uishell_sidebar_prune_regions(CFG_Node *container, UIShell_SectionPlacement *reg
       // CFG nil nodes self-link, so a missing section setting reads as empty.
       // A View without a declared identity is corrupt saved state; drop it.
       String8 key = uishell_sidebar_section_key(c);
-      if(reset || uishell_sidebar_region_index(regions, count, key) == ANDAMENTO_NONE)
+      // A section someone made is kept while it exists in the window's data,
+      // even before Andamento has placed it (just made, or just migrated).
+      B32 local = owner != &cfg_nil_node && uishell_sidebar_local_section_exists(owner, key);
+      if(reset || (!local && uishell_sidebar_region_index(regions, count, key) == ANDAMENTO_NONE))
       { cfg_node_release(rd_state->cfg, c); removed = 1; }
     }
     else if(rd_dock_is_container(c))
     {
-      B32 child_removed = uishell_sidebar_prune_regions(c, regions, count, reset);
+      B32 child_removed = uishell_sidebar_prune_regions(owner, c, regions, count, reset);
       removed |= child_removed;
       removed |= uishell_sidebar_cleanup_region_panel(c, child_removed || reset);
     }
@@ -3327,8 +3417,8 @@ uishell_sidebar_reset_regions(CFG_Node *owner)
   // Only this level's hosts; child Workspace Regions own independent layouts.
   CFG_Node *sidebar = cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT);
   CFG_Node *floating = cfg_node_child_from_string(owner, str8_lit("floating_panels"));
-  uishell_sidebar_prune_regions(sidebar, 0, 0, 1);
-  uishell_sidebar_prune_regions(floating, 0, 0, 1);
+  uishell_sidebar_prune_regions(owner, sidebar, 0, 0, 1);
+  uishell_sidebar_prune_regions(owner, floating, 0, 0, 1);
   if(sidebar != &cfg_nil_node && sidebar->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, sidebar); }
   if(floating != &cfg_nil_node && floating->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, floating); }
   CFG_Node *inventory = cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY);
@@ -3445,8 +3535,8 @@ uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *reg
   CFG_Node *inventory = cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY);
   B32 legacy_saved = inventory == &cfg_nil_node && root != &cfg_nil_node;
   if(inventory == &cfg_nil_node) { inventory = cfg_node_new(rd_state->cfg, owner, UISHELL_REGION_INVENTORY); }
-  uishell_sidebar_prune_regions(root, regions, count, 0);
-  uishell_sidebar_prune_regions(cfg_node_child_from_string(owner, str8_lit("floating_panels")), regions, count, 0);
+  uishell_sidebar_prune_regions(owner, root, regions, count, 0);
+  uishell_sidebar_prune_regions(owner, cfg_node_child_from_string(owner, str8_lit("floating_panels")), regions, count, 0);
   for(CFG_Node *c = inventory->first, *next; c != &cfg_nil_node; c = next)
   {
     next = c->next;
@@ -3541,6 +3631,7 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
   }
   // Reconcile declared regions first, then deduplicate saved card identities.
   // Pins are independent Views and survive authoritative section removal.
+  uishell_sidebar_pin_migrate(split->owner_cfg);
   CFG_Node *root = uishell_sidebar_reconcile_regions(split->owner_cfg, state->placement_regions, state->placement_count);
   if(state->pin_cfg_generation != cfg_change_gen())
   {

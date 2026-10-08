@@ -42,6 +42,39 @@ uishell_sidebar_reorder_node(UIShell_SidebarState *state, String8 id)
   return (AndamentoNode){0};
 }
 
+internal U64
+uishell_sidebar_reorder_section_count(CFG_Node *window)
+{
+  U64 count = 0;
+  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  for(CFG_Node *n = root->first; n != &cfg_nil_node; n = n->next) { count += str8_match(n->string, str8_lit("section"), 0); }
+  return count;
+}
+
+// The group of the local section a drop made (the one after `before`), or nil.
+internal CFG_Node *
+uishell_sidebar_reorder_new_group(CFG_Node *window, U64 before)
+{
+  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  U64 index = 0;
+  for(CFG_Node *n = root->first; n != &cfg_nil_node; n = n->next)
+  {
+    if(!str8_match(n->string, str8_lit("section"), 0)) { continue; }
+    if(index++ == before) { return cfg_node_child_from_string(n, str8_lit("group")); }
+  }
+  return &cfg_nil_node;
+}
+
+// Removes a section a test made, and its View.
+internal void
+uishell_sidebar_reorder_drop_section(CFG_Node *window, CFG_Node *group)
+{
+  if(group == &cfg_nil_node) { return; }
+  CFG_Node *view = uishell_sidebar_local_view(window, group);
+  if(view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, view); }
+  cfg_node_release(rd_state->cfg, group->parent);
+}
+
 typedef struct UIShell_ReorderDrag UIShell_ReorderDrag;
 struct UIShell_ReorderDrag
 {
@@ -291,15 +324,14 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
                  "the drop adds a ghost of the row, as a row, at the insertion point");
     ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), before, 0), "a ghost drop leaves the run's order");
     // An edge site committed in the release frame wins over the list's claim.
+    U64 sections_before = uishell_sidebar_reorder_section_count(window);
     UIShell_ReorderDrag edge = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), between, str8_zero(), 0, UIShell_ReorderMode_Dock, area);
     U64 area_pins = 0;
     for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next) { area_pins += str8_match(c->string, str8_lit("card"), 0); }
-    CFG_Node *split_area = &cfg_nil_node;
-    for(CFG_Node *v = view->parent->first; v != &cfg_nil_node; v = v->next)
-    { if(str8_match(v->string, str8_lit("pinned_cards"), 0)) { split_area = v; } }
-    ReorderCheck(edge.started && area_pins == 3 && cfg_node_child_from_string(split_area, str8_lit("card")) != &cfg_nil_node,
+    CFG_Node *split_group = uishell_sidebar_reorder_new_group(window, sections_before);
+    ReorderCheck(edge.started && area_pins == 3 && cfg_node_child_from_string(split_group, str8_lit("card")) != &cfg_nil_node,
                  "an edge site taken in the release frame wins over the pinned list's claim");
-    if(split_area != &cfg_nil_node) { cfg_node_release(rd_state->cfg, split_area); }
+    uishell_sidebar_reorder_drop_section(window, split_group);
     uishell_sidebar_manual_sizing(window, 0);
     cfg_node_release(rd_state->cfg, area);
   }
@@ -308,17 +340,16 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   // ghost of the row, as a row: the same creation drag as a card's.
   {
     String8 before = push_str8_copy(scratch.arena, uishell_sidebar_reorder_ids(scratch.arena, &state, convoy));
-    CFG_Node *panel = view->parent;
+    U64 sections_before = uishell_sidebar_reorder_section_count(window);
     UIShell_ReorderDrag dock = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c3"), v2f32(0, 400), str8_zero(), 0, UIShell_ReorderMode_Dock, &cfg_nil_node);
-    CFG_Node *area = &cfg_nil_node;
-    for(CFG_Node *v = panel->first; v != &cfg_nil_node; v = v->next)
-    { if(str8_match(v->string, str8_lit("pinned_cards"), 0)) { area = v; } }
+    CFG_Node *area = uishell_sidebar_reorder_new_group(window, sections_before);
     CFG_Node *pin = cfg_node_child_from_string(area, str8_lit("card"));
     ReorderCheck(dock.started && !dock.line, "a row drag away from its run claims no reorder");
     ReorderCheck(pin != &cfg_nil_node && str8_match(cfg_node_child_from_string(pin, str8_lit("entity"))->first->string, str8_lit("c3"), 0) &&
-                 !uishell_sidebar_pin_expanded(pin), "a docking-site drop makes a pinned area with the row's ghost, as a row");
+                 !uishell_sidebar_pin_expanded(pin) && uishell_sidebar_local_view(window, area) != &cfg_nil_node,
+                 "a docking-site drop makes a section, in a View there, whose group holds the row's ghost, as a row");
     ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), before, 0), "a docking-site drop leaves the run's order");
-    if(area != &cfg_nil_node) { cfg_node_release(rd_state->cfg, area); }
+    uishell_sidebar_reorder_drop_section(window, area);
     uishell_sidebar_manual_sizing(window, 0);
   }
 
