@@ -120,6 +120,7 @@ class NativeSidebarTests(unittest.TestCase):
         # The workspace fallback is always emitted, unhinted; Wheelhouse places it last.
         self.assertEqual(hints_seen, [('tree', 'sidebar', 1, 10), ('sessions', 'sidebar', 1, 20),
                                      ('attention', 'sidebar', 1, 30), ('git', 'sidebar', 1, 40),
+                                     ('local', 'sidebar', 1, 50),
                                      ('.unplaced', '', 0, 0)])
 
     def open_workspace(self, identity, workspace_id):

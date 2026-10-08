@@ -322,3 +322,33 @@ template "worktree/detail" slot="detail" node-kind="entity" {
   field "dirty" section="facts" role="fact" label="Dirty" key="git.dirty" prefix="Dirty: "
   field "upstream" section="facts" role="fact" label="Upstream" key="git.upstream" prefix="Upstream: "
 }
+
+// Sections and groups people make (drag-model.md, "Sections and groups as
+// data"). Wheelhouse publishes them; each .section is its own sidebar section.
+// A group's workspaces and references share one item loop, so one order.
+region "local" root-template="local/title" form="compact" placement="local" default-host="sidebar" order=50
+template "local/title" slot="compact" node-kind="entity" {
+  field "label" source="literal" value="Local"
+}
+placement "local" {
+  for "section" kind=".section" layout="section" {
+    order ".position" natural=true
+    apply-template "section/local"
+  }
+}
+template "section/local" {
+  field "label" key="display.label"
+  for "group" kind=".group" {
+    match ".section" of="section"
+    order ".position" natural=true
+    apply-template "group/local"
+  }
+}
+template "group/local" {
+  field "label" key="display.label"
+  for "item" {
+    match ".group" of="group"
+    order ".position" natural=true
+    apply-template "wheelhouse/entry"
+  }
+}

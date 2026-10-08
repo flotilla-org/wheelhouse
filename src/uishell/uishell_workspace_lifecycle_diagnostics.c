@@ -179,8 +179,9 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
     AndamentoNode section = {0};
     if(found && homed.parent != ANDAMENTO_NONE) { andamento_snapshot_node(state->snapshot, homed.parent, &section); }
-    LifecycleCheck(found && section.is_section && uishell_sidebar_section_hosts_chrome(uishell_sidebar_string(section.key)) &&
-                   str8_match(uishell_sidebar_string(homed.entity_id), local_id, 0), "without its project it returns to Workspaces");
+    LifecycleCheck(found && str8_match(uishell_sidebar_string(section.entity_kind), str8_lit(".group"), 0) &&
+                   str8_match(uishell_sidebar_string(section.entity_id), uishell_sidebar_default_local_id, 0) &&
+                   str8_match(uishell_sidebar_string(homed.entity_id), local_id, 0), "without its project it returns to the default Workspaces group");
     loose_node = homed;
 
     //- Dragging it onto the project's group moves it there (Move, not ghost),
@@ -251,11 +252,11 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
           entry_row = 1;
           for(UI_Box *a = box->parent; !ui_box_is_nil(a) && !ui_box_is_nil(a->parent); a = a->parent)
           {
-            if(ui_key_match(a->key, ui_key_from_string(a->parent->key, str8_lit("###section_header_.unplaced"))))
+            if(ui_key_match(a->key, ui_key_from_string(a->parent->key, str8_lit("###section_header_.section:workspaces"))))
             { entry_row = 0; }
           }
         }
-        if(ui_key_match(box->key, ui_key_from_string(box->parent->key, str8_lit("###section_.unplaced"))))
+        if(ui_key_match(box->key, ui_key_from_string(box->parent->key, str8_lit("###section_.section:workspaces"))))
         { titled = str8_match(ui_box_display_string(box), str8_lit("WORKSPACES"), 0); }
         for(U64 r = 0; r < row_key_count; r++)
         {
@@ -418,7 +419,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     // the niche, so new-workspace moves to the sidebar action row.
     {
       UIShell_SidebarSection *workspaces = state->sections;
-      for(; workspaces && !str8_match(workspaces->key, str8_lit(".unplaced"), 0); workspaces = workspaces->next) {}
+      for(; workspaces && !str8_match(workspaces->key, str8_lit(".section:workspaces"), 0); workspaces = workspaces->next) {}
       LifecycleCheck(workspaces != 0, "Workspaces section state exists");
       if(workspaces)
       {
