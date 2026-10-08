@@ -155,6 +155,15 @@ struct UIShell_SidebarState
   String8 order_loop;
   AndamentoEntity *order;
   U64 order_count;
+  // Renaming a local section or group (uishell_local_groups.c): its node,
+  // the edit, and whether the field still needs focus. A delete awaiting
+  // confirmation, because workspaces would move.
+  CFG_ID rename_node;
+  U8 rename_text[256];
+  U64 rename_size;
+  TxtPt rename_cursor, rename_mark;
+  B32 rename_focus;
+  CFG_ID confirm_delete;
   // The docking site a sidebar drag was dropped on (drag_panel_drop).
   CFG_ID drop_panel;
   Dir2 drop_direction;
@@ -925,6 +934,8 @@ uishell_sidebar_node_at(UIShell_SidebarState *state, U64 i, AndamentoNode *out)
 read_only global String8 uishell_sidebar_default_local_id = str8_lit_comp("workspaces");
 
 internal void uishell_sidebar_pin_migrate(CFG_Node *window);
+internal String8 uishell_sidebar_local_title(CFG_Node *section);
+internal void uishell_sidebar_local_borrow_titles(CFG_Node *root);
 
 internal String8
 uishell_sidebar_local_field(CFG_Node *node, String8 name)
@@ -962,6 +973,7 @@ uishell_sidebar_local_root(CFG_Node *window)
     uishell_sidebar_local_set_field(group, str8_lit("label"), str8_lit("Workspaces"));
     cfg_node_new(rd_state->cfg, group, str8_lit("default"));
   }
+  uishell_sidebar_local_borrow_titles(root);
   return root;
 }
 
@@ -1070,7 +1082,7 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
     String8 section_id = uishell_sidebar_local_field(section, str8_lit("id"));
     if(!section_id.size) { continue; }
     str8_list_push(arena, &patches, uishell_sidebar_json_entity_patch(arena, section_kind, section_id,
-      uishell_sidebar_json_label(arena, uishell_sidebar_local_field(section, str8_lit("label")), section_position++), str8_zero()));
+      uishell_sidebar_json_label(arena, uishell_sidebar_local_title(section), section_position++), str8_zero()));
     U64 group_position = 0;
     str8_list_pushf(arena, &ids, "%S/%S", section_kind, section_id);
     for(CFG_Node *group = section->first; group != &cfg_nil_node; group = group->next)
@@ -1684,6 +1696,7 @@ internal void uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_Sid
 internal void uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r);
 
 #include "uishell/uishell_hover_cards.c"
+#include "uishell/uishell_local_groups.c"
 
 // Native entry templates declare label/kind/status before optional context.
 internal String8
@@ -1903,7 +1916,21 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
       rd_request_frame();
     }
   }
-  if(subject)
+  if(!menu && str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".group"), 0))
+  {
+    // A local group's header: its menu (uishell_local_groups.c), with its
+    // items' loop for Reset order.
+    CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+    String8 items_loop = str8_zero();
+    AndamentoNode first = {0};
+    if(andamento_snapshot_node(state->snapshot, node_index+1, &first) && first.parent == node_index)
+    { items_loop = uishell_sidebar_loop_key(state->snapshot, node_index+1); }
+    UI_Key menu_key = ui_key_from_stringf(sig.box->key, "group_menu");
+    uishell_sidebar_local_group_menu(state, window, uishell_sidebar_local_group(window, uishell_sidebar_string(node.entity_id)),
+      items_loop, menu_key, ui_key_from_stringf(sig.box->key, "rename_menu"), sig.box->key);
+    if(ui_right_clicked(sig)) { state->confirm_delete = 0; ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
+  }
+  else if(subject)
   {
     uishell_sidebar_subject_hit(node, sig.box, "subject", menu);
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "subject_menu");
@@ -2923,8 +2950,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         title = uishell_sidebar_string(field.text);
       }
       // The local workspace list is Wheelhouse's Workspaces group (drag-model.md);
-      // Andamento's fallback name describes it relative to projects.
-      if(uishell_sidebar_section_hosts_chrome(key)) { title = str8_lit("Workspaces"); }
+      // Andamento's fallback name describes it relative to projects. A section
+      // you made, the default one included, is titled by its data instead.
+      CFG_Node *local_section = uishell_sidebar_local_section(split->owner_cfg, uishell_sidebar_local_key_id(key));
+      if(uishell_sidebar_section_hosts_chrome(key) && local_section == &cfg_nil_node) { title = str8_lit("Workspaces"); }
       UI_Box *header;
       if(states[n]->collapsed && contains_selected[sections[n]])
       { ui_set_next_border_color(uishell_sidebar_selection_fill(1)); }
@@ -2934,6 +2963,15 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       // header is hovered; the collapse indicator follows the title; the count
       // shows only when collapsed. `header` still holds last frame's rect.
       B32 engaged = contains_2f32(header->rect, ui_mouse()) && !rd_drag_is_active();
+      // A section you made has a menu (uishell_local_groups.c). Showing one
+      // group, its items' loop gives the menu Reset order.
+      UI_Key section_menu = ui_key_from_stringf(header->key, "section_menu");
+      String8 section_loop = str8_zero();
+      for(U64 i = sections[n]+1; local_section != &cfg_nil_node && i < count && !section_loop.size; i++)
+      {
+        if(nodes[i].parent == ANDAMENTO_NONE || !passed[nodes[i].parent] || nodes[nodes[i].parent].parent != sections[n]) { continue; }
+        section_loop = uishell_sidebar_loop_key(state->snapshot, i);
+      }
       UI_Parent(header) UI_PrefHeight(ui_pct(1, 1)) UI_FontSize(floor_f32(em*0.82f)) UI_TagF("weak")
       {
         B32 toggle = 0;
@@ -2958,6 +2996,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           if(section_panel && ui_dragging(title_sig) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
           { rd_drag_begin(UIShell_ContextRegSlot_View); }
           toggle |= ui_clicked(title_sig) && !rd_drag_is_active();
+          if(local_section != &cfg_nil_node && ui_right_clicked(title_sig))
+          { state->confirm_delete = 0; ui_ctx_menu_open(section_menu, header->key, v2f32(0, row_height)); }
         }
         if(states[n]->collapsed) UI_PrefWidth(ui_text_dim(4.f, 1)) UI_TextColor(uishell_sidebar_ended_color())
         { ui_label(push_str8f(scratch.arena, "%I64u", entries[n])); }
@@ -2993,10 +3033,20 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         if(section_panel)
         {
           CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-          if(ui_clicked(uishell_sidebar_header_button(str8_lit("×"), str8_lit("section_close"), 0, engaged,
-                                                      str8_lit("Close section"), str8_lit("Restore it from Sections…"))) &&
-             rd_dock_can_close(view))
+          // A section you made: holding × opens its menu (Delete lives there).
+          UI_Signal close = uishell_sidebar_header_button(str8_lit("×"), str8_lit("section_close"), 0, engaged,
+            str8_lit("Close section"), local_section != &cfg_nil_node ? str8_lit("Restore it from Sections… · hold for more") :
+            str8_lit("Restore it from Sections…"));
+          if(local_section != &cfg_nil_node && uishell_sidebar_held(state, close))
+          { state->confirm_delete = 0; ui_ctx_menu_open(section_menu, header->key, v2f32(0, row_height)); }
+          else if(ui_clicked(close) && rd_dock_can_close(view))
           { uishell_cmd("close_tab"); }
+        }
+        if(local_section != &cfg_nil_node)
+        {
+          uishell_sidebar_local_section_menu(state, split->owner_cfg, local_section,
+            section_panel ? cfg_node_from_id(uishell_regs()->view) : &cfg_nil_node, section_loop,
+            section_menu, ui_key_from_stringf(header->key, "rename_menu"), header->key);
         }
         ui_spacer(ui_px(4.f, 1));
         if(toggle)

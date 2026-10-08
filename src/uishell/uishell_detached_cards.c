@@ -428,7 +428,7 @@ uishell_sidebar_pin_migrate_container(CFG_Node *window, CFG_Node *container)
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")),
       uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(group->parent, str8_lit("id"))));
     scratch_end(scratch);
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_field(group->parent, str8_lit("label")));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_title(group->parent));
     if(selected) { cfg_node_new(rd_state->cfg, view, str8_lit("selected")); }
     // The area's own state: its collapsed header. Its other children were
     // its label and selection, carried above; a pin's form travels with it.
@@ -637,7 +637,8 @@ uishell_sidebar_local_view_group(CFG_Node *window, CFG_Node *view)
   return &cfg_nil_node;
 }
 
-// A new local section holding one group, both named `label`; returns the group.
+// A new local section holding one group named `label`, whose name the
+// section borrows (uishell_sidebar_local_title); returns the group.
 internal CFG_Node *
 uishell_sidebar_local_new_group(CFG_Node *window, String8 label)
 {
@@ -645,7 +646,6 @@ uishell_sidebar_local_new_group(CFG_Node *window, String8 label)
   CFG_Node *root = uishell_sidebar_local_root(window);
   CFG_Node *section = cfg_node_new(rd_state->cfg, root, str8_lit("section"));
   uishell_sidebar_local_set_field(section, str8_lit("id"), string_from_guid(scratch.arena, make_guid()));
-  uishell_sidebar_local_set_field(section, str8_lit("label"), label);
   CFG_Node *group = cfg_node_new(rd_state->cfg, section, str8_lit("group"));
   uishell_sidebar_local_set_field(group, str8_lit("id"), string_from_guid(scratch.arena, make_guid()));
   uishell_sidebar_local_set_field(group, str8_lit("label"), label);
@@ -666,7 +666,7 @@ uishell_sidebar_local_new_view(CFG_Node *panel, CFG_Node *section)
   CFG_Node *view = cfg_node_new(rd_state->cfg, panel, str8_lit("sidebar_section"));
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")),
     uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(section, str8_lit("id"))));
-  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_field(section, str8_lit("label")));
+  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_title(section));
   cfg_node_new(rd_state->cfg, view, str8_lit("selected"));
   scratch_end(scratch);
   return view;
