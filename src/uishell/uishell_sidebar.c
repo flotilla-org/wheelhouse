@@ -869,6 +869,19 @@ uishell_sidebar_has_children(UIShell_SidebarState *state, U64 i)
   return next.parent == i;
 }
 
+// The leftover section stands aside, while empty, for the default local
+// section (Workspaces), which hosts New workspace instead. Without one (a
+// host that publishes no local sections) it stays, as the workspace fallback.
+internal B32
+uishell_sidebar_leftover_hidden(UIShell_SidebarState *state, U64 i, AndamentoNode node)
+{
+  if(!str8_match(uishell_sidebar_string(node.key), str8_lit(".unplaced"), 0) || uishell_sidebar_has_children(state, i)) { return 0; }
+  uishell_sidebar_roles(state);
+  for(U64 k = 0; k < andamento_snapshot_node_count(state->snapshot); k++)
+  { if(str8_match(state->role_keys[k], str8_lit(".section:workspaces"), 0)) { return 1; } }
+  return 0;
+}
+
 // Reads node `i` as the sidebar shows it (see UIShell_SidebarRole).
 internal UIShell_SidebarRole
 uishell_sidebar_node_at(UIShell_SidebarState *state, U64 i, AndamentoNode *out)
@@ -2671,7 +2684,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     UIShell_SidebarRole role = uishell_sidebar_node_at(state, i, &nodes[i]);
     passed[i] = role == UIShell_SidebarRole_PassThrough;
     // The leftover section shows only while something is left over.
-    B32 empty_leftover = str8_match(uishell_sidebar_string(nodes[i].key), str8_lit(".unplaced"), 0) && !uishell_sidebar_has_children(state, i);
+    B32 empty_leftover = uishell_sidebar_leftover_hidden(state, i, nodes[i]);
     if(nodes[i].is_section && role != UIShell_SidebarRole_Container && !empty_leftover) { sections[section_count++] = i; }
     project_owner[i] = ANDAMENTO_NONE;
     if(nodes[i].parent != ANDAMENTO_NONE)
@@ -3699,8 +3712,7 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
       if(!node.is_section || role == UIShell_SidebarRole_Container) { continue; }
       // Leftover tabs fill the default group; the leftover section is a
       // region only while something is left over.
-      if(str8_match(uishell_sidebar_string(node.key), str8_lit(".unplaced"), 0) && !uishell_sidebar_has_children(state, i))
-      { continue; }
+      if(uishell_sidebar_leftover_hidden(state, i, node)) { continue; }
       // A section someone made takes its container region's hints.
       AndamentoRegionHints hints = {0};
       andamento_snapshot_region_hints(state->snapshot, role == UIShell_SidebarRole_LocalSection ? node.parent : i, &hints);
