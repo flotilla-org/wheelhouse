@@ -55,7 +55,9 @@ workspaces would move; a section left without groups goes too. Workspaces
 can't be deleted. A section without a name of its own shows its only group's
 name, and renaming it renames the group; with several groups it shows their
 names, joined. Dragging a group's header to a group in another section moves it
-there; dropping it on a docking site makes it a section of its own. Copied
+there; dropping it on a docking site makes it a section of its own. A
+section showing one group is that group: its title dropped on another
+section's group moves the group there, and the emptied section goes. Copied
 or restored layouts reconcile copies of the same pin (same ghost id) within
 the owning window. Pins saved before ghost ids keep the first per subject,
 which gains an id.

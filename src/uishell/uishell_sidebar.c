@@ -1694,8 +1694,9 @@ struct UIShell_SidebarRow
 };
 
 // Sidebar menus are compact: a hairline above and below, as wide as their
-// longest item, with even padding either side of the text.
-#define UIShell_SidebarMenu(key, width) UI_CtxMenuCompact(key) UI_PrefWidth(ui_px((width), 1)) \
+// longest item, with even padding either side of the text, and items styled
+// as the shell's own menus ("implicit": no borders).
+#define UIShell_SidebarMenu(key, width) UI_CtxMenuCompact(key) UI_TagF("implicit") UI_PrefWidth(ui_px((width), 1)) \
   UI_PrefHeight(ui_em(1.8f, 1)) UI_TextPadding(floor_f32(ui_top_font_size()*0.75f))
 
 internal F32
@@ -1707,13 +1708,6 @@ uishell_sidebar_menu_width(String8 *labels, U64 count)
   return ceil_f32(widest + 2*floor_f32(ui_top_font_size()*0.75f) + 2.f);
 }
 
-// Row menus share one width, from the longest of their items.
-internal F32
-uishell_sidebar_row_menu_width(void)
-{
-  String8 labels[] = {str8_lit("Close and discard layout"), str8_lit("Open in browser"), str8_lit("Detach workspace")};
-  return uishell_sidebar_menu_width(labels, ArrayCount(labels));
-}
 
 // Opens a menu where a right-click or press happened, inside a large target;
 // a small control's menu opens at its edge instead (offset from its box).
@@ -1787,6 +1781,28 @@ uishell_sidebar_close_label(UIShell_SidebarCloseKind kind)
     kind == UIShell_SidebarCloseKind_RemovePin ? str8_lit("Remove pin") : str8_lit("Close workspace");
 }
 
+internal B32 uishell_sidebar_is_subject(AndamentoNode node);
+
+// A row menu's width, from the items that row's menu shows
+// (uishell_sidebar_entry_signal).
+internal F32
+uishell_sidebar_row_menu_width(AndamentoNode node, UIShell_SidebarCloseKind close)
+{
+  String8 labels[6] = {str8_lit("Reset order")};
+  U64 count = 1;
+  if(close == UIShell_SidebarCloseKind_RemovePin)
+  {
+    labels[count++] = str8_lit("Go to source"); labels[count++] = str8_lit("Show as card"); labels[count++] = str8_lit("Remove pin");
+  }
+  else
+  {
+    if(uishell_sidebar_is_subject(node)) { labels[count++] = str8_lit("Open in browser"); labels[count++] = str8_lit("Copy reference"); }
+    if(close != UIShell_SidebarCloseKind_None) { labels[count++] = uishell_sidebar_close_label(close); }
+    if(close == UIShell_SidebarCloseKind_Detach) { labels[count++] = str8_lit("Close and discard layout"); }
+  }
+  return uishell_sidebar_menu_width(labels, count);
+}
+
 internal void
 uishell_sidebar_close_workspace(RD_WindowState *ws, AndamentoNode node, UIShell_SidebarCloseKind kind)
 {
@@ -1849,7 +1865,7 @@ uishell_sidebar_margin_close(UIShell_SidebarState *state, RD_WindowState *ws, An
   }
   // Below the button, right-aligned to it, so the menu stays over the sidebar.
   if(uishell_sidebar_held(state, sig))
-  { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(dim_2f32(sig.box->rect).x-uishell_sidebar_row_menu_width(), dim_2f32(sig.box->rect).y)); }
+  { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(dim_2f32(sig.box->rect).x-uishell_sidebar_row_menu_width(node, close), dim_2f32(sig.box->rect).y)); }
   if(ui_clicked(sig)) { uishell_sidebar_close_workspace(ws, node, close); }
 }
 
@@ -1970,7 +1986,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   {
     uishell_sidebar_subject_hit(node, sig.box, "subject", menu);
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "subject_menu");
-    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width())
+    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width(node, close_kind))
     {
       // The retained snapshot gives every placed subject an activate action.
       if(copy_url != ANDAMENTO_NONE && node.activate != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Open in browser"))))
@@ -1996,7 +2012,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     CFG_Node *saved = uishell_sidebar_pin_by_ghost(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity_id));
     B32 expanded = saved != &cfg_nil_node && uishell_sidebar_pin_expanded(saved);
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "workspace_menu");
-    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width())
+    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width(node, close_kind))
     {
       if(node.activate != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Go to source"))))
       { action = node.activate; ui_ctx_menu_close(); }
@@ -2012,7 +2028,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   {
     // Rows show this on hover too; inline action chips have only this menu.
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "workspace_menu");
-    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width())
+    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width(node, close_kind))
     {
       if(ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
       { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
@@ -2025,7 +2041,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   {
     // `ordered` is only computed on a right click or while a menu is open.
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "order_menu");
-    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width())
+    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width(node, close_kind))
     { uishell_sidebar_order_reset_button(state, loop); }
     if(ui_right_clicked(sig)) { uishell_sidebar_menu_open_at_pointer(menu_key, sig.box); }
   }
@@ -2571,6 +2587,9 @@ uishell_sidebar_group_claim(UIShell_SidebarState *state, UI_Box *body, Andamento
   // section's groups.
   if(state->row_drag_key.size && loop.size && str8_match(loop, state->row_drag_loop, 0)) { return; }
   if(state->row_drag_key.size && str8_match(uishell_sidebar_loop_key(state->snapshot, group), state->row_drag_loop, 0)) { return; }
+  CFG_Node *section_group = uishell_sidebar_section_drag_group(cfg_node_from_id(uishell_regs()->window));
+  if(section_group != &cfg_nil_node &&
+     str8_match(uishell_sidebar_local_field(section_group, str8_lit("id")), uishell_sidebar_string(nodes[group].entity_id), 0)) { return; }
   F32 y = area.y0+row_height*0.5f;
   if(first < item_count)
   {
@@ -2790,7 +2809,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   UIShell_RowDragSibling *drag_siblings = push_array(scratch.arena, UIShell_RowDragSibling, row_dragging ? count : 0);
   // Local groups' items as built this frame (last frame's rects), and their
   // cards' rects, for the insertion point a sidebar drag claims.
-  B32 sidebar_dragging = row_dragging || state->drag_card;
+  // A one-group section dragged by its title is its group's drag too.
+  B32 sidebar_dragging = row_dragging || state->drag_card ||
+    uishell_sidebar_section_drag_group(split->owner_cfg) != &cfg_nil_node;
   UIShell_RowDragSibling *group_items = push_array(scratch.arena, UIShell_RowDragSibling, sidebar_dragging ? count : 0);
   Rng2F32 *group_rects = push_array(scratch.arena, Rng2F32, sidebar_dragging ? count : 0);
   U64 group_item_count = 0;

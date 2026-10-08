@@ -251,7 +251,7 @@ Card features and profiles (`card-features-prototype.html`) can reuse RAD's per-
         - dragging a group's header to another section or a dock edge;
         - the title rules.
 
-        A section showing one group has no group header to drag; its title drags the section (docking).
+        A section showing one group has no group header: it is that group, so its title's drag is the group's too. Over another section's group, the group moves in and the emptied section goes; on a docking site it docks as before.
 4. **Entity ghosts.** *Done:* compact ghost rows, the ghost marker, explicit removal, positioned drops (#249). *Left:* the ended and unavailable lifecycle, and Clear ended.
 5. **Group drag and titles.** Folded into step 3.3.
 6. **View ghosts.** Read-only mirrors, after #89's attachment policy.

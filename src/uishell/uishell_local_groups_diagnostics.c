@@ -255,6 +255,12 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     UI_Box *title_box = uishell_sidebar_reorder_box(ui_state->root, title);
     Vec2F32 opened_at = add_2f32(title_box->rect.p0, ui_state->ctx_menu_anchor_off);
     GroupsCheck(length_2f32(sub_2f32(opened_at, center_2f32(title_box->rect))) < 1.f, "the menu opens where the pointer was");
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    F32 menu_width = dim_2f32(ui_state->ctx_menu_root->rect).x;
+    F32 item_width = 0;
+    for(UI_Box *b = ui_state->ctx_menu_root->first; !ui_box_is_nil(b); b = b->next)
+    { if(b->flags & UI_BoxFlag_Clickable) { item_width = Max(item_width, dim_2f32(b->rect).x); } }
+    GroupsCheck(item_width > 0 && abs_f32(menu_width-item_width) < 1.f, "the menu is as wide as its items, with no margin to the right");
     U64 groups_before = uishell_sidebar_local_group_count(section);
     found = uishell_local_groups_click(ws, window, arena, str8_lit("New group"), WM_Key_LeftMouseButton);
     CFG_Node *added = cfg_node_from_id(state->rename_node);
@@ -344,13 +350,43 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     GroupsCheck(str8_match(uishell_sidebar_local_title(arena, first), str8_lit("Alpha"), 0), "the section it left borrows its remaining group's name");
     CFG_Node *own_view = uishell_sidebar_local_view(window, beta);
     if(own_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, own_view); }
-    // Each section once, even if a failed move left them shared.
-    CFG_Node *made_sections[] = {own, first, second};
-    for(U64 i = 0; i < ArrayCount(made_sections); i++)
+
+    //- A section showing one group is that group: dragging its title onto a
+    //  group in another section moves the group there, and the emptied
+    //  section and its View go.
+    String8 second_id = push_str8_copy(arena, uishell_sidebar_local_field(second, str8_lit("id")));
+    uishell_local_groups_publish(state, window, arena);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    String8 alpha_row = uishell_local_groups_row(arena, state, str8_lit("groups-alpha"));
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    UIShell_RegsScope(.window = window->id, .view = uishell_local_groups_view2->id, .panel = bottom->id, .tab = uishell_local_groups_view2->id)
+    { rd_drag_begin(UIShell_ContextRegSlot_View); }
+    B32 dragging = rd_drag_is_active();
+    for(U64 frame = 0; frame < 3; frame++)
     {
-      B32 seen = 0;
-      for(U64 k = 0; k < i; k++) { seen |= made_sections[k] == made_sections[i]; }
-      if(!seen) { cfg_node_release(rd_state->cfg, made_sections[i]); }
+      if(frame == 2) { rd_state->drag_drop_state = RD_DragDropState_Dropping; }
+      UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
+      Vec2F32 at = uishell_workspace_lifecycle_center(ui_state, alpha_row);
+      UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = at;
+      uishell_local_groups_render(window, &split);
+      uishell_sidebar_drag_finish(ws);
+      ui_end_build();
+    }
+    rd_drag_kill();
+    GroupsCheck(dragging && gamma->parent == first && gamma->prev == alpha &&
+                uishell_sidebar_local_section(window, second_id) == &cfg_nil_node &&
+                cfg_node_child_from_string(bottom, str8_lit("sidebar_section")) == &cfg_nil_node,
+                "a one-group section's title dropped on another section's group moves its group there, and the section and its View go");
+    uishell_local_groups_view2 = &cfg_nil_node;
+    // Each section that remains, once.
+    String8 made_ids[] = {push_str8_copy(arena, uishell_sidebar_local_field(own, str8_lit("id"))),
+      push_str8_copy(arena, uishell_sidebar_local_field(first, str8_lit("id"))), second_id};
+    for(U64 i = 0; i < ArrayCount(made_ids); i++)
+    {
+      CFG_Node *left = uishell_sidebar_local_section(window, made_ids[i]);
+      if(left != &cfg_nil_node) { cfg_node_release(rd_state->cfg, left); }
     }
     cfg_node_release(rd_state->cfg, top);
     cfg_node_release(rd_state->cfg, bottom);
@@ -362,7 +398,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, group drag between sections, group to a docking site)\n",
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, group drag between sections, group to a docking site, one-group section title drag)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

@@ -883,6 +883,7 @@ uishell_sidebar_detached_bounds(RD_WindowState *ws)
 
 internal CFG_Node *uishell_sidebar_drag_local(UIShell_SidebarState *state);
 internal void uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *section, CFG_Node *after);
+internal CFG_Node *uishell_sidebar_section_drag_group(CFG_Node *window);
 
 internal void
 uishell_sidebar_drag_clear(UIShell_SidebarState *state)
@@ -974,7 +975,23 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   UIShell_SidebarState *state = ws->sidebar;
   UIShell_HoverCard *card = state->drag_card;
   B32 row = state->row_drag_key.size != 0;
-  if(!card && !row) { return; }
+  if(!card && !row)
+  {
+    // A one-group section's title dropped where a group claimed it, and no
+    // docking site took it: its group moves into that section.
+    CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *dragged = uishell_sidebar_section_drag_group(window);
+    CFG_Node *target = dragged != &cfg_nil_node && rd_state->drag_drop_state == RD_DragDropState_Dropping &&
+      uishell_sidebar_group_claimed(state) ? uishell_sidebar_local_group(window, state->group_claim_id) : &cfg_nil_node;
+    if(target != &cfg_nil_node && target->parent != dragged->parent)
+    {
+      uishell_sidebar_local_move_group(window, dragged, target->parent, target);
+      rd_drag_kill();
+      state->group_claim_build = 0;
+      rd_request_frame();
+    }
+    return;
+  }
   B32 released = row ? state->row_drag_released : card->drag_released;
   if((card && !card->open) || (!rd_drag_is_active() && !released && !state->drop_panel))
   {

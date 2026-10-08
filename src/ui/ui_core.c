@@ -2223,7 +2223,9 @@ ui_begin_ctx_menu(UI_Key key)
     ui_state->ctx_menu_root->blur_size = ui_top_blur_size();
     ui_state->ctx_menu_root->text_color = ui_color_from_name(str8_lit("text"));
     ui_state->ctx_menu_root->background_color = ui_color_from_name(str8_lit("background"));
-    ui_spacer(compact ? ui_px(3.f, 1.f) : ui_em(1.f, 1.f));
+    // A compact menu's hairline has no width of its own, so the items set it.
+    if(compact) UI_PrefWidth(ui_px(0, 0)) { ui_spacer(ui_px(3.f, 1.f)); }
+    else { ui_spacer(ui_em(1.f, 1.f)); }
   }
   ui_state->is_in_open_ctx_menu = is_open;
   return is_open;
@@ -2235,7 +2237,8 @@ ui_end_ctx_menu(void)
   if(ui_state->is_in_open_ctx_menu)
   {
     ui_state->is_in_open_ctx_menu = 0;
-    ui_spacer(ui_state->is_in_compact_ctx_menu ? ui_px(3.f, 1.f) : ui_em(1.f, 1.f));
+    if(ui_state->is_in_compact_ctx_menu) UI_PrefWidth(ui_px(0, 0)) { ui_spacer(ui_px(3.f, 1.f)); }
+    else { ui_spacer(ui_em(1.f, 1.f)); }
     ui_state->is_in_compact_ctx_menu = 0;
   }
   ui_pop_tag();

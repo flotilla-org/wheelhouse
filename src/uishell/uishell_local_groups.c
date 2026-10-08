@@ -193,6 +193,19 @@ uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *se
   }
 }
 
+// While a local section showing one group is dragged by its title (its
+// View's docking drag), the group it shows: the section is that group, so
+// other sections' groups claim the drag as they would the group's header,
+// and a claim moves the group there instead of docking (drag_finish).
+internal CFG_Node *
+uishell_sidebar_section_drag_group(CFG_Node *window)
+{
+  if(!rd_drag_is_active() || rd_state->drag_drop_regs_slot != UIShell_ContextRegSlot_View ||
+     rd_state->drag_drop_regs->window != window->id) { return &cfg_nil_node; }
+  CFG_Node *group = uishell_sidebar_local_view_group(window, cfg_node_from_id(rd_state->drag_drop_regs->view));
+  return group != &cfg_nil_node && uishell_sidebar_local_group_count(group->parent) == 1 ? group : &cfg_nil_node;
+}
+
 // Opens a new workspace living in `group`.
 internal void
 uishell_sidebar_local_new_workspace(CFG_Node *window, CFG_Node *group)
