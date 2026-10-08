@@ -135,7 +135,8 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
       Rng2F32 inside = pad_2f32(lift->rect, 0.5f);
       result.lift_text_inside = !ui_box_is_nil(label) && !ui_box_is_nil(icon) && dim_2f32(label->rect).x > 0 &&
         contains_2f32(inside, label->rect.p0) && contains_2f32(inside, label->rect.p1) &&
-        contains_2f32(inside, icon->rect.p0) && contains_2f32(inside, icon->rect.p1);
+        contains_2f32(inside, icon->rect.p0) && contains_2f32(inside, icon->rect.p1) &&
+        (icon->flags & UI_BoxFlag_DisableTextTrunc);
       if(mode == UIShell_ReorderMode_Cancel) { rd_drag_kill(); ui_kill_action(); }
     }
     if(frame == 5) { result.menu = ui_any_ctx_menu_is_open(); }
@@ -283,7 +284,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next)
     { if(str8_match(c->string, str8_lit("card"), 0) && pin_count < 3) { pins[pin_count++] = c; } }
     ReorderCheck(ghost.started && ghost.lifted, "a dragged row lifts and follows the pointer");
-    ReorderCheck(ghost.lift_text_inside, "the lifted copy is the row: its icon and label inside it");
+    ReorderCheck(ghost.lift_text_inside, "the lifted copy is the row: its whole icon and label inside it");
     ReorderCheck(ghost.ghost_target && !ghost.line, "a pinned area shows an insertion point, not the reorder line");
     ReorderCheck(pin_count == 3 && str8_match(cfg_node_child_from_string(pins[1], str8_lit("entity"))->first->string, str8_lit("c2"), 0) &&
                  uishell_sidebar_pin_ghost(pins[1]).size && !uishell_sidebar_pin_expanded(pins[1]),

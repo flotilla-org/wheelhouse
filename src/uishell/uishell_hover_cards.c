@@ -852,7 +852,9 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     F32 em = ui_top_font_size(), width = Min(floating ? dim_2f32(card->rect).x : em*34, dim_2f32(window).x-20);
     F32 content_height = ui_box_is_nil(old_content) ? em*(6+node.detail_count*1.6f) : old_content->fixed_size.y;
     F32 height = Clamp(em*4, card->moving ? dim_2f32(card->rect).y : content_height+16, dim_2f32(window).y-20);
-    F32 x = outside ? state->rect.x1+8 : Min(card->source_rect.x1+8, state->rect.x1-24);
+    // One column for every source (label, icon, chip or ghost row): just
+    // inside the sidebar's edge, or beyond it.
+    F32 x = outside ? state->rect.x1+8 : state->rect.x1-24;
     if(slot) { x = card->source_rect.x1+8; }
     Vec2F32 target = v2f32(Clamp(window.x0+10, x, window.x1-width-10),
                           uishell_sidebar_card_target_y(card, height, window, !outside && slot == 0));

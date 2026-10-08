@@ -1657,9 +1657,21 @@ uishell_sidebar_subject_color(String8 status)
   return color;
 }
 
+// An entity's one icon, for its row, its chip, its ghost and its drag lift:
+// the producer's presentation.icon (or the template's override), else one by
+// kind. A node without fields (a card's detail) reads them from the tree.
 internal String8
-uishell_sidebar_chip_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *icon_font)
+uishell_sidebar_node_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *icon_font)
 {
+  if(!node.field_count && state->snapshot)
+  {
+    for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+    {
+      AndamentoNode n = {0}; andamento_snapshot_node(state->snapshot, i, &n);
+      if(!n.is_section && n.field_count && uishell_sidebar_card_entity_match(uishell_sidebar_card_entity(n), uishell_sidebar_card_entity(node)))
+      { node = n; break; }
+    }
+  }
   String8 icon = uishell_sidebar_chip_fact(state, node, str8_lit("chip-icon:"));
   if(!icon.size) { icon = uishell_sidebar_chip_fact(state, node, str8_lit("chip-icon-override:")); }
   *icon_font = 1;
@@ -1675,9 +1687,21 @@ uishell_sidebar_chip_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *
   { if(str8_match(icon, str8_cstring(icons[i].name), 0)) { return rd_icon_kind_text_table[icons[i].kind]; } }
   if(icon.size) { *icon_font = 0; return icon; }
   String8 kind = uishell_sidebar_string(node.entity_kind);
-  RD_IconKind fallback = str8_match(kind, str8_lit("project"), 0) ? RD_IconKind_Thumbnails :
-    str8_match(kind, str8_lit("role"), 0) ? RD_IconKind_Threads : RD_IconKind_Machine;
+  RD_IconKind fallback = str8_match(kind, str8_lit("project"), 0) ? RD_IconKind_FolderClosedOutline :
+    str8_match(kind, str8_lit("convoy"), 0) || str8_match(kind, str8_lit("role"), 0) ? RD_IconKind_Threads : RD_IconKind_Machine;
   return rd_icon_kind_text_table[fallback];
+}
+
+// A chip is its entity's icon, except a project's own chip, which opens
+// its overview.
+internal String8
+uishell_sidebar_chip_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *icon_font)
+{
+  String8 icon = uishell_sidebar_node_icon(state, node, icon_font);
+  if(str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("project"), 0) &&
+     str8_match(icon, rd_icon_kind_text_table[RD_IconKind_FolderClosedOutline], 0))
+  { icon = rd_icon_kind_text_table[RD_IconKind_Thumbnails]; }
+  return icon;
 }
 
 internal String8
@@ -1838,20 +1862,10 @@ uishell_sidebar_section_hosts_chrome(String8 key)
   return str8_match(key, str8_lit("andamento.unplaced-workspaces"), 0);
 }
 
-internal RD_IconKind
-uishell_sidebar_row_icon(String8 kind)
-{
-  if(str8_match(kind, str8_lit("project"), 0)) { return RD_IconKind_FolderClosedOutline; }
-  if(str8_match(kind, str8_lit("convoy"), 0) || str8_match(kind, str8_lit("role"), 0)) { return RD_IconKind_Threads; }
-  if(str8_match(kind, str8_lit("vessel"), 0) || str8_match(kind, str8_lit("session"), 0)) { return RD_IconKind_Machine; }
-  return RD_IconKind_FileOutline;
-}
-
 internal void
 uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
 {
   Arena *arena = ui_build_arena();
-  String8 kind = uishell_sidebar_string(r->node.entity_kind);
   UI_PrefWidth(r->width > 0 ? ui_px(r->width, 1) : ui_pct(1, 0)) UI_PrefHeight(ui_px(r->height, 1)) UI_ChildLayoutAxis(Axis2_X)
   { r->slot = ui_build_box_from_stringf(0, "###row_slot_%S", r->key); }
   ui_push_parent(r->slot);
@@ -1881,13 +1895,21 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
     if(r->disclosure) { r->toggle = uishell_sidebar_disclosure(r->expanded, push_str8f(arena, "###toggle_%S", r->key)); }
     else { ui_spacer(ui_em(1.5f, 1)); }
   }
-  UI_TagF("weak") UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) RD_Font(RD_FontSlot_Icons)
+  // The entity's icon, as its chip shows it, never truncated to nothing.
+  B32 icon_font = 1;
+  String8 icon = uishell_sidebar_node_icon(state, r->node, &icon_font);
+  UI_TagF("weak") UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+  UI_FontSize(ui_top_font_size()*0.9f) UI_Font(icon_font ? rd_font_from_slot(RD_FontSlot_Icons) : ui_top_font())
   {
-    String8 icon = rd_icon_kind_text_table[uishell_sidebar_row_icon(kind)];
     // With chips in the name column, the icon keeps the row's identity and
     // hover card reachable.
     if(r->icon_entry) { r->icon_sig = uishell_sidebar_button(push_str8f(arena, "%S###identity_%S", icon, r->key)); }
-    else { ui_label(icon); }
+    else
+    {
+      UI_Box *box = ui_build_box_from_key(UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc, ui_key_zero());
+      ui_box_equip_display_string(box, icon);
+    }
+    if(r->icon_entry) { r->icon_sig.box->flags |= UI_BoxFlag_DisableTextTrunc|UI_BoxFlag_DisableTruncatedHover; }
   }
   UI_PrefWidth(ui_pct(1, 0))
   {
