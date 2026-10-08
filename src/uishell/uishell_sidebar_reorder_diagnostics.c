@@ -106,6 +106,8 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
     UIShell_RegsScope(.window = split->owner_cfg->id, .view = pinned_area->id)
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     {
+      // As in a window, the area's own catch-all site has the pointer first.
+      ui_state->drop_hot_box_key = ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", pinned_area->parent);
       UI_Box *view_parent;
       UI_Rect(pinned_rect) { view_parent = ui_build_box_from_key(UI_BoxFlag_Clip, ui_key_make(119168)); }
       UI_Parent(view_parent) { RD_VIEW_UI_FUNCTION_NAME(pinned_cards)((E_Eval){0}, pinned_rect); }

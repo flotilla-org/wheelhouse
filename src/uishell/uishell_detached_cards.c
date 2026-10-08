@@ -420,6 +420,19 @@ uishell_sidebar_drop_area(UIShell_SidebarState *state)
   return cfg_node_from_id(state->drop_area);
 }
 
+// A sidebar View may claim a positioned drop unless another docking site has
+// the pointer. Its own panel's centre and catch-all sites don't count: they
+// stand aside once it claims (drag_drop_local_panel), and the catch-all,
+// built before the View, would otherwise always have the pointer first.
+internal B32
+uishell_sidebar_drop_claimable(CFG_Node *panel)
+{
+  UI_Key hot = ui_drop_hot_key();
+  return ui_key_match(hot, ui_key_zero()) ||
+    ui_key_match(hot, ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panel)) ||
+    ui_key_match(hot, ui_key_from_stringf(ui_key_zero(), "drop_split_center_%p", panel));
+}
+
 internal CFG_Node *
 uishell_sidebar_pin_add(UIShell_SidebarState *state, CFG_Node *area, U64 index, AndamentoEntity entity,
                         String8 fallback_label, String8 source, B32 compact)
@@ -1114,7 +1127,7 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
   // A row or card dragged over the list gets an insertion point between pins
   // (drag-model.md, drop table): the release adds a ghost there, or moves a
   // pinned card's own ghost there. RAD's edge sites still win under the pointer.
-  if((state->row_drag_key.size || state->drag_card) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
+  if((state->row_drag_key.size || state->drag_card) && uishell_sidebar_drop_claimable(view->parent))
   {
     Rng2F32 list = scroll.content_box->rect;
     Vec2F32 mouse = ui_mouse();

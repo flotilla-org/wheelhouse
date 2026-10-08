@@ -1828,6 +1828,7 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
                         siblings[0].extent.x1, siblings[count-1].extent.y1+row_height*0.5f);
   // A pinned area's insertion point (claimed this build or the last) wins.
   B32 moves = uishell_sidebar_drop_area(state) == &cfg_nil_node && source < count &&
+    uishell_sidebar_drop_claimable(cfg_node_from_id(uishell_regs()->panel)) &&
     contains_2f32(span, mouse) && target != source && target != source+1;
   state->reorder_build = 0;
   if(!moves) { return; }
