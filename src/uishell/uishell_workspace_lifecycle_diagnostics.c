@@ -207,6 +207,49 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
     uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &loose_node);
+
+    //- Dropped on another local group with Option/Alt held, a workspace stays
+    //  at home and that group gets a ghost of it; without, it moves there.
+    {
+      CFG_Node *builds = uishell_sidebar_local_new_group(window, str8_lit("Builds"));
+      String8 builds_id = push_str8_copy(scratch.arena, uishell_sidebar_local_field(builds, str8_lit("id")));
+      CFG_Node *seed = cfg_node_new(rd_state->cfg, builds, str8_lit("card"));
+      uishell_sidebar_local_set_field(seed, str8_lit("ghost"), str8_lit("lifecycle-seed"));
+      uishell_sidebar_local_set_field(seed, str8_lit("kind"), str8_lit("project"));
+      uishell_sidebar_local_set_field(seed, str8_lit("entity"), str8_lit("p"));
+      cfg_node_new(rd_state->cfg, seed, str8_lit("compact"));
+      uishell_sidebar_observe(state, &split);
+      uishell_sidebar_refresh(state);
+      AndamentoNode seed_node = {0}, row_node = {0};
+      uishell_workspace_lifecycle_find(state, str8_lit("lifecycle-seed"), 0, &seed_node);
+      uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &row_node);
+      String8 seed_row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(seed_node.key));
+      String8 loose_row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(row_node.key));
+      String8 line = push_str8f(scratch.arena, "group_drop_line_%S", builds_id);
+      uishell_sidebar_test_modifiers = WM_Modifier_Alt;
+      lit = uishell_workspace_lifecycle_drag(ws, window, scratch.arena, loose_row, seed_row, line);
+      uishell_sidebar_test_modifiers = 0;
+      B32 ghosted = 0;
+      for(CFG_Node *c = builds->first; c != &cfg_nil_node; c = c->next)
+      { ghosted |= str8_match(uishell_sidebar_local_field(c, str8_lit("entity")), local_id, 0) && str8_match(uishell_sidebar_local_field(c, str8_lit("kind")), str8_lit(".workspace"), 0); }
+      LifecycleCheck(lit && ghosted && !str8_match(uishell_sidebar_local_field(loose, str8_lit("lives_in")), builds_id, 0),
+                     "Option-dropping a workspace on another group adds a ghost of it there and leaves it at home");
+      uishell_sidebar_observe(state, &split);
+      uishell_sidebar_refresh(state);
+      uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &row_node);
+      loose_row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(row_node.key));
+      uishell_workspace_lifecycle_find(state, str8_lit("lifecycle-seed"), 0, &seed_node);
+      seed_row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(seed_node.key));
+      lit = uishell_workspace_lifecycle_drag(ws, window, scratch.arena, loose_row, seed_row, line);
+      LifecycleCheck(lit && str8_match(uishell_sidebar_local_field(loose, str8_lit("lives_in")), builds_id, 0),
+                     "dropping a workspace on another group moves it there");
+      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(loose, str8_lit("lives_in")));
+      cfg_node_release(rd_state->cfg, builds->parent);
+      split = uishell_root_controlled_split_from_window(scratch.arena, window);
+      uishell_sidebar_observe(state, &split);
+      uishell_sidebar_refresh(state);
+      uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &loose_node);
+    }
   }
   // The subject is a chip in the tree and a full row in Attention; match every
   // placement and use whichever renders as a row.

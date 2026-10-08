@@ -149,11 +149,6 @@ struct UIShell_SidebarState
   AndamentoEntity reorder_anchor;
   B32 reorder_after;
   U64 reorder_build;
-  // The positioned drop a pinned area claimed for a row or card drag: the
-  // area, the insertion index among its pins, and the build that claimed it.
-  CFG_ID drop_area;
-  U64 drop_index, drop_build;
-  Rng2F32 drop_rect;
   // The control held down, and since when (see uishell_sidebar_held).
   UI_Key hold_key;
   U64 hold_us;
@@ -1064,7 +1059,8 @@ uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSpl
       {
         String8 ghost = uishell_sidebar_local_field(card, str8_lit("ghost"));
         String8 target_kind = uishell_sidebar_local_field(card, str8_lit("kind")), target_id = uishell_sidebar_local_field(card, str8_lit("entity"));
-        if(!str8_match(card->string, str8_lit("card"), 0) || !ghost.size || !target_kind.size) { continue; }
+        // A pin missing its target still shows, as no longer present.
+        if(!str8_match(card->string, str8_lit("card"), 0) || !ghost.size) { continue; }
         String8 ref_set = push_str8f(arena, "%S,%S,\".position\":{\"value\":{\"type\":\"text\",\"value\":\"%I64u\"}}",
           uishell_sidebar_json_fact_ref(arena, str8_lit(".group"), group_kind, group_id),
           uishell_sidebar_json_fact_ref(arena, str8_lit(".target"), target_kind, target_id), ref_position++);
@@ -1939,7 +1935,19 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     { uishell_sidebar_order_reset_button(state, loop); }
     if(ui_right_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, em*1.8f)); }
   }
-  uishell_sidebar_card_source(state, node, sig, context, contains_current);
+  // A ghost's hover card is its subject's, as on its home row; Pin there
+  // pins the subject, not the ghost.
+  AndamentoNode hover_node = node;
+  if(close_kind == UIShell_SidebarCloseKind_RemovePin)
+  {
+    CFG_Node *saved = uishell_sidebar_pin_by_ghost(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity_id));
+    if(saved != &cfg_nil_node)
+    {
+      hover_node.entity_kind = uishell_sidebar_text(push_str8_copy(scratch.arena, cfg_node_child_from_string(saved, str8_lit("kind"))->first->string));
+      hover_node.entity_id = uishell_sidebar_text(push_str8_copy(scratch.arena, cfg_node_child_from_string(saved, str8_lit("entity"))->first->string));
+    }
+  }
+  uishell_sidebar_card_source(state, hover_node, sig, context, contains_current);
   scratch_end(scratch);
   return action;
 }
@@ -2393,7 +2401,7 @@ uishell_sidebar_home_claim(UIShell_SidebarState *state, Rng2F32 rect, String8 pr
   CFG_Node *workspace = uishell_sidebar_drag_local(state);
   if(workspace == &cfg_nil_node || !contains_2f32(rect, ui_mouse()) ||
      str8_match(uishell_sidebar_local_home(workspace), project, 0) ||
-     uishell_sidebar_drop_area(state) != &cfg_nil_node ||
+     uishell_sidebar_group_claimed(state) ||
      !uishell_sidebar_drop_claimable(cfg_node_from_id(uishell_regs()->panel))) { return; }
   if(!state->home_arena) { state->home_arena = arena_alloc(); }
   arena_clear(state->home_arena);
@@ -2469,8 +2477,7 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
   }
   Rng2F32 span = r2f32p(siblings[0].extent.x0, siblings[0].extent.y0-row_height*0.5f,
                         siblings[0].extent.x1, siblings[count-1].extent.y1+row_height*0.5f);
-  // A pinned area's insertion point (claimed this build or the last) wins.
-  B32 moves = uishell_sidebar_drop_area(state) == &cfg_nil_node && source < count &&
+  B32 moves = source < count &&
     uishell_sidebar_drop_claimable(cfg_node_from_id(uishell_regs()->panel)) &&
     contains_2f32(span, mouse) && target != source && target != source+1;
   state->reorder_build = 0;
@@ -3100,6 +3107,17 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             }
             // An expanded ghost draws its card in its row's place.
             CFG_Node *ghost = uishell_sidebar_tree_ghost(split->owner_cfg, node);
+            // A revealed pin scrolls into view; an expanded one takes focus,
+            // and the reveal completes once its card has been measured.
+            if(ghost != &cfg_nil_node && ghost->id == state->pin_reveal)
+            {
+              body->view_off_target.y = Clamp(0.f, row_y, (F32)axes[Axis2_Y].range.max);
+              B32 expanded = uishell_sidebar_pin_expanded(ghost);
+              UIShell_HoverCard *card = uishell_sidebar_saved_card(ws, ghost);
+              card->focused = expanded;
+              if(!expanded || card->content_height > 0) { state->pin_reveal = 0; }
+              rd_request_frame();
+            }
             if(ghost != &cfg_nil_node && uishell_sidebar_pin_expanded(ghost))
             {
               UIShell_HoverCard *card = uishell_sidebar_saved_card(ws, ghost);
@@ -3134,8 +3152,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             B32 icon_entry = chip_count && chip_layout.name_width == 0;
             UIShell_SidebarRow r = {.node = node, .present = 1, .key = node_key, .text = display, .status = status,
               .height = row_height, .indent = indent, .project = project, .selected = node.selected,
-              .contains_current = contains_current, .disclosure = children && node.toggle != ANDAMENTO_NONE,
-              .expanded = !node.collapsed, .entry = 1, .icon_entry = icon_entry,
+              // A compact ghost's disclosure expands it into its card.
+              .contains_current = contains_current, .disclosure = (children && node.toggle != ANDAMENTO_NONE) || ghost != &cfg_nil_node,
+              .expanded = ghost == &cfg_nil_node && !node.collapsed, .entry = 1, .icon_entry = icon_entry,
               // A ghost is a reference: it lives elsewhere.
               .reference = ghost != &cfg_nil_node};
             // Persistent workspace selection remains visible while the terminal
@@ -3158,7 +3177,11 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               Rng2F32 *extent = &drag_siblings[drag_sibling_count-1].extent;
               extent->y1 = Max(extent->y1, slot->rect.y1);
             }
-            if(ui_clicked(r.toggle)) { action = node.toggle; }
+            if(ui_clicked(r.toggle))
+            {
+              if(ghost != &cfg_nil_node) { uishell_sidebar_ghost_set_expanded(ghost, 1); rd_request_frame(); }
+              else { action = node.toggle; }
+            }
             if(icon_entry)
             {
               entry_key = r.icon_sig.box->key;
