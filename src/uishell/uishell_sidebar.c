@@ -39,6 +39,8 @@ struct UIShell_SidebarSection
   F32 content_height;
   B32 has_controls;
   B32 collapsed;
+  // Its make footers' height last frame (they open on hover and push rows down).
+  F32 footer_extra;
 };
 
 typedef enum UIShell_CardPlacement
@@ -170,6 +172,11 @@ struct UIShell_SidebarState
   TxtPt rename_cursor, rename_mark;
   B32 rename_focus;
   CFG_ID confirm_delete;
+  // The make footer being named (uishell_sidebar_make_footer), by its key,
+  // and which of its actions.
+  U8 make_key[256];
+  U64 make_key_size;
+  U32 make_index;
   // The docking site a sidebar drag was dropped on (drag_panel_drop).
   CFG_ID drop_panel;
   Dir2 drop_direction;
@@ -3314,15 +3321,20 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           }
         }
       }
+      // The section body's screen rect, from last frame's root.
+      Rng2F32 section_body_rect = r2f32p(root->rect.x0, root->rect.y0+y, root->rect.x1, root->rect.y0+y+heights[n]);
       UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, y, dim.x, y+heights[n]),
         UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);
-      params.content_dim_px = v2f32(0, content_heights[n]);
+      // Open make footers lengthen the scroll range, but never the section's
+      // allocation: a hover must not reflow the sections around it.
+      F32 scroll_content = content_heights[n]+states[n]->footer_extra;
+      params.content_dim_px = v2f32(0, scroll_content);
       UI_ScrollRegion region = ui_scroll_region_layout(params);
       F32 card_inset = dim_2f32(region.viewport).x >= em*16.f ? side_margin : 0.f;
       UI_Key content_key = ui_key_from_stringf(root->key, "section_body_%S", key);
       UI_Box *previous = ui_box_from_key(content_key);
       UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
-      axes[Axis2_Y].range = r1s64(0, Max(0, (S64)(content_heights[n]-heights[n])));
+      axes[Axis2_Y].range = r1s64(0, Max(0, (S64)(scroll_content-heights[n])));
       axes[Axis2_Y].visible = (S64)heights[n];
       F32 target = Clamp(0.f, previous->view_off_target.y, (F32)axes[Axis2_Y].range.max);
       axes[Axis2_Y].position.idx = (S64)target;
@@ -3341,13 +3353,30 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         F32 project_children_y = 0;
         ui_spacer(ui_px(body_top_padding, 1));
         F32 row_y = body_top_padding;
+        // Make footers (sidebar-headers.md): a group's opens when the pointer
+        // reaches its last row. In a section you made, the last group card's
+        // also offers New group, below the card.
+        CFG_Node *make_section = uishell_sidebar_local_section(split->owner_cfg, uishell_sidebar_local_key_id(key));
+        U64 last_group = ANDAMENTO_NONE;
+        for(U64 g = sections[n]+1; make_section != &cfg_nil_node && g < end; g++)
+        {
+          if(nodes[g].parent == sections[n] && !passed[g] && str8_match(uishell_sidebar_string(nodes[g].entity_kind), str8_lit(".group"), 0))
+          { last_group = g; }
+        }
+        Rng2F32 card_last_row = {0}, body_last_row = {0};
+        F32 footer_extra = 0;
+        B32 make_engagable = !rd_drag_is_active() && !ui_any_ctx_menu_is_open();
         // A collapsed body isn't built, which leaves new-workspace to the action row.
         if(uishell_sidebar_section_hosts_chrome(key))
         {
           // Chrome resolution reads this next frame (ADR-0006).
           ws->chrome_section_header_frame = rd_state->frame_index+1;
-          uishell_sidebar_new_workspace_entry(split, row_height, side_margin);
-          row_y += row_height;
+          // A section you made (Workspaces) offers it in its footer instead.
+          if(make_section == &cfg_nil_node)
+          {
+            uishell_sidebar_new_workspace_entry(split, row_height, side_margin);
+            row_y += row_height;
+          }
         }
         for(U64 i = sections[n]; i < end; i++)
         {
@@ -3355,10 +3384,37 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           {
             ui_pop_flags();
             ui_pop_parent(); // clipped project children
-            ui_spacer(ui_px(project_padding, 1));
-            ui_pop_parent();
-            ui_spacer(ui_px(project_gap, 1));
-            row_y = project_children_y + project_child_heights[project_index]*project_open[project_index] + project_padding+project_gap;
+            F32 card_footer = 0, outer_footer = 0;
+            {
+              AndamentoNode owner_node = nodes[project_index];
+              B32 is_project = str8_match(uishell_sidebar_string(owner_node.entity_kind), str8_lit("project"), 0);
+              CFG_Node *group_cfg = is_project ? &cfg_nil_node : uishell_sidebar_local_group(split->owner_cfg, uishell_sidebar_string(owner_node.entity_id));
+              B32 outer = project_index == last_group;
+              String8 outer_key = push_str8f(scratch.arena, "group_%S", key);
+              UI_Box *outer_box = ui_box_from_key(ui_key_from_stringf(body->key, "###make_%S", outer_key));
+              Vec2F32 mouse = ui_mouse();
+              B32 engaged = make_engagable && (contains_2f32(project_box->rect, mouse) || (outer && contains_2f32(outer_box->rect, mouse))) &&
+                mouse.y >= card_last_row.y0;
+              F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1)+1.5f);
+              if(!owner_node.collapsed && (is_project || group_cfg != &cfg_nil_node))
+              {
+                UIShell_MakeAction make = is_project ?
+                  (UIShell_MakeAction){UIShell_Make_ProjectWorkspace, str8_lit("New workspace"), 0, uishell_sidebar_string(owner_node.entity_id)} :
+                  (UIShell_MakeAction){UIShell_Make_Workspace, str8_lit("New workspace"), group_cfg->id};
+                card_footer = uishell_sidebar_make_footer(state, split->owner_cfg, push_str8f(scratch.arena, "workspace_%S", uishell_sidebar_string(owner_node.key)),
+                  &make, 1, engaged, row_height, 4.f+header_inset);
+              }
+              ui_spacer(ui_px(project_padding, 1));
+              ui_pop_parent();
+              ui_spacer(ui_px(project_gap, 1));
+              if(outer)
+              {
+                UIShell_MakeAction make = {UIShell_Make_Group, str8_lit("New group"), make_section->id};
+                outer_footer = uishell_sidebar_make_footer(state, split->owner_cfg, outer_key, &make, 1, engaged, row_height, 2.f+card_inset+4.f+header_inset);
+              }
+            }
+            footer_extra += card_footer + outer_footer;
+            row_y = project_children_y + project_child_heights[project_index]*project_open[project_index] + project_padding+project_gap + card_footer+outer_footer;
             project_box = 0;
           }
           U64 owner = project_owner[i];
@@ -3498,6 +3554,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             {
               UIShell_HoverCard *card = uishell_sidebar_saved_card(ws, ghost);
               F32 extent = uishell_sidebar_ghost_extent(card, ghost, em);
+              if(project_box && owner == project_index) { card_last_row = card->rect; }
+              else { body_last_row = card->rect; }
               if(drag_sibling) { drag_body = body; drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, card->rect, card->rect}; }
               if(sidebar_dragging) { group_items[group_item_count++] = (UIShell_RowDragSibling){i, card->rect, card->rect}; }
               // The moving card keeps its place until it lands.
@@ -3547,6 +3605,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             if(drag_source) { ui_push_transparency(0.6f); }
             uishell_sidebar_row_begin(state, &r);
             UI_Box *slot = r.slot;
+            if(project_box && owner == project_index) { card_last_row = slot->rect; }
+            else { body_last_row = slot->rect; }
             if(sidebar_dragging && node.parent != ANDAMENTO_NONE &&
                str8_match(uishell_sidebar_string(nodes[node.parent].entity_kind), str8_lit(".group"), 0))
             { group_items[group_item_count++] = (UIShell_RowDragSibling){i, slot->rect, slot->rect}; }
@@ -3698,12 +3758,57 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         }
         if(project_box)
         {
-          ui_pop_flags();
-          ui_pop_parent();
-          ui_spacer(ui_px(project_padding, 1));
-          ui_pop_parent();
-          ui_spacer(ui_px(project_gap, 1));
+            ui_pop_flags();
+            ui_pop_parent(); // clipped project children
+            F32 card_footer = 0, outer_footer = 0;
+            {
+              AndamentoNode owner_node = nodes[project_index];
+              B32 is_project = str8_match(uishell_sidebar_string(owner_node.entity_kind), str8_lit("project"), 0);
+              CFG_Node *group_cfg = is_project ? &cfg_nil_node : uishell_sidebar_local_group(split->owner_cfg, uishell_sidebar_string(owner_node.entity_id));
+              B32 outer = project_index == last_group;
+              String8 outer_key = push_str8f(scratch.arena, "group_%S", key);
+              UI_Box *outer_box = ui_box_from_key(ui_key_from_stringf(body->key, "###make_%S", outer_key));
+              Vec2F32 mouse = ui_mouse();
+              B32 engaged = make_engagable && (contains_2f32(project_box->rect, mouse) || (outer && contains_2f32(outer_box->rect, mouse))) &&
+                mouse.y >= card_last_row.y0;
+              F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1)+1.5f);
+              if(!owner_node.collapsed && (is_project || group_cfg != &cfg_nil_node))
+              {
+                UIShell_MakeAction make = is_project ?
+                  (UIShell_MakeAction){UIShell_Make_ProjectWorkspace, str8_lit("New workspace"), 0, uishell_sidebar_string(owner_node.entity_id)} :
+                  (UIShell_MakeAction){UIShell_Make_Workspace, str8_lit("New workspace"), group_cfg->id};
+                card_footer = uishell_sidebar_make_footer(state, split->owner_cfg, push_str8f(scratch.arena, "workspace_%S", uishell_sidebar_string(owner_node.key)),
+                  &make, 1, engaged, row_height, 4.f+header_inset);
+              }
+              ui_spacer(ui_px(project_padding, 1));
+              ui_pop_parent();
+              ui_spacer(ui_px(project_gap, 1));
+              if(outer)
+              {
+                UIShell_MakeAction make = {UIShell_Make_Group, str8_lit("New group"), make_section->id};
+                outer_footer = uishell_sidebar_make_footer(state, split->owner_cfg, outer_key, &make, 1, engaged, row_height, 2.f+card_inset+4.f+header_inset);
+              }
+            }
+            footer_extra += card_footer + outer_footer;
         }
+        // A section without group cards (one group, or Workspaces): its
+        // footer follows its rows, with New workspace and New group side by side.
+        CFG_Node *only_group = make_section != &cfg_nil_node && last_group == ANDAMENTO_NONE ? uishell_sidebar_local_only_group(make_section) : &cfg_nil_node;
+        if(only_group != &cfg_nil_node)
+        {
+          String8 make_key = push_str8f(scratch.arena, "section_%S", key);
+          Rng2F32 viewport = section_body_rect;
+          F32 top = body_last_row.y1 > body_last_row.y0 ? body_last_row.y0 : viewport.y0;
+          UI_Box *make_box = ui_box_from_key(ui_key_from_stringf(body->key, "###make_%S", make_key));
+          Vec2F32 mouse = ui_mouse();
+          B32 engaged = make_engagable && ((contains_2f32(viewport, mouse) && mouse.y >= top) || contains_2f32(make_box->rect, mouse));
+          UIShell_MakeAction makes[] = {
+            {UIShell_Make_Workspace, str8_lit("New workspace"), only_group->id},
+            {UIShell_Make_Group, str8_lit("New group"), make_section->id},
+          };
+          footer_extra += uishell_sidebar_make_footer(state, split->owner_cfg, make_key, makes, ArrayCount(makes), engaged, row_height, 4.f+em*(0.3f+1.5f));
+        }
+        states[n]->footer_extra = footer_extra;
       }
       // Children get first refusal; the viewport consumes the remaining wheel
       // input. Header and sibling viewport geometry are outside this box.

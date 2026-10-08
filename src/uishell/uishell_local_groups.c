@@ -2,6 +2,23 @@
 // and "Titles"). The window's `sidebar_local` node stays the source of truth:
 // these change it, and publishing (uishell_sidebar_publish_local) follows.
 
+typedef enum UIShell_MakeKind
+{
+  UIShell_Make_Workspace = 1,       // in a local group (target), or the default group
+  UIShell_Make_ProjectWorkspace,    // living with a project
+  UIShell_Make_Group,               // in a section (target)
+}
+UIShell_MakeKind;
+
+typedef struct UIShell_MakeAction UIShell_MakeAction;
+struct UIShell_MakeAction
+{
+  UIShell_MakeKind kind;
+  String8 label;
+  CFG_ID target;
+  String8 project;
+};
+
 internal void uishell_sidebar_order_reset_button(UIShell_SidebarState *state, String8 loop);
 internal CFG_Node *uishell_new_workspace(CFG_Node *window);
 
@@ -211,12 +228,13 @@ uishell_sidebar_section_drag_group(CFG_Node *window)
 }
 
 // Opens a new workspace living in `group`.
-internal void
+internal CFG_Node *
 uishell_sidebar_local_new_workspace(CFG_Node *window, CFG_Node *group)
 {
   CFG_Node *workspace = uishell_new_workspace(window);
   if(!uishell_sidebar_local_is_default(group))
   { uishell_sidebar_local_set_field(workspace, str8_lit("lives_in"), uishell_sidebar_local_field(group, str8_lit("id"))); }
+  return workspace;
 }
 
 //- Renaming in place. Double-clicking a title, or Rename… in its menu,
@@ -241,11 +259,12 @@ uishell_sidebar_local_begin_rename(UIShell_SidebarState *state, CFG_Node *node, 
   rd_request_frame();
 }
 
-// The field, built where the title would be (keyed `key` under the current
-// parent); its signal. It owns the keyboard while it's shown: Enter applies,
+// A name field (keyed `key` under the current parent) over the shared edit
+// buffer (rename_text). It owns the keyboard while it's shown: Enter applies,
 // Esc cancels, and a press outside it applies, so it needs no focus tree.
+// *outcome is 1 on apply, 2 on cancel, else 0.
 internal UI_Signal
-uishell_sidebar_local_rename_field(UIShell_SidebarState *state, String8 key)
+uishell_sidebar_name_field(UIShell_SidebarState *state, String8 key, U32 *outcome)
 {
   UI_Key field_key = ui_key_from_string(ui_active_seed_key(), key);
   UI_Box *previous = ui_box_from_key(field_key);
@@ -285,9 +304,19 @@ uishell_sidebar_local_rename_field(UIShell_SidebarState *state, String8 key)
     ui_box_equip_display_string(text_box, text);
     ui_box_equip_custom_draw(text_box, ui_line_edit_draw, draw);
   }
-  UI_Signal sig = ui_signal_from_box(box);
-  if(cancel) { state->rename_node = 0; rd_request_frame(); }
-  if(apply)
+  *outcome = apply ? 1 : cancel ? 2 : 0;
+  if(apply || cancel) { rd_request_frame(); }
+  return ui_signal_from_box(box);
+}
+
+// The field, built where the title would be; its signal.
+internal UI_Signal
+uishell_sidebar_local_rename_field(UIShell_SidebarState *state, String8 key)
+{
+  U32 outcome = 0;
+  UI_Signal sig = uishell_sidebar_name_field(state, key, &outcome);
+  if(outcome == 2) { state->rename_node = 0; }
+  if(outcome == 1)
   {
     CFG_Node *node = cfg_node_from_id(state->rename_node);
     // An unchanged title is no name of the section's own.
@@ -299,9 +328,92 @@ uishell_sidebar_local_rename_field(UIShell_SidebarState *state, String8 key)
     if(node != &cfg_nil_node && !unchanged) { uishell_sidebar_local_rename(node, typed); }
     scratch_end(scratch);
     state->rename_node = 0;
-    rd_request_frame();
   }
   return sig;
+}
+
+//- Making workspaces and groups (sidebar-headers.md): a footer that opens
+// at a group's last row and pushes what's below down. It offers New
+// workspace, and New group at a section's last group; choosing one makes
+// the row a name field.
+
+// Makes what `action` offers, named `name` (empty: the default name).
+internal void
+uishell_sidebar_make(CFG_Node *window, UIShell_MakeAction action, String8 name)
+{
+  if(action.kind == UIShell_Make_Group)
+  {
+    CFG_Node *section = cfg_node_from_id(action.target);
+    if(section != &cfg_nil_node) { uishell_sidebar_local_add_group(section, name.size ? name : str8_lit("New group")); }
+    return;
+  }
+  CFG_Node *workspace = &cfg_nil_node;
+  if(action.kind == UIShell_Make_Workspace)
+  {
+    CFG_Node *group = cfg_node_from_id(action.target);
+    workspace = group != &cfg_nil_node ? uishell_sidebar_local_new_workspace(window, group) : uishell_new_workspace(window);
+  }
+  if(action.kind == UIShell_Make_ProjectWorkspace)
+  {
+    workspace = uishell_new_workspace(window);
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("lives_with")), action.project);
+  }
+  if(workspace != &cfg_nil_node && name.size)
+  { cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, workspace, str8_lit("label")), name); }
+}
+
+// The footer keyed `key`, open while `engaged` or naming; returns the height
+// it takes this frame (it animates open and closed). `inset` lines its
+// text up with the rows above it.
+internal F32
+uishell_sidebar_make_footer(UIShell_SidebarState *state, CFG_Node *window, String8 key, UIShell_MakeAction *actions, U64 count,
+                            B32 engaged, F32 row_height, F32 inset)
+{
+  B32 naming = state->make_key_size && str8_match(str8(state->make_key, state->make_key_size), key, 0);
+  F32 t = ui_anim(ui_key_from_stringf(ui_key_zero(), "make_footer_%S", key), engaged || naming ? 1.f : 0.f,
+                  .rate = rd_state->menu_animation_rate, .epsilon = 0.001f);
+  F32 height = floor_f32(row_height*t);
+  UI_Box *row;
+  UI_PrefHeight(ui_px(height, 1)) UI_PrefWidth(ui_pct(1, 0)) UI_ChildLayoutAxis(Axis2_X)
+  {
+    row = ui_build_box_from_stringf(UI_BoxFlag_Clip, "###make_%S", key);
+    ui_box_equip_display_string(row, push_str8f(ui_build_arena(), "###make_%S", key));
+  }
+  if(height < 1.f) { return 0; }
+  UI_Parent(row) UI_PrefHeight(ui_px(row_height, 1))
+  {
+    ui_spacer(ui_px(inset, 1));
+    if(naming)
+    {
+      U32 outcome = 0;
+      UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(row_height-4.f, 1))
+      { uishell_sidebar_name_field(state, push_str8f(ui_build_arena(), "###make_name_%S", key), &outcome); }
+      ui_spacer(ui_px(8.f, 1));
+      String8 typed = str8_skip_chop_whitespace(str8(state->rename_text, state->rename_size));
+      if(outcome == 1 && state->make_index < count) { uishell_sidebar_make(window, actions[state->make_index], typed); }
+      if(outcome) { state->make_key_size = 0; }
+    }
+    else UI_TagF("weak")
+    {
+      for(U64 i = 0; i < count; i++)
+      {
+        String8 label = push_str8f(ui_build_arena(), "+ %S###make_%S_%I64u", actions[i].label, key, i);
+        UI_Signal sig;
+        UI_PrefWidth(ui_text_dim(10.f, 1)) UI_CornerRadius(3.f) UI_PrefHeight(ui_px(row_height-4.f, 1))
+        { sig = uishell_sidebar_button(label); }
+        if(ui_clicked(sig))
+        {
+          state->make_key_size = Min(key.size, sizeof(state->make_key));
+          MemoryCopy(state->make_key, key.str, state->make_key_size);
+          state->make_index = (U32)i;
+          state->rename_size = 0; state->rename_cursor = state->rename_mark = txt_pt(1, 1);
+          state->rename_focus = 1; state->rename_node = 0;
+          rd_request_frame();
+        }
+      }
+    }
+  }
+  return height;
 }
 
 //- Menus. A local section's title and a group's header open these; a

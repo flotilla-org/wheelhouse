@@ -199,7 +199,17 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
     LifecycleCheck(found && !str8_match(uishell_sidebar_string(homed.layout), str8_lit("inline"), 0), "it lives in the project's group as a row, not a chip");
     String8 homed_row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(homed.key));
-    lit = uishell_workspace_lifecycle_drag(ws, window, scratch.arena, homed_row, str8_lit("###new_workspace"), str8_lit("group_drop_line_workspaces"));
+    // Onto another workspace's row in the Workspaces group.
+    String8 workspaces_row = str8_zero();
+    for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+    {
+      AndamentoNode n = {0}; andamento_snapshot_node(state->snapshot, i, &n);
+      String8 k = uishell_sidebar_string(n.key);
+      if(str8_match(uishell_sidebar_string(n.entity_kind), str8_lit(".workspace"), 0) && n.workspace_id != loose_id &&
+         str8_find_needle(k, 0, str8_lit(".section10:workspaces"), 0) < k.size)
+      { workspaces_row = push_str8f(scratch.arena, "###sidebar_row_%S", k); break; }
+    }
+    lit = uishell_workspace_lifecycle_drag(ws, window, scratch.arena, homed_row, workspaces_row, str8_lit("group_drop_line_workspaces"));
     LifecycleCheck(found && lit && !uishell_sidebar_local_home(loose).size &&
                    str8_match(uishell_sidebar_local_field(loose, str8_lit("lives_in")), uishell_sidebar_default_local_id, 0),
                    "its row dragged to the Workspaces group moves it back, with an insertion line there");
@@ -262,8 +272,8 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     { row_keys[row_key_count++] = push_str8_copy(scratch.arena, uishell_sidebar_string(n.key)); }
   }
 
-  //- The Workspaces group opens with the new-workspace entry row and reports
-  //  it was drawn. Hovering a row shows detach (subject) or × (none) in the
+  //- The Workspaces group offers New workspace in a footer that opens at its
+  //  last row, and reports it hosted chrome. Hovering a row shows detach (subject) or × (none) in the
   //  right margin beside it, leaving the row's own status mark in place.
   {
     UI_State *saved_ui = ui_state, *test = ui_state_alloc();
@@ -271,7 +281,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     RD_ChromeNiche saved_niche = ws->chrome_niche[RD_ChromeElementKind_NewWorkspace];
     ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] = RD_ChromeNiche_SectionHeader;
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
-    B32 entry_row = 0, titled = 0;
+    B32 entry_row = 0, titled = 0, footer_open[3] = {0};
     Rng2F32 subjectless_row = {0}, subjectless_close = {0};
     // Frames: 0-1 settle with no hover, 2-3 hover the subject row, 4-5 hover
     // the subjectless row. Each hover reads the previous frame's row rect.
@@ -292,9 +302,11 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
       for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
       {
         if(ui_box_is_nil(box->parent)) { continue; }
-        if(ui_key_match(box->key, ui_key_from_string(box->parent->key, str8_lit("###new_workspace"))))
+        // Workspaces offers New workspace in its footer (sidebar-headers.md).
+        if(str8_match(box->string, str8_lit("###make_section_.section:workspaces"), 0))
         {
           entry_row = 1;
+          if(dim_2f32(box->rect).y >= 1 && frame % 2 == 1) { footer_open[hover] = 1; }
           for(UI_Box *a = box->parent; !ui_box_is_nil(a) && !ui_box_is_nil(a->parent); a = a->parent)
           {
             if(ui_key_match(a->key, ui_key_from_string(a->parent->key, str8_lit("###section_header_.section:workspaces"))))
@@ -370,7 +382,29 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     LifecycleCheck(close_seen[2] && x_drawn[2], "hovering a subjectless row shows ×");
     LifecycleCheck(subjectless_close.x0 >= subjectless_row.x1 && subjectless_row.x1 > 0, "close sits in the margin beside the row");
     LifecycleCheck(ws->chrome_section_header_frame == rd_state->frame_index+1, "Workspaces records the frame it hosted chrome");
-    LifecycleCheck(entry_row, "new-workspace is the Workspaces group's entry row, not a header button");
+    LifecycleCheck(entry_row, "New workspace is the Workspaces group's footer, not a header button");
+    // It animates open: hover the group's last row (just above the footer,
+    // where it is now) a few frames.
+    for(U32 frame = 0; frame < 8; frame++)
+    {
+      Vec2F32 last_row = row_centers[1];
+      for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+      {
+        if(str8_match(box->string, str8_lit("###make_section_.section:workspaces"), 0))
+        { last_row = v2f32(center_2f32(box->rect).x, box->rect.y0-6.f); }
+      }
+      UI_IconInfo icons = ws->ui->icon_info;
+      UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = last_row;
+      UIShell_RegsScope(.window = window->id)
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_sidebar_ui(r2f32p(0, 0, 320, 900), &split); }
+      ui_end_build();
+    }
+    for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+    { if(str8_match(box->string, str8_lit("###make_section_.section:workspaces"), 0) && dim_2f32(box->rect).y >= 1) { footer_open[2] = 1; } }
+    LifecycleCheck(!footer_open[0] && footer_open[2], "the footer opens when the pointer reaches the Workspaces group's last row");
     LifecycleCheck(titled, "the local workspace section is titled Workspaces");
 
     // Hovering the margin control shows its tooltip beside it, at its own
@@ -481,10 +515,9 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
         ui_end_build();
         for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
         {
-          if(!ui_box_is_nil(box->parent) && ui_key_match(box->key, ui_key_from_string(box->parent->key, str8_lit("###new_workspace"))))
-          { entry_drawn = 1; }
+          if(str8_match(box->string, str8_lit("###make_section_.section:workspaces"), 0)) { entry_drawn = 1; }
         }
-        LifecycleCheck(!entry_drawn, "collapsed Workspaces draws no entry row");
+        LifecycleCheck(!entry_drawn, "collapsed Workspaces draws no New workspace footer");
         LifecycleCheck(ws->chrome_section_header_frame == 0, "collapsed Workspaces leaves the niche to the action row");
         workspaces->collapsed = 0;
       }
