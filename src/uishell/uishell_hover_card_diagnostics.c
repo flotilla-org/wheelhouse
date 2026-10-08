@@ -493,8 +493,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                 "Details button returns to compact mode");
       // Full production layout catches fixed-rectangle scope leakage into
       // fields and buttons, rather than only testing their existence.
-      // A fresh open, so the card lands on its target without gliding.
+      // A fresh open, so the card lands on its target without gliding. The
+      // pointer is right of the narrow source, as over a row's label.
       uishell_sidebar_card_close(card);
+      test->mouse = v2f32(200, 35);
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
       card->source_rect = r2f32p(20, 20, 80, 50); fixture.rect = r2f32p(0, 0, 320, 700);
       for(U64 frame = 0; frame < 3; frame++)
@@ -522,8 +524,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         card->focused = frame == 1; // Click-focus ownership is covered by the WM trace.
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         { uishell_sidebar_cards_ui_at(ws, now_time_us(), frame != 2, 1); }
-        // A narrow source at the left still puts the card in the sidebar-edge column.
-        if(frame == 0) { CardCheck(abs_f32(card->rect.x0-(fixture.rect.x1-24)) < 1, "a hover card's column is the sidebar edge, whatever its source"); }
+        // Near places the card from the pointer where it opened, not the source box.
+        if(frame == 0) { CardCheck(abs_f32(card->rect.x0-(200-UIShell_HoverCardNearGapPT)) < 1, "a Near hover card starts just left of where the pointer opened it"); }
         if(frame == 2) { CardCheck(card->open && !card->focused, "hover remains informational when the window is not the keyboard target"); }
         ui_end_build();
         UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);

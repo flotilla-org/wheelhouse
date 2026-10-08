@@ -34,8 +34,11 @@ change preview attachment policy (#89).
 
 ## Placements and kiwi review
 
-Near is the default placement. It opens below the source row with a 16-point gap, overlapping the
-sidebar edge. When there is insufficient space below, it uses the space above.
+Near is the default placement. It opens below the source row with a 16-point gap, its left edge
+16 points left of where the pointer was when it opened, so it sits under the pointer whichever
+box (label, icon, chip, ghost row) was hovered (2026-10-08, replacing an anchor at the hovered
+box's right edge capped inside the sidebar edge). When there is insufficient space below, it
+uses the space above.
 The gap leaves adjacent pills reachable while the safe corridor still protects
 diagonal entry.
 **Hover Cards Outside Sidebar** in User Settings selects the fully outside

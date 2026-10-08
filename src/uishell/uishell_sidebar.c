@@ -71,6 +71,9 @@ struct UIShell_HoverCard
   UI_Key source, dismissed;
   Rng2F32 source_rect, rect;
   Vec2F32 departure, last_mouse, glide_from;
+  // The pointer's x when the card opened for its subject: Near placement's
+  // horizontal anchor.
+  F32 anchor_x;
   B32 open, engaged, focused, contains_current, source_seen, corridor_active, enriched;
   F32 scroll, content_height;
 };
