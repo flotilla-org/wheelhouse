@@ -366,6 +366,9 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     UI_Box *header_box = uishell_local_groups_box(alpha_header);
     GroupsCheck(!ui_box_is_nil(header_box) && ui_box_is_nil(uishell_sidebar_reorder_box(header_box->first, str8_lit("###identity_"))),
                 "a group header is a row with no icon");
+    UI_Box *alpha_title = !ui_box_is_nil(header_box) ? uishell_sidebar_reorder_box(header_box->first, str8_lit("Alpha")) : &ui_nil_box;
+    GroupsCheck(!ui_box_is_nil(alpha_title) && dim_2f32(alpha_title->rect).x+0.5f >= alpha_title->display_fruns.dim.x+2*alpha_title->text_padding,
+                "a group header's title has its full width in a wide row");
     // Click its middle: empty space past the short title, short of ⋯.
     F32 saved_inset = uishell_local_groups_drag_inset;
     {
