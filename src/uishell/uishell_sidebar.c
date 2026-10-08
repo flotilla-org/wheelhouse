@@ -4305,6 +4305,64 @@ uishell_sidebar_restore_from_menu(UIShell_ControlledSplit *split, String8 key)
   rd_request_frame(); return 0;
 }
 
+//- A sidebar panel's tab-strip "+" (sidebar-headers.md, "Mini tabs"): it
+// adds a tab to that panel: a new section, made with its name field open,
+// or a closed section, restored there rather than at its saved place. It
+// offers no other Views until their state has somewhere to live.
+
+// A selected View in `panel` showing the section keyed `key`.
+internal CFG_Node *
+uishell_sidebar_section_view_here(CFG_Node *panel, String8 key, String8 label)
+{
+  for(CFG_Node *v = panel->first; v != &cfg_nil_node; v = v->next)
+  { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(v, str8_lit("selected"))); }
+  CFG_Node *view = cfg_node_new(rd_state->cfg, panel, str8_lit("sidebar_section"));
+  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")), key);
+  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), label);
+  cfg_node_new(rd_state->cfg, view, str8_lit("selected"));
+  return view;
+}
+
+internal void
+uishell_sidebar_tab_add_menu(RD_WindowState *ws, CFG_Node *panel, UI_Key menu)
+{
+  UIShell_SidebarState *state = ws->sidebar;
+  if(!state) { return; }
+  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  Temp scratch = scratch_begin(0, 0);
+  String8 labels[2] = {str8_lit("New section"), str8_lit("Closed sections")};
+  F32 width = uishell_sidebar_menu_width(labels, ArrayCount(labels));
+  for(U64 i = 0; state->snapshot && i < state->placement_count; i++)
+  {
+    String8 title = state->placement_regions[i].title;
+    width = Max(width, uishell_sidebar_menu_width(&title, 1));
+  }
+  UIShell_SidebarMenu(menu, width)
+  {
+    if(ui_clicked(ui_button(str8_lit("New section"))))
+    {
+      CFG_Node *group = uishell_sidebar_local_new_group(window, str8_lit("New section"));
+      uishell_sidebar_section_view_here(panel, uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(group->parent, str8_lit("id"))),
+                                        uishell_sidebar_local_title(scratch.arena, group->parent));
+      uishell_sidebar_local_begin_rename(state, group->parent, uishell_sidebar_local_title(scratch.arena, group->parent));
+    }
+    B32 any = 0;
+    for(U64 i = 0; state->snapshot && i < state->placement_count; i++)
+    {
+      UIShell_SectionPlacement region = state->placement_regions[i];
+      if(uishell_sidebar_region_view(window, region.key) != &cfg_nil_node) { continue; }
+      if(!any) UI_TagF("weak") { ui_label(str8_lit("Closed sections")); }
+      any = 1;
+      if(ui_clicked(uishell_sidebar_button(push_str8f(scratch.arena, "%S###tab_restore_%S", region.title, region.key))))
+      {
+        uishell_sidebar_section_view_here(panel, region.key, region.title);
+        ui_ctx_menu_close();
+      }
+    }
+  }
+  scratch_end(scratch);
+}
+
 // Dragging opts into saved ratios. Double-clicking a sidebar boundary or an
 // explicit panel reset returns the window to content-based default sizing.
 internal void

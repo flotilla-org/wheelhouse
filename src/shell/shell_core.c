@@ -4834,7 +4834,16 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                                                   rd_icon_kind_text_table[RD_IconKind_Add],
                                                                   panel->cfg);
                   UI_Signal sig = ui_signal_from_box(add_new_box);
-                  if(ui_pressed(sig))
+                  // A sidebar panel's "+" adds sidebar sections, here
+                  // (uishell_sidebar_tab_add_menu); other panels list Views.
+                  B32 sidebar_panel = rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar;
+                  UI_Key sidebar_add_menu = ui_key_from_stringf(add_new_box->key, "sidebar_add_menu");
+                  if(sidebar_panel)
+                  {
+                    uishell_sidebar_tab_add_menu(ws, panel->cfg, sidebar_add_menu);
+                    if(ui_pressed(sig)) { ui_ctx_menu_open(sidebar_add_menu, add_new_box->key, v2f32(0, dim_2f32(add_new_box->rect).y)); }
+                  }
+                  else if(ui_pressed(sig))
                   {
                     uishell_cmd("focus_panel", .panel = panel->cfg->id);
                     if(ws->query_is_active &&

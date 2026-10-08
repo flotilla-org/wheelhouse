@@ -600,10 +600,74 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     ui_select_state(saved_ui); ui_state_release(test);
   }
 
+  //- A sidebar panel's tab-strip "+": New section makes one here, its name
+  //  field open; a closed section is listed and restores here.
+  {
+    UI_State *saved_ui = ui_state, *test = ui_state_alloc();
+    ui_select_state(test);
+    CFG_Node *sidebar_root = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+    CFG_Node *panel = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
+    CFG_Node *closed_group = uishell_sidebar_local_new_group(window, str8_lit("Archive"));
+    String8 closed_key = uishell_sidebar_local_key(arena, uishell_sidebar_local_field(closed_group->parent, str8_lit("id")));
+    uishell_local_groups_publish(state, window, arena);
+    { UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window); uishell_sidebar_dock_layout(&split); }
+    // Closed: it has no View.
+    for(CFG_Node *v = uishell_sidebar_region_view(window, closed_key); v != &cfg_nil_node; v = uishell_sidebar_region_view(window, closed_key))
+    { cfg_node_release(rd_state->cfg, v); }
+    UI_Key menu = ui_key_from_string(ui_key_zero(), str8_lit("test_tab_add_menu"));
+    UI_Key anchor = ui_key_zero();
+    for(U32 step = 0; step < 2; step++)
+    {
+      String8 target = step == 0 ? str8_lit("New section") : push_str8f(arena, "###tab_restore_%S", closed_key);
+      Vec2F32 at = {0};
+      for(U32 f = 0; f < 5; f++)
+      {
+        UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
+        if(f == 3 || f == 4)
+        {
+          event.v = (UI_Event){.kind = f == 3 ? UI_EventKind_Press : UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = at};
+          events.first = events.last = &event; events.count = 1;
+        }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        ui_state->mouse = at;
+        UI_Box *box;
+        UI_Rect(r2f32p(10, 10, 30, 30)) { box = ui_build_box_from_string(UI_BoxFlag_Clickable, str8_lit("###test_tab_add")); }
+        anchor = box->key;
+        if(f == 0) { ui_ctx_menu_open(menu, anchor, v2f32(0, 20)); }
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+        { uishell_sidebar_tab_add_menu(ws, panel, menu); }
+        ui_end_build();
+        if(f >= 1 && at.x == 0) { at = uishell_workspace_lifecycle_center(ui_state, target); }
+      }
+      if(step == 0)
+      {
+        CFG_Node *view = cfg_node_child_from_string(panel, str8_lit("sidebar_section"));
+        String8 key = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
+        CFG_Node *made_section = uishell_sidebar_local_section(window, uishell_sidebar_local_key_id(key));
+        GroupsCheck(at.x > 0 && made_section != &cfg_nil_node && cfg_node_child_from_string(view, str8_lit("selected")) != &cfg_nil_node &&
+                    uishell_sidebar_local_renaming(state, made_section),
+                    "the tab strip's + makes a new section here, selected, with its name field open");
+        state->rename_node = 0;
+        if(made_section != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made_section); }
+        cfg_node_release(rd_state->cfg, view);
+      }
+      else
+      {
+        CFG_Node *restored = uishell_sidebar_region_view(window, closed_key);
+        GroupsCheck(at.x > 0 && restored != &cfg_nil_node && restored->parent == panel,
+                    "a closed section listed under the tab strip's + restores here");
+      }
+    }
+    ui_ctx_menu_close();
+    cfg_node_release(rd_state->cfg, closed_group->parent);
+    cfg_node_release(rd_state->cfg, panel);
+    ui_select_state(saved_ui); ui_state_release(test);
+  }
+
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows)\n",
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, tab strip +)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;
