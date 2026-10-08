@@ -432,7 +432,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     ReorderCheck(cfg_node_child_from_string(panel, str8_lit("pinned_cards")) == &cfg_nil_node && migrated != &cfg_nil_node &&
                  cfg_node_child_from_string(migrated, str8_lit("selected")) != &cfg_nil_node &&
                  cfg_node_child_from_string(migrated, str8_lit("section_collapsed")) != &cfg_nil_node &&
-                 str8_match(uishell_sidebar_local_title(group->parent), str8_lit("Floating pins"), 0) &&
+                 str8_match(uishell_sidebar_local_title(scratch.arena, group->parent), str8_lit("Floating pins"), 0) &&
                  cfg_node_child_from_string(group, str8_lit("card")) == pin && !uishell_sidebar_pin_expanded(pin),
                  "a floating pinned area migrates in place into a section and group, keeping its pins and state");
     if(group != &cfg_nil_node) { cfg_node_release(rd_state->cfg, group->parent); }

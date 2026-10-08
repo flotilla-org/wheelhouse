@@ -50,17 +50,18 @@ uishell_sidebar_local_section_is_default(CFG_Node *section)
   return 0;
 }
 
-// A section's title: the name you gave it; else its only group's name; else
-// the name it showed when a second group joined (its placeholder).
+// A section's title: the name you gave it; else its groups' names, joined.
+// One group's name is the title then, and renaming the section renames it.
 internal String8
-uishell_sidebar_local_title(CFG_Node *section)
+uishell_sidebar_local_title(Arena *arena, CFG_Node *section)
 {
   String8 label = uishell_sidebar_local_field(section, str8_lit("label"));
   if(label.size) { return label; }
-  CFG_Node *only = uishell_sidebar_local_only_group(section);
-  if(only != &cfg_nil_node) { return uishell_sidebar_local_field(only, str8_lit("label")); }
-  String8 placeholder = uishell_sidebar_local_field(section, str8_lit("placeholder"));
-  return placeholder.size ? placeholder : str8_lit("Section");
+  String8List names = {0};
+  for(CFG_Node *g = section->first; g != &cfg_nil_node; g = g->next)
+  { if(str8_match(g->string, str8_lit("group"), 0)) { str8_list_push(arena, &names, uishell_sidebar_local_field(g, str8_lit("label"))); } }
+  StringJoin join = {.sep = str8_lit(", ")};
+  return names.node_count ? str8_list_join(arena, &names, &join) : str8_lit("Section");
 }
 
 // Sections saved before titles were borrowed named themselves after their
@@ -79,7 +80,8 @@ uishell_sidebar_local_borrow_titles(CFG_Node *root)
 }
 
 // Renames a section or a group. A section without a name of its own showing
-// one group renames that group; an empty name makes a section borrow again.
+// one group renames that group; an empty name makes a section show its
+// groups' names again.
 internal void
 uishell_sidebar_local_rename(CFG_Node *node, String8 label)
 {
@@ -98,21 +100,10 @@ uishell_sidebar_local_rename(CFG_Node *node, String8 label)
   if(label.size) { uishell_sidebar_local_set_field(node, str8_lit("label"), label); }
 }
 
-// Before a second group joins `section`: without a name of its own, it keeps
-// the one it was borrowing.
-internal void
-uishell_sidebar_local_before_join(CFG_Node *section)
-{
-  CFG_Node *only = uishell_sidebar_local_only_group(section);
-  if(only != &cfg_nil_node && !uishell_sidebar_local_field(section, str8_lit("label")).size)
-  { uishell_sidebar_local_set_field(section, str8_lit("placeholder"), uishell_sidebar_local_field(only, str8_lit("label"))); }
-}
-
 // Adds a group at the end of `section`.
 internal CFG_Node *
 uishell_sidebar_local_add_group(CFG_Node *section, String8 label)
 {
-  uishell_sidebar_local_before_join(section);
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *group = cfg_node_new(rd_state->cfg, section, str8_lit("group"));
   uishell_sidebar_local_set_field(group, str8_lit("id"), string_from_guid(scratch.arena, make_guid()));
@@ -193,7 +184,6 @@ uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *se
 {
   CFG_Node *from = group->parent;
   if(group == after) { return; }
-  if(from != section) { uishell_sidebar_local_before_join(section); }
   cfg_node_unhook(rd_state->cfg, from, group);
   cfg_node_insert_child(rd_state->cfg, section, after != &cfg_nil_node ? after : section->last, group);
   if(from != section && uishell_sidebar_local_group_count(from) == 0)
@@ -212,11 +202,17 @@ uishell_sidebar_local_new_workspace(CFG_Node *window, CFG_Node *group)
   { uishell_sidebar_local_set_field(workspace, str8_lit("lives_in"), uishell_sidebar_local_field(group, str8_lit("id"))); }
 }
 
-//- Menus. A local section's header and a group's header open these; a
-// section showing one group carries that group's actions too.
+//- Renaming in place. Double-clicking a title, or Rename… in its menu,
+// swaps it for a field holding the name, all selected.
+
+internal B32
+uishell_sidebar_local_renaming(UIShell_SidebarState *state, CFG_Node *node)
+{
+  return node != &cfg_nil_node && state->rename_node == node->id;
+}
 
 internal void
-uishell_sidebar_local_begin_rename(UIShell_SidebarState *state, CFG_Node *node, String8 current, UI_Key menu, UI_Key anchor)
+uishell_sidebar_local_begin_rename(UIShell_SidebarState *state, CFG_Node *node, String8 current)
 {
   state->rename_node = node->id;
   state->rename_size = Min(current.size, sizeof(state->rename_text));
@@ -224,29 +220,75 @@ uishell_sidebar_local_begin_rename(UIShell_SidebarState *state, CFG_Node *node, 
   state->rename_cursor = txt_pt(1, state->rename_size+1);
   state->rename_mark = txt_pt(1, 1);
   state->rename_focus = 1;
-  ui_ctx_menu_open(menu, anchor, v2f32(0, ui_top_font_size()*1.8f));
+  ui_ctx_menu_close();
+  rd_request_frame();
 }
 
-// The rename popup at `menu`: a field holding the name, applied on Enter.
-internal void
-uishell_sidebar_local_rename_menu(UIShell_SidebarState *state, UI_Key menu)
+// The field, built where the title would be (keyed `key` under the current
+// parent); its signal. It owns the keyboard while it's shown: Enter applies,
+// Esc cancels, and a press outside it applies, so it needs no focus tree.
+internal UI_Signal
+uishell_sidebar_local_rename_field(UIShell_SidebarState *state, String8 key)
 {
-  UI_CtxMenu(menu) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+  UI_Key field_key = ui_key_from_string(ui_active_seed_key(), key);
+  UI_Box *previous = ui_box_from_key(field_key);
+  B32 apply = 0, cancel = 0;
+  if(!state->rename_focus)
   {
-    CFG_Node *node = cfg_node_from_id(state->rename_node);
-    if(node == &cfg_nil_node) { ui_ctx_menu_close(); }
-    UI_Key field = ui_key_from_string(ui_active_seed_key(), str8_lit("###local_rename"));
-    if(state->rename_focus) { ui_set_auto_focus_active_key(field); state->rename_focus = 0; }
-    UI_Signal sig = ui_line_edit(&state->rename_cursor, &state->rename_mark, state->rename_text, sizeof(state->rename_text),
-                                 &state->rename_size, str8(state->rename_text, state->rename_size), str8_lit("###local_rename"));
-    if(ui_committed(sig) && node != &cfg_nil_node)
+    cancel = ui_slot_press(UI_EventActionSlot_Cancel);
+    apply = !cancel && ui_slot_press(UI_EventActionSlot_Accept);
+    for(UI_Event *evt = 0; !apply && !cancel && ui_next_event(&evt);)
     {
-      uishell_sidebar_local_rename(node, str8(state->rename_text, state->rename_size));
-      state->rename_node = 0;
-      ui_ctx_menu_close();
+      B32 mouse = evt->key == WM_Key_LeftMouseButton || evt->key == WM_Key_RightMouseButton || evt->key == WM_Key_MiddleMouseButton;
+      apply = evt->kind == UI_EventKind_Press && mouse && !contains_2f32(previous->rect, evt->pos);
     }
   }
+  state->rename_focus = 0;
+  if(!apply && !cancel)
+  {
+    ui_consume_text_edit_events(field_key, state->rename_text, sizeof(state->rename_text), &state->rename_size,
+                                &state->rename_cursor, &state->rename_mark, 0);
+  }
+  UI_Box *box;
+  UI_CornerRadius(3.f)
+  {
+    box = ui_build_box_from_string(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_MouseClickable|
+                                   UI_BoxFlag_Clip|UI_BoxFlag_AllowOverflowX, key);
+  }
+  UI_Parent(box) UI_TextPadding(2.f)
+  {
+    String8 text = str8(state->rename_text, state->rename_size);
+    ui_set_next_pref_width(ui_px(fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, ui_top_tab_size(), text).x+ui_top_font_size()*2, 1.f));
+    UI_Box *text_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc, "###rename_text");
+    UI_LineEditDrawData *draw = push_array(ui_build_arena(), UI_LineEditDrawData, 1);
+    draw->edited_string = push_str8_copy(ui_build_arena(), text);
+    draw->cursor = state->rename_cursor;
+    draw->mark = state->rename_mark;
+    draw->trail = 1;
+    ui_box_equip_display_string(text_box, text);
+    ui_box_equip_custom_draw(text_box, ui_line_edit_draw, draw);
+  }
+  UI_Signal sig = ui_signal_from_box(box);
+  if(cancel) { state->rename_node = 0; rd_request_frame(); }
+  if(apply)
+  {
+    CFG_Node *node = cfg_node_from_id(state->rename_node);
+    // An unchanged title is no name of the section's own.
+    Temp scratch = scratch_begin(0, 0);
+    String8 typed = str8_skip_chop_whitespace(str8(state->rename_text, state->rename_size));
+    B32 unchanged = str8_match(node->string, str8_lit("section"), 0) &&
+      !uishell_sidebar_local_field(node, str8_lit("label")).size &&
+      str8_match(typed, uishell_sidebar_local_title(scratch.arena, node), 0);
+    if(node != &cfg_nil_node && !unchanged) { uishell_sidebar_local_rename(node, typed); }
+    scratch_end(scratch);
+    state->rename_node = 0;
+    rd_request_frame();
+  }
+  return sig;
 }
+
+//- Menus. A local section's title and a group's header open these; a
+// section showing one group carries that group's actions too.
 
 // Delete, asking first when workspaces would move to the default group.
 internal void
@@ -256,7 +298,7 @@ uishell_sidebar_local_delete_button(UIShell_SidebarState *state, CFG_Node *windo
   U64 moving = uishell_sidebar_local_homed_count(window, node);
   if(state->confirm_delete == node->id && moving)
   {
-    String8 confirm = push_str8f(ui_build_arena(), "Move %I64u workspace%s to Workspaces and delete", moving, moving == 1 ? "" : "s");
+    String8 confirm = push_str8f(ui_build_arena(), "Move %I64u workspace%s to Workspaces, delete", moving, moving == 1 ? "" : "s");
     if(ui_clicked(ui_button(confirm)))
     {
       if(section) { uishell_sidebar_local_delete_section(window, node); }
@@ -279,14 +321,26 @@ uishell_sidebar_local_delete_button(UIShell_SidebarState *state, CFG_Node *windo
   }
 }
 
+// A menu's width: its longest item, including a delete awaiting confirmation.
+internal F32
+uishell_sidebar_local_menu_width(UIShell_SidebarState *state, CFG_Node *window, CFG_Node *deletable)
+{
+  String8 labels[] = {str8_lit("New workspace here"), str8_lit("Delete section"), str8_lit("Reset order"), str8_zero()};
+  if(deletable != &cfg_nil_node && state->confirm_delete == deletable->id)
+  {
+    U64 moving = uishell_sidebar_local_homed_count(window, deletable);
+    labels[3] = push_str8f(ui_build_arena(), "Move %I64u workspace%s to Workspaces, delete", moving, moving == 1 ? "" : "s");
+  }
+  return uishell_sidebar_menu_width(labels, ArrayCount(labels));
+}
+
 // A group's own actions: rename, new workspace, reset order, delete.
 // `loop` is its items' loop key, for Reset order when it has been reordered.
 internal void
-uishell_sidebar_local_group_items(UIShell_SidebarState *state, CFG_Node *window, CFG_Node *group, String8 loop,
-                                  UI_Key rename_menu, UI_Key anchor, B32 rename)
+uishell_sidebar_local_group_items(UIShell_SidebarState *state, CFG_Node *window, CFG_Node *group, String8 loop, B32 rename)
 {
   if(rename && ui_clicked(ui_button(str8_lit("Rename…"))))
-  { uishell_sidebar_local_begin_rename(state, group, uishell_sidebar_local_field(group, str8_lit("label")), rename_menu, anchor); }
+  { uishell_sidebar_local_begin_rename(state, group, uishell_sidebar_local_field(group, str8_lit("label"))); }
   if(ui_clicked(ui_button(str8_lit("New workspace here"))))
   { uishell_sidebar_local_new_workspace(window, group); ui_ctx_menu_close(); }
   if(loop.size && uishell_sidebar_order_saved(window, loop)) { uishell_sidebar_order_reset_button(state, loop); }
@@ -297,39 +351,40 @@ uishell_sidebar_local_group_items(UIShell_SidebarState *state, CFG_Node *window,
 // A local section's menu, at `menu`; `view` is the View showing it, for Hide.
 internal void
 uishell_sidebar_local_section_menu(UIShell_SidebarState *state, CFG_Node *window, CFG_Node *section, CFG_Node *view,
-                                   String8 loop, UI_Key menu, UI_Key rename_menu, UI_Key anchor)
+                                   String8 loop, UI_Key menu)
 {
-  UI_CtxMenu(menu) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+  UIShell_SidebarMenu(menu, uishell_sidebar_local_menu_width(state, window, section))
   {
     if(section == &cfg_nil_node) { ui_ctx_menu_close(); }
     else
     {
       if(ui_clicked(ui_button(str8_lit("Rename…"))))
-      { uishell_sidebar_local_begin_rename(state, section, uishell_sidebar_local_title(section), rename_menu, anchor); }
+      {
+        Temp scratch = scratch_begin(0, 0);
+        uishell_sidebar_local_begin_rename(state, section, uishell_sidebar_local_title(scratch.arena, section));
+        scratch_end(scratch);
+      }
       if(ui_clicked(ui_button(str8_lit("New group"))))
       {
         CFG_Node *group = uishell_sidebar_local_add_group(section, str8_lit("New group"));
-        uishell_sidebar_local_begin_rename(state, group, uishell_sidebar_local_field(group, str8_lit("label")), rename_menu, anchor);
+        uishell_sidebar_local_begin_rename(state, group, uishell_sidebar_local_field(group, str8_lit("label")));
       }
       CFG_Node *only = uishell_sidebar_local_only_group(section);
-      if(only != &cfg_nil_node) { uishell_sidebar_local_group_items(state, window, only, loop, rename_menu, anchor, 0); }
+      if(only != &cfg_nil_node) { uishell_sidebar_local_group_items(state, window, only, loop, 0); }
       if(view != &cfg_nil_node && rd_dock_can_close(view) && ui_clicked(ui_button(str8_lit("Hide"))))
       { UIShell_RegsScope(.tab = view->id, .view = view->id) { uishell_cmd("close_tab"); } ui_ctx_menu_close(); }
       if(!uishell_sidebar_local_section_is_default(section)) { uishell_sidebar_local_delete_button(state, window, section); }
     }
   }
-  uishell_sidebar_local_rename_menu(state, rename_menu);
 }
 
 // A group header's menu, at `menu`.
 internal void
-uishell_sidebar_local_group_menu(UIShell_SidebarState *state, CFG_Node *window, CFG_Node *group, String8 loop,
-                                 UI_Key menu, UI_Key rename_menu, UI_Key anchor)
+uishell_sidebar_local_group_menu(UIShell_SidebarState *state, CFG_Node *window, CFG_Node *group, String8 loop, UI_Key menu)
 {
-  UI_CtxMenu(menu) UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+  UIShell_SidebarMenu(menu, uishell_sidebar_local_menu_width(state, window, group))
   {
     if(group == &cfg_nil_node) { ui_ctx_menu_close(); }
-    else { uishell_sidebar_local_group_items(state, window, group, loop, rename_menu, anchor, 1); }
+    else { uishell_sidebar_local_group_items(state, window, group, loop, 1); }
   }
-  uishell_sidebar_local_rename_menu(state, rename_menu);
 }

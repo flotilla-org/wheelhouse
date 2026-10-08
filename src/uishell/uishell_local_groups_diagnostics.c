@@ -51,19 +51,30 @@ uishell_local_groups_render(CFG_Node *window, UIShell_ControlledSplit *split)
   }
 }
 
+// The tests' clock: each frame takes 50ms, and a pause separates gestures,
+// so two clicks are a double click only when meant to be.
+global U64 uishell_local_groups_clock_us = 1000000;
+
+internal void
+uishell_local_groups_pause(void)
+{
+  uishell_local_groups_clock_us += 5000000;
+}
+
 // One frame of those Views, with `event` (if any) at the box keyed `suffix`,
 // found in the last frame's layout. Returns whether it was found.
 internal B32
 uishell_local_groups_frame(RD_WindowState *ws, CFG_Node *window, Arena *arena, String8 suffix, UI_EventKind kind, WM_Key key)
 {
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
+  uishell_local_groups_clock_us += 50000;
   Vec2F32 at = suffix.size ? uishell_workspace_lifecycle_center(ui_state, suffix) : v2f32(-100, -100);
   UI_IconInfo icons = ws->ui->icon_info;
   UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
   if(kind != UI_EventKind_Null)
   {
-    event.v = (UI_Event){.kind = kind, .key = key, .pos = at,
-      .slot = key == WM_Key_Return ? UI_EventActionSlot_Accept : UI_EventActionSlot_Null};
+    event.v = (UI_Event){.kind = kind, .key = key, .pos = at, .timestamp_us = uishell_local_groups_clock_us,
+      .slot = key == WM_Key_Return ? UI_EventActionSlot_Accept : key == WM_Key_Esc ? UI_EventActionSlot_Cancel : UI_EventActionSlot_Null};
     events.first = events.last = &event; events.count = 1;
   }
   ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
@@ -125,15 +136,21 @@ uishell_local_groups_seed(CFG_Node *group, String8 ghost)
 }
 
 // Clicks the box keyed `suffix` with `button`, then lets a frame settle.
+// With `again`, it follows the last click closely enough to double it.
 internal B32
-uishell_local_groups_click(RD_WindowState *ws, CFG_Node *window, Arena *arena, String8 suffix, WM_Key button)
+uishell_local_groups_click_(RD_WindowState *ws, CFG_Node *window, Arena *arena, String8 suffix, WM_Key button, B32 again)
 {
+  if(!again) { uishell_local_groups_pause(); }
   uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
   B32 found = uishell_local_groups_frame(ws, window, arena, suffix, UI_EventKind_Press, button);
   found = found && uishell_local_groups_frame(ws, window, arena, suffix, UI_EventKind_Release, button);
   uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
   return found;
 }
+#define uishell_local_groups_click(ws, window, arena, suffix, button) uishell_local_groups_click_((ws), (window), (arena), (suffix), (button), 0)
+#define uishell_local_groups_double_click(ws, window, arena, suffix) \
+  (uishell_local_groups_click_((ws), (window), (arena), (suffix), WM_Key_LeftMouseButton, 0), \
+   uishell_local_groups_click_((ws), (window), (arena), (suffix), WM_Key_LeftMouseButton, 1))
 
 internal B32
 uishell_local_groups_diagnostics(CFG_Node *window)
@@ -159,15 +176,15 @@ uishell_local_groups_diagnostics(CFG_Node *window)
               !uishell_sidebar_local_field(section, str8_lit("label")).size,
               "renaming a section that borrows its only group's name renames the group");
 
-  //- A second group: the section keeps the name it showed, and groups show their own.
+  //- A second group: the section shows both groups' names, and groups show their own.
   CFG_Node *tests = uishell_sidebar_local_add_group(section, str8_lit("Tests"));
   String8 tests_id = push_str8_copy(arena, uishell_sidebar_local_field(tests, str8_lit("id")));
   uishell_local_groups_publish(state, window, arena);
-  GroupsCheck(str8_match(uishell_local_groups_label(arena, state, str8_lit(".section"), section_id), str8_lit("Nightly"), 0) &&
+  GroupsCheck(str8_match(uishell_local_groups_label(arena, state, str8_lit(".section"), section_id), str8_lit("Nightly, Tests"), 0) &&
               str8_match(uishell_local_groups_label(arena, state, str8_lit(".group"), tests_id), str8_lit("Tests"), 0),
-              "when a second group joins, the section keeps the name it showed");
+              "with several groups and no name of its own, a section shows their names, joined");
   uishell_sidebar_local_rename(section, str8_lit("CI"));
-  GroupsCheck(str8_match(uishell_sidebar_local_title(section), str8_lit("CI"), 0) &&
+  GroupsCheck(str8_match(uishell_sidebar_local_title(arena, section), str8_lit("CI"), 0) &&
               str8_match(uishell_sidebar_local_field(builds, str8_lit("label")), str8_lit("Nightly"), 0),
               "with several groups, renaming the section names the section only");
 
@@ -188,9 +205,9 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   GroupsCheck(uishell_sidebar_local_group(window, tests_id) == &cfg_nil_node &&
               cfg_node_child_from_string(made, str8_lit("lives_in")) == &cfg_nil_node,
               "deleting a group moves its workspaces to the default group");
-  GroupsCheck(str8_match(uishell_sidebar_local_title(section), str8_lit("CI"), 0), "a name you gave the section sticks with one group again");
+  GroupsCheck(str8_match(uishell_sidebar_local_title(arena, section), str8_lit("CI"), 0), "a name you gave the section sticks with one group again");
   uishell_sidebar_local_rename(section, str8_zero());
-  GroupsCheck(str8_match(uishell_sidebar_local_title(section), str8_lit("Nightly"), 0), "clearing the section's name makes it borrow again");
+  GroupsCheck(str8_match(uishell_sidebar_local_title(arena, section), str8_lit("Nightly"), 0), "clearing the section's name makes it show its group's again");
 
   //- The default section and group can't be deleted.
   CFG_Node *workspaces = uishell_sidebar_local_group(window, uishell_sidebar_default_local_id);
@@ -208,20 +225,55 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     uishell_local_groups_publish(state, window, arena);
     String8 key = uishell_sidebar_local_key(arena, section_id);
     String8 title = push_str8f(arena, "###section_%S", key);
+    //- Double-clicking the title renames in place, leaving the section open;
+    //  Esc cancels, Enter applies.
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    uishell_local_groups_double_click(ws, window, arena, title);
+    // The field, holding the name, in place of the title.
+    B32 field = !ui_box_is_nil(uishell_sidebar_reorder_box(ui_state->root, str8_lit("Nightly"))) &&
+      ui_box_is_nil(uishell_sidebar_reorder_box(ui_state->root, title));
+    GroupsCheck(field && uishell_sidebar_local_renaming(state, section) &&
+                cfg_node_child_from_string(uishell_local_groups_view, str8_lit("section_collapsed")) == &cfg_nil_node,
+                "double-clicking a section's title swaps it for a name field, leaving the section open");
+    char cancelled[] = "Discarded";
+    MemoryCopy(state->rename_text, cancelled, sizeof(cancelled)-1); state->rename_size = sizeof(cancelled)-1;
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Press, WM_Key_Esc);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    GroupsCheck(state->rename_node == 0 && str8_match(uishell_sidebar_local_field(builds, str8_lit("label")), str8_lit("Nightly"), 0),
+                "Esc in the name field cancels the rename");
+    uishell_local_groups_double_click(ws, window, arena, title);
+    char applied[] = "Builds";
+    MemoryCopy(state->rename_text, applied, sizeof(applied)-1); state->rename_size = sizeof(applied)-1;
+    state->rename_cursor = state->rename_mark = txt_pt(1, state->rename_size+1);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Press, WM_Key_Return);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    GroupsCheck(state->rename_node == 0 && str8_match(uishell_sidebar_local_field(builds, str8_lit("label")), str8_lit("Builds"), 0),
+                "Enter applies the name: here, the section's only group's");
+    //- The menu: New group adds a group and renames it in its own header.
     B32 found = uishell_local_groups_click(ws, window, arena, title, WM_Key_RightMouseButton);
     GroupsCheck(found && ui_any_ctx_menu_is_open(), "right-clicking a section's title opens its menu");
+    UI_Box *title_box = uishell_sidebar_reorder_box(ui_state->root, title);
+    Vec2F32 opened_at = add_2f32(title_box->rect.p0, ui_state->ctx_menu_anchor_off);
+    GroupsCheck(length_2f32(sub_2f32(opened_at, center_2f32(title_box->rect))) < 1.f, "the menu opens where the pointer was");
     U64 groups_before = uishell_sidebar_local_group_count(section);
     found = uishell_local_groups_click(ws, window, arena, str8_lit("New group"), WM_Key_LeftMouseButton);
-    GroupsCheck(found && uishell_sidebar_local_group_count(section) == groups_before+1 && state->rename_node != 0 &&
-                ui_any_ctx_menu_is_open(), "New group adds a group and opens its rename");
     CFG_Node *added = cfg_node_from_id(state->rename_node);
+    GroupsCheck(found && uishell_sidebar_local_group_count(section) == groups_before+1 && added->parent == section &&
+                !ui_any_ctx_menu_is_open(), "New group adds a group and starts renaming it");
+    uishell_local_groups_publish(state, window, arena);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    AndamentoNode added_node = uishell_sidebar_reorder_node(state, uishell_sidebar_local_field(added, str8_lit("id")));
+    String8 added_entry = push_str8f(arena, "###entry_%S", uishell_sidebar_string(added_node.key));
+    GroupsCheck(!ui_box_is_nil(uishell_sidebar_reorder_box(ui_state->root, str8_lit("New group"))) &&
+                ui_box_is_nil(uishell_sidebar_reorder_box(ui_state->root, added_entry)),
+                "the new group's header holds the name field");
     char typed[] = "Releases";
     MemoryCopy(state->rename_text, typed, sizeof(typed)-1); state->rename_size = sizeof(typed)-1;
     state->rename_cursor = state->rename_mark = txt_pt(1, state->rename_size+1);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Press, WM_Key_Return);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
-    GroupsCheck(str8_match(uishell_sidebar_local_field(added, str8_lit("label")), str8_lit("Releases"), 0) && !ui_any_ctx_menu_is_open(),
-                "Enter in the rename field names the new group");
+    GroupsCheck(str8_match(uishell_sidebar_local_field(added, str8_lit("label")), str8_lit("Releases"), 0),
+                "Enter in the header's field names the new group");
     // Two groups now: each has a header, whose menu deletes it.
     uishell_local_groups_publish(state, window, arena);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
@@ -269,8 +321,8 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     GroupsCheck(started && beta->parent == second && beta->prev == gamma && uishell_sidebar_local_group_count(first) == 1 &&
                 cfg_node_child_from_string(beta, str8_lit("card")) != &cfg_nil_node,
                 "a group's header dropped on a group in another section moves it there, after that group, with its items");
-    GroupsCheck(str8_match(uishell_sidebar_local_title(second), str8_lit("Gamma"), 0),
-                "the section it joined keeps the name it showed");
+    GroupsCheck(str8_match(uishell_sidebar_local_title(arena, second), str8_lit("Gamma, Beta"), 0),
+                "the section it joined shows both groups' names");
     // Back to the first section, then out to a docking site.
     uishell_local_groups_publish(state, window, arena);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
@@ -286,10 +338,10 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     U64 sections_after = 0;
     for(CFG_Node *n = first->parent->first; n != &cfg_nil_node; n = n->next) { sections_after += str8_match(n->string, str8_lit("section"), 0); }
     GroupsCheck(started && own != first && sections_after == sections_before+1 && uishell_sidebar_local_group_count(own) == 1 &&
-                str8_match(uishell_sidebar_local_title(own), str8_lit("Beta"), 0) &&
+                str8_match(uishell_sidebar_local_title(arena, own), str8_lit("Beta"), 0) &&
                 uishell_sidebar_local_view(window, beta) != &cfg_nil_node,
                 "dropped on a docking site, a group becomes a section of its own, shown there, borrowing its name");
-    GroupsCheck(str8_match(uishell_sidebar_local_title(first), str8_lit("Alpha"), 0), "the section it left borrows its remaining group's name");
+    GroupsCheck(str8_match(uishell_sidebar_local_title(arena, first), str8_lit("Alpha"), 0), "the section it left borrows its remaining group's name");
     CFG_Node *own_view = uishell_sidebar_local_view(window, beta);
     if(own_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, own_view); }
     // Each section once, even if a failed move left them shared.
@@ -310,7 +362,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, section menu, rename field, group menu, group drag between sections, group to a docking site)\n",
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, group drag between sections, group to a docking site)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

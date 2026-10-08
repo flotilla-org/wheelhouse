@@ -77,7 +77,8 @@ Sections and groups look the same whoever made them.
   - right-click a section's title or hold its ×; right-click a group's header;
   - the menus hold Rename, New group, Hide, Delete, Reset order and New workspace here;
   - a section showing one group carries that group's actions;
-  - Rename opens a small field, applied with Enter.
+  - right-click menus open at the pointer; a held × opens its menu at the ×;
+  - Rename… (or double-clicking a title) renames in place: Enter or clicking away applies, Esc cancels.
 - Deleting a group moves its homed workspaces to the default group and drops its ghosts. It asks for confirmation only when workspaces would move.
 - The default section and group can't be deleted.
 
@@ -174,7 +175,7 @@ A View ghost is a reference to one live pane inside a workspace. Example: a conv
 Each View, section and group shows one title, never two:
 
 - **A section created by dropping a group** has no name of its own. It borrows its only group's name, and that group's header is omitted. Renaming the section's title renames the group.
-- **When a second group joins,** the section keeps the name it was showing as an editable placeholder, and both groups show their headers. If you never renamed the section, it borrows again when it drops back to one group. A name you gave it sticks; clearing it makes the section borrow again.
+- **When a second group joins,** a section without a name of its own shows its groups' names, joined ("Builds, Tests"), and both groups show their headers. Naming the section replaces that. A name you gave it sticks; clearing it goes back to the groups' names. Later, a namer could suggest what the groups have in common.
 - **A section with a name of its own** (an Andamento-declared region such as Projects, or any section you renamed) always shows its title, and each of its groups shows its own header.
 - **A section shown as a tab** shows its title on the tab only (#211).
 

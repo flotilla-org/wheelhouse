@@ -45,14 +45,16 @@ saved card identity. A group emptied by a move remains, and its section's
 Close control hides it.
 
 Sections and groups you made are managed from menus: right-click a section's
-title or hold its ×, and right-click a group's header. They offer Rename (a
-small field, applied with Enter), New group, New workspace here, Reset order
-once the group has been reordered, Hide, and Delete. Delete moves a group's
+title or hold its ×, and right-click a group's header. A right-click menu
+opens at the pointer; a held × opens its menu at the ×. They offer Rename,
+New group, New workspace here, Reset order once the group has been
+reordered, Hide, and Delete. Rename, or double-clicking a title, swaps the
+title for a field: Enter or clicking away applies, Esc cancels. Delete moves a group's
 workspaces to Workspaces and drops its ghosts, asking first only when
 workspaces would move; a section left without groups goes too. Workspaces
 can't be deleted. A section without a name of its own shows its only group's
-name, and renaming it renames the group; when a second group joins, it keeps
-that name. Dragging a group's header to a group in another section moves it
+name, and renaming it renames the group; with several groups it shows their
+names, joined. Dragging a group's header to a group in another section moves it
 there; dropping it on a docking site makes it a section of its own. Copied
 or restored layouts reconcile copies of the same pin (same ghost id) within
 the owning window. Pins saved before ghost ids keep the first per subject,

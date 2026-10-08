@@ -2205,6 +2205,9 @@ ui_begin_ctx_menu(UI_Key key)
   ui_push_focus_active(UI_FocusKind_Root);
   ui_push_tag(str8_lit("."));
   B32 is_open = ui_key_match(key, ui_state->ctx_menu_key) && ui_state->ctx_menu_open;
+  B32 compact = ui_state->ctx_menu_compact;
+  ui_state->ctx_menu_compact = 0;
+  ui_state->is_in_compact_ctx_menu = is_open && compact;
   if(is_open != 0) UI_TagF("floating")
   {
     ui_state->ctx_menu_touched_this_frame = 1;
@@ -2220,7 +2223,7 @@ ui_begin_ctx_menu(UI_Key key)
     ui_state->ctx_menu_root->blur_size = ui_top_blur_size();
     ui_state->ctx_menu_root->text_color = ui_color_from_name(str8_lit("text"));
     ui_state->ctx_menu_root->background_color = ui_color_from_name(str8_lit("background"));
-    ui_spacer(ui_em(1.f, 1.f));
+    ui_spacer(compact ? ui_px(3.f, 1.f) : ui_em(1.f, 1.f));
   }
   ui_state->is_in_open_ctx_menu = is_open;
   return is_open;
@@ -2232,7 +2235,8 @@ ui_end_ctx_menu(void)
   if(ui_state->is_in_open_ctx_menu)
   {
     ui_state->is_in_open_ctx_menu = 0;
-    ui_spacer(ui_em(1.f, 1.f));
+    ui_spacer(ui_state->is_in_compact_ctx_menu ? ui_px(3.f, 1.f) : ui_em(1.f, 1.f));
+    ui_state->is_in_compact_ctx_menu = 0;
   }
   ui_pop_tag();
   ui_pop_focus_active();
