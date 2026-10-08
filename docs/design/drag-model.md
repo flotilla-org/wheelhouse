@@ -24,6 +24,66 @@ Data things never leave their home. A convoy, vessel or other Andamento entity s
 
 A local group holds both local workspaces, which live there, and ghosts. Today's pinned area becomes a section holding one local group named "Pinned", and its saved `pinned_cards` become that group's entity ghosts.
 
+## Sections and groups as data
+
+Settled with the operator on 2026-10-08. Worked examples are in [sections-groups-examples.html](sections-groups-examples.html).
+
+**The model.** Sections and groups you make are Andamento entities. Wheelhouse publishes them from the window's layout, which stays their source of truth, as it publishes a local workspace's home (part A).
+
+- **Names.** A leading `.` marks Andamento's own system kinds and facts. Facts producers share by convention, such as `display.label` and `flotilla.project`, keep their names.
+- **`.section`** is a section you made. Its only fact is `display.label`, and the label is optional.
+- **`.group`** is a group. Facts: `display.label`, and `.section` naming its section.
+- **`.workspace`** is a host's local workspace (part A's `wheelhouse.workspace`). It has one home:
+  - `.group` for a local group;
+  - or `flotilla.project` to live with a project.
+
+  Setting one home clears the other.
+- **`.ref`** is a ghost. Facts: `.group` and `.target`. Andamento presents it as its target, taking label, status, live state and details from it, but keeps the ghost's own key. So one entity can have any number of ghosts, even in one group.
+  - A group's homed workspaces and ghosts form one sibling run, so they interleave and follow the host-owned sibling order.
+- **Presentation stays in Wheelhouse.** A ghost's form (compact row or card), and later its card details and profiles, sit on the ghost's own config node and are never published. What is saved where can be revisited when terminal or web frontends want to share it.
+
+**Placement.** One KDL region holds every section you made. A `for` loop marked `layout="section"` makes each iteration its own section:
+
+- Wheelhouse gives each one its own docked View. Its rule changes from one View per region to one View per section, where a section is a region or a `layout="section"` node.
+- The terminal frontend shows each one as a headed section.
+
+Groups are placed with `match ".section" of="section"`, and workspaces and ghosts with `match ".group" of="group"`.
+
+**The default Workspaces group** is a real section and group, with reserved ids and marked `.default`.
+
+- Every local workspace without another home lives there.
+- Andamento covers leftover tabs into it, instead of into a separate section.
+- A subject workspace whose subject vanishes stays where it was until it is closed.
+- It can be renamed, moved and hidden, but not deleted.
+
+**Drop intent.**
+
+- A local workspace dropped on a group moves there. Holding Option/Alt while dropping adds a ghost instead and leaves it at home.
+- Data rows and cards become ghosts, and ghosts move between groups.
+- The drop preview names the outcome ("Move → Builds", "Ghost → Builds").
+
+**Reference or home.** The difference shows on each row, never on the section:
+
+- a reference has the ↗ mark and a muted icon;
+- hovering it says "Lives in …";
+- its hover card names its home.
+
+Sections and groups look the same whoever made them.
+
+**Closing and deleting.**
+
+- A section's × hides it, and it is restored from Sections…. The × may become "minimise", with Sections… as a tray.
+- Deleting is explicit, from the section and group menus:
+  - right-click a header, or hold its ×;
+  - the menus hold Rename, New group, Hide, Delete, Reset order and New workspace here;
+  - a section showing one group carries that group's actions.
+- Deleting a group moves its homed workspaces to the default group and drops its ghosts. It asks for confirmation only when workspaces would move.
+- The default section and group can't be deleted.
+
+**Still to design:** where "New group" appears (after a section's groups on hover, or a title-bar button), and "New workspace" per group (a reveal or expansion of the group, like card details).
+
+**Migration.** Each `pinned_cards` area becomes a section of your own holding one group, keeping its label. Its pins become `.ref`s, keeping their ghost ids and forms. The `pinned_cards` View type is retired. Migration is best-effort: saved layouts aren't precious yet.
+
 ## Drop table
 
 | Dragged | Dropped on | Result |
@@ -124,7 +184,11 @@ A section's name can therefore come from you, from its single group, or from a n
 - **Scope.** Arrangements are saved per window, alongside existing pins and section positions in the window's docking tree in the user config. Multi-window behaviour is still RAD-inherited and unexplored. Sharing an arrangement across windows can come later as an explicit action.
 - **Entity ghosts and order lists** are keyed by Andamento entity `(kind, id)`. Order lists are also keyed by the group's identity: a project's entity key, or a local group's id.
 - **The "lives with project X" annotation** is stored on the local workspace's own config node. If the project disappears, the workspace falls back to the default group, keeps the annotation, and returns when the project reappears. This is the same "unobserved is not ended" rule that retained rows follow.
-  - *How it is placed* (settled 2026-10-08): each local workspace is an Andamento **host entity**, kind `wheelhouse.workspace`, with an id saved on the workspace (`local_entity`). Wheelhouse publishes its label and, when homed, `flotilla.project` (`lives_with`), and tags its tab with `host.entity.*`. A KDL rule in the project template (`match "flotilla.project" of="project"`) places it in the project's group as a chip, like the project's other workspaces; without one it is left over for the Workspaces group. Its rows are live for its tab but it is not the tab's subject, so closing it destroys it and retracts the entity. Being an entity also gives it details, so it has a hover card (#252).
+  - *How it is placed* (settled 2026-10-08, #249 and andamento#139): each local workspace is an Andamento **host entity**, kind `wheelhouse.workspace` (to become `.workspace`, above), with an id saved on the workspace (`local_entity`).
+    - Wheelhouse publishes its label and, when homed, `flotilla.project` (`lives_with`), and tags its tab with `host.entity.*`.
+    - A KDL rule in the project template (`match "flotilla.project" of="project"`) places it in the project's group as a row. Chips stay for workspaces about the project, such as its overview and roles (#254).
+    - Its rows are live for its tab, but it is not the tab's subject, so closing it destroys it and retracts the entity.
+    - Being an entity also gives it details, so it has a hover card (#252).
 - **View ghosts** are keyed by the View's runtime identity plus its source workspace.
 - **Drags are never written back into KDL.**
 
@@ -164,13 +228,30 @@ Card features and profiles (`card-features-prototype.html`) can reuse RAD's per-
 
 ## Slices
 
-1. **Gesture.** One drag-start rule (threshold, title as handle, chips drag their subject), spring-loading, and Esc to cancel. This is the drag part of #210.
-2. **Row reorder.** The saved order list with the merge rule, at every level, plus Reset order.
-3. **Local groups.** The default Workspaces group as a local group; local workspaces homed in project groups by annotation; migrating the pinned area to a "Pinned" local group.
-4. **Entity ghosts.** Compact ghost rows in local groups, the ghost marker, and the lifecycle (ended and unavailable states, explicit removal, Clear ended, deleting a group).
-5. **Group drag and titles.** Moving groups between sections, creating a section at a dock edge, and the title-borrowing rule.
+1. **Gesture.** One drag-start rule (threshold, title as handle, chips drag their subject), spring-loading, and Esc to cancel. This is the drag part of #210. *Done, except spring-loading.*
+2. **Row reorder.** The saved order list with the merge rule, at every level, plus Reset order. *Done (#245, andamento#137).*
+3. **Local groups.**
+   - *Done:* local workspaces as host entities, homed in project groups by annotation (#249, andamento#139).
+   - *Next:* sections and groups as data, above, in three steps:
+     1. **Andamento:**
+        - `.`-prefixed system names;
+        - the `layout="section"` loop;
+        - `.ref` entities presented as their targets;
+        - the `.default` group covering leftover tabs.
+     2. **Wheelhouse, the model at parity:**
+        - publish sections, groups, refs and homes;
+        - one View per section;
+        - the default Workspaces section and group;
+        - migrate and retire `pinned_cards`;
+        - today's drags on the new model.
+     3. **Wheelhouse, group management:**
+        - section and group menus;
+        - dragging groups between sections and to a dock edge;
+        - the title rules.
+4. **Entity ghosts.** *Done:* compact ghost rows, the ghost marker, explicit removal, positioned drops (#249). *Left:* the ended and unavailable lifecycle, and Clear ended.
+5. **Group drag and titles.** Folded into step 3.3.
 6. **View ghosts.** Read-only mirrors, after #89's attachment policy.
-7. **Ghost card modes and presets.** With #89.
+7. **Ghost card modes and presets.** With #89. Their state stays in Wheelhouse (above).
 8. **Overview drop target.** With #190.
 
 ## Open
