@@ -374,16 +374,11 @@ uishell_sidebar_pin_deduplicate(CFG_Node *window)
       else { duplicate = str8_match(uishell_sidebar_pin_ghost(c), uishell_sidebar_pin_ghost(m->v), 0); }
     }
     if(duplicate) { cfg_node_release(rd_state->cfg, c); continue; }
-    // Legacy pins were always shown as cards, so they keep that form.
-    if(legacy[index]) { uishell_sidebar_pin_new_ghost(c); cfg_node_child_from_string_or_alloc(rd_state->cfg, c, str8_lit("expanded")); }
+    if(legacy[index]) { uishell_sidebar_pin_new_ghost(c); }
     kept[kept_count++] = c;
   }
   scratch_end(scratch);
 }
-
-// The form new pins take: compact rows. A stand-in for the per-area default
-// that pinned_cards schemas will provide (drag-model.md, "Card settings").
-global B32 uishell_sidebar_new_pins_expanded = 0;
 
 internal CFG_Node *
 uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_area)
@@ -505,7 +500,6 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
   }
   saved = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
   uishell_sidebar_pin_new_ghost(saved);
-  if(uishell_sidebar_new_pins_expanded) { cfg_node_new(rd_state->cfg, saved, str8_lit("expanded")); }
   uishell_sidebar_pin_set_field(saved, str8_lit("kind"), uishell_sidebar_string(entity.kind));
   uishell_sidebar_pin_set_field(saved, str8_lit("entity"), uishell_sidebar_string(entity.id));
   AndamentoNode node = {0};
@@ -783,25 +777,25 @@ internal Vec4F32 uishell_sidebar_ended_color(void);
 internal String8 uishell_sidebar_status_mark(AndamentoNode node, String8 status);
 internal String8 uishell_sidebar_chip_status(UIShell_SidebarState *state, AndamentoNode node);
 
-// A ghost is a compact row by default (drag-model.md, "Entity ghosts"); an
-// expanded ghost shows its card beneath the row.
+// Pinning a card keeps the card. Its header's disclosure collapses the ghost
+// to a compact row (saved as `compact`), and the row's disclosure restores it.
 internal B32
 uishell_sidebar_pin_expanded(CFG_Node *saved)
 {
-  return cfg_node_child_from_string(saved, str8_lit("expanded")) != &cfg_nil_node;
+  return cfg_node_child_from_string(saved, str8_lit("compact")) == &cfg_nil_node;
 }
 
 internal F32
 uishell_sidebar_ghost_extent(UIShell_HoverCard *card, CFG_Node *saved, F32 em)
 {
-  return floor_f32(em*2.2f) + (uishell_sidebar_pin_expanded(saved) ? uishell_sidebar_pinned_card_extent(card, em) : 0);
+  return uishell_sidebar_pin_expanded(saved) ? uishell_sidebar_pinned_card_extent(card, em) : floor_f32(em*2.2f);
 }
 
 internal void
 uishell_sidebar_ghost_set_expanded(CFG_Node *saved, B32 expanded)
 {
-  if(expanded) { cfg_node_child_from_string_or_alloc(rd_state->cfg, saved, str8_lit("expanded")); }
-  else { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(saved, str8_lit("expanded"))); }
+  if(!expanded) { cfg_node_child_from_string_or_alloc(rd_state->cfg, saved, str8_lit("compact")); }
+  else { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(saved, str8_lit("compact"))); }
   rd_request_frame();
 }
 
@@ -1003,8 +997,11 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
       UIShell_HoverCard *c = cards[card_index++];
       // Keep the source allocation while the overlay owns the moving card.
       if(c->moving) { ui_spacer(ui_px(uishell_sidebar_ghost_extent(c, saved, em), 1)); continue; }
-      uishell_sidebar_ghost_row(state, ws, c, saved, Max(0.f, dim_2f32(region.viewport).x), floor_f32(em*2.2f), floor_f32(em*1.5f));
-      if(!uishell_sidebar_pin_expanded(saved)) { continue; }
+      if(!uishell_sidebar_pin_expanded(saved))
+      {
+        uishell_sidebar_ghost_row(state, ws, c, saved, Max(0.f, dim_2f32(region.viewport).x), floor_f32(em*2.2f), floor_f32(em*1.5f));
+        continue;
+      }
       UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
       UI_Focus(c->focused ? UI_FocusKind_On : UI_FocusKind_Off) UI_CornerRadius(5.f)
       UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), .025f))

@@ -447,6 +447,8 @@ internal void uishell_sidebar_card_drag_control(UIShell_HoverCard *card);
 internal void uishell_sidebar_card_title_handle(UIShell_HoverCard *card, String8 text);
 internal void uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width);
 
+internal void uishell_sidebar_ghost_set_expanded(CFG_Node *saved, B32 expanded);
+
 internal void
 uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card,
                             U64 index, AndamentoDetail detail, F32 width, B32 interactive)
@@ -458,15 +460,20 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
   if(!title.size) { title = uishell_sidebar_string(detail.label); }
   F32 header_em = floor_f32(ui_top_font_size()*0.82f);
   F32 grip_width = interactive ? header_em*1.4f : 0;
+  // A pinned card collapses to its compact ghost row.
+  B32 collapsible = interactive && card->placement == UIShell_CardPlacement_Pinned && card->saved;
+  F32 collapse_width = collapsible ? ui_top_font_size()*1.5f : 0;
   U64 move_count = card->placement == UIShell_CardPlacement_Transient ? 4 : 3;
   F32 controls_width = interactive ? header_em*1.4f*(move_count+1) : 0;
   F32 badge_width = badge.size ? Min(width*0.3f, fnt_dim_from_tag_size_string(rd_font_from_slot(RD_FontSlot_Main), header_em, 0, ui_top_tab_size(), badge).x+header_em) : 0;
   UI_Row UI_FontSize(header_em) UI_TagF("weak") RD_Font(RD_FontSlot_Main)
   {
+    if(collapsible && ui_clicked(uishell_sidebar_disclosure(1, str8_lit("###card_collapse"))))
+    { uishell_sidebar_ghost_set_expanded(cfg_node_from_id(card->saved), 0); }
     if(interactive) { UI_PrefWidth(ui_px(grip_width, 1)) { uishell_sidebar_card_drag_control(card); } }
     UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak") RD_Font(RD_FontSlot_Icons)
     { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_icon(detail.entity.kind)]); }
-    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-grip_width-controls_width), 1)) UI_TagF("weak")
+    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-grip_width-collapse_width-controls_width), 1)) UI_TagF("weak")
     { if(interactive) { uishell_sidebar_card_title_handle(card, identity); } else { ui_label(identity); } }
     if(badge.size)
     {
