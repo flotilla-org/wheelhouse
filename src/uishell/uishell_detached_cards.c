@@ -382,11 +382,39 @@ uishell_sidebar_pin_deduplicate(CFG_Node *window)
 
 // Adds a ghost of `entity` to a pinned area and reveals it. A dropped row
 // becomes a row (`compact`); a pinned card stays a card.
+// Moves `saved` among `area`'s pins to sit before the pin at `index`, or
+// last. The area's other children (label, selected) keep their places.
+internal void
+uishell_sidebar_pin_place(CFG_Node *area, CFG_Node *saved, U64 index)
+{
+  CFG_Node *before = &cfg_nil_node;
+  U64 i = 0;
+  for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next)
+  {
+    if(c == saved || !str8_match(c->string, str8_lit("card"), 0)) { continue; }
+    if(i++ == index) { before = c; break; }
+  }
+  // Already in place; also never insert a node after itself.
+  if(saved->parent == area && (before != &cfg_nil_node ? before->prev == saved : area->last == saved)) { return; }
+  cfg_node_insert_child(rd_state->cfg, area, before != &cfg_nil_node ? before->prev : area->last, saved);
+}
+
+// The area a positioned drop was claimed on, this build or the last, while
+// the pointer is still over its list (a View may build after the release).
 internal CFG_Node *
-uishell_sidebar_pin_add(UIShell_SidebarState *state, CFG_Node *area, AndamentoEntity entity,
+uishell_sidebar_drop_area(UIShell_SidebarState *state)
+{
+  if(!state->drop_area || ui_state->build_index-state->drop_build > 1 ||
+     !contains_2f32(state->drop_rect, ui_mouse())) { return &cfg_nil_node; }
+  return cfg_node_from_id(state->drop_area);
+}
+
+internal CFG_Node *
+uishell_sidebar_pin_add(UIShell_SidebarState *state, CFG_Node *area, U64 index, AndamentoEntity entity,
                         String8 fallback_label, String8 source, B32 compact)
 {
   CFG_Node *saved = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
+  uishell_sidebar_pin_place(area, saved, index);
   uishell_sidebar_pin_new_ghost(saved);
   uishell_sidebar_pin_set_field(saved, str8_lit("kind"), uishell_sidebar_string(entity.kind));
   uishell_sidebar_pin_set_field(saved, str8_lit("entity"), uishell_sidebar_string(entity.id));
@@ -517,7 +545,7 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
     state->pin_reveal = saved->id;
     return saved;
   }
-  return uishell_sidebar_pin_add(state, area, entity, card->retained_label, card->source_key, 0);
+  return uishell_sidebar_pin_add(state, area, max_U64, entity, card->retained_label, card->source_key, 0);
 }
 
 internal size_t
@@ -650,6 +678,24 @@ uishell_sidebar_card_drag_finish(RD_WindowState *ws)
   }
   if(rd_state->drag_drop_state == RD_DragDropState_Dropping) { card->drag_released = 1; }
   if(!card->drag_released) { return; }
+  // A pinned area's insertion point takes the card: a pinned card moves its
+  // own ghost there, and any other card adds one there as a card.
+  CFG_Node *drop_area = uishell_sidebar_drop_area(state);
+  if(drop_area != &cfg_nil_node)
+  {
+    rd_drag_kill();
+    state->drag_card = 0; state->card_drop_panel = 0; state->drop_area = 0;
+    card->drag_released = card->moving = 0;
+    CFG_Node *own = card->saved ? cfg_node_from_id(card->saved) : &cfg_nil_node;
+    if(own != &cfg_nil_node) { uishell_sidebar_pin_place(drop_area, own, state->drop_index); state->pin_reveal = own->id; }
+    else
+    {
+      uishell_sidebar_pin_add(state, drop_area, state->drop_index, card->path[card->depth-1], card->retained_label, card->source_key, 0);
+      uishell_sidebar_card_close(card);
+    }
+    rd_request_frame();
+    return;
+  }
   UIShell_CardPlacement placement = uishell_sidebar_card_drag_target(ws, card, ui_mouse());
   if(placement != UIShell_CardPlacement_Inline)
   { placement = state->card_drop_panel ? UIShell_CardPlacement_Pinned : UIShell_CardPlacement_Float; }
@@ -954,15 +1000,6 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
     { uishell_cmd("close_tab"); }
     ui_spacer(ui_px(4.f, 1));
   }
-  // A row dragged here becomes a ghost (drag-model.md, drop table); the row
-  // drop, built with the row's section, reads the target recorded here.
-  if(state->row_drag_key.size && contains_2f32(rect, ui_mouse()))
-  {
-    state->row_ghost_area = view->id;
-    state->row_ghost_build = ui_state->build_index;
-    UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(pad_2f32(rect, -2.f)) UI_CornerRadius(4.f)
-    { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_Floating, ui_key_from_stringf(ui_key_zero(), "pinned_ghost_target_%I64u", view->id)); }
-  }
   UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, header_height, width, dim_2f32(rect).y),
     UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);
   UI_Key key = ui_key_from_stringf(root->key, "body");
@@ -1005,6 +1042,31 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
     UI_BoxFlag_ViewScrollY|UI_BoxFlag_ViewClamp|UI_BoxFlag_AllowOverflowY);
   scroll.content_box->view_off_target.y = (F32)scroll.position.y.idx+scroll.position.y.target_off;
   scroll.content_box->child_layout_axis = Axis2_Y;
+  // A row or card dragged over the list gets an insertion point between pins
+  // (drag-model.md, drop table): the release adds a ghost there, or moves a
+  // pinned card's own ghost there. RAD's edge sites still win under the pointer.
+  if((state->row_drag_key.size || state->drag_card) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
+  {
+    Rng2F32 list = scroll.content_box->rect;
+    Vec2F32 mouse = ui_mouse();
+    if(list.x1 > list.x0 && contains_2f32(list, mouse))
+    {
+      F32 y = list.y0-scroll.content_box->view_off.y, line_y = y;
+      U64 index = 0, at = 0;
+      for(CFG_Node *saved = view->first; saved != &cfg_nil_node; saved = saved->next)
+      {
+        if(!str8_match(saved->string, str8_lit("card"), 0)) { continue; }
+        F32 extent = uishell_sidebar_ghost_extent(cards[at++], saved, em);
+        if(mouse.y > y+extent*0.5f) { index++; line_y = y+extent; }
+        y += extent;
+      }
+      if(index == 0) { line_y = list.y0-scroll.content_box->view_off.y+1.f; }
+      state->drop_area = view->id; state->drop_index = index; state->drop_build = ui_state->build_index; state->drop_rect = list;
+      rd_state->drag_drop_local_panel = view->parent->id; rd_state->drag_drop_local_frame = rd_state->frame_index;
+      UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(r2f32p(list.x0+6.f, line_y-1.f, list.x1-6.f, line_y+1.f)) UI_CornerRadius(1.f)
+      { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(ui_key_zero(), "pinned_drop_line_%I64u", view->id)); }
+    }
+  }
   F32 card_width = Max(0.f, dim_2f32(region.viewport).x-12.f);
   F32 content_width = Max(0.f, card_width-12.f);
   card_index = 0;

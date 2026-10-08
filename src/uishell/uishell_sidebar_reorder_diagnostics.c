@@ -45,7 +45,7 @@ uishell_sidebar_reorder_node(UIShell_SidebarState *state, String8 id)
 typedef struct UIShell_ReorderDrag UIShell_ReorderDrag;
 struct UIShell_ReorderDrag
 {
-  B32 started, line, menu, ghost_target;
+  B32 started, line, menu, ghost_target, lifted;
 };
 
 typedef enum UIShell_ReorderMode
@@ -79,7 +79,7 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
     UI_EventList events = {0}; UI_EventNode event = {0};
     Rng2F32 pinned_rect = r2f32p(0, 620, 320, 820);
     if(frame == 4 && mode == UIShell_ReorderMode_Cancel) { pointer = start; }
-    else if(frame >= 2 && pinned_area != &cfg_nil_node) { pointer = center_2f32(pinned_rect); }
+    else if(frame >= 2 && pinned_area != &cfg_nil_node) { pointer = offset.x ? offset : center_2f32(pinned_rect); }
     else if(frame >= 2 && !right_click)
     {
       UI_Box *to = to_key.size ? uishell_sidebar_reorder_box(test_ui->root, push_str8f(ui_build_arena(), "###entry_%S", to_key)) : &ui_nil_box;
@@ -117,7 +117,8 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
       result.started = rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_UIKey;
       result.line = !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")));
       result.ghost_target = pinned_area != &cfg_nil_node &&
-        !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "pinned_ghost_target_%I64u", pinned_area->id)));
+        !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "pinned_drop_line_%I64u", pinned_area->id)));
+      result.lifted = !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "sidebar_row_lift")));
       if(mode == UIShell_ReorderMode_Cancel) { rd_drag_kill(); ui_kill_action(); }
     }
     if(frame == 5) { result.menu = ui_any_ctx_menu_is_open(); }
@@ -241,16 +242,34 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   uishell_sidebar_release(&restored);
   cfg_state_release(persisted_cfg);
 
-  // Dropped on a pinned area, a row becomes a ghost there (in row form) and
-  // its run keeps its order.
+  // A dragged row lifts and follows the pointer. Over a pinned area it gets
+  // an insertion point between that area's pins; the release adds a ghost of
+  // the row there, as a row, and its run keeps its order.
   {
     CFG_Node *area = cfg_node_new(rd_state->cfg, window, str8_lit("pinned_cards"));
+    char *existing[] = {"first-pin", "second-pin"};
+    for(U64 i = 0; i < 2; i++)
+    {
+      CFG_Node *pin = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
+      uishell_sidebar_pin_new_ghost(pin);
+      uishell_sidebar_pin_set_field(pin, str8_lit("kind"), str8_lit("convoy"));
+      uishell_sidebar_pin_set_field(pin, str8_lit("entity"), str8_cstring(existing[i]));
+      cfg_node_new(rd_state->cfg, pin, str8_lit("compact"));
+    }
     String8 before = push_str8_copy(scratch.arena, uishell_sidebar_reorder_ids(scratch.arena, &state, convoy));
-    UIShell_ReorderDrag ghost = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(0, 0), str8_zero(), 0, UIShell_ReorderMode_Drag, area);
-    CFG_Node *card = cfg_node_child_from_string(area, str8_lit("card"));
-    ReorderCheck(ghost.started && ghost.ghost_target && !ghost.line, "a pinned area under a row drag highlights as a ghost target");
-    ReorderCheck(card != &cfg_nil_node && str8_match(cfg_node_child_from_string(card, str8_lit("entity"))->first->string, str8_lit("c2"), 0) &&
-                 uishell_sidebar_pin_ghost(card).size && !uishell_sidebar_pin_expanded(card), "the drop adds a ghost of the row, as a row");
+    // Two compact pins below a header: just past the first pin's midpoint.
+    F32 row = floor_f32(11*2.2f);
+    Vec2F32 between = v2f32(160, 620+row+row*0.5f+3.f);
+    UIShell_ReorderDrag ghost = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), between, str8_zero(), 0, UIShell_ReorderMode_Drag, area);
+    CFG_Node *pins[3] = {&cfg_nil_node, &cfg_nil_node, &cfg_nil_node};
+    U64 pin_count = 0;
+    for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next)
+    { if(str8_match(c->string, str8_lit("card"), 0) && pin_count < 3) { pins[pin_count++] = c; } }
+    ReorderCheck(ghost.started && ghost.lifted, "a dragged row lifts and follows the pointer");
+    ReorderCheck(ghost.ghost_target && !ghost.line, "a pinned area shows an insertion point, not the reorder line");
+    ReorderCheck(pin_count == 3 && str8_match(cfg_node_child_from_string(pins[1], str8_lit("entity"))->first->string, str8_lit("c2"), 0) &&
+                 uishell_sidebar_pin_ghost(pins[1]).size && !uishell_sidebar_pin_expanded(pins[1]),
+                 "the drop adds a ghost of the row, as a row, at the insertion point");
     ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), before, 0), "a ghost drop leaves the run's order");
     cfg_node_release(rd_state->cfg, area);
   }

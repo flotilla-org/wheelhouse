@@ -1266,7 +1266,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     Vec2F32 pinned_drag_start = {0}, pinned_drag_size = {0};
     for(U64 frame = 0; frame < 5; frame++)
     {
-      Vec2F32 pointer = frame < 2 ? pinned_drag_start : add_2f32(pinned_drag_start, v2f32(450, 30));
+      Vec2F32 pointer = frame < 2 ? pinned_drag_start : add_2f32(pinned_drag_start, v2f32(40, 720));
       UI_EventList events = {0};
       if(frame == 1 || frame == 4)
       {
@@ -1309,10 +1309,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       {
         CardCheck(drag_pin->moving && drag_pin->open && rd_drag_is_active(), "pinned drag stays active while actual panel drop targets build");
         CardCheck(length_2f32(sub_2f32(dim_2f32(drag_pin->rect), pinned_drag_size)) < 1.f &&
-          length_2f32(sub_2f32(drag_pin->rect.p0, add_2f32(drag_pin->move_origin, v2f32(450,30)))) < 1.f,
+          length_2f32(sub_2f32(drag_pin->rect.p0, add_2f32(drag_pin->move_origin, v2f32(40,720)))) < 1.f,
           "moving pin keeps its grabbed size and position instead of being laid out again in its source");
       }
     }
+    // Released below the panel area: over the pinned list it would reposition.
     CardCheck(drag_pin->open && drag_pin->placement == UIShell_CardPlacement_Float &&
       uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == &cfg_nil_node,
       "dragging an existing pin outside its section produces one float and removes the saved pin");
@@ -1731,6 +1732,49 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
 
     // The empty ordinary areas are confined to this diagnostic's disposable profile.
     uishell_sidebar_card_close(original);
+
+    fprintf(stderr, "Hover card diagnostics: positioned card drops\n");
+    // A card released on a pinned area's insertion point adds a ghost there,
+    // as a card; a pinned card dragged there moves its own ghost.
+    {
+      CFG_Node *area = cfg_node_new(rd_state->cfg, window, str8_lit("pinned_cards"));
+      CFG_Node *pins[2];
+      char *ids[] = {"drop-first", "drop-second"};
+      for(U64 i = 0; i < 2; i++)
+      {
+        pins[i] = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
+        uishell_sidebar_pin_new_ghost(pins[i]);
+        uishell_sidebar_pin_set_field(pins[i], str8_lit("kind"), str8_lit("workspace"));
+        uishell_sidebar_pin_set_field(pins[i], str8_lit("entity"), str8_cstring(ids[i]));
+      }
+      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+      fixture.drag_card = original; original->moving = original->drag_released = 1;
+      fixture.drop_area = area->id; fixture.drop_index = 1; fixture.drop_build = test->build_index; fixture.drop_rect = r2f32p(-1e6, -1e6, 1e6, 1e6);
+      uishell_sidebar_card_drag_finish(ws);
+      CFG_Node *order[3] = {&cfg_nil_node, &cfg_nil_node, &cfg_nil_node}; U64 n = 0;
+      for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next)
+      { if(str8_match(c->string, str8_lit("card"), 0) && n < 3) { order[n++] = c; } }
+      CardCheck(n == 3 && order[0] == pins[0] && order[2] == pins[1] &&
+        str8_match(cfg_node_child_from_string(order[1], str8_lit("entity"))->first->string, uishell_sidebar_string(entity.entity_id), 0) &&
+        uishell_sidebar_pin_expanded(order[1]) && !original->open && !fixture.drag_card,
+        "a card released on an insertion point becomes a ghost there, as a card");
+      // The first pin's card is dragged after the last pin.
+      UIShell_HoverCard *first = uishell_sidebar_saved_card(ws, pins[0]);
+      fixture.drag_card = first; first->moving = first->drag_released = 1;
+      fixture.drop_area = area->id; fixture.drop_index = 3; fixture.drop_build = test->build_index;
+      uishell_sidebar_card_drag_finish(ws);
+      CardCheck(area->last == pins[0] && cfg_node_from_id(pins[0]->id) == pins[0] && first->open,
+        "a pinned card dragged to an insertion point moves its own ghost there");
+      // A stale claim (two builds old) doesn't capture a release.
+      fixture.drop_area = area->id; fixture.drop_index = 0; fixture.drop_build = test->build_index-2;
+      CardCheck(uishell_sidebar_drop_area(&fixture) == &cfg_nil_node, "a stale insertion point doesn't capture a release");
+      fixture.drop_build = test->build_index; fixture.drop_rect = r2f32p(-1e6, -1e6, -1e6+1, -1e6+1);
+      CardCheck(uishell_sidebar_drop_area(&fixture) == &cfg_nil_node, "an insertion point the pointer has left doesn't capture a release");
+      fixture.drop_area = 0;
+      for(UIShell_HoverCard *c = fixture.detached; c; c = c->next) { if(c->saved && cfg_node_from_id(c->saved)->parent == area) { uishell_sidebar_card_close(c); } }
+      uishell_sidebar_detached_finish(ws);
+      cfg_node_release(rd_state->cfg, area);
+    }
   }
 
   fprintf(stderr, "Hover card diagnostics: cleanup\n");
