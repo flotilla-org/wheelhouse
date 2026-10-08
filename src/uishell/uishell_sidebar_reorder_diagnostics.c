@@ -79,6 +79,7 @@ typedef struct UIShell_ReorderDrag UIShell_ReorderDrag;
 struct UIShell_ReorderDrag
 {
   B32 started, line, menu, ghost_target, lifted, lift_text_inside;
+  Rng2F32 ghost_line;
 };
 
 typedef enum UIShell_ReorderMode
@@ -160,8 +161,10 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
       result.started = rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
         rd_state->drag_drop_commit == uishell_sidebar_drag_panel_drop;
       result.line = !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")));
-      result.ghost_target = pinned_area != &cfg_nil_node &&
-        !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "group_drop_line_%S", uishell_sidebar_local_field(pinned_area, str8_lit("id")))));
+      UI_Box *ghost_line = pinned_area != &cfg_nil_node ?
+        ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "group_drop_line_%S", uishell_sidebar_local_field(pinned_area, str8_lit("id")))) : &ui_nil_box;
+      result.ghost_target = !ui_box_is_nil(ghost_line);
+      result.ghost_line = ghost_line->rect;
       UI_Box *lift = ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "sidebar_row_lift"));
       result.lifted = !ui_box_is_nil(lift);
       // The copy is the row, drawn as its home row is: its icon and label lay
@@ -345,6 +348,10 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     ReorderCheck(ghost.started && ghost.lifted, "a dragged row lifts and follows the pointer");
     ReorderCheck(ghost.lift_text_inside, "the lifted copy is the row: its whole icon and label inside it");
     ReorderCheck(ghost.ghost_target && !ghost.line, "a local group shows an insertion point, not the reorder line");
+    // Drawn in the section, at the gap after the first item, across the list.
+    F32 gap_y = 620+row+2+row;
+    ReorderCheck(abs_f32(center_2f32(ghost.ghost_line).y-gap_y) < 3 && ghost.ghost_line.x0 >= 0 && ghost.ghost_line.x1 <= 320 &&
+                 dim_2f32(ghost.ghost_line).x > 200, "the insertion line sits at the gap, inside the section");
     ReorderCheck(pin_count == 3 && added != &cfg_nil_node && !uishell_sidebar_pin_expanded(added) && shown_count == 3 &&
                  str8_match(shown[0], ghosts[0], 0) && str8_match(shown[1], uishell_sidebar_pin_ghost(added), 0) && str8_match(shown[2], ghosts[1], 0),
                  "the drop adds a ghost of the row, as a row, at the insertion point");

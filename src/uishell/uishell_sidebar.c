@@ -57,8 +57,6 @@ struct UIShell_HoverCard
   CFG_ID saved;
   UIShell_CardPlacement placement, requested;
   B32 move_requested, moving, drag_released;
-  // A pin request that adds another ghost instead of revealing an existing one.
-  B32 pin_another;
   // The card's own context menu, which mustn't dismiss it like other menus.
   UI_Key menu;
   Vec2F32 move_origin;
@@ -2449,12 +2447,24 @@ uishell_sidebar_home_claim(UIShell_SidebarState *state, Rng2F32 rect, String8 pr
   }
 }
 
+// An insertion line at `line` (screen space, from last frame's layout) drawn
+// inside a section's body, so it paints above the section rather than under
+// the panels, as a line on the window root would.
+internal void
+uishell_sidebar_drop_line(UI_Box *body, Rng2F32 line, UI_Key key)
+{
+  Vec2F32 at = add_2f32(sub_2f32(line.p0, body->rect.p0), body->view_off);
+  UI_Parent(body) UI_TagF("drop_site") UI_FixedX(at.x) UI_FixedY(at.y) UI_CornerRadius(1.f)
+  UI_PrefWidth(ui_px(dim_2f32(line).x, 1)) UI_PrefHeight(ui_px(dim_2f32(line).y, 1))
+  { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, key); }
+}
+
 // A sidebar drag over a local group claims the gap between its items under
 // the pointer, by their midpoints, and shows a line there; the drag's own
 // sibling run reorders instead (uishell_sidebar_row_drop). The panel's own
 // centre docking site stands aside, as for a reorder.
 internal void
-uishell_sidebar_group_claim(UIShell_SidebarState *state, AndamentoNode *nodes, U64 group,
+uishell_sidebar_group_claim(UIShell_SidebarState *state, UI_Box *body, AndamentoNode *nodes, U64 group,
                             UIShell_RowDragSibling *items, U64 item_count, Rng2F32 area, F32 row_height)
 {
   Vec2F32 mouse = ui_mouse();
@@ -2489,16 +2499,15 @@ uishell_sidebar_group_claim(UIShell_SidebarState *state, AndamentoNode *nodes, U
   state->group_claim_build = ui_state->build_index;
   state->group_claim_rect = area;
   rd_state->drag_drop_local_panel = uishell_regs()->panel; rd_state->drag_drop_local_frame = rd_state->frame_index;
-  Rng2F32 line = r2f32p(area.x0+6.f, y-1.f, area.x1-6.f, y+1.f);
-  UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(line) UI_CornerRadius(1.f)
-  { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(ui_key_zero(), "group_drop_line_%S", state->group_claim_id)); }
+  uishell_sidebar_drop_line(body, r2f32p(area.x0+6.f, y-1.f, area.x1-6.f, y+1.f),
+    ui_key_from_stringf(ui_key_zero(), "group_drop_line_%S", state->group_claim_id));
 }
 
 // The pointer picks the gap between siblings by their rows' midpoints. Within
 // the run's extent, a gap that moves the row shows an insertion line and
 // claims the reorder for uishell_sidebar_drag_finish.
 internal void
-uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
+uishell_sidebar_row_drop(UIShell_SidebarState *state, UI_Box *body, AndamentoNode *nodes,
                          UIShell_RowDragSibling *siblings, U64 count, F32 row_height)
 {
   Vec2F32 mouse = ui_mouse();
@@ -2526,9 +2535,8 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
   F32 y = target == 0 ? siblings[0].extent.y0-1.f :
     target == count ? siblings[count-1].extent.y1+1.f :
     (siblings[target-1].extent.y1+siblings[target].extent.y0)*0.5f;
-  Rng2F32 line = r2f32p(span.x0+4.f, y-1.f, span.x1-4.f, y+1.f);
-  UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(line) UI_CornerRadius(1.f)
-  { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")); }
+  uishell_sidebar_drop_line(body, r2f32p(span.x0+4.f, y-1.f, span.x1-4.f, y+1.f),
+    ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line"));
 }
 
 // The dragged row lifts: a translucent copy of its row follows the pointer,
@@ -2696,6 +2704,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   Rng2F32 *group_rects = push_array(scratch.arena, Rng2F32, sidebar_dragging ? count : 0);
   U64 group_item_count = 0;
   U64 drag_sibling_count = 0, drag_depth = 0;
+  UI_Box *drag_body = 0; // the section body holding the dragged row's run
   B32 drag_subtree = 0;
   for(U64 i = 0; i < count; i++) { inline_first[i] = inline_last[i] = inline_next[i] = ANDAMENTO_NONE; }
   U64 section_count = 0;
@@ -3155,7 +3164,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             {
               UIShell_HoverCard *card = uishell_sidebar_saved_card(ws, ghost);
               F32 extent = uishell_sidebar_ghost_extent(card, ghost, em);
-              if(drag_sibling) { drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, card->rect, card->rect}; }
+              if(drag_sibling) { drag_body = body; drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, card->rect, card->rect}; }
               if(sidebar_dragging) { group_items[group_item_count++] = (UIShell_RowDragSibling){i, card->rect, card->rect}; }
               // The moving card keeps its place until it lands.
               if(card->moving) { ui_spacer(ui_px(extent, 1)); }
@@ -3202,6 +3211,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             { group_items[group_item_count++] = (UIShell_RowDragSibling){i, slot->rect, slot->rect}; }
             if(drag_sibling)
             {
+              drag_body = body;
               drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, slot->rect, project ? project_box->rect : slot->rect};
               drag_depth = depth[i]; drag_subtree = 1;
             }
@@ -3355,13 +3365,13 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       {
         if(!str8_match(uishell_sidebar_string(nodes[g].entity_kind), str8_lit(".group"), 0) || nodes[g].parent != sections[n]) { continue; }
         Rng2F32 area = passed[g] ? body->parent->rect : group_rects[g];
-        uishell_sidebar_group_claim(state, nodes, g, group_items, group_item_count, area, row_height);
+        uishell_sidebar_group_claim(state, body, nodes, g, group_items, group_item_count, area, row_height);
       }
       ui_signal_from_box(body);
       y += heights[n];
     }
-    if(drag_sibling_count)
-    { uishell_sidebar_row_drop(state, nodes, drag_siblings, drag_sibling_count, row_height); }
+    if(drag_sibling_count && drag_body)
+    { uishell_sidebar_row_drop(state, drag_body, nodes, drag_siblings, drag_sibling_count, row_height); }
     if(!section_panel)
     { uishell_sidebar_footer_ui(r2f32p(0, dim.y-footer_height, dim.x, dim.y), split); }
   }

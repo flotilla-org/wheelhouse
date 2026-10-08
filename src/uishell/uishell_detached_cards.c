@@ -184,28 +184,27 @@ uishell_sidebar_card_title_handle(UIShell_HoverCard *card, String8 text)
 
 internal CFG_Node *uishell_sidebar_pin_find(CFG_Node *root, AndamentoEntity entity, B32 area_only);
 
-// Pin reveals an existing pin of the subject rather than duplicating it;
-// holding it offers another, since a subject may have any number of pins.
+internal CFG_Node *uishell_sidebar_pin_target(CFG_Node *window);
+
+// Pin reveals the subject's pin in the group Pin uses (the topmost showing
+// one) rather than duplicating it, or adds one there.
 internal void
 uishell_sidebar_card_pin_control(UIShell_HoverCard *card)
 {
   RD_WindowState *ws = rd_window_state_from_os_handle(ui_state->window);
-  B32 pinned = ws != &rd_nil_window_state && card->depth &&
-    uishell_sidebar_pin_find(cfg_node_from_id(ws->cfg_id), card->path[card->depth-1], 0) != &cfg_nil_node;
-  UI_Signal sig = uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Pin], str8_lit("card_pin"),
-    pinned ? str8_lit("Show pin · hold to pin another") : str8_lit("Pin"));
-  UI_Key menu_key = ui_key_from_stringf(sig.box->key, "pin_menu");
-  // The menu must not inherit the icon row's font, tags, width or alignment.
-  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(14.f, 1)) UI_PrefHeight(ui_em(1.8f, 1)) RD_Font(RD_FontSlot_Main) UI_TagF(".")
-  UI_TextAlignment(UI_TextAlign_Left) UI_TextPadding(ui_top_font_size()*0.5f)
+  B32 pinned = 0;
+  if(ws != &rd_nil_window_state && card->depth)
   {
-    if(ui_clicked(ui_button(str8_lit("Show existing pin"))))
-    { uishell_sidebar_card_request(card, UIShell_CardPlacement_Pinned); ui_ctx_menu_close(); }
-    if(ui_clicked(ui_button(str8_lit("Pin another"))))
-    { card->pin_another = 1; uishell_sidebar_card_request(card, UIShell_CardPlacement_Pinned); ui_ctx_menu_close(); }
+    CFG_Node *target = uishell_sidebar_pin_target(cfg_node_from_id(ws->cfg_id));
+    for(CFG_Node *c = target->first; c != &cfg_nil_node && !pinned; c = c->next)
+    {
+      AndamentoEntity saved = {uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("kind"))->first->string),
+                               uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("entity"))->first->string)};
+      pinned = str8_match(c->string, str8_lit("card"), 0) && uishell_sidebar_card_entity_match(saved, card->path[card->depth-1]);
+    }
   }
-  if(pinned && ws->sidebar && uishell_sidebar_held(ws->sidebar, sig))
-  { card->menu = menu_key; ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, sig.box->rect.y1-sig.box->rect.y0)); }
+  UI_Signal sig = uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Pin], str8_lit("card_pin"),
+    pinned ? str8_lit("Show pin") : str8_lit("Pin"));
   if(ui_clicked(sig)) { uishell_sidebar_card_request(card, UIShell_CardPlacement_Pinned); }
 }
 
@@ -332,6 +331,40 @@ uishell_sidebar_pin_by_ghost(CFG_Node *window, String8 ghost)
     }
   }
   return &cfg_nil_node;
+}
+
+// Where Pin puts a pin: the first group, other than the default one, of the
+// topmost local section that is showing (its View open and its panel's
+// selected tab), in docking order. Nil when none is showing.
+internal CFG_Node *uishell_sidebar_local_view_group(CFG_Node *window, CFG_Node *view);
+
+internal CFG_Node *
+uishell_sidebar_pin_target_in(CFG_Node *window, CFG_Node *container)
+{
+  for(CFG_Node *v = container->first; v != &cfg_nil_node; v = v->next)
+  {
+    if(rd_dock_is_container(v))
+    {
+      CFG_Node *found = uishell_sidebar_pin_target_in(window, v);
+      if(found != &cfg_nil_node) { return found; }
+      continue;
+    }
+    if(!str8_match(v->string, str8_lit("sidebar_section"), 0) ||
+       cfg_node_child_from_string(v, str8_lit("selected")) == &cfg_nil_node) { continue; }
+    CFG_Node *group = uishell_sidebar_local_view_group(window, v);
+    for(; group != &cfg_nil_node; group = group->next)
+    {
+      if(str8_match(group->string, str8_lit("group"), 0) && cfg_node_child_from_string(group, str8_lit("default")) == &cfg_nil_node)
+      { return group; }
+    }
+  }
+  return &cfg_nil_node;
+}
+
+internal CFG_Node *
+uishell_sidebar_pin_target(CFG_Node *window)
+{
+  return uishell_sidebar_pin_target_in(window, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT));
 }
 
 internal void
@@ -523,12 +556,18 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   AndamentoEntity entity = card->path[card->depth-1];
   // A pinned card moves its own ghost. Pin on any other card reveals the
-  // entity's first ghost, unless it asks for another; a drop is explicit
-  // placement, so it always adds one.
+  // entity's ghost in the group Pin uses (the topmost showing one), or adds
+  // one there; a drop is explicit placement, so it always adds one.
   CFG_Node *saved = card->saved ? cfg_node_from_id(card->saved) : &cfg_nil_node;
-  B32 another = card->pin_another;
-  card->pin_another = 0;
-  CFG_Node *reveal = saved != &cfg_nil_node ? saved : another ? &cfg_nil_node : uishell_sidebar_pin_find(window, entity, 0);
+  CFG_Node *reveal = saved;
+  CFG_Node *target = uishell_sidebar_pin_target(window);
+  for(CFG_Node *c = target->first; reveal == &cfg_nil_node && c != &cfg_nil_node; c = c->next)
+  {
+    if(!str8_match(c->string, str8_lit("card"), 0)) { continue; }
+    AndamentoEntity pinned = {uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("kind"))->first->string),
+                              uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("entity"))->first->string)};
+    if(uishell_sidebar_card_entity_match(pinned, entity)) { reveal = c; }
+  }
   if(reveal != &cfg_nil_node && !new_area)
   {
     saved = reveal;
@@ -632,16 +671,16 @@ uishell_sidebar_local_new_view(CFG_Node *panel, CFG_Node *section)
 // The local group a pin goes to (drag-model.md, "Sections and groups as
 // data"). With `new_area`, the one at the drag's docking site: a centre drop
 // joins the first group of a section shown there; otherwise a new section
-// and group, shown in a View at the site. Without, the window's first group
-// that isn't the default one, or a new "Pinned" section in a new panel. Nil
-// when the destination can't take one.
+// and group, shown in a View at the site. Without, the group Pin uses (the
+// topmost showing one, uishell_sidebar_pin_target), or a new "Pinned"
+// section at the top of the sidebar. Nil when the destination can't take one.
 internal CFG_Node *
 uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area)
 {
   UIShell_SidebarState *state = ws->sidebar;
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   CFG_Node *destination = cfg_node_from_id(state->drop_panel);
-  CFG_Node *area = new_area ? &cfg_nil_node : uishell_sidebar_pin_find(window, (AndamentoEntity){0}, 1);
+  CFG_Node *area = new_area ? &cfg_nil_node : uishell_sidebar_pin_target(window);
   if(new_area && destination != &cfg_nil_node)
   {
     if(!rd_dock_can_create(str8_lit("sidebar_section"), destination)) { return &cfg_nil_node; }
@@ -708,12 +747,16 @@ uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area)
       }
     }
     if(root->last != panel) { cfg_node_insert_child(rd_state->cfg, root, root->last, panel); }
-    // The new panel is last before the optional insertion, so before->prev
-    // cannot name the node being moved (the intrusive-list self-insert case).
+    // The new panel is last before the insertion, so before->prev cannot name
+    // the node being moved (the intrusive-list self-insert case). It goes
+    // before a requested panel, else at the top of the sidebar, where a new
+    // pin is seen.
     CFG_Node *before = cfg_node_from_id(state->pin_before);
     cfg_node_equip_stringf(rd_state->cfg, panel, "%f", fraction);
     if(before != &cfg_nil_node && before->parent == root)
     { cfg_node_insert_child(rd_state->cfg, root, before->prev, panel); }
+    else if(root->first != panel)
+    { cfg_node_insert_child(rd_state->cfg, root, &cfg_nil_node, panel); }
     area = uishell_sidebar_local_new_group(window, str8_lit("Pinned"));
     uishell_sidebar_local_new_view(panel, area->parent);
   }
