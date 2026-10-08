@@ -1771,6 +1771,7 @@ struct UIShell_SidebarRow
   B32 reference;                  // ↗: a reference to a row that lives elsewhere
   B32 renaming;                   // the label is a field renaming the row (a local group)
   U64 count;                      // a group header's items, shown while collapsed
+  F32 title_max;                  // a group header's room for its title, after its chips
   UI_Box *slot, *row;
   UI_Signal toggle, icon_sig, entry_sig, row_sig;
 };
@@ -2563,8 +2564,14 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
     {
       if(r->renaming) UI_PrefWidth(ui_em(12.f, 1))
       { r->entry_sig = uishell_sidebar_local_rename_field(state, push_str8f(arena, "###rename_%S", r->key)); }
-      else UI_PrefWidth(ui_text_dim(4.f, 0))
-      { ui_label(r->text); }
+      else
+      {
+        // Its own width, up to the room its chips leave: the filler after it
+        // absorbs the rest of the row, so the title never shrinks with it.
+        F32 width = fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, r->text).x + 4.f + 2*ui_top_text_padding();
+        if(r->title_max > 0) { width = Min(width, r->title_max); }
+        UI_PrefWidth(ui_px(width, 1)) { ui_label(r->text); }
+      }
     }
     if(!r->expanded && r->count) UI_PrefWidth(ui_text_dim(4.f, 1)) UI_TextColor(uishell_sidebar_ended_color())
     { ui_label(push_str8f(arena, "%I64u", r->count)); }
@@ -3525,6 +3532,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             UIShell_SidebarRow r = {.node = node, .present = 1, .key = node_key, .text = display, .status = status,
               .height = row_height, .indent = project ? 0.3f+0.4f*(depth[i]+1) : indent, .project = project, .selected = node.selected,
               .clickable = project, .count = header_count,
+              .title_max = project ? Max(em*2.f, available_width-(chip_count ? chip_layout.chip_width+chip_clearance : 0.f)) : 0,
               // A compact ghost's disclosure expands it into its card.
               .contains_current = contains_current, .disclosure = (children && node.toggle != ANDAMENTO_NONE) || ghost != &cfg_nil_node,
               .expanded = ghost == &cfg_nil_node && !node.collapsed, .entry = 1, .icon_entry = icon_entry,
