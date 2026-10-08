@@ -2530,7 +2530,10 @@ uishell_sidebar_group_claim(UIShell_SidebarState *state, UI_Box *body, Andamento
     last = k;
     if(mouse.y > center_2f32(items[k].row).y) { index++; }
   }
+  // A row's own run reorders instead; so does a group header over its own
+  // section's groups.
   if(state->row_drag_key.size && loop.size && str8_match(loop, state->row_drag_loop, 0)) { return; }
+  if(state->row_drag_key.size && str8_match(uishell_sidebar_loop_key(state->snapshot, group), state->row_drag_loop, 0)) { return; }
   F32 y = area.y0+row_height*0.5f;
   if(first < item_count)
   {

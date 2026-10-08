@@ -35,12 +35,25 @@ creates a section and group through the ordinary panel split command,
 including nested layouts. A centre drop joins the first group of a section
 shown in that panel. The sidebar retains those split ratios instead of
 applying automatic content sizing after the drop. Each pin is a ghost: its own
-reference to the subject, so a subject may have any number of pins. Pin on a
-subject that is already pinned selects its section and scrolls to its first
-pin; holding Pin offers Show existing pin and Pin another, which adds a pin.
-Dropping into a group is explicit placement and always adds one. Moving a
-pinned card to another group keeps the same saved card identity. A group
-emptied by a move remains, and its section's Close control hides it. Copied
+reference to the subject, so a subject may have any number of pins. Pin puts
+the subject in the topmost local section that is showing (its panel's selected
+tab), in its first group other than Workspaces; with none showing, it makes a
+section at the top of the sidebar. A subject already pinned there is revealed
+instead, and Pin reads Show pin. Dropping into a group is explicit placement
+and always adds one. Moving a pinned card to another group keeps the same
+saved card identity. A group emptied by a move remains, and its section's
+Close control hides it.
+
+Sections and groups you made are managed from menus: right-click a section's
+title or hold its ×, and right-click a group's header. They offer Rename (a
+small field, applied with Enter), New group, New workspace here, Reset order
+once the group has been reordered, Hide, and Delete. Delete moves a group's
+workspaces to Workspaces and drops its ghosts, asking first only when
+workspaces would move; a section left without groups goes too. Workspaces
+can't be deleted. A section without a name of its own shows its only group's
+name, and renaming it renames the group; when a second group joins, it keeps
+that name. Dragging a group's header to a group in another section moves it
+there; dropping it on a docking site makes it a section of its own. Copied
 or restored layouts reconcile copies of the same pin (same ghost id) within
 the owning window. Pins saved before ghost ids keep the first per subject,
 which gains an id.

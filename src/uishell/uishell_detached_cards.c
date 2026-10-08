@@ -882,6 +882,7 @@ uishell_sidebar_detached_bounds(RD_WindowState *ws)
 }
 
 internal CFG_Node *uishell_sidebar_drag_local(UIShell_SidebarState *state);
+internal void uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *section, CFG_Node *after);
 
 internal void
 uishell_sidebar_drag_clear(UIShell_SidebarState *state)
@@ -997,6 +998,35 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   B32 edge = state->drop_panel && state->drop_direction != Dir2_Invalid;
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   CFG_Node *group = !edge && uishell_sidebar_group_claimed(state) ? uishell_sidebar_local_group(window, state->group_claim_id) : &cfg_nil_node;
+  // A local group's header moves the group: over a group in another
+  // section, into that section after it; on a docking site, into the
+  // section shown there, or a new section of its own, which borrows its
+  // name. Within its own section it reorders, below; it never ghosts.
+  CFG_Node *dragged_group = row && str8_match(uishell_sidebar_string(entity.kind), str8_lit(".group"), 0) ?
+    uishell_sidebar_local_group(window, uishell_sidebar_string(entity.id)) : &cfg_nil_node;
+  if(dragged_group != &cfg_nil_node)
+  {
+    if(group != &cfg_nil_node && group->parent != dragged_group->parent)
+    { uishell_sidebar_local_move_group(window, dragged_group, group->parent, group); uishell_sidebar_drag_clear(state); return; }
+    if(group == &cfg_nil_node && state->drop_panel)
+    {
+      CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+      CFG_Node *last_section = root->last;
+      CFG_Node *made = uishell_sidebar_pin_area(ws, 1);
+      if(made != &cfg_nil_node && made->parent != dragged_group->parent)
+      {
+        // A section made for the drop holds only the group pin_area made for
+        // pins; the dragged group replaces it.
+        CFG_Node *section = made->parent;
+        B32 fresh = section != last_section && root->last == section;
+        if(fresh) { cfg_node_release(rd_state->cfg, made); }
+        uishell_sidebar_local_move_group(window, dragged_group, section, fresh ? &cfg_nil_node : made);
+      }
+      uishell_sidebar_drag_clear(state);
+      return;
+    }
+    group = &cfg_nil_node;
+  }
   if(group != &cfg_nil_node)
   {
     String8 group_id = uishell_sidebar_local_field(group, str8_lit("id"));

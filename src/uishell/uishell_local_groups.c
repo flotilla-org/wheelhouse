@@ -98,14 +98,21 @@ uishell_sidebar_local_rename(CFG_Node *node, String8 label)
   if(label.size) { uishell_sidebar_local_set_field(node, str8_lit("label"), label); }
 }
 
-// Adds a group at the end of `section`. When it's the second, a section
-// without a name of its own keeps the one it was borrowing.
-internal CFG_Node *
-uishell_sidebar_local_add_group(CFG_Node *section, String8 label)
+// Before a second group joins `section`: without a name of its own, it keeps
+// the one it was borrowing.
+internal void
+uishell_sidebar_local_before_join(CFG_Node *section)
 {
   CFG_Node *only = uishell_sidebar_local_only_group(section);
   if(only != &cfg_nil_node && !uishell_sidebar_local_field(section, str8_lit("label")).size)
   { uishell_sidebar_local_set_field(section, str8_lit("placeholder"), uishell_sidebar_local_field(only, str8_lit("label"))); }
+}
+
+// Adds a group at the end of `section`.
+internal CFG_Node *
+uishell_sidebar_local_add_group(CFG_Node *section, String8 label)
+{
+  uishell_sidebar_local_before_join(section);
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *group = cfg_node_new(rd_state->cfg, section, str8_lit("group"));
   uishell_sidebar_local_set_field(group, str8_lit("id"), string_from_guid(scratch.arena, make_guid()));
@@ -177,6 +184,23 @@ uishell_sidebar_local_delete_section(CFG_Node *window, CFG_Node *section)
   // Deleting the last group deletes the section too, fields and all.
   for(U64 left = uishell_sidebar_local_group_count(section); left > 0; left--)
   { uishell_sidebar_local_delete_group(window, cfg_node_child_from_string(section, str8_lit("group"))); }
+}
+
+// Moves `group` into `section` after `after` (nil: at the end), with its
+// workspaces and ghosts. A section it leaves without groups goes.
+internal void
+uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *section, CFG_Node *after)
+{
+  CFG_Node *from = group->parent;
+  if(group == after) { return; }
+  if(from != section) { uishell_sidebar_local_before_join(section); }
+  cfg_node_unhook(rd_state->cfg, from, group);
+  cfg_node_insert_child(rd_state->cfg, section, after != &cfg_nil_node ? after : section->last, group);
+  if(from != section && uishell_sidebar_local_group_count(from) == 0)
+  {
+    uishell_sidebar_local_close_views(window, from);
+    cfg_node_release(rd_state->cfg, from);
+  }
 }
 
 // Opens a new workspace living in `group`.

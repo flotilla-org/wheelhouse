@@ -27,16 +27,35 @@ uishell_local_groups_publish(UIShell_SidebarState *state, CFG_Node *window, Aren
   uishell_sidebar_refresh(state);
 }
 
-// The section View the menu tests render, as a docked View renders it.
+// The section Views the tests render, as docked Views render them: the
+// first above, a second (when set) below.
 global CFG_Node *uishell_local_groups_view = &cfg_nil_node;
+global CFG_Node *uishell_local_groups_view2 = &cfg_nil_node;
 
-// One frame of that View, with `event` (if any) at the box keyed `suffix`,
+internal void
+uishell_local_groups_render(CFG_Node *window, UIShell_ControlledSplit *split)
+{
+  CFG_Node *views[] = {uishell_local_groups_view, uishell_local_groups_view2};
+  for(U64 i = 0; i < ArrayCount(views); i++)
+  {
+    if(views[i] == &cfg_nil_node) { continue; }
+    String8 section = cfg_node_child_from_string(views[i], str8_lit("section"))->first->string;
+    Rng2F32 rect = r2f32p(0, 300.f*i, 320, 300.f*(i+1));
+    UIShell_RegsScope(.window = window->id, .view = views[i]->id, .panel = views[i]->parent->id)
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    {
+      UI_Box *parent;
+      UI_Rect(rect) { parent = ui_build_box_from_stringf(UI_BoxFlag_Clip, "###local_groups_view_%I64u", i); }
+      UI_Parent(parent) { uishell_sidebar_render(rect, split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, section}); }
+    }
+  }
+}
+
+// One frame of those Views, with `event` (if any) at the box keyed `suffix`,
 // found in the last frame's layout. Returns whether it was found.
 internal B32
 uishell_local_groups_frame(RD_WindowState *ws, CFG_Node *window, Arena *arena, String8 suffix, UI_EventKind kind, WM_Key key)
 {
-  CFG_Node *view = uishell_local_groups_view;
-  String8 section = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
   Vec2F32 at = suffix.size ? uishell_workspace_lifecycle_center(ui_state, suffix) : v2f32(-100, -100);
   UI_IconInfo icons = ws->ui->icon_info;
@@ -49,11 +68,60 @@ uishell_local_groups_frame(RD_WindowState *ws, CFG_Node *window, Arena *arena, S
   }
   ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
   ui_state->mouse = at;
-  UIShell_RegsScope(.window = window->id, .view = view->id, .panel = view->parent->id)
-  UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
-  { uishell_sidebar_render(r2f32p(0, 0, 320, 600), &split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, section}); }
+  uishell_local_groups_render(window, &split);
   ui_end_build();
   return !suffix.size || at.x != 0 || at.y != 0;
+}
+
+// Drags the box keyed `from` onto the box keyed `to` (or, with `dock`, onto
+// a docking site below the first View's panel): press, move past the
+// threshold, release, finishing the drag each frame as a window does.
+internal B32
+uishell_local_groups_drag(RD_WindowState *ws, CFG_Node *window, Arena *arena, String8 from, String8 to, B32 dock)
+{
+  Vec2F32 start = {0}, target = {0};
+  B32 started = 0;
+  for(U32 frame = 0; frame < 7; frame++)
+  {
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
+    Vec2F32 at = frame < 2 ? start : frame == 2 ? add_2f32(start, v2f32(0, 12)) : target;
+    if(frame == 1 || frame == 5)
+    {
+      event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release, .pos = at};
+      events.first = events.last = &event; events.count = 1;
+    }
+    if(frame == 5 && dock) { uishell_sidebar_drag_panel_drop(uishell_local_groups_view->parent->id, Dir2_Down, 0); }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = at;
+    uishell_local_groups_render(window, &split);
+    uishell_sidebar_drag_finish(ws);
+    ui_end_build();
+    if(frame == 0) { start = uishell_workspace_lifecycle_center(ui_state, from); }
+    if(frame >= 2) { target = dock ? v2f32(-50, -50) : uishell_workspace_lifecycle_center(ui_state, to); }
+    if(frame == 3) { started = rd_drag_is_active(); }
+  }
+  rd_drag_kill(); ui_kill_action();
+  return started;
+}
+
+// The `###entry_` suffix of the row presenting local entity `id`.
+internal String8
+uishell_local_groups_row(Arena *arena, UIShell_SidebarState *state, String8 id)
+{
+  return push_str8f(arena, "###entry_%S", uishell_sidebar_string(uishell_sidebar_reorder_node(state, id).key));
+}
+
+// A ghost of project `p` in `group`, so the group has a row to drop on.
+internal void
+uishell_local_groups_seed(CFG_Node *group, String8 ghost)
+{
+  CFG_Node *seed = cfg_node_new(rd_state->cfg, group, str8_lit("card"));
+  uishell_sidebar_local_set_field(seed, str8_lit("ghost"), ghost);
+  uishell_sidebar_local_set_field(seed, str8_lit("kind"), str8_lit("project"));
+  uishell_sidebar_local_set_field(seed, str8_lit("entity"), str8_lit("p"));
+  cfg_node_new(rd_state->cfg, seed, str8_lit("compact"));
 }
 
 // Clicks the box keyed `suffix` with `button`, then lets a frame settle.
@@ -176,10 +244,73 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     cfg_node_release(rd_state->cfg, panel);
     uishell_local_groups_view = &cfg_nil_node;
   }
+  //- Dragging a group's header moves the group: into another section after
+  //  the group dropped on, or to a docking site as a section of its own.
+  {
+    UI_State *saved_ui = ui_state, *test = ui_state_alloc();
+    ui_select_state(test);
+    CFG_Node *sidebar_root = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+    CFG_Node *top = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
+    CFG_Node *bottom = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
+    CFG_Node *alpha = uishell_sidebar_local_new_group(window, str8_lit("Alpha"));
+    CFG_Node *beta = uishell_sidebar_local_add_group(alpha->parent, str8_lit("Beta"));
+    CFG_Node *gamma = uishell_sidebar_local_new_group(window, str8_lit("Gamma"));
+    uishell_local_groups_seed(alpha, str8_lit("groups-alpha"));
+    uishell_local_groups_seed(beta, str8_lit("groups-beta"));
+    uishell_local_groups_seed(gamma, str8_lit("groups-gamma"));
+    CFG_Node *first = alpha->parent, *second = gamma->parent;
+    String8 beta_id = push_str8_copy(arena, uishell_sidebar_local_field(beta, str8_lit("id")));
+    uishell_local_groups_view = uishell_sidebar_local_new_view(top, first);
+    uishell_local_groups_view2 = uishell_sidebar_local_new_view(bottom, second);
+    uishell_local_groups_publish(state, window, arena);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    B32 started = uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, beta_id),
+                                            uishell_local_groups_row(arena, state, str8_lit("groups-gamma")), 0);
+    GroupsCheck(started && beta->parent == second && beta->prev == gamma && uishell_sidebar_local_group_count(first) == 1 &&
+                cfg_node_child_from_string(beta, str8_lit("card")) != &cfg_nil_node,
+                "a group's header dropped on a group in another section moves it there, after that group, with its items");
+    GroupsCheck(str8_match(uishell_sidebar_local_title(second), str8_lit("Gamma"), 0),
+                "the section it joined keeps the name it showed");
+    // Back to the first section, then out to a docking site.
+    uishell_local_groups_publish(state, window, arena);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, beta_id),
+                              uishell_local_groups_row(arena, state, str8_lit("groups-alpha")), 0);
+    GroupsCheck(beta->parent == first, "and dropped back, it returns");
+    U64 sections_before = 0;
+    for(CFG_Node *n = first->parent->first; n != &cfg_nil_node; n = n->next) { sections_before += str8_match(n->string, str8_lit("section"), 0); }
+    uishell_local_groups_publish(state, window, arena);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    started = uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, beta_id), str8_zero(), 1);
+    CFG_Node *own = beta->parent;
+    U64 sections_after = 0;
+    for(CFG_Node *n = first->parent->first; n != &cfg_nil_node; n = n->next) { sections_after += str8_match(n->string, str8_lit("section"), 0); }
+    GroupsCheck(started && own != first && sections_after == sections_before+1 && uishell_sidebar_local_group_count(own) == 1 &&
+                str8_match(uishell_sidebar_local_title(own), str8_lit("Beta"), 0) &&
+                uishell_sidebar_local_view(window, beta) != &cfg_nil_node,
+                "dropped on a docking site, a group becomes a section of its own, shown there, borrowing its name");
+    GroupsCheck(str8_match(uishell_sidebar_local_title(first), str8_lit("Alpha"), 0), "the section it left borrows its remaining group's name");
+    CFG_Node *own_view = uishell_sidebar_local_view(window, beta);
+    if(own_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, own_view); }
+    // Each section once, even if a failed move left them shared.
+    CFG_Node *made_sections[] = {own, first, second};
+    for(U64 i = 0; i < ArrayCount(made_sections); i++)
+    {
+      B32 seen = 0;
+      for(U64 k = 0; k < i; k++) { seen |= made_sections[k] == made_sections[i]; }
+      if(!seen) { cfg_node_release(rd_state->cfg, made_sections[i]); }
+    }
+    cfg_node_release(rd_state->cfg, top);
+    cfg_node_release(rd_state->cfg, bottom);
+    uishell_sidebar_manual_sizing(window, 0);
+    uishell_local_groups_view = uishell_local_groups_view2 = &cfg_nil_node;
+    ui_select_state(saved_ui); ui_state_release(test);
+  }
+
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, section menu, rename field, group menu)\n",
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, section menu, rename field, group menu, group drag between sections, group to a docking site)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;
