@@ -109,7 +109,7 @@ uishell_sidebar_card_icon_button(String8 glyph, String8 key, String8 description
     { ui_box_equip_custom_draw(box, uishell_sidebar_card_icon_draw, PtrFromInt((U64)kinds[i])); break; }
   }
   UI_Signal signal = ui_signal_from_box(box);
-  // No tooltip over an open menu, or while held (Pin opens its menu on hold).
+  // No tooltip over an open menu, or while held.
   if(ui_hovering(signal) && !ui_dragging(signal) && !ui_any_ctx_menu_is_open()) UI_Tooltip
   {
     ui_state->tooltip_anchor_key = box->key;

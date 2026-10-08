@@ -1325,8 +1325,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       }
       uishell_sidebar_detached_finish(ws);
       CFG_NodePtrList after = {0}; uishell_sidebar_pin_cards(ghosts_scratch.arena, window, &after);
-      CardCheck(show_tip && !menu_open && after.count == before.count,
-                "Pin on a subject pinned where Pin goes shows it, with no menu and no second ghost");
+      CardCheck(show_tip, "Pin on a subject pinned where Pin goes reads Show pin");
+      CardCheck(!menu_open, "Pin opens no menu");
+      CardCheck(after.count == before.count, "Pin on a subject pinned where Pin goes adds no second ghost");
       scratch_end(ghosts_scratch);
       uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, hold_pin));
       uishell_sidebar_detached_finish(ws);
