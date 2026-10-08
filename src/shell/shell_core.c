@@ -4095,6 +4095,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           if(build_panel)
           {
             CFG_Node *view = cfg_node_from_id(rd_state->drag_drop_regs->view);
+            // A View's claim lasts this frame and the next, then lapses on its
+            // own (drag_drop_local_panel); nothing else resets it.
             B32 local_drop = rd_state->drag_drop_local_panel == panel->cfg->id && rd_state->drag_drop_local_frame+1 >= rd_state->frame_index;
             if(!local_drop && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_panel_drag_target(view, panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid)) && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
             {
