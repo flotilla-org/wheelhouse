@@ -91,6 +91,14 @@ template "project/native" {
     order "display.label"
     apply-template "wheelhouse/entry"
   }
+  // Local workspaces that live with the project (Wheelhouse host entities):
+  // rows, as they are contained in the project rather than about it (chips
+  // are workspaces about the project: its overview and standing roles).
+  for "workspace" kind="wheelhouse.workspace" {
+    match "flotilla.project" of="project"
+    order "display.label"
+    apply-template "wheelhouse/entry"
+  }
   for "convoy" kind="convoy" visibility="wheelhouse/activity" {
     match "flotilla.project" of="project"
     order "display.label"

@@ -3321,6 +3321,23 @@ rd_panel_drag_target(CFG_Node *view, CFG_Node *destination, F32 width)
   return rd_dock_drag_target(view, destination, width);
 }
 
+// A panel's own centre and catch-all docking sites, by key, for Views that
+// claim positioned drops (uishell_sidebar_drop_claimable).
+internal UI_Key
+rd_panel_center_drop_site_key(CFG_Node *panel)
+{ return ui_key_from_stringf(ui_key_zero(), "drop_split_center_%p", panel); }
+
+internal UI_Key
+rd_panel_catchall_drop_site_key(CFG_Node *panel)
+{ return ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panel); }
+
+// Whether a View in `panel` claimed a positioned drop (drag_drop_local_panel).
+// A claim lasts this frame and the next, then lapses on its own; nothing else
+// resets it.
+internal B32
+rd_panel_drop_claimed_locally(CFG_Node *panel)
+{ return rd_state->drag_drop_local_panel == panel->id && rd_state->drag_drop_local_frame+1 >= rd_state->frame_index; }
+
 // Existing Views and creation drags use the same sites, geometry and commands.
 internal void
 rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
@@ -4095,7 +4112,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           if(build_panel)
           {
             CFG_Node *view = cfg_node_from_id(rd_state->drag_drop_regs->view);
-            if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_panel_drag_target(view, panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid)) && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
+            B32 local_drop = rd_panel_drop_claimed_locally(panel->cfg);
+            if(!local_drop && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && rd_panel_drag_target(view, panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid)) && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
             {
               F32 drop_site_dim_px = ceil_f32(ui_top_font_size()*7.f);
               drop_site_dim_px = Min(drop_site_dim_px, dim_2f32(panel_rect).v[panel->split_axis]/4.f);
@@ -4113,7 +4131,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
               sites[] =
               {
                 {
-                  ui_key_from_stringf(ui_key_zero(), "drop_split_center_%p", panel->cfg),
+                  rd_panel_center_drop_site_key(panel->cfg),
                   Dir2_Invalid,
                   r2f32(sub_2f32(panel_center, drop_site_half_dim),
                         add_2f32(panel_center, drop_site_half_dim))
@@ -4263,8 +4281,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //////////////////////////
           //- rjf: build catch-all panel drop-site
           //
-          UI_Key catchall_drop_site_key = ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panel->cfg);
-          if(build_panel && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
+          UI_Key catchall_drop_site_key = rd_panel_catchall_drop_site_key(panel->cfg);
+          B32 local_catchall = rd_panel_drop_claimed_locally(panel->cfg);
+          if(build_panel && !local_catchall && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
              rd_panel_drag_target(cfg_node_from_id(rd_state->drag_drop_regs->view), panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid))) UI_Rect(panel_rect)
           {
             UI_Box *catchall_drop_site = ui_build_box_from_key(UI_BoxFlag_DropSite, catchall_drop_site_key);
@@ -6619,12 +6638,14 @@ rd_window_frame(void)
         FNT_Tag icon_font = rd_font_from_slot(RD_FontSlot_Icons);
         F32 bar_h = dim_2f32(top_bar_rect).y;
         F32 icon_button_w = font_size*2.25f; // flat icon buttons (new-workspace, overview)
-        // Place the breadcrumb's right edge at the sidebar divider. Keep a
-        // small readable slot when the sidebar is collapsed or very narrow.
+        // Place the breadcrumb's right edge at the sidebar divider, after the
+        // one leading button (sidebar collapse; new-workspace lives in the
+        // sidebar). Keep a small readable slot when the sidebar is collapsed
+        // or very narrow.
         F32 leading = (native_title_bar_left_padding > 0 ? native_title_bar_left_padding : bar_h);
         F32 sidebar_right = content_rect.x0 + uishell_controlled_split_control_width_px(&root_controlled_split, content_rect);
         workspace_path_w = Max(font_size*8.f,
-          floor_f32(sidebar_right - top_bar_rect.x0 - leading - icon_button_w*2.f));
+          floor_f32(sidebar_right - top_bar_rect.x0 - leading - icon_button_w));
 
         // menu bar: compact = a single kebab button; full = sum of menu-title
         // button widths. each button is sized by ui_text_dim(20,1), which

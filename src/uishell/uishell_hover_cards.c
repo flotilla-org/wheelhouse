@@ -188,6 +188,7 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, AndamentoNode node, UI_Key sou
   card->dismissed = ui_key_zero();
   card->candidate = card->path[0];
   card->changed_at = now;
+  card->anchor_x = ui_state->mouse.x;
   // Replacement glides from retained bounds; a fresh open has no previous
   // content, so layout resets this origin directly to its target.
   card->glide_from = card->rect.p0;
@@ -199,15 +200,12 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, AndamentoNode node, UI_Key sou
   scratch_end(scratch);
 }
 
+// Hovering `sig` opens the node's hover card after the delay. Any row may
+// offer it; only the node's home row is its source (card_source_at).
 internal void
-uishell_sidebar_card_source_at(UIShell_SidebarState *state, AndamentoNode node,
-                               UI_Signal sig, String8 context, B32 contains_current, U64 now)
+uishell_sidebar_card_hover_at(UIShell_SidebarState *state, AndamentoNode node,
+                              UI_Signal sig, String8 context, B32 contains_current, U64 now)
 {
-  for(UIShell_HoverCard *c = state->detached; c; c = c->next)
-  {
-    if(c->open && c->source_key.size && str8_match(c->source_key, uishell_sidebar_string(node.key), 0))
-    { c->source = sig.box->key; c->source_rect = sig.box->rect; }
-  }
   if(ui_any_ctx_menu_is_open() || !ui_hovering(sig) || state->row_drag_key.size) { return; }
   UIShell_HoverCard *card = &state->cards[0];
   if(card->focused || ui_key_match(card->dismissed, sig.box->key)) { return; }
@@ -233,6 +231,20 @@ uishell_sidebar_card_source_at(UIShell_SidebarState *state, AndamentoNode node,
   card->source_rect = sig.box->rect;
   card->departure = ui_state->mouse;
   rd_request_frame();
+}
+
+// The node's home row: it anchors the node's inline and detached cards, and
+// offers the hover card.
+internal void
+uishell_sidebar_card_source_at(UIShell_SidebarState *state, AndamentoNode node,
+                               UI_Signal sig, String8 context, B32 contains_current, U64 now)
+{
+  for(UIShell_HoverCard *c = state->detached; c; c = c->next)
+  {
+    if(c->open && c->source_key.size && str8_match(c->source_key, uishell_sidebar_string(node.key), 0))
+    { c->source = sig.box->key; c->source_rect = sig.box->rect; }
+  }
+  uishell_sidebar_card_hover_at(state, node, sig, context, contains_current, now);
 }
 
 internal void
@@ -280,7 +292,7 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
   {
     rd_drag_kill();
     state->drag_card->moving = state->drag_card->drag_released = state->drag_card->focused = 0;
-    state->drag_card = 0; state->card_drop_panel = 0;
+    state->drag_card = 0; state->drop_panel = 0;
     state->card_escape_down = 1; ws->ui->hover_card_focus = 0;
     rd_request_frame();
     return 1;
@@ -447,6 +459,8 @@ internal void uishell_sidebar_card_drag_control(UIShell_HoverCard *card);
 internal void uishell_sidebar_card_title_handle(UIShell_HoverCard *card, String8 text);
 internal void uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width);
 
+internal void uishell_sidebar_ghost_set_expanded(CFG_Node *saved, B32 expanded);
+
 internal void
 uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card,
                             U64 index, AndamentoDetail detail, F32 width, B32 interactive)
@@ -458,15 +472,20 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
   if(!title.size) { title = uishell_sidebar_string(detail.label); }
   F32 header_em = floor_f32(ui_top_font_size()*0.82f);
   F32 grip_width = interactive ? header_em*1.4f : 0;
+  // A pinned card collapses to its compact ghost row.
+  B32 collapsible = interactive && card->placement == UIShell_CardPlacement_Pinned && card->saved;
+  F32 collapse_width = collapsible ? ui_top_font_size()*1.5f : 0;
   U64 move_count = card->placement == UIShell_CardPlacement_Transient ? 4 : 3;
   F32 controls_width = interactive ? header_em*1.4f*(move_count+1) : 0;
   F32 badge_width = badge.size ? Min(width*0.3f, fnt_dim_from_tag_size_string(rd_font_from_slot(RD_FontSlot_Main), header_em, 0, ui_top_tab_size(), badge).x+header_em) : 0;
   UI_Row UI_FontSize(header_em) UI_TagF("weak") RD_Font(RD_FontSlot_Main)
   {
+    if(collapsible && ui_clicked(uishell_sidebar_disclosure(1, str8_lit("###card_collapse"))))
+    { uishell_sidebar_ghost_set_expanded(cfg_node_from_id(card->saved), 0); }
     if(interactive) { UI_PrefWidth(ui_px(grip_width, 1)) { uishell_sidebar_card_drag_control(card); } }
     UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak") RD_Font(RD_FontSlot_Icons)
     { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_icon(detail.entity.kind)]); }
-    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-grip_width-controls_width), 1)) UI_TagF("weak")
+    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-grip_width-collapse_width-controls_width), 1)) UI_TagF("weak")
     { if(interactive) { uishell_sidebar_card_title_handle(card, identity); } else { ui_label(identity); } }
     if(badge.size)
     {
@@ -720,11 +739,15 @@ uishell_sidebar_card_target_y(UIShell_HoverCard *card, F32 height, Rng2F32 windo
   return Clamp(window.y0+10, y, window.y1-height-10);
 }
 
+internal void uishell_sidebar_row_lift(UIShell_SidebarState *state);
+
 internal void
 uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32 sidebar_visible)
 {
   UIShell_SidebarState *state = ws->sidebar;
   if(!state) { return; }
+  // Built first, so it paints over the cards and the Views.
+  uishell_sidebar_row_lift(state);
   // Abandon unconsumed previous-frame intent before rendering any cards.
   // Pinned and inline Views render later; all current intent is dispatched
   // together after the window's Views finish, before the build arena advances.
@@ -830,7 +853,10 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     F32 em = ui_top_font_size(), width = Min(floating ? dim_2f32(card->rect).x : em*34, dim_2f32(window).x-20);
     F32 content_height = ui_box_is_nil(old_content) ? em*(6+node.detail_count*1.6f) : old_content->fixed_size.y;
     F32 height = Clamp(em*4, card->moving ? dim_2f32(card->rect).y : content_height+16, dim_2f32(window).y-20);
-    F32 x = outside ? state->rect.x1+8 : Min(card->source_rect.x1+8, state->rect.x1-24);
+    // Near starts just left of where the pointer was when the card opened, so
+    // the card sits under it whichever box (label, icon, chip, ghost row) was
+    // hovered; Outside starts beyond the sidebar's edge.
+    F32 x = outside ? state->rect.x1+8 : card->anchor_x-UIShell_HoverCardNearGapPT;
     if(slot) { x = card->source_rect.x1+8; }
     Vec2F32 target = v2f32(Clamp(window.x0+10, x, window.x1-width-10),
                           uishell_sidebar_card_target_y(card, height, window, !outside && slot == 0));
@@ -948,7 +974,7 @@ uishell_sidebar_cards_dispatch(RD_WindowState *ws)
 {
   UIShell_SidebarState *state = ws->sidebar;
   if(!state) { return; }
-  uishell_sidebar_card_drag_finish(ws);
+  uishell_sidebar_drag_finish(ws);
   size_t pending = uishell_sidebar_card_take_action(state);
   if(pending != ANDAMENTO_NONE && state->core)
   {

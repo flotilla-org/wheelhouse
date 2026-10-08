@@ -45,7 +45,7 @@ uishell_sidebar_reorder_node(UIShell_SidebarState *state, String8 id)
 typedef struct UIShell_ReorderDrag UIShell_ReorderDrag;
 struct UIShell_ReorderDrag
 {
-  B32 started, line, menu;
+  B32 started, line, menu, ghost_target, lifted, lift_text_inside;
 };
 
 typedef enum UIShell_ReorderMode
@@ -54,6 +54,8 @@ typedef enum UIShell_ReorderMode
   UIShell_ReorderMode_RightClick,
   // Cancel as the shared Esc handler does, then release over the source row.
   UIShell_ReorderMode_Cancel,
+  // Release on a docking site below the tree's panel, as RAD commits one.
+  UIShell_ReorderMode_Dock,
 }
 UIShell_ReorderMode;
 
@@ -62,7 +64,7 @@ UIShell_ReorderMode;
 internal UIShell_ReorderDrag
 uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *split, CFG_Node *view,
                                 UIShell_SidebarState *state, String8 id, Vec2F32 offset, String8 to_id,
-                                F32 to_fraction, UIShell_ReorderMode mode)
+                                F32 to_fraction, UIShell_ReorderMode mode, CFG_Node *pinned_area)
 {
   UIShell_ReorderDrag result = {0};
   B32 right_click = mode == UIShell_ReorderMode_RightClick;
@@ -77,13 +79,16 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
   for(U32 frame = 0; frame < 6; frame++)
   {
     UI_EventList events = {0}; UI_EventNode event = {0};
+    Rng2F32 pinned_rect = r2f32p(0, 620, 320, 820);
     if(frame == 4 && mode == UIShell_ReorderMode_Cancel) { pointer = start; }
+    else if(frame >= 2 && pinned_area != &cfg_nil_node) { pointer = offset.x ? offset : center_2f32(pinned_rect); }
     else if(frame >= 2 && !right_click)
     {
       UI_Box *to = to_key.size ? uishell_sidebar_reorder_box(test_ui->root, push_str8f(ui_build_arena(), "###entry_%S", to_key)) : &ui_nil_box;
       pointer = ui_box_is_nil(to) ? add_2f32(start, offset) :
         v2f32(start.x, to->rect.y0+dim_2f32(to->rect).y*to_fraction);
     }
+    if(frame == 4 && mode == UIShell_ReorderMode_Dock) { uishell_sidebar_drag_panel_drop(view->parent->id, Dir2_Down, 0); }
     if(frame == 1 || frame == 4)
     {
       event.v = (UI_Event){.kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release,
@@ -93,9 +98,21 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = pointer;
     state->managed_cfg_generation = cfg_change_gen(); state->managed_dirty = 0;
+    uishell_sidebar_row_lift(state);
     UIShell_RegsScope(.window = split->owner_cfg->id, .view = view->id, .panel = view->parent->id)
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     { uishell_sidebar_render(r2f32p(0, 0, 320, 600), split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, str8_lit("tree")}); }
+    if(pinned_area != &cfg_nil_node)
+    UIShell_RegsScope(.window = split->owner_cfg->id, .view = pinned_area->id)
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    {
+      // As in a window, the area's own catch-all site has the pointer first.
+      ui_state->drop_hot_box_key = ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", pinned_area->parent);
+      UI_Box *view_parent;
+      UI_Rect(pinned_rect) { view_parent = ui_build_box_from_key(UI_BoxFlag_Clip, ui_key_make(119168)); }
+      UI_Parent(view_parent) { RD_VIEW_UI_FUNCTION_NAME(pinned_cards)((E_Eval){0}, pinned_rect); }
+    }
+    uishell_sidebar_drag_finish(ws);
     ui_end_build();
     if(frame == 0)
     {
@@ -104,8 +121,22 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
     }
     if(frame == 3)
     {
-      result.started = rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_UIKey;
+      result.started = rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
+        rd_state->drag_drop_commit == uishell_sidebar_drag_panel_drop;
       result.line = !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")));
+      result.ghost_target = pinned_area != &cfg_nil_node &&
+        !ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "pinned_drop_line_%I64u", pinned_area->id)));
+      UI_Box *lift = ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "sidebar_row_lift"));
+      result.lifted = !ui_box_is_nil(lift);
+      // The copy is the row, drawn as its home row is: its icon and label lay
+      // out inside it, not offset by the copy's rect.
+      UI_Box *label = result.lifted ? uishell_sidebar_reorder_box(lift->first, id) : &ui_nil_box;
+      UI_Box *icon = result.lifted ? uishell_sidebar_reorder_box(lift->first, rd_icon_kind_text_table[RD_IconKind_Threads]) : &ui_nil_box;
+      Rng2F32 inside = pad_2f32(lift->rect, 0.5f);
+      result.lift_text_inside = !ui_box_is_nil(label) && !ui_box_is_nil(icon) && dim_2f32(label->rect).x > 0 &&
+        contains_2f32(inside, label->rect.p0) && contains_2f32(inside, label->rect.p1) &&
+        contains_2f32(inside, icon->rect.p0) && contains_2f32(inside, icon->rect.p1) &&
+        (icon->flags & UI_BoxFlag_DisableTextTrunc);
       if(mode == UIShell_ReorderMode_Cancel) { rd_drag_kill(); ui_kill_action(); }
     }
     if(frame == 5) { result.menu = ui_any_ctx_menu_is_open(); }
@@ -158,21 +189,21 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   // Within the threshold nothing drags, and a click never reorders. These
   // rows have no recipe, so an activation leaves an inspection message.
   state.inspection[0] = 0;
-  UIShell_ReorderDrag still = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 3), str8_zero(), 0, UIShell_ReorderMode_Drag);
+  UIShell_ReorderDrag still = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 3), str8_zero(), 0, UIShell_ReorderMode_Drag, &cfg_nil_node);
   ReorderCheck(!still.started && !still.line, "sub-threshold press stays a click");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c1 c2 c3"), 0), "click keeps order");
   ReorderCheck(state.inspection[0] != 0, "a click activates the row");
 
   // Esc mid-drag, then a release back over the row: no reorder, no activation.
   state.inspection[0] = 0;
-  UIShell_ReorderDrag cancel = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 0), str8_lit("c3"), 0.8f, UIShell_ReorderMode_Cancel);
+  UIShell_ReorderDrag cancel = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 0), str8_lit("c3"), 0.8f, UIShell_ReorderMode_Cancel, &cfg_nil_node);
   ReorderCheck(cancel.started, "cancelled drag had started");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c1 c2 c3"), 0), "cancel keeps order");
   ReorderCheck(state.inspection[0] == 0, "release after cancel doesn't activate");
 
   // Below c3's midpoint lands c1 last; the drag shows the line meanwhile.
-  UIShell_ReorderDrag down = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 0), str8_lit("c3"), 0.8f, UIShell_ReorderMode_Drag);
-  ReorderCheck(down.started, "row drag starts in the UIKey slot");
+  UIShell_ReorderDrag down = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c1"), v2f32(0, 0), str8_lit("c3"), 0.8f, UIShell_ReorderMode_Drag, &cfg_nil_node);
+  ReorderCheck(down.started, "row drag starts as the shared sidebar drag");
   ReorderCheck(down.line, "insertion line while over a moving gap");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c2 c3 c1"), 0), "drop below c3 reorders");
   String8 loop = uishell_sidebar_loop_key(state.snapshot, 0);
@@ -190,15 +221,15 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     "window saves the run's full order");
 
   // A gap that leaves the row where it is shows no line and changes nothing.
-  UIShell_ReorderDrag same = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(0, 0), str8_lit("c3"), 0.2f, UIShell_ReorderMode_Drag);
+  UIShell_ReorderDrag same = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(0, 0), str8_lit("c3"), 0.2f, UIShell_ReorderMode_Drag, &cfg_nil_node);
   ReorderCheck(same.started && !same.line, "no line over the row's own gaps");
   // Off to the side of the run is no target, so the release snaps back.
-  UIShell_ReorderDrag away = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(400, 0), str8_zero(), 0, UIShell_ReorderMode_Drag);
+  UIShell_ReorderDrag away = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), v2f32(400, 0), str8_zero(), 0, UIShell_ReorderMode_Drag, &cfg_nil_node);
   ReorderCheck(away.started && !away.line, "no line outside the run");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c2 c3 c1"), 0), "snap back keeps order");
 
   // Projects reorder at their own level, keeping their convoys' order.
-  UIShell_ReorderDrag up = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("q"), v2f32(0, 0), str8_lit("p"), 0.2f, UIShell_ReorderMode_Drag);
+  UIShell_ReorderDrag up = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("q"), v2f32(0, 0), str8_lit("p"), 0.2f, UIShell_ReorderMode_Drag, &cfg_nil_node);
   ReorderCheck(up.line, "line between projects");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, project), str8_lit("q p"), 0), "project drop above p");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c2 c3 c1"), 0), "convoys unaffected");
@@ -229,8 +260,70 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   uishell_sidebar_release(&restored);
   cfg_state_release(persisted_cfg);
 
+  // A dragged row lifts and follows the pointer. Over a pinned area it gets
+  // an insertion point between that area's pins; the release adds a ghost of
+  // the row there, as a row, and its run keeps its order.
+  {
+    CFG_Node *area = cfg_node_new(rd_state->cfg, window, str8_lit("pinned_cards"));
+    char *existing[] = {"first-pin", "second-pin"};
+    for(U64 i = 0; i < 2; i++)
+    {
+      CFG_Node *pin = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
+      uishell_sidebar_pin_new_ghost(pin);
+      uishell_sidebar_pin_set_field(pin, str8_lit("kind"), str8_lit("convoy"));
+      uishell_sidebar_pin_set_field(pin, str8_lit("entity"), str8_cstring(existing[i]));
+      cfg_node_new(rd_state->cfg, pin, str8_lit("compact"));
+    }
+    String8 before = push_str8_copy(scratch.arena, uishell_sidebar_reorder_ids(scratch.arena, &state, convoy));
+    // Two compact pins below a header: just past the first pin's midpoint.
+    F32 row = floor_f32(11*2.2f);
+    Vec2F32 between = v2f32(160, 620+row+row*0.5f+3.f);
+    UIShell_ReorderDrag ghost = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), between, str8_zero(), 0, UIShell_ReorderMode_Drag, area);
+    CFG_Node *pins[3] = {&cfg_nil_node, &cfg_nil_node, &cfg_nil_node};
+    U64 pin_count = 0;
+    for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next)
+    { if(str8_match(c->string, str8_lit("card"), 0) && pin_count < 3) { pins[pin_count++] = c; } }
+    ReorderCheck(ghost.started && ghost.lifted, "a dragged row lifts and follows the pointer");
+    ReorderCheck(ghost.lift_text_inside, "the lifted copy is the row: its whole icon and label inside it");
+    ReorderCheck(ghost.ghost_target && !ghost.line, "a pinned area shows an insertion point, not the reorder line");
+    ReorderCheck(pin_count == 3 && str8_match(cfg_node_child_from_string(pins[1], str8_lit("entity"))->first->string, str8_lit("c2"), 0) &&
+                 uishell_sidebar_pin_ghost(pins[1]).size && !uishell_sidebar_pin_expanded(pins[1]),
+                 "the drop adds a ghost of the row, as a row, at the insertion point");
+    ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), before, 0), "a ghost drop leaves the run's order");
+    // An edge site committed in the release frame wins over the list's claim.
+    UIShell_ReorderDrag edge = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c2"), between, str8_zero(), 0, UIShell_ReorderMode_Dock, area);
+    U64 area_pins = 0;
+    for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next) { area_pins += str8_match(c->string, str8_lit("card"), 0); }
+    CFG_Node *split_area = &cfg_nil_node;
+    for(CFG_Node *v = view->parent->first; v != &cfg_nil_node; v = v->next)
+    { if(str8_match(v->string, str8_lit("pinned_cards"), 0)) { split_area = v; } }
+    ReorderCheck(edge.started && area_pins == 3 && cfg_node_child_from_string(split_area, str8_lit("card")) != &cfg_nil_node,
+                 "an edge site taken in the release frame wins over the pinned list's claim");
+    if(split_area != &cfg_nil_node) { cfg_node_release(rd_state->cfg, split_area); }
+    uishell_sidebar_manual_sizing(window, 0);
+    cfg_node_release(rd_state->cfg, area);
+  }
+
+  // A row dropped on a docking site makes a new pinned area there holding a
+  // ghost of the row, as a row: the same creation drag as a card's.
+  {
+    String8 before = push_str8_copy(scratch.arena, uishell_sidebar_reorder_ids(scratch.arena, &state, convoy));
+    CFG_Node *panel = view->parent;
+    UIShell_ReorderDrag dock = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c3"), v2f32(0, 400), str8_zero(), 0, UIShell_ReorderMode_Dock, &cfg_nil_node);
+    CFG_Node *area = &cfg_nil_node;
+    for(CFG_Node *v = panel->first; v != &cfg_nil_node; v = v->next)
+    { if(str8_match(v->string, str8_lit("pinned_cards"), 0)) { area = v; } }
+    CFG_Node *pin = cfg_node_child_from_string(area, str8_lit("card"));
+    ReorderCheck(dock.started && !dock.line, "a row drag away from its run claims no reorder");
+    ReorderCheck(pin != &cfg_nil_node && str8_match(cfg_node_child_from_string(pin, str8_lit("entity"))->first->string, str8_lit("c3"), 0) &&
+                 !uishell_sidebar_pin_expanded(pin), "a docking-site drop makes a pinned area with the row's ghost, as a row");
+    ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), before, 0), "a docking-site drop leaves the run's order");
+    if(area != &cfg_nil_node) { cfg_node_release(rd_state->cfg, area); }
+    uishell_sidebar_manual_sizing(window, 0);
+  }
+
   // A reordered run's row offers Reset order, which returns it to data order.
-  UIShell_ReorderDrag menu = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c3"), v2f32(0, 0), str8_zero(), 0, UIShell_ReorderMode_RightClick);
+  UIShell_ReorderDrag menu = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c3"), v2f32(0, 0), str8_zero(), 0, UIShell_ReorderMode_RightClick, &cfg_nil_node);
   ReorderCheck(menu.menu, "reordered row opens its menu");
   uishell_sidebar_set_order(&state, window, loop, 0, 0);
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c1 c2 c3"), 0), "reset returns data order");
@@ -241,6 +334,6 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   ws->sidebar = saved;
   uishell_sidebar_release(&state);
   scratch_end(scratch);
-  fprintf(stderr, "Sidebar reorder diagnostics: %s (threshold, click, cancel, rows and projects, line, snap back, save, restore and merge, reset)\n", ok ? "passed" : "FAILED");
+  fprintf(stderr, "Sidebar reorder diagnostics: %s (threshold, click, cancel, rows and projects, line, snap back, lift, ghost drop, docking-site drop, save, restore and merge, reset)\n", ok ? "passed" : "FAILED");
   return ok;
 }

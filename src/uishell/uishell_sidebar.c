@@ -71,6 +71,9 @@ struct UIShell_HoverCard
   UI_Key source, dismissed;
   Rng2F32 source_rect, rect;
   Vec2F32 departure, last_mouse, glide_from;
+  // The pointer's x when the card opened for its subject: Near placement's
+  // horizontal anchor.
+  F32 anchor_x;
   B32 open, engaged, focused, contains_current, source_seen, corridor_active, enriched;
   F32 scroll, content_height;
 };
@@ -117,10 +120,34 @@ struct UIShell_SidebarState
   UIShell_HoverCard *detached;
   CFG_ID pin_before, pin_reveal;
   UIShell_HoverCard *drag_card;
-  // Row reorder: the dragged row and its sibling run's loop key, both copied.
+  // One sidebar drag at a time, of a card (drag_card) or of a row: the row's
+  // key, sibling run, entity, label and rect, copied when it starts.
   Arena *row_drag_arena;
-  String8 row_drag_key, row_drag_loop;
+  String8 row_drag_key, row_drag_loop, row_drag_label;
+  AndamentoEntity row_drag_entity;
+  Rng2F32 row_drag_rect;
+  // The row row_begin is building, so a drag from its label or a chip lifts
+  // the whole row.
+  UI_Box *building_row;
   B32 row_drag_released;
+  // The workspace a row drag carries (its live workspace), and the move a
+  // local one claimed: the project it would live with (empty: the Workspaces
+  // group), copied into its own arena, and the build that claimed it.
+  CFG_ID row_drag_workspace;
+  Arena *home_arena;
+  String8 home_project;
+  U64 home_build;
+  // The reorder a row drag claimed over its sibling run: before or after
+  // the anchor sibling (copied into its own arena), and the build.
+  Arena *reorder_arena;
+  AndamentoEntity reorder_anchor;
+  B32 reorder_after;
+  U64 reorder_build;
+  // The positioned drop a pinned area claimed for a row or card drag: the
+  // area, the insertion index among its pins, and the build that claimed it.
+  CFG_ID drop_area;
+  U64 drop_index, drop_build;
+  Rng2F32 drop_rect;
   // The control held down, and since when (see uishell_sidebar_held).
   UI_Key hold_key;
   U64 hold_us;
@@ -129,8 +156,9 @@ struct UIShell_SidebarState
   String8 order_loop;
   AndamentoEntity *order;
   U64 order_count;
-  CFG_ID card_drop_panel;
-  Dir2 card_drop_direction;
+  // The docking site a sidebar drag was dropped on (drag_panel_drop).
+  CFG_ID drop_panel;
+  Dir2 drop_direction;
   U64 pin_cfg_generation;
   Rng2F32 rect;
   B32 card_escape_down;
@@ -147,6 +175,12 @@ struct UIShell_SidebarState
   F32 revealed_chip_width;
   U64 revealed_chip_build_index;
   U64 topology_hash;
+  // Local workspaces published as host entities (wheelhouse.workspace), with
+  // the entity ids last published so a closed one can be retracted.
+  U64 local_hash;
+  Arena *local_arena;
+  String8 *local_published;
+  U64 local_published_count;
   U64 workdirs_hash;
   U64 workdirs_retry_at;
   U64 managed_cfg_generation;
@@ -291,6 +325,9 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     state->display_wakeup = 0;
     if(state->display_restore_arena) { arena_release(state->display_restore_arena); }
     if(state->row_drag_arena) { arena_release(state->row_drag_arena); state->row_drag_arena = 0; }
+    if(state->reorder_arena) { arena_release(state->reorder_arena); state->reorder_arena = 0; }
+    if(state->local_arena) { arena_release(state->local_arena); state->local_arena = 0; }
+    if(state->home_arena) { arena_release(state->home_arena); state->home_arena = 0; }
     if(state->placement_arena) { arena_release(state->placement_arena); state->placement_arena = 0; }
     state->placement_snapshot = 0;
     state->placement_regions = 0;
@@ -742,6 +779,100 @@ uishell_sidebar_workdirs(Arena *arena, UIShell_ControlledSplit *split)
   return result;
 }
 
+// A local (subjectless) workspace's own entity id, made once and saved on
+// the workspace so it survives restarts.
+internal String8
+uishell_sidebar_local_entity(CFG_Node *workspace)
+{
+  CFG_Node *node = cfg_node_child_from_string(workspace, str8_lit("local_entity"));
+  if(node->first == &cfg_nil_node)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    node = cfg_node_child_from_string_or_alloc(rd_state->cfg, workspace, str8_lit("local_entity"));
+    cfg_node_new(rd_state->cfg, node, string_from_guid(scratch.arena, make_guid()));
+    scratch_end(scratch);
+  }
+  return node->first->string;
+}
+
+// The project a local workspace lives with ("lives with project X"), saved
+// on the workspace; empty when it lives in the Workspaces group.
+internal String8
+uishell_sidebar_local_home(CFG_Node *workspace)
+{
+  return cfg_node_child_from_string(workspace, str8_lit("lives_with"))->first->string;
+}
+
+// Publishes each local workspace as a host entity: its label and home as
+// facts, and its tab tagged host.entity.* so its rows are live there and a
+// template can place it (drag-model.md, "lives with project X"). Entities of
+// workspaces that closed, or gained a subject, are retracted.
+internal void
+uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
+{
+  Temp scratch = scratch_begin(0, 0);
+  U64 hash = 5381;
+  for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
+  {
+    CFG_Node *workspace = w->mount.owner_cfg;
+    if(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string.size) { continue; }
+    String8 parts[] = {uishell_sidebar_local_entity(workspace), w->display_name, uishell_sidebar_local_home(workspace)};
+    hash = hash*33 + w->id;
+    for(U64 p = 0; p < ArrayCount(parts); p++)
+    { for(U64 i = 0; i < parts[p].size; i++) { hash = hash*33 + parts[p].str[i]; } hash = hash*33 + 0xff; }
+  }
+  if(hash == state->local_hash) { scratch_end(scratch); return; }
+  U64 now = wheelhouse_ingress_now_ms();
+  String8 kind = str8_lit("wheelhouse.workspace"), source = str8_lit("wheelhouse.local");
+  String8 *published = push_array(scratch.arena, String8, split->inventory.count);
+  U64 count = 0;
+  B32 ok = 1;
+  for(UIShell_MaterializedWorkspace *w = split->inventory.first; w && ok; w = w->next)
+  {
+    CFG_Node *workspace = w->mount.owner_cfg;
+    if(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string.size) { continue; }
+    String8 id = published[count++] = push_str8_copy(scratch.arena, uishell_sidebar_local_entity(workspace));
+    String8 home = uishell_sidebar_local_home(workspace);
+    AndamentoFact facts[2] = {
+      {.key = uishell_sidebar_text(str8_lit("display.label")), .kind = 1, .text = uishell_sidebar_text(w->display_name)},
+      {.key = uishell_sidebar_text(str8_lit("flotilla.project")), .kind = home.size ? 1 : 0, .text = uishell_sidebar_text(home)},
+    };
+    char *error = 0;
+    ok = uishell_sidebar_result(state, andamento_apply_entity(state->core, now, uishell_sidebar_text(kind), uishell_sidebar_text(id),
+      uishell_sidebar_text(source), facts, ArrayCount(facts), &error), error);
+    String8 tab = push_str8f(scratch.arena,
+      "{\"target\":{\"kind\":\"tab\",\"value\":%I64u},\"source_id\":\"%S\",\"set\":{"
+      "\"host.entity.kind\":{\"value\":{\"type\":\"text\",\"value\":\"%S\"}},"
+      "\"host.entity.id\":{\"value\":{\"type\":\"text\",\"value\":\"%S\"}}},\"unset\":[]}",
+      w->id, source, kind, id);
+    error = 0;
+    ok = ok && uishell_sidebar_result(state, andamento_apply_patch_json(state->core, now, uishell_sidebar_text(tab), &error), error);
+  }
+  // Retract what is no longer published.
+  for(U64 i = 0; ok && i < state->local_published_count; i++)
+  {
+    B32 kept = 0;
+    for(U64 k = 0; k < count && !kept; k++) { kept = str8_match(published[k], state->local_published[i], 0); }
+    if(kept) { continue; }
+    AndamentoFact facts[2] = {{.key = uishell_sidebar_text(str8_lit("display.label"))}, {.key = uishell_sidebar_text(str8_lit("flotilla.project"))}};
+    char *error = 0;
+    ok = uishell_sidebar_result(state, andamento_apply_entity(state->core, now, uishell_sidebar_text(kind),
+      uishell_sidebar_text(state->local_published[i]), uishell_sidebar_text(source), facts, ArrayCount(facts), &error), error);
+  }
+  if(ok)
+  {
+    if(!state->local_arena) { state->local_arena = arena_alloc(); }
+    arena_clear(state->local_arena);
+    state->local_published = push_array(state->local_arena, String8, count);
+    for(U64 i = 0; i < count; i++) { state->local_published[i] = push_str8_copy(state->local_arena, published[i]); }
+    state->local_published_count = count;
+    state->local_hash = hash;
+    uishell_sidebar_refresh(state);
+    rd_request_frame();
+  }
+  scratch_end(scratch);
+}
+
 internal void
 uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
@@ -788,6 +919,7 @@ uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     else { state->workdirs_retry_at = now+1000; }
   }
   if(changed) { uishell_sidebar_refresh(state); rd_request_frame(); }
+  if(topology_ready) { uishell_sidebar_publish_local(state, split); }
   scratch_end(scratch);
 }
 
@@ -1226,6 +1358,31 @@ uishell_sidebar_held(UIShell_SidebarState *state, UI_Signal sig)
   return 1;
 }
 
+// One row look for tree rows, ghost rows and the drag lift. row_begin builds
+// the slot and the row up to its label; the caller may add chips; row_end adds
+// the status slot and closes the row, leaving the slot open for the caller's
+// trailing margin (pop it with ui_pop_parent).
+typedef struct UIShell_SidebarRow UIShell_SidebarRow;
+struct UIShell_SidebarRow
+{
+  AndamentoNode node;
+  B32 present;                    // the node is in the snapshot
+  String8 key;                    // unique suffix for the row's boxes
+  String8 text;                   // the label column
+  String8 status;
+  F32 height, width, indent;      // width 0 fills; indent in em
+  B32 project, selected, contains_current;
+  B32 disclosure, expanded;       // a disclosure leads the row, else a spacer
+  B32 entry, icon_entry;          // the label, and the icon, are the row's buttons
+  B32 clickable;                  // the whole row takes clicks (ghost rows)
+  B32 reference;                  // ↗: a reference to a row that lives elsewhere
+  UI_Box *slot, *row;
+  UI_Signal toggle, icon_sig, entry_sig, row_sig;
+};
+
+internal void uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r);
+internal void uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r);
+
 #include "uishell/uishell_hover_cards.c"
 
 // Native entry templates declare label/kind/status before optional context.
@@ -1349,8 +1506,8 @@ struct UIShell_RowDragSibling
   Rng2F32 row, extent;
 };
 
-// Rows drag from their body past the shared threshold. The UIKey slot keeps
-// docking targets out of it; render places and commits the drop.
+// Rows drag from their body past the shared threshold, as the same sidebar
+// drag as cards (uishell_sidebar_drag_begin); render claims a reorder.
 internal void
 uishell_sidebar_row_drag_from(UIShell_SidebarState *state, RD_WindowState *ws,
                               AndamentoNode node, U64 node_index, UI_Signal sig)
@@ -1362,14 +1519,19 @@ uishell_sidebar_row_drag_from(UIShell_SidebarState *state, RD_WindowState *ws,
     Temp scratch = scratch_begin(0, 0);
     String8 loop = uishell_sidebar_loop_key(state->snapshot, node_index);
     AndamentoEntity *siblings = 0;
-    if(uishell_sidebar_siblings(scratch.arena, state->snapshot, loop, &siblings) > 1)
+    // A lone row can't reorder but can still be dropped as a ghost.
+    if(uishell_sidebar_siblings(scratch.arena, state->snapshot, loop, &siblings) > 0)
     {
       if(!state->row_drag_arena) { state->row_drag_arena = arena_alloc(); }
       arena_clear(state->row_drag_arena);
       state->row_drag_key = push_str8_copy(state->row_drag_arena, key);
       state->row_drag_loop = push_str8_copy(state->row_drag_arena, loop);
+      state->row_drag_label = push_str8_copy(state->row_drag_arena, uishell_sidebar_string(node.label));
+      state->row_drag_entity = uishell_sidebar_card_entity_copy(state->row_drag_arena, (AndamentoEntity){node.entity_kind, node.entity_id});
+      state->row_drag_rect = state->building_row ? state->building_row->rect : sig.box->rect;
+      state->row_drag_workspace = node.state == ANDAMENTO_LIVE ? node.workspace_id : 0;
       state->row_drag_released = 0;
-      UIShell_RegsScope(.window = ws->cfg_id, .ui_key = sig.box->key) { rd_drag_begin(UIShell_ContextRegSlot_UIKey); }
+      uishell_sidebar_drag_begin(ws);
       UIShell_HoverCard *card = &state->cards[0];
       if(card->open && card->placement == UIShell_CardPlacement_Transient && !card->focused)
       { uishell_sidebar_card_close(card); }
@@ -1609,9 +1771,21 @@ uishell_sidebar_subject_color(String8 status)
   return color;
 }
 
+// An entity's one icon, for its row, its chip, its ghost and its drag lift:
+// the producer's presentation.icon (or the template's override), else one by
+// kind. A node without fields (a card's detail) reads them from the tree.
 internal String8
-uishell_sidebar_chip_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *icon_font)
+uishell_sidebar_node_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *icon_font)
 {
+  if(!node.field_count && state->snapshot)
+  {
+    for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+    {
+      AndamentoNode n = {0}; andamento_snapshot_node(state->snapshot, i, &n);
+      if(!n.is_section && n.field_count && uishell_sidebar_card_entity_match(uishell_sidebar_card_entity(n), uishell_sidebar_card_entity(node)))
+      { node = n; break; }
+    }
+  }
   String8 icon = uishell_sidebar_chip_fact(state, node, str8_lit("chip-icon:"));
   if(!icon.size) { icon = uishell_sidebar_chip_fact(state, node, str8_lit("chip-icon-override:")); }
   *icon_font = 1;
@@ -1627,9 +1801,21 @@ uishell_sidebar_chip_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *
   { if(str8_match(icon, str8_cstring(icons[i].name), 0)) { return rd_icon_kind_text_table[icons[i].kind]; } }
   if(icon.size) { *icon_font = 0; return icon; }
   String8 kind = uishell_sidebar_string(node.entity_kind);
-  RD_IconKind fallback = str8_match(kind, str8_lit("project"), 0) ? RD_IconKind_Thumbnails :
-    str8_match(kind, str8_lit("role"), 0) ? RD_IconKind_Threads : RD_IconKind_Machine;
+  RD_IconKind fallback = str8_match(kind, str8_lit("project"), 0) ? RD_IconKind_FolderClosedOutline :
+    str8_match(kind, str8_lit("convoy"), 0) || str8_match(kind, str8_lit("role"), 0) ? RD_IconKind_Threads : RD_IconKind_Machine;
   return rd_icon_kind_text_table[fallback];
+}
+
+// A chip is its entity's icon, except a project's own chip, which opens
+// its overview.
+internal String8
+uishell_sidebar_chip_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *icon_font)
+{
+  String8 icon = uishell_sidebar_node_icon(state, node, icon_font);
+  if(str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("project"), 0) &&
+     str8_match(icon, rd_icon_kind_text_table[RD_IconKind_FolderClosedOutline], 0))
+  { icon = rd_icon_kind_text_table[RD_IconKind_Thumbnails]; }
+  return icon;
 }
 
 internal String8
@@ -1790,16 +1976,138 @@ uishell_sidebar_section_hosts_chrome(String8 key)
   return str8_match(key, str8_lit("andamento.unplaced-workspaces"), 0);
 }
 
-internal B32
-uishell_sidebar_entity_match(AndamentoEntity a, AndamentoEntity b)
+internal void
+uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
 {
-  return str8_match(uishell_sidebar_string(a.kind), uishell_sidebar_string(b.kind), 0) &&
-    str8_match(uishell_sidebar_string(a.id), uishell_sidebar_string(b.id), 0);
+  Arena *arena = ui_build_arena();
+  UI_PrefWidth(r->width > 0 ? ui_px(r->width, 1) : ui_pct(1, 0)) UI_PrefHeight(ui_px(r->height, 1)) UI_ChildLayoutAxis(Axis2_X)
+  { r->slot = ui_build_box_from_stringf(0, "###row_slot_%S", r->key); }
+  ui_push_parent(r->slot);
+  ui_spacer(ui_px(4.f, 1));
+  UI_Box *column;
+  UI_ChildLayoutAxis(Axis2_Y) UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_pct(1, 1))
+  { column = ui_build_box_from_stringf(0, "###row_column_%S", r->key); }
+  ui_push_parent(column);
+  ui_spacer(ui_px(2.f, 1));
+  if(r->selected) { ui_set_next_background_color(uishell_sidebar_selection_fill(0)); }
+  if(r->contains_current) { ui_set_next_border_color(uishell_sidebar_selection_fill(1)); }
+  UI_BoxFlags flags = (r->selected ? UI_BoxFlag_DrawBackground : 0)|(r->contains_current ? UI_BoxFlag_DrawBorder : 0)|
+    (r->clickable ? UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects : 0);
+  UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(r->height-4.f, 1)) UI_CornerRadius(3.f) UI_ChildLayoutAxis(Axis2_X)
+  { r->row = ui_build_box_from_stringf(flags, "###sidebar_row_%S", r->key); }
+  state->building_row = r->row;
+  ui_push_parent(r->row);
+  ui_push_pref_height(ui_pct(1, 1));
+  if(r->project)
+  {
+    UI_BackgroundColor(uishell_sidebar_project_accent(uishell_sidebar_string(r->node.entity_id))) UI_PrefWidth(ui_px(3.f, 1))
+    { ui_build_box_from_stringf(UI_BoxFlag_DrawBackground, "###accent_%S", r->key); }
+  }
+  ui_spacer(ui_em(r->indent, 1));
+  UI_PrefWidth(ui_em(1.5f, 1))
+  {
+    if(r->disclosure) { r->toggle = uishell_sidebar_disclosure(r->expanded, push_str8f(arena, "###toggle_%S", r->key)); }
+    else { ui_spacer(ui_em(1.5f, 1)); }
+  }
+  // The entity's icon, as its chip shows it, never truncated to nothing.
+  B32 icon_font = 1;
+  String8 icon = uishell_sidebar_node_icon(state, r->node, &icon_font);
+  UI_TagF("weak") UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+  UI_FontSize(ui_top_font_size()*0.9f) UI_Font(icon_font ? rd_font_from_slot(RD_FontSlot_Icons) : ui_top_font())
+  {
+    // With chips in the name column, the icon keeps the row's identity and
+    // hover card reachable.
+    if(r->icon_entry) { r->icon_sig = uishell_sidebar_button(push_str8f(arena, "%S###identity_%S", icon, r->key)); }
+    else
+    {
+      UI_Box *box = ui_build_box_from_key(UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc, ui_key_zero());
+      ui_box_equip_display_string(box, icon);
+    }
+    if(r->icon_entry) { r->icon_sig.box->flags |= UI_BoxFlag_DisableTextTrunc|UI_BoxFlag_DisableTruncatedHover; }
+  }
+  UI_PrefWidth(ui_pct(1, 0))
+  {
+    if(!r->present || str8_match(r->status, str8_lit("ended"), 0)) { ui_set_next_text_color(uishell_sidebar_ended_color()); }
+    if(r->entry) { r->entry_sig = uishell_sidebar_button(push_str8f(arena, "%S###entry_%S", r->text, r->key)); }
+    else { ui_label(r->text); }
+  }
+}
+
+internal void
+uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r)
+{
+  if(r->reference) UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
+  { ui_label(str8_lit("↗")); }
+  // Reserve the same trailing slot at every level. Project-wide status
+  // belongs here once supplied; workspace state stays on the overview action
+  // rather than being duplicated in this slot.
+  B32 change_request = str8_match(uishell_sidebar_string(r->node.entity_kind), str8_lit("change_request"), 0);
+  UI_PrefWidth(ui_em(change_request && r->present ? 10.f : 1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+  {
+    String8 status = r->status;
+    if(!r->present) { ui_label(str8_lit("?")); }
+    else if(change_request)
+    {
+      String8 badge = str8_lit("~ pending");
+      Vec4F32 color = ui_color_from_name(str8_lit("text"));
+      if(str8_match(status, str8_lit("ready_to_merge"), 0)) { badge = str8_lit("+ ready to merge"); color = v4f32(0.4f, 0.85f, 0.55f, 1.f); }
+      else if(str8_match(status, str8_lit("ci_failing"), 0)) { badge = str8_lit("! CI failing"); color = v4f32(1.f, 0.4f, 0.35f, 1.f); }
+      else if(str8_match(status, str8_lit("conflicting"), 0)) { badge = str8_lit("! conflicting"); color = v4f32(1.f, 0.7f, 0.3f, 1.f); }
+      else if(str8_match(status, str8_lit("awaiting_review_response"), 0)) { badge = str8_lit("~ review response"); color = v4f32(0.9f, 0.75f, 0.4f, 1.f); }
+      else if(str8_match(status, str8_lit("draft"), 0)) { badge = str8_lit("o draft"); color.w = 0.65f; }
+      else if(str8_match(status, str8_lit("merged_not_landed"), 0)) { badge = str8_lit("+ merged"); color = v4f32(0.65f, 0.6f, 0.95f, 1.f); }
+      else if(str8_match(status, str8_lit("closed"), 0)) { badge = str8_lit("x closed"); color.w = 0.65f; }
+      UI_TextColor(color) UI_TextAlignment(UI_TextAlign_Left) { ui_label(badge); }
+    }
+    else if(r->project) { ui_spacer(ui_em(1.2f, 1)); }
+    else { ui_label(uishell_sidebar_status_mark(r->node, status)); }
+  }
+  ui_pop_pref_height();
+  ui_pop_parent(); // row
+  state->building_row = 0;
+  // After its children, so a disclosure gets its own clicks.
+  if(r->clickable) { r->row_sig = ui_signal_from_box(r->row); }
+  ui_spacer(ui_px(2.f, 1));
+  ui_pop_parent(); // column
+}
+
+// The local (subjectless) workspace a row drag carries, if any: it may move
+// between groups, unlike data rows (drag-model.md, drop table).
+internal CFG_Node *
+uishell_sidebar_drag_local(UIShell_SidebarState *state)
+{
+  CFG_Node *workspace = state->row_drag_key.size && state->row_drag_workspace ? cfg_node_from_id(state->row_drag_workspace) : &cfg_nil_node;
+  if(workspace == &cfg_nil_node || uishell_workspace_cfg_has_subject(workspace)) { return &cfg_nil_node; }
+  return workspace;
+}
+
+// A local workspace dragged over a group it doesn't live in claims a move
+// there: a project group (`project` is its id) or the Workspaces group
+// (empty). The group lights up; uishell_sidebar_drag_finish applies it.
+internal void
+uishell_sidebar_home_claim(UIShell_SidebarState *state, Rng2F32 rect, String8 project, B32 local)
+{
+  CFG_Node *workspace = uishell_sidebar_drag_local(state);
+  if(workspace == &cfg_nil_node || !contains_2f32(rect, ui_mouse()) ||
+     str8_match(uishell_sidebar_local_home(workspace), project, 0) ||
+     uishell_sidebar_drop_area(state) != &cfg_nil_node ||
+     !uishell_sidebar_drop_claimable(cfg_node_from_id(uishell_regs()->panel))) { return; }
+  if(!state->home_arena) { state->home_arena = arena_alloc(); }
+  arena_clear(state->home_arena);
+  state->home_project = push_str8_copy(state->home_arena, project);
+  state->home_build = ui_state->build_index;
+  // The group's own centre docking site stands aside, as for a reorder.
+  rd_state->drag_drop_local_panel = uishell_regs()->panel; rd_state->drag_drop_local_frame = rd_state->frame_index;
+  UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(rect) UI_CornerRadius(5.f)
+  {
+    ui_build_box_from_key(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating,
+      ui_key_from_stringf(ui_key_zero(), local ? "sidebar_home_workspaces" : "sidebar_home_project"));
+  }
 }
 
 // The pointer picks the gap between siblings by their rows' midpoints. Within
-// the run's extent, a gap that moves the row shows an insertion line; a
-// release there saves the run's full new order. Anywhere else snaps back.
+// the run's extent, a gap that moves the row shows an insertion line and
+// claims the reorder for uishell_sidebar_drag_finish.
 internal void
 uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
                          UIShell_RowDragSibling *siblings, U64 count, F32 row_height)
@@ -1813,45 +2121,62 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, AndamentoNode *nodes,
   }
   Rng2F32 span = r2f32p(siblings[0].extent.x0, siblings[0].extent.y0-row_height*0.5f,
                         siblings[0].extent.x1, siblings[count-1].extent.y1+row_height*0.5f);
-  B32 moves = source < count && contains_2f32(span, mouse) && target != source && target != source+1;
-  if(moves)
+  // A pinned area's insertion point (claimed this build or the last) wins.
+  B32 moves = uishell_sidebar_drop_area(state) == &cfg_nil_node && source < count &&
+    uishell_sidebar_drop_claimable(cfg_node_from_id(uishell_regs()->panel)) &&
+    contains_2f32(span, mouse) && target != source && target != source+1;
+  state->reorder_build = 0;
+  if(!moves) { return; }
+  AndamentoNode anchor = nodes[siblings[target < count ? target : count-1].index];
+  if(!state->reorder_arena) { state->reorder_arena = arena_alloc(); }
+  arena_clear(state->reorder_arena);
+  state->reorder_anchor = uishell_sidebar_card_entity_copy(state->reorder_arena, (AndamentoEntity){anchor.entity_kind, anchor.entity_id});
+  state->reorder_after = target == count;
+  state->reorder_build = ui_state->build_index;
+  // The run's own centre docking site stands aside, as for a pinned area.
+  rd_state->drag_drop_local_panel = uishell_regs()->panel; rd_state->drag_drop_local_frame = rd_state->frame_index;
+  F32 y = target == 0 ? siblings[0].extent.y0-1.f :
+    target == count ? siblings[count-1].extent.y1+1.f :
+    (siblings[target-1].extent.y1+siblings[target].extent.y0)*0.5f;
+  Rng2F32 line = r2f32p(span.x0+4.f, y-1.f, span.x1-4.f, y+1.f);
+  UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(line) UI_CornerRadius(1.f)
+  { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")); }
+}
+
+// The dragged row lifts: a translucent copy of its row follows the pointer,
+// drawn as its home row is (row_begin), at the row's size even when the drag
+// started on a chip. It builds with the cards, ahead of the Views, so it
+// paints above them.
+internal void
+uishell_sidebar_row_lift(UIShell_SidebarState *state)
+{
+  if(!state->row_drag_key.size) { return; }
+  // The copy is the row's slot: the row plus the slot's insets.
+  Rng2F32 lift = state->row_drag_rect;
+  F32 height = floor_f32(ui_top_font_size()*2.2f);
+  lift.x0 -= 4.f; lift.x1 += 4.f;
+  lift.y0 = center_2f32(lift).y-height*0.5f; lift.y1 = lift.y0+height;
+  lift = r2f32(add_2f32(lift.p0, ui_drag_delta()), add_2f32(lift.p1, ui_drag_delta()));
+  AndamentoNode node = {0};
+  B32 present = uishell_sidebar_card_find(state, state->row_drag_entity, &node) != ANDAMENTO_NONE;
+  if(!present) { node.entity_kind = state->row_drag_entity.kind; }
+  UI_Box *box;
+  UI_Parent(ui_state->root) UI_Rect(lift) UI_CornerRadius(3.f) UI_Transparency(0.25f)
+  UI_BackgroundColor(uishell_sidebar_selection_fill(0)) UI_ChildLayoutAxis(Axis2_Y)
   {
-    F32 y = target == 0 ? siblings[0].extent.y0-1.f :
-      target == count ? siblings[count-1].extent.y1+1.f :
-      (siblings[target-1].extent.y1+siblings[target].extent.y0)*0.5f;
-    Rng2F32 line = r2f32p(span.x0+4.f, y-1.f, span.x1-4.f, y+1.f);
-    UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(line) UI_CornerRadius(1.f)
-    { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line")); }
+    box = ui_build_box_from_key(UI_BoxFlag_Floating|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawDropShadow,
+      ui_key_from_stringf(ui_key_zero(), "sidebar_row_lift"));
   }
-  if(!state->row_drag_released) { return; }
-  if(moves)
+  // The row lays out inside the copy; it must not inherit the copy's rect.
+  UI_Parent(box)
   {
-    Arena *arena = ui_build_arena();
-    AndamentoEntity *all = 0;
-    U64 total = uishell_sidebar_siblings(arena, state->snapshot, state->row_drag_loop, &all);
-    AndamentoNode moving = nodes[siblings[source].index];
-    AndamentoEntity item = {moving.entity_kind, moving.entity_id};
-    AndamentoNode anchor = nodes[siblings[target < count ? target : count-1].index];
-    AndamentoEntity at = {anchor.entity_kind, anchor.entity_id};
-    AndamentoEntity *order = push_array(arena, AndamentoEntity, total);
-    U64 n = 0;
-    for(U64 k = 0; k < total; k++)
-    {
-      if(uishell_sidebar_entity_match(all[k], item)) { continue; }
-      B32 here = uishell_sidebar_entity_match(all[k], at);
-      if(here && target < count) { order[n++] = item; }
-      order[n++] = all[k];
-      if(here && target == count) { order[n++] = item; }
-    }
-    if(n < total) { order[n++] = item; }
-    for(U64 k = 0; k < n; k++) { order[k] = uishell_sidebar_card_entity_copy(arena, order[k]); }
-    state->order_pending = 1;
-    state->order_loop = push_str8_copy(arena, state->row_drag_loop);
-    state->order = order; state->order_count = n;
+    UIShell_SidebarRow r = {.node = node, .present = present, .key = str8_lit("lift"), .text = state->row_drag_label,
+      .status = present ? uishell_sidebar_chip_status(state, node) : str8_zero(), .height = height,
+      .width = dim_2f32(lift).x, .indent = 0.3f};
+    uishell_sidebar_row_begin(state, &r);
+    uishell_sidebar_row_end(state, &r);
+    ui_pop_parent();
   }
-  rd_drag_kill();
-  state->row_drag_key = state->row_drag_loop = str8_zero();
-  state->row_drag_released = 0;
 }
 
 // The Workspaces group's first row creates a workspace, which appears in it.
@@ -1909,9 +2234,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   {
     state->render_ui = ui_state;
     state->render_build_index = ui_state->build_index;
-    // Esc, or a release the row's section never saw, ends a row drag unmoved.
-    if(state->row_drag_key.size && !rd_drag_is_active())
-    { state->row_drag_key = state->row_drag_loop = str8_zero(); state->row_drag_released = 0; }
+    // Esc ends a row drag unmoved.
+    if(state->row_drag_key.size && !rd_drag_is_active() && !state->row_drag_released) { uishell_sidebar_drag_clear(state); }
     uishell_sidebar_restore(state, split);
     if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
     {
@@ -2262,6 +2586,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       UI_ScrollRegionSignal scroll = ui_scroll_region_build(root, content_key, &region, axes,
         UI_BoxFlag_ViewScrollY|UI_BoxFlag_ViewClamp|UI_BoxFlag_AllowOverflowY);
       UI_Box *body = scroll.content_box;
+      // The Workspaces group takes back a local workspace that lives elsewhere.
+      if(row_dragging && uishell_sidebar_section_hosts_chrome(key) && !ui_box_is_nil(body->parent))
+      { uishell_sidebar_home_claim(state, body->parent->rect, str8_zero(), 1); }
       body->view_off_target.y = (F32)scroll.position.y.idx + scroll.position.y.target_off;
       body->view_off.y = Clamp(0.f, body->view_off.y, (F32)axes[Axis2_Y].range.max);
       body->child_layout_axis = Axis2_Y;
@@ -2376,6 +2703,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             {
               project_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground, "###project_%S", node_key);
             }
+            if(row_dragging) { uishell_sidebar_home_claim(state, project_box->rect, uishell_sidebar_string(node.entity_id), 0); }
             project_depth = depth[i];
             project_index = i;
             ui_push_parent(project_box);
@@ -2395,14 +2723,31 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             }
             F32 slot_y = row_y;
             row_y += row_height;
+            // Text remains available in the tooltip; terse marks distinguish
+            // selected/open workspaces from producer activity state.
+            // daily-driver declares prefix="orphaned:" on the boolean orphan fact.
+            B32 orphaned = 0;
+            for(U64 f = 3; str8_match(kind, str8_lit("change_request"), 0) && f < node.field_count; f++)
+            {
+              AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field+f, &field);
+              orphaned |= str8_match(uishell_sidebar_string(field.text), str8_lit("orphaned:true"), 0);
+            }
+            if(orphaned) { label = push_str8f(scratch.arena, "%S · orphaned", label); }
+            String8 display = context.size ? push_str8f(scratch.arena, "%S · %S", label, context) : label;
+            if(str8_match(uishell_sidebar_string(node.layout), str8_lit("fields"), 0))
+            { display = uishell_sidebar_fields(scratch.arena, state->snapshot, node, Max(0.f, dim.x-em*6.f)); }
+            B32 icon_entry = chip_count && chip_layout.name_width == 0;
+            UIShell_SidebarRow r = {.node = node, .present = 1, .key = node_key, .text = display, .status = status,
+              .height = row_height, .indent = indent, .project = project, .selected = node.selected,
+              .contains_current = contains_current, .disclosure = children && node.toggle != ANDAMENTO_NONE,
+              .expanded = !node.collapsed, .entry = 1, .icon_entry = icon_entry};
             // Persistent workspace selection remains visible while the terminal
             // has focus, without borrowing the keyboard-focus border.
             // Insets keep row selection and action borders inside the container.
-            UI_Box *slot;
             // The dragged row dims in place until the drop lands it.
             if(drag_source) { ui_push_transparency(0.6f); }
-            UI_ChildLayoutAxis(Axis2_X)
-            { slot = ui_build_box_from_stringf(0, "###row_slot_%S", node_key); }
+            uishell_sidebar_row_begin(state, &r);
+            UI_Box *slot = r.slot;
             if(drag_sibling)
             {
               drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, slot->rect, project ? project_box->rect : slot->rect};
@@ -2413,160 +2758,81 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               Rng2F32 *extent = &drag_siblings[drag_sibling_count-1].extent;
               extent->y1 = Max(extent->y1, slot->rect.y1);
             }
-            ui_push_parent(slot);
-            ui_spacer(ui_px(4.f, 1));
-            UI_Box *column;
-            UI_ChildLayoutAxis(Axis2_Y) UI_PrefHeight(ui_pct(1, 1))
-            { column = ui_build_box_from_stringf(0, "###row_column_%S", node_key); }
-            ui_push_parent(column);
-            ui_spacer(ui_px(2.f, 1));
-            UI_Box *row;
-            if(node.selected) { ui_set_next_background_color(uishell_sidebar_selection_fill(0)); }
-            if(contains_current) { ui_set_next_border_color(uishell_sidebar_selection_fill(1)); }
-            UI_PrefHeight(ui_px(row_height-4.f, 1)) UI_CornerRadius(3.f) UI_ChildLayoutAxis(Axis2_X)
-            { row = ui_build_box_from_stringf((node.selected ? UI_BoxFlag_DrawBackground : 0) | (contains_current ? UI_BoxFlag_DrawBorder : 0), "###sidebar_row_%S", node_key); }
-            UI_Parent(row) UI_PrefHeight(ui_pct(1, 1))
+            if(ui_clicked(r.toggle)) { action = node.toggle; }
+            if(icon_entry)
             {
-              if(project)
+              entry_key = r.icon_sig.box->key;
+              size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, r.icon_sig, context, contains_current, 0);
+              if(requested != ANDAMENTO_NONE) { action = requested; }
+            }
+            {
+              UI_Signal sig = r.entry_sig;
+              entry_key = sig.box->key;
+              if(project && project_child_heights[i] > 0 && project_open[i] > 0)
               {
-                UI_BackgroundColor(uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id)))
-                UI_PrefWidth(ui_px(3.f, 1))
-                { ui_build_box_from_stringf(UI_BoxFlag_DrawBackground, "###accent_%S", node_key); }
+                UIShell_SidebarProjectRule *rule = push_array(ui_build_arena(), UIShell_SidebarProjectRule, 1);
+                rule->title = sig.box;
+                rule->accent = uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
+                rule->accent.w *= project_open[i];
+                ui_box_equip_custom_draw(slot, uishell_sidebar_project_rule_draw, rule);
               }
-              ui_spacer(ui_em(indent, 1));
-              UI_PrefWidth(ui_em(1.5f, 1))
+              // The rich tooltip already includes the full label. Do not also
+              // enroll this row in the shell's automatic truncated-text hover.
+              sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
+              size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0);
+              if(requested != ANDAMENTO_NONE) { action = requested; }
+            }
+            if(chip_count)
+            {
+              UI_Box *chip_area;
+              UI_PrefWidth(ui_px(chip_layout.chip_width+chip_clearance, 1)) UI_ChildLayoutAxis(Axis2_X)
               {
-                if(children && node.toggle != ANDAMENTO_NONE)
-                {
-                  if(ui_clicked(uishell_sidebar_disclosure(!node.collapsed, push_str8f(scratch.arena, "###toggle_%S", node_key)))) { action = node.toggle; }
-                }
-                else { ui_spacer(ui_em(1.5f, 1)); }
+                chip_area = ui_build_box_from_stringf(UI_BoxFlag_Clip|UI_BoxFlag_AllowOverflowX|
+                  UI_BoxFlag_ViewScrollX|UI_BoxFlag_ViewClampX, "###chips_%S", node_key);
               }
-              UI_TagF("weak") UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) RD_Font(RD_FontSlot_Icons)
+              UI_Parent(chip_area)
               {
-                RD_IconKind icon = RD_IconKind_FileOutline;
-                if(str8_match(kind, str8_lit("project"), 0)) { icon = RD_IconKind_FolderClosedOutline; }
-                else if(str8_match(kind, str8_lit("convoy"), 0) || str8_match(kind, str8_lit("role"), 0)) { icon = RD_IconKind_Threads; }
-                else if(str8_match(kind, str8_lit("vessel"), 0) || str8_match(kind, str8_lit("session"), 0)) { icon = RD_IconKind_Machine; }
-                if(chip_count && chip_layout.name_width == 0)
+                for(U64 c = 0; c < chip_count; c++)
                 {
-                  // Keep the full row identity and its rich hover card reachable
-                  // through the fixed icon when chips consume the name column.
-                  UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###identity_%S", rd_icon_kind_text_table[icon], node_key));
-                  entry_key = sig.box->key;
-                  size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0);
+                  if(chip_measures[c].folded) { continue; }
+                  size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[c]], members[c],
+                    members[c] == i ? str8_zero() : full_label, row_height, 0);
                   if(requested != ANDAMENTO_NONE) { action = requested; }
                 }
-                else { ui_label(rd_icon_kind_text_table[icon]); }
-              }
-              UI_PrefWidth(ui_pct(1, 0))
-              {
-                // Text remains available in the tooltip; terse marks distinguish
-                // selected/open workspaces from producer activity state.
-                // daily-driver declares prefix="orphaned:" on the boolean orphan fact.
-                B32 orphaned = 0;
-                for(U64 f = 3; str8_match(kind, str8_lit("change_request"), 0) && f < node.field_count; f++)
+                if(chip_layout.folded)
                 {
-                  AndamentoField field = {0}; andamento_snapshot_field(state->snapshot, node.first_field+f, &field);
-                  orphaned |= str8_match(uishell_sidebar_string(field.text), str8_lit("orphaned:true"), 0);
-                }
-                if(orphaned) { label = push_str8f(scratch.arena, "%S · orphaned", label); }
-                String8 display = context.size ? push_str8f(scratch.arena, "%S · %S", label, context) : label;
-                if(str8_match(uishell_sidebar_string(node.layout), str8_lit("fields"), 0))
-                { display = uishell_sidebar_fields(scratch.arena, state->snapshot, node, Max(0.f, dim.x-em*6.f)); }
-                if(str8_match(status, str8_lit("ended"), 0))
-                { ui_set_next_text_color(uishell_sidebar_ended_color()); }
-                UI_Signal sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###entry_%S", display, node_key));
-                entry_key = sig.box->key;
-                if(project && project_child_heights[i] > 0 && project_open[i] > 0)
-                {
-                  UIShell_SidebarProjectRule *rule = push_array(ui_build_arena(), UIShell_SidebarProjectRule, 1);
-                  rule->title = sig.box;
-                  rule->accent = uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
-                  rule->accent.w *= project_open[i];
-                  ui_box_equip_custom_draw(slot, uishell_sidebar_project_rule_draw, rule);
-                }
-                // The rich tooltip already includes the full label. Do not also
-                // enroll this row in the shell's automatic truncated-text hover.
-                sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
-                size_t requested = uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0);
-                if(requested != ANDAMENTO_NONE) { action = requested; }
-              }
-              if(chip_count)
-              {
-                UI_Box *chip_area;
-                UI_PrefWidth(ui_px(chip_layout.chip_width+chip_clearance, 1)) UI_ChildLayoutAxis(Axis2_X)
-                {
-                  chip_area = ui_build_box_from_stringf(UI_BoxFlag_Clip|UI_BoxFlag_AllowOverflowX|
-                    UI_BoxFlag_ViewScrollX|UI_BoxFlag_ViewClampX, "###chips_%S", node_key);
-                }
-                UI_Parent(chip_area)
-                {
-                  for(U64 c = 0; c < chip_count; c++)
+                  UI_Key menu_key = ui_key_from_stringf(root->key, "overflow_%S", node_key);
+                  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(24.f, 1)) UI_PrefHeight(ui_px(row_height, 1))
                   {
-                    if(chip_measures[c].folded) { continue; }
-                    size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[c]], members[c],
-                      members[c] == i ? str8_zero() : full_label, row_height, 0);
-                    if(requested != ANDAMENTO_NONE) { action = requested; }
-                  }
-                  if(chip_layout.folded)
-                  {
-                    UI_Key menu_key = ui_key_from_stringf(root->key, "overflow_%S", node_key);
-                    UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(24.f, 1)) UI_PrefHeight(ui_px(row_height, 1))
+                    for(U64 c = 0; c < chip_count; c++)
                     {
-                      for(U64 c = 0; c < chip_count; c++)
+                      if(!chip_measures[c].folded) { continue; }
+                      UI_ChildLayoutAxis(Axis2_X)
                       {
-                        if(!chip_measures[c].folded) { continue; }
-                        UI_ChildLayoutAxis(Axis2_X)
+                        UI_Box *menu_row = ui_build_box_from_stringf(0, "###overflow_row_%S", uishell_sidebar_string(nodes[members[c]].key));
+                        UI_Parent(menu_row)
                         {
-                          UI_Box *menu_row = ui_build_box_from_stringf(0, "###overflow_row_%S", uishell_sidebar_string(nodes[members[c]].key));
-                          UI_Parent(menu_row)
-                          {
-                            size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[c]], members[c], full_label, row_height, 1);
-                            if(requested != ANDAMENTO_NONE) { action = requested; ui_ctx_menu_close(); }
-                          }
+                          size_t requested = uishell_sidebar_inline_action(state, ws, nodes[members[c]], members[c], full_label, row_height, 1);
+                          if(requested != ANDAMENTO_NONE) { action = requested; ui_ctx_menu_close(); }
                         }
                       }
                     }
-                    ui_spacer(ui_px(4.f, 1));
-                    UI_CornerRadius(3.f) UI_FixedY(Max(0.f, (row_height-4.f-em*1.6f)*0.5f))
-                    UI_PrefHeight(ui_px(em*1.6f, 1)) UI_PrefWidth(ui_px(overflow_width-4.f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
-                    {
-                      ui_set_next_border_color(uishell_sidebar_action_border());
-                      UI_Signal sig = ui_button(push_str8f(scratch.arena, "+%I64u###overflow_%S", chip_layout.folded, node_key));
-                      uishell_sidebar_reveal_chip(state, sig.box);
-                      if(ui_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, row_height)); }
-                    }
+                  }
+                  ui_spacer(ui_px(4.f, 1));
+                  UI_CornerRadius(3.f) UI_FixedY(Max(0.f, (row_height-4.f-em*1.6f)*0.5f))
+                  UI_PrefHeight(ui_px(em*1.6f, 1)) UI_PrefWidth(ui_px(overflow_width-4.f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+                  {
+                    ui_set_next_border_color(uishell_sidebar_action_border());
+                    UI_Signal sig = ui_button(push_str8f(scratch.arena, "+%I64u###overflow_%S", chip_layout.folded, node_key));
+                    uishell_sidebar_reveal_chip(state, sig.box);
+                    if(ui_clicked(sig)) { ui_ctx_menu_open(menu_key, sig.box->key, v2f32(0, row_height)); }
                   }
                 }
-                UI_Parent(chip_area) { ui_spacer(ui_px(chip_clearance, 1)); }
-                ui_signal_from_box(chip_area);
               }
-              // Reserve the same trailing slot at every level. Project-wide
-              // status belongs here once supplied; workspace state stays on
-              // the overview action rather than being duplicated in this slot.
-              B32 change_request = str8_match(kind, str8_lit("change_request"), 0);
-              UI_PrefWidth(ui_em(change_request ? 10.f : 1.2f, 1)) UI_TextPadding(0)
-              {
-                if(change_request)
-                {
-                  String8 badge = str8_lit("~ pending");
-                  Vec4F32 color = ui_color_from_name(str8_lit("text"));
-                  if(str8_match(status, str8_lit("ready_to_merge"), 0)) { badge = str8_lit("+ ready to merge"); color = v4f32(0.4f, 0.85f, 0.55f, 1.f); }
-                  else if(str8_match(status, str8_lit("ci_failing"), 0)) { badge = str8_lit("! CI failing"); color = v4f32(1.f, 0.4f, 0.35f, 1.f); }
-                  else if(str8_match(status, str8_lit("conflicting"), 0)) { badge = str8_lit("! conflicting"); color = v4f32(1.f, 0.7f, 0.3f, 1.f); }
-                  else if(str8_match(status, str8_lit("awaiting_review_response"), 0)) { badge = str8_lit("~ review response"); color = v4f32(0.9f, 0.75f, 0.4f, 1.f); }
-                  else if(str8_match(status, str8_lit("draft"), 0)) { badge = str8_lit("o draft"); color.w = 0.65f; }
-                  else if(str8_match(status, str8_lit("merged_not_landed"), 0)) { badge = str8_lit("+ merged"); color = v4f32(0.65f, 0.6f, 0.95f, 1.f); }
-                  else if(str8_match(status, str8_lit("closed"), 0)) { badge = str8_lit("x closed"); color.w = 0.65f; }
-                  UI_TextColor(color) { ui_label(badge); }
-                }
-                else if(project) { ui_spacer(ui_em(1.2f, 1)); }
-                else { ui_label(uishell_sidebar_status_mark(node, status)); }
-              }
+              UI_Parent(chip_area) { ui_spacer(ui_px(chip_clearance, 1)); }
+              ui_signal_from_box(chip_area);
             }
-            ui_spacer(ui_px(2.f, 1));
-            ui_pop_parent();
+            uishell_sidebar_row_end(state, &r);
             // Project cards already stop short of the margin.
             ui_spacer(ui_px(4.f+(owner == ANDAMENTO_NONE ? side_margin : 0), 1));
             ui_pop_parent();

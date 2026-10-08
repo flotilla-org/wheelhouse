@@ -31,6 +31,58 @@ uishell_workspace_lifecycle_queued(String8 name, CFG_ID cfg)
   return count;
 }
 
+// The center of the box keyed `suffix` under its nearest keyed ancestor, as
+// last laid out in `ui`; zero when absent.
+internal Vec2F32
+uishell_workspace_lifecycle_center(UI_State *ui, String8 suffix)
+{
+  for(UI_Box *b = ui->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui->root).next)
+  {
+    UI_Box *keyed = b->parent;
+    while(!ui_box_is_nil(keyed) && ui_key_match(keyed->key, ui_key_zero())) { keyed = keyed->parent; }
+    if(!ui_box_is_nil(keyed) && ui_key_match(b->key, ui_key_from_string(keyed->key, suffix))) { return center_2f32(b->rect); }
+  }
+  return v2f32(0, 0);
+}
+
+// Drags the box keyed `from` onto the box keyed `to` through the rendered
+// sidebar: press, move past the threshold, release; the shared drag finish
+// runs each frame, as at the end of a window's build. Returns whether the
+// drag started and the target lit up.
+internal B32
+uishell_workspace_lifecycle_drag(RD_WindowState *ws, CFG_Node *window, Arena *arena, String8 from, String8 to, String8 lit)
+{
+  UI_State *saved_ui = ui_state, *test = ui_state_alloc();
+  ui_select_state(test);
+  Vec2F32 start = {0}, target = {0};
+  B32 lit_seen = 0;
+  for(U32 frame = 0; frame < 7; frame++)
+  {
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
+    Vec2F32 at = frame < 2 ? start : frame == 2 ? add_2f32(start, v2f32(0, 12)) : target;
+    if(frame == 1 || frame == 5)
+    {
+      event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release, .pos = at};
+      events.first = events.last = &event; events.count = 1;
+    }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = at;
+    UIShell_RegsScope(.window = window->id)
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_sidebar_ui(r2f32p(0, 0, 320, 900), &split); }
+    uishell_sidebar_drag_finish(ws);
+    ui_end_build();
+    if(frame == 0) { start = uishell_workspace_lifecycle_center(test, from); }
+    if(frame >= 2) { target = uishell_workspace_lifecycle_center(test, to); }
+    if(frame == 4) { lit_seen = rd_drag_is_active() && !ui_box_is_nil(ui_box_from_key(ui_key_from_string(ui_key_zero(), lit))); }
+  }
+  rd_drag_kill(); ui_kill_action();
+  ui_select_state(saved_ui); ui_state_release(test);
+  return lit_seen;
+}
+
 internal B32
 uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
 {
@@ -100,6 +152,59 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
                  uishell_sidebar_close_kind(loose_node, uishell_sidebar_node_status(state, loose_node)) == UIShell_SidebarCloseKind_Destroy,
                  "a subjectless workspace offers close");
   LifecycleCheck(!uishell_workspace_cfg_has_subject(loose), "new workspaces have no subject");
+
+  //- A local workspace is its own host entity: it has details (a hover card),
+  //  lives with a project when annotated, and returns to Workspaces without.
+  String8 local_id = push_str8_copy(scratch.arena, uishell_sidebar_local_entity(loose));
+  {
+    LifecycleCheck(str8_match(uishell_sidebar_string(loose_node.entity_kind), str8_lit("wheelhouse.workspace"), 0) &&
+                   str8_match(uishell_sidebar_string(loose_node.entity_id), local_id, 0),
+                   "a local workspace's row is its host entity");
+    AndamentoEntity local = {uishell_sidebar_text(str8_lit("wheelhouse.workspace")), uishell_sidebar_text(local_id)};
+    LifecycleCheck(uishell_sidebar_card_find(state, local, 0) != ANDAMENTO_NONE, "a local workspace has details for its hover card");
+    CFG_Node *home = cfg_node_child_from_string_or_alloc(rd_state->cfg, loose, str8_lit("lives_with"));
+    cfg_node_new(rd_state->cfg, home, str8_lit("p"));
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+    AndamentoNode homed = {0}, parent = {0};
+    B32 found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
+    if(found && homed.parent != ANDAMENTO_NONE) { andamento_snapshot_node(state->snapshot, homed.parent, &parent); }
+    LifecycleCheck(found && str8_match(uishell_sidebar_string(parent.entity_kind), str8_lit("project"), 0) &&
+                   str8_match(uishell_sidebar_string(parent.entity_id), str8_lit("p"), 0) &&
+                   str8_match(uishell_sidebar_string(homed.entity_id), local_id, 0),
+                   "a local workspace that lives with a project is placed in its group, live");
+    cfg_node_release(rd_state->cfg, home);
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+    found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
+    AndamentoNode section = {0};
+    if(found && homed.parent != ANDAMENTO_NONE) { andamento_snapshot_node(state->snapshot, homed.parent, &section); }
+    LifecycleCheck(found && section.is_section && uishell_sidebar_section_hosts_chrome(uishell_sidebar_string(section.key)) &&
+                   str8_match(uishell_sidebar_string(homed.entity_id), local_id, 0), "without its project it returns to Workspaces");
+    loose_node = homed;
+
+    //- Dragging it onto the project's group moves it there (Move, not ghost),
+    //  as a row; dragging that row back to the Workspaces group moves it back.
+    AndamentoNode project = {0};
+    LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_lit("p"), 0, &project), "fixture project row");
+    String8 project_box = push_str8f(scratch.arena, "###project_%S", uishell_sidebar_string(project.key));
+    String8 row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(homed.key));
+    B32 lit = uishell_workspace_lifecycle_drag(ws, window, scratch.arena, row, project_box, str8_lit("sidebar_home_project"));
+    LifecycleCheck(lit, "a local workspace dragged over a project's group lights the group");
+    LifecycleCheck(str8_match(uishell_sidebar_local_home(loose), str8_lit("p"), 0), "dropping it there makes it live with the project");
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+    found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
+    LifecycleCheck(found && !str8_match(uishell_sidebar_string(homed.layout), str8_lit("inline"), 0), "it lives in the project's group as a row, not a chip");
+    String8 homed_row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(homed.key));
+    lit = uishell_workspace_lifecycle_drag(ws, window, scratch.arena, homed_row, str8_lit("###new_workspace"), str8_lit("sidebar_home_workspaces"));
+    LifecycleCheck(found && lit && !uishell_sidebar_local_home(loose).size, "its row dragged to the Workspaces group moves it back");
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+    uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &loose_node);
+  }
   // The subject is a chip in the tree and a full row in Attention; match every
   // placement and use whichever renders as a row.
   String8 row_keys[8] = {push_str8_copy(scratch.arena, uishell_sidebar_string(loose_node.key))};
@@ -344,6 +449,15 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
 
   UIShell_RegsScope(.window = window->id, .cfg = loose_id) { uishell_dispatch_window_command(str8_lit("detach_workspace")); }
   LifecycleCheck(cfg_node_from_id(loose_id) == &cfg_nil_node, "detaching a subjectless workspace destroys it");
+  {
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+    AndamentoNode gone = {0};
+    AndamentoEntity local = {uishell_sidebar_text(str8_lit("wheelhouse.workspace")), uishell_sidebar_text(local_id)};
+    LifecycleCheck(!uishell_workspace_lifecycle_find(state, local_id, 0, &gone) && uishell_sidebar_card_find(state, local, 0) == ANDAMENTO_NONE,
+                   "a destroyed local workspace's entity is retracted");
+  }
 
   //- A detached workspace keeps its name reserved: it reopens under it.
   {
