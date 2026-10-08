@@ -800,6 +800,8 @@ wm_init(void)
 internal WM_SystemInfo *
 wm_get_system_info(void)
 {
+  // Read live: it changes with the setting and as a mouse comes and goes.
+  mac_wm_state->gfx_info.scroll_bars_always_shown = [NSScroller preferredScrollerStyle] == NSScrollerStyleLegacy;
   return &mac_wm_state->gfx_info;
 }
 

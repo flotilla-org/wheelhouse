@@ -3720,8 +3720,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             {
               UI_Key menu_key = ui_key_from_stringf(entry_key, uishell_sidebar_is_subject(node) ? "subject_menu" : "workspace_menu");
               UI_Signal sig = {0};
+              // The control stops short of an overlay scroll bar's strip at
+              // the edge, so the bar never sits over it (ui_scroll_region).
+              F32 bar_lane = region.params.style == UI_ScrollBarStyle_Overlay && !region.params.overlay_reserve ?
+                region.params.overlay_rest_px+region.params.overlay_inset_px : 0.f;
               UI_Parent(body) UI_FixedX(dim_2f32(region.viewport).x-side_margin) UI_FixedY(slot_y+2.f)
-              UI_PrefWidth(ui_px(side_margin-2.f, 1)) UI_PrefHeight(ui_px(row_height-4.f, 1))
+              UI_PrefWidth(ui_px(Max(4.f, side_margin-2.f-bar_lane), 1)) UI_PrefHeight(ui_px(row_height-4.f, 1))
               { sig = uishell_sidebar_margin_button(node, close); }
               uishell_sidebar_margin_close(state, ws, node, close, sig, entry_key, menu_key);
             }

@@ -25,6 +25,9 @@ struct UI_ScrollRegionParams
   F32 overlay_rest_px;
   F32 overlay_hover_px;
   F32 overlay_inset_px;
+  // Overlay bars keep their look but reserve their strip and stay shown,
+  // where the system wants scroll bars always shown.
+  B32 overlay_reserve;
 };
 
 typedef struct UI_ScrollRegion UI_ScrollRegion;

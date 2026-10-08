@@ -35,7 +35,8 @@ uishell_scroll_preview_diagnostics(RD_WindowState *ws)
   UI_Key live_bar_key = ui_key_from_stringf(ui_key_make(201), "scroll_region_bar_%i", Axis2_Y);
   UI_Key track_key = ui_key_from_stringf(live_bar_key, "##_scroll_area_%i", Axis2_Y);
   UI_Key thumb_key = ui_key_from_stringf(track_key, "##_scroller_%i", Axis2_Y);
-  Vec2F32 mouse = v2f32(290, 180);
+  // On the live bar's strip at the edge, which brings an overlay bar up (#250).
+  Vec2F32 mouse = v2f32(396, 180);
   for(U32 frame = 0; frame < 8; frame++)
   {
     UI_IconInfo icons = ws->ui->icon_info;
@@ -96,7 +97,7 @@ uishell_scroll_preview_diagnostics(RD_WindowState *ws)
       UI_Key preview_bar = ui_key_from_stringf(ui_key_make(202), "scroll_region_bar_%i", Axis2_Y);
       B32 live_visible = !ui_box_is_nil(ui_box_from_key(live_bar));
       B32 preview_visible = !ui_box_is_nil(ui_box_from_key(preview_bar));
-      fprintf(stderr, "Overlay hover: live=%i preview=%i (expected 1,0)\n", live_visible, preview_visible);
+      fprintf(stderr, "Overlay strip hover: live=%i preview=%i (expected 1,0)\n", live_visible, preview_visible);
       failures += !live_visible || preview_visible;
     }
   }
@@ -196,7 +197,9 @@ uishell_scroll_controls_diagnostics(RD_WindowState *ws)
     ui_select_state(test);
     UI_ScrollRegionParams params = {.rect = {100, 100, 500, 400}, .style = style,
       .axis = {UI_ScrollAxisPolicy_Always, UI_ScrollAxisPolicy_Always},
-      .gutter_px = 24, .overlay_rest_px = 7, .overlay_hover_px = 14, .overlay_inset_px = 3};
+      .gutter_px = 24, .overlay_rest_px = 7, .overlay_hover_px = 14, .overlay_inset_px = 3,
+      // Reserved, so an overlay bar is shown whatever the pointer does.
+      .overlay_reserve = 1};
     UI_ScrollRegion region = ui_scroll_region_layout(params);
     UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
     axes[axis] = (UI_ScrollRegionAxis){ui_scroll_pt(0, 0), r1s64(0, 4), 2};
@@ -311,7 +314,7 @@ uishell_positioned_list_diagnostics(RD_WindowState *ws)
 #define PositionedCheck(c, n) do { if(!(c)) { fprintf(stderr, "FAIL: positioned list frame=%u style=%u: %s\n", frame, (U32)style, n); failures++; } } while(0)
   UI_ScrollPt pt = ui_scroll_pt(4, 0);
   pt.target_off = 0.5f;
-  for(U32 frame = 0; frame < 12; frame++)
+  for(U32 frame = 0; frame < 14; frame++)
   {
     UI_ScrollBarStyle style = frame < 4 || frame >= 8 ? UI_ScrollBarStyle_Overlay : UI_ScrollBarStyle_Classic;
     ui_set_active_scroll_bar_style(style);
@@ -347,12 +350,14 @@ uishell_positioned_list_diagnostics(RD_WindowState *ws)
           UI_ScrollList(&list, &pt, 0, 0, &rows, 0)
           {
             content = ui_top_parent();
-            // The actual positioned viewport, not the origin, reveals overlays.
+            // An overlay bar shows on scrolling, not on hovering content
+            // (#250): the actual positioned viewport's bar appears after the
+            // wheel at frame 10.
+            UI_Key bar = ui_key_from_stringf(content->key, "scroll_region_bar_%i", Axis2_Y);
             if(frame == 3 || frame == 9)
-            {
-              UI_Key bar = ui_key_from_stringf(content->key, "scroll_region_bar_%i", Axis2_Y);
-              PositionedCheck(!ui_box_is_nil(ui_box_from_key(bar)), "nested overlay hover reveals scrollbar");
-            }
+            { PositionedCheck(style == 0 || ui_box_is_nil(ui_box_from_key(bar)), "hovering content alone doesn't reveal an overlay bar"); }
+            if(frame == 13)
+            { PositionedCheck(!ui_box_is_nil(ui_box_from_key(bar)), "scrolling the nested list reveals its bar"); }
             // Fractional content translation and virtual rows agree before input.
             if(frame <= 10)
             {
@@ -377,6 +382,68 @@ uishell_positioned_list_diagnostics(RD_WindowState *ws)
   ui_state_release(test);
   fprintf(stderr, "Positioned list diagnostics: %u failures\n", failures);
 #undef PositionedCheck
+  return failures == 0;
+}
+
+// Overlay bars show on activity (#250): not on hovering content; after a
+// scroll for about a second, then they fade and take no clicks, so a control
+// just inside the bar's strip stays reachable. Reserved, they stay up.
+internal B32
+uishell_scroll_activity_diagnostics(RD_WindowState *ws)
+{
+  UI_State *saved = ui_state, *test = ui_state_alloc();
+  ui_select_state(test);
+  U32 failures = 0;
+#define ActivityCheck(c, n) do { if(!(c)) { fprintf(stderr, "FAIL: scroll activity: %s\n", n); failures++; } } while(0)
+  UI_ScrollRegionParams params = {.rect = {100, 100, 400, 300}, .style = UI_ScrollBarStyle_Overlay,
+    .axis = {UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always},
+    .gutter_px = 24, .overlay_rest_px = 7, .overlay_hover_px = 14, .overlay_inset_px = 3};
+  UI_ScrollRegion region = ui_scroll_region_layout(params);
+  UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
+  axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt(0, 0), r1s64(0, 600), 200};
+  UI_Key bar_key = ui_key_from_stringf(ui_key_make(1001), "scroll_region_bar_%i", Axis2_Y);
+  UI_Signal content = {0};
+  UI_Event none = {0};
+  Vec2F32 middle = v2f32(250, 200);
+  B32 shown = 0;
+  for(U32 frame = 0; frame < 6; frame++)
+  {
+    uishell_scroll_test_frame(ws, &region, axes, middle, none, &content);
+    shown |= !ui_box_is_nil(ui_box_from_key(bar_key));
+  }
+  ActivityCheck(!shown, "hovering content alone shows no overlay bar");
+  // The caller applies a wheel to the position, as views do.
+  axes[Axis2_Y].position = ui_scroll_pt(30, 0);
+  for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_frame(ws, &region, axes, middle, none, &content); }
+  UI_Box *bar = ui_box_from_key(bar_key);
+  ActivityCheck(axes[Axis2_Y].position.idx > 0 && !ui_box_is_nil(bar) && !(bar->flags & UI_BoxFlag_IgnoreInteraction),
+                "a scroll shows the bar");
+  for(U32 frame = 0; frame < 150; frame++) { uishell_scroll_test_frame(ws, &region, axes, middle, none, &content); }
+  bar = ui_box_from_key(bar_key);
+  ActivityCheck(ui_box_is_nil(bar) || (bar->flags & UI_BoxFlag_IgnoreInteraction), "a couple of seconds later it has faded and takes no clicks");
+  // Just inside the strip, where a row's margin control sits.
+  Vec2F32 inside = v2f32(400-(7+3)-3, 200);
+  uishell_scroll_test_frame(ws, &region, axes, inside, none, &content);
+  UI_Event press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = inside};
+  uishell_scroll_test_frame(ws, &region, axes, inside, press, &content);
+  ActivityCheck(ui_pressed(content), "a press just inside the bar's strip reaches the content under it");
+  UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = inside};
+  uishell_scroll_test_frame(ws, &region, axes, inside, release, &content);
+  // On the strip itself the bar comes up.
+  Vec2F32 strip = v2f32(398, 200);
+  for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_frame(ws, &region, axes, strip, none, &content); }
+  bar = ui_box_from_key(bar_key);
+  ActivityCheck(!ui_box_is_nil(bar) && !(bar->flags & UI_BoxFlag_IgnoreInteraction), "the pointer on the bar's strip brings it up");
+  // Reserved: the strip is the viewport's to give up, and the bar stays up.
+  params.overlay_reserve = 1;
+  region = ui_scroll_region_layout(params);
+  for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_frame(ws, &region, axes, middle, none, &content); }
+  ActivityCheck(abs_f32(region.viewport.x1 - (400-(7+3))) < .5f && !ui_box_is_nil(ui_box_from_key(bar_key)),
+                "reserved, the strip is kept clear of content and the bar stays up");
+#undef ActivityCheck
+  ui_select_state(saved);
+  ui_state_release(test);
+  fprintf(stderr, "Scroll activity diagnostics: %u failures\n", failures);
   return failures == 0;
 }
 
@@ -481,6 +548,8 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
     ui_select_state(test_ui);
     params.rect = r2f32p(100, 100, 400, 300);
     params.style = (UI_ScrollBarStyle)style;
+    // Reserved, so an overlay bar is shown whatever the pointer does.
+    params.overlay_reserve = 1;
     region = ui_scroll_region_layout(params);
     UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
     axes[0] = (UI_ScrollRegionAxis){ui_scroll_pt(0, 0), r1s64(0, 600), 300};
@@ -536,7 +605,11 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
       }
     }
     // The two-axis corner is content in overlay mode and empty furniture in
-    // classic mode; neither axis may capture it as a scrollbar drag.
+    // classic mode; neither axis may capture it as a scrollbar drag. Overlay
+    // bars here don't reserve their strip (the corner would be gutter).
+    params.overlay_reserve = 0;
+    region = ui_scroll_region_layout(params);
+    uishell_scroll_test_frame(ws, &region, axes, v2f32(-100, -100), none, &content);
     Vec2F32 corner = v2f32(398, 298);
     UI_Event corner_press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = corner};
     uishell_scroll_test_frame(ws, &region, axes, corner, corner_press, &content);
@@ -582,6 +655,7 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
   failures += !uishell_precise_list_diagnostics(ws);
   failures += !uishell_positioned_list_diagnostics(ws);
   failures += !uishell_scroll_controls_diagnostics(ws);
+  failures += !uishell_scroll_activity_diagnostics(ws);
   fprintf(stderr, "Scroll region diagnostics: %u failures\n", failures);
 #undef ScrollCheck
   return failures == 0;

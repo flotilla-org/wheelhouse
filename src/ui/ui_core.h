@@ -725,6 +725,9 @@ struct UI_State
   
   //- rjf: build state machine state
   B32 is_in_open_ctx_menu;
+  // Overlay scroll bars reserve their strip and stay shown (set by the host
+  // from the system's scroll bar preference; ui_scroll_region_params).
+  B32 scroll_bars_reserved;
   // A compact context menu has only a hairline above and below its items;
   // set by UI_CtxMenuCompact for the menu being built.
   B32 ctx_menu_compact, is_in_compact_ctx_menu;

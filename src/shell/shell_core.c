@@ -5497,6 +5497,7 @@ rd_window_frame(void)
       // rjf: begin & push initial stack values
       if(rd_state->frame_replay.suppress_input) { MemoryZeroStruct(&ws->ui_events); }
       ui_begin_build(ws->os, &ws->ui_events, &icon_info, ws->theme, &animation_info, rd_state->frame_dt, rd_state->frame_dt);
+      ui_state->scroll_bars_reserved = wm_get_system_info()->scroll_bars_always_shown;
       if(rd_state->frame_replay.suppress_input) { ui_state->mouse = v2f32(-10000, -10000); }
       ui_push_font(rd_font_from_slot(RD_FontSlot_Main));
       ui_push_font_size(top_level_font_size);

@@ -14,6 +14,7 @@ ui_scroll_region_params(Rng2F32 rect, UI_ScrollAxisPolicy x, UI_ScrollAxisPolicy
   params.overlay_rest_px = em*0.45f;
   params.overlay_hover_px = em*0.9f;
   params.overlay_inset_px = floor_f32(em*0.2f);
+  params.overlay_reserve = ui_state->scroll_bars_reserved;
   return params;
 }
 
@@ -36,7 +37,9 @@ ui_scroll_region_layout(UI_ScrollRegionParams params)
     for EachEnumVal(Axis2, axis)
     {
       Axis2 cross = axis2_flip(axis);
-      F32 gutter = (params.style == UI_ScrollBarStyle_Classic && region.bar_enabled[cross]) ? Max(0.f, params.gutter_px) : 0.f;
+      F32 gutter = (params.style == UI_ScrollBarStyle_Classic && region.bar_enabled[cross]) ? Max(0.f, params.gutter_px) :
+        (params.style == UI_ScrollBarStyle_Overlay && params.overlay_reserve && region.bar_enabled[cross]) ?
+        Max(0.f, params.overlay_rest_px+params.overlay_inset_px) : 0.f;
       region.viewport.p1.v[axis] = Max(region.viewport.p0.v[axis], region.viewport.p1.v[axis] - gutter);
     }
     for EachEnumVal(Axis2, axis)
@@ -120,17 +123,40 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
       }
       F32 vis = 1.f;
       F32 thickness = region->params.gutter_px;
+      B32 showing = 1;
       if(overlay)
       {
         // Unkeyed layout parents have no retained screen rectangle. The
         // persistent content box includes positioning and ancestor offsets.
-        Rng2F32 hover_rect = ui_box_from_key(key)->rect;
+        UI_Box *content = ui_box_from_key(key);
+        Rng2F32 hover_rect = content->rect;
         Axis2 cross = axis2_flip(axis);
         B32 hovered = contains_2f32(hover_rect, ui_mouse());
-        B32 near_bar = hovered && ui_mouse().v[cross] >= hover_rect.p1.v[cross] - region->params.overlay_hover_px - region->params.overlay_inset_px;
-        vis = ui_anim(ui_key_from_string(bar_key, str8_lit("visibility")), hovered || dragging ? 1.f : 0.f,
+        // The bar shows while it is dragged, while the pointer is on its own
+        // strip at the edge (so controls just inside it stay reachable), and
+        // for about a second after the view scrolls; or always, reserved.
+        F32 strip = region->params.overlay_rest_px + region->params.overlay_inset_px;
+        // Once up (and widened), the bar's own rect keeps it up.
+        B32 on_strip = (hovered && ui_mouse().v[cross] >= hover_rect.p1.v[cross] - strip) ||
+          (!ui_box_is_nil(previous_bar) && contains_2f32(previous_bar->rect, ui_mouse()));
+        // Scrolled: the view is still moving to its target, or the target
+        // changed since last frame (instant scrolling never lags it).
+        F32 target = content->view_off_target.v[axis];
+        // Last frame's target: a rate of exactly 1 would snap on this call.
+        // A new view's first offsets are where it starts, not a scroll.
+        B32 fresh = ui_box_is_nil(content) || content->first_touched_build_index+1 >= ui_state->build_index;
+        F32 target_before = ui_anim(ui_key_from_string(bar_key, str8_lit("target")), target, .initial = target, .reset = fresh, .rate = 0.9999f);
+        // Callers that scroll by position rather than view offset change it.
+        F32 position = (F32)axes[axis].position.idx + axes[axis].position.target_off;
+        F32 position_before = ui_anim(ui_key_from_string(bar_key, str8_lit("position")), position, .initial = position, .reset = fresh, .rate = 0.9999f, .epsilon = 0.0001f);
+        B32 moving = !fresh && (abs_f32(target - content->view_off.v[axis]) > 0.5f || abs_f32(target - target_before) > 0.5f ||
+                                abs_f32(position - position_before) > 0.001f);
+        F32 recent = ui_anim(ui_key_from_string(bar_key, str8_lit("activity")), 0.f, .initial = moving ? 1.f : 0.f, .reset = moving,
+                             .rate = 1 - pow_f32(2, -1.5f*ui_state->animation_dt), .epsilon = 0.01f);
+        showing = region->params.overlay_reserve || on_strip || dragging || recent > 0.35f;
+        vis = ui_anim(ui_key_from_string(bar_key, str8_lit("visibility")), showing ? 1.f : 0.f,
                       .rate = ui_state->animation_info.scroll_animation_rate);
-        F32 expand = ui_anim(ui_key_from_string(bar_key, str8_lit("expansion")), near_bar || dragging ? 1.f : 0.f,
+        F32 expand = ui_anim(ui_key_from_string(bar_key, str8_lit("expansion")), on_strip || dragging ? 1.f : 0.f,
                              .rate = ui_state->animation_info.hot_animation_rate);
         thickness = mix_1f32(region->params.overlay_rest_px, region->params.overlay_hover_px, expand);
       }
@@ -138,6 +164,8 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
       Rng2F32 bar_rect = ui_scroll_region_bar_rect(region, axis, thickness, visible[axis2_flip(axis)]);
       Vec2F32 bar_dim = dim_2f32(bar_rect);
       if(bar_dim.x <= 0 || bar_dim.y <= 0) { continue; }
+      // A fading bar is drawn but takes no clicks: they reach what's under it.
+      if(!showing) { ui_push_flags(ui_top_flags()|UI_BoxFlag_IgnoreInteraction); }
       UI_Focus(UI_FocusKind_Off)
       {
         ui_set_next_rect(bar_rect);
@@ -155,6 +183,7 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
                                                         axes[axis].range, axes[axis].visible);
         }
       }
+      if(!showing) { ui_pop_flags(); }
     }
     UI_Rect(region->viewport)
     {

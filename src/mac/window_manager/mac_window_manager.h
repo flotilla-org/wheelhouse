@@ -20,6 +20,7 @@
 #import <AppKit/NSCursor.h>
 #import <AppKit/NSDragging.h>
 #import <AppKit/NSEvent.h>
+#import <AppKit/NSScroller.h>
 #import <AppKit/NSMenu.h>
 #import <AppKit/NSMenuItem.h>
 #import <AppKit/NSOpenPanel.h>
