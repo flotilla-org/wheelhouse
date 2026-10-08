@@ -6621,12 +6621,14 @@ rd_window_frame(void)
         FNT_Tag icon_font = rd_font_from_slot(RD_FontSlot_Icons);
         F32 bar_h = dim_2f32(top_bar_rect).y;
         F32 icon_button_w = font_size*2.25f; // flat icon buttons (new-workspace, overview)
-        // Place the breadcrumb's right edge at the sidebar divider. Keep a
-        // small readable slot when the sidebar is collapsed or very narrow.
+        // Place the breadcrumb's right edge at the sidebar divider, after the
+        // one leading button (sidebar collapse; new-workspace lives in the
+        // sidebar). Keep a small readable slot when the sidebar is collapsed
+        // or very narrow.
         F32 leading = (native_title_bar_left_padding > 0 ? native_title_bar_left_padding : bar_h);
         F32 sidebar_right = content_rect.x0 + uishell_controlled_split_control_width_px(&root_controlled_split, content_rect);
         workspace_path_w = Max(font_size*8.f,
-          floor_f32(sidebar_right - top_bar_rect.x0 - leading - icon_button_w*2.f));
+          floor_f32(sidebar_right - top_bar_rect.x0 - leading - icon_button_w));
 
         // menu bar: compact = a single kebab button; full = sum of menu-title
         // button widths. each button is sized by ui_text_dim(20,1), which
