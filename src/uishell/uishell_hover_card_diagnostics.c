@@ -1057,13 +1057,33 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(absent && pinned->open && cfg_node_from_id(saved_id) != &cfg_nil_node, "missing subject retains pinned card with an explicit marker");
     fixture.snapshot = snapshot;
     CFG_Node *area = saved->parent;
-    CFG_Node *moved = uishell_sidebar_card_pin(ws, pinned, 1);
-    CardCheck(moved->id == saved_id && moved->parent != area, "dragging a pinned card to a new area moves its own ghost");
+    // Dragged through the shared finish to a docking site below its panel.
+    // The site's split command and sizing are undone below for later checks.
+    B32 sized_before_move = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
+    UIShell_CmdNode *cmds_before_move = rd_state->cmds[0].last; U64 cmd_count_before_move = rd_state->cmds[0].count;
+    fixture.drag_card = pinned; pinned->moving = pinned->drag_released = 1;
+    fixture.drop_panel = area->parent->id; fixture.drop_direction = Dir2_Down; fixture.drop_area = 0;
+    uishell_sidebar_drag_finish(ws);
+    CFG_Node *moved = cfg_node_from_id(saved_id);
+    CardCheck(moved != &cfg_nil_node && moved->parent != area && str8_match(moved->parent->string, str8_lit("pinned_cards"), 0) &&
+              pinned->open && !fixture.drag_card, "dragging a pinned card to a docking site moves its own ghost to the new area");
     B32 has_card = 0;
     for(CFG_Node *n = area->first; n != &cfg_nil_node; n = n->next)
     { has_card |= str8_match(n->string, str8_lit("card"), 0); }
     CardCheck(!has_card && cfg_node_from_id(area->id) == area && rd_dock_can_close(area),
               "moving the last pin preserves an empty area that can be closed");
+    if(moved != &cfg_nil_node && moved->parent != area)
+    {
+      CFG_Node *new_area = moved->parent;
+      cfg_node_insert_child(rd_state->cfg, area, area->last, moved);
+      cfg_node_release(rd_state->cfg, new_area);
+    }
+    if(cmds_before_move) { cmds_before_move->next = 0; } else { rd_state->cmds[0].first = 0; }
+    rd_state->cmds[0].last = cmds_before_move; rd_state->cmds[0].count = cmd_count_before_move;
+    uishell_sidebar_manual_sizing(window, sized_before_move);
+    // Moving its last pin away and back leaves the area as it was; move it
+    // to a new area without a site, as before, for the checks that follow.
+    uishell_sidebar_card_pin(ws, pinned, 1);
     U64 label_pos = arena_pos(pinned->arena);
     for(U64 change = 0; change < 100; change++)
     { uishell_sidebar_card_retain_label(pinned, change & 1 ? str8_lit("Live one") : str8_lit("Live two")); }

@@ -1115,7 +1115,8 @@ RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
     {
       F32 y = list.y0-scroll.content_box->view_off.y, line_y = y;
       U64 index = 0, at = 0;
-      for(CFG_Node *saved = view->first; saved != &cfg_nil_node; saved = saved->next)
+      // `cards` holds one entry per card child, built by the same filter.
+      for(CFG_Node *saved = view->first; saved != &cfg_nil_node && at < card_count; saved = saved->next)
       {
         if(!str8_match(saved->string, str8_lit("card"), 0)) { continue; }
         F32 extent = uishell_sidebar_ghost_extent(cards[at++], saved, em);
