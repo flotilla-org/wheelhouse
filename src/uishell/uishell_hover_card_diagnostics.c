@@ -1287,11 +1287,14 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     }
     fprintf(stderr, "Hover card diagnostics: pin control\n");
     // With the subject already pinned in the group Pin uses, Pin says Show pin
-    // and a click reveals it: no menu, and no second ghost.
+    // and a click reveals it: no menu, and no second ghost. The card runs on
+    // its own clock, starting after its 100ms glide into place, so Pin is
+    // where frame 0 measured it however fast the machine is.
     {
-      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+      U64 t0 = now_time_us();
+      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, t0);
       CFG_Node *hold_pin = uishell_sidebar_card_pin(ws, original, 0);
-      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
+      uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, t0);
       original->source_rect = r2f32p(20, 20, 120, 50); original->engaged = original->focused = 1;
       Temp ghosts_scratch = scratch_begin(0, 0);
       CFG_NodePtrList before = {0}; uishell_sidebar_pin_cards(ghosts_scratch.arena, window, &before);
@@ -1306,7 +1309,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         test->mouse = frame == 0 ? v2f32(-100, -100) : pin_at;
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-        { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+        { uishell_sidebar_cards_ui_at(ws, t0 + 1000000 + frame*16667, 1, 1); }
         ui_end_build();
         if(frame == 0)
         {
