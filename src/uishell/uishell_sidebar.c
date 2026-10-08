@@ -130,6 +130,13 @@ struct UIShell_SidebarState
   // the whole row.
   UI_Box *building_row;
   B32 row_drag_released;
+  // The workspace a row drag carries (its live workspace), and the move a
+  // local one claimed: the project it would live with (empty: the Workspaces
+  // group), copied into its own arena, and the build that claimed it.
+  CFG_ID row_drag_workspace;
+  Arena *home_arena;
+  String8 home_project;
+  U64 home_build;
   // The reorder a row drag claimed over its sibling run: before or after
   // the anchor sibling (copied into its own arena), and the build.
   Arena *reorder_arena;
@@ -168,6 +175,12 @@ struct UIShell_SidebarState
   F32 revealed_chip_width;
   U64 revealed_chip_build_index;
   U64 topology_hash;
+  // Local workspaces published as host entities (wheelhouse.workspace), with
+  // the entity ids last published so a closed one can be retracted.
+  U64 local_hash;
+  Arena *local_arena;
+  String8 *local_published;
+  U64 local_published_count;
   U64 workdirs_hash;
   U64 workdirs_retry_at;
   U64 managed_cfg_generation;
@@ -313,6 +326,8 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     if(state->display_restore_arena) { arena_release(state->display_restore_arena); }
     if(state->row_drag_arena) { arena_release(state->row_drag_arena); state->row_drag_arena = 0; }
     if(state->reorder_arena) { arena_release(state->reorder_arena); state->reorder_arena = 0; }
+    if(state->local_arena) { arena_release(state->local_arena); state->local_arena = 0; }
+    if(state->home_arena) { arena_release(state->home_arena); state->home_arena = 0; }
     if(state->placement_arena) { arena_release(state->placement_arena); state->placement_arena = 0; }
     state->placement_snapshot = 0;
     state->placement_regions = 0;
@@ -764,6 +779,100 @@ uishell_sidebar_workdirs(Arena *arena, UIShell_ControlledSplit *split)
   return result;
 }
 
+// A local (subjectless) workspace's own entity id, made once and saved on
+// the workspace so it survives restarts.
+internal String8
+uishell_sidebar_local_entity(CFG_Node *workspace)
+{
+  CFG_Node *node = cfg_node_child_from_string(workspace, str8_lit("local_entity"));
+  if(node->first == &cfg_nil_node)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    node = cfg_node_child_from_string_or_alloc(rd_state->cfg, workspace, str8_lit("local_entity"));
+    cfg_node_new(rd_state->cfg, node, string_from_guid(scratch.arena, make_guid()));
+    scratch_end(scratch);
+  }
+  return node->first->string;
+}
+
+// The project a local workspace lives with ("lives with project X"), saved
+// on the workspace; empty when it lives in the Workspaces group.
+internal String8
+uishell_sidebar_local_home(CFG_Node *workspace)
+{
+  return cfg_node_child_from_string(workspace, str8_lit("lives_with"))->first->string;
+}
+
+// Publishes each local workspace as a host entity: its label and home as
+// facts, and its tab tagged host.entity.* so its rows are live there and a
+// template can place it (drag-model.md, "lives with project X"). Entities of
+// workspaces that closed, or gained a subject, are retracted.
+internal void
+uishell_sidebar_publish_local(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
+{
+  Temp scratch = scratch_begin(0, 0);
+  U64 hash = 5381;
+  for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
+  {
+    CFG_Node *workspace = w->mount.owner_cfg;
+    if(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string.size) { continue; }
+    String8 parts[] = {uishell_sidebar_local_entity(workspace), w->display_name, uishell_sidebar_local_home(workspace)};
+    hash = hash*33 + w->id;
+    for(U64 p = 0; p < ArrayCount(parts); p++)
+    { for(U64 i = 0; i < parts[p].size; i++) { hash = hash*33 + parts[p].str[i]; } hash = hash*33 + 0xff; }
+  }
+  if(hash == state->local_hash) { scratch_end(scratch); return; }
+  U64 now = wheelhouse_ingress_now_ms();
+  String8 kind = str8_lit("wheelhouse.workspace"), source = str8_lit("wheelhouse.local");
+  String8 *published = push_array(scratch.arena, String8, split->inventory.count);
+  U64 count = 0;
+  B32 ok = 1;
+  for(UIShell_MaterializedWorkspace *w = split->inventory.first; w && ok; w = w->next)
+  {
+    CFG_Node *workspace = w->mount.owner_cfg;
+    if(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string.size) { continue; }
+    String8 id = published[count++] = push_str8_copy(scratch.arena, uishell_sidebar_local_entity(workspace));
+    String8 home = uishell_sidebar_local_home(workspace);
+    AndamentoFact facts[2] = {
+      {.key = uishell_sidebar_text(str8_lit("display.label")), .kind = 1, .text = uishell_sidebar_text(w->display_name)},
+      {.key = uishell_sidebar_text(str8_lit("flotilla.project")), .kind = home.size ? 1 : 0, .text = uishell_sidebar_text(home)},
+    };
+    char *error = 0;
+    ok = uishell_sidebar_result(state, andamento_apply_entity(state->core, now, uishell_sidebar_text(kind), uishell_sidebar_text(id),
+      uishell_sidebar_text(source), facts, ArrayCount(facts), &error), error);
+    String8 tab = push_str8f(scratch.arena,
+      "{\"target\":{\"kind\":\"tab\",\"value\":%I64u},\"source_id\":\"%S\",\"set\":{"
+      "\"host.entity.kind\":{\"value\":{\"type\":\"text\",\"value\":\"%S\"}},"
+      "\"host.entity.id\":{\"value\":{\"type\":\"text\",\"value\":\"%S\"}}},\"unset\":[]}",
+      w->id, source, kind, id);
+    error = 0;
+    ok = ok && uishell_sidebar_result(state, andamento_apply_patch_json(state->core, now, uishell_sidebar_text(tab), &error), error);
+  }
+  // Retract what is no longer published.
+  for(U64 i = 0; ok && i < state->local_published_count; i++)
+  {
+    B32 kept = 0;
+    for(U64 k = 0; k < count && !kept; k++) { kept = str8_match(published[k], state->local_published[i], 0); }
+    if(kept) { continue; }
+    AndamentoFact facts[2] = {{.key = uishell_sidebar_text(str8_lit("display.label"))}, {.key = uishell_sidebar_text(str8_lit("flotilla.project"))}};
+    char *error = 0;
+    ok = uishell_sidebar_result(state, andamento_apply_entity(state->core, now, uishell_sidebar_text(kind),
+      uishell_sidebar_text(state->local_published[i]), uishell_sidebar_text(source), facts, ArrayCount(facts), &error), error);
+  }
+  if(ok)
+  {
+    if(!state->local_arena) { state->local_arena = arena_alloc(); }
+    arena_clear(state->local_arena);
+    state->local_published = push_array(state->local_arena, String8, count);
+    for(U64 i = 0; i < count; i++) { state->local_published[i] = push_str8_copy(state->local_arena, published[i]); }
+    state->local_published_count = count;
+    state->local_hash = hash;
+    uishell_sidebar_refresh(state);
+    rd_request_frame();
+  }
+  scratch_end(scratch);
+}
+
 internal void
 uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
@@ -810,6 +919,7 @@ uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     else { state->workdirs_retry_at = now+1000; }
   }
   if(changed) { uishell_sidebar_refresh(state); rd_request_frame(); }
+  if(topology_ready) { uishell_sidebar_publish_local(state, split); }
   scratch_end(scratch);
 }
 
@@ -1419,6 +1529,7 @@ uishell_sidebar_row_drag_from(UIShell_SidebarState *state, RD_WindowState *ws,
       state->row_drag_label = push_str8_copy(state->row_drag_arena, uishell_sidebar_string(node.label));
       state->row_drag_entity = uishell_sidebar_card_entity_copy(state->row_drag_arena, (AndamentoEntity){node.entity_kind, node.entity_id});
       state->row_drag_rect = state->building_row ? state->building_row->rect : sig.box->rect;
+      state->row_drag_workspace = node.state == ANDAMENTO_LIVE ? node.workspace_id : 0;
       state->row_drag_released = 0;
       uishell_sidebar_drag_begin(ws);
       UIShell_HoverCard *card = &state->cards[0];
@@ -1960,6 +2071,40 @@ uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   ui_pop_parent(); // column
 }
 
+// The local (subjectless) workspace a row drag carries, if any: it may move
+// between groups, unlike data rows (drag-model.md, drop table).
+internal CFG_Node *
+uishell_sidebar_drag_local(UIShell_SidebarState *state)
+{
+  CFG_Node *workspace = state->row_drag_key.size && state->row_drag_workspace ? cfg_node_from_id(state->row_drag_workspace) : &cfg_nil_node;
+  if(workspace == &cfg_nil_node || uishell_workspace_cfg_has_subject(workspace)) { return &cfg_nil_node; }
+  return workspace;
+}
+
+// A local workspace dragged over a group it doesn't live in claims a move
+// there: a project group (`project` is its id) or the Workspaces group
+// (empty). The group lights up; uishell_sidebar_drag_finish applies it.
+internal void
+uishell_sidebar_home_claim(UIShell_SidebarState *state, Rng2F32 rect, String8 project, B32 local)
+{
+  CFG_Node *workspace = uishell_sidebar_drag_local(state);
+  if(workspace == &cfg_nil_node || !contains_2f32(rect, ui_mouse()) ||
+     str8_match(uishell_sidebar_local_home(workspace), project, 0) ||
+     uishell_sidebar_drop_area(state) != &cfg_nil_node ||
+     !uishell_sidebar_drop_claimable(cfg_node_from_id(uishell_regs()->panel))) { return; }
+  if(!state->home_arena) { state->home_arena = arena_alloc(); }
+  arena_clear(state->home_arena);
+  state->home_project = push_str8_copy(state->home_arena, project);
+  state->home_build = ui_state->build_index;
+  // The group's own centre docking site stands aside, as for a reorder.
+  rd_state->drag_drop_local_panel = uishell_regs()->panel; rd_state->drag_drop_local_frame = rd_state->frame_index;
+  UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(rect) UI_CornerRadius(5.f)
+  {
+    ui_build_box_from_key(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating,
+      ui_key_from_stringf(ui_key_zero(), local ? "sidebar_home_workspaces" : "sidebar_home_project"));
+  }
+}
+
 // The pointer picks the gap between siblings by their rows' midpoints. Within
 // the run's extent, a gap that moves the row shows an insertion line and
 // claims the reorder for uishell_sidebar_drag_finish.
@@ -2441,6 +2586,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       UI_ScrollRegionSignal scroll = ui_scroll_region_build(root, content_key, &region, axes,
         UI_BoxFlag_ViewScrollY|UI_BoxFlag_ViewClamp|UI_BoxFlag_AllowOverflowY);
       UI_Box *body = scroll.content_box;
+      // The Workspaces group takes back a local workspace that lives elsewhere.
+      if(row_dragging && uishell_sidebar_section_hosts_chrome(key) && !ui_box_is_nil(body->parent))
+      { uishell_sidebar_home_claim(state, body->parent->rect, str8_zero(), 1); }
       body->view_off_target.y = (F32)scroll.position.y.idx + scroll.position.y.target_off;
       body->view_off.y = Clamp(0.f, body->view_off.y, (F32)axes[Axis2_Y].range.max);
       body->child_layout_axis = Axis2_Y;
@@ -2555,6 +2703,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             {
               project_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground, "###project_%S", node_key);
             }
+            if(row_dragging) { uishell_sidebar_home_claim(state, project_box->rect, uishell_sidebar_string(node.entity_id), 0); }
             project_depth = depth[i];
             project_index = i;
             ui_push_parent(project_box);

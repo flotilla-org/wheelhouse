@@ -91,6 +91,13 @@ template "project/native" {
     order "display.label"
     apply-template "wheelhouse/entry"
   }
+  // Local workspaces that live with the project (Wheelhouse host entities),
+  // beside the project's other workspace actions.
+  for "workspace" kind="wheelhouse.workspace" layout="inline" {
+    match "flotilla.project" of="project"
+    order "display.label"
+    apply-template "wheelhouse/entry"
+  }
   for "convoy" kind="convoy" visibility="wheelhouse/activity" {
     match "flotilla.project" of="project"
     order "display.label"

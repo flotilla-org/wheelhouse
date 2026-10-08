@@ -23,7 +23,7 @@ env:
   # Pinned to jackstay#48's branch commit until it merges; then its squash commit.
   JACKSTAY_REV: 91156bfac2bc2f6df168c928b445c98e002f4950
   # Andamento #137 squash merge on main (host-owned sibling order).
-  ANDAMENTO_REV: 4331ede1e27f59cc35d4375fd6d5bb7ddaadf527
+  ANDAMENTO_REV: f3123c467810af5ef892591c1d5a09328690f34b
 
 jobs:
   daily-driver:

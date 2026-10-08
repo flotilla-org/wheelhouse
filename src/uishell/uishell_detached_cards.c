@@ -706,6 +706,8 @@ uishell_sidebar_detached_bounds(RD_WindowState *ws)
   ui_select_state(previous);
 }
 
+internal CFG_Node *uishell_sidebar_drag_local(UIShell_SidebarState *state);
+
 internal void
 uishell_sidebar_drag_clear(UIShell_SidebarState *state)
 {
@@ -715,6 +717,7 @@ uishell_sidebar_drag_clear(UIShell_SidebarState *state)
   state->row_drag_entity = (AndamentoEntity){0};
   state->row_drag_released = 0;
   state->drop_panel = 0; state->drop_area = 0; state->reorder_build = 0;
+  state->row_drag_workspace = 0; state->home_build = 0;
 }
 
 // A row's release in its sibling run saves the run's full new order, which
@@ -748,6 +751,7 @@ uishell_sidebar_reorder_commit(UIShell_SidebarState *state)
 //     as a card), or a pinned card's own ghost moves there;
 //   - a card back over its source row: inline;
 //   - a docking site: a new pinned area holding the ghost;
+//   - a local workspace over another group: move there;
 //   - a row over its sibling run: reorder.
 // Otherwise a card floats and a row snaps back.
 internal void
@@ -789,7 +793,16 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   }
   else if(row)
   {
-    if(state->reorder_build && state->reorder_build+1 >= ui_state->build_index) { uishell_sidebar_reorder_commit(state); }
+    // A local workspace moves to the group it was dropped on: "lives with
+    // project X", saved on the workspace, or back to Workspaces.
+    CFG_Node *workspace = uishell_sidebar_drag_local(state);
+    if(workspace != &cfg_nil_node && state->home_build && state->home_build+1 >= ui_state->build_index)
+    {
+      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(workspace, str8_lit("lives_with")));
+      if(state->home_project.size)
+      { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("lives_with")), state->home_project); }
+    }
+    else if(state->reorder_build && state->reorder_build+1 >= ui_state->build_index) { uishell_sidebar_reorder_commit(state); }
   }
   else
   {
