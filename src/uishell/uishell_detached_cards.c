@@ -391,10 +391,10 @@ uishell_sidebar_pin_deduplicate(CFG_Node *window)
   scratch_end(scratch);
 }
 
-// Adds a ghost of `entity` to a pinned area and reveals it. A dropped row
-// becomes a row (`compact`); a pinned card stays a card.
 // Moves `saved` among `area`'s pins to sit before the pin at `index`, or
-// last. The area's other children (label, selected) keep their places.
+// last. `index` counts the area's pins as the insertion line does, `saved`
+// included, so a pin moved down lands where the line showed. The area's
+// other children (label, selected) keep their places.
 internal void
 uishell_sidebar_pin_place(CFG_Node *area, CFG_Node *saved, U64 index)
 {
@@ -402,10 +402,12 @@ uishell_sidebar_pin_place(CFG_Node *area, CFG_Node *saved, U64 index)
   U64 i = 0;
   for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next)
   {
-    if(c == saved || !str8_match(c->string, str8_lit("card"), 0)) { continue; }
+    if(!str8_match(c->string, str8_lit("card"), 0)) { continue; }
     if(i++ == index) { before = c; break; }
   }
-  // Already in place; also never insert a node after itself.
+  // Already in place (the line on either side of it); also never insert a
+  // node after itself.
+  if(before == saved) { return; }
   if(saved->parent == area && (before != &cfg_nil_node ? before->prev == saved : area->last == saved)) { return; }
   cfg_node_insert_child(rd_state->cfg, area, before != &cfg_nil_node ? before->prev : area->last, saved);
 }
@@ -433,6 +435,8 @@ uishell_sidebar_drop_claimable(CFG_Node *panel)
     ui_key_match(hot, ui_key_from_stringf(ui_key_zero(), "drop_split_center_%p", panel));
 }
 
+// Adds a ghost of `entity` to a pinned area and reveals it. A dropped row
+// becomes a row (`compact`); a pinned card stays a card.
 internal CFG_Node *
 uishell_sidebar_pin_add(UIShell_SidebarState *state, CFG_Node *area, U64 index, AndamentoEntity entity,
                         String8 fallback_label, String8 source, B32 compact)

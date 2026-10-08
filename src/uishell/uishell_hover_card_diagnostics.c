@@ -1775,6 +1775,21 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_drag_finish(ws);
       CardCheck(area->last == pins[0] && cfg_node_from_id(pins[0]->id) == pins[0] && first->open,
         "a pinned card dragged to an insertion point moves its own ghost there");
+      // Down to a middle slot: with [X, Y, first], the line between X and Y
+      // is index 1 (counting every pin, as the line does); then first moves
+      // down from the top to the line between X and Y, index 2.
+      CFG_Node *x = area->first; while(!str8_match(x->string, str8_lit("card"), 0)) { x = x->next; }
+      fixture.drag_card = first; first->moving = first->drag_released = 1;
+      fixture.drop_area = area->id; fixture.drop_index = 0; fixture.drop_build = test->build_index;
+      uishell_sidebar_drag_finish(ws);
+      fixture.drag_card = first; first->moving = first->drag_released = 1;
+      fixture.drop_area = area->id; fixture.drop_index = 2; fixture.drop_build = test->build_index;
+      uishell_sidebar_drag_finish(ws);
+      CFG_Node *seq[3] = {&cfg_nil_node, &cfg_nil_node, &cfg_nil_node}; U64 m = 0;
+      for(CFG_Node *c = area->first; c != &cfg_nil_node; c = c->next)
+      { if(str8_match(c->string, str8_lit("card"), 0) && m < 3) { seq[m++] = c; } }
+      CardCheck(m == 3 && seq[0] == x && seq[1] == pins[0],
+        "a pinned card dragged down to a middle insertion point lands there, not one past it");
       // A stale claim (two builds old) doesn't capture a release.
       fixture.drop_area = area->id; fixture.drop_index = 0; fixture.drop_build = test->build_index-2;
       CardCheck(uishell_sidebar_drop_area(&fixture) == &cfg_nil_node, "a stale insertion point doesn't capture a release");
