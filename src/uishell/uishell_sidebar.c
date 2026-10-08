@@ -1710,6 +1710,14 @@ uishell_sidebar_disclosure(B32 expanded, String8 key)
   return result;
 }
 
+// The room before a group header's title, after its 3px accent: its text
+// starts where its rows' icons do, `indent` ems in.
+internal F32
+uishell_sidebar_group_title_lead(F32 indent)
+{
+  return Max(0.f, ui_top_font_size()*indent-3.f-ui_top_text_padding());
+}
+
 // A group header's title stands out from its rows by size until a semibold
 // face is bundled (#265); then this becomes the weight.
 internal F32
@@ -2563,10 +2571,11 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   if(r->project)
   {
     // A group's header (docs/design/sidebar-headers.md): no icon; the title
-    // starts where its rows' icons do (r->indent is theirs) and is larger;
-    // a collapsed group's count follows it, then the collapse indicator,
-    // shown while the header is hovered. The row itself takes clicks.
-    ui_spacer(ui_px(Max(0.f, ui_top_font_size()*(r->indent+1.5f)-3.f), 1));
+    // starts where its rows' icons do (r->indent is theirs), just after the
+    // accent, and is larger; a collapsed group's count follows it, then the
+    // collapse indicator, shown while the header is hovered. The row itself
+    // takes clicks.
+    ui_spacer(ui_px(uishell_sidebar_group_title_lead(r->indent), 1));
     UI_FontSize(uishell_sidebar_group_title_size())
     {
       if(r->renaming) UI_PrefWidth(ui_em(12.f, 1))
@@ -2588,12 +2597,9 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
     ui_spacer(ui_pct(1, 0));
     return;
   }
+  // A row's disclosure trails it (uishell_sidebar_row_end), so its icon
+  // lines up with its group's title.
   ui_spacer(ui_em(r->indent, 1));
-  UI_PrefWidth(ui_em(1.5f, 1))
-  {
-    if(r->disclosure) { r->toggle = uishell_sidebar_disclosure(r->expanded, push_str8f(arena, "###toggle_%S", r->key)); }
-    else { ui_spacer(ui_em(1.5f, 1)); }
-  }
   // The entity's icon, as its chip shows it, never truncated to nothing.
   B32 icon_font = 1;
   String8 icon = uishell_sidebar_node_icon(state, r->node, &icon_font);
@@ -2622,6 +2628,8 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
 internal void
 uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r)
 {
+  if(r->disclosure && !r->project)
+  { r->toggle = uishell_sidebar_disclosure(r->expanded, push_str8f(ui_build_arena(), "###toggle_%S", r->key)); }
   if(r->reference) UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
   { ui_label(str8_lit("↗")); }
   // Reserve the same trailing slot at every level. Project-wide status
@@ -2883,7 +2891,7 @@ uishell_sidebar_new_workspace_entry(UIShell_ControlledSplit *split, F32 row_heig
       sig = ui_signal_from_box(row);
       UI_Parent(row) UI_PrefHeight(ui_pct(1, 1)) UI_TagF("weak")
       {
-        ui_spacer(ui_em(0.3f+1.5f, 1));
+        ui_spacer(ui_em(0.7f, 1));
         UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) { ui_label(str8_lit("+")); }
         UI_PrefWidth(ui_pct(1, 0)) { ui_label(str8_lit("New workspace")); }
       }
@@ -3393,9 +3401,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               String8 outer_key = push_str8f(scratch.arena, "group_%S", key);
               UI_Box *outer_box = ui_box_from_key(ui_key_from_stringf(body->key, "###make_%S", outer_key));
               Vec2F32 mouse = ui_mouse();
-              B32 engaged = make_engagable && (contains_2f32(project_box->rect, mouse) || (outer && contains_2f32(outer_box->rect, mouse))) &&
+              // The last group's also opens from anywhere below its last
+              // row, so the pointer can cross the gap to New group.
+              B32 engaged = make_engagable && (contains_2f32(project_box->rect, mouse) ||
+                (outer && (contains_2f32(outer_box->rect, mouse) || contains_2f32(section_body_rect, mouse)))) &&
                 mouse.y >= card_last_row.y0;
-              F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1)+1.5f);
+              F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1));
               if(!owner_node.collapsed && (is_project || group_cfg != &cfg_nil_node))
               {
                 UIShell_MakeAction make = is_project ?
@@ -3490,7 +3501,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           F32 lead = em*(indent+1.5f+1.2f);
           if(project)
           {
-            lead = Max(0.f, em*(0.3f+0.4f*(depth[i]+1)+1.5f)-3.f) + em*1.2f;
+            lead = uishell_sidebar_group_title_lead(0.3f+0.4f*(depth[i]+1)) + em*1.2f;
             if(node.collapsed)
             {
               U64 shown = 0;
@@ -3621,11 +3632,6 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               Rng2F32 *extent = &drag_siblings[drag_sibling_count-1].extent;
               extent->y1 = Max(extent->y1, slot->rect.y1);
             }
-            if(ui_clicked(r.toggle))
-            {
-              if(ghost != &cfg_nil_node) { uishell_sidebar_ghost_set_expanded(ghost, 1); rd_request_frame(); }
-              else { action = node.toggle; }
-            }
             if(icon_entry)
             {
               entry_key = r.icon_sig.box->key;
@@ -3701,6 +3707,11 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               if(ui_clicked(more)) { state->header_more_anchor = more.box->key; state->header_more_open = 1; }
             }
             uishell_sidebar_row_end(state, &r);
+            if(ui_clicked(r.toggle))
+            {
+              if(ghost != &cfg_nil_node) { uishell_sidebar_ghost_set_expanded(ghost, 1); rd_request_frame(); }
+              else { action = node.toggle; }
+            }
             if(project)
             {
               UI_Signal sig = r.row_sig;
@@ -3773,9 +3784,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               String8 outer_key = push_str8f(scratch.arena, "group_%S", key);
               UI_Box *outer_box = ui_box_from_key(ui_key_from_stringf(body->key, "###make_%S", outer_key));
               Vec2F32 mouse = ui_mouse();
-              B32 engaged = make_engagable && (contains_2f32(project_box->rect, mouse) || (outer && contains_2f32(outer_box->rect, mouse))) &&
+              // The last group's also opens from anywhere below its last
+              // row, so the pointer can cross the gap to New group.
+              B32 engaged = make_engagable && (contains_2f32(project_box->rect, mouse) ||
+                (outer && (contains_2f32(outer_box->rect, mouse) || contains_2f32(section_body_rect, mouse)))) &&
                 mouse.y >= card_last_row.y0;
-              F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1)+1.5f);
+              F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1));
               if(!owner_node.collapsed && (is_project || group_cfg != &cfg_nil_node))
               {
                 UIShell_MakeAction make = is_project ?
@@ -3810,7 +3824,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             {UIShell_Make_Workspace, str8_lit("New workspace"), only_group->id},
             {UIShell_Make_Group, str8_lit("New group"), make_section->id},
           };
-          footer_extra += uishell_sidebar_make_footer(state, split->owner_cfg, make_key, makes, ArrayCount(makes), engaged, row_height, 4.f+em*(0.3f+1.5f));
+          footer_extra += uishell_sidebar_make_footer(state, split->owner_cfg, make_key, makes, ArrayCount(makes), engaged, row_height, 4.f+em*0.7f);
         }
         states[n]->footer_extra = footer_extra;
       }
@@ -4409,31 +4423,49 @@ uishell_sidebar_panel_collapsed(CFG_PanelNode *panel, F32 header, F32 *height)
 
 // Collapsed sections give their space back (sidebar-headers.md): along a
 // vertical split, a collapsed child keeps only what its headers need and the
-// open children share the rest in their saved proportions; a side-by-side
-// split shrinks only once all of it is collapsed. In memory only, so saved
-// sizes, set by hand or not, return when a section expands.
+// rest goes to the next open child below it (or above, at the end), so
+// expanding it again is one change to one neighbour. Once all are
+// collapsed, the last takes what's left. A side-by-side split shrinks only
+// once all of it is collapsed. In memory only, so saved sizes, set by hand
+// or not, return when a section expands.
 internal void
 uishell_sidebar_collapse_space(CFG_PanelNode *panel, F32 extent, F32 header)
 {
   if(panel->first == &cfg_nil_panel_node) { return; }
   if(panel->split_axis == Axis2_Y && extent > 0)
   {
-    F32 fixed = 0, open_weight = 0; B32 any = 0;
-    for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next)
+    Temp scratch = scratch_begin(0, 0);
+    U64 count = 0;
+    for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next) { count++; }
+    CFG_PanelNode **children = push_array(scratch.arena, CFG_PanelNode *, count);
+    B32 *collapsed = push_array(scratch.arena, B32, count);
+    F32 *pct = push_array(scratch.arena, F32, count);
+    U64 i = 0, open = 0;
+    for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next, i++)
     {
       F32 h = 0;
-      if(uishell_sidebar_panel_collapsed(child, header, &h)) { fixed += h; any = 1; }
-      else { open_weight += Max(0.f, child->pct_of_parent); }
+      children[i] = child;
+      collapsed[i] = uishell_sidebar_panel_collapsed(child, header, &h);
+      pct[i] = collapsed[i] ? h/extent : Max(0.f, child->pct_of_parent);
+      open += !collapsed[i];
     }
-    if(any && open_weight > 0 && fixed < extent)
+    for(i = 0; i < count; i++)
     {
-      for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next)
-      {
-        F32 h = 0;
-        child->pct_of_parent = uishell_sidebar_panel_collapsed(child, header, &h) ? h/extent :
-          Max(0.f, child->pct_of_parent)/open_weight*(1.f-fixed/extent);
-      }
+      if(!collapsed[i]) { continue; }
+      F32 freed = Max(0.f, children[i]->pct_of_parent) - pct[i];
+      U64 to = count;
+      for(U64 j = i+1; to == count && j < count; j++) { if(!collapsed[j]) { to = j; } }
+      for(U64 j = i; to == count && j > 0; j--) { if(!collapsed[j-1]) { to = j-1; } }
+      if(to < count) { pct[to] += freed; }
     }
+    if(!open)
+    {
+      F32 rest = 1.f;
+      for(i = 0; i+1 < count; i++) { rest -= pct[i]; }
+      pct[count-1] = Max(pct[count-1], rest);
+    }
+    for(i = 0; i < count; i++) { children[i]->pct_of_parent = pct[i]; }
+    scratch_end(scratch);
   }
   for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next)
   { uishell_sidebar_collapse_space(child, panel->split_axis == Axis2_Y ? extent*child->pct_of_parent : extent, header); }

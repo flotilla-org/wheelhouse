@@ -280,12 +280,16 @@ uishell_sidebar_name_field(UIShell_SidebarState *state, String8 key, U32 *outcom
     }
   }
   state->rename_focus = 0;
+  ui_take_text_field_focus();
   if(!apply && !cancel)
   {
     ui_consume_text_edit_events(field_key, state->rename_text, sizeof(state->rename_text), &state->rename_size,
                                 &state->rename_cursor, &state->rename_mark, 0);
   }
+  // It shows focused (its cursor) whichever panel has focus.
   UI_Box *box;
+  ui_push_focus_active(UI_FocusKind_Root);
+  ui_push_focus_active(UI_FocusKind_On);
   UI_CornerRadius(3.f)
   {
     box = ui_build_box_from_string(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_MouseClickable|
@@ -304,6 +308,8 @@ uishell_sidebar_name_field(UIShell_SidebarState *state, String8 key, U32 *outcom
     ui_box_equip_display_string(text_box, text);
     ui_box_equip_custom_draw(text_box, ui_line_edit_draw, draw);
   }
+  ui_pop_focus_active();
+  ui_pop_focus_active();
   *outcome = apply ? 1 : cancel ? 2 : 0;
   if(apply || cancel) { rd_request_frame(); }
   return ui_signal_from_box(box);
@@ -370,17 +376,31 @@ uishell_sidebar_make_footer(UIShell_SidebarState *state, CFG_Node *window, Strin
                             B32 engaged, F32 row_height, F32 inset)
 {
   B32 naming = state->make_key_size && str8_match(str8(state->make_key, state->make_key_size), key, 0);
+  // While a press is held (dragging the scroll bar, say), it stays as it
+  // was: opening moves the rows under the pointer, which would close it again.
+  UI_Box *previous = ui_box_from_key(ui_key_from_stringf(ui_active_seed_key(), "###make_%S", key));
+  if(!ui_key_match(ui_active_key(UI_MouseButtonKind_Left), ui_key_zero()))
+  { engaged = !ui_box_is_nil(previous) && dim_2f32(previous->rect).y >= 1.f; }
   F32 t = ui_anim(ui_key_from_stringf(ui_key_zero(), "make_footer_%S", key), engaged || naming ? 1.f : 0.f,
                   .rate = rd_state->menu_animation_rate, .epsilon = 0.001f);
   F32 height = floor_f32(row_height*t);
   UI_Box *row;
-  UI_PrefHeight(ui_px(height, 1)) UI_PrefWidth(ui_pct(1, 0)) UI_ChildLayoutAxis(Axis2_X)
+  UI_PrefHeight(ui_px(height, 1)) UI_PrefWidth(ui_pct(1, 0)) UI_ChildLayoutAxis(Axis2_Y)
   {
     row = ui_build_box_from_stringf(UI_BoxFlag_Clip, "###make_%S", key);
     ui_box_equip_display_string(row, push_str8f(ui_build_arena(), "###make_%S", key));
   }
   if(height < 1.f) { return 0; }
-  UI_Parent(row) UI_PrefHeight(ui_px(row_height, 1))
+  // Its controls sit 2px in from the row's top, as a row's own box does, so
+  // the clip leaves a field's border whole.
+  UI_Box *line;
+  UI_Parent(row)
+  {
+    ui_spacer(ui_px(2.f, 1));
+    UI_PrefHeight(ui_px(row_height-4.f, 1)) UI_PrefWidth(ui_pct(1, 0)) UI_ChildLayoutAxis(Axis2_X)
+    { line = ui_build_box_from_key(0, ui_key_zero()); }
+  }
+  UI_Parent(line) UI_PrefHeight(ui_px(row_height-4.f, 1))
   {
     ui_spacer(ui_px(inset, 1));
     if(naming)

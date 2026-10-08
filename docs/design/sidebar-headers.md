@@ -13,8 +13,9 @@ preset "Groups redesign"; the operator's knob values are at the end.
 - **The card** is inset equally from the left and right. It keeps its side
   accent: a project's colour, a neutral one for a local group. The horizontal
   rule under the title goes.
-- **The header** has no icon. Its title is semibold and starts where the
-  rows' icons start; rows get no extra indent. The collapse indicator follows
+- **The header** has no icon. Its title is semibold and starts just after
+  the accent; the rows' icons line up with it, their own expand/collapse
+  moved to the end of the row (to be polished with the card work). The collapse indicator follows
   the title and shows only on hover. A collapsed group shows its count,
   dimmed, after the title; a project keeps its chips.
 - **Three levels:** section (small uppercase), group (semibold), row
@@ -31,12 +32,15 @@ preset "Groups redesign"; the operator's knob values are at the end.
 
 - **New workspace** is a footer. When the pointer reaches a group's last
   row, a "+ New workspace" row pushes in below it, and leaves with the
-  pointer. Choosing it turns the row into a name field (Enter creates, Esc
+  pointer. A footer stays as it is while a button is held (dragging the
+  scroll bar would otherwise open and close it as rows pass the pointer). Choosing it turns the row into a name field (Enter creates, Esc
   cancels). For a project, the workspace lives with the project.
 - **New group** shares the trigger. At the section's last group, "+ New
   group" opens too, at the section's level: below the card when the group is
   a visible card, beside New workspace when it isn't (a one-group section,
-  or Workspaces). Choosing one makes it the name field.
+  or Workspaces). Below the last card, anywhere under its last row keeps
+  both open, so the pointer can reach New group. Choosing one makes it the
+  name field, which takes the keyboard even from a focused terminal.
 - **Workspaces** uses the same footer instead of a first-entry row.
 
 ## Mini tabs
@@ -50,7 +54,10 @@ repeat it.
 ## Collapse gives space back
 
 A collapsed section's panel shrinks to its header along its parent's vertical
-split, and its siblings take the space; expanding restores the size it had.
+split, and the next open section below it (or above, at the end) takes the
+space, so expanding restores one neighbour rather than all. Once all are
+collapsed the last takes what's left. Expanding restores the size it had.
+How space is shared may be tuned later.
 In a side-by-side split, the row shrinks only once all of its panels are
 collapsed. A size the operator set by hand is kept.
 

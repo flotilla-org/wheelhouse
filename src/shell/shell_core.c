@@ -4796,6 +4796,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             }
             
             // rjf: build add-new-tab button
+            UI_Key sidebar_add_menu_key = ui_key_zero();
             UI_TextAlignment(UI_TextAlign_Center)
               UI_PrefWidth(ui_px(tab_bar_vheight, 1.f))
               UI_PrefHeight(ui_px(tab_bar_vheight, 1.f))
@@ -4840,7 +4841,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                   UI_Key sidebar_add_menu = ui_key_from_stringf(add_new_box->key, "sidebar_add_menu");
                   if(sidebar_panel)
                   {
-                    uishell_sidebar_tab_add_menu(ws, panel->cfg, sidebar_add_menu);
+                    sidebar_add_menu_key = sidebar_add_menu;
                     if(ui_pressed(sig)) { ui_ctx_menu_open(sidebar_add_menu, add_new_box->key, v2f32(0, dim_2f32(add_new_box->rect).y)); }
                   }
                   else if(ui_pressed(sig))
@@ -4864,6 +4865,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 }
               }
             }
+            // Built outside the button so it takes none of its styling.
+            if(!ui_key_match(sidebar_add_menu_key, ui_key_zero()))
+            { uishell_sidebar_tab_add_menu(ws, panel->cfg, sidebar_add_menu_key); }
             
             // rjf: interact with tab bar
             ui_signal_from_box(tab_bar_box);
@@ -10500,6 +10504,7 @@ rd_frame(void)
                                        !ws->query_is_active &&
                                        !ws->menu_bar_focused &&
                                        !ws->ui->hover_card_focus &&
+                                       !(ws->ui->text_field_focus_build_index && ws->ui->text_field_focus_build_index+1 >= ws->ui->build_index) &&
                                        str8_match(focused_view->string, str8_lit("terminal"), 0));
       B32 terminal_claims_keyboard_input = (terminal_input_is_focused &&
                                             !(event->modifiers & WM_Modifier_Super) &&

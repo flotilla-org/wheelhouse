@@ -412,6 +412,13 @@ uishell_local_groups_diagnostics(CFG_Node *window)
                   "at the last group's last row, its New workspace footer and the section's New group open");
       GroupsCheck(uishell_local_groups_footer(section_footer)->rect.y0 >= uishell_local_groups_box(push_str8f(arena, "###project_%S", beta_key))->rect.y1,
                   "New group opens below the card, at the section's level");
+      {
+        Rng2F32 card = uishell_local_groups_box(push_str8f(arena, "###project_%S", beta_key))->rect;
+        F32 below = uishell_local_groups_footer(section_footer)->rect.y0;
+        uishell_local_groups_hover(ws, window, arena, v2f32(center_2f32(card).x, below > card.y1+1.f ? (card.y1+below)*0.5f : card.y1+0.5f), 10);
+        GroupsCheck(dim_2f32(uishell_local_groups_footer(section_footer)->rect).y >= 1,
+                    "New group stays open while the pointer crosses the gap below the card to it");
+      }
       // New group, named in place.
       U64 groups_before = uishell_sidebar_local_group_count(first);
       String8 group_button = push_str8f(arena, "###make_%S_0", section_footer);
@@ -420,7 +427,11 @@ uishell_local_groups_diagnostics(CFG_Node *window)
       uishell_local_groups_frame(ws, window, arena, group_button, UI_EventKind_Press, WM_Key_LeftMouseButton);
       uishell_local_groups_frame(ws, window, arena, group_button, UI_EventKind_Release, WM_Key_LeftMouseButton);
       uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      GroupsCheck(ui_text_field_focus(), "an open name field takes the keyboard from a focused terminal");
       uishell_local_groups_type(ws, window, arena, state, "Delta");
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      GroupsCheck(!ui_text_field_focus(), "a closed name field gives the keyboard back");
       CFG_Node *delta = first->last;
       GroupsCheck(uishell_sidebar_local_group_count(first) == groups_before+1 && str8_match(delta->string, str8_lit("group"), 0) &&
                   str8_match(uishell_sidebar_local_field(delta, str8_lit("label")), str8_lit("Delta"), 0),
@@ -695,30 +706,39 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     UIShell_ControlledSplit owner_split = {.owner_cfg = owner};
     Rng2F32 rect = r2f32p(0, 0, 300, 600);
     F32 header = 0, collapsed_h = 0;
-    for(U32 pass = 0; pass < 2; pass++)
+    for(U32 pass = 0; pass < 3; pass++)
     {
       if(pass == 1) { cfg_node_new(cfg, cfg_node_child_from_string(leaves[2], str8_lit("sidebar_section")), str8_lit("section_collapsed")); }
+      if(pass == 2) { cfg_node_new(cfg, cfg_node_child_from_string(leaves[3], str8_lit("sidebar_section")), str8_lit("section_collapsed")); }
       UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(arena, owner, root);
+      F32 row_h = 0, last_h = 0;
       UI_FontSize(11)
       {
         uishell_sidebar_size_panels(&owner_split, &mount, rect);
         header = floor_f32(ui_top_font_size()*2.2f);
         uishell_sidebar_panel_collapsed(mount.panel_tree.root->first, header, &collapsed_h);
+        uishell_sidebar_panel_collapsed(mount.panel_tree.root->first->next, header, &row_h);
+        uishell_sidebar_panel_collapsed(mount.panel_tree.root->last, header, &last_h);
       }
       CFG_PanelNode *a = mount.panel_tree.root->first, *r = a->next, *d = r->next;
       F32 sum = a->pct_of_parent + r->pct_of_parent + d->pct_of_parent;
       if(pass == 0)
       {
         GroupsCheck(abs_f32(a->pct_of_parent*600.f - collapsed_h) < 1.f && abs_f32(sum-1.f) < .001f &&
-                    abs_f32(r->pct_of_parent/d->pct_of_parent - 0.5f) < .001f,
-                    "a collapsed section shrinks to its header; the others share the rest in their saved proportions");
+                    abs_f32(d->pct_of_parent - 0.5f) < .001f,
+                    "a collapsed section shrinks to its header and gives the rest to the next open one below");
+      }
+      else if(pass == 1)
+      {
+        GroupsCheck(abs_f32(r->pct_of_parent*600.f - row_h) < 1.f && abs_f32(sum-1.f) < .001f &&
+                    abs_f32(d->pct_of_parent*600.f - (600.f-collapsed_h-row_h)) < 1.f,
+                    "a side-by-side row shrinks once all of it is collapsed");
       }
       else
       {
-        F32 row_h = 0;
-        UI_FontSize(11) { uishell_sidebar_panel_collapsed(r, header, &row_h); }
-        GroupsCheck(abs_f32(r->pct_of_parent*600.f - row_h) < 1.f && abs_f32(sum-1.f) < .001f,
-                    "a side-by-side row shrinks once all of it is collapsed");
+        GroupsCheck(abs_f32(a->pct_of_parent*600.f - collapsed_h) < 1.f && abs_f32(r->pct_of_parent*600.f - row_h) < 1.f &&
+                    abs_f32(sum-1.f) < .001f && d->pct_of_parent*600.f > last_h,
+                    "once all are collapsed, the last takes what's left");
       }
     }
     GroupsCheck(str8_match(root->first->string, str8_lit("0.25"), 0) && str8_match(row->string, str8_lit("0.25"), 0) &&

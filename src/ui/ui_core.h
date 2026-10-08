@@ -696,6 +696,9 @@ struct UI_State
   B32 edit_menu_focus;
   // Interactive hover overlays own pointer hits; only a click gives them keys.
   B32 hover_card_focus;
+  // A name field outside the focus tree owns the keyboard: the build index
+  // it was last built in (ui_text_field_focus).
+  U64 text_field_focus_build_index;
   UI_HoverCardMask *hover_card_extra;
   UI_Key hover_card_keys[2];
   Rng2F32 hover_card_rects[2];
@@ -908,6 +911,8 @@ internal B32 ui_key_press(WM_Modifiers mods, WM_Key key);
 internal B32 ui_key_release(WM_Modifiers mods, WM_Key key);
 internal B32 ui_text(U32 character);
 internal B32 ui_slot_press(UI_EventActionSlot slot);
+internal void ui_take_text_field_focus(void);
+internal B32 ui_text_field_focus(void);
 
 //- rjf: autocomplete info
 internal void ui_set_autocomplete_string(String8 string);
