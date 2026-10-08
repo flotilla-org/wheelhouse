@@ -393,10 +393,14 @@ uishell_sidebar_pin_migrate_container(CFG_Node *window, CFG_Node *container)
     cfg_node_insert_child(rd_state->cfg, v->parent, v, view);
     Temp scratch = scratch_begin(0, 0);
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")),
-      push_str8f(scratch.arena, ".section:%S", uishell_sidebar_local_field(group->parent, str8_lit("id"))));
+      uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(group->parent, str8_lit("id"))));
     scratch_end(scratch);
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_field(group->parent, str8_lit("label")));
     if(selected) { cfg_node_new(rd_state->cfg, view, str8_lit("selected")); }
+    // The area's own state: its collapsed header. Its other children were
+    // its label and selection, carried above; a pin's form travels with it.
+    if(cfg_node_child_from_string(v, str8_lit("section_collapsed")) != &cfg_nil_node)
+    { cfg_node_new(rd_state->cfg, view, str8_lit("section_collapsed")); }
     for(CFG_Node *c = v->first, *after; c != &cfg_nil_node; c = after)
     {
       after = c->next;
@@ -566,7 +570,7 @@ internal CFG_Node *
 uishell_sidebar_local_view(CFG_Node *window, CFG_Node *group)
 {
   Temp scratch = scratch_begin(0, 0);
-  String8 key = push_str8f(scratch.arena, ".section:%S", uishell_sidebar_local_field(group->parent, str8_lit("id")));
+  String8 key = uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(group->parent, str8_lit("id")));
   CFG_Node *view = uishell_sidebar_region_view(window, key);
   scratch_end(scratch);
   return view;
@@ -578,8 +582,8 @@ uishell_sidebar_local_view_group(CFG_Node *window, CFG_Node *view)
 {
   if(!str8_match(view->string, str8_lit("sidebar_section"), 0)) { return &cfg_nil_node; }
   String8 key = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
-  if(!str8_match(str8_prefix(key, 9), str8_lit(".section:"), 0)) { return &cfg_nil_node; }
-  String8 id = str8_skip(key, 9);
+  String8 id = uishell_sidebar_local_key_id(key);
+  if(!id.size) { return &cfg_nil_node; }
   CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
   for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
   {
@@ -618,7 +622,7 @@ uishell_sidebar_local_new_view(CFG_Node *panel, CFG_Node *section)
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *view = cfg_node_new(rd_state->cfg, panel, str8_lit("sidebar_section"));
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")),
-    push_str8f(scratch.arena, ".section:%S", uishell_sidebar_local_field(section, str8_lit("id"))));
+    uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(section, str8_lit("id"))));
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_field(section, str8_lit("label")));
   cfg_node_new(rd_state->cfg, view, str8_lit("selected"));
   scratch_end(scratch);
@@ -1198,7 +1202,8 @@ uishell_sidebar_ghost_card(UIShell_SidebarState *state, RD_WindowState *ws, UISh
 
 // Retired: saved pinned areas migrate into local sections before Views
 // render (uishell_sidebar_pin_migrate). The type stays registered so a saved
-// layout loads until then.
+// layout loads until then; remove it, and the migration, once layouts saved
+// before 2026-10-08 no longer need loading (drag-model.md, "Migration").
 RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
 {
 }

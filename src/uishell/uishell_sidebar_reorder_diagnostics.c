@@ -379,6 +379,35 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     uishell_sidebar_manual_sizing(window, 0);
   }
 
+  // A saved pinned area migrates in place, even in a floating panel: its
+  // View becomes its section's View, keeping its label, selection and
+  // collapse, and its pins move into the section's one group.
+  {
+    B32 had_floating = cfg_node_child_from_string(window, str8_lit("floating_panels")) != &cfg_nil_node;
+    CFG_Node *floating = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("floating_panels"));
+    CFG_Node *panel = cfg_node_new(rd_state->cfg, floating, str8_lit("1"));
+    CFG_Node *old_area = cfg_node_new(rd_state->cfg, panel, str8_lit("pinned_cards"));
+    uishell_sidebar_local_set_field(old_area, str8_lit("label"), str8_lit("Floating pins"));
+    cfg_node_new(rd_state->cfg, old_area, str8_lit("selected"));
+    cfg_node_new(rd_state->cfg, old_area, str8_lit("section_collapsed"));
+    CFG_Node *pin = cfg_node_new(rd_state->cfg, old_area, str8_lit("card"));
+    uishell_sidebar_local_set_field(pin, str8_lit("ghost"), str8_lit("floating-pin"));
+    uishell_sidebar_local_set_field(pin, str8_lit("kind"), str8_lit("convoy"));
+    uishell_sidebar_local_set_field(pin, str8_lit("entity"), str8_lit("c1"));
+    cfg_node_new(rd_state->cfg, pin, str8_lit("compact"));
+    uishell_sidebar_pin_migrate(window);
+    CFG_Node *migrated = cfg_node_child_from_string(panel, str8_lit("sidebar_section"));
+    CFG_Node *group = uishell_sidebar_local_view_group(window, migrated);
+    ReorderCheck(cfg_node_child_from_string(panel, str8_lit("pinned_cards")) == &cfg_nil_node && migrated != &cfg_nil_node &&
+                 cfg_node_child_from_string(migrated, str8_lit("selected")) != &cfg_nil_node &&
+                 cfg_node_child_from_string(migrated, str8_lit("section_collapsed")) != &cfg_nil_node &&
+                 str8_match(uishell_sidebar_local_field(group->parent, str8_lit("label")), str8_lit("Floating pins"), 0) &&
+                 cfg_node_child_from_string(group, str8_lit("card")) == pin && !uishell_sidebar_pin_expanded(pin),
+                 "a floating pinned area migrates in place into a section and group, keeping its pins and state");
+    if(group != &cfg_nil_node) { cfg_node_release(rd_state->cfg, group->parent); }
+    if(had_floating) { cfg_node_release(rd_state->cfg, panel); } else { cfg_node_release(rd_state->cfg, floating); }
+  }
+
   // A reordered run's row offers Reset order, which returns it to data order.
   UIShell_ReorderDrag menu = uishell_sidebar_reorder_gesture(ws, &split, view, &state, str8_lit("c3"), v2f32(0, 0), str8_zero(), 0, UIShell_ReorderMode_RightClick, &cfg_nil_node);
   ReorderCheck(menu.menu, "reordered row opens its menu");

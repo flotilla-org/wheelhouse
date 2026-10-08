@@ -828,6 +828,25 @@ typedef enum UIShell_SidebarRole
 }
 UIShell_SidebarRole;
 
+// A section someone made is keyed `.section:<id>` among sections; the
+// default (Workspaces) one is `.section:workspaces`.
+read_only global String8 uishell_sidebar_local_prefix = str8_lit_comp(".section:");
+read_only global String8 uishell_sidebar_default_section_key = str8_lit_comp(".section:workspaces");
+
+internal String8
+uishell_sidebar_local_key(Arena *arena, String8 id)
+{
+  return push_str8f(arena, "%S%S", uishell_sidebar_local_prefix, id);
+}
+
+// The section id a key names, or empty when it isn't a section someone made.
+internal String8
+uishell_sidebar_local_key_id(String8 key)
+{
+  if(!str8_match(str8_prefix(key, uishell_sidebar_local_prefix.size), uishell_sidebar_local_prefix, 0)) { return str8_zero(); }
+  return str8_skip(key, uishell_sidebar_local_prefix.size);
+}
+
 internal void
 uishell_sidebar_roles(UIShell_SidebarState *state)
 {
@@ -844,7 +863,7 @@ uishell_sidebar_roles(UIShell_SidebarState *state)
     AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
     if(!str8_match(uishell_sidebar_string(node.layout), str8_lit("section"), 0)) { continue; }
     state->roles[i] = UIShell_SidebarRole_LocalSection;
-    state->role_keys[i] = push_str8f(state->roles_arena, ".section:%S", uishell_sidebar_string(node.entity_id));
+    state->role_keys[i] = uishell_sidebar_local_key(state->roles_arena, uishell_sidebar_string(node.entity_id));
     if(node.parent != ANDAMENTO_NONE) { state->roles[node.parent] = UIShell_SidebarRole_Container; }
   }
   for(U64 i = 0; i < count; i++)
@@ -878,7 +897,7 @@ uishell_sidebar_leftover_hidden(UIShell_SidebarState *state, U64 i, AndamentoNod
   if(!str8_match(uishell_sidebar_string(node.key), str8_lit(".unplaced"), 0) || uishell_sidebar_has_children(state, i)) { return 0; }
   uishell_sidebar_roles(state);
   for(U64 k = 0; k < andamento_snapshot_node_count(state->snapshot); k++)
-  { if(str8_match(state->role_keys[k], str8_lit(".section:workspaces"), 0)) { return 1; } }
+  { if(str8_match(state->role_keys[k], uishell_sidebar_default_section_key, 0)) { return 1; } }
   return 0;
 }
 
@@ -952,10 +971,11 @@ uishell_sidebar_local_root(CFG_Node *window)
 internal B32
 uishell_sidebar_local_section_exists(CFG_Node *window, String8 key)
 {
-  if(!str8_match(str8_prefix(key, 9), str8_lit(".section:"), 0)) { return 0; }
+  String8 id = uishell_sidebar_local_key_id(key);
+  if(!id.size) { return 0; }
   CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
   for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
-  { if(str8_match(uishell_sidebar_local_field(section, str8_lit("id")), str8_skip(key, 9), 0)) { return 1; } }
+  { if(str8_match(uishell_sidebar_local_field(section, str8_lit("id")), id, 0)) { return 1; } }
   return 0;
 }
 
@@ -2297,7 +2317,7 @@ uishell_sidebar_section_hosts_chrome(String8 key)
 {
   // The default local section (Workspaces), or the leftover section when
   // something is left over.
-  return str8_match(key, str8_lit(".section:workspaces"), 0) || str8_match(key, str8_lit(".unplaced"), 0);
+  return str8_match(key, uishell_sidebar_default_section_key, 0) || str8_match(key, str8_lit(".unplaced"), 0);
 }
 
 internal void
