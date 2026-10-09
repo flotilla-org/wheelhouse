@@ -4738,13 +4738,21 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                         ui_box_equip_display_fstrs(name_box, &tab_fstrs);
                       }
                     }
+                    // The gear and close buttons hover as circles, inset from the
+                    // tab's edges, as upstream's do.
+                    F32 tab_button_margin_x = ceil_f32(ui_top_font_size()*0.5f);
+                    F32 tab_button_inner = tab_close_width_px - 2*tab_button_margin_x;
+                    F32 tab_button_margin_y = Max(0.f, floor_f32((chrome_plan->tab_bar_vheight - tab_button_inner)*0.5f));
+                    F32 tab_button_radius = tab_button_inner*0.5f;
                     if(chrome_plan->presentation == RD_DockPresentation_Tabs && tab_is_selected && panel_tree.focused == panel)
                     {
                       UI_PrefWidth(ui_px(tab_close_width_px, 1.f)) UI_TextAlignment(UI_TextAlign_Center)
                         RD_Font(RD_FontSlot_Icons)
                         UI_FontSize(ui_top_font_size()*0.75f)
                         UI_TagF(".") UI_TagF("tab") UI_TagF("weak") UI_TagF("implicit")
-                        UI_CornerRadius(0)
+                        UI_VisualMarginX(tab_button_margin_x)
+                        UI_VisualMarginY(tab_button_margin_y)
+                        UI_CornerRadius(tab_button_radius)
                       {
                         UI_Box *edit_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
                                                                      UI_BoxFlag_DrawBorder|
@@ -4774,8 +4782,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                       RD_Font(RD_FontSlot_Icons)
                       UI_FontSize(ui_top_font_size()*0.75f)
                       UI_TagF(".") UI_TagF("tab") UI_TagF("weak") UI_TagF("implicit")
-                      UI_CornerRadius00(0)
-                      UI_CornerRadius01(0)
+                      UI_VisualMarginX(tab_button_margin_x)
+                      UI_VisualMarginY(tab_button_margin_y)
+                      UI_CornerRadius(tab_button_radius)
                     {
                       UI_Box *close_box = ui_build_box_from_stringf((rd_dock_can_close(tab) ? 0 : UI_BoxFlag_Disabled)|UI_BoxFlag_Clickable|
                                                                     UI_BoxFlag_DrawBorder|
@@ -6852,7 +6861,7 @@ rd_window_frame(void)
 
             //- rjf: leading buttons ("a") niche — elements resolved here (ADR-0006)
             if(ws->chrome_niche[RD_ChromeElementKind_SidebarCollapse] == RD_ChromeNiche_TitleBarLeading)
-              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill UI_TagF("implicit") UI_CornerRadius(ui_top_font_size()*1.f) UI_VisualMargin(ui_top_font_size()*0.5f)
             {
               UI_Signal sig = rd_chrome_build_sidebar_collapse(root_controlled_split.owner_cfg);
               wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
@@ -6924,7 +6933,10 @@ rd_window_frame(void)
                   }
                   
                   // rjf: make ui
-                  for(U64 idx = 0; idx < app_menus.count; idx += 1)
+                  UI_TagF("implicit")
+                    UI_VisualMargin(ui_top_font_size()*0.45f)
+                    UI_CornerRadius(ui_top_font_size()*0.5f)
+                    for(U64 idx = 0; idx < app_menus.count; idx += 1)
                   {
                     RD_AppMenuSpec *spec = &app_menus.v[idx];
                     ui_set_next_fastpath_codepoint(spec->codepoint);
@@ -6937,7 +6949,8 @@ rd_window_frame(void)
                     {
                       ui_set_next_flags(UI_BoxFlag_DrawTextFastpathCodepoint);
                     }
-                    UI_Signal sig = rd_menu_bar_button(spec->label);
+                    UI_Signal sig = {0};
+                    UI_TagF(!ui_ctx_menu_is_open(menu_keys[idx]) ? "weak" : "") { sig = rd_menu_bar_button(spec->label); }
                     wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
                     if(menu_open)
                     {
@@ -6976,14 +6989,14 @@ rd_window_frame(void)
           //- rjf: trailing buttons ("b") niche — elements resolved here (ADR-0006)
 
           if(ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_TitleBarTrailing)
-            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill UI_TagF("implicit") UI_CornerRadius(ui_top_font_size()*1.f) UI_VisualMargin(ui_top_font_size()*0.5f)
           {
             UI_Signal sig = rd_chrome_build_reveal_workspace(window);
             wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
           }
 
           if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_TitleBarTrailing)
-            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill UI_TagF("implicit") UI_CornerRadius(ui_top_font_size()*1.f) UI_VisualMargin(ui_top_font_size()*0.5f)
           {
             UI_Signal sig = rd_chrome_build_overview_toggle(ws);
             wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
@@ -7031,11 +7044,12 @@ rd_window_frame(void)
           
           // rjf: loaded project viz
           if(do_user_prof)
+            UI_VisualMargin(ui_top_font_size()*0.5f)
+            UI_CornerRadius(ui_top_font_size()*0.5f)
           {
             ui_set_next_pref_width(ui_children_sum(1));
             ui_set_next_child_layout_axis(Axis2_X);
             UI_Box *prof_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
-                                                         UI_BoxFlag_DrawBorder|
                                                          UI_BoxFlag_DrawBackground|
                                                          UI_BoxFlag_DrawHotEffects|
                                                          UI_BoxFlag_DrawActiveEffects,
@@ -7095,10 +7109,11 @@ rd_window_frame(void)
                 rd_app_menu_spec_content(spec);
               }
             }
-            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill UI_TagF("implicit") UI_CornerRadius(ui_top_font_size()*1.f) UI_VisualMargin(ui_top_font_size()*0.5f)
             {
               ui_set_next_child_layout_axis(Axis2_Y);
               UI_Box *kebab_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                                           UI_BoxFlag_DrawBackground|
                                                            UI_BoxFlag_DrawHotEffects|
                                                            UI_BoxFlag_DrawActiveEffects,
                                                            "###app_menu_kebab_button");
@@ -7149,6 +7164,10 @@ rd_window_frame(void)
 
           // rjf: min/max/close buttons
           if(draw_custom_title_bar_controls)
+            UI_TagF("implicit")
+            UI_TagF("weak")
+            UI_VisualMargin(ui_top_font_size()*0.5f)
+            UI_CornerRadius(ui_top_font_size()*0.9f)
           {
             UI_Signal min_sig = {0};
             UI_Signal max_sig = {0};
@@ -7162,9 +7181,9 @@ rd_window_frame(void)
               max_sig = rd_icon_buttonf(wm_window_is_maximized(ws->os) ? RD_IconKind_WindowRestore : RD_IconKind_Window, 0, "##maximize");
             }
             UI_PrefWidth(ui_px(button_dim, 1.f))
-              UI_TagF("bad_pop")
+              UI_FontSize(ui_top_font_size()*0.75f)
             {
-              cls_sig = rd_icon_buttonf(RD_IconKind_X,      0, "##close");
+              cls_sig = rd_icon_buttonf(RD_IconKind_X, 0, "##close");
             }
             if(ui_clicked(min_sig))
             {
@@ -8045,17 +8064,22 @@ rd_window_frame(void)
       // rjf: draw background
       if(box->flags & UI_BoxFlag_DrawBackground)
       {
+        Rng2F32 box_bg_rect = r2f32p(box->rect.x0 + box->visual_margin.x,
+                                     box->rect.y0 + box->visual_margin.y,
+                                     box->rect.x1 - box->visual_margin.x,
+                                     box->rect.y1 - box->visual_margin.y);
+        
         // rjf: hot effect extension (drop shadow)
         if(box->flags & UI_BoxFlag_DrawHotEffects)
         {
-          Rng2F32 drop_shadow_rect = shift_2f32(pad_2f32(box->rect, 8), v2f32(4, 4));
+          Rng2F32 drop_shadow_rect = shift_2f32(pad_2f32(box_bg_rect, 8), v2f32(4, 4));
           Vec4F32 color = drop_shadow_color;
           color.w *= t*box_background_color.w;
           dr_rect(drop_shadow_rect, color, 0.8f, 0, 8.f);
         }
         
         // rjf: draw background
-        R_Rect2DInst *inst = dr_rect(pad_2f32(box->rect, 1.f), box_background_color, 0, 0, border_softness*1.f);
+        R_Rect2DInst *inst = dr_rect(pad_2f32(box_bg_rect, 1.f), box_background_color, 0, 0, border_softness*1.f);
         MemoryCopyArray(inst->corner_radii, box_corner_radii);
         
         // rjf: hot effect extension
@@ -8065,24 +8089,24 @@ rd_window_frame(void)
           Vec4F32 hover_color = ui_color_from_tags_key_name(box->tags_key, str8_lit("hover"));
           
           // rjf: brighten
+          if(is_hot)
           {
             Vec4F32 color = hover_color;
-            color.w *= 0.05f;
-            if(!is_hot)
-            {
-              color.w *= t;
-            }
-            R_Rect2DInst *inst = dr_rect(pad_2f32(box->rect, 1.f), v4f32(0, 0, 0, 0), 0, 0, border_softness*1.f);
+            color.w *= 0.015f;
+            R_Rect2DInst *inst = dr_rect(pad_2f32(box_bg_rect, 1.f), v4f32(0, 0, 0, 0), 0, 0, border_softness*1.f);
             inst->colors[Corner_00] = color;
             inst->colors[Corner_10] = color;
+            inst->colors[Corner_01] = color;
+            inst->colors[Corner_11] = color;
             MemoryCopyArray(inst->corner_radii, box_corner_radii);
           }
           
           // rjf: soft circle around mouse
-          if(box->hot_t > 0.01f) DR_ClipScope(intersect_2f32(box->rect, dr_top_clip()))
+#if 0
+          if(box->hot_t > 0.01f && dim_2f32(box->rect).x > box->font_size*8.f) DR_ClipScope(intersect_2f32(box_bg_rect, dr_top_clip()))
           {
             Vec4F32 color = hover_color;
-            color.w *= 0.02f;
+            color.w *= 0.025f;
             if(!is_hot)
             {
               color.w *= t;
@@ -8090,10 +8114,11 @@ rd_window_frame(void)
             Vec2F32 center = ui_mouse();
             Vec2F32 box_dim = dim_2f32(box->rect);
             F32 max_dim = Max(box_dim.x, box_dim.y);
-            F32 radius = box->font_size*12.f;
+            F32 radius = box->font_size*24.f;
             radius = Min(max_dim, radius);
-            dr_rect(pad_2f32(r2f32(center, center), radius), color, radius, 0, radius/3.f);
+            dr_rect(pad_2f32(r2f32(center, center), radius*2.f), color, radius, 0, radius/2.f);
           }
+#endif
         }
         
         // rjf: active effect extension
@@ -8103,15 +8128,15 @@ rd_window_frame(void)
           shadow_color.w *= 0.5f*box->active_t;
           Vec2F32 shadow_size =
           {
-            (box->rect.x1 - box->rect.x0)*0.60f*box->active_t,
-            (box->rect.y1 - box->rect.y0)*0.60f*box->active_t,
+            (box_bg_rect.x1 - box_bg_rect.x0)*0.60f*box->active_t,
+            (box_bg_rect.y1 - box_bg_rect.y0)*0.60f*box->active_t,
           };
           shadow_size.x = Clamp(0, shadow_size.x, box->font_size*2.f);
           shadow_size.y = Clamp(0, shadow_size.y, box->font_size*2.f);
           
           // rjf: top -> bottom dark effect
           {
-            R_Rect2DInst *inst = dr_rect(r2f32p(box->rect.x0, box->rect.y0, box->rect.x1, box->rect.y0 + shadow_size.y), v4f32(0, 0, 0, 0), 0, 0, 1.f);
+            R_Rect2DInst *inst = dr_rect(r2f32p(box_bg_rect.x0, box_bg_rect.y0, box_bg_rect.x1, box_bg_rect.y0 + shadow_size.y), v4f32(0, 0, 0, 0), 0, 0, 1.f);
             inst->colors[Corner_00] = inst->colors[Corner_10] = shadow_color;
             inst->colors[Corner_01] = inst->colors[Corner_11] = v4f32(0.f, 0.f, 0.f, 0.0f);
             MemoryCopyArray(inst->corner_radii, box_corner_radii);
@@ -8119,7 +8144,7 @@ rd_window_frame(void)
           
           // rjf: bottom -> top light effect
           {
-            R_Rect2DInst *inst = dr_rect(r2f32p(box->rect.x0, box->rect.y1 - shadow_size.y, box->rect.x1, box->rect.y1), v4f32(0, 0, 0, 0), 0, 0, 1.f);
+            R_Rect2DInst *inst = dr_rect(r2f32p(box_bg_rect.x0, box_bg_rect.y1 - shadow_size.y, box_bg_rect.x1, box_bg_rect.y1), v4f32(0, 0, 0, 0), 0, 0, 1.f);
             inst->colors[Corner_00] = inst->colors[Corner_10] = v4f32(0, 0, 0, 0);
             inst->colors[Corner_01] = inst->colors[Corner_11] = v4f32(1.0f, 1.0f, 1.0f, 0.08f*box->active_t);
             MemoryCopyArray(inst->corner_radii, box_corner_radii);
@@ -8127,7 +8152,7 @@ rd_window_frame(void)
           
           // rjf: left -> right dark effect
           {
-            R_Rect2DInst *inst = dr_rect(r2f32p(box->rect.x0, box->rect.y0, box->rect.x0 + shadow_size.x, box->rect.y1), v4f32(0, 0, 0, 0), 0, 0, 1.f);
+            R_Rect2DInst *inst = dr_rect(r2f32p(box_bg_rect.x0, box_bg_rect.y0, box_bg_rect.x0 + shadow_size.x, box_bg_rect.y1), v4f32(0, 0, 0, 0), 0, 0, 1.f);
             inst->colors[Corner_10] = inst->colors[Corner_11] = v4f32(0.f, 0.f, 0.f, 0.f);
             inst->colors[Corner_00] = shadow_color;
             inst->colors[Corner_01] = shadow_color;
@@ -8136,7 +8161,7 @@ rd_window_frame(void)
           
           // rjf: right -> left dark effect
           {
-            R_Rect2DInst *inst = dr_rect(r2f32p(box->rect.x1 - shadow_size.x, box->rect.y0, box->rect.x1, box->rect.y1), v4f32(0, 0, 0, 0), 0, 0, 1.f);
+            R_Rect2DInst *inst = dr_rect(r2f32p(box_bg_rect.x1 - shadow_size.x, box_bg_rect.y0, box_bg_rect.x1, box_bg_rect.y1), v4f32(0, 0, 0, 0), 0, 0, 1.f);
             inst->colors[Corner_00] = inst->colors[Corner_01] = v4f32(0.f, 0.f, 0.f, 0.f);
             inst->colors[Corner_10] = shadow_color;
             inst->colors[Corner_11] = shadow_color;
@@ -8378,7 +8403,8 @@ rd_window_frame(void)
           if(b->flags & UI_BoxFlag_DrawBorder)
           {
             Vec4F32 border_color = b->border_color;
-            Rng2F32 b_border_rect = pad_2f32(b->rect, stroke_softness);
+            Rng2F32 b_border_rect = pad_2f32(r2f32p(b->rect.x0 + b->visual_margin.x, b->rect.y0 + b->visual_margin.y,
+                                                    b->rect.x1 - b->visual_margin.x, b->rect.y1 - b->visual_margin.y), stroke_softness);
             R_Rect2DInst *inst = dr_rect(b_border_rect, border_color, 0, 1.f, stroke_softness);
             MemoryCopyArray(inst->corner_radii, b_corner_radii);
             

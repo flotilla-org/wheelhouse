@@ -423,6 +423,8 @@ struct UI_Box
   F32 tab_size;
   FNT_RasterFlags text_raster_flags;
   F32 corner_radii[Corner_COUNT];
+  // Inset of the drawn background, border and hover from the box's rect.
+  Vec2F32 visual_margin;
   F32 blur_size;
   F32 transparency;
   F32 squish;
@@ -1072,6 +1074,8 @@ internal F32                        ui_top_corner_radius_00(void);
 internal F32                        ui_top_corner_radius_01(void);
 internal F32                        ui_top_corner_radius_10(void);
 internal F32                        ui_top_corner_radius_11(void);
+internal F32                        ui_top_visual_margin_x(void);
+internal F32                        ui_top_visual_margin_y(void);
 internal F32                        ui_top_blur_size(void);
 internal F32                        ui_top_text_padding(void);
 internal UI_TextAlign               ui_top_text_alignment(void);
@@ -1107,6 +1111,8 @@ internal F32                        ui_bottom_corner_radius_00(void);
 internal F32                        ui_bottom_corner_radius_01(void);
 internal F32                        ui_bottom_corner_radius_10(void);
 internal F32                        ui_bottom_corner_radius_11(void);
+internal F32                        ui_bottom_visual_margin_x(void);
+internal F32                        ui_bottom_visual_margin_y(void);
 internal F32                        ui_bottom_blur_size(void);
 internal F32                        ui_bottom_text_padding(void);
 internal UI_TextAlign               ui_bottom_text_alignment(void);
@@ -1142,6 +1148,8 @@ internal F32                        ui_push_corner_radius_00(F32 v);
 internal F32                        ui_push_corner_radius_01(F32 v);
 internal F32                        ui_push_corner_radius_10(F32 v);
 internal F32                        ui_push_corner_radius_11(F32 v);
+internal F32                        ui_push_visual_margin_x(F32 v);
+internal F32                        ui_push_visual_margin_y(F32 v);
 internal F32                        ui_push_blur_size(F32 v);
 internal F32                        ui_push_text_padding(F32 v);
 internal UI_TextAlign               ui_push_text_alignment(UI_TextAlign v);
@@ -1177,6 +1185,8 @@ internal F32                        ui_pop_corner_radius_00(void);
 internal F32                        ui_pop_corner_radius_01(void);
 internal F32                        ui_pop_corner_radius_10(void);
 internal F32                        ui_pop_corner_radius_11(void);
+internal F32                        ui_pop_visual_margin_x(void);
+internal F32                        ui_pop_visual_margin_y(void);
 internal F32                        ui_pop_blur_size(void);
 internal F32                        ui_pop_text_padding(void);
 internal UI_TextAlign               ui_pop_text_alignment(void);
@@ -1212,6 +1222,8 @@ internal F32                        ui_set_next_corner_radius_00(F32 v);
 internal F32                        ui_set_next_corner_radius_01(F32 v);
 internal F32                        ui_set_next_corner_radius_10(F32 v);
 internal F32                        ui_set_next_corner_radius_11(F32 v);
+internal F32                        ui_set_next_visual_margin_x(F32 v);
+internal F32                        ui_set_next_visual_margin_y(F32 v);
 internal F32                        ui_set_next_blur_size(F32 v);
 internal F32                        ui_set_next_text_padding(F32 v);
 internal UI_TextAlign               ui_set_next_text_alignment(UI_TextAlign v);
@@ -1263,6 +1275,8 @@ internal F32      ui_top_px_height(void);
 #define UI_CornerRadius01(v) DeferLoop(ui_push_corner_radius_01(v), ui_pop_corner_radius_01())
 #define UI_CornerRadius10(v) DeferLoop(ui_push_corner_radius_10(v), ui_pop_corner_radius_10())
 #define UI_CornerRadius11(v) DeferLoop(ui_push_corner_radius_11(v), ui_pop_corner_radius_11())
+#define UI_VisualMarginX(v) DeferLoop(ui_push_visual_margin_x(v), ui_pop_visual_margin_x())
+#define UI_VisualMarginY(v) DeferLoop(ui_push_visual_margin_y(v), ui_pop_visual_margin_y())
 #define UI_BlurSize(v) DeferLoop(ui_push_blur_size(v), ui_pop_blur_size())
 #define UI_TextPadding(v) DeferLoop(ui_push_text_padding(v), ui_pop_text_padding())
 #define UI_TextAlignment(v) DeferLoop(ui_push_text_alignment(v), ui_pop_text_alignment())
@@ -1275,6 +1289,7 @@ internal F32      ui_top_px_height(void);
 #define UI_Rect(r)           DeferLoop(ui_push_rect(r), ui_pop_rect())
 #define UI_PrefSize(axis, v) DeferLoop(ui_push_pref_size((axis), (v)), ui_pop_pref_size(axis))
 #define UI_CornerRadius(v)   DeferLoop(ui_push_corner_radius(v), ui_pop_corner_radius())
+#define UI_VisualMargin(v)   DeferLoop((ui_push_visual_margin_x(v), ui_push_visual_margin_y(v)), (ui_pop_visual_margin_x(), ui_pop_visual_margin_y()))
 #define UI_Focus(kind)       DeferLoop((ui_push_focus_hot(kind), ui_push_focus_active(kind)), (ui_pop_focus_hot(), ui_pop_focus_active()))
 #define UI_FlagsAdd(v)       DeferLoop(ui_push_flags(ui_top_flags()|(v)), ui_pop_flags())
 #define UI_TagF(...)         DeferLoop(ui_push_tagf(__VA_ARGS__), ui_pop_tag())
