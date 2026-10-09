@@ -3616,6 +3616,13 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         UI_Box *segment;
         UI_PrefWidth(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_X) UI_CornerRadius(4.f)
         { segment = ui_build_box_from_stringf(segment_shown && section_node->control_count ? UI_BoxFlag_DrawBorder : 0, "###controls_%S", key); }
+        // Beside other titles, the controls take the selected title's accent
+        // underline: they're its View's.
+        if(tabs.count > 1 && segment_shown && section_node->control_count)
+        UI_Parent(segment) UI_FixedX(2.f) UI_FixedY(dim_2f32(segment->rect).y-2.f)
+          UI_PrefWidth(ui_px(Max(0.f, dim_2f32(segment->rect).x-4.f), 1)) UI_PrefHeight(ui_px(2.f, 1))
+          UI_BackgroundColor(rd_drop_accent(1.f)) UI_CornerRadius(1.f)
+        { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(segment->key, "selected_mark")); }
         UI_Parent(segment)
         for(U64 c = 0; c < section_node->control_count; c++)
         {

@@ -57,7 +57,8 @@ has two levels:
   title, with its count, controls and menu; the others sit beside it as
   compact titles, in tab order, split by hairlines like unselected browser
   tabs. Beside others, the selected title shows full strength over an accent
-  underline. A click on another title selects it (opening a collapsed
+  underline, and so do its View's display controls, which are its alone.
+  Later, unselected titles may recede further. A click on another title selects it (opening a collapsed
   section); a click on the selected one collapses or expands, as before; a
   drag moves that one View; a middle click closes it. There are no per-title
   ×s.
