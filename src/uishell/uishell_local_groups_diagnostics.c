@@ -692,6 +692,30 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     { selects |= str8_match(c->cmd.name, str8_lit("focus_tab"), 0) && c->cmd.regs->tab == views[0]->id; }
     GroupsCheck(selects && !uishell_sidebar_section_collapsed(views[0]),
                 "clicking a compact title selects its View, opening a collapsed section");
+    // A right click on a compact title shows that View and opens its
+    // section's menu, built by its header once it's selected.
+    before = rd_state->cmds[0].last;
+    uishell_local_groups_click(ws, window, arena, north, WM_Key_RightMouseButton);
+    selects = 0;
+    for(UIShell_CmdNode *c = before ? before->next : rd_state->cmds[0].first; c; c = c->next)
+    { selects |= str8_match(c->cmd.name, str8_lit("focus_tab"), 0) && c->cmd.regs->tab == views[0]->id; }
+    B32 menu_open = ui_any_ctx_menu_is_open();
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(views[1], str8_lit("selected")));
+    cfg_node_new(rd_state->cfg, views[0], str8_lit("selected"));
+    uishell_local_groups_view = views[0];
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    GroupsCheck(selects && menu_open && !ui_box_is_nil(uishell_sidebar_reorder_box(ui_state->ctx_menu_root, str8_lit("Rename…"))),
+                "right-clicking a compact title shows its View and opens its section's menu");
+    ui_ctx_menu_close();
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(views[0], str8_lit("selected")));
+    cfg_node_new(rd_state->cfg, views[1], str8_lit("selected"));
+    uishell_local_groups_view = views[1];
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    north_box = uishell_local_groups_box(north);
+    south_box = uishell_local_groups_box(push_str8f(arena, "###section_%S",
+      cfg_node_child_from_string(views[1], str8_lit("section"))->first->string));
     // East, from another panel, dropped on the gap between North and South.
     UIShell_RegsScope(.window = window->id, .panel = elsewhere->id, .view = views[3]->id, .tab = views[3]->id)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
@@ -865,7 +889,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, New section, header holds its panel's Views, section collapse, × and drag, collapse gives space back)\n",
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, New section, header holds its panel's Views, right click on a tab, section collapse, × and drag, collapse gives space back)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

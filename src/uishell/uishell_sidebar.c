@@ -1827,6 +1827,16 @@ uishell_sidebar_menu_open_at_pointer(UI_Key menu, UI_Box *anchor)
 internal void uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r);
 internal void uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r);
 
+internal CFG_Node *uishell_sidebar_local_section(CFG_Node *window, String8 id);
+
+// A section's menu, by its key: its header builds it, or one of its panel's
+// other titles while it switches to it.
+internal UI_Key
+uishell_sidebar_section_menu_key(String8 section_key)
+{ return ui_key_from_stringf(ui_key_zero(), "section_menu_%S", section_key); }
+internal void uishell_sidebar_local_section_menu(UIShell_SidebarState *state, CFG_Node *window, CFG_Node *section, CFG_Node *view,
+                                                 String8 loop, UI_Key menu);
+
 //~ A sidebar section, its panel, collapses as a whole (sidebar-headers.md):
 // the state is a panel option. A layout from before kept it on a View; the
 // View's own still counts until the section next opens or closes.
@@ -1866,6 +1876,9 @@ struct UIShell_HeaderTabs
   U64 selected;      // the header's own View
   F32 width;         // each compact title's width
   B32 any_built;     // an entry is already in the row, so the next is separated
+  UIShell_SidebarState *state;
+  CFG_Node *window;
+  UI_Box *anchor;    // a box that outlives the switch of header, for that menu
 };
 
 // A hairline between two of a header's entries, like an unselected tab's edge.
@@ -2034,6 +2047,22 @@ uishell_sidebar_header_tabs_ui(UIShell_HeaderTabs *tabs, U64 from, U64 to)
                                       "%S###header_tab_%p", tabs->titles[i], tab);
     }
     UI_Signal sig = ui_signal_from_box(box);
+    // A right click shows the View and opens its section's menu, as the
+    // selected title's does; its header builds the menu from next frame.
+    String8 section_key = cfg_node_child_from_string(tab, str8_lit("section"))->first->string;
+    CFG_Node *local = tabs->window ? uishell_sidebar_local_section(tabs->window, uishell_sidebar_local_key_id(section_key)) : &cfg_nil_node;
+    if(local != &cfg_nil_node && tabs->anchor)
+    {
+      UI_Key menu = uishell_sidebar_section_menu_key(section_key);
+      if(ui_right_clicked(sig))
+      {
+        tabs->state->confirm_delete = 0;
+        uishell_sidebar_header_select(tabs->panel, tab);
+        ui_ctx_menu_open(menu, tabs->anchor->key, sub_2f32(ui_mouse(), tabs->anchor->rect.p0));
+      }
+      // Until its header takes over, the title keeps the menu built.
+      uishell_sidebar_local_section_menu(tabs->state, tabs->window, local, tab, str8_zero(), menu);
+    }
     if(ui_dragging(sig) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
     { UIShell_RegsScope(.panel = tabs->panel->id, .view = tab->id, .tab = tab->id) { rd_drag_begin(UIShell_ContextRegSlot_View); } }
     else if(ui_clicked(sig) && !rd_drag_is_active()) { uishell_sidebar_header_select(tabs->panel, tab); }
@@ -3487,7 +3516,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       B32 engaged = contains_2f32(header->rect, ui_mouse()) && !rd_drag_is_active();
       // A section you made has a menu (uishell_local_groups.c). Showing one
       // group, its items' loop gives the menu Reset order.
-      UI_Key section_menu = ui_key_from_stringf(header->key, "section_menu");
+      UI_Key section_menu = uishell_sidebar_section_menu_key(key);
       String8 section_loop = str8_zero();
       for(U64 i = sections[n]+1; local_section != &cfg_nil_node && i < count && !section_loop.size; i++)
       {
@@ -3525,6 +3554,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           F32 own = fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, upper).x +
             em*(UIShell_GripWidthEM + 4.f) + em*1.7f*(section_node->control_count + 2);
           tabs = uishell_sidebar_header_tabs(scratch.arena, cfg_node_from_id(uishell_regs()->view), dim.x - own);
+          tabs.state = state;
+          tabs.window = split->owner_cfg;
+          tabs.anchor = root;
         }
         uishell_sidebar_header_tabs_ui(&tabs, 0, tabs.selected);
         // The title holds its width; the spacer after the indicator absorbs slack.
