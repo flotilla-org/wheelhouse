@@ -3012,8 +3012,7 @@ uishell_sidebar_home_claim(UIShell_SidebarState *state, Rng2F32 rect, String8 pr
   state->home_build = ui_state->build_index;
   // The drop-site colours are barely visible; the target takes the accent, as
   // insertion lines do (uishell_sidebar_drop_line).
-  Vec4F32 border = ui_color_from_name(str8_lit("selection"));
-  border.w = 1.f;
+  Vec4F32 border = rd_accent_color();
   Vec4F32 fill = border;
   fill.w = 0.12f;
   UI_Parent(ui_state->root) UI_TagF("drop_site") UI_Rect(rect) UI_CornerRadius(5.f)
@@ -3038,9 +3037,8 @@ uishell_sidebar_drop_line(UI_Box *body, Rng2F32 line, UI_Key key)
   F32 sweep_x = at.x + (width+sweep)*phase - sweep;
   F32 x0 = Max(at.x, sweep_x), x1 = Min(at.x+width, sweep_x+sweep);
   // The drop-site fill is nearly transparent, made for whole areas; a line
-  // needs the selection accent at full strength.
-  Vec4F32 color = ui_color_from_name(str8_lit("selection"));
-  color.w = 1.f;
+  // needs the accent at full strength.
+  Vec4F32 color = rd_accent_color();
   Vec4F32 bright = mix_4f32(color, ui_color_from_name(str8_lit("text")), 0.6f);
   bright.w = 1.f;
   UI_Parent(body) UI_TagF("drop_site") UI_CornerRadius(height*0.5f) UI_PrefHeight(ui_px(height, 1))

@@ -123,6 +123,56 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     B32 on_strip = !ui_box_is_nil(strip) && !contains_2f32(strip->rect, ui_state->mouse) && dim_2f32(strip->rect).y < 100;
     fprintf(stderr, "%s single panel: no centre pill; tabs drop on its strip\n", no_centre && on_strip ? "PASS" : "FAIL");
     failures += !(no_centre && on_strip);
+    // A dragged View keeps its size and draws to a texture (#253)...
+    UI_Box *surface_box = ui_box_from_key(rd_view_surface_key(view->id));
+    B32 real_size = !ui_box_is_nil(surface_box) && surface_box->flags & UI_BoxFlag_RenderToSurface && dim_2f32(surface_box->rect).x > 500;
+    fprintf(stderr, "%s a dragged View draws to a texture at its real size\n", real_size ? "PASS" : "FAIL");
+    failures += !real_size;
+    // ...which the floater shows scaled, without laying the View out again.
+    rd_window_surface_node_from_key(ws, rd_view_surface_key(view->id).u64[0], v2s32(800, 400));
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) { rd_drag_view_floater_ui(ws, view); }
+    ui_end_build();
+    UI_Box *preview = ui_box_from_key(ui_key_from_string(ui_key_zero(), str8_lit("###view_preview_container")));
+    for(UI_Box *b = test_ui->root; ui_box_is_nil(preview) && !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test_ui->root).next)
+    { if(b->custom_draw == rd_workspace_preview_box_draw) { preview = b; } }
+    B32 floater = !ui_box_is_nil(preview) && preview->custom_draw == rd_workspace_preview_box_draw && ui_box_is_nil(preview->first) &&
+      ui_box_is_nil(ui_box_from_key(rd_view_surface_key(view->id))) && abs_f32(dim_2f32(preview->rect).y - 180.f) < 1.f;
+    fprintf(stderr, "%s the drag floater shows the View's texture, scaled, without laying it out\n", floater ? "PASS" : "FAIL");
+    failures += !floater;
+    rd_drag_kill();
+  }
+  // A View that opts in to a live preview (text, binary) is laid out again in
+  // the floater rather than drawn to a texture.
+  CFG_Node *text_view = rd_cfg_new_view_tab(panels, str8_lit("text"), str8_zero(), 0);
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = panels->id, .view = text_view->id)
+  {
+    rd_drag_begin(UIShell_ContextRegSlot_View);
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0};
+    UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) { rd_drag_view_floater_ui(ws, text_view); }
+    // Accents take the theme's focus border, not its faint selection wash.
+    String8 focus_border[] = {str8_lit("focus"), str8_lit("border")};
+    Vec4F32 accent = rd_accent_color(), wash = ui_color_from_name(str8_lit("selection"));
+    Vec4F32 focus = ui_color_from_tags_key_extras(ui_top_tags_key(), (String8Array){focus_border, ArrayCount(focus_border)});
+    B32 themed = accent.x == focus.x && accent.y == focus.y && accent.z == focus.z && accent.w == 1.f &&
+      (accent.x != wash.x || accent.y != wash.y || accent.z != wash.z);
+    ui_end_build();
+    fprintf(stderr, "%s accents take the theme's focus border, not its selection wash\n", themed ? "PASS" : "FAIL");
+    failures += !themed;
+    UI_Box *preview = &ui_nil_box;
+    for(UI_Box *b = test_ui->root; ui_box_is_nil(preview) && !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test_ui->root).next)
+    {
+      UI_Box *seed = b->parent;
+      while(!ui_box_is_nil(seed) && ui_key_match(seed->key, ui_key_zero())) { seed = seed->parent; }
+      if(!ui_box_is_nil(seed) && ui_key_match(b->key, ui_key_from_string(seed->key, str8_lit("###view_preview_container")))) { preview = b; }
+    }
+    B32 live = rd_view_drag_preview_is_live(text_view) && !rd_view_drag_preview_is_live(view) &&
+      !ui_box_is_nil(preview) && preview->custom_draw == 0 && !ui_box_is_nil(preview->first);
+    fprintf(stderr, "%s a text View's drag floater shows it live\n", live ? "PASS" : "FAIL");
+    failures += !live;
     rd_drag_kill();
   }
   // Closing the empty source panel is also part of moving its last tab.

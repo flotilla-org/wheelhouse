@@ -993,6 +993,20 @@ uishell_watch_view_text_edit_state_from_pt(UIShell_WatchViewState *wv, UIShell_W
   return result;
 }
 
+// Settings apply as they're typed, except the theme: each partial name
+// would show a fallback theme (#264), so it applies once it names one.
+internal B32
+uishell_setting_applies_while_typing(E_Eval eval, String8 string)
+{
+  if(!str8_match(e_string_from_id(eval.space.u64s[1]), str8_lit("theme"), 0)) { return 1; }
+  Temp scratch = scratch_begin(0, 0);
+  String8Array names = uishell_eval_theme_names_from_filter(scratch.arena, str8_zero());
+  B32 named = 0;
+  for(U64 i = 0; i < names.count && !named; i++) { named = str8_match(names.v[i], string, 0); }
+  scratch_end(scratch);
+  return named;
+}
+
 internal UIShell_WatchRowInfo
 uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
 {
@@ -1999,7 +2013,7 @@ uishell_watch_view_ui(Rng2F32 rect)
                     B32 should_commit_asap = editing_complete;
                     if(cell->eval.space.kind == RD_EvalSpaceKind_MetaCfg)
                     {
-                      should_commit_asap = 1;
+                      should_commit_asap = editing_complete || uishell_setting_applies_while_typing(cell->eval, new_string);
                     }
                     else if(evt->slot != UI_EventActionSlot_Cancel)
                     {

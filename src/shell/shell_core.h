@@ -1078,6 +1078,7 @@ internal B32 rd_view_name_is_listed_in_app(String8 name);
 internal B32 rd_drag_is_active(void);
 internal UI_Key rd_panel_catchall_drop_site_key(CFG_Node *panel);
 internal void rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
+internal Vec4F32 rd_accent_color(void);
 internal Vec4F32 rd_drop_accent(F32 alpha);
 internal B32 uishell_dispatch_tab_command(String8 name);
 internal B32 uishell_dispatch_panel_command(String8 name);
@@ -1160,7 +1161,10 @@ internal String8 rd_query_from_eval_string(Arena *arena, String8 string);
 
 internal CFG_Node *rd_view_from_eval(CFG_Node *parent, E_Eval eval);
 internal RD_ViewState *rd_view_state_from_cfg(CFG_Node *cfg);
+internal UI_Key rd_view_surface_key(CFG_ID view);
+internal B32 rd_view_drag_preview_is_live(CFG_Node *view);
 internal void rd_view_ui(Rng2F32 rect);
+internal void rd_drag_view_floater_ui(RD_WindowState *ws, CFG_Node *view);
 
 ////////////////////////////////
 //~ rjf: View Building API

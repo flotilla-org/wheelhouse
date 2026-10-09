@@ -274,6 +274,7 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   U32 failures = !cfg_native_menu_diagnostics();
   failures += !uishell_edit_menu_ui_diagnostics(ws);
   failures += !uishell_query_ui_diagnostics(ws);
+  failures += !uishell_setting_typing_diagnostics();
 #if OS_LINUX
   failures += !uishell_edit_x11_text_diagnostics(ws);
 #endif
