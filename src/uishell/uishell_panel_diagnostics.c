@@ -194,10 +194,18 @@ uishell_panel_diagnostics(RD_WindowState *ws)
       params.flags = RD_CellFlag_Button;
       button_sig = rd_cell(&params, str8_lit("Open###diag_button_cell"));
     }
+    UI_Signal docked_sig = {0};
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) UI_PrefWidth(ui_px(200, 1)) UI_PrefHeight(ui_px(24, 1))
+    {
+      RD_CellParams params = {0};
+      params.flags = RD_CellFlag_Button;
+      docked_sig = rd_cell(&params, str8_lit("Open###diag_docked_button_cell"));
+    }
     ui_end_build();
+    // Outside a floating view, a button cell keeps its themed fill.
     B32 one_layer = (button_sig.box->flags & UI_BoxFlag_DrawBackground) && (button_sig.box->flags & UI_BoxFlag_DrawHotEffects) &&
-      button_sig.box->background_color.w == 0;
-    fprintf(stderr, "%s a floating button cell shows hover without painting a background layer\n", one_layer ? "PASS" : "FAIL");
+      button_sig.box->background_color.w == 0 && docked_sig.box->background_color.w > 0;
+    fprintf(stderr, "%s a floating button cell shows hover without painting a background layer; a docked one keeps its fill\n", one_layer ? "PASS" : "FAIL");
     failures += !one_layer;
     rd_drag_kill();
   }
