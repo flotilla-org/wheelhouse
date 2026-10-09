@@ -1087,6 +1087,8 @@ internal void rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID prev
 internal Vec4F32 rd_accent_color(void);
 internal Vec4F32 rd_drop_accent(F32 alpha);
 internal F32 rd_hover_alpha(Vec4F32 hover, Vec4F32 under, F32 step);
+// How far hover moves the visible (sRGB) brightness of what's under it.
+#define RD_HoverBrightnessStep 0.06f
 internal B32 uishell_dispatch_tab_command(String8 name);
 internal B32 uishell_dispatch_panel_command(String8 name);
 internal void rd_drag_begin(UIShell_ContextRegSlot slot);

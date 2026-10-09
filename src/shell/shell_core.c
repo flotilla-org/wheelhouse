@@ -8112,7 +8112,7 @@ rd_window_frame(void)
             // fixed 1.5% is invisible on light ones.
             Vec4F32 under = mix_4f32(base_background_color, box_background_color, box_background_color.w);
             Vec4F32 color = hover_color;
-            color.w *= rd_hover_alpha(hover_color, under, 0.06f);
+            color.w *= rd_hover_alpha(hover_color, under, RD_HoverBrightnessStep);
             R_Rect2DInst *inst = dr_rect(pad_2f32(box_bg_rect, 1.f), v4f32(0, 0, 0, 0), 0, 0, border_softness*1.f);
             inst->colors[Corner_00] = color;
             inst->colors[Corner_10] = color;
