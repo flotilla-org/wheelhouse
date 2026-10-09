@@ -1425,6 +1425,13 @@ RD_VIEW_UI_FUNCTION_DEF(null)
   (void)rect;
 }
 
+
+internal UI_Key
+rd_view_surface_key(CFG_ID view)
+{
+  return ui_key_from_stringf(ui_key_zero(), "###view_surface_%I64u", view);
+}
+
 internal void
 rd_view_ui(Rng2F32 rect)
 {
@@ -1566,10 +1573,15 @@ rd_view_ui(Rng2F32 rect)
   {
     UI_BoxFlags container_flags = 0;
     UI_Key container_key = ui_key_zero();
-    if(DEV_draw_view_surfaces || DEV_crt_views)
+    // A dragged View keeps its size and draws into a texture, which the drag
+    // floater shows scaled (#253); laying it out in the floater would resize
+    // a terminal's session.
+    B32 dragged = rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
+      rd_state->drag_drop_regs->view == uishell_regs()->view;
+    if(DEV_draw_view_surfaces || DEV_crt_views || dragged)
     {
       container_flags |= UI_BoxFlag_RenderToSurface;
-      container_key = ui_key_from_stringf(ui_key_zero(), "###view_surface_%I64u", uishell_regs()->view);
+      container_key = rd_view_surface_key(uishell_regs()->view);
     }
     view_container = ui_build_box_from_key(container_flags, container_key);
     if(DEV_crt_views)
@@ -2489,6 +2501,53 @@ internal UI_BOX_CUSTOM_DRAW(rd_workspace_preview_box_draw)
       dr_surface_img_sub(draw->node->texture, dst, draw->workspace_surface ? draw->node->workspace_content_uv : draw->src_uv, v4f32(1, 1, 1, 1), 0, 0, 0);
     }
   }
+}
+
+// The drag floater for a dragged View: its title over its own texture,
+// scaled (#253). The View keeps drawing at its real size in its panel
+// (rd_view_ui renders it to a surface while dragged); a View not on screen,
+// such as a background tab, shows its title alone.
+internal void
+rd_drag_view_floater_ui(RD_WindowState *ws, CFG_Node *view)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UI_Size main_width = ui_top_pref_width();
+  UI_Size main_height = ui_top_pref_height();
+  UI_TextAlign main_text_align = ui_top_text_alignment();
+  RD_SurfaceCacheNode *surface = rd_window_surface_node_lookup(ws, rd_view_surface_key(view->id).u64[0]);
+  if(surface != 0 && (r_handle_match(surface->texture, r_handle_zero()) || surface->size.x <= 0 || surface->size.y <= 0)) { surface = 0; }
+  F32 preview_width = ui_top_font_size()*30.f;
+  F32 preview_height = surface ? Clamp(ui_top_font_size()*6.f, preview_width*surface->size.y/surface->size.x, ui_top_font_size()*22.f) : 0;
+  UI_Tooltip
+    UI_PrefWidth(main_width)
+    UI_PrefHeight(main_height)
+    UI_TextAlignment(main_text_align)
+  {
+    ui_state->tooltip_can_overflow_window = 1;
+    ui_set_next_pref_width(ui_px(preview_width, 1.f));
+    ui_set_next_pref_height(ui_children_sum(1.f));
+    ui_set_next_child_layout_axis(Axis2_Y);
+    UI_Box *container = ui_build_box_from_key(0, ui_key_zero());
+    UI_Parent(container)
+    {
+      UI_Row UI_PrefWidth(ui_text_dim(10, 1))
+      {
+        DR_FStrList fstrs = rd_title_fstrs_from_cfg(scratch.arena, view, 0);
+        UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
+        ui_box_equip_display_fstrs(name_box, &fstrs);
+      }
+      if(surface)
+      {
+        ui_set_next_pref_width(ui_pct(1, 0));
+        ui_set_next_pref_height(ui_px(preview_height, 1.f));
+        UI_Box *view_preview = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_Clip, "###view_preview_container");
+        RD_WorkspacePreviewDraw *preview = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
+        preview->node = surface; preview->src_uv = r2f32p(0, 0, 1, 1); preview->keep_aspect = 1;
+        ui_box_equip_custom_draw(view_preview, rd_workspace_preview_box_draw, preview);
+      }
+    }
+  }
+  scratch_end(scratch);
 }
 
 ////////////////////////////////
@@ -5637,37 +5696,7 @@ rd_window_frame(void)
           {
             cfg_node_child_from_string_or_alloc(rd_state->cfg, immediate_parent, str8_lit("hot"));
           }
-          UI_Size main_width = ui_top_pref_width();
-          UI_Size main_height = ui_top_pref_height();
-          UI_TextAlign main_text_align = ui_top_text_alignment();
-          UI_Tooltip
-            UI_PrefWidth(main_width)
-            UI_PrefHeight(main_height)
-            UI_TextAlignment(main_text_align)
-          {
-            ui_state->tooltip_can_overflow_window = 1;
-            ui_set_next_pref_width(ui_em(60.f, 1.f));
-            ui_set_next_pref_height(ui_em(40.f, 1.f));
-            ui_set_next_child_layout_axis(Axis2_Y);
-            UI_Box *container = ui_build_box_from_key(0, ui_key_zero());
-            UI_Parent(container)
-            {
-              UI_Row UI_PrefWidth(ui_text_dim(10, 1))
-              {
-                DR_FStrList fstrs = rd_title_fstrs_from_cfg(scratch.arena, view, 0);
-                UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
-                ui_box_equip_display_fstrs(name_box, &fstrs);
-              }
-              ui_set_next_pref_width(ui_pct(1, 0));
-              ui_set_next_pref_height(ui_pct(1, 0));
-              ui_set_next_child_layout_axis(Axis2_Y);
-              UI_Box *view_preview_container = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Clip, "###view_preview_container");
-              UI_Parent(view_preview_container) UI_Focus(UI_FocusKind_Off) UI_WidthFill
-              {
-                rd_view_ui(view_preview_container->rect);
-              }
-            }
-          }
+          rd_drag_view_floater_ui(ws, view);
         }
       }
       scratch_end(scratch);

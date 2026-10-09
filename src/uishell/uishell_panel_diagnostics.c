@@ -123,6 +123,23 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     B32 on_strip = !ui_box_is_nil(strip) && !contains_2f32(strip->rect, ui_state->mouse) && dim_2f32(strip->rect).y < 100;
     fprintf(stderr, "%s single panel: no centre pill; tabs drop on its strip\n", no_centre && on_strip ? "PASS" : "FAIL");
     failures += !(no_centre && on_strip);
+    // A dragged View keeps its size and draws to a texture (#253)...
+    UI_Box *surface_box = ui_box_from_key(rd_view_surface_key(view->id));
+    B32 real_size = !ui_box_is_nil(surface_box) && surface_box->flags & UI_BoxFlag_RenderToSurface && dim_2f32(surface_box->rect).x > 500;
+    fprintf(stderr, "%s a dragged View draws to a texture at its real size\n", real_size ? "PASS" : "FAIL");
+    failures += !real_size;
+    // ...which the floater shows scaled, without laying the View out again.
+    rd_window_surface_node_from_key(ws, rd_view_surface_key(view->id).u64[0], v2s32(800, 400));
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) { rd_drag_view_floater_ui(ws, view); }
+    ui_end_build();
+    UI_Box *preview = ui_box_from_key(ui_key_from_string(ui_key_zero(), str8_lit("###view_preview_container")));
+    for(UI_Box *b = test_ui->root; ui_box_is_nil(preview) && !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test_ui->root).next)
+    { if(b->custom_draw == rd_workspace_preview_box_draw) { preview = b; } }
+    B32 floater = !ui_box_is_nil(preview) && preview->custom_draw == rd_workspace_preview_box_draw && ui_box_is_nil(preview->first) &&
+      ui_box_is_nil(ui_box_from_key(rd_view_surface_key(view->id))) && abs_f32(dim_2f32(preview->rect).y - 180.f) < 1.f;
+    fprintf(stderr, "%s the drag floater shows the View's texture, scaled, without laying it out\n", floater ? "PASS" : "FAIL");
+    failures += !floater;
     rd_drag_kill();
   }
   // Closing the empty source panel is also part of moving its last tab.
