@@ -1161,6 +1161,7 @@ internal String8 rd_query_from_eval_string(Arena *arena, String8 string);
 internal CFG_Node *rd_view_from_eval(CFG_Node *parent, E_Eval eval);
 internal RD_ViewState *rd_view_state_from_cfg(CFG_Node *cfg);
 internal UI_Key rd_view_surface_key(CFG_ID view);
+internal B32 rd_view_drag_preview_is_live(CFG_Node *view);
 internal void rd_view_ui(Rng2F32 rect);
 internal void rd_drag_view_floater_ui(RD_WindowState *ws, CFG_Node *view);
 

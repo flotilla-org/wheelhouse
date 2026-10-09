@@ -45,6 +45,9 @@ enum
   RD_ViewTrait_NeedsHost = 1<<5,
   // Content supplied by the root Controlled Split, not a child workspace.
   RD_ViewTrait_ControlSplitScope = 1<<6,
+  // Laying it out again at another size is harmless, so its drag floater
+  // shows it live rather than as its texture (#253).
+  RD_ViewTrait_LiveDragPreview = 1<<7,
 };
 
 typedef struct RD_ViewRegistration RD_ViewRegistration;
@@ -101,13 +104,13 @@ struct RD_DockProposal
 #define RD_DOCK_RENDERED_VIEWS(X) \
   X(pinned_cards, pinned_cards, RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_ControlSplitScope, 0, Sidebar) \
   X(sidebar_section, sidebar_section, RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_ControlSplitScope, 0, Sidebar) \
-  X(text, shell_text, RD_ViewTrait_Content, 0, WorkspaceRegion) \
+  X(text, shell_text, RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview, 0, WorkspaceRegion) \
   X(jackstay, jackstay, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(terminal, terminal, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(scroll_region_fixture, scroll_region_fixture, RD_ViewTrait_Content, 128, WorkspaceRegion) \
   X(terminal_fixture, terminal, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(sessions, sessions, RD_ViewTrait_Content|RD_ViewTrait_Section, 0, WorkspaceRegion) \
-  X(binary, binary, RD_ViewTrait_Content, 0, WorkspaceRegion) \
+  X(binary, binary, RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview, 0, WorkspaceRegion) \
   X(bitmap, bitmap, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(color, color, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(geo3d, geo3d, RD_ViewTrait_Content, 0, WorkspaceRegion)

@@ -142,6 +142,31 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     failures += !floater;
     rd_drag_kill();
   }
+  // A View that opts in to a live preview (text, binary) is laid out again in
+  // the floater rather than drawn to a texture.
+  CFG_Node *text_view = rd_cfg_new_view_tab(panels, str8_lit("text"), str8_zero(), 0);
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = panels->id, .view = text_view->id)
+  {
+    rd_drag_begin(UIShell_ContextRegSlot_View);
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0};
+    UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) { rd_drag_view_floater_ui(ws, text_view); }
+    ui_end_build();
+    UI_Box *preview = &ui_nil_box;
+    for(UI_Box *b = test_ui->root; ui_box_is_nil(preview) && !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test_ui->root).next)
+    {
+      UI_Box *seed = b->parent;
+      while(!ui_box_is_nil(seed) && ui_key_match(seed->key, ui_key_zero())) { seed = seed->parent; }
+      if(!ui_box_is_nil(seed) && ui_key_match(b->key, ui_key_from_string(seed->key, str8_lit("###view_preview_container")))) { preview = b; }
+    }
+    B32 live = rd_view_drag_preview_is_live(text_view) && !rd_view_drag_preview_is_live(view) &&
+      !ui_box_is_nil(preview) && preview->custom_draw == 0 && !ui_box_is_nil(preview->first);
+    fprintf(stderr, "%s a text View's drag floater shows it live\n", live ? "PASS" : "FAIL");
+    failures += !live;
+    rd_drag_kill();
+  }
   // Closing the empty source panel is also part of moving its last tab.
   // Use a workspace separate from the window's selected workspace so a
   // window-level lookup cannot accidentally supply the correct panel tree.

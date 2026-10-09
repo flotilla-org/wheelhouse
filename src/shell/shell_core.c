@@ -1432,6 +1432,13 @@ rd_view_surface_key(CFG_ID view)
   return ui_key_from_stringf(ui_key_zero(), "###view_surface_%I64u", view);
 }
 
+internal B32
+rd_view_drag_preview_is_live(CFG_Node *view)
+{
+  RD_ViewRegistration *registration = rd_dock_view_from_name(view->string);
+  return registration != 0 && (registration->traits & RD_ViewTrait_LiveDragPreview) != 0;
+}
+
 internal void
 rd_view_ui(Rng2F32 rect)
 {
@@ -1577,7 +1584,8 @@ rd_view_ui(Rng2F32 rect)
     // floater shows scaled (#253); laying it out in the floater would resize
     // a terminal's session.
     B32 dragged = rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
-      rd_state->drag_drop_regs->view == uishell_regs()->view;
+      rd_state->drag_drop_regs->view == uishell_regs()->view &&
+      !rd_view_drag_preview_is_live(cfg_node_from_id(uishell_regs()->view));
     if(DEV_draw_view_surfaces || DEV_crt_views || dragged)
     {
       container_flags |= UI_BoxFlag_RenderToSurface;
@@ -2506,7 +2514,8 @@ internal UI_BOX_CUSTOM_DRAW(rd_workspace_preview_box_draw)
 // The drag floater for a dragged View: its title over its own texture,
 // scaled (#253). The View keeps drawing at its real size in its panel
 // (rd_view_ui renders it to a surface while dragged); a View not on screen,
-// such as a background tab, shows its title alone.
+// such as a background tab, shows its title alone. A View that is harmless
+// to lay out again (RD_ViewTrait_LiveDragPreview) is shown live instead.
 internal void
 rd_drag_view_floater_ui(RD_WindowState *ws, CFG_Node *view)
 {
@@ -2516,7 +2525,9 @@ rd_drag_view_floater_ui(RD_WindowState *ws, CFG_Node *view)
   UI_TextAlign main_text_align = ui_top_text_alignment();
   RD_SurfaceCacheNode *surface = rd_window_surface_node_lookup(ws, rd_view_surface_key(view->id).u64[0]);
   if(surface != 0 && (r_handle_match(surface->texture, r_handle_zero()) || surface->size.x <= 0 || surface->size.y <= 0)) { surface = 0; }
-  F32 preview_width = ui_top_font_size()*30.f;
+  B32 live = rd_view_drag_preview_is_live(view);
+  if(live) { surface = 0; }
+  F32 preview_width = ui_top_font_size()*(live ? 60.f : 30.f);
   F32 preview_height = surface ? Clamp(ui_top_font_size()*6.f, preview_width*surface->size.y/surface->size.x, ui_top_font_size()*22.f) : 0;
   UI_Tooltip
     UI_PrefWidth(main_width)
@@ -2536,7 +2547,18 @@ rd_drag_view_floater_ui(RD_WindowState *ws, CFG_Node *view)
         UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
         ui_box_equip_display_fstrs(name_box, &fstrs);
       }
-      if(surface)
+      if(live)
+      {
+        ui_set_next_pref_width(ui_pct(1, 0));
+        ui_set_next_pref_height(ui_em(40.f, 1.f));
+        ui_set_next_child_layout_axis(Axis2_Y);
+        UI_Box *view_preview_container = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Clip, "###view_preview_container");
+        UI_Parent(view_preview_container) UI_Focus(UI_FocusKind_Off) UI_WidthFill
+        {
+          rd_view_ui(view_preview_container->rect);
+        }
+      }
+      else if(surface)
       {
         ui_set_next_pref_width(ui_pct(1, 0));
         ui_set_next_pref_height(ui_px(preview_height, 1.f));
