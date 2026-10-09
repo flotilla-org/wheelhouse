@@ -416,8 +416,9 @@ uishell_local_groups_diagnostics(CFG_Node *window)
         Rng2F32 card = uishell_local_groups_box(push_str8f(arena, "###project_%S", beta_key))->rect;
         F32 below = uishell_local_groups_footer(section_footer)->rect.y0;
         uishell_local_groups_hover(ws, window, arena, v2f32(center_2f32(card).x, below > card.y1+1.f ? (card.y1+below)*0.5f : card.y1+0.5f), 10);
-        GroupsCheck(dim_2f32(uishell_local_groups_footer(section_footer)->rect).y >= 1,
-                    "New group stays open while the pointer crosses the gap below the card to it");
+        GroupsCheck(dim_2f32(uishell_local_groups_footer(section_footer)->rect).y >= 1 &&
+                    dim_2f32(uishell_local_groups_footer(beta_footer)->rect).y < 1,
+                    "below the last card, only New group opens");
       }
       // New group, named in place.
       U64 groups_before = uishell_sidebar_local_group_count(first);
@@ -684,7 +685,9 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     cfg_node_new(cfg, owner, str8_lit("sidebar_layout_sized"));
     CFG_Node *root = cfg_node_new(cfg, owner, RD_DOCK_SIDEBAR_ROOT);
     CFG_Node *leaves[4] = {0};
-    char *shares[] = {"0.25", "0.25", "0.5"};
+    // Saved shares needn't sum to one (these sum to two); sizes still fill
+    // exactly the space there is.
+    char *shares[] = {"0.5", "0.5", "1"};
     CFG_Node *row = &cfg_nil_node;
     for(U64 i = 0; i < 3; i++)
     {
@@ -741,8 +744,8 @@ uishell_local_groups_diagnostics(CFG_Node *window)
                     "once all are collapsed, the last takes what's left");
       }
     }
-    GroupsCheck(str8_match(root->first->string, str8_lit("0.25"), 0) && str8_match(row->string, str8_lit("0.25"), 0) &&
-                str8_match(root->last->string, str8_lit("0.5"), 0),
+    GroupsCheck(str8_match(root->first->string, str8_lit("0.5"), 0) && str8_match(row->string, str8_lit("0.5"), 0) &&
+                str8_match(root->last->string, str8_lit("1"), 0),
                 "collapsing never rewrites the sizes saved by hand");
     cfg_state_release(cfg);
   }

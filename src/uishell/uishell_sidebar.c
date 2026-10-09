@@ -1710,6 +1710,9 @@ uishell_sidebar_disclosure(B32 expanded, String8 key)
   return result;
 }
 
+// How much further in than its group's title a group's rows' icons start.
+global F32 uishell_sidebar_group_row_inset = 0.6f;
+
 // The room before a group header's title, after its 3px accent: its text
 // starts where its rows' icons do, `indent` ems in.
 internal F32
@@ -3401,12 +3404,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               String8 outer_key = push_str8f(scratch.arena, "group_%S", key);
               UI_Box *outer_box = ui_box_from_key(ui_key_from_stringf(body->key, "###make_%S", outer_key));
               Vec2F32 mouse = ui_mouse();
-              // The last group's also opens from anywhere below its last
-              // row, so the pointer can cross the gap to New group.
-              B32 engaged = make_engagable && (contains_2f32(project_box->rect, mouse) ||
-                (outer && (contains_2f32(outer_box->rect, mouse) || contains_2f32(section_body_rect, mouse)))) &&
-                mouse.y >= card_last_row.y0;
-              F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1));
+              // New group, after the last group, also opens from anywhere
+              // below that card, alone.
+              B32 engaged = make_engagable && contains_2f32(project_box->rect, mouse) && mouse.y >= card_last_row.y0;
+              B32 outer_engaged = outer && make_engagable && (engaged || contains_2f32(outer_box->rect, mouse) ||
+                (contains_2f32(section_body_rect, mouse) && mouse.y >= project_box->rect.y1));
+              F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1)+uishell_sidebar_group_row_inset);
               if(!owner_node.collapsed && (is_project || group_cfg != &cfg_nil_node))
               {
                 UIShell_MakeAction make = is_project ?
@@ -3421,7 +3424,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               if(outer)
               {
                 UIShell_MakeAction make = {UIShell_Make_Group, str8_lit("New group"), make_section->id};
-                outer_footer = uishell_sidebar_make_footer(state, split->owner_cfg, outer_key, &make, 1, engaged, row_height, 2.f+card_inset+4.f+header_inset);
+                outer_footer = uishell_sidebar_make_footer(state, split->owner_cfg, outer_key, &make, 1, outer_engaged, row_height,
+                  2.f+card_inset+4.f+header_inset-em*uishell_sidebar_group_row_inset);
               }
             }
             footer_extra += card_footer + outer_footer;
@@ -3492,6 +3496,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           for(U64 c = 0; chip_count && c < 3; c++)
           { name_widths[c] = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, names[c]).x+em; }
           F32 indent = 0.3f+Min(depth[i], (str8_match(kind, str8_lit("role"), 0) || str8_match(kind, str8_lit("convoy"), 0) || uishell_sidebar_is_subject(node)) ? 3 : 1)*0.4f;
+          // A group's rows sit half an icon in from its title.
+          if(owner != ANDAMENTO_NONE && owner != i) { indent += uishell_sidebar_group_row_inset; }
           F32 status_width = em*(str8_match(kind, str8_lit("change_request"), 0) ? 10.f : 1.2f);
           F32 row_width = Max(0.f, dim_2f32(region.viewport).x-8.f-side_margin-(owner != ANDAMENTO_NONE ? 4.f+card_inset : 0.f));
           // A group header leads with its title inset (to its rows' icons),
@@ -3699,8 +3705,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               UI_Parent(chip_area) { ui_spacer(ui_px(chip_clearance, 1)); }
               ui_signal_from_box(chip_area);
             }
-            // A group header's actions follow its chips, shown while hovered.
-            if(project && contains_2f32(r.row->rect, ui_mouse()) && !rd_drag_is_active())
+            // A local group header's actions follow it, shown while hovered;
+            // a project's (New workspace here) are its footer's and its
+            // right-click menu's, so its chips never shift.
+            if(project && str8_match(kind, str8_lit(".group"), 0) && contains_2f32(r.row->rect, ui_mouse()) && !rd_drag_is_active())
             {
               UI_Signal more = uishell_sidebar_header_button(str8_lit("⋯"), push_str8f(scratch.arena, "header_more_%S", node_key), 0, 1,
                 str8_lit("Group options"), str8_lit("Or right-click the header"));
@@ -3784,12 +3792,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               String8 outer_key = push_str8f(scratch.arena, "group_%S", key);
               UI_Box *outer_box = ui_box_from_key(ui_key_from_stringf(body->key, "###make_%S", outer_key));
               Vec2F32 mouse = ui_mouse();
-              // The last group's also opens from anywhere below its last
-              // row, so the pointer can cross the gap to New group.
-              B32 engaged = make_engagable && (contains_2f32(project_box->rect, mouse) ||
-                (outer && (contains_2f32(outer_box->rect, mouse) || contains_2f32(section_body_rect, mouse)))) &&
-                mouse.y >= card_last_row.y0;
-              F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1));
+              // New group, after the last group, also opens from anywhere
+              // below that card, alone.
+              B32 engaged = make_engagable && contains_2f32(project_box->rect, mouse) && mouse.y >= card_last_row.y0;
+              B32 outer_engaged = outer && make_engagable && (engaged || contains_2f32(outer_box->rect, mouse) ||
+                (contains_2f32(section_body_rect, mouse) && mouse.y >= project_box->rect.y1));
+              F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1)+uishell_sidebar_group_row_inset);
               if(!owner_node.collapsed && (is_project || group_cfg != &cfg_nil_node))
               {
                 UIShell_MakeAction make = is_project ?
@@ -3804,7 +3812,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               if(outer)
               {
                 UIShell_MakeAction make = {UIShell_Make_Group, str8_lit("New group"), make_section->id};
-                outer_footer = uishell_sidebar_make_footer(state, split->owner_cfg, outer_key, &make, 1, engaged, row_height, 2.f+card_inset+4.f+header_inset);
+                outer_footer = uishell_sidebar_make_footer(state, split->owner_cfg, outer_key, &make, 1, outer_engaged, row_height,
+                  2.f+card_inset+4.f+header_inset-em*uishell_sidebar_group_row_inset);
               }
             }
             footer_extra += card_footer + outer_footer;
@@ -4405,6 +4414,8 @@ uishell_sidebar_panel_collapsed(CFG_PanelNode *panel, F32 header, F32 *height)
   F32 inset = 2*rd_panel_inset_px(ui_top_font_size());
   if(panel->first == &cfg_nil_panel_node)
   {
+    // An empty leaf has nothing to show: it gives all its space away.
+    if(panel->tabs.count == 0) { *height = 0; return 1; }
     CFG_Node *view = panel->selected_tab;
     *height = header + inset + (panel->tabs.count > 1 ? header : 0.f);
     return str8_match(view->string, str8_lit("sidebar_section"), 0) &&
@@ -4440,19 +4451,25 @@ uishell_sidebar_collapse_space(CFG_PanelNode *panel, F32 extent, F32 header)
     CFG_PanelNode **children = push_array(scratch.arena, CFG_PanelNode *, count);
     B32 *collapsed = push_array(scratch.arena, B32, count);
     F32 *pct = push_array(scratch.arena, F32, count);
+    // Saved sizes needn't sum to one; their shares do.
+    F32 total = 0;
+    for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next) { total += Max(0.f, child->pct_of_parent); }
+    if(total <= 0) { total = 1; }
+    F32 *saved = push_array(scratch.arena, F32, count);
     U64 i = 0, open = 0;
     for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next, i++)
     {
       F32 h = 0;
       children[i] = child;
       collapsed[i] = uishell_sidebar_panel_collapsed(child, header, &h);
-      pct[i] = collapsed[i] ? h/extent : Max(0.f, child->pct_of_parent);
+      saved[i] = Max(0.f, child->pct_of_parent)/total;
+      pct[i] = collapsed[i] ? h/extent : saved[i];
       open += !collapsed[i];
     }
     for(i = 0; i < count; i++)
     {
       if(!collapsed[i]) { continue; }
-      F32 freed = Max(0.f, children[i]->pct_of_parent) - pct[i];
+      F32 freed = saved[i] - pct[i];
       U64 to = count;
       for(U64 j = i+1; to == count && j < count; j++) { if(!collapsed[j]) { to = j; } }
       for(U64 j = i; to == count && j > 0; j--) { if(!collapsed[j-1]) { to = j-1; } }
@@ -4464,7 +4481,10 @@ uishell_sidebar_collapse_space(CFG_PanelNode *panel, F32 extent, F32 header)
       for(i = 0; i+1 < count; i++) { rest -= pct[i]; }
       pct[count-1] = Max(pct[count-1], rest);
     }
-    for(i = 0; i < count; i++) { children[i]->pct_of_parent = pct[i]; }
+    // Always exactly the space there is, even when headers alone overfill it.
+    F32 sum = 0;
+    for(i = 0; i < count; i++) { pct[i] = Max(0.f, pct[i]); sum += pct[i]; }
+    for(i = 0; i < count; i++) { children[i]->pct_of_parent = sum > 0 ? pct[i]/sum : 1.f/count; }
     scratch_end(scratch);
   }
   for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next)

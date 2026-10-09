@@ -372,6 +372,10 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     {
       DockFailure(cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) == &cfg_nil_node);
       DockFailure(abs_f32((F32)f64_from_str8(first_panel->string)-default_pct) < .0001f);
+      // The drag keeps the saved sizes summing to one.
+      F32 saved_sum = 0;
+      for(CFG_Node *c = first_panel->parent->first; c != &cfg_nil_node; c = c->next) { saved_sum += (F32)f64_from_str8(c->string); }
+      DockFailure(abs_f32(saved_sum-1.f) > .001f);
       CFG_State *loaded_cfg = cfg_state_alloc();
       String8 text = cfg_string_from_tree(scratch.arena, rd_state->cfg_schema_table, str8_zero(), window);
       CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(scratch.arena, loaded_cfg, rd_state->cfg_schema_table, str8_zero(), text);

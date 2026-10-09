@@ -3762,12 +3762,25 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
           else if(ui_pressed(sig))
           {
-            Vec2F32 v = {min_child->pct_of_parent, max_child->pct_of_parent};
+            // What's laid out can differ from what's saved (a sidebar's
+            // collapsed sections give their space away in memory), so the
+            // drag moves the saved sizes by what it moves the laid out ones.
+            F32 saved_total = 0;
+            for(CFG_PanelNode *c = panel->first; c != &cfg_nil_panel_node; c = c->next) { saved_total += Max(0.f, (F32)f64_from_str8(c->cfg->string)); }
+            Vec4F32 v = {min_child->pct_of_parent, max_child->pct_of_parent,
+              (F32)f64_from_str8(min_child->cfg->string), (F32)f64_from_str8(max_child->cfg->string)};
+            // Saved sizes that drifted from summing to one are put right first.
+            if(saved_total > 0 && abs_f32(saved_total-1.f) > .0001f)
+            {
+              v.v[2] /= saved_total; v.v[3] /= saved_total;
+              for(CFG_PanelNode *c = panel->first; c != &cfg_nil_panel_node; c = c->next)
+              { cfg_node_equip_stringf(rd_state->cfg, c->cfg, "%f", Max(0.f, (F32)f64_from_str8(c->cfg->string))/saved_total); }
+            }
             ui_store_drag_struct(&v);
           }
           else if(ui_dragging(sig))
           {
-            Vec2F32 v = *ui_get_drag_struct(Vec2F32);
+            Vec4F32 v = *ui_get_drag_struct(Vec4F32);
             Vec2F32 mouse_delta      = ui_drag_delta();
             F32 total_size           = dim_2f32(panel_rect).v[split_axis];
             F32 min_pct__before      = v.v[0];
@@ -3791,8 +3804,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             }
             min_child->pct_of_parent = min_pct__after;
             max_child->pct_of_parent = max_pct__after;
-            cfg_node_equip_stringf(rd_state->cfg, min_child->cfg, "%f", min_pct__after);
-            cfg_node_equip_stringf(rd_state->cfg, max_child->cfg, "%f", max_pct__after);
+            F32 min_saved = Max(0.001f, v.v[2] + pct_delta), max_saved = Max(0.001f, v.v[3] - pct_delta);
+            cfg_node_equip_stringf(rd_state->cfg, min_child->cfg, "%f", min_saved);
+            cfg_node_equip_stringf(rd_state->cfg, max_child->cfg, "%f", max_saved);
             is_changing_panel_boundaries = 1;
           }
         }
