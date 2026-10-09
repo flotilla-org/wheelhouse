@@ -2265,6 +2265,12 @@ rd_cell(RD_CellParams *params, String8 string)
   {
     ui_set_next_hover_cursor(WM_Cursor_IBar);
   }
+  // A button cell draws a background only to show hover; it paints none of
+  // its own, so it adds no layer over a floating view's blur (#275).
+  if(params->flags & RD_CellFlag_Button && !(params->flags & RD_CellFlag_NoBackground))
+  {
+    ui_set_next_background_color(v4f32(0, 0, 0, 0));
+  }
   UI_Box *box = ui_build_box_from_key(UI_BoxFlag_MouseClickable|
                                       (!!build_lhs_name_desc*UI_BoxFlag_DisableFocusBorder)|
                                       (!!(params->flags & RD_CellFlag_KeyboardClickable)*UI_BoxFlag_KeyboardClickable)|

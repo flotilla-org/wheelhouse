@@ -184,6 +184,21 @@ uishell_panel_diagnostics(RD_WindowState *ws)
       !ui_box_is_nil(preview) && preview->custom_draw == 0 && !ui_box_is_nil(preview->first);
     fprintf(stderr, "%s a text View's drag floater shows it live\n", live ? "PASS" : "FAIL");
     failures += !live;
+    // A button cell in a floating view keeps hover effects but paints no
+    // background, so it adds no layer over the view's blur.
+    UI_Signal button_sig = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_TagF("floating") UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) UI_PrefWidth(ui_px(200, 1)) UI_PrefHeight(ui_px(24, 1))
+    {
+      RD_CellParams params = {0};
+      params.flags = RD_CellFlag_Button;
+      button_sig = rd_cell(&params, str8_lit("Open###diag_button_cell"));
+    }
+    ui_end_build();
+    B32 one_layer = (button_sig.box->flags & UI_BoxFlag_DrawBackground) && (button_sig.box->flags & UI_BoxFlag_DrawHotEffects) &&
+      button_sig.box->background_color.w == 0;
+    fprintf(stderr, "%s a floating button cell shows hover without painting a background layer\n", one_layer ? "PASS" : "FAIL");
+    failures += !one_layer;
     rd_drag_kill();
   }
   // Closing the empty source panel is also part of moving its last tab.
