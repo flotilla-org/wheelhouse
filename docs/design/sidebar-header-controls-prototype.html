@@ -14,6 +14,11 @@
   Scope: sidebar-level drops only. Panel-level drops (sections as tabs,
   splits, floating cards) are RAD's docking; they are designed against the
   native code rather than recreated here.
+  "Groups redesign" (2026-10-08, workstream A) adds group-header knobs: the
+  redesigned header (no icon, weight, collapse after the title), hover
+  actions, New workspace and New group affordances (header, push-down footer,
+  overlay footer), mini tabs with a "+" menu, and scrollbar modes (the Pinned
+  section scrolls so you can reach for a row's margin x under the bar).
   Knobs are kept in the URL hash so a combination can be shared.
   Data is a static fixture; clicks change only in-page state (log below the panel).
   Run: serve docs/design over http (file:// blocks some browser APIs), e.g.
@@ -27,6 +32,7 @@
 <title>Sidebar header controls prototype</title>
 <style>
 :root{
+  color-scheme:dark;
   --bg:#1e1e1e; --side:#232323; --line:#3a3a3a; --text:#d8d8d8; --dim:#8c8c8c; --faint:#5f5f5f;
   --sel:#3b4048; --selfill:#4a4f58; --hot:#ffffff12; --act:#ffffff20;
   --good:#8fdc9f; --bad:#f28b82; --warn:#e6c07b; --issue:#9ab8e8;
@@ -165,6 +171,37 @@ svg.lossplot.big{height:220px;max-width:640px}
 .wsbody{padding:12px 16px}
 .wsempty{padding:24px;color:var(--faint)}
 .term{font:12.5px ui-monospace,Menlo,monospace;color:#cfcfcf;margin:0}
+/* groups redesign */
+.proj.card>.ghead::before{content:"";position:absolute;left:0;top:4px;bottom:4px;width:3px;border-radius:2px;background:var(--pc)}
+.ghead .nm{flex:0 1 auto;color:var(--text)}
+.ghead .gcnt{color:var(--faint);font-size:11px;margin-left:6px;flex:none}
+.ghead .gdisc,.gdisc{font-size:9px;color:var(--dim);margin-left:5px;flex:none;cursor:pointer}
+.ghead .gfill{flex:1}
+.ghead .gacts{display:flex;gap:1px;flex:none;visibility:hidden}
+.ghead:hover .gacts{visibility:visible}
+.hoverreveal{visibility:hidden}
+.ghead:hover .hoverreveal,.sh:hover .hoverreveal{visibility:visible}
+.gh-old>.prow{box-shadow:inset 0 -1px 0 var(--pc)}
+.footrow.pushfoot{height:0;margin:0 4px;opacity:0;overflow:hidden;transition:height .12s,opacity .12s,margin .12s}
+.foot-on>.footrow.pushfoot,.foot-on>.proj>.footrow.pushfoot{height:26px;margin:1px 4px;opacity:1}
+.footrow.capfoot{position:absolute;left:-1px;right:-1px;top:100%;margin:0;height:26px;display:none;z-index:20;background:#262626;border:1px solid #343434;border-top:none;border-radius:0 0 6px 6px}
+.foot-on>.footrow.capfoot{display:flex}
+.foot-on.proj.card{border-bottom-left-radius:0;border-bottom-right-radius:0}
+.sectail{height:14px}
+.footact{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px 0 2px;margin-right:6px;border-radius:4px;color:var(--faint);cursor:pointer}
+.footact:hover{background:var(--hot);color:var(--text)}
+.footact .plus{font-size:14px}
+.secfoot{position:relative}
+.mtabs{display:flex;align-items:center;height:26px;border-top:1px solid var(--line);padding:0 4px;gap:2px;background:#202020}
+.mtab{font-size:11px;padding:2px 8px;border-radius:4px;color:var(--dim);cursor:pointer;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mtab:hover{background:var(--hot)} .mtab.on{background:#ffffff14;color:var(--text)}
+.mtabs .hb{margin-left:2px}
+.svp{position:relative;overflow:hidden}
+.svp .sin{will-change:transform}
+.sthumb{position:absolute;right:2px;top:0;width:6px;border-radius:4px;background:#ffffff40;z-index:30;transition:opacity .25s,width .12s;opacity:0;pointer-events:none}
+.sthumb.wide{width:11px;background:#ffffff58}
+.sthumb.vis{opacity:1;pointer-events:auto}
+.lane-activity .marginhit{margin-right:0}
 /* drop-target visuals: preview the outcome, one colour family with RAD's drop sites */
 :root{--drop:#e0b34a}
 #work{position:relative}
@@ -191,7 +228,7 @@ const KNOBS = [
    note: 'Today: toggles get a selection fill, + is a bordered toolbar button.'},
   {k: 'toggles', label: 'Toggles', opts: {buttons: 'Separate buttons', segmented: 'Segmented group', menu: 'In ⋯ menu'}},
   {k: 'vis', label: 'Actions visible', opts: {always: 'Always', hover: 'On header hover', hoverKeepOn: 'Hover; active stay'}},
-  {k: 'plus', label: 'New workspace', opts: {entry: 'First entry ⊕', icon: '+ in header', labelled: '+ New in header', menu: 'In ⋯ menu'},
+  {k: 'plus', label: 'New workspace', opts: {entry: 'First entry ⊕', footer: 'Footer, like other groups', icon: '+ in header', labelled: '+ New in header', menu: 'In ⋯ menu'},
    note: 'First entry: click it to name the workspace inline (Enter creates, Esc cancels).'},
   {k: 'entryPos', label: 'Entry position', opts: {top: 'Top of section', bottom: 'Bottom of section'}},
   {k: 'secClose', label: 'Section close', opts: {hoverX: '× on hover', dimX: '× always, dim', menu: 'In ⋯ menu'}},
@@ -215,9 +252,24 @@ const KNOBS = [
   {k: 'margin', label: 'Side margin', range: [0, 24], unit: 'px'},
   {k: 'pdisc', label: 'Project disclosure', opts: {before: 'Before name (today)', after: 'After name', none: 'None (click name)'}},
   {k: 'width', label: 'Sidebar width', range: [220, 420], unit: 'px'},
+  {group: 'Groups redesign'},
+  {k: 'gHead', label: 'Group header', opts: {old: 'Today (icon, rule, ▶ first)', new: 'Redesign (no icon, weight, ▼ after)'}},
+  {k: 'gWeight', label: 'Header weight', opts: {'500': 'Medium', '600': 'Semibold', '700': 'Bold'}},
+  {k: 'discHover', label: 'Collapse indicator', opts: {always: 'Always shown', hover: 'Only on hover'},
+   note: 'Section and group headers. A collapsed header shows its count either way.'},
+  {k: 'gActs', label: 'Group actions', opts: {hover: '+ / ⋯ on hover', menuOnly: 'Right-click only'}},
+  {k: 'newWs', label: 'New workspace', opts: {header: '+ in group header', footer: 'Footer, pushes down', cap: 'Footer, overlays', menu: 'Menu only'},
+   note: 'Per group, projects included. Workspaces keeps its first-entry row.'},
+  {k: 'trigger', label: 'Footer appears', opts: {intent: 'After 300ms on the group', edge: "At the group's last row", now: 'On entering the group'}},
+  {k: 'newGroup', label: 'New group', opts: {beside: "Beside New workspace, in the last group's footer", footer: 'Own strip after the last group', header: 'Section header button', menu: 'Menu only'},
+   note: 'Beside: the last group\'s footer offers both; the one you pick takes the row.'},
+  {k: 'tabs', label: 'Mini tabs', opts: {off: 'Separate sections', on: 'Two sections as tabs, with +'}},
+  {k: 'scroll', label: 'Scrollbar', opts: {hover: 'Overlay on hover (today)', activity: 'Overlay on activity, own lane', reserve: 'Always, space reserved'},
+   note: 'The Pinned section scrolls (wheel). Hover a row and reach for its margin ×.'},
   {group: 'Notes'},
 ];
-const BASE = {layout: 'separate', defaultGroup: 'cardless', entryPos: 'top', attention: 'aligned'};
+const BASE = {layout: 'separate', defaultGroup: 'cardless', entryPos: 'top', attention: 'aligned',
+  gHead: 'old', gWeight: '500', discHover: 'always', gActs: 'menuOnly', newWs: 'menu', trigger: 'intent', newGroup: 'menu', tabs: 'off', scroll: 'hover'};
 const PRESETS = {
   Current: {...BASE, defaultGroup: 'flush', attention: 'flush', btn: 'today', toggles: 'buttons', vis: 'always', plus: 'icon', secClose: 'hoverX', tipStyle: 'mixed', tipText: 'raw', count: 'right',
             disc: 'before', grab: 'grip', rowClose: 'strip', status: 'trailing', both: 'detach', proj: 'rule', margin: 0, pdisc: 'before', width: 320},
@@ -228,8 +280,11 @@ const PRESETS = {
   'Workspaces idea': {...BASE, btn: 'quiet', toggles: 'segmented', vis: 'hoverKeepOn', plus: 'entry', secClose: 'hoverX', tipStyle: 'unified', tipText: 'rich', count: 'collapsed',
             disc: 'after', grab: 'gripHover', rowClose: 'margin', status: 'trailing', both: 'detachClose', proj: 'card', margin: 18, pdisc: 'after', width: 338},
 };
-let K = {...PRESETS['Workspaces idea']};
-try { const h = decodeURIComponent(location.hash.slice(1)); if (h) K = {...PRESETS['Workspaces idea'], ...JSON.parse(h)}; } catch (e) {}
+// Workstream A (2026-10-08): Workspaces idea plus the agreed group-header redesign.
+PRESETS['Groups redesign'] = {...PRESETS['Workspaces idea'], gHead: 'new', gWeight: '600', discHover: 'hover', gActs: 'hover',
+  newWs: 'footer', trigger: 'edge', newGroup: 'beside', tabs: 'on', scroll: 'activity', plus: 'footer'};
+let K = {...PRESETS['Groups redesign']};
+try { const h = decodeURIComponent(location.hash.slice(1)); if (h) K = {...PRESETS['Groups redesign'], ...JSON.parse(h)}; } catch (e) {}
 function saveKnobs() { try { history.replaceState(null, '', '#' + encodeURIComponent(JSON.stringify(K))); } catch (e) {} }
 
 // ---------- fixture model (in memory only) ----------
@@ -241,7 +296,8 @@ function saveKnobs() { try { history.replaceState(null, '', '#' + encodeURICompo
 const S = {
   vars: {issues: true, finished: false, attempts: false},
   // Generated ids start past the fixture's (gh-1, w-1...).
-  collapsed: {}, pcollapsed: {}, nextWs: 3, nextId: 100, log: [], naming: false,
+  collapsed: {}, pcollapsed: {}, gcollapsed: {}, nextWs: 5, nextId: 100, log: [], naming: false,
+  footOpen: null, footNaming: null, scrollTop: 0, tabbed: ['ci', 'pinned-sec'], tabSel: 'ci',
   // Data order is Andamento's; `order` holds saved sibling lists (key: group/parent).
   projects: [
     {id: 'wheelhouse', name: 'wheelhouse', color: 'var(--p1)', roles: [{glyph: '◆', ws: 'live'}]},
@@ -263,18 +319,29 @@ const S = {
   locals: [
     {id: 'w-1', name: 'Workspace 1', ws: 'live', group: 'default', sel: true},
     {id: 'w-2', name: 'scratch', ws: 'live', group: 'default'},
+    {id: 'w-3', name: 'release-build', ws: 'live', group: 'builds'},
+    {id: 'w-4', name: 'flaky-tests', ws: 'live', group: 'tests'},
   ],
   localGroups: [
     {id: 'default', name: '', kind: 'default', items: ['w:w-1', 'w:w-2']},
-    {id: 'pinned', name: 'Pinned', kind: 'local', items: ['g:gh-1']},
+    {id: 'pinned', name: 'Pinned', kind: 'local', items: ['g:gh-1', 'g:gh-3', 'g:gh-4', 'g:gh-5', 'g:gh-6']},
+    {id: 'builds', name: 'Builds', kind: 'local', items: ['w:w-3', 'g:gh-2']},
+    {id: 'tests', name: 'Tests', kind: 'local', items: ['w:w-4']},
   ],
-  ghosts: [{id: 'gh-1', of: {type: 'entity', ref: 'c-ml'}, expanded: false, mode: 0}],
+  ghosts: [{id: 'gh-1', of: {type: 'entity', ref: 'c-ml'}, expanded: false, mode: 0},
+    {id: 'gh-2', of: {type: 'entity', ref: 'c-hdr'}, expanded: false, mode: 0},
+    {id: 'gh-3', of: {type: 'entity', ref: 'c-close'}, expanded: false, mode: 0},
+    {id: 'gh-4', of: {type: 'entity', ref: 'v-fix'}, expanded: false, mode: 0},
+    {id: 'gh-5', of: {type: 'entity', ref: 'c-unpl'}, expanded: false, mode: 0},
+    {id: 'gh-6', of: {type: 'entity', ref: 'v-test'}, expanded: false, mode: 0}],
   // Sections hold groups. name null = borrows its only group's name.
   sections: [
     {id: 'projects', name: 'Projects', declared: true, groups: ['@projects']},
     {id: 'attention', name: 'Attention', declared: true, groups: ['@attention']},
     {id: 'workspaces', name: 'Workspaces', declared: true, groups: ['default']},
+    {id: 'ci', name: null, autoNamed: false, groups: ['builds', 'tests']},
     {id: 'pinned-sec', name: null, autoNamed: false, groups: ['pinned']},
+    {id: 'controls', name: 'Controls', declared: true, groups: [], closed: true},
   ],
   focus: 'c-ml', focusTab: 'loss graph', loss: [],
 };
@@ -325,9 +392,10 @@ function act(row, kind) {
   if (![...S.entities, ...S.locals].some(r => r.ws === 'live')) newWorkspace(null, 'last close'); else render();
 }
 function removeItem(key) { for (const g of S.localGroups) { const i = g.items.indexOf(key); if (i >= 0) g.items.splice(i, 1); } }
-function newWorkspace(name, why) {
-  const w = {id: 'w-' + S.nextWs, name: name || 'Workspace ' + S.nextWs, ws: 'live', group: 'default'};
-  S.nextWs++; S.locals.push(w); lgroup('default').items.push('w:' + w.id);
+function newWorkspace(name, why, gid = 'default') {
+  const w = {id: 'w-' + S.nextWs, name: name || 'Workspace ' + S.nextWs, ws: 'live', group: gid};
+  S.nextWs++; S.locals.push(w); if (lgroup(gid)) lgroup(gid).items.push('w:' + w.id);
+  S.focus = w.id;
   log(`new ${w.name}${why ? ' (' + why + ')' : ''}`); render();
 }
 const VARS = [
@@ -348,18 +416,12 @@ function deleteGroup(g) {
   fixSectionNames();
   log(`delete group ${g.name}: ${homed.length} workspace(s) → Workspaces, ghosts dropped`); render();
 }
-// A section with no name of its own borrows its only group's name; when a
-// second group joins it takes a placeholder, which reverts if never renamed.
+// A section with no name of its own shows its groups' names, joined (as
+// built in #260); one group's name is the title, and renaming renames it.
 function fixSectionNames() {
-  for (const s of S.sections) {
-    if (s.declared) continue;
-    if (s.groups.length > 1 && s.name === null) {
-      let n = 'Pinned', i = 2; while (S.sections.some(x => x !== s && x.name === n)) n = 'Pinned ' + i++;
-      s.name = n; s.autoNamed = true;
-    } else if (s.groups.length === 1 && s.autoNamed) { s.name = null; s.autoNamed = false; }
-  }
+  for (const s of S.sections) if (s.autoNamed) { s.name = null; s.autoNamed = false; }
 }
-function sectionTitle(s) { return s.name !== null ? s.name : groupName(s.groups[0]); }
+function sectionTitle(s) { return s.name !== null ? s.name : s.groups.map(groupName).join(', ') || 'Section'; }
 
 // ---------- helpers ----------
 const tip = document.getElementById('tip');
@@ -405,7 +467,7 @@ function header(sec, title, count, opts, secEl) {
   const collapsedNote = S.collapsed[sec] ? `<span class="cnt" style="color:var(--faint);margin-left:6px">${count}</span>` : '';
   const pill = `<span class="cnt" style="display:inline-block;margin-left:6px;padding:0 5px;border-radius:7px;background:#ffffff0e;color:var(--faint);font-size:10px">${count}</span>`;
   const t = h('span', 'title' + (K.grab === 'title' || K.grab === 'both' ? ' grab' : ''), title +
-    (K.count === 'pill' ? pill : K.count === 'collapsed' ? collapsedNote : '') + (K.disc === 'after' ? ` <span class="cnt" style="font-size:9px">${S.collapsed[sec] ? '▶' : '▼'}</span>` : ''));
+    (K.count === 'pill' ? pill : K.count === 'collapsed' ? collapsedNote : '') + (K.disc === 'after' ? ` <span class="cnt${K.discHover === 'hover' ? ' hoverreveal' : ''}" style="font-size:9px">${S.collapsed[sec] ? '▶' : '▼'}</span>` : ''));
   if (K.disc === 'after') t.style.flex = '0 1 auto';
   if (K.grab === 'title' || K.grab === 'both') dragSection(t, secEl, title, () => toggleSec(sec)); else t.onclick = () => toggleSec(sec);
   sh.append(t);
@@ -432,7 +494,7 @@ function header(sec, title, count, opts, secEl) {
       if (box !== acts) { if (K.vis === 'hover' || (K.vis === 'hoverKeepOn' && !anyOn)) hoverOnly.push(box); acts.append(box); }
     }
   }
-  if (opts.plus && K.plus !== 'entry') {
+  if (opts.plus && K.plus !== 'entry' && K.plus !== 'footer') {
     if (K.plus === 'menu') menuItems.push('-', {label: 'New workspace', icon: '+', run: () => newWorkspace()});
     else {
       const b = h('span', 'hb', K.plus === 'labelled' ? '+ New' : '+'); if (K.plus === 'icon') b.style.fontSize = '15px';
@@ -440,6 +502,10 @@ function header(sec, title, count, opts, secEl) {
       if (K.vis === 'hover') hoverOnly.push(b);
       acts.append(b);
     }
+  }
+  if (opts.newGroup && K.newGroup === 'header') {
+    const b = h('span', 'hb', '⊞'); b.onclick = e => { e.stopPropagation(); opts.newGroup(); };
+    bindTip(b, '<b>New group</b>\n<span class="k">Adds a group to this section</span>'); hoverOnly.push(b); acts.append(b);
   }
   if (K.secClose === 'menu') menuItems.push('-', {label: 'Close section', icon: '×', run: () => log(`close section ${title}`)});
   else {
@@ -479,7 +545,7 @@ function dragSection(el, secEl, title, onClick) {
 let DRAG = null;
 function draggable(el, payload, onClick) {
   el.addEventListener('mousedown', e => {
-    if (e.button !== 0 || e.target.closest('.ab,.tw,.disc,.modes,input' + (payload.kind === 'subject' ? '' : ',.chip'))) return;
+    if (e.button !== 0 || e.target.closest('.ab,.hb,.tw,.disc,.modes,input' + (payload.kind === 'subject' ? '' : ',.chip'))) return;
     e.stopPropagation();
     const x0 = e.clientX, y0 = e.clientY;
     const move = m => {
@@ -811,8 +877,112 @@ function entityTree(el, project, parent, depth) {
     entityTree(el, project, e.id, depth + 1);
   }
 }
+// Redesigned group header, shared by projects and local groups: no icon, the
+// title where row icons start, weight, ▼ after the title (on hover if set),
+// a dimmed count when collapsed, chips, then + and ⋯ on hover. The whole
+// header drags; a click collapses; double-click renames a local group.
+let clickTimer = null;
+function groupHead(o) {
+  const hr = h('div', 'row ghead');
+  hr.append(h('span', 'tw'));
+  const nm = o.renaming ? renameInput(o.name, o.rename) : h('span', 'nm', o.name);
+  nm.style.fontWeight = K.gWeight; hr.append(nm);
+  if (o.collapsed) hr.append(h('span', 'gcnt', String(o.count)));
+  const d = h('span', 'gdisc' + (K.discHover === 'hover' ? ' hoverreveal' : ''), o.collapsed ? '▶' : '▼');
+  hr.append(d, h('span', 'gfill'));
+  if (o.chips) hr.append(o.chips);
+  const acts = h('span', 'gacts');
+  if (K.gActs === 'hover') {
+    if (K.newWs === 'header' && o.plus) {
+      const b = h('span', 'hb', '+'); b.style.fontSize = '15px';
+      b.onclick = e => { e.stopPropagation(); o.plus(); };
+      bindTip(b, `<b>New workspace</b>\n<span class="k">Opens a workspace in ${o.name}</span>`); acts.append(b);
+    }
+    const more = h('span', 'hb', '⋯');
+    more.onclick = e => { e.stopPropagation(); const r = more.getBoundingClientRect(); menu(r.left, r.bottom + 4, o.menu()); };
+    bindTip(more, `<b>${o.name}</b>\n<span class="k">Group options</span>`); acts.append(more);
+  }
+  hr.append(acts, h('span', 'st'));
+  hr.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); menu(e.clientX, e.clientY, o.menu()); };
+  // A single click collapses; a double click renames instead (local groups).
+  draggable(hr, o.drag, () => { clearTimeout(clickTimer); clickTimer = setTimeout(o.toggle, o.rename ? 220 : 0); });
+  if (o.rename) hr.ondblclick = () => { clearTimeout(clickTimer); o.startRename(); };
+  return hr;
+}
+// A "+ New …" row that a hover reveals at the bottom of `host`: pushing
+// what's below down (footer), or overlaying it (cap). K.trigger picks when.
+// Several actions share the row side by side; the one picked takes the row
+// as its name field.
+// `inner` (default `host`) holds the row; `outer`, when given, are actions
+// at the section's level, in a second row after `inner`, inside `host`.
+function hoverFooter(host, key, actions, cap, inner, outer) {
+  inner = inner || host;
+  const all = outer ? [...actions, ...outer] : actions;
+  const f = h('div', 'row newrow footrow ' + (cap ? 'capfoot' : 'pushfoot'));
+  f.dataset.foot = key;
+  const naming = S.footNaming && S.footNaming.startsWith(key + '#') ? all[+S.footNaming.split('#')[1]] : null;
+  const namingOuter = naming && outer && outer.includes(naming);
+  const row2 = outer ? h('div', 'row newrow footrow pushfoot outerfoot') : null;
+  if (row2) row2.style.marginLeft = K.margin + 'px';
+  if (naming) {
+    const target = namingOuter ? row2 : f;
+    target.append(h('span', 'tw'), h('span', 'ic plus', '+'));
+    const input = h('input', 'nameinput'); input.placeholder = naming.label;
+    input.onkeydown = e => { if (e.key === 'Enter') { S.footNaming = null; naming.create(input.value.trim() || null); } if (e.key === 'Escape') { S.footNaming = null; S.footOpen = null; render(); } };
+    input.onblur = () => { if (S.footNaming) { S.footNaming = null; S.footOpen = null; render(); } };
+    target.append(input); setTimeout(() => input.focus(), 0);
+    if (namingOuter) f.append(h('span', 'tw'));
+  }
+  if (!naming) {
+    const buttons = (row, list, offset) => { row.append(h('span', 'tw')); list.forEach((a, i) => {
+      const b = h('span', 'footact', `<span class="plus">+</span> ${a.label}`);
+      b.onclick = e => { e.stopPropagation(); S.footNaming = key + '#' + (offset + i); S.footOpen = key; render(); };
+      row.append(b); }); };
+    buttons(f, actions, 0);
+    if (row2) buttons(row2, outer, actions.length);
+  }
+  inner.append(f);
+  if (row2) host.append(row2);
+  const set = on => { if (S.footNaming) return; S.footOpen = on ? key : (S.footOpen === key ? null : S.footOpen); host.classList.toggle('foot-on', S.footOpen === key); };
+  if (S.footOpen === key) host.classList.add('foot-on');
+  let timer = null;
+  host.addEventListener('mouseenter', () => { if (DRAG) return; if (K.trigger === 'now') set(true); else if (K.trigger === 'intent') timer = setTimeout(() => set(true), 300); });
+  host.addEventListener('mouseleave', () => { clearTimeout(timer); set(false); });
+  if (K.trigger === 'edge') host.addEventListener('mousemove', m => {
+    if (DRAG) return;
+    const rows = [...host.querySelectorAll('.row:not(.footrow)')];
+    const last = rows[rows.length - 1];
+    set(!last || m.clientY >= last.getBoundingClientRect().top || !!m.target.closest('.footrow'));
+  });
+}
+// The footer's actions for a group: New workspace, and New group too when
+// it is the section's last group (its bottom is the section's).
+function footActions(label, ws, sec, last) {
+  const out = [{label: 'New workspace', create: ws}];
+  if (last && sec && K.newGroup === 'beside') out.push({label: 'New group', create: n => newGroupIn(sec, n)});
+  return out;
+}
+function groupCollapsedCount(items) { return items.length; }
 function projectGroup(p) {
   const el = grpShell('project', p.id, K.proj); el.dataset.pid = p.id; el.style.setProperty('--pc', p.color);
+  if (K.gHead === 'new') {
+    const toggle = () => { S.pcollapsed[p.id] = !S.pcollapsed[p.id]; render(); };
+    const roles = h('span', 'chips'); for (const r of p.roles) roles.append(h('span', 'chip' + (r.ws === 'live' ? ' live' : ''), r.glyph));
+    const menuItems = () => [
+      {label: 'New workspace here', icon: '+', run: () => newWorkspace(null, `lives with ${p.name}`, p.id)},
+      {label: 'Reset order', icon: '↺', run: () => { for (const k of Object.keys(S.order)) if (k.startsWith(p.id + '/')) delete S.order[k]; log(`reset order in ${p.name}`); render(); }}];
+    const hd = groupHead({name: p.name, collapsed: S.pcollapsed[p.id], count: siblings(p.id, null).length, chips: roles, toggle,
+      menu: menuItems, plus: () => newWorkspace(null, `lives with ${p.name}`, p.id), drag: {kind: 'pgroup', p}});
+    if (S.pcollapsed[p.id]) hd.dataset.spring = 'p:' + p.id;
+    el.append(hd);
+    if (!S.pcollapsed[p.id]) {
+      entityTree(el, p.id, null, 0);
+      for (const w of S.locals.filter(w => w.group === p.id)) el.append(realRow(w, 0, 'local'));
+      if (K.newWs === 'footer' || K.newWs === 'cap') hoverFooter(el, 'p:' + p.id, footActions('', n => newWorkspace(n, `lives with ${p.name}`, p.id)), K.newWs === 'cap');
+    }
+    return el;
+  }
+  el.classList.add('gh-old');
   const pr = h('div', 'row prow'); if (S.pcollapsed[p.id]) pr.dataset.spring = 'p:' + p.id;
   const toggle = () => { S.pcollapsed[p.id] = !S.pcollapsed[p.id]; render(); };
   const disc = h('span', 'tw', S.pcollapsed[p.id] ? '▶' : '▼'); disc.onclick = e => { e.stopPropagation(); toggle(); };
@@ -830,10 +1000,43 @@ function projectGroup(p) {
   }
   return el;
 }
-function localGroupEl(g, borrowed, sec) {
-  const style = g.kind === 'default' ? (K.defaultGroup === 'cardless' ? 'card bare' : 'flush') : 'card localcard';
+function localGroupEl(g, borrowed, sec, last) {
+  const style = g.kind === 'default' ? (K.defaultGroup === 'cardless' ? 'card bare' : 'flush') :
+    borrowed && K.gHead === 'new' ? 'card bare' : K.gHead === 'new' ? 'card' : 'card localcard';
   const el = grpShell(g.kind, g.id, style);
   if (g.kind === 'default' && K.defaultGroup === 'flush') el.style.margin = '0';
+  if (g.kind === 'default' && K.plus === 'footer') {
+    for (const key of g.items) { const w = local(key.slice(2)); if (w) el.append(realRow(w, 0, 'local')); }
+    hoverFooter(el, 'g:default', footActions('', n => newWorkspace(n), sec, last), false);
+    return el;
+  }
+  if (K.gHead === 'new' && g.kind === 'local') {
+    el.style.setProperty('--pc', '#ffffff3a');
+    const collapsed = !borrowed && S.gcollapsed[g.id];
+    if (!borrowed) el.append(groupHead({name: g.name, collapsed, count: g.items.length,
+      toggle: () => { S.gcollapsed[g.id] = !S.gcollapsed[g.id]; render(); },
+      renaming: S.renaming === 'g:' + g.id, rename: v => g.name = v, startRename: () => renameGroup(g),
+      menu: () => [{label: 'New workspace here', icon: '+', run: () => newWorkspace(null, `in ${g.name}`, g.id)}, ...groupMenu(g)],
+      plus: () => newWorkspace(null, `in ${g.name}`, g.id), drag: {kind: 'lgroup', g}}));
+    if (collapsed) return el;
+    for (const key of g.items) {
+      if (key.startsWith('w:')) { const w = local(key.slice(2)); if (w) el.append(realRow(w, 0, 'local')); }
+      else { const gh = ghost(key.slice(2)); if (gh) el.append(ghostRow(gh)); }
+    }
+    if (!g.items.length) el.append(h('div', 'empty', 'Drop rows, chips or tabs here'));
+    if (K.newWs === 'footer' || K.newWs === 'cap') {
+      const ws = n => newWorkspace(n, `in ${g.name}`, g.id);
+      // A visible card's footer is the group's own: New group, which adds a
+      // sibling, goes below the card at the section's level.
+      if (!borrowed && last && sec && K.newGroup === 'beside') {
+        const wrap = h('div', 'grpwrap'); wrap.append(el);
+        hoverFooter(wrap, 'g:' + g.id, footActions('', ws), K.newWs === 'cap', el, [{label: 'New group', create: n => newGroupIn(sec, n)}]);
+        return wrap;
+      }
+      hoverFooter(el, 'g:' + g.id, footActions('', ws, sec, last), K.newWs === 'cap');
+    }
+    return el;
+  }
   if (g.kind === 'local' && !borrowed) {
     const hr = h('div', 'row lghead');
     hr.append(h('span', 'tw'), h('span', 'ic', '▢'), S.renaming === 'g:' + g.id ? renameInput(g.name, v => g.name = v) : h('span', 'nm', g.name));
@@ -866,9 +1069,11 @@ function renameInput(current, save) {
   setTimeout(() => input.select(), 0);
   return input;
 }
-function newGroupIn(s) {
-  const id = uid('lg'); S.localGroups.push({id, name: 'Group ' + S.localGroups.length, kind: 'local', items: []});
-  s.groups.push(id); fixSectionNames(); log(`new local group in ${sectionTitle(s)}`); render();
+function newGroupIn(s, name) {
+  const id = uid('lg'); S.localGroups.push({id, name: name || 'New group', kind: 'local', items: []});
+  s.groups.push(id); fixSectionNames(); log(`new local group in ${sectionTitle(s)}`);
+  if (!name) S.renaming = 'g:' + id;
+  S.footOpen = null; render();
 }
 
 // ---------- sections ----------
@@ -879,7 +1084,9 @@ function sectionEl(s) {
   const title = sectionTitle(s);
   const groups = s.groups.flatMap(g => g === '@projects' ? projectList().map(p => ({t: 'p', p})) : g === '@attention' ? [{t: 'a'}] : [{t: 'l', g: lgroup(g)}]).filter(x => x.t !== 'l' || x.g);
   const count = s.id === 'projects' ? S.projects.length : s.id === 'attention' ? S.attention.length : groups.reduce((n, x) => n + (x.g ? x.g.items.length : 0), 0);
-  const head = header(key, title, count, {toggles: s.id === 'projects' || (K.layout === 'combined' && s.id === 'projects'), plus: s.groups.includes('default')}, el);
+  const takesGroups = s.id !== 'projects' && s.id !== 'attention' && (!s.declared || s.id === 'workspaces');
+  const head = header(key, title, count, {toggles: s.id === 'projects' || (K.layout === 'combined' && s.id === 'projects'), plus: s.groups.includes('default'),
+    newGroup: takesGroups ? () => newGroupIn(s) : null}, el);
   if (S.collapsed[key]) head.dataset.spring = 's:' + key;
   const titleEl = head.querySelector('.title');
   let titleNode = titleEl;
@@ -911,11 +1118,61 @@ function sectionEl(s) {
       const w = grpShell('attention', 'attention', K.attention === 'aligned' ? 'card bare' : 'flush');
       if (K.attention !== 'aligned') w.style.margin = '0';
       rows.forEach(r => w.append(realRow(r, 0, 'attn'))); body.append(w);
-    } else body.append(localGroupEl(x.g, borrowed, s));
+    } else body.append(localGroupEl(x.g, borrowed, s, x === groups[groups.length - 1] && takesGroups));
   }
   if (withEntry && K.entryPos === 'bottom') body.append(entry());
+  // New group: a footer revealed by hovering just below the last group.
+  if (takesGroups && K.newGroup === 'footer') {
+    const tail = h('div', 'secfoot'); tail.style.margin = `0 ${K.margin}px`;
+    const zone = h('div', 'sectail'); tail.append(zone);
+    hoverFooter(tail, 's:' + s.id, [{label: 'New group', create: n => newGroupIn(s, n)}], false);
+    body.append(tail);
+  }
+  if (s.id === 'pinned-sec') { el.append(scrollBody(body)); return el; }
   el.append(body);
   return el;
+}
+// The Pinned section scrolls in a fixed height so the scrollbar modes show.
+function scrollBody(body) {
+  const vp = h('div', 'svp lane-' + K.scroll); vp.style.height = '120px';
+  const inner = h('div', 'sin'); inner.append(body); vp.append(inner);
+  const thumb = h('div', 'sthumb'); vp.append(thumb);
+  if (K.scroll === 'reserve') { inner.style.marginRight = '10px'; thumb.classList.add('vis'); thumb.style.right = '2px'; }
+  let fade = null;
+  const max = () => Math.max(0, inner.scrollHeight - vp.clientHeight);
+  const layout = () => {
+    S.scrollTop = Math.min(max(), Math.max(0, S.scrollTop));
+    inner.style.transform = `translateY(${-S.scrollTop}px)`;
+    const ratio = vp.clientHeight / Math.max(1, inner.scrollHeight);
+    if (ratio >= 1) { thumb.style.display = 'none'; return; }
+    thumb.style.display = ''; thumb.style.height = Math.max(18, vp.clientHeight * ratio) + 'px';
+    thumb.style.top = (S.scrollTop / Math.max(1, max())) * (vp.clientHeight - parseFloat(thumb.style.height)) + 'px';
+  };
+  const show = on => { if (K.scroll === 'reserve') return; thumb.classList.toggle('vis', on); };
+  const activity = () => { if (K.scroll !== 'activity') return; show(true); clearTimeout(fade); fade = setTimeout(() => { if (!dragging) show(false); }, 1000); };
+  vp.addEventListener('wheel', e => { e.preventDefault(); S.scrollTop += e.deltaY; layout(); activity(); }, {passive: false});
+  vp.addEventListener('mouseenter', () => { if (K.scroll === 'hover') show(true); });
+  vp.addEventListener('mouseleave', () => { if (K.scroll === 'hover') { show(false); thumb.classList.remove('wide'); } });
+  vp.addEventListener('mousemove', m => {
+    const fromEdge = vp.getBoundingClientRect().right - m.clientX;
+    if (K.scroll === 'hover') thumb.classList.toggle('wide', fromEdge < 15);
+    // Activity mode: only the bar's own strip (the outermost 6px) brings it up.
+    if (K.scroll === 'activity' && fromEdge < 6) { thumb.classList.add('wide'); activity(); }
+    else if (K.scroll === 'activity') thumb.classList.remove('wide');
+  });
+  let dragging = false;
+  thumb.addEventListener('mousedown', e => {
+    e.preventDefault(); e.stopPropagation(); dragging = true;
+    const y0 = e.clientY, t0 = S.scrollTop, span = vp.clientHeight - thumb.offsetHeight;
+    const move = m => { S.scrollTop = t0 + (m.clientY - y0) / Math.max(1, span) * max(); layout(); };
+    const up = () => { dragging = false; removeEventListener('mousemove', move); removeEventListener('mouseup', up); activity(); };
+    addEventListener('mousemove', move); addEventListener('mouseup', up);
+  });
+  thumb.addEventListener('click', e => { e.stopPropagation(); log('click landed on the scrollbar, not the control under it'); });
+  // In activity mode the margin controls stop short of the bar's lane.
+  if (K.scroll === 'activity') for (const m of body.querySelectorAll('.marginhit')) m.style.width = Math.max(0, parseFloat(m.style.width) - 6) + 'px';
+  requestAnimationFrame(layout);
+  return vp;
 }
 
 // ---------- workspace pane (source of View ghosts) ----------
@@ -945,8 +1202,42 @@ function render() {
   const sb = document.getElementById('sidebar'); sb.replaceChildren(); sb.style.width = K.width + 'px';
   let sections = S.sections;
   if (K.layout === 'combined') sections = S.sections.filter(s => s.id !== 'workspaces').map(s => s.id === 'projects' ? {...s, groups: ['@projects', ...S.sections.find(x => x.id === 'workspaces').groups]} : s);
-  for (const s of sections) sb.append(sectionEl(s));
+  sections = sections.filter(s => !s.closed);
+  const tabbed = K.tabs === 'on' ? S.tabbed.filter(id => sections.some(s => s.id === id)) : [];
+  if (!tabbed.includes(S.tabSel)) S.tabSel = tabbed[0];
+  for (const s of sections) {
+    if (!tabbed.includes(s.id)) { sb.append(sectionEl(s)); continue; }
+    if (s.id !== tabbed[0]) continue;
+    sb.append(miniTabs(tabbed, sections));
+    sb.append(sectionEl(sections.find(x => x.id === S.tabSel)));
+  }
   renderWork(); renderPanel(); saveKnobs();
+}
+// Two sections sharing a panel show compact tabs; "+" adds a sidebar tab here:
+// a new section (named in place) or a closed section, restored here.
+function miniTabs(ids, sections) {
+  const strip = h('div', 'mtabs');
+  for (const id of ids) {
+    const s = sections.find(x => x.id === id);
+    const t = h('span', 'mtab' + (id === S.tabSel ? ' on' : ''), sectionTitle(s));
+    t.onclick = () => { S.tabSel = id; render(); }; strip.append(t);
+  }
+  const plus = h('span', 'hb', '+'); plus.style.fontSize = '14px';
+  bindTip(plus, '<b>Add a section here</b>\n<span class="k">A new section, or one you closed</span>');
+  plus.onclick = e => {
+    e.stopPropagation(); const r = plus.getBoundingClientRect();
+    const closed = S.sections.filter(x => x.closed);
+    menu(r.left, r.bottom + 4, [
+      {label: 'New section', icon: '+', run: () => {
+        const gid = uid('lg'), sid = uid('sec');
+        S.localGroups.push({id: gid, name: 'New section', kind: 'local', items: []});
+        S.sections.push({id: sid, name: null, autoNamed: false, groups: [gid]});
+        S.tabbed.push(sid); S.tabSel = sid; S.renaming = 'g:' + gid; log('new section, as a tab here'); render(); }},
+      ...(closed.length ? ['-', {hint: 'Closed sections'}] : []),
+      ...closed.map(x => ({label: x.name, icon: '↺', run: () => { x.closed = false; S.tabbed.push(x.id); S.tabSel = x.id; log(`restore ${x.name} here`); render(); }}))]);
+  };
+  strip.append(plus);
+  return strip;
 }
 const NOTES_TEXT = [
   'Rows in Projects only reorder among siblings (a saved list). Dragged onto a local group they become ghosts (↗); the original stays.',
@@ -971,6 +1262,15 @@ function renderPanel() {
   const sims = h('div', 'presets');
   for (const [label, f] of SIMS) { const b = h('button', '', label); b.onclick = () => { f(); log('sim: ' + label); render(); }; sims.append(b); }
   p.append(sims);
+  const copy = h('div', 'presets'); const cb = h('button', '', 'Copy choices');
+  cb.onclick = () => {
+    const text = JSON.stringify(K);
+    const done = () => { cb.textContent = 'Copied'; setTimeout(() => cb.textContent = 'Copy choices', 1200); };
+    const fallback = () => { const ta = h('textarea'); ta.value = text; ta.style.width = '100%'; copy.append(ta); ta.select(); };
+    try { navigator.clipboard.writeText(text).then(done, fallback); } catch (e) { fallback(); }
+  };
+  copy.append(cb); p.append(h('h2', '', 'Your choices'), copy,
+    h('div', 'note', 'Copies every knob as JSON, to paste back into the conversation.'));
   p.append(h('h2', '', 'Presets'));
   const pr = h('div', 'presets');
   for (const [name, preset] of Object.entries(PRESETS)) {

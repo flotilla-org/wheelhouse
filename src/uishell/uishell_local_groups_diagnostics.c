@@ -84,6 +84,60 @@ uishell_local_groups_frame(RD_WindowState *ws, CFG_Node *window, Arena *arena, S
   return !suffix.size || at.x != 0 || at.y != 0;
 }
 
+// The box keyed `suffix` under its nearest keyed ancestor, as last laid out.
+internal UI_Box *
+uishell_local_groups_box(String8 suffix)
+{
+  for(UI_Box *b = ui_state->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui_state->root).next)
+  {
+    UI_Box *keyed = b->parent;
+    while(!ui_box_is_nil(keyed) && ui_key_match(keyed->key, ui_key_zero())) { keyed = keyed->parent; }
+    if(!ui_box_is_nil(keyed) && ui_key_match(b->key, ui_key_from_string(keyed->key, suffix))) { return b; }
+  }
+  return &ui_nil_box;
+}
+
+// Frames with the pointer at `at` (no events), as a hover.
+internal void
+uishell_local_groups_hover(RD_WindowState *ws, CFG_Node *window, Arena *arena, Vec2F32 at, U32 frames)
+{
+  for(U32 f = 0; f < frames; f++)
+  {
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
+    UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+    uishell_local_groups_clock_us += 50000;
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = at;
+    uishell_local_groups_render(window, &split);
+    ui_end_build();
+  }
+}
+
+// The make footer keyed `key` (uishell_sidebar_make_footer), as last laid out.
+internal UI_Box *
+uishell_local_groups_footer(String8 key)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UI_Box *found = uishell_sidebar_reorder_box(ui_state->root, push_str8f(scratch.arena, "###make_%S", key));
+  scratch_end(scratch);
+  return found;
+}
+
+// Types `text` into the name field and presses Enter.
+internal void
+uishell_local_groups_type(RD_WindowState *ws, CFG_Node *window, Arena *arena, UIShell_SidebarState *state, char *text)
+{
+  U64 size = cstring8_length((U8 *)text);
+  MemoryCopy(state->rename_text, text, size); state->rename_size = size;
+  state->rename_cursor = state->rename_mark = txt_pt(1, size+1);
+  uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Press, WM_Key_Return);
+  uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+}
+
+// A drag starting this far in from the left of the box it starts on, when
+// set; else from its centre.
+global F32 uishell_local_groups_drag_inset = 0;
+
 // Drags the box keyed `from` onto the box keyed `to` (or, with `dock`, onto
 // a docking site below the first View's panel): press, move past the
 // threshold, release, finishing the drag each frame as a window does.
@@ -109,7 +163,11 @@ uishell_local_groups_drag(RD_WindowState *ws, CFG_Node *window, Arena *arena, St
     uishell_local_groups_render(window, &split);
     uishell_sidebar_drag_finish(ws);
     ui_end_build();
-    if(frame == 0) { start = uishell_workspace_lifecycle_center(ui_state, from); }
+    if(frame == 0)
+    {
+      start = uishell_workspace_lifecycle_center(ui_state, from);
+      if(uishell_local_groups_drag_inset > 0) { start.x = uishell_local_groups_box(from)->rect.x0+uishell_local_groups_drag_inset; }
+    }
     if(frame >= 2) { target = dock ? v2f32(-50, -50) : uishell_workspace_lifecycle_center(ui_state, to); }
     if(frame == 3) { started = rd_drag_is_active(); }
   }
@@ -285,8 +343,8 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
     AndamentoNode added_node = uishell_sidebar_reorder_node(state, uishell_sidebar_local_field(added, str8_lit("id")));
     String8 added_entry = push_str8f(arena, "###entry_%S", uishell_sidebar_string(added_node.key));
-    GroupsCheck(!ui_box_is_nil(uishell_sidebar_reorder_box(ui_state->root, str8_lit("New group"))) &&
-                ui_box_is_nil(uishell_sidebar_reorder_box(ui_state->root, added_entry)),
+    UI_Box *added_header = uishell_sidebar_reorder_box(ui_state->root, added_entry);
+    GroupsCheck(!ui_box_is_nil(added_header) && !ui_box_is_nil(uishell_sidebar_reorder_box(added_header->first, str8_lit("New group"))),
                 "the new group's header holds the name field");
     char typed[] = "Releases";
     MemoryCopy(state->rename_text, typed, sizeof(typed)-1); state->rename_size = sizeof(typed)-1;
@@ -337,11 +395,169 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     uishell_local_groups_view2 = uishell_sidebar_local_new_view(bottom, second);
     uishell_local_groups_publish(state, window, arena);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    //- Make footers (sidebar-headers.md): a group's opens when the pointer
+    //  reaches its last row, not its header; the section's last group also
+    //  offers New group, below its card. Choosing one names it in place.
+    {
+      String8 beta_key = push_str8_copy(arena, uishell_sidebar_string(uishell_sidebar_reorder_node(state, beta_id).key));
+      String8 alpha_key = push_str8_copy(arena, uishell_sidebar_string(uishell_sidebar_reorder_node(state, uishell_sidebar_local_field(alpha, str8_lit("id"))).key));
+      String8 beta_footer = push_str8f(arena, "workspace_%S", beta_key);
+      String8 section_footer = push_str8f(arena, "group_%S", uishell_sidebar_local_key(arena, uishell_sidebar_local_field(first, str8_lit("id"))));
+      UI_Box *beta_header = uishell_local_groups_box(push_str8f(arena, "###entry_%S", beta_key));
+      uishell_local_groups_hover(ws, window, arena, v2f32(center_2f32(beta_header->rect).x, beta_header->rect.y0+2.f), 8);
+      GroupsCheck(dim_2f32(uishell_local_groups_footer(beta_footer)->rect).y < 1, "a group's header alone leaves its footer closed");
+      UI_Box *footer = uishell_local_groups_footer(beta_footer);
+      uishell_local_groups_hover(ws, window, arena, v2f32(center_2f32(footer->rect).x, footer->rect.y0-6.f), 10);
+      GroupsCheck(dim_2f32(uishell_local_groups_footer(beta_footer)->rect).y >= 1 && dim_2f32(uishell_local_groups_footer(section_footer)->rect).y >= 1,
+                  "at the last group's last row, its New workspace footer and the section's New group open");
+      GroupsCheck(uishell_local_groups_footer(section_footer)->rect.y0 >= uishell_local_groups_box(push_str8f(arena, "###project_%S", beta_key))->rect.y1,
+                  "New group opens below the card, at the section's level");
+      {
+        Rng2F32 card = uishell_local_groups_box(push_str8f(arena, "###project_%S", beta_key))->rect;
+        F32 below = uishell_local_groups_footer(section_footer)->rect.y0;
+        uishell_local_groups_hover(ws, window, arena, v2f32(center_2f32(card).x, below > card.y1+1.f ? (card.y1+below)*0.5f : card.y1+0.5f), 10);
+        GroupsCheck(dim_2f32(uishell_local_groups_footer(section_footer)->rect).y >= 1 &&
+                    dim_2f32(uishell_local_groups_footer(beta_footer)->rect).y < 1,
+                    "below the last card, only New group opens");
+      }
+      // New group, named in place.
+      U64 groups_before = uishell_sidebar_local_group_count(first);
+      String8 group_button = push_str8f(arena, "###make_%S_0", section_footer);
+      Vec2F32 at = uishell_workspace_lifecycle_center(ui_state, group_button);
+      uishell_local_groups_hover(ws, window, arena, at, 2);
+      uishell_local_groups_frame(ws, window, arena, group_button, UI_EventKind_Press, WM_Key_LeftMouseButton);
+      uishell_local_groups_frame(ws, window, arena, group_button, UI_EventKind_Release, WM_Key_LeftMouseButton);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      GroupsCheck(ui_text_field_focus(), "an open name field takes the keyboard from a focused terminal");
+      uishell_local_groups_type(ws, window, arena, state, "Delta");
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      GroupsCheck(!ui_text_field_focus(), "a closed name field gives the keyboard back");
+      CFG_Node *delta = first->last;
+      GroupsCheck(uishell_sidebar_local_group_count(first) == groups_before+1 && str8_match(delta->string, str8_lit("group"), 0) &&
+                  str8_match(uishell_sidebar_local_field(delta, str8_lit("label")), str8_lit("Delta"), 0),
+                  "New group, named in its footer, adds a group with that name");
+      cfg_node_release(rd_state->cfg, delta);
+      // New workspace in Alpha (not the last group: no New group there).
+      uishell_local_groups_publish(state, window, arena);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      String8 alpha_footer = push_str8f(arena, "workspace_%S", alpha_key);
+      footer = uishell_local_groups_footer(alpha_footer);
+      uishell_local_groups_hover(ws, window, arena, v2f32(center_2f32(footer->rect).x, footer->rect.y0-6.f), 10);
+      String8 ws_button = push_str8f(arena, "###make_%S_0", alpha_footer);
+      at = uishell_workspace_lifecycle_center(ui_state, ws_button);
+      GroupsCheck(at.x > 0 && ui_box_is_nil(uishell_local_groups_box(push_str8f(arena, "###make_%S_1", alpha_footer))),
+                  "a group that isn't the last offers only New workspace");
+      uishell_local_groups_hover(ws, window, arena, at, 2);
+      uishell_local_groups_frame(ws, window, arena, ws_button, UI_EventKind_Press, WM_Key_LeftMouseButton);
+      uishell_local_groups_frame(ws, window, arena, ws_button, UI_EventKind_Release, WM_Key_LeftMouseButton);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      uishell_local_groups_type(ws, window, arena, state, "built");
+      CFG_Node *built = &cfg_nil_node;
+      for(CFG_Node *w = window->first; w != &cfg_nil_node; w = w->next)
+      {
+        if(str8_match(w->string, str8_lit("workspace"), 0) && str8_match(uishell_sidebar_local_field(w, str8_lit("label")), str8_lit("built"), 0)) { built = w; }
+      }
+      GroupsCheck(built != &cfg_nil_node && str8_match(uishell_sidebar_local_field(built, str8_lit("lives_in")), uishell_sidebar_local_field(alpha, str8_lit("id")), 0),
+                  "New workspace, named in its footer, opens a workspace with that name living in the group");
+      if(built != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = built->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
+      uishell_local_groups_publish(state, window, arena);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      // A name field whose footer stops showing (its section closed, say)
+      // is done: shown again, the footer is closed.
+      footer = uishell_local_groups_footer(alpha_footer);
+      uishell_local_groups_hover(ws, window, arena, v2f32(center_2f32(footer->rect).x, footer->rect.y0-6.f), 10);
+      at = uishell_workspace_lifecycle_center(ui_state, ws_button);
+      uishell_local_groups_hover(ws, window, arena, at, 2);
+      uishell_local_groups_frame(ws, window, arena, ws_button, UI_EventKind_Press, WM_Key_LeftMouseButton);
+      uishell_local_groups_frame(ws, window, arena, ws_button, UI_EventKind_Release, WM_Key_LeftMouseButton);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      B32 was_naming = state->make_key != 0;
+      for(U32 f = 0; f < 2; f++)
+      {
+        UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        ui_end_build();
+      }
+      uishell_local_groups_hover(ws, window, arena, v2f32(-100, -100), 10);
+      GroupsCheck(was_naming && state->make_key == 0 && dim_2f32(uishell_local_groups_footer(alpha_footer)->rect).y < 1,
+                  "a name field whose footer stopped showing is closed when it shows again");
+      // A one-group section's footer offers both, side by side.
+      String8 single_footer = push_str8f(arena, "section_%S", uishell_sidebar_local_key(arena, uishell_sidebar_local_field(second, str8_lit("id"))));
+      footer = uishell_local_groups_footer(single_footer);
+      uishell_local_groups_hover(ws, window, arena, v2f32(center_2f32(footer->rect).x, footer->rect.y0-6.f), 10);
+      Vec2F32 ws_at = uishell_workspace_lifecycle_center(ui_state, push_str8f(arena, "###make_%S_0", single_footer));
+      Vec2F32 group_at = uishell_workspace_lifecycle_center(ui_state, push_str8f(arena, "###make_%S_1", single_footer));
+      GroupsCheck(ws_at.x > 0 && group_at.x > ws_at.x && abs_f32(group_at.y-ws_at.y) < 1.f,
+                  "a one-group section's footer offers New workspace and New group side by side");
+      uishell_local_groups_hover(ws, window, arena, v2f32(-100, -100), 10);
+    }
+
+    //- The group header (sidebar-headers.md): a click anywhere on it
+    //  collapses the group and shows its count; double-clicking renames it
+    //  and leaves it open; ⋯ opens its menu.
+    String8 alpha_id = push_str8_copy(arena, uishell_sidebar_local_field(alpha, str8_lit("id")));
+    String8 alpha_header = uishell_local_groups_row(arena, state, alpha_id);
+    UI_Box *header_box = uishell_local_groups_box(alpha_header);
+    GroupsCheck(!ui_box_is_nil(header_box) && ui_box_is_nil(uishell_sidebar_reorder_box(header_box->first, str8_lit("###identity_"))),
+                "a group header is a row with no icon");
+    UI_Box *alpha_title = !ui_box_is_nil(header_box) ? uishell_sidebar_reorder_box(header_box->first, str8_lit("Alpha")) : &ui_nil_box;
+    GroupsCheck(!ui_box_is_nil(alpha_title) && dim_2f32(alpha_title->rect).x+0.5f >= alpha_title->display_fruns.dim.x+2*alpha_title->text_padding,
+                "a group header's title has its full width in a wide row");
+    // Click its middle: empty space past the short title, short of ⋯.
+    F32 saved_inset = uishell_local_groups_drag_inset;
+    {
+      UI_Box *hb = uishell_local_groups_box(alpha_header);
+      Vec2F32 at = center_2f32(hb->rect);
+      for(U32 f = 0; f < 4; f++)
+      {
+        UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
+        UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
+        uishell_local_groups_clock_us += 50000;
+        if(f == 1 || f == 2)
+        {
+          event.v = (UI_Event){.kind = f == 1 ? UI_EventKind_Press : UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = at, .timestamp_us = uishell_local_groups_clock_us};
+          events.first = events.last = &event; events.count = 1;
+        }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        ui_state->mouse = at;
+        uishell_local_groups_render(window, &split);
+        ui_end_build();
+      }
+    }
+    uishell_local_groups_publish(state, window, arena);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    AndamentoNode alpha_node = uishell_sidebar_reorder_node(state, alpha_id);
+    header_box = uishell_local_groups_box(alpha_header);
+    GroupsCheck(alpha_node.collapsed && !ui_box_is_nil(uishell_sidebar_reorder_box(header_box->first, str8_lit("1"))),
+                "a click on the header's empty part collapses the group, which shows its count");
+    uishell_local_groups_click(ws, window, arena, alpha_header, WM_Key_LeftMouseButton);
+    uishell_local_groups_publish(state, window, arena);
+    GroupsCheck(!uishell_sidebar_reorder_node(state, alpha_id).collapsed, "another click opens it again");
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    uishell_local_groups_double_click(ws, window, arena, alpha_header);
+    uishell_local_groups_publish(state, window, arena);
+    GroupsCheck(uishell_sidebar_local_renaming(state, alpha) && !uishell_sidebar_reorder_node(state, alpha_id).collapsed,
+                "double-clicking a group header renames it in place and leaves it open");
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Press, WM_Key_Esc);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    // ⋯ shows while the header is hovered.
+    uishell_local_groups_frame(ws, window, arena, alpha_header, UI_EventKind_Null, 0);
+    uishell_local_groups_frame(ws, window, arena, alpha_header, UI_EventKind_Null, 0);
+    String8 more = push_str8f(arena, "###header_more_%S", uishell_sidebar_string(uishell_sidebar_reorder_node(state, alpha_id).key));
+    B32 more_found = uishell_local_groups_frame(ws, window, arena, more, UI_EventKind_Press, WM_Key_LeftMouseButton);
+    uishell_local_groups_frame(ws, window, arena, more, UI_EventKind_Release, WM_Key_LeftMouseButton);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    GroupsCheck(more_found && ui_any_ctx_menu_is_open(), "a hovered group header's ⋯ opens its menu");
+    ui_ctx_menu_close();
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    uishell_local_groups_drag_inset = 3.f; // from the header's left edge, not its title (#261)
     B32 started = uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, beta_id),
                                             uishell_local_groups_row(arena, state, str8_lit("groups-gamma")), 0);
+    uishell_local_groups_drag_inset = saved_inset;
     GroupsCheck(started && beta->parent == second && beta->prev == gamma && uishell_sidebar_local_group_count(first) == 1 &&
                 cfg_node_child_from_string(beta, str8_lit("card")) != &cfg_nil_node,
-                "a group's header dropped on a group in another section moves it there, after that group, with its items");
+                "a group's header, dragged from its edge, dropped on a group in another section moves it there, after that group, with its items");
     GroupsCheck(str8_match(uishell_sidebar_local_title(arena, second), str8_lit("Gamma, Beta"), 0),
                 "the section it joined shows both groups' names");
     // Back to the first section, then out to a docking site.
@@ -415,10 +631,148 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     ui_select_state(saved_ui); ui_state_release(test);
   }
 
+  //- A sidebar panel's tab-strip "+": New section makes one here, its name
+  //  field open; a closed section is listed and restores here.
+  {
+    UI_State *saved_ui = ui_state, *test = ui_state_alloc();
+    ui_select_state(test);
+    CFG_Node *sidebar_root = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+    CFG_Node *panel = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
+    CFG_Node *closed_group = uishell_sidebar_local_new_group(window, str8_lit("Archive"));
+    String8 closed_key = uishell_sidebar_local_key(arena, uishell_sidebar_local_field(closed_group->parent, str8_lit("id")));
+    uishell_local_groups_publish(state, window, arena);
+    { UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window); uishell_sidebar_dock_layout(&split); }
+    // Closed: it has no View.
+    for(CFG_Node *v = uishell_sidebar_region_view(window, closed_key); v != &cfg_nil_node; v = uishell_sidebar_region_view(window, closed_key))
+    { cfg_node_release(rd_state->cfg, v); }
+    UI_Key menu = ui_key_from_string(ui_key_zero(), str8_lit("test_tab_add_menu"));
+    UI_Key anchor = ui_key_zero();
+    for(U32 step = 0; step < 2; step++)
+    {
+      String8 target = step == 0 ? str8_lit("New section") : push_str8f(arena, "###tab_restore_%S", closed_key);
+      Vec2F32 at = {0};
+      for(U32 f = 0; f < 5; f++)
+      {
+        UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
+        if(f == 3 || f == 4)
+        {
+          event.v = (UI_Event){.kind = f == 3 ? UI_EventKind_Press : UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = at};
+          events.first = events.last = &event; events.count = 1;
+        }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        ui_state->mouse = at;
+        UI_Box *box;
+        UI_Rect(r2f32p(10, 10, 30, 30)) { box = ui_build_box_from_string(UI_BoxFlag_Clickable, str8_lit("###test_tab_add")); }
+        anchor = box->key;
+        if(f == 0) { ui_ctx_menu_open(menu, anchor, v2f32(0, 20)); }
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+        { uishell_sidebar_tab_add_menu(ws, panel, menu); }
+        ui_end_build();
+        if(f >= 1 && at.x == 0) { at = uishell_workspace_lifecycle_center(ui_state, target); }
+      }
+      if(step == 0)
+      {
+        CFG_Node *view = cfg_node_child_from_string(panel, str8_lit("sidebar_section"));
+        String8 key = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
+        CFG_Node *made_section = uishell_sidebar_local_section(window, uishell_sidebar_local_key_id(key));
+        GroupsCheck(at.x > 0 && made_section != &cfg_nil_node && cfg_node_child_from_string(view, str8_lit("selected")) != &cfg_nil_node &&
+                    uishell_sidebar_local_renaming(state, made_section),
+                    "the tab strip's + makes a new section here, selected, with its name field open");
+        state->rename_node = 0;
+        if(made_section != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made_section); }
+        cfg_node_release(rd_state->cfg, view);
+      }
+      else
+      {
+        CFG_Node *restored = uishell_sidebar_region_view(window, closed_key);
+        GroupsCheck(at.x > 0 && restored != &cfg_nil_node && restored->parent == panel,
+                    "a closed section listed under the tab strip's + restores here");
+      }
+    }
+    ui_ctx_menu_close();
+    cfg_node_release(rd_state->cfg, closed_group->parent);
+    cfg_node_release(rd_state->cfg, panel);
+    ui_select_state(saved_ui); ui_state_release(test);
+  }
+
+  //- Collapsed sections give their space back in any layout, without
+  //  touching saved sizes: a collapsed leaf keeps its header, a side-by-side
+  //  row shrinks only once all of it is collapsed.
+  {
+    CFG_State *cfg = cfg_state_alloc();
+    CFG_Node *owner = cfg_node_new(cfg, &cfg_nil_node, str8_lit("window"));
+    cfg_node_new(cfg, owner, str8_lit("sidebar_layout_sized"));
+    CFG_Node *root = cfg_node_new(cfg, owner, RD_DOCK_SIDEBAR_ROOT);
+    CFG_Node *leaves[4] = {0};
+    // Saved shares needn't sum to one (these sum to two); sizes still fill
+    // exactly the space there is.
+    char *shares[] = {"0.5", "0.5", "1"};
+    CFG_Node *row = &cfg_nil_node;
+    for(U64 i = 0; i < 3; i++)
+    {
+      CFG_Node *panel = cfg_node_new(cfg, root, str8_cstring(shares[i]));
+      if(i == 1)
+      {
+        row = panel;
+        for(U64 k = 0; k < 2; k++) { leaves[1+k] = cfg_node_new(cfg, panel, str8_lit("0.5")); }
+      }
+      else { leaves[i == 0 ? 0 : 3] = panel; }
+    }
+    for(U64 i = 0; i < 4; i++)
+    {
+      CFG_Node *view = cfg_node_new(cfg, leaves[i], str8_lit("sidebar_section"));
+      cfg_node_new(cfg, cfg_node_new(cfg, view, str8_lit("section")), push_str8f(arena, "test_%I64u", i));
+      cfg_node_new(cfg, view, str8_lit("selected"));
+      if(i == 0 || i == 1) { cfg_node_new(cfg, view, str8_lit("section_collapsed")); }
+    }
+    UIShell_ControlledSplit owner_split = {.owner_cfg = owner};
+    Rng2F32 rect = r2f32p(0, 0, 300, 600);
+    F32 header = 0, collapsed_h = 0;
+    for(U32 pass = 0; pass < 3; pass++)
+    {
+      if(pass == 1) { cfg_node_new(cfg, cfg_node_child_from_string(leaves[2], str8_lit("sidebar_section")), str8_lit("section_collapsed")); }
+      if(pass == 2) { cfg_node_new(cfg, cfg_node_child_from_string(leaves[3], str8_lit("sidebar_section")), str8_lit("section_collapsed")); }
+      UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(arena, owner, root);
+      F32 row_h = 0, last_h = 0;
+      UI_FontSize(11)
+      {
+        uishell_sidebar_size_panels(&owner_split, &mount, rect);
+        header = floor_f32(ui_top_font_size()*2.2f);
+        uishell_sidebar_panel_collapsed(mount.panel_tree.root->first, header, &collapsed_h);
+        uishell_sidebar_panel_collapsed(mount.panel_tree.root->first->next, header, &row_h);
+        uishell_sidebar_panel_collapsed(mount.panel_tree.root->last, header, &last_h);
+      }
+      CFG_PanelNode *a = mount.panel_tree.root->first, *r = a->next, *d = r->next;
+      F32 sum = a->pct_of_parent + r->pct_of_parent + d->pct_of_parent;
+      if(pass == 0)
+      {
+        GroupsCheck(abs_f32(a->pct_of_parent*600.f - collapsed_h) < 1.f && abs_f32(sum-1.f) < .001f &&
+                    abs_f32(d->pct_of_parent - 0.5f) < .001f,
+                    "a collapsed section shrinks to its header and gives the rest to the next open one below");
+      }
+      else if(pass == 1)
+      {
+        GroupsCheck(abs_f32(r->pct_of_parent*600.f - row_h) < 1.f && abs_f32(sum-1.f) < .001f &&
+                    abs_f32(d->pct_of_parent*600.f - (600.f-collapsed_h-row_h)) < 1.f,
+                    "a side-by-side row shrinks once all of it is collapsed");
+      }
+      else
+      {
+        GroupsCheck(abs_f32(a->pct_of_parent*600.f - collapsed_h) < 1.f && abs_f32(r->pct_of_parent*600.f - row_h) < 1.f &&
+                    abs_f32(sum-1.f) < .001f && d->pct_of_parent*600.f > last_h,
+                    "once all are collapsed, the last takes what's left");
+      }
+    }
+    GroupsCheck(str8_match(root->first->string, str8_lit("0.5"), 0) && str8_match(row->string, str8_lit("0.5"), 0) &&
+                str8_match(root->last->string, str8_lit("1"), 0),
+                "collapsing never rewrites the sizes saved by hand");
+    cfg_state_release(cfg);
+  }
+
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, group drag between sections, group to a docking site, one-group section title drag, default group stays, View label follows)\n",
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, tab strip +, collapse gives space back)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

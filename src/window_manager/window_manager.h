@@ -13,6 +13,10 @@ struct WM_SystemInfo
   F32 double_click_time;
   F32 caret_blink_time;
   F32 default_refresh_rate;
+  // The system wants scroll bars shown all the time (macOS: "Show scroll
+  // bars: Always", or "Automatically" with a mouse attached). Other
+  // platforms have no such preference and leave it 0.
+  B32 scroll_bars_always_shown;
 };
 
 ////////////////////////////////

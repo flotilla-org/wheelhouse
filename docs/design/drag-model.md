@@ -82,7 +82,7 @@ Sections and groups look the same whoever made them.
 - Deleting a group moves its homed workspaces to the default group and drops its ghosts. It asks for confirmation only when workspaces would move.
 - The default section and group can't be deleted.
 
-**Still to design:** a visible affordance for "New group" (after a section's groups on hover, or a title-bar button) and for "New workspace" per group (a reveal or expansion of the group, like card details). Both are in the menus meanwhile.
+**New group and New workspace** are footers that open at a group's last row, designed in [sidebar-headers.md](sidebar-headers.md) along with the group header itself.
 
 **Migration.** Each `pinned_cards` area becomes a section of your own holding one group, keeping its label. Its pins become `.ref`s, keeping their ghost ids and forms. The `pinned_cards` View type is retired. Migration is best-effort: saved layouts aren't precious yet.
 

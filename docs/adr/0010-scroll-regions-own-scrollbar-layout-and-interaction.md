@@ -23,8 +23,15 @@ It resolves both gutters together because one gutter can cause overflow on the
 other axis. Auto does not perform text reflow or call back into content layout.
 Every layout calculation starts afresh, so gutters disappear when content fits.
 
-Overlay bars leave the viewport unchanged. They appear while the pointer is
-inside the viewport and expand near their respective edges. The two bars have
+Overlay bars leave the viewport unchanged. They appear while the content
+scrolls and for about a second after, while the pointer is on the bar's own
+strip at the edge (its resting width and inset), and while dragged; they
+widen once the pointer is on them. A fading bar takes no clicks, so controls
+just inside the strip stay reachable (#250, 2026-10-08; this replaced
+appearing whenever the pointer was inside the viewport). Where the system
+wants scroll bars always shown (macOS "Show scroll bars: Always", read into
+`ui_state->scroll_bars_reserved` by the host), an overlay bar keeps its look
+but reserves its strip and stays shown. The two bars have
 separate animation identities and leave room for their expanded footprints at
 the shared corner. An active drag keeps its own bar visible outside the region
 until release. An overlay is absent when its legal position range is empty.

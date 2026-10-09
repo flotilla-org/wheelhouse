@@ -3339,6 +3339,16 @@ rd_panel_drop_claimed_locally(CFG_Node *panel)
 { return rd_state->drag_drop_local_panel == panel->id && rd_state->drag_drop_local_frame+1 >= rd_state->frame_index; }
 
 // Existing Views and creation drags use the same sites, geometry and commands.
+// A panel boundary drag: the two sides' laid out and saved sizes as it
+// began (saved ones as shares of their siblings' total), and that total
+// while saved sizes still need putting right (0 once they sum to one).
+typedef struct RD_BoundaryDrag RD_BoundaryDrag;
+struct RD_BoundaryDrag
+{
+  Vec4F32 v;
+  F32 drifted_total;
+};
+
 internal void
 rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
 {
@@ -3733,6 +3743,14 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
       {
         CFG_PanelNode *min_child = child;
         CFG_PanelNode *max_child = min_child->next;
+        // A collapsed sidebar section's height is its header's, not a size
+        // to drag: a boundary beside one would only eat into the size it
+        // returns to when expanded.
+        if(split_axis == Axis2_Y && rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar)
+        {
+          F32 header = uishell_sidebar_row_height(), h = 0;
+          if(uishell_sidebar_panel_collapsed(min_child, header, &h) || uishell_sidebar_panel_collapsed(max_child, header, &h)) { continue; }
+        }
         Rng2F32 min_child_rect = cfg_target_rect_from_panel_node_child(panel_rect, panel, min_child);
         Rng2F32 max_child_rect = cfg_target_rect_from_panel_node_child(panel_rect, panel, max_child);
         Rng2F32 boundary_rect = {0};
@@ -3762,12 +3780,29 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
           else if(ui_pressed(sig))
           {
-            Vec2F32 v = {min_child->pct_of_parent, max_child->pct_of_parent};
-            ui_store_drag_struct(&v);
+            // What's laid out can differ from what's saved (a sidebar's
+            // collapsed sections give their space away in memory), so the
+            // drag moves the saved sizes by what it moves the laid out ones.
+            // Saved sizes that drifted from summing to one are put right
+            // (all of them) on the first move, so a click writes nothing.
+            F32 saved_total = 0;
+            for(CFG_PanelNode *c = panel->first; c != &cfg_nil_panel_node; c = c->next) { saved_total += Max(0.f, (F32)f64_from_str8(c->cfg->string)); }
+            RD_BoundaryDrag drag = {{min_child->pct_of_parent, max_child->pct_of_parent,
+              (F32)f64_from_str8(min_child->cfg->string), (F32)f64_from_str8(max_child->cfg->string)},
+              saved_total > 0 && abs_f32(saved_total-1.f) > .0001f ? saved_total : 0};
+            if(drag.drifted_total > 0) { drag.v.v[2] /= saved_total; drag.v.v[3] /= saved_total; }
+            ui_store_drag_struct(&drag);
           }
           else if(ui_dragging(sig))
           {
-            Vec2F32 v = *ui_get_drag_struct(Vec2F32);
+            RD_BoundaryDrag *drag = ui_get_drag_struct(RD_BoundaryDrag);
+            if(drag->drifted_total > 0 && ui_drag_delta().v[split_axis] != 0)
+            {
+              for(CFG_PanelNode *c = panel->first; c != &cfg_nil_panel_node; c = c->next)
+              { cfg_node_equip_stringf(rd_state->cfg, c->cfg, "%f", Max(0.f, (F32)f64_from_str8(c->cfg->string))/drag->drifted_total); }
+              drag->drifted_total = 0;
+            }
+            Vec4F32 v = drag->v;
             Vec2F32 mouse_delta      = ui_drag_delta();
             F32 total_size           = dim_2f32(panel_rect).v[split_axis];
             F32 min_pct__before      = v.v[0];
@@ -3791,8 +3826,14 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             }
             min_child->pct_of_parent = min_pct__after;
             max_child->pct_of_parent = max_pct__after;
-            cfg_node_equip_stringf(rd_state->cfg, min_child->cfg, "%f", min_pct__after);
-            cfg_node_equip_stringf(rd_state->cfg, max_child->cfg, "%f", max_pct__after);
+            // Saved sizes keep the drag's minimum too, so a section expanded
+            // later still shows its header.
+            F32 floor_pct = 50.f/Max(1.f, total_size);
+            F32 saved_delta = pct_delta;
+            if(v.v[2]+v.v[3] >= 2*floor_pct) { saved_delta = Clamp(floor_pct-v.v[2], saved_delta, v.v[3]-floor_pct); }
+            F32 min_saved = v.v[2] + saved_delta, max_saved = v.v[3] - saved_delta;
+            cfg_node_equip_stringf(rd_state->cfg, min_child->cfg, "%f", min_saved);
+            cfg_node_equip_stringf(rd_state->cfg, max_child->cfg, "%f", max_saved);
             is_changing_panel_boundaries = 1;
           }
         }
@@ -4796,6 +4837,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             }
             
             // rjf: build add-new-tab button
+            UI_Key sidebar_add_menu_key = ui_key_zero();
             UI_TextAlignment(UI_TextAlign_Center)
               UI_PrefWidth(ui_px(tab_bar_vheight, 1.f))
               UI_PrefHeight(ui_px(tab_bar_vheight, 1.f))
@@ -4834,7 +4876,16 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                                                   rd_icon_kind_text_table[RD_IconKind_Add],
                                                                   panel->cfg);
                   UI_Signal sig = ui_signal_from_box(add_new_box);
-                  if(ui_pressed(sig))
+                  // A sidebar panel's "+" adds sidebar sections, here
+                  // (uishell_sidebar_tab_add_menu); other panels list Views.
+                  B32 sidebar_panel = rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar;
+                  UI_Key sidebar_add_menu = ui_key_from_stringf(add_new_box->key, "sidebar_add_menu");
+                  if(sidebar_panel)
+                  {
+                    sidebar_add_menu_key = sidebar_add_menu;
+                    if(ui_pressed(sig)) { ui_ctx_menu_open(sidebar_add_menu, add_new_box->key, v2f32(0, dim_2f32(add_new_box->rect).y)); }
+                  }
+                  else if(ui_pressed(sig))
                   {
                     uishell_cmd("focus_panel", .panel = panel->cfg->id);
                     if(ws->query_is_active &&
@@ -4855,6 +4906,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 }
               }
             }
+            // Built outside the button so it takes none of its styling.
+            if(!ui_key_match(sidebar_add_menu_key, ui_key_zero()))
+            { uishell_sidebar_tab_add_menu(ws, panel->cfg, sidebar_add_menu_key); }
             
             // rjf: interact with tab bar
             ui_signal_from_box(tab_bar_box);
@@ -5488,6 +5542,7 @@ rd_window_frame(void)
       // rjf: begin & push initial stack values
       if(rd_state->frame_replay.suppress_input) { MemoryZeroStruct(&ws->ui_events); }
       ui_begin_build(ws->os, &ws->ui_events, &icon_info, ws->theme, &animation_info, rd_state->frame_dt, rd_state->frame_dt);
+      ui_state->scroll_bars_reserved = wm_get_system_info()->scroll_bars_always_shown;
       if(rd_state->frame_replay.suppress_input) { ui_state->mouse = v2f32(-10000, -10000); }
       ui_push_font(rd_font_from_slot(RD_FontSlot_Main));
       ui_push_font_size(top_level_font_size);
@@ -10490,6 +10545,7 @@ rd_frame(void)
                                        !ws->query_is_active &&
                                        !ws->menu_bar_focused &&
                                        !ws->ui->hover_card_focus &&
+                                       !ui_text_field_focus_in(ws->ui) &&
                                        str8_match(focused_view->string, str8_lit("terminal"), 0));
       B32 terminal_claims_keyboard_input = (terminal_input_is_focused &&
                                             !(event->modifiers & WM_Modifier_Super) &&
