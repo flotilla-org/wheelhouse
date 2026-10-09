@@ -409,6 +409,70 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     if(!ui_box_is_nil(ui_box_from_key(boundary_key))) { fprintf(stderr, "FAIL dock: a boundary beside a collapsed section can be dragged\n"); failures++; }
     cfg_node_release(rd_state->cfg, collapsed);
   }
+  // A row dragged onto the pill between two sections makes a new section
+  // there holding its ghost (drag-model.md: "a docking site: a new pinned
+  // area"), through the real docking sites.
+  {
+    CFG_Node *local = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+    U64 sections_before = 0;
+    for(CFG_Node *n = local->first; n != &cfg_nil_node; n = n->next) { sections_before += str8_match(n->string, str8_lit("section"), 0); }
+    UI_Key site_key = ui_key_from_stringf(ui_key_zero(), "drop_boundary_%p_%p", host, second_panel);
+    UIShell_CmdNode *cmds_before = rd_state->cmds[0].last;
+    Vec2F32 pointer = v2f32(-100, -100), start = pointer;
+    B32 started = 0, site_seen = 0;
+    for(U32 frame = 0; frame < 9; frame++)
+    {
+      UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0};
+      UI_EventList events = {0}; UI_EventNode event = {0};
+      if(frame == 1)
+      {
+        // A row (not a header: its string has a label before the key).
+        for(UI_Box *b = ui_box_from_key(bodies[1]); !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui_box_from_key(bodies[1])).next)
+        {
+          if(b->string.size > 0 && !str8_match(str8_prefix(b->string, 3), str8_lit("###"), 0) &&
+             str8_find_needle(b->string, 0, str8_lit("###entry_"), 0) < b->string.size)
+          { start = pointer = center_2f32(b->rect); break; }
+        }
+      }
+      if(frame >= 2 && frame < 4) { pointer = add_2f32(start, v2f32(0, 12.f*(frame-1))); }
+      UI_Box *site = ui_box_from_key(site_key);
+      if(frame >= 4 && !ui_box_is_nil(site)) { pointer = center_2f32(site->rect); site_seen = 1; }
+      if(frame == 1 || frame >= 2 && frame < 7 || frame == 7)
+      {
+        event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .pos = pointer,
+          .kind = frame == 1 ? UI_EventKind_Press : frame == 7 ? UI_EventKind_Release : UI_EventKind_MouseMove,
+          .timestamp_us = 9000000+frame*50000};
+        events.first = events.last = &event; events.count = 1;
+      }
+      // The window's event loop marks a release during a drag as a drop.
+      if(frame == 7 && rd_drag_is_active()) { rd_state->drag_drop_state = RD_DragDropState_Dropping; }
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = pointer;
+      UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_control_surface_ui(r2f32p(17, 29, 337, 229), &split); }
+      ui_end_build();
+      uishell_sidebar_drag_finish(ws);
+      if(frame == 5) { started = rd_drag_is_active(); }
+    }
+    U64 sections_after = 0;
+    for(CFG_Node *n = local->first; n != &cfg_nil_node; n = n->next) { sections_after += str8_match(n->string, str8_lit("section"), 0); }
+    if(!started || !site_seen || sections_after != sections_before+1)
+    {
+      fprintf(stderr, "FAIL dock: a row dropped on the pill between sections makes a section there (started %d, site %d, sections %llu -> %llu)\n",
+              started, site_seen, (unsigned long long)sections_before, (unsigned long long)sections_after);
+      failures++;
+    }
+    if(rd_drag_is_active()) { rd_drag_kill(); }
+    // The split it asked for puts the View in a panel of its own, above the
+    // pill's lower section.
+    uishell_sidebar_docking_drain(cmds_before);
+    CFG_Node *made = sections_after > sections_before ? local->last : &cfg_nil_node;
+    CFG_Node *made_view = uishell_sidebar_local_view(window, cfg_node_child_from_string(made, str8_lit("group")));
+    DockFailure(made != &cfg_nil_node && (made_view == &cfg_nil_node || made_view->parent->parent != host || made_view->parent->next != second_panel));
+    // Remove the section, its View and its panel.
+    if(made_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made_view->parent); }
+    if(made != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made); }
+  }
   // Merge through the production command, then split the merged panel in the
   // opposite direction. This exercises host-root retention on split/collapse.
   UIShell_CmdNode *before = rd_state->cmds[0].last;

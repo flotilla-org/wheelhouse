@@ -2923,8 +2923,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   {
     state->render_ui = ui_state;
     state->render_build_index = ui_state->build_index;
-    // Esc ends a row drag unmoved.
-    if(state->row_drag_key.size && !rd_drag_is_active() && !state->row_drag_released) { uishell_sidebar_drag_clear(state); }
+    // Esc ends a row drag unmoved. A docking site built before this took
+    // the release as its drop, also ending the drag: that one finishes.
+    if(state->row_drag_key.size && !rd_drag_is_active() && !state->row_drag_released && !state->drop_panel) { uishell_sidebar_drag_clear(state); }
     uishell_sidebar_restore(state, split);
     if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
     {
