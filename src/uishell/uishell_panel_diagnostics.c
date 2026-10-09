@@ -153,7 +153,15 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     UI_EventList events = {0};
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) { rd_drag_view_floater_ui(ws, text_view); }
+    // Accents take the theme's focus border, not its faint selection wash.
+    String8 focus_border[] = {str8_lit("focus"), str8_lit("border")};
+    Vec4F32 accent = rd_accent_color(), wash = ui_color_from_name(str8_lit("selection"));
+    Vec4F32 focus = ui_color_from_tags_key_extras(ui_top_tags_key(), (String8Array){focus_border, ArrayCount(focus_border)});
+    B32 themed = accent.x == focus.x && accent.y == focus.y && accent.z == focus.z && accent.w == 1.f &&
+      (accent.x != wash.x || accent.y != wash.y || accent.z != wash.z);
     ui_end_build();
+    fprintf(stderr, "%s accents take the theme's focus border, not its selection wash\n", themed ? "PASS" : "FAIL");
+    failures += !themed;
     UI_Box *preview = &ui_nil_box;
     for(UI_Box *b = test_ui->root; ui_box_is_nil(preview) && !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test_ui->root).next)
     {
