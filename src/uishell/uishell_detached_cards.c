@@ -580,7 +580,7 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
         if(selected != &cfg_nil_node) { cfg_node_release(rd_state->cfg, selected); }
       }
       cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("selected"));
-      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("section_collapsed")));
+      uishell_sidebar_section_set_collapsed(view, 0);
     }
     for(UIShell_HoverCard *c = state->detached; c; c = c->next)
     { if(c->saved == saved->id) { c->scroll = 0; c->focused = 1; } }

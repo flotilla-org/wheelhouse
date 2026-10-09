@@ -309,7 +309,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     B32 field = !ui_box_is_nil(uishell_sidebar_reorder_box(ui_state->root, str8_lit("Nightly"))) &&
       ui_box_is_nil(uishell_sidebar_reorder_box(ui_state->root, title));
     GroupsCheck(field && uishell_sidebar_local_renaming(state, section) &&
-                cfg_node_child_from_string(uishell_local_groups_view, str8_lit("section_collapsed")) == &cfg_nil_node,
+                !uishell_sidebar_section_collapsed(uishell_local_groups_view),
                 "double-clicking a section's title swaps it for a name field, leaving the section open");
     char cancelled[] = "Discarded";
     MemoryCopy(state->rename_text, cancelled, sizeof(cancelled)-1); state->rename_size = sizeof(cancelled)-1;
@@ -672,7 +672,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     // South shows; North sits before it, West after.
     for(U64 i = 0; i < 3; i++) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(views[i], str8_lit("selected"))); }
     cfg_node_new(rd_state->cfg, views[1], str8_lit("selected"));
-    cfg_node_new(rd_state->cfg, views[0], str8_lit("section_collapsed"));
+    uishell_sidebar_section_set_collapsed(views[1], 1);
     uishell_local_groups_publish(state, window, arena);
     CFG_Node *saved_view = uishell_local_groups_view;
     uishell_local_groups_view = views[1];
@@ -690,8 +690,8 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     B32 selects = 0;
     for(UIShell_CmdNode *c = before ? before->next : rd_state->cmds[0].first; c; c = c->next)
     { selects |= str8_match(c->cmd.name, str8_lit("focus_tab"), 0) && c->cmd.regs->tab == views[0]->id; }
-    GroupsCheck(selects && cfg_node_child_from_string(views[0], str8_lit("section_collapsed")) == &cfg_nil_node,
-                "clicking a compact title selects its View, opening it");
+    GroupsCheck(selects && !uishell_sidebar_section_collapsed(views[0]),
+                "clicking a compact title selects its View, opening a collapsed section");
     // East, from another panel, dropped on the gap between North and South.
     UIShell_RegsScope(.window = window->id, .panel = elsewhere->id, .view = views[3]->id, .tab = views[3]->id)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
@@ -729,6 +729,52 @@ uishell_local_groups_diagnostics(CFG_Node *window)
                 ui_box_is_nil(uishell_local_groups_box(west)),
                 "too narrow, the titles that don't fit go behind a +N chip");
     uishell_local_groups_narrow = 0;
+    // Collapse is the section's: clicking the selected title stores it on
+    // the panel, and no View keeps its own.
+    String8 south_title = push_str8f(arena, "###section_%S", cfg_node_child_from_string(views[1], str8_lit("section"))->first->string);
+    uishell_local_groups_click(ws, window, arena, south_title, WM_Key_LeftMouseButton);
+    B32 views_clear = 1;
+    for(U64 i = 0; i < 3; i++) { views_clear &= cfg_node_child_from_string(views[i], str8_lit("section_collapsed")) == &cfg_nil_node; }
+    GroupsCheck(cfg_node_child_from_string(panel, str8_lit("section_collapsed")) != &cfg_nil_node && views_clear &&
+                uishell_sidebar_section_collapsed(views[2]),
+                "collapsing stores it on the section's panel, so every View in it shows collapsed");
+    uishell_sidebar_section_set_collapsed(views[1], 0);
+    // × closes the whole section: every View in it.
+    uishell_local_groups_hover(ws, window, arena, center_2f32(south_box->rect), 2);
+    before = rd_state->cmds[0].last;
+    uishell_local_groups_click(ws, window, arena, str8_lit("###section_close"), WM_Key_LeftMouseButton);
+    U64 closes = 0;
+    for(UIShell_CmdNode *c = before ? before->next : rd_state->cmds[0].first; c; c = c->next)
+    { for(U64 i = 0; i < 3; i++) { closes += str8_match(c->cmd.name, str8_lit("close_tab"), 0) && c->cmd.regs->tab == views[i]->id; } }
+    GroupsCheck(closes == 3, "the section's × closes every View in it");
+    // The grip drags the whole section: dropped on East's header after East,
+    // its three Views join as four, in order.
+    UIShell_RegsScope(.window = window->id, .panel = panel->id, .view = views[1]->id, .tab = views[1]->id)
+    { rd_drag_begin(UIShell_ContextRegSlot_View); }
+    rd_state->drag_drop_commit = uishell_sidebar_section_drop_commit;
+    rd_panel_drag_drop(elsewhere->id, Dir2_Invalid, views[3]->id);
+    rd_drag_kill();
+    uishell_sidebar_section_drop_apply(ws);
+    CFG_Node *order[4] = {0};
+    U64 count = 0;
+    for(CFG_Node *c = elsewhere->first; c != &cfg_nil_node && count < 4; c = c->next) { if(uishell_sidebar_is_tab(c)) { order[count++] = c; } }
+    GroupsCheck(count == 4 && order[0] == views[3] && order[1] == views[0] && order[2] == views[1] && order[3] == views[2],
+                "a whole section dropped on a header joins it in order at the gap: three Views and one make four");
+    // At an edge, they make the new panel there together.
+    UIShell_RegsScope(.window = window->id, .panel = elsewhere->id, .view = views[3]->id, .tab = views[3]->id)
+    { rd_drag_begin(UIShell_ContextRegSlot_View); }
+    rd_state->drag_drop_commit = uishell_sidebar_section_drop_commit;
+    CFG_Node *third = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
+    CFG_Node *held = rd_cfg_new_view_tab(third, str8_lit("sidebar_section"), str8_zero(), 1);
+    rd_panel_drag_drop(third->id, Dir2_Down, 0);
+    rd_drag_kill();
+    uishell_sidebar_section_drop_apply(ws);
+    CFG_Node *moved_panel = views[3]->parent;
+    B32 together = moved_panel != elsewhere && moved_panel != third;
+    for(U64 i = 0; i < 3; i++) { together &= views[i]->parent == moved_panel; }
+    GroupsCheck(together, "a whole section dropped at an edge makes the new panel there with all its Views");
+    cfg_node_release(rd_state->cfg, held);
+    CFG_ID made_panels[] = {moved_panel->id, third->id};
     uishell_local_groups_view = saved_view;
     for(U64 i = 0; i < ArrayCount(views); i++)
     {
@@ -737,6 +783,8 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     }
     cfg_node_release(rd_state->cfg, panel);
     cfg_node_release(rd_state->cfg, elsewhere);
+    for(U64 i = 0; i < ArrayCount(made_panels); i++)
+    { if(cfg_node_from_id(made_panels[i]) != &cfg_nil_node) { cfg_node_release(rd_state->cfg, cfg_node_from_id(made_panels[i])); } }
     ui_select_state(saved_ui); ui_state_release(test);
   }
 
@@ -817,7 +865,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, New section, header holds its panel's Views, collapse gives space back)\n",
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, New section, header holds its panel's Views, section collapse, × and drag, collapse gives space back)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

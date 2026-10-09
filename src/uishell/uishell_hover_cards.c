@@ -973,6 +973,7 @@ uishell_sidebar_cards_dispatch(RD_WindowState *ws)
 {
   UIShell_SidebarState *state = ws->sidebar;
   if(!state) { return; }
+  uishell_sidebar_section_drop_apply(ws);
   uishell_sidebar_drag_finish(ws);
   size_t pending = uishell_sidebar_card_take_action(state);
   if(pending != ANDAMENTO_NONE && state->core)

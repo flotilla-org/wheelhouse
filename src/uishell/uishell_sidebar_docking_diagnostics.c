@@ -660,7 +660,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   // the title keeps collapsing it (drag-model.md, Gesture).
   for(U32 moved = 0; moved < 2; moved++)
   {
-    B32 collapsed_before = cfg_node_child_from_string(view, str8_lit("section_collapsed")) != &cfg_nil_node;
+    B32 collapsed_before = uishell_sidebar_section_collapsed(view);
     UI_Key title_key = ui_key_from_stringf(header_key, "###section_%S", key);
     Vec2F32 start = {0};
     B32 started = 0;
@@ -686,12 +686,12 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       if(frame == 0) { start = center_2f32(ui_box_from_key(title_key)->rect); }
       if(frame == 2) { started = rd_drag_is_active() && rd_state->drag_drop_regs->view == view->id; }
     }
-    B32 collapsed_after = cfg_node_child_from_string(view, str8_lit("section_collapsed")) != &cfg_nil_node;
+    B32 collapsed_after = uishell_sidebar_section_collapsed(view);
     if(moved) { DockFailure(!started); DockFailure(collapsed_after != collapsed_before); }
     else { DockFailure(started); DockFailure(collapsed_after == collapsed_before); }
     rd_drag_kill(); ui_kill_action();
   }
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("section_collapsed")));
+  uishell_sidebar_section_set_collapsed(view, 0);
   ws->sidebar = state;
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_display")));
   String8 persisted = str8_lit("display-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role history\" icon=\"R\" persist=true");

@@ -220,8 +220,9 @@ uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *se
 internal CFG_Node *
 uishell_sidebar_section_drag_group(CFG_Node *window)
 {
+  // A whole section dragged by its grip moves its Views, not a group.
   if(!rd_drag_is_active() || rd_state->drag_drop_regs_slot != UIShell_ContextRegSlot_View ||
-     rd_state->drag_drop_regs->window != window->id) { return &cfg_nil_node; }
+     rd_state->drag_drop_regs->window != window->id || rd_state->drag_drop_commit == uishell_sidebar_section_drop_commit) { return &cfg_nil_node; }
   CFG_Node *group = uishell_sidebar_local_view_group(window, cfg_node_from_id(rd_state->drag_drop_regs->view));
   return group != &cfg_nil_node && uishell_sidebar_local_group_count(group->parent) == 1 &&
     !uishell_sidebar_local_is_default(group) ? group : &cfg_nil_node;

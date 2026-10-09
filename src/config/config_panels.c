@@ -55,7 +55,8 @@ cfg_panel_tree_from_panels_cfg(Arena *arena, CFG_Node *panels_root, Axis2 root_s
         {
           panel_has_children = 1;
         }
-        else if(str8_match(src_child->string, str8_lit("tabs_on_bottom"), 0))
+        else if(str8_match(src_child->string, str8_lit("tabs_on_bottom"), 0) ||
+                str8_match(src_child->string, str8_lit("section_collapsed"), 0))
         {
           // NOTE(rjf): skip - this is a panel option.
         }

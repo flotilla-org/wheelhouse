@@ -1079,6 +1079,8 @@ internal B32 rd_drag_is_active(void);
 internal UI_Key rd_panel_catchall_drop_site_key(CFG_Node *panel);
 internal void rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
 internal Vec4F32 rd_drop_accent(F32 alpha);
+internal B32 uishell_dispatch_tab_command(String8 name);
+internal B32 uishell_dispatch_panel_command(String8 name);
 internal void rd_drag_begin(UIShell_ContextRegSlot slot);
 internal B32 rd_drag_drop(void);
 internal void rd_drag_kill(void);
