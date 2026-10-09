@@ -4601,10 +4601,7 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
 internal F32
 uishell_sidebar_footer_height(RD_WindowState *ws)
 {
-  B32 chrome = ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions ||
-    ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions ||
-    ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions;
-  return floor_f32(ui_top_font_size()*2.2f)*(1+chrome);
+  return floor_f32(ui_top_font_size()*2.2f);
 }
 
 internal void
@@ -4613,10 +4610,7 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   if(ws == &rd_nil_window_state || !ws->sidebar) { return; }
   UIShell_SidebarState *state = ws->sidebar;
-  F32 row_height = floor_f32(ui_top_font_size()*2.2f), footer = row_height;
-  F32 chrome_height = uishell_sidebar_footer_height(ws)-footer;
-  F32 controls_height = chrome_height;
-  B32 chrome_controls = chrome_height > 0;
+  F32 row_height = floor_f32(ui_top_font_size()*2.2f);
   Vec2F32 dim = dim_2f32(rect);
   AndamentoText diagnostic = {0};
   if(state->snapshot && andamento_snapshot_diagnostic_count(state->snapshot))
@@ -4626,22 +4620,11 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   { root = ui_build_box_from_string(UI_BoxFlag_Clip|UI_BoxFlag_DefaultFocusNav, str8_lit("###sidebar_footer")); }
   UI_Parent(root)
   {
-    if(chrome_controls)
-    {
-      UI_Rect(r2f32p(0, dim.y-chrome_height, dim.x, dim.y)) UI_ChildLayoutAxis(Axis2_X)
-      {
-        UI_Box *bar = ui_build_box_from_string(UI_BoxFlag_DrawSideTop, str8_lit("###workspace_chrome"));
-        UI_Parent(bar) UI_PrefWidth(ui_em(2.25f, 1)) UI_PrefHeight(ui_pct(1, 1))
-        {
-          if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_new_workspace(split->owner_cfg); }
-          ui_spacer(ui_pct(1, 0));
-          if(ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_reveal_workspace(split->owner_cfg); }
-          if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_overview_toggle(ws); }
-        }
-      }
-    }
+    // One row: Sections…, any notice, and the sidebar's chrome actions
+    // (ADR-0006: New workspace while Workspaces isn't showing it, and what
+    // the title bar has no room for) at its trailing end.
     UI_Box *notice;
-    UI_Rect(r2f32p(0, dim.y-controls_height-footer, dim.x, dim.y-controls_height)) UI_ChildLayoutAxis(Axis2_X)
+    UI_Rect(r2f32p(0, 0, dim.x, dim.y)) UI_ChildLayoutAxis(Axis2_X)
     { notice = ui_build_box_from_string(UI_BoxFlag_DrawSideTop, str8_lit("###sidebar_notice")); }
     // Only the notice uses that absolute rectangle. Its controls and popup
     // must use their own layout, otherwise they inherit a clipped hit area.
@@ -4695,6 +4678,12 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       {
         if((state->error[0] || state->inspection[0]) && ui_clicked(uishell_sidebar_button(str8_lit("×###sidebar_dismiss"))))
         { state->inspection[0] = state->error[0] = 0; rd_request_frame(); }
+      }
+      UI_PrefWidth(ui_em(2.25f, 1))
+      {
+        if(ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_new_workspace(split->owner_cfg); }
+        if(ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_reveal_workspace(split->owner_cfg); }
+        if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_SidebarActions) { rd_chrome_build_overview_toggle(ws); }
       }
     }
   }
