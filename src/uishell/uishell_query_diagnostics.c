@@ -97,3 +97,20 @@ uishell_query_ui_diagnostics(RD_WindowState *ws)
   fprintf(stderr, "embedded query UI scenario %s\n", ok ? "passed" : "failed");
   return ok;
 }
+
+// Typing a theme name applies it only once it names a theme (#264); other
+// settings still apply as they're typed.
+internal B32
+uishell_setting_typing_diagnostics(void)
+{
+  E_Eval theme = {0}, other = {0};
+  theme.space.kind = other.space.kind = RD_EvalSpaceKind_MetaCfg;
+  theme.space.u64s[1] = e_id_from_string(str8_lit("theme"));
+  other.space.u64s[1] = e_id_from_string(str8_lit("font_size"));
+  String8 preset = rd_theme_preset_display_string_table[RD_ThemePreset_DefaultDark];
+  B32 ok = !uishell_setting_applies_while_typing(theme, str8_prefix(preset, 3)) &&
+    uishell_setting_applies_while_typing(theme, preset) &&
+    uishell_setting_applies_while_typing(other, str8_lit("1"));
+  fprintf(stderr, "%s a theme applies while typed only once it names one\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
