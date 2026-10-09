@@ -172,11 +172,12 @@ struct UIShell_SidebarState
   TxtPt rename_cursor, rename_mark;
   B32 rename_focus;
   CFG_ID confirm_delete;
-  // The make footer being named (uishell_sidebar_make_footer), by its key,
-  // and which of its actions.
-  U8 make_key[256];
-  U64 make_key_size;
+  // The make footer being named (uishell_sidebar_make_footer), by its key's
+  // hash (0: none), which of its actions, and the build it was last shown
+  // in: one no longer shown stops naming.
+  U64 make_key;
   U32 make_index;
+  U64 make_build;
   // The docking site a sidebar drag was dropped on (drag_panel_drop).
   CFG_ID drop_panel;
   Dir2 drop_direction;
@@ -2114,8 +2115,8 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     {
       if(ui_clicked(ui_button(str8_lit("New workspace here"))))
       {
-        CFG_Node *workspace = uishell_new_workspace(cfg_node_from_id(ws->cfg_id));
-        cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("lives_with")), uishell_sidebar_string(node.entity_id));
+        uishell_sidebar_make(cfg_node_from_id(ws->cfg_id),
+          (UIShell_MakeAction){UIShell_Make_ProjectWorkspace, str8_lit("New workspace"), 0, uishell_sidebar_string(node.entity_id)}, str8_zero());
         ui_ctx_menu_close();
       }
       if(items_loop.size && uishell_sidebar_order_saved(cfg_node_from_id(ws->cfg_id), items_loop)) { uishell_sidebar_order_reset_button(state, items_loop); }
@@ -2926,6 +2927,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     // Esc ends a row drag unmoved. A docking site built before this took
     // the release as its drop, also ending the drag: that one finishes.
     if(state->row_drag_key.size && !rd_drag_is_active() && !state->row_drag_released && !state->drop_panel) { uishell_sidebar_drag_clear(state); }
+    // A footer being named that stopped being shown (its group collapsed or
+    // went, its section closed) is done naming; it opens fresh next time.
+    if(state->make_key && state->make_build+1 < ui_state->build_index) { state->make_key = 0; }
     uishell_sidebar_restore(state, split);
     if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
     {
@@ -3390,9 +3394,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             row_y += row_height;
           }
         }
-        for(U64 i = sections[n]; i < end; i++)
+        // One step past the section's last row closes its last card.
+        for(U64 i = sections[n]; i <= end; i++)
         {
-          if(project_box && depth[i] <= project_depth)
+          if(project_box && (i == end || depth[i] <= project_depth))
           {
             ui_pop_flags();
             ui_pop_parent(); // clipped project children
@@ -3433,6 +3438,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             row_y = project_children_y + project_child_heights[project_index]*project_open[project_index] + project_padding+project_gap + card_footer+outer_footer;
             project_box = 0;
           }
+          if(i == end) { break; }
           U64 owner = project_owner[i];
           if(hidden[i] || inlined[i] || passed[i] ||
              (owner != ANDAMENTO_NONE && owner != i && project_open[owner] == 0.f)) { continue; }
@@ -3779,45 +3785,6 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             // rows can still be drawn through the shrinking viewport.
             ui_push_flags(ui_top_flags() | (node.collapsed ? UI_BoxFlag_Disabled|UI_BoxFlag_IgnoreInteraction : 0));
           }
-        }
-        if(project_box)
-        {
-            ui_pop_flags();
-            ui_pop_parent(); // clipped project children
-            F32 card_footer = 0, outer_footer = 0;
-            {
-              AndamentoNode owner_node = nodes[project_index];
-              B32 is_project = str8_match(uishell_sidebar_string(owner_node.entity_kind), str8_lit("project"), 0);
-              CFG_Node *group_cfg = is_project ? &cfg_nil_node : uishell_sidebar_local_group(split->owner_cfg, uishell_sidebar_string(owner_node.entity_id));
-              B32 outer = project_index == last_group;
-              String8 outer_key = push_str8f(scratch.arena, "group_%S", key);
-              UI_Box *outer_box = ui_box_from_key(ui_key_from_stringf(body->key, "###make_%S", outer_key));
-              Vec2F32 mouse = ui_mouse();
-              // New group, after the last group, also opens from anywhere
-              // below that card, alone.
-              B32 engaged = make_engagable && contains_2f32(project_box->rect, mouse) && mouse.y >= card_last_row.y0;
-              B32 outer_engaged = outer && make_engagable && (engaged || contains_2f32(outer_box->rect, mouse) ||
-                (contains_2f32(section_body_rect, mouse) && mouse.y >= project_box->rect.y1));
-              F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1)+uishell_sidebar_group_row_inset);
-              if(!owner_node.collapsed && (is_project || group_cfg != &cfg_nil_node))
-              {
-                UIShell_MakeAction make = is_project ?
-                  (UIShell_MakeAction){UIShell_Make_ProjectWorkspace, str8_lit("New workspace"), 0, uishell_sidebar_string(owner_node.entity_id)} :
-                  (UIShell_MakeAction){UIShell_Make_Workspace, str8_lit("New workspace"), group_cfg->id};
-                card_footer = uishell_sidebar_make_footer(state, split->owner_cfg, push_str8f(scratch.arena, "workspace_%S", uishell_sidebar_string(owner_node.key)),
-                  &make, 1, engaged, row_height, 4.f+header_inset);
-              }
-              ui_spacer(ui_px(project_padding, 1));
-              ui_pop_parent();
-              ui_spacer(ui_px(project_gap, 1));
-              if(outer)
-              {
-                UIShell_MakeAction make = {UIShell_Make_Group, str8_lit("New group"), make_section->id};
-                outer_footer = uishell_sidebar_make_footer(state, split->owner_cfg, outer_key, &make, 1, outer_engaged, row_height,
-                  2.f+card_inset+4.f+header_inset-em*uishell_sidebar_group_row_inset);
-              }
-            }
-            footer_extra += card_footer + outer_footer;
         }
         // A section without group cards (one group, or Workspaces): its
         // footer follows its rows, with New workspace and New group side by side.
@@ -4409,6 +4376,14 @@ uishell_sidebar_manual_sizing(CFG_Node *window, B32 manual)
 // tab is a collapsed section, or a split whose children all do. If so,
 // *height is what it needs: its headers (and a tab strip where several tabs
 // share a leaf) within the panel insets.
+// A sidebar row's height, and a collapsed section header's: what layout
+// and the boundaries beside collapsed sections agree on.
+internal F32
+uishell_sidebar_row_height(void)
+{
+  return floor_f32(ui_top_font_size()*2.2f);
+}
+
 internal B32
 uishell_sidebar_panel_collapsed(CFG_PanelNode *panel, F32 header, F32 *height)
 {
@@ -4498,7 +4473,7 @@ internal void
 uishell_sidebar_size_panels(UIShell_ControlledSplit *split, UIShell_WorkspaceMount *mount, Rng2F32 rect)
 {
   uishell_sidebar_size_panels_saved(split, mount, rect);
-  uishell_sidebar_collapse_space(mount->panel_tree.root, dim_2f32(rect).y, floor_f32(ui_top_font_size()*2.2f));
+  uishell_sidebar_collapse_space(mount->panel_tree.root, dim_2f32(rect).y, uishell_sidebar_row_height());
 }
 
 // The sizes to lay out from before collapse: manual (saved, repaired) or

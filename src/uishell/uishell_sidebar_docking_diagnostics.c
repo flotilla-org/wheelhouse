@@ -344,6 +344,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   }
   // Drive a real boundary drag, serialize its manual allocation, then
   // double-click the boundary to return to content-based default sizing.
+  // A press alone writes no sizes.
+  String8 pressed_from = {0};
   F32 default_pct = (F32)f64_from_str8(first_panel->string);
   UI_Key boundary_key = ui_key_from_stringf(ui_state->root->key, "###%p_%p", first_panel, second_panel);
   Vec2F32 drag_start = {0};
@@ -368,6 +370,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     { uishell_control_surface_ui(r2f32p(17, 29, 337, 229), &split); }
     ui_end_build();
+    if(frame == 0) { pressed_from = push_str8_copy(scratch.arena, first_panel->string); }
+    if(frame == 1) { DockFailure(!str8_match(first_panel->string, pressed_from, 0)); }
     if(frame == 4)
     {
       DockFailure(cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) == &cfg_nil_node);

@@ -463,6 +463,25 @@ uishell_local_groups_diagnostics(CFG_Node *window)
       if(built != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = built->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
       uishell_local_groups_publish(state, window, arena);
       uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      // A name field whose footer stops showing (its section closed, say)
+      // is done: shown again, the footer is closed.
+      footer = uishell_local_groups_footer(alpha_footer);
+      uishell_local_groups_hover(ws, window, arena, v2f32(center_2f32(footer->rect).x, footer->rect.y0-6.f), 10);
+      at = uishell_workspace_lifecycle_center(ui_state, ws_button);
+      uishell_local_groups_hover(ws, window, arena, at, 2);
+      uishell_local_groups_frame(ws, window, arena, ws_button, UI_EventKind_Press, WM_Key_LeftMouseButton);
+      uishell_local_groups_frame(ws, window, arena, ws_button, UI_EventKind_Release, WM_Key_LeftMouseButton);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      B32 was_naming = state->make_key != 0;
+      for(U32 f = 0; f < 2; f++)
+      {
+        UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        ui_end_build();
+      }
+      uishell_local_groups_hover(ws, window, arena, v2f32(-100, -100), 10);
+      GroupsCheck(was_naming && state->make_key == 0 && dim_2f32(uishell_local_groups_footer(alpha_footer)->rect).y < 1,
+                  "a name field whose footer stopped showing is closed when it shows again");
       // A one-group section's footer offers both, side by side.
       String8 single_footer = push_str8f(arena, "section_%S", uishell_sidebar_local_key(arena, uishell_sidebar_local_field(second, str8_lit("id"))));
       footer = uishell_local_groups_footer(single_footer);

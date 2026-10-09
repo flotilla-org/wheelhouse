@@ -86,6 +86,18 @@ ui_scroll_region_bar_rect(UI_ScrollRegion *region, Axis2 axis, F32 thickness, B3
   return rect;
 }
 
+// `value` as it was the last time it was given under `key` (itself when
+// `reset`). ui_anim keeps the persistent value: it moves a node toward its
+// target as each build begins, by `rate`, and a call only sets the target
+// (a rate of exactly 1, or a gap within epsilon, snaps on the call). Just
+// short of 1, the value it returns is last build's target; the epsilon is
+// below the smallest change callers look for.
+internal F32
+ui_scroll_region_previous(UI_Key key, F32 value, B32 reset)
+{
+  return ui_anim(key, value, .initial = value, .reset = reset, .rate = 0.9999f, .epsilon = 0.0001f);
+}
+
 internal UI_ScrollRegionSignal
 ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
                        UI_ScrollRegionAxis axes[Axis2_COUNT], UI_BoxFlags content_flags)
@@ -142,13 +154,12 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
         // Scrolled: the view is still moving to its target, or the target
         // changed since last frame (instant scrolling never lags it).
         F32 target = content->view_off_target.v[axis];
-        // Last frame's target: a rate of exactly 1 would snap on this call.
         // A new view's first offsets are where it starts, not a scroll.
         B32 fresh = ui_box_is_nil(content) || content->first_touched_build_index+1 >= ui_state->build_index;
-        F32 target_before = ui_anim(ui_key_from_string(bar_key, str8_lit("target")), target, .initial = target, .reset = fresh, .rate = 0.9999f);
+        F32 target_before = ui_scroll_region_previous(ui_key_from_string(bar_key, str8_lit("target")), target, fresh);
         // Callers that scroll by position rather than view offset change it.
         F32 position = (F32)axes[axis].position.idx + axes[axis].position.target_off;
-        F32 position_before = ui_anim(ui_key_from_string(bar_key, str8_lit("position")), position, .initial = position, .reset = fresh, .rate = 0.9999f, .epsilon = 0.0001f);
+        F32 position_before = ui_scroll_region_previous(ui_key_from_string(bar_key, str8_lit("position")), position, fresh);
         B32 moving = !fresh && (abs_f32(target - content->view_off.v[axis]) > 0.5f || abs_f32(target - target_before) > 0.5f ||
                                 abs_f32(position - position_before) > 0.001f);
         F32 recent = ui_anim(ui_key_from_string(bar_key, str8_lit("activity")), 0.f, .initial = moving ? 1.f : 0.f, .reset = moving,

@@ -3339,6 +3339,16 @@ rd_panel_drop_claimed_locally(CFG_Node *panel)
 { return rd_state->drag_drop_local_panel == panel->id && rd_state->drag_drop_local_frame+1 >= rd_state->frame_index; }
 
 // Existing Views and creation drags use the same sites, geometry and commands.
+// A panel boundary drag: the two sides' laid out and saved sizes as it
+// began (saved ones as shares of their siblings' total), and that total
+// while saved sizes still need putting right (0 once they sum to one).
+typedef struct RD_BoundaryDrag RD_BoundaryDrag;
+struct RD_BoundaryDrag
+{
+  Vec4F32 v;
+  F32 drifted_total;
+};
+
 internal void
 rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
 {
@@ -3738,7 +3748,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
         // returns to when expanded.
         if(split_axis == Axis2_Y && rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar)
         {
-          F32 header = floor_f32(ui_top_font_size()*2.2f), h = 0;
+          F32 header = uishell_sidebar_row_height(), h = 0;
           if(uishell_sidebar_panel_collapsed(min_child, header, &h) || uishell_sidebar_panel_collapsed(max_child, header, &h)) { continue; }
         }
         Rng2F32 min_child_rect = cfg_target_rect_from_panel_node_child(panel_rect, panel, min_child);
@@ -3773,22 +3783,26 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             // What's laid out can differ from what's saved (a sidebar's
             // collapsed sections give their space away in memory), so the
             // drag moves the saved sizes by what it moves the laid out ones.
+            // Saved sizes that drifted from summing to one are put right
+            // (all of them) on the first move, so a click writes nothing.
             F32 saved_total = 0;
             for(CFG_PanelNode *c = panel->first; c != &cfg_nil_panel_node; c = c->next) { saved_total += Max(0.f, (F32)f64_from_str8(c->cfg->string)); }
-            Vec4F32 v = {min_child->pct_of_parent, max_child->pct_of_parent,
-              (F32)f64_from_str8(min_child->cfg->string), (F32)f64_from_str8(max_child->cfg->string)};
-            // Saved sizes that drifted from summing to one are put right first.
-            if(saved_total > 0 && abs_f32(saved_total-1.f) > .0001f)
-            {
-              v.v[2] /= saved_total; v.v[3] /= saved_total;
-              for(CFG_PanelNode *c = panel->first; c != &cfg_nil_panel_node; c = c->next)
-              { cfg_node_equip_stringf(rd_state->cfg, c->cfg, "%f", Max(0.f, (F32)f64_from_str8(c->cfg->string))/saved_total); }
-            }
-            ui_store_drag_struct(&v);
+            RD_BoundaryDrag drag = {{min_child->pct_of_parent, max_child->pct_of_parent,
+              (F32)f64_from_str8(min_child->cfg->string), (F32)f64_from_str8(max_child->cfg->string)},
+              saved_total > 0 && abs_f32(saved_total-1.f) > .0001f ? saved_total : 0};
+            if(drag.drifted_total > 0) { drag.v.v[2] /= saved_total; drag.v.v[3] /= saved_total; }
+            ui_store_drag_struct(&drag);
           }
           else if(ui_dragging(sig))
           {
-            Vec4F32 v = *ui_get_drag_struct(Vec4F32);
+            RD_BoundaryDrag *drag = ui_get_drag_struct(RD_BoundaryDrag);
+            if(drag->drifted_total > 0 && ui_drag_delta().v[split_axis] != 0)
+            {
+              for(CFG_PanelNode *c = panel->first; c != &cfg_nil_panel_node; c = c->next)
+              { cfg_node_equip_stringf(rd_state->cfg, c->cfg, "%f", Max(0.f, (F32)f64_from_str8(c->cfg->string))/drag->drifted_total); }
+              drag->drifted_total = 0;
+            }
+            Vec4F32 v = drag->v;
             Vec2F32 mouse_delta      = ui_drag_delta();
             F32 total_size           = dim_2f32(panel_rect).v[split_axis];
             F32 min_pct__before      = v.v[0];
@@ -10531,7 +10545,7 @@ rd_frame(void)
                                        !ws->query_is_active &&
                                        !ws->menu_bar_focused &&
                                        !ws->ui->hover_card_focus &&
-                                       !(ws->ui->text_field_focus_build_index && ws->ui->text_field_focus_build_index+1 >= ws->ui->build_index) &&
+                                       !ui_text_field_focus_in(ws->ui) &&
                                        str8_match(focused_view->string, str8_lit("terminal"), 0));
       B32 terminal_claims_keyboard_input = (terminal_input_is_focused &&
                                             !(event->modifiers & WM_Modifier_Super) &&

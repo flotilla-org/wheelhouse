@@ -728,7 +728,8 @@ ui_slot_press(UI_EventActionSlot slot)
 
 // A name field outside the focus tree (a sidebar's) claims the keyboard for
 // each build it's in; the claim holds into the next build, so views built
-// before it that frame, and the host's routing between frames, see it.
+// before it that frame, and the host's routing between frames, see it. A
+// field that stops being built keeps it for that one more build.
 internal void
 ui_take_text_field_focus(void)
 {
@@ -736,9 +737,15 @@ ui_take_text_field_focus(void)
 }
 
 internal B32
+ui_text_field_focus_in(UI_State *state)
+{
+  return state->text_field_focus_build_index != 0 && state->text_field_focus_build_index+1 >= state->build_index;
+}
+
+internal B32
 ui_text_field_focus(void)
 {
-  return ui_state->text_field_focus_build_index != 0 && ui_state->text_field_focus_build_index+1 >= ui_state->build_index;
+  return ui_text_field_focus_in(ui_state);
 }
 
 //- rjf: autocomplete info

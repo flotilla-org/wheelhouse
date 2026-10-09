@@ -776,6 +776,7 @@ wm_init(void)
   mac_wm_state->gfx_info.double_click_time = 0.5f;
   mac_wm_state->gfx_info.caret_blink_time = 0.5f;
   mac_wm_state->gfx_info.default_refresh_rate = 60.f;
+  mac_wm_state->gfx_info.scroll_bars_always_shown = [NSScroller preferredScrollerStyle] == NSScrollerStyleLegacy;
   mac_wm_state->chrome_mode = mac_wm_chrome_mode_from_window_decorations(1);
   mac_wm_state->menu_mode = mac_wm_menu_mode_from_native_menu_bar(0);
   mac_wm_state->menu_target = [MAC_WM_MenuTarget new];
@@ -800,8 +801,6 @@ wm_init(void)
 internal WM_SystemInfo *
 wm_get_system_info(void)
 {
-  // Read live: it changes with the setting and as a mouse comes and goes.
-  mac_wm_state->gfx_info.scroll_bars_always_shown = [NSScroller preferredScrollerStyle] == NSScrollerStyleLegacy;
   return &mac_wm_state->gfx_info;
 }
 
@@ -1332,6 +1331,9 @@ internal WM_EventList
 wm_get_events(Arena *arena, B32 wait)
 {
   WM_EventList result = {0};
+  // Read per event pump, on the main thread: it changes with the setting
+  // and as a mouse comes and goes.
+  mac_wm_state->gfx_info.scroll_bars_always_shown = [NSScroller preferredScrollerStyle] == NSScrollerStyleLegacy;
   NSDate *limit = wait ? [NSDate distantFuture] : [NSDate distantPast];
   B32 blocking = wait;
   for(;;)

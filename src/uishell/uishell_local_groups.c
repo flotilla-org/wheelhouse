@@ -375,7 +375,8 @@ internal F32
 uishell_sidebar_make_footer(UIShell_SidebarState *state, CFG_Node *window, String8 key, UIShell_MakeAction *actions, U64 count,
                             B32 engaged, F32 row_height, F32 inset)
 {
-  B32 naming = state->make_key_size && str8_match(str8(state->make_key, state->make_key_size), key, 0);
+  B32 naming = state->make_key && state->make_key == u64_hash_from_str8(key);
+  if(naming) { state->make_build = ui_state->build_index; }
   // While a press is held (dragging the scroll bar, say), it stays as it
   // was: opening moves the rows under the pointer, which would close it again.
   UI_Box *previous = ui_box_from_key(ui_key_from_stringf(ui_active_seed_key(), "###make_%S", key));
@@ -384,7 +385,7 @@ uishell_sidebar_make_footer(UIShell_SidebarState *state, CFG_Node *window, Strin
   F32 t = ui_anim(ui_key_from_stringf(ui_key_zero(), "make_footer_%S", key), engaged || naming ? 1.f : 0.f,
                   .rate = rd_state->menu_animation_rate, .epsilon = 0.001f);
   F32 height = floor_f32(row_height*t);
-  UI_Box *row;
+  UI_Box *row = &ui_nil_box;
   UI_PrefHeight(ui_px(height, 1)) UI_PrefWidth(ui_pct(1, 0)) UI_ChildLayoutAxis(Axis2_Y)
   {
     row = ui_build_box_from_stringf(UI_BoxFlag_Clip, "###make_%S", key);
@@ -411,7 +412,7 @@ uishell_sidebar_make_footer(UIShell_SidebarState *state, CFG_Node *window, Strin
       ui_spacer(ui_px(8.f, 1));
       String8 typed = str8_skip_chop_whitespace(str8(state->rename_text, state->rename_size));
       if(outcome == 1 && state->make_index < count) { uishell_sidebar_make(window, actions[state->make_index], typed); }
-      if(outcome) { state->make_key_size = 0; }
+      if(outcome) { state->make_key = 0; }
     }
     else UI_TagF("weak")
     {
@@ -423,10 +424,12 @@ uishell_sidebar_make_footer(UIShell_SidebarState *state, CFG_Node *window, Strin
         { sig = uishell_sidebar_button(label); }
         if(ui_clicked(sig))
         {
-          state->make_key_size = Min(key.size, sizeof(state->make_key));
-          MemoryCopy(state->make_key, key.str, state->make_key_size);
+          state->make_key = u64_hash_from_str8(key);
+          state->make_build = ui_state->build_index;
           state->make_index = (U32)i;
           state->rename_size = 0; state->rename_cursor = state->rename_mark = txt_pt(1, 1);
+          // One name field at a time: this ends a rename in progress
+          // unapplied, as Esc would.
           state->rename_focus = 1; state->rename_node = 0;
           rd_request_frame();
         }
