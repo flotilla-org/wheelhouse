@@ -3465,10 +3465,23 @@ internal F32
 rd_drop_target_gap(void)
 { return ceil_f32(ui_top_font_size()*0.25f); }
 
+// The theme's accent: its focus border colour. The selection colour is a
+// faint wash, the same pale blue in most themes, so at full strength it
+// ignored the theme.
+internal Vec4F32
+rd_accent_color(void)
+{
+  String8 extras[] = {str8_lit("focus"), str8_lit("border")};
+  String8Array extras_array = {extras, ArrayCount(extras)};
+  Vec4F32 color = ui_color_from_tags_key_extras(ui_top_tags_key(), extras_array);
+  color.w = 1.f;
+  return color;
+}
+
 internal Vec4F32
 rd_drop_accent(F32 alpha)
 {
-  Vec4F32 color = ui_color_from_name(str8_lit("selection"));
+  Vec4F32 color = rd_accent_color();
   color.w = alpha;
   return color;
 }

@@ -1078,6 +1078,7 @@ internal B32 rd_view_name_is_listed_in_app(String8 name);
 internal B32 rd_drag_is_active(void);
 internal UI_Key rd_panel_catchall_drop_site_key(CFG_Node *panel);
 internal void rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
+internal Vec4F32 rd_accent_color(void);
 internal Vec4F32 rd_drop_accent(F32 alpha);
 internal B32 uishell_dispatch_tab_command(String8 name);
 internal B32 uishell_dispatch_panel_command(String8 name);
