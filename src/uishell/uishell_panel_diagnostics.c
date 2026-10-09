@@ -162,6 +162,17 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     ui_end_build();
     fprintf(stderr, "%s accents take the theme's focus border, not its selection wash\n", themed ? "PASS" : "FAIL");
     failures += !themed;
+    // Hover moves the visible brightness by the same step on light and dark
+    // backgrounds; a fixed opacity of black is invisible on a light one.
+    Vec4F32 white = v4f32(1, 1, 1, 1), black = v4f32(0, 0, 0, 1);
+    Vec4F32 dark = linear_from_srgba(v4f32(0x1f/255.f, 0x1f/255.f, 0x1f/255.f, 1));
+    Vec4F32 light = linear_from_srgba(v4f32(0xf4/255.f, 0xf4/255.f, 0xf4/255.f, 1));
+    F32 dark_a = rd_hover_alpha(white, dark, RD_HoverBrightnessStep), light_a = rd_hover_alpha(black, light, RD_HoverBrightnessStep);
+    F32 dark_step = srgba_from_linear(mix_4f32(dark, white, dark_a)).x - srgba_from_linear(dark).x;
+    F32 light_step = srgba_from_linear(light).x - srgba_from_linear(mix_4f32(light, black, light_a)).x;
+    B32 hover = abs_f32(dark_step - RD_HoverBrightnessStep) < 0.005f && abs_f32(light_step - RD_HoverBrightnessStep) < 0.005f && light_a > 4*dark_a;
+    fprintf(stderr, "%s hover changes light and dark backgrounds by the same visible step (alpha %.3f dark, %.3f light)\n", hover ? "PASS" : "FAIL", dark_a, light_a);
+    failures += !hover;
     UI_Box *preview = &ui_nil_box;
     for(UI_Box *b = test_ui->root; ui_box_is_nil(preview) && !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test_ui->root).next)
     {

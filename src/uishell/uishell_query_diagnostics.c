@@ -112,5 +112,18 @@ uishell_setting_typing_diagnostics(void)
     uishell_setting_applies_while_typing(theme, preset) &&
     uishell_setting_applies_while_typing(other, str8_lit("1"));
   fprintf(stderr, "%s a theme applies while typed only once it names one\n", ok ? "PASS" : "FAIL");
-  return ok;
+  // A finished edit saves a theme the picker lists, never a partial name, and
+  // a name that isn't a theme still draws with the fallback's colours.
+  Temp scratch = scratch_begin(0, 0);
+  String8 completed = uishell_theme_name_from_typed(scratch.arena, str8_prefix(preset, 3));
+  String8 exact = uishell_theme_name_from_typed(scratch.arena, preset);
+  String8 none = uishell_theme_name_from_typed(scratch.arena, str8_lit("zzqqxx"));
+  Access *access = access_open();
+  UI_Theme *unknown = rd_theme_from_name_and_colors(scratch.arena, access, str8_prefix(preset, 3), (CFG_NodePtrList){0}, 1);
+  access_close(access);
+  B32 saved = str8_match(str8_prefix(completed, 3), str8_prefix(preset, 3), 0) && completed.size > 3 &&
+    str8_match(exact, preset, 0) && none.size == 0 && unknown != 0 && unknown->patterns_count > 0;
+  fprintf(stderr, "%s a finished theme edit saves a listed theme; an unknown name falls back\n", saved ? "PASS" : "FAIL");
+  scratch_end(scratch);
+  return ok && saved;
 }

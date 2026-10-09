@@ -1007,6 +1007,18 @@ uishell_setting_applies_while_typing(E_Eval eval, String8 string)
   return named;
 }
 
+// The theme a finished edit saves: the name typed, if it names a theme,
+// otherwise the first theme the picker lists for it. Empty if none match,
+// so a partial or mistyped name is never saved as the theme.
+internal String8
+uishell_theme_name_from_typed(Arena *arena, String8 string)
+{
+  String8Array names = uishell_eval_theme_names_from_filter(arena, str8_zero());
+  for(U64 i = 0; i < names.count; i++) { if(str8_match(names.v[i], string, 0)) { return names.v[i]; } }
+  String8Array matches = string.size ? uishell_eval_theme_names_from_filter(arena, string) : (String8Array){0};
+  return matches.count ? matches.v[0] : str8_zero();
+}
+
 internal UIShell_WatchRowInfo
 uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
 {
@@ -2019,9 +2031,16 @@ uishell_watch_view_ui(Rng2F32 rect)
                     {
                       should_commit_asap = editing_complete;
                     }
+                    String8 commit_string = new_string;
+                    if(should_commit_asap && cell->eval.space.kind == RD_EvalSpaceKind_MetaCfg &&
+                       str8_match(e_string_from_id(cell->eval.space.u64s[1]), str8_lit("theme"), 0))
+                    {
+                      commit_string = uishell_theme_name_from_typed(scratch.arena, new_string);
+                      should_commit_asap = commit_string.size != 0;
+                    }
                     if(should_commit_asap)
                     {
-                      B32 success = rd_commit_eval_value_string(cell->eval, new_string);
+                      B32 success = rd_commit_eval_value_string(cell->eval, commit_string);
                       state_dirty = 1;
                       if(!success)
                       {

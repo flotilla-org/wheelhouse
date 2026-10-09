@@ -1078,8 +1078,17 @@ internal B32 rd_view_name_is_listed_in_app(String8 name);
 internal B32 rd_drag_is_active(void);
 internal UI_Key rd_panel_catchall_drop_site_key(CFG_Node *panel);
 internal void rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
+// A borderless button of size w x h that hovers as a circle of diameter d,
+// centred in it.
+#define RD_RoundButtonStyle(w, h, d) UI_TagF("implicit") UI_CornerRadius((d)*0.5f) \
+  UI_VisualMarginX(Max(0.f, ((w)-(d))*0.5f)) UI_VisualMarginY(Max(0.f, ((h)-(d))*0.5f))
+// Title-bar chrome buttons, w x h: borderless, hovering as a circle.
+#define RD_TitleBarButtonStyle(w, h) RD_RoundButtonStyle((w), (h), Min((w), (h)) - ui_top_font_size()*0.8f)
 internal Vec4F32 rd_accent_color(void);
 internal Vec4F32 rd_drop_accent(F32 alpha);
+internal F32 rd_hover_alpha(Vec4F32 hover, Vec4F32 under, F32 step);
+// How far hover moves the visible (sRGB) brightness of what's under it.
+#define RD_HoverBrightnessStep 0.06f
 internal B32 uishell_dispatch_tab_command(String8 name);
 internal B32 uishell_dispatch_panel_command(String8 name);
 internal void rd_drag_begin(UIShell_ContextRegSlot slot);
