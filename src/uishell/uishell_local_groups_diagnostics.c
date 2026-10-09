@@ -637,6 +637,16 @@ uishell_local_groups_diagnostics(CFG_Node *window)
       uishell_sidebar_local_move_group(window, beta, first, alpha);
       GroupsCheck(beta->parent == first && uishell_sidebar_local_view(window, beta) == uishell_local_groups_view,
                   "and moved back, it returns, and the tab goes");
+      // A gap after a tab that no longer exists puts it first.
+      uishell_local_groups_publish(state, window, arena);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      uishell_local_groups_dock_direction = Dir2_Invalid; uishell_local_groups_dock_previous = 0x7fffffff;
+      uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, beta_id), str8_zero(), 1);
+      uishell_local_groups_dock_direction = Dir2_Down; uishell_local_groups_dock_previous = 0;
+      CFG_Node *stale_view = uishell_sidebar_local_view(window, beta);
+      GroupsCheck(beta->parent != first && stale_view->parent == strip && stale_view->prev == &cfg_nil_node,
+                  "dropped after a tab that no longer exists, it goes first");
+      uishell_sidebar_local_move_group(window, beta, first, alpha);
     }
     U64 sections_before = 0;
     for(CFG_Node *n = first->parent->first; n != &cfg_nil_node; n = n->next) { sections_before += str8_match(n->string, str8_lit("section"), 0); }

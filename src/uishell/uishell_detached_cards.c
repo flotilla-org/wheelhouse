@@ -631,15 +631,24 @@ uishell_sidebar_local_view_group(CFG_Node *window, CFG_Node *view)
   return &cfg_nil_node;
 }
 
+// A new, empty local section, last among the sidebar's.
+internal CFG_Node *
+uishell_sidebar_local_new_section(CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *section = cfg_node_new(rd_state->cfg, uishell_sidebar_local_root(window), str8_lit("section"));
+  uishell_sidebar_local_set_field(section, str8_lit("id"), string_from_guid(scratch.arena, make_guid()));
+  scratch_end(scratch);
+  return section;
+}
+
 // A new local section holding one group named `label`, whose name the
 // section borrows (uishell_sidebar_local_title); returns the group.
 internal CFG_Node *
 uishell_sidebar_local_new_group(CFG_Node *window, String8 label)
 {
   Temp scratch = scratch_begin(0, 0);
-  CFG_Node *root = uishell_sidebar_local_root(window);
-  CFG_Node *section = cfg_node_new(rd_state->cfg, root, str8_lit("section"));
-  uishell_sidebar_local_set_field(section, str8_lit("id"), string_from_guid(scratch.arena, make_guid()));
+  CFG_Node *section = uishell_sidebar_local_new_section(window);
   CFG_Node *group = cfg_node_new(rd_state->cfg, section, str8_lit("group"));
   uishell_sidebar_local_set_field(group, str8_lit("id"), string_from_guid(scratch.arena, make_guid()));
   uishell_sidebar_local_set_field(group, str8_lit("label"), label);
@@ -1048,9 +1057,7 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
     if(group == &cfg_nil_node && strip != &cfg_nil_node && state->drop_direction == Dir2_Invalid &&
        !uishell_sidebar_local_is_default(dragged_group) && rd_dock_can_create(str8_lit("sidebar_section"), strip))
     {
-      CFG_Node *made = uishell_sidebar_local_new_group(window, str8_lit("Pinned"));
-      CFG_Node *section = made->parent;
-      cfg_node_release(rd_state->cfg, made);
+      CFG_Node *section = uishell_sidebar_local_new_section(window);
       uishell_sidebar_local_move_group(window, dragged_group, section, &cfg_nil_node);
       CFG_Node *view = uishell_sidebar_local_new_view(strip, section);
       CFG_Node *previous = cfg_node_from_id(state->drop_previous_tab);

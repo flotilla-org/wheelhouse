@@ -177,11 +177,22 @@ rd_drag_refuse(String8 reason)
   rd_drag_refusal_build = ui_state->build_index;
 }
 
+// The refusal recorded this build or the last. One not renewed lapses after
+// a build, so the badge trails the pointer by at most one. With nested
+// refusing areas (a project in a section), the last one built wins.
 internal String8
 rd_drag_refusal(void)
 {
   if(!rd_drag_is_active() || !rd_drag_refusal_build || rd_drag_refusal_build+1 < ui_state->build_index) { return str8_zero(); }
   return str8(rd_drag_refusal_buffer, rd_drag_refusal_size);
+}
+
+// The refusal as the dragged item shows it.
+internal String8
+rd_drag_refusal_text(Arena *arena)
+{
+  String8 reason = rd_drag_refusal();
+  return reason.size ? push_str8f(arena, "Not allowed: %S", reason) : str8_zero();
 }
 
 // The refusal's colour: the theme's bad_pop, as Close Panel's.
@@ -199,10 +210,9 @@ rd_drag_refusal_color(void)
 internal void
 rd_drag_refusal_badge_ui(Rng2F32 anchor)
 {
-  String8 reason = rd_drag_refusal();
-  if(!reason.size) { return; }
   Temp scratch = scratch_begin(0, 0);
-  String8 text = push_str8f(scratch.arena, "Not allowed: %S", reason);
+  String8 text = rd_drag_refusal_text(scratch.arena);
+  if(!text.size) { scratch_end(scratch); return; }
   F32 height = floor_f32(ui_top_font_size()*1.8f);
   UI_Parent(ui_state->root) UI_TagF("bad_pop") UI_CornerRadius(height*0.5f) UI_TextAlignment(UI_TextAlign_Center)
     UI_FixedX(anchor.x0) UI_FixedY(anchor.y1 + 4.f) UI_PrefWidth(ui_text_dim(ui_top_font_size(), 1)) UI_PrefHeight(ui_px(height, 1))
@@ -2600,10 +2610,10 @@ rd_drag_view_floater_ui(RD_WindowState *ws, CFG_Node *view)
         ui_box_equip_display_fstrs(name_box, &fstrs);
       }
       // Where it's over can't take it (#282): say why.
-      String8 refusal = rd_drag_refusal();
+      String8 refusal = rd_drag_refusal_text(scratch.arena);
       if(refusal.size) UI_TagF("bad_pop") UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_em(1.8f, 1)) UI_TextPadding(ui_top_font_size()*0.5f)
       {
-        ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawText, "Not allowed: %S###drag_refusal_row", refusal);
+        ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawText, "%S###drag_refusal_row", refusal);
       }
       if(live)
       {
