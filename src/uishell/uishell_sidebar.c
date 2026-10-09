@@ -3850,6 +3850,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       body->view_off_target.y = (F32)scroll.position.y.idx + scroll.position.y.target_off;
       body->view_off.y = Clamp(0.f, body->view_off.y, (F32)axes[Axis2_Y].range.max);
       body->child_layout_axis = Axis2_Y;
+      // Drop lines go in this layer, the body's first child: siblings paint
+      // last to first, so a line built after a group's card would paint
+      // beneath it (#282).
+      UI_Box *drop_layer = &ui_nil_box;
+      UI_Parent(body) UI_FixedX(0) UI_FixedY(0) UI_PrefWidth(ui_px(0, 1)) UI_PrefHeight(ui_px(0, 1))
+      { drop_layer = ui_build_box_from_key(UI_BoxFlag_Floating, ui_key_from_stringf(body->key, "drop_layer")); }
       UI_Parent(body) UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(row_height, 1))
       {
         U64 end = n+1 < section_count ? sections[n+1] : count;
@@ -4039,7 +4045,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             {
               B32 own = 0;
               for(U64 j = drag_row_index; j != ANDAMENTO_NONE && !own; j = nodes[j].parent) { own = j == i; }
-              if(!own) { uishell_sidebar_refuse(body, project_box->rect, str8_lit("rows stay in their project")); }
+              if(!own) { uishell_sidebar_refuse(drop_layer, project_box->rect, str8_lit("rows stay in their project")); }
             }
             project_depth = depth[i];
             project_index = i;
@@ -4077,7 +4083,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               F32 extent = uishell_sidebar_ghost_extent(card, ghost, em);
               if(project_box && owner == project_index) { card_last_row = card->rect; }
               else { body_last_row = card->rect; }
-              if(drag_sibling) { drag_body = body; drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, card->rect, card->rect}; }
+              if(drag_sibling) { drag_body = drop_layer; drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, card->rect, card->rect}; }
               if(sidebar_dragging) { group_items[group_item_count++] = (UIShell_RowDragSibling){i, card->rect, card->rect}; }
               // The moving card keeps its place until it lands.
               if(card->moving) { ui_spacer(ui_px(extent, 1)); }
@@ -4133,7 +4139,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             { group_items[group_item_count++] = (UIShell_RowDragSibling){i, slot->rect, slot->rect}; }
             if(drag_sibling)
             {
-              drag_body = body;
+              drag_body = drop_layer;
               drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, slot->rect, project ? project_box->rect : slot->rect};
               drag_depth = depth[i]; drag_subtree = 1;
             }
@@ -4309,15 +4315,15 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       U64 end_of_section = n+1 < section_count ? sections[n+1] : count;
       // Groups go between groups instead (#282).
       if(groups_dragging)
-      { uishell_sidebar_groups_claim(state, body, split->owner_cfg, nodes, sections[n], sections[n], end_of_section, passed, group_rects,
+      { uishell_sidebar_groups_claim(state, drop_layer, split->owner_cfg, nodes, sections[n], sections[n], end_of_section, passed, group_rects,
                                      group_items, group_item_count, body->parent->rect); }
       else if(section_refusal.size && uishell_regs()->panel != rd_state->drag_drop_regs->panel)
-      { uishell_sidebar_refuse(body, body->parent->rect, section_refusal); }
+      { uishell_sidebar_refuse(drop_layer, body->parent->rect, section_refusal); }
       for(U64 g = sections[n]; sidebar_dragging && !groups_dragging && g < end_of_section; g++)
       {
         if(!str8_match(uishell_sidebar_string(nodes[g].entity_kind), str8_lit(".group"), 0) || nodes[g].parent != sections[n]) { continue; }
         Rng2F32 area = passed[g] ? body->parent->rect : group_rects[g];
-        uishell_sidebar_group_claim(state, body, nodes, g, group_items, group_item_count, area, row_height);
+        uishell_sidebar_group_claim(state, drop_layer, nodes, g, group_items, group_item_count, area, row_height);
       }
       ui_signal_from_box(body);
       y += heights[n];

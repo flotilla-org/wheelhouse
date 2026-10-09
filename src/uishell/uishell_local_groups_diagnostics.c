@@ -144,6 +144,10 @@ global F32 uishell_local_groups_drag_inset = 0;
 // The refusal the last drag showed over its target, just before release.
 global U8 uishell_local_groups_refusal[128];
 global U64 uishell_local_groups_refusal_size = 0;
+// A line the last drag should show over its target (its key), and whether it
+// did, painted on top: in its section body's first child, the drop layer.
+global UI_Key uishell_local_groups_line_key = {0};
+global B32 uishell_local_groups_line_on_top = 0;
 
 // The docking site a `dock` drag drops on in the first View's panel: below
 // it, or with Dir2_Invalid its tab strip, after the tab given.
@@ -192,6 +196,8 @@ uishell_local_groups_drag(RD_WindowState *ws, CFG_Node *window, Arena *arena, St
       String8 refusal = rd_drag_refusal();
       uishell_local_groups_refusal_size = Min(refusal.size, sizeof(uishell_local_groups_refusal));
       MemoryCopy(uishell_local_groups_refusal, refusal.str, uishell_local_groups_refusal_size);
+      UI_Box *line = ui_box_from_key(uishell_local_groups_line_key);
+      uishell_local_groups_line_on_top = !ui_box_is_nil(line) && !ui_box_is_nil(line->parent) && line->parent->parent->first == line->parent;
     }
   }
   rd_drag_kill(); ui_kill_action();
@@ -719,6 +725,15 @@ uishell_local_groups_diagnostics(CFG_Node *window)
       GroupsCheck(flat_dragged && eta->parent == zeta->parent && eta->prev == zeta &&
                   uishell_sidebar_local_group_count(zeta->parent) == 2 && uishell_sidebar_local_section(window, eta_id) == &cfg_nil_node,
                   "a one-group section dropped into a section showing one group makes it a list of two groups");
+      // A row dropped into a group shown as a card: the line shows over the
+      // card, not beneath it (#282).
+      uishell_local_groups_publish(state, window, arena);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      uishell_local_groups_line_key = ui_key_from_stringf(ui_key_zero(), "group_drop_line_%S", uishell_sidebar_local_field(gamma, str8_lit("id")));
+      uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, str8_lit("groups-delta")),
+                                uishell_local_groups_row(arena, state, str8_lit("groups-gamma")), 0);
+      GroupsCheck(uishell_local_groups_line_on_top, "a row over a group card shows its insertion line over the card, in the section's drop layer");
+      uishell_local_groups_line_key = ui_key_zero();
       // A ghost row over Workspaces is refused there, with a reason (#282).
       CFG_Node *workspaces_section = uishell_sidebar_local_section(window, str8_lit("workspaces"));
       CFG_Node *workspaces_view = uishell_sidebar_local_new_view(extra, workspaces_section);
