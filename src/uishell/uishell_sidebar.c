@@ -1873,8 +1873,27 @@ internal void
 uishell_sidebar_header_separator(UIShell_HeaderTabs *tabs)
 {
   if(tabs->count > 1 && tabs->any_built)
-  UI_PrefWidth(ui_em(0.9f, 1)) UI_TextAlignment(UI_TextAlign_Center) UI_Transparency(0.5f) UI_TagF("weak")
-  { ui_label(str8_lit("│")); }
+  {
+    // A drawn line, centred in a slot, half the row's height.
+    Vec4F32 color = ui_color_from_name(str8_lit("text"));
+    color.w = 0.25f;
+    UI_Box *slot, *band;
+    UI_PrefWidth(ui_em(0.9f, 1)) UI_PrefHeight(ui_pct(1, 1)) UI_ChildLayoutAxis(Axis2_Y)
+    { slot = ui_build_box_from_key(0, ui_key_zero()); }
+    UI_Parent(slot)
+    {
+      ui_spacer(ui_pct(0.25f, 1));
+      UI_PrefWidth(ui_pct(1, 1)) UI_PrefHeight(ui_pct(0.5f, 1)) UI_ChildLayoutAxis(Axis2_X)
+      { band = ui_build_box_from_key(0, ui_key_zero()); }
+      UI_Parent(band)
+      {
+        ui_spacer(ui_pct(1, 0));
+        UI_PrefWidth(ui_px(1.f, 1)) UI_PrefHeight(ui_pct(1, 1)) UI_BackgroundColor(color)
+        { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
+        ui_spacer(ui_pct(1, 0));
+      }
+    }
+  }
   tabs->any_built = 1;
 }
 
