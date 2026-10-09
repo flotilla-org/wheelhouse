@@ -6861,7 +6861,7 @@ rd_window_frame(void)
 
             //- rjf: leading buttons ("a") niche — elements resolved here (ADR-0006)
             if(ws->chrome_niche[RD_ChromeElementKind_SidebarCollapse] == RD_ChromeNiche_TitleBarLeading)
-              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle
+              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle(ui_top_font_size()*2.25f, dim_2f32(top_bar_rect).y)
             {
               UI_Signal sig = rd_chrome_build_sidebar_collapse(root_controlled_split.owner_cfg);
               wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
@@ -6989,14 +6989,14 @@ rd_window_frame(void)
           //- rjf: trailing buttons ("b") niche — elements resolved here (ADR-0006)
 
           if(ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_TitleBarTrailing)
-            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle(ui_top_font_size()*2.25f, dim_2f32(top_bar_rect).y)
           {
             UI_Signal sig = rd_chrome_build_reveal_workspace(window);
             wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
           }
 
           if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_TitleBarTrailing)
-            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle(ui_top_font_size()*2.25f, dim_2f32(top_bar_rect).y)
           {
             UI_Signal sig = rd_chrome_build_overview_toggle(ws);
             wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
@@ -7111,7 +7111,7 @@ rd_window_frame(void)
                 rd_app_menu_spec_content(spec);
               }
             }
-            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle(ui_top_font_size()*2.25f, dim_2f32(top_bar_rect).y)
             {
               ui_set_next_child_layout_axis(Axis2_Y);
               UI_Box *kebab_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
@@ -7166,10 +7166,8 @@ rd_window_frame(void)
 
           // rjf: min/max/close buttons
           if(draw_custom_title_bar_controls)
-            UI_TagF("implicit")
             UI_TagF("weak")
-            UI_VisualMargin(ui_top_font_size()*0.5f)
-            UI_CornerRadius(ui_top_font_size()*0.9f)
+            RD_TitleBarButtonStyle(floor_f32(dim_2f32(top_bar_rect).y), dim_2f32(top_bar_rect).y)
           {
             UI_Signal min_sig = {0};
             UI_Signal max_sig = {0};
@@ -9089,7 +9087,12 @@ rd_theme_tree_from_name(Arena *arena, Access *access, String8 theme_name)
       }
       U128 hash = fs_hash_from_path_range(path, r1u64(0, max_U64), endt_us);
       String8 data = c_data_from_hash(access, hash);
-      theme_tree = md_tree_from_string(arena, data);
+      // A name with no theme file is not a theme: an empty tree would give a
+      // theme with no colours, instead of the fallback.
+      if(data.size != 0)
+      {
+        theme_tree = md_tree_from_string(arena, data);
+      }
     }
   }
   scratch_end(scratch);
