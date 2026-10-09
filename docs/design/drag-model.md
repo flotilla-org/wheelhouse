@@ -101,8 +101,13 @@ Sections and groups look the same whoever made them.
 | Anything | Attention | Not a valid target |
 | Tab or View | Panel or tab strip | Move (docking, unchanged) |
 | Tab or View | A local group | View ghost |
-| Local group header | Another section | Move the group |
+| Data row or card | Workspaces | Not a valid target |
+| Local group header | Another section, between its groups | Move the group there |
+| Local group header | A section's tab strip | New section of its own, a tab at the gap |
 | Local group header | A dock edge in the sidebar | New section that borrows the group's name |
+| Section of yours, or one of its tabs | Another of your sections, between its groups | Its groups move there in order; the section goes |
+| Section of several tabs, by its grip | A list | Not a valid target (it docks) |
+| Section of data (Projects, Attention…) | A list | Not a valid target (it docks) |
 | Project group header | Its own section | Reorder |
 | Section | Docking targets | Move (docking, unchanged) |
 
@@ -116,6 +121,8 @@ Dragging a chip drags the chip's own subject (an issue or PR), not the row it si
   - tabs are unchanged.
 - **Spring-loading.** Hovering a drag over a collapsed section, project or group for about 0.6s expands it. A title-bar overview (home) target opens the overview so you can drop into it, then drag back out. Leaving a target re-collapses only what the drag itself opened.
 - **Invalid targets never highlight.** They come from the same declared validity checker used for docking.
+- **A refused drop says so.** Over a target that can't take the drag, a line in the refusal colour (the theme's `bad_pop`, as Close Panel's) marks where it would have gone, and the dragged item carries a "Not allowed" badge with the reason, for example "rows stay in their project" (#282).
+- **Groups go between groups.** A drag carrying groups (a group's header, or one of your sections) claims the gap between another section's groups. A section showing one group has a gap above and below it: dropped there, it becomes a list of groups (#282).
 - **Cancelling.** Esc cancels the drag. Releasing over nothing valid snaps the item back.
 - **Releasing never removes anything.** Removal is always an explicit action.
 

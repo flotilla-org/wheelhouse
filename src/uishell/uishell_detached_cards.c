@@ -125,6 +125,7 @@ uishell_sidebar_drag_panel_drop(CFG_ID destination, Dir2 direction, CFG_ID previ
   if(ws == &rd_nil_window_state || !ws->sidebar || (!ws->sidebar->drag_card && !ws->sidebar->row_drag_key.size)) { return; }
   ws->sidebar->drop_panel = destination;
   ws->sidebar->drop_direction = direction;
+  ws->sidebar->drop_previous_tab = previous_tab;
 }
 
 // Every sidebar drag, of a card or a row, is one creation drag of a pinned
@@ -134,7 +135,7 @@ uishell_sidebar_drag_panel_drop(CFG_ID destination, Dir2 direction, CFG_ID previ
 internal void
 uishell_sidebar_drag_begin(RD_WindowState *ws)
 {
-  ws->sidebar->drop_panel = 0; ws->sidebar->reorder_build = 0; ws->sidebar->group_claim_build = 0;
+  ws->sidebar->drop_panel = 0; ws->sidebar->drop_previous_tab = 0; ws->sidebar->reorder_build = 0; ws->sidebar->group_claim_build = 0;
   UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = 0, .tab = 0) { rd_drag_begin(UIShell_ContextRegSlot_View); }
   rd_state->drag_drop_creation_name = str8_lit("sidebar_section");
   rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
@@ -877,6 +878,9 @@ uishell_sidebar_detached_bounds(RD_WindowState *ws)
 internal CFG_Node *uishell_sidebar_drag_local(UIShell_SidebarState *state);
 internal void uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *section, CFG_Node *after);
 internal CFG_Node *uishell_sidebar_section_drag_group(CFG_Node *window);
+internal CFG_Node *uishell_sidebar_section_drag_section(CFG_Node *window);
+internal void uishell_sidebar_local_drop_groups(CFG_Node *window, CFG_Node *from_section, CFG_Node *group, CFG_Node *section, CFG_Node *after);
+internal B32 uishell_sidebar_local_is_default(CFG_Node *group);
 
 internal void
 uishell_sidebar_drag_clear(UIShell_SidebarState *state)
@@ -900,6 +904,28 @@ uishell_sidebar_group_claimed(UIShell_SidebarState *state)
 {
   return state->group_claim_build && state->group_claim_build+1 >= ui_state->build_index &&
     contains_2f32(state->group_claim_rect, ui_mouse());
+}
+
+// The gap between a section's groups a drag carrying groups claimed, this
+// build or the last, while the pointer is still over that section (#282).
+internal B32
+uishell_sidebar_groups_claimed(UIShell_SidebarState *state)
+{
+  return state->groups_claim_build && state->groups_claim_build+1 >= ui_state->build_index &&
+    contains_2f32(state->groups_claim_rect, ui_mouse());
+}
+
+// Applies that claim: the carried groups go into the section, at the gap.
+internal B32
+uishell_sidebar_groups_drop(UIShell_SidebarState *state, CFG_Node *window, CFG_Node *section, CFG_Node *group)
+{
+  if(!uishell_sidebar_groups_claimed(state)) { return 0; }
+  CFG_Node *target = uishell_sidebar_local_section(window, state->groups_claim_section);
+  if(target == &cfg_nil_node || target == section) { return 0; }
+  CFG_Node *after = state->groups_claim_after.size ? uishell_sidebar_local_group(window, state->groups_claim_after) : &cfg_nil_node;
+  uishell_sidebar_local_drop_groups(window, section, group, target, after);
+  state->groups_claim_build = 0;
+  return 1;
 }
 
 // Saves the claimed group's item order with `placed` at the claimed index.
@@ -970,17 +996,14 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   B32 row = state->row_drag_key.size != 0;
   if(!card && !row)
   {
-    // A one-group section's title dropped where a group claimed it, and no
-    // docking site took it: its group moves into that section.
+    // A local section's View dropped between another section's groups, and
+    // no docking site took it: its groups move there (#282).
     CFG_Node *window = cfg_node_from_id(ws->cfg_id);
-    CFG_Node *dragged = uishell_sidebar_section_drag_group(window);
-    CFG_Node *target = dragged != &cfg_nil_node && rd_state->drag_drop_state == RD_DragDropState_Dropping &&
-      uishell_sidebar_group_claimed(state) ? uishell_sidebar_local_group(window, state->group_claim_id) : &cfg_nil_node;
-    if(target != &cfg_nil_node && target->parent != dragged->parent)
+    CFG_Node *dragged = uishell_sidebar_section_drag_section(window);
+    if(dragged != &cfg_nil_node && rd_state->drag_drop_state == RD_DragDropState_Dropping &&
+       uishell_sidebar_groups_drop(state, window, dragged, &cfg_nil_node))
     {
-      uishell_sidebar_local_move_group(window, dragged, target->parent, target);
       rd_drag_kill();
-      state->group_claim_build = 0;
       rd_request_frame();
     }
     return;
@@ -1016,8 +1039,25 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
     uishell_sidebar_local_group(window, uishell_sidebar_string(entity.id)) : &cfg_nil_node;
   if(dragged_group != &cfg_nil_node)
   {
-    if(group != &cfg_nil_node && group->parent != dragged_group->parent)
-    { uishell_sidebar_local_move_group(window, dragged_group, group->parent, group); uishell_sidebar_drag_clear(state); return; }
+    // Between another section's groups, it goes there (#282).
+    if(!edge && uishell_sidebar_groups_drop(state, window, &cfg_nil_node, dragged_group))
+    { uishell_sidebar_drag_clear(state); return; }
+    // On a section's tab strip, the group joins as a tab at the gap (#282):
+    // a new section of its own, shown after the tab the gap follows.
+    CFG_Node *strip = cfg_node_from_id(state->drop_panel);
+    if(group == &cfg_nil_node && strip != &cfg_nil_node && state->drop_direction == Dir2_Invalid &&
+       !uishell_sidebar_local_is_default(dragged_group) && rd_dock_can_create(str8_lit("sidebar_section"), strip))
+    {
+      CFG_Node *made = uishell_sidebar_local_new_group(window, str8_lit("Pinned"));
+      CFG_Node *section = made->parent;
+      cfg_node_release(rd_state->cfg, made);
+      uishell_sidebar_local_move_group(window, dragged_group, section, &cfg_nil_node);
+      CFG_Node *view = uishell_sidebar_local_new_view(strip, section);
+      CFG_Node *previous = cfg_node_from_id(state->drop_previous_tab);
+      cfg_node_insert_child(rd_state->cfg, strip, previous->parent == strip && previous != view ? previous : &cfg_nil_node, view);
+      uishell_sidebar_drag_clear(state);
+      return;
+    }
     if(group == &cfg_nil_node && state->drop_panel)
     {
       CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));

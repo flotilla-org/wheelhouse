@@ -195,17 +195,17 @@ uishell_sidebar_local_delete_section(CFG_Node *window, CFG_Node *section)
   { uishell_sidebar_local_delete_group(window, cfg_node_child_from_string(section, str8_lit("group"))); }
 }
 
-// Moves `group` into `section` after `after` (nil: at the end), with its
+// Moves `group` into `section` after the node `prev` (nil: first), with its
 // workspaces and ghosts. A section it leaves without groups goes.
 internal void
-uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *section, CFG_Node *after)
+uishell_sidebar_local_place_group(CFG_Node *window, CFG_Node *group, CFG_Node *section, CFG_Node *prev)
 {
   CFG_Node *from = group->parent;
   // The default group stays in the Workspaces section, which hosts New
   // workspace; the section itself moves by docking.
-  if(group == after || uishell_sidebar_local_is_default(group)) { return; }
+  if(group == prev || uishell_sidebar_local_is_default(group)) { return; }
   cfg_node_unhook(rd_state->cfg, from, group);
-  cfg_node_insert_child(rd_state->cfg, section, after != &cfg_nil_node ? after : section->last, group);
+  cfg_node_insert_child(rd_state->cfg, section, prev, group);
   if(from != section && uishell_sidebar_local_group_count(from) == 0)
   {
     uishell_sidebar_local_close_views(window, from);
@@ -213,19 +213,64 @@ uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *se
   }
 }
 
-// While a local section showing one group is dragged by its title (its
-// View's docking drag), the group it shows: the section is that group, so
-// other sections' groups claim the drag as they would the group's header,
-// and a claim moves the group there instead of docking (drag_finish).
-internal CFG_Node *
-uishell_sidebar_section_drag_group(CFG_Node *window)
+// Moves `group` into `section` after `after` (nil: at the end).
+internal void
+uishell_sidebar_local_move_group(CFG_Node *window, CFG_Node *group, CFG_Node *section, CFG_Node *after)
 {
-  // A whole section dragged by its grip moves its Views, not a group.
+  uishell_sidebar_local_place_group(window, group, section, after != &cfg_nil_node ? after : section->last);
+}
+
+// Moves the groups a drag carries (a section's, or one group) into
+// `section`, in order, after group `after` (nil: before its first group)
+// (#282). A section left without groups goes with its Views.
+internal void
+uishell_sidebar_local_drop_groups(CFG_Node *window, CFG_Node *from_section, CFG_Node *group, CFG_Node *section, CFG_Node *after)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_NodePtrList moving = {0};
+  if(from_section != &cfg_nil_node)
+  {
+    for(CFG_Node *g = from_section->first; g != &cfg_nil_node; g = g->next)
+    { if(str8_match(g->string, str8_lit("group"), 0)) { cfg_node_ptr_list_push(scratch.arena, &moving, g); } }
+  }
+  else if(group != &cfg_nil_node) { cfg_node_ptr_list_push(scratch.arena, &moving, group); }
+  CFG_Node *prev = after;
+  if(prev == &cfg_nil_node)
+  {
+    CFG_Node *first = cfg_node_child_from_string(section, str8_lit("group"));
+    prev = first != &cfg_nil_node ? first->prev : section->last;
+  }
+  for(CFG_NodePtrNode *n = moving.first; n != 0; n = n->next)
+  {
+    uishell_sidebar_local_place_group(window, n->v, section, prev);
+    prev = n->v;
+  }
+  scratch_end(scratch);
+}
+
+// While one View of a local section is dragged (by its title, or as one of
+// several tabs), the section it shows: its groups can join another section's
+// list of groups, between groups, instead of docking (#282). Not a whole
+// section of several tabs dragged by its grip, which moves its Views, nor
+// one holding the default group, which stays put.
+internal CFG_Node *
+uishell_sidebar_section_drag_section(CFG_Node *window)
+{
   if(!rd_drag_is_active() || rd_state->drag_drop_regs_slot != UIShell_ContextRegSlot_View ||
      rd_state->drag_drop_regs->window != window->id || rd_state->drag_drop_commit == uishell_sidebar_section_drop_commit) { return &cfg_nil_node; }
   CFG_Node *group = uishell_sidebar_local_view_group(window, cfg_node_from_id(rd_state->drag_drop_regs->view));
-  return group != &cfg_nil_node && uishell_sidebar_local_group_count(group->parent) == 1 &&
-    !uishell_sidebar_local_is_default(group) ? group : &cfg_nil_node;
+  if(group == &cfg_nil_node) { return &cfg_nil_node; }
+  for(CFG_Node *g = group->parent->first; g != &cfg_nil_node; g = g->next)
+  { if(str8_match(g->string, str8_lit("group"), 0) && uishell_sidebar_local_is_default(g)) { return &cfg_nil_node; } }
+  return group->parent;
+}
+
+// The same, when the section shows one group: that group.
+internal CFG_Node *
+uishell_sidebar_section_drag_group(CFG_Node *window)
+{
+  CFG_Node *section = uishell_sidebar_section_drag_section(window);
+  return section != &cfg_nil_node && uishell_sidebar_local_group_count(section) == 1 ? uishell_sidebar_local_only_group(section) : &cfg_nil_node;
 }
 
 // Opens a new workspace living in `group`.
