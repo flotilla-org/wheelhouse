@@ -3461,7 +3461,7 @@ rd_drop_bars_layout(RD_DropBars *bars, Rng2F32 area)
       a0 = side > 0 ? start + (level-1)*(thickness+gap) : start - level*thickness - (level-1)*gap;
     }
     F32 span0 = bar->split_rect.p0.v[across], span1 = bar->split_rect.p1.v[across];
-    F32 bar_length = Min(Max(em*3.f, length*(1.f - 0.22f*level)), span1 - span0 - 2*gap);
+    F32 bar_length = Max(0.f, Min(Max(em*3.f, length*(1.f - 0.22f*level)), span1 - span0 - 2*gap));
     F32 centre = (span0 + span1)*0.5f;
     bar->rect.p0.v[axis] = a0;
     bar->rect.p1.v[axis] = a0 + thickness;
