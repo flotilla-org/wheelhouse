@@ -950,11 +950,6 @@ struct RD_State
   // Creation drags share panel sites without allocating a saved View until drop.
   String8 drag_drop_creation_name;
   void (*drag_drop_commit)(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
-  // A panel whose View claimed a positioned drop for the pointer (a pinned
-  // area's insertion point) this frame or the last; its centre and catch-all
-  // docking sites stand aside. Edge sites still win under the pointer.
-  CFG_ID drag_drop_local_panel;
-  U64 drag_drop_local_frame;
 
   // rjf: cfg state
   CFG_State *cfg;
@@ -1081,9 +1076,9 @@ internal B32 rd_view_name_is_listed_in_app(String8 name);
 //~ rjf: Global Cross-Window UI Interaction State Functions
 
 internal B32 rd_drag_is_active(void);
-internal UI_Key rd_panel_center_drop_site_key(CFG_Node *panel);
 internal UI_Key rd_panel_catchall_drop_site_key(CFG_Node *panel);
-internal B32 rd_panel_drop_claimed_locally(CFG_Node *panel);
+internal void rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
+internal Vec4F32 rd_drop_accent(F32 alpha);
 internal void rd_drag_begin(UIShell_ContextRegSlot slot);
 internal B32 rd_drag_drop(void);
 internal void rd_drag_kill(void);

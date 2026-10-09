@@ -32,6 +32,9 @@ uishell_local_groups_publish(UIShell_SidebarState *state, CFG_Node *window, Aren
 global CFG_Node *uishell_local_groups_view = &cfg_nil_node;
 global CFG_Node *uishell_local_groups_view2 = &cfg_nil_node;
 
+// A narrower width for the Views, when set.
+global F32 uishell_local_groups_narrow = 0;
+
 internal void
 uishell_local_groups_render(CFG_Node *window, UIShell_ControlledSplit *split)
 {
@@ -40,7 +43,7 @@ uishell_local_groups_render(CFG_Node *window, UIShell_ControlledSplit *split)
   {
     if(views[i] == &cfg_nil_node) { continue; }
     String8 section = cfg_node_child_from_string(views[i], str8_lit("section"))->first->string;
-    Rng2F32 rect = r2f32p(0, 300.f*i, 320, 300.f*(i+1));
+    Rng2F32 rect = r2f32p(0, 300.f*i, uishell_local_groups_narrow ? uishell_local_groups_narrow : 320, 300.f*(i+1));
     UIShell_RegsScope(.window = window->id, .view = views[i]->id, .panel = views[i]->parent->id)
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     {
@@ -631,67 +634,109 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     ui_select_state(saved_ui); ui_state_release(test);
   }
 
-  //- A sidebar panel's tab-strip "+": New section makes one here, its name
-  //  field open; a closed section is listed and restores here.
+  //- Sections… → New section: an empty section of its own at the sidebar's
+  //  end, selected, its name field open.
+  {
+    CFG_Node *sidebar_root = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+    cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
+    CFG_Node *view = uishell_sidebar_new_section(state, window);
+    String8 key = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
+    CFG_Node *made_section = uishell_sidebar_local_section(window, uishell_sidebar_local_key_id(key));
+    GroupsCheck(view->parent == sidebar_root->last && made_section != &cfg_nil_node &&
+                cfg_node_child_from_string(view, str8_lit("selected")) != &cfg_nil_node &&
+                uishell_sidebar_local_renaming(state, made_section),
+                "Sections…'s New section makes a section of its own at the sidebar's end, with its name field open");
+    state->rename_node = 0;
+    if(made_section != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made_section); }
+    cfg_node_release(rd_state->cfg, view->parent);
+    cfg_node_release(rd_state->cfg, sidebar_root->last);
+  }
+
+  //- A sidebar panel's header holds all its Views (sidebar-headers.md): the
+  //  others sit beside the selected title in tab order; a click selects one,
+  //  opening it; a tab drop lands in the gap under the pointer; too narrow,
+  //  the rest go behind "+N".
   {
     UI_State *saved_ui = ui_state, *test = ui_state_alloc();
     ui_select_state(test);
     CFG_Node *sidebar_root = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
     CFG_Node *panel = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
-    CFG_Node *closed_group = uishell_sidebar_local_new_group(window, str8_lit("Archive"));
-    String8 closed_key = uishell_sidebar_local_key(arena, uishell_sidebar_local_field(closed_group->parent, str8_lit("id")));
-    uishell_local_groups_publish(state, window, arena);
-    { UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window); uishell_sidebar_dock_layout(&split); }
-    // Closed: it has no View.
-    for(CFG_Node *v = uishell_sidebar_region_view(window, closed_key); v != &cfg_nil_node; v = uishell_sidebar_region_view(window, closed_key))
-    { cfg_node_release(rd_state->cfg, v); }
-    UI_Key menu = ui_key_from_string(ui_key_zero(), str8_lit("test_tab_add_menu"));
-    UI_Key anchor = ui_key_zero();
-    for(U32 step = 0; step < 2; step++)
+    CFG_Node *elsewhere = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
+    char *names[] = {"North", "South", "West", "East"};
+    CFG_Node *views[4];
+    for(U64 i = 0; i < ArrayCount(views); i++)
     {
-      String8 target = step == 0 ? str8_lit("New section") : push_str8f(arena, "###tab_restore_%S", closed_key);
-      Vec2F32 at = {0};
-      for(U32 f = 0; f < 5; f++)
-      {
-        UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
-        if(f == 3 || f == 4)
-        {
-          event.v = (UI_Event){.kind = f == 3 ? UI_EventKind_Press : UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = at};
-          events.first = events.last = &event; events.count = 1;
-        }
-        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-        ui_state->mouse = at;
-        UI_Box *box;
-        UI_Rect(r2f32p(10, 10, 30, 30)) { box = ui_build_box_from_string(UI_BoxFlag_Clickable, str8_lit("###test_tab_add")); }
-        anchor = box->key;
-        if(f == 0) { ui_ctx_menu_open(menu, anchor, v2f32(0, 20)); }
-        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
-        { uishell_sidebar_tab_add_menu(ws, panel, menu); }
-        ui_end_build();
-        if(f >= 1 && at.x == 0) { at = uishell_workspace_lifecycle_center(ui_state, target); }
-      }
-      if(step == 0)
-      {
-        CFG_Node *view = cfg_node_child_from_string(panel, str8_lit("sidebar_section"));
-        String8 key = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
-        CFG_Node *made_section = uishell_sidebar_local_section(window, uishell_sidebar_local_key_id(key));
-        GroupsCheck(at.x > 0 && made_section != &cfg_nil_node && cfg_node_child_from_string(view, str8_lit("selected")) != &cfg_nil_node &&
-                    uishell_sidebar_local_renaming(state, made_section),
-                    "the tab strip's + makes a new section here, selected, with its name field open");
-        state->rename_node = 0;
-        if(made_section != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made_section); }
-        cfg_node_release(rd_state->cfg, view);
-      }
-      else
-      {
-        CFG_Node *restored = uishell_sidebar_region_view(window, closed_key);
-        GroupsCheck(at.x > 0 && restored != &cfg_nil_node && restored->parent == panel,
-                    "a closed section listed under the tab strip's + restores here");
-      }
+      CFG_Node *group = uishell_sidebar_local_new_group(window, str8_cstring(names[i]));
+      views[i] = uishell_sidebar_local_new_view(i < 3 ? panel : elsewhere, group->parent);
     }
-    ui_ctx_menu_close();
-    cfg_node_release(rd_state->cfg, closed_group->parent);
+    // South shows; North sits before it, West after.
+    for(U64 i = 0; i < 3; i++) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(views[i], str8_lit("selected"))); }
+    cfg_node_new(rd_state->cfg, views[1], str8_lit("selected"));
+    cfg_node_new(rd_state->cfg, views[0], str8_lit("section_collapsed"));
+    uishell_local_groups_publish(state, window, arena);
+    CFG_Node *saved_view = uishell_local_groups_view;
+    uishell_local_groups_view = views[1];
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    String8 north = push_str8f(arena, "###header_tab_%p", views[0]), west = push_str8f(arena, "###header_tab_%p", views[2]);
+    UI_Box *north_box = uishell_local_groups_box(north), *west_box = uishell_local_groups_box(west);
+    UI_Box *south_box = uishell_local_groups_box(push_str8f(arena, "###section_%S",
+      cfg_node_child_from_string(views[1], str8_lit("section"))->first->string));
+    GroupsCheck(!ui_box_is_nil(north_box) && !ui_box_is_nil(west_box) && !ui_box_is_nil(south_box) &&
+                north_box->rect.x1 <= south_box->rect.x0 && south_box->rect.x1 <= west_box->rect.x0,
+                "a panel's other Views sit beside its selected title, in tab order");
+    UIShell_CmdNode *before = rd_state->cmds[0].last;
+    uishell_local_groups_click(ws, window, arena, north, WM_Key_LeftMouseButton);
+    B32 selects = 0;
+    for(UIShell_CmdNode *c = before ? before->next : rd_state->cmds[0].first; c; c = c->next)
+    { selects |= str8_match(c->cmd.name, str8_lit("focus_tab"), 0) && c->cmd.regs->tab == views[0]->id; }
+    GroupsCheck(selects && cfg_node_child_from_string(views[0], str8_lit("section_collapsed")) == &cfg_nil_node,
+                "clicking a compact title selects its View, opening it");
+    // East, from another panel, dropped on the gap between North and South.
+    UIShell_RegsScope(.window = window->id, .panel = elsewhere->id, .view = views[3]->id, .tab = views[3]->id)
+    { rd_drag_begin(UIShell_ContextRegSlot_View); }
+    Vec2F32 gap = v2f32((north_box->rect.x1 + south_box->rect.x0)*0.5f, center_2f32(south_box->rect).y);
+    before = rd_state->cmds[0].last;
+    for(U64 frame = 0; frame < 2; frame++)
+    {
+      if(frame == 1) { rd_state->drag_drop_state = RD_DragDropState_Dropping; }
+      UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
+      UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = gap;
+      // The shell's tab drop site over the header row has the pointer.
+      ui_state->drop_hot_box_key = rd_panel_catchall_drop_site_key(panel);
+      uishell_local_groups_render(window, &split);
+      ui_end_build();
+    }
+    rd_drag_kill();
+    B32 moved = 0;
+    for(UIShell_CmdNode *c = before ? before->next : rd_state->cmds[0].first; c; c = c->next)
+    {
+      moved |= str8_match(c->cmd.name, str8_lit("move_view"), 0) && c->cmd.regs->view == views[3]->id &&
+        c->cmd.regs->dst_panel == panel->id && c->cmd.regs->prev_tab == views[0]->id;
+    }
+    GroupsCheck(moved, "a View dropped on the header row goes in the gap under the pointer");
+    // Narrow, West goes behind "+1".
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    String8 more = push_str8f(arena, "###header_more_%p", panel);
+    B32 roomy = ui_box_is_nil(uishell_local_groups_box(more));
+    uishell_local_groups_narrow = 185.f;
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+    UI_Box *more_box = uishell_local_groups_box(more);
+    GroupsCheck(roomy && !ui_box_is_nil(more_box) && str8_match(ui_box_display_string(more_box), str8_lit("+1"), 0) &&
+                ui_box_is_nil(uishell_local_groups_box(west)),
+                "too narrow, the titles that don't fit go behind a +N chip");
+    uishell_local_groups_narrow = 0;
+    uishell_local_groups_view = saved_view;
+    for(U64 i = 0; i < ArrayCount(views); i++)
+    {
+      CFG_Node *made = uishell_sidebar_local_section(window, uishell_sidebar_local_key_id(cfg_node_child_from_string(views[i], str8_lit("section"))->first->string));
+      if(made != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made); }
+    }
     cfg_node_release(rd_state->cfg, panel);
+    cfg_node_release(rd_state->cfg, elsewhere);
     ui_select_state(saved_ui); ui_state_release(test);
   }
 
@@ -772,7 +817,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, tab strip +, collapse gives space back)\n",
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, New section, header holds its panel's Views, collapse gives space back)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

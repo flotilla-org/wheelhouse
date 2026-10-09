@@ -43,13 +43,27 @@ preset "Groups redesign"; the operator's knob values are at the end.
   name field, which takes the keyboard even from a focused terminal.
 - **Workspaces** uses the same footer instead of a first-entry row.
 
-## Mini tabs
+## A panel's Views share its header
 
-In a sidebar panel, the tab strip's `+` adds a tab to that panel: **New
-section** (made empty, its name field open), or one of the **closed
-sections**, restored there. It offers no other Views until their state has
-somewhere to live. Later, a tab should be the section's header rather than
-repeat it.
+Settled with the operator on 2026-10-09. A sidebar panel has no tab strip;
+its section header is one, so tabs no longer repeat the header.
+
+- **The selected View is the header:** its title, collapse, count, controls
+  and menu, as for a panel with one View.
+- **The others sit beside it** as compact titles, in tab order. A click
+  selects one, opening it if it was collapsed; a drag moves its View, as a
+  tab drag does; a middle click closes it, as it closes the selected one.
+  There are no per-title ×s: a View closes from its header's × or menu.
+- **Narrow,** compact titles shrink to 3em, then those that don't fit go
+  behind a "+N" chip whose menu selects them.
+- **The row is the panel's tab strip for drops** (drag-model.md, "Drop-target
+  visuals"): a View dropped on it lands in the gap under the pointer, marked
+  with an accent bar. A one-View panel's header takes them too, so a View
+  can join it first or second, and a one-group section's title drag can join
+  another section as a tab (#262).
+- **No `+`.** Sections… offers **New section** (an empty section of its own
+  at the sidebar's end, its name field open) above the closed sections. The
+  tray is likely to grow into a palette to drag Views out of.
 
 ## Collapse gives space back
 

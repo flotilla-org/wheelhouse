@@ -75,7 +75,7 @@ entry_point(CmdLine *cmdline)
   Check(rd_dock_check(fleet_section, p) == RD_DockRule_ControlSplitLevel);
 
   Check(rd_dock_presentation(RD_DockHostKind_Sidebar, 1) == RD_DockPresentation_SectionHeader);
-  Check(rd_dock_presentation(RD_DockHostKind_Sidebar, 2) == RD_DockPresentation_CompactTabs);
+  Check(rd_dock_presentation(RD_DockHostKind_Sidebar, 2) == RD_DockPresentation_SectionHeader);
   Check(rd_dock_presentation(RD_DockHostKind_WorkspaceRegion, 1) == RD_DockPresentation_Tabs);
   Check(rd_dock_presentation(RD_DockHostKind_FloatingPanel, 1) == RD_DockPresentation_Tabs);
   Arena *arena = arena_alloc();

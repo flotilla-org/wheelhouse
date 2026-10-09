@@ -64,13 +64,15 @@ integration_drag_site(RD_WindowState *ws, CFG_Node *source, CFG_Node *destinatio
   B32 insertion = dir != Dir2_Invalid && target->parent != &cfg_nil_panel_node &&
     target->parent->split_axis == axis2_from_dir2(dir);
   char *names[] = {"up", "down", "left", "right"};
-  String8 site_name = str8_lit("center");
+  String8 site_name = str8_zero();
   if(dir == Dir2_Up) site_name = str8_cstring(names[0]);
   if(dir == Dir2_Down) site_name = str8_cstring(names[1]);
   if(dir == Dir2_Left) site_name = str8_cstring(names[2]);
   if(dir == Dir2_Right) site_name = str8_cstring(names[3]);
   CFG_PanelNode *boundary = side_from_dir2(dir) == Side_Max ? target->next : target;
+  // A drop into the panel lands on its tab strip.
   UI_Key site = insertion ? ui_key_from_stringf(ui_key_zero(), "drop_boundary_%p_%p", target->parent->cfg, boundary->cfg) :
+    dir == Dir2_Invalid ? rd_panel_catchall_drop_site_key(destination) :
     ui_key_from_stringf(ui_key_zero(), "drop_split_%S_%p", site_name, destination);
   F32 layout_font_size = 0;
   UIShell_RegsScope(.window = ws->cfg_id, .panel = 0, .view = 0, .tab = 0)

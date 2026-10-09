@@ -97,8 +97,8 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   return ok;
 }
 
-// Exercise the production tab strip with enough tabs to overflow both the
-// compact sidebar presentation and ordinary workspace presentation.
+// Exercise the production tab strip with enough tabs to overflow it. (A
+// sidebar panel has no strip: its header holds its Views.)
 internal B32
 uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
 {
@@ -107,10 +107,9 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
   UI_State *saved = ui_state, *test = ui_state_alloc();
   ui_select_state(test);
   B32 ok = 1;
-  for(U32 compact = 0; compact < 2; compact++)
   {
-    CFG_Node *owner = cfg_node_new(rd_state->cfg, window, compact ? RD_DOCK_SIDEBAR_ROOT : str8_lit("workspace"));
-    CFG_Node *panel = compact ? owner : cfg_node_new(rd_state->cfg, owner, str8_lit("panels"));
+    CFG_Node *owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+    CFG_Node *panel = cfg_node_new(rd_state->cfg, owner, str8_lit("panels"));
     CFG_Node *last = &cfg_nil_node;
     for(U32 i = 0; i < 12; i++)
     {
@@ -119,7 +118,7 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
     }
     ws->window_layout_reset = 1;
     UI_Box *bar = &ui_nil_box;
-    UI_Box *last_grip = &ui_nil_box, *last_close = &ui_nil_box;
+    UI_Box *last_grip = &ui_nil_box;
     for(U32 frame = 0; frame < 8; frame++)
     {
       UI_EventList events = {0}; UI_EventNode event = {0};
@@ -141,22 +140,12 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
       UI_Key column = ui_key_from_stringf(bar->key, "tab_column_%p", last);
       UI_Key tab = ui_key_from_stringf(column, "tab_%p", last);
       UI_Box *tab_box = ui_box_from_key(tab);
-      UI_Box *column_box = ui_box_from_key(column);
-      last_close = ui_box_from_key(ui_key_from_stringf(tab, "###close_view_%p", last));
-      if(compact && !ui_box_is_nil(column_box) && dim_2f32(column_box->rect).x < floor_f32(11.f*(1.6f+UIShell_GripWidthEM)))
-      { ok = 0; fprintf(stderr, "FAIL compact tab grip/close minimum width\n"); }
       for(UI_Box *box = tab_box; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, tab_box).next)
       { if(str8_match(ui_box_display_string(box), str8_lit("⋮⋮"), 0)) { last_grip = box; break; } }
     }
     if(ui_box_is_nil(bar) || ui_box_is_nil(last_grip) || bar->view_off_target.x <= 0 ||
        last_grip->rect.x0 < bar->rect.x0-1 || last_grip->rect.x1 > bar->rect.x1+1)
-    { ok = 0; fprintf(stderr, "FAIL %s many-tab scroll/grip reachability: offset=%g bar=[%g,%g] grip=[%g,%g]\n", compact ? "compact" : "ordinary", bar->view_off_target.x, bar->rect.x0, bar->rect.x1, last_grip->rect.x0, last_grip->rect.x1); }
-    // Compact controls must have actual, disjoint hit rectangles and remain
-    // visible after scrolling to the final tab, beyond the allocation floor.
-    if(compact && (ui_box_is_nil(last_close) || dim_2f32(last_grip->rect).x < 11.f*UIShell_GripWidthEM-1 ||
-       dim_2f32(last_close->rect).x < 11.f*1.6f-1 || last_grip->rect.x1 > last_close->rect.x0+1 ||
-       last_close->rect.x1 > bar->rect.x1+1 || last_close->rect.x0 < bar->rect.x0-1))
-    { ok = 0; fprintf(stderr, "FAIL compact tab actual grip/close geometry and reachability\n"); }
+    { ok = 0; fprintf(stderr, "FAIL many-tab scroll/grip reachability: offset=%g bar=[%g,%g] grip=[%g,%g]\n", bar->view_off_target.x, bar->rect.x0, bar->rect.x1, last_grip->rect.x0, last_grip->rect.x1); }
     cfg_node_release(rd_state->cfg, owner);
   }
   ui_select_state(saved); ui_state_release(test); scratch_end(scratch);
@@ -487,7 +476,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(second_view->parent != view->parent);
   UIShell_WorkspaceMount merged = uishell_workspace_mount_from_cfg(scratch.arena, view);
   DockFailure(rd_dock_presentation(RD_DockHostKind_Sidebar,
-    cfg_panel_node_from_tree_cfg(merged.panel_tree.root, view->parent)->tabs.count) != RD_DockPresentation_CompactTabs);
+    cfg_panel_node_from_tree_cfg(merged.panel_tree.root, view->parent)->tabs.count) != RD_DockPresentation_SectionHeader);
   before = rd_state->cmds[0].last;
   UIShell_RegsScope(.window = window->id, .panel = second_view->parent->id, .view = second_view->id,
                    .dst_panel = view->parent->id, .dir2 = Dir2_Right)
@@ -513,7 +502,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11)
     { rd_panel_area_ui(scratch, r2f32p(0, 0, 640, 480), r2f32p(0, 0, 640, 480), ws, &child_mount, 1, 0, 0, 0, 0); }
     ui_end_build();
-    char *names[] = {"center", "up", "down", "left", "right"};
+    char *names[] = {"up", "down", "left", "right"};
     for(U32 i = 0; i < ArrayCount(names); i++)
     {
       UI_Key site = ui_key_from_stringf(ui_key_zero(), "drop_split_%s_%p", names[i], panels);
