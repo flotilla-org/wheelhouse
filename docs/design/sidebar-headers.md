@@ -57,7 +57,10 @@ A collapsed section's panel shrinks to its header along its parent's vertical
 split, and the next open section below it (or above, at the end) takes the
 space, so expanding restores one neighbour rather than all. Once all are
 collapsed the last takes what's left. Expanding restores the size it had.
-How space is shared may be tuned later.
+A boundary beside a collapsed section can't be dragged (only its header
+shows; dragging would only eat into the size it returns to), and a drag
+never leaves a saved size too small for a header. How space is shared may
+be tuned later.
 In a side-by-side split, the row shrinks only once all of its panels are
 collapsed. A size the operator set by hand is kept.
 

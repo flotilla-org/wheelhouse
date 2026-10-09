@@ -394,6 +394,21 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   }
   DockFailure(cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node);
   DockFailure(abs_f32((F32)f64_from_str8(first_panel->string)-default_pct) > .0001f);
+  // Beside a collapsed section there's no boundary to drag: it would only
+  // eat into the size the section returns to when expanded.
+  {
+    CFG_Node *collapsed = cfg_node_new(rd_state->cfg, second_view, str8_lit("section_collapsed"));
+    for(U32 frame = 0; frame < 2; frame++)
+    {
+      UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_control_surface_ui(r2f32p(17, 29, 337, 229), &split); }
+      ui_end_build();
+    }
+    if(!ui_box_is_nil(ui_box_from_key(boundary_key))) { fprintf(stderr, "FAIL dock: a boundary beside a collapsed section can be dragged\n"); failures++; }
+    cfg_node_release(rd_state->cfg, collapsed);
+  }
   // Merge through the production command, then split the merged panel in the
   // opposite direction. This exercises host-root retention on split/collapse.
   UIShell_CmdNode *before = rd_state->cmds[0].last;

@@ -3733,6 +3733,14 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
       {
         CFG_PanelNode *min_child = child;
         CFG_PanelNode *max_child = min_child->next;
+        // A collapsed sidebar section's height is its header's, not a size
+        // to drag: a boundary beside one would only eat into the size it
+        // returns to when expanded.
+        if(split_axis == Axis2_Y && rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar)
+        {
+          F32 header = floor_f32(ui_top_font_size()*2.2f), h = 0;
+          if(uishell_sidebar_panel_collapsed(min_child, header, &h) || uishell_sidebar_panel_collapsed(max_child, header, &h)) { continue; }
+        }
         Rng2F32 min_child_rect = cfg_target_rect_from_panel_node_child(panel_rect, panel, min_child);
         Rng2F32 max_child_rect = cfg_target_rect_from_panel_node_child(panel_rect, panel, max_child);
         Rng2F32 boundary_rect = {0};
@@ -3804,7 +3812,12 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             }
             min_child->pct_of_parent = min_pct__after;
             max_child->pct_of_parent = max_pct__after;
-            F32 min_saved = Max(0.001f, v.v[2] + pct_delta), max_saved = Max(0.001f, v.v[3] - pct_delta);
+            // Saved sizes keep the drag's minimum too, so a section expanded
+            // later still shows its header.
+            F32 floor_pct = 50.f/Max(1.f, total_size);
+            F32 saved_delta = pct_delta;
+            if(v.v[2]+v.v[3] >= 2*floor_pct) { saved_delta = Clamp(floor_pct-v.v[2], saved_delta, v.v[3]-floor_pct); }
+            F32 min_saved = v.v[2] + saved_delta, max_saved = v.v[3] - saved_delta;
             cfg_node_equip_stringf(rd_state->cfg, min_child->cfg, "%f", min_saved);
             cfg_node_equip_stringf(rd_state->cfg, max_child->cfg, "%f", max_saved);
             is_changing_panel_boundaries = 1;
