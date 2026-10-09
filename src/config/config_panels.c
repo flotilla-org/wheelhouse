@@ -16,6 +16,13 @@ cfg_window_from_cfg(CFG_Node *cfg)
   return result;
 }
 
+// A panel's children are its sub-panels, its Views and these options.
+internal B32
+cfg_panel_child_is_option(String8 name)
+{
+  return str8_match(name, str8_lit("tabs_on_bottom"), 0) || str8_match(name, str8_lit("section_collapsed"), 0);
+}
+
 internal CFG_PanelTree
 cfg_panel_tree_from_panels_cfg(Arena *arena, CFG_Node *panels_root, Axis2 root_split_axis)
 {
@@ -55,7 +62,7 @@ cfg_panel_tree_from_panels_cfg(Arena *arena, CFG_Node *panels_root, Axis2 root_s
         {
           panel_has_children = 1;
         }
-        else if(str8_match(src_child->string, str8_lit("tabs_on_bottom"), 0))
+        else if(cfg_panel_child_is_option(src_child->string))
         {
           // NOTE(rjf): skip - this is a panel option.
         }

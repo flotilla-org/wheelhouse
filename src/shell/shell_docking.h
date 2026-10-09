@@ -30,7 +30,6 @@ typedef enum RD_DockPresentation
 {
   RD_DockPresentation_Tabs,
   RD_DockPresentation_SectionHeader,
-  RD_DockPresentation_CompactTabs,
 } RD_DockPresentation;
 
 internal RD_DockPresentation rd_dock_presentation(RD_DockHostKind host, U64 tab_count);

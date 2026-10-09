@@ -109,7 +109,8 @@ uishell_panel_diagnostics(RD_WindowState *ws)
       rd_panel_area_ui(scratch, r2f32p(0, 0, 640, 480), r2f32p(0, 0, 640, 480), ws, &mount, 1, 0, 0, 0, 0);
     }
     ui_end_build();
-    char *names[] = {"center", "up", "down", "left", "right"};
+    // Its middle is the View's: no centre pill, and tabs drop on the strip.
+    char *names[] = {"up", "down", "left", "right"};
     for(U32 i = 0; i < ArrayCount(names); i++)
     {
       UI_Key key = ui_key_from_stringf(ui_key_zero(), "drop_split_%s_%p", names[i], panels);
@@ -117,6 +118,11 @@ uishell_panel_diagnostics(RD_WindowState *ws)
       fprintf(stderr, "%s single-panel drop target: %s\n", exists ? "PASS" : "FAIL", names[i]);
       failures += !exists;
     }
+    B32 no_centre = ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "drop_split_center_%p", panels)));
+    UI_Box *strip = ui_box_from_key(rd_panel_catchall_drop_site_key(panels));
+    B32 on_strip = !ui_box_is_nil(strip) && !contains_2f32(strip->rect, ui_state->mouse) && dim_2f32(strip->rect).y < 100;
+    fprintf(stderr, "%s single panel: no centre pill; tabs drop on its strip\n", no_centre && on_strip ? "PASS" : "FAIL");
+    failures += !(no_centre && on_strip);
     rd_drag_kill();
   }
   // Closing the empty source panel is also part of moving its last tab.

@@ -3321,22 +3321,11 @@ rd_panel_drag_target(CFG_Node *view, CFG_Node *destination, F32 width)
   return rd_dock_drag_target(view, destination, width);
 }
 
-// A panel's own centre and catch-all docking sites, by key, for Views that
-// claim positioned drops (uishell_sidebar_drop_claimable).
-internal UI_Key
-rd_panel_center_drop_site_key(CFG_Node *panel)
-{ return ui_key_from_stringf(ui_key_zero(), "drop_split_center_%p", panel); }
-
+// A panel's tab drop site, by key. It covers the panel's tab strip, or a
+// sidebar section's header row, which is its strip (sidebar-headers.md).
 internal UI_Key
 rd_panel_catchall_drop_site_key(CFG_Node *panel)
 { return ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panel); }
-
-// Whether a View in `panel` claimed a positioned drop (drag_drop_local_panel).
-// A claim lasts this frame and the next, then lapses on its own; nothing else
-// resets it.
-internal B32
-rd_panel_drop_claimed_locally(CFG_Node *panel)
-{ return rd_state->drag_drop_local_panel == panel->id && rd_state->drag_drop_local_frame+1 >= rd_state->frame_index; }
 
 // Existing Views and creation drags use the same sites, geometry and commands.
 // A panel boundary drag: the two sides' laid out and saved sizes as it
@@ -4016,7 +4005,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
         if(plan->content_rect.x1 > plan->content_rect.x0 && plan->content_rect.y1 > plan->content_rect.y0) UI_TagF("tab")
         {
           B32 reset = (window_layout_reset || ws->frames_alive < 5 || is_changing_panel_boundaries);
-          F32 tab_close_width_px = ui_top_font_size()*(plan->presentation == RD_DockPresentation_CompactTabs ? 1.6f : 2.5f);
+          F32 tab_close_width_px = ui_top_font_size()*2.5f;
           F32 max_tab_width_px = ui_top_font_size()*20.f;
           for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next)
           {
@@ -4038,8 +4027,6 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
               {
                 tab_width_target += tab_close_width_px;
               }
-              if(plan->presentation == RD_DockPresentation_CompactTabs)
-              { max_tab_width_px = Max(tab_close_width_px+ui_top_font_size()*UIShell_GripWidthEM, (dim_2f32(plan->tab_bar_rect).x-plan->tab_bar_vheight-tab_gap_px*(panel->tabs.count+1))/Max(1, panel->tabs.count)); }
               tab_width_target = Min(max_tab_width_px, tab_width_target);
               t->tab_width = floor_f32(ui_anim(ui_key_from_stringf(ui_key_zero(), "tab_width_%p", tab), tab_width_target, .initial = reset ? tab_width_target : 0, .rate = rd_state->menu_animation_rate));
               SLLQueuePush(plan->first_tab_task, plan->last_tab_task, t);
@@ -4209,10 +4196,22 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           B32 build_panel = (content_rect.x1 > content_rect.x0 && content_rect.y1 > content_rect.y0);
           
           //////////////////////////
+          //- The panel's tab strip: where its tab drops land. A sidebar
+          // section has no strip; its header row is one (sidebar-headers.md).
+          //
+          Rng2F32 tab_drop_strip = tab_bar_rect;
+          Side tab_drop_side = panel->tab_side;
+          if(chrome_plan->presentation == RD_DockPresentation_SectionHeader)
+          {
+            tab_drop_strip = r2f32p(panel_rect.x0, panel_rect.y0, panel_rect.x1, Min(panel_rect.y1, panel_rect.y0 + uishell_sidebar_row_height()));
+            tab_drop_side = Side_Min;
+          }
+          
+          //////////////////////////
           //- Docking drop sites in the panel under the pointer: a split pill
-          // just inside each edge it can split along (stacked past that edge's
-          // bars), and the centre pill, which stands aside once the View
-          // claims a positioned drop.
+          // just inside each edge it can split along, stacked past that edge's
+          // bars and clear of its tab strip. Its middle belongs to its View
+          // (drag-model.md, "Drop-target visuals").
           //
           if(build_panel && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && contains_2f32(panel_rect, ui_mouse()))
           {
@@ -4235,6 +4234,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 S32 inward = side == Side_Min ? 1 : -1;
                 F32 edge = rd_drop_bars_inner_edge(&drop_bars, axis, edges.v[side].v[axis], r1f32(edges.p0.v[across], edges.p1.v[across]), inward);
                 edge = inward > 0 ? Max(edge, panel_rect.p0.v[axis] + gap) : Min(edge, panel_rect.p1.v[axis] - gap);
+                if(axis == Axis2_Y && side == tab_drop_side && dim_2f32(tab_drop_strip).y > 0)
+                { edge = inward > 0 ? Max(edge, tab_drop_strip.y1 + gap) : Min(edge, tab_drop_strip.y0 - gap); }
                 F32 centre = (panel_rect.p0.v[across] + panel_rect.p1.v[across])*0.5f;
                 Rng2F32 rect = {0};
                 rect.p0.v[axis] = inward > 0 ? edge : edge - pill_thickness;
@@ -4249,26 +4250,15 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                   if(rd_drag_drop()) { rd_panel_drag_drop(panel->cfg->id, dir, 0); }
                 }
               }
-              if(!rd_panel_drop_claimed_locally(panel->cfg))
-              {
-                Vec2F32 centre = center_2f32(panel_rect);
-                Vec2F32 half = v2f32(pill_length*0.5f, pill_length*0.5f);
-                if(rd_drop_pill_ui(rd_panel_center_drop_site_key(panel->cfg), r2f32(sub_2f32(centre, half), add_2f32(centre, half)), Dir2_Invalid))
-                {
-                  rd_drop_preview(panel_rect);
-                  if(rd_drag_drop()) { rd_panel_drag_drop(panel->cfg->id, Dir2_Invalid, cfg_node_ptr_list_last(&panel->tabs)->id); }
-                }
-              }
             }
           }
           
           //////////////////////////
-          //- rjf: build catch-all panel drop-site
+          //- rjf: build the tab drop site, over the tab strip
           //
           UI_Key catchall_drop_site_key = rd_panel_catchall_drop_site_key(panel->cfg);
-          B32 local_catchall = rd_panel_drop_claimed_locally(panel->cfg);
-          if(build_panel && !local_catchall && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
-             rd_panel_drag_target(cfg_node_from_id(rd_state->drag_drop_regs->view), panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid))) UI_Rect(panel_rect)
+          if(build_panel && dim_2f32(tab_drop_strip).x > 0 && dim_2f32(tab_drop_strip).y > 0 && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
+             rd_panel_drag_target(cfg_node_from_id(rd_state->drag_drop_regs->view), panel->cfg, rd_dock_width_from_geometry(&dock_geometry, panel->cfg, Dir2_Invalid))) UI_Rect(tab_drop_strip)
           {
             UI_Box *catchall_drop_site = ui_build_box_from_key(UI_BoxFlag_DropSite, catchall_drop_site_key);
             ui_signal_from_box(catchall_drop_site);
@@ -4470,7 +4460,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //- rjf: unpack tab build tasks
           //
           TabTask *first_tab_task = chrome_plan->first_tab_task;
-          F32 tab_close_width_px = ui_top_font_size()*(chrome_plan->presentation == RD_DockPresentation_CompactTabs ? 1.6f : 2.5f);
+          F32 tab_close_width_px = ui_top_font_size()*2.5f;
           
           //////////////////////////
           //- rjf: build tab bar container
@@ -4498,7 +4488,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //////////////////////////
           //- rjf: determine tab drop site
           //
-          B32 tab_drop_is_active = rd_drag_is_active() && ui_key_match(ui_drop_hot_key(), catchall_drop_site_key);
+          // A sidebar section's header places its own tab drops.
+          B32 tab_drop_is_active = rd_drag_is_active() && ui_key_match(ui_drop_hot_key(), catchall_drop_site_key) &&
+            chrome_plan->presentation != RD_DockPresentation_SectionHeader;
           CFG_Node *tab_drop_prev = &cfg_nil_node;
           if(build_panel)
           {
@@ -4784,7 +4776,6 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             }
             
             // rjf: build add-new-tab button
-            UI_Key sidebar_add_menu_key = ui_key_zero();
             UI_TextAlignment(UI_TextAlign_Center)
               UI_PrefWidth(ui_px(tab_bar_vheight, 1.f))
               UI_PrefHeight(ui_px(tab_bar_vheight, 1.f))
@@ -4823,16 +4814,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                                                   rd_icon_kind_text_table[RD_IconKind_Add],
                                                                   panel->cfg);
                   UI_Signal sig = ui_signal_from_box(add_new_box);
-                  // A sidebar panel's "+" adds sidebar sections, here
-                  // (uishell_sidebar_tab_add_menu); other panels list Views.
-                  B32 sidebar_panel = rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar;
-                  UI_Key sidebar_add_menu = ui_key_from_stringf(add_new_box->key, "sidebar_add_menu");
-                  if(sidebar_panel)
-                  {
-                    sidebar_add_menu_key = sidebar_add_menu;
-                    if(ui_pressed(sig)) { ui_ctx_menu_open(sidebar_add_menu, add_new_box->key, v2f32(0, dim_2f32(add_new_box->rect).y)); }
-                  }
-                  else if(ui_pressed(sig))
+                  if(ui_pressed(sig))
                   {
                     uishell_cmd("focus_panel", .panel = panel->cfg->id);
                     if(ws->query_is_active &&
@@ -4853,9 +4835,6 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 }
               }
             }
-            // Built outside the button so it takes none of its styling.
-            if(!ui_key_match(sidebar_add_menu_key, ui_key_zero()))
-            { uishell_sidebar_tab_add_menu(ws, panel->cfg, sidebar_add_menu_key); }
             
             // rjf: interact with tab bar
             ui_signal_from_box(tab_bar_box);

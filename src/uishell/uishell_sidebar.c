@@ -181,6 +181,11 @@ struct UIShell_SidebarState
   // The docking site a sidebar drag was dropped on (drag_panel_drop).
   CFG_ID drop_panel;
   Dir2 drop_direction;
+  // A whole section dragged by its grip and dropped (section_drop_commit),
+  // applied once the window's Views have built (section_drop_apply).
+  B32 section_drop;
+  CFG_ID section_drop_source, section_drop_panel, section_drop_prev, section_drop_selected;
+  Dir2 section_drop_direction;
   U64 pin_cfg_generation;
   Rng2F32 rect;
   B32 card_escape_down;
@@ -1822,6 +1827,317 @@ uishell_sidebar_menu_open_at_pointer(UI_Key menu, UI_Box *anchor)
 internal void uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r);
 internal void uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r);
 
+internal CFG_Node *uishell_sidebar_local_section(CFG_Node *window, String8 id);
+
+// A section's menu, by its key: its header builds it, or one of its panel's
+// other titles while it switches to it.
+internal UI_Key
+uishell_sidebar_section_menu_key(String8 section_key)
+{ return ui_key_from_stringf(ui_key_zero(), "section_menu_%S", section_key); }
+internal void uishell_sidebar_local_section_menu(UIShell_SidebarState *state, CFG_Node *window, CFG_Node *section, CFG_Node *view,
+                                                 String8 loop, UI_Key menu);
+
+//~ A sidebar section, its panel, collapses as a whole (sidebar-headers.md):
+// the state is a panel option. A layout from before kept it on a View; the
+// View's own still counts until the section next opens or closes; drop that
+// fallback once layouts saved before #268 no longer need to load.
+
+internal B32
+uishell_sidebar_section_collapsed(CFG_Node *view)
+{
+  return cfg_node_child_from_string(view->parent, str8_lit("section_collapsed")) != &cfg_nil_node ||
+    cfg_node_child_from_string(view, str8_lit("section_collapsed")) != &cfg_nil_node;
+}
+
+internal void
+uishell_sidebar_section_set_collapsed(CFG_Node *view, B32 collapsed)
+{
+  CFG_Node *panel = view->parent;
+  if(panel == &cfg_nil_node) { return; }
+  for(CFG_Node *v = panel->first; v != &cfg_nil_node; v = v->next)
+  { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(v, str8_lit("section_collapsed"))); }
+  if(collapsed) { cfg_node_child_from_string_or_alloc(rd_state->cfg, panel, str8_lit("section_collapsed")); }
+  else { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(panel, str8_lit("section_collapsed"))); }
+}
+
+//~ A section's header holds all its panel's Views (sidebar-headers.md). The
+// selected one is the header; the others sit beside it as compact titles, in
+// tab order, and those that don't fit go behind a "+N" chip. The row is the
+// panel's tab strip: tab drops land between its entries.
+
+typedef struct UIShell_HeaderTabs UIShell_HeaderTabs;
+struct UIShell_HeaderTabs
+{
+  CFG_Node *panel;
+  CFG_Node **v;      // the panel's tabs, in order
+  String8 *titles;
+  B32 *hidden;       // behind the "+N" chip
+  UI_Box **boxes;    // each shown entry's box this build; the header's own is its title
+  U64 count;
+  U64 selected;      // the header's own View
+  F32 width;         // each compact title's width
+  B32 any_built;     // an entry is already in the row, so the next is separated
+  UIShell_SidebarState *state;
+  CFG_Node *window;
+  UI_Box *anchor;    // a box that outlives the switch of header, for that menu
+};
+
+// A hairline between two of a header's entries, like an unselected tab's edge.
+internal void
+uishell_sidebar_header_separator(UIShell_HeaderTabs *tabs)
+{
+  if(tabs->count > 1 && tabs->any_built)
+  {
+    // A drawn line, centred in a slot, half the row's height.
+    Vec4F32 color = ui_color_from_name(str8_lit("text"));
+    color.w = 0.25f;
+    UI_Box *slot, *band;
+    UI_PrefWidth(ui_em(0.9f, 1)) UI_PrefHeight(ui_pct(1, 1)) UI_ChildLayoutAxis(Axis2_Y)
+    { slot = ui_build_box_from_key(0, ui_key_zero()); }
+    UI_Parent(slot)
+    {
+      ui_spacer(ui_pct(0.25f, 1));
+      UI_PrefWidth(ui_pct(1, 1)) UI_PrefHeight(ui_pct(0.5f, 1)) UI_ChildLayoutAxis(Axis2_X)
+      { band = ui_build_box_from_key(0, ui_key_zero()); }
+      UI_Parent(band)
+      {
+        ui_spacer(ui_pct(1, 0));
+        UI_PrefWidth(ui_px(1.f, 1)) UI_PrefHeight(ui_pct(1, 1)) UI_BackgroundColor(color)
+        { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
+        ui_spacer(ui_pct(1, 0));
+      }
+    }
+  }
+  tabs->any_built = 1;
+}
+
+// A View's title, as its tab would show it.
+internal String8
+uishell_sidebar_view_title(Arena *arena, CFG_Node *view)
+{
+  String8 label = rd_label_from_cfg(view);
+  if(label.size) { return label; }
+  DR_FStrList fstrs = rd_title_fstrs_from_cfg(arena, view, 0);
+  return dr_string_from_fstrs(arena, &fstrs);
+}
+
+// Whether a panel's child is one of its tabs, as cfg_panel_tree_from_cfg
+// reads them: an identifier that isn't a panel option.
+internal B32
+uishell_sidebar_is_tab(CFG_Node *c)
+{
+  U8 first = c->string.size ? c->string.str[0] : 0;
+  return (char_is_alpha(first) || first == '_') && !str8_match(c->string, str8_lit("selected"), 0) &&
+    !cfg_panel_child_is_option(c->string) &&
+    !rd_cfg_is_project_filtered(c);
+}
+
+// A whole section, dragged by its grip, drops all its Views together
+// (sidebar-headers.md): onto a header row they go in order at the gap, so
+// a three-View section joins a one-View one as four; at an edge they make
+// the new panel there. The panel tree is in use while drops are taken, so
+// the move waits for uishell_sidebar_section_drop_apply.
+internal void
+uishell_sidebar_section_drop_commit(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
+{
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(cfg_node_from_id(rd_state->drag_drop_regs->window));
+  if(ws == &rd_nil_window_state || !ws->sidebar || destination == rd_state->drag_drop_regs->panel) { return; }
+  UIShell_SidebarState *state = ws->sidebar;
+  state->section_drop = 1;
+  state->section_drop_source = rd_state->drag_drop_regs->panel;
+  state->section_drop_selected = rd_state->drag_drop_regs->view;
+  state->section_drop_panel = destination;
+  state->section_drop_direction = direction;
+  state->section_drop_prev = previous_tab;
+}
+
+internal void
+uishell_sidebar_section_drop_apply(RD_WindowState *ws)
+{
+  UIShell_SidebarState *state = ws->sidebar;
+  if(!state || !state->section_drop) { return; }
+  state->section_drop = 0;
+  CFG_Node *source = cfg_node_from_id(state->section_drop_source), *destination = cfg_node_from_id(state->section_drop_panel);
+  if(source == &cfg_nil_node || destination == &cfg_nil_node) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  CFG_NodePtrList tabs = {0};
+  for(CFG_Node *c = source->first; c != &cfg_nil_node; c = c->next) { if(uishell_sidebar_is_tab(c)) { cfg_node_ptr_list_push(scratch.arena, &tabs, c); } }
+  B32 collapsed = cfg_node_child_from_string(source, str8_lit("section_collapsed")) != &cfg_nil_node;
+  CFG_ID prev = state->section_drop_prev;
+  CFG_NodePtrNode *n = tabs.first;
+  if(n && state->section_drop_direction != Dir2_Invalid)
+  {
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = source->id, .dst_panel = destination->id, .view = n->v->id, .dir2 = state->section_drop_direction)
+    { uishell_dispatch_panel_command(str8_lit("split_panel")); }
+    destination = n->v->parent;
+    // The section keeps its collapse in its new place.
+    if(collapsed) { cfg_node_child_from_string_or_alloc(rd_state->cfg, destination, str8_lit("section_collapsed")); }
+    prev = n->v->id;
+    n = n->next;
+  }
+  for(; n; n = n->next)
+  {
+    if(n->v->parent == destination) { continue; }
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = n->v->parent->id, .dst_panel = destination->id, .view = n->v->id, .prev_tab = prev)
+    { uishell_dispatch_tab_command(str8_lit("move_view")); }
+    prev = n->v->id;
+  }
+  CFG_Node *selected = cfg_node_from_id(state->section_drop_selected);
+  if(selected->parent == destination)
+  { UIShell_RegsScope(.window = ws->cfg_id, .panel = destination->id, .view = selected->id, .tab = selected->id) { uishell_cmd("focus_tab"); } }
+  rd_request_frame();
+  scratch_end(scratch);
+}
+
+// `view`'s panel's tabs, as cfg_panel_tree_from_cfg reads them. Compact
+// titles share `budget`, each at least 3em wide.
+internal UIShell_HeaderTabs
+uishell_sidebar_header_tabs(Arena *arena, CFG_Node *view, F32 budget)
+{
+  UIShell_HeaderTabs tabs = {view->parent};
+  U64 cap = 0;
+  for(CFG_Node *c = view->parent->first; c != &cfg_nil_node; c = c->next) { cap += 1; }
+  tabs.v = push_array(arena, CFG_Node *, cap);
+  tabs.titles = push_array(arena, String8, cap);
+  tabs.hidden = push_array(arena, B32, cap);
+  tabs.boxes = push_array(arena, UI_Box *, cap);
+  for(CFG_Node *c = view->parent->first; c != &cfg_nil_node; c = c->next)
+  {
+    if(!uishell_sidebar_is_tab(c)) { continue; }
+    if(c == view) { tabs.selected = tabs.count; }
+    tabs.titles[tabs.count] = upper_from_str8(arena, uishell_sidebar_view_title(arena, c));
+    tabs.boxes[tabs.count] = &ui_nil_box;
+    tabs.v[tabs.count++] = c;
+  }
+  F32 em = ui_top_font_size(), least = em*3.f;
+  U64 others = tabs.count ? tabs.count-1 : 0, fit = others;
+  if(others*least > budget) { fit = (U64)Max(0.f, (budget - em*1.7f)/least); }
+  for(U64 i = 0, shown = 0; i < tabs.count; i++)
+  {
+    if(i == tabs.selected) { continue; }
+    tabs.hidden[i] = shown >= fit;
+    shown += 1;
+  }
+  tabs.width = fit ? Max(least, Min(em*10.f, budget/(F32)(fit + (fit < others)))) : 0;
+  return tabs;
+}
+
+// Choosing a View shows it: a collapsed section opens.
+internal void
+uishell_sidebar_header_select(CFG_Node *panel, CFG_Node *tab)
+{
+  uishell_sidebar_section_set_collapsed(tab, 0);
+  UIShell_RegsScope(.panel = panel->id, .view = tab->id, .tab = tab->id) { uishell_cmd("focus_tab"); }
+}
+
+// Compact titles for tabs [from, to): a click selects one, a drag moves its
+// View, and a middle click closes it.
+internal void
+uishell_sidebar_header_tabs_ui(UIShell_HeaderTabs *tabs, U64 from, U64 to)
+{
+  for(U64 i = from; i < to && i < tabs->count; i++)
+  {
+    if(i == tabs->selected || tabs->hidden[i]) { continue; }
+    uishell_sidebar_header_separator(tabs);
+    CFG_Node *tab = tabs->v[i];
+    F32 text = fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, tabs->titles[i]).x + ui_top_font_size();
+    UI_Box *box;
+    UI_PrefWidth(ui_px(Min(text, tabs->width), 1)) UI_TagF("weak") UI_CornerRadius(3.f)
+    {
+      box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
+                                      "%S###header_tab_%p", tabs->titles[i], tab);
+    }
+    UI_Signal sig = ui_signal_from_box(box);
+    // A right click shows the View and opens its section's menu, as the
+    // selected title's does; its header builds the menu from next frame.
+    String8 section_key = cfg_node_child_from_string(tab, str8_lit("section"))->first->string;
+    CFG_Node *local = tabs->window ? uishell_sidebar_local_section(tabs->window, uishell_sidebar_local_key_id(section_key)) : &cfg_nil_node;
+    if(local != &cfg_nil_node && tabs->anchor)
+    {
+      UI_Key menu = uishell_sidebar_section_menu_key(section_key);
+      if(ui_right_clicked(sig))
+      {
+        tabs->state->confirm_delete = 0;
+        uishell_sidebar_header_select(tabs->panel, tab);
+        ui_ctx_menu_open(menu, tabs->anchor->key, sub_2f32(ui_mouse(), tabs->anchor->rect.p0));
+      }
+      // Until its header takes over, the title keeps the menu built.
+      uishell_sidebar_local_section_menu(tabs->state, tabs->window, local, tab, str8_zero(), menu);
+    }
+    if(ui_dragging(sig) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
+    { UIShell_RegsScope(.panel = tabs->panel->id, .view = tab->id, .tab = tab->id) { rd_drag_begin(UIShell_ContextRegSlot_View); } }
+    else if(ui_clicked(sig) && !rd_drag_is_active()) { uishell_sidebar_header_select(tabs->panel, tab); }
+    else if(ui_middle_clicked(sig) && rd_dock_can_close(tab))
+    { UIShell_RegsScope(.panel = tabs->panel->id, .view = tab->id, .tab = tab->id) { uishell_cmd("close_tab"); } }
+    tabs->boxes[i] = box;
+  }
+}
+
+// The "+N" chip and its menu of the titles that didn't fit.
+internal void
+uishell_sidebar_header_more_ui(UIShell_HeaderTabs *tabs)
+{
+  Temp scratch = scratch_begin(0, 0);
+  U64 hidden = 0;
+  String8 *labels = push_array(scratch.arena, String8, tabs->count+1);
+  for(U64 i = 0; i < tabs->count; i++) { if(tabs->hidden[i]) { labels[hidden++] = tabs->titles[i]; } }
+  if(hidden)
+  {
+    UI_Signal sig = uishell_sidebar_header_button(push_str8f(scratch.arena, "+%I64u", hidden),
+      push_str8f(scratch.arena, "header_more_%p", tabs->panel), 0, 1, str8_lit("More views"), str8_zero());
+    UI_Key menu = ui_key_from_stringf(sig.box->key, "menu");
+    if(ui_clicked(sig)) { ui_ctx_menu_open(menu, sig.box->key, v2f32(0, dim_2f32(sig.box->rect).y)); }
+    UIShell_SidebarMenu(menu, uishell_sidebar_menu_width(labels, hidden))
+    {
+      for(U64 i = 0; i < tabs->count; i++)
+      {
+        if(!tabs->hidden[i]) { continue; }
+        if(ui_clicked(ui_button(push_str8f(scratch.arena, "%S###more_%p", tabs->titles[i], tabs->v[i]))))
+        { uishell_sidebar_header_select(tabs->panel, tabs->v[i]); ui_ctx_menu_close(); }
+      }
+    }
+  }
+  scratch_end(scratch);
+}
+
+// While the panel's tab drop site (the header row, rd_panel_area_ui) has a
+// View drag, the gap between entries nearest the pointer takes it, marked
+// with an accent bar. Dropping a View beside itself changes nothing.
+internal void
+uishell_sidebar_header_drop(UIShell_HeaderTabs *tabs, UI_Box *header)
+{
+  if(!tabs->count || !rd_drag_is_active() || rd_state->drag_drop_regs_slot != UIShell_ContextRegSlot_View ||
+     !ui_key_match(ui_drop_hot_key(), rd_panel_catchall_drop_site_key(tabs->panel))) { return; }
+  if(rd_state->drag_drop_commit == uishell_sidebar_section_drop_commit && rd_state->drag_drop_regs->panel == tabs->panel->id) { return; }
+  // The gap after the last shown entry left of the pointer's x.
+  U64 gap = 0;
+  B32 any = 0;
+  for(U64 i = 0; i < tabs->count; i++)
+  {
+    UI_Box *box = tabs->boxes[i];
+    if(ui_box_is_nil(box) || dim_2f32(box->rect).x <= 0) { continue; }
+    any = 1;
+    if(ui_mouse().x > center_2f32(box->rect).x) { gap = i+1; }
+  }
+  if(!any) { return; }
+  // The bar sits between the entries either side of the gap.
+  UI_Box *before = gap ? tabs->boxes[gap-1] : &ui_nil_box, *after = &ui_nil_box;
+  for(U64 i = gap; i < tabs->count && ui_box_is_nil(after); i++)
+  { if(!ui_box_is_nil(tabs->boxes[i]) && dim_2f32(tabs->boxes[i]->rect).x > 0) { after = tabs->boxes[i]; } }
+  F32 at = ui_box_is_nil(before) ? after->rect.x0 - 2.f : ui_box_is_nil(after) ? before->rect.x1 + 2.f :
+    (before->rect.x1 + after->rect.x0)*0.5f;
+  CFG_Node *prev = gap ? tabs->v[gap-1] : &cfg_nil_node;
+  CFG_Node *next = gap < tabs->count ? tabs->v[gap] : &cfg_nil_node;
+  CFG_ID dragged = rd_state->drag_drop_regs->view;
+  if(dragged && (prev->id == dragged || next->id == dragged)) { return; }
+  F32 height = dim_2f32(header->rect).y;
+  UI_Parent(header) UI_FixedX(at - header->rect.x0 - 1.5f) UI_FixedY(height*0.15f) UI_PrefWidth(ui_px(3.f, 1))
+    UI_PrefHeight(ui_px(height*0.7f, 1)) UI_CornerRadius(1.5f) UI_BackgroundColor(rd_drop_accent(1.f))
+  { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(header->key, "tab_drop")); }
+  rd_request_frame();
+  if(rd_drag_drop()) { rd_panel_drag_drop(tabs->panel->id, Dir2_Invalid, prev->id); }
+}
+
 #include "uishell/uishell_hover_cards.c"
 #include "uishell/uishell_local_groups.c"
 
@@ -2694,8 +3010,6 @@ uishell_sidebar_home_claim(UIShell_SidebarState *state, Rng2F32 rect, String8 pr
   arena_clear(state->home_arena);
   state->home_project = push_str8_copy(state->home_arena, project);
   state->home_build = ui_state->build_index;
-  // The group's own centre docking site stands aside, as for a reorder.
-  rd_state->drag_drop_local_panel = uishell_regs()->panel; rd_state->drag_drop_local_frame = rd_state->frame_index;
   // The drop-site colours are barely visible; the target takes the accent, as
   // insertion lines do (uishell_sidebar_drop_line).
   Vec4F32 border = ui_color_from_name(str8_lit("selection"));
@@ -2741,8 +3055,7 @@ uishell_sidebar_drop_line(UI_Box *body, Rng2F32 line, UI_Key key)
 
 // A sidebar drag over a local group claims the gap between its items under
 // the pointer, by their midpoints, and shows a line there; the drag's own
-// sibling run reorders instead (uishell_sidebar_row_drop). The panel's own
-// centre docking site stands aside, as for a reorder.
+// sibling run reorders instead (uishell_sidebar_row_drop).
 internal void
 uishell_sidebar_group_claim(UIShell_SidebarState *state, UI_Box *body, AndamentoNode *nodes, U64 group,
                             UIShell_RowDragSibling *items, U64 item_count, Rng2F32 area, F32 row_height)
@@ -2784,7 +3097,6 @@ uishell_sidebar_group_claim(UIShell_SidebarState *state, UI_Box *body, Andamento
   state->group_claim_index = index;
   state->group_claim_build = ui_state->build_index;
   state->group_claim_rect = area;
-  rd_state->drag_drop_local_panel = uishell_regs()->panel; rd_state->drag_drop_local_frame = rd_state->frame_index;
   uishell_sidebar_drop_line(body, r2f32p(area.x0+6.f, y-1.5f, area.x1-6.f, y+1.5f),
     ui_key_from_stringf(ui_key_zero(), "group_drop_line_%S", state->group_claim_id));
 }
@@ -2816,8 +3128,6 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, UI_Box *body, AndamentoNod
   state->reorder_anchor = uishell_sidebar_card_entity_copy(state->reorder_arena, (AndamentoEntity){anchor.entity_kind, anchor.entity_id});
   state->reorder_after = target == count;
   state->reorder_build = ui_state->build_index;
-  // The run's own centre docking site stands aside, as for a pinned area.
-  rd_state->drag_drop_local_panel = uishell_regs()->panel; rd_state->drag_drop_local_frame = rd_state->frame_index;
   F32 y = target == 0 ? siblings[0].extent.y0-1.f :
     target == count ? siblings[count-1].extent.y1+1.f :
     (siblings[target-1].extent.y1+siblings[target].extent.y0)*0.5f;
@@ -3098,14 +3408,13 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       state->sections = section;
     }
     if(section_panel && str8_match(only_section, key, 0))
-    { section->collapsed = cfg_node_child_from_string(cfg_node_from_id(uishell_regs()->view), str8_lit("section_collapsed")) != &cfg_nil_node; }
+    { section->collapsed = uishell_sidebar_section_collapsed(cfg_node_from_id(uishell_regs()->view)); }
     if(sections[n] == reveal_section)
     {
       section->collapsed = 0;
       if(section_panel && str8_match(only_section, key, 0))
       {
-        CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-        cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("section_collapsed")));
+        uishell_sidebar_section_set_collapsed(cfg_node_from_id(uishell_regs()->view), 0);
       }
     }
     states[n] = section;
@@ -3203,12 +3512,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       UI_Rect(r2f32p(0, y+(!section_panel && n != flexible && heights[n] > 0 ? 6.f : 0.f), dim.x, y+row_height)) UI_ChildLayoutAxis(Axis2_X)
       { header = ui_build_box_from_stringf(states[n]->collapsed && contains_selected[sections[n]] ? UI_BoxFlag_DrawBorder : 0, "###section_header_%S", key); }
       // Header chrome (#210): the grip and inactive actions appear while the
-      // header is hovered; the collapse indicator follows the title; the count
-      // shows only when collapsed. `header` still holds last frame's rect.
+      // header is hovered; the section's collapse sits with its × at the
+      // right; the count shows only when collapsed. `header` still holds last frame's rect.
       B32 engaged = contains_2f32(header->rect, ui_mouse()) && !rd_drag_is_active();
       // A section you made has a menu (uishell_local_groups.c). Showing one
       // group, its items' loop gives the menu Reset order.
-      UI_Key section_menu = ui_key_from_stringf(header->key, "section_menu");
+      UI_Key section_menu = uishell_sidebar_section_menu_key(key);
       String8 section_loop = str8_zero();
       for(U64 i = sections[n]+1; local_section != &cfg_nil_node && i < count && !section_loop.size; i++)
       {
@@ -3223,24 +3532,59 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         {
           if(engaged)
           {
+            // The grip drags the whole section; with one View, that's the
+            // View's own drag, so a one-group section's group rules hold.
             UI_Signal drag = uishell_sidebar_grip(str8_lit("section_drag"), str8_lit("Drag section"));
             if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
-            { rd_drag_begin(UIShell_ContextRegSlot_View); }
+            {
+              CFG_Node *panel = cfg_node_from_id(uishell_regs()->panel);
+              U64 views = 0;
+              for(CFG_Node *c = panel->first; c != &cfg_nil_node; c = c->next) { views += uishell_sidebar_is_tab(c); }
+              rd_drag_begin(UIShell_ContextRegSlot_View);
+              if(views > 1) { rd_state->drag_drop_commit = uishell_sidebar_section_drop_commit; }
+            }
           }
           else { ui_spacer(ui_em(UIShell_GripWidthEM, 1)); }
         }
+        // The panel's other Views sit beside this one's title, in tab order;
+        // their titles share what the header's own parts leave.
+        UIShell_HeaderTabs tabs = {0};
+        if(section_panel)
+        {
+          String8 upper = upper_from_str8(scratch.arena, title);
+          F32 own = fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, upper).x +
+            em*(UIShell_GripWidthEM + 4.f) + em*1.7f*(section_node->control_count + 2);
+          tabs = uishell_sidebar_header_tabs(scratch.arena, cfg_node_from_id(uishell_regs()->view), dim.x - own);
+          tabs.state = state;
+          tabs.window = split->owner_cfg;
+          tabs.anchor = root;
+        }
+        uishell_sidebar_header_tabs_ui(&tabs, 0, tabs.selected);
         // The title holds its width; the spacer after the indicator absorbs slack.
         // A docked section's title is also its drag handle: past the shared
         // threshold it starts the section's docking drag, and a plain click
-        // still collapses (drag-model.md, Gesture).
+        // still collapses (drag-model.md, Gesture). A middle click closes it,
+        // as a tab's does.
+        uishell_sidebar_header_separator(&tabs);
+        UI_Box *title_box = &ui_nil_box;
         if(uishell_sidebar_local_renaming(state, local_section)) UI_PrefWidth(ui_pct(1, 0)) UI_TagF("")
-        { uishell_sidebar_local_rename_field(state, str8_lit("###section_rename")); }
-        else UI_PrefWidth(ui_text_dim(4.f, 1))
+        { title_box = uishell_sidebar_local_rename_field(state, str8_lit("###section_rename")).box; }
+        else UI_PrefWidth(ui_text_dim(4.f, 1)) UI_TagF(tabs.count > 1 ? "" : "weak")
         {
           UI_Signal title_sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###section_%S", upper_from_str8(scratch.arena, title), key));
+          title_box = title_sig.box;
+          // Beside other titles, the selected one shows full strength over an
+          // accent underline.
+          if(tabs.count > 1)
+          UI_Parent(title_box) UI_FixedX(ui_top_text_padding()) UI_FixedY(dim_2f32(title_box->rect).y-2.f)
+            UI_PrefWidth(ui_px(Max(0.f, dim_2f32(title_box->rect).x - 2*ui_top_text_padding()), 1)) UI_PrefHeight(ui_px(2.f, 1))
+            UI_BackgroundColor(rd_drop_accent(1.f)) UI_CornerRadius(1.f)
+          { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(title_box->key, "selected_mark")); }
           if(section_panel && ui_dragging(title_sig) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
           { rd_drag_begin(UIShell_ContextRegSlot_View); }
           toggle |= ui_clicked(title_sig) && !rd_drag_is_active();
+          CFG_Node *own_view = cfg_node_from_id(uishell_regs()->view);
+          if(section_panel && ui_middle_clicked(title_sig) && rd_dock_can_close(own_view)) { uishell_cmd("close_tab"); }
           if(local_section != &cfg_nil_node && ui_right_clicked(title_sig))
           { state->confirm_delete = 0; uishell_sidebar_menu_open_at_pointer(section_menu, title_sig.box); }
           // Double-clicking a section you made renames it in place; the
@@ -3255,10 +3599,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         }
         if(states[n]->collapsed) UI_PrefWidth(ui_text_dim(4.f, 1)) UI_TextColor(uishell_sidebar_ended_color())
         { ui_label(push_str8f(scratch.arena, "%I64u", entries[n])); }
-        // The collapse indicator shows while the header is hovered; a
-        // collapsed header shows its count instead (sidebar-headers.md).
-        UI_Transparency(engaged ? 0.f : 1.f)
-        { toggle |= ui_clicked(uishell_sidebar_disclosure(!states[n]->collapsed, push_str8f(scratch.arena, "###section_toggle_%S", key))); }
+        if(tabs.count) { tabs.boxes[tabs.selected] = title_box; }
+        uishell_sidebar_header_tabs_ui(&tabs, tabs.selected+1, tabs.count);
+        if(tabs.count) { uishell_sidebar_header_more_ui(&tabs); }
+        if(tabs.count) { uishell_sidebar_header_drop(&tabs, header); }
         ui_spacer(ui_pct(1, 0));
         // Display toggles form one segment. It stays visible while any toggle
         // is on, so active filters are always shown; otherwise only on hover.
@@ -3273,6 +3617,13 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         UI_Box *segment;
         UI_PrefWidth(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_X) UI_CornerRadius(4.f)
         { segment = ui_build_box_from_stringf(segment_shown && section_node->control_count ? UI_BoxFlag_DrawBorder : 0, "###controls_%S", key); }
+        // Beside other titles, the controls take the selected title's accent
+        // underline: they're its View's.
+        if(tabs.count > 1 && segment_shown && section_node->control_count)
+        UI_Parent(segment) UI_FixedX(2.f) UI_FixedY(dim_2f32(segment->rect).y-2.f)
+          UI_PrefWidth(ui_px(Max(0.f, dim_2f32(segment->rect).x-4.f), 1)) UI_PrefHeight(ui_px(2.f, 1))
+          UI_BackgroundColor(rd_drop_accent(1.f)) UI_CornerRadius(1.f)
+        { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(segment->key, "selected_mark")); }
         UI_Parent(segment)
         for(U64 c = 0; c < section_node->control_count; c++)
         {
@@ -3287,10 +3638,17 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             uishell_sidebar_string(control.label), detail);
           if(ui_clicked(sig)) { action = control.action; }
         }
+        // The section's own controls sit at the right, beside the grip's
+        // opposite end: collapse, then ×. The collapse indicator shows while
+        // the header is hovered; a collapsed header shows its count instead
+        // (sidebar-headers.md).
+        UI_Transparency(engaged ? 0.f : 1.f)
+        { toggle |= ui_clicked(uishell_sidebar_disclosure(!states[n]->collapsed, push_str8f(scratch.arena, "###section_toggle_%S", key))); }
         if(section_panel)
         {
           CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
           // A section you made: holding × opens its menu (Delete lives there).
+          // × closes the whole section: every View it holds.
           UI_Signal close = uishell_sidebar_header_button(str8_lit("×"), str8_lit("section_close"), 0, engaged,
             str8_lit("Close section"), local_section != &cfg_nil_node ? str8_lit("Restore it from Sections… · hold for more") :
             str8_lit("Restore it from Sections…"));
@@ -3300,8 +3658,14 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             F32 width = uishell_sidebar_local_menu_width(state, split->owner_cfg, local_section);
             ui_ctx_menu_open(section_menu, close.box->key, v2f32(dim_2f32(close.box->rect).x-width, dim_2f32(close.box->rect).y));
           }
-          else if(ui_clicked(close) && rd_dock_can_close(view))
-          { uishell_cmd("close_tab"); }
+          else if(ui_clicked(close))
+          {
+            for(CFG_Node *v = view->parent->first; v != &cfg_nil_node; v = v->next)
+            {
+              if(!uishell_sidebar_is_tab(v) || !rd_dock_can_close(v)) { continue; }
+              UIShell_RegsScope(.panel = view->parent->id, .view = v->id, .tab = v->id) { uishell_cmd("close_tab"); }
+            }
+          }
         }
         if(local_section != &cfg_nil_node)
         {
@@ -3315,8 +3679,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           if(section_panel)
           {
             CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-            if(states[n]->collapsed) { cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("section_collapsed")); }
-            else { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("section_collapsed"))); }
+            uishell_sidebar_section_set_collapsed(view, states[n]->collapsed);
           }
         }
       }
@@ -4300,11 +4663,6 @@ uishell_sidebar_restore_from_menu(UIShell_ControlledSplit *split, String8 key)
   rd_request_frame(); return 0;
 }
 
-//- A sidebar panel's tab-strip "+" (sidebar-headers.md, "Mini tabs"): it
-// adds a tab to that panel: a new section, made with its name field open,
-// or a closed section, restored there rather than at its saved place. It
-// offers no other Views until their state has somewhere to live.
-
 // A selected View in `panel` showing the section keyed `key`.
 internal CFG_Node *
 uishell_sidebar_section_view_here(CFG_Node *panel, String8 key, String8 label)
@@ -4318,44 +4676,28 @@ uishell_sidebar_section_view_here(CFG_Node *panel, String8 key, String8 label)
   return view;
 }
 
-internal void
-uishell_sidebar_tab_add_menu(RD_WindowState *ws, CFG_Node *panel, UI_Key menu)
+// Sections… → New section (sidebar-headers.md): an empty section of its own
+// at the sidebar's end, its name field open. A sidebar that is one panel
+// takes it as a View beside its others.
+internal CFG_Node *
+uishell_sidebar_new_section(UIShell_SidebarState *state, CFG_Node *window)
 {
-  UIShell_SidebarState *state = ws->sidebar;
-  if(!state) { return; }
-  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+  if(host == &cfg_nil_node) { return &cfg_nil_node; }
+  B32 split = 0;
+  for(CFG_Node *c = host->first; c != &cfg_nil_node; c = c->next)
+  {
+    MD_TokenizeResult tokens = md_tokenize_from_text(ui_build_arena(), c->string);
+    split |= tokens.tokens.count == 1 && tokens.tokens.v[0].flags & MD_TokenFlag_Numeric;
+  }
+  CFG_Node *panel = split ? cfg_node_new(rd_state->cfg, host, str8_lit("0.25")) : host;
   Temp scratch = scratch_begin(0, 0);
-  String8 labels[2] = {str8_lit("New section"), str8_lit("Closed sections")};
-  F32 width = uishell_sidebar_menu_width(labels, ArrayCount(labels));
-  for(U64 i = 0; state->snapshot && i < state->placement_count; i++)
-  {
-    String8 title = state->placement_regions[i].title;
-    width = Max(width, uishell_sidebar_menu_width(&title, 1));
-  }
-  UIShell_SidebarMenu(menu, width)
-  {
-    if(ui_clicked(ui_button(str8_lit("New section"))))
-    {
-      CFG_Node *group = uishell_sidebar_local_new_group(window, str8_lit("New section"));
-      uishell_sidebar_section_view_here(panel, uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(group->parent, str8_lit("id"))),
-                                        uishell_sidebar_local_title(scratch.arena, group->parent));
-      uishell_sidebar_local_begin_rename(state, group->parent, uishell_sidebar_local_title(scratch.arena, group->parent));
-    }
-    B32 any = 0;
-    for(U64 i = 0; state->snapshot && i < state->placement_count; i++)
-    {
-      UIShell_SectionPlacement region = state->placement_regions[i];
-      if(uishell_sidebar_region_view(window, region.key) != &cfg_nil_node) { continue; }
-      if(!any) UI_TagF("weak") { ui_label(str8_lit("Closed sections")); }
-      any = 1;
-      if(ui_clicked(uishell_sidebar_button(push_str8f(scratch.arena, "%S###tab_restore_%S", region.title, region.key))))
-      {
-        uishell_sidebar_section_view_here(panel, region.key, region.title);
-        ui_ctx_menu_close();
-      }
-    }
-  }
+  CFG_Node *group = uishell_sidebar_local_new_group(window, str8_lit("New section"));
+  String8 title = uishell_sidebar_local_title(scratch.arena, group->parent);
+  CFG_Node *view = uishell_sidebar_section_view_here(panel, uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(group->parent, str8_lit("id"))), title);
+  uishell_sidebar_local_begin_rename(state, group->parent, title);
   scratch_end(scratch);
+  return view;
 }
 
 // Dragging opts into saved ratios. Double-clicking a sidebar boundary or an
@@ -4394,8 +4736,7 @@ uishell_sidebar_panel_collapsed(CFG_PanelNode *panel, F32 header, F32 *height)
     if(panel->tabs.count == 0) { *height = 0; return 1; }
     CFG_Node *view = panel->selected_tab;
     *height = header + inset + (panel->tabs.count > 1 ? header : 0.f);
-    return str8_match(view->string, str8_lit("sidebar_section"), 0) &&
-      cfg_node_child_from_string(view, str8_lit("section_collapsed")) != &cfg_nil_node;
+    return str8_match(view->string, str8_lit("sidebar_section"), 0) && uishell_sidebar_section_collapsed(view);
   }
   F32 most = 0, sum = 0;
   for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next)
@@ -4541,7 +4882,7 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
     if(panel->first != &cfg_nil_panel_node || panel->tabs.count != 1) { scratch_end(scratch); return; }
     CFG_Node *view = panel->tabs.first->v;
     String8 key = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
-    collapsed[n] = cfg_node_child_from_string(view, str8_lit("section_collapsed")) != &cfg_nil_node;
+    collapsed[n] = uishell_sidebar_section_collapsed(view);
     UIShell_SidebarSection *section = state->sections;
     for(; section; section = section->next)
     {
@@ -4626,6 +4967,8 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       // the notice rectangle into its popup rows and clip their hit areas.
       UI_CtxMenu(menu_key) UI_PrefWidth(ui_px(menu_width, 1)) UI_PrefHeight(ui_px(row_height, 1))
       {
+        if(ui_clicked(uishell_sidebar_button(str8_lit("New section###section_new"))))
+        { uishell_sidebar_new_section(state, split->owner_cfg); ui_ctx_menu_close(); }
         B32 available = 0;
         for(U64 i = 0; state->snapshot && i < state->placement_count; i++)
         {

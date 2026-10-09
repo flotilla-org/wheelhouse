@@ -43,13 +43,40 @@ preset "Groups redesign"; the operator's knob values are at the end.
   name field, which takes the keyboard even from a focused terminal.
 - **Workspaces** uses the same footer instead of a first-entry row.
 
-## Mini tabs
+## A panel's Views share its header
 
-In a sidebar panel, the tab strip's `+` adds a tab to that panel: **New
-section** (made empty, its name field open), or one of the **closed
-sections**, restored there. It offers no other Views until their state has
-somewhere to live. Later, a tab should be the section's header rather than
-repeat it.
+Settled with the operator on 2026-10-09. A sidebar panel has no tab strip;
+its section header is one, so tabs no longer repeat the header. The header
+has two levels:
+
+- **The section (the panel) owns the ends of the row.** The grip on the left
+  drags the whole section; collapse and × sit together on the right. Collapse
+  is the section's state (a panel option), so every View in it shows the same;
+  × closes every View it holds.
+- **The titles between are tabs.** The selected View's title is the header's
+  title, with its count, controls and menu; the others sit beside it as
+  compact titles, in tab order, split by hairlines like unselected browser
+  tabs. Beside others, the selected title shows full strength over an accent
+  underline, and so do its View's display controls, which are its alone.
+  Later, unselected titles may recede further. A click on another title selects it (opening a collapsed
+  section); a click on the selected one collapses or expands, as before; a
+  drag moves that one View; a middle click closes it. There are no per-title
+  ×s.
+- **Narrow,** compact titles shrink to 3em, then those that don't fit go
+  behind a "+N" chip whose menu selects them.
+- **The row is the panel's tab strip for drops** (drag-model.md, "Drop-target
+  visuals"): a View dropped on it lands in the gap under the pointer, marked
+  with an accent bar. A one-View panel's header takes them too, so a View can
+  join it first or second, and a one-group section's title drag can join
+  another section as a tab (#262).
+- **A whole section drops as its Views.** Dragged by its grip onto another
+  header, a three-View section joins a one-View one as four, in order at the
+  gap, not as a nested section; at an edge, its Views make the new panel
+  there together. With one View, the grip's drag is that View's, so a
+  one-group section keeps its group rules.
+- **No `+`.** Sections… offers **New section** (an empty section of its own
+  at the sidebar's end, its name field open) above the closed sections. The
+  tray is likely to grow into a palette to drag Views out of.
 
 ## Collapse gives space back
 

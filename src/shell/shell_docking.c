@@ -11,8 +11,8 @@ rd_dock_layout_keys(Arena *arena, CFG_Node *root)
 internal RD_DockPresentation
 rd_dock_presentation(RD_DockHostKind host, U64 tab_count)
 {
-  if(host == RD_DockHostKind_Sidebar)
-  { return tab_count == 1 ? RD_DockPresentation_SectionHeader : RD_DockPresentation_CompactTabs; }
+  // A sidebar section's header holds all its panel's Views (sidebar-headers.md).
+  if(host == RD_DockHostKind_Sidebar) { return RD_DockPresentation_SectionHeader; }
   return RD_DockPresentation_Tabs;
 }
 

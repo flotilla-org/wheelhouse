@@ -513,18 +513,14 @@ uishell_sidebar_pin_place(CFG_Node *area, CFG_Node *saved, U64 index)
   cfg_node_insert_child(rd_state->cfg, area, before != &cfg_nil_node ? before->prev : area->last, saved);
 }
 
-// A sidebar View may claim a positioned drop unless another docking site has
-// the pointer. Its own panel's centre and catch-all sites don't count: they
-// stand aside once it claims (drag_drop_local_panel), and being built before
-// the View, they'd otherwise have the pointer first. Its split pills do: they
-// sit just inside its edges (drag-model.md, "Drop-target visuals").
+// A sidebar View may claim a positioned drop unless a docking site has the
+// pointer: its panel's edge pills and tab strip sit outside its body
+// (drag-model.md, "Drop-target visuals").
 internal B32
 uishell_sidebar_drop_claimable(CFG_Node *panel)
 {
-  UI_Key hot = ui_drop_hot_key();
-  return ui_key_match(hot, ui_key_zero()) ||
-    ui_key_match(hot, rd_panel_catchall_drop_site_key(panel)) ||
-    ui_key_match(hot, rd_panel_center_drop_site_key(panel));
+  (void)panel;
+  return ui_key_match(ui_drop_hot_key(), ui_key_zero());
 }
 
 // Adds a ghost of `entity` to a pinned area and reveals it. A dropped row
@@ -584,7 +580,7 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
         if(selected != &cfg_nil_node) { cfg_node_release(rd_state->cfg, selected); }
       }
       cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("selected"));
-      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("section_collapsed")));
+      uishell_sidebar_section_set_collapsed(view, 0);
     }
     for(UIShell_HoverCard *c = state->detached; c; c = c->next)
     { if(c->saved == saved->id) { c->scroll = 0; c->focused = 1; } }
