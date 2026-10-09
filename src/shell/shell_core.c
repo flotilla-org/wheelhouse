@@ -3486,6 +3486,22 @@ rd_drop_accent(F32 alpha)
   return color;
 }
 
+// The hover fill's opacity: enough to move the visible brightness of `under`
+// by `step` (in sRGB) toward `hover`. Colours blend in linear light, where a
+// fixed opacity of black barely changes a light background, though the same
+// opacity of white clearly lifts a dark one.
+internal F32
+rd_hover_alpha(Vec4F32 hover, Vec4F32 under, F32 step)
+{
+  F32 l_hover = 0.2126f*hover.x + 0.7152f*hover.y + 0.0722f*hover.z;
+  F32 l_under = 0.2126f*under.x + 0.7152f*under.y + 0.0722f*under.z;
+  if(abs_f32(l_hover - l_under) < 0.0001f) { return 0; }
+  F32 s_under = srgba_from_linear(v4f32(l_under, l_under, l_under, 1)).x;
+  F32 s_target = Clamp(0.f, s_under + (l_hover > l_under ? step : -step), 1.f);
+  F32 l_target = linear_from_srgba(v4f32(s_target, s_target, s_target, 1)).x;
+  return Clamp(0.f, (l_target - l_under)/(l_hover - l_under), 1.f);
+}
+
 internal B32
 rd_drop_bar_shares_line(RD_DropBar *a, RD_DropBar *b)
 {
@@ -4696,6 +4712,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                   UI_Box *tab_box = ui_build_box_from_stringf(UI_BoxFlag_DrawHotEffects|
                                                               UI_BoxFlag_DrawBackground|
                                                               (UI_BoxFlag_DrawBorder * (!tab_is_selected && !omit_name))|
+                                                              (UI_BoxFlag_DrawDropShadow * (tab_is_selected && !omit_name))|
                                                               UI_BoxFlag_DisableFocusBorder|
                                                               UI_BoxFlag_Clickable,
                                                               "tab_%p", tab);
@@ -6826,7 +6843,7 @@ rd_window_frame(void)
         // background/border/click-capture and keep only the end-zone clusters.
         // window drag in the bare band rides the WM custom title bar.
         UI_BoxFlags top_bar_flags = UI_BoxFlag_Clip|UI_BoxFlag_DefaultFocusNav|UI_BoxFlag_DisableFocusOverlay;
-        if(!tabs_in_title_bar) { top_bar_flags |= UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground; }
+        if(!tabs_in_title_bar) { top_bar_flags |= UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawDropShadow; }
         ui_set_next_child_layout_axis(Axis2_Y);
         ui_set_next_rect(top_bar_rect);
         UI_Box *top_bar_pane = ui_build_box_from_string(top_bar_flags, str8_lit("###top_bar"));
@@ -8091,8 +8108,11 @@ rd_window_frame(void)
           // rjf: brighten
           if(is_hot)
           {
+            // The same visible step on light and dark backgrounds; upstream's
+            // fixed 1.5% is invisible on light ones.
+            Vec4F32 under = mix_4f32(base_background_color, box_background_color, box_background_color.w);
             Vec4F32 color = hover_color;
-            color.w *= 0.015f;
+            color.w *= rd_hover_alpha(hover_color, under, 0.06f);
             R_Rect2DInst *inst = dr_rect(pad_2f32(box_bg_rect, 1.f), v4f32(0, 0, 0, 0), 0, 0, border_softness*1.f);
             inst->colors[Corner_00] = color;
             inst->colors[Corner_10] = color;
