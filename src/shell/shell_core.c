@@ -4005,7 +4005,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
         if(plan->content_rect.x1 > plan->content_rect.x0 && plan->content_rect.y1 > plan->content_rect.y0) UI_TagF("tab")
         {
           B32 reset = (window_layout_reset || ws->frames_alive < 5 || is_changing_panel_boundaries);
-          F32 tab_close_width_px = ui_top_font_size()*(plan->presentation == RD_DockPresentation_CompactTabs ? 1.6f : 2.5f);
+          F32 tab_close_width_px = ui_top_font_size()*2.5f;
           F32 max_tab_width_px = ui_top_font_size()*20.f;
           for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next)
           {
@@ -4027,8 +4027,6 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
               {
                 tab_width_target += tab_close_width_px;
               }
-              if(plan->presentation == RD_DockPresentation_CompactTabs)
-              { max_tab_width_px = Max(tab_close_width_px+ui_top_font_size()*UIShell_GripWidthEM, (dim_2f32(plan->tab_bar_rect).x-plan->tab_bar_vheight-tab_gap_px*(panel->tabs.count+1))/Max(1, panel->tabs.count)); }
               tab_width_target = Min(max_tab_width_px, tab_width_target);
               t->tab_width = floor_f32(ui_anim(ui_key_from_stringf(ui_key_zero(), "tab_width_%p", tab), tab_width_target, .initial = reset ? tab_width_target : 0, .rate = rd_state->menu_animation_rate));
               SLLQueuePush(plan->first_tab_task, plan->last_tab_task, t);
@@ -4462,7 +4460,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //- rjf: unpack tab build tasks
           //
           TabTask *first_tab_task = chrome_plan->first_tab_task;
-          F32 tab_close_width_px = ui_top_font_size()*(chrome_plan->presentation == RD_DockPresentation_CompactTabs ? 1.6f : 2.5f);
+          F32 tab_close_width_px = ui_top_font_size()*2.5f;
           
           //////////////////////////
           //- rjf: build tab bar container

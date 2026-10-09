@@ -797,6 +797,19 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     B32 together = moved_panel != elsewhere && moved_panel != third;
     for(U64 i = 0; i < 3; i++) { together &= views[i]->parent == moved_panel; }
     GroupsCheck(together, "a whole section dropped at an edge makes the new panel there with all its Views");
+    // A source released before the drop is applied moves nothing.
+    CFG_Node *brief = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
+    CFG_Node *brief_view = rd_cfg_new_view_tab(brief, str8_lit("sidebar_section"), str8_zero(), 1);
+    UIShell_RegsScope(.window = window->id, .panel = brief->id, .view = brief_view->id, .tab = brief_view->id)
+    { rd_drag_begin(UIShell_ContextRegSlot_View); }
+    rd_state->drag_drop_commit = uishell_sidebar_section_drop_commit;
+    rd_panel_drag_drop(third->id, Dir2_Invalid, held->id);
+    rd_drag_kill();
+    cfg_node_release(rd_state->cfg, brief);
+    uishell_sidebar_section_drop_apply(ws);
+    U64 third_tabs = 0;
+    for(CFG_Node *c = third->first; c != &cfg_nil_node; c = c->next) { third_tabs += uishell_sidebar_is_tab(c); }
+    GroupsCheck(third_tabs == 1 && !ws->sidebar->section_drop, "a section drop whose source was released moves nothing");
     cfg_node_release(rd_state->cfg, held);
     CFG_ID made_panels[] = {moved_panel->id, third->id};
     uishell_local_groups_view = saved_view;

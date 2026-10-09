@@ -48,7 +48,9 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   { ok = 0; fprintf(stderr, "FAIL long section restore menu title width\n"); }
   // A short native window forces the upward anchor above y=0; ui_end_build
   // must contain the popup after anchoring, leaving the restore row reachable.
-  WM_Window short_window = wm_window_open(r2f32p(0, 0, 360, 80), 0, str8_lit("Restore containment diagnostic"));
+  // The menu (New section, a label, the row) must still fit the client area
+  // that Windows leaves after its frame.
+  WM_Window short_window = wm_window_open(r2f32p(0, 0, 360, 120), 0, str8_lit("Restore containment diagnostic"));
   UI_State *short_test = ui_state_alloc();
   ui_select_state(short_test);
   WM_Window original_window = ws->os;

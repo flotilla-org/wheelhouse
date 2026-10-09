@@ -103,8 +103,9 @@ panel sits in decides how it looks:
 - In the sidebar, a single-tab panel shows a section header (title, count, the
   display toggles from #80) instead of a tab strip. Drag and close appear on
   hover, following the same peek and engaged idea as cards.
-- Two sections in one panel show compact tabs. A section dragged into the
-  workspace becomes an ordinary panel with the normal tab look.
+- Two sections in one panel share its header, their titles as tabs
+  (`sidebar-headers.md`). A section dragged into the workspace becomes an
+  ordinary panel with the normal tab look.
 
 The docking system will grow: stacked sections that scroll as one area, and
 per-host choices of tab presentation, including in the main workspace. Those

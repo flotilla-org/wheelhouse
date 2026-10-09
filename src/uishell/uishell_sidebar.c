@@ -1839,7 +1839,8 @@ internal void uishell_sidebar_local_section_menu(UIShell_SidebarState *state, CF
 
 //~ A sidebar section, its panel, collapses as a whole (sidebar-headers.md):
 // the state is a panel option. A layout from before kept it on a View; the
-// View's own still counts until the section next opens or closes.
+// View's own still counts until the section next opens or closes; drop that
+// fallback once layouts saved before #268 no longer need to load.
 
 internal B32
 uishell_sidebar_section_collapsed(CFG_Node *view)
@@ -1927,7 +1928,7 @@ uishell_sidebar_is_tab(CFG_Node *c)
 {
   U8 first = c->string.size ? c->string.str[0] : 0;
   return (char_is_alpha(first) || first == '_') && !str8_match(c->string, str8_lit("selected"), 0) &&
-    !str8_match(c->string, str8_lit("tabs_on_bottom"), 0) && !str8_match(c->string, str8_lit("section_collapsed"), 0) &&
+    !cfg_panel_child_is_option(c->string) &&
     !rd_cfg_is_project_filtered(c);
 }
 
