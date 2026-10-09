@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drop Targets Prototype</title>
+<!-- PROTOTYPE, throwaway: docking drop-target layout for #257 (overlapping
+     targets) and the unified drop visuals. Move the pointer over the window as
+     if dragging a tab; click to freeze the pointer, click again to release.
+     Alt-click a panel to toggle whether it has a tab strip. -->
+<style>
+:root {
+  --bg: #111; --win: #1a1a1a; --panel: #1a1a1a; --title: #1a1a1a; --line: #2c2c2c;
+  --text: #c9ccd2; --dim: #80858f; --accent: #4a9eff;
+  --pill: rgba(38, 42, 49, 0.82); --pill-border: rgba(150, 160, 175, 0.35);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.35 -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+#win { position: relative; margin: 12px auto 0; background: var(--win); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: default; }
+.panel { position: absolute; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.panel .tt { height: 24px; background: var(--title); border-bottom: 1px solid var(--line); padding: 4px 8px; font-size: 12px; color: var(--dim); white-space: nowrap; }
+.panel .tt b { color: var(--text); font-weight: 600; margin-right: 10px; }
+.panel .rows { padding: 6px 8px; }
+.panel .rows i { display: block; height: 7px; margin: 9px 0; background: #262626; border-radius: 3px; }
+.t { position: absolute; transition: left .12s, top .12s, width .12s, height .12s, opacity .12s; }
+/* Today: RAD's drop sites as Wheelhouse draws them (sampled from a recording). */
+.bar { background: #1a1a1a; border: 1px solid #363636; border-radius: 99px; box-shadow: 0 1px 4px rgba(0,0,0,.6); }
+.bar.hot { background: #2a2a2a; border-color: #5a5a5a; }
+.pill { background: #1a1a1a; border: 1px solid #363636; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,.6); display: flex; padding: 5px; gap: 4px; }
+.pill.hot { background: #222; border-color: #5a5a5a; }
+.pill > i { flex: 1; border: 1px solid #363636; border-radius: 6px; }
+.pill > i.f { background: #202020; }
+.pill.hot > i.f { background: #2e2e2e; }
+#preview { position: absolute; pointer-events: none; background: #2a2a2a; border-radius: 26px; display: flex; align-items: center; justify-content: center; transition: left .12s, top .12s, width .12s, height .12s, opacity .12s; opacity: 0; }
+/* Accent: the sidebar's insertion-line accent for every target. */
+body.accent .bar { background: rgba(74,158,255,.18); border-color: rgba(74,158,255,.55); }
+body.accent .bar.hot { background: rgba(74,158,255,.75); border-color: #9ccbff; }
+body.accent .pill.hot { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 2px 8px rgba(0,0,0,.6); }
+body.accent .pill > i { border-color: #4a4f57; }
+body.accent .pill > i.f { background: rgba(74,158,255,.35); border-color: rgba(74,158,255,.7); }
+body.accent .pill.hot > i.f { background: var(--accent); }
+body.accent #preview { background: rgba(74,158,255,.12); border: 1px solid rgba(74,158,255,.7); }
+.tt.tabs { display: flex; gap: 4px; padding: 3px 6px 0; }
+.chip { display: inline-block; height: 21px; padding: 2px 9px; border-radius: 5px 5px 0 0; color: var(--dim); overflow: hidden; }
+.chip.on { background: #242424; color: var(--text); }
+.pill > b.nub { flex: 0 0 5px; border: 1px solid #363636; background: #202020; border-radius: 3px; }
+.pill > b.nub.y { width: 45%; } .pill > b.nub.x { height: 45%; }
+.tt.tabs.bottom { position: absolute; left: 0; right: 0; bottom: 0; border-bottom: none; border-top: 1px solid var(--line); padding: 0 6px 3px; }
+.tt.tabs.bottom .chip { border-radius: 0 0 5px 5px; }
+.ghoststrip { display: flex; padding: 3px 6px 0; background: #1f1f1f; border-bottom: 1px dashed #4a4a4a; border-radius: 3px 3px 0 0; }
+.ghoststrip.bottom { padding: 0 6px 3px; border-bottom: none; border-top: 1px dashed #4a4a4a; align-items: flex-end; }
+.ghoststrip .chip { height: 21px; }
+body.accent .ghoststrip { border-color: rgba(74,158,255,.6); }
+.tabmark { background: #5a5a5a; border-radius: 2px; }
+body.accent .tabmark { background: var(--accent); }
+body.accent .pill > b.nub { border-color: rgba(74,158,255,.7); background: rgba(74,158,255,.35); }
+#preview.tab { z-index: 5; border-radius: 6px 6px 0 0; justify-content: flex-start; padding-left: 10px; }
+#preview.tab.bottom { border-radius: 0 0 6px 6px; }
+#preview.tab span { background: none; padding: 0; }
+#preview span { background: rgba(20,22,26,.85); padding: 3px 8px; border-radius: 5px; font-size: 12px; }
+#ghost { position: absolute; pointer-events: none; padding: 3px 10px; background: var(--title); border: 1px solid var(--accent); border-radius: 5px; font-size: 12px; opacity: .85; z-index: 10; white-space: nowrap; }
+#bar { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); background: #23262b; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; max-width: calc(100vw - 32px); font-size: 12px; z-index: 20; }
+#bar label { display: flex; gap: 5px; align-items: center; white-space: nowrap; }
+#bar input[type=range] { width: 80px; }
+#bar .seg button { background: #30343a; color: var(--text); border: 1px solid var(--line); padding: 3px 9px; cursor: pointer; }
+#bar .seg button:first-child { border-radius: 5px 0 0 5px; } #bar .seg button:last-child { border-radius: 0 5px 5px 0; }
+#bar .seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+#readout { color: var(--dim); min-width: 260px; }
+</style>
+</head>
+<body>
+<div id="win"><div id="preview"><span></span></div><div id="ghost">Terminal 3</div></div>
+<div id="bar">
+  <span class="seg" id="variant"><button data-v="current">Current</button><button data-v="nested">Nested at edges</button></span>
+  <span class="seg" id="look"><button data-l="today">Today</button><button data-l="accent">Accent</button></span>
+  <label><input type="checkbox" id="wsSplit" checked>Sidebar row split</label>
+  <label><input type="checkbox" id="contentSplit" checked>Content split</label>
+  <label><input type="checkbox" id="follow">Outer bars follow panel</label>
+  <label><input type="checkbox" id="sidebarCentre">Centre pill</label>
+  <span class="seg" id="tabPos"><button data-p="top">Tabs top</button><button data-p="bottom">bottom</button></span>
+  <span class="seg" id="tabless"><button data-m="pill">No tabs: pill</button><button data-m="ghost">ghost strip</button></span>
+  <label><input type="checkbox" id="tabEdges">Tab pills on every edge</label>
+  <label>bar <input type="range" id="tb" min="0.4" max="2" step="0.1" value="0.8"></label>
+  <label>length <input type="range" id="lb" min="4" max="20" step="0.5" value="11"></label>
+  <label>pill <input type="range" id="pill" min="2" max="6" step="0.2" value="3.4"></label>
+  <span id="readout"></span>
+</div>
+<script>
+const EM = 13, GAP = 3, HIT_PAD = 4;
+const Q = new URLSearchParams(location.search);
+const S = { variant: Q.get('v') || 'nested', look: Q.get('look') || 'today', wsSplit: true, contentSplit: true, follow: false, sidebarCentre: false, tb: 0.8, lb: 11, pill: 3.4, tabPos: 'top', tabEdges: false, tabless: 'pill', noTabs: [] };
+const win = document.getElementById('win'), preview = document.getElementById('preview'), ghost = document.getElementById('ghost');
+let mouse = { x: -1, y: -1 }, frozen = false, root;
+
+const TABS = { ws: ['Workspaces', 'Work'], ed: ['Editor', 'notes.md', 'build.log'], term: ['Terminal', 'zsh'], logs: ['Logs'] };
+const leaf = (id, name, share, zone) => ({ id, name, share, zone, tabs: S.noTabs.includes(id) ? null : TABS[id] || null });
+function tree() {
+  const ws = S.wsSplit
+    ? { id: 'wsrow', axis: 'x', share: .42, children: [leaf('ws', 'Workspaces', .55, 'sidebar'), leaf('pin', 'Pinned', .45, 'sidebar')] }
+    : leaf('ws', 'Workspaces', .42, 'sidebar');
+  const sidebar = { id: 'sidebar', axis: 'y', share: .24, children: [leaf('att', 'Attention', .25, 'sidebar'), ws, leaf('proj', 'Projects', .33, 'sidebar')] };
+  const content = S.contentSplit
+    ? { id: 'content', axis: 'x', share: .76, children: [leaf('ed', 'Editor', .6, 'content'),
+        { id: 'right', axis: 'y', share: .4, children: [leaf('term', 'Terminal', .5, 'content'), leaf('logs', 'Logs', .5, 'content')] }] }
+    : leaf('ed', 'Editor', .76, 'content');
+  return { id: 'root', axis: 'x', children: [sidebar, content] };
+}
+const A = a => a === 'x' ? ['x0', 'x1'] : ['y0', 'y1'];
+const flip = a => a === 'x' ? 'y' : 'x';
+const size = (r, a) => r[A(a)[1]] - r[A(a)[0]];
+function layout(n, r, depth, parent) {
+  Object.assign(n, { rect: r, depth, parent });
+  if (!n.children) return;
+  const [k0, k1] = A(n.axis); let at = r[k0];
+  const total = n.children.reduce((s, c) => s + c.share, 0);
+  n.children.forEach((c, i) => {
+    const w = size(r, n.axis) * c.share / total, cr = { ...r };
+    cr[k0] = at; cr[k1] = i === n.children.length - 1 ? r[k1] : at + w; at += w;
+    layout(c, cr, depth + 1, n);
+  });
+}
+const walk = (n, f) => { f(n); (n.children || []).forEach(c => walk(c, f)); };
+const leaves = () => { const l = []; walk(root, n => !n.children && l.push(n)); return l; };
+const contains = (r, p, pad = 0) => p.x >= r.x0 - pad && p.x < r.x1 + pad && p.y >= r.y0 - pad && p.y < r.y1 + pad;
+const isAncestor = (a, n) => { for (let p = n; p; p = p.parent) if (p === a) return true; return false; };
+const rect = (x0, y0, x1, y1) => ({ x0, y0, x1, y1 });
+// A rect on `axis` spanning [a0,a1] along it and centred on `c` with length `len` across it.
+function onAxis(axis, a0, a1, c, len) { return axis === 'x' ? rect(a0, c - len / 2, a1, c + len / 2) : rect(c - len / 2, a0, c + len / 2, a1); }
+const clampSpan = (c, len, lo, hi) => Math.max(lo + len / 2, Math.min(hi - len / 2, c));
+
+// Every boundary docking site: each split's child edges and its far end, plus the root's extra top/bottom.
+function boundaries() {
+  const list = [];
+  walk(root, n => {
+    if (!n.children) return;
+    const [k0, k1] = A(n.axis);
+    for (let i = 0; i <= n.children.length; i++)
+      list.push({ kind: 'boundary', node: n, index: i, axis: n.axis, pos: i < n.children.length ? n.children[i].rect[k0] : n.rect[k1], depth: n.depth });
+  });
+  const ra = flip(root.axis), [k0, k1] = A(ra);
+  list.push({ kind: 'boundary', node: root, extra: 'start', axis: ra, pos: root.rect[k0], depth: -1 });
+  list.push({ kind: 'boundary', node: root, extra: 'end', axis: ra, pos: root.rect[k1], depth: -1 });
+  list.forEach(b => b.id = `b:${b.node.id}:${b.extra || b.index}:${b.axis}`);
+  return list;
+}
+const DIRS = [['left', 'x', 0], ['right', 'x', 1], ['up', 'y', 0], ['down', 'y', 1]];
+const leafDirs = P => DIRS.filter(([, a]) => !(P.parent && P.parent.axis === a));
+const atWindowEdge = (b) => { const [k0, k1] = A(b.axis); return Math.abs(b.pos - root.rect[k0]) < 1 || Math.abs(b.pos - root.rect[k1]) < 1; };
+const touches = (b, P, axis, side) => b.axis === axis && Math.abs(b.pos - P.rect[A(axis)[side]]) < 1.5 && (b.extra || isAncestor(b.node, P));
+
+function targetsCurrent(hoverLeaf) {
+  const T = [];
+  for (const b of boundaries()) {
+    const other = flip(b.axis), [o0, o1] = A(other);
+    const c = (b.node.rect[o0] + b.node.rect[o1]) / 2;
+    T.push({ ...b, style: 'pill', r: onAxis(b.axis, b.pos - 2.5 * EM, b.pos + 2.5 * EM, c, 7 * EM) });
+  }
+  // RAD builds the hovered panel's cross only when no boundary site is drop-hot.
+  if (hoverLeaf && !T.some(t => contains(t.r, mouse))) {
+    const P = hoverLeaf, dim = Math.max(3 * EM, Math.min(7 * EM, size(P.rect, 'x') / 4)), h = dim / 2;
+    const cx = (P.rect.x0 + P.rect.x1) / 2, cy = (P.rect.y0 + P.rect.y1) / 2;
+    const at = (dx, dy) => rect(cx - h + dx, cy - h + dy, cx + h + dx, cy + h + dy);
+    T.push({ kind: 'centre', leaf: P, id: `c:${P.id}`, style: 'pill', r: at(0, 0) });
+    for (const [d, a, side] of leafDirs(P)) {
+      const off = (side ? 1 : -1) * dim;
+      T.push({ kind: 'split', leaf: P, dir: d, axis: a, side, id: `s:${P.id}:${d}`, style: 'pill', r: a === 'x' ? at(off, 0) : at(0, off) });
+    }
+  }
+  return T;
+}
+
+// Boundaries on one line nest: the shallowest straddles it (or sits inside the
+// window at its edge); deeper ones stack inward on their own side, each shorter.
+// The hovered panel's own split pill stacks innermost on its side.
+function targetsNested(P) {
+  const T = [], all = boundaries();
+  const tb = S.tb * EM, lb = S.lb * EM, pill = S.pill * EM;
+  const span = b => b.extra ? root.rect : b.node.rect;
+  const overlap = (a, b) => { const [o0, o1] = A(flip(a.axis)); return span(a)[o0] < span(b)[o1] - 1 && span(b)[o0] < span(a)[o1] - 1; };
+  const sideOf = b => { const [k0, k1] = A(b.axis); return (span(b)[k0] + span(b)[k1]) / 2 < b.pos ? -1 : 1; };
+  const lineOf = new Map(), edges = new Map();
+  const groups = [];
+  for (const b of all) {
+    const g = groups.find(g => g.some(o => o.axis === b.axis && Math.abs(o.pos - b.pos) < 1.5 && overlap(o, b)));
+    if (g) g.push(b); else groups.push([b]);
+  }
+  for (const g of groups) { g.sort((x, y) => x.depth - y.depth); for (const b of g) lineOf.set(b.id, g); }
+  const placeLine = group => {
+    const base = group[0], key = base.id;
+    if (edges.has(key)) return edges.get(key);
+    const [k0, k1] = A(base.axis), pos = base.pos;
+    const atMin = Math.abs(pos - root.rect[k0]) < 1, atMax = Math.abs(pos - root.rect[k1]) < 1;
+    const placed = new Map();
+    let lo = atMin ? pos : atMax ? pos - tb : pos - tb / 2, hi = lo + tb;
+    placed.set(base.id, { a0: lo, a1: hi, k: 0 });
+    const edge = { '-1': lo - GAP, '1': hi + GAP }, count = { '-1': 0, '1': 0 };
+    for (const b of group.slice(1)) {
+      const sd = atMin ? 1 : atMax ? -1 : sideOf(b), k = ++count[sd];
+      const a0 = sd > 0 ? edge[sd] : edge[sd] - tb, a1 = a0 + tb;
+      placed.set(b.id, { a0, a1, k });
+      edge[sd] = sd > 0 ? a1 + GAP : a0 - GAP;
+    }
+    const res = { placed, edge, atMin, atMax };
+    edges.set(key, res); return res;
+  };
+  const touching = P ? new Set(all.filter(b => DIRS.some(([, a, sd]) => touches(b, P, a, sd))).map(b => b.id)) : new Set();
+  for (const b of all) {
+    const line = placeLine(lineOf.get(b.id)), { a0, a1, k } = line.placed.get(b.id);
+    const other = flip(b.axis), [o0, o1] = A(other), sp = span(b);
+    const len = Math.min(Math.max(3 * EM, lb * (1 - 0.22 * k)), size(sp, other) - 2 * GAP);
+    const want = S.follow && P && touching.has(b.id) ? (P.rect[o0] + P.rect[o1]) / 2 : (sp[o0] + sp[o1]) / 2;
+    T.push({ ...b, style: 'bar', level: k, r: onAxis(b.axis, a0, a1, clampSpan(want, len, sp[o0], sp[o1]), len) });
+  }
+  // The tab bar's edge: top or bottom. A panel without tabs either offers a
+  // tab pill there or, in ghost mode, shows a one-tab strip while hovered.
+  const tabDir = S.tabPos === 'bottom' ? 'down' : 'up';
+  const strip = P && tabsOf(P) ? stripRect(P) : null;
+  if (P) for (const [d, axis, side] of DIRS) {
+    const own = leafDirs(P).some(([dd]) => dd === d);
+    const tab = !P.tabs && S.tabless === 'pill' && (d === tabDir || S.tabEdges);
+    if (!own && !tab) continue;
+    const other = flip(axis), [o0, o1] = A(other), line = P.rect[A(axis)[side]], inward = side ? -1 : 1;
+    const b = all.find(o => o.axis === axis && Math.abs(o.pos - line) < 1.5 && touches(o, P, axis, side));
+    let edge = line + inward * GAP;
+    if (b) { const L = placeLine(lineOf.get(b.id)); edge = L.atMin ? L.edge['1'] : L.atMax ? L.edge['-1'] : L.edge[String(inward)]; }
+    // Nothing on the tab bar's edge covers the strip.
+    if (strip && d === tabDir) edge = inward > 0 ? Math.max(edge, strip.y1 + GAP) : Math.min(edge, strip.y0 - GAP);
+    const th = pill * 0.8, pc = (P.rect[o0] + P.rect[o1]) / 2;
+    // Split and tab pills sit side by side along the edge when they fit.
+    const beside = tab && own && size(P.rect, other) >= 2 * pill + GAP + 2 * EM;
+    const c0 = beside ? pc - (pill + GAP) / 2 : pc, c1 = beside ? pc + (pill + GAP) / 2 : pc;
+    if (own) {
+      const a0 = inward > 0 ? edge : edge - th;
+      T.push({ kind: 'split', leaf: P, dir: d, axis, side, id: `s:${P.id}:${d}`, style: 'pill', r: onAxis(axis, a0, a0 + th, clampSpan(c0, pill, P.rect[o0], P.rect[o1]), pill) });
+      if (!beside) edge += inward * (th + GAP);
+    }
+    if (tab) {
+      const a0 = inward > 0 ? edge : edge - th;
+      T.push({ kind: 'tabpill', leaf: P, dir: d, axis, side, id: `t:${P.id}:${d}`, style: 'pill', r: onAxis(axis, a0, a0 + th, clampSpan(c1, pill, P.rect[o0], P.rect[o1]), pill) });
+    }
+  }
+  if (P && !P.tabs && strip) T.unshift({ kind: 'ghost', leaf: P, id: `ghost:${P.id}`, style: 'ghoststrip', r: strip });
+  // Over a tab strip, real or ghost, the gap under the pointer takes the drop.
+  if (strip && contains(strip, mouse)) {
+    const tabs = tabsOf(P), xs = tabXs(P); let i = 0;
+    while (i < tabs.length && mouse.x > (xs[i][0] + xs[i][1]) / 2) i++;
+    const x = i < tabs.length ? xs[i][0] - 2 : xs[tabs.length - 1][1] + 2;
+    T.push({ kind: 'tab', leaf: P, index: i, id: `strip:${P.id}`, style: 'tabmark', r: rect(x - 1.5, strip.y0 + 4, x + 1.5, strip.y1 - 4) });
+  }
+  if (P && S.sidebarCentre) {
+    const cx = (P.rect.x0 + P.rect.x1) / 2, cy = (P.rect.y0 + P.rect.y1) / 2, h = pill / 2;
+    T.push({ kind: 'centre', leaf: P, id: `c:${P.id}`, style: 'pill', r: rect(cx - h, cy - h, cx + h, cy + h) });
+  }
+  return T;
+}
+
+const STRIP_H = 24, PANEL_INSET = 2;
+const stripRect = P => S.tabPos === 'bottom'
+  ? rect(P.rect.x0 + PANEL_INSET, P.rect.y1 - PANEL_INSET - STRIP_H, P.rect.x1 - PANEL_INSET, P.rect.y1 - PANEL_INSET)
+  : rect(P.rect.x0 + PANEL_INSET, P.rect.y0 + PANEL_INSET, P.rect.x1 - PANEL_INSET, P.rect.y0 + PANEL_INSET + STRIP_H);
+const tabsOf = P => P.tabs || (S.tabless === 'ghost' ? [P.name] : null);
+const tabW = t => 18 + t.length * 6.6;
+function tabXs(P) { let x = P.rect.x0 + PANEL_INSET + 6; return tabsOf(P).map(t => { const r = [x, x + tabW(t)]; x += tabW(t) + 4; return r; }); }
+const NAMES = { root: 'window', sidebar: 'sidebar', wsrow: 'sidebar row', content: 'content', right: 'right column' };
+function outcome(t) {
+  if (t.kind === 'centre') return { r: t.leaf.rect, label: `Drop into ${t.leaf.name}` };
+  if (t.kind === 'tab') {
+    const xs = tabXs(t.leaf), sr = stripRect(t.leaf), x = t.index < xs.length ? xs[t.index][0] : xs[xs.length - 1][1] + 4;
+    const n = tabsOf(t.leaf).length;
+    return { r: rect(x - 4, sr.y0 - 4, x + tabW('Terminal 3') + 12, sr.y1 + 4), tab: true, label: 'Terminal 3',
+      say: `Add as tab ${t.index + 1} of ${n + 1} in ${t.leaf.name}` };
+  }
+  if (t.kind === 'tabpill') {
+    const r = { ...t.leaf.rect }, [k0, k1] = A(t.axis);
+    if (t.side) r[k0] = r[k1] - STRIP_H - 16; else r[k1] = r[k0] + STRIP_H + 16;
+    return { r, label: `Add as tab: ${t.leaf.name} gets a tab ${t.dir === 'up' ? 'strip' : 'bar on the ' + t.dir}` };
+  }
+  if (t.kind === 'split') {
+    const r = { ...t.leaf.rect }, [k0, k1] = A(t.axis), mid = (r[k0] + r[k1]) / 2;
+    if (t.side) r[k0] = mid; else r[k1] = mid;
+    return { r, label: `Split ${t.leaf.name} ${t.dir}` };
+  }
+  const n = t.node, other = flip(t.axis), [o0, o1] = A(other), [k0, k1] = A(t.axis);
+  if (t.extra) {
+    const h = size(root.rect, t.axis) / 4, r = { ...root.rect };
+    if (t.extra === 'start') r[k1] = r[k0] + h; else r[k0] = r[k1] - h;
+    return { r, label: `New row across the ${t.extra === 'start' ? 'top' : 'bottom'} of the window` };
+  }
+  const w = size(n.rect, t.axis) / (n.children.length + 1);
+  const a0 = Math.max(n.rect[k0], Math.min(n.rect[k1] - w, t.pos - w / 2));
+  const r = { ...n.rect }; r[k0] = a0; r[k1] = a0 + w;
+  const what = n.id === 'sidebar' ? 'New sidebar section' : n.id === 'root' ? 'New column in the window' : `New ${t.axis === 'x' ? 'column' : 'row'} in the ${NAMES[n.id] || n.id}`;
+  return { r, label: what };
+}
+
+const els = new Map();
+function el(id, cls) {
+  let e = els.get(id);
+  if (!e) { e = document.createElement('div'); e.className = 't ' + cls; e.style.opacity = 0; win.insertBefore(e, ghost); els.set(id, e); requestAnimationFrame(() => e.style.opacity = 1); }
+  return e;
+}
+function place(e, r) { Object.assign(e.style, { left: r.x0 + 'px', top: r.y0 + 'px', width: (r.x1 - r.x0) + 'px', height: (r.y1 - r.y0) + 'px' }); }
+
+function drawPanels() {
+  win.querySelectorAll('.panel').forEach(p => p.remove());
+  for (const L of leaves()) {
+    const p = document.createElement('div'); p.className = 'panel';
+    place(p, { x0: L.rect.x0 + 2, y0: L.rect.y0 + 2, x1: L.rect.x1 - 2, y1: L.rect.y1 - 2 });
+    p.innerHTML = (L.tabs ? `<div class="tt tabs ${S.tabPos}">${L.tabs.map((t, i) => `<span class="chip${i ? '' : ' on'}" style="width:${tabW(t)}px">${t}</span>`).join('')}</div>` : `<div class="tt"><b>${L.name}</b></div>`) + `<div class="rows">${'<i></i>'.repeat(12)}</div>`;
+    p.onclick = e => { if (!e.altKey) return; e.stopPropagation(); S.noTabs = S.noTabs.includes(L.id) ? S.noTabs.filter(x => x !== L.id) : [...S.noTabs, L.id]; rebuild(); };
+    win.insertBefore(p, win.firstChild);
+  }
+}
+function frame() {
+  const P = leaves().find(L => contains(L.rect, mouse)) || null;
+  const inside = contains(root.rect, mouse);
+  const T = !inside ? [] : S.variant === 'current' ? targetsCurrent(P) : targetsNested(P);
+  let hot = null;
+  for (const t of T) if (t.kind !== 'tab' && t.kind !== 'ghost' && contains(t.r, mouse, t.style === 'bar' ? HIT_PAD : 0)) hot = t;
+  if (!hot) hot = T.find(t => t.kind === 'tab') || null;
+  const live = new Set();
+  for (const t of T) {
+    const e = el(t.id, t.style); live.add(t.id);
+    e.className = 't ' + t.style + (t === hot ? ' hot' : '');
+    place(e, t.r);
+    if (t.style === 'ghoststrip' && !e.childElementCount) e.innerHTML = `<span class="chip on" style="width:${tabW(t.leaf.name)}px">${t.leaf.name}</span>`;
+    if (t.style === 'ghoststrip') e.classList.toggle('bottom', S.tabPos === 'bottom');
+    if (t.style === 'pill') {
+      const vertical = t.kind === 'boundary' ? t.axis === 'y' : t.axis === 'y';
+      e.style.flexDirection = vertical ? 'column' : 'row';
+      const n = t.kind === 'centre' ? 1 : 2;
+      if (t.kind === 'tabpill') e.style.flexDirection = { up: 'column', down: 'column-reverse', left: 'row', right: 'row-reverse' }[t.dir];
+      if (e.childElementCount !== n || e.dataset.k !== t.kind + t.side) {
+        e.dataset.k = t.kind + t.side;
+        e.innerHTML = t.kind === 'tabpill' ? `<b class="nub ${t.axis}"></b><i class="f"></i>` : t.kind === 'centre' ? '<i class="f"></i>' : t.kind === 'boundary' ? '<i></i><i></i>' : (t.side ? '<i></i><i class="f"></i>' : '<i class="f"></i><i></i>');
+      }
+    }
+  }
+  for (const [id, e] of els) if (!live.has(id)) { e.remove(); els.delete(id); }
+  if (hot) {
+    const o = outcome(hot), r = { x0: o.r.x0 + 8, y0: o.r.y0 + 8, x1: o.r.x1 - 8, y1: o.r.y1 - 8 };
+    place(preview, o.tab ? o.r : r); preview.classList.toggle('tab', !!o.tab); preview.classList.toggle('bottom', S.tabPos === 'bottom'); preview.style.opacity = 1; preview.firstChild.textContent = o.label;
+  } else preview.style.opacity = 0;
+  ghost.style.display = inside ? 'block' : 'none';
+  ghost.style.left = (mouse.x + 12) + 'px'; ghost.style.top = (mouse.y + 12) + 'px';
+  document.getElementById('readout').textContent = (frozen ? '❄ frozen · ' : '') + (hot ? (outcome(hot).say || outcome(hot).label) : P ? `over ${P.name}` : '');
+}
+function rebuild() {
+  const W = Math.min(1180, innerWidth - 24), H = Math.min(720, innerHeight - 150);
+  win.style.width = W + 'px'; win.style.height = H + 'px';
+  root = tree(); layout(root, rect(0, 0, W - 2, H - 2), 0, null);
+  drawPanels(); frame();
+  document.querySelectorAll('#variant button').forEach(b => b.classList.toggle('on', b.dataset.v === S.variant));
+  document.querySelectorAll('#look button').forEach(b => b.classList.toggle('on', b.dataset.l === S.look));
+  document.body.classList.toggle('accent', S.look === 'accent');
+  document.querySelectorAll('#tabPos button').forEach(b => b.classList.toggle('on', b.dataset.p === S.tabPos));
+  document.querySelectorAll('#tabless button').forEach(b => b.classList.toggle('on', b.dataset.m === S.tabless));
+}
+win.addEventListener('mousemove', e => { if (frozen) return; const r = win.getBoundingClientRect(); mouse = { x: e.clientX - r.left - 1, y: e.clientY - r.top - 1 }; frame(); });
+win.addEventListener('mouseleave', () => { if (frozen) return; mouse = { x: -1, y: -1 }; frame(); });
+win.addEventListener('click', () => { frozen = !frozen; frame(); });
+document.querySelectorAll('#variant button').forEach(b => b.onclick = () => { S.variant = b.dataset.v; syncUrl(); rebuild(); });
+document.querySelectorAll('#look button').forEach(b => b.onclick = () => { S.look = b.dataset.l; syncUrl(); rebuild(); });
+document.querySelectorAll('#tabPos button').forEach(b => b.onclick = () => { S.tabPos = b.dataset.p; rebuild(); });
+document.querySelectorAll('#tabless button').forEach(b => b.onclick = () => { S.tabless = b.dataset.m; rebuild(); });
+function syncUrl() { history.replaceState(null, '', `?v=${S.variant}&look=${S.look}`); }
+for (const id of ['wsSplit', 'contentSplit', 'follow', 'sidebarCentre', 'tabEdges']) document.getElementById(id).onchange = e => { S[id] = e.target.checked; rebuild(); };
+for (const id of ['tb', 'lb', 'pill']) document.getElementById(id).oninput = e => { S[id] = +e.target.value; frame(); };
+addEventListener('resize', rebuild);
+rebuild();
+</script>
+</body>
+</html>

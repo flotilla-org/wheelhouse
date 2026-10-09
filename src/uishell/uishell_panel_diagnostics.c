@@ -1,3 +1,85 @@
+// Every drop site box under `box`, except panels' catch-all sites, which
+// cover their whole panel by design.
+internal void
+uishell_panel_drop_sites(Arena *arena, UI_Box *box, CFG_PanelTree *tree, UI_Box ***sites, U64 *count)
+{
+  for(UI_Box *child = box->first; !ui_box_is_nil(child); child = child->next)
+  {
+    B32 catchall = 0;
+    for(CFG_PanelNode *p = tree->root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree->root, p).next)
+    { catchall |= ui_key_match(child->key, rd_panel_catchall_drop_site_key(p->cfg)); }
+    if(child->flags & UI_BoxFlag_DropSite && !catchall)
+    {
+      UI_Box **grown = push_array(arena, UI_Box *, *count+1);
+      MemoryCopy(grown, *sites, sizeof(UI_Box *)*(*count));
+      grown[(*count)++] = child;
+      *sites = grown;
+    }
+    uishell_panel_drop_sites(arena, child, tree, sites, count);
+  }
+}
+
+// Docking sites that share a line nest instead of overlapping (#257). As in
+// the sidebar, a column holds a row in its middle, so the row's end and the
+// window's boundary beside the column lie on one line, both centred on it.
+internal U32
+uishell_panel_drop_site_overlap_diagnostics(RD_WindowState *ws)
+{
+  Temp scratch = scratch_begin(0, 0);
+  Arena *arena = scratch.arena;
+  U32 failures = 0;
+  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  CFG_Node *owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+  CFG_Node *root = cfg_node_new(rd_state->cfg, owner, str8_lit("panels"));
+  CFG_Node *tabs[5];
+  for(U32 i = 0; i < ArrayCount(tabs); i++) { tabs[i] = rd_cfg_new_view_tab(root, str8_lit("terminal_fixture"), str8_zero(), i == 0); }
+  // root X [Y [t1, X [t2, t4], t3], t0]
+  struct { U32 view, beside; Dir2 dir; } splits[] = {{1, 0, Dir2_Left}, {2, 1, Dir2_Down}, {3, 2, Dir2_Down}, {4, 2, Dir2_Right}};
+  for(U32 i = 0; i < ArrayCount(splits); i++)
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = tabs[splits[i].view]->parent->id, .dst_panel = tabs[splits[i].beside]->parent->id,
+                      .view = tabs[splits[i].view]->id, .dir2 = splits[i].dir)
+  { uishell_dispatch_panel_command(str8_lit("split_panel")); }
+  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(arena, window, owner);
+  CFG_PanelTree tree = mount.panel_tree;
+  B32 nested = tree.root->child_count == 2 && tree.root->first->child_count == 3 && tree.root->first->first->next->child_count == 2;
+  fprintf(stderr, "%s drop-site overlap layout: a row in the middle of a column\n", nested ? "PASS" : "FAIL");
+  failures += !nested;
+  Rng2F32 area = r2f32p(0, 0, 900, 600);
+  for(CFG_PanelNode *leaf = tree.root; nested && leaf != &cfg_nil_panel_node; leaf = cfg_panel_node_rec__depth_first_pre(tree.root, leaf).next)
+  {
+    if(leaf->first != &cfg_nil_panel_node) { continue; }
+    UI_State *test_ui = ui_state_alloc(), *saved_ui = ui_state;
+    ui_select_state(test_ui);
+    UI_Box **sites = 0; U64 count = 0;
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = tabs[0]->parent->id, .view = tabs[0]->id)
+    {
+      rd_drag_begin(UIShell_ContextRegSlot_View);
+      UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = center_2f32(cfg_target_rect_from_panel_node(area, tree.root, leaf));
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+      { rd_panel_area_ui(scratch, area, area, ws, &mount, 1, 0, 0, 0, 0); }
+      ui_end_build();
+      uishell_panel_drop_sites(arena, test_ui->root, &tree, &sites, &count);
+      rd_drag_kill();
+    }
+    U32 overlaps = 0;
+    for(U64 i = 0; i < count; i++) for(U64 j = i+1; j < count; j++)
+    {
+      Rng2F32 both = intersect_2f32(sites[i]->rect, sites[j]->rect);
+      if(both.x1 - both.x0 > 0.5f && both.y1 - both.y0 > 0.5f) { overlaps += 1; }
+    }
+    B32 ok = count >= 8 && overlaps == 0;
+    fprintf(stderr, "%s drop sites don't overlap over panel %p (%llu sites, %u overlaps)\n", ok ? "PASS" : "FAIL", leaf->cfg, (unsigned long long)count, overlaps);
+    failures += !ok;
+    ui_select_state(saved_ui);
+    ui_state_release(test_ui);
+  }
+  cfg_node_release(rd_state->cfg, owner);
+  scratch_end(scratch);
+  return failures;
+}
+
 // Exercises production drop-site generation with an isolated workspace and UI state.
 internal B32
 uishell_panel_diagnostics(RD_WindowState *ws)
@@ -163,6 +245,7 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   ui_state_release(test_ui);
   cfg_node_release(rd_state->cfg, owner);
   scratch_end(scratch);
+  failures += uishell_panel_drop_site_overlap_diagnostics(ws);
   failures += !uishell_sidebar_docking_diagnostics(ws);
   failures += !uishell_border_diagnostics(ws);
   fprintf(stderr, "Panel diagnostics: %u failures\n", failures);

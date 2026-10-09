@@ -121,14 +121,15 @@ Dragging a chip drags the chip's own subject (an issue or PR), not the row it si
 
 ### Drop-target visuals
 
-- **Panel, tab and split drops keep RAD's visuals:** boundary drop-site pills, and an animated rect that grows into the area the new panel will occupy. They are judged and restyled natively, not recreated in a mock-up.
-- **Sidebar drops preview their outcome,** following RAD's idea: a faded copy of the item at the place it will land, labelled with what will happen ("Reorder", "Ghost → Pinned", "Move → andamento", "New section", "Float"). A move dims the original; a ghost leaves it untouched. Sidebar sites share RAD's `drop_site` colour and animation rate, so both read as one system.
-- **Sections that hold content have three zones,** decided by the pointer's position (agreed 2026-10-07, answering #211's centre-drop question):
-  - *into the body* adds to the section's group, with an insertion preview;
-  - *onto the header or tab strip* adds as a tab, with a tab-shaped preview in the strip;
-  - *at an edge* splits, using RAD's pills and growing rect.
+Settled with the operator on 2026-10-09 (#257, #262), using `drop-targets-prototype.html`. The edge targets and the look are built; the tab parts wait for the sidebar tab redesign, which may change what a section header and a tab strip are.
 
-  Sections that accept content have no centre pill. Content panels in the workspace keep RAD's centre pill, where "add as tab" is the only meaning a centre drop has.
+- **Targets sit at the edges they act on.** A panel's middle belongs to its View, so a drop there means whatever that View says: an insertion line in a sidebar group, or later a placed item in an overview or dashboard. *With the tab redesign:* no panel has a centre target, and a body that claims nothing takes nothing. Until then the centre pill and a drop anywhere in a panel still add a tab, standing aside when the View claims the drop.
+- **Boundaries nest.** Every boundary docking site is a thin bar along its line. Where several sites share a line (the window's edge, the sidebar's edge and a sidebar row's end, say), the outermost, the split covering the most, straddles the line. Each deeper one stacks inward on its own side, a little shorter. At the window's edge the outermost sits just inside. Nothing overlaps, and the order reads outside in.
+- **A panel's own splits stack innermost.** Over a panel, a split pill shows on each edge its parent doesn't already split along (RAD's rule), just inside that edge's bars. The pill shows two boxes, the new half filled. Bars and pills don't move while the drag is over their panel.
+- **Tabs drop on a tab strip** (with the tab redesign). Over a tab strip, the gap under the pointer takes the drop, with a tab-shaped slot there; the strip may be at the top or bottom. A panel showing one View without a strip (a sidebar section's header) shows a ghost strip while the drag is over it, holding that View as its one tab, so the drop can go first or second. This gives a one-group section's title drag its "join as a tab" target beside "merge into its group" (#262). Pills on the strip's edge start past it, never over it.
+- **One look.** Every target, sidebar insertion lines and the tab strip's slot included, uses the selection accent: bars and pills faintly at rest and solid when hot. The rect growing into the area a drop will fill takes the same accent.
+- **Sidebar drops preview their outcome,** following RAD's idea: a faded copy of the item at the place it will land, labelled with what will happen ("Reorder", "Ghost → Pinned", "Move → andamento", "New section", "Float"). A move dims the original; a ghost leaves it untouched.
+- **Later:** tinting each region's targets differently at rest, perhaps by depth, so stacks read at a glance.
 
 ## Reorder
 
@@ -261,7 +262,7 @@ Card features and profiles (`card-features-prototype.html`) can reuse RAD's per-
 
 ## Open
 
-- **Drag-target visuals.** The sidebar previews are prototyped in `sidebar-header-controls-prototype.html`. The three section zones, tabs, splits and floating are RAD docking and are designed in the native code; an HTML prototype would either rebuild RAD's drop system or mislead.
+- **Drag-target visuals.** Docking targets are settled (above, from `drop-targets-prototype.html`). The sidebar previews are prototyped in `sidebar-header-controls-prototype.html`.
 - **Interactive View ghosts** and the "upgrade" to a fresh instance.
 - **Dragging between windows.** Ephemeral OS windows, with floating things promoted to real OS windows when dragged out. The likely first use is an overview on a second monitor.
 - **Automatic naming and layout through a delegate.**
