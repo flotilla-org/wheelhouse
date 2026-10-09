@@ -1078,6 +1078,8 @@ internal B32 rd_view_name_is_listed_in_app(String8 name);
 internal B32 rd_drag_is_active(void);
 internal UI_Key rd_panel_catchall_drop_site_key(CFG_Node *panel);
 internal void rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
+// Title-bar chrome buttons: borderless, hovering as a rounded inset.
+#define RD_TitleBarButtonStyle UI_TagF("implicit") UI_CornerRadius(ui_top_font_size()*1.f) UI_VisualMargin(ui_top_font_size()*0.5f)
 internal Vec4F32 rd_accent_color(void);
 internal Vec4F32 rd_drop_accent(F32 alpha);
 internal B32 uishell_dispatch_tab_command(String8 name);

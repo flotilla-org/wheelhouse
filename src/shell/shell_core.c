@@ -4741,7 +4741,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                     // The gear and close buttons hover as circles, inset from the
                     // tab's edges, as upstream's do.
                     F32 tab_button_margin_x = ceil_f32(ui_top_font_size()*0.5f);
-                    F32 tab_button_inner = tab_close_width_px - 2*tab_button_margin_x;
+                    F32 tab_button_inner = Max(0.f, tab_close_width_px - 2*tab_button_margin_x);
                     F32 tab_button_margin_y = Max(0.f, floor_f32((chrome_plan->tab_bar_vheight - tab_button_inner)*0.5f));
                     F32 tab_button_radius = tab_button_inner*0.5f;
                     if(chrome_plan->presentation == RD_DockPresentation_Tabs && tab_is_selected && panel_tree.focused == panel)
@@ -6861,7 +6861,7 @@ rd_window_frame(void)
 
             //- rjf: leading buttons ("a") niche — elements resolved here (ADR-0006)
             if(ws->chrome_niche[RD_ChromeElementKind_SidebarCollapse] == RD_ChromeNiche_TitleBarLeading)
-              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill UI_TagF("implicit") UI_CornerRadius(ui_top_font_size()*1.f) UI_VisualMargin(ui_top_font_size()*0.5f)
+              UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle
             {
               UI_Signal sig = rd_chrome_build_sidebar_collapse(root_controlled_split.owner_cfg);
               wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
@@ -6989,14 +6989,14 @@ rd_window_frame(void)
           //- rjf: trailing buttons ("b") niche — elements resolved here (ADR-0006)
 
           if(ws->chrome_niche[RD_ChromeElementKind_RevealWorkspace] == RD_ChromeNiche_TitleBarTrailing)
-            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill UI_TagF("implicit") UI_CornerRadius(ui_top_font_size()*1.f) UI_VisualMargin(ui_top_font_size()*0.5f)
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle
           {
             UI_Signal sig = rd_chrome_build_reveal_workspace(window);
             wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
           }
 
           if(ws->chrome_niche[RD_ChromeElementKind_OverviewToggle] == RD_ChromeNiche_TitleBarTrailing)
-            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill UI_TagF("implicit") UI_CornerRadius(ui_top_font_size()*1.f) UI_VisualMargin(ui_top_font_size()*0.5f)
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle
           {
             UI_Signal sig = rd_chrome_build_overview_toggle(ws);
             wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
@@ -7044,16 +7044,18 @@ rd_window_frame(void)
           
           // rjf: loaded project viz
           if(do_user_prof)
-            UI_VisualMargin(ui_top_font_size()*0.5f)
-            UI_CornerRadius(ui_top_font_size()*0.5f)
           {
             ui_set_next_pref_width(ui_children_sum(1));
             ui_set_next_child_layout_axis(Axis2_X);
-            UI_Box *prof_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
-                                                         UI_BoxFlag_DrawBackground|
-                                                         UI_BoxFlag_DrawHotEffects|
-                                                         UI_BoxFlag_DrawActiveEffects,
-                                                         "###loaded_project_button");
+            UI_Box *prof_box = &ui_nil_box;
+            UI_VisualMargin(ui_top_font_size()*0.5f) UI_CornerRadius(ui_top_font_size()*0.5f)
+            {
+              prof_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                                   UI_BoxFlag_DrawBackground|
+                                                   UI_BoxFlag_DrawHotEffects|
+                                                   UI_BoxFlag_DrawActiveEffects,
+                                                   "###loaded_project_button");
+            }
             wm_window_push_custom_title_bar_client_area(ws->os, prof_box->rect);
             UI_Parent(prof_box) UI_PrefWidth(ui_text_dim(10, 0)) UI_TextAlignment(UI_TextAlign_Center) UI_Padding(ui_em(0.5f, 1.f))
             {
@@ -7109,7 +7111,7 @@ rd_window_frame(void)
                 rd_app_menu_spec_content(spec);
               }
             }
-            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill UI_TagF("implicit") UI_CornerRadius(ui_top_font_size()*1.f) UI_VisualMargin(ui_top_font_size()*0.5f)
+            UI_PrefWidth(ui_em(2.25f, 1.f)) UI_HeightFill RD_TitleBarButtonStyle
             {
               ui_set_next_child_layout_axis(Axis2_Y);
               UI_Box *kebab_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
