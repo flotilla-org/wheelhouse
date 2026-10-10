@@ -73,7 +73,8 @@ state_pump(void)
 
 // What a frame does for the sidebar between commands: the workspace path
 // observes the window's workspaces, and the sidebar's layout reconciles
-// its docked sections against the snapshot.
+// its docked sections against the snapshot. Then, as a frame does before
+// Views build, the states of Views that left a live place are released.
 internal void
 state_frame(RD_WindowState *ws)
 {
@@ -85,6 +86,7 @@ state_frame(RD_WindowState *ws)
   uishell_sidebar_dock_layout(&split);
   scratch_end(scratch);
   rd_dock_restore_layouts();
+  rd_view_states_release_unowned();
 }
 
 // Set: a window's first frame draws its sidebar before anything else
@@ -455,6 +457,87 @@ state_sidebar_text(Arena *arena)
   U64 start = str8_find_needle(text, 0, str8_lit("\n  sidebar arrangement\n"), 0);
   U64 end = str8_find_needle(text, start, str8_lit("\npresentation\n"), 0);
   return str8_substr(text, r1u64(start, end));
+}
+
+// A terminal View's first build (WH_VIEW_UI_FUNCTION_DEF(terminal)),
+// headless: a terminal whose Target Resolution names a session re-attaches
+// to it, which needs a Cleat daemon, so the attach is recorded instead; any
+// other launches in an in-process Cleat session. Released runtimes are
+// counted.
+global U32 state_runtimes_released;
+global U8 state_attached_buffer[64];
+global String8 state_attached;
+
+internal void
+state_terminal_release(void *data)
+{
+  state_runtimes_released++;
+  uishell_terminal_runtime_release(data);
+}
+
+internal UIShell_TerminalViewState *
+state_terminal(CFG_Node *view)
+{
+  Temp scratch = scratch_begin(0, 0);
+  WH_Renderer *renderer = wh_renderer_from_name(view->string);
+  RD_ViewState *vs = rd_view_state_from_cfg(view);
+  UIShell_TerminalViewState *tv = rd_view_user_data(vs, renderer->state_size);
+  if(!tv->initialized)
+  {
+    WH_ViewContext ctx = wh_view_context_from_cfg(scratch.arena, view, renderer, tv, r2f32p(0, 0, 640, 384));
+    tv->initialized = 1;
+    vs->release_user_data = state_terminal_release;
+    if(ctx.resolution.session.size != 0)
+    {
+      tv->daemon_backend = 1;
+      state_attached = str8(state_attached_buffer, Min(ctx.resolution.session.size, sizeof(state_attached_buffer)));
+      MemoryCopy(state_attached_buffer, ctx.resolution.session.str, state_attached.size);
+    }
+    else
+    {
+      cleat_provider_desc pd = {.abi_version = CLEAT_PROVIDER_ABI_VERSION, .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS};
+      tv->provider = cleat_provider_open(&pd);
+      String8 command = str8_lit("/bin/sh -c 'sleep 60'");
+      cleat_session_desc sd = {.cols = 80, .rows = 24, .cell_width_px = 8, .cell_height_px = 16,
+        .vt_engine = CLEAT_PROVIDER_VT_PASSTHROUGH, .command = command.str, .command_len = command.size};
+      tv->session = tv->provider ? cleat_session_create(tv->provider, &sd) : 0;
+    }
+  }
+  scratch_end(scratch);
+  return tv;
+}
+
+// Whether a launched terminal's session is running in-process.
+internal B32
+state_terminal_running(UIShell_TerminalViewState *tv)
+{
+  cleat_str hosting = {0};
+  return tv->session != 0 && cleat_session_hosting(tv->session, &hosting) &&
+    str8_match(str8((U8 *)hosting.ptr, hosting.len), str8_lit("in_process"), 0);
+}
+
+internal B32
+state_has_view_state(CFG_ID view)
+{
+  for(U64 slot = 0; slot < rd_state->view_state_slots_count; slot++)
+  {
+    for(RD_ViewState *vs = rd_state->view_state_slots[slot].first; vs; vs = vs->hash_next)
+    { if(vs->cfg_id == view) { return 1; } }
+  }
+  return 0;
+}
+
+// Opens vessel `v`'s workspace from its row, kept or not.
+internal CFG_Node *
+state_open_v(RD_WindowState *ws)
+{
+  AndamentoNode node = {0};
+  StateCheck(state_find(ws->sidebar, str8_lit("vessel"), str8_lit("v"), &node) && node.openable);
+  state_click(ws, node.activate);
+  CFG_Node *workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
+  StateCheck(str8_match(workspace->string, str8_lit("workspace"), 0) &&
+             str8_match(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string, str8_lit("v"), 0));
+  return workspace;
 }
 
 internal void
@@ -1164,6 +1247,102 @@ entry_point(CmdLine *cmdline)
                      state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
     state_write(dir, "subscriptions_restarted.txt");
     uishell_subscriptions_close();
+  }
+
+  //- A View's state lives as long as its Slot does in a materialized
+  // workspace, whether or not it is drawn: a terminal in a tab that isn't
+  // selected, one filtered out by project, one in a Floating Panel, all in
+  // a workspace that isn't visible, keep their runtimes however many frames
+  // pass. Keeping the workspace releases them; reopening it starts them
+  // again, the one with a session re-attaching to it.
+  {
+    window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *workspace = state_open_v(ws);
+    CFG_PanelTree tree = state_panels(scratch.arena, workspace);
+    CFG_PanelNode *leaf = tree.root;
+    while(leaf->first != &cfg_nil_panel_node) { leaf = leaf->first; }
+    CFG_Node *panel = leaf->cfg;
+    char *commands[] = {"make watch", "tail -f build.log", "htop"};
+    CFG_Node *terminals[4] = {0};
+    for(U64 i = 0; i < ArrayCount(commands); i++)
+    {
+      uishell_cmd("build_tab", .window = window->id, .panel = panel->id, .string = str8_lit("terminal"), .expr = str8_cstring(commands[i]));
+      state_frame(ws);
+      tree = state_panels(scratch.arena, workspace);
+      terminals[i] = cfg_panel_node_from_tree_cfg(tree.root, panel)->tabs.last->v;
+      StateCheck(str8_match(terminals[i]->string, str8_lit("terminal"), 0));
+    }
+    // A terminal saves its daemon session's ID when it starts one, and a
+    // tab's project comes from the file it was saved in; no command sets
+    // either.
+    CFG_Node *attached = terminals[0], *filtered = terminals[1];
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, attached, str8_lit("session")), str8_lit("s-kept"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, filtered, str8_lit("project")), str8_lit("/elsewhere"));
+    StateCheck(rd_cfg_is_project_filtered(filtered));
+    tree = state_panels(scratch.arena, workspace);
+    StateCheck(cfg_panel_node_from_tree_cfg(tree.root, panel)->selected_tab == terminals[2]);
+    // No command puts a terminal in a Floating Panel; a detached card is
+    // the only thing that makes one.
+    CFG_Node *floating_panel = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("floating_panels")), str8_lit("1"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, floating_panel, str8_lit("text")), str8_lit("selected"));
+    terminals[3] = cfg_node_new(rd_state->cfg, floating_panel, str8_lit("terminal"));
+    state_frame(ws);
+
+    // Each builds once while it is the selected tab; then another
+    // workspace becomes visible.
+    state_attached = str8_zero();
+    UIShell_TerminalViewState *tvs[4] = {0};
+    for(U64 i = 0; i < ArrayCount(terminals); i++) { tvs[i] = state_terminal(terminals[i]); }
+    StateCheck(str8_match(state_attached, str8_lit("s-kept"), 0) && tvs[0]->session == 0);
+    for(U64 i = 1; i < ArrayCount(tvs); i++) { StateCheck(state_terminal_running(tvs[i])); }
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    CFG_ID other = split.inventory.first->id != workspace->id ? split.inventory.first->id : split.inventory.last->id;
+    StateCheck(other != workspace->id);
+    uishell_cmd("select_workspace", .window = window->id, .cfg = other);
+    U32 released = state_runtimes_released;
+    for(U32 frame = 0; frame < 30; frame++)
+    {
+      rd_state->frame_index += 1;
+      state_frame(ws);
+    }
+    StateCheck(ws->root_controlled_split_selected_workspace_id == other);
+    StateCheck(state_runtimes_released == released);
+    for(U64 i = 0; i < ArrayCount(terminals); i++) { StateCheck(rd_view_state_from_cfg(terminals[i])->user_data == tvs[i]); }
+    for(U64 i = 1; i < ArrayCount(tvs); i++) { StateCheck(state_terminal_running(tvs[i])); }
+
+    // Closing it and keeping it releases all four runtimes.
+    uishell_cmd("detach_workspace", .window = window->id, .cfg = workspace->id);
+    state_frame(ws);
+    StateCheck(str8_match(workspace->string, str8_lit("detached_workspace"), 0));
+    StateCheck(state_runtimes_released == released+4);
+    for(U64 i = 0; i < ArrayCount(terminals); i++) { StateCheck(!state_has_view_state(terminals[i]->id)); }
+    for(U32 frame = 0; frame < 3; frame++)
+    {
+      rd_state->frame_index += 1;
+      state_frame(ws);
+    }
+    StateCheck(state_runtimes_released == released+4);
+
+    // Reopening it starts them again: the same Views, the one with a
+    // session re-attached to it, the others launched afresh.
+    StateCheck(state_open_v(ws) == workspace);
+    state_attached = str8_zero();
+    for(U64 i = 0; i < ArrayCount(terminals); i++)
+    {
+      StateCheck(cfg_node_from_id(terminals[i]->id) == terminals[i] && !state_has_view_state(terminals[i]->id));
+      tvs[i] = state_terminal(terminals[i]);
+    }
+    StateCheck(str8_match(state_attached, str8_lit("s-kept"), 0) && tvs[0]->session == 0);
+    for(U64 i = 1; i < ArrayCount(tvs); i++) { StateCheck(state_terminal_running(tvs[i])); }
+
+    // Closing a tab releases its runtime; closing the workspace, the rest.
+    uishell_cmd("close_tab", .window = window->id, .panel = panel->id, .tab = filtered->id);
+    state_frame(ws);
+    StateCheck(state_runtimes_released == released+5 && !state_has_view_state(filtered->id));
+    StateCheck(state_terminal_running(tvs[2]) && state_terminal_running(tvs[3]));
+    uishell_cmd("close_workspace", .window = window->id, .cfg = workspace->id);
+    state_frame(ws);
+    StateCheck(state_runtimes_released == released+8);
   }
 
   scratch_end(scratch);
