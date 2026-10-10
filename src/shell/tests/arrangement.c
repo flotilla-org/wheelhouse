@@ -260,7 +260,7 @@ entry_point(CmdLine *cmdline)
     Check(a->parent == right_node && a->prev == jackstay && child(a, "selected") != &cfg_nil_node);
     Check(str8_match(child(a, "label")->first->string, str8_lit("A"), 0));
     // First place, and a reorder within a panel.
-    Check(rd_arrangement_move_tab(arrangement, a->id, right, 0) && rd_arrangement_select(arrangement, jackstay->id));
+    Check(rd_arrangement_move_tab(arrangement, a->id, right, 0) && rd_arrangement_select(arrangement, right, jackstay->id));
     check_saved(arena, arrangement, workspace);
     Check(right_node->first == a && a->next == jackstay);
     // A View from the sidebar's arrangement leaves it when this one saves.
@@ -275,6 +275,69 @@ entry_point(CmdLine *cmdline)
     Check(rd_arrangement_panel_from_id(arrangement, left)->tab_count == 2 && rd_arrangement_panel_from_id(copy, left) == &rd_nil_arrangement_panel);
     check_saved(arena, copy, workspace);
     Check(cfg_node_from_id(terminal_id) == &cfg_nil_node && a->parent == child(workspace, "panels"));
+    cfg_node_release(cfg, window);
+  }
+
+  // Tab commands: a new View node is placed where its tab goes, a removed
+  // tab's View is released on save, and only the Selected View keeps a mark.
+  {
+    CFG_Node *window = fixture(arena, "window:{split_x panels:{0.5:{text:{selected label:{`A`}} terminal tabs_on_bottom} 0.5:{jackstay}}}");
+    CFG_Node *panels = child(window, "panels"), *left_node = panels->first;
+    CFG_Node *a = left_node->first, *terminal = a->next;
+    RD_Arrangement *arrangement = rd_arrangement_from_cfg(arena, panels);
+    RD_PanelID left = arrangement->root->first->id, right = arrangement->root->last->id;
+    // A duplicate brings its source's mark; the copy is selected, the source not.
+    CFG_Node *copy = cfg_node_deep_copy(cfg, a);
+    Check(copy->parent == &cfg_nil_node && child(copy, "selected") != &cfg_nil_node);
+    Check(rd_arrangement_move_tab(arrangement, copy->id, left, a->id));
+    check_saved(arena, arrangement, window);
+    Check(copy->parent == left_node && a->next == copy && copy->next == terminal);
+    Check(child(a, "selected") == &cfg_nil_node && child(copy, "selected") != &cfg_nil_node);
+    Check(str8_match(child(copy, "label")->first->string, str8_lit("A"), 0));
+    // A new View goes after the last tab, before the panel's options.
+    CFG_Node *built = cfg_node_new(cfg, &cfg_nil_node, str8_lit("text"));
+    Check(rd_arrangement_move_tab(arrangement, built->id, left, terminal->id));
+    check_saved(arena, arrangement, window);
+    Check(terminal->next == built && child(left_node, "tabs_on_bottom")->prev == built);
+    // Selecting is within a panel; 0 selects none, and an unchanged
+    // selection writes nothing.
+    Check(!rd_arrangement_select(arrangement, right, a->id) && !rd_arrangement_select(arrangement, 99, 0));
+    Check(rd_arrangement_select(arrangement, left, a->id));
+    check_saved(arena, arrangement, window);
+    Check(child(a, "selected") != &cfg_nil_node && child(built, "selected") == &cfg_nil_node);
+    U64 gen = cfg_change_gen();
+    Check(rd_arrangement_select(arrangement, left, a->id));
+    rd_arrangement_save(cfg, arrangement);
+    Check(cfg_change_gen() == gen);
+    Check(rd_arrangement_select(arrangement, left, 0));
+    check_saved(arena, arrangement, window);
+    Check(child(a, "selected") == &cfg_nil_node);
+    // Removing a tab releases its View on save, not before; a copy made
+    // meanwhile releases it too. A tab taken back keeps its View.
+    CFG_ID terminal_id = terminal->id, built_id = built->id;
+    Check(rd_arrangement_select(arrangement, left, terminal_id));
+    Check(rd_arrangement_remove_tab(arrangement, terminal_id) && !rd_arrangement_remove_tab(arrangement, terminal_id));
+    Check(rd_arrangement_panel_from_id(arrangement, left)->selected == 0 && rd_arrangement_panel_from_id(arrangement, left)->tab_count == 3);
+    Check(cfg_node_from_id(terminal_id) == terminal);
+    Check(rd_arrangement_remove_tab(arrangement, built_id) && rd_arrangement_move_tab(arrangement, built_id, right, 0));
+    RD_Arrangement *preview = rd_arrangement_copy(arena, arrangement);
+    check_saved(arena, arrangement, window);
+    Check(cfg_node_from_id(terminal_id) == &cfg_nil_node && built->parent->id == rd_arrangement_panel_from_id(arrangement, right)->cfg);
+    Check(arrangement->first_removed == 0 && preview->first_removed != 0);
+    // Reordering moves a panel and its weight among its siblings.
+    rd_arrangement_split(arrangement, right, Dir2_Right);
+    RD_ArrangementPanel *first = arrangement->root->first, *last = arrangement->root->last;
+    first->weight = 0.2f; first->next->weight = 0.3f; last->weight = 0.5f;
+    Check(rd_arrangement_reorder(arrangement, first->id, last->id));
+    Check(arrangement->root->first->id == right && arrangement->root->last->id == left && arrangement->root->last->weight == 0.2f);
+    check_saved(arena, arrangement, window);
+    Check(rd_arrangement_next_child_cfg(left_node->next, RD_ArrangementChild_Panel) == &cfg_nil_node);
+    Check(str8_match(left_node->string, str8_lit("0.200000"), 0));
+    Check(rd_arrangement_reorder(arrangement, left, 0) && arrangement->root->first->id == left);
+    Check(!rd_arrangement_reorder(arrangement, left, left) && !rd_arrangement_reorder(arrangement, arrangement->root->id, 0));
+    rd_arrangement_split(arrangement, left, Dir2_Down);
+    Check(!rd_arrangement_reorder(arrangement, left, right));
+    check_saved(arena, arrangement, window);
     cfg_node_release(cfg, window);
   }
 
@@ -334,7 +397,7 @@ entry_point(CmdLine *cmdline)
     {
       Temp temp = temp_begin(arena);
       RD_Arrangement *arrangement = rd_arrangement_from_cfg(arena, child(window, "panels"));
-      U64 op = next_random(&state) % 4;
+      U64 op = next_random(&state) % 5;
       RD_ArrangementPanel *panel = random_panel(arrangement, &state, 1);
       if(op == 0 || op == 1) { rd_arrangement_split(arrangement, panel->id, (Dir2)(next_random(&state) % 4)); }
       if(op == 2 && arrangement->root->first != &rd_nil_arrangement_panel) { rd_arrangement_close(arrangement, panel->id); }
@@ -342,6 +405,11 @@ entry_point(CmdLine *cmdline)
       {
         RD_ArrangementPanel *source = random_panel(arrangement, &state, 1);
         if(source->first_tab) { rd_arrangement_move_tab(arrangement, source->first_tab->view, panel->id, panel->last_tab ? panel->last_tab->view : 0); }
+      }
+      if(op == 4)
+      {
+        if(panel->first_tab && next_random(&state) % 2) { rd_arrangement_remove_tab(arrangement, panel->first_tab->view); }
+        else { rd_arrangement_reorder(arrangement, panel->id, panel->parent->last->id); }
       }
       if(op == 1 && panel->next != &rd_nil_arrangement_panel)
       { rd_arrangement_resize(arrangement, panel->id, (F32)(next_random(&state) % 100)/100.f - .5f, .05f); }

@@ -66,6 +66,8 @@ struct RD_Arrangement
   String8 root_name;
   String8 axis_key;
   CFG_ID saved_root;
+  // Tabs removed since the last save, whose View nodes saving releases.
+  RD_ArrangementTab *first_removed;
 };
 
 read_only global RD_ArrangementPanel rd_nil_arrangement_panel =
@@ -93,7 +95,7 @@ internal RD_Arrangement *rd_arrangement_from_cfg(Arena *arena, CFG_Node *panels_
 internal RD_Arrangement *rd_arrangement_copy(Arena *arena, RD_Arrangement *src);
 // Edits the loaded config nodes in place: panel and View nodes keep their
 // identity and their other children, unchanged values are not rewritten, and
-// only a closed panel's Views are released.
+// only removed tabs' and closed panels' Views are released.
 internal void rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement);
 
 //- The renderer's panel tree
@@ -125,10 +127,18 @@ internal RD_PanelID rd_arrangement_split(RD_Arrangement *arrangement, RD_PanelID
 internal RD_PanelID rd_arrangement_close(RD_Arrangement *arrangement, RD_PanelID panel);
 // Moves `view` into `destination` after `prev_view` (0 or not there: first)
 // and selects it there. The View may come from another arrangement: saving
-// moves its node, and that arrangement no longer has it when next loaded. A
-// panel it leaves while selected has no Selected View until one is selected.
+// moves its node, and that arrangement no longer has it when next loaded. It
+// may also be a new View node in no panel, which saving places. A panel it
+// leaves while selected has no Selected View until one is selected.
 internal B32 rd_arrangement_move_tab(RD_Arrangement *arrangement, CFG_ID view, RD_PanelID destination, CFG_ID prev_view);
-internal B32 rd_arrangement_select(RD_Arrangement *arrangement, CFG_ID view);
+// Removes `view`'s tab; saving releases its View node. A panel it leaves
+// while selected has no Selected View until one is selected.
+internal B32 rd_arrangement_remove_tab(RD_Arrangement *arrangement, CFG_ID view);
+// Makes `view`, one of `panel`'s tabs, its Selected View; 0 selects none.
+internal B32 rd_arrangement_select(RD_Arrangement *arrangement, RD_PanelID panel, CFG_ID view);
+// Moves `panel` among its siblings to after `prev` (0: first), with its
+// weight.
+internal B32 rd_arrangement_reorder(RD_Arrangement *arrangement, RD_PanelID panel, RD_PanelID prev);
 // Moves the boundary after `panel` by `delta` of its parent, keeping both
 // sides at least `floor` where they can. Siblings whose weights drifted from
 // summing to one are rescaled first.
