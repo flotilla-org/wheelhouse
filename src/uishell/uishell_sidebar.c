@@ -656,19 +656,19 @@ uishell_sidebar_workdirs(Arena *arena, UIShell_ControlledSplit *split)
   for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
   {
     CFG_Node *workspace = w->mount.owner_cfg;
-    CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-    CFG_PanelTree tree = rd_panel_tree_from_cfg(arena, panels);
-    for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+    RD_Arrangement *arrangement = rd_arrangement_from_owner(arena, workspace, str8_lit("panels"));
+    for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p))
     {
-      for(CFG_NodePtrNode *tab = p->tabs.first; tab; tab = tab->next)
+      for(RD_ArrangementTab *tab = p->first_tab; tab; tab = tab->next)
       {
-        if(!str8_match(tab->v->string, str8_lit("terminal"), 0)) { continue; }
-        CFG_Node *cwd_node = cfg_node_child_from_string(tab->v, str8_lit("cwd"));
+        CFG_Node *view = cfg_node_from_id(tab->view);
+        if(!str8_match(view->string, str8_lit("terminal"), 0)) { continue; }
+        CFG_Node *cwd_node = cfg_node_child_from_string(view, str8_lit("cwd"));
         if(cwd_node == &cfg_nil_node || cwd_node->first == &cfg_nil_node) { continue; }
         String8 cwd = cwd_node->first->string;
         if(!cwd.size) { continue; }
         UIShell_Workdir *dir = push_array(arena, UIShell_Workdir, 1);
-        dir->value = (WheelhouseWorkdir){w->id, tab->v->id,
+        dir->value = (WheelhouseWorkdir){w->id, tab->view,
           uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string),
           uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string),
           uishell_ingress_text(cwd), {0}};
@@ -1480,16 +1480,17 @@ uishell_sidebar_init(RD_WindowState *ws)
 internal CFG_Node *
 uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *resources, U64 count, String8 cwd)
 {
-  CFG_Node *primary_tab = &cfg_nil_node;
-  CFG_Node *panels = cfg_node_new(rd_state->cfg, workspace, str8_lit("panels"));
-  CFG_Node *primary = panels, *overflow = panels;
+  // The primary resource alone, or beside a narrower panel of the others,
+  // whose first is selected.
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *primary_tab = &cfg_nil_node, *overflow_tab = &cfg_nil_node;
+  RD_Arrangement *arrangement = rd_arrangement_from_owner(scratch.arena, workspace, str8_lit("panels"));
+  RD_PanelID primary = rd_arrangement_clear(arrangement), overflow = primary;
   if(count > 1)
   {
-    cfg_node_new(rd_state->cfg, workspace, str8_lit("split_x"));
-    primary = cfg_node_new(rd_state->cfg, panels, str8_lit("0.6"));
-    overflow = cfg_node_new(rd_state->cfg, panels, str8_lit("0.4"));
+    overflow = rd_arrangement_split(arrangement, primary, Dir2_Right);
+    rd_arrangement_resize(arrangement, primary, 0.1f, 0);
   }
-  cfg_node_new(rd_state->cfg, primary, str8_lit("selected"));
   for(U64 i = 0; i < count; i++)
   {
     const UIShell_SidebarResource *resource = &resources[i];
@@ -1497,8 +1498,9 @@ uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *res
 #if OS_WINDOWS
     command = resource->windows_command;
 #endif
-    CFG_Node *tab = rd_cfg_new_view_tab(i == 0 ? primary : overflow, str8_lit("terminal"), str8_cstring(command), i <= 1);
+    CFG_Node *tab = rd_new_view_tab(arrangement, i == 0 ? primary : overflow, str8_lit("terminal"), str8_cstring(command));
     if(i == 0) { primary_tab = tab; }
+    if(i == 1) { overflow_tab = tab; }
     CFG_Node *id = cfg_node_new(rd_state->cfg, tab, str8_lit("resource_id"));
     cfg_node_new(rd_state->cfg, id, str8_cstring(resource->id));
     CFG_Node *label = cfg_node_new(rd_state->cfg, tab, str8_lit("label"));
@@ -1509,6 +1511,11 @@ uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *res
       cfg_node_new(rd_state->cfg, dir, cwd);
     }
   }
+  if(overflow_tab != &cfg_nil_node) { rd_arrangement_select(arrangement, overflow, overflow_tab->id); }
+  rd_arrangement_save(rd_state->cfg, arrangement);
+  // The primary panel has focus (Presentation State, on its node).
+  cfg_node_new(rd_state->cfg, cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, primary)->cfg), str8_lit("selected"));
+  scratch_end(scratch);
   return primary_tab;
 }
 

@@ -377,17 +377,18 @@ uishell_app_file_menu_specs(void)
 internal void
 uishell_default_workspace_panels(CFG_Node *window, CFG_Node *panels_owner)
 {
-  CFG_Node *old_panels = cfg_node_child_from_string(panels_owner, str8_lit("panels"));
-  cfg_node_release(rd_state->cfg, old_panels);
-  cfg_node_child_from_string_or_alloc(rd_state->cfg, panels_owner, str8_lit("split_x"));
-  
-  CFG_Node *panels = cfg_node_new(rd_state->cfg, panels_owner, str8_lit("panels"));
-  CFG_Node *main_panel = cfg_node_new(rd_state->cfg, panels, str8_lit("0.72"));
-  CFG_Node *side_panel = cfg_node_new(rd_state->cfg, panels, str8_lit("0.28"));
-  
-  rd_cfg_new_view_tab(main_panel, str8_lit("text"), str8_zero(), 1);
-  rd_cfg_new_view_tab(side_panel, str8_lit("text"), str8_lit("query:output"), 1);
-  cfg_node_new(rd_state->cfg, main_panel, str8_lit("selected"));
+  // A text panel beside a narrower output panel, replacing what was there.
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *arrangement = rd_arrangement_from_owner(scratch.arena, panels_owner, str8_lit("panels"));
+  RD_PanelID main_panel = rd_arrangement_clear(arrangement);
+  RD_PanelID side_panel = rd_arrangement_split(arrangement, main_panel, Dir2_Right);
+  rd_arrangement_resize(arrangement, main_panel, 0.22f, 0);
+  rd_new_view_tab(arrangement, main_panel, str8_lit("text"), str8_zero());
+  rd_new_view_tab(arrangement, side_panel, str8_lit("text"), str8_lit("query:output"));
+  rd_arrangement_save(rd_state->cfg, arrangement);
+  // The main panel has focus (Presentation State, on its node).
+  cfg_node_new(rd_state->cfg, cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, main_panel)->cfg), str8_lit("selected"));
+  scratch_end(scratch);
   
   RD_WindowState *ws = rd_window_state_from_cfg(window);
   if(ws != &rd_nil_window_state)

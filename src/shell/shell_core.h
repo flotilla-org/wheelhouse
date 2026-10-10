@@ -1385,6 +1385,7 @@ internal void rd_app_menu_buttons(RD_AppMenuSpec *spec);
 internal void rd_app_menu_spec_content(RD_AppMenuSpec *spec);
 internal String8 rd_app_data_folder(Arena *arena);
 internal CFG_Node *rd_cfg_new_view_tab(CFG_Node *parent, String8 view, String8 expr, B32 selected);
+internal CFG_Node *rd_new_view_tab(RD_Arrangement *arrangement, RD_PanelID panel, String8 view, String8 expr);
 
 ////////////////////////////////
 //~ rjf: Main Layer Top-Level Calls
