@@ -137,7 +137,7 @@ internal String8 rd_dock_rule_message(RD_DockRule rule);
 internal B32 rd_dock_can_create(String8 name, CFG_Node *destination);
 internal B32 rd_dock_can_close(CFG_Node *view);
 
-//- Repair: restore, and the sidebar's reconciliation
+//- Repair: restore, the sidebar's edits outside docking
 
 // The arrangements a repair edits, each loaded once and saved together.
 typedef struct RD_DockDocument RD_DockDocument;

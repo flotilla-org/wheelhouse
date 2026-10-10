@@ -633,11 +633,12 @@ struct UIShell_StorePanel
   U64 first_tab, tab_count, selected;
 };
 
-// Andamento's document as a tree whose splits alternate axes, as a panel
+// Andamento's document as trees whose splits alternate axes, as a panel
 // tree's must: a split along its parent's axis gives its children to the
-// parent, each scaled to the share it had.
-internal UIShell_StorePanel *
-uishell_store_panels(Arena *arena, AndamentoArrangement *arrangement, U64 count)
+// parent, each scaled to the share it had. Each panel by its index: a root
+// is one whose parent is NONE (the sidebar's document has several).
+internal UIShell_StorePanel **
+uishell_store_panel_array(Arena *arena, AndamentoArrangement *arrangement, U64 count)
 {
   UIShell_StorePanel **all = push_array(arena, UIShell_StorePanel *, count);
   for(U64 i = 0; i < count; i++)
@@ -681,7 +682,13 @@ uishell_store_panels(Arena *arena, AndamentoArrangement *arrangement, U64 count)
     parent->first = first;
     parent->last = last;
   }
-  return count ? all[0] : 0;
+  return all;
+}
+
+internal UIShell_StorePanel *
+uishell_store_panels(Arena *arena, AndamentoArrangement *arrangement, U64 count)
+{
+  return count ? uishell_store_panel_array(arena, arrangement, count)[0] : 0;
 }
 
 // Replaces `owner`'s panel tree with Andamento's document, keeping the View
@@ -1155,6 +1162,8 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
       }
     }
   }
+  // The sidebar's arrangement is the Dashboard's (uishell_sidebar_store.c).
+  uishell_sidebar_store_presentation(copy_state, window, copy);
   String8 result = cfg_string_from_tree(arena, rd_state->cfg_schema_table, root_path, copy);
   cfg_state_release(copy_state);
   scratch_end(scratch);

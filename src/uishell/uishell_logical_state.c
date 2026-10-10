@@ -121,12 +121,18 @@ uishell_logical_tab(Arena *arena, CFG_Node *tab, B32 selected)
 }
 
 // A sidebar View names the section it shows by title; other Views are tabs.
+// A section whose key no longer resolves is flagged (template drift), and
+// the leftover section is hidden while it stands aside.
 internal String8
 uishell_logical_view(Arena *arena, CFG_Node *view, B32 selected)
 {
   if(!str8_match(view->string, str8_lit("sidebar_section"), 0)) { return uishell_logical_tab(arena, view, selected); }
-  return push_str8f(arena, "section %S%s%s", uishell_logical_quote(arena, rd_label_from_cfg(view)),
-    selected ? " selected" : "", uishell_sidebar_section_collapsed(view) ? " collapsed" : "");
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(rd_window_from_cfg(view));
+  UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
+  B32 gone = state && uishell_sidebar_section_gone(state, uishell_sidebar_section_key(view));
+  return push_str8f(arena, "section %S%s%s%s%s", uishell_logical_quote(arena, rd_label_from_cfg(view)),
+    selected ? " selected" : "", uishell_sidebar_section_collapsed(view) ? " collapsed" : "",
+    uishell_sidebar_view_hidden(view) ? " hidden" : "", gone ? " flagged" : "");
 }
 
 // An arrangement's panels: splits with their axis, each child's weight to
@@ -384,12 +390,13 @@ uishell_logical_sidebar_arrangement(UIShell_LogicalText *t, U64 depth, CFG_Node 
       uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
     }
   }
-  CFG_Node *inventory = cfg_node_child_from_string(window, str8_lit("section_positions"));
-  for(CFG_Node *record = inventory->first; record != &cfg_nil_node; record = record->next)
+  // Andamento's notes: the sections closed on purpose.
+  for(U64 i = 0; state && i < state->sidebar_closed_count; i++)
   {
-    if(cfg_node_child_from_string(record, str8_lit("closed")) == &cfg_nil_node) { continue; }
-    uishell_logical_linef(t, depth+1, "closed %S",
-      uishell_logical_quote(t->arena, uishell_logical_section_key_title(t->arena, state, window, record->string)));
+    String8 key = state->sidebar_closed[i];
+    uishell_logical_linef(t, depth+1, "closed %S%s",
+      uishell_logical_quote(t->arena, uishell_logical_section_key_title(t->arena, state, window, key)),
+      uishell_sidebar_section_gone(state, key) ? " flagged" : "");
   }
 }
 

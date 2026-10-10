@@ -97,6 +97,8 @@ window 1
         panel weight=1.00
         panel weight=1.00
           section "Workspaces" selected
+        panel weight=1.00
+          section "Other workspaces" selected hidden
         panel weight=0.25
           section "Builds" selected
     closed "Git"
