@@ -479,6 +479,7 @@ struct UIShell_RegsNode
 typedef enum RD_FontSlot
 {
   RD_FontSlot_Main,
+  RD_FontSlot_MainSemibold,
   RD_FontSlot_Code,
   RD_FontSlot_Icons,
   RD_FontSlot_COUNT

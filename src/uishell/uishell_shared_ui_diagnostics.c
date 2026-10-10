@@ -220,6 +220,39 @@ uishell_check_raster_baselines(Arena *arena, U32 *failures)
   }
 }
 
+// Symbols the UI font lacks draw from the first fallback that has them, the
+// same glyph that fallback draws on its own; every one has a fallback.
+internal void
+uishell_check_font_fallbacks(U32 *failures)
+{
+  FNT_Tag main = fnt_tag_from_static_data_string(&rd_default_main_font_bytes);
+  String8 symbols[] = {str8_lit("↗"), str8_lit("→"), str8_lit("⌘"), str8_lit("⇧"), str8_lit("⌥"), str8_lit("⌃"), str8_lit("▾"), str8_lit("▸")};
+  for EachElement(idx, symbols)
+  {
+    U32 codepoint = utf8_decode(symbols[idx].str, symbols[idx].size).codepoint;
+    UIImportCheck(!fnt_tag_has_codepoint(main, codepoint));
+    FNT_Tag source = fnt_tag_zero();
+    for(U64 fallback_idx = 0; fallback_idx < fnt_state->fallback_count; fallback_idx += 1)
+    {
+      if(fnt_tag_has_codepoint(fnt_state->fallbacks[fallback_idx], codepoint))
+      {
+        source = fnt_state->fallbacks[fallback_idx];
+        break;
+      }
+    }
+    UIImportCheck(!fnt_tag_match(source, fnt_tag_zero()));
+    FNT_Run run = fnt_run_from_string(main, 16, 0, 0, FNT_RasterFlag_Smooth, symbols[idx]);
+    FNT_Run expected = fnt_run_from_string(source, 16, 0, 0, FNT_RasterFlag_Smooth, symbols[idx]);
+    UIImportCheck(run.pieces.count == 1 && expected.pieces.count == 1);
+    if(run.pieces.count == 1 && expected.pieces.count == 1)
+    {
+      FNT_Piece *got = &run.pieces.v[0], *want = &expected.pieces.v[0];
+      UIImportCheck(got->advance == want->advance && got->draw_dim.x == want->draw_dim.x &&
+                    got->draw_dim.y == want->draw_dim.y && got->draw_dim.x > 0);
+    }
+  }
+}
+
 internal void
 uishell_check_text_decorations(U32 *failures)
 {
@@ -282,6 +315,7 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   failures += !uishell_edit_command_diagnostics(1);
 #endif
   uishell_check_raster_baselines(scratch.arena, &failures);
+  uishell_check_font_fallbacks(&failures);
   uishell_check_text_decorations(&failures);
   fprintf(stderr, "raster baselines and text decorations: %u failures\n", failures);
   CFG_State *state = cfg_state_alloc();

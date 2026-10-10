@@ -6,10 +6,9 @@
 
 @embed_file rd_icon_font_bytes:         "../data/icons.ttf"
 
-//@embed_file rd_default_main_font_bytes: "../data/Roboto-Regular.ttf"
-@embed_file rd_default_main_font_bytes: "../data/segoeui.ttf"
+@embed_file rd_default_main_font_bytes: "../data/AtkinsonHyperlegibleNext-Regular.ttf"
+@embed_file rd_default_main_semibold_font_bytes: "../data/AtkinsonHyperlegibleNext-SemiBold.ttf"
 
-//@embed_file rd_default_main_font_bytes: "../data/seguisb.ttf"
 //@embed_file rd_default_code_font_bytes: "../data/liberation-.ttf"
 //@embed_file rd_default_code_font_bytes: "../data/Inconsolata-Regular.ttf"
 @embed_file rd_default_code_font_bytes: "../data/JetBrainsMonoNerdFont-Regular.ttf"

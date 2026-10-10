@@ -246,6 +246,10 @@ struct FNT_State
   // rjf: atlas list
   FNT_Atlas *first_atlas;
   FNT_Atlas *last_atlas;
+  
+  // A character a run's font lacks comes from the first of these that has it.
+  FNT_Tag fallbacks[8];
+  U64 fallback_count;
 };
 
 ////////////////////////////////
@@ -271,6 +275,7 @@ internal B32 fnt_tag_has_codepoint(FNT_Tag tag, U32 codepoint);
 internal FNT_Tag fnt_tag_from_path(String8 path);
 internal FNT_Tag fnt_tag_from_static_data_string(String8 *data_ptr);
 internal String8 fnt_path_from_tag(FNT_Tag tag);
+internal void fnt_set_fallbacks(FNT_Tag *tags, U64 count);
 
 ////////////////////////////////
 //~ rjf: Atlas

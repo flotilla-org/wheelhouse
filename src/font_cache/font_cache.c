@@ -219,6 +219,16 @@ fnt_tag_from_static_data_string(String8 *data_ptr)
   return result;
 }
 
+// Fallbacks apply to every font's runs; setting them drops what's rasterized
+// so far, so cached glyphs never mix the old chain with the new.
+internal void
+fnt_set_fallbacks(FNT_Tag *tags, U64 count)
+{
+  fnt_state->fallback_count = Min(count, ArrayCount(fnt_state->fallbacks));
+  MemoryCopy(fnt_state->fallbacks, tags, sizeof(FNT_Tag)*fnt_state->fallback_count);
+  fnt_reset();
+}
+
 internal String8
 fnt_path_from_tag(FNT_Tag tag)
 {
@@ -746,6 +756,26 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
           }
         }
         
+        // A character this font lacks comes from the first fallback that has
+        // it; the piece's own baseline keeps it on the run's line.
+        FP_Handle piece_font_handle = font_handle;
+        if(!single_piece && fnt_state->fallback_count != 0)
+        {
+          U32 codepoint = utf8_decode(piece_substring.str, piece_substring.size).codepoint;
+          if(!fp_font_has_codepoint(font_handle, codepoint))
+          {
+            for(U64 fallback_idx = 0; fallback_idx < fnt_state->fallback_count; fallback_idx += 1)
+            {
+              FP_Handle fallback = fnt_handle_from_tag(fnt_state->fallbacks[fallback_idx]);
+              if(fp_font_has_codepoint(fallback, codepoint))
+              {
+                piece_font_handle = fallback;
+                break;
+              }
+            }
+          }
+        }
+        
         // rjf: call into font provider to rasterize this substring
         FP_RasterResult raster = {0};
         if(size > 0)
@@ -754,7 +784,7 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
           if(flags & FNT_RasterFlag_Smooth) { fp_flags |= FP_RasterFlag_Smooth; }
           if(flags & FNT_RasterFlag_Hinted) { fp_flags |= FP_RasterFlag_Hinted; }
           if(flags & FNT_RasterFlag_TightBounds) { fp_flags |= FP_RasterFlag_TightBounds; }
-          raster = fp_raster(scratch.arena, font_handle, floor_f32(size)*raster_scale, fp_flags, piece_substring);
+          raster = fp_raster(scratch.arena, piece_font_handle, floor_f32(size)*raster_scale, fp_flags, piece_substring);
         }
         
         // rjf: allocate portion of an atlas to upload the rasterization

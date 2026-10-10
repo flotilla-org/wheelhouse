@@ -21,7 +21,7 @@ entry_point(CmdLine *cmdline)
 {
   fnt_frame();
   dr_begin_frame(fnt_tag_zero());
-  String8 fonts[] = {str8_lit("data/segoeui.ttf"),
+  String8 fonts[] = {str8_lit("data/AtkinsonHyperlegibleNext-Regular.ttf"),
                     str8_lit("data/Inconsolata-Regular.ttf"),
                     str8_lit("data/JetBrainsMono-Regular.ttf")};
   F32 sizes[] = {13, 17, 17.5f, 24};

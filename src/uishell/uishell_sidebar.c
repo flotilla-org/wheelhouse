@@ -1737,12 +1737,19 @@ uishell_sidebar_group_title_lead(F32 indent)
   return Max(0.f, ui_top_font_size()*indent-3.f-ui_top_text_padding());
 }
 
-// A group header's title stands out from its rows by size until a semibold
-// face is bundled (#265); then this becomes the weight.
+// A group header's title stands out from its rows by weight, or by size when
+// the UI font (one chosen in Settings) has no semibold of its own.
+internal FNT_Tag
+uishell_sidebar_group_title_font(void)
+{
+  return rd_font_from_slot(RD_FontSlot_MainSemibold);
+}
+
 internal F32
 uishell_sidebar_group_title_size(void)
 {
-  return floor_f32(ui_top_font_size()*1.08f);
+  B32 has_semibold = !fnt_tag_match(rd_font_from_slot(RD_FontSlot_MainSemibold), rd_font_from_slot(RD_FontSlot_Main));
+  return has_semibold ? ui_top_font_size() : floor_f32(ui_top_font_size()*1.08f);
 }
 
 // Presentation defaults are local policy, independent of role/group identity.
@@ -2902,11 +2909,11 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   {
     // A group's header (docs/design/sidebar-headers.md): no icon; the title
     // starts where its rows' icons do (r->indent is theirs), just after the
-    // accent, and is larger; a collapsed group's count follows it, then the
-    // collapse indicator, shown while the header is hovered. The row itself
-    // takes clicks.
+    // accent, and is semibold (or larger, for a Settings font); a collapsed
+    // group's count follows it, then the collapse indicator, shown while the
+    // header is hovered. The row itself takes clicks.
     ui_spacer(ui_px(uishell_sidebar_group_title_lead(r->indent), 1));
-    UI_FontSize(uishell_sidebar_group_title_size())
+    UI_Font(uishell_sidebar_group_title_font()) UI_FontSize(uishell_sidebar_group_title_size())
     {
       if(r->renaming) UI_PrefWidth(ui_em(12.f, 1))
       { r->entry_sig = uishell_sidebar_local_rename_field(state, push_str8f(arena, "###rename_%S", r->key)); }
