@@ -124,6 +124,37 @@ Other open defects and CI work remain on the
   and crew Ghostty terminfo, are closed. Deployment into an existing crew is
   separate from merged source; do not diagnose remaining styling from TERM alone.
 
+## State model migration
+
+Decided on [Map: a target state model for Wheelhouse](https://github.com/flotilla-org/wheelhouse/issues/290)
+(10 October 2026): Andamento owns logical state (the Dashboard, workspaces,
+slots and the panel tree) and saves it as named KDL records in a Dashboard
+directory; RAD's config tree keeps only Presentation State. See ADRs
+[0012](adr/0012-andamento-owns-logical-state.md) and
+[0013](adr/0013-workspace-overlay-is-an-addressed-edit-set.md) and the glossary
+in `CONTEXT.md`. The steps below land in order; each keeps the daily driver
+usable. The switch to Dashboard directories is a fresh start with no import.
+
+| Step | Wheelhouse | Andamento / Flotilla |
+| --- | --- | --- |
+| 1. Stable Workspace IDs | [#306](https://github.com/flotilla-org/wheelhouse/issues/306) | [andamento#141](https://github.com/flotilla-org/andamento/issues/141) |
+| 2. Named records and one Dashboard per process | [#307](https://github.com/flotilla-org/wheelhouse/issues/307) | [andamento#142](https://github.com/flotilla-org/andamento/issues/142) |
+| 3. Provider-stamped entities; Wheelhouse starts `pm connect` | [#308](https://github.com/flotilla-org/wheelhouse/issues/308) | [andamento#143](https://github.com/flotilla-org/andamento/issues/143) |
+| 4. Slots, View Specs and the panel tree (config mirror as a stage) | [#309](https://github.com/flotilla-org/wheelhouse/issues/309) | [andamento#144](https://github.com/flotilla-org/andamento/issues/144) |
+| 5. Renderer registry and `WH_ViewContext` | [#310](https://github.com/flotilla-org/wheelhouse/issues/310) | |
+| 6. Typed read model; remove the mirror | [#311](https://github.com/flotilla-org/wheelhouse/issues/311) | |
+| 7. Workspace Overlay semantics | | [andamento#145](https://github.com/flotilla-org/andamento/issues/145) |
+| 8. Presentation State by address, typed accessors | [#312](https://github.com/flotilla-org/wheelhouse/issues/312) | |
+| 9. Evaluator out of views and settings | [#313](https://github.com/flotilla-org/wheelhouse/issues/313) | |
+| 10. Facts stream and `andamento-subscribe` | | [flotilla#3011](https://github.com/flotilla-org/flotilla/issues/3011), [andamento#146](https://github.com/flotilla-org/andamento/issues/146) |
+
+Flotilla's provider identity is decided separately in
+[flotilla#3010](https://github.com/flotilla-org/flotilla/issues/3010). Build
+speed work that fell out of the same research is independent:
+[#302](https://github.com/flotilla-org/wheelhouse/issues/302),
+[#303](https://github.com/flotilla-org/wheelhouse/issues/303),
+[#304](https://github.com/flotilla-org/wheelhouse/issues/304).
+
 ## Later decisions
 
 | Investigation | Scope |
