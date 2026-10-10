@@ -663,6 +663,22 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); ui_end_build();
       CardCheck(!test->hover_card_focus, "closing the last card clears focus before View event consumers");
+      // Its slot opens the next card with the cap in, not sliding back from
+      // where the last card left it.
+      for(U64 frame = 0; frame < 3; frame++)
+      {
+        // Out, then closed, then reopened as a peek, sliding at half rate.
+        if(frame != 1) { uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us()); }
+        card->engaged = frame == 0;
+        rd_state->menu_animation_rate = frame == 2 ? 0.5f : 1.f;
+        UI_EventList reopen_events = {0}; ui_begin_build(ws->os, &reopen_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = frame == 0 ? center_2f32(card->rect) : v2f32(-100, -100);
+        uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); ui_end_build();
+        if(frame == 0) { CardCheck(card->cap_shown, "an engaged hover card has its cap out"); uishell_sidebar_card_close(card); }
+        if(frame == 2) { CardCheck(card->open && !card->engaged && !card->cap_drawn, "a reopened hover card starts with its cap in"); }
+      }
+      uishell_sidebar_card_close(card);
+      rd_state->menu_animation_rate = 1.f;
       // Follow the focused card's production default-navigation path.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
       uishell_sidebar_card_navigate(card, uishell_sidebar_card_entity(parent), now_time_us());

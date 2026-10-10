@@ -1039,7 +1039,9 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     if(ui_box_is_nil(dismissed) || !contains_2f32(dismissed->rect, mouse)) { card->dismissed = ui_key_zero(); }
     if(!card->source_seen && !card->open) { card->candidate = (AndamentoEntity){0}; }
     card->source_seen = 0;
-    if(!card->open) { continue; }
+    // Slots are reused: a card opening here starts with its cap in.
+    UI_Key reveal_key = ui_key_from_stringf(ui_key_zero(), "card_cap_reveal_%p", card);
+    if(!card->open) { ui_anim(reveal_key, 0, .initial = 0, .reset = 1); continue; }
     if(!window_focused && floating) { card->focused = 0; }
     // Another menu dismisses the card; its own (the Pin menu) keeps it.
     B32 other_menu = ui_any_ctx_menu_is_open() && !ui_ctx_menu_is_open(card->menu);
@@ -1091,7 +1093,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     // has moved into it, sliding it out (#269). Its edge is square where the
     // cap joins, and the card casts one shadow with it.
     B32 live = !card->moving && (floating || card->engaged);
-    F32 reveal = ui_anim(ui_key_from_stringf(ui_key_zero(), "card_cap_reveal_%p", card), (F32)live, .initial = 0,
+    F32 reveal = ui_anim(reveal_key, (F32)live, .initial = 0,
       .rate = rd_state->menu_animation_rate, .epsilon = 0.01f, .reset = card->moving);
     if(reveal > 0 && reveal < 1) { rd_request_frame(); }
     B32 cap = reveal > 0;
