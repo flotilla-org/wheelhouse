@@ -18,44 +18,96 @@ enum
 };
 
 ////////////////////////////////
-//~ rjf: View UI Hook Types
+//~ Renderers (uishell/uishell_renderers.h)
 
 #include "shell_arrangement.h"
 #include "shell_docking.h"
 #include "shell_workspace_id.h"
 
-#define RD_VIEW_UI_FUNCTION_SIG(name) void name(E_Eval eval, Rng2F32 rect)
-#define RD_VIEW_UI_FUNCTION_NAME(name) rd_view_ui__##name
-#define RD_VIEW_UI_FUNCTION_DEF(name) internal RD_VIEW_UI_FUNCTION_SIG(RD_VIEW_UI_FUNCTION_NAME(name))
-typedef RD_VIEW_UI_FUNCTION_SIG(RD_ViewUIFunctionType);
+// Where a Slot is: its workspace's ID and its slot key. Zero for a View that
+// is not a Slot: a control view, a Floating Panel's View, a query or palette.
+typedef struct WH_SlotAddress WH_SlotAddress;
+struct WH_SlotAddress
+{
+  UIShell_WorkspaceId workspace;
+  String8 key;
+};
 
-typedef struct RD_ViewUIRule RD_ViewUIRule;
-struct RD_ViewUIRule
+typedef U32 WH_SlotStatus;
+enum
+{
+  // The address names a Slot.
+  WH_SlotStatus_Slot = 1<<0,
+  // The Slot is in its provider's baseline and not detached, so it follows
+  // the provider. Andamento's detached flag reaches Views only this way for
+  // now (uishell_workspace_store.c, "follows_provider").
+  WH_SlotStatus_FollowsProvider = 1<<1,
+  // Content this Wheelhouse can't show; the Slot keeps its View Spec.
+  WH_SlotStatus_Placeholder = 1<<2,
+  // Built for an immediate tree: the palette, a query or a hover evaluation.
+  WH_SlotStatus_Floating = 1<<3,
+};
+
+// How this device last reached the Slot's content (CONTEXT.md, "Target
+// Resolution"): disposable, and never part of its View Spec. Only
+// machine-local resolutions exist so far.
+typedef struct WH_TargetResolution WH_TargetResolution;
+struct WH_TargetResolution
+{
+  String8 session;
+  String8 daemon_name;
+  String8 attach_token;
+  String8 managed_target;
+  String8 porthole_session;
+};
+
+// A View's presentation settings, read through wh_view_setting*: its own,
+// then its Renderer's schema defaults. Backed by config for now.
+typedef struct WH_ViewSettings WH_ViewSettings;
+struct WH_ViewSettings
+{
+  CFG_ID view;
+};
+
+// Defined by the store that produces it (uishell_workspace_store.h).
+typedef struct UIShell_ViewSpec UIShell_ViewSpec;
+
+// Everything a Renderer's `ui` is given for one View this frame.
+typedef struct WH_ViewContext WH_ViewContext;
+struct WH_ViewContext
+{
+  WH_SlotAddress slot;
+  // Read-only; zero for a View that isn't a Slot or is a placeholder.
+  UIShell_ViewSpec const *spec;
+  WH_SlotStatus status;
+  WH_TargetResolution resolution;
+  // The Renderer's state for this View, of its registered size; read it
+  // with wh_view_state. Zero for a Renderer without state.
+  void *state;
+  U64 state_size;
+  WH_ViewSettings settings;
+  Rng2F32 rect;
+  // The evaluator escape hatch until it is retired (#313): the View's
+  // expression, evaluated, for Renderers with RD_ViewTrait_LegacyEval.
+  E_Eval legacy_eval;
+};
+
+#define WH_VIEW_UI_FUNCTION_SIG(name) void name(WH_ViewContext *ctx)
+#define WH_VIEW_UI_FUNCTION_NAME(name) wh_view_ui__##name
+#define WH_VIEW_UI_FUNCTION_DEF(name) internal WH_VIEW_UI_FUNCTION_SIG(WH_VIEW_UI_FUNCTION_NAME(name))
+typedef WH_VIEW_UI_FUNCTION_SIG(WH_ViewUIFunctionType);
+
+// One registry entry (WH_RENDERERS), with docking's part of it.
+typedef struct WH_Renderer WH_Renderer;
+struct WH_Renderer
 {
   String8 name;
-  RD_ViewUIFunctionType *ui;
+  WH_ViewUIFunctionType *ui;
+  U64 state_size;
+  WH_ContentKinds content;
+  EV_ExpandRuleInfoHookFunctionType *expand;
+  String8 settings;
   RD_ViewRegistration *registration;
-};
-
-typedef struct RD_ViewUIRuleNode RD_ViewUIRuleNode;
-struct RD_ViewUIRuleNode
-{
-  RD_ViewUIRuleNode *next;
-  RD_ViewUIRule v;
-};
-
-typedef struct RD_ViewUIRuleSlot RD_ViewUIRuleSlot;
-struct RD_ViewUIRuleSlot
-{
-  RD_ViewUIRuleNode *first;
-  RD_ViewUIRuleNode *last;
-};
-
-typedef struct RD_ViewUIRuleMap RD_ViewUIRuleMap;
-struct RD_ViewUIRuleMap
-{
-  RD_ViewUIRuleSlot *slots;
-  U64 slots_count;
 };
 
 ////////////////////////////////
@@ -312,6 +364,7 @@ struct RD_ViewState
   RD_ViewState *hash_next;
   RD_ViewState *hash_prev;
   CFG_ID cfg_id;
+  U64 sub_key;
 
   // rjf: touch info
   U64 last_frame_index_touched;
@@ -335,6 +388,7 @@ struct RD_ViewState
   RD_ArenaExt *first_arena_ext;
   RD_ArenaExt *last_arena_ext;
   void *user_data;
+  U64 user_data_size;
   void (*release_user_data)(void *);
 
   // rjf: query state
@@ -922,8 +976,9 @@ struct RD_State
   // rjf: meta name -> eval type key map (constructed from-scratch each frame)
   E_String2TypeKeyMap *meta_name2type_map;
 
-  // rjf: name -> view ui map (constructed from-scratch each frame)
-  RD_ViewUIRuleMap *view_ui_rule_map;
+  // Tests that build panels without the renderer stack: Visualizers draw
+  // nothing (src/shell/tests, src/uishell/tests).
+  B32 headless_views;
   U64 docking_restore_gen;
 
   // rjf: registers stack
@@ -1014,11 +1069,14 @@ struct RD_State
 
 read_only global RD_VocabInfo rd_nil_vocab_info = {0};
 
-RD_VIEW_UI_FUNCTION_DEF(null);
-read_only global RD_ViewUIRule rd_nil_view_ui_rule =
+WH_VIEW_UI_FUNCTION_DEF(null);
+read_only global RD_ViewRegistration rd_nil_view_registration = {0};
+read_only global WH_Renderer wh_nil_renderer =
 {
   {0},
-  RD_VIEW_UI_FUNCTION_NAME(null),
+  WH_VIEW_UI_FUNCTION_NAME(null),
+  0, 0, 0, {0},
+  &rd_nil_view_registration,
 };
 
 read_only global RD_ViewState rd_nil_view_state =
@@ -1097,14 +1155,34 @@ internal void uishell_regs_copy_contents(Arena *arena, UIShell_Regs *dst, UIShel
 internal void uishell_cmd_list_push_new(Arena *arena, UIShell_CmdList *cmds, String8 name, UIShell_Regs *regs);
 
 ////////////////////////////////
-//~ rjf: View UI Rule Functions
+//~ Renderer Functions
 
 internal void rd_dock_restore_layouts(void);
-internal RD_ViewUIRuleMap *rd_view_ui_rule_map_make(Arena *arena, U64 slots_count);
-internal void rd_view_ui_rule_map_insert(Arena *arena, RD_ViewUIRuleMap *map, String8 string, RD_ViewUIFunctionType *ui);
 
-internal RD_ViewUIRule *rd_view_ui_rule_from_string(String8 string);
-internal B32 rd_view_name_is_listed_in_app(String8 name);
+// The Renderer for View kind `name`, or &wh_nil_renderer.
+internal WH_Renderer *wh_renderer_from_name(String8 name);
+// The first Renderer showing any of `content`, or &wh_nil_renderer.
+internal WH_Renderer *wh_renderer_from_content(WH_ContentKinds content);
+internal WH_Renderer *wh_renderer_from_index(U64 idx);
+// The Visualizer for `name` (a Lens or expand rule's name), or
+// &wh_nil_renderer; always nil in headless tests.
+internal WH_Renderer *wh_visualizer_from_name(String8 name);
+internal B32 wh_renderer_has_trait(WH_Renderer *renderer, RD_ViewTraits traits);
+
+// The context for building `view` (a View node) in `rect` this frame, with
+// `state` its Renderer's state (sized by the caller from the registry).
+internal WH_ViewContext wh_view_context_from_cfg(Arena *arena, CFG_Node *view, WH_Renderer *renderer, void *state, Rng2F32 rect);
+// Builds `view` with `renderer` alone, without rd_view_ui's container and
+// query bar: for diagnostics that drive one Renderer.
+internal void wh_view_ui_direct(WH_Renderer *renderer, CFG_Node *view, Rng2F32 rect);
+// The ctx's state, checked to be a `size`-byte state: wh_view_state(ctx, T).
+internal void *wh_view_state_checked(WH_ViewContext *ctx, U64 size);
+#define wh_view_state(ctx, T) ((T *)wh_view_state_checked((ctx), sizeof(T)))
+// Presentation settings: the View's own, else its Renderer's schema default.
+internal String8 wh_view_setting(WH_ViewContext *ctx, String8 name);
+internal B32 wh_view_setting_b32(WH_ViewContext *ctx, String8 name);
+internal U64 wh_view_setting_u64(WH_ViewContext *ctx, String8 name);
+internal F32 wh_view_setting_f32(WH_ViewContext *ctx, String8 name);
 
 ////////////////////////////////
 //~ rjf: Global Cross-Window UI Interaction State Functions
@@ -1212,6 +1290,12 @@ internal String8 rd_query_from_eval_string(Arena *arena, String8 string);
 
 internal CFG_Node *rd_view_from_eval(CFG_Node *parent, E_Eval eval);
 internal RD_ViewState *rd_view_state_from_cfg(CFG_Node *cfg);
+// A View's state record under `sub_key`: 0 for the View itself, else a
+// Renderer it embeds (a watch cell's visualizer).
+internal RD_ViewState *rd_view_state_from_key(CFG_ID id, U64 sub_key);
+// `vs`'s Renderer state, `size` bytes, allocated on first use and checked
+// against the size it was allocated with.
+internal void *rd_view_user_data(RD_ViewState *vs, U64 size);
 internal UI_Key rd_view_surface_key(CFG_ID view);
 internal B32 rd_view_drag_preview_is_live(CFG_Node *view);
 internal void rd_view_ui(Rng2F32 rect);
@@ -1227,6 +1311,10 @@ internal EV_View *rd_view_eval_view(void);
 internal String8 rd_view_query_cmd(void);
 internal String8 rd_view_query_input(void);
 internal String8 rd_view_setting_from_name(String8 string);
+internal String8 rd_view_setting_from_cfg(CFG_Node *view, String8 string);
+internal B32 rd_setting_b32_from_string(String8 string);
+internal U64 rd_setting_u64_from_string(String8 string);
+internal F32 rd_setting_f32_from_string(String8 string);
 internal E_Value rd_view_setting_value_from_name(String8 string);
 internal B32 rd_view_setting_b32_from_name(String8 string);
 internal U64 rd_view_setting_u64_from_name(String8 string);

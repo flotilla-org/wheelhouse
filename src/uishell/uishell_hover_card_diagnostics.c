@@ -1147,7 +1147,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         UI_Rect(view_rect)
         { view_parent = ui_build_box_from_key(UI_BoxFlag_Clip, ui_key_make(119166)); }
         UI_Parent(view_parent)
-        { RD_VIEW_UI_FUNCTION_NAME(sidebar_section)((E_Eval){0}, view_rect); }
+        { wh_view_ui_direct(wh_renderer_from_name(str8_lit("sidebar_section")), cfg_node_from_id(uishell_regs()->view), view_rect); }
       }
       ui_end_build();
       CardCheck(ui_nil_box.view_off_target.y == nil_scroll_before,
@@ -1357,7 +1357,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         {
           UI_Box *view_parent;
           UI_Rect(view_rect) { view_parent = ui_build_box_from_key(UI_BoxFlag_Clip, ui_key_make(119167)); }
-          UI_Parent(view_parent) { RD_VIEW_UI_FUNCTION_NAME(sidebar_section)((E_Eval){0}, view_rect); }
+          UI_Parent(view_parent) { wh_view_ui_direct(wh_renderer_from_name(str8_lit("sidebar_section")), cfg_node_from_id(uishell_regs()->view), view_rect); }
         }
         ui_end_build();
         // The ghost's tree row is keyed by its placement.
@@ -1912,7 +1912,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
     UIShell_RegsScope(.window = window->id, .view = tolerance_view->id, .panel = tolerance_view->parent->id)
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-    { RD_VIEW_UI_FUNCTION_NAME(sidebar_section)((E_Eval){0}, r2f32p(17, 29, 297, 1629)); }
+    { wh_view_ui_direct(wh_renderer_from_name(str8_lit("sidebar_section")), cfg_node_from_id(uishell_regs()->view), r2f32p(17, 29, 297, 1629)); }
     ui_end_build();
     U64 missing_markers = 0;
     for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)

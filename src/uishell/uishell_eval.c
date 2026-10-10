@@ -199,12 +199,12 @@ uishell_eval_view_names_from_filter(Arena *arena, String8 filter)
 {
   Temp scratch = scratch_begin(&arena, 1);
   String8List names = {0};
-  for EachElement(idx, uishell_name_schema_info_table)
+  for EachIndex(idx, WH_RendererIndex_COUNT)
   {
-    if(uishell_name_schema_info_table[idx].is_view &&
-       rd_view_name_is_listed_in_app(uishell_name_schema_info_table[idx].name))
+    WH_Renderer *renderer = wh_renderer_from_index(idx);
+    if(wh_renderer_has_trait(renderer, RD_ViewTrait_Listed))
     {
-      String8 name = uishell_name_schema_info_table[idx].name;
+      String8 name = renderer->name;
       FuzzyMatchRangeList name_matches = fuzzy_match_find(scratch.arena, filter, name);
       if(name_matches.count == name_matches.needle_part_count)
       {
@@ -540,9 +540,10 @@ uishell_eval_register_query_macros(Arena *arena, Arena *type_arena, E_String2Exp
   }
 
   //- rjf: build schema types & cache (name -> type) mapping
-  for EachElement(idx, uishell_name_schema_info_table)
+  UIShell_NameSchemaInfoArray name_schemas = uishell_name_schemas();
+  for EachIndex(idx, name_schemas.count)
   {
-    String8 name = uishell_name_schema_info_table[idx].name;
+    String8 name = name_schemas.v[idx].name;
     E_TypeKey type_key = e_type_key_cons(.name = name,
                                          .kind = E_TypeKind_Set,
                                          .irext  = E_TYPE_IREXT_FUNCTION_NAME(schema),

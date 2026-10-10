@@ -297,9 +297,9 @@ internal void uishell_jackstay_open(UIShell_JackstayView *v,B32 control)
   MemoryZeroArray(v->paths[2]);v->sizes[2]=0;
   if(v->session)wh_js_connect(v->session,control);
 }
-RD_VIEW_UI_FUNCTION_DEF(jackstay)
+WH_VIEW_UI_FUNCTION_DEF(jackstay)
 {
-  (void)eval;
+  Rng2F32 rect = ctx->rect;
   CFG_ID id=uishell_regs()->view;
   UIShell_JackstayView *v=uishell_jackstay_find(id);
   if(!v) {v=calloc(1,sizeof(*v));v->id=id;v->next=uishell_jackstay_views;uishell_jackstay_views=v;}
@@ -315,14 +315,14 @@ RD_VIEW_UI_FUNCTION_DEF(jackstay)
     v->mode=UISHELL_JACKSTAY_MODE_COMBINED;
     if(!paths[0].size)
     {
-      String8 d3d11=rd_view_setting_from_name(str8_lit("d3d11_endpoint"));
-      String8 porthole=rd_view_setting_from_name(str8_lit("porthole_endpoint"));
+      String8 d3d11=wh_view_setting(ctx, str8_lit("d3d11_endpoint"));
+      String8 porthole=wh_view_setting(ctx, str8_lit("porthole_endpoint"));
       if(d3d11.size){v->mode=UISHELL_JACKSTAY_MODE_D3D11;paths[0]=d3d11;paths[1]=str8_zero();}
       else if(porthole.size)
       {
         v->mode=UISHELL_JACKSTAY_MODE_PORTHOLE;paths[0]=porthole;
-        paths[1]=rd_view_setting_from_name(str8_lit("porthole_session"));
-        paths[2]=rd_view_setting_from_name(str8_lit("attach_token"));
+        paths[1]=ctx->resolution.porthole_session;
+        paths[2]=ctx->resolution.attach_token;
       }
       else{v->mode=UISHELL_JACKSTAY_MODE_SEPARATE;paths[0]=uishell_jackstay_address(str8_lit("media"));}
     }
@@ -330,7 +330,7 @@ RD_VIEW_UI_FUNCTION_DEF(jackstay)
     // A scripted layout may carry the attach token and a one-shot `connect`;
     // both are consumed here and never saved back. Connecting this way
     // observes only; control still needs an explicit click.
-    B32 connect=rd_view_setting_b32_from_name(str8_lit("connect"));
+    B32 connect=wh_view_setting_b32(ctx, str8_lit("connect"));
     uishell_jackstay_forget_setting(str8_lit("attach_token"));
     uishell_jackstay_forget_setting(str8_lit("connect"));
     if(connect && v->sizes[0])uishell_jackstay_open(v,0);
@@ -455,11 +455,10 @@ RD_VIEW_UI_FUNCTION_DEF(jackstay)
       if(focused)v->mouse=mouse;
     }
   }
-  (void)rect;
 }
 #else
 internal B32 uishell_jackstay_pending(void){return 0;}
 internal B32 uishell_jackstay_event(CFG_ID id,WM_Event *event){(void)id;(void)event;return 0;}
 internal void uishell_jackstay_tick(B32 before,B32 quit){(void)before;(void)quit;}
-RD_VIEW_UI_FUNCTION_DEF(jackstay){(void)eval;(void)rect;ui_label(str8_lit("This build does not include Jackstay."));}
+WH_VIEW_UI_FUNCTION_DEF(jackstay){(void)ctx;ui_label(str8_lit("This build does not include Jackstay."));}
 #endif

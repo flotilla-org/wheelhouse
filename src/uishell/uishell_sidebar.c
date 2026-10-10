@@ -4581,8 +4581,9 @@ internal void
 uishell_sidebar_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 { uishell_sidebar_render(rect, split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_DiagnosticAggregate}); }
 
-RD_VIEW_UI_FUNCTION_DEF(sidebar_section)
+WH_VIEW_UI_FUNCTION_DEF(sidebar_section)
 {
+  Rng2F32 rect = ctx->rect;
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   CFG_Node *window = rd_window_from_cfg(view);

@@ -66,16 +66,9 @@
 // device. Floating Panels are Presentation State, and their Views are not
 // Slots.
 
-typedef struct UIShell_ViewSpec UIShell_ViewSpec;
-struct UIShell_ViewSpec
-{
-  U32 content;
-  String8 provider, kind, id, facet;
-  // A shell line; argv from another host is joined with spaces.
-  String8 command;
-  B32 has_cwd;
-  String8 cwd, path, url, launcher, endpoint, presentation;
-};
+StaticAssert(WH_Content_Command == 1<<ANDAMENTO_SLOT_COMMAND && WH_Content_File == 1<<ANDAMENTO_SLOT_FILE &&
+             WH_Content_Url == 1<<ANDAMENTO_SLOT_URL && WH_Content_Jackstay == 1<<ANDAMENTO_SLOT_JACKSTAY &&
+             WH_Content_Facet == 1<<ANDAMENTO_SLOT_FACET, uishell_store_content_kinds);
 
 typedef struct UIShell_StoreEntry UIShell_StoreEntry;
 struct UIShell_StoreEntry
@@ -102,6 +95,8 @@ read_only global String8 uishell_store_resolution_keys[] =
   str8_lit_comp("session"), str8_lit_comp("daemon_name"), str8_lit_comp("attach_token"),
   str8_lit_comp("managed_target"), str8_lit_comp("porthole_session"),
 };
+// In WH_TargetResolution's order (uishell_store_view_slot).
+StaticAssert(ArrayCount(uishell_store_resolution_keys) == 5, uishell_store_resolution_fields);
 
 #define UIShell_StoreCall(state, call) ((state)->store_calls += 1, (call))
 
@@ -288,6 +283,53 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
   return 1;
 }
 
+// The workspace whose arrangement holds `view`: a workspace node, or a window
+// whose own panels are its workspace. Nil for a View outside one (a control
+// view, a Floating Panel's, an immediate tree's).
+internal CFG_Node *
+uishell_store_view_owner(CFG_Node *view)
+{
+  CFG_Node *child = view;
+  for(CFG_Node *p = view->parent; p != &cfg_nil_node; child = p, p = p->parent)
+  {
+    if(str8_match(p->string, str8_lit("workspace"), 0) || str8_match(p->string, str8_lit("detached_workspace"), 0) ||
+       str8_match(p->string, str8_lit("window"), 0))
+    {
+      return str8_match(child->string, str8_lit("panels"), 0) ? p : &cfg_nil_node;
+    }
+  }
+  return &cfg_nil_node;
+}
+
+internal void
+uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UIShell_ViewSpec const **spec,
+                        WH_SlotStatus *status, WH_TargetResolution *resolution)
+{
+  String8 *resolved[] = {&resolution->session, &resolution->daemon_name, &resolution->attach_token,
+                         &resolution->managed_target, &resolution->porthole_session};
+  for(U64 i = 0; i < ArrayCount(resolved); i++) { *resolved[i] = uishell_store_setting(view, uishell_store_resolution_keys[i]); }
+  if(str8_match(view->string, str8_lit("placeholder"), 0)) { *status |= WH_SlotStatus_Placeholder; }
+  CFG_Node *owner = uishell_store_view_owner(view);
+  String8 key = uishell_store_setting(view, str8_lit("slot"));
+  if(owner == &cfg_nil_node || key.size == 0) { return; }
+  // Read, never assigned: an arrangement's workspace has had its ID since
+  // the inventory first listed it.
+  uishell_workspace_id_from_string(uishell_store_setting(owner, str8_lit("workspace_id")), &slot->workspace);
+  slot->key = key;
+  *status |= WH_SlotStatus_Slot;
+  // A Slot following its provider has the provider's spec, which Andamento
+  // keeps; this device holds only what it last resolved it to.
+  if(cfg_node_child_from_string(view, str8_lit("follows_provider")) != &cfg_nil_node)
+  {
+    *status |= WH_SlotStatus_FollowsProvider;
+    return;
+  }
+  UIShell_ViewSpec *view_spec = push_array(arena, UIShell_ViewSpec, 1);
+  String8 taken[4];
+  U64 taken_count = 0;
+  if(uishell_store_spec_from_view(arena, view, view_spec, taken, &taken_count)) { *spec = view_spec; }
+}
+
 internal UIShell_ViewSpec
 uishell_store_spec_from_andamento(Arena *arena, AndamentoViewSpec *s)
 {
@@ -378,8 +420,7 @@ uishell_store_unshown(Arena *arena, String8 key, UIShell_ViewSpec *spec)
     case ANDAMENTO_SLOT_URL:
     {
       String8 kind = uishell_store_page_kind(spec->url);
-      RD_ViewRegistration *registration = kind.size ? rd_dock_view_from_name(kind) : 0;
-      if(registration && registration->default_host == RD_DockHostKind_WorkspaceRegion) { return str8_zero(); }
+      if(kind.size && (wh_renderer_from_name(kind)->content & WH_Content_Page)) { return str8_zero(); }
       return push_str8_copy(arena, spec->url);
     }
     case ANDAMENTO_SLOT_FACET:
@@ -398,16 +439,16 @@ uishell_store_view_from_spec(String8 key, UIShell_ViewSpec *spec)
 {
   Temp scratch = scratch_begin(0, 0);
   String8 unshown = spec ? uishell_store_unshown(scratch.arena, key, spec) : str8_lit("a slot that has gone");
-  String8 kind = str8_lit("placeholder"), expr = str8_zero(), cwd = str8_zero();
+  String8 kind = wh_renderer_from_content(WH_Content_Unshown)->name, expr = str8_zero(), cwd = str8_zero();
   B32 has_cwd = 0;
   if(!unshown.size)
   {
+    // The Renderer for the content: the first in the registry that shows it.
+    kind = wh_renderer_from_content(1<<spec->content)->name;
     switch(spec->content)
     {
-      case ANDAMENTO_SLOT_COMMAND: { kind = str8_lit("terminal"); expr = spec->command; has_cwd = spec->has_cwd; cwd = spec->cwd; } break;
-      case ANDAMENTO_SLOT_FILE: { kind = str8_lit("text"); expr = rd_eval_string_from_file_path(scratch.arena, spec->path); } break;
-      case ANDAMENTO_SLOT_JACKSTAY: { kind = str8_lit("jackstay"); } break;
-      case ANDAMENTO_SLOT_FACET: { kind = str8_lit("terminal"); } break;
+      case ANDAMENTO_SLOT_COMMAND: { expr = spec->command; has_cwd = spec->has_cwd; cwd = spec->cwd; } break;
+      case ANDAMENTO_SLOT_FILE: { expr = rd_eval_string_from_file_path(scratch.arena, spec->path); } break;
       case ANDAMENTO_SLOT_URL:
       {
         kind = uishell_store_page_kind(spec->url);

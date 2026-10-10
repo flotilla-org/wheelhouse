@@ -37,61 +37,75 @@ uishell_cmd_list_push_new(Arena *arena, UIShell_CmdList *cmds, String8 name, UIS
 }
 
 ////////////////////////////////
-//~ rjf: View UI Rule Functions
+//~ Renderer Registry (uishell/uishell_renderers.h)
 
-internal RD_ViewUIRuleMap *
-rd_view_ui_rule_map_make(Arena *arena, U64 slots_count)
+#define WH_RENDERER_DECLARE(name, ui, state, content, traits, width, host, expand, settings) \
+  {str8_lit_comp(#name), WH_VIEW_UI_FUNCTION_NAME(ui), state, content, expand, str8_lit_comp(settings), &rd_view_registrations[WH_RendererIndex_##name]},
+read_only global WH_Renderer wh_renderers[] =
 {
-  RD_ViewUIRuleMap *map = push_array(arena, RD_ViewUIRuleMap, 1);
-  map->slots_count = slots_count;
-  map->slots = push_array(arena, RD_ViewUIRuleSlot, map->slots_count);
-  return map;
-}
+  WH_RENDERERS(WH_RENDERER_DECLARE)
+};
+#undef WH_RENDERER_DECLARE
+StaticAssert(ArrayCount(wh_renderers) == ArrayCount(rd_view_registrations), wh_renderer_registration_count);
 
-internal void
-rd_view_ui_rule_map_insert(Arena *arena, RD_ViewUIRuleMap *map, String8 string, RD_ViewUIFunctionType *ui)
+internal WH_Renderer *
+wh_renderer_from_name(String8 name)
 {
-  U64 hash = u64_djb2_hash_from_str8(string);
-  U64 slot_idx = hash%map->slots_count;
-  RD_ViewUIRuleNode *n = push_array(arena, RD_ViewUIRuleNode, 1);
-  n->v.name = push_str8_copy(arena, string);
-  n->v.ui = ui;
-  n->v.registration = rd_dock_view_from_name(string);
-  AssertAlways(n->v.registration != 0);
-  SLLQueuePush(map->slots[slot_idx].first, map->slots[slot_idx].last, n);
-}
-
-internal RD_ViewUIRule *
-rd_view_ui_rule_from_string(String8 string)
-{
-  RD_ViewUIRule *rule = &rd_nil_view_ui_rule;
+  for EachElement(idx, wh_renderers)
   {
-    RD_ViewUIRuleMap *map = rd_state->view_ui_rule_map;
-    U64 hash = u64_djb2_hash_from_str8(string);
-    U64 slot_idx = hash%map->slots_count;
-    for(RD_ViewUIRuleNode *n = map->slots[slot_idx].first; n != 0; n = n->next)
-    {
-      if(str8_match(n->v.name, string, 0))
-      {
-        rule = &n->v;
-        break;
-      }
-    }
+    if(str8_match(wh_renderers[idx].name, name, 0)) { return &wh_renderers[idx]; }
   }
-  return rule;
+  return &wh_nil_renderer;
+}
+
+internal WH_Renderer *
+wh_renderer_from_content(WH_ContentKinds content)
+{
+  for EachElement(idx, wh_renderers)
+  {
+    if(wh_renderers[idx].content & content) { return &wh_renderers[idx]; }
+  }
+  return &wh_nil_renderer;
+}
+
+internal WH_Renderer *
+wh_renderer_from_index(U64 idx)
+{
+  return idx < ArrayCount(wh_renderers) ? &wh_renderers[idx] : &wh_nil_renderer;
 }
 
 internal B32
-rd_view_name_is_listed_in_app(String8 name)
+wh_renderer_has_trait(WH_Renderer *renderer, RD_ViewTraits traits)
 {
-  B32 result = 1;
-  result = uishell_view_name_is_listed(name);
-  return result;
+  return (renderer->registration->traits & traits) != 0;
 }
 
-#if !defined(RD_APP_NAME_SCHEMA_INFO_TABLE)
-#  define RD_APP_NAME_SCHEMA_INFO_TABLE uishell_name_schema_info_table
-#endif
+internal WH_Renderer *
+wh_visualizer_from_name(String8 name)
+{
+  WH_Renderer *renderer = wh_renderer_from_name(name);
+  if(rd_state->headless_views || !wh_renderer_has_trait(renderer, RD_ViewTrait_Visualizer)) { renderer = &wh_nil_renderer; }
+  return renderer;
+}
+
+// Every config schema by name: the shell's own, then each Renderer's
+// presentation settings.
+internal UIShell_NameSchemaInfoArray
+uishell_name_schemas(void)
+{
+  local_persist UIShell_NameSchemaInfo infos[ArrayCount(uishell_name_schema_info_table) + ArrayCount(wh_renderers)];
+  local_persist U64 count = 0;
+  if(count == 0)
+  {
+    for EachElement(idx, uishell_name_schema_info_table) { infos[count++] = uishell_name_schema_info_table[idx]; }
+    for EachElement(idx, wh_renderers)
+    {
+      if(wh_renderers[idx].settings.size != 0) { infos[count++] = (UIShell_NameSchemaInfo){wh_renderers[idx].name, wh_renderers[idx].settings}; }
+    }
+  }
+  UIShell_NameSchemaInfoArray result = {infos, count};
+  return result;
+}
 
 #if !defined(RD_APP_VOCAB_INFO_TABLE)
 #  define RD_APP_VOCAB_INFO_TABLE uishell_vocab_info_table
@@ -1363,8 +1377,7 @@ rd_view_from_eval(CFG_Node *parent, E_Eval eval)
   B32 type_is_visualizer = 0;
   if(type->kind == E_TypeKind_Lens)
   {
-    RD_ViewUIRule *view_ui_rule = rd_view_ui_rule_from_string(type->name);
-    if(view_ui_rule != &rd_nil_view_ui_rule)
+    if(wh_visualizer_from_name(type->name) != &wh_nil_renderer)
     {
       schema_name = type->name;
       type_is_visualizer = 1;
@@ -1437,11 +1450,17 @@ rd_view_from_eval(CFG_Node *parent, E_Eval eval)
 internal RD_ViewState *
 rd_view_state_from_cfg(CFG_Node *cfg)
 {
+  return rd_view_state_from_key(cfg->id, 0);
+}
+
+internal RD_ViewState *
+rd_view_state_from_key(CFG_ID id, U64 sub_key)
+{
   RD_ViewState *view_state = &rd_nil_view_state;
-  CFG_ID id = cfg->id;
-  if(id != 0 &&
+  if(id != 0 && sub_key == 0 &&
      id == rd_state->view_state_last_accessed_id &&
-     id == rd_state->view_state_last_accessed->cfg_id)
+     id == rd_state->view_state_last_accessed->cfg_id &&
+     rd_state->view_state_last_accessed->sub_key == 0)
   {
     view_state = rd_state->view_state_last_accessed;
   }
@@ -1452,7 +1471,7 @@ rd_view_state_from_cfg(CFG_Node *cfg)
     RD_ViewStateSlot *slot = &rd_state->view_state_slots[slot_idx];
     for(RD_ViewState *v = slot->first; v != 0; v = v->hash_next)
     {
-      if(v->cfg_id == id)
+      if(v->cfg_id == id && v->sub_key == sub_key)
       {
         view_state = v;
         break;
@@ -1476,6 +1495,7 @@ rd_view_state_from_cfg(CFG_Node *cfg)
     RD_ViewStateSlot *slot = &rd_state->view_state_slots[slot_idx];
     DLLPushBack_NP(slot->first, slot->last, view_state, hash_next, hash_prev);
     view_state->cfg_id = id;
+    view_state->sub_key = sub_key;
     view_state->arena = arena_alloc();
     view_state->arena_reset_pos = arena_pos(view_state->arena);
     view_state->ev_view = ev_view_alloc();
@@ -1484,15 +1504,90 @@ rd_view_state_from_cfg(CFG_Node *cfg)
   {
     view_state->last_frame_index_touched = rd_state->frame_index;
   }
-  rd_state->view_state_last_accessed = view_state;
-  rd_state->view_state_last_accessed_id = id;
+  if(sub_key == 0)
+  {
+    rd_state->view_state_last_accessed = view_state;
+    rd_state->view_state_last_accessed_id = id;
+  }
   return view_state;
 }
 
-RD_VIEW_UI_FUNCTION_DEF(null)
+internal void *
+rd_view_user_data(RD_ViewState *vs, U64 size)
 {
-  (void)eval;
-  (void)rect;
+  if(size == 0) { return 0; }
+  if(vs->user_data == 0)
+  {
+    vs->user_data = push_array(vs->arena, U8, size);
+    vs->user_data_size = size;
+  }
+  // A View's state is its Renderer's, of the size the registry declares.
+  AssertAlways(vs->user_data_size == size);
+  return vs->user_data;
+}
+
+//- Renderer contexts
+
+internal WH_ViewContext
+wh_view_context_from_cfg(Arena *arena, CFG_Node *view, WH_Renderer *renderer, void *state, Rng2F32 rect)
+{
+  WH_ViewContext ctx = {0};
+  uishell_store_view_slot(arena, view, &ctx.slot, &ctx.spec, &ctx.status, &ctx.resolution);
+  for(CFG_Node *p = view->parent; p != &cfg_nil_node; p = p->parent)
+  {
+    if(str8_match(p->string, str8_lit("immediate"), 0)) { ctx.status |= WH_SlotStatus_Floating; break; }
+  }
+  ctx.state = state;
+  ctx.state_size = state ? renderer->state_size : 0;
+  ctx.settings.view = view->id;
+  ctx.rect = rect;
+  return ctx;
+}
+
+internal void
+wh_view_ui_direct(WH_Renderer *renderer, CFG_Node *view, Rng2F32 rect)
+{
+  Temp scratch = scratch_begin(0, 0);
+  WH_ViewContext ctx = wh_view_context_from_cfg(scratch.arena, view, renderer, rd_view_user_data(rd_view_state_from_cfg(view), renderer->state_size), rect);
+  renderer->ui(&ctx);
+  scratch_end(scratch);
+}
+
+internal void *
+wh_view_state_checked(WH_ViewContext *ctx, U64 size)
+{
+  // The registry declares each Renderer's state type; reading another is a bug.
+  AssertAlways(ctx->state != 0 && ctx->state_size == size);
+  return ctx->state;
+}
+
+internal String8
+wh_view_setting(WH_ViewContext *ctx, String8 name)
+{
+  return rd_view_setting_from_cfg(cfg_node_from_id(ctx->settings.view), name);
+}
+
+internal B32
+wh_view_setting_b32(WH_ViewContext *ctx, String8 name)
+{
+  return rd_setting_b32_from_string(wh_view_setting(ctx, name));
+}
+
+internal U64
+wh_view_setting_u64(WH_ViewContext *ctx, String8 name)
+{
+  return rd_setting_u64_from_string(wh_view_setting(ctx, name));
+}
+
+internal F32
+wh_view_setting_f32(WH_ViewContext *ctx, String8 name)
+{
+  return rd_setting_f32_from_string(wh_view_setting(ctx, name));
+}
+
+WH_VIEW_UI_FUNCTION_DEF(null)
+{
+  (void)ctx;
 }
 
 
@@ -1509,21 +1604,191 @@ rd_view_drag_preview_is_live(CFG_Node *view)
   return registration != 0 && (registration->traits & RD_ViewTrait_LiveDragPreview) != 0;
 }
 
+// The shell's own pages (RD_ViewTrait_QueryFocus): a new window's empty
+// View, and a file View waiting to learn whether it is text or binary.
+
+WH_VIEW_UI_FUNCTION_DEF(getting_started)
+{
+  (void)ctx;
+  Temp scratch = scratch_begin(0, 0);
+  ui_set_next_flags(UI_BoxFlag_DefaultFocusNav);
+  UI_Focus(UI_FocusKind_On) UI_WidthFill UI_HeightFill UI_NamedColumn(str8_lit("empty_view"))
+    UI_Padding(ui_pct(1, 0)) UI_Focus(UI_FocusKind_Null)
+  {
+    //- rjf: icon & info
+    UI_Padding(ui_em(2.f, 1.f)) UI_TagF("weak")
+    {
+      //- rjf: icon
+      {
+        F32 icon_dim = ui_top_font_size()*10.f;
+        UI_PrefHeight(ui_px(icon_dim, 1.f))
+          UI_Row
+          UI_Padding(ui_pct(1, 0))
+          UI_PrefWidth(ui_px(icon_dim, 1.f))
+        {
+          R_Handle texture = rd_state->icon_texture;
+          Vec2S32 texture_dim = r_size_from_tex2d(texture);
+          ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
+        }
+      }
+      
+      //- rjf: info
+      UI_Padding(ui_em(2.f, 1.f))
+        UI_WidthFill UI_PrefHeight(ui_em(2.f, 1.f))
+        UI_Row
+        UI_Padding(ui_pct(1, 0))
+        UI_TextAlignment(UI_TextAlign_Center)
+        UI_PrefWidth(ui_text_dim(10, 1))
+      {
+        ui_label(str8_lit(BUILD_TITLE_STRING_LITERAL));
+      }
+    }
+    
+    //- rjf: targets state dependent helper
+    B32 helper_built = 0;
+    
+    //- rjf: or text
+    if(helper_built)
+    {
+      UI_TagF("weak")
+        UI_PrefHeight(ui_em(2.25f, 1.f))
+        UI_Row
+        UI_Padding(ui_pct(1, 0))
+        UI_TextAlignment(UI_TextAlign_Center)
+        UI_WidthFill
+        ui_labelf("- or -");
+    }
+    
+    //- rjf: helper text for command lister activation
+    UI_TagF("weak")
+      UI_PrefHeight(ui_em(2.25f, 1.f)) UI_Row
+      UI_PrefWidth(ui_text_dim(10, 1))
+      UI_TextAlignment(UI_TextAlign_Center)
+      UI_Padding(ui_pct(1, 0))
+    {
+      ui_labelf("use");
+      UI_TextAlignment(UI_TextAlign_Center) rd_cmd_binding_buttons(str8_lit("open_palette"), str8_zero(), 1);
+      ui_labelf("to search for commands and options");
+    }
+  }
+  scratch_end(scratch);
+}
+
+WH_VIEW_UI_FUNCTION_DEF(pending)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_PendingViewState *state = wh_view_state(ctx, UIShell_PendingViewState);
+  if(state->deferred_cmd_arena == 0)
+  {
+    state->deferred_cmd_arena = rd_push_view_arena();
+  }
+  rd_store_view_loading_info(1, 0, 0);
+  
+  // rjf: any commands sent to this view need to be deferred until loading is complete
+  for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
+  {
+    if(str8_match(cmd->name, str8_lit("goto_line"), 0) ||
+       str8_match(cmd->name, str8_lit("goto_address"), 0) ||
+       str8_match(cmd->name, str8_lit("center_cursor"), 0) ||
+       str8_match(cmd->name, str8_lit("contain_cursor"), 0))
+    {
+      uishell_cmd_list_push_new(state->deferred_cmd_arena, &state->deferred_cmds, cmd->name, cmd->regs);
+    }
+  }
+  
+  // rjf: unpack view's target expression & hash
+  E_Eval eval = ctx->legacy_eval;
+  Rng1U64 range = r1u64(0, 1024);
+  C_Key key = rd_key_from_eval_space_range(eval.space, range, 0);
+  U128 hash = c_hash_from_key(key, 0);
+  
+  // rjf: determine if hash's blob is ready, and which viewer to use
+  B32 data_is_ready = 0;
+  String8 new_view_name = {0};
+  {
+    Access *access = access_open();
+    if(!u128_match(hash, u128_zero()))
+    {
+      String8 data = c_data_from_hash(access, hash);
+      U64 num_utf8_bytes = 0;
+      U64 num_unknown_bytes = 0;
+      for(U64 idx = 0; idx < data.size && idx < range.max;)
+      {
+        UnicodeDecode decode = utf8_decode(data.str+idx, data.size-idx);
+        if(decode.codepoint != max_U32 && (decode.inc > 1 ||
+                                           (10 <= decode.codepoint && decode.codepoint <= 13) ||
+                                           (32 <= decode.codepoint && decode.codepoint <= 126)))
+        {
+          num_utf8_bytes += decode.inc;
+          idx += decode.inc;
+        }
+        else
+        {
+          num_unknown_bytes += 1;
+          idx += 1;
+        }
+      }
+      data_is_ready = 1;
+      new_view_name = uishell_file_view_name_from_probe(num_utf8_bytes, num_unknown_bytes);
+    }
+    access_close(access);
+  }
+  
+  // rjf: if we don't have a viewer, use the app's binary-data fallback.
+  if(new_view_name.size == 0)
+  {
+    new_view_name = uishell_fallback_file_view_name();
+  }
+  
+  // rjf: if data is ready and we have the name of a new visualizer,
+  // dispatch deferred commands & change this view's string to be
+  // that of the new visualizer.
+  if(data_is_ready && new_view_name.size != 0)
+  {
+    for(UIShell_CmdNode *cmd_node = state->deferred_cmds.first;
+        cmd_node != 0;
+        cmd_node = cmd_node->next)
+    {
+      UIShell_Cmd *cmd = &cmd_node->cmd;
+      uishell_push_stored_cmd(cmd->name, cmd->regs);
+    }
+    CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
+    cfg_node_equip_string(rd_state->cfg, view, new_view_name);
+    RD_ViewState *vs = rd_view_state_from_cfg(view);
+    for(RD_ArenaExt *ext = vs->first_arena_ext; ext != 0; ext = ext->next)
+    {
+      arena_release(ext->arena);
+    }
+    if(vs->release_user_data) { vs->release_user_data(vs->user_data); vs->release_user_data = 0; }
+    arena_pop_to(vs->arena, vs->arena_reset_pos);
+    vs->user_data = 0;
+    vs->user_data_size = 0;
+    vs->first_arena_ext = vs->last_arena_ext = 0;
+  }
+  
+  // rjf: if we don't have a viewer, for whatever reason, then just
+  // close the tab.
+  if(data_is_ready && new_view_name.size == 0)
+  {
+    uishell_cmd("close_tab");
+  }
+  
+  scratch_end(scratch);
+}
+
 internal void
 rd_view_ui(Rng2F32 rect)
 {
   ProfBeginFunction();
   CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   RD_ViewState *vs = rd_view_state_from_cfg(view);
-  String8 view_name = view->string;
   String8 expr_string = rd_expr_from_cfg(view);
+  WH_Renderer *renderer = wh_renderer_from_name(view->string);
 
-  // only views that declare a producer version (terminal: render generation,
-  // text: content hash) are safe for shape-only workspace preservation; any
-  // other view kind keeps its workspace on full byte hashing
-  if(!str8_match(view_name, str8_lit("terminal"), 0) &&
-     !str8_match(view_name, str8_lit("terminal_fixture"), 0) &&
-     !str8_match(view_name, str8_lit("text"), 0))
+  // only views that declare a producer version are safe for shape-only
+  // workspace preservation; any other view kind keeps its workspace on full
+  // byte hashing
+  if(!wh_renderer_has_trait(renderer, RD_ViewTrait_VersionedSurface))
   {
     rd_workspace_surface_mark_unversioned_view();
   }
@@ -1682,204 +1947,26 @@ rd_view_ui(Rng2F32 rect)
     UI_FontSize(rd_font_size())
     UI_PrefHeight(ui_px(floor_f32(ui_top_font_size()*rd_setting_f32_from_name(str8_lit("row_height"))), 1.f))
   {
-    ////////////////////////////
-    //- rjf: special-case view: "getting started"
-    //
-    if(0){}
-    else if(str8_match(view_name, str8_lit("getting_started"), 0))
+    Temp scratch = scratch_begin(0, 0);
+    WH_ViewContext ctx = wh_view_context_from_cfg(scratch.arena, view, renderer, rd_view_user_data(vs, renderer->state_size), rect);
+    if(wh_renderer_has_trait(renderer, RD_ViewTrait_LegacyEval))
     {
-      Temp scratch = scratch_begin(0, 0);
-      ui_set_next_flags(UI_BoxFlag_DefaultFocusNav);
-      UI_Focus(UI_FocusKind_On) UI_WidthFill UI_HeightFill UI_NamedColumn(str8_lit("empty_view"))
-        UI_Padding(ui_pct(1, 0)) UI_Focus(UI_FocusKind_Null)
-      {
-        //- rjf: icon & info
-        UI_Padding(ui_em(2.f, 1.f)) UI_TagF("weak")
-        {
-          //- rjf: icon
-          {
-            F32 icon_dim = ui_top_font_size()*10.f;
-            UI_PrefHeight(ui_px(icon_dim, 1.f))
-              UI_Row
-              UI_Padding(ui_pct(1, 0))
-              UI_PrefWidth(ui_px(icon_dim, 1.f))
-            {
-              R_Handle texture = rd_state->icon_texture;
-              Vec2S32 texture_dim = r_size_from_tex2d(texture);
-              ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
-            }
-          }
-          
-          //- rjf: info
-          UI_Padding(ui_em(2.f, 1.f))
-            UI_WidthFill UI_PrefHeight(ui_em(2.f, 1.f))
-            UI_Row
-            UI_Padding(ui_pct(1, 0))
-            UI_TextAlignment(UI_TextAlign_Center)
-            UI_PrefWidth(ui_text_dim(10, 1))
-          {
-            ui_label(str8_lit(BUILD_TITLE_STRING_LITERAL));
-          }
-        }
-        
-        //- rjf: targets state dependent helper
-        B32 helper_built = 0;
-        
-        //- rjf: or text
-        if(helper_built)
-        {
-          UI_TagF("weak")
-            UI_PrefHeight(ui_em(2.25f, 1.f))
-            UI_Row
-            UI_Padding(ui_pct(1, 0))
-            UI_TextAlignment(UI_TextAlign_Center)
-            UI_WidthFill
-            ui_labelf("- or -");
-        }
-        
-        //- rjf: helper text for command lister activation
-        UI_TagF("weak")
-          UI_PrefHeight(ui_em(2.25f, 1.f)) UI_Row
-          UI_PrefWidth(ui_text_dim(10, 1))
-          UI_TextAlignment(UI_TextAlign_Center)
-          UI_Padding(ui_pct(1, 0))
-        {
-          ui_labelf("use");
-          UI_TextAlignment(UI_TextAlign_Center) rd_cmd_binding_buttons(str8_lit("open_palette"), str8_zero(), 1);
-          ui_labelf("to search for commands and options");
-        }
-      }
-      scratch_end(scratch);
+      ctx.legacy_eval = e_eval_from_string(expr_string);
     }
     
     ////////////////////////////
-    //- rjf: special-case view: pending
+    //- rjf: the shell's own pages keep focus on their query bar
     //
-    else if(str8_match(view_name, str8_lit("pending"), 0))
+    if(wh_renderer_has_trait(renderer, RD_ViewTrait_QueryFocus))
     {
-      Temp scratch = scratch_begin(0, 0);
-      typedef struct State State;
-      struct State
-      {
-        Arena *deferred_cmd_arena;
-        UIShell_CmdList deferred_cmds;
-      };
-      State *state = rd_view_state(State);
-      if(state->deferred_cmd_arena == 0)
-      {
-        state->deferred_cmd_arena = rd_push_view_arena();
-      }
-      rd_store_view_loading_info(1, 0, 0);
-      
-      // rjf: any commands sent to this view need to be deferred until loading is complete
-      for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
-      {
-        if(str8_match(cmd->name, str8_lit("goto_line"), 0) ||
-           str8_match(cmd->name, str8_lit("goto_address"), 0) ||
-           str8_match(cmd->name, str8_lit("center_cursor"), 0) ||
-           str8_match(cmd->name, str8_lit("contain_cursor"), 0))
-        {
-          uishell_cmd_list_push_new(state->deferred_cmd_arena, &state->deferred_cmds, cmd->name, cmd->regs);
-        }
-      }
-      
-      // rjf: unpack view's target expression & hash
-      E_Eval eval = e_eval_from_string(expr_string);
-      Rng1U64 range = r1u64(0, 1024);
-      C_Key key = rd_key_from_eval_space_range(eval.space, range, 0);
-      U128 hash = c_hash_from_key(key, 0);
-      
-      // rjf: determine if hash's blob is ready, and which viewer to use
-      B32 data_is_ready = 0;
-      String8 new_view_name = {0};
-      {
-        Access *access = access_open();
-        if(!u128_match(hash, u128_zero()))
-        {
-          String8 data = c_data_from_hash(access, hash);
-          U64 num_utf8_bytes = 0;
-          U64 num_unknown_bytes = 0;
-          for(U64 idx = 0; idx < data.size && idx < range.max;)
-          {
-            UnicodeDecode decode = utf8_decode(data.str+idx, data.size-idx);
-            if(decode.codepoint != max_U32 && (decode.inc > 1 ||
-                                               (10 <= decode.codepoint && decode.codepoint <= 13) ||
-                                               (32 <= decode.codepoint && decode.codepoint <= 126)))
-            {
-              num_utf8_bytes += decode.inc;
-              idx += decode.inc;
-            }
-            else
-            {
-              num_unknown_bytes += 1;
-              idx += 1;
-            }
-          }
-          data_is_ready = 1;
-          new_view_name = uishell_file_view_name_from_probe(num_utf8_bytes, num_unknown_bytes);
-        }
-        access_close(access);
-      }
-      
-      // rjf: if we don't have a viewer, use the app's binary-data fallback.
-      if(new_view_name.size == 0)
-      {
-        new_view_name = uishell_fallback_file_view_name();
-      }
-      
-      // rjf: if data is ready and we have the name of a new visualizer,
-      // dispatch deferred commands & change this view's string to be
-      // that of the new visualizer.
-      if(data_is_ready && new_view_name.size != 0)
-      {
-        for(UIShell_CmdNode *cmd_node = state->deferred_cmds.first;
-            cmd_node != 0;
-            cmd_node = cmd_node->next)
-        {
-          UIShell_Cmd *cmd = &cmd_node->cmd;
-          uishell_push_stored_cmd(cmd->name, cmd->regs);
-        }
-        CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-        cfg_node_equip_string(rd_state->cfg, view, new_view_name);
-        RD_ViewState *vs = rd_view_state_from_cfg(view);
-        for(RD_ArenaExt *ext = vs->first_arena_ext; ext != 0; ext = ext->next)
-        {
-          arena_release(ext->arena);
-        }
-        if(vs->release_user_data) { vs->release_user_data(vs->user_data); vs->release_user_data = 0; }
-        arena_pop_to(vs->arena, vs->arena_reset_pos);
-        vs->user_data = 0;
-        vs->first_arena_ext = vs->last_arena_ext = 0;
-      }
-      
-      // rjf: if we don't have a viewer, for whatever reason, then just
-      // close the tab.
-      if(data_is_ready && new_view_name.size == 0)
-      {
-        uishell_cmd("close_tab");
-      }
-      
-      scratch_end(scratch);
+      renderer->ui(&ctx);
     }
-    
-    ////////////////////////////
-    //- rjf: special-case view: generic property/list renderer
-    //
-    else if(str8_match(view_name, str8_lit("watch"), 0))
-    {
-      uishell_watch_view_ui(rect);
-    }
-    
     
     ////////////////////////////
     //- rjf: visualizer hook
     //
     else
     {
-      Temp scratch = scratch_begin(0, 0);
-      RD_ViewUIRule *view_ui_rule = rd_view_ui_rule_from_string(view_name);
-      E_Eval expr_eval = e_eval_from_string(expr_string);
-      
       // rjf: peek presses, steal focus from query bar. This reads events
       // directly, so respect inert preview ancestors just as UI signals do.
       B32 interaction_ignored = 0;
@@ -1932,13 +2019,15 @@ rd_view_ui(Rng2F32 rect)
       }
       
       // rjf: build ui via hook
-      E_ParentKey(expr_eval.key)
+      if(!rd_state->headless_views || !wh_renderer_has_trait(renderer, RD_ViewTrait_Visualizer))
       {
-        view_ui_rule->ui(expr_eval, rect);
+        E_ParentKey(ctx.legacy_eval.key)
+        {
+          renderer->ui(&ctx);
+        }
       }
-      
-      scratch_end(scratch);
     }
+    scratch_end(scratch);
   }
   
   ////////////////////////////
@@ -2020,12 +2109,38 @@ rd_view_query_input(void)
 internal String8
 rd_view_setting_from_name(String8 name)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
+  return rd_view_setting_from_cfg(cfg_node_from_id(uishell_regs()->view), name);
+}
+
+internal String8
+rd_view_setting_from_cfg(CFG_Node *view, String8 name)
+{
   String8 result = cfg_node_child_from_string(view, name)->first->string;
   if(result.size == 0)
   {
     result = rd_default_setting_from_names(view->string, name);
   }
+  return result;
+}
+
+internal B32
+rd_setting_b32_from_string(String8 string)
+{
+  B32 result = !!e_value_from_stringf("raw((bool)(%S))", string).u64;
+  return result;
+}
+
+internal U64
+rd_setting_u64_from_string(String8 string)
+{
+  U64 result = e_value_from_stringf("raw((uint64)(%S))", string).u64;
+  return result;
+}
+
+internal F32
+rd_setting_f32_from_string(String8 string)
+{
+  F32 result = e_value_from_stringf("raw((float32)(%S))", string).f32;
   return result;
 }
 
@@ -2041,25 +2156,19 @@ rd_view_setting_value_from_name(String8 name)
 internal B32
 rd_view_setting_b32_from_name(String8 name)
 {
-  String8 string = rd_view_setting_from_name(name);
-  B32 result = !!e_value_from_stringf("raw((bool)(%S))", string).u64;
-  return result;
+  return rd_setting_b32_from_string(rd_view_setting_from_name(name));
 }
 
 internal U64
 rd_view_setting_u64_from_name(String8 name)
 {
-  String8 string = rd_view_setting_from_name(name);
-  U64 result = e_value_from_stringf("raw((uint64)(%S))", string).u64;
-  return result;
+  return rd_setting_u64_from_string(rd_view_setting_from_name(name));
 }
 
 internal F32
 rd_view_setting_f32_from_name(String8 name)
 {
-  String8 string = rd_view_setting_from_name(name);
-  F32 result = e_value_from_stringf("raw((float32)(%S))", string).f32;
-  return result;
+  return rd_setting_f32_from_string(rd_view_setting_from_name(name));
 }
 
 internal U64
@@ -2119,11 +2228,7 @@ rd_view_state_by_size(U64 size)
 {
   CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
   RD_ViewState *view_state = rd_view_state_from_cfg(view);
-  if(view_state->user_data == 0)
-  {
-    view_state->user_data = push_array(view_state->arena, U8, size);
-  }
-  return view_state->user_data;
+  return rd_view_user_data(view_state, size);
 }
 
 internal Arena *
@@ -4754,9 +4859,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             //- rjf: visualizers -> accept expression drops
             UI_Box *view_drop_site = &ui_nil_box;
             {
-              RD_ViewUIRule *view_ui_rule = rd_view_ui_rule_from_string(selected_tab->string);
-              if(view_ui_rule != &rd_nil_view_ui_rule && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_Expr &&
-                 !str8_match(selected_tab->string, str8_lit("text"), 0))
+              WH_Renderer *renderer = wh_visualizer_from_name(selected_tab->string);
+              if(wh_renderer_has_trait(renderer, RD_ViewTrait_ExpressionDrop) &&
+                 rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_Expr)
               {
                 UI_FixedSize(dim_2f32(content_rect))
                   view_drop_site = ui_build_box_from_stringf(UI_BoxFlag_DropSite|UI_BoxFlag_Floating, "drop_site_%I64x", selected_tab->id);
@@ -6535,7 +6640,7 @@ rd_window_frame(void)
         {
           // rjf: determine if we have a top-level visualizer
           EV_ExpandRule *expand_rule = ev_expand_rule_from_type_key(hover_eval.irtree.type_key);
-          RD_ViewUIRule *view_ui_rule = rd_view_ui_rule_from_string(expand_rule->string);
+          B32 has_visualizer = wh_visualizer_from_name(expand_rule->string) != &wh_nil_renderer;
           
           // rjf: build view
           CFG_Node *root = rd_immediate_cfg_from_keyf("hover_eval_view_%I64x", ws->cfg_id);
@@ -6556,7 +6661,7 @@ rd_window_frame(void)
           F32 height_px = needed_row_count*row_height_px;
           
           // rjf: if arbitrary visualizer, pick catchall size
-          if(view_ui_rule != &rd_nil_view_ui_rule)
+          if(has_visualizer)
           {
             height_px = floor_f32(40.f*ui_top_font_size());
           }
@@ -10092,10 +10197,11 @@ rd_init(CmdLine *cmdln)
     rd_state->cfg_schema_table = push_array(rd_state->arena, CFG_SchemaTable, 1);
     rd_state->cfg_schema_table->slots_count = 4096;
     rd_state->cfg_schema_table->slots = push_array(rd_state->arena, CFG_SchemaNode *, rd_state->cfg_schema_table->slots_count);
-    for EachElement(idx, RD_APP_NAME_SCHEMA_INFO_TABLE)
+    UIShell_NameSchemaInfoArray name_schemas = uishell_name_schemas();
+    for EachIndex(idx, name_schemas.count)
     {
-      String8 name = RD_APP_NAME_SCHEMA_INFO_TABLE[idx].name;
-      MD_Node *schema = md_tree_from_string(rd_state->arena, RD_APP_NAME_SCHEMA_INFO_TABLE[idx].schema)->first;
+      String8 name = name_schemas.v[idx].name;
+      MD_Node *schema = md_tree_from_string(rd_state->arena, name_schemas.v[idx].schema)->first;
       cfg_schema_table_insert(rd_state->arena, rd_state->cfg_schema_table, name, schema);
     }
 
@@ -11119,16 +11225,16 @@ rd_frame(void)
     rd_state->meta_name2type_map = push_array(rd_frame_arena(), E_String2TypeKeyMap, 1);
     rd_state->meta_name2type_map[0] = e_string2typekey_map_make(rd_frame_arena(), 256);
     EV_ExpandRuleTable *expand_rule_table = push_array(scratch.arena, EV_ExpandRuleTable, 1);
-    rd_state->view_ui_rule_map = rd_view_ui_rule_map_make(scratch.arena, 512);
     ProfScope("build extra types & maps")
     {
       uishell_eval_register_query_macros(scratch.arena, rd_frame_arena(), macro_map, rd_state->meta_name2type_map);
       
       //- rjf: add macros for evallable top-level individual config entity trees -
       // things with names either explicitly attached, or that we can infer
-      for EachElement(idx, RD_APP_NAME_SCHEMA_INFO_TABLE)
+      UIShell_NameSchemaInfoArray name_schemas = uishell_name_schemas();
+      for EachIndex(idx, name_schemas.count)
       {
-        String8 name = RD_APP_NAME_SCHEMA_INFO_TABLE[idx].name;
+        String8 name = name_schemas.v[idx].name;
         MD_NodePtrList schemas = cfg_schemas_from_name(scratch.arena, rd_state->cfg_schema_table, name);
         B32 is_individually_evallable = 0;
         for(MD_NodePtrNode *n = schemas.first; n != 0; n = n->next)
@@ -11308,8 +11414,6 @@ rd_frame(void)
         E_TypeIRExtFunctionType *irext;
         E_TypeAccessFunctionType *access;
         E_TypeExpandRule expand;
-        RD_ViewUIFunctionType *ui;
-        EV_ExpandRuleInfoHookFunctionType *ev_expand;
       }
       lens_table[] =
       {
@@ -11333,10 +11437,13 @@ rd_frame(void)
         {str8_lit("list"),        0, 0, 1,        E_TYPE_IREXT_FUNCTION_NAME(list), E_TYPE_ACCESS_FUNCTION_NAME(list), {E_TYPE_EXPAND_INFO_FUNCTION_NAME(list), E_TYPE_EXPAND_RANGE_FUNCTION_NAME(list)}},
       };
       
-      //- rjf: fill lenses in ev expand rule map, rd view ui rule map
+      //- rjf: fill lenses in ev expand rule map
+      for EachElement(idx, wh_renderers)
       {
-        uishell_register_view_ui_rules(scratch.arena, rd_state->view_ui_rule_map);
-        uishell_register_expand_rule_infos(scratch.arena, expand_rule_table);
+        if(wh_renderers[idx].expand != 0)
+        {
+          ev_expand_rule_table_push_new(scratch.arena, expand_rule_table, wh_renderers[idx].name, wh_renderers[idx].expand);
+        }
       }
       
       //- rjf: fill macros w/ types for lenses
