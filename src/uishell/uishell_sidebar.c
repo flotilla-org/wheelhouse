@@ -1910,7 +1910,9 @@ internal void uishell_sidebar_local_section_menu(UIShell_SidebarState *state, CF
                                                  String8 loop, UI_Key menu);
 
 //~ A sidebar section, its panel, collapses as a whole (sidebar-headers.md):
-// the state is a panel option. A layout from before kept it on a View; the
+// the state is a panel option. Like tabs_on_bottom it is Presentation State,
+// edited here rather than through the arrangement, which carries it along
+// when it moves a panel's tabs. A layout from before kept it on a View; the
 // View's own still counts until the section next opens or closes; drop that
 // fallback once layouts saved before #268 no longer need to load.
 
@@ -1930,6 +1932,31 @@ uishell_sidebar_section_set_collapsed(CFG_Node *view, B32 collapsed)
   { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(v, str8_lit("section_collapsed"))); }
   if(collapsed) { cfg_node_child_from_string_or_alloc(rd_state->cfg, panel, str8_lit("section_collapsed")); }
   else { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(panel, str8_lit("section_collapsed"))); }
+}
+
+// Makes `view` its panel's Selected View, without the focus a click on its
+// title brings (focus_tab).
+internal void
+uishell_sidebar_select_view(CFG_Node *view)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *arrangement = uishell_workspace_mount_from_cfg(scratch.arena, view).arrangement;
+  RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(arrangement, view->id);
+  if(panel != &rd_nil_arrangement_panel)
+  {
+    if(panel->selected != view->id && rd_arrangement_select(arrangement, panel->id, view->id)) { rd_arrangement_save(rd_state->cfg, arrangement); }
+  }
+  else
+  {
+    // Floating Panels are not arrangements yet.
+    for(CFG_Node *v = view->parent->first; v != &cfg_nil_node; v = v->next)
+    {
+      CFG_Node *selected = cfg_node_child_from_string(v, str8_lit("selected"));
+      if(selected != &cfg_nil_node) { cfg_node_release(rd_state->cfg, selected); }
+    }
+    cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("selected"));
+  }
+  scratch_end(scratch);
 }
 
 //~ A section's header holds all its panel's Views (sidebar-headers.md). The
@@ -4601,25 +4628,48 @@ uishell_sidebar_region_view(CFG_Node *owner, String8 key)
   return view;
 }
 
+// A new section View showing `key`, as the Selected View of the
+// arrangement's `panel`, after `prev` (0: first). Saving places it.
 internal CFG_Node *
-uishell_sidebar_place_region(CFG_Node *owner, UIShell_SectionPlacement *regions, U64 count, U64 index, CFG_Node *view)
+uishell_sidebar_section_view_new(RD_Arrangement *arrangement, RD_PanelID panel, CFG_ID prev, String8 key, String8 label)
+{
+  CFG_Node *view = cfg_node_new(rd_state->cfg, &cfg_nil_node, str8_lit("sidebar_section"));
+  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")), key);
+  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), label);
+  cfg_node_new(rd_state->cfg, view, str8_lit("selected"));
+  rd_arrangement_move_tab(arrangement, view->id, panel, prev);
+  return view;
+}
+
+// The View of the arrangement's `panel`'s last tab, or 0.
+internal CFG_ID
+uishell_sidebar_last_tab(RD_Arrangement *arrangement, RD_PanelID panel)
+{
+  RD_ArrangementTab *last = rd_arrangement_panel_from_id(arrangement, panel)->last_tab;
+  return last ? last->view : 0;
+}
+
+// As uishell_sidebar_panel_has_content, for a panel of the sidebar's
+// arrangement.
+internal B32
+uishell_sidebar_arrangement_panel_has_content(RD_ArrangementPanel *panel)
+{
+  if(panel->first != &rd_nil_arrangement_panel) { return 1; }
+  for(RD_ArrangementTab *tab = panel->first_tab; tab != 0; tab = tab->next)
+  {
+    CFG_Node *view = cfg_node_from_id(tab->view);
+    if(rd_dock_view_from_name(view->string) || rd_dock_is_container(view)) { return 1; }
+  }
+  return 0;
+}
+
+// Floating Panels are not arrangements yet, so placing a section in one
+// edits their config.
+internal CFG_Node *
+uishell_sidebar_place_floating(CFG_Node *owner, UIShell_SectionPlacement *regions, U64 count, U64 index, CFG_Node *view, F32 weight)
 {
   UIShell_SectionPlacement region = regions[index];
-  String8 host_name = str8_match(region.default_host, str8_lit("floating"), 0) ? str8_lit("floating_panels") : RD_DOCK_SIDEBAR_ROOT;
-  // Check the prospective ancestry before mutating saved configuration. The
-  // checker reads host/owner traits; allocation is only needed after acceptance.
-  B32 valid = 0;
-  for(U32 attempt = 0; attempt < 2; attempt++)
-  {
-    CFG_Node prospective_host = {.string = host_name, .parent = owner};
-    CFG_Node prospective_panel = {.string = str8_lit("1"), .parent = &prospective_host};
-    valid = view == &cfg_nil_node ? rd_dock_can_create(str8_lit("sidebar_section"), &prospective_panel) :
-      rd_dock_drag_target(view, &prospective_panel, RD_DOCK_UNMEASURED_WIDTH);
-    if(valid || str8_match(host_name, RD_DOCK_SIDEBAR_ROOT, 0)) { break; }
-    host_name = RD_DOCK_SIDEBAR_ROOT;
-  }
-  if(!valid) { return view; }
-  CFG_Node *host = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner, host_name);
+  CFG_Node *host = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner, str8_lit("floating_panels"));
   CFG_Node *panel = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
   if(view == &cfg_nil_node)
   {
@@ -4645,6 +4695,89 @@ uishell_sidebar_place_region(CFG_Node *owner, UIShell_SectionPlacement *regions,
     if(anchor != &cfg_nil_node)
     { cfg_node_insert_child(rd_state->cfg, host, anchor->prev, panel); break; }
   }
+  if(weight > 0) { return view; }
+  // An equal share: lift a merged host's tabs and leaf options into a panel
+  // of their own, then scale the saved sibling shares together.
+  B32 split_host = 0;
+  for(CFG_Node *n = host->first; n != &cfg_nil_node; n = n->next)
+  { if(n != panel && rd_dock_is_container(n)) { split_host = 1; break; } }
+  if(!split_host && (host->first != panel || panel->next != &cfg_nil_node))
+  {
+    CFG_Node *old = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
+    for(CFG_Node *n = host->first, *next; n != &cfg_nil_node; n = next)
+    {
+      next = n->next;
+      if(n != old && n != panel) { cfg_node_insert_child(rd_state->cfg, old, old->last, n); }
+    }
+  }
+  F32 total = 0; U64 siblings = 0;
+  for(CFG_Node *n = host->first; n != &cfg_nil_node; n = n->next)
+  {
+    if(n != panel && rd_dock_is_container(n))
+    { total += Max(.01f, (F32)f64_from_str8(n->string)); siblings++; }
+  }
+  F32 fraction = 1.f/(siblings+1);
+  for(CFG_Node *n = host->first; n != &cfg_nil_node; n = n->next)
+  {
+    if(n != panel && rd_dock_is_container(n))
+    { cfg_node_equip_stringf(rd_state->cfg, n, "%f", (1-fraction)*Max(.01f, (F32)f64_from_str8(n->string))/total); }
+  }
+  cfg_node_equip_stringf(rd_state->cfg, panel, "%f", fraction);
+  return view;
+}
+
+// Places a region's View, new or saved, in a new panel of its default host,
+// before the next placed region's: with `weight` 1 as a declared section
+// arrives (the sidebar sizes it), with 0 an equal share, as Restore gives.
+internal CFG_Node *
+uishell_sidebar_place_region(CFG_Node *owner, UIShell_SectionPlacement *regions, U64 count, U64 index, CFG_Node *view, F32 weight)
+{
+  UIShell_SectionPlacement region = regions[index];
+  String8 host_name = str8_match(region.default_host, str8_lit("floating"), 0) ? str8_lit("floating_panels") : RD_DOCK_SIDEBAR_ROOT;
+  // Check the prospective ancestry before mutating saved configuration. The
+  // checker reads host/owner traits; allocation is only needed after acceptance.
+  B32 valid = 0;
+  for(U32 attempt = 0; attempt < 2; attempt++)
+  {
+    CFG_Node prospective_host = {.string = host_name, .parent = owner};
+    CFG_Node prospective_panel = {.string = str8_lit("1"), .parent = &prospective_host};
+    valid = view == &cfg_nil_node ? rd_dock_can_create(str8_lit("sidebar_section"), &prospective_panel) :
+      rd_dock_drag_target(view, &prospective_panel, RD_DOCK_UNMEASURED_WIDTH);
+    if(valid || str8_match(host_name, RD_DOCK_SIDEBAR_ROOT, 0)) { break; }
+    host_name = RD_DOCK_SIDEBAR_ROOT;
+  }
+  if(!valid) { return view; }
+  if(!str8_match(host_name, RD_DOCK_SIDEBAR_ROOT, 0)) { return uishell_sidebar_place_floating(owner, regions, count, index, view, weight); }
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, owner, RD_DOCK_SIDEBAR_ROOT);
+  RD_PanelID panel = rd_arrangement_add(sidebar, sidebar->root->id, weight);
+  CFG_Node *old_panel = view->parent;
+  RD_ArrangementPanel *source = rd_arrangement_panel_from_view(sidebar, view->id);
+  if(view == &cfg_nil_node) { view = uishell_sidebar_section_view_new(sidebar, panel, 0, region.key, region.title); }
+  else
+  {
+    // A saved View keeps its selection, and a sidebar panel it leaves with
+    // nothing to show goes.
+    B32 selected = cfg_node_child_from_string(view, str8_lit("selected")) != &cfg_nil_node;
+    rd_arrangement_move_tab(sidebar, view->id, panel, 0);
+    if(!selected) { rd_arrangement_select(sidebar, panel, 0); }
+    if(source != &rd_nil_arrangement_panel && !uishell_sidebar_arrangement_panel_has_content(source))
+    { rd_arrangement_remove(sidebar, source->id); }
+  }
+  // Insert beside the next hinted neighbour's whole subtree. Existing nested
+  // splits keep their structure, tab selection, ratios and View identities.
+  for(U64 next = index+1; next < count; next++)
+  {
+    CFG_Node *neighbour = uishell_sidebar_region_view(owner, regions[next].key);
+    RD_ArrangementPanel *anchor = rd_arrangement_panel_from_view(sidebar, neighbour->id);
+    while(anchor->parent != &rd_nil_arrangement_panel && anchor->parent != sidebar->root) { anchor = anchor->parent; }
+    if(anchor->parent == sidebar->root)
+    { rd_arrangement_reorder(sidebar, panel, anchor->prev->id); break; }
+  }
+  rd_arrangement_save(rd_state->cfg, sidebar);
+  // A View saved outside the sidebar's panels leaves wrappers to repair.
+  if(source == &rd_nil_arrangement_panel) { uishell_sidebar_prune_empty_panel(old_panel); }
+  scratch_end(scratch);
   return view;
 }
 
@@ -4690,6 +4823,9 @@ uishell_sidebar_prune_region_duplicates(CFG_Node *container, String8 key, CFG_No
 
 // An authoritative empty declaration removes stale Views and close records.
 // Missing provider snapshots never reach this function and preserve layout.
+// Pruning stale, duplicate and misplaced saved Views repairs the config of
+// the sidebar and the Floating Panels together, as rd_dock_restore_window
+// does; placing a region edits the sidebar's arrangement.
 internal CFG_Node *
 uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *regions, U64 count)
 {
@@ -4720,7 +4856,7 @@ uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *reg
     B32 invalid = view != &cfg_nil_node && (!rd_dock_saved_placement_valid(view) || hint_pending != &cfg_nil_node);
     if(invalid || (view == &cfg_nil_node && !known && !legacy_saved))
     {
-      view = uishell_sidebar_place_region(owner, regions, count, r, view);
+      view = uishell_sidebar_place_region(owner, regions, count, r, view, 1.f);
       if(hint_pending != &cfg_nil_node && rd_dock_saved_placement_valid(view))
       { cfg_node_release(rd_state->cfg, hint_pending); }
     }
@@ -4818,44 +4954,9 @@ uishell_sidebar_restore_region(UIShell_ControlledSplit *split, String8 key)
   // Reconciliation above clears any stale closed record for an existing
   // View. Returning success adds no further placement mutation or duplicate.
   if(view != &cfg_nil_node) { return 1; }
-  view = uishell_sidebar_place_region(split->owner_cfg, state->placement_regions, state->placement_count, index, &cfg_nil_node);
+  // An equal share of the host, its siblings scaled to make room.
+  view = uishell_sidebar_place_region(split->owner_cfg, state->placement_regions, state->placement_count, index, &cfg_nil_node, 0);
   if(view == &cfg_nil_node) { return 0; }
-  CFG_Node *panel = view->parent, *host = panel->parent;
-  // A merged host may be a leaf itself. Lift its tabs and leaf options
-  // (tabs_on_bottom and panel selected) together. config_panels.c reads
-  // these on the leaf; host axis and sizing settings live on owner_cfg.
-  B32 split_host = 0;
-  for(CFG_Node *n = host->first; n != &cfg_nil_node; n = n->next)
-  { if(n != panel && rd_dock_is_container(n)) { split_host = 1; break; } }
-  if(!split_host && (host->first != panel || panel->next != &cfg_nil_node))
-  {
-    CFG_Node *old = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
-    for(CFG_Node *n = host->first, *next; n != &cfg_nil_node; n = next)
-    {
-      next = n->next;
-      if(n != old && n != panel) { cfg_node_insert_child(rd_state->cfg, old, old->last, n); }
-    }
-  }
-  // Match ordinary sibling insertion: allocate one share to the restored
-  // panel and scale saved sibling shares together, including nested splits.
-  F32 total = 0; U64 count = 0;
-  for(CFG_Node *n = host->first; n != &cfg_nil_node; n = n->next)
-  {
-    if(n != panel && rd_dock_is_container(n))
-    { total += Max(.01f, (F32)f64_from_str8(n->string)); count++; }
-  }
-  F32 fraction = 1.f/(count+1);
-  for(CFG_Node *n = host->first; n != &cfg_nil_node; n = n->next)
-  {
-    if(n != panel && rd_dock_is_container(n))
-    {
-      // Saved numeric tokens can be malformed or zero. Give each sibling
-      // a positive weight before normalization so none becomes unreachable.
-      F32 share = Max(.01f, (F32)f64_from_str8(n->string))/total;
-      cfg_node_equip_stringf(rd_state->cfg, n, "%f", (1-fraction)*share);
-    }
-  }
-  cfg_node_equip_stringf(rd_state->cfg, panel, "%f", fraction);
   CFG_Node *record = cfg_node_child_from_string(cfg_node_child_from_string(split->owner_cfg, UISHELL_REGION_INVENTORY), key);
   CFG_Node *closed = cfg_node_child_from_string(record, str8_lit("closed"));
   if(closed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, closed); }
@@ -4874,38 +4975,21 @@ uishell_sidebar_restore_from_menu(UIShell_ControlledSplit *split, String8 key)
   rd_request_frame(); return 0;
 }
 
-// A selected View in `panel` showing the section keyed `key`.
-internal CFG_Node *
-uishell_sidebar_section_view_here(CFG_Node *panel, String8 key, String8 label)
-{
-  for(CFG_Node *v = panel->first; v != &cfg_nil_node; v = v->next)
-  { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(v, str8_lit("selected"))); }
-  CFG_Node *view = cfg_node_new(rd_state->cfg, panel, str8_lit("sidebar_section"));
-  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")), key);
-  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), label);
-  cfg_node_new(rd_state->cfg, view, str8_lit("selected"));
-  return view;
-}
-
 // Sections… → New section (sidebar-headers.md): an empty section of its own
 // at the sidebar's end, its name field open. A sidebar that is one panel
 // takes it as a View beside its others.
 internal CFG_Node *
 uishell_sidebar_new_section(UIShell_SidebarState *state, CFG_Node *window)
 {
-  CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
-  if(host == &cfg_nil_node) { return &cfg_nil_node; }
-  B32 split = 0;
-  for(CFG_Node *c = host->first; c != &cfg_nil_node; c = c->next)
-  {
-    MD_TokenizeResult tokens = md_tokenize_from_text(ui_build_arena(), c->string);
-    split |= tokens.tokens.count == 1 && tokens.tokens.v[0].flags & MD_TokenFlag_Numeric;
-  }
-  CFG_Node *panel = split ? cfg_node_new(rd_state->cfg, host, str8_lit("0.25")) : host;
   Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
+  if(sidebar->root == &rd_nil_arrangement_panel) { scratch_end(scratch); return &cfg_nil_node; }
+  RD_PanelID panel = sidebar->root->first != &rd_nil_arrangement_panel ? rd_arrangement_add(sidebar, sidebar->root->id, 0.25f) : sidebar->root->id;
   CFG_Node *group = uishell_sidebar_local_new_group(window, str8_lit("New section"));
   String8 title = uishell_sidebar_local_title(scratch.arena, group->parent);
-  CFG_Node *view = uishell_sidebar_section_view_here(panel, uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(group->parent, str8_lit("id"))), title);
+  String8 key = uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(group->parent, str8_lit("id")));
+  CFG_Node *view = uishell_sidebar_section_view_new(sidebar, panel, uishell_sidebar_last_tab(sidebar, panel), key, title);
+  rd_arrangement_save(rd_state->cfg, sidebar);
   uishell_sidebar_local_begin_rename(state, group->parent, title);
   scratch_end(scratch);
   return view;
@@ -5029,7 +5113,9 @@ uishell_sidebar_size_panels(UIShell_ControlledSplit *split, UIShell_WorkspaceMou
 }
 
 // The sizes to lay out from before collapse: manual (saved, repaired) or
-// automatic (from content), written to the config.
+// automatic (from content), written to the config. The pixel geometry is
+// Presentation State, so it writes panel weights directly rather than
+// editing the arrangement.
 internal void
 uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_WorkspaceMount *mount, Rng2F32 rect)
 {

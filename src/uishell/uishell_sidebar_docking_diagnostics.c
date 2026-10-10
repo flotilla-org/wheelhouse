@@ -185,6 +185,8 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   CFG_NodePtrList panels = {0};
   for(CFG_Node *panel = host->first; panel != &cfg_nil_node; panel = panel->next)
   {
+    // Not the host's own `id`.
+    if(!rd_dock_is_container(panel)) { continue; }
     cfg_node_ptr_list_push(scratch.arena, &panels, panel);
     String8 key = cfg_node_child_from_string(cfg_node_child_from_string(panel, str8_lit("sidebar_section")), str8_lit("section"))->first->string;
     cfg_node_equip_stringf(rd_state->cfg, panel, "%f", str8_match(key, keys[0], 0) || str8_match(key, keys[1], 0) ? 0.f : 1.f/Max(1, panels.count));
@@ -724,6 +726,24 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
 #undef DockFailure
 }
 
+// Saving gives each panel node its `id`, after its own panels; panels a test
+// adds by hand land after it.
+internal CFG_Node *
+uishell_section_placement_last_panel(CFG_Node *host)
+{
+  CFG_Node *n = host->last;
+  for(; n != &cfg_nil_node && !rd_dock_is_container(n); n = n->prev) {}
+  return n;
+}
+
+internal CFG_Node *
+uishell_section_placement_next_panel(CFG_Node *panel)
+{
+  CFG_Node *n = panel->next;
+  for(; n != &cfg_nil_node && !rd_dock_is_container(n); n = n->next) {}
+  return n;
+}
+
 // Headless lifecycle scenarios use the real native snapshot and config codec.
 internal B32
 uishell_section_placement_diagnostics(String8 source_path)
@@ -758,10 +778,10 @@ uishell_section_placement_diagnostics(String8 source_path)
       PlacementCheck(source_host != &cfg_nil_node && source_host->first != &cfg_nil_node);
       // The unhinted workspace fallback follows every hinted shipped region.
       CFG_Node *source_fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
-      PlacementCheck(source_fallback != &cfg_nil_node && source_host->last == source_fallback->parent);
+      PlacementCheck(source_fallback != &cfg_nil_node && uishell_section_placement_last_panel(source_host) == source_fallback->parent);
       if(source_host->first != &cfg_nil_node)
       {
-        CFG_Node *moved = source_host->last;
+        CFG_Node *moved = uishell_section_placement_last_panel(source_host);
         cfg_node_insert_child(state.cfg, source_host, &cfg_nil_node, moved);
         uishell_sidebar_dock_layout(&split);
         PlacementCheck(source_host->first == moved);
@@ -787,7 +807,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   // Andamento always emits the unhinted workspace fallback; it sorts last.
   CFG_Node *fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
   PlacementCheck(fallback != &cfg_nil_node);
-  PlacementCheck(host->first == a->parent && a->parent->next == b->parent && host->last == fallback->parent);
+  PlacementCheck(host->first == a->parent && a->parent->next == b->parent && uishell_section_placement_last_panel(host) == fallback->parent);
   CFG_ID a_id = a->id, b_id = b->id;
   // A user reorder changes only layout, and reconciliation is idempotent.
   cfg_node_insert_child(state.cfg, host, &cfg_nil_node, b->parent);
@@ -934,7 +954,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   c = uishell_sidebar_region_view(restored, str8_lit("c"));
   PlacementCheck(restored_host->first == a->parent && a->parent->next == c->parent && c->parent->next == b->parent);
   fallback = uishell_sidebar_region_view(restored, str8_lit(".unplaced"));
-  PlacementCheck(fallback != &cfg_nil_node && b->parent->next == fallback->parent && restored_host->last == fallback->parent);
+  PlacementCheck(fallback != &cfg_nil_node && b->parent->next == fallback->parent && uishell_section_placement_last_panel(restored_host) == fallback->parent);
   // A saved user split remains intact when a new neighbour is hinted before
   // a View within it. The whole subtree is the insertion anchor.
   CFG_Node *nested = cfg_node_new(state.cfg, restored_host, str8_lit("0.5"));
@@ -946,7 +966,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
   uishell_sidebar_dock_layout(&split);
   CFG_Node *d = uishell_sidebar_region_view(restored, str8_lit("d"));
-  PlacementCheck(d != &cfg_nil_node && d->parent->next == nested);
+  PlacementCheck(d != &cfg_nil_node && uishell_section_placement_next_panel(d->parent) == nested);
   PlacementCheck(b->id == nested_b_id && b->parent == nested_b && nested_b->parent == nested);
   PlacementCheck(str8_match(nested->string, str8_lit("0.5"), 0));
   // A saved section inside a child Workspace level is rejected by the shared
@@ -1038,7 +1058,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   UIShell_SectionPlacement rejected = {str8_lit("reject"), str8_lit("Reject"), str8_lit("floating"), 0};
   U64 reject_generation = cfg_change_gen();
   for(U32 attempt = 0; attempt < 2; attempt++)
-  { PlacementCheck(uishell_sidebar_place_region(reject_owner, &rejected, 1, 0, unknown_view) == unknown_view); }
+  { PlacementCheck(uishell_sidebar_place_region(reject_owner, &rejected, 1, 0, unknown_view, 1.f) == unknown_view); }
   PlacementCheck(cfg_change_gen() == reject_generation && reject_owner->first == unknown_view && unknown_view->next == &cfg_nil_node);
   cfg_node_release(state.cfg, reject_owner);
   // Unusual numeric and reserved-looking ids survive the actual config codec.

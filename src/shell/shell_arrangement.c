@@ -68,12 +68,18 @@ rd_arrangement_next_child_cfg(CFG_Node *node, RD_ArrangementChild kind)
 }
 
 internal RD_ArrangementKeys
-rd_arrangement_keys(Arena *arena, CFG_Node *root)
+rd_arrangement_keys_from_owner(Arena *arena, CFG_Node *owner, String8 root_name)
 {
-  RD_ArrangementKeys result = {root->parent, push_str8_copy(arena, root->string)};
+  RD_ArrangementKeys result = {owner, push_str8_copy(arena, root_name)};
   result.axis_key = str8_match(result.root_name, RD_DOCK_SIDEBAR_ROOT, 0) ?
     str8_lit("control_views_split_x") : str8_lit("split_x");
   return result;
+}
+
+internal RD_ArrangementKeys
+rd_arrangement_keys(Arena *arena, CFG_Node *root)
+{
+  return rd_arrangement_keys_from_owner(arena, root->parent, root->string);
 }
 
 ////////////////////////////////
@@ -274,6 +280,20 @@ rd_arrangement_from_cfg(Arena *arena, CFG_Node *panels_root)
 }
 
 internal RD_Arrangement *
+rd_arrangement_from_owner(Arena *arena, CFG_Node *owner, String8 root_name)
+{
+  CFG_Node *root = cfg_node_child_from_string(owner, root_name);
+  if(root != &cfg_nil_node || owner == &cfg_nil_node) { return rd_arrangement_from_cfg(arena, root); }
+  RD_Arrangement *arrangement = rd_arrangement_from_cfg(arena, &cfg_nil_node);
+  RD_ArrangementKeys keys = rd_arrangement_keys_from_owner(arena, owner, root_name);
+  arrangement->owner = owner->id;
+  arrangement->root_name = keys.root_name;
+  arrangement->axis_key = keys.axis_key;
+  arrangement->root_axis = cfg_node_child_from_string(owner, keys.axis_key) != &cfg_nil_node ? Axis2_X : Axis2_Y;
+  return arrangement;
+}
+
+internal RD_Arrangement *
 rd_arrangement_copy(Arena *arena, RD_Arrangement *src)
 {
   RD_Arrangement *dst = push_array(arena, RD_Arrangement, 1);
@@ -386,6 +406,19 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
       rd_arrangement_place_cfg(state, node, prev, view, RD_ArrangementChild_Tab);
       prev = view;
     }
+  }
+
+  // A panel that took another's tabs takes its Presentation State too.
+  for(RD_ArrangementPanel *p = root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(root, p))
+  {
+    CFG_Node *from = cfg_node_from_id(p->options_from), *node = cfg_node_from_id(p->cfg);
+    for(CFG_Node *c = from->first, *next = &cfg_nil_node; c != &cfg_nil_node && from != node; c = next)
+    {
+      next = c->next;
+      if(rd_arrangement_child_from_cfg(c) == RD_ArrangementChild_Other && !str8_match(c->string, str8_lit("id"), 0))
+      { cfg_node_insert_child(state, node, node->last, c); }
+    }
+    p->options_from = 0;
   }
 
   // Only the Selected View is marked `selected`, whatever marks Views brought
@@ -667,6 +700,76 @@ rd_arrangement_split(RD_Arrangement *arrangement, RD_PanelID id, Dir2 dir)
     rd_arrangement_insert(split, split->last, side == Side_Min ? panel : created);
   }
   return created->id;
+}
+
+internal RD_PanelID
+rd_arrangement_add(RD_Arrangement *arrangement, RD_PanelID parent_id, F32 weight)
+{
+  RD_ArrangementPanel *parent = rd_arrangement_panel_from_id(arrangement, parent_id);
+  if(parent == &rd_nil_arrangement_panel)
+  {
+    if(parent_id != 0 || arrangement->root != &rd_nil_arrangement_panel) { return 0; }
+    parent = arrangement->root = rd_arrangement_panel_alloc(arrangement);
+    parent->weight = 1.f;
+  }
+  if(parent->first == &rd_nil_arrangement_panel && parent->first_tab != 0)
+  {
+    RD_ArrangementPanel *lifted = rd_arrangement_panel_alloc(arrangement);
+    lifted->weight = 1.f;
+    lifted->first_tab = parent->first_tab;
+    lifted->last_tab = parent->last_tab;
+    lifted->tab_count = parent->tab_count;
+    lifted->selected = parent->selected;
+    lifted->options_from = parent->cfg;
+    parent->first_tab = parent->last_tab = 0;
+    parent->tab_count = 0;
+    parent->selected = 0;
+    rd_arrangement_insert(parent, &rd_nil_arrangement_panel, lifted);
+  }
+  RD_ArrangementPanel *created = rd_arrangement_panel_alloc(arrangement);
+  if(weight > 0) { created->weight = rd_arrangement_quantize(weight); }
+  else
+  {
+    // Malformed or zero saved weights still keep a share, so none becomes
+    // unreachable.
+    F32 total = 0;
+    for(RD_ArrangementPanel *child = parent->first; child != &rd_nil_arrangement_panel; child = child->next)
+    { total += Max(.01f, child->weight); }
+    F32 fraction = 1.f/(parent->child_count+1);
+    for(RD_ArrangementPanel *child = parent->first; child != &rd_nil_arrangement_panel; child = child->next)
+    { child->weight = rd_arrangement_quantize((1-fraction)*Max(.01f, child->weight)/total); }
+    created->weight = rd_arrangement_quantize(fraction);
+  }
+  rd_arrangement_insert(parent, parent->last, created);
+  return created->id;
+}
+
+internal B32
+rd_arrangement_remove(RD_Arrangement *arrangement, RD_PanelID id)
+{
+  RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(arrangement, id);
+  if(panel == &rd_nil_arrangement_panel || panel == arrangement->root) { return 0; }
+  // Saving releases its Views, and the panel nodes no longer used.
+  for(RD_ArrangementPanel *p = panel; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(panel, p))
+  {
+    for(RD_ArrangementTab *tab = p->first_tab, *next = 0; tab != 0; tab = next)
+    {
+      next = tab->next;
+      tab->prev = 0;
+      SLLStackPush(arrangement->first_removed, tab);
+    }
+    p->first_tab = p->last_tab = 0;
+    p->tab_count = 0;
+    p->selected = 0;
+  }
+  for(;;)
+  {
+    RD_ArrangementPanel *parent = panel->parent;
+    rd_arrangement_unlink(arrangement, panel);
+    if(parent == arrangement->root || parent->first != &rd_nil_arrangement_panel || parent->first_tab != 0) { break; }
+    panel = parent;
+  }
+  return 1;
 }
 
 internal RD_PanelID
