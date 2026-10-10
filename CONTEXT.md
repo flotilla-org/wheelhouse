@@ -276,8 +276,12 @@ A user's choice of which **Content Providers** to subscribe to, together with th
 _Avoid_: Project, RAD project, sidebar config
 
 **Presentation State**:
-State that belongs to one frontend on one device: window and panel geometry, tab placement, theme. It is keyed by stable IDs from the **Dashboard** and **Workspaces**. It is never shared between frontends.
+State that belongs to one frontend on one device: absolute geometry (window size and position, pixel sizes), floating panels, the **Visible Workspace** and **Workspace Focus** of each window, section collapse, fonts, keybindings and chrome. It is keyed by stable IDs from the **Dashboard** and **Workspaces**, and is never shared between frontends. A workspace's panel tree, including relative split weights, is not Presentation State: it is part of the **Workspace**, and each frontend adapts it to its own space.
 _Avoid_: Workspace, layout (ambiguous), project
+
+**Target Resolution**:
+The cached result of resolving a **Target Reference** into a way of connecting, such as a Cleat session on a host or a Jackstay endpoint. It is always disposable: when it no longer works, the **Target Reference** is resolved again. A portable resolution (a remote session or endpoint) is kept with the **Workspace**; a machine-local one (a local socket or attach token) is kept per device.
+_Avoid_: Runtime instance (the live attachment), binding, target reference
 
 **Overlay Sync**:
 An explicit operation that proposes a **Workspace Overlay**, or **Dashboard** changes, back to the source that owns the canonical version, such as flotilla. Without it, a user's overlay stays personal to them. Proposed, not built.
@@ -347,6 +351,7 @@ _Avoid_: Autosave, replication
 - A **Workspace Overlay** records which version of its **Suggested Layout** it was made against, so it can be reapplied when the provider's baseline changes. If reapplying conflicts, the conflict is flagged, not dropped.
 - **Overlay Sync** moves user changes towards the canonical source; reapplying an overlay moves provider changes towards the user. Both are explicit.
 - A Wheelhouse process opens one **Dashboard**. How its windows relate to that Dashboard is still open.
+- A **Target Reference** may have a **Target Resolution**; a **Runtime Instance** is attached by using that resolution.
 - **Presentation State** refers to **Workspaces** and **Views** only by stable IDs; it never defines what they are.
 
 ## Example Dialogue
