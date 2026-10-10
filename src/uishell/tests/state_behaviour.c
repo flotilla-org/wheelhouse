@@ -372,6 +372,30 @@ entry_point(CmdLine *cmdline)
     // The section header's disclosure.
     uishell_sidebar_section_set_collapsed(attention, 1);
     state_frame(ws);
+    // The sidebar's panel tree, as its render builds and sizes it, sees the
+    // collapse: Attention's leaf keeps only its header, and the leaves still
+    // fill the sidebar.
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    CFG_Node *root = uishell_sidebar_dock_layout(&split);
+    UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, root);
+    CFG_PanelNode *leaf = &cfg_nil_panel_node;
+    F32 sum = 0, header_h = 0;
+    B32 collapsed = 0;
+    UI_IconInfo icons = {0}; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_FontSize(11)
+    {
+      uishell_sidebar_size_panels(&split, &mount, r2f32p(0, 0, 300, 600));
+      for(CFG_PanelNode *p = mount.panel_tree.root->first; p != &cfg_nil_panel_node; p = p->next)
+      {
+        sum += p->pct_of_parent;
+        if(p->selected_tab == attention) { leaf = p; }
+      }
+      collapsed = uishell_sidebar_panel_collapsed(leaf, uishell_sidebar_row_height(), &header_h);
+    }
+    ui_end_build();
+    StateCheck(leaf != &cfg_nil_panel_node && collapsed);
+    StateCheck(abs_f32(leaf->pct_of_parent*600.f - header_h) < 1.f && abs_f32(sum-1.f) < .001f);
   }
 
   //- Presentation: the split local workspace visible, its terminal focused.
