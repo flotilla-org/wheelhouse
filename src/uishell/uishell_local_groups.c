@@ -1,6 +1,7 @@
 //- Managing local sections and groups (drag-model.md, "Closing and deleting"
-// and "Titles"). The window's `sidebar_local` node stays the source of truth:
-// these change it, and publishing (uishell_sidebar_publish_local) follows.
+// and "Titles"). These change the window's working copy of what Andamento
+// owns (uishell_sidebar_local_tree), and publishing sends Andamento the
+// change (uishell_sidebar_local_publish).
 
 typedef enum UIShell_MakeKind
 {
@@ -27,7 +28,7 @@ internal CFG_Node *
 uishell_sidebar_local_section(CFG_Node *window, String8 id)
 {
   if(!id.size) { return &cfg_nil_node; }
-  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  CFG_Node *root = uishell_sidebar_local_tree(window);
   for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
   {
     if(str8_match(section->string, str8_lit("section"), 0) && str8_match(uishell_sidebar_local_field(section, str8_lit("id")), id, 0))
@@ -541,7 +542,7 @@ uishell_sidebar_local_group_items(UIShell_SidebarState *state, CFG_Node *window,
   { uishell_sidebar_local_begin_rename(state, group, uishell_sidebar_local_field(group, str8_lit("label"))); }
   if(ui_clicked(ui_button(str8_lit("New workspace here"))))
   { uishell_sidebar_local_new_workspace(window, group); ui_ctx_menu_close(); }
-  if(loop.size && uishell_sidebar_order_saved(window, loop)) { uishell_sidebar_order_reset_button(state, loop); }
+  if(loop.size && uishell_sidebar_order_saved(state, loop)) { uishell_sidebar_order_reset_button(state, loop); }
   if(!uishell_sidebar_local_is_default(group) && uishell_sidebar_local_group_count(group->parent) > 1)
   { uishell_sidebar_local_delete_button(state, window, group); }
 }

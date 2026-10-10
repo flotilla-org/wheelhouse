@@ -1,11 +1,12 @@
-// The logical state as text (uishell_logical_state.h). It reads the user
-// config tree and each window's current Andamento snapshot and changes
-// neither, so it can run between any two commands.
+// The logical state as text (uishell_logical_state.h). It reads the config
+// tree and each window's current Andamento snapshot and dashboard record and
+// changes none of them, so it can run between any two commands.
 //
 //   window <n>
 //     workspaces          selector order; subject or local; kept; arrangement
 //     sidebar             persisted display values; rows as Andamento presents
-//                         them; saved sibling orders; local sections and pins
+//                         them; the sibling orders it keeps; local sections
+//                         and pins
 //     sidebar arrangement where sections are docked, and which are closed
 //   presentation
 //     window <n>          visible workspace, focused panel, input host
@@ -281,37 +282,40 @@ uishell_logical_order_entity(Arena *arena, UIShell_SidebarState *state, String8 
   return push_str8f(arena, "%S (absent)", name);
 }
 
-// Each saved sibling order, named by the row (or region) its run is under.
+// Each sibling order Andamento keeps, named by the row (or region) its run
+// is under.
 internal void
-uishell_logical_orders(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *state, CFG_Node *window)
+uishell_logical_orders(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *state)
 {
   Arena *arena = t->arena;
-  CFG_Node *orders = cfg_node_child_from_string(window, str8_lit("sidebar_order"));
-  for(CFG_Node *run = orders->first; run != &cfg_nil_node; run = run->next)
+  for(UIShell_KdlNode *order = uishell_sidebar_dashboard(state); order; order = order->next)
   {
+    if(!str8_match(order->name, str8_lit("order"), 0)) { continue; }
     String8 under = str8_lit("(no rows)");
-    for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+    U64 row = uishell_sidebar_order_row(state, order);
+    if(row != ANDAMENTO_NONE)
     {
-      if(!str8_match(uishell_sidebar_loop_key(state->snapshot, i), run->string, 0)) { continue; }
       AndamentoNode node = {0}, parent = {0};
-      uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-      if(node.parent == ANDAMENTO_NONE) { under = str8_lit("(top level)"); break; }
+      uishell_sidebar_snapshot_node(state->snapshot, row, &node);
       uishell_sidebar_node_at(state, node.parent, &parent);
       under = uishell_logical_quote(arena, parent.is_section ? uishell_logical_section_title(state, parent) : uishell_sidebar_string(parent.label));
-      break;
     }
     uishell_logical_linef(t, depth, "order under %S", under);
-    for(CFG_Node *n = run->first; n != &cfg_nil_node && n->next != &cfg_nil_node; n = n->next->next)
-    { uishell_logical_linef(t, depth+1, "%S", uishell_logical_order_entity(arena, state, n->string, n->next->string)); }
+    for(UIShell_KdlNode *e = order->first; e; e = e->next)
+    {
+      if(!str8_match(e->name, str8_lit("entity"), 0) || e->arg_count < 2) { continue; }
+      uishell_logical_linef(t, depth+1, "%S", uishell_logical_order_entity(arena, state, e->args[0], e->args[1]));
+    }
   }
 }
 
-// Sections and groups people made, and the pins in each group.
+// Sections and groups people made, and the pins in each group (the
+// window's working copy of what Andamento keeps).
 internal void
 uishell_logical_local(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
 {
   Arena *arena = t->arena;
-  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  CFG_Node *root = uishell_sidebar_local_tree(window);
   for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
   {
     if(!str8_match(section->string, str8_lit("section"), 0)) { continue; }
@@ -371,7 +375,7 @@ uishell_logical_sidebar(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
     uishell_logical_linef(t, depth+1, "rows");
     uishell_logical_rows(t, depth+2, state);
     uishell_logical_linef(t, depth+1, "orders");
-    uishell_logical_orders(t, depth+2, state, window);
+    uishell_logical_orders(t, depth+2, state);
   }
   uishell_logical_linef(t, depth+1, "local");
   uishell_logical_local(t, depth+2, window);

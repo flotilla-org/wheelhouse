@@ -161,13 +161,13 @@ uishell_sidebar_detached_copy(RD_WindowState *ws, UIShell_HoverCard *source)
 
 // Missing identity fields resolve through CFG's nil sentinel to empty strings;
 // malformed saved entries stay available to render their retained/missing label.
-// Pins (ghosts) live in the window's local groups (sidebar_local). With
+// Pins (ghosts) live in the window's local groups (uishell_sidebar_local_tree). With
 // `area_only`, the first group that isn't the default one (where Pin puts
 // things); otherwise the first ghost of `entity`.
 internal CFG_Node *
 uishell_sidebar_pin_find(CFG_Node *window, AndamentoEntity entity, B32 area_only)
 {
-  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  CFG_Node *root = uishell_sidebar_local_tree(window);
   for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
   {
     for(CFG_Node *group = section->first; group != &cfg_nil_node; group = group->next)
@@ -194,7 +194,7 @@ uishell_sidebar_pin_find(CFG_Node *window, AndamentoEntity entity, B32 area_only
 internal CFG_Node *
 uishell_sidebar_pin_by_ghost(CFG_Node *window, String8 ghost)
 {
-  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  CFG_Node *root = uishell_sidebar_local_tree(window);
   for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
   {
     for(CFG_Node *group = section->first; group != &cfg_nil_node; group = group->next)
@@ -270,7 +270,7 @@ uishell_sidebar_pin_new_ghost(CFG_Node *card)
 internal void
 uishell_sidebar_pin_cards(Arena *arena, CFG_Node *window, CFG_NodePtrList *out)
 {
-  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  CFG_Node *root = uishell_sidebar_local_tree(window);
   for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
   {
     for(CFG_Node *group = section->first; group != &cfg_nil_node; group = group->next)
@@ -496,7 +496,7 @@ uishell_sidebar_local_view_group(CFG_Node *window, CFG_Node *view)
   String8 key = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
   String8 id = uishell_sidebar_local_key_id(key);
   if(!id.size) { return &cfg_nil_node; }
-  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  CFG_Node *root = uishell_sidebar_local_tree(window);
   for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
   {
     if(!str8_match(uishell_sidebar_local_field(section, str8_lit("id")), id, 0)) { continue; }
@@ -938,7 +938,7 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
     }
     if(group == &cfg_nil_node && state->drop_panel)
     {
-      CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+      CFG_Node *root = uishell_sidebar_local_tree(window);
       CFG_Node *last_section = root->last;
       CFG_Node *made = uishell_sidebar_pin_area(ws, 1);
       if(made != &cfg_nil_node && made->parent != dragged_group->parent)
