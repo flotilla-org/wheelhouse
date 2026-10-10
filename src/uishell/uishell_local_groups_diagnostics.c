@@ -809,6 +809,8 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     CFG_Node *sidebar_root = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
     CFG_Node *panel = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
     CFG_Node *elsewhere = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
+    // Drops close the panel they empty, so the cleanup below finds each by ID.
+    CFG_ID panel_id = panel->id, elsewhere_id = elsewhere->id;
     char *names[] = {"North", "South", "West", "East"};
     CFG_Node *views[4];
     for(U64 i = 0; i < ArrayCount(views); i++)
@@ -934,6 +936,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     for(CFG_Node *c = elsewhere->first; c != &cfg_nil_node && count < 4; c = c->next) { if(uishell_sidebar_is_tab(c)) { order[count++] = c; } }
     GroupsCheck(count == 4 && order[0] == views[3] && order[1] == views[0] && order[2] == views[1] && order[3] == views[2],
                 "a whole section dropped on a header joins it in order at the gap: three Views and one make four");
+    GroupsCheck(cfg_node_from_id(panel_id) == &cfg_nil_node, "the panel a whole section left is closed by the drop");
     // At an edge, they make the new panel there together.
     UIShell_RegsScope(.window = window->id, .panel = elsewhere->id, .view = views[3]->id, .tab = views[3]->id)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
@@ -946,7 +949,8 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     CFG_Node *moved_panel = views[3]->parent;
     B32 together = moved_panel != elsewhere && moved_panel != third;
     for(U64 i = 0; i < 3; i++) { together &= views[i]->parent == moved_panel; }
-    GroupsCheck(together, "a whole section dropped at an edge makes the new panel there with all its Views");
+    GroupsCheck(together && cfg_node_from_id(elsewhere_id) == &cfg_nil_node,
+                "a whole section dropped at an edge makes the new panel there with all its Views, closing the one it left");
     // A section of data (not one of yours) can't join a list either.
     UIShell_RegsScope(.window = window->id, .panel = third->id, .view = held->id, .tab = held->id)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
@@ -967,15 +971,13 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     for(CFG_Node *c = third->first; c != &cfg_nil_node; c = c->next) { third_tabs += uishell_sidebar_is_tab(c); }
     GroupsCheck(third_tabs == 1 && !ws->sidebar->section_drop, "a section drop whose source was released moves nothing");
     cfg_node_release(rd_state->cfg, held);
-    CFG_ID made_panels[] = {moved_panel->id, third->id};
+    CFG_ID made_panels[] = {panel_id, elsewhere_id, moved_panel->id, third->id};
     uishell_local_groups_view = saved_view;
     for(U64 i = 0; i < ArrayCount(views); i++)
     {
       CFG_Node *made = uishell_sidebar_local_section(window, uishell_sidebar_local_key_id(cfg_node_child_from_string(views[i], str8_lit("section"))->first->string));
       if(made != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made); }
     }
-    cfg_node_release(rd_state->cfg, panel);
-    cfg_node_release(rd_state->cfg, elsewhere);
     for(U64 i = 0; i < ArrayCount(made_panels); i++)
     { if(cfg_node_from_id(made_panels[i]) != &cfg_nil_node) { cfg_node_release(rd_state->cfg, cfg_node_from_id(made_panels[i])); } }
     ui_select_state(saved_ui); ui_state_release(test);
