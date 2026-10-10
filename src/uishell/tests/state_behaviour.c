@@ -87,6 +87,43 @@ state_frame(RD_WindowState *ws)
   rd_dock_restore_layouts();
 }
 
+// Set: a window's first frame draws its sidebar before anything else
+// observes the window, as a frame does when the title bar has no room for
+// the workspace path (whose build otherwise observes first).
+global B32 state_draw_sidebar;
+
+// The sidebar's draw, as the window frame makes it: its panel tree, with each
+// docked section's View rendered in it. A section View's render observes the
+// window, and so syncs the arrangement stores, while the tree is drawn.
+internal void
+state_sidebar_draw(RD_WindowState *ws)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, cfg_node_from_id(ws->cfg_id));
+  UI_IconInfo icons = {0}; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+  fnt_frame();
+  dr_begin_frame(rd_font_from_slot(RD_FontSlot_Icons));
+  ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+  UIShell_RegsScope(.window = ws->cfg_id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11)
+  { uishell_control_surface_ui(r2f32p(0, 0, 320, 600), &split); }
+  ui_end_build();
+  scratch_end(scratch);
+}
+
+// A whole window frame, as rd_frame runs one. The theme it makes lives in
+// its scratch; the harness's own builds keep theirs.
+internal void
+state_window_frame(RD_WindowState *ws)
+{
+  state_pump();
+  UI_Theme *theme = ws->theme;
+  fnt_frame();
+  dr_begin_frame(rd_font_from_slot(RD_FontSlot_Icons));
+  UIShell_RegsScope(.window = ws->cfg_id) { rd_window_frame(); }
+  ws->theme = theme;
+  rd_dock_restore_layouts();
+}
+
 // A window's first frame: a new window state and Andamento core (fixture
 // facts, and the window's records imported), what the producer reports now,
 // then the sidebar's first build: observe and reconcile docked sections.
@@ -106,9 +143,17 @@ state_open_window(UI_Theme *theme)
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
   StateCheck(state->core != 0 && state->snapshot != 0);
   state_producer(state);
-  UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
-  uishell_sidebar_observe(state, &split);
-  uishell_sidebar_refresh(state);
+  if(state_draw_sidebar)
+  {
+    state_sidebar_draw(ws);
+    state_window_frame(ws);
+  }
+  else
+  {
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+  }
   scratch_end(scratch);
   state_frame(ws);
   return ws;
@@ -367,6 +412,51 @@ state_check_committed(RD_WindowState *ws)
   scratch_end(scratch);
 }
 
+// The window's sidebar is committed, and is the document Andamento keeps:
+// the same panels, tabs by section key, Selected Views and weights, at the
+// generation the window last saw.
+internal void
+state_check_sidebar_committed(RD_WindowState *ws)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_SidebarState *state = ws->sidebar;
+  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  UIShell_SidebarDoc doc = uishell_sidebar_store_doc(scratch.arena, state, window, 0);
+  AndamentoArrangement *stored = andamento_sidebar_arrangement_acquire(state->core, 0);
+  AndamentoArrangementInfo info = {0};
+  B32 same = stored && andamento_arrangement_info(stored, &info) && info.owned &&
+    info.panel_count == doc.panel_count && info.tab_count == doc.tab_count &&
+    andamento_arrangement_floating_first(stored) == doc.floating_first &&
+    str8_match(uishell_store_setting(window, str8_lit("sidebar_generation")), push_str8f(scratch.arena, "%I64u", info.generation), 0);
+  for(U64 i = 0; same && i < info.panel_count; i++)
+  {
+    AndamentoPanel p = {0}, q = doc.panels[i];
+    andamento_arrangement_panel(stored, i, &p);
+    same = (str8_match(uishell_sidebar_string(p.id), uishell_sidebar_string(q.id), 0) && p.parent == q.parent && p.kind == q.kind &&
+            (p.kind != ANDAMENTO_PANEL_SPLIT || p.axis == q.axis) && abs_f32((F32)(p.weight-q.weight)) < 1e-6f &&
+            p.tab_count == q.tab_count && (p.kind != ANDAMENTO_PANEL_TABS || p.first_tab == q.first_tab) && p.selected == q.selected);
+  }
+  for(U64 i = 0; same && i < info.tab_count; i++)
+  {
+    AndamentoTab t = {0};
+    andamento_arrangement_tab(stored, i, &t);
+    same = str8_match(uishell_sidebar_string(t.slot), doc.keys[i], 0);
+  }
+  if(!same) { fprintf(stderr, "The sidebar is not the arrangement Andamento keeps\n"); state_failures++; }
+  andamento_arrangement_release(stored);
+  scratch_end(scratch);
+}
+
+// The sidebar's arrangement as the logical state shows it.
+internal String8
+state_sidebar_text(Arena *arena)
+{
+  String8 text = uishell_logical_state_text(arena);
+  U64 start = str8_find_needle(text, 0, str8_lit("\n  sidebar arrangement\n"), 0);
+  U64 end = str8_find_needle(text, start, str8_lit("\npresentation\n"), 0);
+  return str8_substr(text, r1u64(start, end));
+}
+
 internal void
 entry_point(CmdLine *cmdline)
 {
@@ -376,6 +466,9 @@ entry_point(CmdLine *cmdline)
   uishell_sidebar_fixture = uishell_sidebar_subject_fixture = 1;
   wm_init(); fp_init(); r_init(cmdline); fnt_init(); rd_init(cmdline);
   rd_state->view_ui_rule_map = rd_view_ui_rule_map_make(rd_state->arena, 512);
+  // Docked sections render when the sidebar is drawn (state_sidebar_draw);
+  // no other View does.
+  rd_view_ui_rule_map_insert(rd_state->arena, rd_state->view_ui_rule_map, str8_lit("sidebar_section"), RD_VIEW_UI_FUNCTION_NAME(sidebar_section));
   e_select_cache(rd_state->eval_cache);
   E_BaseCtx base_ctx = {.address_arch = Arch_CURRENT, .space_gen = rd_eval_space_gen,
                        .space_read = rd_eval_space_read, .space_write = rd_eval_space_write}; e_select_base_ctx(&base_ctx);
@@ -563,6 +656,19 @@ entry_point(CmdLine *cmdline)
     state_check_committed(ws);
   }
 
+  //- The sidebar's arrangement came back from the dashboard record: the
+  // presentation file holds no dock and no closed sections, only this
+  // device's part (collapse, sizes, focus), and the dock is the document
+  // Andamento keeps.
+  {
+    String8 presentation = data_from_file_path(scratch.arena, uishell_dashboard.presentation_path);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("control_views"), 0) == presentation.size);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("section_positions"), 0) == presentation.size);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("sidebar_presentation"), 0) < presentation.size);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("section_collapsed"), 0) < presentation.size);
+    state_check_sidebar_committed(ws);
+  }
+
   //- Every workspace, kept ones included, has the ID it had.
   String8List ids_after = state_workspace_ids(scratch.arena);
   StateCheck(ids_after.node_count == ids_before.node_count);
@@ -598,6 +704,62 @@ entry_point(CmdLine *cmdline)
     StateCheck(state->store_commits == commits+1);
     StateCheck(!str8_match(first_cfg->string, weight_before, 0));
     state_check_committed(ws);
+  }
+
+  //- A sidebar divider drag reaches Andamento once, when it ends, sizes
+  // and all: releasing it opts into sizes set by hand, as the boundary does.
+  {
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    CFG_Node *root = uishell_sidebar_dock_layout(&split);
+    UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, root);
+    CFG_PanelNode *first = mount.panel_tree.root->first;
+    CFG_Node *first_cfg = first->cfg;
+    String8 weight_before = push_str8_copy(scratch.arena, first_cfg->string);
+    U64 calls = state->store_calls, commits = state->sidebar_commits;
+    rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_sidebar_drag")), &mount, first);
+    for(U32 step = 1; step <= 4; step++)
+    {
+      rd_state->frame_index += 1;
+      rd_boundary_resize_move(0.05f*step, 0.05f, 1);
+      state_frame(ws);
+      StateCheck(state->store_calls == calls && state->sidebar_commits == commits);
+    }
+    rd_state->frame_index += 1;
+    uishell_sidebar_manual_sizing(window, 1);
+    rd_boundary_resize_commit();
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(state->sidebar_commits == commits+1);
+    StateCheck(!str8_match(first_cfg->string, weight_before, 0));
+    state_check_sidebar_committed(ws);
+  }
+
+  //- A region the template drops (template drift, ADR 0013) keeps its
+  // place, flagged, rather than disappearing; once the template has it
+  // again, it is where it was.
+  {
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
+    U64 at = str8_find_needle(daily, 0, str8_lit("region \"sessions\""), 0);
+    U64 end = str8_find_needle(daily, at, str8_lit("\n"), 0);
+    StateCheck(at < daily.size);
+    String8 drifted = push_str8f(scratch.arena, "%S%S", str8_prefix(daily, at), str8_skip(daily, end+1));
+    CFG_Node *sessions = uishell_sidebar_region_view(window, str8_lit("sessions"));
+    StateCheck(sessions != &cfg_nil_node);
+    StateCheck(andamento_configure(state->core, uishell_sidebar_text(drifted), 0));
+    uishell_sidebar_refresh(state);
+    state_frame(ws);
+    StateCheck(uishell_sidebar_region_view(window, str8_lit("sessions")) == sessions && uishell_sidebar_section_gone(state, str8_lit("sessions")));
+    String8 text = state_sidebar_text(scratch.arena);
+    StateCheck(str8_find_needle(text, 0, str8_lit("section \"Sessions\" selected flagged"), 0) < text.size);
+    StateCheck(andamento_configure(state->core, uishell_sidebar_text(daily), 0));
+    uishell_sidebar_refresh(state);
+    state_frame(ws);
+    StateCheck(uishell_sidebar_region_view(window, str8_lit("sessions")) == sessions && !uishell_sidebar_section_gone(state, str8_lit("sessions")));
+    state_check_sidebar_committed(ws);
   }
 
   //- A slot whose content Wheelhouse can't show (a web page another
@@ -686,14 +848,20 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
   }
 
-  //- A restart restores them all from the workspace records.
+  //- A restart restores them all from the workspace records, and the
+  // sidebar, the drag's sizes included, from the dashboard record.
   {
     String8 before = state_workspaces_text(scratch.arena);
+    String8 sidebar_before = state_sidebar_text(scratch.arena);
     ws = state_restart(ws, &theme, str8_zero());
     String8 after = state_workspaces_text(scratch.arena);
     StateCheck(str8_match(before, after, 0));
     if(!str8_match(before, after, 0)) { fprintf(stderr, "before:\n%.*s\nafter:\n%.*s\n", str8_varg(before), str8_varg(after)); }
     state_check_committed(ws);
+    String8 sidebar_after = state_sidebar_text(scratch.arena);
+    StateCheck(str8_match(sidebar_before, sidebar_after, 0));
+    if(!str8_match(sidebar_before, sidebar_after, 0)) { fprintf(stderr, "before:\n%.*s\nafter:\n%.*s\n", str8_varg(sidebar_before), str8_varg(sidebar_after)); }
+    state_check_sidebar_committed(ws);
   }
 
   //- Idle: once the restart's own changes are saved, frames that change
@@ -816,13 +984,15 @@ entry_point(CmdLine *cmdline)
   }
 
   //- A Dashboard whose presentation file still holds its workspaces' panel
-  // trees, as state model step 4 saved them, imports each into Andamento on
-  // its first load, slots and arrangement, and its next save drops them.
+  // trees and its sidebar, as state model step 4 saved them, imports each
+  // into Andamento on its first load, slots and arrangement, and its next
+  // save drops them.
   {
     // Dashboard C: this window saved as step 4 saved it, with no records.
     rd_autosave();
     state_pump();
     String8 workspaces_b = state_workspaces_text(scratch.arena);
+    String8 sidebar_b = state_sidebar_text(scratch.arena);
     window = cfg_node_from_id(ws->cfg_id);
     CFG_State *legacy = cfg_state_alloc();
     CFG_Node *copy = cfg_node_deep_copy(legacy, window);
@@ -830,7 +1000,8 @@ entry_point(CmdLine *cmdline)
       CFG_NodePtrList drop = {0};
       for(CFG_Node *c = copy; c != &cfg_nil_node; c = cfg_node_rec__depth_first(copy, c).next)
       {
-        if(str8_match(c->string, str8_lit("arrangement_generation"), 0) || str8_match(c->string, str8_lit("slot"), 0))
+        if(str8_match(c->string, str8_lit("arrangement_generation"), 0) || str8_match(c->string, str8_lit("slot"), 0) ||
+           str8_match(c->string, str8_lit("sidebar_generation"), 0))
         { cfg_node_ptr_list_push(scratch.arena, &drop, c); }
       }
       for(CFG_NodePtrNode *n = drop.first; n; n = n->next) { cfg_node_release(legacy, n->v); }
@@ -844,6 +1015,7 @@ entry_point(CmdLine *cmdline)
                                      cfg_string_from_tree(scratch.arena, rd_state->cfg_schema_table, str8_chop_last_slash(c_presentation), copy));
     cfg_state_release(legacy);
     StateCheck(state_saves_panel_tree(legacy_text));
+    StateCheck(str8_find_needle(legacy_text, 0, str8_lit("control_views"), 0) < legacy_text.size);
     StateCheck(write_data_to_file_path(c_presentation, legacy_text));
     ws = state_restart(ws, &theme, dashboard_c);
     StateCheck(str8_match(uishell_dashboard.dir, dashboard_c, 0));
@@ -851,14 +1023,50 @@ entry_point(CmdLine *cmdline)
     StateCheck(str8_match(workspaces_c, workspaces_b, 0));
     if(!str8_match(workspaces_c, workspaces_b, 0)) { fprintf(stderr, "B:\n%.*s\nC:\n%.*s\n", str8_varg(workspaces_b), str8_varg(workspaces_c)); }
     state_check_committed(ws);
+    String8 sidebar_c = state_sidebar_text(scratch.arena);
+    StateCheck(str8_match(sidebar_c, sidebar_b, 0));
+    if(!str8_match(sidebar_c, sidebar_b, 0)) { fprintf(stderr, "B:\n%.*s\nC:\n%.*s\n", str8_varg(sidebar_b), str8_varg(sidebar_c)); }
+    state_check_sidebar_committed(ws);
     rd_autosave();
     state_pump();
-    StateCheck(!state_saves_panel_tree(data_from_file_path(scratch.arena, c_presentation)));
+    String8 saved_c = data_from_file_path(scratch.arena, c_presentation);
+    StateCheck(!state_saves_panel_tree(saved_c));
+    StateCheck(str8_find_needle(saved_c, 0, str8_lit("control_views"), 0) == saved_c.size);
     // Read back from C's records alone.
     ws = state_restart(ws, &theme, dashboard_c);
     StateCheck(str8_match(state_workspaces_text(scratch.arena), workspaces_b, 0));
+    StateCheck(str8_match(state_sidebar_text(scratch.arena), sidebar_b, 0));
     state_check_committed(ws);
+    state_check_sidebar_committed(ws);
     ws = state_restart(ws, &theme, push_str8f(scratch.arena, "%S/dashboard-b", dir));
+  }
+
+  //- A new Dashboard's first frame draws its sidebar before anything else
+  // observes it. Andamento placed the container of local sections, as it
+  // does before any are published; with them published, it no longer
+  // resolves. The first observation is a section View's render, in the
+  // middle of drawing the sidebar's panel tree, and its sync drops the
+  // container's View and the panel it empties. That waits for the tree to be
+  // drawn: dropped mid-draw, the tree walks the released panel (whose links
+  // are cleared) and crashes.
+  {
+    String8 dashboard_b = push_str8_copy(scratch.arena, dashboard->dir);
+    state_draw_sidebar = 1;
+    ws = state_restart(ws, &theme, push_str8f(scratch.arena, "%S/dashboard-d", dir));
+    state_draw_sidebar = 0;
+    window = cfg_node_from_id(ws->cfg_id);
+    String8 container = {0};
+    for(U64 i = 0; i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
+    {
+      AndamentoNode node = {0};
+      if(uishell_sidebar_node_at(ws->sidebar, i, &node) == UIShell_SidebarRole_Container)
+      { container = push_str8_copy(scratch.arena, uishell_sidebar_string(node.key)); }
+    }
+    StateCheck(container.size != 0 && uishell_sidebar_region_view(window, container) == &cfg_nil_node);
+    StateCheck(uishell_sidebar_region_view(window, uishell_sidebar_local_key(scratch.arena, str8_lit("workspaces"))) != &cfg_nil_node);
+    state_window_frame(ws);
+    state_check_sidebar_committed(ws);
+    ws = state_restart(ws, &theme, dashboard_b);
   }
 
   //- A local workspace saved before Workspace IDs, whose sidebar entity was

@@ -7,11 +7,12 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   ui_select_state(test);
   UI_Box *button = &ui_nil_box;
   UIShell_SidebarState *state = ws->sidebar;
-  String8 saved_title = state->placement_regions[0].title;
-  CFG_Node *view = uishell_sidebar_region_view(split->owner_cfg, state->placement_regions[0].key);
+  uishell_sidebar_section_titles(state);
+  String8 saved_title = state->titles[0].title;
+  CFG_Node *view = uishell_sidebar_region_view(split->owner_cfg, state->titles[0].key);
   CFG_Node *parent = view->parent, *prev = view->prev;
   cfg_node_unhook(rd_state->cfg, parent, view);
-  state->placement_regions[0].title = str8_lit("Long section declaration with a deliberately extended title for review");
+  state->titles[0].title = str8_lit("Long section declaration with a deliberately extended title for review");
   B32 ok = 1;
   for(U32 frame = 0; frame < 8; frame++)
   {
@@ -27,7 +28,7 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
     }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = mouse;
-    if(frame == 6) { state->placement_regions[0].title = str8_lit("Changed long section declaration with a deliberately extended title for review"); }
+    if(frame == 6) { state->titles[0].title = str8_lit("Changed long section declaration with a deliberately extended title for review"); }
     // Changing font size while open changes both row size and toolkit padding.
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(frame >= 6 ? 15 : 11) UI_TextPadding(3)
     { uishell_sidebar_footer_ui(r2f32p(100, 200, 400, 250), split); }
@@ -42,7 +43,7 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
     if(frame == 7 && (!test->ctx_menu_open || test->ctx_menu_root->rect.y1 > button->rect.y0+1))
     { ok = 0; fprintf(stderr, "FAIL section restore footer menu placement/open\n"); }
   }
-  UI_Box *restore = ui_box_from_key(ui_key_from_stringf(test->ctx_menu_root->key, "###restore_%S", state->placement_regions[0].key));
+  UI_Box *restore = ui_box_from_key(ui_key_from_stringf(test->ctx_menu_root->key, "###restore_%S", state->titles[0].key));
   F32 text_width = fnt_dim_from_tag_size_string(restore->font, restore->font_size, 0, 0, ui_box_display_string(restore)).x;
   if(dim_2f32(restore->rect).x < text_width || dim_2f32(restore->rect).x <= restore->font_size*24.f)
   { ok = 0; fprintf(stderr, "FAIL long section restore menu title width\n"); }
@@ -75,7 +76,7 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
     }
   }
   Rng2F32 bounds = wm_client_rect_from_window(short_window);
-  restore = ui_box_from_key(ui_key_from_stringf(short_test->ctx_menu_root->key, "###restore_%S", state->placement_regions[0].key));
+  restore = ui_box_from_key(ui_key_from_stringf(short_test->ctx_menu_root->key, "###restore_%S", state->titles[0].key));
   if(!short_test->ctx_menu_open || ui_box_is_nil(restore) || short_test->ctx_menu_root->rect.y0 < bounds.y0 ||
      short_test->ctx_menu_root->rect.x0 < bounds.x0 || restore->rect.y0 < bounds.y0 ||
      restore->rect.y1 > bounds.y1 || restore->rect.x1 > bounds.x1)
@@ -84,7 +85,7 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   wm_window_close(short_window);
   ui_select_state(test);
   ui_state_release(short_test);
-  state->placement_regions[0].title = saved_title;
+  state->titles[0].title = saved_title;
   cfg_node_insert_child(rd_state->cfg, parent, prev, view);
   uishell_sidebar_dock_layout(split);
   U64 generation = cfg_change_gen();
@@ -92,7 +93,7 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   if(uishell_sidebar_restore_from_menu(split, str8_lit("not-declared")) || !test->next_ctx_menu_open ||
      !state->error[0] || cfg_change_gen() != generation)
   { ok = 0; fprintf(stderr, "FAIL failed section restore must leave menu open with a notice\n"); }
-  if(!uishell_sidebar_restore_from_menu(split, state->placement_regions[0].key) || test->next_ctx_menu_open)
+  if(!uishell_sidebar_restore_from_menu(split, state->titles[0].key) || test->next_ctx_menu_open)
   { ok = 0; fprintf(stderr, "FAIL successful section restore must close menu\n"); }
   MemoryCopy(state->error, saved_error, sizeof(saved_error));
   ui_select_state(saved); ui_state_release(test);
@@ -162,7 +163,7 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *owner = split->owner_cfg;
   CFG_Node *saved_host = cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT);
-  CFG_Node *saved_inventory = cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY);
+  CFG_Node *saved_inventory = cfg_node_child_from_string(owner, str8_lit("sidebar_generation"));
   CFG_Node *saved_sizing = cfg_node_child_from_string(owner, str8_lit("sidebar_layout_sized"));
   cfg_node_unhook(rd_state->cfg, owner, saved_host);
   cfg_node_unhook(rd_state->cfg, owner, saved_inventory);
@@ -175,6 +176,9 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   B32 ok = uishell_sidebar_result(&fixture, fixture.core != 0, error);
   uishell_sidebar_refresh(&fixture);
   ws->sidebar = &fixture;
+  // The fixture is the window's sidebar while it runs: Andamento's
+  // arrangement is built for it.
+  fixture.window = owner->id;
   CFG_Node *host = uishell_sidebar_dock_layout(split);
   String8 keys[] = {str8_lit("sessions"), str8_lit("git")};
   for(U32 i = 0; i < ArrayCount(keys); i++)
@@ -221,12 +225,14 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
     { ok = 0; fprintf(stderr, "FAIL saved section header %.*s: visible height %g\n", (int)keys[i].size, keys[i].str, dim_2f32(visible).y); }
   }
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT));
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY));
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(owner, str8_lit("sidebar_generation")));
   if(manual != &cfg_nil_node) { cfg_node_release(rd_state->cfg, manual); }
   if(saved_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, owner, owner->last, saved_host); }
   if(saved_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, owner, owner->last, saved_inventory); }
   if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, owner, owner->last, saved_sizing); }
   ws->sidebar = saved_sidebar;
+  // Releasing it as a window's would release the window's local sections.
+  fixture.window = 0;
   uishell_sidebar_release(&fixture);
   ui_select_state(saved); ui_state_release(test); scratch_end(scratch);
   return ok;
@@ -250,7 +256,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   CFG_Node *saved_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
   cfg_node_unhook(rd_state->cfg, window, saved_host);
-  CFG_Node *saved_positions = cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY);
+  CFG_Node *saved_positions = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
   if(saved_positions != &cfg_nil_node) { cfg_node_unhook(rd_state->cfg, window, saved_positions); }
   U32 failures = 0;
 #define DockFailure(expr) do { if(expr) { failures++; fprintf(stderr, "FAIL sidebar docking line %u: %s\n", __LINE__, #expr); } } while(0)
@@ -275,7 +281,11 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!uishell_sidebar_tab_overflow_diagnostics(ws));
   DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 1));
   DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 0));
-  CFG_Node *first_panel = host->first, *second_panel = first_panel->next;
+  // Two adjacent scrolling sections: Andamento places pinned regions
+  // (controls) first, so they're found by key, not position.
+  CFG_Node *first_panel = uishell_sidebar_region_view(window, str8_lit("tree"))->parent, *second_panel = first_panel->next;
+  U64 first_index = 0;
+  for(CFG_Node *c = host->first; c != first_panel && c != &cfg_nil_node; c = c->next) { first_index++; }
   CFG_Node *view = cfg_node_child_from_string(first_panel, str8_lit("sidebar_section"));
   CFG_Node *second_view = cfg_node_child_from_string(second_panel, str8_lit("sidebar_section"));
   CFG_ID view_id = view->id;
@@ -373,8 +383,10 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       DockFailure(loaded.count != 1);
       CFG_Node *restored_window = loaded.first->v;
       CFG_Node *restored_root = cfg_node_child_from_string(restored_window, RD_DOCK_SIDEBAR_ROOT);
+      CFG_Node *restored_first = restored_root->first;
+      for(U64 i = 0; i < first_index; i++) { restored_first = restored_first->next; }
       DockFailure(cfg_node_child_from_string(restored_window, str8_lit("sidebar_layout_sized")) == &cfg_nil_node);
-      DockFailure(!str8_match(restored_root->first->string, first_panel->string, 0));
+      DockFailure(!str8_match(restored_first->string, first_panel->string, 0));
       UIShell_ControlledSplit restored_split = {.owner_cfg = restored_window};
       // Arrangements name their nodes by ID in the selected config.
       CFG_Ctx *saved_ctx = cfg_ctx;
@@ -383,7 +395,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       UI_FontSize(11)
       { uishell_sidebar_size_panels(&restored_split, &restored_mount, r2f32p(17, 29, 337, 229-uishell_sidebar_footer_height(ws))); }
       cfg_ctx_select(saved_ctx);
-      DockFailure(!str8_match(restored_root->first->string, first_panel->string, 0));
+      DockFailure(!str8_match(restored_first->string, first_panel->string, 0));
       cfg_state_release(loaded_cfg);
     }
   }
@@ -714,7 +726,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   if(saved_axis != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_axis); }
   if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_sizing); }
   if(saved_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_host); }
-  CFG_Node *test_positions = cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY);
+  CFG_Node *test_positions = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
   if(test_positions != &cfg_nil_node) { cfg_node_release(rd_state->cfg, test_positions); }
   if(saved_positions != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_positions); }
   uishell_sidebar_release(state);
@@ -737,6 +749,14 @@ uishell_section_placement_last_panel(CFG_Node *host)
 }
 
 internal CFG_Node *
+uishell_section_placement_first_panel(CFG_Node *host)
+{
+  CFG_Node *n = host->first;
+  for(; n != &cfg_nil_node && !rd_dock_is_container(n); n = n->next) {}
+  return n;
+}
+
+internal CFG_Node *
 uishell_section_placement_next_panel(CFG_Node *panel)
 {
   CFG_Node *n = panel->next;
@@ -744,7 +764,87 @@ uishell_section_placement_next_panel(CFG_Node *panel)
   return n;
 }
 
-// Headless lifecycle scenarios use the real native snapshot and config codec.
+// The headless sidebar of the placement scenarios: one window, its core and
+// snapshot, as uishell_sidebar_init makes them.
+typedef struct UIShell_SectionPlacement UIShell_SectionPlacement;
+struct UIShell_SectionPlacement
+{
+  CFG_Node *user, *window;
+  CFG_SchemaTable *schemas;
+  UIShell_SidebarState sidebar;
+  RD_WindowState ws;
+  UIShell_ControlledSplit split;
+};
+
+// Makes `window` the sidebar's, with `core` (taking it; the old one goes).
+internal void
+uishell_section_placement_use(UIShell_SectionPlacement *p, CFG_Node *window, Andamento *core)
+{
+  UIShell_SidebarState *s = &p->sidebar;
+  if(core != s->core)
+  {
+    uishell_sidebar_replace_snapshot(s, 0);
+    andamento_destroy(s->core);
+    s->core = core;
+    s->sidebar_synced = 0; s->sidebar_hash = s->sidebar_generation = 0;
+  }
+  p->window = window;
+  s->window = window->id;
+  p->ws.cfg_id = window->id;
+  rd_state->window_state_last_accessed_id = window->id;
+  p->split.owner_cfg = window;
+  uishell_sidebar_replace_snapshot(s, core ? andamento_snapshot_acquire(core, 0) : 0);
+}
+
+// A frame: the sidebar commits what changed, or follows Andamento, then lays
+// itself out.
+internal CFG_Node *
+uishell_section_placement_frame(UIShell_SectionPlacement *p)
+{
+  uishell_sidebar_store_sync(&p->sidebar, p->window, 0);
+  return uishell_sidebar_dock_layout(&p->split);
+}
+
+internal B32
+uishell_section_placement_configure(UIShell_SectionPlacement *p, String8 config)
+{
+  B32 ok = andamento_configure(p->sidebar.core, uishell_sidebar_text(config), 0);
+  uishell_sidebar_replace_snapshot(&p->sidebar, andamento_snapshot_acquire(p->sidebar.core, 0));
+  uishell_section_placement_frame(p);
+  return ok;
+}
+
+// A restart: the window as the presentation file holds it, read back, and a
+// new core with `config` that imports the dashboard record. Returns the
+// window's text.
+internal String8
+uishell_section_placement_restart(Arena *arena, UIShell_SectionPlacement *p, String8 config)
+{
+  String8 text = uishell_workspace_store_window_text(arena, str8_zero(), p->window);
+  String8 record = uishell_sidebar_record_export(arena, p->sidebar.core, str8_lit("dashboard"));
+  CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(arena, rd_state->cfg, p->schemas, str8_zero(), text);
+  CFG_Node *window = loaded.first ? loaded.first->v : &cfg_nil_node;
+  cfg_node_insert_child(rd_state->cfg, p->user, p->user->last, window);
+  cfg_node_release(rd_state->cfg, p->window);
+  Andamento *core = andamento_create(config.str, config.size, 0);
+  if(core && record.size) { andamento_record_import(core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0); }
+  uishell_section_placement_use(p, window, core);
+  uishell_sidebar_store_load(&p->sidebar, window);
+  uishell_section_placement_frame(p);
+  return text;
+}
+
+internal B32
+uishell_section_placement_closed(UIShell_SectionPlacement *p, String8 key)
+{
+  for(U64 i = 0; i < p->sidebar.sidebar_closed_count; i++) { if(str8_match(p->sidebar.sidebar_closed[i], key, 0)) { return 1; } }
+  return 0;
+}
+
+// Headless lifecycle scenarios with the real Andamento ABI, docking checker
+// and config codec. Andamento places, restores and flags sections
+// (uishell_sidebar_store.c); these check the sidebar Wheelhouse builds from
+// it, across restarts through the presentation file and the dashboard record.
 internal B32
 uishell_section_placement_diagnostics(String8 source_path)
 {
@@ -755,12 +855,13 @@ uishell_section_placement_diagnostics(String8 source_path)
   state.arena = scratch.arena;
   state.cfg = cfg_state_alloc(); cfg_ctx_select(cfg_state_ctx(state.cfg));
   CFG_SchemaNode *slot = 0; CFG_SchemaTable schemas = {&slot, 1}; state.cfg_schema_table = &schemas;
-  CFG_Node *user = cfg_node_new(state.cfg, cfg_node_root(), str8_lit("user"));
-  CFG_Node *window = cfg_node_new(state.cfg, user, str8_lit("window"));
-  UIShell_SidebarState sidebar = {.initialized = 1};
-  RD_WindowState ws = {.cfg_id = window->id, .sidebar = &sidebar};
-  state.window_state_last_accessed_id = window->id; state.window_state_last_accessed = &ws;
-  UIShell_ControlledSplit split = {.owner_cfg = window};
+  UIShell_SectionPlacement p = {0};
+  p.schemas = &schemas;
+  p.user = cfg_node_new(state.cfg, cfg_node_root(), str8_lit("user"));
+  CFG_Node *window = cfg_node_new(state.cfg, p.user, str8_lit("window"));
+  p.sidebar.initialized = 1;
+  p.ws.sidebar = &p.sidebar;
+  state.window_state_last_accessed = &p.ws;
   U32 failures = 0;
 #define PlacementCheck(expr) do { if(!(expr)) { failures++; fprintf(stderr, "FAIL section placement line %u: %s\n", __LINE__, #expr); } } while(0)
   // The source-integrity integration runner supplies the shipped KDL. Build,
@@ -773,8 +874,8 @@ uishell_section_placement_diagnostics(String8 source_path)
     PlacementCheck(source_core != 0);
     if(source_core)
     {
-      sidebar.snapshot = andamento_snapshot_acquire(source_core, 0);
-      CFG_Node *source_host = uishell_sidebar_dock_layout(&split);
+      uishell_section_placement_use(&p, window, source_core);
+      CFG_Node *source_host = uishell_section_placement_frame(&p);
       PlacementCheck(source_host != &cfg_nil_node && source_host->first != &cfg_nil_node);
       // The unhinted workspace fallback follows every hinted shipped region.
       CFG_Node *source_fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
@@ -783,54 +884,53 @@ uishell_section_placement_diagnostics(String8 source_path)
       {
         CFG_Node *moved = uishell_section_placement_last_panel(source_host);
         cfg_node_insert_child(state.cfg, source_host, &cfg_nil_node, moved);
-        uishell_sidebar_dock_layout(&split);
-        PlacementCheck(source_host->first == moved);
+        uishell_section_placement_frame(&p);
+        PlacementCheck(uishell_section_placement_first_panel(source_host) == moved);
         String8 text = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), window);
         PlacementCheck(text.size != 0);
       }
       uishell_sidebar_reset_regions(window);
-      uishell_sidebar_replace_snapshot(&sidebar, 0);
-      andamento_destroy(source_core);
+      PlacementCheck(uishell_section_placement_last_panel(cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT)) ==
+                     uishell_sidebar_region_view(window, str8_lit(".unplaced"))->parent);
     }
+    cfg_node_release(state.cfg, window);
+    window = cfg_node_new(state.cfg, p.user, str8_lit("window"));
   }
   String8 config = str8_lit(
     "region \"b\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\" order=20\n"
     "region \"a\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\" order=10\n");
   Andamento *core = andamento_create(config.str, config.size, 0);
   PlacementCheck(core != 0);
-  sidebar.snapshot = andamento_snapshot_acquire(core, 0);
-  CFG_Node *host = uishell_sidebar_dock_layout(&split);
+  uishell_section_placement_use(&p, window, core);
+  CFG_Node *host = uishell_section_placement_frame(&p);
   CFG_Node *a = uishell_sidebar_region_view(window, str8_lit("a"));
   CFG_Node *b = uishell_sidebar_region_view(window, str8_lit("b"));
   // Defaults are stable by hint, regardless of declaration order.
   PlacementCheck(a != &cfg_nil_node && b != &cfg_nil_node);
-  // Andamento always emits the unhinted workspace fallback; it sorts last.
+  // Andamento always declares the unhinted workspace fallback; it sorts last.
   CFG_Node *fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
   PlacementCheck(fallback != &cfg_nil_node);
-  PlacementCheck(host->first == a->parent && a->parent->next == b->parent && uishell_section_placement_last_panel(host) == fallback->parent);
+  PlacementCheck(uishell_section_placement_first_panel(host) == a->parent && uishell_section_placement_next_panel(a->parent) == b->parent &&
+                 uishell_section_placement_last_panel(host) == fallback->parent);
   CFG_ID a_id = a->id, b_id = b->id;
-  // A user reorder changes only layout, and reconciliation is idempotent.
+  // A user reorder changes only layout: one commit, and nothing more after.
   cfg_node_insert_child(state.cfg, host, &cfg_nil_node, b->parent);
-  uishell_sidebar_dock_layout(&split);
-  PlacementCheck(host->first == b->parent && a->id == a_id && b->id == b_id);
-  U64 generation = cfg_change_gen(), cache_builds = sidebar.placement_cache_builds;
-  uishell_sidebar_dock_layout(&split);
-  PlacementCheck(cfg_change_gen() == generation && sidebar.placement_cache_builds == cache_builds);
-  // Reconciliation must retain an unrelated intentionally empty saved panel.
+  U64 commits = p.sidebar.sidebar_commits;
+  uishell_section_placement_frame(&p);
+  PlacementCheck(uishell_section_placement_first_panel(host) == b->parent && a->id == a_id && b->id == b_id);
+  PlacementCheck(p.sidebar.sidebar_commits == commits+1);
+  U64 generation = cfg_change_gen(), title_builds = p.sidebar.title_builds;
+  uishell_section_placement_frame(&p);
+  PlacementCheck(cfg_change_gen() == generation && p.sidebar.title_builds == title_builds && p.sidebar.sidebar_commits == commits+1);
+  // An unrelated, intentionally empty saved panel stays.
   CFG_Node *reserved_panel = cfg_node_new(state.cfg, host, str8_lit("0.25"));
   CFG_ID reserved_id = reserved_panel->id;
-  uishell_sidebar_dock_layout(&split);
+  uishell_section_placement_frame(&p);
   PlacementCheck(cfg_node_from_id(reserved_id) == reserved_panel);
   cfg_node_release(state.cfg, reserved_panel);
-  // An invalid copy preceding the original must not displace a valid saved
-  // View. The nested panels node belongs to a different docking level.
-  CFG_Node *duplicate_invalid_panel = cfg_node_new(state.cfg, host, str8_lit("panels"));
-  cfg_node_insert_child(state.cfg, host, &cfg_nil_node, duplicate_invalid_panel);
-  CFG_Node *invalid_copy = cfg_node_new(state.cfg, duplicate_invalid_panel, str8_lit("sidebar_section"));
-  cfg_node_new(state.cfg, cfg_node_new(state.cfg, invalid_copy, str8_lit("section")), str8_lit("a"));
-  PlacementCheck(!rd_dock_saved_placement_valid(invalid_copy));
-  // Malformed saved ids survive the real codec. Keep the first valid copy,
-  // prune empty wrappers, and preserve unrelated content and saved ratios.
+  // Duplicates, as a hand edit or an old layout saves them: the first copy
+  // in the dock wins, and Floating Panels come after the dock. A panel the
+  // repair empties goes; unrelated content and its panel's share stay.
   CFG_Node *duplicate_panel = cfg_node_new(state.cfg, host, str8_lit("0.125"));
   CFG_Node *duplicate = cfg_node_new(state.cfg, duplicate_panel, str8_lit("sidebar_section"));
   cfg_node_new(state.cfg, cfg_node_new(state.cfg, duplicate, str8_lit("section")), str8_lit("a"));
@@ -839,8 +939,6 @@ uishell_section_placement_diagnostics(String8 source_path)
   CFG_Node *empty_duplicate_panel = cfg_node_new(state.cfg, host, str8_lit("0.0625"));
   duplicate = cfg_node_new(state.cfg, empty_duplicate_panel, str8_lit("sidebar_section"));
   cfg_node_new(state.cfg, cfg_node_new(state.cfg, duplicate, str8_lit("section")), str8_lit("a"));
-  // Copies split across both owning-level hosts must prefer the valid sidebar
-  // originals, preserve unrelated floating content and remove empty wrappers.
   CFG_Node *duplicate_floating = cfg_node_child_from_string_or_alloc(state.cfg, window, str8_lit("floating_panels"));
   for(U32 i = 0; i < 2; i++)
   {
@@ -849,128 +947,135 @@ uishell_section_placement_diagnostics(String8 source_path)
     cfg_node_new(state.cfg, cfg_node_new(state.cfg, floating_copy, str8_lit("section")), i ? str8_lit("b") : str8_lit("a"));
     if(!i) { cfg_node_new(state.cfg, floating_panel, str8_lit("text")); }
   }
-  // Restart through the actual serializer/parser retains that arrangement.
-  String8 serialized = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), window);
-  CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), serialized);
-  PlacementCheck(loaded.count == 1);
-  CFG_Node *restored = loaded.first->v; cfg_node_insert_child(state.cfg, user, user->last, restored);
-  ws.cfg_id = restored->id; state.window_state_last_accessed_id = restored->id;
-  split.owner_cfg = restored;
-  CFG_Node *restored_host = uishell_sidebar_dock_layout(&split);
-  PlacementCheck(str8_match(cfg_node_child_from_string(restored_host->first->first, str8_lit("section"))->first->string, str8_lit("b"), 0));
-  CFG_Node *restored_unrelated_panel = cfg_node_child_from_string(restored_host, str8_lit("0.125"));
-  PlacementCheck(uishell_sidebar_find_view(restored_unrelated_panel, str8_lit("a")) == &cfg_nil_node);
-  PlacementCheck(str8_match(restored_unrelated_panel->string, str8_lit("0.125"), 0));
-  PlacementCheck(str8_match(restored_unrelated_panel->first->string, str8_lit("text"), 0));
-  PlacementCheck(str8_match(cfg_node_child_from_string(restored_unrelated_panel->first, str8_lit("label"))->first->string, str8_lit("unrelated"), 0));
+  uishell_section_placement_frame(&p);
+  // The restart reads it back from the presentation file and the record.
+  String8 text = uishell_section_placement_restart(scratch.arena, &p, config);
+  PlacementCheck(str8_find_needle(text, 0, str8_lit("control_views"), 0) == text.size);
+  PlacementCheck(str8_find_needle(text, 0, str8_lit("sidebar_presentation"), 0) < text.size);
+  CFG_Node *restored = p.window;
+  CFG_Node *restored_host = cfg_node_child_from_string(restored, RD_DOCK_SIDEBAR_ROOT);
+  CFG_Node *first = uishell_section_placement_first_panel(restored_host);
+  PlacementCheck(str8_match(cfg_node_child_from_string(cfg_node_child_from_string(first, str8_lit("sidebar_section")), str8_lit("section"))->first->string, str8_lit("b"), 0));
+  CFG_Node *restored_unrelated_panel = &cfg_nil_node;
+  for(CFG_Node *n = restored_host->first; n != &cfg_nil_node; n = n->next)
+  { if(cfg_node_child_from_string(n, str8_lit("text")) != &cfg_nil_node) { restored_unrelated_panel = n; } }
+  PlacementCheck(restored_unrelated_panel != &cfg_nil_node && uishell_sidebar_find_view(restored_unrelated_panel, str8_lit("a")) == &cfg_nil_node);
+  // Its share is this device's, as content sizes it, kept by key.
+  PlacementCheck(abs_f32((F32)f64_from_str8(restored_unrelated_panel->string)-.125f) < .00001f);
+  PlacementCheck(str8_match(cfg_node_child_from_string(cfg_node_child_from_string(restored_unrelated_panel, str8_lit("text")), str8_lit("label"))->first->string,
+                            str8_lit("unrelated"), 0));
   CFG_Node *restored_floating = cfg_node_child_from_string(restored, str8_lit("floating_panels"));
   PlacementCheck(uishell_sidebar_find_view(restored_floating, str8_lit("a")) == &cfg_nil_node);
   PlacementCheck(uishell_sidebar_find_view(restored_floating, str8_lit("b")) == &cfg_nil_node);
-  PlacementCheck(restored_floating->first == restored_floating->last);
-  PlacementCheck(str8_match(restored_floating->first->string, str8_lit("0.5"), 0));
-  PlacementCheck(str8_match(restored_floating->first->first->string, str8_lit("text"), 0));
+  PlacementCheck(uishell_section_placement_first_panel(restored_floating) == uishell_section_placement_last_panel(restored_floating));
+  PlacementCheck(str8_match(uishell_section_placement_first_panel(restored_floating)->string, str8_lit("0.5"), 0));
+  PlacementCheck(cfg_node_child_from_string(uishell_section_placement_first_panel(restored_floating), str8_lit("text")) != &cfg_nil_node);
   generation = cfg_change_gen();
-  uishell_sidebar_dock_layout(&split);
+  uishell_section_placement_frame(&p);
   PlacementCheck(cfg_change_gen() == generation);
   cfg_node_release(state.cfg, restored_floating); // Remove the floating fixture.
   cfg_node_release(state.cfg, restored_unrelated_panel); // Remove this scenario's unrelated fixture.
-  // Adding a hinted region inserts it without changing the saved pair's order.
+  uishell_section_placement_frame(&p);
+  // Adding a hinted region places it before its next hinted neighbour,
+  // without changing the saved pair's order.
   String8 added = push_str8f(scratch.arena, "%Sregion \"c\" root-template=\"flotilla/region/tree\" order=15\n", config);
-  PlacementCheck(andamento_configure(core, (AndamentoText){added.str, added.size}, 0));
-  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
-  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(uishell_section_placement_configure(&p, added));
   CFG_Node *c = uishell_sidebar_region_view(restored, str8_lit("c"));
   a = uishell_sidebar_region_view(restored, str8_lit("a")); b = uishell_sidebar_region_view(restored, str8_lit("b"));
-  PlacementCheck(c != &cfg_nil_node && c->parent->next == b->parent && b->parent->next == a->parent);
-  // Closing a known section remains distinguishable from an unseen id.
+  PlacementCheck(c != &cfg_nil_node && uishell_section_placement_next_panel(c->parent) == b->parent &&
+                 uishell_section_placement_next_panel(b->parent) == a->parent);
+  // Closing a section is remembered, distinct from one never seen.
   cfg_node_release(state.cfg, c);
-  uishell_sidebar_dock_layout(&split);
+  uishell_section_placement_frame(&p);
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("c")) == &cfg_nil_node);
-  CFG_Node *inventory = cfg_node_child_from_string(restored, UISHELL_REGION_INVENTORY);
-  PlacementCheck(cfg_node_child_from_string(cfg_node_child_from_string(inventory, str8_lit("c")), str8_lit("closed")) != &cfg_nil_node);
-  // Closed intent survives the same restart codec as saved positions.
-  serialized = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), restored);
-  loaded = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), serialized);
-  PlacementCheck(loaded.count == 1);
-  restored = loaded.first->v; cfg_node_insert_child(state.cfg, user, user->last, restored);
-  ws.cfg_id = restored->id; state.window_state_last_accessed_id = restored->id; split.owner_cfg = restored;
-  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(uishell_section_placement_closed(&p, str8_lit("c")));
+  // Closed survives a restart.
+  uishell_section_placement_restart(scratch.arena, &p, added);
+  restored = p.window;
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("c")) == &cfg_nil_node);
-  // A corrupt numeric token is still a container, but must not become a
-  // zero-width sibling when explicit restoration normalizes the host.
+  PlacementCheck(uishell_section_placement_closed(&p, str8_lit("c")));
+  // Sizes set by hand are the document's: Restore gives an equal share of
+  // the dock, the others scaled to make room, even from a corrupt weight.
+  cfg_node_new(state.cfg, restored, str8_lit("sidebar_layout_sized"));
   a = uishell_sidebar_region_view(restored, str8_lit("a"));
   b = uishell_sidebar_region_view(restored, str8_lit("b"));
   cfg_node_equip_string(state.cfg, a->parent, str8_lit("0bad"));
   cfg_node_equip_string(state.cfg, b->parent, str8_lit("0.75"));
   CFG_Node *zero_share = cfg_node_new(state.cfg, a->parent->parent, str8_lit("0"));
-  // Explicit restore clears the intentional close, obeys owning-level policy,
-  // and is idempotent even when invoked twice before another frame.
-  PlacementCheck(uishell_sidebar_restore_region(&split, str8_lit("c")));
+  CFG_ID zero_id = zero_share->id;
+  uishell_section_placement_frame(&p);
+  // Restore is idempotent, even twice before another frame.
+  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("c")));
   c = uishell_sidebar_region_view(restored, str8_lit("c"));
   PlacementCheck(c != &cfg_nil_node && rd_dock_saved_placement_valid(c));
+  a = uishell_sidebar_region_view(restored, str8_lit("a"));
+  b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  zero_share = cfg_node_from_id(zero_id);
   PlacementCheck((F32)f64_from_str8(a->parent->string) > 0);
   PlacementCheck((F32)f64_from_str8(b->parent->string) > 0);
-  PlacementCheck((F32)f64_from_str8(zero_share->string) > 0);
+  PlacementCheck(zero_share == &cfg_nil_node || (F32)f64_from_str8(zero_share->string) > 0);
   F32 restored_sum = 0;
   for(CFG_Node *n = c->parent->parent->first; n != &cfg_nil_node; n = n->next)
   { if(rd_dock_is_container(n)) { restored_sum += (F32)f64_from_str8(n->string); } }
-  PlacementCheck(abs_f32(restored_sum-1.f) < .00001f);
+  PlacementCheck(abs_f32(restored_sum-1.f) < .0001f);
+  PlacementCheck(!uishell_section_placement_closed(&p, str8_lit("c")));
   CFG_ID restored_c_id = c->id;
-  CFG_Node *stale_closed = cfg_node_child_from_string_or_alloc(state.cfg,
-    cfg_node_child_from_string(cfg_node_child_from_string(restored, UISHELL_REGION_INVENTORY), str8_lit("c")), str8_lit("closed"));
-  PlacementCheck(stale_closed != &cfg_nil_node);
-  PlacementCheck(uishell_sidebar_restore_region(&split, str8_lit("c")) && c->id == restored_c_id);
-  PlacementCheck(cfg_node_child_from_string(cfg_node_child_from_string(cfg_node_child_from_string(restored, UISHELL_REGION_INVENTORY), str8_lit("c")), str8_lit("closed")) == &cfg_nil_node);
   generation = cfg_change_gen();
-  PlacementCheck(uishell_sidebar_restore_region(&split, str8_lit("c")));
+  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("c")));
   PlacementCheck(c->id == restored_c_id && cfg_change_gen() == generation);
-  PlacementCheck(!uishell_sidebar_restore_region(&split, str8_lit("undeclared")));
+  PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("undeclared")));
   PlacementCheck(cfg_change_gen() == generation);
-  inventory = cfg_node_child_from_string(restored, UISHELL_REGION_INVENTORY);
-  PlacementCheck(cfg_node_child_from_string(cfg_node_child_from_string(inventory, str8_lit("c")), str8_lit("closed")) == &cfg_nil_node);
-  serialized = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), restored);
-  loaded = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), serialized);
-  PlacementCheck(loaded.count == 1);
-  restored = loaded.first->v; cfg_node_insert_child(state.cfg, user, user->last, restored);
-  ws.cfg_id = restored->id; state.window_state_last_accessed_id = restored->id; split.owner_cfg = restored;
-  uishell_sidebar_dock_layout(&split);
+  uishell_section_placement_restart(scratch.arena, &p, added);
+  restored = p.window;
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("c")) != &cfg_nil_node);
-  inventory = cfg_node_child_from_string(restored, UISHELL_REGION_INVENTORY);
+  PlacementCheck(cfg_node_child_from_string(restored, str8_lit("sidebar_layout_sized")) != &cfg_nil_node);
+  cfg_node_release(state.cfg, cfg_node_child_from_string(restored, str8_lit("sidebar_layout_sized")));
+  // A region the template drops keeps its place, flagged (ADR 0013), and
+  // other Views keep their identity. Removing it forgets it.
   a = uishell_sidebar_region_view(restored, str8_lit("a"));
-  // Removal drops the View and inventory, retaining the surviving View identity.
   CFG_ID kept = a->id;
   String8 removed = str8_lit("region \"a\" root-template=\"flotilla/region/tree\" order=10\n");
-  PlacementCheck(andamento_configure(core, (AndamentoText){removed.str, removed.size}, 0));
-  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
-  uishell_sidebar_dock_layout(&split);
-  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("b")) == &cfg_nil_node);
-  PlacementCheck(cfg_node_child_from_string(inventory, str8_lit("b")) == &cfg_nil_node);
+  PlacementCheck(uishell_section_placement_configure(&p, removed));
+  b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  PlacementCheck(b != &cfg_nil_node && uishell_sidebar_section_gone(&p.sidebar, str8_lit("b")));
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("a"))->id == kept);
+  PlacementCheck(uishell_sidebar_section_gone(&p.sidebar, str8_lit("c")));
+  // It comes back where it was if the template has it again.
+  PlacementCheck(uishell_section_placement_configure(&p, added));
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("b")) == b && !uishell_sidebar_section_gone(&p.sidebar, str8_lit("b")));
+  PlacementCheck(uishell_section_placement_configure(&p, removed));
+  cfg_node_release(state.cfg, b);
+  uishell_section_placement_frame(&p);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("b")) == &cfg_nil_node && !uishell_sidebar_section_gone(&p.sidebar, str8_lit("b")));
+  PlacementCheck(!uishell_section_placement_closed(&p, str8_lit("b")));
   // Reset clears closes and user positions, restoring all hints.
-  PlacementCheck(andamento_configure(core, (AndamentoText){added.str, added.size}, 0));
-  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
-  uishell_sidebar_reset_regions(restored); restored_host = uishell_sidebar_dock_layout(&split);
+  PlacementCheck(uishell_section_placement_configure(&p, added));
+  uishell_sidebar_reset_regions(restored); restored_host = uishell_section_placement_frame(&p);
   a = uishell_sidebar_region_view(restored, str8_lit("a")); b = uishell_sidebar_region_view(restored, str8_lit("b"));
   c = uishell_sidebar_region_view(restored, str8_lit("c"));
-  PlacementCheck(restored_host->first == a->parent && a->parent->next == c->parent && c->parent->next == b->parent);
+  PlacementCheck(uishell_section_placement_first_panel(restored_host) == a->parent && uishell_section_placement_next_panel(a->parent) == c->parent &&
+                 uishell_section_placement_next_panel(c->parent) == b->parent);
   fallback = uishell_sidebar_region_view(restored, str8_lit(".unplaced"));
-  PlacementCheck(fallback != &cfg_nil_node && b->parent->next == fallback->parent && uishell_section_placement_last_panel(restored_host) == fallback->parent);
-  // A saved user split remains intact when a new neighbour is hinted before
-  // a View within it. The whole subtree is the insertion anchor.
+  PlacementCheck(fallback != &cfg_nil_node && uishell_section_placement_next_panel(b->parent) == fallback->parent &&
+                 uishell_section_placement_last_panel(restored_host) == fallback->parent);
+  // A saved user split stays whole when a new neighbour is hinted before a
+  // View within it: the whole subtree is the anchor.
   CFG_Node *nested = cfg_node_new(state.cfg, restored_host, str8_lit("0.5"));
+  cfg_node_insert_child(state.cfg, restored_host, b->parent->prev, nested);
   cfg_node_new(state.cfg, nested, str8_lit("split_x"));
   CFG_Node *nested_b = b->parent; CFG_ID nested_b_id = b->id;
   cfg_node_insert_child(state.cfg, nested, nested->last, nested_b);
+  uishell_section_placement_frame(&p);
   String8 nested_added = push_str8f(scratch.arena, "%Sregion \"d\" root-template=\"flotilla/region/tree\" order=17\n", added);
-  PlacementCheck(andamento_configure(core, (AndamentoText){nested_added.str, nested_added.size}, 0));
-  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
-  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(uishell_section_placement_configure(&p, nested_added));
   CFG_Node *d = uishell_sidebar_region_view(restored, str8_lit("d"));
-  PlacementCheck(d != &cfg_nil_node && uishell_section_placement_next_panel(d->parent) == nested);
-  PlacementCheck(b->id == nested_b_id && b->parent == nested_b && nested_b->parent == nested);
-  PlacementCheck(str8_match(nested->string, str8_lit("0.5"), 0));
-  // A saved section inside a child Workspace level is rejected by the shared
-  // checker and moves to its hint, preserving identity and removing its empty panel.
+  b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  PlacementCheck(d != &cfg_nil_node && b->id == nested_b_id && rd_dock_is_container(b->parent->parent) &&
+                 uishell_section_placement_next_panel(d->parent) == b->parent->parent);
+  PlacementCheck(str8_match(b->parent->parent->string, str8_lit("0.5"), 0));
+  // A section saved inside a child Workspace level is refused by the shared
+  // checker: the frame's safety restore marks it, and it goes where its hint
+  // says, keeping its identity; the level it was in goes.
   CFG_Node *invalid_workspace = cfg_node_new(state.cfg, restored_host, str8_lit("workspace"));
   CFG_ID invalid_workspace_id = invalid_workspace->id;
   CFG_Node *invalid_panels = cfg_node_new(state.cfg, invalid_workspace, str8_lit("panels"));
@@ -980,29 +1085,43 @@ uishell_section_placement_diagnostics(String8 source_path)
   cfg_node_insert_child(state.cfg, invalid_panel, invalid_panel->last, a);
   cfg_node_release(state.cfg, old_a_panel);
   PlacementCheck(!rd_dock_saved_placement_valid(a));
-  uishell_sidebar_dock_layout(&split);
+  rd_dock_restore_window(state.cfg, restored);
+  PlacementCheck(cfg_node_child_from_string(a, str8_lit("section_hint_pending")) != &cfg_nil_node);
+  uishell_section_placement_frame(&p);
+  a = uishell_sidebar_region_view(restored, str8_lit("a"));
   PlacementCheck(a->id == invalid_view_id && rd_dock_saved_placement_valid(a));
+  PlacementCheck(cfg_node_child_from_string(a, str8_lit("section_hint_pending")) == &cfg_nil_node);
   PlacementCheck(cfg_node_from_id(invalid_panel_id) == &cfg_nil_node);
   PlacementCheck(cfg_node_from_id(invalid_workspace_id) == &cfg_nil_node);
-  // Legacy adoption closes currently absent ids only. A declaration added on
-  // a subsequent update is new and appears without requiring reset or #183.
-  cfg_node_release(state.cfg, cfg_node_child_from_string(restored, UISHELL_REGION_INVENTORY));
-  cfg_node_release(state.cfg, d);
-  uishell_sidebar_dock_layout(&split);
-  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("d")) == &cfg_nil_node);
+  // A sidebar saved before Andamento kept it is adopted by its first commit:
+  // what it lacks is closed. A region declared after that is new.
+  cfg_node_release(state.cfg, uishell_sidebar_region_view(restored, str8_lit("d")));
+  cfg_node_release(state.cfg, cfg_node_child_from_string(restored, str8_lit("sidebar_generation")));
+  {
+    String8 legacy = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), restored);
+    CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), legacy);
+    PlacementCheck(loaded.count == 1);
+    cfg_node_insert_child(state.cfg, p.user, p.user->last, loaded.first->v);
+    cfg_node_release(state.cfg, restored);
+    restored = loaded.first->v;
+    uishell_section_placement_use(&p, restored, andamento_create(nested_added.str, nested_added.size, 0));
+    uishell_section_placement_frame(&p);
+  }
+  PlacementCheck(cfg_node_child_from_string(restored, str8_lit("sidebar_generation")) != &cfg_nil_node);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("d")) == &cfg_nil_node && uishell_section_placement_closed(&p, str8_lit("d")));
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("a")) != &cfg_nil_node);
   String8 post_upgrade = push_str8f(scratch.arena, "%Sregion \"e\" root-template=\"flotilla/region/tree\" order=25\n", nested_added);
-  PlacementCheck(andamento_configure(core, (AndamentoText){post_upgrade.str, post_upgrade.size}, 0));
-  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
-  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(uishell_section_placement_configure(&p, post_upgrade));
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("e")) != &cfg_nil_node);
-  // The empty authoritative declaration is a valid reconciler input, unlike a
-  // missing native snapshot. Removal must clear positions and closed intent.
-  uishell_sidebar_reconcile_regions(restored, 0, 0);
-  PlacementCheck(cfg_node_child_from_string(restored, UISHELL_REGION_INVENTORY)->first == &cfg_nil_node);
-  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("a")) == &cfg_nil_node);
-  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("e")) == &cfg_nil_node);
-  uishell_sidebar_dock_layout(&split);
-  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("d")) != &cfg_nil_node);
+  // An empty declaration flags every section rather than clearing them
+  // (Andamento, "Template key drift"); a declaration that has them again
+  // finds them where they were.
+  PlacementCheck(uishell_section_placement_configure(&p, str8_lit("template \"empty\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Empty\"; }\n")));
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("a")) != &cfg_nil_node && uishell_sidebar_section_gone(&p.sidebar, str8_lit("a")));
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("e")) != &cfg_nil_node && uishell_sidebar_section_gone(&p.sidebar, str8_lit("e")));
+  PlacementCheck(uishell_section_placement_closed(&p, str8_lit("d")) && uishell_sidebar_section_gone(&p.sidebar, str8_lit("d")));
+  PlacementCheck(uishell_section_placement_configure(&p, post_upgrade));
+  PlacementCheck(!uishell_sidebar_section_gone(&p.sidebar, str8_lit("a")) && uishell_sidebar_region_view(restored, str8_lit("d")) == &cfg_nil_node);
   // Generated host/order cases cover absent hints, equal hints, negative order,
   // opaque unknown hosts and the supported floating host. Every placement
   // passes the same validity checker used by drag and restore.
@@ -1012,24 +1131,23 @@ uishell_section_placement_diagnostics(String8 source_path)
     String8 generated = push_str8f(scratch.arena,
       "region \"x\" root-template=\"flotilla/region/tree\" %s\n"
       "region \"y\" root-template=\"flotilla/region/tree\" %s\n", attributes[variant], attributes[variant]);
-    PlacementCheck(andamento_configure(core, (AndamentoText){generated.str, generated.size}, 0));
-    uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
-    uishell_sidebar_reset_regions(restored); uishell_sidebar_dock_layout(&split);
+    PlacementCheck(uishell_section_placement_configure(&p, generated));
+    uishell_sidebar_reset_regions(restored); uishell_section_placement_frame(&p);
     CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
     CFG_Node *y = uishell_sidebar_region_view(restored, str8_lit("y"));
     CFG_ID existing_x = x->id;
     U64 existing_generation = cfg_change_gen();
-    PlacementCheck(uishell_sidebar_restore_region(&split, str8_lit("x")));
+    PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")));
     PlacementCheck(x->id == existing_x && cfg_change_gen() == existing_generation);
     PlacementCheck(x != &cfg_nil_node && y != &cfg_nil_node);
-    PlacementCheck(x->parent->next == y->parent);
+    PlacementCheck(uishell_section_placement_next_panel(x->parent) == y->parent);
     PlacementCheck(rd_dock_saved_placement_valid(x) && rd_dock_saved_placement_valid(y));
     PlacementCheck(rd_dock_host_from_cfg(x, RD_DOCK_UNMEASURED_WIDTH).kind ==
       (variant == 2 ? RD_DockHostKind_FloatingPanel : RD_DockHostKind_Sidebar));
     if(variant == 2)
     {
       // Startup first applies generic safety restore. A floating region hint
-      // must still win when native reconciliation sees that recovered View.
+      // must still win when the sidebar commits that recovered View.
       CFG_Node *floating = cfg_node_child_from_string(restored, str8_lit("floating_panels"));
       CFG_Node *bad_workspace = cfg_node_new(state.cfg, floating, str8_lit("workspace"));
       CFG_Node *bad_panels = cfg_node_new(state.cfg, bad_workspace, str8_lit("panels"));
@@ -1040,114 +1158,100 @@ uishell_section_placement_diagnostics(String8 source_path)
       cfg_node_release(state.cfg, previous_panel);
       rd_dock_restore_window(state.cfg, restored);
       PlacementCheck(cfg_node_child_from_string(x, str8_lit("section_hint_pending")) != &cfg_nil_node);
-      uishell_sidebar_dock_layout(&split);
+      uishell_section_placement_frame(&p);
       PlacementCheck(x->id == x_id && rd_dock_saved_placement_valid(x));
       PlacementCheck(rd_dock_host_from_cfg(x, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_FloatingPanel);
       PlacementCheck(cfg_node_from_id(bad_id) == &cfg_nil_node);
       PlacementCheck(cfg_node_child_from_string(x, str8_lit("section_hint_pending")) == &cfg_nil_node);
+      // A changed host hint moves nothing already placed.
       String8 changed_host = str8_lit("region \"x\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\"\nregion \"y\" root-template=\"flotilla/region/tree\"\n");
-      PlacementCheck(andamento_configure(core, (AndamentoText){changed_host.str, changed_host.size}, 0));
-      uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
-      uishell_sidebar_dock_layout(&split);
+      PlacementCheck(uishell_section_placement_configure(&p, changed_host));
       PlacementCheck(x->id == x_id && rd_dock_host_from_cfg(x, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_FloatingPanel);
     }
   }
-  // Rejected placement checks must leave no hosts/panels or generation churn.
-  CFG_Node *reject_owner = cfg_node_new(state.cfg, user, str8_lit("window"));
-  CFG_Node *unknown_view = cfg_node_new(state.cfg, reject_owner, str8_lit("unknown_view"));
-  UIShell_SectionPlacement rejected = {str8_lit("reject"), str8_lit("Reject"), str8_lit("floating"), 0};
-  U64 reject_generation = cfg_change_gen();
-  for(U32 attempt = 0; attempt < 2; attempt++)
-  { PlacementCheck(uishell_sidebar_place_region(reject_owner, &rejected, 1, 0, unknown_view, 1.f) == unknown_view); }
-  PlacementCheck(cfg_change_gen() == reject_generation && reject_owner->first == unknown_view && unknown_view->next == &cfg_nil_node);
-  cfg_node_release(state.cfg, reject_owner);
-  // Unusual numeric and reserved-looking ids survive the actual config codec.
-  UIShell_SectionPlacement unusual[] = {{str8_lit("123"), str8_lit("Number"), str8_zero(), 0},
-                                      {str8_lit("closed"), str8_lit("Closed"), str8_zero(), 1}};
-  CFG_Node *id_owner = cfg_node_new(state.cfg, user, str8_lit("window"));
-  uishell_sidebar_reconcile_regions(id_owner, unusual, ArrayCount(unusual));
-  uishell_sidebar_reset_regions(id_owner);
-  uishell_sidebar_reconcile_regions(id_owner, unusual, ArrayCount(unusual));
-  for(U32 restart = 0; restart < 2; restart++)
+  // Unusual numeric and reserved-looking keys survive the record and the
+  // config codec.
   {
-    String8 roundtrip = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), id_owner);
-    CFG_NodePtrList parsed = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), roundtrip);
-    PlacementCheck(parsed.first != 0);
-    CFG_Node *next_owner = parsed.first->v;
-    cfg_node_insert_child(state.cfg, user, user->last, next_owner);
-    cfg_node_release(state.cfg, id_owner); id_owner = next_owner;
-    for(U64 i = 0; i < ArrayCount(unusual); i++)
-    { PlacementCheck(uishell_sidebar_region_view(id_owner, unusual[i].key) != &cfg_nil_node); }
-    uishell_sidebar_reconcile_regions(id_owner, unusual, ArrayCount(unusual));
+    String8 unusual = str8_lit("region \"123\" root-template=\"flotilla/region/tree\"\nregion \"closed\" root-template=\"flotilla/region/tree\" order=1\n");
+    PlacementCheck(uishell_section_placement_configure(&p, unusual));
+    uishell_sidebar_reset_regions(restored);
+    for(U32 restart = 0; restart < 2; restart++)
+    {
+      uishell_section_placement_restart(scratch.arena, &p, unusual);
+      restored = p.window;
+      PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("123")) != &cfg_nil_node);
+      PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("closed")) != &cfg_nil_node);
+    }
   }
-  cfg_node_release(state.cfg, id_owner);
-  // Updating a default host does not move a valid saved position; KDL-owned
-  // titles do refresh. Removing a region also removes its pending hint marker.
+  // A changed default host doesn't move a placed section; KDL titles do
+  // refresh its label. A region the template drops is flagged.
+  {
+    String8 generated = str8_lit("region \"x\" root-template=\"flotilla/region/tree\" order=0\nregion \"y\" root-template=\"flotilla/region/tree\" order=0\n");
+    PlacementCheck(uishell_section_placement_configure(&p, generated));
+    uishell_sidebar_reset_regions(restored); uishell_section_placement_frame(&p);
+  }
   CFG_Node *saved_x = uishell_sidebar_region_view(restored, str8_lit("x"));
   CFG_ID saved_x_id = saved_x->id;
-  CFG_Node *removed_y = uishell_sidebar_region_view(restored, str8_lit("y"));
-  CFG_ID removed_y_id = removed_y->id;
-  cfg_node_new(state.cfg, removed_y, str8_lit("section_hint_pending"));
+  CFG_ID kept_y_id = uishell_sidebar_region_view(restored, str8_lit("y"))->id;
   String8 retitled = str8_lit(
     "region \"x\" root-template=\"renamed\" form=\"compact\" default-host=\"floating\"\n"
     "template \"renamed\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Renamed\"; }\n");
-  PlacementCheck(andamento_configure(core, (AndamentoText){retitled.str, retitled.size}, 0));
-  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
-  uishell_sidebar_dock_layout(&split);
+  PlacementCheck(uishell_section_placement_configure(&p, retitled));
   PlacementCheck(saved_x->id == saved_x_id && rd_dock_host_from_cfg(saved_x, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar);
   PlacementCheck(str8_match(cfg_node_child_from_string(saved_x, str8_lit("label"))->first->string, str8_lit("Renamed"), 0));
-  PlacementCheck(cfg_node_from_id(removed_y_id) == &cfg_nil_node);
-  // A provider outage retains the complete saved arrangement. An authoritative
-  // changed declaration removes stale positions; a later declaration is new.
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("y"))->id == kept_y_id && uishell_sidebar_section_gone(&p.sidebar, str8_lit("y")));
+  // A provider outage changes nothing.
   CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
-  AndamentoSnapshot *saved_snapshot = sidebar.snapshot; sidebar.snapshot = 0;
-  generation = cfg_change_gen(); uishell_sidebar_dock_layout(&split);
+  AndamentoSnapshot *saved_snapshot = p.sidebar.snapshot; p.sidebar.snapshot = 0;
+  generation = cfg_change_gen(); uishell_sidebar_dock_layout(&p.split);
   PlacementCheck(cfg_change_gen() == generation && uishell_sidebar_region_view(restored, str8_lit("x")) == x);
-  sidebar.snapshot = saved_snapshot;
-  String8 empty = str8_lit("region \"x\" root-template=\"flotilla/region/tree\"\n");
-  PlacementCheck(andamento_configure(core, (AndamentoText){empty.str, empty.size}, 0));
-  uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
-  uishell_sidebar_dock_layout(&split);
-  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("y")) == &cfg_nil_node);
-  // Closing every fleet section leaves the layout empty across restart.
-  cfg_node_release(state.cfg, uishell_sidebar_region_view(restored, str8_lit("x")));
-  uishell_sidebar_dock_layout(&split);
-  serialized = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), restored);
-  loaded = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), serialized);
-  PlacementCheck(loaded.count == 1);
-  restored = loaded.first->v; cfg_node_insert_child(state.cfg, user, user->last, restored);
-  ws.cfg_id = restored->id; state.window_state_last_accessed_id = restored->id; split.owner_cfg = restored;
-  uishell_sidebar_dock_layout(&split);
+  p.sidebar.snapshot = saved_snapshot;
+  // Closing every section leaves the dock empty across a restart.
+  String8 only_x = str8_lit("region \"x\" root-template=\"flotilla/region/tree\"\n");
+  PlacementCheck(uishell_section_placement_configure(&p, only_x));
+  cfg_node_release(state.cfg, uishell_sidebar_region_view(restored, str8_lit("y")));
+  cfg_node_release(state.cfg, uishell_sidebar_region_view(restored, str8_lit(".unplaced")));
+  cfg_node_release(state.cfg, x);
+  uishell_section_placement_frame(&p);
+  uishell_section_placement_restart(scratch.arena, &p, only_x);
+  restored = p.window;
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("x")) == &cfg_nil_node);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit(".unplaced")) == &cfg_nil_node);
+  // Restore needs the snapshot and the window's sidebar; with them, the
+  // section goes to the dock, not into a child Workspace level.
   CFG_Node *child = cfg_node_new(state.cfg, restored, str8_lit("workspace"));
   CFG_Node *child_panels = cfg_node_new(state.cfg, child, str8_lit("panels"));
   cfg_node_new(state.cfg, child_panels, str8_lit("1"));
-  saved_snapshot = sidebar.snapshot; sidebar.snapshot = 0;
+  uishell_section_placement_frame(&p);
+  saved_snapshot = p.sidebar.snapshot; p.sidebar.snapshot = 0;
   generation = cfg_change_gen();
-  PlacementCheck(!uishell_sidebar_restore_region(&split, str8_lit("x")) && cfg_change_gen() == generation);
-  ws.sidebar = 0;
-  PlacementCheck(!uishell_sidebar_restore_region(&split, str8_lit("x")) && cfg_change_gen() == generation);
-  ws.sidebar = &sidebar;
-  sidebar.snapshot = saved_snapshot;
-  PlacementCheck(uishell_sidebar_restore_region(&split, str8_lit("x")));
+  PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("x")) && cfg_change_gen() == generation);
+  p.ws.sidebar = 0;
+  PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("x")) && cfg_change_gen() == generation);
+  p.ws.sidebar = &p.sidebar;
+  p.sidebar.snapshot = saved_snapshot;
+  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")));
   x = uishell_sidebar_region_view(restored, str8_lit("x"));
   PlacementCheck(rd_dock_saved_placement_valid(x));
   PlacementCheck(rd_dock_host_from_cfg(x, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar);
   PlacementCheck(uishell_sidebar_find_view(child_panels, str8_lit("x")) == &cfg_nil_node);
   generation = cfg_change_gen();
-  PlacementCheck(uishell_sidebar_restore_region(&split, str8_lit("x")) && cfg_change_gen() == generation);
+  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")) && cfg_change_gen() == generation);
+  // Restoring into a dock that is one panel with a View of its own lifts
+  // that panel, with its Presentation State, into a split: half each.
   cfg_node_release(state.cfg, x);
-  uishell_sidebar_dock_layout(&split);
+  uishell_section_placement_frame(&p);
   CFG_Node *merged = cfg_node_child_from_string(restored, RD_DOCK_SIDEBAR_ROOT);
+  for(CFG_Node *n = merged->first, *next; n != &cfg_nil_node; n = next)
+  { next = n->next; if(rd_dock_is_container(n)) { cfg_node_release(state.cfg, n); } }
   CFG_Node *ordinary = cfg_node_new(state.cfg, merged, str8_lit("text"));
   CFG_ID ordinary_id = ordinary->id;
   cfg_node_new(state.cfg, ordinary, str8_lit("selected"));
   CFG_Node *leaf_selected = cfg_node_new(state.cfg, merged, str8_lit("selected"));
   CFG_Node *leaf_tabs = cfg_node_new(state.cfg, merged, str8_lit("tabs_on_bottom"));
-  // Remove the empty section panel to make the host an actual merged leaf.
-  for(CFG_Node *n = merged->first, *next; n != &cfg_nil_node; n = next)
-  { next = n->next; if(rd_dock_is_container(n)) { cfg_node_release(state.cfg, n); } }
-  PlacementCheck(uishell_sidebar_restore_region(&split, str8_lit("x")));
+  uishell_section_placement_frame(&p);
+  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")));
+  merged = cfg_node_child_from_string(restored, RD_DOCK_SIDEBAR_ROOT);
   x = uishell_sidebar_region_view(restored, str8_lit("x"));
   PlacementCheck(ordinary->id == ordinary_id && ordinary->parent != merged && ordinary->parent != x->parent);
   PlacementCheck(leaf_selected->parent == ordinary->parent && leaf_tabs->parent == ordinary->parent);
@@ -1157,10 +1261,13 @@ uishell_section_placement_diagnostics(String8 source_path)
   PlacementCheck(lifted.focused == lifted_leaf);
   PlacementCheck(abs_f32((F32)f64_from_str8(ordinary->parent->string)-.5f) < .00001f);
   PlacementCheck(abs_f32((F32)f64_from_str8(x->parent->string)-.5f) < .00001f);
-  andamento_snapshot_release(sidebar.snapshot); andamento_destroy(core);
-  if(sidebar.placement_arena) { arena_release(sidebar.placement_arena); }
+  uishell_sidebar_replace_snapshot(&p.sidebar, 0);
+  andamento_destroy(p.sidebar.core);
+  if(p.sidebar.titles_arena) { arena_release(p.sidebar.titles_arena); }
+  if(p.sidebar.roles_arena) { arena_release(p.sidebar.roles_arena); }
+  if(p.sidebar.sidebar_notes_arena) { arena_release(p.sidebar.sidebar_notes_arena); }
   cfg_state_release(state.cfg); cfg_ctx_select(saved_ctx); rd_state = saved_rd;
-  fprintf(stderr, "Section placement diagnostics: %s (hints, reorder, restart, add, close, remove, reset)\n", failures ? "FAILED" : "passed");
+  fprintf(stderr, "Section placement diagnostics: %s (hints, reorder, restart, add, close, drift, reset)\n", failures ? "FAILED" : "passed");
 #undef PlacementCheck
   scratch_end(scratch); return failures == 0;
 }

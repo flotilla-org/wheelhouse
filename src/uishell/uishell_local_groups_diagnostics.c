@@ -38,6 +38,8 @@ global F32 uishell_local_groups_narrow = 0;
 internal void
 uishell_local_groups_render(CFG_Node *window, UIShell_ControlledSplit *split)
 {
+  // As a frame does: the stores sync once both Views are drawn.
+  uishell_sidebar_store_frame_begin();
   CFG_Node *views[] = {uishell_local_groups_view, uishell_local_groups_view2};
   for(U64 i = 0; i < ArrayCount(views); i++)
   {
@@ -52,6 +54,7 @@ uishell_local_groups_render(CFG_Node *window, UIShell_ControlledSplit *split)
       UI_Parent(parent) { uishell_sidebar_render(rect, split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, section}); }
     }
   }
+  uishell_sidebar_store_frame_end(rd_window_state_from_cfg__existing(window));
 }
 
 // The tests' clock: each frame takes 50ms, and a pause separates gestures,
@@ -346,10 +349,12 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   {
     UI_State *saved_ui = ui_state, *test = ui_state_alloc();
     ui_select_state(test);
-    CFG_Node *panel = cfg_node_new(rd_state->cfg, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT), str8_lit("0.2"));
-    uishell_local_groups_view = uishell_sidebar_local_new_view(panel, section);
+    // Andamento docked the section's View once it was published; a second
+    // View of it would be a duplicate, which it drops.
     uishell_local_groups_publish(state, window, arena);
     String8 key = uishell_sidebar_local_key(arena, section_id);
+    uishell_local_groups_view = uishell_sidebar_region_view(window, key);
+    GroupsCheck(uishell_local_groups_view != &cfg_nil_node, "a published section is docked");
     String8 title = push_str8f(arena, "###section_%S", key);
     //- Double-clicking the title renames in place, leaving the section open;
     //  Esc cancels, Enter applies.
@@ -425,7 +430,6 @@ uishell_local_groups_diagnostics(CFG_Node *window)
                 uishell_sidebar_local_group(window, builds_id) == &cfg_nil_node &&
                 uishell_sidebar_region_view(window, key) == &cfg_nil_node,
                 "deleting a section deletes its groups and closes its View");
-    cfg_node_release(rd_state->cfg, panel);
     uishell_local_groups_view = &cfg_nil_node;
   }
   //- Dragging a group's header moves the group: into another section after
@@ -745,8 +749,9 @@ uishell_local_groups_diagnostics(CFG_Node *window)
       GroupsCheck(uishell_local_groups_line_on_top, "a row over a group card shows its insertion line over the card, in the section's drop layer");
       uishell_local_groups_line_key = ui_key_zero();
       // A ghost row over Workspaces is refused there, with a reason (#282).
-      CFG_Node *workspaces_section = uishell_sidebar_local_section(window, str8_lit("workspaces"));
-      CFG_Node *workspaces_view = uishell_sidebar_local_new_view(extra, workspaces_section);
+      // Andamento docks Workspaces: its View.
+      CFG_Node *workspaces_view = uishell_sidebar_region_view(window, uishell_sidebar_local_key(arena, str8_lit("workspaces")));
+      GroupsCheck(workspaces_view != &cfg_nil_node, "Workspaces is docked");
       CFG_Node *zeta_view = uishell_local_groups_view2;
       uishell_local_groups_view2 = workspaces_view;
       uishell_local_groups_publish(state, window, arena);
@@ -758,7 +763,6 @@ uishell_local_groups_diagnostics(CFG_Node *window)
       GroupsCheck(str8_match(str8(uishell_local_groups_refusal, uishell_local_groups_refusal_size), str8_lit("only workspaces go in Workspaces"), 0) &&
                   ghost_card->parent == alpha,
                   "a ghost row over Workspaces is refused, says why, and stays where it was");
-      cfg_node_release(rd_state->cfg, workspaces_view);
       uishell_local_groups_view2 = zeta_view;
       CFG_Node *zeta_section = zeta->parent;
       if(uishell_local_groups_view2->parent != &cfg_nil_node) { cfg_node_release(rd_state->cfg, uishell_local_groups_view2); }

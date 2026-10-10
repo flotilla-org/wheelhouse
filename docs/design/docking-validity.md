@@ -115,8 +115,9 @@ its temporary panel tree before returning.
 ## Sidebar acceptance and integration boundaries
 
 
-Projects, Sessions, Attention and Git are `sidebar_section` Views in the saved
-`control_views` panel tree. The shared panel renderer gives every sidebar
+Projects, Sessions, Attention and Git are `sidebar_section` Views in the
+window's `control_views` panel tree, the live copy of the Dashboard's sidebar
+arrangement that Andamento keeps (`src/uishell/uishell_sidebar_store.c`). The shared panel renderer gives every sidebar
 panel a section header, whose titles are its Views' tabs. Ordinary workspace
 content uses normal tabs. Placement creation, moves, drops and restore use the existing
 `rd_dock_check` rules. No placement hints were added to KDL.
