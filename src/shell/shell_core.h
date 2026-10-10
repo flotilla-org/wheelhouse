@@ -1296,6 +1296,13 @@ internal RD_ViewState *rd_view_state_from_key(CFG_ID id, U64 sub_key);
 // `vs`'s Renderer state, `size` bytes, allocated on first use and checked
 // against the size it was allocated with.
 internal void *rd_view_user_data(RD_ViewState *vs, U64 size);
+// Whether a View node is somewhere its state lives: in the config tree, and
+// not in a Kept Workspace.
+internal B32 rd_view_node_is_live(CFG_Node *view);
+internal void rd_view_state_release(RD_ViewState *vs);
+// Releases the states of Views that have left a live place, and of watch
+// rows' visualizers no longer built. Run once a frame, before Views build.
+internal void rd_view_states_release_unowned(void);
 internal UI_Key rd_view_surface_key(CFG_ID view);
 internal B32 rd_view_drag_preview_is_live(CFG_Node *view);
 internal void rd_view_ui(Rng2F32 rect);

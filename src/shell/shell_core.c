@@ -1512,6 +1512,73 @@ rd_view_state_from_key(CFG_ID id, U64 sub_key)
   return view_state;
 }
 
+//- View state lifetime
+//
+// A View's state is its runtime instance's: a terminal's session, a query's
+// cursor. A View node is one runtime instance of its Slot, so a Slot that
+// keeps its previous instance has a state for each. The state is made when
+// the View first needs it, and lives while the node is somewhere live,
+// drawn or not:
+// - a Slot's View, while its workspace is materialized. A tab that isn't
+//   selected, is filtered out by project, or is in a Floating Panel that
+//   isn't drawn keeps its state. Removing the Slot, closing or keeping the
+//   workspace, and closing the window release it. A Kept Workspace's Views
+//   start again when it reopens: a terminal with a session re-attaches.
+// - a View that isn't a Slot, with its owner: the sidebar's and Floating
+//   Panels' with their window, and an immediate tree's (command palette,
+//   queries, hover evaluation) with that tree, which lives while it is hot
+//   (rd_immediate_cfg_from_key).
+// - a visualizer in a watch row (a state with a sub-key), while its row is
+//   built, and never longer than its View.
+
+internal B32
+rd_view_node_is_live(CFG_Node *view)
+{
+  CFG_Node *root = cfg_node_root();
+  for(CFG_Node *n = view; n != &cfg_nil_node; n = n->parent)
+  {
+    if(str8_match(n->string, str8_lit("detached_workspace"), 0)) { return 0; }
+    if(n == root) { return 1; }
+  }
+  return 0;
+}
+
+internal void
+rd_view_state_release(RD_ViewState *vs)
+{
+  if(vs->release_user_data) { vs->release_user_data(vs->user_data); }
+  ev_view_release(vs->ev_view);
+  for(RD_ArenaExt *ext = vs->first_arena_ext; ext != 0; ext = ext->next)
+  {
+    arena_release(ext->arena);
+  }
+  arena_release(vs->arena);
+  U64 hash = u64_djb2_hash_from_str8(str8_struct(&vs->cfg_id));
+  RD_ViewStateSlot *slot = &rd_state->view_state_slots[hash%rd_state->view_state_slots_count];
+  DLLRemove_NP(slot->first, slot->last, vs, hash_next, hash_prev);
+  if(rd_state->view_state_last_accessed == vs)
+  {
+    rd_state->view_state_last_accessed = &rd_nil_view_state;
+    rd_state->view_state_last_accessed_id = 0;
+  }
+  SLLStackPush_N(rd_state->free_view_state, vs, hash_next);
+}
+
+internal void
+rd_view_states_release_unowned(void)
+{
+  for EachIndex(slot_idx, rd_state->view_state_slots_count)
+  {
+    for(RD_ViewState *vs = rd_state->view_state_slots[slot_idx].first, *next; vs != 0; vs = next)
+    {
+      next = vs->hash_next;
+      B32 live = rd_view_node_is_live(cfg_node_from_id(vs->cfg_id));
+      if(vs->sub_key != 0 && vs->last_frame_index_touched+2 < rd_state->frame_index) { live = 0; }
+      if(!live) { rd_view_state_release(vs); }
+    }
+  }
+}
+
 internal void *
 rd_view_user_data(RD_ViewState *vs, U64 size)
 {
@@ -10693,7 +10760,7 @@ rd_frame(void)
   if(rd_state->frame_depth == 1) { rd_dock_restore_layouts(); }
 
   //////////////////////////////
-  //- rjf: iterate all materialized workspace tabs, touch their view-states
+  //- rjf: select a shown tab in each of the Visible Workspace's panels that has none
   //
   if(rd_state->frame_depth == 1)
   {
@@ -10701,35 +10768,17 @@ rd_frame(void)
     CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
     for(CFG_NodePtrNode *window_n = windows.first; window_n != 0; window_n = window_n->next)
     {
-      CFG_Node *window = window_n->v;
-      UIShell_ControlledSplit root_controlled_split = uishell_root_controlled_split_from_window(scratch.arena, window);
-      for(UIShell_MaterializedWorkspace *workspace = root_controlled_split.inventory.first;
-          workspace != 0;
-          workspace = workspace->next)
+      UIShell_ControlledSplit root_controlled_split = uishell_root_controlled_split_from_window(scratch.arena, window_n->v);
+      UIShell_MaterializedWorkspace *workspace = root_controlled_split.inventory.selected;
+      CFG_PanelTree panel_tree = workspace ? workspace->mount.panel_tree : (CFG_PanelTree){&cfg_nil_panel_node};
+      for(CFG_PanelNode *p = panel_tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
       {
-        CFG_PanelTree panel_tree = workspace->mount.panel_tree;
-        for(CFG_PanelNode *p = panel_tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
+        if(p->selected_tab != &cfg_nil_node) { continue; }
+        for(CFG_NodePtrNode *tab_n = p->tabs.first; tab_n != 0; tab_n = tab_n->next)
         {
-          CFG_Node *first_unfiltered_tab = &cfg_nil_node;
-          for(CFG_NodePtrNode *tab_n = p->tabs.first; tab_n != 0; tab_n = tab_n->next)
-          {
-            CFG_Node *tab = tab_n->v;
-            if(rd_cfg_is_project_filtered(tab))
-            {
-              continue;
-            }
-            if(first_unfiltered_tab == &cfg_nil_node)
-            {
-              first_unfiltered_tab = tab;
-            }
-            rd_view_state_from_cfg(tab);
-          }
-          if(workspace == root_controlled_split.inventory.selected &&
-             p->selected_tab == &cfg_nil_node &&
-             first_unfiltered_tab != &cfg_nil_node)
-          {
-            uishell_cmd("focus_tab", .panel = p->cfg->id, .tab = first_unfiltered_tab->id);
-          }
+          if(rd_cfg_is_project_filtered(tab_n->v)) { continue; }
+          uishell_cmd("focus_tab", .panel = p->cfg->id, .tab = tab_n->v->id);
+          break;
         }
       }
     }
@@ -10770,29 +10819,11 @@ rd_frame(void)
   }
   
   //////////////////////////////
-  //- rjf: garbage collect untouched view states
+  //- release the states of Views that left a live place
   //
   if(rd_state->frame_depth == 1)
   {
-    for EachIndex(slot_idx, rd_state->view_state_slots_count)
-    {
-      for(RD_ViewState *vs = rd_state->view_state_slots[slot_idx].first, *next; vs != 0; vs = next)
-      {
-        next = vs->hash_next;
-        if(vs->last_frame_index_touched+2 < rd_state->frame_index)
-        {
-          if(vs->release_user_data) { vs->release_user_data(vs->user_data); }
-          ev_view_release(vs->ev_view);
-          for(RD_ArenaExt *ext = vs->first_arena_ext; ext != 0; ext = ext->next)
-          {
-            arena_release(ext->arena);
-          }
-          arena_release(vs->arena);
-          DLLRemove_NP(rd_state->view_state_slots[slot_idx].first, rd_state->view_state_slots[slot_idx].last, vs, hash_next, hash_prev);
-          SLLStackPush_N(rd_state->free_view_state, vs, hash_next);
-        }
-      }
-    }
+    rd_view_states_release_unowned();
   }
   
   //////////////////////////////
