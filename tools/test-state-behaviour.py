@@ -61,12 +61,14 @@ command = shlex.split(os.environ.get('CC', 'clang')) + [
     '-Wl,--gc-sections', '-o', str(binary)]
 subprocess.run(command, check=True)
 
-# A fresh user file each run: the scenario starts from a first launch.
+# A fresh user file and Dashboard each run: the scenario starts from a first
+# launch, with the Dashboard directory given as --dashboard gives it.
 run_dir = BUILD / 'state_behaviour_run'
 shutil.rmtree(run_dir, ignore_errors=True)
 run_dir.mkdir()
 subprocess.run([str(binary), '--async_thread_count:1', '--state_dir:'+str(run_dir),
-                '--user:'+str(run_dir/'user.wheelhouse')], cwd=ROOT, check=True, timeout=60)
+                '--user:'+str(run_dir/'user.wheelhouse'), '--dashboard:'+str(run_dir/'dashboard-a')],
+               cwd=ROOT, check=True, timeout=60)
 before = (run_dir/'before_restart.txt').read_text().splitlines()
 after = (run_dir/'after_restart.txt').read_text().splitlines()
 

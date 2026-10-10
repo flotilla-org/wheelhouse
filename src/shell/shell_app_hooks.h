@@ -39,6 +39,10 @@
 # define UISHELL_APP_AUTOSAVE() ((void)0)
 #endif
 
+#if !defined(UISHELL_APP_OPEN_DASHBOARD)
+# define UISHELL_APP_OPEN_DASHBOARD(cmd_line) ((void)(cmd_line))
+#endif
+
 #if !defined(UISHELL_APP_INITIAL_LOAD)
 # define UISHELL_APP_INITIAL_LOAD(user_path, project_path) ((void)(user_path), (void)(project_path))
 #endif

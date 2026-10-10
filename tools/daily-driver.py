@@ -57,6 +57,14 @@ def default_state():
     return Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'wheelhouse/daily-driver'
 
 
+def dashboard_path(dashboard, state):
+    # A name is a Dashboard under the profile, where Wheelhouse resolves names
+    # beside an explicit --user file; a path is used as it is.
+    if '/' in dashboard or os.sep in dashboard or dashboard in ('.', '..'):
+        return Path(dashboard).expanduser().resolve()
+    return state / 'dashboards' / dashboard
+
+
 def flotilla_binary():
     if 'FLOTILLA_BIN' in os.environ:
         return Path(os.environ['FLOTILLA_BIN']).resolve()
@@ -149,13 +157,14 @@ def run(args, binary, template, state):
                     return processes.launch(command, **options)
                 return subprocess.Popen(command, start_new_session=True, **options)
 
-        print(f'Daily-driver settings: {state}\nLogs: {logs}\nWHEELHOUSE_SOCKET={path}', flush=True)
+        dashboard = dashboard_path(args.dashboard, state)
+        print(f'Daily-driver settings: {state}\nDashboard: {dashboard}\nLogs: {logs}\nWHEELHOUSE_SOCKET={path}', flush=True)
         recording_args = []
         if args.ingress_record:
             recording_args = ['--ingress_record', '--ingress_record_bytes:' + str(args.ingress_record_bytes),
                               '--ingress_record_files:' + str(args.ingress_record_files)]
         app = launch('wheelhouse', [str(binary), '--user:' + str(state / 'user'),
-                                   '--project:' + str(state / 'project'),
+                                   '--project:' + str(state / 'project'), '--dashboard:' + str(dashboard),
                                    '--andamento_socket:' + path, '--andamento_config:' + str(template)] + recording_args)
         stack.callback(stop_child, app)
         wait_ready(app, path)
@@ -234,6 +243,9 @@ def main():
     parser.add_argument('--no-git', action='store_true', help='omit local git discovery; use provider facts only')
     parser.add_argument('--git-only', action='store_true', help='omit Flotilla; publish only local git facts')
     parser.add_argument('--daemon', help='remote daemon endpoint; overrides FLOTILLA_DAEMON and is inherited by the UI')
+    parser.add_argument('--dashboard', default=os.environ.get('WHEELHOUSE_DASHBOARD', 'daily'),
+                        help='Dashboard to open: a name under the settings folder\'s dashboards/, or a directory '
+                             '(default: $WHEELHOUSE_DASHBOARD or "daily")')
     parser.add_argument('--repo', type=Path, action='append', help='Unix git checkout to watch; repeatable, defaults to current directory')
     parser.add_argument('--ingress-record', action='store_true', help='record metadata ingress beside the daily-driver logs')
     parser.add_argument('--ingress-record-bytes', type=int, default=4*1024*1024, help='maximum bytes per ingress file')

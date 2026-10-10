@@ -4,8 +4,21 @@
 #ifndef UISHELL_DISPATCH_H
 #define UISHELL_DISPATCH_H
 
+// Which of a bucket's top-level nodes a file holds. The user file holds this
+// device's settings; its windows are the Dashboard's Presentation State,
+// in its own file (uishell_dashboard.c).
+typedef enum UIShell_ConfigPart
+{
+  UIShell_ConfigPart_All,
+  UIShell_ConfigPart_Settings,
+  UIShell_ConfigPart_Windows,
+}
+UIShell_ConfigPart;
+
+// Writes `bucket_name`'s `part` to `dst_path` as a `kind` file, followed by
+// `extra`, already in the file's syntax.
 internal void
-uishell_write_config_data(Arena *arena, String8 dst_path, String8 bucket_name)
+uishell_write_config_data(Arena *arena, String8 dst_path, String8 bucket_name, UIShell_ConfigPart part, String8 kind, String8 extra)
 {
   if(dst_path.size != 0)
   {
@@ -14,11 +27,14 @@ uishell_write_config_data(Arena *arena, String8 dst_path, String8 bucket_name)
     String8 overwritten_path = push_str8f(arena, "%S.old", dst_path);
     CFG_Node *tree_root = cfg_node_child_from_string(cfg_node_root(), bucket_name);
     String8List strings = {0};
-    str8_list_pushf(arena, &strings, "%s%s %S file\n\n", RD_APP_CONFIG_MAGIC, BUILD_VERSION_STRING_LITERAL, bucket_name);
+    str8_list_pushf(arena, &strings, "%s%s %S file\n\n", RD_APP_CONFIG_MAGIC, BUILD_VERSION_STRING_LITERAL, kind);
     for(CFG_Node *child = tree_root->first; child != &cfg_nil_node; child = child->next)
     {
+      B32 is_window = str8_match(child->string, str8_lit("window"), 0);
+      if((part == UIShell_ConfigPart_Settings && is_window) || (part == UIShell_ConfigPart_Windows && !is_window)) { continue; }
       str8_list_push(arena, &strings, cfg_string_from_tree(arena, rd_state->cfg_schema_table, str8_chop_last_slash(dst_path), child));
     }
+    str8_list_push(arena, &strings, extra);
     String8 data = str8_list_join(arena, &strings, 0);
     B32 temp_write_good = write_data_to_file_path(temp_path, data);
     B32 old_del_good    = (temp_write_good && delete_file_at_path(overwritten_path));
@@ -133,6 +149,7 @@ uishell_dispatch_config_command(String8 name)
         cfg_node_insert_child(rd_state->cfg, file_root, file_root->last, n->v);
       }
     }
+    if(file_is_okay && is_user) { uishell_dashboard_load_windows(file_root, file_path); }
     
     // Repair loaded placements before selection/layout readers retain nodes.
     if(file_is_okay) { rd_dock_restore_layouts(); }
@@ -330,13 +347,24 @@ uishell_dispatch_config_command(String8 name)
   else if(str8_match(name, str8_lit("write_user_data"), 0))
   {
     Temp scratch = scratch_begin(0, 0);
-    uishell_write_config_data(scratch.arena, rd_state->user_path, str8_lit("user"));
+    UIShell_Dashboard *dashboard = &uishell_dashboard;
+    B32 has_dashboard = dashboard->presentation_path.size != 0;
+    uishell_write_config_data(scratch.arena, rd_state->user_path, str8_lit("user"),
+                              has_dashboard ? UIShell_ConfigPart_Settings : UIShell_ConfigPart_All, str8_lit("user"),
+                              dashboard->user_file_windows);
+    if(has_dashboard)
+    {
+      uishell_dashboard_save_identity();
+      uishell_write_config_data(scratch.arena, dashboard->presentation_path, str8_lit("user"), UIShell_ConfigPart_Windows,
+                                str8_lit("presentation"), str8_zero());
+    }
     scratch_end(scratch);
   }
   else if(str8_match(name, str8_lit("write_project_data"), 0))
   {
     Temp scratch = scratch_begin(0, 0);
-    uishell_write_config_data(scratch.arena, rd_state->project_path, str8_lit("project"));
+    uishell_write_config_data(scratch.arena, rd_state->project_path, str8_lit("project"), UIShell_ConfigPart_All,
+                              str8_lit("project"), str8_zero());
     scratch_end(scratch);
   }
   else
@@ -498,6 +526,8 @@ uishell_register_app_cmd_packs(void)
   uishell_cmd("write_user_data"); \
   uishell_cmd("write_project_data"); \
 } while(0)
+
+#define UISHELL_APP_OPEN_DASHBOARD(cmd_line) uishell_dashboard_open_from_cmd_line(cmd_line)
 
 #define UISHELL_APP_INITIAL_LOAD(user_path, project_path) do \
 { \
