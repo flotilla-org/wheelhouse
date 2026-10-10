@@ -86,7 +86,7 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   ws->root_controlled_split_selected_workspace_id = workspace->id;
   rd_state->window_state_last_accessed_id = window->id; rd_state->window_state_last_accessed = ws;
   RD_ViewState *vs = push_array(arena, RD_ViewState, 1);
-  vs->cfg_id = view->id; vs->user_data = tv;
+  vs->cfg_id = view->id; vs->user_data = tv; vs->user_data_size = sizeof(*tv);
   rd_state->view_state_last_accessed_id = view->id; rd_state->view_state_last_accessed = vs;
   uishell_terminal_clipboard_views = 0;
   uishell_terminal_clipboard_register(tv, view->id, window->id);

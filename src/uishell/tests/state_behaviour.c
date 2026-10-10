@@ -465,10 +465,9 @@ entry_point(CmdLine *cmdline)
   // As --sidebar_subject_fixture: the daily-driver sidebar with fixture facts.
   uishell_sidebar_fixture = uishell_sidebar_subject_fixture = 1;
   wm_init(); fp_init(); r_init(cmdline); fnt_init(); rd_init(cmdline);
-  rd_state->view_ui_rule_map = rd_view_ui_rule_map_make(rd_state->arena, 512);
-  // Docked sections render when the sidebar is drawn (state_sidebar_draw);
-  // no other View does.
-  rd_view_ui_rule_map_insert(rd_state->arena, rd_state->view_ui_rule_map, str8_lit("sidebar_section"), RD_VIEW_UI_FUNCTION_NAME(sidebar_section));
+  // Every registered Renderer except visualizers renders, so docked
+  // sections render when the sidebar is drawn (state_sidebar_draw).
+  rd_state->headless_views = 1;
   e_select_cache(rd_state->eval_cache);
   E_BaseCtx base_ctx = {.address_arch = Arch_CURRENT, .space_gen = rd_eval_space_gen,
                        .space_read = rd_eval_space_read, .space_write = rd_eval_space_write}; e_select_base_ctx(&base_ctx);

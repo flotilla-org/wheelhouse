@@ -807,7 +807,7 @@ struct UIShell_WatchRowInfo
   CFG_Node *group_cfg_child;
   String8 cell_style_key;
   UIShell_WatchCellList cells;
-  RD_ViewUIRule *view_ui_rule;
+  WH_Renderer *renderer;
 };
 
 typedef struct UIShell_WatchRowCellInfo UIShell_WatchRowCellInfo;
@@ -820,7 +820,7 @@ struct UIShell_WatchRowCellInfo
   DR_FStrList expr_fstrs;
   DR_FStrList eval_fstrs;
   String8 description;
-  RD_ViewUIRule *view_ui_rule;
+  WH_Renderer *renderer;
 };
 
 typedef struct UIShell_WatchPt UIShell_WatchPt;
@@ -1027,7 +1027,7 @@ uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
     .can_expand = ev_row_is_expandable(row),
     .group_cfg_parent = &cfg_nil_node,
     .group_cfg_child = &cfg_nil_node,
-    .view_ui_rule = &rd_nil_view_ui_rule,
+    .renderer = &wh_nil_renderer,
   };
   Temp scratch = scratch_begin(&arena, 1);
   
@@ -1072,7 +1072,7 @@ uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
     }
   }
   
-  info.view_ui_rule = rd_view_ui_rule_from_string(row->block->viz_expand_rule->string);
+  info.renderer = wh_visualizer_from_name(row->block->viz_expand_rule->string);
   
   E_Type *maybe_table_type = block_type;
   for(;;)
@@ -1215,7 +1215,7 @@ uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
     }
     uishell_watch_cell_list_push_new(arena, &info.cells, UIShell_WatchCellKind_Eval, row->eval, .flags = flags, .pct = 1.f);
   }
-  else if(info.view_ui_rule != &rd_nil_view_ui_rule)
+  else if(info.renderer != &wh_nil_renderer)
   {
     uishell_watch_cell_list_push_new(arena, &info.cells, UIShell_WatchCellKind_ViewUI, row->eval, .pct = 1.f);
   }
@@ -1307,7 +1307,7 @@ uishell_info_from_watch_row_cell(Arena *arena, EV_Row *row, EV_StringFlags strin
   UIShell_WatchRowCellInfo result =
   {
     .flags = cell->flags,
-    .view_ui_rule = &rd_nil_view_ui_rule,
+    .renderer = &wh_nil_renderer,
     .cfg = &cfg_nil_node,
   };
   
@@ -1322,10 +1322,10 @@ uishell_info_from_watch_row_cell(Arena *arena, EV_Row *row, EV_StringFlags strin
   result.file_path = rd_file_path_from_eval(arena, cell->eval);
   for(E_Type *type = cell_type; type->kind == E_TypeKind_Lens; type = e_type_from_key(type->direct_type_key))
   {
-    RD_ViewUIRule *view_ui_rule = rd_view_ui_rule_from_string(type->name);
-    if(view_ui_rule != &rd_nil_view_ui_rule)
+    WH_Renderer *renderer = wh_visualizer_from_name(type->name);
+    if(renderer != &wh_nil_renderer)
     {
-      result.view_ui_rule = view_ui_rule;
+      result.renderer = renderer;
       break;
     }
   }
@@ -1691,9 +1691,9 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
 }
 
 
-internal void
-uishell_watch_view_ui(Rng2F32 rect)
+WH_VIEW_UI_FUNCTION_DEF(watch)
 {
+  Rng2F32 rect = ctx->rect;
   Temp scratch = scratch_begin(0, 0);
   RD_Font(RD_FontSlot_Code)
   {
@@ -1705,7 +1705,7 @@ uishell_watch_view_ui(Rng2F32 rect)
       expr_string = str8_lit("query:views");
     }
     E_Eval eval = e_eval_from_string(expr_string);
-    UIShell_WatchViewState *wv = rd_view_state(UIShell_WatchViewState);
+    UIShell_WatchViewState *wv = wh_view_state(ctx, UIShell_WatchViewState);
     UI_ScrollPt2 scroll_pos = rd_view_scroll_pos();
     B32 is_first_frame = 0;
     if(wv->initialized == 0)
@@ -2342,13 +2342,23 @@ uishell_watch_view_ui(Rng2F32 rect)
                   }
                   cell_info.flags &= ~UIShell_WatchCellFlag_CanEdit;
                 }
-                else if(cell->kind == UIShell_WatchCellKind_ViewUI && cell_info.view_ui_rule != &rd_nil_view_ui_rule)
+                else if(cell->kind == UIShell_WatchCellKind_ViewUI && cell_info.renderer != &wh_nil_renderer)
                 {
                   Rng2F32 cell_rect = r2f32p(cell_x_px, 0, next_cell_x_px, row_height_px*row->visual_size);
                   UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clip|UI_BoxFlag_Clickable, "###val_%I64x", row_hash);
+                  // An embedded Renderer draws the cell's value, not a Slot,
+                  // with state of its own beside the watch's.
+                  WH_Renderer *renderer = cell_info.renderer;
+                  RD_ViewState *cell_state = rd_view_state_from_key(uishell_regs()->view, (row_hash ^ u64_djb2_hash_from_str8(renderer->name)) | 1);
+                  WH_ViewContext cell_ctx = {0};
+                  cell_ctx.state = rd_view_user_data(cell_state, renderer->state_size);
+                  cell_ctx.state_size = cell_ctx.state ? renderer->state_size : 0;
+                  cell_ctx.settings.view = uishell_regs()->view;
+                  cell_ctx.rect = cell_rect;
+                  cell_ctx.legacy_eval = cell->eval;
                   UI_Parent(box) E_ParentKey(cell->eval.key)
                   {
-                    cell_info.view_ui_rule->ui(cell->eval, cell_rect);
+                    renderer->ui(&cell_ctx);
                   }
                   sig = ui_signal_from_box(box);
                 }
@@ -2661,12 +2671,12 @@ struct UIShell_SessionsViewRow
   U16 rows;
 };
 
-RD_VIEW_UI_FUNCTION_DEF(sessions)
+WH_VIEW_UI_FUNCTION_DEF(sessions)
 {
-  (void)eval;
+  Rng2F32 rect = ctx->rect;
   Temp scratch = scratch_begin(0, 0);
-  String8 daemon_name = rd_view_setting_from_name(str8_lit("daemon_name"));
-  String8 group_key = rd_view_setting_from_name(str8_lit("group_by"));
+  String8 daemon_name = wh_view_setting(ctx, str8_lit("daemon_name"));
+  String8 group_key = wh_view_setting(ctx, str8_lit("group_by"));
   if(group_key.size == 0) { group_key = str8_lit("vessel"); }
   cleat_provider *provider = uishell_cleat_daemon_provider_from_name(daemon_name);
 
@@ -2838,26 +2848,6 @@ RD_VIEW_UI_FUNCTION_DEF(sessions)
   }
   (void)session_count;
   scratch_end(scratch);
-}
-
-internal void
-uishell_register_view_ui_rules(Arena *arena, RD_ViewUIRuleMap *map)
-{
-  // The selector remains rendered by the Control Surface until sections become
-  // dockable (#163). Its registration declares validity without moving it.
-#define RD_REGISTER_VIEW(name, ui, traits, width, host) \
-  rd_view_ui_rule_map_insert(arena, map, str8_lit(#name), RD_VIEW_UI_FUNCTION_NAME(ui));
-  RD_DOCK_RENDERED_VIEWS(RD_REGISTER_VIEW)
-#undef RD_REGISTER_VIEW
-}
-
-internal void
-uishell_register_expand_rule_infos(Arena *arena, EV_ExpandRuleTable *table)
-{
-  ev_expand_rule_table_push_new(arena, table, str8_lit("text"), EV_EXPAND_RULE_INFO_FUNCTION_NAME(shell_text));
-  ev_expand_rule_table_push_new(arena, table, str8_lit("bitmap"), EV_EXPAND_RULE_INFO_FUNCTION_NAME(bitmap));
-  ev_expand_rule_table_push_new(arena, table, str8_lit("color"), EV_EXPAND_RULE_INFO_FUNCTION_NAME(color));
-  ev_expand_rule_table_push_new(arena, table, str8_lit("geo3d"), EV_EXPAND_RULE_INFO_FUNCTION_NAME(geo3d));
 }
 
 internal Rng1U64
@@ -3379,11 +3369,13 @@ uishell_text_line_from_needle(String8 data, TXT_TextInfo *info, String8 needle, 
   return result;
 }
 
-RD_VIEW_UI_FUNCTION_DEF(shell_text)
+WH_VIEW_UI_FUNCTION_DEF(shell_text)
 {
+  Rng2F32 rect = ctx->rect;
+  E_Eval eval = ctx->legacy_eval;
   Temp scratch = scratch_begin(0, 0);
   Access *access = access_open();
-  UIShell_TextViewState *tv = rd_view_state(UIShell_TextViewState);
+  UIShell_TextViewState *tv = wh_view_state(ctx, UIShell_TextViewState);
   
   String8 file_path = rd_file_path_from_eval(scratch.arena, eval);
   FileProperties props = properties_from_file_path(file_path);
@@ -3391,7 +3383,7 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
   Rng1U64 range = rd_space_range_from_eval(eval);
   C_Key text_key = rd_key_from_eval_space_range(eval.space, range, 1);
   TXT_LangKind lang_kind = TXT_LangKind_Null;
-  String8 lang = rd_view_setting_from_name(str8_lit("lang"));
+  String8 lang = wh_view_setting(ctx, str8_lit("lang"));
   if(lang.size != 0)
   {
     lang_kind = txt_lang_kind_from_extension(lang);
@@ -3417,8 +3409,8 @@ RD_VIEW_UI_FUNCTION_DEF(shell_text)
   FNT_Tag code_font = rd_font_from_slot(RD_FontSlot_Code);
   F32 code_font_size = main_font_size;
   F32 code_glyph_advance = fnt_column_size_from_tag_size(code_font, code_font_size);
-  B32 do_line_numbers = rd_view_setting_b32_from_name(str8_lit("show_line_numbers"));
-  B32 do_wrap = rd_view_setting_b32_from_name(str8_lit("line_wrapping"));
+  B32 do_line_numbers = wh_view_setting_b32(ctx, str8_lit("show_line_numbers"));
+  B32 do_wrap = wh_view_setting_b32(ctx, str8_lit("line_wrapping"));
   UI_ScrollRegion text_region = ui_scroll_region_layout(ui_scroll_region_params(r2f32p(0, 0, list_dim.x, list_dim.y),
                                                                                UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always));
   F32 line_num_width_px = do_line_numbers ? floor_f32(code_glyph_advance*(log10(ClampBot(1, line_count))+3)) : 0;
@@ -4069,11 +4061,11 @@ uishell_runtime_setting(Arena *arena, CFG_Node *cfg, String8 name)
   return result;
 }
 
-RD_VIEW_UI_FUNCTION_DEF(terminal)
+WH_VIEW_UI_FUNCTION_DEF(terminal)
 {
-  (void)eval;
+  Rng2F32 rect = ctx->rect;
   Temp scratch = scratch_begin(0, 0);
-  UIShell_TerminalViewState *tv = rd_view_state(UIShell_TerminalViewState);
+  UIShell_TerminalViewState *tv = wh_view_state(ctx, UIShell_TerminalViewState);
   rd_view_state_from_cfg(cfg_node_from_id(uishell_regs()->view))->release_user_data = uishell_terminal_runtime_release;
   tv->native_view = 1;
   tv->input_frame = rd_state->frame_index;
@@ -4144,9 +4136,9 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     // backend selection is per-view workspace config: `daemon:1` (optionally
     // `daemon_name:"..."`) hosts the session in a cleat daemon so it survives
     // uishell; `session:"<id>"` attaches to an existing daemon session.
-    String8 attach_session_id = rd_view_setting_from_name(str8_lit("session"));
-    String8 daemon_name = rd_view_setting_from_name(str8_lit("daemon_name"));
-    B32 daemon_backend = (attach_session_id.size != 0 || rd_view_setting_b32_from_name(str8_lit("daemon")));
+    String8 attach_session_id = ctx->resolution.session;
+    String8 daemon_name = ctx->resolution.daemon_name;
+    B32 daemon_backend = (attach_session_id.size != 0 || wh_view_setting_b32(ctx, str8_lit("daemon")));
     tv->daemon_backend = daemon_backend;
     if(daemon_backend)
     {
@@ -4178,7 +4170,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     // the default shell), which makes commands part of the workspace config:
     // reproducible layouts (e.g. perf workloads) & a step toward recreation
     String8 session_command = rd_expr_from_cfg(view_cfg);
-    String8 session_cwd = rd_view_setting_from_name(str8_lit("cwd"));
+    String8 session_cwd = wh_view_setting(ctx, str8_lit("cwd"));
     cleat_session_desc session_desc =
     {
       .cols = cols,
@@ -4243,7 +4235,7 @@ RD_VIEW_UI_FUNCTION_DEF(terminal)
     terminal_root_box = ui_build_box_from_string(0, str8_lit("terminal_root"));
   }
 
-  if(session_ready && hosting.len != 0 && rd_view_setting_b32_from_name(str8_lit("show_hosting_overlay")))
+  if(session_ready && hosting.len != 0 && wh_view_setting_b32(ctx, str8_lit("show_hosting_overlay")))
   {
     String8 title = push_str8f(scratch.arena, "%S · %s", str8((U8 *)hosting.ptr, hosting.len),
                               daemon_hosted ? "Adopt" : "Hand to daemon");
@@ -4741,11 +4733,13 @@ uishell_binary_copy_range(Arena *arena, Access *access, E_Eval eval, Rng1U64 ran
   }
 }
 
-RD_VIEW_UI_FUNCTION_DEF(binary)
+WH_VIEW_UI_FUNCTION_DEF(binary)
 {
+  Rng2F32 rect = ctx->rect;
+  E_Eval eval = ctx->legacy_eval;
   Temp scratch = scratch_begin(0, 0);
   Access *access = access_open();
-  UIShell_BinaryViewState *bv = rd_view_state(UIShell_BinaryViewState);
+  UIShell_BinaryViewState *bv = wh_view_state(ctx, UIShell_BinaryViewState);
   
   String8 file_path = rd_file_path_from_eval(scratch.arena, eval);
   FileProperties props = properties_from_file_path(file_path);
@@ -4767,8 +4761,8 @@ RD_VIEW_UI_FUNCTION_DEF(binary)
                                                                                  UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always));
   Rng2F32 content_rect = binary_region.viewport;
   Rng2F32 footer_rect = r2f32p(0, panel_dim.y-footer_dim, content_rect.x1, panel_dim.y);
-  U64 num_columns = rd_view_setting_u64_from_name(str8_lit("num_columns"));
-  B32 auto_columns = rd_view_setting_b32_from_name(str8_lit("auto_columns"));
+  U64 num_columns = wh_view_setting_u64(ctx, str8_lit("num_columns"));
+  B32 auto_columns = wh_view_setting_b32(ctx, str8_lit("auto_columns"));
   if(num_columns == 0)
   {
     num_columns = 16;
@@ -5477,13 +5471,15 @@ EV_EXPAND_RULE_INFO_FUNCTION_DEF(bitmap)
   return info;
 }
 
-RD_VIEW_UI_FUNCTION_DEF(bitmap)
+WH_VIEW_UI_FUNCTION_DEF(bitmap)
 {
+  Rng2F32 rect = ctx->rect;
+  E_Eval eval = ctx->legacy_eval;
   Temp scratch = scratch_begin(0, 0);
   Access *access = access_open();
   
-  Vec2S32 dim = v2s32((S32)rd_view_setting_u64_from_name(str8_lit("w")), (S32)rd_view_setting_u64_from_name(str8_lit("h")));
-  String8 fmt_string = rd_view_setting_from_name(str8_lit("fmt"));
+  Vec2S32 dim = v2s32((S32)wh_view_setting_u64(ctx, str8_lit("w")), (S32)wh_view_setting_u64(ctx, str8_lit("h")));
+  String8 fmt_string = wh_view_setting(ctx, str8_lit("fmt"));
   R_Tex2DFormat fmt = R_Tex2DFormat_RGBA8;
   for EachEnumVal(R_Tex2DFormat, f)
   {
@@ -5785,18 +5781,21 @@ EV_EXPAND_RULE_INFO_FUNCTION_DEF(color)
   return info;
 }
 
-RD_VIEW_UI_FUNCTION_DEF(color)
+typedef struct UIShell_ColorViewState UIShell_ColorViewState;
+struct UIShell_ColorViewState
 {
+  B32 initialized;
+  U32 start_rgba_u32;
+  Vec4F32 hsva;
+};
+
+WH_VIEW_UI_FUNCTION_DEF(color)
+{
+  Rng2F32 rect = ctx->rect;
+  E_Eval eval = ctx->legacy_eval;
   Temp scratch = scratch_begin(0, 0);
   
-  typedef struct UIShell_ColorViewState UIShell_ColorViewState;
-  struct UIShell_ColorViewState
-  {
-    B32 initialized;
-    U32 start_rgba_u32;
-    Vec4F32 hsva;
-  };
-  UIShell_ColorViewState *state = rd_view_state(UIShell_ColorViewState);
+  UIShell_ColorViewState *state = wh_view_state(ctx, UIShell_ColorViewState);
   UIShell_EvalColor eval_color = uishell_eval_color_from_eval(eval);
   U32 rgba_u32 = u32_from_rgba(eval_color.rgba);
   if(!state->initialized || rgba_u32 != state->start_rgba_u32)
@@ -5992,11 +5991,11 @@ internal UI_BOX_CUSTOM_DRAW(uishell_geo3d_box_draw)
 // A Slot whose content this Wheelhouse can't show (uishell_workspace_store.c):
 // what it is, and a way to open it when it is a web page. The slot keeps its
 // View Spec; closing the tab is what removes it.
-RD_VIEW_UI_FUNCTION_DEF(placeholder)
+WH_VIEW_UI_FUNCTION_DEF(placeholder)
 {
-  (void)eval;
-  String8 content = rd_view_setting_from_name(str8_lit("content"));
-  String8 url = rd_view_setting_from_name(str8_lit("url"));
+  Rng2F32 rect = ctx->rect;
+  String8 content = wh_view_setting(ctx, str8_lit("content"));
+  String8 url = wh_view_setting(ctx, str8_lit("url"));
   ui_set_next_pref_width(ui_px(dim_2f32(rect).x, 1));
   ui_set_next_pref_height(ui_px(dim_2f32(rect).y, 1));
   UI_Column UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_em(1.8f, 1))
@@ -6014,18 +6013,20 @@ EV_EXPAND_RULE_INFO_FUNCTION_DEF(geo3d)
   return info;
 }
 
-RD_VIEW_UI_FUNCTION_DEF(geo3d)
+WH_VIEW_UI_FUNCTION_DEF(geo3d)
 {
+  Rng2F32 rect = ctx->rect;
+  E_Eval eval = ctx->legacy_eval;
   Temp scratch = scratch_begin(0, 0);
   Access *access = access_open();
-  UIShell_Geo3DViewState *state = rd_view_state(UIShell_Geo3DViewState);
+  UIShell_Geo3DViewState *state = wh_view_state(ctx, UIShell_Geo3DViewState);
   
-  U64 count         = rd_view_setting_u64_from_name(str8_lit("count"));
+  U64 count         = wh_view_setting_u64(ctx, str8_lit("count"));
   U64 vtx_base_off  = rd_view_setting_addr_from_name(str8_lit("vtx"));
-  U64 vtx_size      = rd_view_setting_u64_from_name(str8_lit("vtx_size"));
-  F32 yaw_target    = rd_view_setting_f32_from_name(str8_lit("yaw"));
-  F32 pitch_target  = rd_view_setting_f32_from_name(str8_lit("pitch"));
-  F32 zoom_target   = rd_view_setting_f32_from_name(str8_lit("zoom"));
+  U64 vtx_size      = wh_view_setting_u64(ctx, str8_lit("vtx_size"));
+  F32 yaw_target    = wh_view_setting_f32(ctx, str8_lit("yaw"));
+  F32 pitch_target  = wh_view_setting_f32(ctx, str8_lit("pitch"));
+  F32 zoom_target   = wh_view_setting_f32(ctx, str8_lit("zoom"));
   
   Rng1U64 eval_range = e_range_from_eval(eval);
   U64 base_offset = eval_range.min;
@@ -6109,10 +6110,18 @@ RD_VIEW_UI_FUNCTION_DEF(geo3d)
 
 // A real two-axis consumer: fixed-size cells, pixel positions, normal wheel
 // routing. Resize the view or switch styles to exercise gutter interactions.
-RD_VIEW_UI_FUNCTION_DEF(scroll_region_fixture)
+typedef struct UIShell_ScrollRegionFixtureState UIShell_ScrollRegionFixtureState;
+struct UIShell_ScrollRegionFixtureState
 {
-  typedef struct FixtureState { B32 classic; B32 small_content; UI_ScrollPt2 position; } FixtureState;
-  FixtureState *state = rd_view_state(FixtureState);
+  B32 classic;
+  B32 small_content;
+  UI_ScrollPt2 position;
+};
+
+WH_VIEW_UI_FUNCTION_DEF(scroll_region_fixture)
+{
+  Rng2F32 rect = ctx->rect;
+  UIShell_ScrollRegionFixtureState *state = wh_view_state(ctx, UIShell_ScrollRegionFixtureState);
   Vec2F32 dim = dim_2f32(rect);
   F32 toolbar_height = ui_top_font_size()*2.f;
   UI_Box *root;
