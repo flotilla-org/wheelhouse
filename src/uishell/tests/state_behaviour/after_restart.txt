@@ -105,9 +105,6 @@ window 1
     closed "Git"
 presentation
   window 1
-    # the visible workspace and focus are not saved, fixed by step 2 (#315); was visible workspace "Workspace 1"
-    visible workspace "Workspace"
-    # the visible workspace and focus are not saved, fixed by step 2 (#315); was focused panel 2: tab text expression="query:output"
-    focused panel 1: tab text
-    # the visible workspace and focus are not saved, fixed by step 2 (#315); was input workspace
-    input none
+    visible workspace "Workspace 1"
+    focused panel 2: tab text expression="query:output"
+    input workspace

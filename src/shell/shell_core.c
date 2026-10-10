@@ -2857,6 +2857,7 @@ rd_window_state_from_cfg(CFG_Node *cfg)
     RD_WindowStateSlot *slot = &rd_state->window_state_slots[slot_idx];
     DLLPushBack_NPZ(&rd_nil_window_state, rd_state->first_window_state, rd_state->last_window_state, ws, order_next, order_prev);
     DLLPushBack_NP(slot->first, slot->last, ws, hash_next, hash_prev);
+    rd_window_restore_presentation(ws);
     
     scratch_end(scratch);
   }
@@ -3095,6 +3096,108 @@ uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window)
     inventory,
   };
   return split;
+}
+
+//- Presentation State: each window's Visible Workspace and input host.
+//
+// Until workspaces have IDs (state model step 1 re-keys these by Workspace
+// ID), the user file marks the visible workspace's node `visible`, and the
+// window's `input_host` names the panel tree whose focused (`selected`) panel
+// takes input: `sidebar` or `workspace`. Each tree's focused panel is saved
+// already. The window state is the live copy; it is written to config before
+// each save rather than wherever it changes, and only where it differs.
+
+internal String8
+rd_window_input_host(RD_WindowState *ws, CFG_Node *window)
+{
+  String8 host = str8_zero();
+  CFG_Node *active = cfg_node_from_id(ws->active_panel_id);
+  if(active != &cfg_nil_node && rd_window_from_cfg(active) == window)
+  {
+    RD_DockHostKind kind = rd_dock_host_from_cfg(active, RD_DOCK_UNMEASURED_WIDTH).kind;
+    if(kind == RD_DockHostKind_Sidebar) { host = str8_lit("sidebar"); }
+    else if(kind == RD_DockHostKind_WorkspaceRegion) { host = str8_lit("workspace"); }
+  }
+  return host;
+}
+
+internal void
+rd_window_save_presentation(RD_WindowState *ws)
+{
+  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  if(window == &cfg_nil_node) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+  CFG_ID visible = split.inventory.selected ? split.inventory.selected->id : 0;
+  for(CFG_Node *n = window->first; n != &cfg_nil_node; n = n->next)
+  {
+    if(!str8_match(n->string, str8_lit("workspace"), 0)) { continue; }
+    CFG_Node *marker = cfg_node_child_from_string(n, str8_lit("visible"));
+    if(n->id == visible && marker == &cfg_nil_node) { cfg_node_new(rd_state->cfg, n, str8_lit("visible")); }
+    else if(n->id != visible && marker != &cfg_nil_node) { cfg_node_release(rd_state->cfg, marker); }
+  }
+  String8 host = rd_window_input_host(ws, window);
+  CFG_Node *host_cfg = cfg_node_child_from_string(window, str8_lit("input_host"));
+  if(host.size == 0 && host_cfg != &cfg_nil_node) { cfg_node_release(rd_state->cfg, host_cfg); }
+  else if(host.size != 0 && !str8_match(host_cfg->first->string, host, 0))
+  {
+    cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("input_host")), host);
+  }
+  scratch_end(scratch);
+}
+
+// A new window state starts from what the user file saved.
+internal void
+rd_window_restore_presentation(RD_WindowState *ws)
+{
+  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  for(CFG_Node *n = window->first; n != &cfg_nil_node; n = n->next)
+  {
+    if(str8_match(n->string, str8_lit("workspace"), 0) && cfg_node_child_from_string(n, str8_lit("visible")) != &cfg_nil_node)
+    {
+      ws->root_controlled_split_selected_workspace_id = n->id;
+      break;
+    }
+  }
+  Temp scratch = scratch_begin(0, 0);
+  String8 host = cfg_node_child_from_string(window, str8_lit("input_host"))->first->string;
+  CFG_PanelTree tree = {&cfg_nil_panel_node, &cfg_nil_panel_node};
+  CFG_Node *sidebar = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+  if(str8_match(host, str8_lit("sidebar"), 0) && sidebar != &cfg_nil_node)
+  {
+    tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, sidebar).panel_tree;
+  }
+  else if(str8_match(host, str8_lit("workspace"), 0))
+  {
+    tree = uishell_workspace_mount_from_window(scratch.arena, window).panel_tree;
+  }
+  if(tree.focused != &cfg_nil_panel_node) { ws->active_panel_id = tree.focused->cfg->id; }
+  scratch_end(scratch);
+}
+
+internal void
+rd_save_presentation(void)
+{
+  for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
+  {
+    rd_window_save_presentation(ws);
+  }
+}
+
+// Writes the user and project files if config changed since the last
+// autosave, counting Presentation State saved just before. Returns whether
+// it wrote.
+internal B32
+rd_autosave(void)
+{
+  rd_save_presentation();
+  B32 changed = (cfg_change_gen() != rd_state->autosave_change_gen);
+  if(changed)
+  {
+    UISHELL_APP_AUTOSAVE();
+    rd_state->autosave_change_gen = cfg_change_gen();
+  }
+  return changed;
 }
 
 // Closing the last workspace is allowed: the close command replaces it with a
@@ -11173,7 +11276,7 @@ rd_frame(void)
       rd_state->seconds_until_autosave -= rd_state->frame_dt;
       if(rd_state->seconds_until_autosave <= 0.f)
       {
-        UISHELL_APP_AUTOSAVE();
+        rd_autosave();
         rd_state->seconds_until_autosave = 5.f;
       }
     }

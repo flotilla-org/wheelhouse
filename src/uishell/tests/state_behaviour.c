@@ -6,7 +6,7 @@
 // compares both with goldens.
 //
 // A restart is the production one in-process: autosave writes the user file
-// (UISHELL_APP_AUTOSAVE), the window state and its Andamento core are released
+// (rd_autosave), the window state and its Andamento core are released
 // as a frame does once their config is gone, the initial load reopens the file
 // (UISHELL_APP_INITIAL_LOAD, which repairs layouts), and a fresh core runs the
 // sidebar's first-frame path. Config is edited directly only where no command
@@ -383,7 +383,7 @@ entry_point(CmdLine *cmdline)
   StateCheck(ids_before.node_count == 7);
 
   //- Restart.
-  UISHELL_APP_AUTOSAVE();
+  StateCheck(rd_autosave());
   state_pump();
   rd_window_state_release(ws);
   String8 user_path = push_str8_copy(scratch.arena, rd_state->user_path);
@@ -401,6 +401,21 @@ entry_point(CmdLine *cmdline)
     if(!str8_match(a->string, b->string, 0))
     { fprintf(stderr, "Workspace ID changed across restart: %.*s -> %.*s\n", str8_varg(a->string), str8_varg(b->string)); state_failures++; }
   }
+
+  //- Idle: once the restart's own changes are saved, frames that change
+  // nothing write nothing, and changing only the visible workspace writes.
+  rd_autosave();
+  state_pump();
+  state_frame(ws);
+  state_frame(ws);
+  StateCheck(!rd_autosave());
+  window = cfg_node_from_id(ws->cfg_id);
+  UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+  StateCheck(split.inventory.last != split.inventory.selected);
+  uishell_cmd("select_workspace", .window = window->id, .cfg = split.inventory.last->id);
+  state_frame(ws);
+  StateCheck(rd_autosave());
+  state_pump();
 
   //- A local workspace saved before Workspace IDs, whose sidebar entity was
   // a GUID of its own: its ID takes the GUID's place wherever the window
