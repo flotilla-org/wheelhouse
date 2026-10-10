@@ -283,6 +283,10 @@ _Avoid_: Workspace, layout (ambiguous), project
 The logical definition of a **View**: the content it shows and, optionally, a preferred presentation. The content is either a provider facet, meaning an entity such as a role, convoy or artifact together with which aspect of it to show, or a local recipe such as a command and working directory, a file, a URL or a Jackstay launcher. Each frontend picks a renderer it supports for the content.
 _Avoid_: View kind, view settings, tab
 
+**Renderer**:
+A frontend's way of drawing one or more kinds of **View Spec** content, such as Wheelhouse's terminal view or a Cleat pane in the TUI. Each frontend has one list of its Renderers; control views such as sidebar sections are Renderers too.
+_Avoid_: View kind, view rule, widget
+
 **Slot**:
 A **View**'s place in a **Workspace**. It is identified by a slot key: the provider's key for a View from a **Suggested Layout**, or a short generated key for a View the user adds. It carries the View's **View Spec** and the progress of resolving it.
 _Avoid_: Tab, pane, panel
