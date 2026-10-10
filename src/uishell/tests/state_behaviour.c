@@ -271,7 +271,9 @@ entry_point(CmdLine *cmdline)
   CFG_Node *output = output_panel->first;
   uishell_cmd("build_tab", .window = window->id, .panel = editor_panel->id, .string = str8_lit("terminal"), .expr = str8_lit("make test"));
   state_frame(ws);
-  CFG_Node *terminal = editor_panel->last;
+  // A new tab is the panel's last; its node sits among the panel's tabs.
+  tree = state_panels(scratch.arena, work);
+  CFG_Node *terminal = cfg_panel_node_from_tree_cfg(tree.root, editor_panel)->tabs.last->v;
   StateCheck(str8_match(terminal->string, str8_lit("terminal"), 0));
   // A launch directory comes from a provider's recipe or hand editing; no
   // command sets one.
@@ -290,7 +292,8 @@ entry_point(CmdLine *cmdline)
   CFG_Node *notes_panel = state_panels(scratch.arena, notes).root->first->cfg;
   uishell_cmd("build_tab", .window = window->id, .panel = notes_panel->id, .string = str8_lit("jackstay"));
   state_frame(ws);
-  CFG_Node *jackstay = notes_panel->last;
+  tree = state_panels(scratch.arena, notes);
+  CFG_Node *jackstay = cfg_panel_node_from_tree_cfg(tree.root, notes_panel)->tabs.last->v;
   StateCheck(str8_match(jackstay->string, str8_lit("jackstay"), 0));
   // Its address field saves the endpoint on Connect; no command does.
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, jackstay, str8_lit("source_endpoint")), str8_lit("porthole-demo"));
