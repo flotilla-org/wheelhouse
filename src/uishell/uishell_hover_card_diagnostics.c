@@ -99,6 +99,40 @@ uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
   return found;
 }
 
+// The window's pins as a restart reads them back: sent to `state`'s core,
+// exported in its dashboard record, imported into a new core, and made into
+// a working copy, under a transient node the caller releases.
+internal CFG_Node *
+uishell_hover_card_test_restart_pins(UIShell_SidebarState *state, CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  uishell_sidebar_local_publish(state, window->id);
+  String8 record = uishell_sidebar_record_export(scratch.arena, state->core, str8_lit("dashboard"));
+  String8 config = str8_cstring((char *)uishell_sidebar_local_config);
+  UIShell_SidebarState fresh = {0};
+  fresh.core = andamento_create(config.str, config.size, 0);
+  CFG_Node *copy = cfg_node_new(rd_state->cfg, cfg_node_child_from_string(cfg_node_root(), str8_lit("transient")), str8_lit("pins_after_restart"));
+  if(fresh.core && andamento_record_import(fresh.core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0))
+  { uishell_sidebar_local_seed(uishell_sidebar_dashboard(&fresh), copy, str8_lit("section"), str8_lit(".section"), str8_zero(), str8_zero()); }
+  uishell_sidebar_release(&fresh);
+  scratch_end(scratch);
+  return copy;
+}
+
+// The first pin of `kind`/`id` in a working copy, or nil.
+internal CFG_Node *
+uishell_hover_card_test_pin(CFG_Node *root, String8 kind, String8 id)
+{
+  for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
+  for(CFG_Node *group = section->first; group != &cfg_nil_node; group = group->next)
+  for(CFG_Node *c = group->first; c != &cfg_nil_node; c = c->next)
+  {
+    if(str8_match(c->string, str8_lit("card"), 0) && str8_match(uishell_sidebar_local_field(c, str8_lit("kind")), kind, 0) &&
+       str8_match(uishell_sidebar_local_field(c, str8_lit("entity")), id, 0)) { return c; }
+  }
+  return &cfg_nil_node;
+}
+
 // Deterministic time traces use the production transitions; UI and raw-WM
 // checks exercise the actual hit exclusion and Escape routing seams.
 internal B32
@@ -112,7 +146,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   F32 saved_rate = rd_state->menu_animation_rate;
   rd_state->menu_animation_rate = 1.f;
   // Initialized and restored: rendering must use this fixture's own core.
-  UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {.initialized = 1, .restored = 1};
+  UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {.initialized = 1};
   ws->sidebar = &fixture;
   UI_State *saved_window_ui = ws->ui;
   ws->ui = test;
@@ -1079,14 +1113,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(cfg_node_from_id(saved_id) == saved, "closing one ghost leaves the other");
     CFG_Node *again = uishell_sidebar_card_pin(ws, original, 0);
     CardCheck(again->id == saved_id && fixture.pin_reveal == saved_id, "pinning twice reveals the same card");
-    Temp saved_scratch = scratch_begin(0, 0);
-    CFG_State *loaded_cfg = cfg_state_alloc();
-    String8 serialized = cfg_string_from_tree(saved_scratch.arena, rd_state->cfg_schema_table, str8_zero(), window);
-    CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(saved_scratch.arena, loaded_cfg, rd_state->cfg_schema_table, str8_zero(), serialized);
-    CFG_Node *restored = loaded.count ? uishell_sidebar_pin_find(loaded.first->v, uishell_sidebar_card_entity(entity), 0) : &cfg_nil_node;
-    CardCheck(restored != &cfg_nil_node && str8_match(cfg_node_child_from_string(restored, str8_lit("label"))->first->string,
-              uishell_sidebar_string(entity.label), 0), "layout serialization and restart preserve pinned identity and label");
-    cfg_state_release(loaded_cfg); scratch_end(saved_scratch);
+    CFG_Node *after_restart = uishell_hover_card_test_restart_pins(&fixture, window);
+    CFG_Node *restored = uishell_hover_card_test_pin(after_restart, uishell_sidebar_string(entity.entity_kind), uishell_sidebar_string(entity.entity_id));
+    CardCheck(restored != &cfg_nil_node && str8_match(uishell_sidebar_pin_ghost(restored), uishell_sidebar_pin_ghost(saved), 0) &&
+              str8_match(cfg_node_child_from_string(restored, str8_lit("label"))->first->string, uishell_sidebar_string(entity.label), 0),
+              "Andamento's record keeps a pin's identity and label across a restart");
+    cfg_node_release(rd_state->cfg, after_restart);
     fprintf(stderr, "Hover card diagnostics: pinned rendering\n");
     UIShell_HoverCard *pinned = uishell_sidebar_saved_card(ws, saved);
     CFG_Node *layout_second = cfg_node_new(rd_state->cfg, saved->parent, str8_lit("card"));
@@ -1476,7 +1508,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     {
       Temp publish_scratch = scratch_begin(0, 0);
       UIShell_ControlledSplit publish_split = uishell_root_controlled_split_from_window(publish_scratch.arena, window);
-      uishell_sidebar_publish_local(&fixture, &publish_split);
+      uishell_sidebar_publish(&fixture, &publish_split);
       uishell_sidebar_refresh(&fixture);
       scratch_end(publish_scratch);
     }
@@ -1860,22 +1892,17 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(cfg_node_from_id(unknown_copy_id) == &cfg_nil_node && cfg_node_from_id(unknown->id) == unknown &&
               cfg_node_from_id(incomplete->id) == incomplete && cfg_node_from_id(unique->id) == unique,
               "unknown kinds and incomplete entries tolerate reconciliation without losing valid pins");
-    Temp tolerance_scratch = scratch_begin(0, 0);
-    CFG_State *tolerance_cfg = cfg_state_alloc();
-    String8 tolerance_text = cfg_string_from_tree(tolerance_scratch.arena, rd_state->cfg_schema_table, str8_zero(), window);
-    CFG_NodePtrList tolerance_loaded = cfg_node_ptr_list_from_string(tolerance_scratch.arena, tolerance_cfg,
-      rd_state->cfg_schema_table, str8_zero(), tolerance_text);
-    AndamentoEntity future_entity = {uishell_sidebar_text(str8_lit("future_kind")), uishell_sidebar_text(str8_lit("orphan"))};
-    CFG_Node *future_restored = tolerance_loaded.count ? uishell_sidebar_pin_find(tolerance_loaded.first->v, future_entity, 0) : &cfg_nil_node;
+    CFG_Node *tolerance_restart = uishell_hover_card_test_restart_pins(&fixture, window);
+    CFG_Node *future_restored = uishell_hover_card_test_pin(tolerance_restart, str8_lit("future_kind"), str8_lit("orphan"));
     CardCheck(future_restored != &cfg_nil_node &&
               str8_match(cfg_node_child_from_string(future_restored, str8_lit("label"))->first->string, str8_lit("Future pin"), 0),
-              "unversioned layout round-trip retains unknown pin kinds and fallback labels");
-    cfg_state_release(tolerance_cfg); scratch_end(tolerance_scratch);
+              "a restart through Andamento's record keeps unknown pin kinds and fallback labels");
+    cfg_node_release(rd_state->cfg, tolerance_restart);
     // Published and placed, they render in their section's View.
     {
       Temp publish_scratch = scratch_begin(0, 0);
       UIShell_ControlledSplit publish_split = uishell_root_controlled_split_from_window(publish_scratch.arena, window);
-      uishell_sidebar_publish_local(&fixture, &publish_split);
+      uishell_sidebar_publish(&fixture, &publish_split);
       uishell_sidebar_refresh(&fixture);
       scratch_end(publish_scratch);
     }
@@ -2107,7 +2134,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       }
       // Published and placed, the group's items form one run.
       UIShell_ControlledSplit drop_split = uishell_root_controlled_split_from_window(scratch.arena, window);
-      uishell_sidebar_publish_local(&fixture, &drop_split);
+      uishell_sidebar_publish(&fixture, &drop_split);
       uishell_sidebar_refresh(&fixture);
       String8 loop = str8_zero();
       for(U64 i = 0; fixture.snapshot && i < andamento_snapshot_node_count(fixture.snapshot); i++)
@@ -2136,7 +2163,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       // Down to a middle slot, from the top of [first, second, added]: the
       // line between second and added is index 2 (counting every item, as the
       // line does), so first lands between them.
-      uishell_sidebar_publish_local(&fixture, &drop_split);
+      uishell_sidebar_publish(&fixture, &drop_split);
       uishell_sidebar_refresh(&fixture);
       UIShell_HoverCard *first = uishell_sidebar_saved_card(ws, pins[0]);
       fixture.drag_card = first; first->moving = first->drag_released = 1;

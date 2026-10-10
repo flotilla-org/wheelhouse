@@ -58,7 +58,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
   U64 sizes[] = {uishell_sidebar_benchmark_issues};
   for(U64 size_index = 0; size_index < ArrayCount(sizes); size_index++)
   {
-    UIShell_SidebarState state = {.initialized = 1, .restored = 1};
+    UIShell_SidebarState state = {.initialized = 1};
     char *error = 0;
     String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
     state.core = andamento_create(config.str, config.size, &error);
@@ -210,17 +210,16 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     if(old_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, old_host); }
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY));
     if(old_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, old_inventory); }
-    // A real state owns core/snapshot, labels, cards and display recovery resources.
+    // A real state owns core/snapshot, labels, cards and records resources.
     // Teardown must clear every owned pointer so repeated release is safe.
     for(U64 i = 0; i < ArrayCount(state.cards); i++)
     { if(!state.cards[i].arena) { state.cards[i].arena = arena_alloc(); } }
-    if(!state.display_restore_arena) { state.display_restore_arena = arena_alloc(); }
-    state.display_restores = push_array(state.display_restore_arena, UIShell_DisplayRestore, 1);
-    if(!state.display_wakeup) { state.display_wakeup = uishell_sidebar_display_wake_after(1); }
-    ok &= state.display_wakeup != 0;
+    if(!state.records_arena) { state.records_arena = arena_alloc(); }
+    uishell_sidebar_dashboard(&state);
+    ok &= state.dashboard_arena != 0;
     uishell_sidebar_release(&state);
     B32 released = !state.core && !state.snapshot && !state.labels_arena &&
-      !state.display_restore_arena && !state.display_restores && !state.display_wakeup && !state.display_wakeup_at &&
+      !state.records_arena && !state.records && !state.dashboard_arena && !state.dashboard &&
       !state.placement_arena && !state.placement_snapshot && !state.placement_regions && !state.placement_count;
     for(U64 i = 0; i < ArrayCount(state.cards); i++) { released &= !state.cards[i].arena; }
     ok &= released;

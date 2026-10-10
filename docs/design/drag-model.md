@@ -208,7 +208,7 @@ A section's name can therefore come from you, from its single group, or from a n
 Floating and pinned cards already exist (`uishell_detached_cards.c`, `docs/detached-card-acceptance.md`). The model must keep the following invariants:
 
 - Today a pin is identified by `(kind, entity)` and is unique per window. Pinning again reveals the existing pin, moving a pin keeps the same node, and copied layouts are deduplicated. Decision 1 below deliberately relaxes the uniqueness.
-- Pins are stored as `card{kind, entity, label, source, ghost}` inside local groups in the window's `sidebar_local` node (they were inside `pinned_cards` Views before 2026-10-08). Unknown or incomplete entries are tolerated.
+- Pins are `card{kind, entity, label, source, ghost}` inside local groups, which Andamento owns as local `.ref` entities in its dashboard record; Wheelhouse edits a working copy of them (they were in the window's `sidebar_local` node until state model step 3, and inside `pinned_cards` Views before 2026-10-08). Unknown or incomplete entries are tolerated.
 - Only an explicit Close removes a pin. A missing subject shows "No longer present", with no timeout. This is the same as the ghost lifecycle above.
 - Every target goes through `rd_dock_check` and `rd_dock_can_create`. A centre drop joins or creates an area, and a directional drop splits the panel.
 - An emptied group remains; its section's Close control hides it.

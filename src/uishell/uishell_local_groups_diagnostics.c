@@ -22,7 +22,7 @@ internal void
 uishell_local_groups_publish(UIShell_SidebarState *state, CFG_Node *window, Arena *arena)
 {
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
-  uishell_sidebar_publish_local(state, &split);
+  uishell_sidebar_publish(state, &split);
   uishell_sidebar_observe(state, &split);
   uishell_sidebar_refresh(state);
 }
