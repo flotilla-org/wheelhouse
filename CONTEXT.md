@@ -168,7 +168,7 @@ The path through nested **Controlled Splits** to a **Workspace**.
 _Avoid_: Workspace name, global ID
 
 **Workspace ID**:
-A stable identifier for a **Workspace** within its owning **Controlled Split**.
+A stable identifier for a **Workspace**, created once when it is materialized and unique across Dashboards and devices. Its **Workspace Subject** is an attribute, not its identity: several Workspaces may share a subject, and a detached Workspace keeps its ID.
 _Avoid_: Workspace address, layout position, display name
 
 **Workspace Focus**:
@@ -314,7 +314,8 @@ _Avoid_: Autosave, replication
 - A **Workspace Region** cannot contain the **Control Surface** that selects it.
 - The workspace-selecting **View** may move while retaining its **Workspace Selection Binding**, but cannot close.
 - A selected **Selection Handle** may create **Frame Integration** with the region selected by its binding; unselected handles may have their own boundaries or themed previews, but they do not open the selected region's frame.
-- A **Workspace ID** identifies a **Workspace** within its owning **Controlled Split**.
+- An entity, such as a **Workspace Subject**, is identified by its **Content Provider**, kind and ID. The provider comes from the **Dashboard**'s subscription, not from what the producer claims.
+- A **Workspace ID** identifies a **Workspace** wherever it is shown; a **Workspace Address** only says where it is shown.
 - A **Workspace Address** locates a **Workspace** by composing stable IDs through nested **Controlled Splits**.
 - A **Control Surface** may select or create many **Workspaces** over time.
 - A **Workspace** may have many **Runtime Instances** attached while it is active.
@@ -402,4 +403,4 @@ _Avoid_: Autosave, replication
 - Tabs in the title bar is not a special tab mode. Resolved: it is the **Tab Strip** element placed in the title-bar host; the topmost docking row becomes the chrome row and the title bar's end-zone widths become **edge insets** to the docking layout. Tab overflow within the inset span stays clipped for now (a later overflow dropdown is separable). See ADR 0006.
 - The project selector is not assumed useful in uishell. Resolved: a uishell user overwhelmingly has one context bringing all threads together; the project/owner selector is not a fixed title-bar fixture — it is a **Chrome Element** like any other, present only if placed.
 - "Project" means two different things. The RAD project file holds all app state, while a flotilla project is a domain entity that Andamento picks up. Resolved for new work: the user-level aggregation is the **Dashboard**; per-device layout is **Presentation State**; "project" on its own refers only to the flotilla/domain entity.
-- **Workspace ID** is scoped to its owning **Controlled Split**, but workspaces from several providers on a shared **Dashboard** need IDs that make sense across devices. Open: IDs probably need provider-namespaced forms, such as `flotilla:<instance>/…` or `local:<guid>`.
+- A **Workspace ID** was scoped to its owning **Controlled Split**. Resolved: it is unique across Dashboards and devices, and a **Workspace Address** remains only a locator. Entities from several **Content Providers** are told apart by the provider, not by the ID string.
