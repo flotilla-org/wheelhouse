@@ -16,11 +16,26 @@ cfg_window_from_cfg(CFG_Node *cfg)
   return result;
 }
 
-// A panel's children are its sub-panels, its Views and these options.
+// A panel's children are its sub-panels, its Views and these options. `id`
+// is the panel's stable ID (shell_arrangement.h).
 internal B32
 cfg_panel_child_is_option(String8 name)
 {
-  return str8_match(name, str8_lit("tabs_on_bottom"), 0) || str8_match(name, str8_lit("section_collapsed"), 0);
+  return str8_match(name, str8_lit("tabs_on_bottom"), 0) || str8_match(name, str8_lit("section_collapsed"), 0) ||
+    str8_match(name, str8_lit("id"), 0);
+}
+
+// Sub-panels have numeric names; a split's other children (its `id`, a
+// focus mark) are not panels.
+internal CFG_Node *
+cfg_panel_next_child_panel(Arena *arena, CFG_Node *node)
+{
+  for(; node != &cfg_nil_node; node = node->next)
+  {
+    MD_TokenizeResult tokenize = md_tokenize_from_text(arena, node->string);
+    if(tokenize.tokens.count == 1 && tokenize.tokens.v[0].flags & MD_TokenFlag_Numeric) { break; }
+  }
+  return node;
 }
 
 internal CFG_PanelTree
@@ -80,19 +95,21 @@ cfg_panel_tree_from_panels_cfg(Arena *arena, CFG_Node *panels_root, Axis2 root_s
         }
       }
       
-      // rjf: recurse
-      rec = cfg_node_rec__depth_first(panels_root, src);
-      if(!panel_has_children)
+      // rjf: recurse, through sub-panels only
+      MemoryZeroStruct(&rec);
+      rec.next = &cfg_nil_node;
+      if(panel_has_children)
       {
-        MemoryZeroStruct(&rec);
-        rec.next = &cfg_nil_node;
-        for(CFG_Node *p = src; p != panels_root && p != &cfg_nil_node; p = p->parent, rec.pop_count += 1)
+        rec.next = cfg_panel_next_child_panel(scratch.arena, src->first);
+        rec.push_count = 1;
+      }
+      else for(CFG_Node *p = src; p != panels_root && p != &cfg_nil_node; p = p->parent, rec.pop_count += 1)
+      {
+        CFG_Node *next = cfg_panel_next_child_panel(scratch.arena, p->next);
+        if(next != &cfg_nil_node)
         {
-          if(p->next != &cfg_nil_node)
-          {
-            rec.next = p->next;
-            break;
-          }
+          rec.next = next;
+          break;
         }
       }
       if(rec.push_count > 0)
