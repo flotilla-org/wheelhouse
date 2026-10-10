@@ -6,6 +6,7 @@
 
 #include "shell_app_hooks.h"
 #include "shell_docking.c"
+#include "shell_workspace_id.c"
 
 ////////////////////////////////
 //~ rjf: Generated Code
@@ -3041,6 +3042,9 @@ uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window)
   {
     UIShell_MaterializedWorkspace *workspace = push_array(arena, UIShell_MaterializedWorkspace, 1);
     workspace->id = window->id;
+    // The window's own layout is a workspace too, with its ID on the window.
+    // Workspaces from files saved before IDs get theirs on first read.
+    workspace->workspace_id = uishell_workspace_id_from_cfg(window);
     workspace->display_name = rd_label_from_cfg(window);
     if(workspace->display_name.size == 0)
     {
@@ -3061,6 +3065,7 @@ uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window)
       CFG_Node *workspace_cfg = n->v;
       UIShell_MaterializedWorkspace *workspace = push_array(arena, UIShell_MaterializedWorkspace, 1);
       workspace->id = workspace_cfg->id;
+      workspace->workspace_id = uishell_workspace_id_from_cfg(workspace_cfg);
       workspace->display_name = rd_label_from_cfg(workspace_cfg);
       if(workspace->display_name.size == 0)
       {

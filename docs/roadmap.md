@@ -134,8 +134,8 @@ in a Dashboard directory; RAD's config tree keeps only Presentation State. See
 ADRs [0012](adr/0012-andamento-owns-logical-state.md) and
 [0013](adr/0013-workspace-overlay-is-an-addressed-edit-set.md) and the glossary
 in `CONTEXT.md`. Each step keeps the daily driver usable; step 4 is the one
-planned fresh start. Andamento's ABI 3 is additive, and Wheelhouse accepts ABI
-2 or 3 while it moves.
+planned fresh start. Andamento's ABI 3 is additive; Wheelhouse names
+workspaces only by Workspace ID from step 1, so it requires ABI 3.
 
 | Step | Wheelhouse | Andamento / Flotilla |
 | --- | --- | --- |

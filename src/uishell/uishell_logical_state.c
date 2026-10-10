@@ -275,7 +275,7 @@ uishell_logical_order_entity(Arena *arena, UIShell_SidebarState *state, String8 
   for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
   {
     AndamentoNode node = {0};
-    andamento_snapshot_node(state->snapshot, i, &node);
+    uishell_sidebar_snapshot_node(state->snapshot, i, &node);
     if(str8_match(uishell_sidebar_string(node.entity_kind), kind, 0) && str8_match(uishell_sidebar_string(node.entity_id), id, 0))
     { return push_str8f(arena, "%S %S", name, uishell_logical_quote(arena, uishell_sidebar_string(node.label))); }
   }
@@ -295,7 +295,7 @@ uishell_logical_orders(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *
     {
       if(!str8_match(uishell_sidebar_loop_key(state->snapshot, i), run->string, 0)) { continue; }
       AndamentoNode node = {0}, parent = {0};
-      andamento_snapshot_node(state->snapshot, i, &node);
+      uishell_sidebar_snapshot_node(state->snapshot, i, &node);
       if(node.parent == ANDAMENTO_NONE) { under = str8_lit("(top level)"); break; }
       uishell_sidebar_node_at(state, node.parent, &parent);
       under = uishell_logical_quote(arena, parent.is_section ? uishell_logical_section_title(state, parent) : uishell_sidebar_string(parent.label));
