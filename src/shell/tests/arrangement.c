@@ -501,6 +501,82 @@ entry_point(CmdLine *cmdline)
     cfg_node_release(cfg, window);
   }
 
+  // The sidebar's edits. A window with no sidebar gets one once it has a
+  // panel; sections arrive at weight 1 or at an equal share.
+  {
+    CFG_Node *window = fixture(arena, "window:{workspace:{panels:{text}}}");
+    RD_Arrangement *sidebar = rd_arrangement_from_owner(arena, window, str8_lit("control_views"));
+    Check(sidebar->root == &rd_nil_arrangement_panel && sidebar->root_axis == Axis2_Y);
+    U64 gen = cfg_change_gen();
+    rd_arrangement_save(cfg, sidebar);
+    Check(cfg_change_gen() == gen && child(window, "control_views") == &cfg_nil_node);
+    RD_PanelID first = rd_arrangement_add(sidebar, 0, 1.f);
+    RD_PanelID second = rd_arrangement_add(sidebar, sidebar->root->id, 1.f);
+    Check(first != 0 && second != 0 && rd_arrangement_add(sidebar, 0, 1.f) == 0 && rd_arrangement_add(sidebar, 99, 1.f) == 0);
+    CFG_Node *a = cfg_node_new(cfg, &cfg_nil_node, str8_lit("text"));
+    Check(rd_arrangement_move_tab(sidebar, a->id, first, 0));
+    rd_arrangement_save(cfg, sidebar);
+    CFG_Node *root = child(window, "control_views");
+    Check(root != &cfg_nil_node && root->first == a->parent && child(window, "control_views_split_x") == &cfg_nil_node);
+    Check((F32)f64_from_str8(root->first->string) == 1.f && (F32)f64_from_str8(root->first->next->string) == 1.f);
+    sidebar = rd_arrangement_from_owner(arena, window, str8_lit("control_views"));
+    Check(sidebar->root->cfg == root->id && sidebar->root->child_count == 2);
+    RD_PanelID third = rd_arrangement_add(sidebar, sidebar->root->id, 0);
+    for(RD_ArrangementPanel *p = sidebar->root->first; p != &rd_nil_arrangement_panel; p = p->next) { Check(p->weight == 0.333333f); }
+    Check(sidebar->root->last->id == third);
+    check_saved(arena, sidebar, window);
+    // An equal share counts malformed or zero weights as 0.01.
+    cfg_node_equip_string(cfg, root->first, str8_lit("0bad"));
+    sidebar = rd_arrangement_from_owner(arena, window, str8_lit("control_views"));
+    rd_arrangement_add(sidebar, sidebar->root->id, 0);
+    for(RD_ArrangementPanel *p = sidebar->root->first; p != &rd_nil_arrangement_panel; p = p->next) { Check(p->weight > 0); }
+    check_saved(arena, sidebar, window);
+    cfg_node_release(cfg, window);
+  }
+
+  // A sidebar merged into one panel keeps its tabs, Selected View and
+  // Presentation State in a panel of their own; the root keeps its node and ID.
+  {
+    CFG_Node *window = fixture(arena, "window:{control_views:{selected tabs_on_bottom section_collapsed id:{4} text:{selected} terminal}}");
+    CFG_Node *root = child(window, "control_views"), *text = child(root, "text"), *terminal = child(root, "terminal");
+    RD_Arrangement *sidebar = rd_arrangement_from_owner(arena, window, str8_lit("control_views"));
+    RD_PanelID added = rd_arrangement_add(sidebar, sidebar->root->id, 0);
+    RD_ArrangementPanel *lifted = sidebar->root->first;
+    Check(sidebar->root->id == 4 && sidebar->root->tab_count == 0 && sidebar->root->selected == 0);
+    Check(lifted->tab_count == 2 && lifted->selected == text->id && lifted->weight == 0.5f && sidebar->root->last->id == added);
+    check_saved(arena, sidebar, window);
+    CFG_Node *leaf = text->parent;
+    Check(child(window, "control_views") == root && leaf->parent == root && terminal->parent == leaf && leaf != root);
+    Check(str8_match(child(root, "id")->first->string, str8_lit("4"), 0) && !str8_match(child(leaf, "id")->first->string, str8_lit("4"), 0));
+    Check(child(root, "selected") == &cfg_nil_node && child(root, "tabs_on_bottom") == &cfg_nil_node && child(root, "section_collapsed") == &cfg_nil_node);
+    Check(child(leaf, "selected") != &cfg_nil_node && child(leaf, "tabs_on_bottom") != &cfg_nil_node && child(leaf, "section_collapsed") != &cfg_nil_node);
+    CFG_PanelTree tree = render_tree(arena, root);
+    Check(tree.focused == tree.root->first && tree.root->first->tab_side == Side_Max && tree.root->first->selected_tab == text);
+    cfg_node_release(cfg, window);
+  }
+
+  // Removing a panel leaves its siblings' weights, and a split it leaves with
+  // one panel, as they are; a split it empties goes too, short of the root.
+  {
+    CFG_Node *window = fixture(arena, "window:{control_views:{0.5:{text} 0.3:{0.5:{terminal} 0.5:{}} 0.2:{jackstay}}}");
+    CFG_Node *root = child(window, "control_views"), *middle = root->first->next, *terminal = middle->first->first;
+    CFG_ID terminal_id = terminal->id, middle_id = middle->id;
+    RD_Arrangement *sidebar = rd_arrangement_from_cfg(arena, root);
+    RD_ArrangementPanel *split = sidebar->root->first->next;
+    Check(!rd_arrangement_remove(sidebar, sidebar->root->id) && !rd_arrangement_remove(sidebar, 99));
+    Check(rd_arrangement_remove(sidebar, split->last->id));
+    Check(split->child_count == 1 && sidebar->root->child_count == 3 && sidebar->root->first->weight == 0.5f);
+    rd_arrangement_save(cfg, sidebar);
+    Check(cfg_node_from_id(middle_id) == middle && middle->string.size && cfg_node_from_id(terminal_id) == terminal);
+    sidebar = rd_arrangement_from_cfg(arena, root);
+    Check(rd_arrangement_remove(sidebar, rd_arrangement_panel_from_view(sidebar, terminal_id)->id));
+    Check(sidebar->root->child_count == 2 && sidebar->root->first->weight == 0.5f && sidebar->root->last->weight == 0.2f);
+    rd_arrangement_save(cfg, sidebar);
+    Check(cfg_node_from_id(terminal_id) == &cfg_nil_node && cfg_node_from_id(middle_id) == &cfg_nil_node);
+    Check(root->first->next->first->string.size && str8_match(root->first->next->first->string, str8_lit("jackstay"), 0));
+    cfg_node_release(cfg, window);
+  }
+
   // A hand-edited deep split chain loads, copies and saves without exhausting
   // the C stack, and a copy is independent of its source.
   {

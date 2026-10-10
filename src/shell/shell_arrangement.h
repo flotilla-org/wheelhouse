@@ -51,6 +51,9 @@ struct RD_ArrangementPanel
   CFG_ID selected;
   // The config node it was loaded from or saved to; 0 until first saved.
   CFG_ID cfg;
+  // A panel that took another's tabs (rd_arrangement_add) takes that panel's
+  // Presentation State with them when first saved: the node it moves from.
+  CFG_ID options_from;
 };
 
 typedef struct RD_Arrangement RD_Arrangement;
@@ -109,6 +112,9 @@ struct RD_ArrangementKeys
 internal RD_ArrangementKeys rd_arrangement_keys(Arena *arena, CFG_Node *root);
 // Empty (no root panel) when `panels_root` is nil.
 internal RD_Arrangement *rd_arrangement_from_cfg(Arena *arena, CFG_Node *panels_root);
+// The arrangement saved as `owner`'s `root_name` child. Without one, it is
+// empty and saves there once it has panels.
+internal RD_Arrangement *rd_arrangement_from_owner(Arena *arena, CFG_Node *owner, String8 root_name);
 internal RD_Arrangement *rd_arrangement_copy(Arena *arena, RD_Arrangement *src);
 // Edits the loaded config nodes in place: panel and View nodes keep their
 // identity and their other children, unchanged values are not rewritten, and
@@ -138,6 +144,19 @@ internal String8 rd_arrangement_problem(Arena *arena, RD_Arrangement *arrangemen
 // Inserts a sibling beside `panel` when its parent splits along `dir`'s axis,
 // rescaling the siblings; otherwise bisects `panel`. Returns the new panel.
 internal RD_PanelID rd_arrangement_split(RD_Arrangement *arrangement, RD_PanelID panel, Dir2 dir);
+// Adds an empty panel as `parent`'s last child and returns it; with no
+// panels, `parent` 0 makes the root first. A parent with tabs first moves
+// them, its Selected View and its Presentation State into a new first child
+// of weight 1, keeping its own ID and node. With `weight` positive the new
+// panel takes it and its siblings keep theirs, as the sidebar's sections do
+// until it sizes them; with 0 it takes an equal share, and its siblings
+// scale to make room, each counted as at least 0.01.
+internal RD_PanelID rd_arrangement_add(RD_Arrangement *arrangement, RD_PanelID parent, F32 weight);
+// Removes `panel` and its Views as the sidebar's reconciliation does: its
+// siblings keep their weights, and a split it leaves with one panel stays a
+// split. A split it leaves with none goes too, short of the root. Refuses
+// the root.
+internal B32 rd_arrangement_remove(RD_Arrangement *arrangement, RD_PanelID panel);
 // Removes `panel` and its Views. Its siblings grow into its space; a split
 // left with one child is replaced by it, merging into a parent along the same
 // axis. Returns the leaf that takes focus if `panel` had it; 0 for the root.
