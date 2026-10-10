@@ -1,5 +1,5 @@
 // Headless tests of the arrangement module through its interface, against
-// the real configuration parser and the renderer's panel tree reader.
+// the real configuration parser and the renderer's panel tree.
 #define BUILD_CONSOLE_INTERFACE 1
 #define WM_STUB 1
 #include "base/base_inc.h"
@@ -40,9 +40,7 @@ child(CFG_Node *node, char *name)
 internal CFG_PanelTree
 render_tree(Arena *arena, CFG_Node *root)
 {
-  RD_ArrangementKeys keys = rd_arrangement_keys(arena, root);
-  Axis2 axis = cfg_node_child_from_string(keys.owner, keys.axis_key) != &cfg_nil_node ? Axis2_X : Axis2_Y;
-  return cfg_panel_tree_from_panels_cfg(arena, root, axis);
+  return rd_panel_tree_from_cfg(arena, root);
 }
 
 internal CFG_Node *
@@ -146,6 +144,12 @@ entry_point(CmdLine *cmdline)
     // A split's `id` and focus mark are not panels to the renderer.
     CFG_PanelTree tree = render_tree(arena, panels);
     Check(tree.root->child_count == 2 && tree.focused == tree.root && cfg_panel_node_from_tree_cfg(tree.root, child(right, "id")) == &cfg_nil_panel_node);
+    // It reads the Presentation State saved beside each panel: the tab bar's
+    // side, and focus on the last marked panel in tree order.
+    Check(tree.root->first->tab_side == Side_Max && tree.root->last->tab_side == Side_Min);
+    CFG_Node *mark = cfg_node_new(cfg, right->first, str8_lit("selected"));
+    Check(render_tree(arena, panels).focused->cfg == right->first);
+    cfg_node_release(cfg, mark);
     // The sidebar's arrangement saves under its own keys.
     CFG_Node *sidebar = child(window, "control_views");
     RD_Arrangement *side = rd_arrangement_from_cfg(arena, sidebar);

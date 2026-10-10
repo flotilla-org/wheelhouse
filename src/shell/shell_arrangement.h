@@ -96,6 +96,15 @@ internal RD_Arrangement *rd_arrangement_copy(Arena *arena, RD_Arrangement *src);
 // only a closed panel's Views are released.
 internal void rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement);
 
+//- The renderer's panel tree
+// The arrangement's panels and tabs as config nodes, with the Presentation
+// State saved on each panel's node: the focus mark (`selected`; the last
+// marked panel in tree order has focus) and `tabs_on_bottom`. Valid until
+// the config changes.
+internal CFG_PanelTree rd_panel_tree_from_arrangement(Arena *arena, RD_Arrangement *arrangement);
+// Loads `panels_root` and returns its panel tree.
+internal CFG_PanelTree rd_panel_tree_from_cfg(Arena *arena, CFG_Node *panels_root);
+
 //- Queries; each returns the nil panel when there is none
 internal RD_ArrangementPanel *rd_arrangement_panel_from_id(RD_Arrangement *arrangement, RD_PanelID id);
 internal RD_ArrangementPanel *rd_arrangement_panel_from_cfg(RD_Arrangement *arrangement, CFG_ID cfg);

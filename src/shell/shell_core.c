@@ -2936,7 +2936,7 @@ uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node 
   RD_ArrangementKeys layout = rd_arrangement_keys(arena, panels_root);
   CFG_Node *axis_owner = layout.owner != &cfg_nil_node ? layout.owner : (sidebar ? window : owner);
   Axis2 root_split_axis = cfg_node_child_from_string(axis_owner, layout.axis_key) != &cfg_nil_node ? Axis2_X : Axis2_Y;
-  CFG_PanelTree panel_tree = cfg_panel_tree_from_panels_cfg(arena, panels_root, root_split_axis);
+  RD_Arrangement *arrangement = rd_arrangement_from_cfg(arena, panels_root);
   CFG_Node *workspace = str8_match(owner->string, str8_lit("workspace"), 0) ? owner : &cfg_nil_node;
   UIShell_WorkspaceMount mount =
   {
@@ -2945,7 +2945,8 @@ uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node 
     workspace,
     panels_root,
     root_split_axis,
-    panel_tree,
+    arrangement,
+    rd_panel_tree_from_arrangement(arena, arrangement),
   };
   return mount;
 }
