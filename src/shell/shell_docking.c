@@ -337,27 +337,24 @@ rd_dock_restore_window(CFG_State *state, CFG_Node *window)
   rd_dock_restore_container(state, window, window);
 }
 
-// The proposal runs the commands' operations on a copy: insert (or split),
-// then close the emptied source. split_panel deliberately keeps an emptied
-// source that is also the split target, and closing the root does nothing.
-// A split destination that the closure collapses is measured before it, as
-// the space its surviving panel takes over (the whole area for the root).
-// Tabs occupy vertical chrome only; the panel inset consumes both X edges.
+// The proposal runs the commands' drop on a copy, which closes an emptied
+// source as they do. A split destination that the closure collapses is
+// measured before it, as the space its surviving panel takes over (the whole
+// area for the root). Tabs occupy vertical chrome only; the panel inset
+// consumes both X edges.
 internal F32
-rd_dock_moving_width(RD_Arrangement *arrangement, RD_PanelID destination,
-                     RD_PanelID origin, Rng2F32 area, Dir2 dir, F32 inset)
+rd_dock_moving_width(RD_Arrangement *arrangement, RD_PanelID destination, CFG_ID view,
+                     RD_ArrangementTabRule *shown, Rng2F32 area, Dir2 dir, F32 inset)
 {
   Temp scratch = scratch_begin(0, 0);
   RD_Arrangement *proposal = rd_arrangement_copy(scratch.arena, arrangement);
-  RD_PanelID target = dir == Dir2_Invalid ? destination : rd_arrangement_split(proposal, destination, dir);
-  RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(proposal, target);
-  Rng2F32 rect = rd_arrangement_rect(proposal, area, panel);
-  if(origin != destination)
+  RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(proposal, rd_arrangement_drop(proposal, view, destination, dir, 0, shown).panel);
+  if(panel == &rd_nil_arrangement_panel)
   {
-    rd_arrangement_close(proposal, origin);
-    RD_ArrangementPanel *closed = rd_arrangement_panel_from_id(proposal, target);
-    if(closed != &rd_nil_arrangement_panel) { rect = rd_arrangement_rect(proposal, area, closed); }
+    proposal = rd_arrangement_copy(scratch.arena, arrangement);
+    panel = rd_arrangement_panel_from_id(proposal, dir == Dir2_Invalid ? destination : rd_arrangement_split(proposal, destination, dir));
   }
+  Rng2F32 rect = rd_arrangement_rect(proposal, area, panel);
   F32 result = panel == &rd_nil_arrangement_panel ? 0 : Max(0.f, round_f32(rect.x1-inset)-round_f32(rect.x0+inset));
   scratch_end(scratch);
   return result;

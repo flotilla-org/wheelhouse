@@ -742,6 +742,49 @@ rd_arrangement_move_tab(RD_Arrangement *arrangement, CFG_ID view, RD_PanelID des
 }
 
 internal B32
+rd_arrangement_settle__heir(RD_Arrangement *arrangement, RD_ArrangementPanel *panel, Dir2 dir, RD_ArrangementTabRule *shown, B32 may_close, RD_PanelID *heir)
+{
+  if(panel == &rd_nil_arrangement_panel) { return 0; }
+  RD_ArrangementTab *first_shown = 0;
+  for(RD_ArrangementTab *tab = panel->first_tab; tab != 0 && first_shown == 0; tab = tab->next)
+  {
+    if(shown == 0 || shown(tab->view)) { first_shown = tab; }
+  }
+  B32 split = dir != Dir2_Invalid;
+  if(may_close && (split ? panel->tab_count == 0 : first_shown == 0))
+  {
+    // Closing the root does nothing.
+    *heir = rd_arrangement_close(arrangement, panel->id);
+    return *heir != 0;
+  }
+  if(first_shown == 0 || (split && panel->selected != 0) || panel->selected == first_shown->view) { return 0; }
+  panel->selected = first_shown->view;
+  return 1;
+}
+
+internal B32
+rd_arrangement_settle(RD_Arrangement *arrangement, RD_PanelID panel, Dir2 dir, RD_ArrangementTabRule *shown, B32 may_close)
+{
+  RD_PanelID heir = 0;
+  return rd_arrangement_settle__heir(arrangement, rd_arrangement_panel_from_id(arrangement, panel), dir, shown, may_close, &heir);
+}
+
+internal RD_ArrangementDrop
+rd_arrangement_drop(RD_Arrangement *arrangement, CFG_ID view, RD_PanelID destination, Dir2 dir, CFG_ID prev_view, RD_ArrangementTabRule *shown)
+{
+  RD_ArrangementDrop result = {0};
+  RD_ArrangementPanel *source = rd_arrangement_panel_from_view(arrangement, view);
+  RD_PanelID target = dir == Dir2_Invalid ? destination : rd_arrangement_split(arrangement, destination, dir);
+  if(view == 0) { result.panel = target; return result; }
+  if(!rd_arrangement_move_tab(arrangement, view, target, prev_view)) { return result; }
+  result.panel = target;
+  result.source = source->id;
+  if(dir != Dir2_Invalid || source->id != destination)
+  { rd_arrangement_settle__heir(arrangement, source, dir, shown, source->id != destination, &result.heir); }
+  return result;
+}
+
+internal B32
 rd_arrangement_remove_tab(RD_Arrangement *arrangement, CFG_ID view)
 {
   RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(arrangement, view);

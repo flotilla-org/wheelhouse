@@ -2057,17 +2057,16 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
     rd_panel_drag_drop(other->id, Dir2_Up, 0);
     rd_drag_kill();
-    B32 closed_source = 0;
+    CFG_ID source_panel_id = source_panel->id;
     for(UIShell_CmdNode *n = before_collapse ? before_collapse->next : rd_state->cmds[0].first; n; n = n->next)
     {
-      if(str8_match(n->cmd.name, str8_lit("split_panel"), 0) || str8_match(n->cmd.name, str8_lit("close_panel"), 0)) UIShell_RegsScope()
+      if(str8_match(n->cmd.name, str8_lit("split_panel"), 0)) UIShell_RegsScope()
       {
         MemoryCopyStruct(uishell_regs(), n->cmd.regs);
         uishell_dispatch_panel_command(n->cmd.name);
-        closed_source |= str8_match(n->cmd.name, str8_lit("close_panel"), 0);
       }
     }
-    CardCheck(closed_source && moving_section->parent != source_panel,
+    CardCheck(cfg_node_from_id(source_panel_id) == &cfg_nil_node && moving_section->parent != &cfg_nil_node,
       "workspace section drop splits its destination and closes the empty source Panel");
     CardCheck(cfg_node_from_id(survivor_id) == &cfg_nil_node &&
       first_survivor->parent == collapse_root && last_survivor->parent == collapse_root &&

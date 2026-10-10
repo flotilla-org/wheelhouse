@@ -1140,6 +1140,9 @@ internal void rd_set_hover_regs(UIShell_ContextRegSlot slot);
 //~ rjf: Config Functions
 
 internal B32 rd_cfg_is_project_filtered(CFG_Node *cfg);
+// The visibility rule docking gives the arrangement (RD_ArrangementTabRule):
+// a tab is shown unless its View is filtered out of the current project.
+internal B32 rd_tab_is_shown(CFG_ID view);
 
 internal Vec4F32 rd_hsva_from_cfg(CFG_Node *cfg);
 internal Vec4F32 rd_color_from_cfg(CFG_Node *cfg);

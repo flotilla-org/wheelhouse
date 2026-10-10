@@ -70,6 +70,22 @@ struct RD_Arrangement
   RD_ArrangementTab *first_removed;
 };
 
+// A caller's rule for which tabs count, such as the Views shown in the
+// current project. The module keeps no such policy of its own.
+typedef B32 RD_ArrangementTabRule(CFG_ID view);
+
+typedef struct RD_ArrangementDrop RD_ArrangementDrop;
+struct RD_ArrangementDrop
+{
+  // The panel the View landed in; 0 when the drop was refused.
+  RD_PanelID panel;
+  // The panel it left, when this arrangement has it.
+  RD_PanelID source;
+  // When the source closed, the leaf that takes focus if the source had it;
+  // otherwise 0.
+  RD_PanelID heir;
+};
+
 read_only global RD_ArrangementPanel rd_nil_arrangement_panel =
 {
   &rd_nil_arrangement_panel,
@@ -131,6 +147,20 @@ internal RD_PanelID rd_arrangement_close(RD_Arrangement *arrangement, RD_PanelID
 // may also be a new View node in no panel, which saving places. A panel it
 // leaves while selected has no Selected View until one is selected.
 internal B32 rd_arrangement_move_tab(RD_Arrangement *arrangement, CFG_ID view, RD_PanelID destination, CFG_ID prev_view);
+// Drops `view` into `destination` (`dir` invalid) or into the new panel
+// splitting `destination` along `dir` makes, after `prev_view` as move_tab
+// places it, and settles the panel it left, when this arrangement has it, in
+// the same edit (rd_arrangement_settle). A move within one panel settles
+// nothing; a split of the source itself never closes it. With no View (0) it
+// only splits, which is what measuring a drop needs before one is chosen.
+internal RD_ArrangementDrop rd_arrangement_drop(RD_Arrangement *arrangement, CFG_ID view, RD_PanelID destination, Dir2 dir, CFG_ID prev_view, RD_ArrangementTabRule *shown);
+// Settles `panel` after a drop took a View out of it. After a move (`dir`
+// invalid) it selects its first tab `shown` accepts, and closes it as close
+// does when there is none. After a split it selects that tab only when it has
+// no Selected View, and closes it only when it has no tabs left. `shown` 0
+// accepts every tab; with `may_close` 0 the panel stays open. Returns whether
+// anything changed.
+internal B32 rd_arrangement_settle(RD_Arrangement *arrangement, RD_PanelID panel, Dir2 dir, RD_ArrangementTabRule *shown, B32 may_close);
 // Removes `view`'s tab; saving releases its View node. A panel it leaves
 // while selected has no Selected View until one is selected.
 internal B32 rd_arrangement_remove_tab(RD_Arrangement *arrangement, CFG_ID view);
