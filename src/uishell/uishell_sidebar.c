@@ -3355,6 +3355,19 @@ uishell_sidebar_new_workspace_entry(UIShell_ControlledSplit *split, F32 row_heig
   if(ui_clicked(sig)) { uishell_cmd("new_workspace", .window = split->owner_cfg->id); }
 }
 
+// A clicked row, header, toggle or control: dispatch it against the snapshot
+// it was shown from, run what it asks of the host, and save display intent.
+internal void
+uishell_sidebar_perform(UIShell_SidebarState *state, UIShell_ControlledSplit *split, size_t action)
+{
+  char *error = 0;
+  B32 ok = uishell_sidebar_dispatch(state, action, &error);
+  if(uishell_sidebar_result(state, ok, error)) { uishell_sidebar_effects(state, split); }
+  uishell_sidebar_refresh(state);
+  uishell_sidebar_save_display(state, split->owner_cfg);
+  rd_request_frame();
+}
+
 internal void
 uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_SidebarRenderParams params)
 {
@@ -4363,15 +4376,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   // Dispatch only against the snapshot used above, before topology mutations.
   if(state->core != 0)
   {
-    if(action != ANDAMENTO_NONE)
-    {
-      char *error = 0;
-      B32 ok = uishell_sidebar_dispatch(state, action, &error);
-      if(uishell_sidebar_result(state, ok, error)) { uishell_sidebar_effects(state, split); }
-      uishell_sidebar_refresh(state);
-      uishell_sidebar_save_display(state, split->owner_cfg);
-      rd_request_frame();
-    }
+    if(action != ANDAMENTO_NONE) { uishell_sidebar_perform(state, split, action); }
     if(state->order_pending)
     {
       state->order_pending = 0;
