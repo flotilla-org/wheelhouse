@@ -72,7 +72,7 @@ uishell_sidebar_card_find(UIShell_SidebarState *state, AndamentoEntity entity, A
   if(index == ANDAMENTO_NONE) { return ANDAMENTO_NONE; }
   if(out)
   {
-    if(!andamento_snapshot_detail(state->snapshot, index, &detail)) { return ANDAMENTO_NONE; }
+    if(!uishell_sidebar_snapshot_detail(state->snapshot, index, &detail)) { return ANDAMENTO_NONE; }
     *out = (AndamentoNode){.entity_kind = detail.entity.kind, .entity_id = detail.entity.id,
       .label = detail.label, .activate = detail.activate, .detail_count = detail.field_count,
       .state = detail.has_workspace ? ANDAMENTO_LIVE : ANDAMENTO_LATENT, .workspace_id = detail.workspace_id};
@@ -455,7 +455,7 @@ uishell_sidebar_card_age(U64 now, U64 observed)
 internal String8
 uishell_sidebar_card_role_text(UIShell_SidebarState *state, U64 index, U32 role)
 {
-  AndamentoDetail detail = {0}; andamento_snapshot_detail(state->snapshot, index, &detail);
+  AndamentoDetail detail = {0}; uishell_sidebar_snapshot_detail(state->snapshot, index, &detail);
   for(U64 f = 0; f < detail.field_count; f++)
   {
     AndamentoDetailField field = {0}; andamento_snapshot_detail_field(state->snapshot, index, f, &field);
@@ -714,7 +714,7 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
                             U64 slot, AndamentoNode node, U64 index, F32 width, B32 interactive)
 {
   AndamentoDetail detail = {0};
-  if(!andamento_snapshot_detail(state->snapshot, index, &detail)) { return ANDAMENTO_NONE; }
+  if(!uishell_sidebar_snapshot_detail(state->snapshot, index, &detail)) { return ANDAMENTO_NONE; }
   uishell_sidebar_card_header(state, card, index, detail, width, interactive);
   uishell_sidebar_card_facts(state, card, index, detail, width, interactive);
   uishell_sidebar_card_related(state, card, slot, index, detail, width, interactive);

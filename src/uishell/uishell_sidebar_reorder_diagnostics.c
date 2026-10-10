@@ -22,7 +22,7 @@ uishell_sidebar_reorder_ids(Arena *arena, UIShell_SidebarState *state, String8 k
   String8List ids = {0};
   for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
     if(!node.is_section && str8_match(uishell_sidebar_string(node.entity_kind), kind, 0))
     { str8_list_push(arena, &ids, uishell_sidebar_string(node.entity_id)); }
   }
@@ -36,7 +36,7 @@ uishell_sidebar_reorder_node(UIShell_SidebarState *state, String8 id)
   AndamentoNode node = {0};
   for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
   {
-    andamento_snapshot_node(state->snapshot, i, &node);
+    uishell_sidebar_snapshot_node(state->snapshot, i, &node);
     if(!node.is_section && str8_match(uishell_sidebar_string(node.entity_id), id, 0)) { return node; }
   }
   return (AndamentoNode){0};
@@ -251,7 +251,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   String8 loop = uishell_sidebar_loop_key(state.snapshot, 0);
   for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
   {
-    AndamentoNode node = {0}; andamento_snapshot_node(state.snapshot, i, &node);
+    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state.snapshot, i, &node);
     if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("c1"), 0))
     { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(state.snapshot, i)); }
   }
@@ -339,7 +339,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     uishell_sidebar_refresh(&state);
     for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
     {
-      AndamentoNode n = {0}; andamento_snapshot_node(state.snapshot, i, &n);
+      AndamentoNode n = {0}; uishell_sidebar_snapshot_node(state.snapshot, i, &n);
       if(str8_match(uishell_sidebar_string(n.entity_kind), str8_lit(".ref"), 0) && shown_count < 3)
       { shown[shown_count++] = push_str8_copy(scratch.arena, uishell_sidebar_string(n.entity_id)); }
     }
@@ -414,7 +414,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     String8 label = str8_zero();
     for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
     {
-      AndamentoNode n = {0}; andamento_snapshot_node(state.snapshot, i, &n);
+      AndamentoNode n = {0}; uishell_sidebar_snapshot_node(state.snapshot, i, &n);
       if(!str8_match(uishell_sidebar_string(n.entity_kind), str8_lit(".section"), 0) || !str8_match(uishell_sidebar_string(n.entity_id), id, 0)) { continue; }
       published++;
       label = push_str8_copy(scratch.arena, uishell_sidebar_string(n.label));
