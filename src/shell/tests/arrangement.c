@@ -616,6 +616,90 @@ entry_point(CmdLine *cmdline)
     cfg_node_release(cfg, window);
   }
 
+  // Restore's operations. A View detached from one arrangement and moved
+  // into another keeps its node whichever saves first, and only the one
+  // that takes it lists it; neither changes its other panels.
+  {
+    CFG_Node *window = fixture(arena,
+      "window:{workspace:{panels:{0.5:{terminal:{selected} text} 0.5:{jackstay}}} "
+      "control_views:{sidebar_section:{selected section:a} text:{label:`moving`}}}");
+    CFG_Node *workspace = child(window, "workspace");
+    for(U32 source_first = 0; source_first < 2; source_first++)
+    {
+      RD_Arrangement *sidebar = rd_arrangement_from_owner(arena, window, str8_lit("control_views"));
+      RD_Arrangement *panels = rd_arrangement_from_owner(arena, workspace, str8_lit("panels"));
+      CFG_ID moving = source_first ? sidebar->root->last_tab->view : panels->root->first->last_tab->view;
+      RD_Arrangement *source = source_first ? sidebar : panels, *destination = source_first ? panels : sidebar;
+      RD_ArrangementPanel *leaf = source_first ? panels->root->first : sidebar->root;
+      CFG_ID kept_selected = leaf->selected;
+      Check(rd_arrangement_detach_tab(source, moving) && !rd_arrangement_detach_tab(source, moving));
+      Check(rd_arrangement_panel_from_view(source, moving) == &rd_nil_arrangement_panel);
+      // Not selected where it was saved: the destination keeps its own.
+      Check(rd_arrangement_insert_tab(destination, moving, leaf->id, leaf->last_tab->view, 0));
+      Check(leaf->selected == kept_selected && leaf->last_tab->view == moving);
+      if(source_first) { rd_arrangement_save(cfg, source); }
+      Check(cfg_node_from_id(moving) != &cfg_nil_node);
+      check_saved(arena, destination, source_first ? workspace : window);
+      check_saved(arena, source, source_first ? window : workspace);
+      Check(cfg_node_from_id(moving)->parent == cfg_node_from_id(leaf->cfg));
+      Check(child(cfg_node_from_id(moving), "selected") == &cfg_nil_node);
+    }
+    // Selected where it was saved, it is selected where it lands.
+    RD_Arrangement *panels = rd_arrangement_from_owner(arena, workspace, str8_lit("panels"));
+    CFG_ID chosen = panels->root->first->first_tab->view;
+    RD_ArrangementPanel *right = panels->root->last;
+    Check(rd_arrangement_insert_tab(panels, chosen, right->id, 0, 1));
+    Check(right->selected == chosen && right->first_tab->view == chosen && panels->root->first->selected == 0);
+    check_saved(arena, panels, workspace);
+    cfg_node_release(cfg, window);
+  }
+  // An orphan (a View saved outside every arrangement) is released when the
+  // arrangement it was handed to saves, even one with no panels, unless a tab
+  // takes it first. A View that is one of its tabs is not an orphan.
+  {
+    CFG_Node *window = fixture(arena, "window:{workspace:{text:{label:`stray`} terminal:{label:`placed`} panels:{jackstay}}}");
+    CFG_Node *workspace = child(window, "workspace");
+    CFG_ID stray = child(workspace, "text")->id, placed = child(workspace, "terminal")->id;
+    RD_Arrangement *panels = rd_arrangement_from_owner(arena, workspace, str8_lit("panels"));
+    Check(!rd_arrangement_release_orphan(panels, panels->root->first_tab->view));
+    Check(rd_arrangement_release_orphan(panels, stray) && rd_arrangement_release_orphan(panels, placed));
+    Check(rd_arrangement_move_tab(panels, placed, panels->root->id, panels->root->last_tab->view));
+    check_saved(arena, panels, workspace);
+    Check(cfg_node_from_id(stray) == &cfg_nil_node && cfg_node_from_id(placed)->parent == child(workspace, "panels"));
+    CFG_Node *other = cfg_node_new(cfg, window, str8_lit("workspace"));
+    CFG_ID loose = cfg_node_new(cfg, other, str8_lit("text"))->id;
+    RD_Arrangement *empty = rd_arrangement_from_owner(arena, other, str8_lit("panels"));
+    Check(rd_arrangement_release_orphan(empty, loose));
+    rd_arrangement_save(cfg, empty);
+    Check(cfg_node_from_id(loose) == &cfg_nil_node && other->first == &cfg_nil_node);
+    cfg_node_release(cfg, window);
+  }
+  // A discarded Floating Panel goes when saved, with its Views; a new one
+  // saves after the host's others, which keep their nodes.
+  {
+    CFG_Node *window = fixture(arena, "window:{floating_panels:{1:{text} 0.5:{0.5:{terminal} 0.5:{jackstay}}}}");
+    CFG_Node *host = child(window, "floating_panels");
+    CFG_Node *first = host->first, *second = host->last;
+    CFG_ID text = first->first->id;
+    RD_Arrangement *discarded = rd_arrangement_from_cfg(arena, second);
+    rd_arrangement_discard(discarded);
+    Check(discarded->root == &rd_nil_arrangement_panel && rd_arrangement_problem(arena, discarded).size == 0);
+    rd_arrangement_save(cfg, discarded);
+    Check(host->first == first && host->last == first);
+    U64 gen = cfg_change_gen();
+    rd_arrangement_save(cfg, discarded);
+    Check(cfg_change_gen() == gen);
+    RD_Arrangement *created = rd_arrangement_new(arena, host, str8_lit("1"));
+    RD_PanelID root = rd_arrangement_clear(created);
+    CFG_Node *view = cfg_node_new(cfg, &cfg_nil_node, str8_lit("terminal"));
+    Check(rd_arrangement_move_tab(created, view->id, root, 0));
+    rd_arrangement_save(cfg, created);
+    check_saved(arena, created, host->last);
+    Check(host->first == first && first->first->id == text && host->last != first);
+    Check(str8_match(host->last->string, str8_lit("1"), 0) && view->parent == host->last);
+    cfg_node_release(cfg, window);
+  }
+
   // A hand-edited deep split chain loads, copies and saves without exhausting
   // the C stack, and a copy is independent of its source.
   {

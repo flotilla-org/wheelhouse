@@ -135,6 +135,75 @@ internal RD_DockRule rd_dock_closure(CFG_Node *view);
 internal String8 rd_dock_rule_message(RD_DockRule rule);
 internal B32 rd_dock_can_create(String8 name, CFG_Node *destination);
 internal B32 rd_dock_can_close(CFG_Node *view);
+
+//- Repair: restore, and the sidebar's reconciliation
+
+// The arrangements a repair edits, each loaded once and saved together.
+typedef struct RD_DockDocument RD_DockDocument;
+struct RD_DockDocument
+{
+  RD_DockDocument *next;
+  RD_Arrangement *arrangement;
+  B32 dirty;
+  // It took a View from another arrangement, so it saves first: the panel
+  // node that View leaves may be released when its own arrangement saves.
+  B32 took;
+};
+
+typedef struct RD_DockDocuments RD_DockDocuments;
+struct RD_DockDocuments
+{
+  Arena *arena;
+  RD_DockDocument *first;
+  RD_DockDocument *last;
+};
+
+// A registered View saved under a layout container, as the pre-pass found it.
+typedef struct RD_DockSavedView RD_DockSavedView;
+struct RD_DockSavedView
+{
+  RD_DockSavedView *next;
+  CFG_Node *view;
+  // The arrangement and panel that have it as a tab. A stray, saved in no
+  // panel, has the ones whose tab (`holder`) it is saved inside, or none.
+  RD_DockDocument *document;
+  RD_ArrangementPanel *panel;
+  CFG_ID holder;
+};
+
+typedef struct RD_DockSavedViewList RD_DockSavedViewList;
+struct RD_DockSavedViewList
+{
+  RD_DockSavedView *first;
+  RD_DockSavedView *last;
+  U64 count;
+};
+
+// The arrangement saved as `owner`'s `root_name` child, loaded (or, with
+// none, an empty one that saves there) the first time it is asked for.
+internal RD_DockDocument *rd_dock_document_from_owner(RD_DockDocuments *documents, CFG_Node *owner, String8 root_name);
+// Adds an arrangement the repair made, such as a new Floating Panel.
+internal RD_DockDocument *rd_dock_documents_add(RD_DockDocuments *documents, RD_Arrangement *arrangement);
+// Loads each Floating Panel in `host`.
+internal void rd_dock_documents_add_floating(RD_DockDocuments *documents, CFG_Node *host);
+// The pre-pass: every registered View saved under `container`'s layout
+// containers, in config order (a split's tabs and child panels interleaved,
+// as the file reads them), and which of the loaded arrangements has it. The
+// one walk of saved layout config; it also finds the strays no arrangement
+// loads: Views directly under a workspace or a Floating Panels host, in a
+// second `panels` or `control_views` root, or inside a tab.
+internal RD_DockSavedViewList rd_dock_saved_views(RD_DockDocuments *documents, CFG_Node *container);
+// Whether the pre-pass found `view` as a tab of an arrangement.
+internal B32 rd_dock_saved_view_is_tab(RD_DockSavedView *view);
+// Saves the arrangements marked dirty: those that took Views first, then the
+// rest, each in the order they were loaded.
+internal void rd_dock_documents_save(CFG_State *state, RD_DockDocuments *documents);
+// The leaf a View restore moves goes to: down the first children of the
+// root, which is made when there is none.
+internal RD_ArrangementPanel *rd_dock_restore_leaf(RD_Arrangement *arrangement);
+// Repairs a window's saved layouts through their arrangements: one copy of
+// each singleton, and each View saved where the checker refuses it moved to
+// its default host.
 internal void rd_dock_restore_window(CFG_State *state, CFG_Node *window);
 
 // The body width `destination` (or the panel a split there makes) would have

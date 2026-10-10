@@ -119,11 +119,13 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
         {
           CFG_Node *selected = uishell_sidebar_region_view(window, destinations[pair]);
           CFG_Node *view = uishell_sidebar_region_view(window, sources[pair]);
-          CFG_Node *destination = selected->parent, *source = view->parent;
-          cfg_node_insert_child(rd_state->cfg, destination, destination->last, view);
-          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("selected")));
-          cfg_node_child_from_string_or_alloc(rd_state->cfg, selected, str8_lit("selected"));
-          uishell_sidebar_prune_empty_panel(source);
+          RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
+          RD_ArrangementPanel *destination = rd_arrangement_panel_from_view(sidebar, selected->id);
+          RD_ArrangementPanel *source = rd_arrangement_panel_from_view(sidebar, view->id);
+          rd_arrangement_select(sidebar, destination->id, selected->id);
+          rd_arrangement_insert_tab(sidebar, view->id, destination->id, destination->last_tab->view, 0);
+          if(!uishell_sidebar_arrangement_panel_has_content(source)) { rd_arrangement_remove(sidebar, source->id); }
+          rd_arrangement_save(rd_state->cfg, sidebar);
         }
       }
       for(U64 scrolling = 0; scrolling < inputs; scrolling++)
