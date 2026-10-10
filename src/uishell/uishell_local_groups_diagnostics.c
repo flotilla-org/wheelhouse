@@ -985,7 +985,11 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   //  touching saved sizes: a collapsed leaf keeps its header, a side-by-side
   //  row shrinks only once all of it is collapsed.
   {
+    // Its own config, selected while in use: arrangements name their nodes by
+    // ID, looked up in the selected config.
     CFG_State *cfg = cfg_state_alloc();
+    CFG_Ctx *saved_ctx = cfg_ctx;
+    cfg_ctx_select(cfg_state_ctx(cfg));
     CFG_Node *owner = cfg_node_new(cfg, &cfg_nil_node, str8_lit("window"));
     cfg_node_new(cfg, owner, str8_lit("sidebar_layout_sized"));
     CFG_Node *root = cfg_node_new(cfg, owner, RD_DOCK_SIDEBAR_ROOT);
@@ -1052,6 +1056,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     GroupsCheck(str8_match(root->first->string, str8_lit("0.5"), 0) && str8_match(row->string, str8_lit("0.5"), 0) &&
                 str8_match(root->last->string, str8_lit("1"), 0),
                 "collapsing never rewrites the sizes saved by hand");
+    cfg_ctx_select(saved_ctx);
     cfg_state_release(cfg);
   }
 

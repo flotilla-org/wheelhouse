@@ -178,7 +178,7 @@ entry_point(CmdLine *cmdline)
   CFG_Node *misplaced = cfg_node_new(cfg, split_sidebar, str8_lit("terminal"));
   rd_dock_restore_window(cfg, split);
   Check(misplaced->parent == leaf);
-  Check(cfg_panel_tree_from_panels_cfg(arena, split_panels, Axis2_X).root->first->tabs.first->v == misplaced);
+  Check(rd_panel_tree_from_cfg(arena, split_panels).root->first->tabs.first->v == misplaced);
   // The selector cannot cross Controlled Splits, which would leave one split
   // without its Control Surface and give the other two.
   Check(!rd_dock_drag_target(selecting_view, split_sidebar, 640));

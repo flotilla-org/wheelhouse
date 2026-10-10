@@ -1027,6 +1027,9 @@ struct UIShell_WorkspaceMount
   CFG_Node *workspace_cfg;
   CFG_Node *panels_root;
   Axis2 root_split_axis;
+  // As loaded. Commands may edit and save it; `panel_tree` stays as loaded.
+  RD_Arrangement *arrangement;
+  // The renderer's view of `arrangement`.
   CFG_PanelTree panel_tree;
 };
 

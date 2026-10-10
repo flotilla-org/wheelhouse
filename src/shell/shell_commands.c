@@ -715,8 +715,7 @@ internal void
 uishell_move_view_to_panel(Arena *arena, CFG_Node *view, CFG_Node *destination, CFG_Node *prev)
 {
   Temp temp = temp_begin(arena);
-  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_cfg(arena, destination);
-  RD_Arrangement *arrangement = rd_arrangement_from_cfg(arena, mount.panels_root);
+  RD_Arrangement *arrangement = uishell_workspace_mount_from_cfg(arena, destination).arrangement;
   RD_PanelID panel = rd_arrangement_panel_from_cfg(arrangement, destination->id)->id;
   if(panel == 0) { cfg_node_insert_child(rd_state->cfg, destination, prev, view); }
   else if(rd_arrangement_move_tab(arrangement, view->id, panel, prev->id)) { rd_arrangement_save(rd_state->cfg, arrangement); }
@@ -1107,7 +1106,7 @@ uishell_dispatch_panel_command(String8 name)
       UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, split_panel);
       CFG_PanelTree panel_tree = workspace_mount.panel_tree;
       CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, split_panel);
-      RD_Arrangement *arrangement = rd_arrangement_from_cfg(scratch.arena, workspace_mount.panels_root);
+      RD_Arrangement *arrangement = workspace_mount.arrangement;
       RD_PanelID created = rd_arrangement_split(arrangement, rd_arrangement_panel_from_cfg(arrangement, split_panel->id)->id, split_dir);
       if(created != 0) { rd_arrangement_save(rd_state->cfg, arrangement); }
       CFG_Node *new_panel_cfg = cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, created)->cfg);
@@ -1219,7 +1218,7 @@ uishell_dispatch_panel_command(String8 name)
     Temp scratch = scratch_begin(0, 0);
     UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
     CFG_Node *panel = cfg_node_from_id(uishell_regs()->panel);
-    RD_Arrangement *arrangement = rd_arrangement_from_cfg(scratch.arena, workspace_mount.panels_root);
+    RD_Arrangement *arrangement = workspace_mount.arrangement;
     RD_PanelID heir = rd_arrangement_close(arrangement, rd_arrangement_panel_from_cfg(arrangement, panel->id)->id);
     if(heir != 0)
     {

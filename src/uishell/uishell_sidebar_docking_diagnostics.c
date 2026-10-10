@@ -380,9 +380,13 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       DockFailure(cfg_node_child_from_string(restored_window, str8_lit("sidebar_layout_sized")) == &cfg_nil_node);
       DockFailure(!str8_match(restored_root->first->string, first_panel->string, 0));
       UIShell_ControlledSplit restored_split = {.owner_cfg = restored_window};
+      // Arrangements name their nodes by ID in the selected config.
+      CFG_Ctx *saved_ctx = cfg_ctx;
+      cfg_ctx_select(cfg_state_ctx(loaded_cfg));
       UIShell_WorkspaceMount restored_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, restored_window, restored_root);
       UI_FontSize(11)
       { uishell_sidebar_size_panels(&restored_split, &restored_mount, r2f32p(17, 29, 337, 229-uishell_sidebar_footer_height(ws))); }
+      cfg_ctx_select(saved_ctx);
       DockFailure(!str8_match(restored_root->first->string, first_panel->string, 0));
       cfg_state_release(loaded_cfg);
     }
@@ -1139,7 +1143,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   x = uishell_sidebar_region_view(restored, str8_lit("x"));
   PlacementCheck(ordinary->id == ordinary_id && ordinary->parent != merged && ordinary->parent != x->parent);
   PlacementCheck(leaf_selected->parent == ordinary->parent && leaf_tabs->parent == ordinary->parent);
-  CFG_PanelTree lifted = cfg_panel_tree_from_panels_cfg(scratch.arena, merged, Axis2_Y);
+  CFG_PanelTree lifted = rd_panel_tree_from_cfg(scratch.arena, merged);
   CFG_PanelNode *lifted_leaf = cfg_panel_node_from_tree_cfg(lifted.root, ordinary->parent);
   PlacementCheck(lifted_leaf->tab_side == Side_Max && lifted_leaf->selected_tab == ordinary);
   PlacementCheck(lifted.focused == lifted_leaf);

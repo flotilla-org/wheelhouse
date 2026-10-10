@@ -651,7 +651,8 @@ entry_point(CmdLine *cmdline)
   // Current mount builders select rendered panels/sidebar roots. Exercise a
   // future floating mount explicitly to cover the defensive no-render branch.
   UIShell_WorkspaceMount floating_mount = {.window_cfg = window, .owner_cfg = window,
-    .panel_tree = cfg_panel_tree_from_panels_cfg(scratch.arena, floating, Axis2_X)};
+    .arrangement = rd_arrangement_from_cfg(scratch.arena, floating)};
+  floating_mount.panel_tree = rd_panel_tree_from_arrangement(scratch.arena, floating_mount.arrangement);
   RD_DockGeometry floating_geometry = rd_dock_geometry_from_mount(&floating_mount);
   F32 floating_width = rd_dock_width_from_geometry(&floating_geometry, floating, Dir2_Invalid);
   IntegrationCheck(floating_width == 0);

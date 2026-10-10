@@ -111,31 +111,30 @@ uishell_logical_view(Arena *arena, CFG_Node *view, B32 selected)
     selected ? " selected" : "", uishell_sidebar_section_collapsed(view) ? " collapsed" : "");
 }
 
-// A panel tree: splits with their axis, each child's weight to two places,
-// and leaf panels' tabs in order.
+// An arrangement's panels: splits with their axis, each child's weight to
+// two places, and leaf panels' tabs in order.
 internal void
-uishell_logical_panels(UIShell_LogicalText *t, U64 depth, CFG_PanelNode *panel, B32 root)
+uishell_logical_panels(UIShell_LogicalText *t, U64 depth, RD_ArrangementPanel *panel, Axis2 axis, B32 root)
 {
-  String8 head = root ? str8_lit("panel") : push_str8f(t->arena, "panel weight=%.2f", panel->pct_of_parent);
-  if(panel->first != &cfg_nil_panel_node)
+  String8 head = root ? str8_lit("panel") : push_str8f(t->arena, "panel weight=%.2f", panel->weight);
+  if(panel->first != &rd_nil_arrangement_panel)
   {
-    uishell_logical_linef(t, depth, "%S split=%s", head, panel->split_axis == Axis2_X ? "x" : "y");
-    for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next)
-    { uishell_logical_panels(t, depth+1, child, 0); }
+    uishell_logical_linef(t, depth, "%S split=%s", head, axis == Axis2_X ? "x" : "y");
+    for(RD_ArrangementPanel *child = panel->first; child != &rd_nil_arrangement_panel; child = child->next)
+    { uishell_logical_panels(t, depth+1, child, axis2_flip(axis), 0); }
     return;
   }
   uishell_logical_linef(t, depth, "%S", head);
-  for(CFG_NodePtrNode *n = panel->tabs.first; n; n = n->next)
-  { uishell_logical_linef(t, depth+1, "%S", uishell_logical_view(t->arena, n->v, n->v == panel->selected_tab)); }
+  for(RD_ArrangementTab *tab = panel->first_tab; tab; tab = tab->next)
+  { uishell_logical_linef(t, depth+1, "%S", uishell_logical_view(t->arena, cfg_node_from_id(tab->view), tab->view == panel->selected)); }
 }
 
 internal void
 uishell_logical_arrangement(UIShell_LogicalText *t, U64 depth, CFG_Node *window, CFG_Node *owner)
 {
-  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(t->arena, window, owner);
-  if(mount.panel_tree.root == &cfg_nil_panel_node || mount.panels_root == &cfg_nil_node)
-  { uishell_logical_linef(t, depth, "no panels"); return; }
-  uishell_logical_panels(t, depth, mount.panel_tree.root, 1);
+  RD_Arrangement *arrangement = uishell_workspace_mount_from_owner_cfg(t->arena, window, owner).arrangement;
+  if(arrangement->root == &rd_nil_arrangement_panel) { uishell_logical_linef(t, depth, "no panels"); return; }
+  uishell_logical_panels(t, depth, arrangement->root, arrangement->root_axis, 1);
 }
 
 // One workspace: its label, its subject (or local, with where it lives),
@@ -347,8 +346,8 @@ uishell_logical_sidebar_arrangement(UIShell_LogicalText *t, U64 depth, CFG_Node 
     CFG_Node *host = cfg_node_child_from_string(window, hosts[h]);
     if(host == &cfg_nil_node) { continue; }
     uishell_logical_linef(t, depth+1, "%s", names[h]);
-    UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(t->arena, window, host);
-    uishell_logical_panels(t, depth+2, mount.panel_tree.root, 1);
+    RD_Arrangement *arrangement = uishell_workspace_mount_from_owner_cfg(t->arena, window, host).arrangement;
+    uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
   }
   CFG_Node *inventory = cfg_node_child_from_string(window, str8_lit("section_positions"));
   for(CFG_Node *record = inventory->first; record != &cfg_nil_node; record = record->next)
