@@ -287,6 +287,10 @@ _Avoid_: View kind, view settings, tab
 A **View**'s place in a **Workspace**. It is identified by a slot key: the provider's key for a View from a **Suggested Layout**, or a short generated key for a View the user adds. It carries the View's **View Spec** and the progress of resolving it.
 _Avoid_: Tab, pane, panel
 
+**Detached Slot**:
+A **Slot** whose content the user has overridden in a **Workspace Overlay**, so it no longer follows the provider's **Suggested Layout**. Reattaching drops the override. Being detached is independent of whether the Slot's content is currently resolved.
+_Avoid_: Detached workspace, orphaned view
+
 **Target Resolution**:
 The cached result of resolving a **Target Reference** into a way of connecting, such as a Cleat session on a host or a Jackstay endpoint. It is always disposable: when it no longer works, the **Target Reference** is resolved again. A portable resolution (a remote session or endpoint) is kept with the **Workspace**; a machine-local one (a local socket or attach token) is kept per device.
 _Avoid_: Runtime instance (the live attachment), binding, target reference
@@ -358,6 +362,8 @@ _Avoid_: Autosave, replication
 - The **Tab Strip** is a **Chrome Element**; placing it in the title-bar host promotes the topmost docking row to the chrome row and feeds the title bar's end-zone widths to the docking layout as edge insets.
 - A **Dashboard** aggregates **Workspace Inventory Entries** from several **Content Providers**: local workspaces, one or more flotilla instances, and later other orchestrators.
 - A **Workspace Overlay** records which version of its **Suggested Layout** it was made against, so it can be reapplied when the provider's baseline changes. If reapplying conflicts, the conflict is flagged, not dropped.
+- A **Workspace Overlay** is a set of edits keyed by **Slot** and panel, together with the version of the **Suggested Layout** it was made against. Once the user rearranges a Workspace, the Overlay owns its whole arrangement; Slots the provider adds later are placed by a default rule.
+- A **Dashboard** relates to its template the way a **Workspace Overlay** relates to a **Suggested Layout**.
 - **Overlay Sync** moves user changes towards the canonical source; reapplying an overlay moves provider changes towards the user. Both are explicit.
 - A Wheelhouse process opens one **Dashboard**. How its windows relate to that Dashboard is still open.
 - A **Target Reference** may have a **Target Resolution**; a **Runtime Instance** is attached by using that resolution.
