@@ -49,8 +49,9 @@ enum
 };
 
 // How this device last reached the Slot's content (CONTEXT.md, "Target
-// Resolution"): disposable, and never part of its View Spec. Only
-// machine-local resolutions exist so far.
+// Resolution"): disposable, and never part of its View Spec. A Cleat daemon
+// session (`session`, `daemon_name`) is portable and saved with the Slot in
+// Andamento; the rest are machine-local (uishell_workspace_store.c).
 typedef struct WH_TargetResolution WH_TargetResolution;
 struct WH_TargetResolution
 {

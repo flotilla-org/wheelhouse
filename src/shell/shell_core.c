@@ -4935,6 +4935,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
               }
             }
             
+            //- uishell: a Slot's notice, in a banner above its View
+            if(selected_tab != &cfg_nil_node) { content_rect = uishell_slot_banner(selected_tab, content_rect); }
+            
             //- rjf: build view container
             UI_Box *view_container_box = &ui_nil_box;
             UI_FixedWidth(dim_2f32(content_rect).x)

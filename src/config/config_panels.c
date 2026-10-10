@@ -24,7 +24,9 @@ internal B32
 cfg_panel_child_is_option(String8 name)
 {
   return str8_match(name, str8_lit("tabs_on_bottom"), 0) || str8_match(name, str8_lit("section_collapsed"), 0) ||
-    str8_match(name, str8_lit("id"), 0) || str8_match(name, str8_lit("section_hint_cleanup"), 0);
+    str8_match(name, str8_lit("id"), 0) || str8_match(name, str8_lit("section_hint_cleanup"), 0) ||
+    // The ID a provider's document gave the panel (uishell_workspace_store.c).
+    str8_match(name, str8_lit("doc_id"), 0);
 }
 
 internal CFG_PanelNodeRec
