@@ -5445,6 +5445,7 @@ rd_window_frame(void)
   {
     ws->font_slot_raster_flags[RD_FontSlot_Icons] = FNT_RasterFlag_Smooth;
     ws->font_slot_raster_flags[RD_FontSlot_Main] = (rd_setting_b32_from_name(str8_lit("smooth_ui_text"))*FNT_RasterFlag_Smooth)|(rd_setting_b32_from_name(str8_lit("hint_ui_text"))*FNT_RasterFlag_Hinted);
+    ws->font_slot_raster_flags[RD_FontSlot_MainSemibold] = ws->font_slot_raster_flags[RD_FontSlot_Main];
     ws->font_slot_raster_flags[RD_FontSlot_Code] = (rd_setting_b32_from_name(str8_lit("smooth_code_text"))*FNT_RasterFlag_Smooth)|(rd_setting_b32_from_name(str8_lit("hint_code_text"))*FNT_RasterFlag_Hinted);
   }
   
@@ -9783,6 +9784,17 @@ rd_init(CmdLine *cmdln)
       }
     }
   }
+  // UI fonts rarely carry symbols like ↗ ⌘ ⇧ ▾; the bundled Noto symbol
+  // faces fill them in for every font.
+  {
+    FNT_Tag fallbacks[] =
+    {
+      fnt_tag_from_static_data_string(&rd_terminal_noto_symbols_2_font_bytes),
+      fnt_tag_from_static_data_string(&rd_terminal_noto_math_font_bytes),
+      fnt_tag_from_static_data_string(&rd_terminal_noto_symbols_font_bytes),
+    };
+    fnt_set_fallbacks(fallbacks, ArrayCount(fallbacks));
+  }
   rd_state->user_path_arena = arena_alloc();
   rd_state->project_path_arena = arena_alloc();
   rd_state->theme_path_arena = arena_alloc();
@@ -10590,9 +10602,13 @@ rd_frame(void)
     String8 code_font_name = rd_setting_from_name(str8_lit("code_font"));
     rd_state->font_slot_table[RD_FontSlot_Main]  = fnt_tag_from_path(main_font_name);
     rd_state->font_slot_table[RD_FontSlot_Code]  = fnt_tag_from_path(code_font_name);
+    // A UI font from settings is also its own semibold: only the embedded
+    // default comes with a semibold face.
+    rd_state->font_slot_table[RD_FontSlot_MainSemibold] = rd_state->font_slot_table[RD_FontSlot_Main];
     if(fnt_tag_match(rd_state->font_slot_table[RD_FontSlot_Main], fnt_tag_zero()))
     {
       rd_state->font_slot_table[RD_FontSlot_Main] = fnt_tag_from_static_data_string(&rd_default_main_font_bytes);
+      rd_state->font_slot_table[RD_FontSlot_MainSemibold] = fnt_tag_from_static_data_string(&rd_default_main_semibold_font_bytes);
     }
     if(fnt_tag_match(rd_state->font_slot_table[RD_FontSlot_Code], fnt_tag_zero()))
     {
