@@ -97,12 +97,13 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     ok &= uishell_sidebar_benchmark_label_lifecycle(&state);
     ws->sidebar = &state;
     CFG_Node *old_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
-    // The region inventory records intentionally closed sections. Isolate it
-    // with the layout so production reconciliation creates the full fixture.
-    CFG_Node *old_inventory = cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY);
+    // Andamento keeps the sidebar's arrangement once this marks it. Isolate
+    // it with the layout so the fixture's is built from Andamento's.
+    CFG_Node *old_inventory = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
     cfg_node_unhook(rd_state->cfg, window, old_inventory);
     cfg_node_unhook(rd_state->cfg, window, old_host);
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    state.window = window->id;
     CFG_Node *host = uishell_sidebar_dock_layout(&split);
     U64 sections = 0;
     for(CFG_Node *panel = host->first; panel != &cfg_nil_node; panel = panel->next) { sections++; }
@@ -210,19 +211,21 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     }
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT));
     if(old_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, old_host); }
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, UISHELL_REGION_INVENTORY));
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_generation")));
     if(old_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, old_inventory); }
     // A real state owns core/snapshot, labels, cards and records resources.
     // Teardown must clear every owned pointer so repeated release is safe.
     for(U64 i = 0; i < ArrayCount(state.cards); i++)
     { if(!state.cards[i].arena) { state.cards[i].arena = arena_alloc(); } }
     if(!state.records_arena) { state.records_arena = arena_alloc(); }
+    // Releasing it as a window's would release the window's local sections.
+    state.window = 0;
     uishell_sidebar_dashboard(&state);
     ok &= state.dashboard_arena != 0;
     uishell_sidebar_release(&state);
     B32 released = !state.core && !state.snapshot && !state.labels_arena &&
       !state.records_arena && !state.records && !state.dashboard_arena && !state.dashboard &&
-      !state.placement_arena && !state.placement_snapshot && !state.placement_regions && !state.placement_count;
+      !state.titles_arena && !state.titles_snapshot && !state.titles && !state.title_count && !state.sidebar_notes_arena;
     for(U64 i = 0; i < ArrayCount(state.cards); i++) { released &= !state.cards[i].arena; }
     ok &= released;
     if(!released) { fprintf(stderr, "FAIL sidebar owned resources remain after release\n"); }

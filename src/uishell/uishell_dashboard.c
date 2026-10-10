@@ -25,8 +25,11 @@
 // Presentation State and live in its presentation file, keyed by Dashboard
 // ID. Workspace nodes there are named by Workspace ID and keep only this
 // device's part of their arrangements: Andamento's workspace records keep
-// the arrangements and Slots (uishell_workspace_store.c). A file saved with
-// panel trees (step 4) has them imported into Andamento on its first load.
+// the arrangements and Slots (uishell_workspace_store.c). The dashboard
+// record keeps the sidebar's arrangement, and the window only this device's
+// part of it (uishell_sidebar_store.c). A file saved with panel trees (step
+// 4), or with a sidebar (before step 8), has them imported into Andamento on
+// its first load.
 //
 // Each window still has its own Andamento core (one core per process is
 // deferred), and only one core can own the Dashboard's records. The

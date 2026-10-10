@@ -436,9 +436,10 @@ rd_dock_restore_window(CFG_State *state, CFG_Node *window)
   for(RD_DockSavedView *v = views.first; v != 0; v = v->next)
   {
     if(v->view == &cfg_nil_node || rd_dock_placement(v->view, v->view->parent, RD_DOCK_UNMEASURED_WIDTH) == RD_DockRule_Valid) { continue; }
-    // Region-specific defaults arrive with the native snapshot. Preserve the
-    // need to resolve those hints after this generic safety fallback, and
-    // mark the panel the section leaves for reconciliation to clean up.
+    // Region-specific defaults are Andamento's. Preserve the need to place
+    // the section by its hints after this generic safety fallback, and mark
+    // the panel it leaves: the sidebar's next commit leaves both out, then
+    // restores the section (uishell_sidebar_store.c).
     if(str8_match(v->view->string, str8_lit("sidebar_section"), 0))
     {
       cfg_node_child_from_string_or_alloc(state, v->view, str8_lit("section_hint_pending"));
