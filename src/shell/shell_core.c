@@ -10253,6 +10253,7 @@ rd_init(CmdLine *cmdln)
     }
     
     // rjf: do initial app load
+    UISHELL_APP_OPEN_DASHBOARD(cmdln);
     UISHELL_APP_INITIAL_LOAD(user_path, project_path);
     if(cmd_line_has_flag(cmdln, str8_lit("terminal_fixture")) ||
        cmd_line_has_flag(cmdln, str8_lit("terminal-fixture")))

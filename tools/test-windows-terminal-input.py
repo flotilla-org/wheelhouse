@@ -120,15 +120,19 @@ def check(executable):
         expression = subprocess.list2cmdline([
             sys.executable, str(Path(__file__).resolve()), "--child", tmp])
         expression = expression.replace("\\", "\\\\").replace('"', '\\"')
-        (directory / "user").write_text(
-            '// uishell 0.1.0 user file\nwindow:\n{\n  size: 900 600\n'
+        # Windows are a Dashboard's Presentation State, kept beside an explicit --user file.
+        (directory / "dashboard").mkdir()
+        (directory / "dashboard" / "id").write_text("input")
+        (directory / "presentation").mkdir()
+        (directory / "presentation" / "input.wheelhouse").write_text(
+            '// uishell 0.1.0 presentation file\nwindow:\n{\n  size: 900 600\n'
             '  panels:\n  {\n    1.0:\n    {\n      terminal:\n      {\n'
             f'        expression: "{expression}"\n        selected\n'
             '      }\n      selected\n    }\n  }\n}\n')
         (directory / "project").write_text("// isolated input regression\n")
         started = time.monotonic()
         process = subprocess.Popen([str(executable), "--terminal_glyph_trace",
-                                    f"--user:{tmp}/user",
+                                    f"--user:{tmp}/user", f"--dashboard:{tmp}/dashboard",
                                     f"--project:{tmp}/project"], cwd=executable.parent)
         child_handle = None
         child_pid = None

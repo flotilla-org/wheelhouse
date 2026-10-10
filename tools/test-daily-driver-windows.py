@@ -37,6 +37,7 @@ def close_when_requested():
     while not os.path.exists(os.environ['CLOSE_APP']): time.sleep(.05)
     os._exit(0)
 threading.Thread(target=close_when_requested, daemon=True).start()
+print('args=' + repr(sys.argv[1:]), flush=True)
 print('pid=' + str(os.getpid()), flush=True)
 print('daemon=' + os.environ.get('FLOTILLA_DAEMON', ''), flush=True)
 print('socket=' + pipe, flush=True)
@@ -169,6 +170,9 @@ class WindowsDailyDriverTests(unittest.TestCase):
         self.ready(process)
         self.assertIn('daemon=' + endpoint, self.log('wheelhouse'))
         self.assertIn('daemon=' + endpoint, self.log('flotilla'))
+        # #316: the daily driver opens a Dashboard of its profile.
+        # resolve() expands the runner's 8.3 temp name (RUNNER~1), as the driver's path does.
+        self.assertIn(repr('--dashboard:' + str(self.state.resolve() / 'dashboards' / 'daily')), self.log('wheelhouse'))
         first_pipe = self.log('flotilla').split('socket=', 1)[1].splitlines()[0]
         self.assertTrue(first_pipe.startswith(r'\\.\pipe\wheelhouse-daily-'))
         self.assertIn("'pm', 'connect', '--wheelhouse-socket'", self.log('flotilla'))

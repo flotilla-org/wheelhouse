@@ -42,12 +42,16 @@ def main():
     source = Path(__file__).with_name('overview-source.py').resolve(strict=True)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    (output / 'user').write_text('window:\n{\n size: 1200 800\n}\n')
+    # Windows are a Dashboard's Presentation State, kept beside an explicit --user file.
+    (output / 'dashboard').mkdir()
+    (output / 'dashboard/id').write_text('benchmark')
+    (output / 'presentation').mkdir()
+    (output / 'presentation/benchmark.wheelhouse').write_text('window:\n{\n size: 1200 800\n}\n')
     command = shlex.join([sys.executable, str(source), '--duration', '14' if args.transitions else '8',
                           '--quiet-seconds', str(args.timeout)])
     if args.images:
         command += ' --images'
-    launch = [str(binary), f'--user:{output}/user', f'--project:{output}/project',
+    launch = [str(binary), f'--user:{output}/user', f'--project:{output}/project', f'--dashboard:{output}/dashboard',
               f'--overview_benchmark:{output}', f'--overview_benchmark_count:{args.count}',
               f'--overview_benchmark_command:{command}']
     if not args.screenshots:

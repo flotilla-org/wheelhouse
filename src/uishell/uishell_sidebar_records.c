@@ -3,13 +3,14 @@
 // orders, and local sections, groups and pins (the `dashboard` record); and
 // each workspace it knows, with its subject and the rows on its path as last
 // seen (`workspace/<id>`). It exports them as records and imports them into
-// a fresh core before the first observe; Wheelhouse only stores them. Each
-// window still has its own core, so each has its own directory, beside the
-// user file until Dashboard directories replace it (roadmap, step 4):
+// a fresh core before the first observe; Wheelhouse only stores them, in
+// the Dashboard directory (uishell_dashboard.c). Each window still has its
+// own core, so only the first window's are the Dashboard's own:
 //
-//   <user file>.andamento/<the window's andamento_records id>/
+//   <Dashboard>/                     the first window's
 //     dashboard.kdl
 //     workspace-<Workspace ID>.kdl
+//   <Dashboard>/windows/<andamento_records id>/   any other window's
 //
 // A record is written when its generation changes: a second after the first
 // change, through a temporary file renamed over the old one, and at once
@@ -293,11 +294,11 @@ uishell_sidebar_record_name(Arena *arena, String8 file)
 }
 
 // The window's records directory, giving the window an id for it when it
-// has none; empty without a user file.
+// has none; empty without a Dashboard.
 internal String8
 uishell_sidebar_records_dir(Arena *arena, CFG_Node *window)
 {
-  if(!rd_state->user_path.size || window == &cfg_nil_node) { return str8_zero(); }
+  if(!uishell_dashboard.dir.size || window == &cfg_nil_node) { return str8_zero(); }
   CFG_Node *id = cfg_node_child_from_string(window, str8_lit("andamento_records"));
   if(id->first->string.size == 0)
   {
@@ -306,7 +307,7 @@ uishell_sidebar_records_dir(Arena *arena, CFG_Node *window)
     cfg_node_new_replace(rd_state->cfg, id, uishell_string_from_workspace_id(scratch.arena, uishell_workspace_id_make()));
     scratch_end(scratch);
   }
-  return push_str8f(arena, "%S.andamento/%S", rd_state->user_path, id->first->string);
+  return uishell_dashboard_records_dir(arena, window, id->first->string);
 }
 
 internal B32
@@ -378,8 +379,7 @@ uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush)
   if(changed && (flush || now >= state->records_due))
   {
     state->records_due = 0;
-    make_directory(str8_chop_last_slash(state->records_dir));
-    make_directory(state->records_dir);
+    uishell_dashboard_make_directories(state->records_dir);
     index = 0;
     for(String8Node *n = names.first; n; n = n->next, index++)
     {
@@ -593,80 +593,10 @@ uishell_sidebar_local_load(UIShell_SidebarState *state, CFG_Node *window)
   }
 }
 
-// Before records, a window saved its sidebar under these keys of the user
-// file, and each new core had them replayed into it. A window that has them
-// and no records has them imported once; then they go.
-read_only global String8 uishell_sidebar_legacy_keys[] =
-{
-  str8_lit_comp("sidebar_display"), str8_lit_comp("sidebar_order"), str8_lit_comp("sidebar_local"),
-};
-
-internal void
-uishell_sidebar_records_migrate(UIShell_SidebarState *state, CFG_Node *window)
-{
-  Temp scratch = scratch_begin(0, 0);
-  CFG_Node *display = cfg_node_child_from_string(window, str8_lit("sidebar_display"));
-  for(CFG_Node *value = display->first; value != &cfg_nil_node; value = value->next)
-  {
-    // A value for a variable this configuration doesn't declare is dropped.
-    char *error = 0;
-    andamento_set_display_variable(state->core, uishell_sidebar_text(value->string), uishell_sidebar_text(value->first->string), &error);
-    andamento_string_free(error);
-  }
-  CFG_Node *orders = cfg_node_child_from_string(window, str8_lit("sidebar_order"));
-  for(CFG_Node *run = orders->first; run != &cfg_nil_node; run = run->next)
-  {
-    U64 count = 0;
-    for(CFG_Node *n = run->first; n != &cfg_nil_node && n->next != &cfg_nil_node; n = n->next->next) { count++; }
-    AndamentoEntity *entities = push_array(scratch.arena, AndamentoEntity, count);
-    CFG_Node *n = run->first;
-    for(U64 i = 0; i < count; i++, n = n->next->next)
-    { entities[i] = (AndamentoEntity){uishell_sidebar_text(n->string), uishell_sidebar_text(n->next->string)}; }
-    char *error = 0;
-    if(count) { andamento_set_sibling_order(state->core, uishell_sidebar_text(run->string), entities, count, &error); }
-    andamento_string_free(error);
-  }
-  // Local sections become the working copy, which publishing sends.
-  CFG_Node *local = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
-  if(local->first != &cfg_nil_node)
-  {
-    CFG_Node *tree = uishell_sidebar_local_tree_alloc(window);
-    for(CFG_Node *c = local->first, *next; c != &cfg_nil_node; c = next)
-    {
-      next = c->next;
-      cfg_node_unhook(rd_state->cfg, local, c);
-      cfg_node_insert_child(rd_state->cfg, tree, tree->last, c);
-    }
-  }
-  // An open subject workspace was bound to its subject by activating its row
-  // again on every start; its record binds it now. Until it has one, it is
-  // registered with its subject published on it, which its record keeps.
-  for(CFG_Node *c = window->first; c != &cfg_nil_node; c = c->next)
-  {
-    if(!str8_match(c->string, str8_lit("workspace"), 0) || !uishell_workspace_cfg_has_subject(c)) { continue; }
-    AndamentoFact facts[2] = {0};
-    facts[0].key = uishell_sidebar_text(str8_lit("entity.kind"));
-    facts[0].kind = ANDAMENTO_FACT_TEXT;
-    facts[0].text = uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("sidebar_entity_kind"))->first->string);
-    facts[1].key = uishell_sidebar_text(str8_lit("entity.id"));
-    facts[1].kind = ANDAMENTO_FACT_TEXT;
-    facts[1].text = uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("sidebar_entity_id"))->first->string);
-    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(c));
-    char *error = 0;
-    if(andamento_workspace_register(state->core, id, &error))
-    { andamento_apply_workspace(state->core, 0, id, uishell_sidebar_text(str8_lit("wheelhouse.local")), facts, ArrayCount(facts), &error); }
-    andamento_string_free(error);
-  }
-  for(U64 i = 0; i < ArrayCount(uishell_sidebar_legacy_keys); i++)
-  { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, uishell_sidebar_legacy_keys[i])); }
-  scratch_end(scratch);
-}
-
 // Imports the window's records into its new core, before its first observe:
 // the dashboard first, then each workspace's (which registers it and binds
-// it to its subject). Without records, a window saved before them has its
-// old keys imported instead. A record that doesn't import (a newer
-// version's, say) is reported, and nothing is saved over it this session.
+// it to its subject). A record that doesn't import (a newer version's, say)
+// is reported, and nothing is saved over it this session.
 internal void
 uishell_sidebar_records_load(UIShell_SidebarState *state, CFG_Node *window)
 {
@@ -722,18 +652,6 @@ uishell_sidebar_records_load(UIShell_SidebarState *state, CFG_Node *window)
     }
     if(!kept) { andamento_workspace_forget(state->core, uishell_sidebar_workspace(id), 0); }
   }
-  B32 legacy = 0;
-  for(U64 i = 0; i < ArrayCount(uishell_sidebar_legacy_keys); i++)
-  { legacy |= cfg_node_child_from_string(window, uishell_sidebar_legacy_keys[i]) != &cfg_nil_node; }
-  if(names.node_count == 0 && legacy) { uishell_sidebar_records_migrate(state, window); }
-  else
-  {
-    if(!failed)
-    {
-      for(U64 i = 0; i < ArrayCount(uishell_sidebar_legacy_keys); i++)
-      { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, uishell_sidebar_legacy_keys[i])); }
-    }
-    uishell_sidebar_local_load(state, window);
-  }
+  uishell_sidebar_local_load(state, window);
   scratch_end(scratch);
 }

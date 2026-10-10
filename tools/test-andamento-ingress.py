@@ -408,13 +408,18 @@ class IngressTests(unittest.TestCase):
     def test_native_process_applies_producer_patch(self):
         path = os.path.join(self.dir.name, 'native.sock')
         binary = str(Path(os.environ['WHEELHOUSE_TEST_BINARY']).resolve())
-        Path(self.dir.name, 'user').write_text(
+        # Windows are a Dashboard's Presentation State, kept beside an explicit --user file.
+        Path(self.dir.name, 'dashboard').mkdir()
+        Path(self.dir.name, 'dashboard', 'id').write_text('ingress')
+        Path(self.dir.name, 'presentation').mkdir()
+        Path(self.dir.name, 'presentation', 'ingress.wheelhouse').write_text(
             'window: {\nsize: 900 600\nworkspace: {\nlabel: "Observed"\npanels: {\n'
             'terminal: {\nexpression: "read answer"\ncwd: "/tmp"\nselected\n}\n'
             'terminal: {\nexpression: "read answer"\ncwd: "' + self.dir.name + '"\n}\n'
             'terminal: {\nexpression: "read answer"\n}\n}\n}\n}\n')
         with tempfile.TemporaryFile() as log:
             process = subprocess.Popen([binary, '--user:' + self.dir.name + '/user',
+                                        '--dashboard:' + self.dir.name + '/dashboard',
                                         '--project:' + self.dir.name + '/project',
                                         '--andamento_socket:' + path,
                                         '--andamento_config:' + str(ROOT / 'data/sidebar/fixture.kdl'),
