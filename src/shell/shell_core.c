@@ -5342,6 +5342,9 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *root = uishell_sidebar_dock_layout(split);
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, split->owner_cfg, root);
+  // The sidebar's panel tree points into the config until it is drawn: its
+  // sections' renders leave the stores' syncs for the end.
+  uishell_sidebar_store_frame_begin();
   // Sizing reads the weights too.
   rd_boundary_resize_show(scratch.arena, &mount);
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
@@ -5380,6 +5383,7 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       UI_Rect(edges[i]) { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
     }
   }
+  uishell_sidebar_store_frame_end(ws);
   scratch_end(scratch);
 }
 
@@ -5620,6 +5624,9 @@ rd_window_frame(void)
   //
   CFG_Node *window          = cfg_node_from_id(uishell_regs()->window);
   RD_WindowState *ws      = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
+  // From here the frame's panel trees point into the config: the
+  // arrangement stores sync at its end.
+  uishell_sidebar_store_frame_begin();
   UIShell_ControlledSplit root_controlled_split = uishell_root_controlled_split_from_window(scratch.arena, window);
   UIShell_WorkspaceMount *workspace_mount = uishell_controlled_split_selected_mount(&root_controlled_split);
   CFG_PanelTree panel_tree = workspace_mount->panel_tree;
@@ -8928,6 +8935,7 @@ rd_window_frame(void)
   //
   ws->frames_alive += 1;
   ws->last_window_rect = wm_client_rect_from_window(ws->os);
+  uishell_sidebar_store_frame_end(ws);
   
   ProfEnd();
   scratch_end(scratch);
