@@ -1471,8 +1471,13 @@ uishell_dispatch_window_command(String8 name)
         cfg_node_release(rd_state->cfg, cfg_node_child_from_string(new_child, str8_lit("workspace_id")));
       }
     }
-    CFG_Node *panels = cfg_node_new(rd_state->cfg, new_window, str8_lit("panels"));
-    cfg_node_child_from_string_or_alloc(rd_state->cfg, panels, str8_lit("selected"));
+    // One empty panel, which has focus (Presentation State, on its node).
+    Temp scratch = scratch_begin(0, 0);
+    RD_Arrangement *arrangement = rd_arrangement_from_owner(scratch.arena, new_window, str8_lit("panels"));
+    RD_PanelID panel = rd_arrangement_clear(arrangement);
+    rd_arrangement_save(rd_state->cfg, arrangement);
+    cfg_node_new(rd_state->cfg, cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, panel)->cfg), str8_lit("selected"));
+    scratch_end(scratch);
   }
   else if(str8_match(name, str8_lit("new_workspace"), 0))
   {

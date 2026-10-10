@@ -671,6 +671,24 @@ rd_arrangement_problem(Arena *arena, RD_Arrangement *arrangement)
 //~ Operations
 
 internal RD_PanelID
+rd_arrangement_clear(RD_Arrangement *arrangement)
+{
+  // Saving releases the panel nodes no longer used, and these tabs' Views.
+  for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p))
+  {
+    for(RD_ArrangementTab *tab = p->first_tab, *next = 0; tab != 0; tab = next)
+    {
+      next = tab->next;
+      tab->prev = 0;
+      SLLStackPush(arrangement->first_removed, tab);
+    }
+  }
+  arrangement->root = rd_arrangement_panel_alloc(arrangement);
+  arrangement->root->weight = 1.f;
+  return arrangement->root->id;
+}
+
+internal RD_PanelID
 rd_arrangement_split(RD_Arrangement *arrangement, RD_PanelID id, Dir2 dir)
 {
   RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(arrangement, id);

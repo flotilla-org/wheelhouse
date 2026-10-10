@@ -131,6 +131,8 @@ internal CFG_PanelTree rd_panel_tree_from_arrangement(Arena *arena, RD_Arrangeme
 internal CFG_PanelTree rd_panel_tree_from_cfg(Arena *arena, CFG_Node *panels_root);
 
 //- Queries; each returns the nil panel when there is none
+// The panel after `panel` in tree order (pre-order) under `root`.
+internal RD_ArrangementPanel *rd_arrangement_next(RD_ArrangementPanel *root, RD_ArrangementPanel *panel);
 internal RD_ArrangementPanel *rd_arrangement_panel_from_id(RD_Arrangement *arrangement, RD_PanelID id);
 internal RD_ArrangementPanel *rd_arrangement_panel_from_cfg(RD_Arrangement *arrangement, CFG_ID cfg);
 internal RD_ArrangementPanel *rd_arrangement_panel_from_view(RD_Arrangement *arrangement, CFG_ID view);
@@ -141,6 +143,11 @@ internal Rng2F32 rd_arrangement_rect(RD_Arrangement *arrangement, Rng2F32 area, 
 internal String8 rd_arrangement_problem(Arena *arena, RD_Arrangement *arrangement);
 
 //- Operations
+// Replaces every panel with one empty root panel and returns it, as a layout
+// producer starts a document (a reset, a new workspace, a Suggested Layout).
+// The root's axis is kept until it splits. Saving releases the old panel
+// nodes, with every View no tab took back.
+internal RD_PanelID rd_arrangement_clear(RD_Arrangement *arrangement);
 // Inserts a sibling beside `panel` when its parent splits along `dir`'s axis,
 // rescaling the siblings; otherwise bisects `panel`. Returns the new panel.
 internal RD_PanelID rd_arrangement_split(RD_Arrangement *arrangement, RD_PanelID panel, Dir2 dir);

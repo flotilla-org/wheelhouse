@@ -9939,6 +9939,17 @@ rd_cfg_new_view_tab(CFG_Node *parent, String8 view, String8 expr, B32 selected)
   return tab;
 }
 
+// A new View as `panel`'s last tab and its Selected View. Saving the
+// arrangement places its node.
+internal CFG_Node *
+rd_new_view_tab(RD_Arrangement *arrangement, RD_PanelID panel, String8 view, String8 expr)
+{
+  CFG_Node *tab = rd_cfg_new_view_tab(&cfg_nil_node, view, expr, 0);
+  RD_ArrangementTab *last = rd_arrangement_panel_from_id(arrangement, panel)->last_tab;
+  rd_arrangement_move_tab(arrangement, tab->id, panel, last ? last->view : 0);
+  return tab;
+}
+
 internal void
 rd_vocab_info_map_insert(Arena *arena, RD_VocabInfoMap *map, RD_VocabInfo *info)
 {
