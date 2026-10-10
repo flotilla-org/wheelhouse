@@ -124,6 +124,9 @@ read_only global RD_ViewRegistration rd_view_registrations[] =
 internal RD_ViewRegistration *rd_dock_view_from_name(String8 name);
 internal RD_DockRule rd_dock_check(RD_ViewRegistration *view, RD_DockProposal proposal);
 internal RD_DockHost rd_dock_host_from_cfg(CFG_Node *cfg, F32 width);
+// The Floating Panel `cfg` is in or is: the root of its own arrangement. Nil
+// outside Floating Panels, and for a View saved directly in the host.
+internal CFG_Node *rd_dock_floating_panel_from_cfg(CFG_Node *cfg);
 internal RD_DockRule rd_dock_placement(CFG_Node *view, CFG_Node *destination, F32 width);
 // The production drag-target query, shared by all View drop sites.
 internal B32 rd_dock_drag_target(CFG_Node *view, CFG_Node *destination, F32 width);

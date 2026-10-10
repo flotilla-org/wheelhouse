@@ -6,9 +6,10 @@
 //
 // Saved shape, until arrangements are committed to Andamento (#309):
 //   panels:{id:1 0.6:{id:2 terminal:{selected ...}} 0.4:{id:3 text:{...}}}
-// The root is `panels` or the sidebar's `control_views`; its owner's
+// The root is `panels`, the sidebar's `control_views`, or a Floating Panel's
+// node in its `floating_panels` host, which keeps its name; its owner's
 // `split_x` (or `control_views_split_x`) gives the root's axis, and each
-// level below alternates. A child panel's node string is its weight. `id`
+// level below alternates. Where a Floating Panel floats is not in it. A child panel's node string is its weight. `id`
 // holds the panel's stable ID: panels without one (older files, hand edits,
 // reset layouts) get the next free IDs in tree order when loaded, and keep
 // them once saved. A duplicated ID is replaced the same way.
