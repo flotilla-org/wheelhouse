@@ -292,6 +292,81 @@ state_workspace_ids(Arena *arena)
   return result;
 }
 
+// Whether a saved file holds a workspace's panel tree: since #309 Andamento's
+// workspace records hold arrangements, and the presentation file only this
+// device's part of them.
+internal B32
+state_saves_panel_tree(String8 text)
+{
+  for(U64 start = 0; start < text.size;)
+  {
+    U64 end = str8_find_needle(text, start, str8_lit("\n"), 0);
+    String8 line = str8_skip_chop_whitespace(str8_substr(text, r1u64(start, end)));
+    if(str8_match(str8_prefix(line, 7), str8_lit("panels:"), 0)) { return 1; }
+    start = end+1;
+  }
+  return 0;
+}
+
+// The window's workspaces as the logical state shows them.
+internal String8
+state_workspaces_text(Arena *arena)
+{
+  String8 text = uishell_logical_state_text(arena);
+  U64 start = str8_find_needle(text, 0, str8_lit("\n  workspaces\n"), 0);
+  U64 end = str8_find_needle(text, start, str8_lit("\n  sidebar\n"), 0);
+  return str8_substr(text, r1u64(start, end));
+}
+
+internal CFG_Node *
+state_workspace_labelled(CFG_Node *window, String8 label)
+{
+  for(CFG_Node *c = window->first; c != &cfg_nil_node; c = c->next)
+  {
+    if(str8_match(c->string, str8_lit("workspace"), 0) && str8_match(rd_label_from_cfg(c), label, 0)) { return c; }
+  }
+  return &cfg_nil_node;
+}
+
+// Every workspace of the window is committed, and its panel tree is the
+// document Andamento keeps: the same panels, weights, tabs by slot key and
+// Selected Views, at the generation the window last saw.
+internal void
+state_check_committed(RD_WindowState *ws)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_SidebarState *state = ws->sidebar;
+  CFG_NodePtrList owners = uishell_store_owners(scratch.arena, cfg_node_from_id(ws->cfg_id));
+  StateCheck(owners.count != 0);
+  for(CFG_NodePtrNode *n = owners.first; n; n = n->next)
+  {
+    CFG_Node *owner = n->v;
+    UIShell_StoreDoc doc = uishell_store_doc(scratch.arena, owner);
+    AndamentoArrangement *stored = andamento_arrangement_acquire(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0);
+    AndamentoArrangementInfo info = {0};
+    B32 same = stored && andamento_arrangement_info(stored, &info) && info.owned &&
+      info.panel_count == doc.panel_count && info.tab_count == doc.tab_count &&
+      str8_match(uishell_store_setting(owner, str8_lit("arrangement_generation")), push_str8f(scratch.arena, "%I64u", info.generation), 0);
+    for(U64 i = 0; same && i < info.panel_count; i++)
+    {
+      AndamentoPanel p = {0}, q = doc.panels[i];
+      andamento_arrangement_panel(stored, i, &p);
+      same = (str8_match(uishell_sidebar_string(p.id), uishell_sidebar_string(q.id), 0) && p.parent == q.parent && p.kind == q.kind &&
+              (p.kind != ANDAMENTO_PANEL_SPLIT || p.axis == q.axis) && (i == 0 || abs_f32((F32)(p.weight-q.weight)) < 1e-6f) &&
+              p.tab_count == q.tab_count && p.first_tab == q.first_tab && p.selected == q.selected);
+    }
+    for(U64 i = 0; same && i < info.tab_count; i++)
+    {
+      AndamentoTab t = {0};
+      andamento_arrangement_tab(stored, i, &t);
+      same = !t.gone && str8_match(uishell_sidebar_string(t.slot), doc.keys[i], 0);
+    }
+    if(!same) { fprintf(stderr, "Workspace %.*s is not the arrangement Andamento keeps\n", str8_varg(rd_label_from_cfg(owner))); state_failures++; }
+    andamento_arrangement_release(stored);
+  }
+  scratch_end(scratch);
+}
+
 internal void
 entry_point(CmdLine *cmdline)
 {
@@ -477,6 +552,17 @@ entry_point(CmdLine *cmdline)
   ws = state_restart(ws, &theme, str8_zero());
   state_write(dir, "after_restart.txt");
 
+  //- The restart read every arrangement from Andamento's workspace records:
+  // the presentation file it read holds no panel tree, only this device's
+  // part of each (focus, labels, Target Resolutions), and each panel tree is
+  // the document Andamento keeps.
+  {
+    String8 presentation = data_from_file_path(scratch.arena, uishell_dashboard.presentation_path);
+    StateCheck(!state_saves_panel_tree(presentation));
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("arrangement_presentation"), 0) < presentation.size);
+    state_check_committed(ws);
+  }
+
   //- Every workspace, kept ones included, has the ID it had.
   String8List ids_after = state_workspace_ids(scratch.arena);
   StateCheck(ids_after.node_count == ids_before.node_count);
@@ -484,6 +570,130 @@ entry_point(CmdLine *cmdline)
   {
     if(!str8_match(a->string, b->string, 0))
     { fprintf(stderr, "Workspace ID changed across restart: %.*s -> %.*s\n", str8_varg(a->string), str8_varg(b->string)); state_failures++; }
+  }
+
+  //- A divider drag reaches Andamento once, when it ends: no call while it
+  // is in flight, one commit after.
+  {
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
+    UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace);
+    CFG_PanelNode *first = mount.panel_tree.root->first;
+    CFG_Node *first_cfg = first->cfg;
+    String8 weight_before = push_str8_copy(scratch.arena, first_cfg->string);
+    U64 calls = state->store_calls, commits = state->store_commits;
+    rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_drag")), &mount, first);
+    for(U32 step = 1; step <= 4; step++)
+    {
+      rd_state->frame_index += 1;
+      rd_boundary_resize_move(0.05f*step, 0.05f, 1);
+      state_frame(ws);
+      StateCheck(state->store_calls == calls && state->store_commits == commits);
+    }
+    rd_state->frame_index += 1;
+    rd_boundary_resize_commit();
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(state->store_commits == commits+1);
+    StateCheck(!str8_match(first_cfg->string, weight_before, 0));
+    state_check_committed(ws);
+  }
+
+  //- A slot whose content Wheelhouse can't show (a web page another
+  // frontend added, which Andamento places at the next commit) gets a
+  // placeholder naming it, and keeps its View Spec.
+  {
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
+    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace));
+    AndamentoViewSpec web = {0};
+    web.content = ANDAMENTO_SLOT_URL;
+    web.url = uishell_sidebar_text(str8_lit("https://example.com/board"));
+    web.has_presentation = 1;
+    web.presentation = uishell_sidebar_text(str8_lit("web"));
+    StateCheck(andamento_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:web")), &web, ANDAMENTO_REBIND_REPLACE, 0));
+    // Any edit commits: the terminal tab selected.
+    CFG_PanelTree panels = state_panels(scratch.arena, workspace);
+    CFG_Node *make = &cfg_nil_node;
+    for(CFG_PanelNode *p = panels.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(panels.root, p).next)
+    { for(CFG_NodePtrNode *t = p->tabs.first; t; t = t->next) { if(str8_match(t->v->string, str8_lit("terminal"), 0)) { make = t->v; } } }
+    StateCheck(make != &cfg_nil_node);
+    uishell_cmd("focus_tab", .window = window->id, .panel = make->parent->id, .tab = make->id);
+    state_frame(ws);
+    state_frame(ws);
+    String8 text = state_workspaces_text(scratch.arena);
+    StateCheck(str8_find_needle(text, 0, str8_lit("tab placeholder slot=\"u:web\" content=\"https://example.com/board\""), 0) < text.size);
+    state_check_committed(ws);
+    AndamentoSlots *slots = andamento_slots_acquire(state->core, id, 0);
+    AndamentoSlot slot = {0};
+    StateCheck(uishell_store_slot_find(slots, str8_lit("u:web"), &slot) && slot.spec.content == ANDAMENTO_SLOT_URL &&
+               str8_match(uishell_sidebar_string(slot.spec.url), str8_lit("https://example.com/board"), 0));
+    andamento_slots_release(slots);
+  }
+
+  //- A commit made against a generation that has moved since (here another
+  // host committed in between) is made again at the new generation: the
+  // edit is kept, whole.
+  {
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
+    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace));
+    AndamentoArrangement *stored = andamento_arrangement_acquire(state->core, id, 0);
+    AndamentoArrangementInfo info = {0};
+    StateCheck(stored && andamento_arrangement_info(stored, &info) && info.panel_count == 3);
+    AndamentoPanel panels[3] = {0};
+    AndamentoTab *tabs = push_array(scratch.arena, AndamentoTab, info.tab_count);
+    for(U64 i = 0; i < info.panel_count && i < 3; i++) { andamento_arrangement_panel(stored, i, &panels[i]); }
+    for(U64 i = 0; i < info.tab_count; i++) { andamento_arrangement_tab(stored, i, &tabs[i]); }
+    panels[1].weight = panels[2].weight = 0.5;
+    StateCheck(andamento_set_arrangement(state->core, id, panels, 3, tabs, info.tab_count, info.generation, 0, 0) == ANDAMENTO_ARRANGEMENT_COMMITTED);
+    andamento_arrangement_release(stored);
+    CFG_PanelTree tree = state_panels(scratch.arena, workspace);
+    CFG_Node *first_cfg = tree.root->first->cfg;
+    String8 weight = push_str8_copy(scratch.arena, first_cfg->string);
+    CFG_Node *other = tree.root->first->tabs.first->v == tree.root->first->selected_tab ? tree.root->first->tabs.last->v : tree.root->first->tabs.first->v;
+    U64 commits = state->store_commits;
+    uishell_cmd("focus_tab", .window = window->id, .panel = first_cfg->id, .tab = other->id);
+    state_frame(ws);
+    StateCheck(state->store_commits == commits+2);
+    StateCheck(str8_match(first_cfg->string, weight, 0) && cfg_node_child_from_string(other, str8_lit("selected")) != &cfg_nil_node);
+    state_check_committed(ws);
+  }
+
+  //- A subject publishing workspace.primary.* has a Suggested Layout of its
+  // own: its terminal is the provider's `primary` slot, which follows the
+  // provider, so Wheelhouse never sets its spec and keeps what it runs on
+  // this device.
+  {
+    CFG_Node *governor = state_open_subject(ws, str8_lit("role"), str8_lit("p/governor"));
+    state = ws->sidebar;
+    state_frame(ws);
+    CFG_Node *primary = state_panels(scratch.arena, governor).root->tabs.first->v;
+    StateCheck(str8_match(uishell_store_setting(primary, str8_lit("slot")), str8_lit("primary"), 0));
+    StateCheck(cfg_node_child_from_string(primary, str8_lit("follows_provider")) != &cfg_nil_node);
+    AndamentoSlots *slots = andamento_slots_acquire(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(governor)), 0);
+    AndamentoSlot slot = {0};
+    StateCheck(uishell_store_slot_find(slots, str8_lit("primary"), &slot) && slot.in_baseline && !slot.detached &&
+               slot.spec.content == ANDAMENTO_SLOT_FACET);
+    andamento_slots_release(slots);
+    state_check_committed(ws);
+    // Back to the workspace that was visible.
+    window = cfg_node_from_id(ws->cfg_id);
+    uishell_cmd("select_workspace", .window = window->id, .cfg = state_workspace_labelled(window, str8_lit("Workspace 1"))->id);
+    state_frame(ws);
+  }
+
+  //- A restart restores them all from the workspace records.
+  {
+    String8 before = state_workspaces_text(scratch.arena);
+    ws = state_restart(ws, &theme, str8_zero());
+    String8 after = state_workspaces_text(scratch.arena);
+    StateCheck(str8_match(before, after, 0));
+    if(!str8_match(before, after, 0)) { fprintf(stderr, "before:\n%.*s\nafter:\n%.*s\n", str8_varg(before), str8_varg(after)); }
+    state_check_committed(ws);
   }
 
   //- Idle: once the restart's own changes are saved, frames that change
@@ -603,6 +813,52 @@ entry_point(CmdLine *cmdline)
     StateCheck(str8_find_needle(user, 0, str8_lit("Before Dashboards"), 0) < user.size);
     String8 presentation = data_from_file_path(scratch.arena, dashboard->presentation_path);
     StateCheck(str8_find_needle(presentation, 0, str8_lit("Before Dashboards"), 0) == presentation.size);
+  }
+
+  //- A Dashboard whose presentation file still holds its workspaces' panel
+  // trees, as state model step 4 saved them, imports each into Andamento on
+  // its first load, slots and arrangement, and its next save drops them.
+  {
+    // Dashboard C: this window saved as step 4 saved it, with no records.
+    rd_autosave();
+    state_pump();
+    String8 workspaces_b = state_workspaces_text(scratch.arena);
+    window = cfg_node_from_id(ws->cfg_id);
+    CFG_State *legacy = cfg_state_alloc();
+    CFG_Node *copy = cfg_node_deep_copy(legacy, window);
+    {
+      CFG_NodePtrList drop = {0};
+      for(CFG_Node *c = copy; c != &cfg_nil_node; c = cfg_node_rec__depth_first(copy, c).next)
+      {
+        if(str8_match(c->string, str8_lit("arrangement_generation"), 0) || str8_match(c->string, str8_lit("slot"), 0))
+        { cfg_node_ptr_list_push(scratch.arena, &drop, c); }
+      }
+      for(CFG_NodePtrNode *n = drop.first; n; n = n->next) { cfg_node_release(legacy, n->v); }
+    }
+    String8 dashboard_c = push_str8f(scratch.arena, "%S/dashboard-c", dir);
+    String8 c_id = uishell_string_from_workspace_id(scratch.arena, uishell_workspace_id_make());
+    StateCheck(uishell_dashboard_make_directories(dashboard_c));
+    StateCheck(write_data_to_file_path(push_str8f(scratch.arena, "%S/id", dashboard_c), push_str8f(scratch.arena, "%S\n", c_id)));
+    String8 c_presentation = push_str8f(scratch.arena, "%S/presentation/%S.wheelhouse", dir, c_id);
+    String8 legacy_text = push_str8f(scratch.arena, "%s%s presentation file\n\n%S", RD_APP_CONFIG_MAGIC, BUILD_VERSION_STRING_LITERAL,
+                                     cfg_string_from_tree(scratch.arena, rd_state->cfg_schema_table, str8_chop_last_slash(c_presentation), copy));
+    cfg_state_release(legacy);
+    StateCheck(state_saves_panel_tree(legacy_text));
+    StateCheck(write_data_to_file_path(c_presentation, legacy_text));
+    ws = state_restart(ws, &theme, dashboard_c);
+    StateCheck(str8_match(uishell_dashboard.dir, dashboard_c, 0));
+    String8 workspaces_c = state_workspaces_text(scratch.arena);
+    StateCheck(str8_match(workspaces_c, workspaces_b, 0));
+    if(!str8_match(workspaces_c, workspaces_b, 0)) { fprintf(stderr, "B:\n%.*s\nC:\n%.*s\n", str8_varg(workspaces_b), str8_varg(workspaces_c)); }
+    state_check_committed(ws);
+    rd_autosave();
+    state_pump();
+    StateCheck(!state_saves_panel_tree(data_from_file_path(scratch.arena, c_presentation)));
+    // Read back from C's records alone.
+    ws = state_restart(ws, &theme, dashboard_c);
+    StateCheck(str8_match(state_workspaces_text(scratch.arena), workspaces_b, 0));
+    state_check_committed(ws);
+    ws = state_restart(ws, &theme, push_str8f(scratch.arena, "%S/dashboard-b", dir));
   }
 
   //- A local workspace saved before Workspace IDs, whose sidebar entity was

@@ -6,42 +6,42 @@ window 1
     workspace "Workspace" local
       panel split=x
         panel weight=0.72
-          tab text selected
+          tab text slot="u:1" selected
         panel weight=0.28
-          tab text expression="query:output" selected
+          tab text slot="u:2" expression="query:output" selected
     workspace "Workspace 1" local
       panel split=y
         panel weight=0.50
-          tab text selected
+          tab text slot="u:1" selected
         panel weight=0.50
-          tab terminal command="make test" cwd="/src/wheelhouse"
-          tab text expression="query:output" selected
+          tab terminal slot="u:3" command="make test" cwd="/src/wheelhouse"
+          tab text slot="u:2" expression="query:output" selected
     workspace "Notes" local
       panel split=x
         panel weight=0.72
-          tab text
-          tab jackstay source_endpoint="porthole-demo" selected
+          tab text slot="u:1"
+          tab jackstay slot="u:3" source_endpoint="porthole-demo" selected
         panel weight=0.28
-          tab text expression="query:output" selected
+          tab text slot="u:2" expression="query:output" selected
     workspace "Example workspace" subject=vessel/multi
       panel split=x
         panel weight=0.60
-          tab terminal "Primary" slot="primary" command="printf 'Wheelhouse Primary terminal\\n'; exec /bin/sh" selected
+          tab terminal "Primary" slot="u:primary" command="printf 'Wheelhouse Primary terminal\\n'; exec /bin/sh" selected
         panel weight=0.40
-          tab terminal "Shell" slot="shell" command="printf 'Wheelhouse Shell terminal\\n'; exec /bin/sh"
-          tab terminal "Tools" slot="tools" command="printf 'Wheelhouse Tools terminal\\n'; exec /bin/sh" selected
+          tab terminal "Shell" slot="u:shell" command="printf 'Wheelhouse Shell terminal\\n'; exec /bin/sh"
+          tab terminal "Tools" slot="u:tools" command="printf 'Wheelhouse Tools terminal\\n'; exec /bin/sh" selected
     workspace "Example terminal" subject=vessel/v kept
       panel
-        tab terminal "Terminal" slot="primary" command="printf 'Wheelhouse sidebar fixture\\n'; exec /bin/sh" selected
+        tab terminal "Terminal" slot="u:primary" command="printf 'Wheelhouse sidebar fixture\\n'; exec /bin/sh" selected
     workspace "Subject workspace" subject=vessel/chip-v
       panel
-        tab terminal "Terminal" slot="primary" command="printf 'Subject workspace fixture\\n'; exec /bin/sh" selected
+        tab terminal "Terminal" slot="u:primary" command="printf 'Subject workspace fixture\\n'; exec /bin/sh" selected
     workspace "Build logs" local group="Builds"
       panel split=x
         panel weight=0.72
-          tab text selected
+          tab text slot="u:1" selected
         panel weight=0.28
-          tab text expression="query:output" selected
+          tab text slot="u:2" expression="query:output" selected
   sidebar
     display show-issues=off
     display show-finished=off
@@ -103,5 +103,5 @@ window 1
 presentation
   window 1
     visible workspace "Workspace 1"
-    focused panel 2: tab text expression="query:output"
+    focused panel 2: tab text slot="u:2" expression="query:output"
     input workspace

@@ -32,7 +32,12 @@ uishell_write_config_data(Arena *arena, String8 dst_path, String8 bucket_name, U
     {
       B32 is_window = str8_match(child->string, str8_lit("window"), 0);
       if((part == UIShell_ConfigPart_Settings && is_window) || (part == UIShell_ConfigPart_Windows && !is_window)) { continue; }
-      str8_list_push(arena, &strings, cfg_string_from_tree(arena, rd_state->cfg_schema_table, str8_chop_last_slash(dst_path), child));
+      // The Dashboard's windows leave each workspace's arrangement to
+      // Andamento's records, keeping only this device's part of it.
+      String8 root_path = str8_chop_last_slash(dst_path);
+      str8_list_push(arena, &strings, part == UIShell_ConfigPart_Windows ?
+                     uishell_workspace_store_window_text(arena, root_path, child) :
+                     cfg_string_from_tree(arena, rd_state->cfg_schema_table, root_path, child));
     }
     str8_list_push(arena, &strings, extra);
     String8 data = str8_list_join(arena, &strings, 0);
