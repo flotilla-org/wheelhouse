@@ -141,26 +141,43 @@ uishell_local_groups_type(RD_WindowState *ws, CFG_Node *window, Arena *arena, UI
 // set; else from its centre.
 global F32 uishell_local_groups_drag_inset = 0;
 
+// The refusal the last drag showed over its target, just before release.
+global U8 uishell_local_groups_refusal[128];
+global U64 uishell_local_groups_refusal_size = 0;
+// A line the last drag should show over its target (its key), and whether it
+// did, painted on top: in its section body's first child, the drop layer.
+global UI_Key uishell_local_groups_line_key = {0};
+global B32 uishell_local_groups_line_on_top = 0;
+
+// The docking site a `dock` drag drops on in the first View's panel: below
+// it, or with Dir2_Invalid its tab strip, after the tab given.
+global Dir2 uishell_local_groups_dock_direction = Dir2_Down;
+global CFG_ID uishell_local_groups_dock_previous = 0;
+
 // Drags the box keyed `from` onto the box keyed `to` (or, with `dock`, onto
-// a docking site below the first View's panel): press, move past the
+// a docking site in the first View's panel): press, move past the
 // threshold, release, finishing the drag each frame as a window does.
 internal B32
 uishell_local_groups_drag(RD_WindowState *ws, CFG_Node *window, Arena *arena, String8 from, String8 to, B32 dock)
 {
   Vec2F32 start = {0}, target = {0};
   B32 started = 0;
+  // A drag is its own gesture: its press never doubles an earlier click.
+  uishell_local_groups_pause();
   for(U32 frame = 0; frame < 7; frame++)
   {
+    uishell_local_groups_clock_us += 50000;
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
     UI_IconInfo icons = ws->ui->icon_info;
     UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
     Vec2F32 at = frame < 2 ? start : frame == 2 ? add_2f32(start, v2f32(0, 12)) : target;
     if(frame == 1 || frame == 5)
     {
-      event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release, .pos = at};
+      event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release, .pos = at,
+                           .timestamp_us = uishell_local_groups_clock_us};
       events.first = events.last = &event; events.count = 1;
     }
-    if(frame == 5 && dock) { uishell_sidebar_drag_panel_drop(uishell_local_groups_view->parent->id, Dir2_Down, 0); }
+    if(frame == 5 && dock) { uishell_sidebar_drag_panel_drop(uishell_local_groups_view->parent->id, uishell_local_groups_dock_direction, uishell_local_groups_dock_previous); }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = at;
     uishell_local_groups_render(window, &split);
@@ -173,9 +190,42 @@ uishell_local_groups_drag(RD_WindowState *ws, CFG_Node *window, Arena *arena, St
     }
     if(frame >= 2) { target = dock ? v2f32(-50, -50) : uishell_workspace_lifecycle_center(ui_state, to); }
     if(frame == 3) { started = rd_drag_is_active(); }
+    // Over the target, before release: whether it refused, and why.
+    if(frame == 4)
+    {
+      String8 refusal = rd_drag_refusal();
+      uishell_local_groups_refusal_size = Min(refusal.size, sizeof(uishell_local_groups_refusal));
+      MemoryCopy(uishell_local_groups_refusal, refusal.str, uishell_local_groups_refusal_size);
+      UI_Box *line = ui_box_from_key(uishell_local_groups_line_key);
+      uishell_local_groups_line_on_top = !ui_box_is_nil(line) && !ui_box_is_nil(line->parent) && line->parent->parent->first == line->parent;
+    }
   }
   rd_drag_kill(); ui_kill_action();
   return started;
+}
+
+// Drags `view` (in `panel`) by its docking drag onto the centre of the box
+// keyed `to`, and drops it there, as a section's title or tab drag does.
+internal B32
+uishell_local_groups_drag_view(RD_WindowState *ws, CFG_Node *window, Arena *arena, CFG_Node *view, CFG_Node *panel, String8 to)
+{
+  UIShell_RegsScope(.window = window->id, .view = view->id, .panel = panel->id, .tab = view->id)
+  { rd_drag_begin(UIShell_ContextRegSlot_View); }
+  B32 dragging = rd_drag_is_active();
+  for(U64 frame = 0; frame < 3; frame++)
+  {
+    if(frame == 2) { rd_state->drag_drop_state = RD_DragDropState_Dropping; }
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
+    Vec2F32 at = uishell_workspace_lifecycle_center(ui_state, to);
+    UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = at;
+    uishell_local_groups_render(window, &split);
+    uishell_sidebar_drag_finish(ws);
+    ui_end_build();
+  }
+  rd_drag_kill();
+  return dragging;
 }
 
 // The `###entry_` suffix of the row presenting local entity `id`.
@@ -569,6 +619,35 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, beta_id),
                               uishell_local_groups_row(arena, state, str8_lit("groups-alpha")), 0);
     GroupsCheck(beta->parent == first, "and dropped back, it returns");
+    // Dropped on a section's tab strip, a group joins as a tab at the gap
+    // (#282): a section of its own, its View after the tab the gap follows.
+    {
+      uishell_local_groups_publish(state, window, arena);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      CFG_Node *strip = uishell_local_groups_view->parent;
+      uishell_local_groups_dock_direction = Dir2_Invalid; uishell_local_groups_dock_previous = uishell_local_groups_view->id;
+      B32 strip_started = uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, beta_id), str8_zero(), 1);
+      uishell_local_groups_dock_direction = Dir2_Down; uishell_local_groups_dock_previous = 0;
+      CFG_Node *strip_view = uishell_sidebar_local_view(window, beta);
+      GroupsCheck(strip_started && beta->parent != first && uishell_sidebar_local_group_count(beta->parent) == 1 &&
+                  strip_view->parent == strip && strip_view->prev == uishell_local_groups_view &&
+                  cfg_node_child_from_string(beta, str8_lit("card")) != &cfg_nil_node,
+                  "a group dropped on a section's tab strip joins as a tab at the gap, with its items");
+      // Moving it back empties its section, which goes with its View.
+      uishell_sidebar_local_move_group(window, beta, first, alpha);
+      GroupsCheck(beta->parent == first && uishell_sidebar_local_view(window, beta) == uishell_local_groups_view,
+                  "and moved back, it returns, and the tab goes");
+      // A gap after a tab that no longer exists puts it first.
+      uishell_local_groups_publish(state, window, arena);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      uishell_local_groups_dock_direction = Dir2_Invalid; uishell_local_groups_dock_previous = 0x7fffffff;
+      uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, beta_id), str8_zero(), 1);
+      uishell_local_groups_dock_direction = Dir2_Down; uishell_local_groups_dock_previous = 0;
+      CFG_Node *stale_view = uishell_sidebar_local_view(window, beta);
+      GroupsCheck(beta->parent != first && stale_view->parent == strip && stale_view->prev == &cfg_nil_node,
+                  "dropped after a tab that no longer exists, it goes first");
+      uishell_sidebar_local_move_group(window, beta, first, alpha);
+    }
     U64 sections_before = 0;
     for(CFG_Node *n = first->parent->first; n != &cfg_nil_node; n = n->next) { sections_before += str8_match(n->string, str8_lit("section"), 0); }
     uishell_local_groups_publish(state, window, arena);
@@ -619,6 +698,74 @@ uishell_local_groups_diagnostics(CFG_Node *window)
                 cfg_node_child_from_string(bottom, str8_lit("sidebar_section")) == &cfg_nil_node,
                 "a one-group section's title dropped on another section's group moves its group there, and the section and its View go");
     uishell_local_groups_view2 = &cfg_nil_node;
+
+    //- A section of several groups, dragged by its title, drops its groups
+    //  between another section's groups, in order, and the section goes;
+    //  dropped into a section showing one group, that becomes a list (#282).
+    {
+      CFG_Node *delta = uishell_sidebar_local_new_group(window, str8_lit("Delta"));
+      CFG_Node *epsilon = uishell_sidebar_local_add_group(delta->parent, str8_lit("Epsilon"));
+      uishell_local_groups_seed(delta, str8_lit("groups-delta"));
+      uishell_local_groups_seed(epsilon, str8_lit("groups-epsilon"));
+      String8 pair_id = push_str8_copy(arena, uishell_sidebar_local_field(delta->parent, str8_lit("id")));
+      uishell_local_groups_view2 = uishell_sidebar_local_new_view(bottom, delta->parent);
+      uishell_local_groups_publish(state, window, arena);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      B32 pair_dragged = uishell_local_groups_drag_view(ws, window, arena, uishell_local_groups_view2, bottom,
+                                                        uishell_local_groups_row(arena, state, str8_lit("groups-alpha")));
+      GroupsCheck(pair_dragged && delta->parent == first && delta->prev == alpha && epsilon->prev == delta &&
+                  gamma->prev == epsilon && uishell_sidebar_local_section(window, pair_id) == &cfg_nil_node &&
+                  cfg_node_child_from_string(bottom, str8_lit("sidebar_section")) == &cfg_nil_node,
+                  "a section's groups, dropped between another section's groups, join it there in order, and the section and its View go");
+      // Into a section showing one group: it becomes a list of two.
+      CFG_Node *zeta = uishell_sidebar_local_new_group(window, str8_lit("Zeta"));
+      CFG_Node *eta = uishell_sidebar_local_new_group(window, str8_lit("Eta"));
+      uishell_local_groups_seed(zeta, str8_lit("groups-zeta"));
+      uishell_local_groups_seed(eta, str8_lit("groups-eta"));
+      String8 eta_id = push_str8_copy(arena, uishell_sidebar_local_field(eta->parent, str8_lit("id")));
+      CFG_Node *extra = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
+      uishell_local_groups_view2 = uishell_sidebar_local_new_view(bottom, zeta->parent);
+      CFG_Node *eta_view = uishell_sidebar_local_new_view(extra, eta->parent);
+      uishell_local_groups_publish(state, window, arena);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      B32 flat_dragged = uishell_local_groups_drag_view(ws, window, arena, eta_view, extra,
+                                                        uishell_local_groups_row(arena, state, str8_lit("groups-zeta")));
+      GroupsCheck(flat_dragged && eta->parent == zeta->parent && eta->prev == zeta &&
+                  uishell_sidebar_local_group_count(zeta->parent) == 2 && uishell_sidebar_local_section(window, eta_id) == &cfg_nil_node,
+                  "a one-group section dropped into a section showing one group makes it a list of two groups");
+      // A row dropped into a group shown as a card: the line shows over the
+      // card, not beneath it (#282).
+      uishell_local_groups_publish(state, window, arena);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      uishell_local_groups_line_key = ui_key_from_stringf(ui_key_zero(), "group_drop_line_%S", uishell_sidebar_local_field(gamma, str8_lit("id")));
+      uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, str8_lit("groups-delta")),
+                                uishell_local_groups_row(arena, state, str8_lit("groups-gamma")), 0);
+      GroupsCheck(uishell_local_groups_line_on_top, "a row over a group card shows its insertion line over the card, in the section's drop layer");
+      uishell_local_groups_line_key = ui_key_zero();
+      // A ghost row over Workspaces is refused there, with a reason (#282).
+      CFG_Node *workspaces_section = uishell_sidebar_local_section(window, str8_lit("workspaces"));
+      CFG_Node *workspaces_view = uishell_sidebar_local_new_view(extra, workspaces_section);
+      CFG_Node *zeta_view = uishell_local_groups_view2;
+      uishell_local_groups_view2 = workspaces_view;
+      uishell_local_groups_publish(state, window, arena);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
+      CFG_Node *ghost_card = cfg_node_child_from_string(alpha, str8_lit("card"));
+      uishell_local_groups_drag(ws, window, arena, uishell_local_groups_row(arena, state, str8_lit("groups-alpha")),
+                                str8_lit("###local_groups_view_1"), 0);
+      GroupsCheck(str8_match(str8(uishell_local_groups_refusal, uishell_local_groups_refusal_size), str8_lit("only workspaces go in Workspaces"), 0) &&
+                  ghost_card->parent == alpha,
+                  "a ghost row over Workspaces is refused, says why, and stays where it was");
+      cfg_node_release(rd_state->cfg, workspaces_view);
+      uishell_local_groups_view2 = zeta_view;
+      CFG_Node *zeta_section = zeta->parent;
+      if(uishell_local_groups_view2->parent != &cfg_nil_node) { cfg_node_release(rd_state->cfg, uishell_local_groups_view2); }
+      cfg_node_release(rd_state->cfg, zeta_section);
+      cfg_node_release(rd_state->cfg, extra);
+      uishell_local_groups_view2 = &cfg_nil_node;
+    }
     // Each section that remains, once.
     String8 made_ids[] = {push_str8_copy(arena, uishell_sidebar_local_field(own, str8_lit("id"))),
       push_str8_copy(arena, uishell_sidebar_local_field(first, str8_lit("id"))), second_id};
@@ -776,6 +923,9 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     UIShell_RegsScope(.window = window->id, .panel = panel->id, .view = views[1]->id, .tab = views[1]->id)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
     rd_state->drag_drop_commit = uishell_sidebar_section_drop_commit;
+    GroupsCheck(str8_match(uishell_sidebar_section_drag_refusal(window), str8_lit("a section of several tabs can't join a list"), 0) &&
+                uishell_sidebar_section_drag_section(window) == &cfg_nil_node,
+                "a section of several tabs, dragged by its grip, can't join a list, and says why (#282)");
     rd_panel_drag_drop(elsewhere->id, Dir2_Invalid, views[3]->id);
     rd_drag_kill();
     uishell_sidebar_section_drop_apply(ws);
@@ -797,6 +947,12 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     B32 together = moved_panel != elsewhere && moved_panel != third;
     for(U64 i = 0; i < 3; i++) { together &= views[i]->parent == moved_panel; }
     GroupsCheck(together, "a whole section dropped at an edge makes the new panel there with all its Views");
+    // A section of data (not one of yours) can't join a list either.
+    UIShell_RegsScope(.window = window->id, .panel = third->id, .view = held->id, .tab = held->id)
+    { rd_drag_begin(UIShell_ContextRegSlot_View); }
+    GroupsCheck(str8_match(uishell_sidebar_section_drag_refusal(window), str8_lit("this section's rows stay in it"), 0),
+                "a section of data, dragged, can't join a list, and says why (#282)");
+    rd_drag_kill();
     // A source released before the drop is applied moves nothing.
     CFG_Node *brief = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
     CFG_Node *brief_view = rd_cfg_new_view_tab(brief, str8_lit("sidebar_section"), str8_zero(), 1);

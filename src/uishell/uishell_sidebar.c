@@ -142,6 +142,13 @@ struct UIShell_SidebarState
   Arena *group_claim_arena;
   String8 group_claim_id, group_claim_loop;
   U64 group_claim_index, group_claim_build;
+  // A drag carrying groups (a group's header, or a local section's View)
+  // claims the gap between a local section's groups instead: the section,
+  // and the group the dropped ones go after (empty: first) (#282).
+  Arena *groups_claim_arena;
+  String8 groups_claim_section, groups_claim_after;
+  U64 groups_claim_build;
+  Rng2F32 groups_claim_rect;
   Rng2F32 group_claim_rect;
   // The reorder a row drag claimed over its sibling run: before or after
   // the anchor sibling (copied into its own arena), and the build.
@@ -178,9 +185,11 @@ struct UIShell_SidebarState
   U64 make_key;
   U32 make_index;
   U64 make_build;
-  // The docking site a sidebar drag was dropped on (drag_panel_drop).
+  // The docking site a sidebar drag was dropped on (drag_panel_drop): on a
+  // tab strip (no direction), the tab it goes after (0: first).
   CFG_ID drop_panel;
   Dir2 drop_direction;
+  CFG_ID drop_previous_tab;
   // A whole section dragged by its grip and dropped (section_drop_commit),
   // applied once the window's Views have built (section_drop_apply).
   B32 section_drop;
@@ -366,6 +375,7 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     if(state->local_arena) { arena_release(state->local_arena); state->local_arena = 0; }
     if(state->home_arena) { arena_release(state->home_arena); state->home_arena = 0; }
     if(state->group_claim_arena) { arena_release(state->group_claim_arena); state->group_claim_arena = 0; }
+    if(state->groups_claim_arena) { arena_release(state->groups_claim_arena); state->groups_claim_arena = 0; }
     if(state->roles_arena) { arena_release(state->roles_arena); state->roles_arena = 0; }
     state->roles_snapshot = 0;
     if(state->placement_arena) { arena_release(state->placement_arena); state->placement_arena = 0; }
@@ -3028,7 +3038,7 @@ uishell_sidebar_home_claim(UIShell_SidebarState *state, Rng2F32 rect, String8 pr
 // the panels, as a line on the window root would. A brighter segment sweeps
 // along it so it reads against the lifted row.
 internal void
-uishell_sidebar_drop_line(UI_Box *body, Rng2F32 line, UI_Key key)
+uishell_sidebar_drop_line(UI_Box *body, Rng2F32 line, UI_Key key, B32 refused)
 {
   Vec2F32 at = add_2f32(sub_2f32(line.p0, body->rect.p0), body->view_off);
   F32 width = dim_2f32(line).x, height = dim_2f32(line).y;
@@ -3038,7 +3048,7 @@ uishell_sidebar_drop_line(UI_Box *body, Rng2F32 line, UI_Key key)
   F32 x0 = Max(at.x, sweep_x), x1 = Min(at.x+width, sweep_x+sweep);
   // The drop-site fill is nearly transparent, made for whole areas; a line
   // needs the accent at full strength.
-  Vec4F32 color = rd_accent_color();
+  Vec4F32 color = refused ? rd_drag_refusal_color() : rd_accent_color();
   Vec4F32 bright = mix_4f32(color, ui_color_from_name(str8_lit("text")), 0.6f);
   bright.w = 1.f;
   UI_Parent(body) UI_TagF("drop_site") UI_CornerRadius(height*0.5f) UI_PrefHeight(ui_px(height, 1))
@@ -3049,6 +3059,19 @@ uishell_sidebar_drop_line(UI_Box *body, Rng2F32 line, UI_Key key)
     { ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_from_stringf(key, "sweep")); }
   }
   rd_request_frame();
+}
+
+// A drop the pointer is over but that can't happen (#282): the reason goes to
+// the dragged item's badge, and a line in the refusal colour marks where it
+// would have gone, under the pointer. Docking sites take precedence.
+internal void
+uishell_sidebar_refuse(UI_Box *body, Rng2F32 area, String8 reason)
+{
+  Vec2F32 mouse = ui_mouse();
+  if(!contains_2f32(area, mouse) || !uishell_sidebar_drop_claimable(cfg_node_from_id(uishell_regs()->panel))) { return; }
+  rd_drag_refuse(reason);
+  uishell_sidebar_drop_line(body, r2f32p(area.x0+6.f, mouse.y-1.5f, area.x1-6.f, mouse.y+1.5f),
+    ui_key_from_stringf(ui_key_zero(), "sidebar_refused_line"), 1);
 }
 
 // A sidebar drag over a local group claims the gap between its items under
@@ -3074,6 +3097,10 @@ uishell_sidebar_group_claim(UIShell_SidebarState *state, UI_Box *body, Andamento
   // section's groups.
   if(state->row_drag_key.size && loop.size && str8_match(loop, state->row_drag_loop, 0)) { return; }
   if(state->row_drag_key.size && str8_match(uishell_sidebar_loop_key(state->snapshot, group), state->row_drag_loop, 0)) { return; }
+  // Workspaces holds only local workspaces: no ghosts (drag-model.md, drop table).
+  CFG_Node *target_cfg = uishell_sidebar_local_group(cfg_node_from_id(uishell_regs()->window), uishell_sidebar_string(nodes[group].entity_id));
+  if(uishell_sidebar_local_is_default(target_cfg) && (state->drag_card || uishell_sidebar_drag_local(state) == &cfg_nil_node))
+  { uishell_sidebar_refuse(body, area, str8_lit("only workspaces go in Workspaces")); return; }
   CFG_Node *section_group = uishell_sidebar_section_drag_group(cfg_node_from_id(uishell_regs()->window));
   if(section_group != &cfg_nil_node &&
      str8_match(uishell_sidebar_local_field(section_group, str8_lit("id")), uishell_sidebar_string(nodes[group].entity_id), 0)) { return; }
@@ -3096,7 +3123,101 @@ uishell_sidebar_group_claim(UIShell_SidebarState *state, UI_Box *body, Andamento
   state->group_claim_build = ui_state->build_index;
   state->group_claim_rect = area;
   uishell_sidebar_drop_line(body, r2f32p(area.x0+6.f, y-1.5f, area.x1-6.f, y+1.5f),
-    ui_key_from_stringf(ui_key_zero(), "group_drop_line_%S", state->group_claim_id));
+    ui_key_from_stringf(ui_key_zero(), "group_drop_line_%S", state->group_claim_id), 0);
+}
+
+// Why a section View being dragged can't join a list, if it is one that
+// can't (#282): a section of several tabs dragged by its grip, a section of
+// data (Projects, Attention…), or the one holding Workspaces.
+internal String8
+uishell_sidebar_section_drag_refusal(CFG_Node *window)
+{
+  if(!rd_drag_is_active() || rd_state->drag_drop_regs_slot != UIShell_ContextRegSlot_View ||
+     rd_state->drag_drop_regs->window != window->id || uishell_sidebar_section_drag_section(window) != &cfg_nil_node) { return str8_zero(); }
+  CFG_Node *view = cfg_node_from_id(rd_state->drag_drop_regs->view);
+  if(!str8_match(view->string, str8_lit("sidebar_section"), 0)) { return str8_zero(); }
+  if(rd_state->drag_drop_commit == uishell_sidebar_section_drop_commit) { return str8_lit("a section of several tabs can't join a list"); }
+  if(uishell_sidebar_local_view_group(window, view) == &cfg_nil_node) { return str8_lit("this section's rows stay in it"); }
+  return str8_lit("Workspaces stays in its own section");
+}
+
+// Whether a sidebar drag carries local groups (#282): a local section's View
+// (all its groups, `*section`), or a local group's header (`*group`).
+internal B32
+uishell_sidebar_drag_carries_groups(UIShell_SidebarState *state, CFG_Node *window, CFG_Node **section, CFG_Node **group)
+{
+  *section = uishell_sidebar_section_drag_section(window);
+  *group = &cfg_nil_node;
+  if(*section == &cfg_nil_node && state->row_drag_key.size &&
+     str8_match(uishell_sidebar_string(state->row_drag_entity.kind), str8_lit(".group"), 0))
+  {
+    *group = uishell_sidebar_local_group(window, uishell_sidebar_string(state->row_drag_entity.id));
+    if(uishell_sidebar_local_is_default(*group)) { *group = &cfg_nil_node; }
+  }
+  return *section != &cfg_nil_node || *group != &cfg_nil_node;
+}
+
+// A drag carrying groups, over another local section, claims the gap between
+// its groups under the pointer, by their midpoints, and shows a line there
+// (#282). A section showing one group (no group headers) has a gap above and
+// below it: dropped there, it becomes a list of groups. Groups [first, end)
+// of `nodes` whose parent is `section` are that section's.
+internal void
+uishell_sidebar_groups_claim(UIShell_SidebarState *state, UI_Box *body, CFG_Node *window, AndamentoNode *nodes,
+                             U64 section, U64 first, U64 end, B32 *passed, Rng2F32 *group_rects,
+                             UIShell_RowDragSibling *items, U64 item_count, Rng2F32 viewport)
+{
+  CFG_Node *dragged_section, *dragged_group;
+  Vec2F32 mouse = ui_mouse();
+  if(!contains_2f32(viewport, mouse) || !uishell_sidebar_drop_claimable(cfg_node_from_id(uishell_regs()->panel)) ||
+     !uishell_sidebar_drag_carries_groups(state, window, &dragged_section, &dragged_group)) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node **groups = push_array(scratch.arena, CFG_Node *, end-first);
+  Rng2F32 *rects = push_array(scratch.arena, Rng2F32, end-first);
+  U64 count = 0;
+  for(U64 g = first; g < end; g++)
+  {
+    if(nodes[g].parent != section || !str8_match(uishell_sidebar_string(nodes[g].entity_kind), str8_lit(".group"), 0)) { continue; }
+    CFG_Node *cfg = uishell_sidebar_local_group(window, uishell_sidebar_string(nodes[g].entity_id));
+    if(cfg == &cfg_nil_node) { continue; }
+    groups[count] = cfg;
+    rects[count] = group_rects[g];
+    // A section's only group has no card: it is the section's rows, and
+    // splits above or below at their middle, not the viewport's.
+    if(passed[g])
+    {
+      rects[count] = r2f32p(viewport.x0, viewport.y0, viewport.x1, viewport.y0);
+      for(U64 k = 0; k < item_count; k++)
+      {
+        if(nodes[items[k].index].parent != g) { continue; }
+        rects[count].y0 = rects[count].y1 > rects[count].y0 ? Min(rects[count].y0, items[k].row.y0) : items[k].row.y0;
+        rects[count].y1 = Max(rects[count].y1, items[k].row.y1);
+      }
+      if(rects[count].y1 <= rects[count].y0) { rects[count] = viewport; }
+    }
+    count++;
+  }
+  // Not a local section; or the dragged groups' own, where a group header
+  // reorders instead (uishell_sidebar_row_drop) and a section is already there.
+  CFG_Node *target = count ? groups[0]->parent : &cfg_nil_node;
+  if(target == &cfg_nil_node)
+  { uishell_sidebar_refuse(body, viewport, str8_lit("groups only go into your own sections")); scratch_end(scratch); return; }
+  if(target == dragged_section || (dragged_group != &cfg_nil_node && target == dragged_group->parent))
+  { scratch_end(scratch); return; }
+  U64 index = 0;
+  // Over a group's middle counts as after it, as a drop onto it reads.
+  for(U64 k = 0; k < count; k++) { if(mouse.y >= center_2f32(rects[k]).y) { index = k+1; } }
+  F32 y = index == 0 ? rects[0].y0 : index == count ? rects[count-1].y1 : (rects[index-1].y1+rects[index].y0)*0.5f;
+  y = Clamp(viewport.y0+2.f, y, viewport.y1-2.f);
+  if(!state->groups_claim_arena) { state->groups_claim_arena = arena_alloc(); }
+  arena_clear(state->groups_claim_arena);
+  state->groups_claim_section = push_str8_copy(state->groups_claim_arena, uishell_sidebar_local_field(target, str8_lit("id")));
+  state->groups_claim_after = index ? push_str8_copy(state->groups_claim_arena, uishell_sidebar_local_field(groups[index-1], str8_lit("id"))) : str8_zero();
+  state->groups_claim_build = ui_state->build_index;
+  state->groups_claim_rect = viewport;
+  uishell_sidebar_drop_line(body, r2f32p(viewport.x0+6.f, y-1.5f, viewport.x1-6.f, y+1.5f),
+    ui_key_from_stringf(ui_key_zero(), "groups_drop_line_%S", state->groups_claim_section), 0);
+  scratch_end(scratch);
 }
 
 // The pointer picks the gap between siblings by their rows' midpoints. Within
@@ -3130,7 +3251,7 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, UI_Box *body, AndamentoNod
     target == count ? siblings[count-1].extent.y1+1.f :
     (siblings[target-1].extent.y1+siblings[target].extent.y0)*0.5f;
   uishell_sidebar_drop_line(body, r2f32p(span.x0+4.f, y-1.5f, span.x1-4.f, y+1.5f),
-    ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line"));
+    ui_key_from_stringf(ui_key_zero(), "sidebar_row_drop_line"), 0);
 }
 
 // The dragged row lifts: a translucent copy of its row follows the pointer,
@@ -3167,6 +3288,7 @@ uishell_sidebar_row_lift(UIShell_SidebarState *state)
     uishell_sidebar_row_end(state, &r);
     ui_pop_parent();
   }
+  rd_drag_refusal_badge_ui(lift);
 }
 
 // The saved ghost a tree row presents (a `.ref`), or nil.
@@ -3300,8 +3422,14 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   // Local groups' items as built this frame (last frame's rects), and their
   // cards' rects, for the insertion point a sidebar drag claims.
   // A one-group section dragged by its title is its group's drag too.
-  B32 sidebar_dragging = row_dragging || state->drag_card ||
-    uishell_sidebar_section_drag_group(split->owner_cfg) != &cfg_nil_node;
+  CFG_Node *carried_section, *carried_group;
+  B32 groups_dragging = uishell_sidebar_drag_carries_groups(state, split->owner_cfg, &carried_section, &carried_group);
+  String8 section_refusal = uishell_sidebar_section_drag_refusal(split->owner_cfg);
+  // The dragged row, so a project it isn't in can refuse it.
+  U64 drag_row_index = ANDAMENTO_NONE;
+  for(U64 i = 0; row_dragging && i < count && drag_row_index == ANDAMENTO_NONE; i++)
+  { if(str8_match(uishell_sidebar_string(nodes[i].key), state->row_drag_key, 0)) { drag_row_index = i; } }
+  B32 sidebar_dragging = row_dragging || state->drag_card || groups_dragging;
   UIShell_RowDragSibling *group_items = push_array(scratch.arena, UIShell_RowDragSibling, sidebar_dragging ? count : 0);
   Rng2F32 *group_rects = push_array(scratch.arena, Rng2F32, sidebar_dragging ? count : 0);
   U64 group_item_count = 0;
@@ -3722,6 +3850,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       body->view_off_target.y = (F32)scroll.position.y.idx + scroll.position.y.target_off;
       body->view_off.y = Clamp(0.f, body->view_off.y, (F32)axes[Axis2_Y].range.max);
       body->child_layout_axis = Axis2_Y;
+      // Drop lines go in this layer, the body's first child: siblings paint
+      // last to first, so a line built after a group's card would paint
+      // beneath it (#282).
+      UI_Box *drop_layer = &ui_nil_box;
+      UI_Parent(body) UI_FixedX(0) UI_FixedY(0) UI_PrefWidth(ui_px(0, 1)) UI_PrefHeight(ui_px(0, 1))
+      { drop_layer = ui_build_box_from_key(UI_BoxFlag_Floating, ui_key_from_stringf(body->key, "drop_layer")); }
       UI_Parent(body) UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(row_height, 1))
       {
         U64 end = n+1 < section_count ? sections[n+1] : count;
@@ -3904,7 +4038,15 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               project_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground, "###project_%S", node_key);
             }
             if(sidebar_dragging) { group_rects[i] = project_box->rect; }
-            if(row_dragging) { uishell_sidebar_home_claim(state, project_box->rect, uishell_sidebar_string(node.entity_id), 0); }
+            B32 is_project = str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("project"), 0);
+            if(row_dragging && is_project) { uishell_sidebar_home_claim(state, project_box->rect, uishell_sidebar_string(node.entity_id), 0); }
+            // A data row stays in its project: another project refuses it.
+            if(row_dragging && is_project && !groups_dragging && uishell_sidebar_drag_local(state) == &cfg_nil_node)
+            {
+              B32 own = 0;
+              for(U64 j = drag_row_index; j != ANDAMENTO_NONE && !own; j = nodes[j].parent) { own = j == i; }
+              if(!own) { uishell_sidebar_refuse(drop_layer, project_box->rect, str8_lit("rows stay in their project")); }
+            }
             project_depth = depth[i];
             project_index = i;
             ui_push_parent(project_box);
@@ -3941,7 +4083,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               F32 extent = uishell_sidebar_ghost_extent(card, ghost, em);
               if(project_box && owner == project_index) { card_last_row = card->rect; }
               else { body_last_row = card->rect; }
-              if(drag_sibling) { drag_body = body; drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, card->rect, card->rect}; }
+              if(drag_sibling) { drag_body = drop_layer; drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, card->rect, card->rect}; }
               if(sidebar_dragging) { group_items[group_item_count++] = (UIShell_RowDragSibling){i, card->rect, card->rect}; }
               // The moving card keeps its place until it lands.
               if(card->moving) { ui_spacer(ui_px(extent, 1)); }
@@ -3997,7 +4139,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             { group_items[group_item_count++] = (UIShell_RowDragSibling){i, slot->rect, slot->rect}; }
             if(drag_sibling)
             {
-              drag_body = body;
+              drag_body = drop_layer;
               drag_siblings[drag_sibling_count++] = (UIShell_RowDragSibling){i, slot->rect, project ? project_box->rect : slot->rect};
               drag_depth = depth[i]; drag_subtree = 1;
             }
@@ -4171,11 +4313,17 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       // Each local group in this section offers an insertion point among its
       // items; a section's only group spans the section's viewport.
       U64 end_of_section = n+1 < section_count ? sections[n+1] : count;
-      for(U64 g = sections[n]; sidebar_dragging && g < end_of_section; g++)
+      // Groups go between groups instead (#282).
+      if(groups_dragging)
+      { uishell_sidebar_groups_claim(state, drop_layer, split->owner_cfg, nodes, sections[n], sections[n], end_of_section, passed, group_rects,
+                                     group_items, group_item_count, body->parent->rect); }
+      else if(section_refusal.size && uishell_regs()->panel != rd_state->drag_drop_regs->panel)
+      { uishell_sidebar_refuse(drop_layer, body->parent->rect, section_refusal); }
+      for(U64 g = sections[n]; sidebar_dragging && !groups_dragging && g < end_of_section; g++)
       {
         if(!str8_match(uishell_sidebar_string(nodes[g].entity_kind), str8_lit(".group"), 0) || nodes[g].parent != sections[n]) { continue; }
         Rng2F32 area = passed[g] ? body->parent->rect : group_rects[g];
-        uishell_sidebar_group_claim(state, body, nodes, g, group_items, group_item_count, area, row_height);
+        uishell_sidebar_group_claim(state, drop_layer, nodes, g, group_items, group_item_count, area, row_height);
       }
       ui_signal_from_box(body);
       y += heights[n];

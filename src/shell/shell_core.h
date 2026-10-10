@@ -1076,6 +1076,11 @@ internal B32 rd_view_name_is_listed_in_app(String8 name);
 //~ rjf: Global Cross-Window UI Interaction State Functions
 
 internal B32 rd_drag_is_active(void);
+internal void rd_drag_refuse(String8 reason);
+internal String8 rd_drag_refusal(void);
+internal String8 rd_drag_refusal_text(Arena *arena);
+internal Vec4F32 rd_drag_refusal_color(void);
+internal void rd_drag_refusal_badge_ui(Rng2F32 anchor);
 internal UI_Key rd_panel_catchall_drop_site_key(CFG_Node *panel);
 internal void rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
 // A borderless button of size w x h that hovers as a circle of diameter d,
