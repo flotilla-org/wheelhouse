@@ -166,7 +166,8 @@ scripts/run-daily-driver.sh
 
 This builds Wheelhouse and the native Andamento git watcher, launches its live Andamento
 sidebar, discovers git worktrees from configured roots and terminal directories, and
-runs `flotilla pm connect` against the local daemon. It uses Wheelhouse's native
+subscribes its Dashboard to the local Flotilla daemon (see "Dashboard subscriptions"
+below), whose `flotilla pm connect` Wheelhouse runs. It uses Wheelhouse's native
 `data/sidebar/daily-driver.kdl` template. Projects contain checkouts, convoys/vessels,
 and issues; sessions and Git have their own sections. Attention is a second placement of
 the same entities. The project tree is the only sidebar, including when an older saved
@@ -193,15 +194,19 @@ grouping tree in Andamento's Zellij template, which native snapshots deliberatel
 omit.
 
 Use a Flotilla binary with the HTTP/UDS `pm connect` sink. The launcher prefers
-`~/.local/opt/flotilla-fleet/current/bin/flotilla` when installed, following `current`
-to the fleet generation on launch and connector retries. Without a fleet install it uses
-`${FLOTILLA_ROOT:-../flotilla}/target/debug/flotilla`. `FLOTILLA_BIN` overrides both. It
-does not rebuild Flotilla or start a Zellij session. If the connector reports a wire
-build mismatch, the launcher prints both builds and a `FLOTILLA_BIN` hint; the full
-diagnostic remains in `logs/flotilla.log`.
+`~/.local/opt/flotilla-fleet/current/bin/flotilla` when installed, passing that path
+unresolved so each connector restart follows `current` to the fleet generation. Without
+a fleet install it uses `${FLOTILLA_ROOT:-../flotilla}/target/debug/flotilla`.
+`FLOTILLA_BIN` overrides both. The launcher passes it to Wheelhouse
+(`--flotilla_bin`) and asks for a subscription to `--daemon`, else `FLOTILLA_DAEMON`,
+else Flotilla's own daemon (`--flotilla_subscription[:<daemon>]`), which Wheelhouse
+adds to the Dashboard unless it has one. It does not rebuild Flotilla or start a
+Zellij session. If a connector reports a wire build mismatch, Wheelhouse notes both
+builds and a `FLOTILLA_BIN` hint in its log and the connector's,
+`logs/flotilla-<subscription ID>.log`.
 
 ```sh
-# Git facts only; no Flotilla binary or daemon needed.
+# Git facts only; adds no Flotilla subscription (ones the Dashboard has still connect).
 scripts/run-daily-driver.sh --git-only
 # Watch several checkouts using existing Wheelhouse and watcher builds.
 scripts/run-daily-driver.sh --no-build --repo ~/dev/wheelhouse --repo ~/dev/flotilla
@@ -235,9 +240,11 @@ the shipped hierarchy, opening capability, and shared Open/Focus identity throug
 real C ABI.
 
 `python3 tools/test-daily-driver.py` checks producer delivery, profile locking, startup
-failure, producer failure, restart, and process cleanup with controlled UI, watcher, and
-connector processes. Real HTTP/UDS delivery is covered by
-`tools/test-andamento-ingress.py`.
+failure, producer failure, restart, the subscription and Flotilla it asks Wheelhouse
+for, and process cleanup with controlled UI and watcher processes. Real HTTP/UDS
+delivery is covered by `tools/test-andamento-ingress.py`; connector restarts and
+cleanup by `src/ingress/connector.rs`'s tests, and subscriptions end to end by the
+behaviour harness (`tools/test-state-behaviour.py`).
 
 ### Daily driver (Windows)
 
@@ -257,8 +264,8 @@ $env:FLOTILLA_BIN = 'C:\dev\flotilla-ssh\target\debug\flotilla.exe'
 scripts/run-daily-driver.ps1 --no-build --daemon ssh://udder/home/robert/candidates/flotilla
 ```
 
-`--daemon` overrides `FLOTILLA_DAEMON`; the selected endpoint is inherited by the
-UI, its terminals and the connector. Without either, the Windows launcher fails
+`--daemon` overrides `FLOTILLA_DAEMON`; the selected endpoint is the daemon the
+Dashboard subscribes to, and is inherited by the UI and its terminals. Without either, the Windows launcher fails
 before starting Wheelhouse. The default binaries have an `.exe` suffix. Without
 `WHEELHOUSE_BIN` or `--no-build`, the launcher runs `build.bat wheelhouse`.
 The PowerShell entrypoint uses `py -3` to select an interpreter, then runs that
@@ -274,12 +281,13 @@ retain their existing Windows ACLs. Each launch creates a fresh
 over the pipe with same-user server verification, matching ADR 0011. The app
 and its terminals inherit `WHEELHOUSE_SOCKET` for additional producers.
 
-The connector restarts with backoff while Wheelhouse stays open. Logs live in
-the profile's `logs` directory. Closing Wheelhouse or pressing Ctrl-C stops
-the launcher-owned process trees, including the connector's SSH subprocesses.
-Windows Job Objects also clean up children if the Python launcher is abruptly
-terminated. Helper processes do not create visible console windows. Saved
-profiles are retained across launches; remote daemons remain running.
+Wheelhouse runs the connector in a Job Object of its own and restarts it with
+backoff while it stays open. Logs live in the profile's `logs` directory. Closing
+Wheelhouse or pressing Ctrl-C stops the launcher-owned process trees, and with
+Wheelhouse the connector's, including its SSH subprocesses. Windows Job Objects
+also clean up children if the Python launcher is abruptly terminated. Helper
+processes do not create visible console windows. Saved profiles are retained
+across launches; remote daemons remain running.
 
 Windows currently publishes the Flotilla catalog only. Local git discovery is
 disabled by default, and `--repo` / `--git-only` are refused until
@@ -290,7 +298,7 @@ Permanent connector-error classification remains flotilla#2589; the launcher
 retains the existing retry policy.
 
 `python tools/test-daily-driver-windows.py` checks native pipe readiness, profile
-locking, endpoint inheritance, settings retention, connector restart, UI closure,
+locking, endpoint inheritance and subscription, settings retention, UI closure,
 Ctrl-C, abrupt termination and descendant cleanup. These contracts use controlled
 processes and a health-only named-pipe server, independently of a fleet or native
 Wheelhouse build. Real metadata ingress is covered by `tools/test-andamento-ingress.py`.
@@ -321,6 +329,26 @@ Or use a Flotilla build with the HTTP sink: `flotilla pm connect --wheelhouse-so
 supplied recipe in an ordinary Terminal View; Flotilla's recipes use `flotilla attach`
 or `flotilla view`. Resource enumeration and dynamic overflow tabs remain follow-up
 work. A new window receives facts on the producer's next periodic reassertion.
+
+#### Dashboard subscriptions
+
+A Dashboard lists the providers it subscribes to in `subscriptions.kdl` in its
+directory: each has a subscription ID (a UUIDv7, made when it is added), a kind
+(`flotilla`) and its daemon endpoint. Every fact a subscription publishes belongs to
+it, so two subscriptions reporting the same project show two projects. With
+`--andamento_socket`, each subscription gets an ingress endpoint of its own, named
+after that one (`<socket>-<subscription ID>`, a socket beside it or a named pipe),
+and Wheelhouse runs `flotilla pm connect --wheelhouse-socket <its endpoint>` for it
+(`--flotilla_bin`, else `FLOTILLA_BIN`, else `flotilla`), restarting it after 1s,
+doubling to 30s, when it exits. While a connector is down its rows stay, marked
+stale, until it publishes again. The `--andamento_socket` endpoint itself, which
+the git watcher and one-off scripts use, is the `local` provider.
+
+The command palette's **Add Flotilla Subscription** takes a daemon endpoint
+(`default` for Flotilla's own) and starts its connector; **Remove Subscription** takes
+a subscription ID or daemon endpoint, stops its connector and retracts its facts.
+Workspaces open on them stay, retained. `--flotilla_subscription[:<daemon>]` adds one
+at launch unless the Dashboard has it.
 
 To capture lifecycle bugs, add `--ingress_record` to Wheelhouse or run the daily
 driver with `scripts/run-daily-driver.sh --ingress-record`. Recording is off by

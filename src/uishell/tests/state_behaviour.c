@@ -17,6 +17,10 @@
 // The fixture's producer is Andamento's patch ABI: the sidebar fixture's facts
 // (as --sidebar_subject_fixture), plus what the scenario's producer changes
 // later. A restarted producer reports its current state again.
+//
+// Subscriptions run live: each gets its endpoint, named after
+// --andamento_socket, and its connector, a stand-in for `flotilla pm
+// connect` (--flotilla_bin, written by the script) that publishes over it.
 
 #define StateCheck(x) do { if(!(x)) { fprintf(stderr, "FAIL state behaviour line %d: %s\n", __LINE__, #x); state_failures++; } } while(0)
 global U32 state_failures;
@@ -198,6 +202,43 @@ state_open_subject(RD_WindowState *ws, String8 kind, String8 id)
   StateCheck(str8_match(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string, id, 0));
   return workspace;
 }
+
+// Rows of entity `kind`/`id` from `provider`, and (optional) whether one of
+// them is stale.
+internal U64
+state_count_from(UIShell_SidebarState *state, String8 kind, String8 id, String8 provider, B32 *stale)
+{
+  U64 count = 0;
+  for(U64 i = 0; state->snapshot && i < andamento_snapshot_node_count(state->snapshot); i++)
+  {
+    AndamentoNode node = {0};
+    AndamentoText from = {0};
+    uint32_t node_stale = 0;
+    uishell_sidebar_snapshot_node(state->snapshot, i, &node);
+    if(node.is_section || !str8_match(uishell_sidebar_string(node.entity_kind), kind, 0) ||
+       !str8_match(uishell_sidebar_string(node.entity_id), id, 0) ||
+       !andamento_snapshot_node_provider(state->snapshot, i, &from, &node_stale) ||
+       !str8_match(uishell_sidebar_string(from), provider, 0)) { continue; }
+    count++;
+    if(stale && node_stale) { *stale = 1; }
+  }
+  return count;
+}
+
+// Frames, with live ingress polled before each as a frame does, until `cond`
+// holds or ten seconds pass.
+#define StateWaitFor(ws, cond) do \
+{ \
+  U64 deadline_ = wheelhouse_ingress_now_ms() + 10000; \
+  for(;;) \
+  { \
+    uishell_sidebar_poll_live(); \
+    state_frame(ws); \
+    if(cond) { break; } \
+    if(wheelhouse_ingress_now_ms() > deadline_) { StateCheck(cond); break; } \
+    sleep_ms(20); \
+  } \
+} while(0)
 
 internal CFG_PanelTree
 state_panels(Arena *arena, CFG_Node *workspace)
@@ -578,6 +619,88 @@ entry_point(CmdLine *cmdline)
     StateCheck(id.size == 36 && str8_match(reference->string, id, 0));
     StateCheck(cfg_node_child_from_string(legacy, str8_lit("local_entity")) == &cfg_nil_node);
     StateCheck(uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_cfg(legacy)) == legacy->id);
+  }
+
+  //- Subscriptions. A Dashboard without any has only local facts. Adding
+  // one saves it in the Dashboard and starts its connector on its own
+  // endpoint; two publishing the same project and vessel make two of each.
+  {
+    StateCheck(uishell_subscriptions.first == 0);
+    String8 local = cmd_line_string(cmdline, str8_lit("andamento_socket"));
+    StateCheck(local.size != 0);
+    uishell_subscriptions_go_live(local, cmd_line_string(cmdline, str8_lit("flotilla_bin")), dir);
+    window = cfg_node_from_id(ws->cfg_id);
+    uishell_cmd("add_flotilla_subscription", .window = window->id, .string = str8_lit("ssh://alpha"));
+    uishell_cmd("add_flotilla_subscription", .window = window->id, .string = str8_lit("ssh://beta"));
+    // The same daemon again adds nothing.
+    uishell_cmd("add_flotilla_subscription", .window = window->id, .string = str8_lit("ssh://beta"));
+    state_pump();
+    StateCheck(uishell_subscriptions.count == 2);
+    UIShell_Subscription *alpha = uishell_subscription_from_text(str8_lit("ssh://alpha"));
+    UIShell_Subscription *beta = uishell_subscription_from_text(str8_lit("ssh://beta"));
+    StateCheck(alpha && beta && alpha != beta);
+    String8 alpha_id = push_str8_copy(scratch.arena, alpha->id), beta_id = push_str8_copy(scratch.arena, beta->id);
+    UIShell_WorkspaceId parsed = {0};
+    StateCheck(uishell_workspace_id_from_string(alpha_id, &parsed) && (parsed.v[6] >> 4) == 7);
+    StateCheck(str8_match(alpha->endpoint, push_str8f(scratch.arena, "%S-%S", local, alpha_id), 0));
+    String8 saved = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/subscriptions.kdl", dashboard->dir));
+    StateCheck(str8_find_needle(saved, 0, push_str8f(scratch.arena, "subscription \"%S\" {\n    kind \"flotilla\"\n    daemon \"ssh://alpha\"\n}", alpha_id), 0) < saved.size);
+    StateCheck(str8_find_needle(saved, 0, beta_id, 0) < saved.size);
+    String8 project = str8_lit("project"), fleet = str8_lit("fleet"), vessel = str8_lit("vessel"), fleet_v = str8_lit("fleet-v");
+    StateWaitFor(ws, state_count_from(ws->sidebar, project, fleet, alpha_id, 0) == 1 && state_count_from(ws->sidebar, project, fleet, beta_id, 0) == 1 &&
+                     state_count_from(ws->sidebar, vessel, fleet_v, alpha_id, 0) >= 1 && state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
+    StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/flotilla-%S.log", dir, alpha_id)));
+    // Opening alpha's vessel opens a workspace on it, not on beta's.
+    size_t activate = ANDAMENTO_NONE;
+    for(U64 i = 0; i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
+    {
+      AndamentoNode node = {0}; AndamentoText from = {0};
+      uishell_sidebar_snapshot_node(ws->sidebar->snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity_id), fleet_v, 0) && andamento_snapshot_node_provider(ws->sidebar->snapshot, i, &from, 0) &&
+         str8_match(uishell_sidebar_string(from), alpha_id, 0) && node.openable) { activate = node.activate; break; }
+    }
+    state_click(ws, activate);
+    CFG_Node *opened = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
+    StateCheck(str8_match(uishell_workspace_cfg_subject_provider(opened), alpha_id, 0));
+    StateWaitFor(ws, state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
+    state_write(dir, "subscriptions_two.txt");
+
+    //- A connector going down makes its provider stale: its rows stay,
+    // marked, past their facts' lifetime, until it publishes again.
+    String8 stop_beta = push_str8f(scratch.arena, "%S/stop-beta", dir);
+    StateCheck(write_data_to_file_path(stop_beta, str8_lit("stop\n")));
+    StateWaitFor(ws, beta->stale);
+    U64 until = wheelhouse_ingress_now_ms() + 3000;
+    StateWaitFor(ws, wheelhouse_ingress_now_ms() > until);
+    B32 stale = 0;
+    StateCheck(state_count_from(ws->sidebar, project, fleet, beta_id, &stale) == 1 && stale);
+    StateCheck(!alpha->stale && state_count_from(ws->sidebar, project, fleet, alpha_id, 0) == 1);
+    state_write(dir, "subscriptions_stale.txt");
+    StateCheck(delete_file_at_path(stop_beta));
+    StateWaitFor(ws, !beta->stale);
+    stale = 0;
+    StateCheck(state_count_from(ws->sidebar, project, fleet, beta_id, &stale) == 1 && !stale);
+    state_write(dir, "subscriptions_fresh.txt");
+
+    //- Removing a subscription stops its connector and retracts its facts;
+    // the workspace open on its vessel stays, retained.
+    uishell_cmd("remove_subscription", .window = window->id, .string = alpha_id);
+    state_pump();
+    StateWaitFor(ws, state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
+    StateCheck(uishell_subscriptions.count == 1 && uishell_subscription_from_text(alpha_id) == 0);
+    StateCheck(state_count_from(ws->sidebar, vessel, fleet_v, alpha_id, 0) >= 1);
+    StateCheck(cfg_node_from_id(ws->root_controlled_split_selected_workspace_id) == opened);
+    saved = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/subscriptions.kdl", dashboard->dir));
+    StateCheck(str8_find_needle(saved, 0, alpha_id, 0) == saved.size && str8_find_needle(saved, 0, beta_id, 0) < saved.size);
+    state_write(dir, "subscriptions_removed.txt");
+
+    //- A restart opens the Dashboard's subscriptions again and reconnects them.
+    ws = state_restart(ws, &theme, push_str8_copy(scratch.arena, dashboard->dir));
+    StateCheck(uishell_subscriptions.count == 1 && str8_match(uishell_subscriptions.first->id, beta_id, 0));
+    StateWaitFor(ws, state_count_from(ws->sidebar, project, fleet, beta_id, 0) == 1 &&
+                     state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
+    state_write(dir, "subscriptions_restarted.txt");
+    uishell_subscriptions_close();
   }
 
   scratch_end(scratch);

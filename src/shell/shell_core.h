@@ -1283,6 +1283,7 @@ internal B32 rd_autosave(void);
 internal void uishell_sidebar_reset_regions(CFG_Node *owner);
 internal B32 uishell_controlled_split_workspace_can_close(UIShell_ControlledSplit *split, UIShell_MaterializedWorkspace *workspace);
 internal B32 uishell_workspace_cfg_has_subject(CFG_Node *workspace);
+internal String8 uishell_workspace_cfg_subject_provider(CFG_Node *workspace);
 internal UIShell_WorkspaceMount *uishell_controlled_split_selected_mount(UIShell_ControlledSplit *split);
 internal Rng2F32 uishell_controlled_split_control_rect(UIShell_ControlledSplit *split, Rng2F32 rect);
 internal Rng2F32 uishell_controlled_split_workspace_rect(UIShell_ControlledSplit *split, Rng2F32 rect);

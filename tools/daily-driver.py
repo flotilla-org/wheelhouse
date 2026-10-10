@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Launch Wheelhouse with live git facts and Flotilla's catalog connector."""
+"""Launch Wheelhouse with live git facts and a Flotilla subscription.
+
+Wheelhouse runs and restarts each of its Dashboard's subscriptions' connectors
+(`flotilla pm connect`); the launcher makes sure the Dashboard subscribes to
+the configured daemon (--daemon, else FLOTILLA_DAEMON, else Flotilla's own)
+by passing --flotilla_subscription, and which Flotilla to run.
+"""
 import argparse
 import contextlib
 import errno
@@ -7,7 +13,6 @@ import http.client
 import importlib.util
 import os
 from pathlib import Path
-import re
 import signal
 import socket
 import subprocess
@@ -19,8 +24,6 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS = sys.platform == 'win32'
 EXE = '.exe' if WINDOWS else ''
-CONNECTOR_STABLE_SECONDS = 30
-MAX_CONNECTOR_BACKOFF_SECONDS = 30
 
 
 def load_tool(name, filename):
@@ -70,19 +73,10 @@ def flotilla_binary():
         return Path(os.environ['FLOTILLA_BIN']).resolve()
     fleet = Path.home() / ('.local/opt/flotilla-fleet/current/bin/flotilla' + EXE)
     if fleet.is_file():
-        return fleet.resolve()
+        # Unresolved, so each connector restart follows `current` after a fleet roll.
+        return Path(os.path.abspath(fleet))
     root = Path(os.environ.get('FLOTILLA_ROOT', ROOT.parent / 'flotilla'))
     return (root / ('target/debug/flotilla' + EXE)).resolve()
-
-
-def mismatch_hint(output):
-    mismatch = re.search(r'wire generation mismatch:.*?client fingerprint.*?\(build ([^)]+)\)'
-                         r'.*?daemon fingerprint.*?\(build ([^)]+)\)', output, re.DOTALL)
-    if mismatch:
-        client, daemon = mismatch.groups()
-        return (f'Flotilla build mismatch: client {client}, daemon {daemon}; '
-                'set FLOTILLA_BIN to a binary matching the daemon '
-                '(fleet install: ~/.local/opt/flotilla-fleet/current/bin/flotilla).')
 
 
 class LocalHTTPConnection(http.client.HTTPConnection):
@@ -130,7 +124,7 @@ def stop(process):
         process.wait()
 
 
-def run(args, binary, template, state):
+def run(args, binary, template, state, flotilla):
     with contextlib.ExitStack() as stack:
         if WINDOWS:
             path = r'\\.\pipe\wheelhouse-daily-' + uuid.uuid4().hex
@@ -143,7 +137,7 @@ def run(args, binary, template, state):
             stop_child = stop
         env = {**os.environ, 'WHEELHOUSE_SOCKET': path}
         if args.daemon is not None:
-            # UI recipe processes inherit the same endpoint as the connector.
+            # UI recipe processes use the daemon the Dashboard subscribes to.
             env['FLOTILLA_DAEMON'] = args.daemon
         # Pane identity belongs to Wheelhouse, not an enclosing Zellij session.
         env.pop('WHEELHOUSE_PANE_ID', None)
@@ -163,9 +157,16 @@ def run(args, binary, template, state):
         if args.ingress_record:
             recording_args = ['--ingress_record', '--ingress_record_bytes:' + str(args.ingress_record_bytes),
                               '--ingress_record_files:' + str(args.ingress_record_files)]
+        # The Dashboard keeps its subscriptions; this adds one for the configured
+        # daemon unless it has one. Wheelhouse runs and restarts its connector.
+        subscription_args = ['--flotilla_bin:' + str(flotilla)]
+        if not args.git_only:
+            daemon = env.get('FLOTILLA_DAEMON', '')
+            subscription_args.append('--flotilla_subscription' + (':' + daemon if daemon else ''))
         app = launch('wheelhouse', [str(binary), '--user:' + str(state / 'user'),
                                    '--project:' + str(state / 'project'), '--dashboard:' + str(dashboard),
-                                   '--andamento_socket:' + path, '--andamento_config:' + str(template)] + recording_args)
+                                   '--andamento_socket:' + path, '--andamento_config:' + str(template)] +
+                     subscription_args + recording_args)
         stack.callback(stop_child, app)
         wait_ready(app, path)
         producers = []
@@ -176,63 +177,13 @@ def run(args, binary, template, state):
             process = launch('git', command)
             stack.callback(stop_child, process)
             producers.append(('git', process))
-        connector_log_start = 0
-
-        def launch_connector(append=False):
-            nonlocal connector_log_start
-            # Resolve current again on retries so a fleet roll can recover in place.
-            flotilla = flotilla_binary()
-            log = logs / 'flotilla.log'
-            connector_log_start = log.stat().st_size if append and log.exists() else 0
-            return launch('flotilla', [str(flotilla), 'pm', 'connect', '--wheelhouse-socket', path,
-                                      '--flotilla-bin', str(flotilla)], append=append)
-
-        connector = None
-        connector_started_at = 0
-        restart_at = 0
-        backoff = 1
-        if not args.git_only:
-            connector = launch_connector()
-            connector_started_at = time.monotonic()
-
-        def stop_connector():
-            if connector is not None:
-                stop_child(connector)
-
-        stack.callback(stop_connector)
         print('Wheelhouse is running. Close the app or press Ctrl-C to stop the daily driver.', flush=True)
+        if not args.git_only:
+            print(f'Wheelhouse runs the Flotilla connector; its log is {logs}/flotilla-<subscription>.log', flush=True)
         while app.poll() is None:
             for name, process in producers:
                 if process.poll() is not None:
                     raise RuntimeError(f'{name} producer exited with status {process.returncode}; see {logs / (name + ".log")}')
-            if connector is not None and connector.poll() is not None:
-                status = connector.returncode
-                if time.monotonic() - connector_started_at >= CONNECTOR_STABLE_SECONDS:
-                    backoff = 1
-                stop_child(connector)
-                connector = None
-                with (logs / 'flotilla.log').open('rb') as output:
-                    output.seek(connector_log_start)
-                    hint = mismatch_hint(output.read().decode(errors='replace'))
-                if hint:
-                    print(hint, flush=True)
-                restart_at = time.monotonic() + backoff
-                message = f'Flotilla connector exited with status {status}; restarting in {backoff}s'
-                with (logs / 'flotilla.log').open('a', encoding='utf-8') as output:
-                    print(message, file=output, flush=True)
-                print(message, flush=True)
-                backoff = min(backoff * 2, MAX_CONNECTOR_BACKOFF_SECONDS)
-            if connector is None and not args.git_only and time.monotonic() >= restart_at:
-                try:
-                    connector = launch_connector(append=True)
-                    connector_started_at = time.monotonic()
-                except OSError as error:
-                    message = f'Flotilla connector could not start: {error}; retrying in {backoff}s'
-                    with (logs / 'flotilla.log').open('a', encoding='utf-8') as output:
-                        print(message, file=output, flush=True)
-                    print(message, flush=True)
-                    restart_at = time.monotonic() + backoff
-                    backoff = min(backoff * 2, MAX_CONNECTOR_BACKOFF_SECONDS)
             time.sleep(.2)
         return app.returncode
 
@@ -241,8 +192,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--no-build', action='store_true', help='use existing Wheelhouse and git watcher binaries')
     parser.add_argument('--no-git', action='store_true', help='omit local git discovery; use provider facts only')
-    parser.add_argument('--git-only', action='store_true', help='omit Flotilla; publish only local git facts')
-    parser.add_argument('--daemon', help='remote daemon endpoint; overrides FLOTILLA_DAEMON and is inherited by the UI')
+    parser.add_argument('--git-only', action='store_true',
+                        help='add no Flotilla subscription; publish local git facts (the Dashboard\'s own subscriptions still connect)')
+    parser.add_argument('--daemon', help='daemon endpoint the Dashboard subscribes to; overrides FLOTILLA_DAEMON and is inherited by the UI')
     parser.add_argument('--dashboard', default=os.environ.get('WHEELHOUSE_DASHBOARD', 'daily'),
                         help='Dashboard to open: a name under the settings folder\'s dashboards/, or a directory '
                              '(default: $WHEELHOUSE_DASHBOARD or "daily")')
@@ -310,7 +262,7 @@ def main():
         if not os.access(binary, os.X_OK):
             build_hint = 'build.bat wheelhouse' if WINDOWS else 'bash build.sh wheelhouse'
             parser.error(f'Wheelhouse binary not found: {binary}; run {build_hint}')
-        return run(args, binary, template, state)
+        return run(args, binary, template, state, flotilla)
 
 
 if __name__ == '__main__':

@@ -276,7 +276,7 @@ A logical local IPC address — scope, name and transport kind — that each pla
 _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 
 **Dashboard**:
-A user's choice of which **Content Providers** to subscribe to, together with the **Grouping Projection**, section, order and display choices that turn their entries into a **Workspace Inventory**. Likely to be called a *flotilla dashboard*, even while the Andamento project defines it. It can be shared across devices and frontends, for example through cloud storage. Each Wheelhouse process opens one, as a directory of Andamento's records (`--dashboard`); its provider subscriptions are still the Andamento config and the implicit `flotilla pm connect` subscription.
+A user's choice of which **Content Providers** to subscribe to, together with the **Grouping Projection**, section, order and display choices that turn their entries into a **Workspace Inventory**. Likely to be called a *flotilla dashboard*, even while the Andamento project defines it. It can be shared across devices and frontends, for example through cloud storage. Each Wheelhouse process opens one, as a directory of Andamento's records (`--dashboard`) and its list of provider subscriptions, each with a subscription ID that is the provider of every entity it publishes. Wheelhouse gives each subscription an ingress endpoint of its own and runs its connector (`flotilla pm connect`, until Flotilla serves a facts stream).
 _Avoid_: Project, RAD project, sidebar config
 
 **Presentation State**:

@@ -2,6 +2,8 @@
 use std::ffi::c_void;
 
 #[cfg(any(unix, windows))]
+mod connector;
+#[cfg(any(unix, windows))]
 mod recording;
 
 pub type Wake = extern "C" fn();
@@ -430,8 +432,13 @@ pub unsafe extern "C" fn wheelhouse_ingress_start_recorded(
         let _ = (path, len, wake);
         Err("Local HTTP ingress is supported on Unix and Windows hosts".into())
     };
+    boxed_or_error(result, error, capacity)
+}
+
+/// The handle for `result`, or NULL with its message NUL-terminated in `error`.
+unsafe fn boxed_or_error<T>(result: Result<T, String>, error: *mut u8, capacity: usize) -> *mut T {
     match result {
-        Ok(server) => Box::into_raw(Box::new(server)),
+        Ok(value) => Box::into_raw(Box::new(value)),
         Err(message) => {
             if capacity > 0 {
                 let n = message.len().min(capacity - 1);
@@ -440,6 +447,120 @@ pub unsafe extern "C" fn wheelhouse_ingress_start_recorded(
             }
             std::ptr::null_mut()
         }
+    }
+}
+
+#[cfg(any(unix, windows))]
+pub use connector::Connector;
+#[cfg(not(any(unix, windows)))]
+pub struct Connector;
+
+/// Start supervising a connector: `argv` (program first), in Wheelhouse's
+/// environment changed by `env` entries ("NAME=value" sets NAME, "NAME"
+/// removes it), its output appended to `log`. It restarts when it exits; see
+/// connector.rs.
+///
+/// # Safety
+/// Text pointers must be valid UTF-8 for their lengths (NULL only for length
+/// zero) and arrays valid for their counts; `error` as for start. `wake` must
+/// be safe on a background thread and remain valid until stop returns.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_connector_start(
+    argv: *const Text,
+    argc: usize,
+    env: *const Text,
+    env_count: usize,
+    log: Text,
+    wake: Wake,
+    error: *mut u8,
+    capacity: usize,
+) -> *mut Connector {
+    unsafe fn text(t: &Text) -> Result<String, String> {
+        if t.len == 0 {
+            return Ok(String::new());
+        }
+        std::str::from_utf8(std::slice::from_raw_parts(t.data, t.len))
+            .map(str::to_owned)
+            .map_err(|e| e.to_string())
+    }
+    unsafe fn list(items: *const Text, count: usize) -> Result<Vec<String>, String> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        std::slice::from_raw_parts(items, count)
+            .iter()
+            .map(|t| text(t))
+            .collect()
+    }
+    #[cfg(any(unix, windows))]
+    let result = (|| {
+        let argv = list(argv, argc)?;
+        let env = list(env, env_count)?
+            .into_iter()
+            .map(|entry| match entry.split_once('=') {
+                Some((name, value)) if !name.is_empty() => {
+                    Ok((name.to_owned(), Some(value.to_owned())))
+                }
+                None if !entry.is_empty() => Ok((entry, None)),
+                _ => Err(format!(
+                    "environment entry must be NAME=value or NAME: {entry}"
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let log = text(&log)?;
+        if log.is_empty() {
+            return Err("connector log path must not be empty".to_owned());
+        }
+        Connector::start(
+            connector::Spec {
+                argv,
+                env,
+                log: log.into(),
+            },
+            wake,
+        )
+    })();
+    #[cfg(not(any(unix, windows)))]
+    let result: Result<Connector, String> = {
+        let _ = (argv, argc, env, env_count, log, wake, text, list);
+        Err("Connectors are supported on Unix and Windows hosts".into())
+    };
+    boxed_or_error(result, error, capacity)
+}
+
+/// Whether the connector's command runs now, and (optional) how many times
+/// it has started.
+///
+/// # Safety
+/// `connector` must be NULL or a live handle; `starts` NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_connector_running(
+    connector: *const Connector,
+    starts: *mut u64,
+) -> u32 {
+    #[cfg(any(unix, windows))]
+    if let Some(connector) = connector.as_ref() {
+        if !starts.is_null() {
+            *starts = connector.starts();
+        }
+        return connector.running() as u32;
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = connector;
+    if !starts.is_null() {
+        *starts = 0;
+    }
+    0
+}
+
+/// Stop the connector and whatever it started, and release the handle.
+///
+/// # Safety
+/// `connector` must be NULL or a live handle, never used again after this.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_connector_stop(connector: *mut Connector) {
+    if !connector.is_null() {
+        drop(Box::from_raw(connector));
     }
 }
 
