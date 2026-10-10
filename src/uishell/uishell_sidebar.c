@@ -287,6 +287,9 @@ struct UIShell_SidebarState
   String8 *sidebar_closed, *sidebar_gone;
   U64 sidebar_closed_count, sidebar_gone_count;
   U64 sidebar_commits;
+  // A sync of both stores asked for while panel trees were being drawn
+  // (uishell_store_frame_depth), which their end makes.
+  B32 store_sync_due;
   B32 initialized;
   U64 reveal_workspace_id;
   U8 error[512];
@@ -454,8 +457,32 @@ internal void uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now,
 internal void uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 force);
 internal void uishell_workspace_store_release(UIShell_SidebarState *state);
 internal void uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 force);
+internal void uishell_sidebar_store_settle(UIShell_SidebarState *state, CFG_Node *window);
 internal void uishell_sidebar_store_presentation(CFG_State *copy_state, CFG_Node *window, CFG_Node *copy);
 internal CFG_Node *uishell_sidebar_local_tree_from_id(CFG_ID window);
+
+// Open while panel trees built from the config are drawn (rd_window_frame,
+// and the sidebar's own in uishell_control_surface_ui): the arrangement
+// stores' syncs wait for the outermost to end (uishell_sidebar_store_settle).
+global U32 uishell_store_frame_depth;
+
+internal void
+uishell_sidebar_store_frame_begin(void) { uishell_store_frame_depth += 1; }
+
+// The panel trees are done with: a sync asked for while they were drawn is
+// made, and one that changed the config draws again.
+internal void
+uishell_sidebar_store_frame_end(RD_WindowState *ws)
+{
+  uishell_store_frame_depth -= 1;
+  UIShell_SidebarState *state = ws->sidebar;
+  if(uishell_store_frame_depth || !state || !state->store_sync_due) { return; }
+  state->store_sync_due = 0;
+  if(!state->core || !state->window || state->window != ws->cfg_id) { return; }
+  U64 gen = cfg_change_gen(), generation = state->sidebar_generation;
+  uishell_sidebar_store_settle(state, cfg_node_from_id(state->window));
+  if(cfg_change_gen() != gen || state->sidebar_generation != generation) { rd_request_frame(); }
+}
 
 internal void
 uishell_sidebar_release(UIShell_SidebarState *state)
@@ -1458,10 +1485,23 @@ uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
   if(topology_ready) { uishell_sidebar_publish(state, split); }
   // Arrangements edited since are committed, once no gesture is in flight:
   // the workspaces', and the sidebar's, once the local sections its tabs
-  // name are published.
-  if(topology_ready) { uishell_workspace_store_sync(state, split->owner_cfg, 0); }
-  if(topology_ready) { uishell_sidebar_store_sync(state, split->owner_cfg, 0); }
+  // name are published. While panel trees are drawn, once they are.
+  if(topology_ready && uishell_store_frame_depth) { state->store_sync_due = 1; }
+  else if(topology_ready) { uishell_sidebar_store_settle(state, split->owner_cfg); }
   scratch_end(scratch);
+}
+
+// Syncs both stores. Each can release and rebuild the window's config nodes
+// (a pull rebuilds the sidebar, a dropped container takes its panel), so none
+// runs while panel trees built from them are drawn: a sidebar_section View's
+// render observes in the middle of drawing the sidebar's tree. Asked for
+// then, the sync waits for the drawing to end (uishell_sidebar_store_frame_end).
+internal void
+uishell_sidebar_store_settle(UIShell_SidebarState *state, CFG_Node *window)
+{
+  state->store_sync_due = 0;
+  uishell_workspace_store_sync(state, window, 0);
+  uishell_sidebar_store_sync(state, window, 0);
 }
 
 #include "uishell/uishell_sidebar_records.c"

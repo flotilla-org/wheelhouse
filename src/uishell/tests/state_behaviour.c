@@ -87,6 +87,43 @@ state_frame(RD_WindowState *ws)
   rd_dock_restore_layouts();
 }
 
+// Set: a window's first frame draws its sidebar before anything else
+// observes the window, as a frame does when the title bar has no room for
+// the workspace path (whose build otherwise observes first).
+global B32 state_draw_sidebar;
+
+// The sidebar's draw, as the window frame makes it: its panel tree, with each
+// docked section's View rendered in it. A section View's render observes the
+// window, and so syncs the arrangement stores, while the tree is drawn.
+internal void
+state_sidebar_draw(RD_WindowState *ws)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, cfg_node_from_id(ws->cfg_id));
+  UI_IconInfo icons = {0}; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+  fnt_frame();
+  dr_begin_frame(rd_font_from_slot(RD_FontSlot_Icons));
+  ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+  UIShell_RegsScope(.window = ws->cfg_id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11)
+  { uishell_control_surface_ui(r2f32p(0, 0, 320, 600), &split); }
+  ui_end_build();
+  scratch_end(scratch);
+}
+
+// A whole window frame, as rd_frame runs one. The theme it makes lives in
+// its scratch; the harness's own builds keep theirs.
+internal void
+state_window_frame(RD_WindowState *ws)
+{
+  state_pump();
+  UI_Theme *theme = ws->theme;
+  fnt_frame();
+  dr_begin_frame(rd_font_from_slot(RD_FontSlot_Icons));
+  UIShell_RegsScope(.window = ws->cfg_id) { rd_window_frame(); }
+  ws->theme = theme;
+  rd_dock_restore_layouts();
+}
+
 // A window's first frame: a new window state and Andamento core (fixture
 // facts, and the window's records imported), what the producer reports now,
 // then the sidebar's first build: observe and reconcile docked sections.
@@ -106,9 +143,17 @@ state_open_window(UI_Theme *theme)
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
   StateCheck(state->core != 0 && state->snapshot != 0);
   state_producer(state);
-  UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
-  uishell_sidebar_observe(state, &split);
-  uishell_sidebar_refresh(state);
+  if(state_draw_sidebar)
+  {
+    state_sidebar_draw(ws);
+    state_window_frame(ws);
+  }
+  else
+  {
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+  }
   scratch_end(scratch);
   state_frame(ws);
   return ws;
@@ -421,6 +466,9 @@ entry_point(CmdLine *cmdline)
   uishell_sidebar_fixture = uishell_sidebar_subject_fixture = 1;
   wm_init(); fp_init(); r_init(cmdline); fnt_init(); rd_init(cmdline);
   rd_state->view_ui_rule_map = rd_view_ui_rule_map_make(rd_state->arena, 512);
+  // Docked sections render when the sidebar is drawn (state_sidebar_draw);
+  // no other View does.
+  rd_view_ui_rule_map_insert(rd_state->arena, rd_state->view_ui_rule_map, str8_lit("sidebar_section"), RD_VIEW_UI_FUNCTION_NAME(sidebar_section));
   e_select_cache(rd_state->eval_cache);
   E_BaseCtx base_ctx = {.address_arch = Arch_CURRENT, .space_gen = rd_eval_space_gen,
                        .space_read = rd_eval_space_read, .space_write = rd_eval_space_write}; e_select_base_ctx(&base_ctx);
@@ -991,6 +1039,34 @@ entry_point(CmdLine *cmdline)
     state_check_committed(ws);
     state_check_sidebar_committed(ws);
     ws = state_restart(ws, &theme, push_str8f(scratch.arena, "%S/dashboard-b", dir));
+  }
+
+  //- A new Dashboard's first frame draws its sidebar before anything else
+  // observes it. Andamento placed the container of local sections, as it
+  // does before any are published; with them published, it no longer
+  // resolves. The first observation is a section View's render, in the
+  // middle of drawing the sidebar's panel tree, and its sync drops the
+  // container's View and the panel it empties. That waits for the tree to be
+  // drawn: dropped mid-draw, the tree walks the released panel (whose links
+  // are cleared) and crashes.
+  {
+    String8 dashboard_b = push_str8_copy(scratch.arena, dashboard->dir);
+    state_draw_sidebar = 1;
+    ws = state_restart(ws, &theme, push_str8f(scratch.arena, "%S/dashboard-d", dir));
+    state_draw_sidebar = 0;
+    window = cfg_node_from_id(ws->cfg_id);
+    String8 container = {0};
+    for(U64 i = 0; i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
+    {
+      AndamentoNode node = {0};
+      if(uishell_sidebar_node_at(ws->sidebar, i, &node) == UIShell_SidebarRole_Container)
+      { container = push_str8_copy(scratch.arena, uishell_sidebar_string(node.key)); }
+    }
+    StateCheck(container.size != 0 && uishell_sidebar_region_view(window, container) == &cfg_nil_node);
+    StateCheck(uishell_sidebar_region_view(window, uishell_sidebar_local_key(scratch.arena, str8_lit("workspaces"))) != &cfg_nil_node);
+    state_window_frame(ws);
+    state_check_sidebar_committed(ws);
+    ws = state_restart(ws, &theme, dashboard_b);
   }
 
   //- A local workspace saved before Workspace IDs, whose sidebar entity was
