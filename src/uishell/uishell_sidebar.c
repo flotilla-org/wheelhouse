@@ -1655,7 +1655,7 @@ uishell_sidebar_restore(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
   if(state->restored || state->snapshot == 0) { return; }
   state->restored = 1;
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
-  CFG_ID selected = ws->root_controlled_split_selected_workspace_id;
+  CFG_ID selected = ws->root_controlled_split_selected_workspace_id, active_panel = ws->active_panel_id;
   for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
   {
     String8 kind = cfg_node_child_from_string(w->mount.owner_cfg, str8_lit("sidebar_entity_kind"))->first->string;
@@ -1679,6 +1679,7 @@ uishell_sidebar_restore(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     }
   }
   ws->root_controlled_split_selected_workspace_id = selected;
+  ws->active_panel_id = active_panel;
   uishell_sidebar_observe(state, split);
 }
 

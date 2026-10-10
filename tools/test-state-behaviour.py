@@ -71,9 +71,7 @@ before = (run_dir/'before_restart.txt').read_text().splitlines()
 after = (run_dir/'after_restart.txt').read_text().splitlines()
 
 # Known losses across a restart today, and the migration step that ends each.
-STEP2 = 'fixed by step 2 (#315)'
 STEP3 = 'fixed by step 3 (#307)'
-PRESENTATION = re.compile(r'^\s*(visible workspace|focused panel|input) ')
 SUBJECT_ROW = re.compile(r'^\s*row [^.\s][^/\s]*/\S+ .* live\b')
 LOCAL_ROW = re.compile(r'^\s*row \.workspace (".*") live$')
 
@@ -86,8 +84,6 @@ def changed_pair(old, new):
     """Why `old` became `new` across the restart, or None."""
     if old.endswith(' collapsed') and old[:-len(' collapsed')] == new:
         return 'row collapse is not saved, %s; was collapsed' % STEP3
-    if PRESENTATION.match(old) and PRESENTATION.match(new) and PRESENTATION.match(old).group(1) == PRESENTATION.match(new).group(1):
-        return 'the visible workspace and focus are not saved, %s; was %s' % (STEP2, old.strip())
     return None
 
 
