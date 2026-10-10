@@ -43,9 +43,11 @@ render_tree(Arena *arena, CFG_Node *root)
   return rd_panel_tree_from_cfg(arena, root);
 }
 
+// A Floating Panel is its own root.
 internal CFG_Node *
 panels_of(CFG_Node *owner)
 {
+  if(rd_dock_floating_panel_from_cfg(owner) == owner) { return owner; }
   CFG_Node *root = child(owner, "panels");
   return root != &cfg_nil_node ? root : child(owner, "control_views");
 }
@@ -455,6 +457,47 @@ entry_point(CmdLine *cmdline)
     Check(arrangement->root->first->weight == 0.5f && arrangement->root->last->weight == 0.5f);
     rd_arrangement_equalize(arrangement, arrangement->root->last->id);
     Check(arrangement->root->first->weight == 0.5f && rd_arrangement_problem(arena, arrangement).size == 0);
+    cfg_node_release(cfg, window);
+  }
+
+  // Each Floating Panel is its own arrangement, rooted at its node in the
+  // host. Saving one keeps its node's name, and leaves the host's other
+  // panels and the owners' axes alone. A View moves between two as a move
+  // into one and a settle of the other, which never closes its root.
+  {
+    CFG_Node *window = fixture(arena, "window:{split_x workspace:{split_x panels:{0.5:{text} 0.5:{terminal}} "
+      "floating_panels:{1:{text:{selected} terminal:{label:{`Log`}}} 0.5:{jackstay:{selected} text tabs_on_bottom}}}}");
+    CFG_Node *workspace = child(window, "workspace"), *host = child(workspace, "floating_panels");
+    CFG_Node *first = host->first, *second = host->last;
+    CFG_Node *log = first->last, *jackstay = second->first, *text = jackstay->next;
+    CFG_ID text_id = text->id;
+    Check(rd_dock_floating_panel_from_cfg(log) == first && rd_dock_floating_panel_from_cfg(second) == second);
+    Check(rd_dock_floating_panel_from_cfg(host) == &cfg_nil_node);
+    Check(rd_dock_floating_panel_from_cfg(child(workspace, "panels")->first->first) == &cfg_nil_node);
+    // A View saved directly in the host is in no Floating Panel.
+    Check(rd_dock_floating_panel_from_cfg(cfg_node_new(cfg, host, str8_lit("text"))) == &cfg_nil_node);
+    cfg_node_release(cfg, host->last);
+    RD_Arrangement *into = rd_arrangement_from_cfg(arena, first);
+    Check(rd_arrangement_problem(arena, into).size == 0 && into->root->cfg == first->id);
+    Check(into->root->first == &rd_nil_arrangement_panel && into->root->tab_count == 2 && into->root->selected == first->first->id);
+    Check(rd_arrangement_panel_from_view(into, jackstay->id) == &rd_nil_arrangement_panel);
+    Check(rd_arrangement_move_tab(into, jackstay->id, into->root->id, log->id));
+    check_saved(arena, into, first);
+    Check(jackstay->parent == first && log->next == jackstay && str8_match(first->string, str8_lit("1"), 0));
+    Check(child(jackstay, "selected") != &cfg_nil_node && child(first->first, "selected") == &cfg_nil_node);
+    Check(str8_match(child(first, "id")->first->string, str8_lit("1"), 0));
+    Check(child(second, "id") == &cfg_nil_node && str8_match(second->string, str8_lit("0.5"), 0));
+    Check(child(host, "split_x") == &cfg_nil_node && child(workspace, "split_x") != &cfg_nil_node);
+    RD_Arrangement *from = rd_arrangement_from_cfg(arena, second);
+    Check(from->root->tab_count == 1 && from->root->selected == 0);
+    Check(rd_arrangement_settle(from, from->root->id, Dir2_Invalid, 0, 1) && from->root->selected == text_id);
+    check_saved(arena, from, second);
+    Check(child(text, "selected") != &cfg_nil_node && host->last == second && str8_match(second->string, str8_lit("0.5"), 0));
+    Check(child(second, "tabs_on_bottom") != &cfg_nil_node);
+    // Emptied, it stays.
+    Check(rd_arrangement_remove_tab(from, text_id) && !rd_arrangement_settle(from, from->root->id, Dir2_Invalid, 0, 1));
+    check_saved(arena, from, second);
+    Check(cfg_node_from_id(text_id) == &cfg_nil_node && second->parent == host && from->root->tab_count == 0);
     cfg_node_release(cfg, window);
   }
 
