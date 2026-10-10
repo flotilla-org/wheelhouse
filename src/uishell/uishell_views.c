@@ -5989,6 +5989,23 @@ internal UI_BOX_CUSTOM_DRAW(uishell_geo3d_box_draw)
   dr_mesh(draw_data->vertex_buffer, draw_data->index_buffer, R_GeoTopologyKind_Triangles, R_GeoVertexFlag_TexCoord|R_GeoVertexFlag_Normals|R_GeoVertexFlag_RGB, r_handle_zero(), 0, mat_4x4f32(1.f));
 }
 
+// A Slot whose content this Wheelhouse can't show (uishell_workspace_store.c):
+// what it is, and a way to open it when it is a web page. The slot keeps its
+// View Spec; closing the tab is what removes it.
+RD_VIEW_UI_FUNCTION_DEF(placeholder)
+{
+  (void)eval;
+  String8 content = rd_view_setting_from_name(str8_lit("content"));
+  String8 url = rd_view_setting_from_name(str8_lit("url"));
+  ui_set_next_pref_width(ui_px(dim_2f32(rect).x, 1));
+  ui_set_next_pref_height(ui_px(dim_2f32(rect).y, 1));
+  UI_Column UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_em(1.8f, 1))
+  {
+    ui_labelf("Wheelhouse can't show %S here.", content.size ? content : str8_lit("this view"));
+    if(url.size && ui_clicked(ui_buttonf("Open in browser###placeholder_open"))) { wm_open_in_browser(url); }
+  }
+}
+
 EV_EXPAND_RULE_INFO_FUNCTION_DEF(geo3d)
 {
   EV_ExpandInfo info = {0};

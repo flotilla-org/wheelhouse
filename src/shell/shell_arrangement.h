@@ -4,8 +4,10 @@
 // previews edit a copy; commands edit a loaded document and save it back to
 // the config nodes it came from.
 //
-// Saved shape, until arrangements are committed to Andamento (#309):
-//   panels:{id:1 0.6:{id:2 terminal:{selected ...}} 0.4:{id:3 text:{...}}}
+// Config shape. For a workspace this is Wheelhouse's live copy: Andamento's
+// workspace record keeps the document, which the presentation file leaves
+// out (uishell_workspace_store.c), and each View carries its Slot's key.
+//   panels:{id:1 0.6:{id:2 terminal:{slot:"u:1" selected ...}} 0.4:{id:3 text:{...}}}
 // The root is `panels`, the sidebar's `control_views`, or a Floating Panel's
 // node in its `floating_panels` host, which keeps its name; its owner's
 // `split_x` (or `control_views_split_x`) gives the root's axis, and each
@@ -25,8 +27,8 @@ struct RD_ArrangementTab
   RD_ArrangementTab *next;
   RD_ArrangementTab *prev;
   // The View's config node, which saving moves but never recreates (its
-  // runtime state, such as a live terminal, is keyed by it). Slot keys
-  // replace this in #309.
+  // runtime state, such as a live terminal, is keyed by it). Its `slot`
+  // setting names its Slot in Andamento's document.
   CFG_ID view;
 };
 

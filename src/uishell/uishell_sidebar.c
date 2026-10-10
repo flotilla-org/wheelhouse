@@ -105,6 +105,7 @@ struct UIShell_SidebarPublished
 };
 typedef struct UIShell_KdlNode UIShell_KdlNode;
 typedef struct UIShell_SectionPlacement UIShell_SectionPlacement;
+typedef struct UIShell_StoreEntry UIShell_StoreEntry;
 
 struct UIShell_SidebarState
 {
@@ -252,6 +253,16 @@ struct UIShell_SidebarState
   Arena *observed_arena;
   UIShell_WorkspaceId *observed;
   U64 observed_count;
+  // Workspace arrangements and Slots in Andamento (uishell_workspace_store.c):
+  // each workspace's document as last committed or built; the config gen,
+  // content revision and snapshot count last synced; and the calls and
+  // commits made, which the behaviour harness counts across a gesture.
+  Arena *store_arena;
+  UIShell_StoreEntry *store_entries;
+  U64 store_entry_count, store_entry_capacity;
+  B32 store_synced;
+  U64 store_cfg_gen, store_content_revision, store_snapshot_count;
+  U64 store_calls, store_commits;
   B32 initialized;
   U64 reveal_workspace_id;
   U8 error[512];
@@ -416,6 +427,8 @@ uishell_sidebar_context_label(UIShell_SidebarState *state, AndamentoNode *nodes,
 
 internal void uishell_sidebar_local_publish(UIShell_SidebarState *state, CFG_ID window);
 internal void uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush);
+internal void uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 force);
+internal void uishell_workspace_store_release(UIShell_SidebarState *state);
 internal CFG_Node *uishell_sidebar_local_tree_from_id(CFG_ID window);
 
 internal void
@@ -428,8 +441,10 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     if(state->window && state->core)
     {
       uishell_sidebar_local_publish(state, state->window);
+      uishell_workspace_store_sync(state, cfg_node_from_id(state->window), 1);
       uishell_sidebar_records_save(state, 0, 1);
     }
+    uishell_workspace_store_release(state);
     if(state->window) { cfg_node_release(rd_state->cfg, uishell_sidebar_local_tree_from_id(state->window)); }
     state->window = 0;
     for(U64 i = 0; i < ArrayCount(state->cards); i++)
@@ -1432,10 +1447,13 @@ uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
   }
   if(changed) { uishell_sidebar_refresh(state); rd_request_frame(); }
   if(topology_ready) { uishell_sidebar_publish(state, split); }
+  // Arrangements edited since are committed, once no gesture is in flight.
+  if(topology_ready) { uishell_workspace_store_sync(state, split->owner_cfg, 0); }
   scratch_end(scratch);
 }
 
 #include "uishell/uishell_sidebar_records.c"
+#include "uishell/uishell_workspace_store.c"
 
 internal UIShell_SidebarState *
 uishell_sidebar_init(RD_WindowState *ws)
@@ -1498,6 +1516,10 @@ uishell_sidebar_init(RD_WindowState *ws)
       }
       state->window = ws->cfg_id;
       uishell_sidebar_records_load(state, window);
+      // Workspaces saved without their panel trees get them from Andamento,
+      // and the window's focus is read again from them.
+      uishell_workspace_store_load(state, window);
+      rd_window_restore_presentation(ws);
       uishell_sidebar_refresh(state);
     }
   }
