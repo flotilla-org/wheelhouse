@@ -116,6 +116,10 @@ jobs:
         run: call build.bat wheelhouse meta
       - name: Build on Linux
         if: runner.os == 'Linux'
+        # With CI set, build.sh also runs the headless harnesses against the
+        # real Andamento and Cleat libraries: docking validity and integration,
+        # and restart behaviour against golden logical-state snapshots
+        # (tools/test-state-behaviour.py; goldens in src/uishell/tests/).
         run: bash build.sh wheelhouse
       - name: Build and verify macOS bundle
         if: runner.os == 'macOS'
@@ -144,6 +148,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tools/check-windows-conpty.ps1 -Expect inbox
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # --managed_content_diagnostics stays macOS-only: it runs real terminal
+      # sessions, which ask Cleat for its Ghostty VT engine, and this job builds
+      # Cleat without one (vt: none). Running it here needs a ghostty-vt build.
       - name: Linux UI diagnostics
         if: runner.os == 'Linux'
         env:

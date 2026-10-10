@@ -61,6 +61,7 @@
 #include "uishell/uishell_terminal_glyph.h"
 #include "uishell/uishell_views.h"
 #include "uishell/uishell_overview_benchmark.h"
+#include "uishell/uishell_logical_state.h"
 
 //- rjf: [c]
 #include "base/base_inc.c"
@@ -94,6 +95,7 @@
 #include "uishell/uishell_views.c"
 #include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
+#include "uishell/uishell_logical_state.c"
 #include "uishell/uishell_terminal_clipboard.c"
 #include "uishell/uishell_terminal_clipboard_diagnostics.c"
 #include "uishell/uishell_terminal_selection_diagnostics.c"
