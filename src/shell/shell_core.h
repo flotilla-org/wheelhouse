@@ -909,6 +909,7 @@ struct RD_State
 
   // rjf: autosave state
   F32 seconds_until_autosave;
+  U64 autosave_change_gen; // config generation the last autosave wrote
 
   // rjf: commands
   UIShell_CmdPack *first_cmd_pack;
@@ -1241,6 +1242,10 @@ internal UIShell_WorkspaceMount uishell_workspace_mount_from_window(Arena *arena
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_current_regs(Arena *arena);
 internal UIShell_ControlledSplit uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window);
+internal void rd_window_save_presentation(RD_WindowState *ws);
+internal void rd_window_restore_presentation(RD_WindowState *ws);
+internal void rd_save_presentation(void);
+internal B32 rd_autosave(void);
 internal void uishell_sidebar_reset_regions(CFG_Node *owner);
 internal B32 uishell_controlled_split_workspace_can_close(UIShell_ControlledSplit *split, UIShell_MaterializedWorkspace *workspace);
 internal B32 uishell_workspace_cfg_has_subject(CFG_Node *workspace);

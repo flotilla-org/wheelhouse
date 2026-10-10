@@ -175,6 +175,7 @@ uishell_dispatch_app_command(String8 name)
 
   if(str8_match(name, str8_lit("exit"), 0))
   {
+    rd_save_presentation();
     UISHELL_APP_SAVE_BEFORE_EXIT();
     rd_state->quit = 1;
   }
