@@ -110,6 +110,14 @@ random_panel(RD_Arrangement *arrangement, U64 *seed, B32 leaf)
   return &rd_nil_arrangement_panel;
 }
 
+// The caller's visibility rule for drops: one View is filtered out.
+global CFG_ID hidden_view;
+internal B32
+shown_tab(CFG_ID view)
+{
+  return view != hidden_view;
+}
+
 internal void
 entry_point(CmdLine *cmdline)
 {
@@ -339,6 +347,80 @@ entry_point(CmdLine *cmdline)
     Check(!rd_arrangement_reorder(arrangement, left, right));
     check_saved(arena, arrangement, window);
     cfg_node_release(cfg, window);
+  }
+
+  // A drop settles the panel its View left in the same edit, by the caller's
+  // rule: a move closes a source with no shown tab left, or selects its first
+  // shown tab; a split closes it only with no tabs left, and selects only when
+  // it has no Selected View.
+  {
+    char *text = "window:{split_x panels:{0.3:{text:{selected} terminal binary} 0.3:{jackstay} 0.4:{sessions}}}";
+    CFG_Node *window = fixture(arena, text);
+    CFG_Node *source_node = child(window, "panels")->first;
+    CFG_Node *a = source_node->first, *hidden = a->next, *b = hidden->next;
+    CFG_ID hidden_id = hidden->id;
+    hidden_view = hidden->id;
+    RD_Arrangement *arrangement = rd_arrangement_from_cfg(arena, child(window, "panels"));
+    RD_PanelID source = arrangement->root->first->id, middle = arrangement->root->first->next->id, last = arrangement->root->last->id;
+    // Moving an unselected tab still selects the first shown one; the hidden
+    // tab is passed over.
+    Check(rd_arrangement_select(arrangement, source, b->id));
+    RD_ArrangementDrop drop = rd_arrangement_drop(arrangement, b->id, last, Dir2_Invalid, 0, shown_tab);
+    Check(drop.panel == last && drop.source == source && drop.heir == 0);
+    Check(rd_arrangement_panel_from_id(arrangement, source)->selected == a->id);
+    check_saved(arena, arrangement, window);
+    // Moving the last shown tab closes the source, releasing the hidden View;
+    // its next sibling is the heir.
+    drop = rd_arrangement_drop(arrangement, a->id, middle, Dir2_Invalid, 0, shown_tab);
+    Check(drop.panel == middle && drop.source == source && drop.heir == middle);
+    Check(rd_arrangement_panel_from_id(arrangement, source) == &rd_nil_arrangement_panel);
+    Check(rd_arrangement_panel_from_id(arrangement, middle)->selected == a->id);
+    check_saved(arena, arrangement, window);
+    Check(cfg_node_from_id(hidden_id) == &cfg_nil_node && a->parent->id == rd_arrangement_panel_from_id(arrangement, middle)->cfg);
+    // Moving within a panel settles nothing.
+    drop = rd_arrangement_drop(arrangement, a->id, middle, Dir2_Invalid, 0, shown_tab);
+    Check(drop.panel == middle && drop.heir == 0 && arrangement->root->child_count == 2);
+    cfg_node_release(cfg, window);
+
+    // A split keeps a source with only a hidden tab, without selecting it.
+    window = fixture(arena, text);
+    source_node = child(window, "panels")->first;
+    a = source_node->first; hidden = a->next; b = hidden->next;
+    hidden_view = hidden->id;
+    arrangement = rd_arrangement_from_cfg(arena, child(window, "panels"));
+    source = arrangement->root->first->id; middle = arrangement->root->first->next->id;
+    Check(rd_arrangement_select(arrangement, source, b->id));
+    drop = rd_arrangement_drop(arrangement, a->id, middle, Dir2_Down, 0, shown_tab);
+    Check(drop.panel != 0 && drop.source == source && drop.heir == 0);
+    Check(rd_arrangement_panel_from_id(arrangement, source)->selected == b->id);
+    Check(rd_arrangement_panel_from_id(arrangement, drop.panel)->selected == a->id);
+    rd_arrangement_drop(arrangement, b->id, middle, Dir2_Up, 0, shown_tab);
+    Check(rd_arrangement_panel_from_id(arrangement, source)->selected == 0 && rd_arrangement_panel_from_id(arrangement, source)->tab_count == 1);
+    check_saved(arena, arrangement, window);
+    // Splitting its last tab off a panel keeps that panel, now empty.
+    RD_PanelID landed = rd_arrangement_panel_from_view(arrangement, b->id)->id;
+    drop = rd_arrangement_drop(arrangement, b->id, landed, Dir2_Right, 0, shown_tab);
+    Check(drop.source == landed && drop.heir == 0 && rd_arrangement_panel_from_id(arrangement, landed)->tab_count == 0);
+    // A split takes an emptied source away and names its heir.
+    RD_PanelID emptied = rd_arrangement_panel_from_view(arrangement, b->id)->id;
+    drop = rd_arrangement_drop(arrangement, b->id, source, Dir2_Left, 0, shown_tab);
+    Check(drop.source == emptied && drop.heir != 0 && rd_arrangement_panel_from_id(arrangement, emptied) == &rd_nil_arrangement_panel);
+    Check(rd_arrangement_panel_from_id(arrangement, landed)->tab_count == 0);
+    check_saved(arena, arrangement, window);
+    // No View only splits; settling without closing leaves an emptied panel.
+    U64 panels_before = 0;
+    for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p)) { panels_before += 1; }
+    drop = rd_arrangement_drop(arrangement, 0, source, Dir2_Down, 0, shown_tab);
+    Check(drop.panel != 0 && drop.source == 0 && rd_arrangement_panel_from_id(arrangement, drop.panel)->tab_count == 0);
+    Check(!rd_arrangement_settle(arrangement, drop.panel, Dir2_Invalid, shown_tab, 0));
+    Check(rd_arrangement_settle(arrangement, drop.panel, Dir2_Invalid, shown_tab, 1));
+    Check(rd_arrangement_panel_from_id(arrangement, drop.panel) == &rd_nil_arrangement_panel);
+    U64 panels_after = 0;
+    for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p)) { panels_after += 1; }
+    Check(panels_after == panels_before);
+    check_saved(arena, arrangement, window);
+    cfg_node_release(cfg, window);
+    hidden_view = 0;
   }
 
   // Resizing moves one boundary, holding both sides to the floor where they

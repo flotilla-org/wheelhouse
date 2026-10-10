@@ -287,6 +287,12 @@ rd_cfg_is_project_filtered(CFG_Node *cfg)
   return result;
 }
 
+internal B32
+rd_tab_is_shown(CFG_ID view)
+{
+  return !rd_cfg_is_project_filtered(cfg_node_from_id(view));
+}
+
 internal Vec4F32
 rd_hsva_from_cfg(CFG_Node *cfg)
 {
@@ -4014,17 +4020,8 @@ rd_dock_width_from_geometry_for_view(RD_DockGeometry *geometry, CFG_Node *destin
   // Thus a nil View safely selects insertion-only measurement below.
   Temp scratch = scratch_begin(0, 0);
   RD_Arrangement *arrangement = rd_arrangement_from_cfg(scratch.arena, geometry->mount->panel_tree.root->cfg);
-  CFG_Node *view = moving_view;
-  RD_ArrangementPanel *origin = rd_arrangement_panel_from_cfg(arrangement, view->parent->id);
-  B32 empty = origin != &rd_nil_arrangement_panel && view != &cfg_nil_node;
-  // move_view closes when no unfiltered tabs remain; split_panel closes
-  // only when there are no tabs at all. Mirror those distinct command rules.
-  for(RD_ArrangementTab *tab = origin->first_tab; tab; tab = tab->next)
-  {
-    if(tab->view != view->id && (dir != Dir2_Invalid || !rd_cfg_is_project_filtered(cfg_node_from_id(tab->view)))) { empty = 0; }
-  }
   F32 width = rd_dock_moving_width(arrangement, rd_arrangement_panel_from_cfg(arrangement, destination->id)->id,
-    empty ? origin->id : 0, geometry->area, dir, geometry->inset);
+    moving_view->id, rd_tab_is_shown, geometry->area, dir, geometry->inset);
   scratch_end(scratch);
   return width;
 }
