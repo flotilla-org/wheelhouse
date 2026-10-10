@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Exercise launcher lifecycle with controlled UI, watcher, and connector processes."""
+"""Exercise launcher lifecycle with controlled UI and watcher processes.
+
+Wheelhouse runs the Flotilla connector for each Dashboard subscription; the
+launcher only asks for a subscription and names the Flotilla to run, so these
+check what it passes. Connector restarts, backoff and the build-mismatch hint
+are tested with Wheelhouse's supervisor (src/ingress/connector.rs).
+"""
 import importlib.util
 import itertools
 import os
@@ -31,20 +37,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
 print('args=' + repr(sys.argv[1:]), flush=True)
 print('pid=' + str(os.getpid()), flush=True)
 print('daemon=' + os.environ.get('FLOTILLA_DAEMON', ''), flush=True)
+print('socket=' + path, flush=True)
 with socketserver.UnixStreamServer(path, Handler) as server:
     server.serve_forever()
 '''
-FAKE_FLOTILLA = '''#!/usr/bin/env python3
-import os, sys, time
-print('args=' + repr(sys.argv[1:]), flush=True)
-print('socket=' + os.environ['WHEELHOUSE_SOCKET'], flush=True)
-print('daemon=' + os.environ.get('FLOTILLA_DAEMON', ''), flush=True)
-if os.environ.get('FAIL_PRODUCER') or (os.environ.get('FAIL_PRODUCER_UNTIL') and
-                                      not os.path.exists(os.environ['FAIL_PRODUCER_UNTIL'])):
-    sys.exit(7)
-print('connector ready', flush=True)
-while True: time.sleep(1)
-'''
+FAKE_FLOTILLA = '#!/bin/sh\nexit 0\n'
 FAKE_WATCHER = '''#!/usr/bin/env python3
 import http.client, os, socket, sys, time
 assert sys.argv[1:3] == ['--transport', 'wheelhouse'], sys.argv
@@ -61,12 +58,6 @@ assert connection.getresponse().status == 204
 connection.close()
 while all(os.path.isdir(root) for root in roots): time.sleep(.1)
 sys.exit(8)
-'''
-MISMATCH_FLOTILLA = '''#!/usr/bin/env python3
-import sys
-print('wire generation mismatch: client fingerprint old speaks proto 21 (build old+dirty); '
-      'daemon fingerprint new speaks proto 21 (build new)', file=sys.stderr)
-sys.exit(1)
 '''
 
 
@@ -140,7 +131,7 @@ class WatcherBuildTests(unittest.TestCase):
                 self.assertEqual(build_commands, expected)
                 self.assertEqual(rustc.call_count, int(not (supplied_watcher or no_git)))
                 launch.assert_called_once()
-                args, actual_binary, _, _ = launch.call_args.args
+                args, actual_binary, _, _, _ = launch.call_args.args
                 self.assertEqual(actual_binary, binary)
                 if not no_git:
                     self.assertEqual(args.watcher, watcher)
@@ -184,12 +175,11 @@ class DailyDriverTests(unittest.TestCase):
         path = self.state / 'logs' / (name + '.log')
         return path.read_text() if path.exists() else ''
 
-    def ready(self, process, connector=False, previous_pid=None):
+    def ready(self, process, previous_pid=None, patch=True):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             app_log = self.log('wheelhouse')
-            if ('patch received' in app_log and
-                    (not connector or 'socket=' in self.log('flotilla')) and
+            if (('patch received' in app_log or (not patch and 'socket=' in app_log)) and
                     (previous_pid is None or f'pid={previous_pid}\n' not in app_log)):
                 return
             if process.poll() is not None:
@@ -216,21 +206,26 @@ class DailyDriverTests(unittest.TestCase):
             process = self.start(['--git-only'] + extra, **environment)
             self.ready(process, previous_pid=pid)
             self.assertIn(repr('--dashboard:' + str(dashboard)), self.log('wheelhouse'))
+            # --git-only asks for no Flotilla subscription.
+            self.assertNotIn('--flotilla_subscription', self.log('wheelhouse'))
             process.send_signal(signal.SIGTERM)
             self.assertEqual(process.wait(timeout=10), 130)
             self.assertIn('Dashboard: ' + str(dashboard), process.stdout.read())
 
     def test_full_launch_lock_signal_cleanup_and_restart(self):
         process = self.start()
-        self.ready(process, connector=True)
+        self.ready(process)
         self.assertNotIn("--ingress_record", self.log("wheelhouse"))
         watcher = self.log('git')
         self.assertIn("'--transport', 'wheelhouse', '--socket'", watcher)
         self.assertIn("'--roots', " + repr(str(ROOT)), watcher)
-        connector = self.log('flotilla')
-        self.assertIn("'pm', 'connect', '--wheelhouse-socket'", connector)
-        self.assertIn(str(self.flotilla), connector)
-        path = connector.split('socket=', 1)[1].splitlines()[0]
+        # Wheelhouse subscribes the Dashboard to Flotilla's default daemon
+        # and runs this Flotilla's connector; the launcher starts none.
+        app = self.log('wheelhouse')
+        self.assertIn("'--flotilla_subscription'", app)
+        self.assertIn(repr('--flotilla_bin:' + str(self.flotilla)), app)
+        self.assertFalse(list((self.state / 'logs').glob('flotilla*')))
+        path = app.split('socket=', 1)[1].splitlines()[0]
         self.assertTrue(Path(path).is_socket())
         self.assertEqual(Path(path).parent.stat().st_mode & 0o777, 0o700)
         second = self.start()
@@ -255,29 +250,31 @@ class DailyDriverTests(unittest.TestCase):
         self.assertIn('Andamento git watcher not found', process.stdout.read())
         self.assertFalse((self.state / 'logs/wheelhouse.log').exists())
 
-    def test_explicit_remote_endpoint_is_inherited_by_ui_and_connector(self):
+    def test_explicit_remote_endpoint_is_subscribed_and_inherited_by_ui(self):
         endpoint = 'ssh://udder/opt/flotilla tools/flotilla'
         process = self.start(['--daemon', endpoint])
-        self.ready(process, connector=True)
+        self.ready(process)
         self.assertIn('daemon=' + endpoint, self.log('wheelhouse'))
-        self.assertIn('daemon=' + endpoint, self.log('flotilla'))
+        self.assertIn(repr('--flotilla_subscription:' + endpoint), self.log('wheelhouse'))
+
+    def test_inherited_endpoint_is_subscribed(self):
+        endpoint = 'ssh://udder'
+        process = self.start(FLOTILLA_DAEMON=endpoint)
+        self.ready(process)
+        self.assertIn(repr('--flotilla_subscription:' + endpoint), self.log('wheelhouse'))
 
     def test_no_git_does_not_require_watcher(self):
         self.command = self.command[:1]
         process = self.start(['--no-git'], ANDAMENTO_GIT_WATCHER_BIN=str(self.directory / 'missing'))
-        deadline = time.monotonic() + 10
-        while 'connector ready' not in self.log('flotilla') and time.monotonic() < deadline:
-            if process.poll() is not None:
-                self.fail(process.stdout.read())
-            time.sleep(.05)
-        self.assertIn('connector ready', self.log('flotilla'))
+        self.ready(process, patch=False)
+        self.assertIn("'--flotilla_subscription'", self.log('wheelhouse'))
         self.assertFalse((self.state / 'logs/git.log').exists())
 
     def test_startup_failure_does_not_start_producers(self):
         process = self.start(FAIL_START='1')
         self.assertEqual(process.wait(timeout=10), 1)
         self.assertIn('before startup', process.stdout.read())
-        self.assertFalse((self.state / 'logs/flotilla.log').exists())
+        self.assertFalse((self.state / 'logs/git.log').exists())
 
     def install_fleet(self, generation, content=FAKE_FLOTILLA):
         fleet = self.directory / '.local/opt/flotilla-fleet'
@@ -290,13 +287,18 @@ class DailyDriverTests(unittest.TestCase):
         current.symlink_to(generation)
         return binary
 
+    def flotilla_bin(self):
+        return self.log('wheelhouse').split("'--flotilla_bin:", 1)[1].split("'", 1)[0]
+
     def test_fleet_default_follows_current(self):
+        # Wheelhouse runs the fleet's `current`, unresolved, so a connector
+        # restart after a fleet roll runs the new generation.
         del self.env['FLOTILLA_BIN']
-        self.install_fleet('old', MISMATCH_FLOTILLA)
-        binary = self.install_fleet('new')
+        self.install_fleet('old')
+        self.install_fleet('new')
         process = self.start()
-        self.ready(process, connector=True)
-        self.assertIn(str(binary), self.log('flotilla'))
+        self.ready(process)
+        self.assertEqual(self.flotilla_bin(), str(self.directory / '.local/opt/flotilla-fleet/current/bin/flotilla'))
 
     def test_dev_fallback_without_fleet(self):
         del self.env['FLOTILLA_BIN']
@@ -304,52 +306,23 @@ class DailyDriverTests(unittest.TestCase):
         binary.parent.mkdir(parents=True)
         shutil.copy2(self.flotilla, binary)
         process = self.start()
-        self.ready(process, connector=True)
-        self.assertIn(str(binary), self.log('flotilla'))
+        self.ready(process)
+        self.assertEqual(self.flotilla_bin(), str(binary))
 
     def test_explicit_override_wins_over_fleet(self):
-        self.install_fleet('old', MISMATCH_FLOTILLA)
+        self.install_fleet('old')
         process = self.start()
-        self.ready(process, connector=True)
-        self.assertIn(str(self.flotilla), self.log('flotilla'))
+        self.ready(process)
+        self.assertEqual(self.flotilla_bin(), str(self.flotilla))
 
-    def test_mismatch_hint_and_recovery_after_fleet_roll(self):
-        del self.env['FLOTILLA_BIN']
-        self.install_fleet('old', MISMATCH_FLOTILLA)
-        process = self.start()
-        deadline = time.monotonic() + 10
-        while 'restarting in' not in self.log('flotilla') and time.monotonic() < deadline:
-            if process.poll() is not None:
-                self.fail(process.stdout.read())
-            time.sleep(.05)
-        self.assertIn('restarting in', self.log('flotilla'))
-        binary = self.install_fleet('new')
-        self.ready(process, connector=True)
-        self.assertIn(str(binary), self.log('flotilla'))
-        process.terminate()
-        self.assertEqual(process.wait(timeout=10), 130)
-        output = process.stdout.read()
-        self.assertIn('Flotilla build mismatch: client old+dirty, daemon new;', output)
-        self.assertIn('set FLOTILLA_BIN', output)
-        self.assertNotIn('wire generation mismatch:', output)
-
-    def test_flotilla_failure_restarts_without_closing_app(self):
-        marker = self.directory / 'fleet-upgrade-complete'
-        process = self.start(FAIL_PRODUCER_UNTIL=str(marker))
-        deadline = time.monotonic() + 10
-        while 'status 7' not in self.log('flotilla') and time.monotonic() < deadline:
-            if process.poll() is not None:
-                self.assertIsNone(process.poll(), process.stdout.read())
-            time.sleep(.05)
-        self.assertIn('status 7', self.log('flotilla'))
-        self.assertIsNone(process.poll(), 'Wheelhouse should survive a connector failure')
-        marker.touch()
-        while 'connector ready' not in self.log('flotilla') and time.monotonic() < deadline:
-            time.sleep(.05)
-        self.assertIn('connector ready', self.log('flotilla'))
-        self.assertIsNone(process.poll())
-        pid = int(self.log('wheelhouse').split('pid=', 1)[1].splitlines()[0])
-        os.kill(pid, signal.SIGUSR1)
+    def test_missing_flotilla_fails_unless_git_only(self):
+        missing = str(self.directory / 'missing flotilla')
+        process = self.start(FLOTILLA_BIN=missing)
+        self.assertNotEqual(process.wait(timeout=10), 0)
+        self.assertIn('Flotilla binary not found', process.stdout.read())
+        process = self.start(['--git-only'], FLOTILLA_BIN=missing)
+        self.ready(process)
+        os.kill(int(self.log('wheelhouse').split('pid=', 1)[1].splitlines()[0]), signal.SIGUSR1)
         self.assertEqual(process.wait(timeout=10), 0)
 
     def test_git_producer_failure_stops_app(self):

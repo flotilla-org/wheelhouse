@@ -2,6 +2,7 @@
 // tree and each window's current Andamento snapshot and dashboard record and
 // changes none of them, so it can run between any two commands.
 //
+//   subscriptions         the Dashboard's, in order: kind, daemon, stale
 //   window <n>
 //     workspaces          selector order; subject or local; kept; arrangement
 //     sidebar             persisted display values; rows as Andamento presents
@@ -13,7 +14,9 @@
 //
 // Things are named by meaning: workspaces by label, rows by entity and label,
 // sections by title. Wheelhouse's own entities (.workspace, .section, .group,
-// .ref) have generated ids, so their labels stand in for them.
+// .ref) have generated ids, so their labels stand in for them. An entity
+// from a subscription names it by position (provider=<n>, or "removed");
+// "local" ones say nothing.
 
 typedef struct UIShell_LogicalText UIShell_LogicalText;
 struct UIShell_LogicalText
@@ -56,6 +59,16 @@ uishell_logical_quote(Arena *arena, String8 s)
   str8_list_push(arena, &parts, str8_skip(s, start));
   str8_list_push(arena, &parts, str8_lit("\""));
   return str8_list_join(arena, &parts, 0);
+}
+
+// " provider=<n>" (and " stale") for a subscription's entity; empty for a
+// local one.
+internal String8
+uishell_logical_provider(Arena *arena, String8 provider, B32 stale)
+{
+  String8 label = uishell_subscription_label(arena, provider);
+  if(str8_match(label, str8_lit("local"), 0)) { return str8_zero(); }
+  return push_str8f(arena, " provider=%S%s", label, stale ? " stale" : "");
 }
 
 internal String8
@@ -147,9 +160,10 @@ uishell_logical_workspace(UIShell_LogicalText *t, U64 depth, CFG_Node *window, C
   String8 home = str8_lit(" local");
   if(uishell_workspace_cfg_has_subject(owner))
   {
-    home = push_str8f(arena, " subject=%S/%S",
+    home = push_str8f(arena, " subject=%S/%S%S",
       cfg_node_child_from_string(owner, str8_lit("sidebar_entity_kind"))->first->string,
-      cfg_node_child_from_string(owner, str8_lit("sidebar_entity_id"))->first->string);
+      cfg_node_child_from_string(owner, str8_lit("sidebar_entity_id"))->first->string,
+      uishell_logical_provider(arena, uishell_workspace_cfg_subject_provider(owner), 0));
   }
   else if(uishell_sidebar_local_home(owner).size)
   { home = push_str8f(arena, " local with=project/%S", uishell_sidebar_local_home(owner)); }
@@ -261,6 +275,10 @@ uishell_logical_rows(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *st
     if(status.size) { str8_list_pushf(arena, &flags, " status=%S", uishell_logical_quote(arena, status)); }
     if(node.collapsed && uishell_sidebar_has_children(state, i)) { str8_list_push(arena, &flags, str8_lit(" collapsed")); }
     if(role == UIShell_SidebarRole_PassThrough) { str8_list_push(arena, &flags, str8_lit(" untitled")); }
+    AndamentoText provider = {0};
+    uint32_t stale = 0;
+    if(andamento_snapshot_node_provider(state->snapshot, i, &provider, &stale))
+    { str8_list_push(arena, &flags, uishell_logical_provider(arena, uishell_sidebar_string(provider), stale)); }
     uishell_logical_linef(t, depth+depths[i], "row %S %S%S",
       uishell_logical_entity(arena, uishell_sidebar_string(node.entity_kind), uishell_sidebar_string(node.entity_id)),
       title, str8_list_join(arena, &flags, 0));
@@ -444,7 +462,15 @@ uishell_logical_state_text(Arena *arena)
   Temp scratch = scratch_begin(&arena, 1);
   UIShell_LogicalText t = {scratch.arena};
   CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
+  uishell_logical_linef(&t, 0, "subscriptions%s", uishell_subscriptions.first ? "" : " none");
   U64 number = 1;
+  for(UIShell_Subscription *s = uishell_subscriptions.first; s; s = s->next, number++)
+  {
+    uishell_logical_linef(&t, 1, "subscription %I64u %S%S%s", number, s->kind,
+      s->daemon.size ? push_str8f(t.arena, " daemon=%S", uishell_logical_quote(t.arena, s->daemon)) : str8_zero(),
+      s->stale ? " stale" : "");
+  }
+  number = 1;
   for(CFG_NodePtrNode *n = windows.first; n; n = n->next, number++)
   {
     uishell_logical_linef(&t, 0, "window %I64u", number);
