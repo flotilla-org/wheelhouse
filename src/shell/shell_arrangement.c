@@ -796,3 +796,11 @@ rd_arrangement_resize(RD_Arrangement *arrangement, RD_PanelID id, F32 delta, F32
   panel->weight = rd_arrangement_quantize(min+delta);
   next->weight = rd_arrangement_quantize(max-delta);
 }
+
+internal void
+rd_arrangement_equalize(RD_Arrangement *arrangement, RD_PanelID id)
+{
+  RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(arrangement, id);
+  rd_arrangement_resize(arrangement, id, 0, 0);
+  rd_arrangement_resize(arrangement, id, (panel->next->weight-panel->weight)/2, 0);
+}

@@ -5093,7 +5093,8 @@ uishell_sidebar_size_panels(UIShell_ControlledSplit *split, UIShell_WorkspaceMou
 internal void
 uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_WorkspaceMount *mount, Rng2F32 rect)
 {
-  B32 manual = cfg_node_child_from_string(split->owner_cfg, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
+  // A boundary drag in flight is manual sizing, saved when it ends.
+  B32 manual = mount->resizing || cfg_node_child_from_string(split->owner_cfg, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
   CFG_PanelNode *root = mount->panel_tree.root;
   if(root->split_axis != Axis2_Y || root->child_count == 0) { return; }
   U64 count = root->child_count;
@@ -5138,7 +5139,7 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
     {
       F32 share = fixed[i] ? minimum : weight > 0 ? Max(0.f, panel->pct_of_parent)*remaining/weight : remaining/Max(1, unfixed);
       panel->pct_of_parent = share;
-      cfg_node_equip_stringf(rd_state->cfg, panel->cfg, "%f", share);
+      if(!mount->resizing) { cfg_node_equip_stringf(rd_state->cfg, panel->cfg, "%f", share); }
     }
     scratch_end(scratch); return;
   }

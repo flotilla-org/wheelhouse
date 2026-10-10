@@ -143,5 +143,8 @@ internal B32 rd_arrangement_reorder(RD_Arrangement *arrangement, RD_PanelID pane
 // sides at least `floor` where they can. Siblings whose weights drifted from
 // summing to one are rescaled first.
 internal void rd_arrangement_resize(RD_Arrangement *arrangement, RD_PanelID panel, F32 delta, F32 floor);
+// Gives the two sides of the boundary after `panel` equal shares of their
+// space, rescaling drifted siblings as resizing does.
+internal void rd_arrangement_equalize(RD_Arrangement *arrangement, RD_PanelID panel);
 
 #endif

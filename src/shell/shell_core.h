@@ -803,6 +803,28 @@ struct RD_FrameReplay
   void (*prepare_window)(RD_WindowState *ws);
 };
 
+// A panel boundary drag in flight (ADR 0012: an arrangement is committed
+// when its gesture ends). Rendering shows `live`, the arrangement as config
+// has it with the drag applied; config is untouched until the drag ends.
+typedef struct RD_BoundaryResize RD_BoundaryResize;
+struct RD_BoundaryResize
+{
+  Arena *arena;
+  UI_Key key;              // the boundary's box; zero when no drag is in flight
+  CFG_ID root;             // the arrangement's root panel node
+  CFG_ID panel;            // the boundary is after this panel's node
+  F32 delta;               // moved by, and held at least `floor` from either end
+  F32 floor;
+  Vec2F32 laid_out;        // both sides' laid out shares as the drag began
+  B32 moved;               // the boundary has moved since the press
+  // The arrangement as config has it, and a copy with the drag applied.
+  RD_Arrangement *base;
+  U64 base_pos;
+  RD_Arrangement *live;
+  U64 cfg_gen;             // the config `base` was loaded from
+  U64 frame_index;         // the last frame the drag was seen
+};
+
 typedef struct RD_State RD_State;
 struct RD_State
 {
@@ -954,6 +976,7 @@ struct RD_State
   // Creation drags share panel sites without allocating a saved View until drop.
   String8 drag_drop_creation_name;
   void (*drag_drop_commit)(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
+  RD_BoundaryResize boundary_resize;
 
   // rjf: cfg state
   CFG_State *cfg;
@@ -1031,6 +1054,9 @@ struct UIShell_WorkspaceMount
   RD_Arrangement *arrangement;
   // The renderer's view of `arrangement`.
   CFG_PanelTree panel_tree;
+  // Both show a boundary drag in flight, not what config has
+  // (rd_boundary_resize_show).
+  B32 resizing;
 };
 
 typedef struct UIShell_MaterializedWorkspace UIShell_MaterializedWorkspace;

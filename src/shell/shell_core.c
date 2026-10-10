@@ -3587,16 +3587,6 @@ rd_panel_catchall_drop_site_key(CFG_Node *panel)
 { return ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panel); }
 
 // Existing Views and creation drags use the same sites, geometry and commands.
-// A panel boundary drag: the two sides' laid out and saved sizes as it
-// began (saved ones as shares of their siblings' total), and that total
-// while saved sizes still need putting right (0 once they sum to one).
-typedef struct RD_BoundaryDrag RD_BoundaryDrag;
-struct RD_BoundaryDrag
-{
-  Vec4F32 v;
-  F32 drifted_total;
-};
-
 internal void
 rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
 {
@@ -3608,6 +3598,110 @@ rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
   else
   { uishell_cmd("move_view", .dst_panel = destination, .panel = rd_state->drag_drop_regs->panel,
                 .view = rd_state->drag_drop_regs->view, .prev_tab = previous_tab); }
+}
+
+//~ Panel boundary drags (ADR 0012: an arrangement is committed when its
+// gesture ends)
+//
+// A boundary drag resizes a copy of the arrangement each frame, and the
+// panel areas render from that copy (rd_boundary_resize_show). It saves once,
+// when the mouse is released. A drag that ends any other way (its boundary
+// went away, the action was killed) saved nothing, so there is nothing to put
+// back.
+
+internal void
+rd_boundary_resize_end(void)
+{
+  RD_BoundaryResize *resize = &rd_state->boundary_resize;
+  if(resize->arena) { arena_release(resize->arena); }
+  MemoryZeroStruct(resize);
+}
+
+// Copies the arrangement as config has it, reloading it first if config
+// changed under the drag (a command, a section appearing), and applies the
+// drag to the copy.
+internal void
+rd_boundary_resize_apply(void)
+{
+  RD_BoundaryResize *resize = &rd_state->boundary_resize;
+  if(resize->base == 0 || resize->cfg_gen != cfg_change_gen())
+  {
+    CFG_Node *root = cfg_node_from_id(resize->root);
+    if(root == &cfg_nil_node) { rd_boundary_resize_end(); return; }
+    arena_clear(resize->arena);
+    resize->base = rd_arrangement_from_cfg(resize->arena, root);
+    resize->base_pos = arena_pos(resize->arena);
+    resize->cfg_gen = cfg_change_gen();
+  }
+  arena_pop_to(resize->arena, resize->base_pos);
+  resize->live = rd_arrangement_copy(resize->arena, resize->base);
+  // Until the boundary first moves the copy is as loaded: drifted saved
+  // sizes are put right by the move, so a click changes nothing.
+  if(resize->moved)
+  { rd_arrangement_resize(resize->live, rd_arrangement_panel_from_cfg(resize->live, resize->panel)->id, resize->delta, resize->floor); }
+}
+
+internal void
+rd_boundary_resize_begin(UI_Key key, UIShell_WorkspaceMount *mount, CFG_PanelNode *panel)
+{
+  rd_boundary_resize_end();
+  RD_BoundaryResize *resize = &rd_state->boundary_resize;
+  resize->arena = arena_alloc();
+  resize->key = key;
+  resize->root = mount->panels_root->id;
+  resize->panel = panel->cfg->id;
+  resize->laid_out = v2f32(panel->pct_of_parent, panel->next->pct_of_parent);
+  resize->frame_index = rd_state->frame_index;
+  rd_boundary_resize_apply();
+}
+
+// The drag in flight on `key`, or 0.
+internal RD_BoundaryResize *
+rd_boundary_resize_from_key(UI_Key key)
+{
+  RD_BoundaryResize *resize = &rd_state->boundary_resize;
+  return resize->arena != 0 && ui_key_match(resize->key, key) ? resize : 0;
+}
+
+// Still dragging, now by `delta` of the boundary's parent from where it
+// began; `moved` once the mouse has.
+internal void
+rd_boundary_resize_move(F32 delta, F32 floor, B32 moved)
+{
+  RD_BoundaryResize *resize = &rd_state->boundary_resize;
+  resize->frame_index = rd_state->frame_index;
+  resize->moved |= moved;
+  resize->delta = delta;
+  resize->floor = floor;
+  rd_boundary_resize_apply();
+}
+
+// The mouse was released: save the moved boundary, once.
+internal void
+rd_boundary_resize_commit(void)
+{
+  RD_BoundaryResize *resize = &rd_state->boundary_resize;
+  if(resize->moved) { rd_boundary_resize_apply(); }
+  if(resize->moved && resize->arena) { rd_arrangement_save(rd_state->cfg, resize->live); }
+  rd_boundary_resize_end();
+}
+
+// Shows the drag in flight on `mount`'s arrangement, if there is one: its
+// arrangement and panel tree become copies of the drag's. Everything that
+// lays panels out calls this before reading weights. Commands load what
+// config has, never this. A drag not seen since last frame has ended
+// without a release, and is dropped.
+internal void
+rd_boundary_resize_show(Arena *arena, UIShell_WorkspaceMount *mount)
+{
+  RD_BoundaryResize *resize = &rd_state->boundary_resize;
+  if(resize->arena && resize->frame_index+1 < rd_state->frame_index) { rd_boundary_resize_end(); }
+  if(mount->resizing || resize->arena == 0 || mount->panels_root->id != resize->root) { return; }
+  if(resize->cfg_gen != cfg_change_gen()) { rd_boundary_resize_apply(); }
+  if(resize->arena == 0) { return; }
+  mount->arrangement = rd_arrangement_copy(arena, resize->live);
+  mount->panel_tree = rd_panel_tree_from_arrangement(arena, mount->arrangement);
+  mount->resizing = 1;
 }
 
 //~ Docking drop targets (drag-model.md, "Drop-target visuals")
@@ -3961,6 +4055,7 @@ rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir, CFG_Node *vi
 internal void
 rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right, B32 tabs_in_title_bar)
 {
+  rd_boundary_resize_show(scratch.arena, mount);
   CFG_PanelTree panel_tree = mount->panel_tree;
   // Lazy measurement handles drags started by a View during this build and
   // keeps non-drag frames free of docking geometry work.
@@ -4109,45 +4204,29 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable, "###%p_%p", min_child->cfg, max_child->cfg);
           UI_Signal sig = ui_signal_from_box(box);
           B32 sidebar_boundary = rd_dock_host_from_cfg(panel->cfg, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar;
-          if(sidebar_boundary && (ui_double_clicked(sig) || ui_dragging(sig)))
-          { uishell_sidebar_manual_sizing(mount->window_cfg, !ui_double_clicked(sig)); }
+          RD_BoundaryResize *resize = rd_boundary_resize_from_key(box->key);
           if(ui_double_clicked(sig))
           {
             ui_kill_action();
-            F32 sum_pct = min_child->pct_of_parent + max_child->pct_of_parent;
-            min_child->pct_of_parent = 0.5f * sum_pct;
-            max_child->pct_of_parent = 0.5f * sum_pct;
-            cfg_node_equip_stringf(rd_state->cfg, min_child->cfg, "%f", min_child->pct_of_parent);
-            cfg_node_equip_stringf(rd_state->cfg, max_child->cfg, "%f", max_child->pct_of_parent);
+            if(sidebar_boundary) { uishell_sidebar_manual_sizing(mount->window_cfg, 0); }
+            Temp temp = temp_begin(scratch.arena);
+            RD_Arrangement *arrangement = rd_arrangement_from_cfg(temp.arena, mount->panels_root);
+            rd_arrangement_equalize(arrangement, rd_arrangement_panel_from_cfg(arrangement, min_child->cfg->id)->id);
+            rd_arrangement_save(rd_state->cfg, arrangement);
+            temp_end(temp);
           }
           else if(ui_pressed(sig))
+          {
+            rd_boundary_resize_begin(box->key, mount, min_child);
+          }
+          else if(ui_dragging(sig) && resize != 0)
           {
             // What's laid out can differ from what's saved (a sidebar's
             // collapsed sections give their space away in memory), so the
             // drag moves the saved sizes by what it moves the laid out ones.
-            // Saved sizes that drifted from summing to one are put right
-            // (all of them) on the first move, so a click writes nothing.
-            F32 saved_total = 0;
-            for(CFG_PanelNode *c = panel->first; c != &cfg_nil_panel_node; c = c->next) { saved_total += Max(0.f, (F32)f64_from_str8(c->cfg->string)); }
-            RD_BoundaryDrag drag = {{min_child->pct_of_parent, max_child->pct_of_parent,
-              (F32)f64_from_str8(min_child->cfg->string), (F32)f64_from_str8(max_child->cfg->string)},
-              saved_total > 0 && abs_f32(saved_total-1.f) > .0001f ? saved_total : 0};
-            if(drag.drifted_total > 0) { drag.v.v[2] /= saved_total; drag.v.v[3] /= saved_total; }
-            ui_store_drag_struct(&drag);
-          }
-          else if(ui_dragging(sig))
-          {
-            RD_BoundaryDrag *drag = ui_get_drag_struct(RD_BoundaryDrag);
-            if(drag->drifted_total > 0 && ui_drag_delta().v[split_axis] != 0)
-            {
-              for(CFG_PanelNode *c = panel->first; c != &cfg_nil_panel_node; c = c->next)
-              { cfg_node_equip_stringf(rd_state->cfg, c->cfg, "%f", Max(0.f, (F32)f64_from_str8(c->cfg->string))/drag->drifted_total); }
-              drag->drifted_total = 0;
-            }
-            Vec4F32 v = drag->v;
             Vec2F32 mouse_delta      = ui_drag_delta();
             F32 total_size           = dim_2f32(panel_rect).v[split_axis];
-            F32 min_pct__before      = v.v[0];
+            F32 min_pct__before      = resize->laid_out.v[0];
             F32 min_pixels__before   = min_pct__before * total_size;
             F32 min_pixels__after    = min_pixels__before + mouse_delta.v[split_axis];
             if(min_pixels__after < 50.f)
@@ -4156,7 +4235,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             }
             F32 min_pct__after       = min_pixels__after / total_size;
             F32 pct_delta            = min_pct__after - min_pct__before;
-            F32 max_pct__before      = v.v[1];
+            F32 max_pct__before      = resize->laid_out.v[1];
             F32 max_pct__after       = max_pct__before - pct_delta;
             F32 max_pixels__after    = max_pct__after * total_size;
             if(max_pixels__after < 50.f)
@@ -4169,14 +4248,17 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             min_child->pct_of_parent = min_pct__after;
             max_child->pct_of_parent = max_pct__after;
             // Saved sizes keep the drag's minimum too, so a section expanded
-            // later still shows its header.
-            F32 floor_pct = 50.f/Max(1.f, total_size);
-            F32 saved_delta = pct_delta;
-            if(v.v[2]+v.v[3] >= 2*floor_pct) { saved_delta = Clamp(floor_pct-v.v[2], saved_delta, v.v[3]-floor_pct); }
-            F32 min_saved = v.v[2] + saved_delta, max_saved = v.v[3] - saved_delta;
-            cfg_node_equip_stringf(rd_state->cfg, min_child->cfg, "%f", min_saved);
-            cfg_node_equip_stringf(rd_state->cfg, max_child->cfg, "%f", max_saved);
+            // later still shows its header. Later frames lay out from the
+            // resized copy (rd_boundary_resize_show).
+            rd_boundary_resize_move(pct_delta, 50.f/Max(1.f, total_size), mouse_delta.v[split_axis] != 0);
             is_changing_panel_boundaries = 1;
+          }
+          else if(ui_released(sig) && resize != 0)
+          {
+            // Dragging a sidebar boundary opts into saved sizes; until now
+            // the sidebar laid out the drag's copy as saved sizes.
+            if(sidebar_boundary) { uishell_sidebar_manual_sizing(mount->window_cfg, 1); }
+            rd_boundary_resize_commit();
           }
         }
       }
@@ -5240,6 +5322,8 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *root = uishell_sidebar_dock_layout(split);
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, split->owner_cfg, root);
+  // Sizing reads the weights too.
+  rd_boundary_resize_show(scratch.arena, &mount);
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   ws->sidebar->rect = rect;
   MemoryZeroStruct(&uishell_sidebar_subject_geometry);
