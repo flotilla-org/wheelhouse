@@ -303,6 +303,26 @@ _Avoid_: Runtime instance (the live attachment), binding, target reference
 An explicit operation that proposes a **Workspace Overlay**, or **Dashboard** changes, back to the source that owns the canonical version, such as flotilla. Without it, a user's overlay stays personal to them. Proposed, not built.
 _Avoid_: Autosave, replication
 
+**Automation Endpoint**:
+The routes on a **Local Endpoint** that let local clients — agents, test harnesses, scripts — observe the shell's **Semantic Tree** and invoke named commands. Observation and invocation are separately gated.
+_Avoid_: Agent API (not agent-specific), control socket (collides with **Control Surface**)
+
+**Semantic Tree**:
+The model-level description of the shell served to automation clients: windows, **Workspaces**, **Panels**, **Views** and the **Control Surface**, each with an **Automation ID**, role, state and bounds. Derived from the shell's model, not from drawn UI boxes.
+_Avoid_: UI dump, box tree, accessibility tree
+
+**Accessibility Tree**:
+The per-element tree published to the platform's assistive-technology APIs (UIA, AX, AT-SPI) for screen readers and other assistive tools. Finer-grained than the **Semantic Tree**, and shares its **Automation IDs** where nodes correspond.
+_Avoid_: Semantic tree, a11y dump
+
+**Automation ID**:
+A stable, locale-independent identifier for a **Semantic Tree** node, an **Accessibility Tree** node or a command. It survives relaunch and translation, and never derives from display text.
+_Avoid_: Label, display name, UI key
+
+**Caller Context**:
+Where an automation client is calling from: the **View**, **Workspace** and **Workspace Subject** that currently host the caller's terminal session. It is resolved at the time of each call, because a session can move or reattach.
+_Avoid_: Self, current view, environment view ID
+
 ## Relationships
 
 - A **Panel** hosts one or more **Views**.
