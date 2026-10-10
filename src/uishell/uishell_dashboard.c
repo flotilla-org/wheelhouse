@@ -7,6 +7,7 @@
 //   <shared>/dashboards/<name>/        the Dashboard directory
 //     id                               its Dashboard ID (UUIDv7), written on first save
 //     dashboard.kdl, workspace-<id>.kdl  Andamento's records (uishell_sidebar_records.c)
+//     subscriptions.kdl                its provider subscriptions (uishell_subscriptions.c)
 //     windows/<andamento_records id>/  records of the process's other windows
 //   <device>/
 //     last_dashboard                   the directory opened last
@@ -135,6 +136,7 @@ uishell_dashboard_open(String8 dashboard, String8 folder)
   d->presentation_path = push_str8f(d->arena, "%S/presentation/%S.wheelhouse", device, id);
   d->identity_saved = 0;
   scratch_end(scratch);
+  uishell_subscriptions_load();
 }
 
 internal void

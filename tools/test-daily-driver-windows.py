@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Native Windows pipe, profile-lock and owned-process lifecycle contracts."""
+"""Native Windows pipe, profile-lock and owned-process lifecycle contracts.
+
+Wheelhouse runs the Flotilla connector for each Dashboard subscription; the
+launcher asks for a subscription to the configured daemon and names the
+Flotilla to run. Connector restarts and the job that owns its descendants
+belong to Wheelhouse's supervisor (src/ingress/connector.rs).
+"""
 import ctypes as C
 from ctypes import wintypes as W
 import os
@@ -60,20 +66,6 @@ while True:
     kernel.DisconnectNamedPipe(handle)
 '''
 
-CONNECTOR = '''
-import os, subprocess, sys, time
-child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'],
-                         creationflags=subprocess.CREATE_NO_WINDOW)
-print('pid=' + str(os.getpid()), flush=True)
-print('grandchild=' + str(child.pid), flush=True)
-print('args=' + repr(sys.argv[1:]), flush=True)
-print('daemon=' + os.environ.get('FLOTILLA_DAEMON', ''), flush=True)
-print('socket=' + os.environ['WHEELHOUSE_SOCKET'], flush=True)
-marker = os.environ.get('FAIL_UNTIL')
-if marker and not os.path.exists(marker): sys.exit(7)
-print('connector ready', flush=True)
-while True: time.sleep(1)
-'''
 
 
 def alive(pid):
@@ -103,7 +95,8 @@ class WindowsDailyDriverTests(unittest.TestCase):
         self.state = self.directory / 'saved settings'
         self.close_app = self.directory / 'close-app'
         self.app = self.wrapper('fake wheelhouse', APP)
-        self.connector = self.wrapper('fake flotilla', CONNECTOR)
+        # Only a path the launcher checks and passes on.
+        self.connector = self.wrapper('fake flotilla', 'raise SystemExit(0)\n')
         self.env = {**os.environ, 'PYTHONUTF8': '1', 'WHEELHOUSE_BIN': str(self.app),
                     'FLOTILLA_BIN': str(self.connector), 'FLOTILLA_DAEMON': 'ssh://inherited',
                     'WHEELHOUSE_DAILY_DIR': str(self.state), 'CLOSE_APP': str(self.close_app),
@@ -142,21 +135,18 @@ class WindowsDailyDriverTests(unittest.TestCase):
     def ready(self, process, previous_pids=()):
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            connector = self.log('flotilla')
             app = self.log('wheelhouse')
-            current_pids = {int(line.split('=', 1)[1]) for line in (app + connector).splitlines()
-                            if line.startswith(('pid=', 'grandchild='))}
-            if ('connector ready' in connector and
+            current_pids = {int(line.split('=', 1)[1]) for line in app.splitlines() if line.startswith('pid=')}
+            if ('socket=' in app and current_pids and
                     not set(previous_pids).intersection(current_pids)):
                 return
             if process.poll() is not None:
                 self.fail(process.stdout.read())
             time.sleep(.05)
-        self.fail('connector did not reach readiness: ' + self.log('flotilla'))
+        self.fail('app did not reach readiness: ' + self.log('wheelhouse'))
 
     def pids(self):
-        return [int(line.split('=', 1)[1]) for log in [self.log('wheelhouse'), self.log('flotilla')]
-                for line in log.splitlines() if line.startswith(('pid=', 'grandchild='))]
+        return [int(line.split('=', 1)[1]) for line in self.log('wheelhouse').splitlines() if line.startswith('pid=')]
 
     def assert_stopped(self, pids):
         deadline = time.monotonic() + 5
@@ -169,14 +159,14 @@ class WindowsDailyDriverTests(unittest.TestCase):
         process = self.start(['--daemon', endpoint])
         self.ready(process)
         self.assertIn('daemon=' + endpoint, self.log('wheelhouse'))
-        self.assertIn('daemon=' + endpoint, self.log('flotilla'))
+        # The Dashboard subscribes to it, and Wheelhouse runs this Flotilla's connector.
+        self.assertIn(repr('--flotilla_subscription:' + endpoint), self.log('wheelhouse'))
+        self.assertIn(repr('--flotilla_bin:' + str(self.connector.resolve())), self.log('wheelhouse'))
         # #316: the daily driver opens a Dashboard of its profile.
         # resolve() expands the runner's 8.3 temp name (RUNNER~1), as the driver's path does.
         self.assertIn(repr('--dashboard:' + str(self.state.resolve() / 'dashboards' / 'daily')), self.log('wheelhouse'))
-        first_pipe = self.log('flotilla').split('socket=', 1)[1].splitlines()[0]
+        first_pipe = self.log('wheelhouse').split('socket=', 1)[1].splitlines()[0]
         self.assertTrue(first_pipe.startswith(r'\\.\pipe\wheelhouse-daily-'))
-        self.assertIn("'pm', 'connect', '--wheelhouse-socket'", self.log('flotilla'))
-        self.assertIn(repr(str(self.connector.resolve())), self.log('flotilla'))
         self.assertFalse((self.state / 'logs/git.log').exists(), 'Windows defaults to no git watcher')
         pids = self.pids()
         self.assertTrue(all(alive(pid) for pid in pids))
@@ -191,7 +181,7 @@ class WindowsDailyDriverTests(unittest.TestCase):
         self.close_app.unlink()
         restarted = self.start()
         self.ready(restarted, previous_pids=pids)
-        next_pipe = self.log('flotilla').split('socket=', 1)[1].splitlines()[0]
+        next_pipe = self.log('wheelhouse').split('socket=', 1)[1].splitlines()[0]
         self.assertNotEqual(first_pipe, next_pipe)
         self.assertEqual((self.state / 'user').read_text(), 'saved layout')
         pids = self.pids()
@@ -246,32 +236,10 @@ os._exit(0)
         self.assertEqual(process.wait(timeout=10), 130)
         self.assert_stopped(pids)
 
-    def test_connector_failure_restarts_without_app_or_orphaned_grandchild(self):
-        marker = self.directory / 'daemon-ready'
-        process = self.start(FAIL_UNTIL=str(marker))
-        deadline = time.monotonic() + 15
-        while 'restarting in' not in self.log('flotilla') and time.monotonic() < deadline:
-            if process.poll() is not None:
-                self.fail(process.stdout.read())
-            time.sleep(.05)
-        self.assertIn('restarting in', self.log('flotilla'))
-        app_pid = int(self.log('wheelhouse').split('pid=', 1)[1].splitlines()[0])
-        first_pids = [pid for pid in self.pids() if pid != app_pid]
-        self.assert_stopped(first_pids)
-        marker.touch()
-        self.ready(process)
-        self.assertTrue(alive(app_pid))
-        self.assertEqual(app_pid, int(self.log('wheelhouse').split('pid=', 1)[1].splitlines()[0]))
-        pids = self.pids()
-        self.close_app.touch()
-        self.assertEqual(process.wait(timeout=10), 0)
-        self.assert_stopped(pids)
-
-    def test_startup_failure_starts_no_connector(self):
+    def test_startup_failure_is_reported(self):
         process = self.start(FAIL_START='1')
         self.assertEqual(process.wait(timeout=10), 1)
         self.assertIn('before startup', process.stdout.read())
-        self.assertFalse((self.state / 'logs/flotilla.log').exists())
 
     def test_missing_endpoint_fails_before_launch(self):
         self.env.pop('FLOTILLA_DAEMON')
@@ -311,7 +279,7 @@ os._exit(0)
                 process = self.start(['--daemon', endpoint])
                 try:
                     self.ready(process)
-                    self.assertIn('daemon=' + endpoint, self.log('flotilla'))
+                    self.assertIn(repr('--flotilla_subscription:' + endpoint), self.log('wheelhouse'))
                     pids = self.pids()
                 finally:
                     # Let the Python launcher unwind even when the wrapper test fails.

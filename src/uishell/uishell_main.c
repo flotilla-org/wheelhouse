@@ -56,6 +56,7 @@
 #include "uishell/uishell_meta.h"
 #include "uishell/uishell_eval.h"
 #include "uishell/uishell_dashboard.h"
+#include "uishell/uishell_subscriptions.h"
 #include "uishell/uishell_dispatch.h"
 #include "uishell/uishell_terminal_provider.h"
 #include "uishell/uishell_terminal_environment.h"
@@ -97,6 +98,7 @@
 #include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
 #include "uishell/uishell_dashboard.c"
+#include "uishell/uishell_subscriptions.c"
 #include "uishell/uishell_logical_state.c"
 #include "uishell/uishell_terminal_clipboard.c"
 #include "uishell/uishell_terminal_clipboard_diagnostics.c"
@@ -239,6 +241,20 @@ entry_point(CmdLine *cmd_line)
         uishell_ingress = wheelhouse_ingress_start_recorded(socket_path.str, socket_path.size, wm_send_wakeup_event,
           recording_path.str, recording_path.size, recording_bytes, recording_files, error, sizeof(error));
         if(uishell_ingress == 0) { fprintf(stderr, "Sidebar ingress: %s\n", error); abort_self(1); }
+        // Subscriptions' endpoints record beside it.
+        uishell_subscriptions.record = recording_path.size != 0;
+        uishell_subscriptions.record_bytes = recording_bytes;
+        uishell_subscriptions.record_files = recording_files;
+      }
+      // The Dashboard gains the Flotilla subscription a launcher asks for
+      // (for its daemon, or Flotilla's default) unless it has one already.
+      if(cmd_line_has_flag(cmd_line, str8_lit("flotilla_subscription")))
+      { uishell_subscription_ensure(str8_lit("flotilla"), cmd_line_string(cmd_line, str8_lit("flotilla_subscription"))); }
+      // Each subscription's endpoint is named after the local one.
+      if(socket_path.size != 0)
+      {
+        uishell_subscriptions_go_live(socket_path, cmd_line_string(cmd_line, str8_lit("flotilla_bin")),
+          str8_chop_last_slash(rd_state->log_path));
       }
 #if OS_MAC || OS_LINUX
       if(cmd_line_has_flag(cmd_line, str8_lit("managed_content_diagnostics")))
@@ -340,6 +356,7 @@ entry_point(CmdLine *cmd_line)
           abort_self(ok ? 0 : 1);
         }
       }
+      uishell_subscriptions_close();
       wheelhouse_ingress_stop(uishell_ingress);
       uishell_ingress = 0;
     }break;
@@ -357,7 +374,11 @@ entry_point(CmdLine *cmd_line)
                                     "--project:<path>\n"
                                     "Use to specify the location of a project file for app-specific settings.\n\n"
                                     "--andamento_socket:<path> --andamento_config:<KDL path>\n"
-                                    "Accept live metadata over HTTP/UDS using the specified sidebar template.\n\n"
+                                    "Accept live metadata over HTTP/UDS using the specified sidebar template. Each of the Dashboard's "
+                                    "subscriptions gets an endpoint of its own named after this one, and its connector is started.\n\n"
+                                    "--flotilla_subscription[:<daemon>] --flotilla_bin:<path>\n"
+                                    "Add a Flotilla subscription for this daemon (default: Flotilla's own) to the Dashboard unless it has one; "
+                                    "connectors run this Flotilla (default: $FLOTILLA_BIN, else flotilla).\n\n"
                                     "--scroll_region_fixture\nOpen the two-axis scrollbar fixture.\n\n"
                                     "--managed_content_diagnostics\nRun managed terminal reconciliation checks and exit (Unix).\n\n"
                                     "--shared_ui_diagnostics --shared_ui_fixture_dir:DIR\nRun config, file-picker and Metal blur regressions using an empty temporary directory.\n\n"

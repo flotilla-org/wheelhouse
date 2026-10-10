@@ -65,6 +65,20 @@ uishell_dispatch_config_command(String8 name)
       uishell_push_cmd_current(str8_lit("push_query"));
     }
   }
+  else if(str8_match(name, str8_lit("add_flotilla_subscription"), 0))
+  {
+    String8 daemon = str8_skip_chop_whitespace(uishell_regs()->string);
+    if(str8_match(daemon, str8_lit("default"), 0)) { daemon = str8_zero(); }
+    if(uishell_subscription_from_text(daemon.size ? daemon : str8_lit("default")))
+    { log_user_errorf("The Dashboard already subscribes to %S.", daemon.size ? daemon : str8_lit("Flotilla's default daemon")); }
+    else { uishell_subscription_add(str8_lit("flotilla"), daemon); }
+  }
+  else if(str8_match(name, str8_lit("remove_subscription"), 0))
+  {
+    UIShell_Subscription *subscription = uishell_subscription_from_text(uishell_regs()->string);
+    if(subscription) { uishell_subscription_remove(subscription); }
+    else { log_user_errorf("The Dashboard has no subscription \"%S\".", uishell_regs()->string); }
+  }
   else if(str8_match(name, str8_lit("open_recent_project"), 0))
   {
     CFG_Node *cfg = cfg_node_from_id(uishell_regs()->cfg);

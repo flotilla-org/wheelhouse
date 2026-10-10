@@ -1431,6 +1431,8 @@ uishell_sidebar_init(RD_WindowState *ws)
     state->core = andamento_create(config.str, config.size, &error);
     if(uishell_sidebar_result(state, state->core != 0, error))
     {
+      // Before any facts or records: what publishes as whom.
+      uishell_subscriptions_prepare_core(state->core);
       String8 patches = uishell_sidebar_fixture && !uishell_sidebar_live ? str8_cstring((char *)uishell_sidebar_fixture_patches) : str8_zero();
       for(U64 start = 0; start < patches.size;)
       {
@@ -1536,6 +1538,9 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     }
     if(effect.kind == ANDAMENTO_EFFECT_MATERIALIZE)
     {
+      // The same kind and id from two subscriptions are two subjects.
+      AndamentoText provider_text = {0};
+      String8 provider = andamento_effects_provider(effects, i, &provider_text) ? uishell_sidebar_string(provider_text) : str8_lit("local");
       // Reuse a previously created fixture workspace after switching modes or
       // restarting the app; its persisted identity is independent of its label.
       // A detached workspace reattaches with the layout it was detached with.
@@ -1543,7 +1548,8 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
       {
         if((str8_match(c->string, str8_lit("workspace"), 0) || str8_match(c->string, str8_lit("detached_workspace"), 0)) &&
            str8_match(cfg_node_child_from_string(c, str8_lit("sidebar_entity_kind"))->first->string, uishell_sidebar_string(effect.entity_kind), 0) &&
-           str8_match(cfg_node_child_from_string(c, str8_lit("sidebar_entity_id"))->first->string, uishell_sidebar_string(effect.entity_id), 0))
+           str8_match(cfg_node_child_from_string(c, str8_lit("sidebar_entity_id"))->first->string, uishell_sidebar_string(effect.entity_id), 0) &&
+           str8_match(uishell_workspace_cfg_subject_provider(c), provider, 0))
         { workspace = c; break; }
       }
       if(str8_match(workspace->string, str8_lit("detached_workspace"), 0))
@@ -1558,6 +1564,8 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
         cfg_node_new(rd_state->cfg, kind, uishell_sidebar_string(effect.entity_kind));
         CFG_Node *id = cfg_node_new(rd_state->cfg, workspace, str8_lit("sidebar_entity_id"));
         cfg_node_new(rd_state->cfg, id, uishell_sidebar_string(effect.entity_id));
+        if(!str8_match(provider, str8_lit("local"), 0))
+        { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("sidebar_entity_provider")), provider); }
         String8 cwd = effect.has_cwd ? uishell_sidebar_string(effect.cwd) : str8_zero();
         if(uishell_sidebar_fixture && !uishell_sidebar_live && str8_match(uishell_sidebar_string(effect.entity_kind), str8_lit("vessel"), 0) &&
            str8_match(uishell_sidebar_string(effect.entity_id), str8_lit("multi"), 0))
@@ -5815,19 +5823,27 @@ uishell_sidebar_diagnostics(CFG_Node *window)
 }
 
 // Called between frames only: snapshots used by clicks have finished dispatch.
+// A subscription's endpoint (`context`) stamps its patches with that
+// subscription as their provider; the local endpoint's are "local", the
+// default provider. A stale subscription is fresh again once it publishes.
 internal U32
-uishell_sidebar_apply_live(void *unused, const U8 *data, size_t size)
+uishell_sidebar_apply_live(void *context, const U8 *data, size_t size)
 {
+  UIShell_Subscription *subscription = (UIShell_Subscription *)context;
   B32 rejected = 0, unavailable = 0, applied = 0;
   for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
   {
     UIShell_SidebarState *state = uishell_sidebar_init(ws);
     if(state->core == 0) { unavailable = 1; continue; }
     char *error = 0;
-    B32 accepted = andamento_apply_patch_json(state->core, wheelhouse_ingress_now_ms(), (AndamentoText){data, size}, &error);
+    U64 now = wheelhouse_ingress_now_ms();
+    B32 accepted = subscription ?
+      andamento_apply_patch_json_from(state->core, now, uishell_sidebar_text(subscription->id), (AndamentoText){data, size}, &error) :
+      andamento_apply_patch_json(state->core, now, (AndamentoText){data, size}, &error);
     if(!uishell_sidebar_result(state, accepted, error)) { rejected = 1; }
     if(accepted) { state->error[0] = 0; applied = 1; }
   }
+  if(subscription && applied && subscription->stale) { uishell_subscription_set_stale(subscription, 0); }
   rd_request_frame();
   return rejected ? 0 : (unavailable || !applied) ? 2 : 1;
 }
@@ -5852,9 +5868,11 @@ internal void
 uishell_sidebar_poll_live(void)
 {
   U64 now = wheelhouse_ingress_now_ms();
-  if(uishell_ingress != 0)
+  uishell_subscriptions_poll();
+  if(uishell_ingress != 0 || uishell_subscriptions.first != 0)
   {
-    wheelhouse_ingress_poll_observed(uishell_ingress, uishell_sidebar_apply_live, uishell_sidebar_observed_workdirs, 0);
+    if(uishell_ingress != 0)
+    { wheelhouse_ingress_poll_observed(uishell_ingress, uishell_sidebar_apply_live, uishell_sidebar_observed_workdirs, 0); }
     if(now - uishell_sidebar_last_tick >= 250)
     {
       uishell_sidebar_last_tick = now;

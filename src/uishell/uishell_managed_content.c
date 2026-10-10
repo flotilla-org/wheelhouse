@@ -91,9 +91,10 @@ uishell_sidebar_reconcile_workspace(UIShell_SidebarState *state, CFG_Node *works
     CFG_Node *cwd = cfg_node_child_from_string(primary, str8_lit("cwd"));
     char *error = 0;
     UIShell_WorkspaceId workspace_id = uishell_workspace_id_from_cfg(workspace);
-    AndamentoContentPlan *plan = andamento_content_plan3(state->core, uishell_sidebar_workspace(workspace_id),
-      uishell_sidebar_text(kind), uishell_sidebar_text(id), uishell_sidebar_text(target),
-      uishell_sidebar_text(rd_expr_from_cfg(primary)), cwd != &cfg_nil_node,
+    AndamentoEntity3 entity = {uishell_sidebar_text(uishell_workspace_cfg_subject_provider(workspace)),
+      uishell_sidebar_text(kind), uishell_sidebar_text(id)};
+    AndamentoContentPlan *plan = andamento_content_plan_entity(state->core, uishell_sidebar_workspace(workspace_id),
+      entity, uishell_sidebar_text(target), uishell_sidebar_text(rd_expr_from_cfg(primary)), cwd != &cfg_nil_node,
       uishell_sidebar_text(cwd->first->string), &error);
     if(uishell_sidebar_result(state, plan != 0, error))
     {
