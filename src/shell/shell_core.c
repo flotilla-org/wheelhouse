@@ -10603,7 +10603,7 @@ rd_frame(void)
     rd_state->font_slot_table[RD_FontSlot_Main]  = fnt_tag_from_path(main_font_name);
     rd_state->font_slot_table[RD_FontSlot_Code]  = fnt_tag_from_path(code_font_name);
     // A UI font from settings is also its own semibold: only the embedded
-    // default comes with a semibold face.
+    // default comes with a semibold face. Group headers then go by size.
     rd_state->font_slot_table[RD_FontSlot_MainSemibold] = rd_state->font_slot_table[RD_FontSlot_Main];
     if(fnt_tag_match(rd_state->font_slot_table[RD_FontSlot_Main], fnt_tag_zero()))
     {

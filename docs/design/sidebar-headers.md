@@ -19,7 +19,8 @@ preset "Groups redesign"; the operator's knob values are at the end.
   the title and shows only on hover. A collapsed group shows its count,
   dimmed, after the title; a project keeps its chips.
 - **Three levels:** section (small uppercase), group (semibold), row
-  (regular, with an icon).
+  (regular, with an icon). A UI font chosen in Settings has no semibold
+  of its own, so its group titles are slightly larger instead.
 - **Gestures (provisional):** the whole header drags the group, past the
   usual threshold, except its buttons and chips. A click collapses it. A
   double-click renames a local group in place; a project's name is its data.

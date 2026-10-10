@@ -7,6 +7,8 @@ The UI font is Atkinson Hyperlegible Next (Regular, plus SemiBold for group head
 - `AtkinsonHyperlegibleNext-Regular.ttf`
 - `AtkinsonHyperlegibleNext-SemiBold.ttf`
 
+Copyright 2020-2024 The Atkinson Hyperlegible Next Project Authors (https://github.com/googlefonts/atkinson-hyperlegible-next). It declares no Reserved Font Name.
+
 It lacks symbols the UI draws, such as arrows (↗ →) and key glyphs (⌘ ⇧). Every run takes a character its font lacks from the Noto symbol faces below, in the order Symbols 2, Math, Symbols. A UI font chosen in Settings gets the same fallbacks.
 
 The terminal-oriented fonts copied from Ghostty's `src/font/res` are:
