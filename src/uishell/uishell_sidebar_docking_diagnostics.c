@@ -546,7 +546,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   display.core = andamento_create(daily.str, daily.size, &error);
   DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
   uishell_sidebar_refresh(&display);
-  AndamentoNode section = {0}; andamento_snapshot_node(display.snapshot, 0, &section);
+  AndamentoNode section = {0}; uishell_sidebar_snapshot_node(display.snapshot, 0, &section);
   AndamentoControl control = {0};
   andamento_snapshot_control(display.snapshot, section.first_control, &control);
   B32 default_value = control.checked;
@@ -565,7 +565,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   uishell_sidebar_refresh(&display);
   uishell_sidebar_restore_display(&display, loaded_display.first->v);
   cfg_state_release(persisted_cfg);
-  andamento_snapshot_node(display.snapshot, 0, &section);
+  uishell_sidebar_snapshot_node(display.snapshot, 0, &section);
   andamento_snapshot_control(display.snapshot, section.first_control, &control);
   DockFailure(!!control.checked == default_value);
   // Exercise real header buttons at both acceptance widths, including their

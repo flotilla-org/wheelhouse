@@ -21,6 +21,7 @@ enum
 //~ rjf: View UI Hook Types
 
 #include "shell_docking.h"
+#include "shell_workspace_id.h"
 
 #define RD_VIEW_UI_FUNCTION_SIG(name) void name(E_Eval eval, Rng2F32 rect)
 #define RD_VIEW_UI_FUNCTION_NAME(name) rd_view_ui__##name
@@ -1033,6 +1034,7 @@ struct UIShell_MaterializedWorkspace
   UIShell_MaterializedWorkspace *next;
   UIShell_MaterializedWorkspace *prev;
   CFG_ID id;
+  UIShell_WorkspaceId workspace_id;
   String8 display_name;
   UIShell_WorkspaceMount mount;
 };

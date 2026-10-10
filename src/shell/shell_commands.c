@@ -1628,6 +1628,7 @@ uishell_new_workspace(CFG_Node *window)
     }
   }
   CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+  uishell_workspace_id_from_cfg(workspace);
   CFG_Node *label = cfg_node_new(rd_state->cfg, workspace, str8_lit("label"));
   cfg_node_newf(rd_state->cfg, label, "Workspace %I64u", number);
   RD_WindowState *ws = rd_window_state_from_cfg(window);
@@ -1663,6 +1664,7 @@ uishell_dispatch_window_command(String8 name)
     {
       if(!str8_match(old_child->string, str8_lit("panels"), 0) &&
          !str8_match(old_child->string, str8_lit("workspace"), 0) &&
+         !str8_match(old_child->string, str8_lit("workspace_id"), 0) &&
          !str8_match(old_child->string, str8_lit("size"), 0) &&
          !str8_match(old_child->string, str8_lit("pos"), 0) &&
          !str8_match(old_child->string, str8_lit("monitor"), 0) &&
@@ -1671,6 +1673,8 @@ uishell_dispatch_window_command(String8 name)
       {
         CFG_Node *new_child = cfg_node_deep_copy(rd_state->cfg, old_child);
         cfg_node_insert_child(rd_state->cfg, new_window, new_window->last, new_child);
+        // A copied kept workspace is another workspace, with an ID of its own.
+        cfg_node_release(rd_state->cfg, cfg_node_child_from_string(new_child, str8_lit("workspace_id")));
       }
     }
     CFG_Node *panels = cfg_node_new(rd_state->cfg, new_window, str8_lit("panels"));
@@ -1747,6 +1751,7 @@ uishell_dispatch_window_command(String8 name)
           // `label` intentionally remains attached to the window node.
           cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
           cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("workspace_id")));
         }
         else if(detach && uishell_workspace_cfg_has_subject(workspace) &&
                 !uishell_sidebar_workspace_subject_ended(rd_window_state_from_cfg(window), workspace->id))

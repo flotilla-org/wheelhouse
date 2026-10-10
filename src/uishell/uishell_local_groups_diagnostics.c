@@ -11,7 +11,7 @@ uishell_local_groups_label(Arena *arena, UIShell_SidebarState *state, String8 ki
 {
   for(U64 i = 0; state->snapshot && i < andamento_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode n = {0}; andamento_snapshot_node(state->snapshot, i, &n);
+    AndamentoNode n = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &n);
     if(str8_match(uishell_sidebar_string(n.entity_kind), kind, 0) && str8_match(uishell_sidebar_string(n.entity_id), id, 0))
     { return push_str8_copy(arena, uishell_sidebar_string(n.label)); }
   }
@@ -324,7 +324,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   B32 retracted = 1;
   for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode n = {0}; andamento_snapshot_node(state->snapshot, i, &n);
+    AndamentoNode n = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &n);
     retracted &= !str8_match(uishell_sidebar_string(n.entity_id), tests_id, 0);
   }
   GroupsCheck(retracted, "a deleted group's entity leaves Andamento's snapshot");

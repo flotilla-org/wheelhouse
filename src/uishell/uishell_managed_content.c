@@ -34,7 +34,7 @@ uishell_managed_commit(UIShell_SidebarState *state, CFG_Node *workspace, CFG_Nod
     if(!session) { if(provider) { cleat_provider_close(provider); } return 0; }
   }
   char *error = 0;
-  B32 valid = andamento_content_valid(state->core, workspace->id, update->token, &error);
+  B32 valid = andamento_content_valid3(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)), update->token, &error);
   andamento_string_free(error);
   if(!valid || cfg_node_from_id(view->id) != view)
   {
@@ -90,7 +90,8 @@ uishell_sidebar_reconcile_workspace(UIShell_SidebarState *state, CFG_Node *works
     String8 target = cfg_node_child_from_string(primary, str8_lit("managed_target"))->first->string;
     CFG_Node *cwd = cfg_node_child_from_string(primary, str8_lit("cwd"));
     char *error = 0;
-    AndamentoContentPlan *plan = andamento_content_plan(state->core, workspace->id,
+    UIShell_WorkspaceId workspace_id = uishell_workspace_id_from_cfg(workspace);
+    AndamentoContentPlan *plan = andamento_content_plan3(state->core, uishell_sidebar_workspace(workspace_id),
       uishell_sidebar_text(kind), uishell_sidebar_text(id), uishell_sidebar_text(target),
       uishell_sidebar_text(rd_expr_from_cfg(primary)), cwd != &cfg_nil_node,
       uishell_sidebar_text(cwd->first->string), &error);
@@ -101,15 +102,15 @@ uishell_sidebar_reconcile_workspace(UIShell_SidebarState *state, CFG_Node *works
       {
         B32 success = uishell_managed_commit(state, workspace, primary, &content);
         error = 0;
-        andamento_content_complete(state->core, workspace->id, content.token, success, &error);
+        andamento_content_complete3(state->core, uishell_sidebar_workspace(workspace_id), content.token, success, &error);
         andamento_string_free(error);
         if(!success)
         {
-          state->managed_error_workspace = workspace->id;
+          state->managed_error_workspace = workspace_id;
           snprintf((char *)state->error, sizeof(state->error), "Managed terminal update failed; select its workspace to retry");
         }
-        else if(state->managed_error_workspace == workspace->id)
-        { state->managed_error_workspace = 0; state->error[0] = 0; }
+        else if(uishell_workspace_id_match(state->managed_error_workspace, workspace_id))
+        { MemoryZeroStruct(&state->managed_error_workspace); state->error[0] = 0; }
       }
       andamento_content_release(plan);
     }

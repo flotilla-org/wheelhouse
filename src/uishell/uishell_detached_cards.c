@@ -720,11 +720,11 @@ uishell_sidebar_detached_apply(RD_WindowState *ws, UIShell_HoverCard *card)
       c->source_row = c->source_key;
       for(U64 i = 0; ws->sidebar->snapshot && i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
       {
-        AndamentoNode node = {0}; andamento_snapshot_node(ws->sidebar->snapshot, i, &node);
+        AndamentoNode node = {0}; uishell_sidebar_snapshot_node(ws->sidebar->snapshot, i, &node);
         if(str8_match(c->source_key, uishell_sidebar_string(node.key), 0) &&
            str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0) && node.parent != ANDAMENTO_NONE)
         {
-          AndamentoNode parent = {0}; andamento_snapshot_node(ws->sidebar->snapshot, node.parent, &parent);
+          AndamentoNode parent = {0}; uishell_sidebar_snapshot_node(ws->sidebar->snapshot, node.parent, &parent);
           c->source_row = push_str8_copy(c->arena, uishell_sidebar_string(parent.key)); break;
         }
       }
@@ -1053,7 +1053,7 @@ uishell_sidebar_detached_finish(RD_WindowState *ws)
       B32 present = 0;
       for(U64 i = 0; ws->sidebar->snapshot && i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
       {
-        AndamentoNode node = {0}; andamento_snapshot_node(ws->sidebar->snapshot, i, &node);
+        AndamentoNode node = {0}; uishell_sidebar_snapshot_node(ws->sidebar->snapshot, i, &node);
         if(str8_match(c->source_key, uishell_sidebar_string(node.key), 0)) { present = 1; break; }
       }
       if(!present || uishell_sidebar_card_find(ws->sidebar, c->path[c->depth-1], 0) == ANDAMENTO_NONE)

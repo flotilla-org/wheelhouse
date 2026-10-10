@@ -8,7 +8,7 @@ uishell_sidebar_coverage_diagnostics(UIShell_SidebarState *state, UIShell_Contro
     B32 found = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
       if(!node.is_section && node.state == ANDAMENTO_LIVE && node.workspace_id == w->id) { found = 1; break; }
     }
     if(!found) { fprintf(stderr, "Open workspace without sidebar entry: %llu (%.*s)\n", (unsigned long long)w->id, (int)w->display_name.size, w->display_name.str); ok = 0; }
@@ -74,13 +74,17 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
   vessel.id = 420; vessel.display_name = str8_lit("Vessel"); vessel.next = &convoy;
   convoy.id = 430; convoy.display_name = str8_lit("Convoy");
   vessel.mount.owner_cfg = convoy.mount.owner_cfg = &cfg_nil_node;
+  vessel.workspace_id = uishell_workspace_id_make(); convoy.workspace_id = uishell_workspace_id_make();
+  uishell_workspace_index_insert(vessel.workspace_id, vessel.id);
+  uishell_workspace_index_insert(convoy.workspace_id, convoy.id);
   split.inventory.first = &vessel; split.inventory.last = &convoy; split.inventory.count = 2;
   for(U64 i = 1; i < 3; i++)
   {
     String8 patch = push_str8f(scratch.arena,
-      "{\"target\":{\"kind\":\"tab\",\"value\":%I64u},\"source_id\":\"selection-test\",\"set\":{"
+      "{\"target\":{\"kind\":\"tab\",\"value\":\"%S\"},\"source_id\":\"selection-test\",\"set\":{"
       "\"entity.kind\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}},"
-      "\"entity.id\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}}},\"unset\":[]}", i == 1 ? convoy.id : vessel.id, kinds[i], ids[i]);
+      "\"entity.id\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}}},\"unset\":[]}",
+      uishell_string_from_workspace_id(scratch.arena, i == 1 ? convoy.workspace_id : vessel.workspace_id), kinds[i], ids[i]);
     ok &= andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(patch), 0);
   }
   UIShell_SidebarSection section = {.key = str8_lit("tree")};
@@ -114,7 +118,7 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
     {
       for(U64 index = 0; index < andamento_snapshot_node_count(state.snapshot); index++)
       {
-        AndamentoNode node = {0}; andamento_snapshot_node(state.snapshot, index, &node);
+        AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state.snapshot, index, &node);
         if(str8_match(uishell_sidebar_string(node.entity_id), str8_cstring(ids[kind]), 0) &&
            node.collapsed != (kind ? convoy_closed : project_closed))
         { uishell_sidebar_dispatch(&state, node.toggle, 0); uishell_sidebar_refresh(&state); break; }

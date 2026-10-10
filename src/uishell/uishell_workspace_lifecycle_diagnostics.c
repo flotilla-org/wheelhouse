@@ -10,7 +10,7 @@ uishell_workspace_lifecycle_find(UIShell_SidebarState *state, String8 entity_id,
 {
   for(U64 i = 0; state->snapshot && i < andamento_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
     if(node.is_section) { continue; }
     if((entity_id.size && str8_match(uishell_sidebar_string(node.entity_id), entity_id, 0)) ||
        (workspace_id && node.state == ANDAMENTO_LIVE && node.workspace_id == workspace_id))
@@ -168,7 +168,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     uishell_sidebar_refresh(state);
     AndamentoNode homed = {0}, parent = {0};
     B32 found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
-    if(found && homed.parent != ANDAMENTO_NONE) { andamento_snapshot_node(state->snapshot, homed.parent, &parent); }
+    if(found && homed.parent != ANDAMENTO_NONE) { uishell_sidebar_snapshot_node(state->snapshot, homed.parent, &parent); }
     LifecycleCheck(found && str8_match(uishell_sidebar_string(parent.entity_kind), str8_lit("project"), 0) &&
                    str8_match(uishell_sidebar_string(parent.entity_id), str8_lit("p"), 0) &&
                    str8_match(uishell_sidebar_string(homed.entity_id), local_id, 0),
@@ -178,7 +178,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     uishell_sidebar_refresh(state);
     found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
     AndamentoNode section = {0};
-    if(found && homed.parent != ANDAMENTO_NONE) { andamento_snapshot_node(state->snapshot, homed.parent, &section); }
+    if(found && homed.parent != ANDAMENTO_NONE) { uishell_sidebar_snapshot_node(state->snapshot, homed.parent, &section); }
     LifecycleCheck(found && str8_match(uishell_sidebar_string(section.entity_kind), str8_lit(".group"), 0) &&
                    str8_match(uishell_sidebar_string(section.entity_id), uishell_sidebar_default_local_id, 0) &&
                    str8_match(uishell_sidebar_string(homed.entity_id), local_id, 0), "without its project it returns to the default Workspaces group");
@@ -203,7 +203,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     String8 workspaces_row = str8_zero();
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode n = {0}; andamento_snapshot_node(state->snapshot, i, &n);
+      AndamentoNode n = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &n);
       String8 k = uishell_sidebar_string(n.key);
       if(str8_match(uishell_sidebar_string(n.entity_kind), str8_lit(".workspace"), 0) && n.workspace_id != loose_id &&
          str8_find_needle(k, 0, str8_lit(".section10:workspaces"), 0) < k.size)
@@ -267,7 +267,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   U64 row_key_count = 1;
   for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot) && row_key_count < ArrayCount(row_keys); i++)
   {
-    AndamentoNode n = {0}; andamento_snapshot_node(state->snapshot, i, &n);
+    AndamentoNode n = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &n);
     if(!n.is_section && str8_match(uishell_sidebar_string(n.entity_id), str8_lit("multi"), 0))
     { row_keys[row_key_count++] = push_str8_copy(scratch.arena, uishell_sidebar_string(n.key)); }
   }
@@ -642,7 +642,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     AndamentoNode row = {0};
     B32 found = uishell_workspace_lifecycle_find(state, uishell_sidebar_local_entity(workspace), 0, &row);
     AndamentoNode parent = {0};
-    B32 placed = found && row.parent != ANDAMENTO_NONE && andamento_snapshot_node(state->snapshot, row.parent, &parent) &&
+    B32 placed = found && row.parent != ANDAMENTO_NONE && uishell_sidebar_snapshot_node(state->snapshot, row.parent, &parent) &&
       str8_match(uishell_sidebar_string(parent.entity_id), str8_lit("home"), 0) &&
       str8_find_needle(uishell_sidebar_string(row.key), 0, str8_lit(".unplaced"), 0) == uishell_sidebar_string(row.key).size;
     LifecycleCheck(placed, "a workspace whose group is gone lives in the default group, whatever its id");
