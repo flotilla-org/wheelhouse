@@ -1,6 +1,8 @@
 # A Workspace Overlay Is an Addressed Edit Set Against a Cached Baseline
 
-**Status:** accepted, not yet implemented. Decided in
+**Status:** accepted, not yet implemented. Revised 2026-10-10 after an
+adversarial review: soft overrides, separate key namespaces, and template-key
+drift. Decided in
 [Define Workspace Overlay semantics against a Suggested Layout](https://github.com/flotilla-org/wheelhouse/issues/298),
 choosing from the models in
 [Survey prior art for baseline-plus-user-overlay workspace definitions](https://github.com/flotilla-org/wheelhouse/issues/293).
@@ -24,10 +26,19 @@ history; history comes from version control of the saved files.
 
 - **Per-slot edits:** add a slot, remove a baseline slot (kept as a
   tombstone), override a slot's content, change its rebind policy, rename the
-  workspace, change its mood.
-- **Arrangement:** the first time the user rearranges anything, the overlay
-  owns the whole arrangement (panels, tab order, splits, weights). Baseline
-  slots that appear later are placed by a default rule.
+  workspace, change its mood. Slots the user adds get keys in their own
+  namespace (for example `u:3`), so they never collide with provider keys.
+  A tombstone or override records the baseline content it was made against;
+  if the provider later reuses that key for different content, the slot is
+  flagged rather than hidden or overridden.
+- **Soft overrides:** split weights and the selected tab are per-key
+  overrides. They never take ownership of the arrangement, so resizing a
+  divider or switching tabs leaves the provider's structure flowing.
+- **Arrangement ownership:** the first *structural* edit (split, move, close,
+  reorder) makes the overlay own the whole arrangement document. Baseline
+  slots that appear later are placed by a default rule, and a provider change
+  to an arrangement the user owns is flagged rather than applied or ignored.
+  Panels in a Suggested Layout carry stable IDs, like slots.
 - **Detached:** a slot whose content is overridden stops following the
   provider. Reattaching drops the override. This is a flag beside the slot's
   resolution state, not a sixth state.
@@ -42,7 +53,11 @@ history; history comes from version control of the saved files.
   | Overridden slot's content changes | The override wins; the slot is flagged. |
 
 - A workspace with no Suggested Layout uses the same model with an empty
-  baseline. The Dashboard relates to its template the same way.
+  baseline.
+- **The Dashboard relates to its template the same way.** Its saved keys
+  (collapse, sibling order, section placement) embed the template's region
+  and loop names, so when the template version changes, keys that no longer
+  resolve are flagged under the same "nothing dropped silently" rule.
 - An **Overlay Sync** proposal is the edit set plus the baseline version it
   applies to; accepted edits drop out once they equal the new baseline.
 

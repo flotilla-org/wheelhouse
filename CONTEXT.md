@@ -20,7 +20,7 @@ The **Panel** that is the current keyboard-input target within a **Workspace** �
 _Avoid_: Focused tab, selected panel, current pane
 
 **Selected View**:
-The single **View** a **Panel** currently shows (its front tab). Every **Panel** has exactly one, whether or not it is the **Active Panel**. Being selected is presentation, not focus.
+The single **View** a **Panel** currently shows (its front tab). Every **Panel** has exactly one, whether or not it is the **Active Panel**. Which View is selected is part of the **Workspace**'s arrangement, shared between frontends; being selected is not focus.
 _Avoid_: Focused view, active tab, current tab
 
 **Region**:
@@ -136,7 +136,7 @@ A provider-known workspace candidate that has not yet been materialized as a sav
 _Avoid_: Workspace, runtime instance
 
 **Materialized Workspace**:
-A **Workspace** with live **Runtime Instances** attached.
+A saved **Workspace** with live **Runtime Instances** attached. A saved Workspace can exist without being materialized, for example straight after a restart.
 _Avoid_: Visible workspace, selected workspace
 
 **Visible Workspace**:
@@ -168,11 +168,15 @@ The path through nested **Controlled Splits** to a **Workspace**.
 _Avoid_: Workspace name, global ID
 
 **Workspace ID**:
-A stable identifier for a **Workspace**, created once when it is materialized and unique across Dashboards and devices. Its **Workspace Subject** is an attribute, not its identity: several Workspaces may share a subject, and a detached Workspace keeps its ID.
+A stable identifier for a **Workspace**, assigned once when the Workspace is first saved and unique across Dashboards and devices. Its **Workspace Subject** is an attribute, not its identity. A Dashboard has at most one Workspace per subject at a time, but a subject can have successive Workspaces over time, such as one closed and later recreated. A **Kept Workspace** keeps its ID.
 _Avoid_: Workspace address, layout position, display name
 
+**Kept Workspace**:
+A **Workspace** the user closed but chose to keep. It keeps its **Workspace ID** and **Workspace Overlay**, and activating its subject again reopens it rather than creating a new Workspace.
+_Avoid_: Detached workspace, archived workspace
+
 **Workspace Focus**:
-The focused panel, view, or control remembered by a materialized **Workspace**.
+The focused panel, view, or control a **Workspace** remembers in a given window. It is **Presentation State**: each window and frontend keeps its own.
 _Avoid_: Window focus, global focus
 
 **Command Context**:
@@ -288,7 +292,7 @@ A frontend's way of drawing one or more kinds of **View Spec** content, such as 
 _Avoid_: View kind, view rule, widget
 
 **Slot**:
-A **View**'s place in a **Workspace**. It is identified by a slot key: the provider's key for a View from a **Suggested Layout**, or a short generated key for a View the user adds. It carries the View's **View Spec** and the progress of resolving it.
+A **View**'s place in a **Workspace**. It is identified by a slot key: the provider's key for a View from a **Suggested Layout**, or a short generated key, in a separate namespace, for a View the user adds. It carries the View's **View Spec** and the progress of resolving it.
 _Avoid_: Tab, pane, panel
 
 **Detached Slot**:
@@ -330,7 +334,7 @@ _Avoid_: Autosave, replication
 - A **Workspace Region** cannot contain the **Control Surface** that selects it.
 - The workspace-selecting **View** may move while retaining its **Workspace Selection Binding**, but cannot close.
 - A selected **Selection Handle** may create **Frame Integration** with the region selected by its binding; unselected handles may have their own boundaries or themed previews, but they do not open the selected region's frame.
-- An entity, such as a **Workspace Subject**, is identified by its **Content Provider**, kind and ID. The provider comes from the **Dashboard**'s subscription, not from what the producer claims.
+- An entity, such as a **Workspace Subject**, is identified by its **Content Provider**, kind and ID. The provider is the **Dashboard**'s subscription, not what the producer claims; the identity a provider reports is checked against the subscription but is not part of the entity's key.
 - A **Workspace ID** identifies a **Workspace** wherever it is shown; a **Workspace Address** only says where it is shown.
 - A **Workspace Address** locates a **Workspace** by composing stable IDs through nested **Controlled Splits**.
 - A **Control Surface** may select or create many **Workspaces** over time.
@@ -348,8 +352,9 @@ _Avoid_: Autosave, replication
 - A **Visible Workspace** is a **Mounted Workspace** in the controlled workspace region.
 - The first implementation has one **Workspace Mount** per window.
 - Nested **Controlled Splits** may introduce additional **Workspace Mounts** later.
-- A **Materialized Workspace** remembers its own **Workspace Focus**.
-- **Workspace Focus** is the **Active Panel**'s **Selected View** — the destination of keyboard input. A **Selected View** alone is presentation; only the **Active Panel**'s **Selected View** is focused.
+- A **Workspace** remembers its own **Workspace Focus** in each window.
+- A **Workspace** moves from **Latent Workspace** (no ID) to saved (it has a **Workspace ID**) to **Materialized Workspace** (live) and back; closing it either removes it or leaves a **Kept Workspace**.
+- **Workspace Focus** is the **Active Panel**'s **Selected View** — the destination of keyboard input. A **Selected View** alone is not focus; only the **Active Panel**'s **Selected View** is focused.
 - Commands execute against a **Command Context**.
 - An **Input Route** may be influenced by **Workspace Focus**, but it is not the same thing as focus.
 - An **Input Owner** may claim specific input classes without owning every event.
@@ -366,7 +371,7 @@ _Avoid_: Autosave, replication
 - The **Tab Strip** is a **Chrome Element**; placing it in the title-bar host promotes the topmost docking row to the chrome row and feeds the title bar's end-zone widths to the docking layout as edge insets.
 - A **Dashboard** aggregates **Workspace Inventory Entries** from several **Content Providers**: local workspaces, one or more flotilla instances, and later other orchestrators.
 - A **Workspace Overlay** records which version of its **Suggested Layout** it was made against, so it can be reapplied when the provider's baseline changes. If reapplying conflicts, the conflict is flagged, not dropped.
-- A **Workspace Overlay** is a set of edits keyed by **Slot** and panel, together with the version of the **Suggested Layout** it was made against. Once the user rearranges a Workspace, the Overlay owns its whole arrangement; Slots the provider adds later are placed by a default rule.
+- A **Workspace Overlay** is a set of edits keyed by **Slot** and panel, together with the version of the **Suggested Layout** it was made against. Once the user makes a structural change (split, move, close, reorder), the Overlay owns the Workspace's arrangement; Slots the provider adds later are placed by a default rule. Split weights and the selected tab are per-key overrides that never take ownership.
 - A **Dashboard** relates to its template the way a **Workspace Overlay** relates to a **Suggested Layout**.
 - **Overlay Sync** moves user changes towards the canonical source; reapplying an overlay moves provider changes towards the user. Both are explicit.
 - A Wheelhouse process opens one **Dashboard**. How its windows relate to that Dashboard is still open.
@@ -391,7 +396,7 @@ _Avoid_: Autosave, replication
 - A selector is not a tab strip. Resolved: a **Control Surface** presents a **Workspace Inventory**.
 - Workspace existence, materialization, visibility, and mounting are distinct. Resolved: a **Materialized Workspace** has live runtime instances; a **Mounted Workspace** has somewhere to build UI and render.
 - The first cut should keep mounting simple without forbidding nesting. Resolved: start with one **Workspace Mount** per window, while allowing nested **Controlled Splits** later.
-- Focus should survive workspace switching. Resolved: **Workspace Focus** belongs to each materialized **Workspace**; commands route through the mounted workspace.
+- Focus should survive workspace switching. Resolved: **Workspace Focus** belongs to each **Workspace**, per window; commands route through the mounted workspace.
 - Commands should not be owned by individual workspaces. Resolved: command registration remains global or modular; command execution uses a **Command Context**.
 - Input capture should not be terminal-specific. Resolved: use **Input Ownership** so terminal views, text editors, property editors, web views, and shell focus navigation can share one routing policy.
 - Tab is both text/editor input and focus traversal depending on context. Resolved: route it through **Input Ownership** before default focus navigation.
