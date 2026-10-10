@@ -343,15 +343,24 @@ internal void
 uishell_logical_sidebar_arrangement(UIShell_LogicalText *t, U64 depth, CFG_Node *window, UIShell_SidebarState *state)
 {
   uishell_logical_linef(t, depth, "sidebar arrangement");
-  String8 hosts[] = {RD_DOCK_SIDEBAR_ROOT, str8_lit("floating_panels")};
-  char *names[] = {"docked", "floating"};
-  for(U64 h = 0; h < ArrayCount(hosts); h++)
+  CFG_Node *sidebar = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+  if(sidebar != &cfg_nil_node)
   {
-    CFG_Node *host = cfg_node_child_from_string(window, hosts[h]);
-    if(host == &cfg_nil_node) { continue; }
-    uishell_logical_linef(t, depth+1, "%s", names[h]);
-    RD_Arrangement *arrangement = uishell_workspace_mount_from_owner_cfg(t->arena, window, host).arrangement;
+    uishell_logical_linef(t, depth+1, "docked");
+    RD_Arrangement *arrangement = uishell_arrangement_from_cfg(t->arena, sidebar);
     uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
+  }
+  CFG_Node *floating = cfg_node_child_from_string(window, str8_lit("floating_panels"));
+  if(floating != &cfg_nil_node)
+  {
+    uishell_logical_linef(t, depth+1, "floating");
+    // Each Floating Panel is its own arrangement.
+    for(CFG_Node *c = floating->first; c != &cfg_nil_node; c = c->next)
+    {
+      if(rd_dock_floating_panel_from_cfg(c) != c) { continue; }
+      RD_Arrangement *arrangement = uishell_arrangement_from_cfg(t->arena, c);
+      uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
+    }
   }
   CFG_Node *inventory = cfg_node_child_from_string(window, str8_lit("section_positions"));
   for(CFG_Node *record = inventory->first; record != &cfg_nil_node; record = record->next)

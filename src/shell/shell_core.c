@@ -3001,6 +3001,16 @@ uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg)
   return mount;
 }
 
+// The arrangement commands edit for `cfg`: its Floating Panel's own, or its
+// mount's (a workspace's or the sidebar's).
+internal RD_Arrangement *
+uishell_arrangement_from_cfg(Arena *arena, CFG_Node *cfg)
+{
+  CFG_Node *floating = rd_dock_floating_panel_from_cfg(cfg);
+  if(floating != &cfg_nil_node) { return rd_arrangement_from_cfg(arena, floating); }
+  return uishell_workspace_mount_from_cfg(arena, cfg).arrangement;
+}
+
 internal UIShell_WorkspaceMount
 uishell_workspace_mount_from_current_regs(Arena *arena)
 {

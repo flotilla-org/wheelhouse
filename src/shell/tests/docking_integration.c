@@ -530,6 +530,77 @@ entry_point(CmdLine *cmdline)
   rd_dock_restore_window(rd_state->cfg, window);
   IntegrationCheck(source->parent == origin);
 
+  // Each Floating Panel is its own arrangement, and the tab and drop
+  // commands edit it through the module like any other: one Selected View,
+  // a saved ID, and no split.
+  {
+    CFG_Node *other = cfg_node_new(rd_state->cfg, user, str8_lit("window"));
+    CFG_Node *workspace = cfg_node_new(rd_state->cfg, other, str8_lit("workspace"));
+    CFG_Node *workspace_panels = cfg_node_new(rd_state->cfg, workspace, str8_lit("panels"));
+    CFG_Node *left = cfg_node_new(rd_state->cfg, workspace_panels, str8_lit("0.5"));
+    CFG_Node *right = cfg_node_new(rd_state->cfg, workspace_panels, str8_lit("0.5"));
+    CFG_Node *lone = cfg_node_new(rd_state->cfg, left, str8_lit("terminal"));
+    cfg_node_new(rd_state->cfg, right, str8_lit("terminal"));
+    CFG_Node *host = cfg_node_new(rd_state->cfg, workspace, str8_lit("floating_panels"));
+    CFG_Node *first = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
+    CFG_Node *second = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
+    CFG_Node *a = cfg_node_new(rd_state->cfg, first, str8_lit("text"));
+    CFG_Node *b = cfg_node_new(rd_state->cfg, first, str8_lit("terminal"));
+    CFG_Node *c = cfg_node_new(rd_state->cfg, second, str8_lit("terminal"));
+    cfg_node_new(rd_state->cfg, a, str8_lit("selected"));
+    cfg_node_new(rd_state->cfg, c, str8_lit("selected"));
+    CFG_ID left_id = left->id;
+    // A workspace panel emptied into its workspace's Floating Panel closes,
+    // in the same command; the View lands selected, the only one marked.
+    UIShell_CmdNode *before_cmd = integration_move(other, lone, second, Dir2_Invalid);
+    IntegrationCheck(lone->parent == second && second->first == lone && !integration_close_queued(before_cmd));
+    IntegrationCheck(cfg_node_from_id(left_id) == &cfg_nil_node && cfg_node_child_from_string(workspace, str8_lit("panels")) == right);
+    IntegrationCheck(cfg_node_child_from_string(lone, str8_lit("selected")) != &cfg_nil_node);
+    IntegrationCheck(cfg_node_child_from_string(c, str8_lit("selected")) == &cfg_nil_node);
+    IntegrationCheck(str8_match(second->string, str8_lit("1"), 0) && str8_match(cfg_node_child_from_string(second, str8_lit("id"))->first->string, str8_lit("1"), 0));
+    IntegrationCheck(cfg_node_child_from_string(first, str8_lit("id")) == &cfg_nil_node);
+    IntegrationCheck(cfg_node_child_from_string(host, str8_lit("split_x")) == &cfg_nil_node);
+    // Selecting a tab moves the mark.
+    UIShell_RegsScope(.window = other->id, .tab = b->id) { uishell_dispatch_tab_command(str8_lit("focus_tab")); }
+    IntegrationCheck(cfg_node_child_from_string(b, str8_lit("selected")) != &cfg_nil_node);
+    IntegrationCheck(cfg_node_child_from_string(a, str8_lit("selected")) == &cfg_nil_node);
+    // Reordering a tab moves it within its Floating Panel.
+    UIShell_RegsScope(.window = other->id, .tab = a->id) { uishell_dispatch_tab_command(str8_lit("move_tab_right")); }
+    UIShell_Cmd *reorder = &rd_state->cmds[0].last->cmd;
+    IntegrationCheck(str8_match(reorder->name, str8_lit("move_view"), 0) && reorder->regs->dst_panel == first->id && reorder->regs->prev_tab == b->id);
+    UIShell_RegsScope(.window = other->id, .view = a->id, .dst_panel = first->id, .prev_tab = b->id)
+    { uishell_dispatch_tab_command(str8_lit("move_view")); }
+    IntegrationCheck(a->parent == first && b->next == a);
+    // Another Floating Panel's source is reselected; emptied, it stays.
+    integration_move(other, b, second, Dir2_Invalid);
+    IntegrationCheck(b->parent == second && second->first == b && cfg_node_child_from_string(a, str8_lit("selected")) != &cfg_nil_node);
+    integration_move(other, a, second, Dir2_Invalid);
+    IntegrationCheck(a->parent == second && first->parent == host && cfg_node_child_from_string(first, str8_lit("text")) == &cfg_nil_node);
+    // Duplicating places the copy after its source; closing releases it.
+    UIShell_RegsScope(.window = other->id, .tab = c->id) { uishell_dispatch_tab_command(str8_lit("duplicate_tab")); }
+    CFG_Node *copy = c->next;
+    IntegrationCheck(copy->parent == second && str8_match(copy->string, str8_lit("terminal"), 0));
+    IntegrationCheck(cfg_node_child_from_string(copy, str8_lit("selected")) != &cfg_nil_node);
+    CFG_ID copy_id = copy->id;
+    UIShell_RegsScope(.window = other->id, .tab = copy_id) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+    IntegrationCheck(cfg_node_from_id(copy_id) == &cfg_nil_node);
+    // A new tab goes after the last tab, before the panel's ID.
+    UIShell_RegsScope(.window = other->id, .panel = second->id, .string = str8_lit("text"), .expr = str8_zero())
+    { uishell_dispatch_tab_command(str8_lit("build_tab")); }
+    CFG_Node *built = cfg_node_child_from_string(second, str8_lit("id"))->prev;
+    IntegrationCheck(built != c && str8_match(built->string, str8_lit("text"), 0) && built->prev == c);
+    // A Floating Panel holds tabs, never splits.
+    U64 split_gen = cfg_change_gen();
+    integration_move(other, b, second, Dir2_Right);
+    UIShell_RegsScope(.window = other->id, .panel = second->id) { uishell_dispatch_panel_command(str8_lit("new_panel_right")); }
+    IntegrationCheck(cfg_change_gen() == split_gen && b->parent == second && second->parent == host);
+    // A move out into the workspace reselects the Floating Panel it left.
+    UIShell_RegsScope(.window = other->id, .tab = c->id) { uishell_dispatch_tab_command(str8_lit("focus_tab")); }
+    integration_move(other, c, right, Dir2_Invalid);
+    IntegrationCheck(c->parent == right && second->first == a && cfg_node_child_from_string(a, str8_lit("selected")) != &cfg_nil_node);
+    cfg_node_release(rd_state->cfg, other);
+  }
+
   // A boundary drag lays out its resized copy of the arrangement every frame
   // and leaves config alone until the mouse is released, then saves once.
   // A drag that ends without a release saves nothing.

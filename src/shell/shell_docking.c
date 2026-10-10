@@ -104,6 +104,17 @@ rd_dock_is_container(CFG_Node *cfg)
   return 1;
 }
 
+// A Floating Panel is a panel node directly under a `floating_panels` host.
+internal CFG_Node *
+rd_dock_floating_panel_from_cfg(CFG_Node *cfg)
+{
+  for(CFG_Node *c = cfg; c != &cfg_nil_node && !str8_match(c->string, str8_lit("window"), 0); c = c->parent)
+  {
+    if(str8_match(c->parent->string, str8_lit("floating_panels"), 0)) { return rd_dock_is_container(c) ? c : &cfg_nil_node; }
+  }
+  return &cfg_nil_node;
+}
+
 internal CFG_Node *
 rd_dock_window(CFG_Node *cfg)
 {

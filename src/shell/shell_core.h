@@ -1274,6 +1274,7 @@ internal UIShell_WorkspaceMount uishell_workspace_mount_from_owner_cfg(Arena *ar
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_window(Arena *arena, CFG_Node *window);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_current_regs(Arena *arena);
+internal RD_Arrangement *uishell_arrangement_from_cfg(Arena *arena, CFG_Node *cfg);
 internal UIShell_ControlledSplit uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window);
 internal void rd_window_save_presentation(RD_WindowState *ws);
 internal void rd_window_restore_presentation(RD_WindowState *ws);
