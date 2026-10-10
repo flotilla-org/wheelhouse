@@ -271,6 +271,18 @@ _Avoid_: Title bar tabs (the outcome, not the element), tab bar widget
 A logical local IPC address — scope, name and transport kind — that each platform renders directly: a Unix socket under the runtime directory, or a named pipe on Windows. Runtime-directory metadata may accompany it, but never determines the address. Accepting a connection reports the peer's identity. See ADR 0011.
 _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 
+**Dashboard**:
+A user's choice of which **Content Providers** to subscribe to, together with the **Grouping Projection**, section, order and display choices that turn their entries into a **Workspace Inventory**. Likely to be called a *flotilla dashboard*, even while the Andamento project defines it. It can be shared across devices and frontends, for example through cloud storage. Proposed, not built: today it is spread across the Andamento config, the implicit `flotilla pm connect` subscription, and the sidebar entries in the RAD project file.
+_Avoid_: Project, RAD project, sidebar config
+
+**Presentation State**:
+State that belongs to one frontend on one device: window and panel geometry, tab placement, theme. It is keyed by stable IDs from the **Dashboard** and **Workspaces**. It is never shared between frontends.
+_Avoid_: Workspace, layout (ambiguous), project
+
+**Overlay Sync**:
+An explicit operation that proposes a **Workspace Overlay**, or **Dashboard** changes, back to the source that owns the canonical version, such as flotilla. Without it, a user's overlay stays personal to them. Proposed, not built.
+_Avoid_: Autosave, replication
+
 ## Relationships
 
 - A **Panel** hosts one or more **Views**.
@@ -331,6 +343,11 @@ _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 - A **Placement Chain** ends in a terminal option (hidden, or overflow menu); an element that may never fully hide (e.g. the main menu) terminates in a representation, not in hidden.
 - A **Chrome Element**'s default placement is declared in code and overridden in config — the same provenance model as code-declared settings.
 - The **Tab Strip** is a **Chrome Element**; placing it in the title-bar host promotes the topmost docking row to the chrome row and feeds the title bar's end-zone widths to the docking layout as edge insets.
+- A **Dashboard** aggregates **Workspace Inventory Entries** from several **Content Providers**: local workspaces, one or more flotilla instances, and later other orchestrators.
+- A **Workspace Overlay** records which version of its **Suggested Layout** it was made against, so it can be reapplied when the provider's baseline changes. If reapplying conflicts, the conflict is flagged, not dropped.
+- **Overlay Sync** moves user changes towards the canonical source; reapplying an overlay moves provider changes towards the user. Both are explicit.
+- A Wheelhouse process opens one **Dashboard**. How its windows relate to that Dashboard is still open.
+- **Presentation State** refers to **Workspaces** and **Views** only by stable IDs; it never defines what they are.
 
 ## Example Dialogue
 
@@ -379,3 +396,5 @@ _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 - "What goes in the title bar" is not a layout question. Resolved: it is a **Placement Resolution** problem over **Chrome Hosts** (title bar, sidebar, status bar) made of **Niches**; **Chrome Elements** declare a **Placement Chain** and resolve by measured overflow, defaulting in code and overriding in config. No element is hardcoded to the title bar.
 - Tabs in the title bar is not a special tab mode. Resolved: it is the **Tab Strip** element placed in the title-bar host; the topmost docking row becomes the chrome row and the title bar's end-zone widths become **edge insets** to the docking layout. Tab overflow within the inset span stays clipped for now (a later overflow dropdown is separable). See ADR 0006.
 - The project selector is not assumed useful in uishell. Resolved: a uishell user overwhelmingly has one context bringing all threads together; the project/owner selector is not a fixed title-bar fixture — it is a **Chrome Element** like any other, present only if placed.
+- "Project" means two different things. The RAD project file holds all app state, while a flotilla project is a domain entity that Andamento picks up. Resolved for new work: the user-level aggregation is the **Dashboard**; per-device layout is **Presentation State**; "project" on its own refers only to the flotilla/domain entity.
+- **Workspace ID** is scoped to its owning **Controlled Split**, but workspaces from several providers on a shared **Dashboard** need IDs that make sense across devices. Open: IDs probably need provider-namespaced forms, such as `flotilla:<instance>/…` or `local:<guid>`.
