@@ -76,6 +76,11 @@ struct UIShell_HoverCard
   F32 anchor_x;
   B32 open, engaged, focused, contains_current, source_seen, corridor_active, enriched;
   F32 scroll, content_height;
+  // The cap holding the card's controls (#269): its box and bounds when it
+  // showed this build, which edge it joins, and whether the entity actions
+  // fell back to a footer for lack of room.
+  UI_HoverCardMask cap;
+  B32 cap_shown, cap_drawn, cap_below, cap_footer;
 };
 
 typedef struct UIShell_SidebarLabel UIShell_SidebarLabel;
@@ -1687,13 +1692,15 @@ uishell_sidebar_grip(String8 key, String8 description)
 // border, a hover fill, a soft fill while on. A hidden control keeps its box
 // and width (so the title never jumps) but draws nothing and takes no input.
 // The tooltip is built outside the control's style scope; inside it, the
-// tooltip inherited the control's background and width.
+// tooltip inherited the control's background and width. Card caps use it too
+// (#269), so every header control shares one glyph set and minimum hit width.
+enum { UIShell_ControlMinimumPT = 22 };
 internal Vec4F32 uishell_sidebar_selection_fill(B32 exact_action);
 internal UI_Signal
 uishell_sidebar_header_button(String8 glyph, String8 key, B32 on, B32 shown, String8 title, String8 detail)
 {
   UI_Box *box;
-  UI_PrefWidth(ui_em(1.7f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+  UI_PrefWidth(ui_px(Max((F32)UIShell_ControlMinimumPT, floor_f32(ui_top_font_size()*1.7f)), 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
   UI_CornerRadius(3.f) UI_BackgroundColor(uishell_sidebar_selection_fill(0))
   {
     // DrawText stays set even when hidden: the box keeps its last string

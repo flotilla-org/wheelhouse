@@ -21,103 +21,6 @@ uishell_sidebar_card_request(UIShell_HoverCard *card, UIShell_CardPlacement plac
   rd_request_frame();
 }
 
-// The prototype uses 16px outline paths. Draw those strokes directly so these
-// controls share one light weight independent of the filled symbol font.
-internal void
-uishell_sidebar_card_icon_stroke(Vec2F32 a, Vec2F32 b, Vec4F32 color)
-{
-  Vec2F32 delta = sub_2f32(b, a);
-  F32 length = length_2f32(delta);
-  if(length == 0) { return; }
-  Vec2F32 direction = scale_2f32(delta, 1.f/length);
-  Mat3x3F32 transform = mat_3x3f32(1);
-  transform.v[0][0] = direction.x; transform.v[0][1] = direction.y;
-  transform.v[1][0] = -direction.y; transform.v[1][1] = direction.x;
-  transform.v[2][0] = a.x; transform.v[2][1] = a.y;
-  DR_XForm2DScope(mul_3x3f32(dr_top_xform2d(), transform))
-  { dr_rect(r2f32p(-.65f, -.65f, length+.65f, .65f), color, .65f, 0, .5f); }
-}
-
-UI_BOX_CUSTOM_DRAW(uishell_sidebar_card_icon_draw)
-{
-  RD_IconKind kind = (RD_IconKind)IntFromPtr(user_data);
-  F32 size = Min(14.f, Min(dim_2f32(box->rect).x, dim_2f32(box->rect).y)-4.f);
-  if(size <= 0) { return; }
-  Vec2F32 origin = sub_2f32(center_2f32(box->rect), v2f32(size/2, size/2));
-  Mat3x3F32 transform = mul_3x3f32(make_translate_3x3f32(origin), make_scale_3x3f32(v2f32(size/16, size/16)));
-  Vec4F32 color = box->text_color;
-  DR_XForm2DScope(mul_3x3f32(dr_top_xform2d(), transform))
-  {
-    Vec2F32 points[12] = {0};
-    U64 count = 0;
-    switch(kind)
-    {
-      case RD_IconKind_Pin:
-      {
-        Vec2F32 path[] = {{6,2.5f},{10,2.5f},{9.5f,6.5f},{12,9},{4,9},{6.5f,6.5f},{6,2.5f}};
-        StaticAssert(ArrayCount(path) <= ArrayCount(points), pin_icon_path_fits);
-        count = ArrayCount(path); MemoryCopy(points, path, sizeof(path));
-        uishell_sidebar_card_icon_stroke(v2f32(8,9), v2f32(8,13.5f), color);
-      }break;
-      case RD_IconKind_DownArrow:
-      {
-        Vec2F32 path[] = {{5,7.5f},{8,10.5f},{11,7.5f}};
-        StaticAssert(ArrayCount(path) <= ArrayCount(points), dock_icon_path_fits);
-        count = ArrayCount(path); MemoryCopy(points, path, sizeof(path));
-        uishell_sidebar_card_icon_stroke(v2f32(8,2.5f), v2f32(8,10.5f), color);
-        uishell_sidebar_card_icon_stroke(v2f32(2.5f,13.5f), v2f32(13.5f,13.5f), color);
-      }break;
-      case RD_IconKind_Window:
-      {
-        Vec2F32 path[] = {{3,5},{11,5},{11,13},{3,13},{3,5}};
-        StaticAssert(ArrayCount(path) <= ArrayCount(points), float_icon_path_fits);
-        count = ArrayCount(path); MemoryCopy(points, path, sizeof(path));
-        uishell_sidebar_card_icon_stroke(v2f32(6,2.5f), v2f32(13.5f,2.5f), color);
-        uishell_sidebar_card_icon_stroke(v2f32(13.5f,2.5f), v2f32(13.5f,10), color);
-      }break;
-      case RD_IconKind_X:
-      {
-        uishell_sidebar_card_icon_stroke(v2f32(4,4), v2f32(12,12), color);
-        uishell_sidebar_card_icon_stroke(v2f32(12,4), v2f32(4,12), color);
-      }break;
-      case RD_IconKind_Info:
-      {
-        dr_rect(r2f32p(2.5f,2.5f,13.5f,13.5f), color, 5.5f, 1.3f, .5f);
-        dr_rect(r2f32p(7.35f,4.5f,8.65f,5.8f), color, .65f, 0, .5f);
-        uishell_sidebar_card_icon_stroke(v2f32(8,7.5f), v2f32(8,11.5f), color);
-      }break;
-      default: break;
-    }
-    for(U64 i = 1; i < count; i++) { uishell_sidebar_card_icon_stroke(points[i-1], points[i], color); }
-  }
-}
-
-// Card furniture follows the prototype header: a quiet grip at the left,
-// compact destination icons at the right, and labelled entity actions below.
-internal UI_Signal
-uishell_sidebar_card_icon_button(String8 glyph, String8 key, String8 description)
-{
-  UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|
-    UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DisableTruncatedHover,
-    "%S###%S", glyph, key);
-  // Retain the widget label and resolved text color; the outline owns paint.
-  box->flags &= ~UI_BoxFlag_DrawText;
-  RD_IconKind kinds[] = {RD_IconKind_Info, RD_IconKind_Window, RD_IconKind_DownArrow, RD_IconKind_Pin, RD_IconKind_X};
-  for(U64 i = 0; i < ArrayCount(kinds); i++)
-  {
-    if(str8_match(glyph, rd_icon_kind_text_table[kinds[i]], 0))
-    { ui_box_equip_custom_draw(box, uishell_sidebar_card_icon_draw, PtrFromInt((U64)kinds[i])); break; }
-  }
-  UI_Signal signal = ui_signal_from_box(box);
-  // No tooltip over an open menu, or while held.
-  if(ui_hovering(signal) && !ui_dragging(signal) && !ui_any_ctx_menu_is_open()) UI_Tooltip
-  {
-    ui_state->tooltip_anchor_key = box->key;
-    RD_Font(RD_FontSlot_Main) { ui_label(description); }
-  }
-  return signal;
-}
-
 internal void
 uishell_sidebar_drag_panel_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
 {
@@ -141,7 +44,7 @@ uishell_sidebar_drag_begin(RD_WindowState *ws)
   rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
 }
 
-// A card drags from its grip or its title line, past the shared threshold
+// A card drags from its title line, past the shared threshold
 // (drag-model.md, decision 4). Card focus is decided from raw press events
 // over the card's rect, so a clickable title does not change it.
 internal void
@@ -168,14 +71,7 @@ uishell_sidebar_card_drag_from(UIShell_HoverCard *card, UI_Signal drag)
   { card->drag_released = 1; rd_request_frame(); }
 }
 
-internal void
-uishell_sidebar_card_drag_control(UIShell_HoverCard *card)
-{
-  uishell_sidebar_card_drag_from(card, uishell_sidebar_grip(str8_lit("card_drag"), str8_lit("Drag card")));
-}
-
-// The card's title line: mouse-only (keyboard keeps the grip and buttons),
-// drawn like the label it replaces.
+// The card's title line, drawn like the label it replaces.
 internal void
 uishell_sidebar_card_title_handle(UIShell_HoverCard *card, String8 text)
 {
@@ -204,30 +100,9 @@ uishell_sidebar_card_pin_control(UIShell_HoverCard *card)
       pinned = str8_match(c->string, str8_lit("card"), 0) && uishell_sidebar_card_entity_match(saved, card->path[card->depth-1]);
     }
   }
-  UI_Signal sig = uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Pin], str8_lit("card_pin"),
-    pinned ? str8_lit("Show pin") : str8_lit("Pin"));
+  UI_Signal sig = uishell_sidebar_header_button(str8_lit("🖈"), str8_lit("card_pin"), 0, 1,
+    pinned ? str8_lit("Show pin") : str8_lit("Pin"), pinned ? str8_lit("Already pinned in the sidebar") : str8_zero());
   if(ui_clicked(sig)) { uishell_sidebar_card_request(card, UIShell_CardPlacement_Pinned); }
-}
-
-internal void
-uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width)
-{
-  UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
-  UI_TagF("weak") RD_Font(RD_FontSlot_Icons)
-  {
-    if(card->placement != UIShell_CardPlacement_Float &&
-       ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Window], str8_lit("card_float"), str8_lit("Float"))))
-    { uishell_sidebar_card_request(card, UIShell_CardPlacement_Float); }
-    if(card->placement != UIShell_CardPlacement_Inline)
-    {
-      UI_Flags(card->source_key.size ? 0 : UI_BoxFlag_Disabled)
-      { if(ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_DownArrow], str8_lit("card_inline"), str8_lit("Dock under source"))))
-        { uishell_sidebar_card_request(card, UIShell_CardPlacement_Inline); } }
-    }
-    if(card->placement != UIShell_CardPlacement_Pinned) { uishell_sidebar_card_pin_control(card); }
-    if(ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_X], str8_lit("card_close"), str8_lit("Close"))))
-    { uishell_sidebar_card_close(card); rd_request_frame(); }
-  }
 }
 
 internal UIShell_HoverCard *
@@ -243,7 +118,7 @@ uishell_sidebar_detached_alloc(RD_WindowState *ws)
     // Recycling it would zero mask.next and truncate the live mask chain.
     B32 linked = 0;
     for(UI_HoverCardMask *m = ws->ui->hover_card_extra; m; m = m->next)
-    { linked |= m == &c->mask; }
+    { linked |= m == &c->mask || m == &c->cap; }
     if(!linked) { break; }
   }
   if(!c)
@@ -781,12 +656,8 @@ uishell_sidebar_detached_content(UIShell_SidebarState *state, RD_WindowState *ws
     return uishell_sidebar_card_content(state, ws, card, slot, node, index, width, interactive);
   }
   UI_Row UI_FontSize(floor_f32(ui_top_font_size()*0.82f)) UI_TagF("weak") RD_Font(RD_FontSlot_Main)
-  {
-    UI_PrefWidth(ui_em(1.4f, 1)) { uishell_sidebar_card_drag_control(card); }
-    U64 control_count = card->placement == UIShell_CardPlacement_Transient ? 4 : 3;
-    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f*(control_count+1)), 1)) { uishell_sidebar_card_title_handle(card, card->retained_label); }
-    uishell_sidebar_card_move_controls(card, width);
-  }
+  UI_PrefWidth(ui_px(width, 1))
+  { uishell_sidebar_card_title_handle(card, card->retained_label); }
   UI_TagF("weak") { ui_label(str8_lit("No longer present")); }
   ui_label_multiline(width, uishell_sidebar_string(card->path[card->depth-1].id));
   return ANDAMENTO_NONE;
@@ -1233,13 +1104,16 @@ uishell_sidebar_inline_ui(RD_WindowState *ws, String8 key, F32 width)
     if(c->moving) { ui_spacer(ui_px(c->content_height+8.f, 1)); continue; }
     ui_spacer(ui_px(4, 1));
     F32 card_width = Max(0.f, width-12.f), content_width = Max(0.f, card_width-12.f);
-    UI_PrefWidth(ui_px(card_width, 1)) UI_PrefHeight(ui_children_sum(1))
-    UI_ChildLayoutAxis(Axis2_Y) UI_CornerRadius(5.f)
+    // The cap's edge is square, and the outline round both is the border
+    // (uishell_sidebar_card_cap).
+    F32 top = c->cap_drawn && !c->cap_below ? 0 : 5.f, bottom = c->cap_drawn && c->cap_below ? 0 : 5.f;
+    UI_PrefWidth(ui_px(card_width, 1)) UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
+    UI_CornerRadius00(top) UI_CornerRadius10(top) UI_CornerRadius01(bottom) UI_CornerRadius11(bottom)
     UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), .025f))
     UI_Focus(c->focused ? UI_FocusKind_On : UI_FocusKind_Off)
     {
       ui_set_next_fixed_x(6.f);
-      UI_Box *root = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_DefaultFocusNavY|
+      UI_Box *root = ui_build_box_from_stringf((c->cap_drawn ? 0 : UI_BoxFlag_DrawBorder)|UI_BoxFlag_DrawBackground|UI_BoxFlag_DefaultFocusNavY|
         UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder, "###inline_card_%p", c);
       c->mask.key = root->key;
       UI_Parent(root) UI_FocusHot(UI_FocusKind_Root) UI_FocusActive(UI_FocusKind_Root)
@@ -1303,14 +1177,18 @@ internal void
 uishell_sidebar_ghost_card(UIShell_SidebarState *state, RD_WindowState *ws, UIShell_HoverCard *c, CFG_Node *saved, F32 card_width)
 {
   F32 content_width = Max(0.f, card_width-12.f);
+  // The cap's edge is square, and the outline round both is the border
+  // (uishell_sidebar_card_cap).
+  F32 top = c->cap_drawn && !c->cap_below ? 0 : 5.f, bottom = c->cap_drawn && c->cap_below ? 0 : 5.f;
   UI_PrefWidth(ui_px(card_width, 1))
   {
     UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
-    UI_Focus(c->focused ? UI_FocusKind_On : UI_FocusKind_Off) UI_CornerRadius(5.f)
+    UI_Focus(c->focused ? UI_FocusKind_On : UI_FocusKind_Off)
+    UI_CornerRadius00(top) UI_CornerRadius10(top) UI_CornerRadius01(bottom) UI_CornerRadius11(bottom)
     UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), .025f))
     {
       ui_set_next_fixed_x(6.f);
-      UI_Box *body = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_DefaultFocusNavY|
+      UI_Box *body = ui_build_box_from_stringf((c->cap_drawn ? 0 : UI_BoxFlag_DrawBorder)|UI_BoxFlag_DrawBackground|UI_BoxFlag_DefaultFocusNavY|
         UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder, "###pinned_card_%I64u", saved->id);
       c->mask.key = body->key;
       UI_Parent(body) UI_PrefHeight(ui_em(1.6f, 1)) UI_FocusHot(UI_FocusKind_Root) UI_FocusActive(UI_FocusKind_Root)

@@ -1,10 +1,19 @@
 # Detached hover cards
 
-Engaged cards expose a dotted drag grip at the left of the header, with compact
-Show details, Float, Dock under source, Pin and Close icons at the right. Pinned-area and card header rows use the ordinary section-header text size
-and muted style. Section and card grips use the same dotted symbol at the
-left; entity and action icons use the sidebar rows’ muted styling. Descriptive tooltips use the main text font. Hover
-an icon for its label. Detached cards omit their current destination icon.
+A card's controls live in its cap (#269): a strip the card's width and style,
+joined to its top edge, or its bottom edge when there's no room above. It
+overlays what it covers and takes the pointer from it, so nothing reflows. A
+hover card shows its cap once the pointer moves into it, a pinned card or one
+expanded under its row while the pointer is over it, and a floating card
+always. The cap holds the entity's actions from Andamento as glyphs (their
+labels are the tooltips; a narrow cap folds them into ⋯), Show details (ⓘ),
+Pin on hover and floating cards, ⤡ back to the row on an expanded card, and
+× elsewhere. Its controls are section-header controls: the same glyphs,
+quiet style and minimum hit width. The card body is information only. There
+is no Float or Dock under source control: a card floats or docks under its
+source by dragging, and drags from its title line.
+Pinned-area and card header rows use the ordinary section-header text size
+and muted style. Descriptive tooltips use the main text font.
 Dragging past ten points releases the card from its hover anchor. Sidebar drops
 use the same target widgets and animated highlights as ordinary panel drags.
 A drop over the source docks inline; a release without a selected panel target
@@ -122,8 +131,9 @@ locale/newline test and all 28 native sidebar ABI tests pass. The ten native
 diagnostic groups pass: shared UI, terminal selection, sidebar, scroll region,
 preview, terminal links, tooltip, panel, managed content and terminal glyphs.
 
-The hover-card diagnostic now drives the real Float control and Drag control
-through press/motion/release frames. It covers detached mouse-out persistence,
+The hover-card diagnostic drives the real cap controls and the title drag
+handle through press/motion/release frames (it drove the Float control and
+grip before the cap replaced them). It covers detached mouse-out persistence,
 Escape press/release, outside-click focus return, neutral surfaces, child focus
 feedback, inline measured height, source removal, the pinned View's measured body
 and clipped hit geometry, duplicate-pin reveal, moving between areas, copied-layout
@@ -151,6 +161,7 @@ to a live leaf rather than the released split container.
 Center drops cover a transient copy of the same pinned entity, the pin dropped
 into its own area, and a different entity appended alongside the existing pin.
 The same-area cases retain one saved identity and do not relink it after itself.
-Former pins floated and dragged through the actual grip remain stationary after
-raw mouse release, Escape cancellation, and window focus loss. These raw events
-clear both the card drag owner and its UI grip before the next build.
+Former pins floated and dragged through the actual title handle remain
+stationary after raw mouse release, Escape cancellation, and window focus loss.
+These raw events clear both the card drag owner and its UI handle before the
+next build.

@@ -28,7 +28,21 @@ uishell_hover_card_test_center_drop(RD_WindowState *ws, UIShell_HoverCard *card,
   ui_end_build();
 }
 
-// Click an actual related/Back widget through press and release frames.
+// The center of the first card title line (its drag handle) under `root`.
+internal Vec2F32
+uishell_hover_card_test_title(UI_Box *root)
+{
+  String8 suffix = str8_lit("###card_title");
+  for(UI_Box *box = root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, root).next)
+  {
+    if(box->string.size >= suffix.size && str8_match(str8_postfix(box->string, suffix.size), suffix, 0))
+    { return center_2f32(box->rect); }
+  }
+  return v2f32(0, 0);
+}
+
+// Click an actual related/Back widget, or a cap control, through press and
+// release frames. The card is engaged, so it shows its cap.
 internal B32
 uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
                              UIShell_HoverCard *card, String8 label, WM_Modifiers modifiers)
@@ -53,10 +67,14 @@ uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
     UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_ChildLayoutAxis(Axis2_Y)
     {
       UI_Box *body;
-      UI_Rect(r2f32p(0, 0, 400, 700)) UI_Focus(UI_FocusKind_On)
+      Rng2F32 rect = r2f32p(0, 40, 400, 740);
+      UI_Rect(rect) UI_Focus(UI_FocusKind_On)
       { body = ui_build_box_from_key(UI_BoxFlag_DefaultFocusNavY, ui_key_make(9090)); }
       UI_Parent(body) UI_FocusHot(UI_FocusKind_Root) UI_FocusActive(UI_FocusKind_Root)
-      { uishell_sidebar_card_content(state, ws, card, 0, node, index, 400, 1); }
+      {
+        uishell_sidebar_card_cap(state, card, index, rect, r2f32p(0, 0, 800, 800), rect.p0, 3.f, 1.f, 1);
+        uishell_sidebar_card_content(state, ws, card, 0, node, index, 400, 1);
+      }
     }
     ui_end_build();
     if(frame == 0)
@@ -90,6 +108,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
 #define CardCheck(expr, message) do { if(!(expr)) { fprintf(stderr, "FAIL hover card: %s\n", message); failures++; } } while(0)
   fprintf(stderr, "Hover card diagnostics: start\n");
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
+  // Caps slide out at the menu animation rate; here they arrive at once.
+  F32 saved_rate = rd_state->menu_animation_rate;
+  rd_state->menu_animation_rate = 1.f;
   // Initialized and restored: rendering must use this fixture's own core.
   UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {.initialized = 1, .restored = 1};
   ws->sidebar = &fixture;
@@ -234,7 +255,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     test->mouse = v2f32(100, 100); MemoryZeroArray(test->hover_card_keys); test->hover_card_extra = 0;
     UI_Rect(r2f32p(50, 50, 150, 150)) UI_FontSize(12) RD_Font(RD_FontSlot_Icons)
-    { uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Pin], str8_lit("font_fixture"), str8_lit("Pin font fixture")); }
+    { uishell_sidebar_header_button(str8_lit("🖈"), str8_lit("font_fixture"), 0, 1, str8_lit("Pin font fixture"), str8_zero()); }
     ui_end_build();
     if(frame)
     {
@@ -447,7 +468,45 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           actions |= str8_match(text, str8_lit("Copy URL"), 0);
         }
         CardCheck(title, "structured title is rendered without a prefix");
-        CardCheck(actions == engaged, "actions appear only when engaged");
+        CardCheck(!actions, "the card body holds no actions; they're its cap's");
+      }
+      // The cap holds the entity's actions as glyphs, with their labels as
+      // tooltips, then ⓘ, Pin and × on a hover card; Float and Dock under
+      // source are gone (#269). A narrow cap folds actions into ⋯.
+      for(U64 narrow = 0; narrow < 2; narrow++)
+      {
+        UI_EventList events = {0};
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        MemoryZeroArray(test->hover_card_keys);
+        F32 cap_width = narrow ? 4*UIShell_ControlMinimumPT+8 : 400;
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        { uishell_sidebar_card_cap(&fixture, card, index, r2f32p(0, 100, cap_width, 300), r2f32p(0, 0, 800, 800), v2f32(0, 0), 3.f, 1.f, 1); }
+        ui_end_build();
+        String8 glyphs[8] = {0}; U64 glyph_count = 0;
+        UI_Box *cap = ui_box_from_key(card->cap.key);
+        for(UI_Box *box = cap; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, cap).next)
+        { if((box->flags & UI_BoxFlag_Clickable) == UI_BoxFlag_Clickable && glyph_count < ArrayCount(glyphs)) { glyphs[glyph_count++] = ui_box_display_string(box); } }
+        CardCheck(card->cap_shown && !card->cap_below && card->cap.rect.y1 == 101 && dim_2f32(card->cap.rect).x == cap_width,
+                  "the cap joins the card's top edge at the card's width");
+        if(narrow)
+        {
+          CardCheck(glyph_count == 4 && str8_match(glyphs[0], str8_lit("⋯"), 0) && !card->cap_footer,
+                    "a narrow cap folds the actions into ⋯");
+        }
+        else
+        {
+          CardCheck(glyph_count == 5 && str8_match(glyphs[1], str8_lit("⧉"), 0) && str8_match(glyphs[2], str8_lit("ⓘ"), 0) &&
+                    str8_match(glyphs[3], str8_lit("🖈"), 0) && str8_match(glyphs[4], str8_lit("×"), 0),
+                    "a hover card's cap holds its actions, ⓘ, Pin and ×");
+        }
+      }
+      {
+        UI_EventList events = {0};
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        { uishell_sidebar_card_cap(&fixture, card, index, r2f32p(0, 10, 400, 300), r2f32p(0, 0, 800, 800), v2f32(0, 0), 3.f, 1.f, 1); }
+        ui_end_build();
+        CardCheck(card->cap_below && card->cap.rect.y0 == 299, "a card at the top takes its cap on its bottom edge");
       }
       AndamentoNode parent = {0}; andamento_snapshot_node(fixture.snapshot, live.parent, &parent);
       String8 parent_label = uishell_sidebar_string(parent.label);
@@ -459,9 +518,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                 fixture.cards[1].open && fixture.cards[1].focused &&
                 str8_match(uishell_sidebar_string(fixture.cards[1].path[0].id), uishell_sidebar_string(parent.entity_id), 0),
                 "modifier-click opens a separate focused card without changing the original path");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, rd_icon_kind_text_table[RD_IconKind_X], 0) && !card->open &&
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("×"), 0) && !card->open &&
                 fixture.cards[1].open && fixture.cards[1].focused, "closing the original leaves the separate card open and focused");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, &fixture.cards[1], rd_icon_kind_text_table[RD_IconKind_X], 0) &&
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, &fixture.cards[1], str8_lit("×"), 0) &&
                 !fixture.cards[1].open, "the separate card closes through its own action");
       // Hidden targets navigate by catalog identity, including cycles and
       // modifier-open. No placement-edge fallback may invent a relation.
@@ -490,9 +549,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Unavailable"), 0),
                 "unavailable relation targets do not expose a navigation button");
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
-      CardCheck(!card->enriched && uishell_hover_card_test_click(ws, &fixture, card, rd_icon_kind_text_table[RD_IconKind_Info], 0) && card->enriched,
+      CardCheck(!card->enriched && uishell_hover_card_test_click(ws, &fixture, card, str8_lit("ⓘ"), 0) && card->enriched,
                 "engaged Details button reveals labels and observation ages");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, rd_icon_kind_text_table[RD_IconKind_Info], 0) && !card->enriched,
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("ⓘ"), 0) && !card->enriched,
                 "Details button returns to compact mode");
       // Full production layout catches fixed-rectangle scope leakage into
       // fields and buttons, rather than only testing their existence.
@@ -529,6 +588,13 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         { uishell_sidebar_cards_ui_at(ws, now_time_us(), frame != 2, 1); }
         // Near places the card from the pointer where it opened, not the source box.
         if(frame == 0) { CardCheck(abs_f32(card->rect.x0-(200-UIShell_HoverCardNearGapPT)) < 1, "a Near hover card starts just left of where the pointer opened it"); }
+        if(frame == 0) { CardCheck(!card->cap_shown, "a hover card at rest is a peek, without its cap"); }
+        if(frame == 1) { CardCheck(card->cap_shown && contains_2f32(test->hover_card_rects[0], center_2f32(card->cap.rect)),
+                                   "a hover card shows its cap once the pointer moves in, and its cap takes the pointer");
+                         UI_Box *card_box = ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0));
+                         UI_Box *outline = ui_box_from_key(ui_key_from_stringf(card_box->key, "outline"));
+                         CardCheck(!(card_box->flags & UI_BoxFlag_DrawBorder) && !ui_box_is_nil(outline) && outline->parent == card_box &&
+                                   outline == card_box->first, "a hover card's outline goes round it and its cap, over both"); }
         if(frame == 2) { CardCheck(card->open && !card->focused, "hover remains informational when the window is not the keyboard target"); }
         ui_end_build();
         UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);
@@ -601,6 +667,22 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); ui_end_build();
       CardCheck(!test->hover_card_focus, "closing the last card clears focus before View event consumers");
+      // Its slot opens the next card with the cap in, not sliding back from
+      // where the last card left it.
+      for(U64 frame = 0; frame < 3; frame++)
+      {
+        // Out, then closed, then reopened as a peek, sliding at half rate.
+        if(frame != 1) { uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us()); }
+        card->engaged = frame == 0;
+        rd_state->menu_animation_rate = frame == 2 ? 0.5f : 1.f;
+        UI_EventList reopen_events = {0}; ui_begin_build(ws->os, &reopen_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = frame == 0 ? center_2f32(card->rect) : v2f32(-100, -100);
+        uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); ui_end_build();
+        if(frame == 0) { CardCheck(card->cap_shown, "an engaged hover card has its cap out"); uishell_sidebar_card_close(card); }
+        if(frame == 2) { CardCheck(card->open && !card->engaged && !card->cap_drawn, "a reopened hover card starts with its cap in"); }
+      }
+      uishell_sidebar_card_close(card);
+      rd_state->menu_animation_rate = 1.f;
       // Follow the focused card's production default-navigation path.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
       uishell_sidebar_card_navigate(card, uishell_sidebar_card_entity(parent), now_time_us());
@@ -626,7 +708,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                     "keyboard-focused child keeps its focus indication");
           String8 text = ui_box_display_string(hot);
           saw_back |= str8_match(text, str8_lit("← Back"), 0);
-          saw_close |= saw_back && saw_related && str8_match(text, rd_icon_kind_text_table[RD_IconKind_X], 0);
+          saw_close |= saw_back && saw_related && str8_match(text, str8_lit("×"), 0);
           saw_related |= !saw_back && !saw_close && str8_find_needle(hot->string, 0, str8_lit("###related_"), 0) < hot->string.size;
         }
       }
@@ -837,12 +919,24 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
               uishell_sidebar_card_target_valid(ws, UIShell_CardPlacement_Inline, 0) &&
               uishell_sidebar_card_target_valid(ws, UIShell_CardPlacement_Pinned, 0),
               "all detached targets use the shared checker with zero minimum width");
-    CardCheck(uishell_hover_card_test_click(ws, &fixture, original, rd_icon_kind_text_table[RD_IconKind_Window], 0) && original->move_requested,
-              "actual Float control requests detachment");
+    // Dragging floats a card; it has no Float control (#269).
+    CardCheck(!uishell_hover_card_test_click(ws, &fixture, original, rd_icon_kind_text_table[RD_IconKind_Window], 0) && !original->move_requested,
+              "a card has no Float control");
+    uishell_sidebar_card_request(original, UIShell_CardPlacement_Float);
     uishell_sidebar_detached_finish(ws);
     UIShell_HoverCard *floating = fixture.detached;
     CardCheck(!original->open && floating && floating->open && floating->placement == UIShell_CardPlacement_Float,
               "float detaches into an independent controller");
+    {
+      UI_EventList events = {0};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      test->mouse = v2f32(-100, -100);
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+      { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+      ui_end_build();
+      CardCheck(floating->cap_shown && contains_2f32(floating->mask.rect, center_2f32(floating->cap.rect)),
+                "a floating card always shows its cap, and its mask covers it");
+    }
     floating->focused = 0;
     uishell_sidebar_card_tick(floating, v2f32(-100, -100), 10000000);
     uishell_sidebar_card_tick(floating, v2f32(-100, -100), 11000000);
@@ -1174,10 +1268,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       ui_end_build();
       if(frame == 0)
       {
-        UI_Box *card_root = ui_box_from_key(test->hover_card_keys[0]);
-        for(UI_Box *box = card_root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, card_root).next)
-        { if(str8_match(ui_box_display_string(box), str8_lit("⋮⋮"), 0)) { drag_start = center_2f32(box->rect); break; } }
-        CardCheck(drag_start.x > 0, "engaged production overlay exposes the drag control");
+        drag_start = uishell_hover_card_test_title(ui_box_from_key(test->hover_card_keys[0]));
+        CardCheck(drag_start.x > 0, "engaged production overlay exposes its title as the drag handle");
       }
       if(frame == 2) { CardCheck(original->moving && original->open, "native drag motion detaches the overlay from its anchor"); }
     }
@@ -1390,6 +1482,50 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     cfg_node_insert_child(rd_state->cfg, drag_root, &cfg_nil_node, drag_panel);
     cfg_node_equip_string(rd_state->cfg, drag_panel, str8_lit("0.5"));
     cfg_node_new(rd_state->cfg, drag_root, str8_lit("0.5"));
+    // Its cap comes out from the title line, not the body; once out, it
+    // stays while the pointer is anywhere on the card.
+    {
+      Rng2F32 pin_rect = {0};
+      for(U64 frame = 0; frame < 4; frame++)
+      {
+        Vec2F32 body = v2f32(center_2f32(pin_rect).x, pin_rect.y1-4), title = v2f32(body.x, pin_rect.y0+6);
+        Vec2F32 pointer = frame == 0 ? v2f32(900, 690) : frame == 2 ? title : body;
+        UI_EventList events = {0};
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = pointer;
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        {
+          uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1);
+          Andamento *drag_core = fixture.core; fixture.core = 0;
+          Temp panel_scratch = scratch_begin(0, 0);
+          CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+          UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(panel_scratch.arena, window, host);
+          mount.panel_tree = cfg_panel_tree_from_panels_cfg(panel_scratch.arena, drag_root, Axis2_X);
+          UIShell_RegsScope(.window = window->id)
+          { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
+          scratch_end(panel_scratch);
+          fixture.core = drag_core;
+        }
+        ui_end_build();
+        if(frame == 0) { pin_rect = ui_box_from_key(drag_pin->mask.key)->rect; }
+        if(frame == 1) { CardCheck(pin_rect.y1-pin_rect.y0 > 40 && !drag_pin->cap_shown, "entering a pinned card's body leaves its cap in"); }
+        if(frame == 2)
+        {
+          B32 lifted = 0;
+          for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+          { lifted |= (box->flags & UI_BoxFlag_DrawDropShadow) && box->parent->flags & UI_BoxFlag_Clip && box->rect.x0 == pin_rect.x0; }
+          CardCheck(drag_pin->cap_shown && lifted, "a pinned card's title line brings out its cap and lifts it");
+          // One outline goes round card and cap; neither draws its own.
+          UI_Box *outline = ui_box_from_key(ui_key_from_stringf(drag_pin->mask.key, "outline"));
+          Rng2F32 both = union_2f32(pin_rect, drag_pin->cap.rect);
+          CardCheck(!ui_box_is_nil(outline) && (outline->flags & UI_BoxFlag_DrawBorder) &&
+                    length_2f32(sub_2f32(outline->rect.p0, both.p0)) < 1 && length_2f32(sub_2f32(outline->rect.p1, both.p1)) < 1,
+                    "one outline goes round a pinned card and its cap");
+          CardCheck(!(ui_box_from_key(drag_pin->mask.key)->flags & UI_BoxFlag_DrawBorder), "a pinned card with its cap out draws no border of its own");
+        }
+        if(frame == 3) { CardCheck(drag_pin->cap_shown, "a pinned card's cap stays while the pointer is on its body"); }
+      }
+    }
     Vec2F32 pinned_drag_start = {0}, pinned_drag_size = {0};
     for(U64 frame = 0; frame < 5; frame++)
     {
@@ -1425,13 +1561,27 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       ui_end_build();
       if(frame == 0)
       {
-        UI_Box *card_root = ui_box_from_key(drag_pin->mask.key);
-        for(UI_Box *box = card_root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, card_root).next)
-        { if(str8_match(ui_box_display_string(box), str8_lit("⋮⋮"), 0)) { pinned_drag_start = center_2f32(box->rect); break; } }
-        uishell_sidebar_detached_bounds(ws);
-        pinned_drag_size = dim_2f32(drag_pin->rect);
-        CardCheck(pinned_drag_start.x > 0, "pinned card exposes its own grip inside the section");
+        pinned_drag_start = uishell_hover_card_test_title(ui_box_from_key(drag_pin->mask.key));
+        CardCheck(pinned_drag_start.x > 0, "pinned card exposes its own title handle inside the section");
       }
+      // The size it's grabbed at: the cap's details can fill it in by then.
+      if(frame == 1) { pinned_drag_size = dim_2f32(drag_pin->rect); }
+      // A pinned card is a peek until the pointer enters it; its cap then
+      // offers × but not Pin, and takes the pointer from what it covers.
+      if(frame == 0) { CardCheck(!drag_pin->cap_shown, "a pinned card at rest shows no cap"); }
+      if(frame == 1)
+      {
+        B32 pin = 0, close = 0, masked = 0;
+        UI_Box *cap = ui_box_from_key(drag_pin->cap.key);
+        for(UI_Box *box = cap; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, cap).next)
+        {
+          pin |= str8_match(ui_box_display_string(box), str8_lit("🖈"), 0);
+          close |= str8_match(ui_box_display_string(box), str8_lit("×"), 0);
+        }
+        for(UI_HoverCardMask *m = test->hover_card_extra; m; m = m->next) { masked |= m == &drag_pin->cap; }
+        CardCheck(drag_pin->cap_shown && close && !pin && masked, "a pinned card's cap shows on pointer enter, with × and no Pin");
+      }
+      if(frame == 3) { CardCheck(drag_pin->cap_drawn && !drag_pin->cap_shown, "a card being dragged keeps its cap, inert"); }
       if(frame == 2 || frame == 3)
       {
         CardCheck(drag_pin->moving && drag_pin->open && rd_drag_is_active(), "pinned drag stays active while actual panel drop targets build");
@@ -1490,6 +1640,41 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                 "a title drag of a float ends as a float");
       (void)title_seed;
     }
+    // A float's cap is the obvious place to grab it: its background drags.
+    {
+      ui_kill_action();
+      Vec2F32 grab = {0}, origin = {0};
+      for(U64 frame = 0; frame < 5; frame++)
+      {
+        Vec2F32 pointer = frame < 2 ? grab : add_2f32(grab, v2f32(50, 30));
+        UI_EventList events = {0};
+        if(frame == 1 || frame == 4)
+        {
+          WM_Event raw = {.kind = frame == 1 ? WM_EventKind_Press : WM_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = pointer};
+          if(!uishell_sidebar_card_wm_event(ws, &raw))
+          {
+            UI_Event event = {.kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = pointer};
+            ui_event_list_push(test->arena, &events, &event);
+          }
+        }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = pointer;
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+        uishell_sidebar_drag_finish(ws);
+        ui_end_build();
+        // Its left end holds no controls.
+        if(frame == 0) { grab = v2f32(drag_pin->cap.rect.x0+8, center_2f32(drag_pin->cap.rect).y); origin = drag_pin->rect.p0; }
+        if(frame == 0) { CardCheck(drag_pin->cap_shown && dim_2f32(drag_pin->cap.rect).y > 0, "a float shows its cap"); }
+        if(frame == 2 || frame == 3)
+        {
+          CardCheck(drag_pin->moving && length_2f32(sub_2f32(drag_pin->rect.p0, add_2f32(origin, v2f32(50, 30)))) < 1.f,
+                    "dragging a float's cap moves the float");
+          CardCheck(drag_pin->cap_drawn, "a float keeps its cap while it's dragged");
+        }
+      }
+      CardCheck(drag_pin->open && !drag_pin->moving && drag_pin->placement == UIShell_CardPlacement_Float,
+                "a cap drag of a float ends as a float");
+    }
     // The pins' section title drags its View, as any section title does.
     {
       ui_kill_action(); rd_drag_kill();
@@ -1537,7 +1722,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       rd_drag_kill(); ui_kill_action();
     }
     // The raw release is consumed by card ownership before UI events. A
-    // former pin's Float grip must release too, or the next build restarts drag.
+    // former pin's title handle must release too, or the next build restarts drag.
     fprintf(stderr, "Hover card diagnostics: float raw release\n");
     Rng2F32 float_window = wm_client_rect_from_window(ws->os);
     Vec2F32 float_drag_delta = v2f32(dim_2f32(float_window).x+80, 20);
@@ -1575,12 +1760,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_end_build();
         if(frame == 0)
         {
-          UI_Box *card_root = ui_box_from_key(drag_pin->mask.key);
-          for(UI_Box *box = card_root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, card_root).next)
-          { if(str8_match(ui_box_display_string(box), str8_lit("⋮⋮"), 0)) { float_drag_start = center_2f32(box->rect); break; } }
-          CardCheck(float_drag_start.x > 0, "former pin exposes its Float grip");
+          float_drag_start = uishell_hover_card_test_title(ui_box_from_key(drag_pin->mask.key));
+          CardCheck(float_drag_start.x > 0, "former pin exposes its title handle");
         }
-        if(frame == 2) { CardCheck(drag_pin->moving && fixture.drag_card == drag_pin, "Float grip starts the real card drag"); }
+        if(frame == 2) { CardCheck(drag_pin->moving && fixture.drag_card == drag_pin, "the title handle starts the real card drag"); }
         if(frame == 3)
         {
           CardCheck(!drag_pin->moving && !fixture.drag_card && !rd_drag_is_active() &&
@@ -1973,6 +2156,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
 
   fprintf(stderr, "Hover card diagnostics: cleanup\n");
   ws->sidebar = saved_sidebar; ws->ui = saved_window_ui;
+  rd_state->menu_animation_rate = saved_rate;
   uishell_sidebar_release(&fixture); ui_select_state(saved_ui); ui_state_release(test);
   fprintf(stderr, "Hover card diagnostics: %u failures\n", failures);
 #undef CardCheck
