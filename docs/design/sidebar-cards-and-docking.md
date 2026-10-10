@@ -65,8 +65,9 @@ drag handles, no keyboard focus. Moving the pointer into it makes it
 width and style, joined to its top edge (or its bottom edge when the window
 has no room above), holding everything you can act on. The cap slides out from
 the card at the group-expand rate and overlays what it covers, even past a
-docked card's section, so nothing reflows. The card casts one shadow with it,
-so it reads as lifted above what it overlaps. The card body stays information
+docked card's section, so nothing reflows. One outline goes round the card
+and cap together, and they cast one shadow, so they read as one card lifted
+above what it overlaps. The card body stays information
 only.
 
 This applies to every card at rest, wherever it is:
@@ -84,7 +85,7 @@ hover and floating cards, ⤡ back to the row on an expanded card, and × on the
 rest. Its controls are section-header controls: one glyph set and one minimum
 hit width. There is no Float control (dragging floats a card) and no Dock
 under source (see `drag-model.md`, decision 2). A floating card also drags
-from its cap's background.
+from its cap's background, and a dragged card keeps its cap.
 
 How the cap is revealed (hover the title, hover anywhere, a modifier, always)
 and which cards expand inline rather than overflow are candidate card

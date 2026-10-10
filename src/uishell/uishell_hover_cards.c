@@ -735,6 +735,27 @@ uishell_sidebar_card_action_glyph(String8 intent)
   return str8_lit("→");
 }
 
+// While its cap is out, a card and its cap draw no borders of their own: one
+// outline goes round both, over them, so nothing marks the join. A border
+// draws after its box's children, so no child could cover the card's. The
+// outline is built first among its siblings, so it paints over them, and
+// placed once the card and cap are.
+internal UI_Box *
+uishell_sidebar_card_outline_begin(UI_Key seed)
+{
+  return ui_build_box_from_key(UI_BoxFlag_DrawBorder|UI_BoxFlag_FloatingX|UI_BoxFlag_FloatingY, ui_key_from_stringf(seed, "outline"));
+}
+
+internal void
+uishell_sidebar_card_outline_end(UI_Box *outline, Rng2F32 rect, Vec2F32 origin, F32 radius)
+{
+  outline->fixed_position = sub_2f32(rect.p0, origin);
+  outline->fixed_size = dim_2f32(rect);
+  outline->pref_size[Axis2_X] = ui_px(dim_2f32(rect).x, 1);
+  outline->pref_size[Axis2_Y] = ui_px(dim_2f32(rect).y, 1);
+  for(U64 i = 0; i < Corner_COUNT; i++) { outline->corner_radii[i] = radius; }
+}
+
 // The cap (#269): a strip the card's width and style, joined to `rect`'s top
 // edge, or its bottom edge when `bounds` has no room above. It holds
 // everything you can act on: the entity's actions (those that don't fit go
@@ -767,7 +788,7 @@ uishell_sidebar_card_cap(UIShell_SidebarState *state, UIShell_HoverCard *card, U
   F32 em = ui_top_font_size(), height = uishell_sidebar_card_cap_height(), width = dim_2f32(rect).x;
   F32 shown_height = Max(1.f, round_f32(height*Clamp(0.f, reveal, 1.f)));
   card->cap_below = uishell_sidebar_card_cap_below(rect, bounds);
-  // A pixel of overlap, which the seam below paints over, joins the borders.
+  // A pixel of overlap leaves no gap at the join.
   F32 y = card->cap_below ? rect.y1-1 : rect.y0-shown_height+1;
   card->cap.rect = r2f32p(rect.x0, y, rect.x1, y+shown_height);
   AndamentoDetailAction controls[UIShell_HoverCardActionCount] = {0};
@@ -799,7 +820,7 @@ uishell_sidebar_card_cap(UIShell_SidebarState *state, UIShell_HoverCard *card, U
   UI_ChildLayoutAxis(Axis2_X)
   UI_CornerRadius00(card->cap_below ? 0 : radius) UI_CornerRadius10(card->cap_below ? 0 : radius)
   UI_CornerRadius01(card->cap_below ? radius : 0) UI_CornerRadius11(card->cap_below ? radius : 0)
-  { cap = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Clip, "###strip"); }
+  { cap = ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_Clip, "###strip"); }
   card->cap.key = opening->key;
   card->cap_shown = live;
   card->cap_drawn = 1;
@@ -807,9 +828,6 @@ uishell_sidebar_card_cap(UIShell_SidebarState *state, UIShell_HoverCard *card, U
   UI_Parent(cap) UI_PrefHeight(ui_px(height, 1)) RD_Font(RD_FontSlot_Main) UI_CornerRadius(0)
   UI_Flags(live ? 0 : UI_BoxFlag_IgnoreInteraction)
   {
-    // The seam covers both borders along the join.
-    UI_FixedX(1) UI_FixedY(card->cap_below ? 0 : height-2) UI_PrefWidth(ui_px(Max(0.f, width-2), 1)) UI_PrefHeight(ui_px(2, 1))
-    { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_from_stringf(cap->key, "seam")); }
     ui_spacer(ui_pct(1, 0));
     for(U64 i = 0; i < shown; i++)
     {
@@ -951,12 +969,13 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
   // cap has the pointer (#269).
   for(UIShell_HoverCard *c = state->detached; c; c = c->next)
   {
-    if(c->placement == UIShell_CardPlacement_Float) { continue; }
+    // A dragged card is built with the floating ones, cap and all.
+    if(c->placement == UIShell_CardPlacement_Float || c->moving) { continue; }
     B32 had_cap = c->cap_shown;
     c->cap_shown = c->cap_drawn = 0;
     UI_Key reveal_key = ui_key_from_stringf(ui_key_zero(), "card_cap_reveal_%p", c);
     UI_Box *box = ui_box_from_key(c->mask.key);
-    B32 eligible = c->open && !c->moving && sidebar_visible && !state->drag_card && !state->row_drag_key.size && !rd_drag_is_active() &&
+    B32 eligible = c->open && sidebar_visible && !state->drag_card && !state->row_drag_key.size && !rd_drag_is_active() &&
       !ui_box_is_nil(box) && box->last_touched_build_index+1 >= ui_state->build_index;
     Rng2F32 visible = {0};
     if(eligible)
@@ -985,9 +1004,12 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     AndamentoNode node = {0};
     U64 index = uishell_sidebar_card_find(state, c->path[c->depth-1], &node);
     size_t action = ANDAMENTO_NONE;
+    UI_Box *outline;
+    UI_Parent(ui_state->root) { outline = uishell_sidebar_card_outline_begin(c->mask.key); }
     UI_Parent(ui_state->root)
     UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), .025f))
     { action = uishell_sidebar_card_cap(state, c, index, visible, window, ui_state->root->fixed_position, 5.f, reveal, over); }
+    uishell_sidebar_card_outline_end(outline, union_2f32(visible, c->cap.rect), ui_state->root->fixed_position, 5.f);
     uishell_sidebar_card_lift(c->cap.key, union_2f32(visible, c->cap.rect), 5.f);
     // The cap takes the pointer from what it covers.
     if(c->cap_shown) { c->cap.next = ui_state->hover_card_extra; ui_state->hover_card_extra = &c->cap; }
@@ -1089,12 +1111,13 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     else { ui_state->hover_card_keys[slot] = card->moving ? ui_key_zero() : key; ui_state->hover_card_rects[slot] = card->rect; }
     card->last_mouse = mouse;
     size_t action = ANDAMENTO_NONE, cap_action = ANDAMENTO_NONE;
+    UI_Box *outline = &ui_nil_box;
     // A floating card always shows its cap; a hover card once the pointer
     // has moved into it, sliding it out (#269). Its edge is square where the
     // cap joins, and the card casts one shadow with it.
-    B32 live = !card->moving && (floating || card->engaged);
-    F32 reveal = ui_anim(reveal_key, (F32)live, .initial = 0,
-      .rate = rd_state->menu_animation_rate, .epsilon = 0.01f, .reset = card->moving);
+    // A dragged card keeps its cap, inert until it lands.
+    B32 out = floating || card->engaged, live = out && !card->moving;
+    F32 reveal = ui_anim(reveal_key, (F32)out, .initial = 0, .rate = rd_state->menu_animation_rate, .epsilon = 0.01f);
     if(reveal > 0 && reveal < 1) { rd_request_frame(); }
     B32 cap = reveal > 0;
     B32 cap_below = cap && uishell_sidebar_card_cap_below(card->rect, window);
@@ -1104,9 +1127,10 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     {
       UI_Box *root;
       UI_Rect(card->rect) UI_CornerRadius00(top) UI_CornerRadius10(top) UI_CornerRadius01(bottom) UI_CornerRadius11(bottom)
-      { root = ui_build_box_from_key(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|
-          (cap ? 0 : UI_BoxFlag_DrawDropShadow)|UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DefaultFocusNavY|
+      { root = ui_build_box_from_key((cap ? 0 : UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawDropShadow)|UI_BoxFlag_DrawBackground|
+          UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DefaultFocusNavY|
           UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder, key); }
+      if(cap) UI_Parent(root) { outline = uishell_sidebar_card_outline_begin(key); }
       if(cap) UI_Parent(root) UI_FocusActive(card->focused ? UI_FocusKind_Root : UI_FocusKind_Off)
       UI_FocusHot(card->focused ? UI_FocusKind_Root : UI_FocusKind_Off)
       { cap_action = uishell_sidebar_card_cap(state, card, index, card->rect, window, card->rect.p0, radius, reveal, live); }
@@ -1178,7 +1202,11 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
       }
     }
     if(action == ANDAMENTO_NONE) { action = cap_action; }
-    if(cap) { uishell_sidebar_card_lift(key, union_2f32(card->rect, card->cap.rect), radius); }
+    if(cap)
+    {
+      uishell_sidebar_card_outline_end(outline, union_2f32(card->rect, card->cap.rect), card->rect.p0, radius);
+      uishell_sidebar_card_lift(key, union_2f32(card->rect, card->cap.rect), radius);
+    }
     // Its masks cover the card and its cap, which is the root's child.
     if(slot >= ArrayCount(state->cards)) { card->mask.rect = uishell_sidebar_card_hit_rect(card); }
     else if(!card->moving) { ui_state->hover_card_rects[slot] = uishell_sidebar_card_hit_rect(card); }

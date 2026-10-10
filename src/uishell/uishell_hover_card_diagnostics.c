@@ -590,7 +590,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         if(frame == 0) { CardCheck(abs_f32(card->rect.x0-(200-UIShell_HoverCardNearGapPT)) < 1, "a Near hover card starts just left of where the pointer opened it"); }
         if(frame == 0) { CardCheck(!card->cap_shown, "a hover card at rest is a peek, without its cap"); }
         if(frame == 1) { CardCheck(card->cap_shown && contains_2f32(test->hover_card_rects[0], center_2f32(card->cap.rect)),
-                                   "a hover card shows its cap once the pointer moves in, and its cap takes the pointer"); }
+                                   "a hover card shows its cap once the pointer moves in, and its cap takes the pointer");
+                         UI_Box *card_box = ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0));
+                         UI_Box *outline = ui_box_from_key(ui_key_from_stringf(card_box->key, "outline"));
+                         CardCheck(!(card_box->flags & UI_BoxFlag_DrawBorder) && !ui_box_is_nil(outline) && outline->parent == card_box &&
+                                   outline == card_box->first, "a hover card's outline goes round it and its cap, over both"); }
         if(frame == 2) { CardCheck(card->open && !card->focused, "hover remains informational when the window is not the keyboard target"); }
         ui_end_build();
         UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);
@@ -1511,6 +1515,13 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
           { lifted |= (box->flags & UI_BoxFlag_DrawDropShadow) && box->parent->flags & UI_BoxFlag_Clip && box->rect.x0 == pin_rect.x0; }
           CardCheck(drag_pin->cap_shown && lifted, "a pinned card's title line brings out its cap and lifts it");
+          // One outline goes round card and cap; neither draws its own.
+          UI_Box *outline = ui_box_from_key(ui_key_from_stringf(drag_pin->mask.key, "outline"));
+          Rng2F32 both = union_2f32(pin_rect, drag_pin->cap.rect);
+          CardCheck(!ui_box_is_nil(outline) && (outline->flags & UI_BoxFlag_DrawBorder) &&
+                    length_2f32(sub_2f32(outline->rect.p0, both.p0)) < 1 && length_2f32(sub_2f32(outline->rect.p1, both.p1)) < 1,
+                    "one outline goes round a pinned card and its cap");
+          CardCheck(!(ui_box_from_key(drag_pin->mask.key)->flags & UI_BoxFlag_DrawBorder), "a pinned card with its cap out draws no border of its own");
         }
         if(frame == 3) { CardCheck(drag_pin->cap_shown, "a pinned card's cap stays while the pointer is on its body"); }
       }
@@ -1570,7 +1581,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         for(UI_HoverCardMask *m = test->hover_card_extra; m; m = m->next) { masked |= m == &drag_pin->cap; }
         CardCheck(drag_pin->cap_shown && close && !pin && masked, "a pinned card's cap shows on pointer enter, with × and no Pin");
       }
-      if(frame == 2) { CardCheck(!drag_pin->cap_shown, "a card being dragged shows no cap"); }
+      if(frame == 3) { CardCheck(drag_pin->cap_drawn && !drag_pin->cap_shown, "a card being dragged keeps its cap, inert"); }
       if(frame == 2 || frame == 3)
       {
         CardCheck(drag_pin->moving && drag_pin->open && rd_drag_is_active(), "pinned drag stays active while actual panel drop targets build");
@@ -1658,6 +1669,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         {
           CardCheck(drag_pin->moving && length_2f32(sub_2f32(drag_pin->rect.p0, add_2f32(origin, v2f32(50, 30)))) < 1.f,
                     "dragging a float's cap moves the float");
+          CardCheck(drag_pin->cap_drawn, "a float keeps its cap while it's dragged");
         }
       }
       CardCheck(drag_pin->open && !drag_pin->moving && drag_pin->placement == UIShell_CardPlacement_Float,

@@ -1104,7 +1104,8 @@ uishell_sidebar_inline_ui(RD_WindowState *ws, String8 key, F32 width)
     if(c->moving) { ui_spacer(ui_px(c->content_height+8.f, 1)); continue; }
     ui_spacer(ui_px(4, 1));
     F32 card_width = Max(0.f, width-12.f), content_width = Max(0.f, card_width-12.f);
-    // The cap's edge is square (uishell_sidebar_card_cap).
+    // The cap's edge is square, and the outline round both is the border
+    // (uishell_sidebar_card_cap).
     F32 top = c->cap_drawn && !c->cap_below ? 0 : 5.f, bottom = c->cap_drawn && c->cap_below ? 0 : 5.f;
     UI_PrefWidth(ui_px(card_width, 1)) UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
     UI_CornerRadius00(top) UI_CornerRadius10(top) UI_CornerRadius01(bottom) UI_CornerRadius11(bottom)
@@ -1112,7 +1113,7 @@ uishell_sidebar_inline_ui(RD_WindowState *ws, String8 key, F32 width)
     UI_Focus(c->focused ? UI_FocusKind_On : UI_FocusKind_Off)
     {
       ui_set_next_fixed_x(6.f);
-      UI_Box *root = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_DefaultFocusNavY|
+      UI_Box *root = ui_build_box_from_stringf((c->cap_drawn ? 0 : UI_BoxFlag_DrawBorder)|UI_BoxFlag_DrawBackground|UI_BoxFlag_DefaultFocusNavY|
         UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder, "###inline_card_%p", c);
       c->mask.key = root->key;
       UI_Parent(root) UI_FocusHot(UI_FocusKind_Root) UI_FocusActive(UI_FocusKind_Root)
@@ -1176,7 +1177,8 @@ internal void
 uishell_sidebar_ghost_card(UIShell_SidebarState *state, RD_WindowState *ws, UIShell_HoverCard *c, CFG_Node *saved, F32 card_width)
 {
   F32 content_width = Max(0.f, card_width-12.f);
-  // The cap's edge is square (uishell_sidebar_card_cap).
+  // The cap's edge is square, and the outline round both is the border
+  // (uishell_sidebar_card_cap).
   F32 top = c->cap_drawn && !c->cap_below ? 0 : 5.f, bottom = c->cap_drawn && c->cap_below ? 0 : 5.f;
   UI_PrefWidth(ui_px(card_width, 1))
   {
@@ -1186,7 +1188,7 @@ uishell_sidebar_ghost_card(UIShell_SidebarState *state, RD_WindowState *ws, UISh
     UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), .025f))
     {
       ui_set_next_fixed_x(6.f);
-      UI_Box *body = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_DefaultFocusNavY|
+      UI_Box *body = ui_build_box_from_stringf((c->cap_drawn ? 0 : UI_BoxFlag_DrawBorder)|UI_BoxFlag_DrawBackground|UI_BoxFlag_DefaultFocusNavY|
         UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder, "###pinned_card_%I64u", saved->id);
       c->mask.key = body->key;
       UI_Parent(body) UI_PrefHeight(ui_em(1.6f, 1)) UI_FocusHot(UI_FocusKind_Root) UI_FocusActive(UI_FocusKind_Root)
