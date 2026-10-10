@@ -281,7 +281,11 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!uishell_sidebar_tab_overflow_diagnostics(ws));
   DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 1));
   DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 0));
-  CFG_Node *first_panel = host->first, *second_panel = first_panel->next;
+  // Two adjacent scrolling sections: Andamento places pinned regions
+  // (controls) first, so they're found by key, not position.
+  CFG_Node *first_panel = uishell_sidebar_region_view(window, str8_lit("tree"))->parent, *second_panel = first_panel->next;
+  U64 first_index = 0;
+  for(CFG_Node *c = host->first; c != first_panel && c != &cfg_nil_node; c = c->next) { first_index++; }
   CFG_Node *view = cfg_node_child_from_string(first_panel, str8_lit("sidebar_section"));
   CFG_Node *second_view = cfg_node_child_from_string(second_panel, str8_lit("sidebar_section"));
   CFG_ID view_id = view->id;
@@ -379,8 +383,10 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       DockFailure(loaded.count != 1);
       CFG_Node *restored_window = loaded.first->v;
       CFG_Node *restored_root = cfg_node_child_from_string(restored_window, RD_DOCK_SIDEBAR_ROOT);
+      CFG_Node *restored_first = restored_root->first;
+      for(U64 i = 0; i < first_index; i++) { restored_first = restored_first->next; }
       DockFailure(cfg_node_child_from_string(restored_window, str8_lit("sidebar_layout_sized")) == &cfg_nil_node);
-      DockFailure(!str8_match(restored_root->first->string, first_panel->string, 0));
+      DockFailure(!str8_match(restored_first->string, first_panel->string, 0));
       UIShell_ControlledSplit restored_split = {.owner_cfg = restored_window};
       // Arrangements name their nodes by ID in the selected config.
       CFG_Ctx *saved_ctx = cfg_ctx;
@@ -389,7 +395,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       UI_FontSize(11)
       { uishell_sidebar_size_panels(&restored_split, &restored_mount, r2f32p(17, 29, 337, 229-uishell_sidebar_footer_height(ws))); }
       cfg_ctx_select(saved_ctx);
-      DockFailure(!str8_match(restored_root->first->string, first_panel->string, 0));
+      DockFailure(!str8_match(restored_first->string, first_panel->string, 0));
       cfg_state_release(loaded_cfg);
     }
   }
