@@ -279,6 +279,14 @@ _Avoid_: Project, RAD project, sidebar config
 State that belongs to one frontend on one device: absolute geometry (window size and position, pixel sizes), floating panels, the **Visible Workspace** and **Workspace Focus** of each window, section collapse, fonts, keybindings and chrome. It is keyed by stable IDs from the **Dashboard** and **Workspaces**, and is never shared between frontends. A workspace's panel tree, including relative split weights, is not Presentation State: it is part of the **Workspace**, and each frontend adapts it to its own space.
 _Avoid_: Workspace, layout (ambiguous), project
 
+**View Spec**:
+The logical definition of a **View**: the content it shows and, optionally, a preferred presentation. The content is either a provider facet, meaning an entity such as a role, convoy or artifact together with which aspect of it to show, or a local recipe such as a command and working directory, a file, a URL or a Jackstay launcher. Each frontend picks a renderer it supports for the content.
+_Avoid_: View kind, view settings, tab
+
+**Slot**:
+A **View**'s place in a **Workspace**. It is identified by a slot key: the provider's key for a View from a **Suggested Layout**, or a short generated key for a View the user adds. It carries the View's **View Spec** and the progress of resolving it.
+_Avoid_: Tab, pane, panel
+
 **Target Resolution**:
 The cached result of resolving a **Target Reference** into a way of connecting, such as a Cleat session on a host or a Jackstay endpoint. It is always disposable: when it no longer works, the **Target Reference** is resolved again. A portable resolution (a remote session or endpoint) is kept with the **Workspace**; a machine-local one (a local socket or attach token) is kept per device.
 _Avoid_: Runtime instance (the live attachment), binding, target reference
@@ -353,6 +361,9 @@ _Avoid_: Autosave, replication
 - **Overlay Sync** moves user changes towards the canonical source; reapplying an overlay moves provider changes towards the user. Both are explicit.
 - A Wheelhouse process opens one **Dashboard**. How its windows relate to that Dashboard is still open.
 - A **Target Reference** may have a **Target Resolution**; a **Runtime Instance** is attached by using that resolution.
+- A **Workspace** holds its content **Views** in **Slots**; control views such as sidebar sections belong to the **Dashboard**, not to a Slot.
+- When a **Slot**'s **Target Resolution** changes, the View keeps its Slot and rebinds. Whether the previous **Runtime Instance** stays reachable is the Slot's policy.
+- A frontend that cannot render a **View Spec**'s content shows a placeholder for it; it never drops the **Slot**.
 - **Presentation State** refers to **Workspaces** and **Views** only by stable IDs; it never defines what they are.
 
 ## Example Dialogue
