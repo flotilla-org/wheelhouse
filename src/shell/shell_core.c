@@ -6629,7 +6629,9 @@ rd_window_frame(void)
             ui_set_next_pref_width(ui_pct(1, 0));
             ui_set_next_pref_height(ui_pct(1, 0));
             ui_set_next_child_layout_axis(Axis2_Y);
-            UI_Box *view_contents_container = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Clip, "###view_contents_container");
+            // The container already paints the floating background over its
+            // blur; painting it again here would double its opacity (#275).
+            UI_Box *view_contents_container = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_Clip, "###view_contents_container");
             UI_Parent(view_contents_container) UI_WidthFill
             {
               rd_view_ui(rect);
