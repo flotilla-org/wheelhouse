@@ -1,4 +1,4 @@
-// Native managed-content diagnostic using the shared Andamento reconciliation API.
+// Native managed-content diagnostic using Andamento's slot plans.
 // Uses isolated configuration, real terminal view rendering and in-process Cleat.
 #if OS_MAC || OS_LINUX
 #include <unistd.h>
@@ -44,53 +44,83 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   UI_State *saved = ui_state, *test = ui_state_alloc();
   ui_select_state(test);
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
-  CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-  CFG_Node *panels = cfg_node_new(rd_state->cfg, workspace, str8_lit("panels"));
-  CFG_Node *view = rd_cfg_new_view_tab(panels, str8_lit("terminal"), str8_lit("printf A; read answer"), 1);
-  CFG_Node *slot = cfg_node_new(rd_state->cfg, view, str8_lit("resource_id"));
-  cfg_node_new(rd_state->cfg, slot, str8_lit("primary"));
-  CFG_Node *personal = rd_cfg_new_view_tab(panels, str8_lit("terminal_fixture"), str8_zero(), 0);
-  CFG_ID workspace_id = workspace->id, view_id = view->id, personal_id = personal->id;
   U32 failures = 0;
 #define ManagedCheck(c, label) do { B32 ok = (c); fprintf(stderr, "%s managed terminal: %s\n", ok ? "PASS" : "FAIL", label); failures += !ok; } while(0)
-  uishell_managed_diagnostic_frame(ws, view);
-  UIShell_TerminalViewState *tv = rd_view_state_from_cfg(view)->user_data;
-  ManagedCheck(uishell_managed_diagnostic_marker(tv->session, 'A'), "original live terminal emits A");
-  UIShell_RegsScope(.window = window->id, .panel = panels->id, .dst_panel = panels->id,
-                   .view = view->id, .dir2 = Dir2_Right)
-  { uishell_dispatch_panel_command(str8_lit("split_panel")); }
-  CFG_Node *moved_panel = view->parent;
-  uishell_managed_diagnostic_frame(ws, view);
-  ManagedCheck(view->parent != personal->parent, "production split command moves managed view beside user view");
-
-  // Exercise real producer facts -> shared plan -> native commit -> completion.
-  UIShell_SidebarState state = {0};
-  char *error = 0;
-  state.core = andamento_create(0, 0, &error);
-  ManagedCheck(state.core != 0, "shared core initializes");
-  andamento_string_free(error);
-  uishell_managed_set(workspace, str8_lit("sidebar_entity_kind"), str8_lit("project-role"));
-  uishell_managed_set(workspace, str8_lit("sidebar_entity_id"), str8_lit("p/governor"));
-  uishell_managed_set(view, str8_lit("managed_target"), str8_lit("one"));
-  CFG_Node *session = cfg_node_new(rd_state->cfg, view, str8_lit("session"));
-  cfg_node_new(rd_state->cfg, session, str8_lit("obsolete-session"));
+  String8 roles = str8_lit(
+    "region \"tree\" root-template=\"roles\" form=\"compact\" placement=\"tree\"\n"
+    "template \"roles\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Roles\"; }\n"
+    "placement \"tree\" { for \"role\" kind=\"role\" { apply-template \"role/entry\"; }; }\n"
+    "template \"role/entry\" { field \"label\" key=\"entity.id\"; }\n");
   AndamentoFact facts[3] = {0};
   char *keys[] = {"workspace.primary.state", "workspace.primary.target", "action.primary.recipe"};
-  char *values[] = {"ready", "two", "printf B; read answer"};
+  char *values[] = {"ready", "one", "printf A; read answer"};
   for(U32 i = 0; i < 3; i++)
   {
     facts[i].key = uishell_sidebar_text(str8_cstring(keys[i]));
     facts[i].kind = ANDAMENTO_FACT_TEXT;
     facts[i].text = uishell_sidebar_text(str8_cstring(values[i]));
   }
+
+  // A role opened through the production effect path: its terminal is its
+  // `primary` Slot, keyed as the workspace store keys it.
+  UIShell_SidebarState state = {0};
+  char *error = 0;
+  state.core = andamento_create(roles.str, roles.size, &error);
+  ManagedCheck(state.core != 0, "shared core initializes");
+  andamento_string_free(error);
   error = 0;
-  B32 applied = andamento_apply_entity(state.core, 1, uishell_sidebar_text(str8_lit("project-role")),
+  andamento_apply_entity(state.core, 0, uishell_sidebar_text(str8_lit("role")), uishell_sidebar_text(str8_lit("p/governor")),
+    uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
+  andamento_string_free(error);
+  uishell_sidebar_refresh(&state);
+  size_t activate = ANDAMENTO_NONE;
+  for(U64 i = 0; state.snapshot && i < andamento_snapshot_node_count(state.snapshot); i++)
+  {
+    AndamentoNode node = {0};
+    if(uishell_sidebar_snapshot_node(state.snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("role"), 0))
+    { activate = node.activate; }
+  }
+  ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(state.core, state.snapshot, activate, 0), "role entry dispatches its opening");
+  {
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_effects(&state, &split);
+  }
+  CFG_Node *workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
+  CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
+  CFG_PanelTree opened_tree = rd_panel_tree_from_cfg(scratch.arena, panels);
+  CFG_Node *view = opened_tree.root != &cfg_nil_panel_node && opened_tree.root->tabs.first ? opened_tree.root->tabs.first->v : &cfg_nil_node;
+  uishell_managed_set(view, str8_lit("slot"), str8_lit("primary"));
+  CFG_Node *slot = cfg_node_child_from_string(view, str8_lit("slot"));
+  CFG_Node *personal = rd_cfg_new_view_tab(panels, str8_lit("terminal_fixture"), str8_zero(), 0);
+  CFG_ID workspace_id = workspace->id, view_id = view->id, personal_id = personal->id;
+  uishell_managed_diagnostic_frame(ws, view);
+  UIShell_TerminalViewState *tv = rd_view_state_from_cfg(view)->user_data;
+  ManagedCheck(tv && uishell_managed_diagnostic_marker(tv->session, 'A'), "original live terminal emits A");
+  UIShell_RegsScope(.window = window->id, .panel = panels->id, .dst_panel = panels->id,
+                   .view = view->id, .dir2 = Dir2_Right)
+  { uishell_dispatch_panel_command(str8_lit("split_panel")); }
+  CFG_Node *moved_panel = view->parent;
+  uishell_managed_diagnostic_frame(ws, view);
+  ManagedCheck(view->parent != personal->parent, "production split command moves managed view beside user view");
+  // Its first plan finds it showing its resolution already: nothing restarts.
+  cleat_session *first = tv->session;
+  uishell_sidebar_reconcile_workspace(&state, workspace);
+  ManagedCheck(tv->session == first && cfg_node_child_from_string(view, str8_lit("applied")) != &cfg_nil_node,
+               "first plan for freshly opened content applies without restarting it");
+
+  // Exercise real producer facts -> slot plan -> native commit -> completion.
+  CFG_Node *session = cfg_node_new(rd_state->cfg, view, str8_lit("session"));
+  cfg_node_new(rd_state->cfg, session, str8_lit("obsolete-session"));
+  facts[1].text = uishell_sidebar_text(str8_lit("two"));
+  facts[2].text = uishell_sidebar_text(str8_lit("printf B; read answer"));
+  error = 0;
+  B32 applied = andamento_apply_entity(state.core, 1, uishell_sidebar_text(str8_lit("role")),
     uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
   ManagedCheck(applied, "desired replacement facts accepted");
   andamento_string_free(error);
   uishell_sidebar_reconcile_workspace(&state, workspace);
   uishell_managed_diagnostic_frame(ws, view);
-  ManagedCheck(uishell_managed_diagnostic_marker(tv->session, 'B'), "same terminal view now receives B via shared reconciliation");
+  ManagedCheck(uishell_managed_diagnostic_marker(tv->session, 'B'), "same terminal view now receives B via its slot plan");
   ManagedCheck(workspace->id == workspace_id && view->id == view_id && view->parent == moved_panel,
                "workspace, view identity and moved panel survive replacement");
   ManagedCheck(cfg_node_from_id(personal_id) == personal && personal->parent != moved_panel,
@@ -104,50 +134,49 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   ManagedCheck(tv->session == unchanged, "repeated observation does not restart terminal");
   facts[0].text = uishell_sidebar_text(str8_lit("held"));
   error = 0;
-  andamento_apply_entity(state.core, 2, uishell_sidebar_text(str8_lit("project-role")),
+  andamento_apply_entity(state.core, 2, uishell_sidebar_text(str8_lit("role")),
     uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 1, &error);
   andamento_string_free(error);
   uishell_sidebar_reconcile_workspace(&state, workspace);
   ManagedCheck(tv->session == unchanged, "explicit held state retains existing content");
   facts[0].text = uishell_sidebar_text(str8_lit("ready"));
   error = 0;
-  andamento_apply_entity(state.core, 3, uishell_sidebar_text(str8_lit("project-role")),
+  andamento_apply_entity(state.core, 3, uishell_sidebar_text(str8_lit("role")),
     uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
   andamento_string_free(error);
   uishell_sidebar_reconcile_workspace(&state, workspace);
   ManagedCheck(tv->session == unchanged, "unchanged resolution after held interval does not restart");
-  // Daemon-backed replacement is not supported in this slice; a new resolution
-  // must leave such a view's content and saved command untouched.
+  // A daemon-backed terminal is never replaced in place: it stays beside the
+  // new View as the Slot's previous instance, its content and command intact.
   {
     CFG_Node *daemon = cfg_node_new(rd_state->cfg, view, str8_lit("daemon"));
     cfg_node_new(rd_state->cfg, daemon, str8_lit("1"));
     facts[1].text = uishell_sidebar_text(str8_lit("three"));
     facts[2].text = uishell_sidebar_text(str8_lit("printf D; read answer"));
     error = 0;
-    andamento_apply_entity(state.core, 4, uishell_sidebar_text(str8_lit("project-role")),
+    andamento_apply_entity(state.core, 4, uishell_sidebar_text(str8_lit("role")),
       uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
     andamento_string_free(error);
     uishell_sidebar_reconcile_workspace(&state, workspace);
     ManagedCheck(tv->session == unchanged && str8_match(rd_expr_from_cfg(view), str8_lit("printf B; read answer"), 0) &&
-                 str8_match(cfg_node_child_from_string(view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0),
-                 "daemon-backed primary view is never replaced");
+                 str8_match(cfg_node_child_from_string(view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0) &&
+                 str8_match(cfg_node_child_from_string(view, str8_lit("previous_of"))->first->string, str8_lit("primary"), 0),
+                 "daemon-backed primary view is kept as the previous instance, not replaced");
     cfg_node_release(rd_state->cfg, daemon);
   }
   andamento_destroy(state.core);
+  state.core = 0;
 
   // Opening an entity from its current resolution through the production effect
-  // path records the managed target, so the first plan does not restart it.
+  // path records the managed target, and its first plan doesn't restart it.
   {
-    String8 config = str8_lit(
-      "region \"tree\" root-template=\"roles\" form=\"compact\" placement=\"tree\"\n"
-      "template \"roles\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Roles\"; }\n"
-      "placement \"tree\" { for \"role\" kind=\"role\" { apply-template \"role/entry\"; }; }\n"
-      "template \"role/entry\" { field \"label\" key=\"entity.id\"; }\n");
+    String8 config = roles;
     UIShell_SidebarState opened = {0};
     error = 0;
     opened.core = andamento_create(config.str, config.size, &error);
     andamento_string_free(error);
     ManagedCheck(opened.core != 0, "role sidebar core initializes");
+    values[1] = "two";
     values[2] = "printf C; read answer";
     facts[0].text = uishell_sidebar_text(str8_lit("ready"));
     for(U32 i = 1; i < 3; i++) { facts[i].text = uishell_sidebar_text(str8_cstring(values[i])); }
@@ -177,16 +206,16 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     ManagedCheck(str8_match(cfg_node_child_from_string(role_workspace, str8_lit("sidebar_entity_kind"))->first->string, str8_lit("role"), 0) &&
                  str8_match(cfg_node_child_from_string(role_view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0),
                  "opened workspace records its current managed target");
-    error = 0;
-    AndamentoContentPlan *plan = andamento_content_plan3(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(role_workspace)),
-      uishell_sidebar_text(str8_lit("role")), uishell_sidebar_text(str8_lit("p/governor")),
-      uishell_sidebar_text(cfg_node_child_from_string(role_view, str8_lit("managed_target"))->first->string),
-      uishell_sidebar_text(rd_expr_from_cfg(role_view)), 0, (AndamentoText){0}, &error);
-    andamento_string_free(error);
-    AndamentoContent content = {0};
-    ManagedCheck(plan && andamento_content_get(plan, &content) && content.state == ANDAMENTO_CONTENT_CURRENT,
-                 "first plan for freshly opened content is current");
-    andamento_content_release(plan);
+    // As the workspace store keys it, its first plan finds it current.
+    uishell_managed_set(role_view, str8_lit("slot"), str8_lit("primary"));
+    uishell_sidebar_reconcile_workspace(&opened, role_workspace);
+    AndamentoSlotPlan *plan = andamento_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(role_workspace)),
+      uishell_sidebar_text(str8_lit("primary")), uishell_sidebar_text(cfg_node_child_from_string(role_view, str8_lit("applied"))->first->string), 0);
+    AndamentoSlotContent content = {0};
+    ManagedCheck(plan && andamento_slot_plan_get(plan, &content) && content.state == ANDAMENTO_CONTENT_CURRENT &&
+                 str8_match(rd_expr_from_cfg(role_view), str8_lit("printf C; read answer"), 0),
+                 "first plan for freshly opened content is current, without restarting it");
+    andamento_slot_plan_release(plan);
     andamento_destroy(opened.core);
     cfg_node_release(rd_state->cfg, role_workspace);
   }
