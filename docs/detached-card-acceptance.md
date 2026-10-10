@@ -27,13 +27,15 @@ row. Removing the source placement or the current detail target closes the inlin
 card. Floats and inline cards last for the current run.
 
 Pins are ghosts in local groups (docs/design/drag-model.md, "Sections and
-groups as data"). The window's `sidebar_local` node holds sections someone
-made, each holding groups, and each group's ghosts as `card` nodes with exact
-kind/id, a ghost id, a fallback label and their form; local workspaces name
-their group (`lives_in`). Wheelhouse publishes them to Andamento as `.section`,
-`.group` and `.ref` entities, and the shipped KDL places them, so each section
-is an ordinary docked `sidebar_section` View and its ghosts are tree rows: a
-`.ref` presents its target's label, status, live state and details. The
+groups as data"). Andamento owns the sections someone made, each holding
+groups, and each group's ghosts with exact kind/id, a ghost id, a fallback
+label and their form, as local `.section`, `.group` and `.ref` entities in its
+dashboard record; Wheelhouse edits a working copy of them (`card` nodes in
+uishell_sidebar_local_tree) and sends changes with `andamento_local_set`.
+Local workspaces name their group (`lives_in`). The shipped KDL places them,
+so each section is an ordinary docked `sidebar_section` View and its ghosts
+are tree rows: a `.ref` presents its target's label, status, live state and
+details. The
 default Workspaces section and group always exist; leftover tabs join that
 group. Saved `pinned_cards` areas migrate once into a section and group in
 the View's place.

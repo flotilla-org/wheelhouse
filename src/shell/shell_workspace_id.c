@@ -138,7 +138,8 @@ uishell_workspace_id_from_cfg(CFG_Node *workspace)
     cfg_node_new_replace(rd_state->cfg, saved, text);
     // A local workspace saved before Workspace IDs was its sidebar entity by a
     // GUID of its own (`local_entity`), which its pins and saved row orders
-    // name. The ID takes its place there.
+    // name (in the keys saved before records, imported once a new core has
+    // given every workspace its ID). The ID takes its place there.
     CFG_Node *legacy = cfg_node_child_from_string(workspace, str8_lit("local_entity"));
     if(legacy != &cfg_nil_node)
     {

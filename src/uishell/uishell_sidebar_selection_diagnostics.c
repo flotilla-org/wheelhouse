@@ -42,7 +42,7 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
   rd_state->menu_animation_rate = 1.f;
   B32 ok = 1;
   char *error = 0;
-  UIShell_SidebarState state = {.initialized = 1, .restored = 1};
+  UIShell_SidebarState state = {.initialized = 1};
   String8 config = str8_lit(
     "region \"tree\" root-template=\"title\" placement=\"tree\"\n"
     "template \"title\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Projects\"; }\n"
