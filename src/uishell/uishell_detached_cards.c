@@ -215,32 +215,24 @@ uishell_sidebar_pin_by_ghost(CFG_Node *window, String8 ghost)
 internal CFG_Node *uishell_sidebar_local_view_group(CFG_Node *window, CFG_Node *view);
 
 internal CFG_Node *
-uishell_sidebar_pin_target_in(CFG_Node *window, CFG_Node *container)
-{
-  for(CFG_Node *v = container->first; v != &cfg_nil_node; v = v->next)
-  {
-    if(rd_dock_is_container(v))
-    {
-      CFG_Node *found = uishell_sidebar_pin_target_in(window, v);
-      if(found != &cfg_nil_node) { return found; }
-      continue;
-    }
-    if(!str8_match(v->string, str8_lit("sidebar_section"), 0) ||
-       cfg_node_child_from_string(v, str8_lit("selected")) == &cfg_nil_node) { continue; }
-    CFG_Node *group = uishell_sidebar_local_view_group(window, v);
-    for(; group != &cfg_nil_node; group = group->next)
-    {
-      if(str8_match(group->string, str8_lit("group"), 0) && cfg_node_child_from_string(group, str8_lit("default")) == &cfg_nil_node)
-      { return group; }
-    }
-  }
-  return &cfg_nil_node;
-}
-
-internal CFG_Node *
 uishell_sidebar_pin_target(CFG_Node *window)
 {
-  return uishell_sidebar_pin_target_in(window, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT));
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
+  CFG_Node *result = &cfg_nil_node;
+  for(RD_ArrangementPanel *p = sidebar->root; p != &rd_nil_arrangement_panel && result == &cfg_nil_node; p = rd_arrangement_next(sidebar->root, p))
+  {
+    CFG_Node *v = cfg_node_from_id(p->selected);
+    if(!str8_match(v->string, str8_lit("sidebar_section"), 0)) { continue; }
+    CFG_Node *group = uishell_sidebar_local_view_group(window, v);
+    for(; group != &cfg_nil_node && result == &cfg_nil_node; group = group->next)
+    {
+      if(str8_match(group->string, str8_lit("group"), 0) && cfg_node_child_from_string(group, str8_lit("default")) == &cfg_nil_node)
+      { result = group; }
+    }
+  }
+  scratch_end(scratch);
+  return result;
 }
 
 internal void
@@ -287,24 +279,23 @@ internal CFG_Node *uishell_sidebar_local_new_group(CFG_Node *window, String8 lab
 // section holding one group with the area's pins, keeping their ghost ids
 // and forms, and its View a section View showing it in the same place
 // (drag-model.md, "Migration"). Best-effort: unknown children are dropped.
+// A pinned area saved outside any panel goes to the sidebar's first.
 internal void
-uishell_sidebar_pin_migrate_container(CFG_Node *window, CFG_Node *container)
+uishell_sidebar_pin_migrate(CFG_Node *window)
 {
-  for(CFG_Node *v = container->first, *next; v != &cfg_nil_node; v = next)
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_SidebarDocks docks = uishell_sidebar_docks(scratch.arena, window);
+  for(RD_DockSavedView *saved = docks.views.first; saved != 0; saved = saved->next)
   {
-    next = v->next;
-    if(rd_dock_is_container(v)) { uishell_sidebar_pin_migrate_container(window, v); continue; }
+    CFG_Node *v = saved->view;
     if(!str8_match(v->string, str8_lit("pinned_cards"), 0)) { continue; }
     String8 label = cfg_node_child_from_string(v, str8_lit("label"))->first->string;
     CFG_Node *group = uishell_sidebar_local_new_group(window, label.size ? label : str8_lit("Pinned"));
     B32 selected = cfg_node_child_from_string(v, str8_lit("selected")) != &cfg_nil_node;
-    CFG_Node *view = cfg_node_new(rd_state->cfg, v->parent, str8_lit("sidebar_section"));
-    cfg_node_insert_child(rd_state->cfg, v->parent, v, view);
-    Temp scratch = scratch_begin(0, 0);
+    CFG_Node *view = cfg_node_new(rd_state->cfg, &cfg_nil_node, str8_lit("sidebar_section"));
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")),
       uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(group->parent, str8_lit("id"))));
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_title(scratch.arena, group->parent));
-    scratch_end(scratch);
     if(selected) { cfg_node_new(rd_state->cfg, view, str8_lit("selected")); }
     // The area's own state: its collapsed header. Its other children were
     // its label and selection, carried above; a pin's form travels with it.
@@ -315,15 +306,17 @@ uishell_sidebar_pin_migrate_container(CFG_Node *window, CFG_Node *container)
       after = c->next;
       if(str8_match(c->string, str8_lit("card"), 0)) { cfg_node_insert_child(rd_state->cfg, group, group->last, c); }
     }
-    cfg_node_release(rd_state->cfg, v);
+    // The section View takes the area's place: after it in its panel, or
+    // after the tab a stray area was saved inside.
+    RD_DockDocument *document = saved->document ? saved->document : docks.sidebar;
+    RD_ArrangementPanel *panel = saved->document ? saved->panel : rd_dock_restore_leaf(document->arrangement);
+    CFG_ID prev = rd_dock_saved_view_is_tab(saved) ? v->id : saved->holder ? saved->holder : panel->last_tab ? panel->last_tab->view : 0;
+    rd_arrangement_insert_tab(document->arrangement, view->id, panel->id, prev, selected);
+    document->dirty = 1;
+    uishell_sidebar_docks_remove(&docks, saved);
   }
-}
-
-internal void
-uishell_sidebar_pin_migrate(CFG_Node *window)
-{
-  uishell_sidebar_pin_migrate_container(window, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT));
-  uishell_sidebar_pin_migrate_container(window, cfg_node_child_from_string(window, str8_lit("floating_panels")));
+  uishell_sidebar_docks_save(&docks);
+  scratch_end(scratch);
 }
 
 // Copied layouts duplicate ghost ids; the first of each is kept. Pins saved
@@ -537,27 +530,13 @@ uishell_sidebar_local_new_view_after(CFG_Node *panel, CFG_Node *section, CFG_Nod
   Temp scratch = scratch_begin(0, 0);
   String8 key = uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(section, str8_lit("id")));
   String8 label = uishell_sidebar_local_title(scratch.arena, section);
-  RD_Arrangement *arrangement = uishell_workspace_mount_from_cfg(scratch.arena, panel).arrangement;
+  RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, panel);
   RD_PanelID panel_id = rd_arrangement_panel_from_cfg(arrangement, panel->id)->id;
   CFG_Node *view = &cfg_nil_node;
   if(panel_id != 0)
   {
     view = uishell_sidebar_section_view_new(arrangement, panel_id, prev->id, key, label);
     rd_arrangement_save(rd_state->cfg, arrangement);
-  }
-  else
-  {
-    // Floating Panels are not arrangements yet.
-    for(CFG_Node *v = panel->first; v != &cfg_nil_node; v = v->next)
-    {
-      CFG_Node *selected = cfg_node_child_from_string(v, str8_lit("selected"));
-      if(selected != &cfg_nil_node) { cfg_node_release(rd_state->cfg, selected); }
-    }
-    view = cfg_node_new(rd_state->cfg, panel, str8_lit("sidebar_section"));
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")), key);
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), label);
-    cfg_node_new(rd_state->cfg, view, str8_lit("selected"));
-    cfg_node_insert_child(rd_state->cfg, panel, prev, view);
   }
   scratch_end(scratch);
   return view;
@@ -568,9 +547,9 @@ internal CFG_Node *
 uishell_sidebar_local_new_view(CFG_Node *panel, CFG_Node *section)
 {
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *arrangement = uishell_workspace_mount_from_cfg(scratch.arena, panel).arrangement;
+  RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, panel);
   RD_PanelID panel_id = rd_arrangement_panel_from_cfg(arrangement, panel->id)->id;
-  CFG_Node *prev = panel_id != 0 ? cfg_node_from_id(uishell_sidebar_last_tab(arrangement, panel_id)) : panel->last;
+  CFG_Node *prev = cfg_node_from_id(uishell_sidebar_last_tab(arrangement, panel_id));
   scratch_end(scratch);
   return uishell_sidebar_local_new_view_after(panel, section, prev);
 }

@@ -821,6 +821,36 @@ internal void uishell_sidebar_pin_migrate(CFG_Node *window);
 internal String8 uishell_sidebar_local_title(Arena *arena, CFG_Node *section);
 internal void uishell_sidebar_local_borrow_titles(CFG_Node *root);
 
+// A panel that lost a View, or a tab a stray View left, since the sidebar's
+// repair last cleaned up.
+typedef struct UIShell_SidebarDocksLoss UIShell_SidebarDocksLoss;
+struct UIShell_SidebarDocksLoss
+{
+  UIShell_SidebarDocksLoss *next;
+  RD_ArrangementPanel *panel;
+  CFG_ID tab;
+};
+
+// An owner's sidebar and its Floating Panels as the sidebar's repairs edit
+// them (reconciliation, placement, Reset, the pinned_cards migration and
+// closing a local section's Views): each loaded once, edited through its
+// arrangement and saved together. `views` is the pre-pass over both, the
+// sidebar first; a View removed since has a nil node.
+typedef struct UIShell_SidebarDocks UIShell_SidebarDocks;
+struct UIShell_SidebarDocks
+{
+  CFG_Node *owner;
+  RD_DockDocuments documents;
+  RD_DockDocument *sidebar;
+  RD_DockSavedViewList views;
+  UIShell_SidebarDocksLoss *first_loss;
+};
+
+internal String8 uishell_sidebar_section_key(CFG_Node *view);
+internal UIShell_SidebarDocks uishell_sidebar_docks(Arena *arena, CFG_Node *owner);
+internal void uishell_sidebar_docks_remove(UIShell_SidebarDocks *docks, RD_DockSavedView *view);
+internal void uishell_sidebar_docks_save(UIShell_SidebarDocks *docks);
+
 // The working copy of the window with this config ID, or nil.
 internal CFG_Node *
 uishell_sidebar_local_tree_from_id(CFG_ID window)
@@ -1955,22 +1985,10 @@ internal void
 uishell_sidebar_select_view(CFG_Node *view)
 {
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *arrangement = uishell_workspace_mount_from_cfg(scratch.arena, view).arrangement;
+  RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, view);
   RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(arrangement, view->id);
-  if(panel != &rd_nil_arrangement_panel)
-  {
-    if(panel->selected != view->id && rd_arrangement_select(arrangement, panel->id, view->id)) { rd_arrangement_save(rd_state->cfg, arrangement); }
-  }
-  else
-  {
-    // Floating Panels are not arrangements yet.
-    for(CFG_Node *v = view->parent->first; v != &cfg_nil_node; v = v->next)
-    {
-      CFG_Node *selected = cfg_node_child_from_string(v, str8_lit("selected"));
-      if(selected != &cfg_nil_node) { cfg_node_release(rd_state->cfg, selected); }
-    }
-    cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("selected"));
-  }
+  if(panel != &rd_nil_arrangement_panel && panel->selected != view->id && rd_arrangement_select(arrangement, panel->id, view->id))
+  { rd_arrangement_save(rd_state->cfg, arrangement); }
   scratch_end(scratch);
 }
 
@@ -4518,20 +4536,21 @@ uishell_sidebar_section_key(CFG_Node *view)
 
 // Saved arrangements use the same panel tree as Workspace Regions. Section
 // identity comes from the snapshot; no placement hints are written into KDL.
+// The first section View showing `key` under `container`, strays included.
 internal CFG_Node *
 uishell_sidebar_find_view(CFG_Node *container, String8 key)
 {
-  for(CFG_Node *c = container->first; c != &cfg_nil_node; c = c->next)
+  Temp scratch = scratch_begin(0, 0);
+  RD_DockDocuments documents = {scratch.arena};
+  RD_DockSavedViewList views = rd_dock_saved_views(&documents, container);
+  CFG_Node *result = &cfg_nil_node;
+  for(RD_DockSavedView *v = views.first; v != 0 && result == &cfg_nil_node; v = v->next)
   {
-    if(str8_match(c->string, str8_lit("sidebar_section"), 0) &&
-       str8_match(uishell_sidebar_section_key(c), key, 0)) { return c; }
-    if(rd_dock_is_container(c))
-    {
-      CFG_Node *found = uishell_sidebar_find_view(c, key);
-      if(found != &cfg_nil_node) { return found; }
-    }
+    if(str8_match(v->view->string, str8_lit("sidebar_section"), 0) &&
+       str8_match(uishell_sidebar_section_key(v->view), key, 0)) { result = v->view; }
   }
-  return &cfg_nil_node;
+  scratch_end(scratch);
+  return result;
 }
 
 // Region inventory belongs to this Controlled Split, alongside its docking
@@ -4550,88 +4569,6 @@ uishell_sidebar_region_index(UIShell_SectionPlacement *regions, U64 count, Strin
   for(U64 i = 0; i < count; i++)
   { if(str8_match(regions[i].key, key, 0)) { return i; } }
   return ANDAMENTO_NONE;
-}
-
-internal B32
-uishell_sidebar_panel_has_content(CFG_Node *panel)
-{
-  for(CFG_Node *n = panel->first; n != &cfg_nil_node; n = n->next)
-  { if(rd_dock_view_from_name(n->string) || rd_dock_is_container(n)) { return 1; } }
-  return 0;
-}
-
-internal void
-uishell_sidebar_prune_empty_panel(CFG_Node *panel)
-{
-  // The View was found within this level's sidebar/floating host. Remove empty
-  // intermediate wrappers, stopping before the host and its owning split.
-  while(panel != &cfg_nil_node && rd_dock_is_container(panel) &&
-        !str8_match(panel->string, RD_DOCK_SIDEBAR_ROOT, 0) &&
-        !str8_match(panel->string, str8_lit("floating_panels"), 0) &&
-        !uishell_sidebar_panel_has_content(panel))
-  {
-    CFG_Node *parent = panel->parent;
-    cfg_node_release(rd_state->cfg, panel); panel = parent;
-  }
-}
-
-// Reconciliation and duplicate repair share empty-wrapper cleanup. Keep
-// unrelated contents and their saved allocations; do not rescale siblings.
-internal B32
-uishell_sidebar_cleanup_region_panel(CFG_Node *panel, B32 removed)
-{
-  CFG_Node *cleanup = cfg_node_child_from_string(panel, str8_lit("section_hint_cleanup"));
-  if((removed || cleanup != &cfg_nil_node) && !uishell_sidebar_panel_has_content(panel))
-  { cfg_node_release(rd_state->cfg, panel); return 1; }
-  if(cleanup != &cfg_nil_node) { cfg_node_release(rd_state->cfg, cleanup); }
-  return 0;
-}
-
-internal B32
-uishell_sidebar_prune_regions(CFG_Node *owner, CFG_Node *container, UIShell_SectionPlacement *regions, U64 count, B32 reset)
-{
-  B32 removed = 0;
-  for(CFG_Node *c = container->first, *next; c != &cfg_nil_node; c = next)
-  {
-    next = c->next;
-    if(str8_match(c->string, str8_lit("sidebar_section"), 0))
-    {
-      // CFG nil nodes self-link, so a missing section setting reads as empty.
-      // A View without a declared identity is corrupt saved state; drop it.
-      String8 key = uishell_sidebar_section_key(c);
-      // A section someone made is kept while it exists in the window's data,
-      // even before Andamento has placed it (just made, or just migrated).
-      B32 local = owner != &cfg_nil_node && uishell_sidebar_local_section_exists(owner, key);
-      if(reset || (!local && uishell_sidebar_region_index(regions, count, key) == ANDAMENTO_NONE))
-      { cfg_node_release(rd_state->cfg, c); removed = 1; }
-    }
-    else if(rd_dock_is_container(c))
-    {
-      B32 child_removed = uishell_sidebar_prune_regions(owner, c, regions, count, reset);
-      removed |= child_removed;
-      removed |= uishell_sidebar_cleanup_region_panel(c, child_removed || reset);
-    }
-  }
-  return removed;
-}
-
-internal void
-uishell_sidebar_reset_regions(CFG_Node *owner)
-{
-  // Only this level's hosts; child Workspace Regions own independent layouts.
-  CFG_Node *sidebar = cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT);
-  CFG_Node *floating = cfg_node_child_from_string(owner, str8_lit("floating_panels"));
-  uishell_sidebar_prune_regions(owner, sidebar, 0, 0, 1);
-  uishell_sidebar_prune_regions(owner, floating, 0, 0, 1);
-  if(sidebar != &cfg_nil_node && sidebar->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, sidebar); }
-  if(floating != &cfg_nil_node && floating->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, floating); }
-  CFG_Node *inventory = cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY);
-  if(inventory != &cfg_nil_node) { cfg_node_release(rd_state->cfg, inventory); }
-  // Empty inventory makes every declared id new even if unrelated tabs keep
-  // the host alive: reconcile_regions' legacy_saved test must see this node.
-  // Avoid releasing absent nodes: cfg_node_release does no tree work for nil,
-  // but still increments the configuration change generation.
-  cfg_node_new(rd_state->cfg, owner, UISHELL_REGION_INVENTORY);
 }
 
 internal CFG_Node *
@@ -4664,8 +4601,8 @@ uishell_sidebar_last_tab(RD_Arrangement *arrangement, RD_PanelID panel)
   return last ? last->view : 0;
 }
 
-// As uishell_sidebar_panel_has_content, for a panel of the sidebar's
-// arrangement.
+// Whether a panel of the sidebar's arrangement still has something in it: a
+// child panel, a registered View, or a tab saving other layout config.
 internal B32
 uishell_sidebar_arrangement_panel_has_content(RD_ArrangementPanel *panel)
 {
@@ -4678,51 +4615,271 @@ uishell_sidebar_arrangement_panel_has_content(RD_ArrangementPanel *panel)
   return 0;
 }
 
-// Floating Panels are not arrangements yet, so placing a section in one
-// edits their config.
-internal CFG_Node *
-uishell_sidebar_place_floating(CFG_Node *owner, UIShell_SectionPlacement *regions, U64 count, U64 index, CFG_Node *view, F32 weight)
+//- The sidebar's documents for repair
+
+internal UIShell_SidebarDocks
+uishell_sidebar_docks(Arena *arena, CFG_Node *owner)
 {
-  UIShell_SectionPlacement region = regions[index];
-  CFG_Node *host = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner, str8_lit("floating_panels"));
-  CFG_Node *panel = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
-  if(view == &cfg_nil_node)
+  UIShell_SidebarDocks docks = {owner, {arena}};
+  CFG_Node *host = cfg_node_child_from_string(owner, str8_lit("floating_panels"));
+  docks.sidebar = rd_dock_document_from_owner(&docks.documents, owner, RD_DOCK_SIDEBAR_ROOT);
+  rd_dock_documents_add_floating(&docks.documents, host);
+  // Only this owner's hosts; child Workspace Regions own independent layouts.
+  docks.views = rd_dock_saved_views(&docks.documents, cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT));
+  RD_DockSavedViewList floating = rd_dock_saved_views(&docks.documents, host);
+  if(floating.first)
   {
-    view = cfg_node_new(rd_state->cfg, panel, str8_lit("sidebar_section"));
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")), region.key);
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), region.title);
-    cfg_node_new(rd_state->cfg, view, str8_lit("selected"));
+    if(docks.views.last) { docks.views.last->next = floating.first; } else { docks.views.first = floating.first; }
+    docks.views.last = floating.last;
+    docks.views.count += floating.count;
+  }
+  return docks;
+}
+
+internal void
+uishell_sidebar_docks_lose(UIShell_SidebarDocks *docks, RD_ArrangementPanel *panel, CFG_ID tab)
+{
+  if(panel == &rd_nil_arrangement_panel) { return; }
+  UIShell_SidebarDocksLoss *loss = push_array(docks->documents.arena, UIShell_SidebarDocksLoss, 1);
+  loss->panel = panel;
+  loss->tab = tab;
+  SLLStackPush(docks->first_loss, loss);
+}
+
+// The pre-pass's entry for `view`, or 0.
+internal RD_DockSavedView *
+uishell_sidebar_docks_saved(UIShell_SidebarDocks *docks, CFG_Node *view)
+{
+  for(RD_DockSavedView *v = docks->views.first; v != 0 && view != &cfg_nil_node; v = v->next)
+  {
+    if(v->view == view) { return v; }
+  }
+  return 0;
+}
+
+// The first section View showing `key`, sidebar then Floating Panels, in
+// config order.
+internal RD_DockSavedView *
+uishell_sidebar_docks_find(UIShell_SidebarDocks *docks, String8 key)
+{
+  for(RD_DockSavedView *v = docks->views.first; v != 0; v = v->next)
+  {
+    if(str8_match(v->view->string, str8_lit("sidebar_section"), 0) &&
+       str8_match(uishell_sidebar_section_key(v->view), key, 0)) { return v; }
+  }
+  return 0;
+}
+
+// Saving releases `view`; its panel, or the tab a stray was saved inside,
+// is left for cleanup.
+internal void
+uishell_sidebar_docks_remove(UIShell_SidebarDocks *docks, RD_DockSavedView *view)
+{
+  if(rd_dock_saved_view_is_tab(view))
+  {
+    rd_arrangement_remove_tab(view->document->arrangement, view->view->id);
+    view->document->dirty = 1;
   }
   else
   {
-    CFG_Node *old_panel = view->parent;
-    cfg_node_insert_child(rd_state->cfg, panel, panel->last, view);
-    uishell_sidebar_prune_empty_panel(old_panel);
+    RD_DockDocument *document = view->document ? view->document : docks->sidebar;
+    rd_arrangement_release_orphan(document->arrangement, view->view->id);
+    document->dirty = 1;
   }
-  // Insert beside the next hinted neighbour's whole subtree. Existing nested
-  // splits keep their structure, tab selection, ratios and View identities.
+  uishell_sidebar_docks_lose(docks, view->panel, view->holder);
+  view->view = &cfg_nil_node;
+}
+
+// Moves `view` into `destination`'s `panel` after `prev`, from another
+// arrangement, its own, or none (a stray). The destination keeps its
+// Selected View unless `select`.
+internal void
+uishell_sidebar_docks_take(UIShell_SidebarDocks *docks, RD_DockSavedView *view, RD_DockDocument *destination,
+                           RD_PanelID panel, CFG_ID prev, B32 select)
+{
+  if(rd_dock_saved_view_is_tab(view) && view->document != destination)
+  {
+    rd_arrangement_detach_tab(view->document->arrangement, view->view->id);
+    view->document->dirty = 1;
+  }
+  uishell_sidebar_docks_lose(docks, view->panel, view->holder);
+  rd_arrangement_insert_tab(destination->arrangement, view->view->id, panel, prev, select);
+  destination->dirty = 1;
+  destination->took |= view->document != destination;
+  view->document = destination;
+  view->panel = rd_arrangement_panel_from_id(destination->arrangement, panel);
+  view->holder = 0;
+}
+
+internal B32
+uishell_sidebar_docks_tab_lost(UIShell_SidebarDocks *docks, CFG_ID tab)
+{
+  for(UIShell_SidebarDocksLoss *loss = docks->first_loss; loss != 0; loss = loss->next)
+  {
+    if(loss->tab == tab) { return 1; }
+  }
+  return 0;
+}
+
+// Removes what repair emptied, keeping unrelated content and saved weights:
+// each panel that lost a View, or that restore marked
+// (`section_hint_cleanup`), loses the tabs strays left with nothing in them,
+// and goes when nothing is left in it. An emptied Floating Panel goes; the
+// sidebar's root stays. With `reset` every panel is looked at, and every
+// empty tab goes.
+internal void
+uishell_sidebar_docks_cleanup(UIShell_SidebarDocks *docks, B32 reset)
+{
+  Temp scratch = scratch_begin(&docks->documents.arena, 1);
+  for(RD_DockDocument *d = docks->documents.first; d != 0; d = d->next)
+  {
+    RD_Arrangement *arrangement = d->arrangement;
+    U64 count = 0;
+    for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p)) { count += 1; }
+    RD_ArrangementPanel **panels = push_array(scratch.arena, RD_ArrangementPanel *, count);
+    U64 index = 0;
+    for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p)) { panels[index++] = p; }
+    // Children before their parents, so an emptied split goes too.
+    for(U64 i = count; i > 0; i -= 1)
+    {
+      RD_ArrangementPanel *panel = panels[i-1];
+      if(rd_arrangement_panel_from_id(arrangement, panel->id) != panel) { continue; }
+      CFG_Node *marker = cfg_node_child_from_string(cfg_node_from_id(panel->cfg), str8_lit("section_hint_cleanup"));
+      B32 lost = reset || marker != &cfg_nil_node;
+      for(UIShell_SidebarDocksLoss *loss = docks->first_loss; loss != 0 && !lost; loss = loss->next) { lost = loss->panel == panel; }
+      if(!lost) { continue; }
+      for(RD_ArrangementTab *tab = panel->first_tab, *next = 0; tab != 0; tab = next)
+      {
+        next = tab->next;
+        CFG_Node *node = cfg_node_from_id(tab->view);
+        if(rd_dock_view_from_name(node->string) || !rd_dock_is_container(node)) { continue; }
+        if(!reset && marker == &cfg_nil_node && !uishell_sidebar_docks_tab_lost(docks, tab->view)) { continue; }
+        B32 holds = 0;
+        for(RD_DockSavedView *v = docks->views.first; v != 0 && !holds; v = v->next) { holds = v->view != &cfg_nil_node && v->holder == tab->view; }
+        if(!holds)
+        {
+          rd_arrangement_remove_tab(arrangement, tab->view);
+          d->dirty = 1;
+        }
+      }
+      B32 root = panel == arrangement->root;
+      if(!uishell_sidebar_arrangement_panel_has_content(panel) && !(root && d == docks->sidebar))
+      {
+        if(root) { rd_arrangement_discard(arrangement); }
+        else
+        {
+          uishell_sidebar_docks_lose(docks, panel->parent, 0);
+          rd_arrangement_remove(arrangement, panel->id);
+        }
+        d->dirty = 1;
+      }
+      else if(marker != &cfg_nil_node) { cfg_node_release(rd_state->cfg, marker); }
+    }
+  }
+  docks->first_loss = 0;
+  scratch_end(scratch);
+}
+
+internal void
+uishell_sidebar_docks_save(UIShell_SidebarDocks *docks)
+{
+  rd_dock_documents_save(rd_state->cfg, &docks->documents);
+}
+
+// Removes the section Views no declared region or local section shows (all
+// of them, with `reset`), and what that empties.
+internal void
+uishell_sidebar_prune_regions(UIShell_SidebarDocks *docks, UIShell_SectionPlacement *regions, U64 count, B32 reset)
+{
+  for(RD_DockSavedView *v = docks->views.first; v != 0; v = v->next)
+  {
+    if(!str8_match(v->view->string, str8_lit("sidebar_section"), 0)) { continue; }
+    // CFG nil nodes self-link, so a missing section setting reads as empty.
+    // A View without a declared identity is corrupt saved state; drop it.
+    String8 key = uishell_sidebar_section_key(v->view);
+    // A section someone made is kept while it exists in the window's data,
+    // even before Andamento has placed it (just made, or just migrated).
+    B32 local = uishell_sidebar_local_section_exists(docks->owner, key);
+    if(reset || (!local && uishell_sidebar_region_index(regions, count, key) == ANDAMENTO_NONE))
+    { uishell_sidebar_docks_remove(docks, v); }
+  }
+  uishell_sidebar_docks_cleanup(docks, reset);
+}
+
+internal void
+uishell_sidebar_reset_regions(CFG_Node *owner)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_SidebarDocks docks = uishell_sidebar_docks(scratch.arena, owner);
+  uishell_sidebar_prune_regions(&docks, 0, 0, 1);
+  uishell_sidebar_docks_save(&docks);
+  scratch_end(scratch);
+  // The Floating Panels host goes with its last Floating Panel.
+  CFG_Node *floating = cfg_node_child_from_string(owner, str8_lit("floating_panels"));
+  if(floating != &cfg_nil_node && floating->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, floating); }
+  CFG_Node *inventory = cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY);
+  if(inventory != &cfg_nil_node) { cfg_node_release(rd_state->cfg, inventory); }
+  // Empty inventory makes every declared id new even if unrelated tabs keep
+  // the host alive: reconcile_regions' legacy_saved test must see this node.
+  // Avoid releasing absent nodes: cfg_node_release does no tree work for nil,
+  // but still increments the configuration change generation.
+  cfg_node_new(rd_state->cfg, owner, UISHELL_REGION_INVENTORY);
+}
+
+// A new Floating Panel holds the section; where it floats among the others
+// (its place and share in the host) is the host's Presentation State.
+internal CFG_Node *
+uishell_sidebar_place_floating(UIShell_SidebarDocks *docks, UIShell_SectionPlacement *regions, U64 count, U64 index, RD_DockSavedView *saved, F32 weight)
+{
+  UIShell_SectionPlacement region = regions[index];
+  CFG_Node *owner = docks->owner;
+  CFG_Node *host = cfg_node_child_from_string_or_alloc(rd_state->cfg, owner, str8_lit("floating_panels"));
+  RD_DockDocument *floating = rd_dock_documents_add(&docks->documents, rd_arrangement_new(docks->documents.arena, host, str8_lit("1")));
+  RD_PanelID root = rd_arrangement_clear(floating->arrangement);
+  CFG_Node *view = &cfg_nil_node;
+  if(saved == 0) { view = uishell_sidebar_section_view_new(floating->arrangement, root, 0, region.key, region.title); }
+  else
+  {
+    view = saved->view;
+    uishell_sidebar_docks_take(docks, saved, floating, root, 0, cfg_node_child_from_string(view, str8_lit("selected")) != &cfg_nil_node);
+  }
+  floating->dirty = 1;
+  uishell_sidebar_docks_cleanup(docks, 0);
+  uishell_sidebar_docks_save(docks);
+  CFG_Node *panel = cfg_node_from_id(floating->arrangement->root->cfg);
+  // Insert beside the next hinted neighbour's whole Floating Panel.
   for(U64 next = index+1; next < count; next++)
   {
-    CFG_Node *neighbour = uishell_sidebar_region_view(owner, regions[next].key);
-    if(neighbour == &cfg_nil_node) { continue; }
-    CFG_Node *anchor = neighbour->parent;
-    while(anchor != &cfg_nil_node && anchor->parent != host) { anchor = anchor->parent; }
-    if(anchor != &cfg_nil_node)
+    RD_DockSavedView *neighbour = uishell_sidebar_docks_find(docks, regions[next].key);
+    if(neighbour == 0 || neighbour->document == 0 || neighbour->document == docks->sidebar) { continue; }
+    CFG_Node *anchor = cfg_node_from_id(neighbour->document->arrangement->root->cfg);
+    if(anchor->parent == host)
     { cfg_node_insert_child(rd_state->cfg, host, anchor->prev, panel); break; }
   }
   if(weight > 0) { return view; }
-  // An equal share: lift a merged host's tabs and leaf options into a panel
-  // of their own, then scale the saved sibling shares together.
+  // An equal share: a host holding Views of its own, saved before Floating
+  // Panels were arrangements, first has them lifted into a Floating Panel,
+  // with the host's options; then the saved shares scale together.
   B32 split_host = 0;
   for(CFG_Node *n = host->first; n != &cfg_nil_node; n = n->next)
-  { if(n != panel && rd_dock_is_container(n)) { split_host = 1; break; } }
+  { if(n != panel && rd_dock_floating_panel_from_cfg(n) == n) { split_host = 1; break; } }
   if(!split_host && (host->first != panel || panel->next != &cfg_nil_node))
   {
-    CFG_Node *old = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
+    RD_DockDocument *old = rd_dock_documents_add(&docks->documents, rd_arrangement_new(docks->documents.arena, host, str8_lit("1")));
+    RD_PanelID old_root = rd_arrangement_clear(old->arrangement);
+    for(RD_DockSavedView *v = docks->views.first; v != 0; v = v->next)
+    {
+      if(v->view == &cfg_nil_node || v->view->parent != host) { continue; }
+      uishell_sidebar_docks_take(docks, v, old, old_root, uishell_sidebar_last_tab(old->arrangement, old_root),
+                                 cfg_node_child_from_string(v->view, str8_lit("selected")) != &cfg_nil_node);
+    }
+    old->dirty = 1;
+    uishell_sidebar_docks_save(docks);
+    CFG_Node *old_node = cfg_node_from_id(old->arrangement->root->cfg);
     for(CFG_Node *n = host->first, *next; n != &cfg_nil_node; n = next)
     {
       next = n->next;
-      if(n != old && n != panel) { cfg_node_insert_child(rd_state->cfg, old, old->last, n); }
+      if(n != old_node && n != panel) { cfg_node_insert_child(rd_state->cfg, old_node, old_node->last, n); }
     }
   }
   F32 total = 0; U64 siblings = 0;
@@ -4762,85 +4919,68 @@ uishell_sidebar_place_region(CFG_Node *owner, UIShell_SectionPlacement *regions,
     host_name = RD_DOCK_SIDEBAR_ROOT;
   }
   if(!valid) { return view; }
-  if(!str8_match(host_name, RD_DOCK_SIDEBAR_ROOT, 0)) { return uishell_sidebar_place_floating(owner, regions, count, index, view, weight); }
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, owner, RD_DOCK_SIDEBAR_ROOT);
-  RD_PanelID panel = rd_arrangement_add(sidebar, sidebar->root->id, weight);
-  CFG_Node *old_panel = view->parent;
-  RD_ArrangementPanel *source = rd_arrangement_panel_from_view(sidebar, view->id);
-  if(view == &cfg_nil_node) { view = uishell_sidebar_section_view_new(sidebar, panel, 0, region.key, region.title); }
-  else
+  UIShell_SidebarDocks docks = uishell_sidebar_docks(scratch.arena, owner);
+  RD_DockSavedView *saved = uishell_sidebar_docks_saved(&docks, view);
+  if(view != &cfg_nil_node && saved == 0)
   {
-    // A saved View keeps its selection, and a sidebar panel it leaves with
-    // nothing to show goes.
-    B32 selected = cfg_node_child_from_string(view, str8_lit("selected")) != &cfg_nil_node;
-    rd_arrangement_move_tab(sidebar, view->id, panel, 0);
-    if(!selected) { rd_arrangement_select(sidebar, panel, 0); }
-    if(source != &rd_nil_arrangement_panel && !uishell_sidebar_arrangement_panel_has_content(source))
-    { rd_arrangement_remove(sidebar, source->id); }
+    // A View the pre-pass does not reach (outside this owner's hosts) is
+    // handed over as a stray.
+    saved = push_array(scratch.arena, RD_DockSavedView, 1);
+    saved->view = view;
+    saved->panel = &rd_nil_arrangement_panel;
   }
+  if(!str8_match(host_name, RD_DOCK_SIDEBAR_ROOT, 0))
+  {
+    view = uishell_sidebar_place_floating(&docks, regions, count, index, saved, weight);
+    scratch_end(scratch);
+    return view;
+  }
+  RD_Arrangement *sidebar = docks.sidebar->arrangement;
+  RD_PanelID panel = rd_arrangement_add(sidebar, sidebar->root->id, weight);
+  if(saved == 0) { view = uishell_sidebar_section_view_new(sidebar, panel, 0, region.key, region.title); }
+  // A saved View keeps its selection, and a panel it leaves with nothing to
+  // show goes.
+  else { uishell_sidebar_docks_take(&docks, saved, docks.sidebar, panel, 0, cfg_node_child_from_string(view, str8_lit("selected")) != &cfg_nil_node); }
+  docks.sidebar->dirty = 1;
   // Insert beside the next hinted neighbour's whole subtree. Existing nested
   // splits keep their structure, tab selection, ratios and View identities.
   for(U64 next = index+1; next < count; next++)
   {
-    CFG_Node *neighbour = uishell_sidebar_region_view(owner, regions[next].key);
-    RD_ArrangementPanel *anchor = rd_arrangement_panel_from_view(sidebar, neighbour->id);
+    RD_DockSavedView *neighbour = uishell_sidebar_docks_find(&docks, regions[next].key);
+    RD_ArrangementPanel *anchor = neighbour && neighbour->document == docks.sidebar ? neighbour->panel : &rd_nil_arrangement_panel;
     while(anchor->parent != &rd_nil_arrangement_panel && anchor->parent != sidebar->root) { anchor = anchor->parent; }
     if(anchor->parent == sidebar->root)
     { rd_arrangement_reorder(sidebar, panel, anchor->prev->id); break; }
   }
-  rd_arrangement_save(rd_state->cfg, sidebar);
-  // A View saved outside the sidebar's panels leaves wrappers to repair.
-  if(source == &rd_nil_arrangement_panel) { uishell_sidebar_prune_empty_panel(old_panel); }
+  uishell_sidebar_docks_cleanup(&docks, 0);
+  uishell_sidebar_docks_save(&docks);
   scratch_end(scratch);
   return view;
 }
 
 // Prefer the first valid saved View in sidebar-then-floating depth-first order.
 // If none is valid, keep the first invalid copy for existing placement repair.
-// Only this owner's hosts participate; child Workspace Regions are independent.
-internal void
-uishell_sidebar_choose_region(CFG_Node *container, String8 key, CFG_Node **keeper)
+internal RD_DockSavedView *
+uishell_sidebar_choose_region(UIShell_SidebarDocks *docks, String8 key)
 {
-  for(CFG_Node *c = container->first; c != &cfg_nil_node; c = c->next)
+  RD_DockSavedView *keeper = 0;
+  for(RD_DockSavedView *v = docks->views.first; v != 0; v = v->next)
   {
-    if(str8_match(c->string, str8_lit("sidebar_section"), 0) &&
-       str8_match(uishell_sidebar_section_key(c), key, 0))
+    if(str8_match(v->view->string, str8_lit("sidebar_section"), 0) &&
+       str8_match(uishell_sidebar_section_key(v->view), key, 0))
     {
-      if(*keeper == &cfg_nil_node ||
-         (!rd_dock_saved_placement_valid(*keeper) && rd_dock_saved_placement_valid(c))) { *keeper = c; }
-    }
-    else if(rd_dock_is_container(c)) { uishell_sidebar_choose_region(c, key, keeper); }
-  }
-}
-
-internal B32
-uishell_sidebar_prune_region_duplicates(CFG_Node *container, String8 key, CFG_Node *keeper)
-{
-  B32 removed = 0;
-  for(CFG_Node *c = container->first, *next; c != &cfg_nil_node; c = next)
-  {
-    next = c->next;
-    if(str8_match(c->string, str8_lit("sidebar_section"), 0) && c != keeper &&
-       str8_match(uishell_sidebar_section_key(c), key, 0))
-    { cfg_node_release(rd_state->cfg, c); removed = 1; }
-    else if(rd_dock_is_container(c))
-    {
-      B32 child_removed = uishell_sidebar_prune_region_duplicates(c, key, keeper);
-      removed |= child_removed;
-      // Authoritative prune_regions runs first and consumes saved
-      // section_hint_cleanup markers before this duplicate-repair pass.
-      removed |= uishell_sidebar_cleanup_region_panel(c, child_removed);
+      if(keeper == 0 || (!rd_dock_saved_placement_valid(keeper->view) && rd_dock_saved_placement_valid(v->view))) { keeper = v; }
     }
   }
-  return removed;
+  return keeper;
 }
 
 // An authoritative empty declaration removes stale Views and close records.
 // Missing provider snapshots never reach this function and preserve layout.
-// Pruning stale, duplicate and misplaced saved Views repairs the config of
-// the sidebar and the Floating Panels together, as rd_dock_restore_window
-// does; placing a region edits the sidebar's arrangement.
+// Pruning stale, duplicate and misplaced saved Views repairs the sidebar's
+// and the Floating Panels' arrangements together, as rd_dock_restore_window
+// repairs a window's.
 internal CFG_Node *
 uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *regions, U64 count)
 {
@@ -4848,8 +4988,10 @@ uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *reg
   CFG_Node *inventory = cfg_node_child_from_string(owner, UISHELL_REGION_INVENTORY);
   B32 legacy_saved = inventory == &cfg_nil_node && root != &cfg_nil_node;
   if(inventory == &cfg_nil_node) { inventory = cfg_node_new(rd_state->cfg, owner, UISHELL_REGION_INVENTORY); }
-  uishell_sidebar_prune_regions(owner, root, regions, count, 0);
-  uishell_sidebar_prune_regions(owner, cfg_node_child_from_string(owner, str8_lit("floating_panels")), regions, count, 0);
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_SidebarDocks docks = uishell_sidebar_docks(scratch.arena, owner);
+  uishell_sidebar_prune_regions(&docks, regions, count, 0);
+  uishell_sidebar_docks_save(&docks);
   for(CFG_Node *c = inventory->first, *next; c != &cfg_nil_node; c = next)
   {
     next = c->next;
@@ -4859,12 +5001,15 @@ uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *reg
   {
     String8 key = regions[r].key;
     CFG_Node *record = cfg_node_child_from_string(inventory, key);
-    CFG_Node *view = &cfg_nil_node;
-    CFG_Node *floating = cfg_node_child_from_string(owner, str8_lit("floating_panels"));
-    uishell_sidebar_choose_region(root, key, &view);
-    uishell_sidebar_choose_region(floating, key, &view);
-    uishell_sidebar_prune_region_duplicates(root, key, view);
-    uishell_sidebar_prune_region_duplicates(floating, key, view);
+    RD_DockSavedView *keeper = uishell_sidebar_choose_region(&docks, key);
+    for(RD_DockSavedView *v = docks.views.first; v != 0; v = v->next)
+    {
+      if(v != keeper && str8_match(v->view->string, str8_lit("sidebar_section"), 0) &&
+         str8_match(uishell_sidebar_section_key(v->view), key, 0)) { uishell_sidebar_docks_remove(&docks, v); }
+    }
+    uishell_sidebar_docks_cleanup(&docks, 0);
+    uishell_sidebar_docks_save(&docks);
+    CFG_Node *view = keeper ? keeper->view : &cfg_nil_node;
     B32 known = record != &cfg_nil_node;
     if(!known) { record = cfg_node_new(rd_state->cfg, inventory, key); }
     CFG_Node *hint_pending = cfg_node_child_from_string(view, str8_lit("section_hint_pending"));
@@ -4874,6 +5019,8 @@ uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *reg
       view = uishell_sidebar_place_region(owner, regions, count, r, view, 1.f);
       if(hint_pending != &cfg_nil_node && rd_dock_saved_placement_valid(view))
       { cfg_node_release(rd_state->cfg, hint_pending); }
+      // Placement saved its own edit; later regions repair what it left.
+      docks = uishell_sidebar_docks(scratch.arena, owner);
     }
     if(view != &cfg_nil_node)
     {
@@ -4886,6 +5033,7 @@ uishell_sidebar_reconcile_regions(CFG_Node *owner, UIShell_SectionPlacement *reg
     if(view == &cfg_nil_node && closed == &cfg_nil_node) { cfg_node_new(rd_state->cfg, record, str8_lit("closed")); }
     if(view != &cfg_nil_node && closed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, closed); }
   }
+  scratch_end(scratch);
   return cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT);
 }
 

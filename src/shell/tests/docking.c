@@ -16,6 +16,36 @@
 
 #define Check(x) do { if(!(x)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #x); failures++; } } while(0)
 
+// Parses one top-level config tree, as the user file loader does.
+internal CFG_Node *
+restore_fixture(Arena *arena, CFG_State *cfg, char *text)
+{
+  CFG_SchemaNode *slot = 0;
+  CFG_SchemaTable schemas = {&slot, 1};
+  CFG_NodePtrList parsed = cfg_node_ptr_list_from_string(arena, cfg, &schemas, str8_zero(), str8_cstring(text));
+  for(CFG_NodePtrNode *n = parsed.first; n; n = n->next) { cfg_node_insert_child(cfg, cfg_node_root(), cfg_node_root()->last, n->v); }
+  return parsed.first->v;
+}
+
+// The child of `node` named `name`, or with `label` as its label.
+internal CFG_Node *
+restore_child(CFG_Node *node, char *name, char *label)
+{
+  for(CFG_Node *c = node->first; c != &cfg_nil_node; c = c->next)
+  {
+    if(str8_match(c->string, str8_cstring(name), 0) &&
+       (label == 0 || str8_match(cfg_node_child_from_string(c, str8_lit("label"))->first->string, str8_cstring(label), 0))) { return c; }
+  }
+  return &cfg_nil_node;
+}
+
+// Each arrangement restore saved loads again with no broken invariant.
+internal B32
+restore_saved_valid(Arena *arena, CFG_Node *root)
+{
+  return rd_arrangement_problem(arena, rd_arrangement_from_cfg(arena, root)).size == 0;
+}
+
 internal void
 entry_point(CmdLine *cmdline)
 {
@@ -231,20 +261,14 @@ entry_point(CmdLine *cmdline)
   B32 expected_widths[] = {0, 0, 1, 1, 1};
   for(U64 i = 0; i < ArrayCount(query_widths); i++)
   { Check(rd_dock_drag_target(width_fixture, panels, query_widths[i]) == expected_widths[i]); }
-  // Repairing to the current default must preserve order and generation,
-  // even if future context requirements cannot be satisfied there.
+  // Repairing a layout with nothing to repair preserves order and generation.
   CFG_Node *following_view = cfg_node_new(cfg, panels, str8_lit("text"));
+  rd_dock_restore_window(cfg, window);
   U64 before_default = cfg_change_gen();
   CFG_Node *before_prev = width_fixture->prev;
-  rd_dock_restore_move(cfg, width_fixture, panels);
+  rd_dock_restore_window(cfg, window);
   Check(cfg_change_gen() == before_default && width_fixture->prev == before_prev);
   Check(width_fixture->next == following_view && panels->last == following_view);
-  // A different default still moves the same View, and repeating it is stable.
-  rd_dock_restore_move(cfg, width_fixture, floating_panel);
-  Check(width_fixture->parent == floating_panel);
-  before_default = cfg_change_gen();
-  rd_dock_restore_move(cfg, width_fixture, floating_panel);
-  Check(cfg_change_gen() == before_default && width_fixture->parent == floating_panel);
   // Unknown saved content must remain removable even though it cannot be
   // created, duplicated or offered a docking target without declared traits.
   CFG_Node *unknown_saved = cfg_node_new(cfg, panels, str8_lit("unknown_saved_view"));
@@ -253,6 +277,95 @@ entry_point(CmdLine *cmdline)
   Check(!rd_dock_can_close(&cfg_nil_node));
   Check(rd_dock_creation(str8_lit("unknown_saved_view"), panels) == RD_DockRule_RegisteredView);
   Check(rd_dock_rule_message(RD_DockRule_RegisteredView).size != 0);
+  // A View restore moves between two layouts leaves one arrangement for the
+  // other with its node, settings and identity: the arrangement it leaves
+  // keeps its panel and other Views, and releases nothing.
+  {
+    CFG_Node *moving = restore_fixture(arena, cfg,
+      "window:{workspace:{panels:{0.5:{terminal:{label:`left`}} 0.5:{text}}} "
+      "control_views:{0.5:{sidebar_section:{selected section:a} terminal:{label:`misplaced`}} 0.5:{sidebar_section:{section:b}}}}");
+    CFG_Node *moving_panels = restore_child(restore_child(moving, "workspace", 0), "panels", 0);
+    CFG_Node *moving_sidebar = restore_child(moving, "control_views", 0);
+    CFG_Node *left = moving_panels->first, *source = moving_sidebar->first;
+    CFG_Node *misplaced = restore_child(source, "terminal", "misplaced");
+    CFG_ID misplaced_id = misplaced->id;
+    rd_dock_restore_window(cfg, moving);
+    Check(cfg_node_from_id(misplaced_id) == misplaced && misplaced->parent == left);
+    Check(rd_panel_tree_from_cfg(arena, moving_panels).root->first->tabs.last->v == misplaced);
+    Check(source->parent == moving_sidebar && restore_child(source, "sidebar_section", 0) != &cfg_nil_node);
+    Check(restore_child(source, "terminal", 0) == &cfg_nil_node);
+    Check(restore_saved_valid(arena, moving_panels) && restore_saved_valid(arena, moving_sidebar));
+    U64 repaired = cfg_change_gen();
+    rd_dock_restore_window(cfg, moving);
+    Check(cfg_change_gen() == repaired);
+    cfg_node_release(cfg, moving);
+  }
+  // Views saved in no layout (directly under a workspace or a Floating
+  // Panels host, or in a second root) are strays: one the checker refuses
+  // where it is moves to its default host, as any refused View does, and
+  // one it accepts stays.
+  {
+    CFG_Node *strays = restore_fixture(arena, cfg,
+      "window:{workspace:{text:{label:`loose`} workspace_selector:{label:`selector`} panels:{terminal} "
+      "panels:{sidebar_section:{section:second}} floating_panels:{sidebar_section:{section:hosted}}} "
+      "control_views:{sidebar_section:{section:docked}}}");
+    CFG_Node *strays_workspace = restore_child(strays, "workspace", 0);
+    CFG_Node *strays_sidebar = restore_child(strays, "control_views", 0);
+    CFG_Node *leaf = strays_sidebar;
+    CFG_Node *loose = restore_child(strays_workspace, "text", 0);
+    CFG_Node *stray_selector = restore_child(strays_workspace, "workspace_selector", 0);
+    CFG_Node *second = restore_child(strays_workspace->last->prev, "sidebar_section", 0);
+    CFG_Node *hosted = restore_child(restore_child(strays_workspace, "floating_panels", 0), "sidebar_section", 0);
+    CFG_ID selector_stray_id = stray_selector->id, second_id = second->id, hosted_id = hosted->id;
+    Check(second != &cfg_nil_node && hosted != &cfg_nil_node);
+    rd_dock_restore_window(cfg, strays);
+    Check(loose->parent == strays_workspace);
+    Check(stray_selector->parent == leaf && stray_selector->id == selector_stray_id);
+    Check(second->parent == leaf && second->id == second_id && hosted->parent == leaf && hosted->id == hosted_id);
+    Check(cfg_node_child_from_string(second, str8_lit("section_hint_pending")) != &cfg_nil_node);
+    Check(cfg_node_child_from_string(hosted, str8_lit("section_hint_pending")) != &cfg_nil_node);
+    CFG_PanelTree strays_tree = rd_panel_tree_from_cfg(arena, strays_sidebar);
+    Check(strays_tree.root->tabs.count == 4 && strays_tree.root->tabs.last->v == hosted);
+    Check(restore_child(restore_child(strays_workspace, "panels", 0), "terminal", 0) != &cfg_nil_node);
+    Check(restore_saved_valid(arena, strays_sidebar));
+    cfg_node_release(cfg, strays);
+  }
+  // Duplicate singletons keep the first copy in config order, where a split
+  // saved with tabs of its own lists its child panels and tabs interleaved,
+  // not the arrangement's tabs-first order.
+  {
+    CFG_Node *duplicates = restore_fixture(arena, cfg,
+      "window:{control_views:{0.5:{workspace_selector:{label:`first`}} workspace_selector:{label:`second`} 0.5:{sidebar_section:{section:a}}}}");
+    CFG_Node *duplicates_sidebar = restore_child(duplicates, "control_views", 0);
+    CFG_Node *first = restore_child(duplicates_sidebar->first, "workspace_selector", 0);
+    CFG_ID second_selector_id = restore_child(duplicates_sidebar, "workspace_selector", 0)->id;
+    rd_dock_restore_window(cfg, duplicates);
+    Check(cfg_node_from_id(second_selector_id) == &cfg_nil_node);
+    Check(first->parent == duplicates_sidebar->first && rd_dock_instances(duplicates, selector) == 1);
+    cfg_node_release(cfg, duplicates);
+  }
+  // Where a View lands, its panel keeps its Selected View unless the View
+  // was itself selected where it was saved.
+  for(U32 marked = 0; marked < 2; marked++)
+  {
+    CFG_Node *selection = restore_fixture(arena, cfg, marked ?
+      "window:{workspace:{panels:{terminal:{selected} text}} control_views:{1:{sidebar_section:{section:a} jackstay:{selected}}}}" :
+      "window:{workspace:{panels:{terminal:{selected} text}} control_views:{1:{sidebar_section:{selected section:a} jackstay}}}");
+    CFG_Node *destination = restore_child(restore_child(selection, "workspace", 0), "panels", 0);
+    CFG_Node *source = restore_child(selection, "control_views", 0)->first;
+    CFG_Node *jackstay = restore_child(source, "jackstay", 0);
+    CFG_Node *selected_terminal = restore_child(destination, "terminal", 0);
+    rd_dock_restore_window(cfg, selection);
+    CFG_PanelTree tree = rd_panel_tree_from_cfg(arena, destination);
+    Check(jackstay->parent == destination && tree.root->tabs.last->v == jackstay);
+    Check(tree.root->selected_tab == (marked ? jackstay : selected_terminal));
+    Check((cfg_node_child_from_string(selected_terminal, str8_lit("selected")) != &cfg_nil_node) == !marked);
+    // The panel it left keeps its own Selected View, or has none if it left.
+    CFG_Node *section = restore_child(source, "sidebar_section", 0);
+    Check((cfg_node_child_from_string(section, str8_lit("selected")) != &cfg_nil_node) == !marked);
+    Check(restore_saved_valid(arena, destination));
+    cfg_node_release(cfg, selection);
+  }
   // Empty saved layouts remain empty; there is already an implicit root
   // Control Surface and restore must not manufacture content Views.
   CFG_Node *empty = cfg_node_new(cfg, cfg_node_root(), str8_lit("window"));

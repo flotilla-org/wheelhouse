@@ -115,10 +115,15 @@ internal RD_Arrangement *rd_arrangement_from_cfg(Arena *arena, CFG_Node *panels_
 // The arrangement saved as `owner`'s `root_name` child. Without one, it is
 // empty and saves there once it has panels.
 internal RD_Arrangement *rd_arrangement_from_owner(Arena *arena, CFG_Node *owner, String8 root_name);
+// An empty arrangement that saves as a new `root_name` child of `owner`, after
+// any it has, once it has panels: a new Floating Panel in its host.
+internal RD_Arrangement *rd_arrangement_new(Arena *arena, CFG_Node *owner, String8 root_name);
 internal RD_Arrangement *rd_arrangement_copy(Arena *arena, RD_Arrangement *src);
 // Edits the loaded config nodes in place: panel and View nodes keep their
 // identity and their other children, unchanged values are not rewritten, and
-// only removed tabs' and closed panels' Views are released.
+// only removed tabs' and closed panels' Views are released. An arrangement
+// with no panels writes nothing, but still releases the Views removed from it,
+// and the root node it was loaded from when it was discarded.
 internal void rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement);
 
 //- The renderer's panel tree
@@ -174,6 +179,13 @@ internal RD_PanelID rd_arrangement_close(RD_Arrangement *arrangement, RD_PanelID
 // may also be a new View node in no panel, which saving places. A panel it
 // leaves while selected has no Selected View until one is selected.
 internal B32 rd_arrangement_move_tab(RD_Arrangement *arrangement, CFG_ID view, RD_PanelID destination, CFG_ID prev_view);
+// As move_tab, but `destination` keeps its Selected View unless `select`, as
+// restore moves a View that was not selected where it was saved.
+internal B32 rd_arrangement_insert_tab(RD_Arrangement *arrangement, CFG_ID view, RD_PanelID destination, CFG_ID prev_view, B32 select);
+// Removes `view`'s tab but keeps its View node, for another arrangement to
+// take with move_tab: saving leaves the node where it is. A panel it leaves
+// while selected has no Selected View until one is selected.
+internal B32 rd_arrangement_detach_tab(RD_Arrangement *arrangement, CFG_ID view);
 // Drops `view` into `destination` (`dir` invalid) or into the new panel
 // splitting `destination` along `dir` makes, after `prev_view` as move_tab
 // places it, and settles the panel it left, when this arrangement has it, in
@@ -191,6 +203,14 @@ internal B32 rd_arrangement_settle(RD_Arrangement *arrangement, RD_PanelID panel
 // Removes `view`'s tab; saving releases its View node. A panel it leaves
 // while selected has no Selected View until one is selected.
 internal B32 rd_arrangement_remove_tab(RD_Arrangement *arrangement, CFG_ID view);
+// Saving releases `view`, a View node in none of the arrangement's panels: one
+// repair found saved outside every arrangement. A tab that takes it first
+// keeps it.
+internal B32 rd_arrangement_release_orphan(RD_Arrangement *arrangement, CFG_ID view);
+// Removes every panel and View. Saving releases the root node it was loaded
+// from, as an emptied Floating Panel goes; it saves nothing more until it
+// has a panel again.
+internal void rd_arrangement_discard(RD_Arrangement *arrangement);
 // Makes `view`, one of `panel`'s tabs, its Selected View; 0 selects none.
 internal B32 rd_arrangement_select(RD_Arrangement *arrangement, RD_PanelID panel, CFG_ID view);
 // Moves `panel` among its siblings to after `prev` (0: first), with its

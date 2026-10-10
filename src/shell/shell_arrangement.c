@@ -280,17 +280,24 @@ rd_arrangement_from_cfg(Arena *arena, CFG_Node *panels_root)
 }
 
 internal RD_Arrangement *
-rd_arrangement_from_owner(Arena *arena, CFG_Node *owner, String8 root_name)
+rd_arrangement_new(Arena *arena, CFG_Node *owner, String8 root_name)
 {
-  CFG_Node *root = cfg_node_child_from_string(owner, root_name);
-  if(root != &cfg_nil_node || owner == &cfg_nil_node) { return rd_arrangement_from_cfg(arena, root); }
   RD_Arrangement *arrangement = rd_arrangement_from_cfg(arena, &cfg_nil_node);
+  if(owner == &cfg_nil_node) { return arrangement; }
   RD_ArrangementKeys keys = rd_arrangement_keys_from_owner(arena, owner, root_name);
   arrangement->owner = owner->id;
   arrangement->root_name = keys.root_name;
   arrangement->axis_key = keys.axis_key;
   arrangement->root_axis = cfg_node_child_from_string(owner, keys.axis_key) != &cfg_nil_node ? Axis2_X : Axis2_Y;
   return arrangement;
+}
+
+internal RD_Arrangement *
+rd_arrangement_from_owner(Arena *arena, CFG_Node *owner, String8 root_name)
+{
+  CFG_Node *root = cfg_node_child_from_string(owner, root_name);
+  if(root != &cfg_nil_node || owner == &cfg_nil_node) { return rd_arrangement_from_cfg(arena, root); }
+  return rd_arrangement_new(arena, owner, root_name);
 }
 
 internal RD_Arrangement *
@@ -346,7 +353,21 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
 {
   CFG_Node *owner = cfg_node_from_id(arrangement->owner);
   RD_ArrangementPanel *root = arrangement->root;
-  if(owner == &cfg_nil_node || root == &rd_nil_arrangement_panel) { return; }
+  if(owner == &cfg_nil_node) { return; }
+  if(root == &rd_nil_arrangement_panel)
+  {
+    // Discarded, or never had panels: the old root node and removed Views go.
+    CFG_Node *saved_root = cfg_node_from_id(arrangement->saved_root);
+    if(saved_root != &cfg_nil_node) { cfg_node_release(state, saved_root); }
+    for(RD_ArrangementTab *tab = arrangement->first_removed; tab != 0; tab = tab->next)
+    {
+      CFG_Node *view = cfg_node_from_id(tab->view);
+      if(view != &cfg_nil_node) { cfg_node_release(state, view); }
+    }
+    arrangement->first_removed = 0;
+    arrangement->saved_root = 0;
+    return;
+  }
   Temp scratch = scratch_begin(0, 0);
 
   // The panel nodes saved last time, before any move.
@@ -844,22 +865,43 @@ rd_arrangement_close(RD_Arrangement *arrangement, RD_PanelID id)
   return heir->id;
 }
 
+// Takes `view`'s tab out of its panel, leaving the tab for the caller.
+internal RD_ArrangementTab *
+rd_arrangement_unlink_tab(RD_Arrangement *arrangement, CFG_ID view)
+{
+  RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(arrangement, view);
+  RD_ArrangementTab *tab = rd_arrangement_tab_from_view(panel, view);
+  if(tab)
+  {
+    DLLRemove_NPZ((RD_ArrangementTab *)0, panel->first_tab, panel->last_tab, tab, next, prev);
+    panel->tab_count -= 1;
+    if(panel->selected == view) { panel->selected = 0; }
+    tab->next = tab->prev = 0;
+  }
+  return tab;
+}
+
 internal B32
-rd_arrangement_move_tab(RD_Arrangement *arrangement, CFG_ID view, RD_PanelID destination, CFG_ID prev_view)
+rd_arrangement_insert_tab(RD_Arrangement *arrangement, CFG_ID view, RD_PanelID destination, CFG_ID prev_view, B32 select)
 {
   RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(arrangement, destination);
   if(panel == &rd_nil_arrangement_panel || view == 0 || view == prev_view) { return 0; }
-  RD_ArrangementPanel *source = rd_arrangement_panel_from_view(arrangement, view);
-  RD_ArrangementTab *tab = rd_arrangement_tab_from_view(source, view);
-  if(tab)
-  {
-    DLLRemove_NPZ((RD_ArrangementTab *)0, source->first_tab, source->last_tab, tab, next, prev);
-    source->tab_count -= 1;
-    if(source->selected == view) { source->selected = 0; }
-  }
+  rd_arrangement_unlink_tab(arrangement, view);
   rd_arrangement_push_tab(arrangement, panel, prev_view ? rd_arrangement_tab_from_view(panel, prev_view) : 0, view);
-  panel->selected = view;
+  if(select) { panel->selected = view; }
   return 1;
+}
+
+internal B32
+rd_arrangement_move_tab(RD_Arrangement *arrangement, CFG_ID view, RD_PanelID destination, CFG_ID prev_view)
+{
+  return rd_arrangement_insert_tab(arrangement, view, destination, prev_view, 1);
+}
+
+internal B32
+rd_arrangement_detach_tab(RD_Arrangement *arrangement, CFG_ID view)
+{
+  return rd_arrangement_unlink_tab(arrangement, view) != 0;
 }
 
 internal B32
@@ -908,15 +950,36 @@ rd_arrangement_drop(RD_Arrangement *arrangement, CFG_ID view, RD_PanelID destina
 internal B32
 rd_arrangement_remove_tab(RD_Arrangement *arrangement, CFG_ID view)
 {
-  RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(arrangement, view);
-  RD_ArrangementTab *tab = rd_arrangement_tab_from_view(panel, view);
+  RD_ArrangementTab *tab = rd_arrangement_unlink_tab(arrangement, view);
   if(tab == 0) { return 0; }
-  DLLRemove_NPZ((RD_ArrangementTab *)0, panel->first_tab, panel->last_tab, tab, next, prev);
-  panel->tab_count -= 1;
-  if(panel->selected == view) { panel->selected = 0; }
-  tab->prev = 0;
   SLLStackPush(arrangement->first_removed, tab);
   return 1;
+}
+
+internal B32
+rd_arrangement_release_orphan(RD_Arrangement *arrangement, CFG_ID view)
+{
+  if(view == 0 || rd_arrangement_panel_from_view(arrangement, view) != &rd_nil_arrangement_panel) { return 0; }
+  RD_ArrangementTab *tab = push_array(arrangement->arena, RD_ArrangementTab, 1);
+  tab->view = view;
+  SLLStackPush(arrangement->first_removed, tab);
+  return 1;
+}
+
+internal void
+rd_arrangement_discard(RD_Arrangement *arrangement)
+{
+  // Saving releases the root node, with every View no tab took back.
+  for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p))
+  {
+    for(RD_ArrangementTab *tab = p->first_tab, *next = 0; tab != 0; tab = next)
+    {
+      next = tab->next;
+      tab->prev = 0;
+      SLLStackPush(arrangement->first_removed, tab);
+    }
+  }
+  arrangement->root = &rd_nil_arrangement_panel;
 }
 
 internal B32
