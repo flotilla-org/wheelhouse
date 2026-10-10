@@ -168,7 +168,7 @@ The path through nested **Controlled Splits** to a **Workspace**.
 _Avoid_: Workspace name, global ID
 
 **Workspace ID**:
-A stable identifier for a **Workspace** within its owning **Controlled Split**.
+A stable identifier for a **Workspace**, created once when it is materialized and unique across Dashboards and devices. Its **Workspace Subject** is an attribute, not its identity: several Workspaces may share a subject, and a detached Workspace keeps its ID.
 _Avoid_: Workspace address, layout position, display name
 
 **Workspace Focus**:
@@ -271,6 +271,38 @@ _Avoid_: Title bar tabs (the outcome, not the element), tab bar widget
 A logical local IPC address — scope, name and transport kind — that each platform renders directly: a Unix socket under the runtime directory, or a named pipe on Windows. Runtime-directory metadata may accompany it, but never determines the address. Accepting a connection reports the peer's identity. See ADR 0011.
 _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 
+**Dashboard**:
+A user's choice of which **Content Providers** to subscribe to, together with the **Grouping Projection**, section, order and display choices that turn their entries into a **Workspace Inventory**. Likely to be called a *flotilla dashboard*, even while the Andamento project defines it. It can be shared across devices and frontends, for example through cloud storage. Proposed, not built: today it is spread across the Andamento config, the implicit `flotilla pm connect` subscription, and the sidebar entries in the RAD project file.
+_Avoid_: Project, RAD project, sidebar config
+
+**Presentation State**:
+State that belongs to one frontend on one device: absolute geometry (window size and position, pixel sizes), floating panels, the **Visible Workspace** and **Workspace Focus** of each window, section collapse, fonts, keybindings and chrome. It is keyed by stable IDs from the **Dashboard** and **Workspaces**, and is never shared between frontends. A workspace's panel tree, including relative split weights, is not Presentation State: it is part of the **Workspace**, and each frontend adapts it to its own space.
+_Avoid_: Workspace, layout (ambiguous), project
+
+**View Spec**:
+The logical definition of a **View**: the content it shows and, optionally, a preferred presentation. The content is either a provider facet, meaning an entity such as a role, convoy or artifact together with which aspect of it to show, or a local recipe such as a command and working directory, a file, a URL or a Jackstay launcher. Each frontend picks a renderer it supports for the content.
+_Avoid_: View kind, view settings, tab
+
+**Renderer**:
+A frontend's way of drawing one or more kinds of **View Spec** content, such as Wheelhouse's terminal view or a Cleat pane in the TUI. Each frontend has one list of its Renderers; control views such as sidebar sections are Renderers too.
+_Avoid_: View kind, view rule, widget
+
+**Slot**:
+A **View**'s place in a **Workspace**. It is identified by a slot key: the provider's key for a View from a **Suggested Layout**, or a short generated key for a View the user adds. It carries the View's **View Spec** and the progress of resolving it.
+_Avoid_: Tab, pane, panel
+
+**Detached Slot**:
+A **Slot** whose content the user has overridden in a **Workspace Overlay**, so it no longer follows the provider's **Suggested Layout**. Reattaching drops the override. Being detached is independent of whether the Slot's content is currently resolved.
+_Avoid_: Detached workspace, orphaned view
+
+**Target Resolution**:
+The cached result of resolving a **Target Reference** into a way of connecting, such as a Cleat session on a host or a Jackstay endpoint. It is always disposable: when it no longer works, the **Target Reference** is resolved again. A portable resolution (a remote session or endpoint) is kept with the **Workspace**; a machine-local one (a local socket or attach token) is kept per device.
+_Avoid_: Runtime instance (the live attachment), binding, target reference
+
+**Overlay Sync**:
+An explicit operation that proposes a **Workspace Overlay**, or **Dashboard** changes, back to the source that owns the canonical version, such as flotilla. Without it, a user's overlay stays personal to them. Proposed, not built.
+_Avoid_: Autosave, replication
+
 ## Relationships
 
 - A **Panel** hosts one or more **Views**.
@@ -298,7 +330,8 @@ _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 - A **Workspace Region** cannot contain the **Control Surface** that selects it.
 - The workspace-selecting **View** may move while retaining its **Workspace Selection Binding**, but cannot close.
 - A selected **Selection Handle** may create **Frame Integration** with the region selected by its binding; unselected handles may have their own boundaries or themed previews, but they do not open the selected region's frame.
-- A **Workspace ID** identifies a **Workspace** within its owning **Controlled Split**.
+- An entity, such as a **Workspace Subject**, is identified by its **Content Provider**, kind and ID. The provider comes from the **Dashboard**'s subscription, not from what the producer claims.
+- A **Workspace ID** identifies a **Workspace** wherever it is shown; a **Workspace Address** only says where it is shown.
 - A **Workspace Address** locates a **Workspace** by composing stable IDs through nested **Controlled Splits**.
 - A **Control Surface** may select or create many **Workspaces** over time.
 - A **Workspace** may have many **Runtime Instances** attached while it is active.
@@ -331,6 +364,17 @@ _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 - A **Placement Chain** ends in a terminal option (hidden, or overflow menu); an element that may never fully hide (e.g. the main menu) terminates in a representation, not in hidden.
 - A **Chrome Element**'s default placement is declared in code and overridden in config — the same provenance model as code-declared settings.
 - The **Tab Strip** is a **Chrome Element**; placing it in the title-bar host promotes the topmost docking row to the chrome row and feeds the title bar's end-zone widths to the docking layout as edge insets.
+- A **Dashboard** aggregates **Workspace Inventory Entries** from several **Content Providers**: local workspaces, one or more flotilla instances, and later other orchestrators.
+- A **Workspace Overlay** records which version of its **Suggested Layout** it was made against, so it can be reapplied when the provider's baseline changes. If reapplying conflicts, the conflict is flagged, not dropped.
+- A **Workspace Overlay** is a set of edits keyed by **Slot** and panel, together with the version of the **Suggested Layout** it was made against. Once the user rearranges a Workspace, the Overlay owns its whole arrangement; Slots the provider adds later are placed by a default rule.
+- A **Dashboard** relates to its template the way a **Workspace Overlay** relates to a **Suggested Layout**.
+- **Overlay Sync** moves user changes towards the canonical source; reapplying an overlay moves provider changes towards the user. Both are explicit.
+- A Wheelhouse process opens one **Dashboard**. How its windows relate to that Dashboard is still open.
+- A **Target Reference** may have a **Target Resolution**; a **Runtime Instance** is attached by using that resolution.
+- A **Workspace** holds its content **Views** in **Slots**; control views such as sidebar sections belong to the **Dashboard**, not to a Slot.
+- When a **Slot**'s **Target Resolution** changes, the View keeps its Slot and rebinds. Whether the previous **Runtime Instance** stays reachable is the Slot's policy.
+- A frontend that cannot render a **View Spec**'s content shows a placeholder for it; it never drops the **Slot**.
+- **Presentation State** refers to **Workspaces** and **Views** only by stable IDs; it never defines what they are.
 
 ## Example Dialogue
 
@@ -379,3 +423,5 @@ _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 - "What goes in the title bar" is not a layout question. Resolved: it is a **Placement Resolution** problem over **Chrome Hosts** (title bar, sidebar, status bar) made of **Niches**; **Chrome Elements** declare a **Placement Chain** and resolve by measured overflow, defaulting in code and overriding in config. No element is hardcoded to the title bar.
 - Tabs in the title bar is not a special tab mode. Resolved: it is the **Tab Strip** element placed in the title-bar host; the topmost docking row becomes the chrome row and the title bar's end-zone widths become **edge insets** to the docking layout. Tab overflow within the inset span stays clipped for now (a later overflow dropdown is separable). See ADR 0006.
 - The project selector is not assumed useful in uishell. Resolved: a uishell user overwhelmingly has one context bringing all threads together; the project/owner selector is not a fixed title-bar fixture — it is a **Chrome Element** like any other, present only if placed.
+- "Project" means two different things. The RAD project file holds all app state, while a flotilla project is a domain entity that Andamento picks up. Resolved for new work: the user-level aggregation is the **Dashboard**; per-device layout is **Presentation State**; "project" on its own refers only to the flotilla/domain entity.
+- A **Workspace ID** was scoped to its owning **Controlled Split**. Resolved: it is unique across Dashboards and devices, and a **Workspace Address** remains only a locator. Entities from several **Content Providers** are told apart by the provider, not by the ID string.
