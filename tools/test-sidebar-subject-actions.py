@@ -30,10 +30,15 @@ def main():
         project = directory / 'subject-actions-project'
         geometry = directory / 'geometry.json'
         user = directory / 'user'
-        user.write_text('window:\n{\n  size: 1280 720\n  control_split_pct: 0.32\n}\n')
+        # Windows are a Dashboard's Presentation State, kept beside an explicit --user file.
+        (directory / 'dashboard').mkdir()
+        (directory / 'dashboard/id').write_text('subject-actions')
+        (directory / 'presentation').mkdir()
+        (directory / 'presentation/subject-actions.wheelhouse').write_text('window:\n{\n  size: 1280 720\n  control_split_pct: 0.32\n}\n')
         with (directory / 'app.log').open('w') as log:
             app = subprocess.Popen([str(ROOT / 'build/wheelhouse'), '--sidebar_subject_fixture',
                                     '--user:' + str(user), '--project:' + str(project),
+                                    '--dashboard:' + str(directory / 'dashboard'),
                                     '--sidebar_subject_geometry:' + str(geometry)],
                                    env=env, stdout=log, stderr=subprocess.STDOUT)
             try:

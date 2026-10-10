@@ -39,9 +39,13 @@ $WorkDir = Join-Path ([System.IO.Path]::GetTempPath()) ("wheelhouse-conpty-" + [
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 $User = Join-Path $WorkDir "user"
 $Project = Join-Path $WorkDir "project"
+# Windows are a Dashboard's Presentation State, kept beside an explicit --user file.
+$Dashboard = Join-Path $WorkDir "dashboard"
+New-Item -ItemType Directory -Force -Path $Dashboard, (Join-Path $WorkDir "presentation") | Out-Null
+Set-Content -Path (Join-Path $Dashboard "id") -Encoding ascii -Value "conpty"
 # One window, one panel, one terminal tab running cmd.exe in-process.
-Set-Content -Path $User -Encoding ascii -Value @"
-// uishell 0.1.0 user file
+Set-Content -Path (Join-Path $WorkDir "presentation\conpty.wheelhouse") -Encoding ascii -Value @"
+// uishell 0.1.0 presentation file
 
 window:
 {
@@ -65,7 +69,7 @@ Set-Content -Path $Project -Encoding ascii -Value "// uishell 0.1.0 project file
 $PreviousOverride = $env:CLEAT_CONPTY
 if($Expect -eq "inbox") { $env:CLEAT_CONPTY = "inbox" } else { Remove-Item Env:\CLEAT_CONPTY -ErrorAction SilentlyContinue }
 try {
-  $Process = Start-Process -FilePath $Exe -ArgumentList @("`"--user:$User`"", "`"--project:$Project`"") -WorkingDirectory $WorkDir -PassThru
+  $Process = Start-Process -FilePath $Exe -ArgumentList @("`"--user:$User`"", "`"--project:$Project`"", "`"--dashboard:$Dashboard`"") -WorkingDirectory $WorkDir -PassThru
 }
 finally {
   if($null -eq $PreviousOverride) { Remove-Item Env:\CLEAT_CONPTY -ErrorAction SilentlyContinue } else { $env:CLEAT_CONPTY = $PreviousOverride }

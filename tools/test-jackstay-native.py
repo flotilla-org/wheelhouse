@@ -37,7 +37,11 @@ with tempfile.TemporaryDirectory(prefix='wh-js-native-', dir='/tmp') as temporar
     subprocess.run(['swiftc', str(ROOT / 'tools/jackstay-native-driver.swift'),
                     '-o', str(work/'driver')], check=True)
     path = work/'source.sock'
-    (work/'user').write_text('window:\n{\n size: 1100 760\n panels: selected jackstay:\n {\n '
+    # Windows are a Dashboard's Presentation State, kept beside an explicit --user file.
+    (work/'dashboard').mkdir(exist_ok=True)
+    (work/'dashboard/id').write_text('jackstay')
+    (work/'presentation').mkdir(exist_ok=True)
+    (work/'presentation/jackstay.wheelhouse').write_text('window:\n{\n size: 1100 760\n panels: selected jackstay:\n {\n '
                             f'source_socket: "{path}"\n selected\n' + ' }\n}\n')
     lines = queue.Queue()
     source = subprocess.Popen([str(work/'source'), str(path)], stdin=subprocess.PIPE,
@@ -70,7 +74,8 @@ with tempfile.TemporaryDirectory(prefix='wh-js-native-', dir='/tmp') as temporar
         until(lambda line: line == 'ready')
         with (work/'app.log').open('w') as log:
             app = subprocess.Popen([str(BINARY), '--user:'+str(work/'user'),
-                                    '--project:'+str(work/'project')], stdout=log, stderr=log)
+                                    '--project:'+str(work/'project'), '--dashboard:'+str(work/'dashboard')],
+                                   stdout=log, stderr=log)
             deadline = time.monotonic()+20
             while True:
                 probe = subprocess.run([str(work/'driver'),str(app.pid),'activate'], capture_output=True, text=True)

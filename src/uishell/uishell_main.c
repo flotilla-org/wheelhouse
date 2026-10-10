@@ -55,6 +55,7 @@
 #include "uishell/uishell_commands.h"
 #include "uishell/uishell_meta.h"
 #include "uishell/uishell_eval.h"
+#include "uishell/uishell_dashboard.h"
 #include "uishell/uishell_dispatch.h"
 #include "uishell/uishell_terminal_provider.h"
 #include "uishell/uishell_terminal_environment.h"
@@ -95,6 +96,7 @@
 #include "uishell/uishell_views.c"
 #include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
+#include "uishell/uishell_dashboard.c"
 #include "uishell/uishell_logical_state.c"
 #include "uishell/uishell_terminal_clipboard.c"
 #include "uishell/uishell_terminal_clipboard_diagnostics.c"
@@ -347,8 +349,11 @@ entry_point(CmdLine *cmd_line)
       wm_graphical_message(0,
                            str8_lit("Wheelhouse - Help"),
                            str8_lit("Wheelhouse composes workspaces from tabbed panels and embedded views.\n\n"
+                                    "--dashboard:<name|path>\n"
+                                    "Open this Dashboard: its workspaces, sidebar and windows. A name is a directory under dashboards/ in the "
+                                    "platform's config folder (beside an explicit --user file). Without it, the Dashboard opened last, else \"default\".\n\n"
                                     "--user:<path>\n"
-                                    "Use to specify the location of a user file for window, panel, keybinding, theme, and visual settings.\n\n"
+                                    "Use to specify the location of a user file for this device's keybinding, theme, font, and visual settings.\n\n"
                                     "--project:<path>\n"
                                     "Use to specify the location of a project file for app-specific settings.\n\n"
                                     "--andamento_socket:<path> --andamento_config:<KDL path>\n"

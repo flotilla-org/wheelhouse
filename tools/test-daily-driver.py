@@ -206,6 +206,20 @@ class DailyDriverTests(unittest.TestCase):
         self.assertIn("'--ingress_record_bytes:1024'", app_log)
         self.assertIn("'--ingress_record_files:2'", app_log)
 
+    def test_dashboard_reaches_app(self):
+        # #316: the daily driver opens a Dashboard of its profile, or the one named.
+        for extra, environment, dashboard in [([], {}, self.state / 'dashboards/daily'),
+                                              (['--dashboard', 'work'], {}, self.state / 'dashboards/work'),
+                                              ([], {'WHEELHOUSE_DASHBOARD': str(self.directory / 'shared')}, self.directory / 'shared')]:
+            previous = self.log('wheelhouse')
+            pid = int(previous.split('pid=', 1)[1].splitlines()[0]) if previous else None
+            process = self.start(['--git-only'] + extra, **environment)
+            self.ready(process, previous_pid=pid)
+            self.assertIn(repr('--dashboard:' + str(dashboard)), self.log('wheelhouse'))
+            process.send_signal(signal.SIGTERM)
+            self.assertEqual(process.wait(timeout=10), 130)
+            self.assertIn('Dashboard: ' + str(dashboard), process.stdout.read())
+
     def test_full_launch_lock_signal_cleanup_and_restart(self):
         process = self.start()
         self.ready(process, connector=True)

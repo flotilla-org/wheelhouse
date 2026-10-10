@@ -144,6 +144,20 @@ The shell keeps the platform, windowing, renderer, font, UI, config, panel, tab,
 
 Debugger app targets and local RAD utility/tool build targets have been removed from this tree. Do not reintroduce them as regression gates; use the original RAD Debugger checkout for debugger behavior comparisons.
 
+### Dashboards
+
+One Wheelhouse process opens one Dashboard: its workspaces, sidebar sections,
+groups, pins and order. `--dashboard:<name|path>` names it; without it, the
+Dashboard opened last on this device opens, else a new one named `default`. A name
+is a directory under `dashboards/` in the platform's config folder
+(`${XDG_CONFIG_HOME:-~/.config}/wheelhouse`, `~/Library/Application Support/Wheelhouse`,
+`%APPDATA%\Wheelhouse`). Its windows and their layout are this device's own, kept
+under `presentation/` in `${XDG_STATE_HOME:-~/.local/state}/wheelhouse`, the same
+macOS folder, or `%LOCALAPPDATA%\Wheelhouse`. The user file keeps this device's
+fonts, keybindings and theme. An explicit `--user` keeps all of these beside it.
+Windows saved in a user file before Dashboards are not imported; they stay in it,
+unread, for an older build. See `src/uishell/uishell_dashboard.c` for the layout.
+
 ### Daily driver (macOS/Linux)
 
 ```sh
@@ -195,8 +209,9 @@ scripts/run-daily-driver.sh --no-build --repo ~/dev/wheelhouse --repo ~/dev/flot
 FLOTILLA_BIN=/path/to/flotilla scripts/run-daily-driver.sh
 ```
 
-Settings and layouts persist in `${XDG_CONFIG_HOME:-~/.config}/wheelhouse/daily-driver`.
-Set `WHEELHOUSE_DAILY_DIR` to use a different profile. Only one launcher may use a
+Settings persist in `${XDG_CONFIG_HOME:-~/.config}/wheelhouse/daily-driver`, and
+the launcher opens the Dashboard `dashboards/daily` there; `--dashboard NAME|DIR` (or
+`WHEELHOUSE_DASHBOARD`) opens another. Set `WHEELHOUSE_DAILY_DIR` to use a different profile. Only one launcher may use a
 profile at a time. Each launch gets a fresh private socket under `/tmp`, printed as
 `WHEELHOUSE_SOCKET` for additional producers and inherited by the app and its terminals.
 Closing Wheelhouse or pressing Ctrl-C stops the launcher-owned producers and removes
