@@ -20,6 +20,7 @@ enum
 ////////////////////////////////
 //~ rjf: View UI Hook Types
 
+#include "shell_arrangement.h"
 #include "shell_docking.h"
 #include "shell_workspace_id.h"
 

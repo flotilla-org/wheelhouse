@@ -7,16 +7,6 @@
 
 #define RD_DOCK_SIDEBAR_ROOT str8_lit("control_views")
 
-typedef struct RD_DockLayoutKeys RD_DockLayoutKeys;
-struct RD_DockLayoutKeys
-{
-  CFG_Node *owner;
-  String8 root_name;
-  String8 axis_key;
-};
-
-internal RD_DockLayoutKeys rd_dock_layout_keys(Arena *arena, CFG_Node *root);
-
 typedef enum RD_DockHostKind
 {
   RD_DockHostKind_Sidebar,
@@ -144,11 +134,9 @@ internal B32 rd_dock_can_create(String8 name, CFG_Node *destination);
 internal B32 rd_dock_can_close(CFG_Node *view);
 internal void rd_dock_restore_window(CFG_State *state, CFG_Node *window);
 
-internal F32 rd_dock_remaining_fraction(F32 fraction, F32 removed, U64 count);
-internal F32 rd_dock_resulting_width(CFG_PanelNode *root, CFG_PanelNode *panel,
-                                    Rng2F32 area, Dir2 dir, F32 inset);
-
-internal F32 rd_dock_moving_width(CFG_PanelNode *root, CFG_PanelNode *panel,
-                                 CFG_PanelNode *origin, Rng2F32 area, Dir2 dir, F32 inset);
+// The body width `destination` (or the panel a split there makes) would have
+// once a move of the View from `origin` completes, measured on a copy.
+internal F32 rd_dock_moving_width(RD_Arrangement *arrangement, RD_PanelID destination,
+                                 RD_PanelID origin, Rng2F32 area, Dir2 dir, F32 inset);
 
 #endif

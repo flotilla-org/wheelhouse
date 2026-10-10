@@ -5,11 +5,13 @@
 #include "mdesk/mdesk.h"
 #include "window_manager/window_manager_inc.h"
 #include "config/config_inc.h"
+#include "shell/shell_arrangement.h"
 #include "shell/shell_docking.h"
 #include "base/base_inc.c"
 #include "mdesk/mdesk.c"
 #include "window_manager/window_manager_inc.c"
 #include "config/config_inc.c"
+#include "shell/shell_arrangement.c"
 #include "shell/shell_docking.c"
 
 #define Check(x) do { if(!(x)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #x); failures++; } } while(0)
