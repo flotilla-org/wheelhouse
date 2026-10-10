@@ -162,16 +162,16 @@ integration_move(CFG_Node *window, CFG_Node *source, CFG_Node *destination, Dir2
   return before;
 }
 
-// Source closure is queued by the production command; dispatch that command
-// rather than modelling closure in the harness.
-internal void
+// A drop closes its emptied source in the same edit; nothing is left queued
+// to close it later.
+internal B32
 integration_close_queued(UIShell_CmdNode *before)
 {
   for(UIShell_CmdNode *n = before ? before->next : rd_state->cmds[0].first; n; n = n->next)
   {
-    if(str8_match(n->cmd.name, str8_lit("close_panel"), 0)) UIShell_RegsScope()
-    { MemoryCopyStruct(uishell_regs(), n->cmd.regs); uishell_dispatch_panel_command(n->cmd.name); break; }
+    if(str8_match(n->cmd.name, str8_lit("close_panel"), 0)) { return 1; }
   }
+  return 0;
 }
 
 internal U32
@@ -499,7 +499,7 @@ entry_point(CmdLine *cmdline)
     U64 before_gen = cfg_change_gen();
     IntegrationCheck(predicted >= 128 && cfg_change_gen() == before_gen);
     UIShell_CmdNode *before_cmd = integration_move(window, source, origin, dir);
-    integration_close_queued(before_cmd);
+    IntegrationCheck(!integration_close_queued(before_cmd));
     IntegrationCheck(source->parent != origin && cfg_node_from_id(origin_id) == origin);
     F32 rendered = 0;
     integration_drag_site(ws, source, source->parent, Dir2_Invalid, &rendered);
@@ -543,7 +543,7 @@ entry_point(CmdLine *cmdline)
     if(boundary < 128) { IntegrationCheck(cfg_change_gen() == before_gen); }
     else
     {
-      integration_close_queued(before_cmd);
+      IntegrationCheck(!integration_close_queued(before_cmd));
       F32 rendered = 0;
       integration_drag_site(ws, source, source->parent, Dir2_Invalid, &rendered);
       IntegrationCheck(rendered == boundary && integration_width(source->parent, Dir2_Invalid) == rendered);
@@ -620,12 +620,35 @@ entry_point(CmdLine *cmdline)
     else { IntegrationCheck(rd_dock_drag_target(source, destination, predicted)); }
     IntegrationCheck(cfg_change_gen() == before_gen);
     UIShell_CmdNode *before_cmd = integration_move(window, source, destination, dir);
-    integration_close_queued(before_cmd);
+    IntegrationCheck(!integration_close_queued(before_cmd));
     if(shape == 2)
     { IntegrationCheck((cfg_node_from_id(origin_id) == &cfg_nil_node) == (dir == Dir2_Invalid)); }
     F32 rendered = 0;
     integration_drag_site(ws, source, source->parent, Dir2_Invalid, &rendered);
     IntegrationCheck(rendered == predicted);
+  }
+  // Splitting the last View out of the focused Panel closes it in the same
+  // edit and queues focus for its heir after the new panel's, as the queued
+  // close did.
+  {
+    panels = integration_reset_panels(window, Axis2_X);
+    CFG_Node *origin = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
+    CFG_Node *destination = cfg_node_new(rd_state->cfg, panels, str8_lit("0.4"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, panels, str8_lit("0.3")), str8_lit("terminal"));
+    cfg_node_new(rd_state->cfg, origin, str8_lit("selected"));
+    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
+    cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
+    CFG_ID origin_id = origin->id;
+    integration_rect = r2f32p(0, 0, 2400, 1600);
+    UIShell_CmdNode *before_cmd = integration_move(window, source, destination, Dir2_Right);
+    IntegrationCheck(cfg_node_from_id(origin_id) == &cfg_nil_node && !integration_close_queued(before_cmd));
+    CFG_ID last_focus = 0, first_focus = 0;
+    for(UIShell_CmdNode *n = before_cmd ? before_cmd->next : rd_state->cmds[0].first; n; n = n->next)
+    {
+      if(str8_match(n->cmd.name, str8_lit("focus_panel"), 0))
+      { if(first_focus == 0) { first_focus = n->cmd.regs->panel; } last_focus = n->cmd.regs->panel; }
+    }
+    IntegrationCheck(first_focus == source->parent->id && last_focus == destination->id);
   }
   integration_rect.y1 = 480;
   // A shown target is remeasured when the drop is committed after a resize.

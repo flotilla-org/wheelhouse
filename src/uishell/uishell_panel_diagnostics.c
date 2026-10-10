@@ -223,22 +223,11 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     if(i == 0) { destination = panel; }
     if(i == 1) { middle = panel; moving_view = tab; }
   }
-  UIShell_CmdNode *before_move = rd_state->cmds[0].last;
+  CFG_ID middle_id = middle->id;
   UIShell_RegsScope(.window = ws->cfg_id, .panel = middle->id, .view = moving_view->id,
                    .dst_panel = destination->id, .prev_tab = 0)
   { uishell_dispatch_tab_command(str8_lit("move_view")); }
-  B32 closed_source = 0;
-  for(UIShell_CmdNode *n = before_move ? before_move->next : rd_state->cmds[0].first; n; n = n->next)
-  {
-    if(str8_match(n->cmd.name, str8_lit("close_panel"), 0)) UIShell_RegsScope()
-    {
-      MemoryCopyStruct(uishell_regs(), n->cmd.regs);
-      uishell_dispatch_panel_command(n->cmd.name);
-      closed_source = 1;
-      break;
-    }
-  }
-  failures += !closed_source;
+  failures += cfg_node_from_id(middle_id) != &cfg_nil_node;
   CFG_PanelTree remaining = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, other).panel_tree;
   F32 total = 0;
   for(CFG_PanelNode *p = remaining.root->first; p != &cfg_nil_panel_node; p = p->next)

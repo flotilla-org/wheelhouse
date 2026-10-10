@@ -135,8 +135,10 @@ internal B32 rd_dock_can_close(CFG_Node *view);
 internal void rd_dock_restore_window(CFG_State *state, CFG_Node *window);
 
 // The body width `destination` (or the panel a split there makes) would have
-// once a move of the View from `origin` completes, measured on a copy.
-internal F32 rd_dock_moving_width(RD_Arrangement *arrangement, RD_PanelID destination,
-                                 RD_PanelID origin, Rng2F32 area, Dir2 dir, F32 inset);
+// once a drop of `view` completes, measured on a copy; `shown` is the rule
+// the drop commands settle its source with. With no View (0) it measures the
+// split alone.
+internal F32 rd_dock_moving_width(RD_Arrangement *arrangement, RD_PanelID destination, CFG_ID view,
+                                 RD_ArrangementTabRule *shown, Rng2F32 area, Dir2 dir, F32 inset);
 
 #endif
