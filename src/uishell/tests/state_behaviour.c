@@ -33,6 +33,10 @@ global B32 state_multi_ended, state_chip_gone;
 // arranges side by side. Each facet's target is "<slot>#<n>", running
 // "attach <slot> <n>"; 0 publishes nothing.
 global U32 state_reviewer_partner, state_reviewer_watch;
+// The reviewer's Suggested Layout version: 2 adds slot `notes` beside
+// `log`; 3 gives `log` other content and its panel twice the room; 4 drops
+// `watch`.
+global U32 state_reviewer_version = 1;
 
 internal String8
 state_json_list(Arena *arena, String8 key, char **values, U64 count)
@@ -71,7 +75,14 @@ state_producer(UIShell_SidebarState *state)
   {
     Temp scratch = scratch_begin(0, 0);
     Arena *arena = scratch.arena;
-    char *slots[] = {"primary", "partner", "watch", "log"}, *children[] = {"agents", "side"}, *agents[] = {"primary", "partner", "watch"}, *side[] = {"log"};
+    B32 watch = state_reviewer_version < 4;
+    char *slots[5] = {0}, *children[] = {"agents", "side"}, *agents[] = {"primary", "partner", "watch"}, *side[] = {"log", "notes"};
+    U64 slot_count = 0, side_count = state_reviewer_version >= 2 ? 2 : 1;
+    slots[slot_count++] = "primary";
+    slots[slot_count++] = "partner";
+    if(watch) { slots[slot_count++] = "watch"; }
+    slots[slot_count++] = "log";
+    if(state_reviewer_version >= 2) { slots[slot_count++] = "notes"; }
     String8 facts[] =
     {
       uishell_sidebar_json_fact_text(arena, str8_lit("flotilla.project"), str8_lit("p")),
@@ -83,24 +94,33 @@ state_producer(UIShell_SidebarState *state)
       uishell_sidebar_json_fact_text(arena, str8_lit("workspace.primary.state"), str8_lit("ready")),
       uishell_sidebar_json_fact_text(arena, str8_lit("workspace.primary.target"), str8_lit("vessel:reviewer-v")),
       uishell_sidebar_json_fact_text(arena, str8_lit("action.primary.recipe"), str8_lit("exec /bin/sh")),
-      uishell_sidebar_json_fact_text(arena, str8_lit("layout.version"), str8_lit("1")),
-      state_json_list(arena, str8_lit("layout.slots"), slots, ArrayCount(slots)),
+      uishell_sidebar_json_fact_text(arena, str8_lit("layout.version"), push_str8f(arena, "%u", state_reviewer_version)),
+      state_json_list(arena, str8_lit("layout.slots"), slots, slot_count),
       state_reviewer_facet(arena, "partner", "keep-previous", state_reviewer_partner),
-      state_reviewer_facet(arena, "watch", "ask", state_reviewer_watch),
+      watch ? state_reviewer_facet(arena, "watch", "ask", state_reviewer_watch) : str8_zero(),
       uishell_sidebar_json_fact_text(arena, str8_lit("layout.slot.log.kind"), str8_lit("command")),
-      uishell_sidebar_json_fact_text(arena, str8_lit("layout.slot.log.command"), str8_lit("tail -f build.log")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("layout.slot.log.command"),
+                                     state_reviewer_version >= 3 ? str8_lit("tail -f test.log") : str8_lit("tail -f build.log")),
+      // Facts for a slot the layout doesn't list are an error.
+      state_reviewer_version >= 2 ? uishell_sidebar_json_fact_text(arena, str8_lit("layout.slot.notes.kind"), str8_lit("command")) : str8_zero(),
+      state_reviewer_version >= 2 ? uishell_sidebar_json_fact_text(arena, str8_lit("layout.slot.notes.command"), str8_lit("less NOTES.md")) : str8_zero(),
+      push_str8f(arena, "\"layout.panel.side.weight\":{\"value\":{\"type\":\"integer\",\"value\":%u}}", state_reviewer_version >= 3 ? 2 : 1),
       uishell_sidebar_json_fact_text(arena, str8_lit("layout.root"), str8_lit("main")),
       uishell_sidebar_json_fact_text(arena, str8_lit("layout.panel.main.axis"), str8_lit("row")),
       state_json_list(arena, str8_lit("layout.panel.main.children"), children, ArrayCount(children)),
-      state_json_list(arena, str8_lit("layout.panel.agents.slots"), agents, ArrayCount(agents)),
+      state_json_list(arena, str8_lit("layout.panel.agents.slots"), agents, watch ? 3 : 2),
       uishell_sidebar_json_fact_text(arena, str8_lit("layout.panel.agents.selected"), str8_lit("primary")),
-      state_json_list(arena, str8_lit("layout.panel.side.slots"), side, ArrayCount(side)),
+      state_json_list(arena, str8_lit("layout.panel.side.slots"), side, side_count),
     };
     StringJoin join = {.sep = str8_lit(",")};
     String8List list = {0};
-    for(U64 i = 0; i < ArrayCount(facts); i++) { str8_list_push(arena, &list, facts[i]); }
+    for(U64 i = 0; i < ArrayCount(facts); i++) { if(facts[i].size) { str8_list_push(arena, &list, facts[i]); } }
     String8 patch = push_str8f(arena, "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"role\",\"id\":\"p/reviewer\"}},"
-                                      "\"source_id\":\"fixture\",\"set\":{%S},\"unset\":[]}", str8_list_join(arena, &list, &join));
+                                      "\"source_id\":\"fixture\",\"set\":{%S},\"unset\":[%s]}", str8_list_join(arena, &list, &join),
+                               // A slot dropped from the layout goes with its facts.
+                               watch ? "" : "\"layout.slot.watch.entity\",\"layout.slot.watch.facet\",\"layout.slot.watch.presentation\","
+                                            "\"layout.slot.watch.rebind\",\"layout.slot.watch.state\",\"layout.slot.watch.target\","
+                                            "\"layout.slot.watch.kind\",\"layout.slot.watch.command\"");
     char *error = 0;
     StateCheck(uishell_sidebar_result(state, andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(patch), &error), error));
     scratch_end(scratch);
@@ -1238,6 +1258,212 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
   }
 
+  //- The Workspace Overlay (ADR 0013). A divider resize is a soft edit: the
+  // arrangement keeps following its provider, whose new slot arrives where
+  // it says, and the size stays.
+  {
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    reviewer = state_workspace_labelled(window, str8_lit("reviewer"));
+    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, reviewer);
+    CFG_PanelNode *first = mount.panel_tree.root->first;
+    rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_soft_drag")), &mount, first);
+    rd_state->frame_index += 1;
+    rd_boundary_resize_move(0.1f, 0.05f, 1);
+    state_frame(ws);
+    rd_state->frame_index += 1;
+    rd_boundary_resize_commit();
+    state_frame(ws);
+    AndamentoArrangement *stored = andamento_arrangement_acquire(state->core, id, 0);
+    AndamentoArrangementInfo info = {0};
+    StateCheck(stored && andamento_arrangement_info(stored, &info) && !info.owned &&
+               andamento_arrangement_flags(stored) == ANDAMENTO_ARRANGEMENT_FLAG_SOFT);
+    andamento_arrangement_release(stored);
+    String8 weight = push_str8_copy(scratch.arena, state_panels(scratch.arena, reviewer).root->first->cfg->string);
+    StateCheck(!str8_match(weight, str8_lit("1"), 0));
+    state_reviewer_version = 2;
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    CFG_Node *notes = state_slot_view(reviewer, str8_lit("notes"));
+    StateCheck(notes != &cfg_nil_node && notes->parent == state_slot_view(reviewer, str8_lit("log"))->parent &&
+               str8_match(rd_expr_from_cfg(notes), str8_lit("less NOTES.md"), 0));
+    StateCheck(str8_match(state_panels(scratch.arena, reviewer).root->first->cfg->string, weight, 0));
+    String8 text = state_workspaces_text(scratch.arena);
+    StateCheck(str8_find_needle(text, 0, str8_lit("workspace \"reviewer\" subject=role/p/reviewer soft\n"), 0) < text.size);
+    state_check_committed(ws);
+  }
+
+  //- Closing a provider's slot tombstones it: hidden while its provider
+  // keeps it, and still the provider's arrangement.
+  {
+    CFG_Node *log = state_slot_view(reviewer, str8_lit("log"));
+    StateCheck(state_offers(log, UIShell_SlotAction_None) == 0);
+    uishell_cmd("close_tab", .window = window->id, .panel = log->parent->id, .tab = log->id);
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(state_slot_view(reviewer, str8_lit("log")) == &cfg_nil_node);
+    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    AndamentoOverlay *overlay = andamento_overlay_acquire(state->core, id, 0);
+    AndamentoOverlayInfo info = {0};
+    B32 tombstoned = 0;
+    for(U64 i = 0; overlay && andamento_overlay_info(overlay, &info) && i < info.note_count; i++)
+    {
+      AndamentoOverlayNote note = {0};
+      tombstoned = tombstoned || (andamento_overlay_note(overlay, i, &note) && note.kind == ANDAMENTO_OVERLAY_TOMBSTONED &&
+                                  str8_match(uishell_sidebar_string(note.key), str8_lit("log"), 0));
+    }
+    andamento_overlay_release(overlay);
+    StateCheck(tombstoned && !info.owned);
+    String8 text = state_workspaces_text(scratch.arena);
+    StateCheck(str8_find_needle(text, 0, str8_lit("      hidden slot=\"log\"\n"), 0) < text.size);
+    state_check_committed(ws);
+  }
+
+  //- A split is structural: the overlay owns the arrangement from then on,
+  // and a provider's later change to it is flagged, not applied, until the
+  // user keeps theirs or follows the provider's. The provider reusing the
+  // tombstoned key for other content shows it again, flagged.
+  {
+    CFG_Node *notes = state_slot_view(reviewer, str8_lit("notes"));
+    uishell_cmd("split_panel", .window = window->id, .panel = notes->parent->id, .view = notes->id,
+                .dst_panel = notes->parent->id, .dir2 = Dir2_Down);
+    state_frame(ws);
+    state_frame(ws);
+    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    AndamentoArrangement *stored = andamento_arrangement_acquire(state->core, id, 0);
+    AndamentoArrangementInfo info = {0};
+    StateCheck(stored && andamento_arrangement_info(stored, &info) && info.owned && andamento_arrangement_flags(stored) == 0);
+    andamento_arrangement_release(stored);
+    String8 before = push_str8_copy(scratch.arena, state_workspaces_text(scratch.arena));
+    state_reviewer_version = 3;
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    stored = andamento_arrangement_acquire(state->core, id, 0);
+    StateCheck(stored && andamento_arrangement_info(stored, &info) && info.owned &&
+               (andamento_arrangement_flags(stored) & ANDAMENTO_ARRANGEMENT_FLAG_PROVIDER_CHANGED));
+    andamento_arrangement_release(stored);
+    CFG_Node *log = state_slot_view(reviewer, str8_lit("log"));
+    StateCheck(str8_match(rd_expr_from_cfg(log), str8_lit("tail -f test.log"), 0));
+    StateCheck(state_offers(log, UIShell_SlotAction_Reattach) && state_offers(log, UIShell_SlotAction_Remove));
+    String8 text = state_workspaces_text(scratch.arena);
+    StateCheck(str8_find_needle(text, 0, str8_lit("workspace \"reviewer\" subject=role/p/reviewer provider-changed\n"), 0) < text.size &&
+               str8_find_needle(text, 0, str8_lit("tab terminal slot=\"log\" command=\"tail -f test.log\" changed"), 0) < text.size);
+    if(str8_find_needle(text, 0, str8_lit(" provider-changed\n"), 0) == text.size) { fprintf(stderr, "before:\n%.*s\nafter:\n%.*s\n", str8_varg(before), str8_varg(text)); }
+    // The workspace's notice is on its first panel's Views.
+    CFG_Node *primary = state_slot_view(reviewer, str8_lit("primary"));
+    StateCheck(state_offers(primary, UIShell_SlotAction_KeepLayout) && state_offers(primary, UIShell_SlotAction_FollowLayout));
+    uishell_store_act(primary, UIShell_SlotAction_KeepLayout);
+    state_frame(ws);
+    stored = andamento_arrangement_acquire(state->core, id, 0);
+    StateCheck(stored && andamento_arrangement_info(stored, &info) && info.owned && andamento_arrangement_flags(stored) == 0);
+    andamento_arrangement_release(stored);
+    StateCheck(!state_offers(primary, UIShell_SlotAction_KeepLayout));
+    // Taking the reused slot as the provider's settles it.
+    uishell_store_act(log, UIShell_SlotAction_Reattach);
+    state_frame(ws);
+    StateCheck(!state_offers(state_slot_view(reviewer, str8_lit("log")), UIShell_SlotAction_Reattach));
+    state_check_committed(ws);
+  }
+
+  //- A slot its provider removes, which the user never edited, follows its
+  // rebind policy: this one (ask) stays until the user closes it, which
+  // releases it.
+  {
+    state_reviewer_version = 4;
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    CFG_Node *watch = state_slot_view(reviewer, str8_lit("watch"));
+    StateCheck(watch != &cfg_nil_node && state_offers(watch, UIShell_SlotAction_Remove));
+    uishell_store_act(watch, UIShell_SlotAction_Remove);
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(state_slot_view(reviewer, str8_lit("watch")) == &cfg_nil_node);
+    UIShell_StoreEntry *entry = uishell_store_entry_find(state, uishell_workspace_id_from_cfg(reviewer));
+    StateCheck(entry && entry->departed_count == 0);
+    state_check_committed(ws);
+  }
+
+  //- Editing a provider's slot detaches it from its provider; reattaching
+  // drops the edit, and its provider's content comes back.
+  {
+    CFG_Node *partner = state_slot_view(reviewer, str8_lit("partner"));
+    UIShell_RegsScope(.view = partner->id) { rd_store_view_expr_string(str8_lit("htop")); }
+    state_frame(ws);
+    state_frame(ws);
+    partner = state_slot_view(reviewer, str8_lit("partner"));
+    StateCheck(str8_match(rd_expr_from_cfg(partner), str8_lit("htop"), 0) && state_offers(partner, UIShell_SlotAction_Reattach));
+    String8 text = state_workspaces_text(scratch.arena);
+    StateCheck(str8_find_needle(text, 0, str8_lit("slot=\"partner\" command=\"htop\" daemon_name=\"D1\" detached"), 0) < text.size);
+    uishell_store_act(partner, UIShell_SlotAction_Reattach);
+    state_frame(ws);
+    state_frame(ws);
+    partner = state_slot_view(reviewer, str8_lit("partner"));
+    StateCheck(str8_match(rd_expr_from_cfg(partner), str8_lit("attach partner 3"), 0) && !state_offers(partner, UIShell_SlotAction_Reattach));
+    // Its edit was the user's own content, so no previous instance is kept.
+    if(state_previous_view(reviewer, str8_lit("partner")) != &cfg_nil_node)
+    { uishell_store_act(state_previous_view(reviewer, str8_lit("partner")), UIShell_SlotAction_ReleasePrevious); state_frame(ws); }
+    state_check_committed(ws);
+  }
+
+  //- A pin to a View: when the View goes, the pin is kept, flagged, until
+  // the user removes it.
+  {
+    CFG_Node *notes = state_slot_view(reviewer, str8_lit("notes"));
+    uishell_cmd("pin_view", .window = window->id, .view = notes->id);
+    state_frame(ws);
+    String8 text = uishell_logical_state_text(scratch.arena);
+    StateCheck(str8_find_needle(text, 0, str8_lit("pin role/p/reviewer \"reviewer: notes\" row view=\"notes\"\n"), 0) < text.size);
+    uishell_cmd("close_tab", .window = window->id, .panel = notes->parent->id, .tab = notes->id);
+    state_frame(ws);
+    state_frame(ws);
+    text = uishell_logical_state_text(scratch.arena);
+    StateCheck(str8_find_needle(text, 0, str8_lit("pin role/p/reviewer \"reviewer: notes\" row view=\"notes\" view-gone\n"), 0) < text.size);
+    StateCheck(str8_find_needle(text, 0, str8_lit("row .ref \"reviewer\" live status=\"view gone\""), 0) < text.size);
+    // Removing the pin settles it (andamento_local_remove).
+    CFG_Node *root = uishell_sidebar_local_tree(window), *pin = &cfg_nil_node;
+    for(CFG_Node *n = root; n != &cfg_nil_node; n = cfg_node_rec__depth_first(root, n).next)
+    { if(str8_match(n->string, str8_lit("view"), 0) && n->parent->string.size && str8_match(n->parent->string, str8_lit("card"), 0)) { pin = n->parent; } }
+    StateCheck(pin != &cfg_nil_node);
+    cfg_node_release(rd_state->cfg, pin);
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(state->store_pin_gone_count == 0);
+  }
+
+  //- Renaming a workspace and giving it a mood are overlay edits: they are
+  // in its record, not this device's file, and survive a restart.
+  {
+    cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string(reviewer, str8_lit("label")), str8_lit("Review"));
+    cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, reviewer, str8_lit("theme")), str8_lit("Calm"));
+    state_frame(ws);
+    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    AndamentoOverlay *overlay = andamento_overlay_acquire(state->core, id, 0);
+    AndamentoOverlayInfo info = {0};
+    StateCheck(overlay && andamento_overlay_info(overlay, &info) && info.has_name && str8_match(uishell_sidebar_string(info.name), str8_lit("Review"), 0) &&
+               info.has_mood && str8_match(uishell_sidebar_string(info.mood), str8_lit("Calm"), 0));
+    andamento_overlay_release(overlay);
+    rd_autosave();
+    state_pump();
+    String8 presentation = data_from_file_path(scratch.arena, uishell_dashboard.presentation_path);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("Review"), 0) == presentation.size &&
+               str8_find_needle(presentation, 0, str8_lit("Calm"), 0) == presentation.size);
+    String8 before = push_str8_copy(scratch.arena, state_workspaces_text(scratch.arena));
+    ws = state_restart(ws, &theme, str8_zero());
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    reviewer = state_workspace_labelled(window, str8_lit("Review"));
+    StateCheck(reviewer != &cfg_nil_node && str8_match(uishell_store_setting(reviewer, str8_lit("theme")), str8_lit("Calm"), 0));
+    String8 after = state_workspaces_text(scratch.arena);
+    StateCheck(str8_match(before, after, 0));
+    if(!str8_match(before, after, 0)) { fprintf(stderr, "before:\n%.*s\nafter:\n%.*s\n", str8_varg(before), str8_varg(after)); }
+    uishell_cmd("select_workspace", .window = window->id, .cfg = state_workspace_labelled(window, str8_lit("Workspace 1"))->id);
+    state_frame(ws);
+  }
+
   //- A restart restores them all from the workspace records, and the
   // sidebar, the drag's sizes included, from the dashboard record.
   {
@@ -1301,7 +1527,12 @@ entry_point(CmdLine *cmdline)
                           dashboard->id, 0));
     StateCheck(str8_match(dashboard->presentation_path, push_str8f(scratch.arena, "%S/presentation/%S.wheelhouse", dir, dashboard->id), 0));
     String8 presentation = data_from_file_path(scratch.arena, dashboard->presentation_path);
-    StateCheck(str8_find_needle(presentation, 0, str8_lit("Notes"), 0) < presentation.size);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("window:"), 0) < presentation.size);
+    // A workspace's name is its record's (an overlay edit), not this device's.
+    CFG_Node *notes = state_workspace_labelled(cfg_node_from_id(ws->cfg_id), str8_lit("Notes"));
+    String8 record = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/workspace-%S.kdl", dashboard_a, uishell_workspace_id_text_from_cfg(notes)));
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("Notes"), 0) == presentation.size &&
+               str8_find_needle(record, 0, str8_lit("name \"Notes\""), 0) < record.size);
     StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/dashboard.kdl", dashboard_a)));
     String8 user = data_from_file_path(scratch.arena, rd_state->user_path);
     StateCheck(str8_find_needle(user, 0, str8_lit("keybindings"), 0) < user.size &&

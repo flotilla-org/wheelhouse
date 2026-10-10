@@ -78,6 +78,12 @@ uishell_dispatch_config_command(String8 name)
     { log_user_errorf("The Dashboard already subscribes to %S.", daemon.size ? daemon : str8_lit("Flotilla's default daemon")); }
     else { uishell_subscription_add(str8_lit("flotilla"), daemon); }
   }
+  else if(str8_match(name, str8_lit("pin_view"), 0))
+  {
+    RD_WindowState *ws = rd_window_state_from_cfg__existing(cfg_node_from_id(uishell_regs()->window));
+    if(ws == &rd_nil_window_state || uishell_store_pin_view(ws, cfg_node_from_id(uishell_regs()->view)) == &cfg_nil_node)
+    { log_user_errorf("Only a workspace's View can be pinned, to a section of your own."); }
+  }
   else if(str8_match(name, str8_lit("remove_subscription"), 0))
   {
     UIShell_Subscription *subscription = uishell_subscription_from_text(uishell_regs()->string);

@@ -1,13 +1,16 @@
 // The logical state as text (uishell_logical_state.h). It reads the config
-// tree and each window's current Andamento snapshot and dashboard record and
-// changes none of them, so it can run between any two commands.
+// tree, each window's current Andamento snapshot and dashboard record, and
+// what its workspace store last read of each Workspace Overlay, and changes
+// none of them, so it can run between any two commands.
 //
 //   subscriptions         the Dashboard's, in order: kind, daemon, stale
 //   window <n>
-//     workspaces          selector order; subject or local; kept; arrangement
+//     workspaces          selector order; subject or local; kept; mood; what
+//                         its Workspace Overlay flags; the provider slots it
+//                         hides; arrangement, tabs with their slots' flags
 //     sidebar             persisted display values; rows as Andamento presents
 //                         them; the sibling orders it keeps; local sections
-//                         and pins
+//                         and pins (a pin to a View that went away flagged)
 //     sidebar arrangement where sections are docked, and which are closed
 //   presentation
 //     window <n>          visible workspace, focused panel, input host
@@ -98,10 +101,13 @@ uishell_logical_tab(Arena *arena, CFG_Node *tab, B32 selected)
   String8 label = rd_label_from_cfg(tab);
   if(label.size) { str8_list_pushf(arena, &parts, " %S", uishell_logical_quote(arena, label)); }
   // Its Slot's key in Andamento (uishell_workspace_store.c); before it has
-  // one, the provider's slot it was made for.
+  // one, the provider's slot it was made for. A Slot's previous instance
+  // names the Slot it was.
   String8 slot = cfg_node_child_from_string(tab, str8_lit("slot"))->first->string;
-  if(!slot.size) { slot = cfg_node_child_from_string(tab, str8_lit("resource_id"))->first->string; }
+  String8 previous_of = cfg_node_child_from_string(tab, str8_lit("previous_of"))->first->string;
+  if(!slot.size && !previous_of.size) { slot = cfg_node_child_from_string(tab, str8_lit("resource_id"))->first->string; }
   if(slot.size) { str8_list_pushf(arena, &parts, " slot=%S", uishell_logical_quote(arena, slot)); }
+  if(previous_of.size) { str8_list_pushf(arena, &parts, " previous_of=%S", uishell_logical_quote(arena, previous_of)); }
   String8 expr = rd_expr_from_cfg(tab);
   if(expr.size)
   {
@@ -116,6 +122,16 @@ uishell_logical_tab(Arena *arena, CFG_Node *tab, B32 selected)
     if(value.size) { str8_list_pushf(arena, &parts, " %s=%S", settings[i], uishell_logical_quote(arena, value)); }
     else { str8_list_pushf(arena, &parts, " %s", settings[i]); }
   }
+  // What its Workspace Overlay says of it (ADR 0013): its content is the
+  // user's (detached), the provider's changed under an edit (changed), the
+  // provider removed it (removed), or its rebind policy is the user's.
+  CFG_Node *owner = &cfg_nil_node;
+  UIShell_SidebarState *state = slot.size ? uishell_store_state_from_view(tab, &owner) : 0;
+  U32 flags = state ? uishell_store_slot_flags(state, owner, slot) : 0;
+  if(flags & ANDAMENTO_SLOT_FLAG_DETACHED) { str8_list_push(arena, &parts, str8_lit(" detached")); }
+  if(flags & ANDAMENTO_SLOT_FLAG_CHANGED) { str8_list_push(arena, &parts, str8_lit(" changed")); }
+  if(flags & ANDAMENTO_SLOT_FLAG_REMOVED) { str8_list_push(arena, &parts, str8_lit(" removed")); }
+  if(flags & ANDAMENTO_SLOT_FLAG_REBIND) { str8_list_push(arena, &parts, str8_lit(" rebind")); }
   if(selected) { str8_list_push(arena, &parts, str8_lit(" selected")); }
   return str8_list_join(arena, &parts, 0);
 }
@@ -183,7 +199,24 @@ uishell_logical_workspace(UIShell_LogicalText *t, U64 depth, CFG_Node *window, C
     if(group != &cfg_nil_node && cfg_node_child_from_string(group, str8_lit("default")) == &cfg_nil_node)
     { home = push_str8f(arena, " local group=%S", uishell_logical_quote(arena, uishell_sidebar_local_field(group, str8_lit("label")))); }
   }
-  uishell_logical_linef(t, depth, "workspace %S%S%s", uishell_logical_quote(arena, label), home, kept ? " kept" : "");
+  // Its mood, and what its Workspace Overlay says of its arrangement: the
+  // provider changed one the user owns, soft overrides (sizes, tabs) apply,
+  // or one names a panel that went.
+  String8List extra = {0};
+  String8 mood = cfg_node_child_from_string(owner, str8_lit("theme"))->first->string;
+  if(mood.size) { str8_list_pushf(arena, &extra, " mood=%S", uishell_logical_quote(arena, mood)); }
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
+  UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
+  U32 flags = state ? uishell_store_arrangement_flags(state, owner) : 0;
+  if(flags & ANDAMENTO_ARRANGEMENT_FLAG_PROVIDER_CHANGED) { str8_list_push(arena, &extra, str8_lit(" provider-changed")); }
+  if(flags & ANDAMENTO_ARRANGEMENT_FLAG_SOFT) { str8_list_push(arena, &extra, str8_lit(" soft")); }
+  if(flags & ANDAMENTO_ARRANGEMENT_FLAG_UNRESOLVED) { str8_list_push(arena, &extra, str8_lit(" unresolved")); }
+  uishell_logical_linef(t, depth, "workspace %S%S%s%S", uishell_logical_quote(arena, label), home, kept ? " kept" : "",
+    str8_list_join(arena, &extra, 0));
+  // Provider slots the user closed, which tombstones hide.
+  UIShell_StoreEntry *entry = state ? uishell_store_entry_find(state, uishell_workspace_id_from_cfg(owner)) : 0;
+  for(U64 i = 0; entry && i < entry->tombstone_count; i++)
+  { uishell_logical_linef(t, depth+1, "hidden slot=%S", uishell_logical_quote(arena, entry->tombstones[i])); }
   uishell_logical_arrangement(t, depth+1, window, owner);
 }
 
@@ -356,10 +389,18 @@ uishell_logical_local(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
       for(CFG_Node *card = group->first; card != &cfg_nil_node; card = card->next)
       {
         if(!str8_match(card->string, str8_lit("card"), 0)) { continue; }
-        uishell_logical_linef(t, depth+2, "pin %S %S %s",
+        // A pin to a View names it by its Slot; one whose View went away is
+        // flagged, kept until the user removes it.
+        RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
+        UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
+        String8 view = uishell_sidebar_local_field(card, str8_lit("view"));
+        String8 slot = str8_skip(view, str8_find_needle(view, 0, str8_lit("/"), 0)+1);
+        B32 gone = state && uishell_store_pin_gone(state, uishell_sidebar_local_field(card, str8_lit("ghost")));
+        uishell_logical_linef(t, depth+2, "pin %S %S %s%S%s",
           uishell_logical_entity(arena, uishell_sidebar_local_field(card, str8_lit("kind")), uishell_sidebar_local_field(card, str8_lit("entity"))),
           uishell_logical_quote(arena, uishell_sidebar_local_field(card, str8_lit("label"))),
-          cfg_node_child_from_string(card, str8_lit("compact")) != &cfg_nil_node ? "row" : "card");
+          cfg_node_child_from_string(card, str8_lit("compact")) != &cfg_nil_node ? "row" : "card",
+          view.size ? push_str8f(arena, " view=%S", uishell_logical_quote(arena, slot)) : str8_zero(), gone ? " view-gone" : "");
       }
     }
   }
