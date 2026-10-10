@@ -204,6 +204,8 @@ rd_arrangement_from_cfg(Arena *arena, CFG_Node *panels_root)
   arrangement->root = &rd_nil_arrangement_panel;
   arrangement->next_id = 1;
   if(panels_root == &cfg_nil_node) { return arrangement; }
+  // The arrangement names nodes by ID, so they must be the selected config's.
+  Assert(cfg_node_from_id(panels_root->id) == panels_root);
   RD_ArrangementKeys keys = rd_arrangement_keys(arena, panels_root);
   arrangement->owner = keys.owner->id;
   arrangement->root_name = keys.root_name;
