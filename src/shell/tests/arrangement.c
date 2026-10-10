@@ -577,6 +577,45 @@ entry_point(CmdLine *cmdline)
     cfg_node_release(cfg, window);
   }
 
+  // A layout producer replaces a document: clearing leaves one empty root,
+  // keeps its axis until it splits, and saving releases the old panel nodes
+  // and every View no tab took back.
+  {
+    CFG_Node *window = fixture(arena, "window:{workspace:{split_x panels:{selected id:{7} 0.5:{text:{selected} terminal} 0.5:{jackstay}}} "
+      "workspace:{panels:{text}}}");
+    CFG_Node *owner = window->first, *old_root = child(owner, "panels");
+    CFG_ID old_root_id = old_root->id, old_text = old_root->first->next->next->first->id;
+    CFG_ID kept = child(old_root->last, "jackstay")->id;
+    RD_Arrangement *arrangement = rd_arrangement_from_owner(arena, owner, str8_lit("panels"));
+    RD_PanelID root = rd_arrangement_clear(arrangement);
+    Check(arrangement->root->id == root && root > 7 && arrangement->root->tab_count == 0 && arrangement->root_axis == Axis2_X);
+    Check(rd_arrangement_problem(arena, arrangement).size == 0);
+    RD_PanelID side = rd_arrangement_split(arrangement, root, Dir2_Right);
+    rd_arrangement_resize(arrangement, root, 0.22f, 0);
+    Check(rd_arrangement_panel_from_id(arrangement, root)->weight == 0.72f && rd_arrangement_panel_from_id(arrangement, side)->weight == 0.28f);
+    CFG_Node *made = cfg_node_new(cfg, &cfg_nil_node, str8_lit("text"));
+    Check(rd_arrangement_move_tab(arrangement, made->id, side, 0) && rd_arrangement_move_tab(arrangement, kept, root, 0));
+    check_saved(arena, arrangement, owner);
+    CFG_Node *root_node = child(owner, "panels");
+    Check(cfg_node_from_id(old_root_id) == &cfg_nil_node && cfg_node_from_id(old_text) == &cfg_nil_node);
+    Check(root_node != &cfg_nil_node && child(root_node, "selected") == &cfg_nil_node && child(owner, "split_x") != &cfg_nil_node);
+    CFG_Node *main_node = cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, root)->cfg);
+    CFG_Node *side_node = cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, side)->cfg);
+    Check(main_node->parent == root_node && side_node->parent == root_node && cfg_node_from_id(kept)->parent == main_node && made->parent == side_node);
+    Check(str8_match(main_node->string, str8_lit("0.720000"), 0) && str8_match(side_node->string, str8_lit("0.280000"), 0));
+    // A new owner's document saves once it has a panel; one that never splits
+    // keeps the axis it had.
+    CFG_Node *fresh = window->last;
+    cfg_node_release(cfg, child(fresh, "panels"));
+    arrangement = rd_arrangement_from_owner(arena, fresh, str8_lit("panels"));
+    root = rd_arrangement_clear(arrangement);
+    CFG_Node *tab = cfg_node_new(cfg, &cfg_nil_node, str8_lit("terminal"));
+    Check(rd_arrangement_move_tab(arrangement, tab->id, root, 0));
+    check_saved(arena, arrangement, fresh);
+    Check(tab->parent == child(fresh, "panels") && child(tab, "selected") != &cfg_nil_node && child(fresh, "split_x") == &cfg_nil_node);
+    cfg_node_release(cfg, window);
+  }
+
   // A hand-edited deep split chain loads, copies and saves without exhausting
   // the C stack, and a copy is independent of its source.
   {
