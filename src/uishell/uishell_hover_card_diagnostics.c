@@ -1554,7 +1554,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         Temp panel_scratch = scratch_begin(0, 0);
         CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
         UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(panel_scratch.arena, window, host);
-        mount.panel_tree = cfg_panel_tree_from_panels_cfg(panel_scratch.arena, drag_root, Axis2_X);
+        // The drag root splits along x, whatever the window's sidebar axis.
+        mount.arrangement = rd_arrangement_from_cfg(panel_scratch.arena, drag_root);
+        mount.arrangement->root_axis = Axis2_X;
+        mount.panel_tree = rd_panel_tree_from_arrangement(panel_scratch.arena, mount.arrangement);
         UIShell_RegsScope(.window = window->id)
         { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
         scratch_end(panel_scratch);
@@ -1703,7 +1706,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           Temp panel_scratch = scratch_begin(0, 0);
           CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
           UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(panel_scratch.arena, window, host);
-          mount.panel_tree = cfg_panel_tree_from_panels_cfg(panel_scratch.arena, drag_root, Axis2_X);
+          mount.arrangement = rd_arrangement_from_cfg(panel_scratch.arena, drag_root);
+          mount.arrangement->root_axis = Axis2_X;
+          mount.panel_tree = rd_panel_tree_from_arrangement(panel_scratch.arena, mount.arrangement);
           UIShell_RegsScope(.window = window->id)
           { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
           scratch_end(panel_scratch);

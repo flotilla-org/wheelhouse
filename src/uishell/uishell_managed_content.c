@@ -73,7 +73,7 @@ uishell_sidebar_reconcile_workspace(UIShell_SidebarState *state, CFG_Node *works
   if(!kind.size || !id.size) { return; }
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-  CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
+  CFG_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, panels);
   CFG_Node *primary = &cfg_nil_node;
   U64 matches = 0;
   for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)

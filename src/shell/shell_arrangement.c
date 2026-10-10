@@ -43,7 +43,7 @@ typedef enum RD_ArrangementChild
 } RD_ArrangementChild;
 
 // A panel node's children: child panels (numeric), Views (identifiers) and
-// panel options, as cfg_panel_tree_from_panels_cfg reads them.
+// panel options.
 internal RD_ArrangementChild
 rd_arrangement_child_from_cfg(CFG_Node *child)
 {
@@ -423,6 +423,65 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
   }
   arrangement->saved_root = root->cfg;
   scratch_end(scratch);
+}
+
+////////////////////////////////
+//~ The Renderer's Panel Tree
+
+internal CFG_PanelTree
+rd_panel_tree_from_arrangement(Arena *arena, RD_Arrangement *arrangement)
+{
+  CFG_PanelTree tree = {&cfg_nil_panel_node, &cfg_nil_panel_node};
+  RD_ArrangementPanel *root = arrangement->root;
+  CFG_PanelNode *parent = &cfg_nil_panel_node;
+  Axis2 axis = arrangement->root_axis;
+  for(RD_ArrangementPanel *s = root; s != &rd_nil_arrangement_panel;)
+  {
+    CFG_PanelNode *d = push_array(arena, CFG_PanelNode, 1);
+    MemoryCopyStruct(d, &cfg_nil_panel_node);
+    d->cfg = cfg_node_from_id(s->cfg);
+    d->split_axis = axis;
+    d->pct_of_parent = s->weight;
+    d->tab_side = Side_Min;
+    for(CFG_Node *c = d->cfg->first; c != &cfg_nil_node; c = c->next)
+    {
+      if(str8_match(c->string, str8_lit("selected"), 0)) { tree.focused = d; }
+      else if(str8_match(c->string, str8_lit("tabs_on_bottom"), 0)) { d->tab_side = Side_Max; }
+    }
+    for(RD_ArrangementTab *tab = s->first_tab; tab != 0; tab = tab->next)
+    {
+      CFG_Node *view = cfg_node_from_id(tab->view);
+      cfg_node_ptr_list_push(arena, &d->tabs, view);
+      if(tab->view == s->selected) { d->selected_tab = view; }
+    }
+    d->parent = parent;
+    if(parent == &cfg_nil_panel_node) { tree.root = d; }
+    else
+    {
+      DLLPushBack_NPZ(&cfg_nil_panel_node, parent->first, parent->last, d, next, prev);
+      parent->child_count += 1;
+    }
+    if(s->first != &rd_nil_arrangement_panel)
+    {
+      s = s->first;
+      parent = d;
+      axis = axis2_flip(axis);
+      continue;
+    }
+    for(; s != root && s->next == &rd_nil_arrangement_panel; s = s->parent)
+    {
+      parent = parent->parent;
+      axis = axis2_flip(axis);
+    }
+    s = s == root ? &rd_nil_arrangement_panel : s->next;
+  }
+  return tree;
+}
+
+internal CFG_PanelTree
+rd_panel_tree_from_cfg(Arena *arena, CFG_Node *panels_root)
+{
+  return rd_panel_tree_from_arrangement(arena, rd_arrangement_from_cfg(arena, panels_root));
 }
 
 ////////////////////////////////

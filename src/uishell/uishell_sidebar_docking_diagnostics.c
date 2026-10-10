@@ -1139,7 +1139,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   x = uishell_sidebar_region_view(restored, str8_lit("x"));
   PlacementCheck(ordinary->id == ordinary_id && ordinary->parent != merged && ordinary->parent != x->parent);
   PlacementCheck(leaf_selected->parent == ordinary->parent && leaf_tabs->parent == ordinary->parent);
-  CFG_PanelTree lifted = cfg_panel_tree_from_panels_cfg(scratch.arena, merged, Axis2_Y);
+  CFG_PanelTree lifted = rd_panel_tree_from_cfg(scratch.arena, merged);
   CFG_PanelNode *lifted_leaf = cfg_panel_node_from_tree_cfg(lifted.root, ordinary->parent);
   PlacementCheck(lifted_leaf->tab_side == Side_Max && lifted_leaf->selected_tab == ordinary);
   PlacementCheck(lifted.focused == lifted_leaf);

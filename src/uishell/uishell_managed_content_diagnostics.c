@@ -173,7 +173,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     CFG_Node *role_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     CFG_Node *role_view = &cfg_nil_node;
     CFG_Node *role_panels = cfg_node_child_from_string(role_workspace, str8_lit("panels"));
-    CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(scratch.arena, role_panels, Axis2_X);
+    CFG_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, role_panels);
     if(tree.root != &cfg_nil_panel_node && tree.root->tabs.first) { role_view = tree.root->tabs.first->v; }
     ManagedCheck(str8_match(cfg_node_child_from_string(role_workspace, str8_lit("sidebar_entity_kind"))->first->string, str8_lit("role"), 0) &&
                  str8_match(cfg_node_child_from_string(role_view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0),
@@ -225,7 +225,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     uishell_sidebar_effects(&opened, &split);
     CFG_Node *worktree_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     CFG_Node *worktree_panels = cfg_node_child_from_string(worktree_workspace, str8_lit("panels"));
-    CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(scratch.arena, worktree_panels, Axis2_X);
+    CFG_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, worktree_panels);
     CFG_Node *worktree_view = tree.root->tabs.first ? tree.root->tabs.first->v : &cfg_nil_node;
     ManagedCheck(str8_match(cfg_node_child_from_string(worktree_view, str8_lit("cwd"))->first->string, str8_lit("/tmp"), 0),
                  "materialized producer terminal saves git.root");

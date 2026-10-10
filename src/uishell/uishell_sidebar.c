@@ -859,7 +859,7 @@ uishell_sidebar_workdirs(Arena *arena, UIShell_ControlledSplit *split)
   {
     CFG_Node *workspace = w->mount.owner_cfg;
     CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-    CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(arena, panels, Axis2_X);
+    CFG_PanelTree tree = rd_panel_tree_from_cfg(arena, panels);
     for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
     {
       for(CFG_NodePtrNode *tab = p->tabs.first; tab; tab = tab->next)
@@ -2051,7 +2051,7 @@ uishell_sidebar_view_title(Arena *arena, CFG_Node *view)
   return dr_string_from_fstrs(arena, &fstrs);
 }
 
-// Whether a panel's child is one of its tabs, as cfg_panel_tree_from_cfg
+// Whether a panel's child is one of its tabs, as rd_arrangement_from_cfg
 // reads them: an identifier that isn't a panel option.
 internal B32
 uishell_sidebar_is_tab(CFG_Node *c)
@@ -2119,7 +2119,7 @@ uishell_sidebar_section_drop_apply(RD_WindowState *ws)
   scratch_end(scratch);
 }
 
-// `view`'s panel's tabs, as cfg_panel_tree_from_cfg reads them. Compact
+// `view`'s panel's tabs, as rd_arrangement_from_cfg reads them. Compact
 // titles share `budget`, each at least 3em wide.
 internal UIShell_HeaderTabs
 uishell_sidebar_header_tabs(Arena *arena, CFG_Node *view, F32 budget)
@@ -5545,7 +5545,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = split.inventory.count == before+1 && workspace != &cfg_nil_node &&
          cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id")) != &cfg_nil_node;
     CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-    CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
+    CFG_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, panels);
     ok = ok && cfg_node_child_from_string(workspace, str8_lit("split_x")) != &cfg_nil_node &&
          tree.root->child_count == 2 && tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 2;
     CFG_Node *tools_tab = tree.root->last->tabs.last->v;
@@ -5569,7 +5569,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     uishell_sidebar_effects(state, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     ok = ok && split.inventory.count == before+1 && ws->root_controlled_split_selected_workspace_id == created;
-    tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
+    tree = rd_panel_tree_from_cfg(scratch.arena, panels);
     ok = ok && tree.root->last->selected_tab->id == tools_id;
     uishell_sidebar_refresh(state);
     // Reveal prefers the nested tree occurrence over Attention, expands its
@@ -5673,7 +5673,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = ok && split.inventory.count == before+1;
     workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-    tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
+    tree = rd_panel_tree_from_cfg(scratch.arena, panels);
     tools_tab = tree.root->last->tabs.last->v;
     tools_id = tools_tab->id;
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(tree.root->last->selected_tab, str8_lit("selected")));
@@ -5691,7 +5691,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
       AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
       restored_live |= node.state == ANDAMENTO_LIVE;
     }
-    tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
+    tree = rd_panel_tree_from_cfg(scratch.arena, panels);
     ok = ok && restored_live && tree.root->last->selected_tab->id == tools_id &&
          tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 2;
     // Authoritative end and focus retain the host's user-selected overflow tab
@@ -5727,7 +5727,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = uishell_sidebar_result(state, retained_call_ok, error) && ok;
     uishell_sidebar_effects(state, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
-    tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
+    tree = rd_panel_tree_from_cfg(scratch.arena, panels);
     ok = ok && split.inventory.count == before+1 &&
          ws->root_controlled_split_selected_workspace_id == workspace->id &&
          tree.root->last->selected_tab->id == tools_id &&
@@ -5786,7 +5786,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
       { recipe_restored |= node.state == ANDAMENTO_LIVE && node.workspace_id == workspace->id; }
     }
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
-    tree = cfg_panel_tree_from_panels_cfg(scratch.arena, panels, Axis2_X);
+    tree = rd_panel_tree_from_cfg(scratch.arena, panels);
     restore_ok = restore_ok && recipe_restored && split.inventory.count == before+1 &&
                  tree.root->last->selected_tab->id == tools_id;
     fprintf(stderr, "Sidebar unavailable restore diagnostics: %s\n", restore_ok ? "passed" : "FAILED");
