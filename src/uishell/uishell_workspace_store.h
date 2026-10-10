@@ -29,7 +29,8 @@ internal void uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddre
 
 // What a View tells the user about its Slot (uishell_workspace_store.c,
 // "Notices"): an update waiting for an answer, a previous instance kept, an
-// update that failed. Each offers at most two actions.
+// update that failed, and the Workspace Overlay's flags. Each offers at most
+// two actions.
 typedef enum UIShell_SlotAction
 {
   UIShell_SlotAction_None,
@@ -37,6 +38,11 @@ typedef enum UIShell_SlotAction
   UIShell_SlotAction_Decline,          // decline it
   UIShell_SlotAction_ReleasePrevious,  // close the previous instance kept
   UIShell_SlotAction_Retry,            // retry a failed update
+  UIShell_SlotAction_Reattach,         // drop the user's edit: the provider's again
+  UIShell_SlotAction_KeepMine,         // keep the user's edit against the provider's change
+  UIShell_SlotAction_Remove,           // close the View; a provider's Slot is tombstoned
+  UIShell_SlotAction_KeepLayout,       // keep the user's arrangement over the provider's change
+  UIShell_SlotAction_FollowLayout,     // follow the provider's arrangement again
   UIShell_SlotAction_COUNT
 }
 UIShell_SlotAction;
@@ -57,5 +63,9 @@ internal String8 uishell_slot_badge(Arena *arena, CFG_Node *view);
 // Builds a one-line banner for `view`'s first notice at the top of `rect`,
 // and returns what is left of `rect` for the View.
 internal Rng2F32 uishell_slot_banner(CFG_Node *view, Rng2F32 rect);
+
+// Pins `view`, a workspace's View, to a section of the user's own; nil when
+// it can't (uishell_workspace_store.c).
+internal CFG_Node *uishell_store_pin_view(RD_WindowState *ws, CFG_Node *view);
 
 #endif // UISHELL_WORKSPACE_STORE_H
