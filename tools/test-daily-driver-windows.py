@@ -171,7 +171,8 @@ class WindowsDailyDriverTests(unittest.TestCase):
         self.assertIn('daemon=' + endpoint, self.log('wheelhouse'))
         self.assertIn('daemon=' + endpoint, self.log('flotilla'))
         # #316: the daily driver opens a Dashboard of its profile.
-        self.assertIn(repr('--dashboard:' + str(self.state / 'dashboards' / 'daily')), self.log('wheelhouse'))
+        # resolve() expands the runner's 8.3 temp name (RUNNER~1), as the driver's path does.
+        self.assertIn(repr('--dashboard:' + str(self.state.resolve() / 'dashboards' / 'daily')), self.log('wheelhouse'))
         first_pipe = self.log('flotilla').split('socket=', 1)[1].splitlines()[0]
         self.assertTrue(first_pipe.startswith(r'\\.\pipe\wheelhouse-daily-'))
         self.assertIn("'pm', 'connect', '--wheelhouse-socket'", self.log('flotilla'))
