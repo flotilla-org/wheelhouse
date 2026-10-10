@@ -127,33 +127,36 @@ Other open defects and CI work remain on the
 ## State model migration
 
 Decided on [Map: a target state model for Wheelhouse](https://github.com/flotilla-org/wheelhouse/issues/290)
-(10 October 2026): Andamento owns logical state (the Dashboard, workspaces,
-slots and the panel tree) and saves it as named KDL records in a Dashboard
-directory; RAD's config tree keeps only Presentation State. See ADRs
-[0012](adr/0012-andamento-owns-logical-state.md) and
+(10 October 2026) and revised the same day after five adversarial reviews:
+Andamento owns logical state (the Dashboard, workspaces, slots, and
+arrangements committed as whole documents) and saves it as named KDL records
+in a Dashboard directory; RAD's config tree keeps only Presentation State. See
+ADRs [0012](adr/0012-andamento-owns-logical-state.md) and
 [0013](adr/0013-workspace-overlay-is-an-addressed-edit-set.md) and the glossary
-in `CONTEXT.md`. The steps below land in order; each keeps the daily driver
-usable. The switch to Dashboard directories is a fresh start with no import.
+in `CONTEXT.md`. Each step keeps the daily driver usable; step 4 is the one
+planned fresh start. Andamento's ABI 3 is additive, and Wheelhouse accepts ABI
+2 or 3 while it moves.
 
 | Step | Wheelhouse | Andamento / Flotilla |
 | --- | --- | --- |
-| 1. Stable Workspace IDs | [#306](https://github.com/flotilla-org/wheelhouse/issues/306) | [andamento#141](https://github.com/flotilla-org/andamento/issues/141) |
-| 2. Named records and one Dashboard per process | [#307](https://github.com/flotilla-org/wheelhouse/issues/307) | [andamento#142](https://github.com/flotilla-org/andamento/issues/142) |
-| 3. Provider-stamped entities; Wheelhouse starts `pm connect` | [#308](https://github.com/flotilla-org/wheelhouse/issues/308) | [andamento#143](https://github.com/flotilla-org/andamento/issues/143) |
-| 4. Slots, View Specs and the panel tree (config mirror as a stage) | [#309](https://github.com/flotilla-org/wheelhouse/issues/309) | [andamento#144](https://github.com/flotilla-org/andamento/issues/144) |
-| 5. Renderer registry and `WH_ViewContext` | [#310](https://github.com/flotilla-org/wheelhouse/issues/310) | |
-| 6. Typed read model; remove the mirror | [#311](https://github.com/flotilla-org/wheelhouse/issues/311) | |
-| 7. Workspace Overlay semantics | | [andamento#145](https://github.com/flotilla-org/andamento/issues/145) |
-| 8. Presentation State by address, typed accessors | [#312](https://github.com/flotilla-org/wheelhouse/issues/312) | |
-| 9. Evaluator out of views and settings | [#313](https://github.com/flotilla-org/wheelhouse/issues/313) | |
-| 10. Facts stream and `andamento-subscribe` | | [flotilla#3011](https://github.com/flotilla-org/flotilla/issues/3011), [andamento#146](https://github.com/flotilla-org/andamento/issues/146) |
+| 0. Behaviour harness with golden logical-state snapshots | [#314](https://github.com/flotilla-org/wheelhouse/issues/314) | |
+| 1. Host-supplied 128-bit Workspace IDs (ABI 3) | [#306](https://github.com/flotilla-org/wheelhouse/issues/306) | [andamento#141](https://github.com/flotilla-org/andamento/issues/141) |
+| 2. Save visible workspace and focus; autosave only on change | [#315](https://github.com/flotilla-org/wheelhouse/issues/315) | |
+| 3. Andamento owns sidebar state as records; delete the replay | [#307](https://github.com/flotilla-org/wheelhouse/issues/307) | [andamento#142](https://github.com/flotilla-org/andamento/issues/142) |
+| 4. Dashboard directory and `--dashboard` | [#316](https://github.com/flotilla-org/wheelhouse/issues/316) | |
+| 5. Subscription providers, one ingress endpoint each; stale facts | [#308](https://github.com/flotilla-org/wheelhouse/issues/308) | [andamento#143](https://github.com/flotilla-org/andamento/issues/143) |
+| 6. Multi-slot Suggested Layout fact schema (can start any time) | | [andamento#147](https://github.com/flotilla-org/andamento/issues/147), [flotilla#3012](https://github.com/flotilla-org/flotilla/issues/3012) |
+| 7. Typed arrangement module (7a), then slots and `set_arrangement` (7b) | [#311](https://github.com/flotilla-org/wheelhouse/issues/311), [#309](https://github.com/flotilla-org/wheelhouse/issues/309) | [andamento#144](https://github.com/flotilla-org/andamento/issues/144) |
+| 8. Sidebar arrangement as a Dashboard document | [#317](https://github.com/flotilla-org/wheelhouse/issues/317) | [andamento#148](https://github.com/flotilla-org/andamento/issues/148) |
+| 9. Renderer registry and `WH_ViewContext` | [#310](https://github.com/flotilla-org/wheelhouse/issues/310) | |
+| 10. Workspace Overlay | | [andamento#145](https://github.com/flotilla-org/andamento/issues/145) |
 
-Flotilla's provider identity is decided separately in
-[flotilla#3010](https://github.com/flotilla-org/flotilla/issues/3010). Build
-speed work that fell out of the same research is independent:
-[#302](https://github.com/flotilla-org/wheelhouse/issues/302),
-[#303](https://github.com/flotilla-org/wheelhouse/issues/303),
-[#304](https://github.com/flotilla-org/wheelhouse/issues/304).
+Deferred: one Andamento core per process (with the window effort); typed
+Presentation State accessors and an explicit settings cascade ([#312](https://github.com/flotilla-org/wheelhouse/issues/312)); retiring
+the evaluator ([#313](https://github.com/flotilla-org/wheelhouse/issues/313)); the provider-agnostic facts stream ([flotilla#3011](https://github.com/flotilla-org/flotilla/issues/3011),
+[andamento#146](https://github.com/flotilla-org/andamento/issues/146)). Flotilla's provider identity is decided separately in
+[flotilla#3010](https://github.com/flotilla-org/flotilla/issues/3010). Build speed work from the same research is independent:
+[#302](https://github.com/flotilla-org/wheelhouse/issues/302), [#303](https://github.com/flotilla-org/wheelhouse/issues/303), [#304](https://github.com/flotilla-org/wheelhouse/issues/304).
 
 ## Later decisions
 
