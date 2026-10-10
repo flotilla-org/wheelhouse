@@ -751,8 +751,9 @@ uishell_sidebar_card_cap_height(void)
 internal B32
 uishell_sidebar_card_cap_below(Rng2F32 rect, Rng2F32 bounds)
 {
-  F32 height = uishell_sidebar_card_cap_height();
-  return rect.y0-height < bounds.y0 && rect.y1+height <= bounds.y1;
+  // Above when it fits; otherwise whichever side has more room.
+  F32 height = uishell_sidebar_card_cap_height(), above = rect.y0-bounds.y0, below = bounds.y1-rect.y1;
+  return above < height && below > above;
 }
 
 internal size_t
@@ -806,9 +807,10 @@ uishell_sidebar_card_cap(UIShell_SidebarState *state, UIShell_HoverCard *card, U
         push_str8f(ui_build_arena(), "card_action_%I64u_%S", i, intent), 0, 1, uishell_sidebar_string(controls[i].label), str8_zero());
       if(ui_clicked(sig)) { action = controls[i].action; }
     }
+    // The card's own menu, which keeps it open, exists only while some fold.
+    card->menu = folded ? menu_key : ui_key_zero();
     if(folded)
     {
-      card->menu = menu_key;
       UI_Signal more = uishell_sidebar_header_button(str8_lit("⋯"), str8_lit("card_more"), ui_ctx_menu_is_open(menu_key), 1,
         str8_lit("More actions"), str8_zero());
       if(ui_clicked(more)) { ui_ctx_menu_open(menu_key, more.box->key, v2f32(0, dim_2f32(more.box->rect).y)); }
@@ -1101,7 +1103,6 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
             cap_box->fixed_position.y = y;
             card->cap.rect = r2f32p(card->rect.x0, card->rect.y0+y, card->rect.x1, card->rect.y0+y+dim_2f32(card->cap.rect).y);
           }
-
           rd_request_frame(); // Update scroll thumb geometry with the measured extent.
         }
         UI_Signal wheel = ui_signal_from_box(scroll.content_box);
