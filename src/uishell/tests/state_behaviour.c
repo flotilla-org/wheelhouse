@@ -27,10 +27,84 @@ global U32 state_failures;
 // What the producer reports beyond the fixture: vessel "multi" ended, and
 // vessel "chip-v" gone while its workspace is open.
 global B32 state_multi_ended, state_chip_gone;
+// Role "p/reviewer", once published: a Suggested Layout of four slots, the
+// primary terminal, `partner` (a provider facet keeping its previous
+// instance), `watch` (one asking first) and `log` (a local recipe), which it
+// arranges side by side. Each facet's target is "<slot>#<n>", running
+// "attach <slot> <n>"; 0 publishes nothing.
+global U32 state_reviewer_partner, state_reviewer_watch;
+
+internal String8
+state_json_list(Arena *arena, String8 key, char **values, U64 count)
+{
+  String8List parts = {0};
+  for(U64 i = 0; i < count; i++) { str8_list_pushf(arena, &parts, "%s\"%s\"", i ? "," : "", values[i]); }
+  return push_str8f(arena, "\"%S\":{\"value\":{\"type\":\"string-list\",\"value\":[%S]}}", key, str8_list_join(arena, &parts, 0));
+}
+
+// A provider facet slot of the reviewer's layout, at target `n`.
+internal String8
+state_reviewer_facet(Arena *arena, char *slot, char *rebind, U32 n)
+{
+  String8 prefix = push_str8f(arena, "layout.slot.%s.", slot);
+  String8 facts[] =
+  {
+    uishell_sidebar_json_fact_ref(arena, push_str8f(arena, "%Sentity", prefix), str8_lit("vessel"), push_str8f(arena, "%s-v", slot)),
+    uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Sfacet", prefix), str8_lit("terminal")),
+    uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Spresentation", prefix), str8_lit("terminal")),
+    uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Srebind", prefix), str8_cstring(rebind)),
+    uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Sstate", prefix), str8_lit("ready")),
+    uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Starget", prefix), push_str8f(arena, "%s#%u", slot, n)),
+    uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Skind", prefix), str8_lit("command")),
+    uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Scommand", prefix), push_str8f(arena, "attach %s %u", slot, n)),
+  };
+  StringJoin join = {.sep = str8_lit(",")};
+  String8List list = {0};
+  for(U64 i = 0; i < ArrayCount(facts); i++) { str8_list_push(arena, &list, facts[i]); }
+  return str8_list_join(arena, &list, &join);
+}
 
 internal void
 state_producer(UIShell_SidebarState *state)
 {
+  if(state_reviewer_partner)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    Arena *arena = scratch.arena;
+    char *slots[] = {"primary", "partner", "watch", "log"}, *children[] = {"agents", "side"}, *agents[] = {"primary", "partner", "watch"}, *side[] = {"log"};
+    String8 facts[] =
+    {
+      uishell_sidebar_json_fact_text(arena, str8_lit("flotilla.project"), str8_lit("p")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("display.label"), str8_lit("reviewer")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("flotilla.role"), str8_lit("p/reviewer")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("flotilla.role.name"), str8_lit("reviewer")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("status.state"), str8_lit("running")),
+      str8_lit("\"status.attention\":{\"value\":{\"type\":\"bool\",\"value\":true}}"),
+      uishell_sidebar_json_fact_text(arena, str8_lit("workspace.primary.state"), str8_lit("ready")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("workspace.primary.target"), str8_lit("vessel:reviewer-v")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("action.primary.recipe"), str8_lit("exec /bin/sh")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("layout.version"), str8_lit("1")),
+      state_json_list(arena, str8_lit("layout.slots"), slots, ArrayCount(slots)),
+      state_reviewer_facet(arena, "partner", "keep-previous", state_reviewer_partner),
+      state_reviewer_facet(arena, "watch", "ask", state_reviewer_watch),
+      uishell_sidebar_json_fact_text(arena, str8_lit("layout.slot.log.kind"), str8_lit("command")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("layout.slot.log.command"), str8_lit("tail -f build.log")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("layout.root"), str8_lit("main")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("layout.panel.main.axis"), str8_lit("row")),
+      state_json_list(arena, str8_lit("layout.panel.main.children"), children, ArrayCount(children)),
+      state_json_list(arena, str8_lit("layout.panel.agents.slots"), agents, ArrayCount(agents)),
+      uishell_sidebar_json_fact_text(arena, str8_lit("layout.panel.agents.selected"), str8_lit("primary")),
+      state_json_list(arena, str8_lit("layout.panel.side.slots"), side, ArrayCount(side)),
+    };
+    StringJoin join = {.sep = str8_lit(",")};
+    String8List list = {0};
+    for(U64 i = 0; i < ArrayCount(facts); i++) { str8_list_push(arena, &list, facts[i]); }
+    String8 patch = push_str8f(arena, "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"role\",\"id\":\"p/reviewer\"}},"
+                                      "\"source_id\":\"fixture\",\"set\":{%S},\"unset\":[]}", str8_list_join(arena, &list, &join));
+    char *error = 0;
+    StateCheck(uishell_sidebar_result(state, andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(patch), &error), error));
+    scratch_end(scratch);
+  }
   if(state_multi_ended)
   {
     AndamentoFact facts[2] = {0};
@@ -377,7 +451,9 @@ state_workspace_labelled(CFG_Node *window, String8 label)
 
 // Every workspace of the window is committed, and its panel tree is the
 // document Andamento keeps: the same panels, weights, tabs by slot key and
-// Selected Views, at the generation the window last saw.
+// Selected Views, at the generation the window last saw. Andamento owns it
+// once a commit changed its structure; one that changed only weights or
+// selections leaves it following the provider (ADR 0013).
 internal void
 state_check_committed(RD_WindowState *ws)
 {
@@ -391,7 +467,7 @@ state_check_committed(RD_WindowState *ws)
     UIShell_StoreDoc doc = uishell_store_doc(scratch.arena, owner);
     AndamentoArrangement *stored = andamento_arrangement_acquire(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0);
     AndamentoArrangementInfo info = {0};
-    B32 same = stored && andamento_arrangement_info(stored, &info) && info.owned &&
+    B32 same = stored && andamento_arrangement_info(stored, &info) &&
       info.panel_count == doc.panel_count && info.tab_count == doc.tab_count &&
       str8_match(uishell_store_setting(owner, str8_lit("arrangement_generation")), push_str8f(scratch.arena, "%I64u", info.generation), 0);
     for(U64 i = 0; same && i < info.panel_count; i++)
@@ -447,6 +523,57 @@ state_check_sidebar_committed(RD_WindowState *ws)
   if(!same) { fprintf(stderr, "The sidebar is not the arrangement Andamento keeps\n"); state_failures++; }
   andamento_arrangement_release(stored);
   scratch_end(scratch);
+}
+
+// The View of Slot `key` in `workspace`, or nil.
+internal CFG_Node *
+state_slot_view(CFG_Node *workspace, String8 key)
+{
+  CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
+  for(CFG_Node *n = panels; n != &cfg_nil_node; n = cfg_node_rec__depth_first(panels, n).next)
+  {
+    if(str8_match(n->string, str8_lit("slot"), 0) && str8_match(n->first->string, key, 0)) { return n->parent; }
+  }
+  return &cfg_nil_node;
+}
+
+// The previous instance kept beside Slot `key`'s View, or nil.
+internal CFG_Node *
+state_previous_view(CFG_Node *workspace, String8 key)
+{
+  CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
+  for(CFG_Node *n = panels; n != &cfg_nil_node; n = cfg_node_rec__depth_first(panels, n).next)
+  {
+    if(str8_match(n->string, str8_lit("previous_of"), 0) && str8_match(n->first->string, key, 0)) { return n->parent; }
+  }
+  return &cfg_nil_node;
+}
+
+// Slot `key`'s plan for what `view` applied: its state, and whether it
+// reports a previous instance.
+internal uint32_t
+state_slot_plan(UIShell_SidebarState *state, CFG_Node *workspace, String8 key, CFG_Node *view, B32 *has_previous)
+{
+  AndamentoSlotPlan *plan = andamento_slot_plan(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)),
+    uishell_sidebar_text(key), uishell_sidebar_text(uishell_store_setting(view, str8_lit("applied"))), 0);
+  AndamentoSlotContent content = {0};
+  uint32_t result = plan && andamento_slot_plan_get(plan, &content) ? content.state : ANDAMENTO_CONTENT_UNAVAILABLE;
+  if(has_previous) { *has_previous = content.has_previous; }
+  andamento_slot_plan_release(plan);
+  return result;
+}
+
+// The first notice of `view` offering `action`, if any.
+internal B32
+state_offers(CFG_Node *view, UIShell_SlotAction action)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_SlotNotice notices[8];
+  U64 count = uishell_store_notices(scratch.arena, view, notices, ArrayCount(notices));
+  B32 found = 0;
+  for(U64 i = 0; i < count && !found; i++) { found = notices[i].actions[0] == action || notices[i].actions[1] == action; }
+  scratch_end(scratch);
+  return found;
 }
 
 // The sidebar's arrangement as the logical state shows it.
@@ -926,6 +1053,187 @@ entry_point(CmdLine *cmdline)
     state_check_committed(ws);
     // Back to the workspace that was visible.
     window = cfg_node_from_id(ws->cfg_id);
+    uishell_cmd("select_workspace", .window = window->id, .cfg = state_workspace_labelled(window, str8_lit("Workspace 1"))->id);
+    state_frame(ws);
+  }
+
+  //- A subject whose Suggested Layout arranges its workspace: it opens as
+  // the provider arranges it, and every slot, not just `primary`, goes
+  // through Andamento's plan: planned, applied, completed.
+  CFG_Node *reviewer = &cfg_nil_node;
+  {
+    state_reviewer_partner = state_reviewer_watch = 1;
+    state = ws->sidebar;
+    state_producer(state);
+    state_frame(ws);
+    reviewer = state_open_subject(ws, str8_lit("role"), str8_lit("p/reviewer"));
+    state_frame(ws);
+    state_frame(ws);
+    String8 text = state_workspaces_text(scratch.arena);
+    String8 expected = str8_lit("workspace \"reviewer\" subject=role/p/reviewer\n"
+                                "      panel split=x\n"
+                                "        panel weight=1.00\n"
+                                "          tab terminal \"Terminal\" slot=\"primary\" command=\"exec /bin/sh\" selected\n"
+                                "          tab terminal slot=\"partner\" command=\"attach partner 1\"\n"
+                                "          tab terminal slot=\"watch\" command=\"attach watch 1\"\n"
+                                "        panel weight=1.00\n"
+                                "          tab terminal slot=\"log\" command=\"tail -f build.log\" selected");
+    StateCheck(str8_find_needle(text, 0, expected, 0) < text.size);
+    if(str8_find_needle(text, 0, expected, 0) == text.size) { fprintf(stderr, "workspaces:\n%.*s\n", str8_varg(text)); }
+    CFG_Node *partner = state_slot_view(reviewer, str8_lit("partner"));
+    StateCheck(cfg_node_child_from_string(partner, str8_lit("follows_provider")) != &cfg_nil_node);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == ANDAMENTO_CONTENT_CURRENT);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("log"), state_slot_view(reviewer, str8_lit("log")), 0) == ANDAMENTO_CONTENT_CURRENT);
+    state_check_committed(ws);
+  }
+
+  //- A keep-previous slot rebinds to its provider's new target, and the
+  // instance it replaced stays reachable, in the tab beside it, until the
+  // user releases it.
+  {
+    state_reviewer_partner = 2;
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    CFG_Node *partner = state_slot_view(reviewer, str8_lit("partner"));
+    CFG_Node *previous = state_previous_view(reviewer, str8_lit("partner"));
+    StateCheck(str8_match(rd_expr_from_cfg(partner), str8_lit("attach partner 2"), 0));
+    StateCheck(previous != &cfg_nil_node && previous->parent == partner->parent &&
+               str8_match(rd_expr_from_cfg(previous), str8_lit("attach partner 1"), 0));
+    B32 has_previous = 0;
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, &has_previous) == ANDAMENTO_CONTENT_CURRENT && has_previous);
+    StateCheck(state_offers(previous, UIShell_SlotAction_ReleasePrevious) && state_offers(partner, UIShell_SlotAction_ReleasePrevious));
+    // The document has the Slot once: the previous instance isn't one.
+    state_check_committed(ws);
+    uishell_store_act(previous, UIShell_SlotAction_ReleasePrevious);
+    state_frame(ws);
+    StateCheck(state_previous_view(reviewer, str8_lit("partner")) == &cfg_nil_node);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, &has_previous) == ANDAMENTO_CONTENT_CURRENT && !has_previous);
+  }
+
+  //- An ask slot waits for the user: the View says what it would show, and
+  // updates only when told to; declining keeps what it shows.
+  {
+    state_reviewer_watch = 2;
+    state_producer(state);
+    state_frame(ws);
+    CFG_Node *watch = state_slot_view(reviewer, str8_lit("watch"));
+    StateCheck(str8_match(rd_expr_from_cfg(watch), str8_lit("attach watch 1"), 0));
+    StateCheck(str8_match(uishell_store_setting(watch, str8_lit("asks")), str8_lit("attach watch 2"), 0));
+    StateCheck(state_offers(watch, UIShell_SlotAction_Update) && state_offers(watch, UIShell_SlotAction_Decline));
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("watch"), watch, 0) == ANDAMENTO_CONTENT_UPDATING);
+    uishell_store_act(watch, UIShell_SlotAction_Update);
+    state_frame(ws);
+    watch = state_slot_view(reviewer, str8_lit("watch"));
+    StateCheck(str8_match(rd_expr_from_cfg(watch), str8_lit("attach watch 2"), 0) && !state_offers(watch, UIShell_SlotAction_Update));
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("watch"), watch, 0) == ANDAMENTO_CONTENT_CURRENT);
+    state_reviewer_watch = 3;
+    state_producer(state);
+    state_frame(ws);
+    uishell_store_act(watch, UIShell_SlotAction_Decline);
+    state_frame(ws);
+    StateCheck(str8_match(rd_expr_from_cfg(watch), str8_lit("attach watch 2"), 0) && !state_offers(watch, UIShell_SlotAction_Update));
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("watch"), watch, 0) == ANDAMENTO_CONTENT_FAILED);
+  }
+
+  //- A View Spec another host changes reaches the View already open,
+  // without a restart.
+  {
+    window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
+    CFG_Node *make = state_slot_view(workspace, str8_lit("u:3"));
+    StateCheck(str8_match(rd_expr_from_cfg(make), str8_lit("make test"), 0));
+    AndamentoViewSpec check = {0};
+    check.content = ANDAMENTO_SLOT_COMMAND;
+    check.command = uishell_sidebar_text(str8_lit("make check"));
+    check.has_cwd = 1;
+    check.cwd = uishell_sidebar_text(str8_lit("/src/wheelhouse"));
+    check.has_presentation = 1;
+    check.presentation = uishell_sidebar_text(str8_lit("terminal"));
+    StateCheck(andamento_slot_set(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)),
+                                  uishell_sidebar_text(str8_lit("u:3")), &check, ANDAMENTO_REBIND_REPLACE, 0));
+    state_frame(ws);
+    StateCheck(state_slot_view(workspace, str8_lit("u:3")) == make && str8_match(rd_expr_from_cfg(make), str8_lit("make check"), 0));
+    state_check_committed(ws);
+  }
+
+  //- A pure reorder (a tab moved within its panel, which leaves the config
+  // generation where it was) is committed.
+  {
+    window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
+    CFG_Node *make = state_slot_view(workspace, str8_lit("u:3"));
+    CFG_Node *panel = make->parent;
+    CFG_Node *last = &cfg_nil_node;
+    for(CFG_Node *c = panel->first; c != &cfg_nil_node; c = c->next) { if(cfg_node_child_from_string(c, str8_lit("slot")) != &cfg_nil_node) { last = c; } }
+    StateCheck(last != make);
+    String8 moved = push_str8_copy(scratch.arena, uishell_store_setting(last, str8_lit("slot")));
+    U64 gen = cfg_change_gen(), commits = state->store_commits;
+    cfg_node_insert_child(rd_state->cfg, panel, make->prev, last);
+    StateCheck(cfg_change_gen() == gen && last->next == make);
+    state_frame(ws);
+    StateCheck(state->store_commits == commits+1);
+    state_check_committed(ws);
+    AndamentoArrangement *stored = andamento_arrangement_acquire(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)), 0);
+    AndamentoArrangementInfo info = {0};
+    B32 before = 0;
+    for(U64 i = 0; stored && andamento_arrangement_info(stored, &info) && i+1 < info.tab_count; i++)
+    {
+      AndamentoTab a = {0}, b = {0};
+      andamento_arrangement_tab(stored, i, &a);
+      andamento_arrangement_tab(stored, i+1, &b);
+      before = before || (str8_match(uishell_sidebar_string(a.slot), moved, 0) && str8_match(uishell_sidebar_string(b.slot), str8_lit("u:3"), 0));
+    }
+    StateCheck(before);
+    andamento_arrangement_release(stored);
+  }
+
+  //- A Cleat daemon session is a portable Target Resolution: saved with its
+  // Slot in Andamento rather than in this device's file, tried first after a
+  // restart, and cleared when the provider names a new target.
+  {
+    CFG_Node *partner = state_slot_view(reviewer, str8_lit("partner"));
+    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    // The terminal saves these when it starts its session in a daemon.
+    uishell_store_set_setting(partner, str8_lit("session"), str8_lit("S1"));
+    uishell_store_set_setting(partner, str8_lit("daemon_name"), str8_lit("D1"));
+    state_frame(ws);
+    AndamentoSlotResolution *saved = andamento_slot_resolution_acquire(state->core, id, uishell_sidebar_text(str8_lit("partner")), 0);
+    AndamentoResolution r = {0};
+    StateCheck(saved && andamento_slot_resolution_get(saved, &r) && str8_match(uishell_sidebar_string(r.kind), str8_lit("cleat-session"), 0) &&
+               str8_match(uishell_store_resolution_field(&r, str8_lit("session")), str8_lit("S1"), 0) &&
+               str8_match(uishell_store_resolution_field(&r, str8_lit("daemon")), str8_lit("D1"), 0) &&
+               str8_match(uishell_store_resolution_field(&r, str8_lit("host")), uishell_store_host(), 0));
+    andamento_slot_resolution_release(saved);
+    rd_autosave();
+    state_pump();
+    String8 presentation = data_from_file_path(scratch.arena, uishell_dashboard.presentation_path);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("\"S1\""), 0) == presentation.size);
+    ws = state_restart(ws, &theme, str8_zero());
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    reviewer = state_workspace_labelled(window, str8_lit("reviewer"));
+    partner = state_slot_view(reviewer, str8_lit("partner"));
+    StateCheck(str8_match(uishell_store_setting(partner, str8_lit("session")), str8_lit("S1"), 0) &&
+               str8_match(uishell_store_setting(partner, str8_lit("daemon_name")), str8_lit("D1"), 0));
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == ANDAMENTO_CONTENT_CURRENT);
+    // The provider names a new target: the saved session is for the old
+    // one. The daemon's session stays beside the new View until released.
+    state_reviewer_partner = 3;
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    saved = andamento_slot_resolution_acquire(state->core, id, uishell_sidebar_text(str8_lit("partner")), 0);
+    StateCheck(saved && !andamento_slot_resolution_get(saved, &r));
+    andamento_slot_resolution_release(saved);
+    partner = state_slot_view(reviewer, str8_lit("partner"));
+    CFG_Node *previous = state_previous_view(reviewer, str8_lit("partner"));
+    StateCheck(str8_match(rd_expr_from_cfg(partner), str8_lit("attach partner 3"), 0) && !uishell_store_setting(partner, str8_lit("session")).size);
+    StateCheck(str8_match(uishell_store_setting(previous, str8_lit("session")), str8_lit("S1"), 0));
+    uishell_store_act(previous, UIShell_SlotAction_ReleasePrevious);
+    state_frame(ws);
+    StateCheck(state_previous_view(reviewer, str8_lit("partner")) == &cfg_nil_node);
+    // Back to the workspace that was visible.
     uishell_cmd("select_workspace", .window = window->id, .cfg = state_workspace_labelled(window, str8_lit("Workspace 1"))->id);
     state_frame(ws);
   }

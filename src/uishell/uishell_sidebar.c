@@ -267,13 +267,14 @@ struct UIShell_SidebarState
   U64 observed_count;
   // Workspace arrangements and Slots in Andamento (uishell_workspace_store.c):
   // each workspace's document as last committed or built; the config gen,
-  // content revision and snapshot count last synced; and the calls and
+  // workspaces' tree hash, content revision and snapshot count last synced;
+  // and the calls and
   // commits made, which the behaviour harness counts across a gesture.
   Arena *store_arena;
   UIShell_StoreEntry *store_entries;
   U64 store_entry_count, store_entry_capacity;
   B32 store_synced;
-  U64 store_cfg_gen, store_content_revision, store_snapshot_count;
+  U64 store_cfg_gen, store_tree_hash, store_content_revision, store_snapshot_count;
   U64 store_calls, store_commits;
   // The Dashboard's sidebar arrangement in Andamento (uishell_sidebar_store.c):
   // the document as last committed or built, and its generation; the
@@ -1672,6 +1673,8 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
       {
         workspace = cfg_node_new(rd_state->cfg, split->owner_cfg, str8_lit("workspace"));
         uishell_workspace_id_from_cfg(workspace);
+        // Its subject's Suggested Layout may arrange it (uishell_workspace_store.c).
+        cfg_node_new(rd_state->cfg, workspace, str8_lit("arrangement_fresh"));
         CFG_Node *label = cfg_node_new(rd_state->cfg, workspace, str8_lit("label"));
         cfg_node_new(rd_state->cfg, label, uishell_sidebar_string(effect.name));
         CFG_Node *kind = cfg_node_new(rd_state->cfg, workspace, str8_lit("sidebar_entity_kind"));
@@ -1715,10 +1718,9 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
       if(workspace != &cfg_nil_node)
       {
         outcome = ANDAMENTO_COMPLETE_FOCUS;
-        char *retry_error = 0;
-        andamento_content_retry3(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)), &retry_error);
+        // Its Views' failed updates are retried (uishell_workspace_store.c, "Slot plans").
+        uishell_store_retry(state, workspace);
         state->managed_dirty = 1;
-        andamento_string_free(retry_error);
       }
     }
     else if(effect.kind == ANDAMENTO_EFFECT_INSPECT)

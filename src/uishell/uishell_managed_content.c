@@ -1,5 +1,6 @@
-// One managed primary terminal slot. Reconciliation policy and tokens are owned
-// by Andamento; this adapter owns configuration and terminal runtime operations.
+// Managed content: a terminal's runtime half of an update Andamento plans.
+// Reconciliation policy and tokens are owned by Andamento; this adapter owns
+// configuration and terminal runtime operations.
 internal void
 uishell_managed_set(CFG_Node *node, String8 key, String8 value)
 {
@@ -7,114 +8,102 @@ uishell_managed_set(CFG_Node *node, String8 key, String8 value)
   cfg_node_new_replace(rd_state->cfg, field, value);
 }
 
-internal B32
-uishell_managed_commit(UIShell_SidebarState *state, CFG_Node *workspace, CFG_Node *view, AndamentoContent *update)
+// A terminal update's new in-process session, started before the update's
+// token is checked so the current one is untouched until it commits. Nothing
+// to prepare (0 out) when the View hasn't started its terminal yet: it starts
+// from its config, which committing rewrites. Returns 0 when it couldn't
+// start one.
+typedef struct UIShell_ManagedPrepared UIShell_ManagedPrepared;
+struct UIShell_ManagedPrepared
 {
-  RD_ViewState *vs = rd_view_state_from_cfg(view);
-  UIShell_TerminalViewState *tv = vs->user_data;
-  // This content kind is an in-process command. Do not silently reinterpret
-  // user-configured daemon attachment semantics as a different backend.
-  if((tv && tv->daemon_backend) || cfg_node_child_from_string(view, str8_lit("daemon")) != &cfg_nil_node)
-  { return 0; }
-  cleat_session_colors colors = tv ? tv->session_colors : (cleat_session_colors){0};
-  cleat_provider *provider = 0;
-  cleat_session *session = 0;
-  if(tv && tv->initialized)
+  cleat_provider *provider;
+  cleat_session *session;
+  cleat_session_colors colors;
+};
+
+internal B32
+uishell_managed_prepare(UIShell_TerminalViewState *tv, String8 command, B32 has_cwd, String8 cwd, UIShell_ManagedPrepared *out)
+{
+  MemoryZeroStruct(out);
+  out->colors = tv ? tv->session_colors : (cleat_session_colors){0};
+  if(!tv || !tv->initialized) { return 1; }
+  cleat_provider_desc desc = {.abi_version = CLEAT_PROVIDER_ABI_VERSION,
+    .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|
+                          CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE,
+    .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS};
+  out->provider = cleat_provider_open(&desc);
+  cleat_session_desc target = {.cols = Max(tv->cols, 1), .rows = Max(tv->rows, 1),
+    .cell_width_px = tv->cell_width_px, .cell_height_px = tv->cell_height_px,
+    .colors = &out->colors, .vt_engine = CLEAT_PROVIDER_VT_GHOSTTY, .command = command.str, .command_len = command.size,
+    .cwd = has_cwd ? cwd.str : 0, .cwd_len = has_cwd ? cwd.size : 0};
+  if(out->provider) { out->session = cleat_session_create(out->provider, &target); }
+  if(!out->session)
   {
-    cleat_provider_desc desc = {.abi_version = CLEAT_PROVIDER_ABI_VERSION,
-      .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|
-                            CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE,
-      .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS};
-    provider = cleat_provider_open(&desc);
-    cleat_session_desc target = {.cols = Max(tv->cols, 1), .rows = Max(tv->rows, 1),
-      .cell_width_px = tv->cell_width_px, .cell_height_px = tv->cell_height_px,
-      .colors = &colors, .vt_engine = CLEAT_PROVIDER_VT_GHOSTTY, .command = update->command.data, .command_len = update->command.len,
-      .cwd = update->has_cwd ? update->cwd.data : 0, .cwd_len = update->has_cwd ? update->cwd.len : 0};
-    if(provider) { session = cleat_session_create(provider, &target); }
-    if(!session) { if(provider) { cleat_provider_close(provider); } return 0; }
-  }
-  char *error = 0;
-  B32 valid = andamento_content_valid3(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)), update->token, &error);
-  andamento_string_free(error);
-  if(!valid || cfg_node_from_id(view->id) != view)
-  {
-    if(session) { cleat_session_destroy(session); }
-    if(provider) { cleat_provider_close(provider); }
+    if(out->provider) { cleat_provider_close(out->provider); }
+    MemoryZeroStruct(out);
     return 0;
   }
-  // All mutation and token validation happen on the UI thread; no ingress patch
-  // can intervene between validation, installation and acknowledgement.
-  if(tv) { uishell_terminal_runtime_release(tv); }
-  UIShell_RegsScope(.view = view->id) { rd_store_view_expr_string(uishell_sidebar_string(update->command)); }
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("session")));
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("daemon_name")));
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("cwd")));
-  if(update->has_cwd) { uishell_managed_set(view, str8_lit("cwd"), uishell_sidebar_string(update->cwd)); }
-  uishell_managed_set(view, str8_lit("managed_target"), uishell_sidebar_string(update->target));
-  if(session)
-  {
-    tv->session_colors = colors;
-    tv->initialized = 1;
-    tv->provider = provider;
-    tv->session = session;
-    uishell_terminal_clipboard_register(tv, view->id, uishell_regs()->window);
-    vs->release_user_data = uishell_terminal_runtime_release;
-    cleat_provider_set_wake_callback(provider, uishell_terminal_provider_wake, tv);
-  }
-  rd_request_frame();
   return 1;
 }
 
 internal void
+uishell_managed_discard(UIShell_ManagedPrepared *prepared)
+{
+  if(prepared->session) { cleat_session_destroy(prepared->session); }
+  if(prepared->provider) { cleat_provider_close(prepared->provider); }
+  MemoryZeroStruct(prepared);
+}
+
+// Commits a prepared update: the View's config runs `command` in `cwd`, its
+// old session (and the session ID that named it) goes, and the prepared one
+// takes its place.
+internal void
+uishell_managed_install(CFG_Node *view, UIShell_ManagedPrepared *prepared, String8 command, B32 has_cwd, String8 cwd,
+                        B32 has_target, String8 target)
+{
+  RD_ViewState *vs = rd_view_state_from_cfg(view);
+  UIShell_TerminalViewState *tv = vs->user_data;
+  // All mutation and token validation happen on the UI thread; no ingress patch
+  // can intervene between validation, installation and acknowledgement.
+  if(tv) { uishell_terminal_runtime_release(tv); }
+  UIShell_RegsScope(.view = view->id) { rd_store_view_expr_string(command); }
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("session")));
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("daemon_name")));
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("cwd")));
+  if(has_cwd) { uishell_managed_set(view, str8_lit("cwd"), cwd); }
+  if(has_target) { uishell_managed_set(view, str8_lit("managed_target"), target); }
+  if(prepared->session)
+  {
+    tv->session_colors = prepared->colors;
+    tv->initialized = 1;
+    tv->provider = prepared->provider;
+    tv->session = prepared->session;
+    uishell_terminal_clipboard_register(tv, view->id, uishell_regs()->window);
+    vs->release_user_data = uishell_terminal_runtime_release;
+    cleat_provider_set_wake_callback(prepared->provider, uishell_terminal_provider_wake, tv);
+  }
+  MemoryZeroStruct(prepared);
+  rd_request_frame();
+}
+
+// Whether `view`'s terminal is hosted by a Cleat daemon, whose session is the
+// daemon's rather than the View's, so an update never replaces it in place.
+internal B32
+uishell_managed_daemon_backed(CFG_Node *view)
+{
+  RD_ViewState *vs = rd_view_state_from_cfg(view);
+  UIShell_TerminalViewState *tv = vs->user_data;
+  if(cfg_node_child_from_string(view, str8_lit("daemon")) != &cfg_nil_node) { return 1; }
+  if(tv && tv->initialized) { return tv->daemon_backend; }
+  return cfg_node_child_from_string(view, str8_lit("session"))->first->string.size != 0;
+}
+
+internal void uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner);
+
+// Plans a workspace's managed content: each of its Slots follows the slot
+// protocol (uishell_workspace_store.c, "Slot plans").
+internal void
 uishell_sidebar_reconcile_workspace(UIShell_SidebarState *state, CFG_Node *workspace)
 {
-  String8 kind = cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string;
-  String8 id = cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string;
-  if(!kind.size || !id.size) { return; }
-  Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *arrangement = rd_arrangement_from_owner(scratch.arena, workspace, str8_lit("panels"));
-  CFG_Node *primary = &cfg_nil_node;
-  U64 matches = 0;
-  for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p))
-  {
-    for(RD_ArrangementTab *tab = p->first_tab; tab; tab = tab->next)
-    {
-      CFG_Node *view = cfg_node_from_id(tab->view);
-      if(str8_match(cfg_node_child_from_string(view, str8_lit("resource_id"))->first->string, str8_lit("primary"), 0))
-      { primary = view; matches++; }
-    }
-  }
-  // Missing/ambiguous/user-replaced slots are not a license to overwrite a view.
-  if(matches == 1 && str8_match(primary->string, str8_lit("terminal"), 0))
-  {
-    String8 target = cfg_node_child_from_string(primary, str8_lit("managed_target"))->first->string;
-    CFG_Node *cwd = cfg_node_child_from_string(primary, str8_lit("cwd"));
-    char *error = 0;
-    UIShell_WorkspaceId workspace_id = uishell_workspace_id_from_cfg(workspace);
-    AndamentoEntity3 entity = {uishell_sidebar_text(uishell_workspace_cfg_subject_provider(workspace)),
-      uishell_sidebar_text(kind), uishell_sidebar_text(id)};
-    AndamentoContentPlan *plan = andamento_content_plan_entity(state->core, uishell_sidebar_workspace(workspace_id),
-      entity, uishell_sidebar_text(target), uishell_sidebar_text(rd_expr_from_cfg(primary)), cwd != &cfg_nil_node,
-      uishell_sidebar_text(cwd->first->string), &error);
-    if(uishell_sidebar_result(state, plan != 0, error))
-    {
-      AndamentoContent content = {0};
-      if(andamento_content_get(plan, &content) && content.state == ANDAMENTO_CONTENT_UPDATING)
-      {
-        B32 success = uishell_managed_commit(state, workspace, primary, &content);
-        error = 0;
-        andamento_content_complete3(state->core, uishell_sidebar_workspace(workspace_id), content.token, success, &error);
-        andamento_string_free(error);
-        if(!success)
-        {
-          state->managed_error_workspace = workspace_id;
-          snprintf((char *)state->error, sizeof(state->error), "Managed terminal update failed; select its workspace to retry");
-        }
-        else if(uishell_workspace_id_match(state->managed_error_workspace, workspace_id))
-        { MemoryZeroStruct(&state->managed_error_workspace); state->error[0] = 0; }
-      }
-      andamento_content_release(plan);
-    }
-  }
-  scratch_end(scratch);
+  uishell_store_plan_owner(state, workspace);
 }

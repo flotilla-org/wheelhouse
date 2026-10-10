@@ -350,6 +350,16 @@ rd_title_fstrs_from_cfg(Arena *arena, CFG_Node *cfg, B32 include_extras)
       dr_fstrs_push_new(arena, &result, &params, rd_icon_kind_text_table[RD_IconKind_CircleFilled], .font = rd_font_from_slot(RD_FontSlot_Icons), .raster_flags = rd_raster_flags_from_slot(RD_FontSlot_Icons), .color = color);
     }
     
+    //- uishell: a Slot's notice, in a word (uishell_workspace_store.c, "Notices")
+    {
+      String8 badge = uishell_slot_badge(arena, cfg);
+      if(badge.size != 0)
+      {
+        dr_fstrs_push_new(arena, &result, &params, str8_lit("  "));
+        dr_fstrs_push_new(arena, &result, &params, badge, .color = rgba_secondary, .size = ui_top_font_size()*0.85f);
+      }
+    }
+    
 #undef start_secondary
     scratch_end(scratch);
   }
