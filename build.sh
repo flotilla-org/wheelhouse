@@ -220,6 +220,9 @@ then
     if [ "$host_os" = "Linux" ]; then
       CC="$compiler" python3 ../tools/test-docking-integration.py "$andamento_lib_dir" "$cleat_lib_dir" \
         --andamento-include "$andamento_dir/crates/andamento-ffi/include" --cleat-include "$cleat_dir/crates/cleat/include"
+      # Restart behaviour against golden logical-state snapshots (#314).
+      CC="$compiler" python3 ../tools/test-state-behaviour.py "$andamento_lib_dir" "$cleat_lib_dir" \
+        --andamento-include "$andamento_dir/crates/andamento-ffi/include" --cleat-include "$cleat_dir/crates/cleat/include"
     fi
   fi
   $compile -c ../src/uishell/uishell_main.c $out uishell_main.o
