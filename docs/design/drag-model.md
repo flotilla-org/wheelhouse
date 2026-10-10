@@ -117,7 +117,7 @@ Dragging a chip drags the chip's own subject (an issue or PR), not the row it si
 
 - **Starting a drag.** Press on the item and move past a small threshold (about 4px). A plain click keeps its current meaning:
   - rows drag from anywhere on the body;
-  - sections and cards drag from the title (#210), with the grip shown on hover only as a hint;
+  - sections drag from the title (#210), with the grip shown on hover only as a hint; cards drag from the title line, and have no grip;
   - tabs are unchanged.
 - **Spring-loading.** Hovering a drag over a collapsed section, project or group for about 0.6s expands it. A title-bar overview (home) target opens the overview so you can drop into it, then drag back out. Leaving a target re-collapses only what the drag itself opened.
 - **Invalid targets never highlight.** They come from the same declared validity checker used for docking.
@@ -221,14 +221,16 @@ Where the model and today's behaviour differed, the operator agreed the followin
    - a ghost id stored on the `card` node, next to the existing `kind` and `entity`;
    - migration gives each existing pin a ghost id, so current layouts load unchanged;
    - layout deduplication keys on the ghost id rather than `(kind, entity)`, so copied layouts still don't double up;
-   - dropping a subject into a group is explicit placement, so it always creates a new ghost. Pin on a subject that already has a ghost shows the existing one; holding Pin offers "Pin another" (agreed 2026-10-07, so duplicates stay deliberate).
+   - dropping a subject into a group is explicit placement, so it always creates a new ghost. Pin on a subject that already has a ghost shows the existing one, so duplicates stay deliberate: a second ghost is made by dropping. ("Pin another", by holding Pin, was agreed on 2026-10-07 and dropped on 2026-10-10.)
 
    Dragging a ghost to another group moves that ghost, as before.
-2. **"Dock under source" becomes the row's own expand-in-place.** It is an action, not a drop target: the card's dock button, or the row's ⤢. Expansion replaces the row with the card (see the card prototype). A ghost dropped on its source's home therefore stays an invalid target.
+2. **"Dock under source" becomes the row's own expand-in-place.** It is an action, not a drop target: the row's ⤢, and the expanded card's ⤡ back to the row in its cap (#269). Expansion replaces the row with the card (see the card prototype). Until the row's ⤢ lands, dropping a card on its source row still expands it there. A ghost dropped on its source's home therefore stays an invalid target.
 3. **Floating stays exactly as it is today.** You drag the card itself and release it where you want it; releasing outside the sidebar floats it there. There are no new float targets or visuals. "Releasing over nothing valid snaps back" applies only inside the sidebar.
 4. **Cards drag from the title line,** past the threshold. A click on the card body keeps its focus or keep-open meaning, and the card's action buttons never start a drag.
 
 ### Card settings
+
+A card's controls live in its cap (#269; `sidebar-cards-and-docking.md`, "Peek and engaged"), which is where card settings (⚙) will go too.
 
 Card features and profiles (`card-features-prototype.html`) can reuse RAD's per-View settings:
 

@@ -129,7 +129,15 @@ uishell_sidebar_card_close(UIShell_HoverCard *card)
   card->candidate_since = card->left_at = 0;
   card->corridor_active = 0;
   card->moving = card->move_requested = 0;
-  card->mask.rect = (Rng2F32){0};
+  card->mask.rect = card->cap.rect = (Rng2F32){0};
+  card->cap_shown = 0;
+}
+
+// Where the card takes the pointer: its body, and its cap while shown.
+internal Rng2F32
+uishell_sidebar_card_hit_rect(UIShell_HoverCard *card)
+{
+  return card->cap_shown ? union_2f32(card->rect, card->cap.rect) : card->rect;
 }
 
 // A bounded triangle toward the approaching edge protects diagonal travel.
@@ -256,7 +264,10 @@ uishell_sidebar_card_source(UIShell_SidebarState *state, AndamentoNode node,
 internal void
 uishell_sidebar_card_tick(UIShell_HoverCard *card, Vec2F32 mouse, U64 now)
 {
-  B32 inside = contains_2f32(card->rect, mouse), at_source = contains_2f32(card->source_rect, mouse);
+  // Its own open menu (the cap's ⋯) keeps a card as the pointer does.
+  B32 inside = contains_2f32(uishell_sidebar_card_hit_rect(card), mouse) ||
+    (!ui_key_match(card->menu, ui_key_zero()) && ui_ctx_menu_is_open(card->menu));
+  B32 at_source = contains_2f32(card->source_rect, mouse);
   if(inside) { card->engaged = 1; }
   if(inside || at_source)
   {
@@ -302,7 +313,7 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
   UIShell_HoverCard *float_hit = 0, *section_hit = 0;
   for(UIShell_HoverCard *c = state->detached; c; c = c->next)
   {
-    if(c->open && dim_2f32(c->rect).x > 0 && dim_2f32(c->rect).y > 0 && contains_2f32(c->rect, event->pos))
+    if(c->open && dim_2f32(c->rect).x > 0 && dim_2f32(c->rect).y > 0 && contains_2f32(uishell_sidebar_card_hit_rect(c), event->pos))
     {
       if(c->placement == UIShell_CardPlacement_Float || c->moving) { if(!float_hit) { float_hit = c; } }
       else if(!section_hit) { section_hit = c; }
@@ -341,7 +352,7 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
   {
     S64 hit = -1;
     for(U64 i = 0; i < ArrayCount(state->cards); i++)
-    { if(state->cards[i].open && contains_2f32(state->cards[i].rect, event->pos)) { hit = (S64)i; } }
+    { if(state->cards[i].open && contains_2f32(uishell_sidebar_card_hit_rect(&state->cards[i]), event->pos)) { hit = (S64)i; } }
     UIShell_HoverCard *detached_hit = float_hit ? float_hit : hit >= 0 ? 0 : section_hit;
     for(UIShell_HoverCard *c = state->detached; c; c = c->next) { c->focused = c->open && c == detached_hit; }
     for(U64 i = 0; i < ArrayCount(state->cards); i++)
@@ -453,10 +464,7 @@ uishell_sidebar_card_role_text(UIShell_SidebarState *state, U64 index, U32 role)
   return str8_zero();
 }
 
-internal UI_Signal uishell_sidebar_card_icon_button(String8 glyph, String8 key, String8 description);
-internal void uishell_sidebar_card_drag_control(UIShell_HoverCard *card);
 internal void uishell_sidebar_card_title_handle(UIShell_HoverCard *card, String8 text);
-internal void uishell_sidebar_card_move_controls(UIShell_HoverCard *card, F32 width);
 
 internal void uishell_sidebar_ghost_set_expanded(CFG_Node *saved, B32 expanded);
 
@@ -469,22 +477,20 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
   String8 badge = uishell_sidebar_card_role_text(state, index, ANDAMENTO_DETAIL_STATE);
   if(!identity.size) { identity = uishell_sidebar_string(detail.entity.id); }
   if(!title.size) { title = uishell_sidebar_string(detail.label); }
+  // The body is information only; its controls are the cap's (#269). The
+  // title line is where the card drags from.
   F32 header_em = floor_f32(ui_top_font_size()*0.82f);
-  F32 grip_width = interactive ? header_em*1.4f : 0;
   // A pinned card collapses to its compact ghost row.
   B32 collapsible = interactive && card->placement == UIShell_CardPlacement_Pinned && card->saved;
   F32 collapse_width = collapsible ? ui_top_font_size()*1.5f : 0;
-  U64 move_count = card->placement == UIShell_CardPlacement_Transient ? 4 : 3;
-  F32 controls_width = interactive ? header_em*1.4f*(move_count+1) : 0;
   F32 badge_width = badge.size ? Min(width*0.3f, fnt_dim_from_tag_size_string(rd_font_from_slot(RD_FontSlot_Main), header_em, 0, ui_top_tab_size(), badge).x+header_em) : 0;
   UI_Row UI_FontSize(header_em) UI_TagF("weak") RD_Font(RD_FontSlot_Main)
   {
     if(collapsible && ui_clicked(uishell_sidebar_disclosure(1, str8_lit("###card_collapse"))))
     { uishell_sidebar_ghost_set_expanded(cfg_node_from_id(card->saved), 0); }
-    if(interactive) { UI_PrefWidth(ui_px(grip_width, 1)) { uishell_sidebar_card_drag_control(card); } }
     UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak") RD_Font(RD_FontSlot_Icons)
     { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_icon(detail.entity.kind)]); }
-    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-grip_width-collapse_width-controls_width), 1)) UI_TagF("weak")
+    UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-collapse_width), 1)) UI_TagF("weak")
     { if(interactive) { uishell_sidebar_card_title_handle(card, identity); } else { ui_label(identity); } }
     if(badge.size)
     {
@@ -493,17 +499,6 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
         UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder, "%S###state_badge", badge);
         ui_box_equip_display_string(box, badge);
       }
-    }
-    if(interactive)
-    {
-      UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
-      UI_TagF("weak") RD_Font(RD_FontSlot_Icons)
-      {
-        if(ui_clicked(uishell_sidebar_card_icon_button(rd_icon_kind_text_table[RD_IconKind_Info], str8_lit("card_details"),
-          card->enriched ? str8_lit("Hide details") : str8_lit("Show details"))))
-        { card->enriched = !card->enriched; rd_request_frame(); }
-      }
-      uishell_sidebar_card_move_controls(card, width);
     }
   }
   if(!str8_match(identity, title, 0)) { ui_label_multiline(width, title); }
@@ -667,10 +662,14 @@ uishell_sidebar_card_preview(RD_WindowState *ws, U64 slot, AndamentoNode node, F
 
 internal void uishell_sidebar_detached_finish(RD_WindowState *ws);
 
+// Back, after in-card navigation; and the entity actions, while the cap shows,
+// when it is too narrow to hold them (uishell_sidebar_card_cap).
 internal size_t
 uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card, U64 index, F32 width)
 {
   size_t action = ANDAMENTO_NONE;
+  B32 actions = card->cap_footer && card->cap_shown;
+  if(card->depth <= 1 && !actions) { return action; }
   ui_spacer(ui_em(0.5f, 1));
   if(card->depth > 1 && ui_clicked(uishell_sidebar_button(str8_lit("← Back###card_back"))))
   {
@@ -684,8 +683,9 @@ uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card
   for(U64 i = 0; i < ArrayCount(controls); i++)
   {
     AndamentoDetailAction control = {0};
-    if(andamento_snapshot_detail_action(state->snapshot, index, i, &control)) { controls[control_count++] = control; }
+    if(actions && andamento_snapshot_detail_action(state->snapshot, index, i, &control)) { controls[control_count++] = control; }
   }
+  if(!control_count) { return action; }
   F32 button_width = control_count ? width/control_count : width;
   UI_Row
   {
@@ -722,6 +722,130 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
 }
 
 #include "uishell/uishell_detached_cards.c"
+
+// Andamento names an action's intent; the cap shows it as a header glyph, its
+// label the tooltip.
+internal String8
+uishell_sidebar_card_action_glyph(String8 intent)
+{
+  if(str8_match(intent, str8_lit("copy-url"), 0)) { return str8_lit("⧉"); }
+  if(str8_match(intent, str8_lit("open-url"), 0)) { return str8_lit("↗"); }
+  if(str8_match(intent, str8_lit("materialize-workspace"), 0)) { return str8_lit("+"); }
+  return str8_lit("→");
+}
+
+// The cap (#269): a strip the card's width and style, joined to `rect`'s top
+// edge, or its bottom edge when `bounds` has no room above. It holds
+// everything you can act on: the entity's actions (those that don't fit go
+// in a ⋯ menu, or with no room even for that, to the footer), ⓘ, Pin on a
+// hover or floating card, ⤡ back to the row on a card expanded under it, and
+// ×. Built at `origin` in its parent's space with the card's corner `radius`,
+// it overlays what's beyond the card, so nothing reflows. Returns the action
+// clicked.
+internal F32
+uishell_sidebar_card_cap_height(void)
+{
+  return floor_f32(ui_top_font_size()*2.f);
+}
+
+internal B32
+uishell_sidebar_card_cap_below(Rng2F32 rect, Rng2F32 bounds)
+{
+  F32 height = uishell_sidebar_card_cap_height();
+  return rect.y0-height < bounds.y0 && rect.y1+height <= bounds.y1;
+}
+
+internal size_t
+uishell_sidebar_card_cap(UIShell_SidebarState *state, UIShell_HoverCard *card, U64 index,
+                         Rng2F32 rect, Rng2F32 bounds, Vec2F32 origin, F32 radius)
+{
+  size_t action = ANDAMENTO_NONE;
+  F32 em = ui_top_font_size(), height = uishell_sidebar_card_cap_height(), width = dim_2f32(rect).x;
+  card->cap_below = uishell_sidebar_card_cap_below(rect, bounds);
+  // A pixel of overlap, which the seam below paints over, joins the borders.
+  F32 y = card->cap_below ? rect.y1-1 : rect.y0-height+1;
+  card->cap.rect = r2f32p(rect.x0, y, rect.x1, y+height);
+  AndamentoDetailAction controls[UIShell_HoverCardActionCount] = {0};
+  U64 control_count = 0;
+  for(U64 i = 0; index != ANDAMENTO_NONE && i < ArrayCount(controls); i++)
+  {
+    AndamentoDetailAction control = {0};
+    if(andamento_snapshot_detail_action(state->snapshot, index, i, &control)) { controls[control_count++] = control; }
+  }
+  B32 pin = card->placement == UIShell_CardPlacement_Transient || card->placement == UIShell_CardPlacement_Float;
+  B32 back = card->placement == UIShell_CardPlacement_Inline;
+  F32 slot = Max((F32)UIShell_ControlMinimumPT, floor_f32(em*1.7f));
+  U64 fixed = (index != ANDAMENTO_NONE) + pin + 1, room = (U64)Max(0.f, floor_f32((width-8.f)/slot));
+  U64 shown = control_count, folded = 0;
+  if(fixed+control_count > room)
+  {
+    B32 more = control_count && fixed+1 <= room;
+    shown = more ? Min(control_count, room-fixed-1) : 0;
+    folded = more ? control_count-shown : 0;
+  }
+  card->cap_footer = shown+folded < control_count;
+  UI_Box *cap;
+  UI_FixedX(rect.x0-origin.x) UI_FixedY(y-origin.y) UI_PrefWidth(ui_px(width, 1)) UI_PrefHeight(ui_px(height, 1))
+  UI_ChildLayoutAxis(Axis2_X)
+  UI_CornerRadius00(card->cap_below ? 0 : radius) UI_CornerRadius10(card->cap_below ? 0 : radius)
+  UI_CornerRadius01(card->cap_below ? radius : 0) UI_CornerRadius11(card->cap_below ? radius : 0)
+  { cap = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Clip, "###card_cap_%p", card); }
+  card->cap.key = cap->key;
+  card->cap_shown = 1;
+  UI_Key menu_key = ui_key_from_stringf(cap->key, "more");
+  UI_Parent(cap) UI_PrefHeight(ui_px(height, 1)) RD_Font(RD_FontSlot_Main) UI_CornerRadius(0)
+  {
+    // The seam covers both borders along the join.
+    UI_FixedX(1) UI_FixedY(card->cap_below ? 0 : height-2) UI_PrefWidth(ui_px(Max(0.f, width-2), 1)) UI_PrefHeight(ui_px(2, 1))
+    { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_from_stringf(cap->key, "seam")); }
+    ui_spacer(ui_pct(1, 0));
+    for(U64 i = 0; i < shown; i++)
+    {
+      String8 intent = uishell_sidebar_string(controls[i].intent);
+      UI_Signal sig = uishell_sidebar_header_button(uishell_sidebar_card_action_glyph(intent),
+        push_str8f(ui_build_arena(), "card_action_%I64u_%S", i, intent), 0, 1, uishell_sidebar_string(controls[i].label), str8_zero());
+      if(ui_clicked(sig)) { action = controls[i].action; }
+    }
+    if(folded)
+    {
+      card->menu = menu_key;
+      UI_Signal more = uishell_sidebar_header_button(str8_lit("⋯"), str8_lit("card_more"), ui_ctx_menu_is_open(menu_key), 1,
+        str8_lit("More actions"), str8_zero());
+      if(ui_clicked(more)) { ui_ctx_menu_open(menu_key, more.box->key, v2f32(0, dim_2f32(more.box->rect).y)); }
+    }
+    if(index != ANDAMENTO_NONE &&
+       ui_clicked(uishell_sidebar_header_button(str8_lit("ⓘ"), str8_lit("card_details"), card->enriched, 1,
+         card->enriched ? str8_lit("Hide details") : str8_lit("Show details"), str8_zero())))
+    { card->enriched = !card->enriched; rd_request_frame(); }
+    if(pin) { uishell_sidebar_card_pin_control(card); }
+    if(ui_clicked(uishell_sidebar_header_button(back ? str8_lit("⤡") : str8_lit("×"), back ? str8_lit("card_back_to_row") : str8_lit("card_close"),
+         0, 1, back ? str8_lit("Back to row") : str8_lit("Close"), str8_zero())))
+    { uishell_sidebar_card_close(card); rd_request_frame(); }
+    ui_spacer(ui_px(4, 1));
+  }
+  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(12.f, 1)) UI_PrefHeight(ui_em(1.8f, 1)) RD_Font(RD_FontSlot_Main)
+  {
+    for(U64 i = shown; i < shown+folded; i++)
+    {
+      String8 intent = uishell_sidebar_string(controls[i].intent);
+      if(ui_clicked(uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###card_more_%I64u_%S", uishell_sidebar_string(controls[i].label), i, intent))))
+      { action = controls[i].action; ui_ctx_menu_close(); }
+    }
+  }
+  // An action other than copying is done with a hover card, as a click is.
+  if(action != ANDAMENTO_NONE && card->placement == UIShell_CardPlacement_Transient)
+  {
+    for(U64 i = 0; i < control_count; i++)
+    {
+      if(controls[i].action == action && !str8_match(uishell_sidebar_string(controls[i].intent), str8_lit("copy-url"), 0))
+      { uishell_sidebar_card_close(card); }
+    }
+  }
+  // Its background takes clicks, so they never reach what it covers.
+  cap->flags |= UI_BoxFlag_MouseClickable;
+  ui_signal_from_box(cap);
+  return action;
+}
 
 // Leave the source row clear for horizontal scanning in Near placement. The
 // 16pt gap exceeds the corridor's 12pt edge padding, so sideways motion along
@@ -776,6 +900,40 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
   }
   B32 outside = uishell_hover_cards_outside || rd_setting_b32_from_name(str8_lit("hover_cards_outside_sidebar"));
   if(!window_focused) { state->card_escape_down = 0; }
+  // Docked cards (pinned, or expanded under their row) build later, in their
+  // Views. Their caps build here from the last build's bounds, so they paint
+  // over the sidebar, and show while the card has the pointer (#269).
+  for(UIShell_HoverCard *c = state->detached; c; c = c->next)
+  {
+    if(c->placement == UIShell_CardPlacement_Float) { continue; }
+    B32 had_cap = c->cap_shown;
+    c->cap_shown = 0;
+    if(!c->open || c->moving || !sidebar_visible || state->drag_card || state->row_drag_key.size || rd_drag_is_active()) { continue; }
+    UI_Box *box = ui_box_from_key(c->mask.key);
+    if(ui_box_is_nil(box) || box->last_touched_build_index+1 < ui_state->build_index) { continue; }
+    Rng2F32 bounds = window;
+    for(UI_Box *p = box->parent; !ui_box_is_nil(p); p = p->parent)
+    { if(p->flags & UI_BoxFlag_Clip) { bounds = intersect_2f32(bounds, p->rect); } }
+    Rng2F32 visible = intersect_2f32(box->rect, bounds);
+    if(dim_2f32(visible).x <= 0 || dim_2f32(visible).y <= 0) { continue; }
+    B32 over = contains_2f32(visible, mouse) || (had_cap && contains_2f32(c->cap.rect, mouse)) ||
+      (!ui_key_match(c->menu, ui_key_zero()) && ui_ctx_menu_is_open(c->menu));
+    // Not while a card above it has the pointer.
+    for(U64 i = 0; i < ArrayCount(state->cards); i++)
+    { if(state->cards[i].open && contains_2f32(uishell_sidebar_card_hit_rect(&state->cards[i]), mouse)) { over = 0; } }
+    for(UIShell_HoverCard *f = state->detached; f; f = f->next)
+    { if(f->open && f->placement == UIShell_CardPlacement_Float && contains_2f32(uishell_sidebar_card_hit_rect(f), mouse)) { over = 0; } }
+    if(!over) { continue; }
+    AndamentoNode node = {0};
+    U64 index = uishell_sidebar_card_find(state, c->path[c->depth-1], &node);
+    size_t action = ANDAMENTO_NONE;
+    UI_Parent(ui_state->root)
+    UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), .025f))
+    { action = uishell_sidebar_card_cap(state, c, index, visible, bounds, ui_state->root->fixed_position, 5.f); }
+    // The cap takes the pointer from what it covers.
+    if(c->cap_shown) { c->cap.next = ui_state->hover_card_extra; ui_state->hover_card_extra = &c->cap; }
+    if(action != ANDAMENTO_NONE) { uishell_sidebar_card_queue_action(state, node, action); rd_request_frame(); }
+  }
   U64 card_count = ArrayCount(state->cards);
   for(UIShell_HoverCard *c = state->detached; c; c = c->next)
   { if(c->open && (c->placement == UIShell_CardPlacement_Float || c->moving)) { card_count++; } }
@@ -787,7 +945,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     if(!c->open || (c->placement != UIShell_CardPlacement_Float && !c->moving)) { continue; }
     cards[--detached_slot] = c;
     c->mask.key = ui_key_from_stringf(ui_key_zero(), "###detached_card_%p", c);
-    c->mask.rect = c->rect;
+    c->mask.rect = uishell_sidebar_card_hit_rect(c);
     c->mask.next = 0;
     if(!c->moving)
     {
@@ -803,7 +961,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     if(state->cards[slot].open && (!ui_any_ctx_menu_is_open() || ui_ctx_menu_is_open(state->cards[slot].menu)))
     {
       ui_state->hover_card_keys[slot] = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", slot);
-      ui_state->hover_card_rects[slot] = state->cards[slot].rect;
+      ui_state->hover_card_rects[slot] = uishell_sidebar_card_hit_rect(&state->cards[slot]);
     }
   }
   // The renderer traverses siblings in reverse. Build the separate card first
@@ -843,6 +1001,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
       { uishell_sidebar_card_close(card); continue; }
     }
     uishell_sidebar_card_tick(card, mouse, now);
+    card->cap_shown = 0;
     if(!card->open) { continue; }
     if(card->left_at && card->placement == UIShell_CardPlacement_Transient) { rd_request_frame(); }
     ui_state->hover_card_focus |= card->focused;
@@ -868,15 +1027,23 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     if(slot >= ArrayCount(state->cards)) { card->mask.rect = card->rect; }
     else { ui_state->hover_card_keys[slot] = card->moving ? ui_key_zero() : key; ui_state->hover_card_rects[slot] = card->rect; }
     card->last_mouse = mouse;
-    size_t action = ANDAMENTO_NONE;
+    size_t action = ANDAMENTO_NONE, cap_action = ANDAMENTO_NONE;
+    // A floating card always shows its cap; a hover card once the pointer
+    // has moved into it (#269). Its edge is square where the cap joins.
+    B32 cap = !card->moving && (floating || card->engaged);
+    B32 cap_below = cap && uishell_sidebar_card_cap_below(card->rect, window);
+    F32 radius = em*0.25f, top = cap && !cap_below ? 0 : radius, bottom = cap_below ? 0 : radius;
     UI_Parent(ui_state->root) UI_TagF("floating")
-    UI_Focus(card->focused ? UI_FocusKind_On : UI_FocusKind_Off) UI_CornerRadius(em*0.25f)
+    UI_Focus(card->focused ? UI_FocusKind_On : UI_FocusKind_Off) UI_CornerRadius(radius)
     {
       UI_Box *root;
-      UI_Rect(card->rect)
+      UI_Rect(card->rect) UI_CornerRadius00(top) UI_CornerRadius10(top) UI_CornerRadius01(bottom) UI_CornerRadius11(bottom)
       { root = ui_build_box_from_key(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|
           UI_BoxFlag_DrawDropShadow|UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DefaultFocusNavY|
           UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder, key); }
+      if(cap) UI_Parent(root) UI_FocusActive(card->focused ? UI_FocusKind_Root : UI_FocusKind_Off)
+      UI_FocusHot(card->focused ? UI_FocusKind_Root : UI_FocusKind_Off)
+      { cap_action = uishell_sidebar_card_cap(state, card, index, card->rect, window, card->rect.p0, radius); }
       UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(8, 8, width-8, height-8), UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);
       params.content_dim_px = v2f32(width-16, content_height);
       UI_ScrollRegion region = ui_scroll_region_layout(params);
@@ -926,8 +1093,15 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
           root->fixed_position = pos; root->fixed_size.y = height;
           scroll.content_box->fixed_size.y = height-16;
           card->rect = r2f32p(pos.x, pos.y, pos.x+width, pos.y+height);
-          if(slot >= ArrayCount(state->cards)) { card->mask.rect = card->rect; }
-          else { ui_state->hover_card_rects[slot] = card->rect; }
+          // The cap follows the measured card: it sits in the root's space.
+          UI_Box *cap_box = ui_box_from_key(card->cap.key);
+          if(card->cap_shown && !ui_box_is_nil(cap_box) && cap_box->parent == root)
+          {
+            F32 y = card->cap_below ? height-1 : cap_box->fixed_position.y;
+            cap_box->fixed_position.y = y;
+            card->cap.rect = r2f32p(card->rect.x0, card->rect.y0+y, card->rect.x1, card->rect.y0+y+dim_2f32(card->cap.rect).y);
+          }
+
           rd_request_frame(); // Update scroll thumb geometry with the measured extent.
         }
         UI_Signal wheel = ui_signal_from_box(scroll.content_box);
@@ -938,6 +1112,10 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
         ui_signal_from_box(root);
       }
     }
+    if(action == ANDAMENTO_NONE) { action = cap_action; }
+    // Its masks cover the card and its cap, which is the root's child.
+    if(slot >= ArrayCount(state->cards)) { card->mask.rect = uishell_sidebar_card_hit_rect(card); }
+    else if(!card->moving) { ui_state->hover_card_rects[slot] = uishell_sidebar_card_hit_rect(card); }
     if(card->moving)
     {
       if(slot < ArrayCount(state->cards)) { ui_state->hover_card_keys[slot] = ui_key_zero(); }

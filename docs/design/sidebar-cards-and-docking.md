@@ -61,7 +61,26 @@ prefix string. Wheelhouse owns the visual style.
 
 A card has two states. A **peek** card is information only: no actions, no
 drag handles, no keyboard focus. Moving the pointer into it makes it
-**engaged**, and only then do actions and move controls appear.
+**engaged**, and only then does it grow its cap (#269): a strip the card's
+width and style, joined to its top edge (or its bottom edge when there's no
+room above), holding everything you can act on. The cap overlays what it
+covers, so nothing reflows. The card body stays information only.
+
+This applies to every card at rest, wherever it is:
+
+| Card | At rest | Cap shown |
+|---|---|---|
+| Hover card (from a row or chip) | Peek | Once the pointer moves into it |
+| Pinned card, or one expanded under its row | Peek | While the pointer is over it |
+| Floating card | — | Always |
+
+The cap holds the entity's actions from Andamento as glyphs with their labels
+as tooltips (a narrow cap folds them into ⋯, and with no room even for that
+they fall back to a footer), ⓘ for details until profiles absorb it, Pin on
+hover and floating cards, ⤡ back to the row on an expanded card, and × on the
+rest. Its controls are section-header controls: one glyph set and one minimum
+hit width. There is no Float control (dragging floats a card) and no Dock
+under source (see `drag-model.md`, decision 2).
 
 - The card anchors to the edge of the row or chip it came from and does not
   follow the pointer. Prototype both placements: just past the hovered element,
@@ -85,8 +104,8 @@ drag handles, no keyboard focus. Moving the pointer into it makes it
 Dragging or pinning an engaged card detaches it. It can then:
 
 - **float** over the workspace (the default after a drag);
-- **dock under its source**, expanding inline beneath the row, scrolling with
-  the tree and going away with the row's subject; or
+- **dock under its source** (dropped on its row), expanding inline beneath the
+  row, scrolling with the tree and going away with the row's subject; or
 - move to the **pinned area**, which survives scrolling, filtering and
   restarts.
 

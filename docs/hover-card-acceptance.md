@@ -107,18 +107,18 @@ The earlier placement-edge Related fallback above is superseded by typed
 relation fields.
 
 The header uses kind icons, identity, title and a state badge. Facts occupy two
-columns with icons and values. The engaged header has a Details toggle that
-reveals full fact labels, controller-relative observation ages and stale styling.
-The actions footer packs its controls into one row. Missing
+columns with icons and values. The cap's Details toggle (ⓘ) reveals full fact
+labels, controller-relative observation ages and stale styling. Missing
 facts are omitted; known-empty facts show a dash. Retained stale values
 and ages are dimmed in Details mode. Producer timestamp strings are never parsed. Related
 mini-rows show kind icons, target labels and state chips. An unavailable target
 is informational; available targets navigate by exact kind/id, including those
 absent from the tree. All path entities and duplicate targets are omitted.
 
-The existing live preview stays in both card states. Engaged cards expose the
-semantic controls supplied by Andamento in an actions footer, plus Back and
-Close. Pending actions retain entity identity and semantic intent, and resolve
+The existing live preview stays in both card states. Engaged cards grow a cap
+(#269, `detached-card-acceptance.md`) holding the semantic controls supplied by
+Andamento as glyphs, Details, Pin and Close; a footer holds Back, and the
+actions only when the cap is too narrow even for its ⋯ menu. Pending actions retain entity identity and semantic intent, and resolve
 against the snapshot current at sidebar dispatch. A disappearing or changed
 intent cancels the pending action. Near remains the default and Outside remains
 in User Settings. The existing timing, safe corridor and focus controller is
