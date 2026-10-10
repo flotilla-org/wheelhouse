@@ -707,6 +707,22 @@ rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, CFG_Node *de
   return rd_dock_command_allowed(operation, view->string, rule);
 }
 
+// Moves `view` after `prev` (nil: first) in `destination`'s arrangement and
+// saves it; saving takes the View from any arrangement it leaves, without
+// selecting another there. Floating Panels are not arrangements yet, so a
+// move into one edits their config directly.
+internal void
+uishell_move_view_to_panel(Arena *arena, CFG_Node *view, CFG_Node *destination, CFG_Node *prev)
+{
+  Temp temp = temp_begin(arena);
+  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_cfg(arena, destination);
+  RD_Arrangement *arrangement = rd_arrangement_from_cfg(arena, mount.panels_root);
+  RD_PanelID panel = rd_arrangement_panel_from_cfg(arrangement, destination->id)->id;
+  if(panel == 0) { cfg_node_insert_child(rd_state->cfg, destination, prev, view); }
+  else if(rd_arrangement_move_tab(arrangement, view->id, panel, prev->id)) { rd_arrangement_save(rd_state->cfg, arrangement); }
+  temp_end(temp);
+}
+
 internal B32
 uishell_dispatch_tab_command(String8 name)
 {
@@ -956,8 +972,7 @@ uishell_dispatch_tab_command(String8 name)
     CFG_Node *dst_panel = cfg_node_from_id(uishell_regs()->dst_panel);
     if(dst_panel != &cfg_nil_node && prev_tab != view && rd_dock_move_allowed(scratch.arena, "move", view, dst_panel, Dir2_Invalid))
     {
-      cfg_node_unhook(rd_state->cfg, src_panel, view);
-      cfg_node_insert_child(rd_state->cfg, dst_panel, prev_tab, view);
+      uishell_move_view_to_panel(scratch.arena, view, dst_panel, prev_tab);
       UIShell_RegsScope(.panel = dst_panel->id, .tab = view->id)
       {
         uishell_push_cmd_current(str8_lit("focus_tab"));
@@ -1080,7 +1095,6 @@ uishell_dispatch_panel_command(String8 name)
     if(split_dir != Dir2_Invalid)
     {
       Axis2 split_axis = axis2_from_dir2(split_dir);
-      Side split_side = side_from_dir2(split_dir);
       if(split_panel == &cfg_nil_node)
       {
         split_panel = cfg_node_from_id(uishell_regs()->panel);
@@ -1088,71 +1102,15 @@ uishell_dispatch_panel_command(String8 name)
       CFG_Node *moving_view = cfg_node_from_id(uishell_regs()->view);
       if(do_dragdrop_split && !rd_dock_move_allowed(scratch.arena, "split with", moving_view, split_panel, split_dir))
       { scratch_end(scratch); return 1; }
-      // rd_dock_moving_width mirrors this insertion/bisection before closure;
-      // preserve agreement with the command/render differential scenarios.
-      CFG_Node *new_panel_cfg = &cfg_nil_node;
+      // rd_dock_moving_width runs these operations on a copy to measure the
+      // result; preserve agreement with the command/render differential scenarios.
       UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, split_panel);
       CFG_PanelTree panel_tree = workspace_mount.panel_tree;
-      CFG_PanelNode *panel_root = panel_tree.root;
-      RD_DockLayoutKeys layout = rd_dock_layout_keys(scratch.arena, panel_root->cfg);
-      String8 host_root_name = layout.root_name;
-      CFG_Node *host_owner = layout.owner;
-      String8 axis_key = layout.axis_key;
-      CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_root, split_panel);
-      CFG_PanelNode *parent = panel->parent;
-
-      if(parent != &cfg_nil_panel_node && parent->split_axis == split_axis)
-      {
-        CFG_Node *parent_cfg = parent->cfg;
-        CFG_Node *panel_cfg = panel->cfg;
-        CFG_Node *new_cfg = cfg_node_alloc(rd_state->cfg);
-        cfg_node_insert_child(rd_state->cfg, parent_cfg, split_side == Side_Max ? panel_cfg : panel_cfg->prev, new_cfg);
-        cfg_node_equip_stringf(rd_state->cfg, new_cfg, "%f", 1.f/(parent->child_count+1));
-        for(CFG_PanelNode *child = parent->first; child != &cfg_nil_panel_node; child = child->next)
-        {
-          F32 old_pct = child->pct_of_parent;
-          F32 new_pct = old_pct * ((F32)(parent->child_count) / (parent->child_count+1));
-          cfg_node_equip_stringf(rd_state->cfg, child->cfg, "%f", new_pct);
-        }
-        new_panel_cfg = new_cfg;
-      }
-      else
-      {
-        CFG_Node *split_panel_prev = panel->prev->cfg;
-        CFG_Node *new_parent = cfg_node_alloc(rd_state->cfg);
-        CFG_Node *new_sibling = cfg_node_alloc(rd_state->cfg);
-        cfg_node_equip_string(rd_state->cfg, new_parent, split_panel->string);
-        cfg_node_equip_string(rd_state->cfg, split_panel, str8_lit("0.5"));
-        cfg_node_equip_string(rd_state->cfg, new_sibling, str8_lit("0.5"));
-        if(parent->cfg != &cfg_nil_node)
-        {
-          cfg_node_unhook(rd_state->cfg, parent->cfg, split_panel);
-          cfg_node_insert_child(rd_state->cfg, parent->cfg, split_panel_prev, new_parent);
-        }
-        else
-        {
-          cfg_node_equip_string(rd_state->cfg, new_parent, host_root_name);
-          CFG_Node *panels_owner = host_owner;
-          cfg_node_insert_child(rd_state->cfg, panels_owner, panels_owner->last, new_parent);
-          if(split_axis == Axis2_X)
-          {
-            cfg_node_child_from_string_or_alloc(rd_state->cfg, panels_owner, axis_key);
-          }
-          else
-          {
-            cfg_node_release(rd_state->cfg, cfg_node_child_from_string(panels_owner, axis_key));
-          }
-        }
-        CFG_Node *min = split_panel;
-        CFG_Node *max = new_sibling;
-        if(split_side == Side_Min)
-        {
-          Swap(CFG_Node *, min, max);
-        }
-        cfg_node_insert_child(rd_state->cfg, new_parent, new_parent->last, min);
-        cfg_node_insert_child(rd_state->cfg, new_parent, new_parent->last, max);
-        new_panel_cfg = new_sibling;
-      }
+      CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, split_panel);
+      RD_Arrangement *arrangement = rd_arrangement_from_cfg(scratch.arena, workspace_mount.panels_root);
+      RD_PanelID created = rd_arrangement_split(arrangement, rd_arrangement_panel_from_cfg(arrangement, split_panel->id)->id, split_dir);
+      if(created != 0) { rd_arrangement_save(rd_state->cfg, arrangement); }
+      CFG_Node *new_panel_cfg = cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, created)->cfg);
 
       {
         RD_WindowState *ws = rd_window_state_from_cfg(new_panel_cfg);
@@ -1209,8 +1167,7 @@ uishell_dispatch_panel_command(String8 name)
       if(do_dragdrop_split &&
          new_panel_cfg != &cfg_nil_node && dragdrop_tab != &cfg_nil_node && dragdrop_origin_panel_cfg != &cfg_nil_node)
       {
-        cfg_node_unhook(rd_state->cfg, dragdrop_origin_panel_cfg, dragdrop_tab);
-        cfg_node_insert_child(rd_state->cfg, new_panel_cfg, new_panel_cfg->last, dragdrop_tab);
+        uishell_move_view_to_panel(scratch.arena, dragdrop_tab, new_panel_cfg, &cfg_nil_node);
         UIShell_WorkspaceMount origin_workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, dragdrop_origin_panel_cfg);
         CFG_PanelTree origin_panel_tree = origin_workspace_mount.panel_tree;
         CFG_PanelNode *origin_panel = cfg_panel_node_from_tree_cfg(origin_panel_tree.root, dragdrop_origin_panel_cfg);
@@ -1256,127 +1213,22 @@ uishell_dispatch_panel_command(String8 name)
     }
     scratch_end(scratch);
   }
-  // rd_dock_moving_width mirrors this closure/rescale/collapse/flatten path.
+  // rd_dock_moving_width runs this closure on a copy to measure a move.
   else if(str8_match(name, str8_lit("close_panel"), 0))
   {
     Temp scratch = scratch_begin(0, 0);
     UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
-    CFG_Node *window = workspace_mount.window_cfg;
-    CFG_PanelTree panel_tree = workspace_mount.panel_tree;
-    CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, cfg_node_from_id(uishell_regs()->panel));
-    RD_DockLayoutKeys layout = rd_dock_layout_keys(scratch.arena, panel_tree.root->cfg);
-    String8 host_root_name = layout.root_name;
-    CFG_Node *host_owner = layout.owner;
-    String8 axis_key = layout.axis_key;
-    CFG_PanelNode *parent = panel->parent;
-    if(parent != &cfg_nil_panel_node)
+    CFG_Node *panel = cfg_node_from_id(uishell_regs()->panel);
+    RD_Arrangement *arrangement = rd_arrangement_from_cfg(scratch.arena, workspace_mount.panels_root);
+    RD_PanelID heir = rd_arrangement_close(arrangement, rd_arrangement_panel_from_cfg(arrangement, panel->id)->id);
+    if(heir != 0)
     {
-      if(parent->child_count == 2)
+      rd_arrangement_save(rd_state->cfg, arrangement);
+      if(workspace_mount.panel_tree.focused->cfg == panel)
       {
-        CFG_PanelNode *discard_child = panel;
-        CFG_PanelNode *keep_child = (panel == parent->first ? parent->last : parent->first);
-        CFG_PanelNode *grandparent = parent->parent;
-        CFG_PanelNode *parent_prev = parent->prev;
-        F32 pct_of_parent = parent->pct_of_parent;
-        // Flattening can release keep_child's split container. Retain a leaf
-        // that survives both the collapse and the same-axis merge for focus.
-        CFG_Node *focus_cfg = keep_child->cfg;
-        for(CFG_PanelNode *p = keep_child; p != &cfg_nil_panel_node; p = p->first)
-        { focus_cfg = p->cfg; }
-
-        cfg_node_unhook(rd_state->cfg, parent->cfg, keep_child->cfg);
-        if(grandparent != &cfg_nil_panel_node)
+        UIShell_RegsScope(.panel = rd_arrangement_panel_from_id(arrangement, heir)->cfg)
         {
-          cfg_node_unhook(rd_state->cfg, grandparent->cfg, parent->cfg);
-        }
-        cfg_node_release(rd_state->cfg, parent->cfg);
-
-        if(grandparent == &cfg_nil_panel_node)
-        {
-          if(keep_child->split_axis == Axis2_X)
-          {
-            cfg_node_child_from_string_or_alloc(rd_state->cfg, host_owner, axis_key);
-          }
-          else
-          {
-            cfg_node_release(rd_state->cfg, cfg_node_child_from_string(host_owner, axis_key));
-          }
-          cfg_node_equip_string(rd_state->cfg, keep_child->cfg, host_root_name);
-          cfg_node_insert_child(rd_state->cfg, host_owner, host_owner->last, keep_child->cfg);
-        }
-        else
-        {
-          cfg_node_insert_child(rd_state->cfg, grandparent->cfg, parent_prev->cfg, keep_child->cfg);
-          cfg_node_equip_stringf(rd_state->cfg, keep_child->cfg, "%f", pct_of_parent);
-        }
-
-        if(grandparent != &cfg_nil_panel_node && grandparent->split_axis == keep_child->split_axis && keep_child->first != &cfg_nil_panel_node)
-        {
-          cfg_node_unhook(rd_state->cfg, grandparent->cfg, keep_child->cfg);
-          CFG_Node *prev = parent_prev->cfg;
-          for(CFG_PanelNode *child = keep_child->first, *next = &cfg_nil_panel_node; child != &cfg_nil_panel_node; child = next)
-          {
-            next = child->next;
-            cfg_node_unhook(rd_state->cfg, keep_child->cfg, child->cfg);
-            cfg_node_insert_child(rd_state->cfg, grandparent->cfg, prev, child->cfg);
-            prev = child->cfg;
-            F32 old_pct = child->pct_of_parent;
-            F32 new_pct = old_pct * pct_of_parent;
-            cfg_node_equip_stringf(rd_state->cfg, child->cfg, "%f", new_pct);
-          }
-          cfg_node_release(rd_state->cfg, keep_child->cfg);
-        }
-
-        if(panel_tree.focused == discard_child)
-        {
-          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, focus_cfg);
-          CFG_PanelTree new_panel_tree = new_workspace_mount.panel_tree;
-          CFG_PanelNode *new_focused = cfg_panel_node_from_tree_cfg(new_panel_tree.root, focus_cfg);
-          for(CFG_PanelNode *grandchild = new_focused; grandchild != &cfg_nil_panel_node; grandchild = grandchild->first)
-          {
-            new_focused = grandchild;
-          }
-          UIShell_RegsScope(.panel = new_focused->cfg->id)
-          {
-            uishell_push_cmd_current(str8_lit("focus_panel"));
-          }
-        }
-      }
-      else
-      {
-        CFG_PanelNode *next = &cfg_nil_panel_node;
-        F32 removed_size_pct = panel->pct_of_parent;
-        if(next == &cfg_nil_panel_node) { next = panel->prev; }
-        if(next == &cfg_nil_panel_node) { next = panel->next; }
-        cfg_node_unhook(rd_state->cfg, parent->cfg, panel->cfg);
-        cfg_node_release(rd_state->cfg, panel->cfg);
-
-        {
-          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace_mount.owner_cfg);
-          CFG_PanelTree new_panel_tree = new_workspace_mount.panel_tree;
-          CFG_PanelNode *new_parent = cfg_panel_node_from_tree_cfg(new_panel_tree.root, parent->cfg);
-          for(CFG_PanelNode *child = new_parent->first; child != &cfg_nil_panel_node; child = child->next)
-          {
-            CFG_Node *cfg = child->cfg;
-            F32 old_pct = child->pct_of_parent;
-            F32 new_pct = rd_dock_remaining_fraction(old_pct, removed_size_pct, new_parent->child_count);
-            cfg_node_equip_stringf(rd_state->cfg, cfg, "%f", new_pct);
-          }
-        }
-
-        if(panel_tree.focused == panel)
-        {
-          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace_mount.owner_cfg);
-          CFG_PanelTree new_panel_tree = new_workspace_mount.panel_tree;
-          CFG_PanelNode *new_focused = cfg_panel_node_from_tree_cfg(new_panel_tree.root, next->cfg);
-          for(CFG_PanelNode *grandchild = new_focused; grandchild != &cfg_nil_panel_node; grandchild = grandchild->first)
-          {
-            new_focused = grandchild;
-          }
-          UIShell_RegsScope(.panel = new_focused->cfg->id)
-          {
-            uishell_push_cmd_current(str8_lit("focus_panel"));
-          }
+          uishell_push_cmd_current(str8_lit("focus_panel"));
         }
       }
     }

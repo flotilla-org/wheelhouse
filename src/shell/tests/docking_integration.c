@@ -309,35 +309,8 @@ entry_point(CmdLine *cmdline)
   E_IRCtx ir_ctx = {.macro_map = &macros}; e_select_ir_ctx(&ir_ctx);
   E_InterpretCtx interpret_ctx = {0}; e_select_interpret_ctx(&interpret_ctx);
   Temp scratch = scratch_begin(0, 0);
-  // A hand-edited deep split chain must copy without exhausting the C stack,
-  // preserve each node/link/value, and never mutate the source graph.
-  {
-    Temp deep_temp = temp_begin(scratch.arena);
-    IntegrationCheck(rd_dock_copy_tree(scratch.arena, &cfg_nil_panel_node) == &cfg_nil_panel_node);
-    enum { depth = 250000 };
-    CFG_PanelNode *deep = push_array(scratch.arena, CFG_PanelNode, depth);
-    for(U32 i = 0; i < depth; i++)
-    {
-      deep[i] = cfg_nil_panel_node;
-      deep[i].pct_of_parent = (F32)(i%97)/97;
-      deep[i].parent = i ? &deep[i-1] : &cfg_nil_panel_node;
-      deep[i].first = deep[i].last = i+1 < depth ? &deep[i+1] : &cfg_nil_panel_node;
-      deep[i].child_count = i+1 < depth;
-    }
-    CFG_PanelNode *copy = rd_dock_copy_tree(scratch.arena, deep), *parent = &cfg_nil_panel_node;
-    for(U32 i = 0; i < depth; i++)
-    {
-      IntegrationCheck(copy != &cfg_nil_panel_node && copy != &deep[i]);
-      IntegrationCheck(copy->parent == parent && copy->pct_of_parent == deep[i].pct_of_parent);
-      IntegrationCheck(copy->first == copy->last && copy->child_count == deep[i].child_count);
-      IntegrationCheck(copy->next == &cfg_nil_panel_node && copy->prev == &cfg_nil_panel_node);
-      IntegrationCheck(deep[i].parent == (i ? &deep[i-1] : &cfg_nil_panel_node));
-      IntegrationCheck(deep[i].first == (i+1 < depth ? &deep[i+1] : &cfg_nil_panel_node));
-      parent = copy; copy = copy->first;
-    }
-    IntegrationCheck(copy == &cfg_nil_panel_node);
-    temp_end(deep_temp);
-  }
+  // Proposals copy the arrangement; src/shell/tests/arrangement.c checks that
+  // a hand-edited deep split chain copies without exhausting the C stack.
   CFG_Node *user = cfg_node_new(rd_state->cfg, cfg_node_root(), str8_lit("user"));
   CFG_Node *window = cfg_node_new(rd_state->cfg, user, str8_lit("window"));
   // Nonzero spacing makes renderer/measurement drift observable.

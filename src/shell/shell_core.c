@@ -5,6 +5,7 @@
 #define LAYER_COLOR 0xf0a215ff
 
 #include "shell_app_hooks.h"
+#include "shell_arrangement.c"
 #include "shell_docking.c"
 #include "shell_workspace_id.c"
 
@@ -2932,7 +2933,7 @@ uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node 
 {
   B32 sidebar = str8_match(owner->string, RD_DOCK_SIDEBAR_ROOT, 0);
   CFG_Node *panels_root = sidebar ? owner : cfg_node_child_from_string(owner, str8_lit("panels"));
-  RD_DockLayoutKeys layout = rd_dock_layout_keys(arena, panels_root);
+  RD_ArrangementKeys layout = rd_arrangement_keys(arena, panels_root);
   CFG_Node *axis_owner = layout.owner != &cfg_nil_node ? layout.owner : (sidebar ? window : owner);
   Axis2 root_split_axis = cfg_node_child_from_string(axis_owner, layout.axis_key) != &cfg_nil_node ? Axis2_X : Axis2_Y;
   CFG_PanelTree panel_tree = cfg_panel_tree_from_panels_cfg(arena, panels_root, root_split_axis);
@@ -3873,7 +3874,7 @@ typedef struct RD_DockGeometry RD_DockGeometry;
 struct RD_DockGeometry
 {
   UIShell_WorkspaceMount *mount;
-  CFG_PanelTree tree;
+  B32 measured;
   Rng2F32 area;
   F32 inset;
 };
@@ -3883,7 +3884,7 @@ struct RD_DockGeometry
 internal RD_DockGeometry
 rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
 {
-  RD_DockGeometry result = {.mount = mount, .tree = mount->panel_tree};
+  RD_DockGeometry result = {.mount = mount, .measured = 1};
   RD_WindowState *ws = rd_window_state_from_cfg__existing(mount->owner_cfg);
   if(ws == &rd_nil_window_state) { return result; }
   UIShell_RegsScope(.window = mount->window_cfg->id, .panel = 0, .view = 0, .tab = 0)
@@ -3913,28 +3914,32 @@ rd_dock_width_from_geometry_for_view(RD_DockGeometry *geometry, CFG_Node *destin
 {
   // A View can begin a drag midway through the panel-area build. Measure on
   // the first target query, including queries from later leaves in that frame.
-  if(geometry->tree.root == 0) { *geometry = rd_dock_geometry_from_mount(geometry->mount); }
-  // Nil CFG nodes self-link; the nil panel sentinel has an empty tabs list.
+  if(!geometry->measured) { *geometry = rd_dock_geometry_from_mount(geometry->mount); }
+  // Nil CFG nodes self-link and have ID 0, which no panel or tab has.
   // Thus a nil View safely selects insertion-only measurement below.
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *arrangement = rd_arrangement_from_cfg(scratch.arena, geometry->mount->panel_tree.root->cfg);
   CFG_Node *view = moving_view;
-  CFG_PanelNode *origin = cfg_panel_node_from_tree_cfg(geometry->tree.root, view->parent);
-  B32 empty = origin != &cfg_nil_panel_node && view != &cfg_nil_node;
+  RD_ArrangementPanel *origin = rd_arrangement_panel_from_cfg(arrangement, view->parent->id);
+  B32 empty = origin != &rd_nil_arrangement_panel && view != &cfg_nil_node;
   // move_view closes when no unfiltered tabs remain; split_panel closes
   // only when there are no tabs at all. Mirror those distinct command rules.
-  for(CFG_NodePtrNode *n = origin->tabs.first; n; n = n->next)
+  for(RD_ArrangementTab *tab = origin->first_tab; tab; tab = tab->next)
   {
-    if(n->v != view && (dir != Dir2_Invalid || !rd_cfg_is_project_filtered(n->v))) { empty = 0; }
+    if(tab->view != view->id && (dir != Dir2_Invalid || !rd_cfg_is_project_filtered(cfg_node_from_id(tab->view)))) { empty = 0; }
   }
-  return rd_dock_moving_width(geometry->tree.root,
-    cfg_panel_node_from_tree_cfg(geometry->tree.root, destination),
-    empty ? origin : &cfg_nil_panel_node, geometry->area, dir, geometry->inset);
+  F32 width = rd_dock_moving_width(arrangement, rd_arrangement_panel_from_cfg(arrangement, destination->id)->id,
+    empty ? origin->id : 0, geometry->area, dir, geometry->inset);
+  scratch_end(scratch);
+  return width;
 }
 
 internal F32
 rd_dock_width_from_geometry(RD_DockGeometry *geometry, CFG_Node *destination, Dir2 dir)
 {
-  // Only layout is cached; read the active View anew and copy/simulate its
-  // proposal on every query, including a cancelled/restarted drag this frame.
+  // Only measurements are cached; read the arrangement and active View anew
+  // and simulate the proposal on a copy on every query, including a
+  // cancelled/restarted drag this frame.
   CFG_Node *view = rd_drag_is_active() ? cfg_node_from_id(rd_state->drag_drop_regs->view) : &cfg_nil_node;
   return rd_dock_width_from_geometry_for_view(geometry, destination, dir, view);
 }
