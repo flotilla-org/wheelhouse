@@ -85,8 +85,7 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
       UI_Key root_key = ui_key_from_string(ui_active_seed_key(), str8_lit("terminal_root"));
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
       {
-        E_Eval eval = {0};
-        rd_view_ui__terminal(eval, r2f32p(0, 0, 640, 480));
+        wh_view_ui_direct(wh_renderer_from_name(str8_lit("terminal")), view, r2f32p(0, 0, 640, 480));
       }
       UI_Box *pill = ui_box_from_key(ui_key_from_string(root_key, str8_lit("terminal_hosting")));
       HostingCheck((!ui_box_is_nil(pill) && pill->last_touched_build_index == ui_state->build_index) == (enabled == 1), "canvas pill follows off/on/off setting");
@@ -115,7 +114,7 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
       ui_begin_build(ws->os, &events, &ws->ui->icon_info, ws->theme, &animation, 1.f/60, 1.f/60);
       if(frame >= 3) { ui_state->mouse = action_pos; }
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) UI_PrefHeight(ui_em(3, 1))
-      { uishell_watch_view_ui(r2f32p(0, 0, 640, 480)); }
+      { wh_view_ui_direct(wh_renderer_from_name(str8_lit("watch")), settings, r2f32p(0, 0, 640, 480)); }
       ui_end_build();
       for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
       {

@@ -21,26 +21,35 @@ struct UIShell_TerminalMetrics
 global UIShell_TerminalMetrics *uishell_terminal_metrics;
 
 ////////////////////////////////
-//~ rjf: Shell View Hooks
+//~ rjf: Renderer UI Functions (uishell_renderers.h)
 
-RD_VIEW_UI_FUNCTION_DEF(pinned_cards);
-RD_VIEW_UI_FUNCTION_DEF(sidebar_section);
-RD_VIEW_UI_FUNCTION_DEF(shell_text);
-RD_VIEW_UI_FUNCTION_DEF(terminal);
-RD_VIEW_UI_FUNCTION_DEF(jackstay);
-RD_VIEW_UI_FUNCTION_DEF(scroll_region_fixture);
-RD_VIEW_UI_FUNCTION_DEF(sessions);
-RD_VIEW_UI_FUNCTION_DEF(binary);
-RD_VIEW_UI_FUNCTION_DEF(bitmap);
-RD_VIEW_UI_FUNCTION_DEF(color);
-RD_VIEW_UI_FUNCTION_DEF(geo3d);
-RD_VIEW_UI_FUNCTION_DEF(placeholder);
+WH_VIEW_UI_FUNCTION_DEF(pinned_cards);
+WH_VIEW_UI_FUNCTION_DEF(sidebar_section);
+WH_VIEW_UI_FUNCTION_DEF(shell_text);
+WH_VIEW_UI_FUNCTION_DEF(terminal);
+WH_VIEW_UI_FUNCTION_DEF(jackstay);
+WH_VIEW_UI_FUNCTION_DEF(scroll_region_fixture);
+WH_VIEW_UI_FUNCTION_DEF(sessions);
+WH_VIEW_UI_FUNCTION_DEF(binary);
+WH_VIEW_UI_FUNCTION_DEF(bitmap);
+WH_VIEW_UI_FUNCTION_DEF(color);
+WH_VIEW_UI_FUNCTION_DEF(geo3d);
+WH_VIEW_UI_FUNCTION_DEF(placeholder);
+WH_VIEW_UI_FUNCTION_DEF(watch);
+WH_VIEW_UI_FUNCTION_DEF(getting_started);
+WH_VIEW_UI_FUNCTION_DEF(pending);
 EV_EXPAND_RULE_INFO_FUNCTION_DEF(shell_text);
 EV_EXPAND_RULE_INFO_FUNCTION_DEF(bitmap);
 EV_EXPAND_RULE_INFO_FUNCTION_DEF(color);
 EV_EXPAND_RULE_INFO_FUNCTION_DEF(geo3d);
-internal void uishell_watch_view_ui(Rng2F32 rect);
-internal void uishell_register_view_ui_rules(Arena *arena, RD_ViewUIRuleMap *map);
-internal void uishell_register_expand_rule_infos(Arena *arena, EV_ExpandRuleTable *table);
+
+// The pending page's state: commands sent to it while it waits, replayed to
+// the View it becomes.
+typedef struct UIShell_PendingViewState UIShell_PendingViewState;
+struct UIShell_PendingViewState
+{
+  Arena *deferred_cmd_arena;
+  UIShell_CmdList deferred_cmds;
+};
 
 #endif // UISHELL_VIEWS_H

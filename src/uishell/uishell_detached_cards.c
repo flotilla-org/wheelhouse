@@ -1181,6 +1181,7 @@ uishell_sidebar_ghost_card(UIShell_SidebarState *state, RD_WindowState *ws, UISh
 // render (uishell_sidebar_pin_migrate). The type stays registered so a saved
 // layout loads until then; remove it, and the migration, once layouts saved
 // before 2026-10-08 no longer need loading (drag-model.md, "Migration").
-RD_VIEW_UI_FUNCTION_DEF(pinned_cards)
+WH_VIEW_UI_FUNCTION_DEF(pinned_cards)
 {
+  (void)ctx;
 }

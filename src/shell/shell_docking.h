@@ -38,6 +38,25 @@ enum
   // Laying it out again at another size is harmless, so its drag floater
   // shows it live rather than as its texture (#253).
   RD_ViewTrait_LiveDragPreview = 1<<7,
+  // Draws a value: a Lens type of its name opens it, a watch cell or a hover
+  // evaluation can embed it, and headless tests draw it as nothing.
+  RD_ViewTrait_Visualizer = 1<<8,
+  // A dragged expression dropped on it becomes its expression.
+  RD_ViewTrait_ExpressionDrop = 1<<9,
+  // Draws its evaluated expression, from its context's `legacy_eval`: the
+  // evaluator escape hatch until the evaluator is retired (#313).
+  RD_ViewTrait_LegacyEval = 1<<10,
+  // Declares a producer version (terminal: render generation, text: content
+  // hash), so shape-only workspace preservation is safe for it.
+  RD_ViewTrait_VersionedSurface = 1<<11,
+  // Offered by name where a View is made from an expression (the view lister).
+  RD_ViewTrait_Listed = 1<<12,
+  // A control view: it shows the Dashboard's arrangement, not a Slot.
+  RD_ViewTrait_Control = 1<<13,
+  // One of the shell's own pages (watch lists, the pending loader, getting
+  // started): presses keep focus on its query bar, and floating, it has no
+  // pull-out button.
+  RD_ViewTrait_QueryFocus = 1<<14,
 };
 
 typedef struct RD_ViewRegistration RD_ViewRegistration;
@@ -89,36 +108,13 @@ struct RD_DockProposal
   CFG_ID view_level;
 };
 
-// This is also the UI registration list. Adding a View requires declaring its
-// traits here, so enumeration and rendering cannot acquire separate lists.
-#define RD_DOCK_RENDERED_VIEWS(X) \
-  X(pinned_cards, pinned_cards, RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_ControlSplitScope, 0, Sidebar) \
-  X(sidebar_section, sidebar_section, RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_ControlSplitScope, 0, Sidebar) \
-  X(text, shell_text, RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview, 0, WorkspaceRegion) \
-  X(jackstay, jackstay, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(terminal, terminal, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(scroll_region_fixture, scroll_region_fixture, RD_ViewTrait_Content, 128, WorkspaceRegion) \
-  X(terminal_fixture, terminal, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(sessions, sessions, RD_ViewTrait_Content|RD_ViewTrait_Section, 0, WorkspaceRegion) \
-  X(binary, binary, RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview, 0, WorkspaceRegion) \
-  X(bitmap, bitmap, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(color, color, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(geo3d, geo3d, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(placeholder, placeholder, RD_ViewTrait_Content, 0, WorkspaceRegion)
-
-// Shell-dispatched Views have no visualizer hook, but still declare validity.
-#define RD_DOCK_VIEW_REGISTRATIONS(X) \
-  RD_DOCK_RENDERED_VIEWS(X) \
-  X(getting_started, null, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(pending, null, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(watch, null, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(workspace_selector, null, RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_SelectsWorkspaces|RD_ViewTrait_Singleton|RD_ViewTrait_ControlSplitScope, 0, Sidebar)
-
-#define RD_DOCK_DECLARE(name, ui, traits, width, host) \
+// Docking's part of each Renderer in the registry, in its order.
+#include "uishell/uishell_renderers.h"
+#define RD_DOCK_DECLARE(name, ui, state, content, traits, width, host, expand, settings) \
   {str8_lit_comp(#name), traits, width, RD_DockHostKind_##host},
 read_only global RD_ViewRegistration rd_view_registrations[] =
 {
-  RD_DOCK_VIEW_REGISTRATIONS(RD_DOCK_DECLARE)
+  WH_RENDERERS(RD_DOCK_DECLARE)
 };
 #undef RD_DOCK_DECLARE
 

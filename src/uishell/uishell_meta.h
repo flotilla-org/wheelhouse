@@ -9,28 +9,25 @@
 #define RD_APP_BINDING_VERSION_REMAP_OLD_NAME_TABLE uishell_binding_version_remap_old_name_table
 #define RD_APP_BINDING_VERSION_REMAP_NEW_NAME_TABLE uishell_binding_version_remap_new_name_table
 
-internal B32
-uishell_view_name_is_listed(String8 name)
-{
-  B32 result = (str8_match(name, str8_lit("text"), 0) ||
-                str8_match(name, str8_lit("terminal"), 0) ||
-                str8_match(name, str8_lit("terminal_fixture"), 0) ||
-                str8_match(name, str8_lit("scroll_region_fixture"), 0) ||
-                str8_match(name, str8_lit("binary"), 0));
-  return result;
-}
-
 typedef struct UIShell_NameSchemaInfo UIShell_NameSchemaInfo;
 struct UIShell_NameSchemaInfo
 {
   String8 name;
-  B32 is_view;
   String8 schema;
 };
 
+typedef struct UIShell_NameSchemaInfoArray UIShell_NameSchemaInfoArray;
+struct UIShell_NameSchemaInfoArray
+{
+  UIShell_NameSchemaInfo *v;
+  U64 count;
+};
+
+// The shell's own config schemas; each Renderer's presentation settings are
+// in the registry (uishell_renderers.h). uishell_name_schemas has both.
 read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
 {
-  {str8_lit_comp("user"), 0, str8_lit_comp(
+  {str8_lit_comp("user"), str8_lit_comp(
     "@inherit(code_defaults)"
     "x:{"
     "@display_name('Animations') @description(\"Enables animations.\") @default(1) 'animations': bool,"
@@ -71,7 +68,7 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@default(1) @display_name('Transient Tabs') @description(\"When snapping to source code locations, opens new files in a transient tab if they are not already open.\") 'transient_tabs': bool,"
     "}"
   )},
-  {str8_lit_comp("project"), 0, str8_lit_comp(
+  {str8_lit_comp("project"), str8_lit_comp(
     "x:{"
     "@display_name('Project Name') 'name': string,"
     "@default(2) @display_name('Project Tab Width') 'tab_width': @range[1, 32] u64,"
@@ -80,13 +77,13 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@no_expand @display_name('Project Theme') @description(\"The project's theme colors, which can override the user's theme.\") 'theme_colors': set,"
     "}"
   )},
-  {str8_lit_comp("theme_color"), 0, str8_lit_comp(
+  {str8_lit_comp("theme_color"), str8_lit_comp(
     "x:{"
     "@display_name('Tags') tags: string,"
     "@display_name('Value') value: @color @hex u32,"
     "}"
   )},
-  {str8_lit_comp("window"), 0, str8_lit_comp(
+  {str8_lit_comp("window"), str8_lit_comp(
     "x:{"
     "@display_name('Workspace Name') @description(\"Name of the window-backed workspace.\") 'label': string,"
     "@default(1) @display_name('Smooth UI Text') @description(\"Controls whether or not UI text is fully anti-aliased.\") 'smooth_ui_text': bool,"
@@ -99,53 +96,19 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@default(1) @display_name('Use Project Theme') @description(\"Prefer using the project theme for this window, if any.\") 'use_project_theme': bool,"
     "}"
   )},
-  {str8_lit_comp("workspace"), 0, str8_lit_comp(
+  {str8_lit_comp("workspace"), str8_lit_comp(
     "x:{"
     "@display_name('Workspace Name') 'label': string,"
     "@optional @display_name('Workspace Theme') @description(\"Theme preset or theme file used when rendering this workspace. Empty inherits the window/default theme.\") 'theme': string,"
     "}"
   )},
-  {str8_lit_comp("tab"), 0, str8_lit_comp(
+  {str8_lit_comp("tab"), str8_lit_comp(
     "@row_commands(@file copy_tab_full_path, @file show_file_in_explorer, duplicate_tab, close_tab)"
     "x:{"
     "@override @display_name('Tab Font Size') @description(\"Controls the tab's font size.\") @no_callee_helper 'font_size': @range[6, 72] u64,"
     "}"
   )},
-  {str8_lit_comp("text"), 1, str8_lit_comp(
-    "@inherit(tab)"
-    "x:{"
-    "@description(\"An expression to describe data which should be viewed as text or code.\") 'expression': expr_string,"
-    "@optional @description(\"The language that the text should be interpreted as being within.\") 'lang': code_string,"
-    "@no_callee_helper @default(1) @description(\"Controls whether or not line numbers are shown.\") 'show_line_numbers': bool,"
-    "@no_callee_helper @default(1) @display_name('Line Wrapping') @description(\"Splits textual lines into multiple visual lines.\") 'line_wrapping': bool,"
-    "@no_callee_helper @default(0) @display_name('Scroll To Bottom On Change') @description(\"Scrolls to the bottom if the text is changed.\") 'scroll_to_bottom_on_change': bool,"
-    "@no_callee_helper @no_revert @default(0) @display_name('Transient') @description(\"Controls whether or not this tab will be automatically replaced.\") 'auto': bool,"
-    "}"
-  )},
-  {str8_lit_comp("binary"), 1, str8_lit_comp(
-    "@inherit(tab)"
-    "x:{"
-    "@description(\"An expression to describe data which should be viewed as binary.\") 'expression': expr_string,"
-    "@optional @expand_if(\"!$.auto_columns\") @default(16) @description(\"The number of byte columns to build before building a new row.\") 'num_columns': @range[1, 64] u64,"
-    "@no_callee_helper @default(0) @display_name(\"Automatically Size Columns\") @description(\"Determines the number of byte columns based on the available space.\") 'auto_columns': bool,"
-    "}"
-  )},
-  {str8_lit_comp("terminal"), 1, str8_lit_comp(
-    "@inherit(tab)"
-    "x:{"
-    "@no_callee_helper @runtime_value(terminal_hosting) @display_name('Hosting') 'hosting': string,"
-    "@no_callee_helper @runtime_action(terminal_hosting) @display_name('Hosting Action') @description('Hand to daemon or Adopt the current terminal.') 'hosting_action': string,"
-    "@no_callee_helper @default(0) @display_name('Show Hosting Overlay') @description('Show terminal hosting metadata and its action on the canvas.') 'show_hosting_overlay': bool,"
-    "@optional @description(\"The command to run when a provider is attached.\") 'command': string,"
-    "@optional @description(\"The working directory to use when a provider is attached.\") 'cwd': path,"
-    "}"
-  )},
-  {str8_lit_comp("terminal_fixture"), 1, str8_lit_comp(
-    "@inherit(terminal)"
-    "x:{}"
-  )},
-  {str8_lit_comp("scroll_region_fixture"), 1, str8_lit_comp("@inherit(tab) x:{}")},
-  {str8_lit_comp("recent_project"), 0, str8_lit_comp("x:{'path':path, 'name':string}")},
+  {str8_lit_comp("recent_project"), str8_lit_comp("x:{'path':path, 'name':string}")},
 };
 
 internal UIShell_Regs
@@ -257,13 +220,16 @@ uishell_context_reg_slot_code_name(UIShell_ContextRegSlot slot)
   return result;
 }
 
+internal UIShell_NameSchemaInfoArray uishell_name_schemas(void);
+
 internal B32
 uishell_cfg_schema_name_is_listed(String8 name)
 {
   B32 result = 0;
-  for EachElement(idx, uishell_name_schema_info_table)
+  UIShell_NameSchemaInfoArray schemas = uishell_name_schemas();
+  for EachIndex(idx, schemas.count)
   {
-    if(str8_match(name, uishell_name_schema_info_table[idx].name, 0))
+    if(str8_match(name, schemas.v[idx].name, 0))
     {
       result = 1;
       break;
