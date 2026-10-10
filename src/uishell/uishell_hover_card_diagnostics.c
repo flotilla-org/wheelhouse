@@ -72,7 +72,7 @@ uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
       { body = ui_build_box_from_key(UI_BoxFlag_DefaultFocusNavY, ui_key_make(9090)); }
       UI_Parent(body) UI_FocusHot(UI_FocusKind_Root) UI_FocusActive(UI_FocusKind_Root)
       {
-        uishell_sidebar_card_cap(state, card, index, rect, r2f32p(0, 0, 800, 800), rect.p0, 3.f);
+        uishell_sidebar_card_cap(state, card, index, rect, r2f32p(0, 0, 800, 800), rect.p0, 3.f, 1.f, 1);
         uishell_sidebar_card_content(state, ws, card, 0, node, index, 400, 1);
       }
     }
@@ -108,6 +108,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
 #define CardCheck(expr, message) do { if(!(expr)) { fprintf(stderr, "FAIL hover card: %s\n", message); failures++; } } while(0)
   fprintf(stderr, "Hover card diagnostics: start\n");
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
+  // Caps slide out at the menu animation rate; here they arrive at once.
+  F32 saved_rate = rd_state->menu_animation_rate;
+  rd_state->menu_animation_rate = 1.f;
   // Initialized and restored: rendering must use this fixture's own core.
   UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {.initialized = 1, .restored = 1};
   ws->sidebar = &fixture;
@@ -477,7 +480,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         MemoryZeroArray(test->hover_card_keys);
         F32 cap_width = narrow ? 4*UIShell_ControlMinimumPT+8 : 400;
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-        { uishell_sidebar_card_cap(&fixture, card, index, r2f32p(0, 100, cap_width, 300), r2f32p(0, 0, 800, 800), v2f32(0, 0), 3.f); }
+        { uishell_sidebar_card_cap(&fixture, card, index, r2f32p(0, 100, cap_width, 300), r2f32p(0, 0, 800, 800), v2f32(0, 0), 3.f, 1.f, 1); }
         ui_end_build();
         String8 glyphs[8] = {0}; U64 glyph_count = 0;
         UI_Box *cap = ui_box_from_key(card->cap.key);
@@ -501,7 +504,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         UI_EventList events = {0};
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-        { uishell_sidebar_card_cap(&fixture, card, index, r2f32p(0, 10, 400, 300), r2f32p(0, 0, 800, 800), v2f32(0, 0), 3.f); }
+        { uishell_sidebar_card_cap(&fixture, card, index, r2f32p(0, 10, 400, 300), r2f32p(0, 0, 800, 800), v2f32(0, 0), 3.f, 1.f, 1); }
         ui_end_build();
         CardCheck(card->cap_below && card->cap.rect.y0 == 299, "a card at the top takes its cap on its bottom edge");
       }
@@ -1459,6 +1462,43 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     cfg_node_insert_child(rd_state->cfg, drag_root, &cfg_nil_node, drag_panel);
     cfg_node_equip_string(rd_state->cfg, drag_panel, str8_lit("0.5"));
     cfg_node_new(rd_state->cfg, drag_root, str8_lit("0.5"));
+    // Its cap comes out from the title line, not the body; once out, it
+    // stays while the pointer is anywhere on the card.
+    {
+      Rng2F32 pin_rect = {0};
+      for(U64 frame = 0; frame < 4; frame++)
+      {
+        Vec2F32 body = v2f32(center_2f32(pin_rect).x, pin_rect.y1-4), title = v2f32(body.x, pin_rect.y0+6);
+        Vec2F32 pointer = frame == 0 ? v2f32(900, 690) : frame == 2 ? title : body;
+        UI_EventList events = {0};
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = pointer;
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        {
+          uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1);
+          Andamento *drag_core = fixture.core; fixture.core = 0;
+          Temp panel_scratch = scratch_begin(0, 0);
+          CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+          UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(panel_scratch.arena, window, host);
+          mount.panel_tree = cfg_panel_tree_from_panels_cfg(panel_scratch.arena, drag_root, Axis2_X);
+          UIShell_RegsScope(.window = window->id)
+          { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
+          scratch_end(panel_scratch);
+          fixture.core = drag_core;
+        }
+        ui_end_build();
+        if(frame == 0) { pin_rect = ui_box_from_key(drag_pin->mask.key)->rect; }
+        if(frame == 1) { CardCheck(pin_rect.y1-pin_rect.y0 > 40 && !drag_pin->cap_shown, "entering a pinned card's body leaves its cap in"); }
+        if(frame == 2)
+        {
+          B32 lifted = 0;
+          for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+          { lifted |= (box->flags & UI_BoxFlag_DrawDropShadow) && box->parent->flags & UI_BoxFlag_Clip && box->rect.x0 == pin_rect.x0; }
+          CardCheck(drag_pin->cap_shown && lifted, "a pinned card's title line brings out its cap and lifts it");
+        }
+        if(frame == 3) { CardCheck(drag_pin->cap_shown, "a pinned card's cap stays while the pointer is on its body"); }
+      }
+    }
     Vec2F32 pinned_drag_start = {0}, pinned_drag_size = {0};
     for(U64 frame = 0; frame < 5; frame++)
     {
@@ -1572,6 +1612,40 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(drag_pin->open && !drag_pin->moving && drag_pin->placement == UIShell_CardPlacement_Float,
                 "a title drag of a float ends as a float");
       (void)title_seed;
+    }
+    // A float's cap is the obvious place to grab it: its background drags.
+    {
+      ui_kill_action();
+      Vec2F32 grab = {0}, origin = {0};
+      for(U64 frame = 0; frame < 5; frame++)
+      {
+        Vec2F32 pointer = frame < 2 ? grab : add_2f32(grab, v2f32(50, 30));
+        UI_EventList events = {0};
+        if(frame == 1 || frame == 4)
+        {
+          WM_Event raw = {.kind = frame == 1 ? WM_EventKind_Press : WM_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = pointer};
+          if(!uishell_sidebar_card_wm_event(ws, &raw))
+          {
+            UI_Event event = {.kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = pointer};
+            ui_event_list_push(test->arena, &events, &event);
+          }
+        }
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        test->mouse = pointer;
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+        uishell_sidebar_drag_finish(ws);
+        ui_end_build();
+        // Its left end holds no controls.
+        if(frame == 0) { grab = v2f32(drag_pin->cap.rect.x0+8, center_2f32(drag_pin->cap.rect).y); origin = drag_pin->rect.p0; }
+        if(frame == 0) { CardCheck(drag_pin->cap_shown && dim_2f32(drag_pin->cap.rect).y > 0, "a float shows its cap"); }
+        if(frame == 2 || frame == 3)
+        {
+          CardCheck(drag_pin->moving && length_2f32(sub_2f32(drag_pin->rect.p0, add_2f32(origin, v2f32(50, 30)))) < 1.f,
+                    "dragging a float's cap moves the float");
+        }
+      }
+      CardCheck(drag_pin->open && !drag_pin->moving && drag_pin->placement == UIShell_CardPlacement_Float,
+                "a cap drag of a float ends as a float");
     }
     // The pins' section title drags its View, as any section title does.
     {
@@ -2054,6 +2128,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
 
   fprintf(stderr, "Hover card diagnostics: cleanup\n");
   ws->sidebar = saved_sidebar; ws->ui = saved_window_ui;
+  rd_state->menu_animation_rate = saved_rate;
   uishell_sidebar_release(&fixture); ui_select_state(saved_ui); ui_state_release(test);
   fprintf(stderr, "Hover card diagnostics: %u failures\n", failures);
 #undef CardCheck

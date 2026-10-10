@@ -80,7 +80,7 @@ struct UIShell_HoverCard
   // showed this build, which edge it joins, and whether the entity actions
   // fell back to a footer for lack of room.
   UI_HoverCardMask cap;
-  B32 cap_shown, cap_below, cap_footer;
+  B32 cap_shown, cap_drawn, cap_below, cap_footer;
 };
 
 typedef struct UIShell_SidebarLabel UIShell_SidebarLabel;

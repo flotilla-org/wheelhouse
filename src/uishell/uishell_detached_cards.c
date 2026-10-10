@@ -1105,7 +1105,7 @@ uishell_sidebar_inline_ui(RD_WindowState *ws, String8 key, F32 width)
     ui_spacer(ui_px(4, 1));
     F32 card_width = Max(0.f, width-12.f), content_width = Max(0.f, card_width-12.f);
     // The cap's edge is square (uishell_sidebar_card_cap).
-    F32 top = c->cap_shown && !c->cap_below ? 0 : 5.f, bottom = c->cap_shown && c->cap_below ? 0 : 5.f;
+    F32 top = c->cap_drawn && !c->cap_below ? 0 : 5.f, bottom = c->cap_drawn && c->cap_below ? 0 : 5.f;
     UI_PrefWidth(ui_px(card_width, 1)) UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
     UI_CornerRadius00(top) UI_CornerRadius10(top) UI_CornerRadius01(bottom) UI_CornerRadius11(bottom)
     UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), .025f))
@@ -1177,7 +1177,7 @@ uishell_sidebar_ghost_card(UIShell_SidebarState *state, RD_WindowState *ws, UISh
 {
   F32 content_width = Max(0.f, card_width-12.f);
   // The cap's edge is square (uishell_sidebar_card_cap).
-  F32 top = c->cap_shown && !c->cap_below ? 0 : 5.f, bottom = c->cap_shown && c->cap_below ? 0 : 5.f;
+  F32 top = c->cap_drawn && !c->cap_below ? 0 : 5.f, bottom = c->cap_drawn && c->cap_below ? 0 : 5.f;
   UI_PrefWidth(ui_px(card_width, 1))
   {
     UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
