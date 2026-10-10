@@ -88,6 +88,14 @@ StaticAssert(WH_Content_Command == 1<<ANDAMENTO_SLOT_COMMAND && WH_Content_File 
              WH_Content_Url == 1<<ANDAMENTO_SLOT_URL && WH_Content_Jackstay == 1<<ANDAMENTO_SLOT_JACKSTAY &&
              WH_Content_Facet == 1<<ANDAMENTO_SLOT_FACET, uishell_store_content_kinds);
 
+typedef struct UIShell_StoreFlag UIShell_StoreFlag;
+struct UIShell_StoreFlag
+{
+  String8 key;
+  // ANDAMENTO_SLOT_FLAG_*
+  U32 flags;
+};
+
 typedef struct UIShell_StoreEntry UIShell_StoreEntry;
 struct UIShell_StoreEntry
 {
@@ -95,7 +103,21 @@ struct UIShell_StoreEntry
   // The document and specs last committed or built, and its generation.
   U64 hash;
   U64 generation;
+  // What Andamento says of its Workspace Overlay, as last read
+  // (uishell_store_read_overlay): the flags of each flagged Slot, the keys
+  // tombstones hide, and the arrangement's flags.
+  UIShell_StoreFlag *flags;
+  U64 flag_count;
+  String8 *tombstones;
+  U64 tombstone_count;
+  // Untouched slots the provider removed, whose instances follow their
+  // rebind policy until released: their keys, and the policies in `flags`.
+  UIShell_StoreFlag *departed;
+  U64 departed_count;
+  U32 arrangement_flags;
 };
+
+internal UIShell_StoreEntry *uishell_store_entry_find(UIShell_SidebarState *state, UIShell_WorkspaceId id);
 
 // Jackstay View settings that name the endpoint it connects to, in the order
 // its View reads them.
@@ -131,7 +153,12 @@ read_only global String8 uishell_store_runtime_keys[] =
   str8_lit_comp("update_failed"),
   // The session and daemon Andamento has saved for it ("session|daemon").
   str8_lit_comp("portable"),
+  // A hash of the content it showed once it applied that resolution: a View
+  // following its provider whose content differs since, the user edited.
+  str8_lit_comp("applied_spec"),
 };
+
+internal U64 uishell_store_view_spec_hash(CFG_Node *view);
 
 #define UIShell_StoreCall(state, call) ((state)->store_calls += 1, (call))
 
@@ -446,6 +473,20 @@ uishell_store_spec_hash(U64 hash, UIShell_ViewSpec *spec)
                       spec->url, spec->launcher, spec->endpoint, spec->presentation};
   for(U64 i = 0; i < ArrayCount(fields); i++) { hash = uishell_store_hash_text(hash, fields[i]); }
   return hash*33 + spec->has_cwd;
+}
+
+// A View's kind and content as one hash ("applied_spec").
+internal U64
+uishell_store_view_spec_hash(CFG_Node *view)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_ViewSpec spec = {0};
+  String8 taken[4];
+  U64 taken_count = 0;
+  U64 hash = uishell_store_hash_text(5381, view->string);
+  if(uishell_store_spec_from_view(scratch.arena, view, &spec, taken, &taken_count)) { hash = uishell_store_spec_hash(hash, &spec); }
+  scratch_end(scratch);
+  return hash;
 }
 
 // What Wheelhouse can't show of a spec, for its placeholder; empty when it
@@ -1262,6 +1303,9 @@ uishell_store_complete(UIShell_SidebarState *state, CFG_Node *owner, String8 key
   if(ok)
   {
     uishell_store_set_setting(shown, str8_lit("applied"), uishell_sidebar_string(content->resolution));
+    Temp scratch = scratch_begin(0, 0);
+    uishell_store_set_setting(shown, str8_lit("applied_spec"), push_str8f(scratch.arena, "%I64x", uishell_store_view_spec_hash(shown)));
+    scratch_end(scratch);
     for(U64 i = 0; i < ArrayCount(cleared); i++) { uishell_store_drop_setting(shown, cleared[i]); }
     if(uishell_workspace_id_match(state->managed_error_workspace, uishell_workspace_id_from_cfg(owner)))
     { MemoryZeroStruct(&state->managed_error_workspace); state->error[0] = 0; }
@@ -1348,7 +1392,39 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
     }
     andamento_slot_plan_release(plan);
   }
+  // A slot its provider removed: its instance closes (replace) or stays
+  // until the user closes it (keep-previous, ask); either way, once it is
+  // closed it is released.
+  UIShell_StoreEntry *entry = uishell_store_entry_find(state, uishell_workspace_id_from_cfg(owner));
+  for(U64 i = 0; entry && i < entry->departed_count;)
+  {
+    String8 key = entry->departed[i].key;
+    CFG_Node *view = &cfg_nil_node;
+    for(U64 t = 0; t < doc.tab_count && view == &cfg_nil_node; t++) { if(str8_match(doc.keys[t], key, 0)) { view = doc.views[t]; } }
+    if(view != &cfg_nil_node && entry->departed[i].flags != ANDAMENTO_REBIND_REPLACE) { i++; continue; }
+    if(view != &cfg_nil_node && cfg_node_from_id(view->id) == view)
+    {
+      RD_Arrangement *a = rd_arrangement_from_owner(arena, owner, str8_lit("panels"));
+      rd_arrangement_remove_tab(a, view->id);
+      rd_arrangement_save(rd_state->cfg, a);
+    }
+    char *error = 0;
+    UIShell_StoreCall(state, andamento_slot_release_previous(state->core, workspace, uishell_sidebar_text(key), &error));
+    andamento_string_free(error);
+    // Released: no longer departed.
+    entry->departed[i] = entry->departed[--entry->departed_count];
+  }
   scratch_end(scratch);
+}
+
+// Whether Slot `key` of `owner` is one its provider removed, kept until the
+// user closes it.
+internal B32
+uishell_store_departed(UIShell_SidebarState *state, CFG_Node *owner, String8 key)
+{
+  UIShell_StoreEntry *entry = state ? uishell_store_entry_find(state, uishell_workspace_id_from_cfg(owner)) : 0;
+  for(U64 i = 0; entry && i < entry->departed_count; i++) { if(str8_match(entry->departed[i].key, key, 0)) { return 1; } }
+  return 0;
 }
 
 // The window state whose sidebar keeps `view`'s workspace, and that
@@ -1446,6 +1522,295 @@ uishell_store_retry(UIShell_SidebarState *state, CFG_Node *owner)
   scratch_end(scratch);
 }
 
+//- The Workspace Overlay (ADR 0013)
+//
+// The user's edits of a workspace are Andamento's edit set: its Slots
+// (above), its arrangement (soft and structural commits), and its name and
+// mood, which are the workspace's label and theme here. A workspace marks
+// the name and mood Andamento has (`named`, `mooded`; runtime-only), so the
+// presentation file leaves them out. After each sync the overlay's flags are
+// read for the notices: each Slot's (DETACHED, CHANGED, REMOVED, REBIND),
+// the arrangement's (PROVIDER_CHANGED, SOFT, UNRESOLVED), the slots
+// tombstones hide, and Dashboard pins whose View went away.
+
+read_only global String8 uishell_store_owner_runtime_keys[] = {str8_lit_comp("named"), str8_lit_comp("mooded")};
+
+// Sends a label or theme the user changed as the workspace's name or mood,
+// or takes Andamento's when only Andamento's changed (another host's edit,
+// or a restart, which reads them from the workspace record).
+internal void
+uishell_store_sync_name(UIShell_SidebarState *state, CFG_Node *owner)
+{
+  if(str8_match(owner->string, str8_lit("window"), 0)) { return; }
+  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+  if(!andamento_workspace_registered(state->core, workspace, 0)) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  AndamentoOverlay *overlay = UIShell_StoreCall(state, andamento_overlay_acquire(state->core, workspace, 0));
+  AndamentoOverlayInfo info = {0};
+  if(overlay && andamento_overlay_info(overlay, &info))
+  {
+    String8 settings[2] = {str8_lit("label"), str8_lit("theme")};
+    B32 has_remote[2] = {info.has_name != 0, info.has_mood != 0};
+    String8 remote[2] = {uishell_sidebar_string(info.name), uishell_sidebar_string(info.mood)};
+    for(U64 i = 0; i < 2; i++)
+    {
+      String8 mark_key = uishell_store_owner_runtime_keys[i];
+      CFG_Node *mark = cfg_node_child_from_string(owner, mark_key);
+      B32 has_mark = mark != &cfg_nil_node;
+      String8 marked = push_str8_copy(scratch.arena, mark->first->string);
+      String8 local = push_str8_copy(scratch.arena, uishell_store_setting(owner, settings[i]));
+      B32 edited = has_mark ? !str8_match(local, marked, 0) : local.size != 0;
+      B32 moved = has_remote[i] != has_mark || !str8_match(remote[i], marked, 0);
+      if(!edited && moved && has_remote[i])
+      {
+        // Andamento's changed: it is the workspace's now.
+        uishell_store_set_setting(owner, settings[i], remote[i]);
+        uishell_store_set_setting(owner, mark_key, remote[i]);
+      }
+      else if(edited || (moved && local.size))
+      {
+        char *error = 0;
+        B32 ok = i == 0 ? andamento_workspace_set_name(state->core, workspace, local.size != 0, uishell_sidebar_text(local), &error) :
+                          andamento_workspace_set_mood(state->core, workspace, local.size != 0, uishell_sidebar_text(local), &error);
+        state->store_calls += 1;
+        if(uishell_sidebar_result(state, ok, error))
+        {
+          if(local.size) { uishell_store_set_setting(owner, mark_key, local); }
+          else { uishell_store_drop_setting(owner, mark_key); }
+        }
+      }
+    }
+  }
+  andamento_overlay_release(overlay);
+  scratch_end(scratch);
+}
+
+internal UIShell_StoreEntry *
+uishell_store_entry_find(UIShell_SidebarState *state, UIShell_WorkspaceId id)
+{
+  for(U64 i = 0; i < state->store_entry_count; i++)
+  { if(uishell_workspace_id_match(state->store_entries[i].id, id)) { return &state->store_entries[i]; } }
+  return 0;
+}
+
+internal UIShell_StoreEntry *uishell_store_entry(UIShell_SidebarState *state, UIShell_WorkspaceId id);
+internal CFG_NodePtrList uishell_store_owners(Arena *arena, CFG_Node *window);
+
+// Reads what Andamento says of each workspace's overlay, and of the
+// Dashboard's pins, for the notices.
+internal void
+uishell_store_read_overlay(UIShell_SidebarState *state, CFG_Node *window)
+{
+  if(!state->store_overlay_arena) { state->store_overlay_arena = arena_alloc(); }
+  Arena *arena = state->store_overlay_arena;
+  arena_clear(arena);
+  Temp scratch = scratch_begin(0, 0);
+  CFG_NodePtrList owners = uishell_store_owners(scratch.arena, window);
+  for(CFG_NodePtrNode *n = owners.first; n; n = n->next)
+  {
+    UIShell_StoreEntry *entry = uishell_store_entry(state, uishell_workspace_id_from_cfg(n->v));
+    entry->flags = 0; entry->flag_count = 0; entry->tombstones = 0; entry->tombstone_count = 0; entry->arrangement_flags = 0;
+    AndamentoWorkspaceId workspace = uishell_sidebar_workspace(entry->id);
+    AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_acquire(state->core, workspace, 0));
+    U64 count = slots ? andamento_slots_count(slots) : 0;
+    entry->flags = push_array(arena, UIShell_StoreFlag, count);
+    for(U64 i = 0; i < count; i++)
+    {
+      AndamentoSlot slot = {0};
+      U32 flags = andamento_slots_flags(slots, i);
+      if(!flags || !andamento_slots_get(slots, i, &slot)) { continue; }
+      entry->flags[entry->flag_count++] = (UIShell_StoreFlag){push_str8_copy(arena, uishell_sidebar_string(slot.key)), flags};
+    }
+    andamento_slots_release(slots);
+    AndamentoArrangement *arrangement = slots ? UIShell_StoreCall(state, andamento_arrangement_acquire(state->core, workspace, 0)) : 0;
+    entry->arrangement_flags = andamento_arrangement_flags(arrangement);
+    andamento_arrangement_release(arrangement);
+    AndamentoOverlay *overlay = slots ? UIShell_StoreCall(state, andamento_overlay_acquire(state->core, workspace, 0)) : 0;
+    AndamentoOverlayInfo info = {0};
+    entry->departed = 0;
+    entry->departed_count = 0;
+    if(overlay && andamento_overlay_info(overlay, &info))
+    {
+      entry->tombstones = push_array(arena, String8, info.note_count);
+      entry->departed = push_array(arena, UIShell_StoreFlag, info.note_count);
+      for(U64 i = 0; i < info.note_count; i++)
+      {
+        AndamentoOverlayNote note = {0};
+        if(!andamento_overlay_note(overlay, i, &note)) { continue; }
+        String8 key = push_str8_copy(arena, uishell_sidebar_string(note.key));
+        if(note.kind == ANDAMENTO_OVERLAY_TOMBSTONED) { entry->tombstones[entry->tombstone_count++] = key; }
+        if(note.kind == ANDAMENTO_OVERLAY_DEPARTED) { entry->departed[entry->departed_count++] = (UIShell_StoreFlag){key, note.rebind}; }
+      }
+    }
+    andamento_overlay_release(overlay);
+  }
+  state->store_pins_gone = 0;
+  state->store_pin_gone_count = 0;
+  AndamentoDashboardOverlay *dashboard = UIShell_StoreCall(state, andamento_dashboard_overlay_acquire(state->core, 0));
+  AndamentoDashboardOverlayInfo info = {0};
+  if(dashboard && andamento_dashboard_overlay_info(dashboard, &info))
+  {
+    state->store_pins_gone = push_array(arena, String8, info.note_count);
+    for(U64 i = 0; i < info.note_count; i++)
+    {
+      AndamentoDashboardNote note = {0};
+      if(andamento_dashboard_overlay_note(dashboard, i, &note) && note.kind == ANDAMENTO_DASHBOARD_PIN)
+      { state->store_pins_gone[state->store_pin_gone_count++] = push_str8_copy(arena, uishell_sidebar_string(note.key)); }
+    }
+  }
+  andamento_dashboard_overlay_release(dashboard);
+  scratch_end(scratch);
+}
+
+// Slot `key`'s flags in `owner`, as last read; 0 for none.
+internal U32
+uishell_store_slot_flags(UIShell_SidebarState *state, CFG_Node *owner, String8 key)
+{
+  UIShell_StoreEntry *entry = state ? uishell_store_entry_find(state, uishell_workspace_id_from_cfg(owner)) : 0;
+  for(U64 i = 0; entry && i < entry->flag_count; i++) { if(str8_match(entry->flags[i].key, key, 0)) { return entry->flags[i].flags; } }
+  return 0;
+}
+
+internal U32
+uishell_store_arrangement_flags(UIShell_SidebarState *state, CFG_Node *owner)
+{
+  UIShell_StoreEntry *entry = state ? uishell_store_entry_find(state, uishell_workspace_id_from_cfg(owner)) : 0;
+  return entry ? entry->arrangement_flags : 0;
+}
+
+// Whether the pin (a local ref) with ID `ref` names a View that went away.
+internal B32
+uishell_store_pin_gone(UIShell_SidebarState *state, String8 ref)
+{
+  for(U64 i = 0; state && i < state->store_pin_gone_count; i++) { if(str8_match(state->store_pins_gone[i], ref, 0)) { return 1; } }
+  return 0;
+}
+
+// Whether `view` is a View of `owner`'s first tab panel, which shows the
+// workspace's own notices.
+internal B32
+uishell_store_view_leads(CFG_Node *owner, CFG_Node *view)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *a = rd_arrangement_from_owner(scratch.arena, owner, str8_lit("panels"));
+  RD_ArrangementPanel *first = a->root;
+  while(first != &rd_nil_arrangement_panel && first->first != &rd_nil_arrangement_panel) { first = first->first; }
+  B32 leads = first != &rd_nil_arrangement_panel && rd_arrangement_panel_from_view(a, view->id) == first;
+  scratch_end(scratch);
+  return leads;
+}
+
+// Resolves a provider's change to an arrangement the user owns: keep the
+// user's, or follow the provider's again.
+internal void
+uishell_store_resolve_arrangement(CFG_Node *view, U32 choice)
+{
+  CFG_Node *owner = &cfg_nil_node;
+  UIShell_SidebarState *state = uishell_store_state_from_view(view, &owner);
+  if(!state) { return; }
+  UIShell_WorkspaceId id = uishell_workspace_id_from_cfg(owner);
+  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(id);
+  AndamentoArrangement *stored = UIShell_StoreCall(state, andamento_arrangement_acquire(state->core, workspace, 0));
+  AndamentoArrangementInfo info = {0};
+  if(stored && andamento_arrangement_info(stored, &info))
+  {
+    char *error = 0;
+    uint32_t result = UIShell_StoreCall(state, andamento_arrangement_resolve(state->core, workspace, choice, info.generation, 0, &error));
+    uishell_sidebar_result(state, result != ANDAMENTO_ARRANGEMENT_INVALID, error);
+  }
+  andamento_arrangement_release(stored);
+}
+
+// Drops the user's edit of `view`'s Slot: the provider's content, or the
+// key it reused, is the Slot's again.
+internal void
+uishell_store_reattach(CFG_Node *view)
+{
+  CFG_Node *owner = &cfg_nil_node;
+  UIShell_SidebarState *state = uishell_store_state_from_view(view, &owner);
+  String8 key = uishell_store_setting(view, str8_lit("slot"));
+  if(!state || !key.size) { return; }
+  char *error = 0;
+  B32 ok = UIShell_StoreCall(state, andamento_slot_reattach(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)),
+                                                             uishell_sidebar_text(key), &error));
+  // It follows its provider again; its next plan shows the provider's
+  // content. A slot a tombstone hid comes back at the next commit, which
+  // places it.
+  if(uishell_sidebar_result(state, ok, error))
+  {
+    uishell_store_mark_follows(view, 1);
+    UIShell_StoreEntry *entry = uishell_store_entry_find(state, uishell_workspace_id_from_cfg(owner));
+    if(entry) { entry->hash = 0; }
+  }
+}
+
+// Keeps the user's edit of `view`'s Slot against the provider's new
+// content, which settles its CHANGED flag.
+internal void
+uishell_store_keep(CFG_Node *view)
+{
+  CFG_Node *owner = &cfg_nil_node;
+  UIShell_SidebarState *state = uishell_store_state_from_view(view, &owner);
+  String8 key = uishell_store_setting(view, str8_lit("slot"));
+  UIShell_ViewSpec spec = {0};
+  String8 taken[4];
+  U64 taken_count = 0;
+  Temp scratch = scratch_begin(0, 0);
+  if(state && key.size && uishell_store_spec_from_view(scratch.arena, view, &spec, taken, &taken_count))
+  {
+    AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+    AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_acquire(state->core, workspace, 0));
+    AndamentoSlot slot = {0};
+    U32 rebind = uishell_store_slot_find(slots, key, &slot) ? slot.rebind : ANDAMENTO_REBIND_REPLACE;
+    andamento_slots_release(slots);
+    AndamentoViewSpec out = uishell_store_andamento_spec(&spec);
+    char *error = 0;
+    uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_set(state->core, workspace, uishell_sidebar_text(key), &out, rebind, &error)), error);
+  }
+  scratch_end(scratch);
+}
+
+// Closes `view`'s tab: its Slot goes, a provider's as a tombstone.
+internal void
+uishell_store_remove(CFG_Node *view)
+{
+  if(view->parent == &cfg_nil_node) { return; }
+  UIShell_RegsScope(.window = rd_window_from_cfg(view)->id, .panel = view->parent->id, .view = view->id, .tab = view->id)
+  { uishell_cmd("close_tab"); }
+}
+
+// Pins `view`, a workspace's View, where Pin puts a card: a pin of its
+// workspace's entity that names the View (`view`: "<workspace-id>/<slot>").
+// When the View goes, Andamento flags the pin rather than dropping it.
+internal CFG_Node *uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area);
+internal CFG_Node *uishell_sidebar_pin_add(UIShell_SidebarState *state, CFG_Node *area, U64 index, AndamentoEntity entity,
+                                           String8 fallback_label, String8 source, B32 compact);
+internal CFG_Node *
+uishell_store_pin_view(RD_WindowState *ws, CFG_Node *view)
+{
+  CFG_Node *owner = uishell_store_view_owner(view);
+  String8 key = uishell_store_setting(view, str8_lit("slot"));
+  if(owner == &cfg_nil_node || str8_match(owner->string, str8_lit("window"), 0) || !key.size || !ws->sidebar) { return &cfg_nil_node; }
+  CFG_Node *area = uishell_sidebar_pin_area(ws, 0);
+  if(area == &cfg_nil_node) { return &cfg_nil_node; }
+  Temp scratch = scratch_begin(0, 0);
+  String8 id = uishell_workspace_id_text_from_cfg(owner);
+  AndamentoEntity entity = {uishell_sidebar_text(str8_lit(".workspace")), uishell_sidebar_text(id)};
+  if(uishell_workspace_cfg_has_subject(owner))
+  {
+    entity.kind = uishell_sidebar_text(uishell_store_setting(owner, str8_lit("sidebar_entity_kind")));
+    entity.id = uishell_sidebar_text(uishell_store_setting(owner, str8_lit("sidebar_entity_id")));
+  }
+  // Named for the View, not only its workspace's entity.
+  String8 label = rd_label_from_cfg(view);
+  label = push_str8f(scratch.arena, "%S: %S", rd_label_from_cfg(owner), label.size ? label : key);
+  CFG_Node *pin = uishell_sidebar_pin_add(ws->sidebar, area, max_U64, entity, label, str8_zero(), 1);
+  uishell_store_set_setting(pin, str8_lit("label"), label);
+  uishell_store_set_setting(pin, str8_lit("view"), push_str8f(scratch.arena, "%S/%S", id, key));
+  scratch_end(scratch);
+  return pin;
+}
+
 //- Notices
 //
 // What a View says about its Slot: a word in its tab's title
@@ -1460,6 +1825,11 @@ read_only global String8 uishell_slot_action_labels[UIShell_SlotAction_COUNT] =
   str8_lit_comp("Not now"),
   str8_lit_comp("Release"),
   str8_lit_comp("Retry"),
+  str8_lit_comp("Use provider's"),
+  str8_lit_comp("Keep mine"),
+  str8_lit_comp("Remove"),
+  str8_lit_comp("Keep mine"),
+  str8_lit_comp("Use provider's"),
 };
 
 // Whether a Slot of `owner` keeps a previous instance of `key` beside its View.
@@ -1508,6 +1878,50 @@ uishell_store_notices(Arena *arena, CFG_Node *view, UIShell_SlotNotice *out, U64
     UIShell_SlotNoticePush(.text = str8_lit("What it showed before is kept in the tab beside it."),
                            .actions = {UIShell_SlotAction_ReleasePrevious});
   }
+  // The Workspace Overlay's flags.
+  CFG_Node *state_owner = &cfg_nil_node;
+  UIShell_SidebarState *state = uishell_store_state_from_view(view, &state_owner);
+  U32 flags = key.size ? uishell_store_slot_flags(state, owner, key) : 0;
+  if(flags & ANDAMENTO_SLOT_FLAG_REMOVED)
+  {
+    UIShell_SlotNoticePush(.badge = str8_lit("removed"), .text = str8_lit("Its provider removed it; it is kept as yours."),
+                           .actions = {UIShell_SlotAction_Remove});
+  }
+  else if((flags & ANDAMENTO_SLOT_FLAG_CHANGED) && (flags & ANDAMENTO_SLOT_FLAG_DETACHED))
+  {
+    UIShell_SlotNoticePush(.badge = str8_lit("changed"), .text = str8_lit("Its provider changed it since you edited it."),
+                           .actions = {UIShell_SlotAction_Reattach, UIShell_SlotAction_KeepMine});
+  }
+  else if(flags & ANDAMENTO_SLOT_FLAG_CHANGED)
+  {
+    UIShell_SlotNoticePush(.badge = str8_lit("changed"), .text = str8_lit("You closed it; its provider has put new content here since."),
+                           .actions = {UIShell_SlotAction_Reattach, UIShell_SlotAction_Remove});
+  }
+  else if(flags & ANDAMENTO_SLOT_FLAG_DETACHED)
+  {
+    UIShell_SlotNoticePush(.badge = str8_lit("edited"), .text = str8_lit("You changed its content, so it no longer follows its provider."),
+                           .actions = {UIShell_SlotAction_Reattach});
+  }
+  if(flags & ANDAMENTO_SLOT_FLAG_REBIND) { UIShell_SlotNoticePush(.badge = str8_lit("rebind")); }
+  if(key.size && uishell_store_departed(state, owner, key))
+  {
+    UIShell_SlotNoticePush(.badge = str8_lit("removed"), .text = str8_lit("Its provider removed this View; it stays until you close it."),
+                           .actions = {UIShell_SlotAction_Remove});
+  }
+  U32 arrangement = uishell_store_arrangement_flags(state, owner);
+  if((arrangement & (ANDAMENTO_ARRANGEMENT_FLAG_PROVIDER_CHANGED|ANDAMENTO_ARRANGEMENT_FLAG_UNRESOLVED)) && uishell_store_view_leads(owner, view))
+  {
+    if(arrangement & ANDAMENTO_ARRANGEMENT_FLAG_PROVIDER_CHANGED)
+    {
+      UIShell_SlotNoticePush(.text = str8_lit("Its provider changed this workspace's layout since you arranged it."),
+                             .actions = {UIShell_SlotAction_KeepLayout, UIShell_SlotAction_FollowLayout});
+    }
+    else
+    {
+      UIShell_SlotNoticePush(.text = str8_lit("A size or tab you chose is for a panel its provider no longer has."),
+                             .actions = {UIShell_SlotAction_FollowLayout});
+    }
+  }
 #undef UIShell_SlotNoticePush
   return count;
 }
@@ -1521,6 +1935,11 @@ uishell_store_act(CFG_Node *view, UIShell_SlotAction action)
     case UIShell_SlotAction_Update: { uishell_store_answer(view, 1); } break;
     case UIShell_SlotAction_Decline: { uishell_store_answer(view, 0); } break;
     case UIShell_SlotAction_ReleasePrevious: { uishell_store_release_previous(view); } break;
+    case UIShell_SlotAction_Reattach: { uishell_store_reattach(view); } break;
+    case UIShell_SlotAction_KeepMine: { uishell_store_keep(view); } break;
+    case UIShell_SlotAction_Remove: { uishell_store_remove(view); } break;
+    case UIShell_SlotAction_KeepLayout: { uishell_store_resolve_arrangement(view, ANDAMENTO_ARRANGEMENT_KEEP); } break;
+    case UIShell_SlotAction_FollowLayout: { uishell_store_resolve_arrangement(view, ANDAMENTO_ARRANGEMENT_FOLLOW); } break;
     case UIShell_SlotAction_Retry:
     {
       CFG_Node *owner = &cfg_nil_node;
@@ -1536,7 +1955,7 @@ uishell_slot_badge(Arena *arena, CFG_Node *view)
 {
   if(cfg_node_child_from_string(view, str8_lit("slot")) == &cfg_nil_node &&
      cfg_node_child_from_string(view, str8_lit("previous_of")) == &cfg_nil_node) { return str8_zero(); }
-  UIShell_SlotNotice notices[4];
+  UIShell_SlotNotice notices[8];
   U64 count = uishell_store_notices(arena, view, notices, ArrayCount(notices));
   for(U64 i = 0; i < count; i++) { if(notices[i].badge.size) { return notices[i].badge; } }
   return str8_zero();
@@ -1548,11 +1967,12 @@ uishell_slot_banner(CFG_Node *view, Rng2F32 rect)
   if(cfg_node_child_from_string(view, str8_lit("slot")) == &cfg_nil_node &&
      cfg_node_child_from_string(view, str8_lit("previous_of")) == &cfg_nil_node) { return rect; }
   Temp scratch = scratch_begin(0, 0);
-  UIShell_SlotNotice notices[4];
+  UIShell_SlotNotice notices[8];
   U64 count = uishell_store_notices(scratch.arena, view, notices, ArrayCount(notices));
-  if(count != 0)
+  UIShell_SlotNotice *notice = 0;
+  for(U64 i = 0; i < count && !notice; i++) { if(notices[i].text.size) { notice = &notices[i]; } }
+  if(notice)
   {
-    UIShell_SlotNotice *notice = &notices[0];
     F32 height = floor_f32(ui_top_font_size()*2.2f);
     UI_WidthFill UI_PrefHeight(ui_px(height, 1)) UI_NamedRow(push_str8f(scratch.arena, "slot_banner_%I64x", view->id))
     {
@@ -1631,6 +2051,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
 {
   // Not built yet: committing would replace what Andamento keeps.
   if(cfg_node_child_from_string(owner, str8_lit("arrangement_presentation")) != &cfg_nil_node) { return; }
+  uishell_store_sync_name(state, owner);
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
   UIShell_WorkspaceId id = uishell_workspace_id_from_cfg(owner);
@@ -1707,14 +2128,35 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     // The provider's own, or a facet's, whose View shows what its plan
     // resolved: the slot's spec is not the View's to set.
     B32 follows = exists && ((slot.in_baseline && !slot.detached) || slot.spec.content == ANDAMENTO_SLOT_FACET);
+    // Unless the user changed what it showed since it applied the provider's:
+    // that is an override, which detaches it.
+    String8 applied_spec = uishell_store_setting(doc.views[i], str8_lit("applied_spec"));
+    if(follows && applied_spec.size &&
+       !str8_match(applied_spec, push_str8f(arena, "%I64x", uishell_store_view_spec_hash(doc.views[i])), 0)) { follows = 0; }
     uishell_store_mark_follows(doc.views[i], follows);
     if(follows) { continue; }
     UIShell_ViewSpec current = exists ? uishell_store_spec_from_andamento(arena, &slot.spec) : (UIShell_ViewSpec){0};
     if(exists && uishell_store_spec_match(&spec, &current)) { continue; }
+    // An override keeps the provider's rebind policy: changing the content
+    // isn't changing the policy.
     AndamentoViewSpec out = uishell_store_andamento_spec(&spec);
     char *error = 0;
     ok = uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_set(state->core, workspace, uishell_sidebar_text(doc.keys[i]),
-                                                                                    &out, ANDAMENTO_REBIND_REPLACE, &error)), error);
+                                                                                    &out, exists ? slot.rebind : ANDAMENTO_REBIND_REPLACE, &error)), error);
+  }
+
+  // Slots whose tabs the user closed go first, so the document no longer
+  // names them: the user's own are removed, and a provider's is tombstoned,
+  // hidden, while its provider keeps it (ADR 0013). A slot the stored
+  // document tabs that this one never had (Andamento placed it since) stays.
+  for(U64 i = 0; ok && i < info.tab_count; i++)
+  {
+    AndamentoTab tab = {0};
+    if(!andamento_arrangement_tab(stored, i, &tab) || tab.placed || tab.gone) { continue; }
+    String8 key = push_str8_copy(arena, uishell_sidebar_string(tab.slot));
+    if(uishell_store_key_in(key, doc.keys, doc.tab_count) || !uishell_store_slot_find(slots, key, 0)) { continue; }
+    char *remove_error = 0;
+    uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_remove(state->core, workspace, uishell_sidebar_text(key), &remove_error)), remove_error);
   }
 
   // The document, at the generation this device last saw.
@@ -1742,28 +2184,6 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   { uishell_sidebar_set_error(state, error ? str8_cstring(error) : str8_lit("The workspace's arrangement was not committed")); }
   andamento_string_free(error);
   B32 committed = ok && result == ANDAMENTO_ARRANGEMENT_COMMITTED;
-
-  // The user's slots whose tabs it closed go; a provider's stays its own,
-  // and a slot it never had a tab for (another host's, just added) stays
-  // for Andamento to place.
-  String8 *closed = push_array(arena, String8, info.tab_count);
-  U64 closed_count = 0;
-  for(U64 i = 0; committed && i < info.tab_count; i++)
-  {
-    AndamentoTab tab = {0};
-    if(!andamento_arrangement_tab(stored, i, &tab)) { continue; }
-    String8 key = push_str8_copy(arena, uishell_sidebar_string(tab.slot));
-    if(!uishell_store_key_in(key, doc.keys, doc.tab_count)) { closed[closed_count++] = key; }
-  }
-  for(U64 i = 0; committed && i < andamento_slots_count(slots); i++)
-  {
-    AndamentoSlot slot = {0};
-    if(!andamento_slots_get(slots, i, &slot) || slot.in_baseline) { continue; }
-    String8 key = uishell_sidebar_string(slot.key);
-    if(!uishell_store_key_in(key, closed, closed_count)) { continue; }
-    char *remove_error = 0;
-    uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_remove(state->core, workspace, slot.key, &remove_error)), remove_error);
-  }
   andamento_arrangement_release(stored);
   andamento_slots_release(slots);
   entry->hash = hash;
@@ -1833,6 +2253,7 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
   }
   CFG_NodePtrList owners = uishell_store_owners(scratch.arena, window);
   for(CFG_NodePtrNode *n = owners.first; n; n = n->next) { uishell_store_sync_owner(state, n->v, revision_moved); }
+  uishell_store_read_overlay(state, window);
   // Kept workspaces aren't materialized: their Slots wait until they open.
   for(CFG_NodePtrNode *n = owners.first; n; n = n->next)
   {
@@ -1878,6 +2299,8 @@ uishell_workspace_store_load(UIShell_SidebarState *state, CFG_Node *window)
       entry->hash = uishell_store_doc_hash(&doc);
     }
   }
+  // Names and moods too, which the presentation file leaves to Andamento.
+  for(CFG_NodePtrNode *n = owners.first; n; n = n->next) { uishell_store_sync_name(state, n->v); }
   scratch_end(scratch);
 }
 
@@ -1885,7 +2308,10 @@ internal void
 uishell_workspace_store_release(UIShell_SidebarState *state)
 {
   if(state->store_arena) { arena_release(state->store_arena); }
-  state->store_arena = 0;
+  if(state->store_overlay_arena) { arena_release(state->store_overlay_arena); }
+  state->store_arena = state->store_overlay_arena = 0;
+  state->store_pins_gone = 0;
+  state->store_pin_gone_count = 0;
   state->store_entries = 0;
   state->store_entry_count = state->store_entry_capacity = 0;
   state->store_synced = 0;
@@ -1920,6 +2346,20 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
   for(CFG_NodePtrNode *n = owners.first; n; n = n->next, owner_index++)
   {
     CFG_Node *owner = n->v;
+    // A name or mood Andamento has is its (`named`, `mooded`).
+    {
+      CFG_Node *dst = copies[owner_index];
+      String8 settings[] = {str8_lit("label"), str8_lit("theme")};
+      for(U64 i = 0; i < ArrayCount(settings) && owner != window; i++)
+      {
+        CFG_Node *mark = cfg_node_child_from_string(owner, uishell_store_owner_runtime_keys[i]);
+        CFG_Node *setting = cfg_node_child_from_string(dst, settings[i]);
+        if(mark != &cfg_nil_node && setting != &cfg_nil_node && str8_match(setting->first->string, mark->first->string, 0))
+        { cfg_node_release(copy_state, setting); }
+        CFG_Node *copied = cfg_node_child_from_string(dst, uishell_store_owner_runtime_keys[i]);
+        if(copied != &cfg_nil_node) { cfg_node_release(copy_state, copied); }
+      }
+    }
     CFG_Node *panels = cfg_node_child_from_string(owner, str8_lit("panels"));
     if(cfg_node_child_from_string(owner, str8_lit("arrangement_generation")) == &cfg_nil_node || panels == &cfg_nil_node) { continue; }
     CFG_Node *dst = copies[owner_index];

@@ -67,6 +67,7 @@ read_only global UIShell_CmdInfo uishell_app_config_cmd_info_table[] =
   UISHELL_CMD("user_settings", "User Settings", Gear, "Opens user settings.", "settings", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("project_settings", "Project Settings", Gear, "Opens project settings.", "settings", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("add_flotilla_subscription", "Add Flotilla Subscription", Add, "Subscribes the Dashboard to a Flotilla daemon: its endpoint, or \"default\" for Flotilla's own.", "dashboard,subscription,provider,flotilla,daemon", UISHELL_CMD_FLAG_UI, UISHELL_Q_STRING),
+  UISHELL_CMD("pin_view", "Pin View", Pin, "Pins the selected View to the sidebar, where Pin puts a card.", "pin,view,slot,sidebar", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("remove_subscription", "Remove Subscription", X, "Removes a Dashboard subscription, named by its ID or daemon endpoint, and its facts.", "dashboard,subscription,provider,flotilla,daemon", UISHELL_CMD_FLAG_UI, UISHELL_Q_STRING),
 };
 

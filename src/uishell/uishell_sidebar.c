@@ -276,6 +276,11 @@ struct UIShell_SidebarState
   B32 store_synced;
   U64 store_cfg_gen, store_tree_hash, store_content_revision, store_snapshot_count;
   U64 store_calls, store_commits;
+  // What Andamento last said of the Workspace Overlays (flags, tombstones)
+  // and of pins whose View went away (uishell_store_read_overlay).
+  Arena *store_overlay_arena;
+  String8 *store_pins_gone;
+  U64 store_pin_gone_count;
   // The Dashboard's sidebar arrangement in Andamento (uishell_sidebar_store.c):
   // the document as last committed or built, and its generation; the
   // snapshot count last synced; what Andamento's notes say is
@@ -1235,6 +1240,9 @@ uishell_sidebar_local_entities(Arena *arena, CFG_Node *root)
         if(label.size) { uishell_sidebar_local_fact_text(r, str8_lit(".label"), label); }
         if(source.size) { uishell_sidebar_local_fact_text(r, str8_lit(".source"), source); }
         if(cfg_node_child_from_string(card, str8_lit("compact")) != &cfg_nil_node) { uishell_sidebar_local_fact_bool(r, str8_lit(".compact"), 1); }
+        // A pin to a View names it, "<workspace-id>/<slot-key>" (uishell_store_pin_view).
+        String8 view = uishell_sidebar_local_field(card, str8_lit("view"));
+        if(view.size) { uishell_sidebar_local_fact_text(r, str8_lit(".view"), view); }
       }
     }
   }
@@ -2356,6 +2364,9 @@ uishell_sidebar_header_drop(UIShell_HeaderTabs *tabs, UI_Box *header)
 internal String8
 uishell_sidebar_node_status(UIShell_SidebarState *state, AndamentoNode node)
 {
+  // A pin whose View went away says so, until the user removes it.
+  if(str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".ref"), 0) &&
+     uishell_store_pin_gone(state, uishell_sidebar_string(node.entity_id))) { return str8_lit("view gone"); }
   AndamentoField field = {0};
   if(node.field_count > 2)
   { andamento_snapshot_field(state->snapshot, node.first_field+2, &field); }
