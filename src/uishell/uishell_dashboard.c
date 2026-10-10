@@ -11,7 +11,7 @@
 //     windows/<andamento_records id>/  records of the process's other windows
 //   <device>/
 //     last_dashboard                   the directory opened last
-//     presentation/<Dashboard ID>.wheelhouse   its windows, with their workspaces
+//     presentation/<Dashboard ID>.wheelhouse   its windows, and this device's part of their workspaces
 //
 //   <shared>:  Linux $XDG_CONFIG_HOME/wheelhouse (~/.config/wheelhouse);
 //              macOS ~/Library/Application Support/Wheelhouse;
@@ -23,8 +23,10 @@
 // isolated runs never touch the person's own. The user file keeps this
 // device's settings (fonts, keybindings, theme); windows are the Dashboard's
 // Presentation State and live in its presentation file, keyed by Dashboard
-// ID. Workspace nodes there still hold their panel trees, named by Workspace
-// ID, until they move into Andamento's workspace records (roadmap, step 7b).
+// ID. Workspace nodes there are named by Workspace ID and keep only this
+// device's part of their arrangements: Andamento's workspace records keep
+// the arrangements and Slots (uishell_workspace_store.c). A file saved with
+// panel trees (step 4) has them imported into Andamento on its first load.
 //
 // Each window still has its own Andamento core (one core per process is
 // deferred), and only one core can own the Dashboard's records. The

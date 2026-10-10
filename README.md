@@ -146,14 +146,15 @@ Debugger app targets and local RAD utility/tool build targets have been removed 
 
 ### Dashboards
 
-One Wheelhouse process opens one Dashboard: its workspaces, sidebar sections,
-groups, pins and order. `--dashboard:<name|path>` names it; without it, the
+One Wheelhouse process opens one Dashboard: its workspaces (with their views
+and how they are arranged), sidebar sections, groups, pins and order. `--dashboard:<name|path>` names it; without it, the
 Dashboard opened last on this device opens, else a new one named `default`. A name
 is a directory under `dashboards/` in the platform's config folder
 (`${XDG_CONFIG_HOME:-~/.config}/wheelhouse`, `~/Library/Application Support/Wheelhouse`,
-`%APPDATA%\Wheelhouse`). Its windows and their layout are this device's own, kept
-under `presentation/` in `${XDG_STATE_HOME:-~/.local/state}/wheelhouse`, the same
-macOS folder, or `%LOCALAPPDATA%\Wheelhouse`. The user file keeps this device's
+`%APPDATA%\Wheelhouse`). Its windows, and focus, labels and terminal sessions
+within its workspaces, are this device's own, kept under `presentation/` in
+`${XDG_STATE_HOME:-~/.local/state}/wheelhouse`, the same macOS folder, or
+`%LOCALAPPDATA%\Wheelhouse`. The user file keeps this device's
 fonts, keybindings and theme. An explicit `--user` keeps all of these beside it.
 Windows saved in a user file before Dashboards are not imported; they stay in it,
 unread, for an older build. See `src/uishell/uishell_dashboard.c` for the layout.

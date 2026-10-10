@@ -103,7 +103,8 @@ struct RD_DockProposal
   X(binary, binary, RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview, 0, WorkspaceRegion) \
   X(bitmap, bitmap, RD_ViewTrait_Content, 0, WorkspaceRegion) \
   X(color, color, RD_ViewTrait_Content, 0, WorkspaceRegion) \
-  X(geo3d, geo3d, RD_ViewTrait_Content, 0, WorkspaceRegion)
+  X(geo3d, geo3d, RD_ViewTrait_Content, 0, WorkspaceRegion) \
+  X(placeholder, placeholder, RD_ViewTrait_Content, 0, WorkspaceRegion)
 
 // Shell-dispatched Views have no visualizer hook, but still declare validity.
 #define RD_DOCK_VIEW_REGISTRATIONS(X) \

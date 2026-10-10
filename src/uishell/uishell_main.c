@@ -57,6 +57,7 @@
 #include "uishell/uishell_eval.h"
 #include "uishell/uishell_dashboard.h"
 #include "uishell/uishell_subscriptions.h"
+#include "uishell/uishell_workspace_store.h"
 #include "uishell/uishell_dispatch.h"
 #include "uishell/uishell_terminal_provider.h"
 #include "uishell/uishell_terminal_environment.h"

@@ -3057,7 +3057,11 @@ uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window)
   
   UIShell_MaterializedWorkspaceInventory inventory = {0};
   CFG_Node *legacy_panels_root = cfg_node_child_from_string(window, str8_lit("panels"));
-  if(workspace_cfgs.count == 0 || legacy_panels_root != &cfg_nil_node)
+  // Andamento keeps a committed layout's arrangement, which a window saved
+  // since has no panels for until its records are read
+  // (uishell_workspace_store.c).
+  B32 legacy_committed = cfg_node_child_from_string(window, str8_lit("arrangement_generation")) != &cfg_nil_node;
+  if(workspace_cfgs.count == 0 || legacy_panels_root != &cfg_nil_node || legacy_committed)
   {
     UIShell_MaterializedWorkspace *workspace = push_array(arena, UIShell_MaterializedWorkspace, 1);
     workspace->id = window->id;

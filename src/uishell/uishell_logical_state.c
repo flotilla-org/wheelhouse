@@ -80,9 +80,10 @@ uishell_logical_entity(Arena *arena, String8 kind, String8 id)
 
 //- Workspaces
 
-// A tab: its View kind, then what defines its content. A terminal is its
-// command and launch directory (and daemon hosting), a Jackstay View its
-// source endpoints, anything else its expression.
+// A tab: its View kind, its Slot's key, then what defines its content. A
+// terminal is its command and launch directory (and daemon hosting), a
+// Jackstay View its source endpoints, a placeholder the content it can't
+// show, anything else its expression.
 internal String8
 uishell_logical_tab(Arena *arena, CFG_Node *tab, B32 selected)
 {
@@ -90,13 +91,16 @@ uishell_logical_tab(Arena *arena, CFG_Node *tab, B32 selected)
   {
     "cwd", "daemon", "daemon_name",
     "source_endpoint", "source_socket", "input_endpoint", "input_socket",
-    "media_endpoint", "media_socket", "d3d11_endpoint", "porthole_endpoint",
+    "media_endpoint", "media_socket", "d3d11_endpoint", "porthole_endpoint", "content",
   };
   String8List parts = {0};
   str8_list_pushf(arena, &parts, "tab %S", tab->string);
   String8 label = rd_label_from_cfg(tab);
   if(label.size) { str8_list_pushf(arena, &parts, " %S", uishell_logical_quote(arena, label)); }
-  String8 slot = cfg_node_child_from_string(tab, str8_lit("resource_id"))->first->string;
+  // Its Slot's key in Andamento (uishell_workspace_store.c); before it has
+  // one, the provider's slot it was made for.
+  String8 slot = cfg_node_child_from_string(tab, str8_lit("slot"))->first->string;
+  if(!slot.size) { slot = cfg_node_child_from_string(tab, str8_lit("resource_id"))->first->string; }
   if(slot.size) { str8_list_pushf(arena, &parts, " slot=%S", uishell_logical_quote(arena, slot)); }
   String8 expr = rd_expr_from_cfg(tab);
   if(expr.size)

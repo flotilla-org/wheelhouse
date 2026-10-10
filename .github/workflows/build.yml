@@ -22,11 +22,11 @@ env:
   # before setup (0.11, jackstay#48, which Porthole capture sessions need).
   # Pinned to jackstay#48's branch commit until it merges; then its squash commit.
   JACKSTAY_REV: 91156bfac2bc2f6df168c928b445c98e002f4950
-  # Pinned to andamento#154's head (subscription providers: apply_*_from,
-  # provider retract and stale, records v2), which builds on andamento#151
-  # (records) and #149 (ABI 3: Workspace IDs), until they merge; then #154's
-  # squash commit.
-  ANDAMENTO_REV: 7770de343f932939261137fd2490f70fcae4cabb
+  # Pinned to andamento#155's head (Slots, View Specs, set_arrangement
+  # documents, workspace records v3), which builds on andamento#154
+  # (subscription providers), #151 (records) and #149 (ABI 3: Workspace
+  # IDs), until they merge; then #155's squash commit.
+  ANDAMENTO_REV: 2b63547982accd99e4aa81340de385779ce4e850
 
 jobs:
   daily-driver:
