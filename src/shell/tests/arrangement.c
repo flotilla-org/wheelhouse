@@ -359,6 +359,21 @@ entry_point(CmdLine *cmdline)
     rd_arrangement_resize(arrangement, arrangement->root->first->id, 0, 0.05f);
     Check(rd_arrangement_problem(arena, arrangement).size == 0 && arrangement->root->first->weight == 0.333333f);
     cfg_node_release(cfg, window);
+    // Equalizing splits the two sides' space evenly, after the same rescale.
+    window = fixture(arena, "window:{split_x panels:{0.2:{text} 0.3:{text} 0.5:{text}}}");
+    arrangement = rd_arrangement_from_cfg(arena, child(window, "panels"));
+    rd_arrangement_equalize(arrangement, arrangement->root->first->next->id);
+    Check(arrangement->root->first->weight == 0.2f && arrangement->root->first->next->weight == 0.4f &&
+          arrangement->root->last->weight == 0.4f);
+    check_saved(arena, arrangement, window);
+    cfg_node_release(cfg, window);
+    window = fixture(arena, "window:{panels:{0.6:{text} 0.6:{text}}}");
+    arrangement = rd_arrangement_from_cfg(arena, child(window, "panels"));
+    rd_arrangement_equalize(arrangement, arrangement->root->first->id);
+    Check(arrangement->root->first->weight == 0.5f && arrangement->root->last->weight == 0.5f);
+    rd_arrangement_equalize(arrangement, arrangement->root->last->id);
+    Check(arrangement->root->first->weight == 0.5f && rd_arrangement_problem(arena, arrangement).size == 0);
+    cfg_node_release(cfg, window);
   }
 
   // A hand-edited deep split chain loads, copies and saves without exhausting
