@@ -81,9 +81,13 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     { activate = node.activate; }
   }
   ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(state.core, state.snapshot, activate, 0), "role entry dispatches its opening");
+  // As a frame does, the window's workspaces are observed before anything
+  // plans them: a Slot is of a workspace Andamento knows.
   {
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_effects(&state, &split);
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(&state, &split);
   }
   CFG_Node *workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
   CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
@@ -166,6 +170,10 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   }
   andamento_destroy(state.core);
   state.core = 0;
+  // Gone before the role opens again: a workspace of the same subject would
+  // be found and focused rather than opened.
+  uishell_terminal_runtime_release(tv);
+  cfg_node_release(rd_state->cfg, workspace);
 
   // Opening an entity from its current resolution through the production effect
   // path records the managed target, and its first plan doesn't restart it.
@@ -198,6 +206,8 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     andamento_snapshot_release(snapshot);
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_effects(&opened, &split);
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(&opened, &split);
     CFG_Node *role_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     CFG_Node *role_view = &cfg_nil_node;
     CFG_Node *role_panels = cfg_node_child_from_string(role_workspace, str8_lit("panels"));
@@ -304,8 +314,6 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     cfg_node_release(rd_state->cfg, existing);
     uishell_sidebar_release(&opened);
   }
-  uishell_terminal_runtime_release(tv);
-  cfg_node_release(rd_state->cfg, workspace);
   ui_select_state(saved);
   ui_state_release(test);
   scratch_end(scratch);
