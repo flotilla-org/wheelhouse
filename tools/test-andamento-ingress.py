@@ -66,6 +66,17 @@ def wait_ready(path, timeout=10, process=None):
         time.sleep(.01)
 
 
+def alive(pid):
+    """Whether `pid` names a process that has not been reaped."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def patch(kind, identity, facts):
     return {'type': 'metadata-patch', 'target': {'kind': 'entity', 'value': {'kind': kind, 'id': identity}},
             'source_id': 'ingress.test', 'set': {
@@ -493,6 +504,89 @@ class IngressTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+
+    # A stand-in for `flotilla pm connect` that ignores SIGTERM, as does the
+    # child it starts; it appends "<its pid> <child pid>" to $WH_TEST_CONNECTOR.
+    STUBBORN_CONNECTOR = """#!/bin/sh
+trap '' TERM
+sleep 300 &
+echo "$$ $!" >> "$WH_TEST_CONNECTOR"
+wait
+"""
+
+    def start_with_connector(self):
+        """Wheelhouse with one Flotilla subscription run by the stand-in;
+        returns it and the connector's and its child's pids."""
+        binary = str(Path(os.environ['WHEELHOUSE_TEST_BINARY']).resolve())
+        flotilla = Path(self.dir.name, 'flotilla')
+        flotilla.write_text(self.STUBBORN_CONNECTOR)
+        flotilla.chmod(0o755)
+        marker = Path(self.dir.name, 'connector.pids')
+        Path(self.dir.name, 'dashboard').mkdir()
+        Path(self.dir.name, 'dashboard', 'id').write_text('lifetime')
+        path = os.path.join(self.dir.name, 'native.sock')
+        log = tempfile.TemporaryFile()
+        self.addCleanup(log.close)
+        process = subprocess.Popen([binary, '--user:' + self.dir.name + '/user',
+                                    '--dashboard:' + self.dir.name + '/dashboard',
+                                    '--project:' + self.dir.name + '/project',
+                                    '--andamento_socket:' + path,
+                                    '--andamento_config:' + str(ROOT / 'data/sidebar/fixture.kdl'),
+                                    '--flotilla_bin:' + str(flotilla), '--flotilla_subscription:ssh://lifetime'],
+                                   stdout=log, stderr=log, env={**os.environ, 'WH_TEST_CONNECTOR': str(marker)})
+
+        def failure(message):
+            log.seek(0)
+            return message + ': ' + log.read().decode(errors='replace')
+
+        def cleanup():
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        self.addCleanup(cleanup)
+        try:
+            wait_ready(path, timeout=20, process=process)
+        except (OSError, TimeoutError, RuntimeError):
+            self.fail(failure('native listener failed'))
+        deadline = time.monotonic() + 10
+        while not (marker.exists() and marker.read_text().endswith('\n')):
+            self.assertLess(time.monotonic(), deadline, failure('the connector did not start'))
+            time.sleep(.05)
+        pids = [int(pid) for pid in marker.read_text().splitlines()[-1].split()]
+        self.assertTrue(all(alive(pid) for pid in pids))
+        # Stopping what it started goes no further than its own processes.
+        self.addCleanup(lambda: [os.kill(pid, 9) for pid in pids if alive(pid)])
+        return process, pids, failure
+
+    def assert_gone(self, pids, within, failure):
+        deadline = time.monotonic() + within
+        while any(alive(pid) for pid in pids):
+            left = [pid for pid in pids if alive(pid)]
+            self.assertLess(time.monotonic(), deadline, failure(f'connector processes {left} outlived Wheelhouse'))
+            time.sleep(.05)
+
+    @unittest.skipIf(WINDOWS, 'Windows connectors are held by a job object (connector.rs)')
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_quitting_stops_the_connector_and_what_it_started(self):
+        # SIGTERM quits as Exit does: Wheelhouse stops its connectors (TERM,
+        # then KILL after 2s) and exits normally.
+        process, pids, failure = self.start_with_connector()
+        process.send_signal(15)
+        try:
+            self.assertEqual(process.wait(timeout=15), 0, failure('Wheelhouse did not quit normally'))
+        except subprocess.TimeoutExpired:
+            self.fail(failure('Wheelhouse did not quit'))
+        self.assert_gone(pids, 1, failure)
+
+    @unittest.skipIf(WINDOWS, 'Windows connectors are held by a job object (connector.rs)')
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_connector_ends_when_wheelhouse_is_killed(self):
+        # No teardown at all: the connector's lifeline closes and its guardian
+        # ends its process group (TERM, then KILL after 2s).
+        process, pids, failure = self.start_with_connector()
+        process.kill()
+        process.wait()
+        self.assert_gone(pids, 8, failure)
 
     @unittest.skipUnless(WINDOWS, 'Windows protected pipe DACL')
     def test_pipe_dacl_is_protected_and_grants_only_system_and_current_user(self):

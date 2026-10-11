@@ -5,11 +5,21 @@
 //! Restarts wait 1s, doubling to 30s; a run that lasted 30s resets the wait,
 //! as `tools/daily-driver.py` did when it supervised `flotilla pm connect`.
 //! The child's output appends to one log, where each exit is noted too.
+//!
+//! A connector never outlives Wheelhouse. Stopping ends what it started
+//! (on Unix, TERM, then KILL after `GRACE`), and Wheelhouse stops every connector
+//! before it exits. Should Wheelhouse end without doing so (a crash,
+//! SIGKILL, a quit that skips teardown), on Unix each connector runs under
+//! a guardian, a `/bin/sh` that leads its process group and holds the read
+//! end of a lifeline pipe whose only write end is Wheelhouse's: when the
+//! pipe closes the guardian ends the group the same way. Linux also sends
+//! the guardian SIGTERM when its parent thread ends; on Windows the job
+//! object kills everything in it when its last handle, Wheelhouse's, closes.
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::PathBuf,
-    process::{Child, Command, Stdio},
+    process::{Child, Command},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc,
@@ -21,6 +31,27 @@ use std::{
 pub const STABLE: Duration = Duration::from_secs(30);
 pub const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(100);
+/// How long a stopped connector has after SIGTERM before SIGKILL. The
+/// guardian waits as long (`GUARDIAN`, 20 × 0.1s).
+#[cfg(unix)]
+pub const GRACE: Duration = Duration::from_secs(2);
+
+/// Runs `"$@"` (the connector) in its own process group, which it leads,
+/// with the lifeline as fd 0. When the lifeline closes (Wheelhouse is gone,
+/// or dropped it) a watcher ignores SIGTERM, sends it to the group, waits for
+/// the connector to go (up to 2s) and then SIGKILLs the group, itself
+/// included. The guardian exits with the connector's status; whatever is
+/// left of the group is stopped by `Run::stop`.
+#[cfg(unix)]
+const GUARDIAN: &str = r#"exec 3<&0 </dev/null
+"$@" 3<&- &
+c=$!
+{ cat <&3 >/dev/null 2>&1; trap '' TERM; kill -TERM 0 2>/dev/null; i=0
+  while [ $i -lt 20 ] && kill -0 $c 2>/dev/null; do sleep 0.1; i=$((i+1)); done
+  kill -KILL 0; } &
+exec 3<&-
+wait $c
+"#;
 
 pub struct Spec {
     pub argv: Vec<String>,
@@ -36,33 +67,50 @@ pub struct Connector {
     thread: Option<thread::JoinHandle<()>>,
 }
 
-/// A started child and what owns its descendants: its process group on
-/// Unix, a job object on Windows.
+/// A started child and what owns its descendants: on Unix the guardian
+/// (the child) leads their process group and `lifeline` keeps it waiting;
+/// on Windows, a job object.
 struct Run {
     child: Child,
+    #[cfg(unix)]
+    lifeline: Option<std::io::PipeWriter>,
     #[cfg(windows)]
     job: windows::Job,
 }
 
 impl Run {
     fn spawn(spec: &Spec, log: &File) -> std::io::Result<Self> {
-        let mut command = Command::new(&spec.argv[0]);
-        command.args(&spec.argv[1..]);
+        #[cfg(unix)]
+        let (mut command, lifeline) = {
+            let mut command = Command::new("/bin/sh");
+            command
+                .args(["-c", GUARDIAN, "wheelhouse-connector"])
+                .args(&spec.argv);
+            // Both ends close on exec: only this process holds the write end.
+            let (reader, writer) = std::io::pipe()?;
+            command.stdin(reader);
+            (command, writer)
+        };
+        #[cfg(not(unix))]
+        let mut command = {
+            let mut command = Command::new(&spec.argv[0]);
+            command
+                .args(&spec.argv[1..])
+                .stdin(std::process::Stdio::null());
+            command
+        };
         for (name, value) in &spec.env {
             match value {
                 Some(value) => command.env(name, value),
                 None => command.env_remove(name),
             };
         }
-        command
-            .stdin(Stdio::null())
-            .stdout(log.try_clone()?)
-            .stderr(log.try_clone()?);
+        command.stdout(log.try_clone()?).stderr(log.try_clone()?);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
-            // A connector never outlives Wheelhouse: it is stopped when the
+            // Besides the lifeline: the guardian is sent SIGTERM when the
             // thread that started it ends, as when the process ends abruptly.
             #[cfg(target_os = "linux")]
             unsafe {
@@ -96,13 +144,16 @@ impl Run {
         }
         Ok(Self {
             child,
+            #[cfg(unix)]
+            lifeline: Some(lifeline),
             #[cfg(windows)]
             job,
         })
     }
 
     /// Stops what is left of the run: the child, if it still runs, and
-    /// anything it started.
+    /// anything it started. On Unix: SIGTERM to the group, then SIGKILL to
+    /// whatever of it is left after [`GRACE`].
     fn stop(mut self) {
         #[cfg(unix)]
         {
@@ -110,14 +161,23 @@ impl Run {
             unsafe {
                 libc::killpg(group, libc::SIGTERM);
             }
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while Instant::now() < deadline && matches!(self.child.try_wait(), Ok(None)) {
-                thread::sleep(Duration::from_millis(20));
-            }
-            if matches!(self.child.try_wait(), Ok(None)) {
-                unsafe {
-                    libc::killpg(group, libc::SIGKILL);
+            drop(self.lifeline.take());
+            // The group's ID stays reserved while it has members, the
+            // unreaped guardian included, so it can only name this group.
+            let deadline = Instant::now() + GRACE;
+            let mut reaped = false;
+            loop {
+                reaped = reaped || !matches!(self.child.try_wait(), Ok(None));
+                if reaped && unsafe { libc::killpg(group, 0) } != 0 {
+                    break;
                 }
+                if Instant::now() >= deadline {
+                    unsafe {
+                        libc::killpg(group, libc::SIGKILL);
+                    }
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
             }
         }
         #[cfg(windows)]
@@ -259,6 +319,12 @@ impl Connector {
     pub fn starts(&self) -> u64 {
         self.starts.load(Ordering::SeqCst)
     }
+
+    /// Asks the connector to stop without waiting for it, so several can
+    /// stop at once; dropping it waits.
+    pub fn stop_begin(&mut self) {
+        drop(self.stop.take());
+    }
 }
 
 impl Drop for Connector {
@@ -390,6 +456,88 @@ mod tests {
             "the grandchild to go",
             || unsafe { libc::kill(grandchild, 0) } != 0,
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn alive(pid: libc::pid_t) -> bool {
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    /// A connector that ignores SIGTERM, as does the child it starts; the
+    /// marker names both once they run.
+    fn stubborn(dir: &std::path::Path) -> (Spec, PathBuf) {
+        std::fs::create_dir_all(dir).unwrap();
+        let marker = dir.join("pids");
+        let script = format!(
+            "trap '' TERM; sleep 60 & echo \"$$ $!\" > {m}.tmp && mv {m}.tmp {m}; wait",
+            m = marker.display()
+        );
+        let spec = Spec {
+            argv: vec!["/bin/sh".into(), "-c".into(), script],
+            env: Vec::new(),
+            log: dir.join("connector.log"),
+        };
+        (spec, marker)
+    }
+
+    fn pids(marker: &std::path::Path) -> Vec<libc::pid_t> {
+        wait_for("the connector to start", || marker.exists());
+        let text = std::fs::read_to_string(marker).unwrap();
+        let pids: Vec<libc::pid_t> = text
+            .split_whitespace()
+            .map(|p| p.parse().unwrap())
+            .collect();
+        assert_eq!(pids.len(), 2, "{text}");
+        assert!(pids.iter().all(|&pid| alive(pid)));
+        pids
+    }
+
+    #[test]
+    fn stop_kills_what_ignores_sigterm_within_the_grace() {
+        let dir = std::env::temp_dir().join(format!("wh-connector-stop-{}", std::process::id()));
+        let (spec, marker) = stubborn(&dir);
+        let connector = Connector::start(spec, wake).unwrap();
+        let pids = pids(&marker);
+        let started = Instant::now();
+        drop(connector);
+        assert!(
+            started.elapsed() < GRACE + Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        wait_for("the connector and its child to go", || {
+            !pids.iter().any(|&pid| alive(pid))
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Wheelhouse ending without stopping its connectors closes the lifeline,
+    // as dropping it here does; the guardian ends the group.
+    #[test]
+    fn closing_the_lifeline_ends_the_connector_and_its_children() {
+        let dir =
+            std::env::temp_dir().join(format!("wh-connector-lifeline-{}", std::process::id()));
+        let (spec, marker) = stubborn(&dir);
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&spec.log)
+            .unwrap();
+        let mut run = Run::spawn(&spec, &log).unwrap();
+        let pids = pids(&marker);
+        let closed = Instant::now();
+        drop(run.lifeline.take());
+        wait_for("the connector and its child to go", || {
+            !pids.iter().any(|&pid| alive(pid))
+        });
+        assert!(
+            closed.elapsed() < GRACE + Duration::from_secs(3),
+            "{:?}",
+            closed.elapsed()
+        );
+        // The guardian went with them.
+        let status = run.child.wait().unwrap();
+        assert!(!status.success(), "{status}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

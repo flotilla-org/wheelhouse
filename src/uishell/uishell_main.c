@@ -139,6 +139,14 @@ frame(void)
 {
   // rd_frame destroys window/UI state on quit. Keep pumping asynchronous
   // session cleanup without building another frame from that retired state.
+  // SIGTERM, SIGINT or SIGHUP quit as Exit does, so the Dashboard's
+  // connectors are stopped below entry_point's loop (quit.rs).
+  local_persist B32 quit_signalled = 0;
+  if(!rd_state->quit && !quit_signalled && wheelhouse_quit_signalled())
+  {
+    quit_signalled = 1;
+    uishell_cmd("exit");
+  }
   if(!rd_state->quit)
   {
     uishell_sidebar_poll_live();
@@ -192,6 +200,8 @@ entry_point(CmdLine *cmd_line)
     case ExecMode_Normal:
     {
       wm_init();
+      if(!wheelhouse_quit_signals_install(wm_send_wakeup_event))
+      { fprintf(stderr, "Quit signals could not be handled; they end Wheelhouse without stopping its connectors\n"); }
       fp_init();
       r_init(cmd_line);
       fnt_init();
@@ -356,6 +366,9 @@ entry_point(CmdLine *cmd_line)
           abort_self(ok ? 0 : 1);
         }
       }
+      // Every way out of the loop (Exit, the last window closed, Quit on
+      // macOS, a quit signal) comes here: connectors stop before Wheelhouse
+      // exits. Should it end otherwise, they end with it (connector.rs).
       uishell_subscriptions_close();
       wheelhouse_ingress_stop(uishell_ingress);
       uishell_ingress = 0;

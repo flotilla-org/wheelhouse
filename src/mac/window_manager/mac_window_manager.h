@@ -89,7 +89,7 @@ struct MAC_WM_FileDropNode
 }
 @end
 
-@interface MAC_WM_MenuTarget : NSObject<NSMenuDelegate>
+@interface MAC_WM_MenuTarget : NSObject<NSMenuDelegate, NSApplicationDelegate>
 - (void)menuItemSelected:(id)sender;
 - (void)finishMenuTracking;
 @end

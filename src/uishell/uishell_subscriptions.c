@@ -127,11 +127,14 @@ uishell_subscription_push(String8 id, String8 kind, String8 daemon)
   return s;
 }
 
-// Stops every subscription's connector and endpoint and forgets them.
+// Stops every subscription's connector and endpoint and forgets them. The
+// connectors stop together, each within its grace (connector.rs), so
+// quitting waits for the slowest rather than their sum.
 internal void
 uishell_subscriptions_close(void)
 {
   UIShell_Subscriptions *subs = &uishell_subscriptions;
+  for(UIShell_Subscription *s = subs->first; s; s = s->next) { wheelhouse_connector_stop_begin(s->connector); }
   for(UIShell_Subscription *s = subs->first, *next = 0; s; s = next)
   {
     next = s->next;

@@ -147,6 +147,17 @@
   // It does not depend on balancing submenu delegate callbacks.
   if([notification object] == [NSApp mainMenu]) { [self finishMenuTracking]; }
 }
+// Quit from the Dock, logout or shutdown ends in -terminate:, which would
+// exit() without the app's teardown (its connectors left running); it quits
+// as the Quit menu item does instead.
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
+{
+  MAC_WM_Window *window = mac_wm_menu_command_target_window();
+  if(window == 0 && mac_wm_state != 0) { window = mac_wm_state->first_window; }
+  if(window == 0) { return NSTerminateNow; }
+  mac_wm_push_menu_command_for_window(window, str8_lit("exit"));
+  return NSTerminateCancel;
+}
 - (void)applicationDidResignActive:(NSNotification *)notification
 {
   [self finishMenuTracking];
@@ -791,6 +802,7 @@ wm_init(void)
                         name:NSMenuDidEndTrackingNotification object:0];
   [notifications addObserver:mac_wm_state->menu_target selector:@selector(applicationDidResignActive:)
                         name:NSApplicationDidResignActiveNotification object:NSApp];
+  [NSApp setDelegate:mac_wm_state->menu_target];
   [NSApp finishLaunching];
   mac_wm_apply_menu_mode(mac_wm_state->menu_mode);
 }

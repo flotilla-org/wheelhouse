@@ -3,6 +3,8 @@ use std::ffi::c_void;
 
 #[cfg(any(unix, windows))]
 mod connector;
+#[cfg(unix)]
+mod quit;
 #[cfg(any(unix, windows))]
 mod recording;
 
@@ -562,6 +564,45 @@ pub unsafe extern "C" fn wheelhouse_connector_stop(connector: *mut Connector) {
     if !connector.is_null() {
         drop(Box::from_raw(connector));
     }
+}
+
+/// Ask the connector to stop without waiting, so that several stop at once;
+/// stop then waits for it and releases the handle.
+///
+/// # Safety
+/// `connector` must be NULL or a live handle, exclusively accessed by this call.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_connector_stop_begin(connector: *mut Connector) {
+    #[cfg(any(unix, windows))]
+    if let Some(connector) = connector.as_mut() {
+        connector.stop_begin();
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = connector;
+}
+
+/// Have SIGTERM, SIGINT and SIGHUP ask to quit (see quit.rs): `wake` runs
+/// on a background thread at the first, and `wheelhouse_quit_signalled`
+/// reports it; a second ends the process. Returns 0 if they could not be
+/// installed. Without such signals (Windows) it does nothing and returns 1.
+#[no_mangle]
+pub extern "C" fn wheelhouse_quit_signals_install(wake: Wake) -> u32 {
+    #[cfg(unix)]
+    return quit::install(wake).is_ok() as u32;
+    #[cfg(not(unix))]
+    {
+        let _ = wake;
+        1
+    }
+}
+
+/// Whether a quit signal has arrived since the handlers were installed.
+#[no_mangle]
+pub extern "C" fn wheelhouse_quit_signalled() -> u32 {
+    #[cfg(unix)]
+    return quit::signalled() as u32;
+    #[cfg(not(unix))]
+    0
 }
 
 /// Drain queued patches on the UI thread.
