@@ -977,8 +977,10 @@ struct RD_State
   E_String2TypeKeyMap *meta_name2type_map;
 
   // Tests that build panels without the renderer stack: Visualizers draw
-  // nothing (src/shell/tests, src/uishell/tests).
+  // nothing (src/shell/tests, src/uishell/tests), except sidebar sections
+  // where headless_sections is set (src/uishell/tests/state_behaviour.c).
   B32 headless_views;
+  B32 headless_sections;
   U64 docking_restore_gen;
 
   // rjf: registers stack

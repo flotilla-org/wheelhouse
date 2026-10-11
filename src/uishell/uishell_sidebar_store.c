@@ -187,6 +187,33 @@ uishell_sidebar_store_assign_keys(CFG_Node *window)
   return unkeyed.count != 0;
 }
 
+// A sidebar panel shows one of its tabs: a panel with tabs whose Selected
+// View went (released with no settle) selects its first. A section's panel
+// has no tab bar, so nothing else would bring it back. Returns whether any
+// changed.
+internal B32
+uishell_sidebar_store_select_shown(CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  U64 count = 0;
+  RD_Arrangement **arrangements = uishell_sidebar_store_arrangements(scratch.arena, window, &count);
+  B32 changed = 0;
+  for(U64 i = 0; i < count; i++)
+  {
+    RD_Arrangement *a = arrangements[i];
+    B32 selected = 0;
+    for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+    {
+      if(p->first_tab == 0 || rd_arrangement_tab_from_view(p, p->selected) != 0) { continue; }
+      selected |= rd_arrangement_select(a, p->id, p->first_tab->view);
+    }
+    if(selected) { rd_arrangement_save(rd_state->cfg, a); }
+    changed |= selected;
+  }
+  scratch_end(scratch);
+  return changed;
+}
+
 //- Documents
 
 // The window's sidebar as a document: the dock's panels, then each Floating
@@ -431,6 +458,8 @@ struct UIShell_SidebarBuild
   B32 manual;
   // The panels made, by document ID.
   UIShell_SidebarBuilt *first_built;
+  // A panel whose Selected View the document didn't name shows its first.
+  B32 selected_first;
 };
 
 // Fills the cleared `a` with the tree under `root`, reusing the panel nodes
@@ -507,16 +536,20 @@ uishell_sidebar_store_fill(UIShell_SidebarBuild *b, RD_Arrangement *a, UIShell_S
       SLLQueuePush(queue, queue_last, pending);
     }
     if(src->kind != ANDAMENTO_PANEL_TABS) { continue; }
-    CFG_ID prev = 0, selected = 0;
+    CFG_ID prev = 0, selected = 0, first = 0;
     for(U64 t = src->first_tab; t < src->first_tab+src->tab_count && t < b->tab_count; t++)
     {
       CFG_Node *view = b->views[t];
       if(view == &cfg_nil_node) { continue; }
       rd_arrangement_insert_tab(a, view->id, wanted, prev, 0);
       if(t-src->first_tab == src->selected) { selected = view->id; }
+      if(!first) { first = view->id; }
       prev = view->id;
     }
-    rd_arrangement_select(a, wanted, selected);
+    // Andamento's document may select none of a panel's tabs; the sidebar
+    // shows its first (uishell_sidebar_store_select_shown).
+    b->selected_first |= !selected && first;
+    rd_arrangement_select(a, wanted, selected ? selected : first);
   }
   a->next_id = fresh;
   for(U64 i = 0; i < ids_used; i++) { a->next_id = Max(a->next_id, ids[i]+1); }
@@ -746,6 +779,9 @@ uishell_sidebar_store_build(UIShell_SidebarState *state, CFG_Node *window)
   andamento_arrangement_release(stored);
   UIShell_SidebarDoc rebuilt = uishell_sidebar_store_doc(arena, state, window, 0);
   state->sidebar_hash = uishell_sidebar_store_doc_hash(&rebuilt);
+  // A selection the document lacked is the sidebar's change: the next sync
+  // commits it.
+  if(b.selected_first) { state->sidebar_hash = 0; }
   scratch_end(scratch);
   return 1;
 }
@@ -887,6 +923,7 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
   if(marked || legacy)
   {
     uishell_sidebar_store_assign_keys(window);
+    uishell_sidebar_store_select_shown(window);
     UIShell_SidebarDoc doc = uishell_sidebar_store_doc(scratch.arena, state, window, !marked);
     U64 hash = uishell_sidebar_store_doc_hash(&doc);
     if(!marked || hash != state->sidebar_hash)

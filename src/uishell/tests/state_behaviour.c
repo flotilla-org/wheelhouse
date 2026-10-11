@@ -548,9 +548,10 @@ entry_point(CmdLine *cmdline)
   // As --sidebar_subject_fixture: the daily-driver sidebar with fixture facts.
   uishell_sidebar_fixture = uishell_sidebar_subject_fixture = 1;
   wm_init(); fp_init(); r_init(cmdline); fnt_init(); rd_init(cmdline);
-  // Every registered Renderer except visualizers renders, so docked
-  // sections render when the sidebar is drawn (state_sidebar_draw).
+  // Every registered Renderer except visualizers renders, and so do docked
+  // sections when the sidebar is drawn (state_sidebar_draw).
   rd_state->headless_views = 1;
+  rd_state->headless_sections = 1;
   e_select_cache(rd_state->eval_cache);
   E_BaseCtx base_ctx = {.address_arch = Arch_CURRENT, .space_gen = rd_eval_space_gen,
                        .space_read = rd_eval_space_read, .space_write = rd_eval_space_write}; e_select_base_ctx(&base_ctx);
@@ -1149,6 +1150,63 @@ entry_point(CmdLine *cmdline)
     state_window_frame(ws);
     state_check_sidebar_committed(ws);
     ws = state_restart(ws, &theme, dashboard_b);
+  }
+
+  //- A sidebar panel shows one of its sections; a section's panel has no tab
+  // bar to choose another. The Selected View of a panel holding a second
+  // section released with no settle (as a test's cleanup or a hand edit
+  // does) leaves the other unselected: the next frame selects it, and
+  // Andamento's record keeps it selected. A record selecting none of a
+  // panel's tabs, which Andamento allows, restores with its first shown,
+  // and the section draws its body.
+  {
+    window = cfg_node_from_id(ws->cfg_id);
+    String8 key = state_section_key(scratch.arena, ws->sidebar, str8_lit("Projects"));
+    CFG_Node *view = uishell_sidebar_region_view(window, key);
+    StateCheck(view != &cfg_nil_node);
+    String8 sidebar_before = state_sidebar_text(scratch.arena);
+    CFG_Node *group = uishell_sidebar_local_new_group(window, str8_lit("Transient"));
+    CFG_Node *added = uishell_sidebar_local_new_view(view->parent, group->parent);
+    StateCheck(added != &cfg_nil_node && cfg_node_child_from_string(view, str8_lit("selected")) == &cfg_nil_node);
+    cfg_node_release(rd_state->cfg, added);
+    cfg_node_release(rd_state->cfg, group->parent);
+    state_frame(ws);
+    StateCheck(cfg_node_child_from_string(view, str8_lit("selected")) != &cfg_nil_node);
+    StateCheck(str8_match(state_sidebar_text(scratch.arena), sidebar_before, 0));
+    state_check_sidebar_committed(ws);
+
+    // Andamento's record, with that panel selecting none of its tabs. The
+    // window, unchanged, has nothing to commit over it before the restart.
+    UIShell_SidebarDoc doc = uishell_sidebar_store_doc(scratch.arena, ws->sidebar, window, 0);
+    StateCheck(uishell_sidebar_store_doc_hash(&doc) == ws->sidebar->sidebar_hash);
+    U64 unselected = 0;
+    for(U64 i = 0; i < doc.panel_count; i++)
+    {
+      AndamentoPanel *p = &doc.panels[i];
+      if(p->kind != ANDAMENTO_PANEL_TABS || p->tab_count == 0 || !str8_match(doc.keys[p->first_tab], key, 0)) { continue; }
+      p->selected = ANDAMENTO_NONE;
+      unselected += 1;
+    }
+    StateCheck(unselected == 1);
+    U64 committed = 0;
+    String8List placed = {0};
+    StateCheck(uishell_sidebar_store_commit(scratch.arena, ws->sidebar, &doc, ws->sidebar->sidebar_generation, &committed, &placed) ==
+               ANDAMENTO_ARRANGEMENT_COMMITTED);
+    ws->sidebar->sidebar_generation = committed;
+    uishell_store_set_setting(window, str8_lit("sidebar_generation"), push_str8f(scratch.arena, "%I64u", committed));
+    ws = state_restart(ws, &theme, str8_zero());
+    window = cfg_node_from_id(ws->cfg_id);
+    view = uishell_sidebar_region_view(window, key);
+    StateCheck(view != &cfg_nil_node && cfg_node_child_from_string(view, str8_lit("selected")) != &cfg_nil_node);
+    String8 sidebar_after = state_sidebar_text(scratch.arena);
+    StateCheck(str8_match(sidebar_after, sidebar_before, 0));
+    if(!str8_match(sidebar_after, sidebar_before, 0)) { fprintf(stderr, "before:\n%.*s\nafter:\n%.*s\n", str8_varg(sidebar_before), str8_varg(sidebar_after)); }
+    state_check_sidebar_committed(ws);
+    state_sidebar_draw(ws);
+    UI_Key root = ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", key);
+    StateCheck(!ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(root, "section_body_%S", key))));
+    state_frame(ws);
+    state_check_sidebar_committed(ws);
   }
 
   //- A local workspace saved before Workspace IDs, whose sidebar entity was

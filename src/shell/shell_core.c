@@ -2086,7 +2086,8 @@ rd_view_ui(Rng2F32 rect)
       }
       
       // rjf: build ui via hook
-      if(!rd_state->headless_views || !wh_renderer_has_trait(renderer, RD_ViewTrait_Visualizer))
+      if(!rd_state->headless_views || !wh_renderer_has_trait(renderer, RD_ViewTrait_Visualizer) ||
+         (rd_state->headless_sections && wh_renderer_has_trait(renderer, RD_ViewTrait_Section)))
       {
         E_ParentKey(ctx.legacy_eval.key)
         {
