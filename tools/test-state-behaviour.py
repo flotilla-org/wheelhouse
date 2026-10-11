@@ -5,6 +5,10 @@ Compiles src/uishell/tests/state_behaviour.c into the production amalgamation
 (entry point replaced, headless WM/renderer/fonts, real Andamento and Cleat),
 runs its scenario, and compares the logical state before and after an
 in-process restart with the goldens in src/uishell/tests/state_behaviour/.
+It runs the scenario again as two processes, the second a fresh launch
+against the files the first saved when it quit, and checks that restart
+opens to the same golden after-restart state, every workspace keeping its
+Workspace ID.
 
 The after-restart golden is the restarted state with each line that differs
 from before the restart preceded by a comment naming the known loss and
@@ -119,13 +123,28 @@ connector.write_text(FAKE_CONNECTOR)
 connector.chmod(0o755)
 # Unix socket paths are short; a private directory of its own holds the
 # local endpoint's name, which subscriptions' endpoints are named after.
-with tempfile.TemporaryDirectory(prefix='wh-sb-', dir='/tmp') as sockets:
-    subprocess.run([str(binary), '--async_thread_count:1', '--state_dir:'+str(run_dir),
-                    '--user:'+str(run_dir/'user.wheelhouse'), '--dashboard:'+str(run_dir/'dashboard-a'),
-                    '--andamento_socket:'+sockets+'/local.sock', '--flotilla_bin:'+str(connector)],
-                   cwd=ROOT, check=True, timeout=90, env={**os.environ, 'STATE_BEHAVIOUR_DIR': str(run_dir)})
+def run_scenario(directory, *phase):
+    with tempfile.TemporaryDirectory(prefix='wh-sb-', dir='/tmp') as sockets:
+        subprocess.run([str(binary), '--async_thread_count:1', '--state_dir:'+str(directory),
+                        '--user:'+str(directory/'user.wheelhouse'), '--dashboard:'+str(directory/'dashboard-a'),
+                        '--andamento_socket:'+sockets+'/local.sock', '--flotilla_bin:'+str(connector), *phase],
+                       cwd=ROOT, check=True, timeout=90, env={**os.environ, 'STATE_BEHAVIOUR_DIR': str(directory)})
+
+
+run_scenario(run_dir)
 before = (run_dir/'before_restart.txt').read_text().splitlines()
 after = (run_dir/'after_restart.txt').read_text().splitlines()
+
+# The same restart across processes: one runs the scenario to its restart
+# and quits; a fresh one opens the files it left. Nothing in memory
+# survives, so the state it opens with is what was saved.
+fresh_dir = BUILD / 'state_behaviour_fresh'
+shutil.rmtree(fresh_dir, ignore_errors=True)
+fresh_dir.mkdir()
+run_scenario(fresh_dir, '--state_phase:save')
+run_scenario(fresh_dir, '--state_phase:restart')
+fresh_before = (fresh_dir/'before_restart.txt').read_text().splitlines()
+fresh = (fresh_dir/'fresh_restart.txt').read_text().splitlines()
 
 # Known losses across a restart today, and what ends each.
 # A subject no producer reports is drawn from its workspace record, which
@@ -192,6 +211,17 @@ golden_text = {
 if unexplained:
     print('Restart changed state in ways no known loss explains:\n\n' + '\n\n'.join(unexplained), file=sys.stderr)
     sys.exit(1)
+# A fresh process restarts to the golden after-restart state (its lines
+# less the comments naming losses), from the same state before.
+expected_after = after if args.update_goldens else [
+    line for line in (GOLDENS/'after_restart.txt').read_text().splitlines() if not line.lstrip().startswith('#')]
+for name, got, want in [('before the fresh-process restart', fresh_before, before),
+                        ('after the fresh-process restart', fresh, expected_after)]:
+    if got != want:
+        sys.stderr.writelines(difflib.unified_diff([l+'\n' for l in want], [l+'\n' for l in got],
+                                                   'expected', 'state ' + name))
+        print('Logical state %s differs from the in-process run\'s.' % name, file=sys.stderr)
+        sys.exit(1)
 if args.update_goldens:
     GOLDENS.mkdir(parents=True, exist_ok=True)
     for name, text in golden_text.items():

@@ -3,7 +3,9 @@
 // the headless WM/renderer/font backends. It builds state through production
 // commands and sidebar actions, writes the logical state
 // (uishell_logical_state.c), restarts, and writes it again; the script
-// compares both with goldens.
+// compares both with goldens. With --state_phase it runs instead as two
+// processes, the second a fresh launch against the files the first left
+// (entry_point says how), so nothing in memory survives the restart.
 //
 // A restart is the production one in-process: autosave writes the user file
 // and the Dashboard's presentation (rd_autosave), the window state and its
@@ -253,6 +255,18 @@ state_open_window(UI_Theme *theme)
   scratch_end(scratch);
   state_frame(ws);
   return ws;
+}
+
+// Quitting, as the exit command does: Presentation State saved and the
+// user and project files written; then the frame that sees the quit
+// releases the window state and its Andamento core, writing its records.
+internal void
+state_quit(RD_WindowState *ws)
+{
+  uishell_cmd("exit");
+  state_pump();
+  StateCheck(rd_state->quit);
+  rd_window_state_release(ws);
 }
 
 // The production restart: autosave writes the user file and presentation,
@@ -697,6 +711,34 @@ entry_point(CmdLine *cmdline)
   Temp scratch = scratch_begin(0, 0);
   UI_Theme theme = {0};
 
+  // --state_phase:save runs the scenario to its restart, saves as the
+  // process does when it quits, and exits; --state_phase:restart is the
+  // next launch, a fresh process against the same files, which writes the
+  // state it opens with (fresh_restart.txt) and checks each workspace kept
+  // the ID the save wrote (workspace_ids.txt).
+  String8 phase = cmd_line_string(cmdline, str8_lit("state_phase"));
+  String8 ids_path = push_str8f(scratch.arena, "%S/workspace_ids.txt", dir);
+  StringJoin lines = {.sep = str8_lit("\n")};
+  if(str8_match(phase, str8_lit("restart"), 0))
+  {
+    // The producer, another process, reports what it did when the first
+    // one quit.
+    state_multi_ended = state_chip_gone = 1;
+    state_pump();
+    RD_WindowState *ws = state_open_window(&theme);
+    state_write(dir, "fresh_restart.txt");
+    String8List ids_after = state_workspace_ids(scratch.arena);
+    String8 ids = str8_list_join(scratch.arena, &ids_after, &lines);
+    String8 saved = data_from_file_path(scratch.arena, ids_path);
+    StateCheck(saved.size != 0);
+    if(!str8_match(ids, saved, 0))
+    { fprintf(stderr, "Workspace IDs changed across a fresh-process restart:\n%.*s\n->\n%.*s\n", str8_varg(saved), str8_varg(ids)); state_failures++; }
+    state_quit(ws);
+    scratch_end(scratch);
+    fprintf(stderr, "State behaviour (fresh-process restart): %u failures\n", state_failures);
+    abort_self(state_failures ? 1 : 0);
+  }
+
   //- First launch: rd_init queued the initial load of the (new) --user file.
   state_pump();
   RD_WindowState *ws = state_open_window(&theme);
@@ -855,6 +897,14 @@ entry_point(CmdLine *cmdline)
   state_write(dir, "before_restart.txt");
   String8List ids_before = state_workspace_ids(scratch.arena);
   StateCheck(ids_before.node_count == 7);
+  if(str8_match(phase, str8_lit("save"), 0))
+  {
+    StateCheck(write_data_to_file_path(ids_path, str8_list_join(scratch.arena, &ids_before, &lines)));
+    state_quit(ws);
+    scratch_end(scratch);
+    fprintf(stderr, "State behaviour (save for a fresh-process restart): %u failures\n", state_failures);
+    abort_self(state_failures ? 1 : 0);
+  }
 
   //- Restart.
   ws = state_restart(ws, &theme, str8_zero());
