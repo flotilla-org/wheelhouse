@@ -335,7 +335,7 @@ work. A new window receives facts on the producer's next periodic reassertion.
 
 #### Dashboard subscriptions
 
-A Dashboard lists the providers it subscribes to in `subscriptions.kdl` in its
+A Dashboard lists the providers it subscribes to in `subscriptions.wheelhouse` in its
 directory: each has a subscription ID (a UUIDv7, made when it is added), a kind
 (`flotilla`) and its daemon endpoint. Every fact a subscription publishes belongs to
 it, so two subscriptions reporting the same project show two projects. With

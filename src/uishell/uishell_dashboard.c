@@ -7,7 +7,7 @@
 //   <shared>/dashboards/<name>/        the Dashboard directory
 //     id                               its Dashboard ID (UUIDv7), written on first save
 //     dashboard.kdl, workspace-<id>.kdl  Andamento's records (uishell_sidebar_records.c)
-//     subscriptions.kdl                its provider subscriptions (uishell_subscriptions.c)
+//     subscriptions.wheelhouse         its provider subscriptions (uishell_subscriptions.c)
 //     windows/<andamento_records id>/  records of the process's other windows
 //   <device>/
 //     last_dashboard                   the directory opened last

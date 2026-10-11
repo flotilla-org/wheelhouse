@@ -1748,8 +1748,8 @@ entry_point(CmdLine *cmdline)
     UIShell_WorkspaceId parsed = {0};
     StateCheck(uishell_workspace_id_from_string(alpha_id, &parsed) && (parsed.v[6] >> 4) == 7);
     StateCheck(str8_match(alpha->endpoint, push_str8f(scratch.arena, "%S-%S", local, alpha_id), 0));
-    String8 saved = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/subscriptions.kdl", dashboard->dir));
-    StateCheck(str8_find_needle(saved, 0, push_str8f(scratch.arena, "subscription \"%S\" {\n    kind \"flotilla\"\n    daemon \"ssh://alpha\"\n}", alpha_id), 0) < saved.size);
+    String8 saved = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/subscriptions.wheelhouse", dashboard->dir));
+    StateCheck(str8_find_needle(saved, 0, push_str8f(scratch.arena, "subscription:\n{\n  id: \"%S\"\n  kind: \"flotilla\"\n  daemon: \"ssh://alpha\"\n}", alpha_id), 0) < saved.size);
     StateCheck(str8_find_needle(saved, 0, beta_id, 0) < saved.size);
     String8 project = str8_lit("project"), fleet = str8_lit("fleet"), vessel = str8_lit("vessel"), fleet_v = str8_lit("fleet-v");
     StateWaitFor(ws, state_count_from(ws->sidebar, project, fleet, alpha_id, 0) == 1 && state_count_from(ws->sidebar, project, fleet, beta_id, 0) == 1 &&
@@ -1795,7 +1795,7 @@ entry_point(CmdLine *cmdline)
     StateCheck(uishell_subscriptions.count == 1 && uishell_subscription_from_text(alpha_id) == 0);
     StateCheck(state_count_from(ws->sidebar, vessel, fleet_v, alpha_id, 0) >= 1);
     StateCheck(cfg_node_from_id(ws->root_controlled_split_selected_workspace_id) == opened);
-    saved = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/subscriptions.kdl", dashboard->dir));
+    saved = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/subscriptions.wheelhouse", dashboard->dir));
     StateCheck(str8_find_needle(saved, 0, alpha_id, 0) == saved.size && str8_find_needle(saved, 0, beta_id, 0) < saved.size);
     state_write(dir, "subscriptions_removed.txt");
 

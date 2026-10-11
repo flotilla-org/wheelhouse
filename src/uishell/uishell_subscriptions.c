@@ -5,19 +5,21 @@
 // connect (the Flotilla daemon endpoint, empty for Flotilla's default, as
 // `--daemon` / FLOTILLA_DAEMON chose it for the daily driver).
 //
-// They are kept in the Dashboard directory, in a file of Wheelhouse's own:
+// They are kept in the Dashboard directory, in a file of Wheelhouse's own,
+// in its config syntax:
 //
-//   <Dashboard>/subscriptions.kdl
-//     subscription "<subscription ID>" {
-//         kind "flotilla"
-//         daemon "ssh://host/path"
+//   <Dashboard>/subscriptions.wheelhouse
+//     subscription:
+//     {
+//       id: "<subscription ID>"
+//       kind: "flotilla"
+//       daemon: "ssh://host/path"
 //     }
 //
-// not in Andamento's dashboard record: Andamento keeps a host's unknown
-// nodes there but offers no way to read or write them, each window still has
-// a core (and records) of its own while subscriptions belong to the process,
-// and the subscription runner that will own them is a host-side crate, not
-// the core (wheelhouse#305).
+// not in Andamento's dashboard record, which is Andamento's alone: each
+// window still has a core (and records) of its own while subscriptions
+// belong to the process, and the subscription runner that will own them is
+// a host-side crate, not the core (wheelhouse#305).
 //
 // Live (with --andamento_socket), each subscription gets its own ingress
 // endpoint, named after the local one: "<local endpoint>-<subscription ID>",
@@ -148,7 +150,7 @@ uishell_subscriptions_close(void)
 internal String8
 uishell_subscriptions_path(Arena *arena)
 {
-  return uishell_dashboard.dir.size ? push_str8f(arena, "%S/subscriptions.kdl", uishell_dashboard.dir) : str8_zero();
+  return uishell_dashboard.dir.size ? push_str8f(arena, "%S/subscriptions.wheelhouse", uishell_dashboard.dir) : str8_zero();
 }
 
 // The Dashboard's subscriptions, in place of any it had (a launch, or
@@ -160,33 +162,18 @@ uishell_subscriptions_load(void)
   Temp scratch = scratch_begin(0, 0);
   String8 path = uishell_subscriptions_path(scratch.arena);
   String8 text = path.size ? data_from_file_path(scratch.arena, path) : str8_zero();
-  for(UIShell_KdlNode *n = text.size ? uishell_kdl_parse(scratch.arena, text) : 0; n; n = n->next)
+  MD_Node *root = text.size ? md_tree_from_string(scratch.arena, text) : &md_nil_node;
+  for MD_EachNode(n, root->first)
   {
-    if(!str8_match(n->name, str8_lit("subscription"), 0) || n->arg_count < 1 || !uishell_dashboard_id_is_valid(n->args[0]))
-    { continue; }
-    UIShell_KdlNode *kind = uishell_kdl_child(n, str8_lit("kind")), *daemon = uishell_kdl_child(n, str8_lit("daemon"));
-    uishell_subscription_push(n->args[0], kind && kind->arg_count ? kind->args[0] : str8_lit("flotilla"),
-      daemon && daemon->arg_count ? daemon->args[0] : str8_zero());
+    String8 fields[3] = {0};
+    String8 names[3] = {str8_lit("id"), str8_lit("kind"), str8_lit("daemon")};
+    for(U64 i = 0; i < ArrayCount(names); i++)
+    { fields[i] = raw_from_escaped_str8(scratch.arena, md_child_from_string(n, names[i], 0)->first->string); }
+    if(!str8_match(n->string, str8_lit("subscription"), 0) || !uishell_dashboard_id_is_valid(fields[0])) { continue; }
+    uishell_subscription_push(fields[0], fields[1].size ? fields[1] : str8_lit("flotilla"), fields[2]);
   }
   for(UIShell_Subscription *s = uishell_subscriptions.first; s; s = s->next) { uishell_subscription_connect(s); }
   scratch_end(scratch);
-}
-
-// `s` as a KDL string.
-internal String8
-uishell_subscriptions_kdl_string(Arena *arena, String8 s)
-{
-  String8List parts = {0};
-  str8_list_push(arena, &parts, str8_lit("\""));
-  for(U64 i = 0; i < s.size; i++)
-  {
-    U8 c = s.str[i];
-    if(c == '"' || c == '\\') { str8_list_pushf(arena, &parts, "\\%c", c); }
-    else if(c < 0x20) { str8_list_pushf(arena, &parts, "\\u{%x}", (U32)c); }
-    else { str8_list_push(arena, &parts, str8(s.str+i, 1)); }
-  }
-  str8_list_push(arena, &parts, str8_lit("\""));
-  return str8_list_join(arena, &parts, 0);
 }
 
 internal void
@@ -198,9 +185,9 @@ uishell_subscriptions_save(void)
   str8_list_push(scratch.arena, &lines, str8_lit("// The Dashboard's provider subscriptions, kept by Wheelhouse (uishell_subscriptions.c).\n"));
   for(UIShell_Subscription *s = uishell_subscriptions.first; s; s = s->next)
   {
-    str8_list_pushf(scratch.arena, &lines, "subscription %S {\n    kind %S\n", uishell_subscriptions_kdl_string(scratch.arena, s->id),
-      uishell_subscriptions_kdl_string(scratch.arena, s->kind));
-    if(s->daemon.size) { str8_list_pushf(scratch.arena, &lines, "    daemon %S\n", uishell_subscriptions_kdl_string(scratch.arena, s->daemon)); }
+    str8_list_pushf(scratch.arena, &lines, "subscription:\n{\n  id: \"%S\"\n  kind: \"%S\"\n", escaped_from_raw_str8(scratch.arena, s->id),
+      escaped_from_raw_str8(scratch.arena, s->kind));
+    if(s->daemon.size) { str8_list_pushf(scratch.arena, &lines, "  daemon: \"%S\"\n", escaped_from_raw_str8(scratch.arena, s->daemon)); }
     str8_list_push(scratch.arena, &lines, str8_lit("}\n"));
   }
   uishell_dashboard_save_identity();
