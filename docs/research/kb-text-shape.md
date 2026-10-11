@@ -3,7 +3,7 @@
 Status: research notes, 10 October 2026. Nothing here is decided.
 
 Ticket: #345 (map #343). Background: `docs/research/automation-accessibility-i18n.md`
-§b–c on branch `research/automation-accessibility-i18n`.
+§b–c.
 
 **Source read:** `kb_text_shape.h` v2.28e, from
 [JimmyLefevre/kb](https://github.com/JimmyLefevre/kb) at commit
