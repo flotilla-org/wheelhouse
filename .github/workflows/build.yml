@@ -26,7 +26,7 @@ env:
   # structs, opaque records, the Dashboard getter), which builds on
   # andamento#157, #156, #155, #154, #151 and #149, until they merge; then
   # #159's squash commit.
-  ANDAMENTO_REV: 9512a2c37bd945a0e3226a21e6d366a82e3f7c8b
+  ANDAMENTO_REV: e2ccde6710b72050a9c77e1e508ca111312fb52a
 
 jobs:
   daily-driver:

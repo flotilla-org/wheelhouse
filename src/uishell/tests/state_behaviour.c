@@ -1673,16 +1673,17 @@ entry_point(CmdLine *cmdline)
     U64 unselected = 0;
     for(U64 i = 0; i < doc.panel_count; i++)
     {
-      AndamentoPanel *p = &doc.panels[i];
-      if(p->kind != ANDAMENTO_PANEL_TABS || p->tab_count == 0 || !str8_match(doc.keys[p->first_tab], key, 0)) { continue; }
+      AndamentoDocPanel *p = &doc.panels[i];
+      if(p->kind != ANDAMENTO_PANEL_TABS || p->tab_count == 0 || !str8_match(uishell_sidebar_string(p->tabs[0]), key, 0)) { continue; }
       p->selected = ANDAMENTO_NONE;
       unselected += 1;
     }
     StateCheck(unselected == 1);
-    U64 committed = 0;
     String8List placed = {0};
-    StateCheck(uishell_sidebar_store_commit(scratch.arena, ws->sidebar, &doc, ws->sidebar->sidebar_generation, &committed, &placed) ==
-               ANDAMENTO_ARRANGEMENT_COMMITTED);
+    AndamentoSidebarArrangement *after = uishell_sidebar_store_commit(scratch.arena, ws->sidebar, &doc, ws->sidebar->sidebar_generation, &placed);
+    StateCheck(after && after->status == ANDAMENTO_COMMITTED);
+    U64 committed = after ? after->generation : 0;
+    andamento_sidebar_arrangement_free(after);
     ws->sidebar->sidebar_generation = committed;
     uishell_store_set_setting(window, str8_lit("sidebar_generation"), push_str8f(scratch.arena, "%I64u", committed));
     ws = state_restart(ws, &theme, str8_zero());
