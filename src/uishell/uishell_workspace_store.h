@@ -14,8 +14,12 @@ struct UIShell_ViewSpec
 {
   U32 content;
   String8 provider, kind, id, facet;
-  // A shell line; argv from another host is joined with spaces.
+  // The command line a terminal runs. A spec Andamento holds as argv keeps
+  // it, and command is its line for this host's shell
+  // (uishell_store_command_line); a View holds only the line.
   String8 command;
+  String8 *argv;
+  U64 argc;
   B32 has_cwd;
   String8 cwd, path, url, launcher, endpoint, presentation;
 };

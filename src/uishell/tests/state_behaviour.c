@@ -1167,6 +1167,80 @@ entry_point(CmdLine *cmdline)
     state_check_committed(ws);
   }
 
+  //- A View Spec's argv reaches the program as it is: the terminal runs the
+  // View's command line, as its first build launches it, and the program
+  // gets each argument verbatim, shell metacharacters and all. Saving the
+  // workspace keeps the slot's argv.
+  {
+    window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
+    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace));
+    // The program: its arguments after the first, each ended by a NUL, into
+    // the file its first names.
+    String8 program = push_str8f(scratch.arena, "%S/print-argv", dir);
+    String8 out = push_str8f(scratch.arena, "%S/argv.out", dir);
+    write_data_to_file_path(program, str8_lit("#!/bin/sh\nout=$1; shift\nfor a; do printf '%s\\0' \"$a\"; done > \"$out.tmp\" && mv \"$out.tmp\" \"$out\"\n"));
+    chmod((char *)push_str8_copy(scratch.arena, program).str, 0755);
+    String8 args[] = {program, out, str8_lit("a b"), str8_lit("$HOME"), str8_lit("'q'"), str8_lit(";"), str8_lit("*"),
+                      str8_lit("\"x\" \\ y"), str8_lit("`id` $(id) & | < > ( ) # ~ !"), str8_lit("")};
+    AndamentoText argv[ArrayCount(args)];
+    for(U64 i = 0; i < ArrayCount(args); i++) { argv[i] = uishell_sidebar_text(args[i]); }
+    AndamentoViewSpec spec = {0};
+    spec.content = ANDAMENTO_SLOT_COMMAND;
+    spec.argv = argv;
+    spec.argc = ArrayCount(argv);
+    spec.has_cwd = 1;
+    spec.cwd = uishell_sidebar_text(dir);
+    spec.has_presentation = 1;
+    spec.presentation = uishell_sidebar_text(str8_lit("terminal"));
+    StateCheck(andamento_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:3")), &spec, ANDAMENTO_REBIND_REPLACE, 0));
+    state_frame(ws);
+    CFG_Node *view = state_slot_view(workspace, str8_lit("u:3"));
+    String8 command = rd_expr_from_cfg(view), cwd = uishell_store_setting(view, str8_lit("cwd"));
+    StateCheck(str8_match(cwd, dir, 0));
+    cleat_provider_desc pd = {.abi_version = CLEAT_PROVIDER_ABI_VERSION, .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS};
+    cleat_provider *provider = cleat_provider_open(&pd);
+    cleat_session_desc sd = {.cols = 80, .rows = 24, .cell_width_px = 8, .cell_height_px = 16, .vt_engine = CLEAT_PROVIDER_VT_PASSTHROUGH,
+                             .command = command.str, .command_len = command.size, .cwd = cwd.str, .cwd_len = cwd.size};
+    cleat_session *session = provider ? cleat_session_create(provider, &sd) : 0;
+    StateCheck(session != 0);
+    String8 got = str8_zero();
+    for(U32 attempt = 0; session && attempt < 1000 && !got.size; attempt++)
+    {
+      got = data_from_file_path(scratch.arena, out);
+      if(!got.size) { usleep(10000); }
+    }
+    String8List expected = {0};
+    for(U64 i = 2; i < ArrayCount(args); i++) { str8_list_pushf(scratch.arena, &expected, "%S%c", args[i], 0); }
+    String8 want = str8_list_join(scratch.arena, &expected, 0);
+    StateCheck(str8_match(got, want, 0));
+    if(!str8_match(got, want, 0)) { fprintf(stderr, "command: %.*s\nreceived (NUL as |): ", str8_varg(command));
+                                    for(U64 i = 0; i < got.size; i++) { fputc(got.str[i] ? got.str[i] : '|', stderr); } fputc('\n', stderr); }
+    if(session) { cleat_session_destroy(session); }
+    if(provider) { cleat_provider_close(provider); }
+    AndamentoSlots *slots = andamento_slots_get(state->core, id, 0);
+    AndamentoSlot slot = {0};
+    StateCheck(uishell_store_slot_find(slots, str8_lit("u:3"), &slot) && slot.spec.argc == ArrayCount(args) && !slot.spec.command.len);
+    andamento_slots_free(slots);
+    // Kept by the user, it is still argv.
+    uishell_store_keep(view);
+    slots = andamento_slots_get(state->core, id, 0);
+    StateCheck(uishell_store_slot_find(slots, str8_lit("u:3"), &slot) && slot.spec.argc == ArrayCount(args));
+    andamento_slots_free(slots);
+    state_check_committed(ws);
+    // Back to the command it ran.
+    AndamentoViewSpec check = {0};
+    check.content = ANDAMENTO_SLOT_COMMAND;
+    check.command = uishell_sidebar_text(str8_lit("make check"));
+    check.has_cwd = 1;
+    check.cwd = uishell_sidebar_text(str8_lit("/src/wheelhouse"));
+    check.has_presentation = 1;
+    check.presentation = uishell_sidebar_text(str8_lit("terminal"));
+    StateCheck(andamento_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:3")), &check, ANDAMENTO_REBIND_REPLACE, 0));
+    state_frame(ws);
+    StateCheck(str8_match(rd_expr_from_cfg(state_slot_view(workspace, str8_lit("u:3"))), str8_lit("make check"), 0));
+  }
+
   //- A pure reorder (a tab moved within its panel, which leaves the config
   // generation where it was) is committed.
   {

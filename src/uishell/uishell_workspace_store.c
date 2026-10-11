@@ -401,6 +401,86 @@ uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UISh
   if(uishell_store_spec_from_view(arena, view, view_spec, taken, &taken_count)) { *spec = view_spec; }
 }
 
+internal B32
+uishell_store_char_in(U8 c, String8 set)
+{
+  for(U64 i = 0; i < set.size; i++) { if(set.str[i] == c) { return 1; } }
+  return 0;
+}
+
+// `argv` as a command line for the shell Cleat runs a terminal's command
+// in, each argument reaching the program as it is. Cleat takes a command
+// line, not argv: `$SHELL -lc <line>` on POSIX, so an argument that needs
+// it is single-quoted (a ' inside as '\''; sh, bash, zsh and fish read it
+// alike, though fish also unescapes \\ inside); `cmd.exe /D /C <line>` on
+// Windows, so an argument that needs it is quoted as the C runtime parses
+// argv, and every cmd.exe metacharacter, quotes included, is escaped with ^
+// so that cmd.exe passes the quoting through. (Cleat itself quotes that line
+// for cmd.exe as if for the C runtime, \" for each quote, which cmd.exe
+// doesn't undo: until it passes the line as is, a Windows argument that
+// needs quoting doesn't arrive intact.)
+internal String8
+uishell_store_command_line(Arena *arena, String8 *argv, U64 argc)
+{
+  String8List parts = {0};
+  for(U64 i = 0; i < argc; i++)
+  {
+    String8 arg = argv[i];
+    String8List out = {0};
+#if OS_WINDOWS
+    B32 quote = arg.size == 0;
+    for(U64 j = 0; j < arg.size; j++) { quote = quote || arg.str[j] == ' ' || arg.str[j] == '\t' || arg.str[j] == '"'; }
+    String8List quoted = {0};
+    if(quote) { str8_list_push(arena, &quoted, str8_lit("\"")); }
+    U64 backslashes = 0;
+    for(U64 j = 0; j < arg.size; j++)
+    {
+      U8 c = arg.str[j];
+      if(c == '\\') { backslashes++; continue; }
+      // Backslashes before a quote are doubled, and the quote escaped.
+      U64 n = c == '"' ? backslashes*2+1 : backslashes;
+      for(U64 k = 0; k < n; k++) { str8_list_push(arena, &quoted, str8_lit("\\")); }
+      str8_list_push(arena, &quoted, push_str8_copy(arena, str8(&arg.str[j], 1)));
+      backslashes = 0;
+    }
+    // ... as are those before the closing quote.
+    for(U64 k = 0; k < (quote ? backslashes*2 : backslashes); k++) { str8_list_push(arena, &quoted, str8_lit("\\")); }
+    if(quote) { str8_list_push(arena, &quoted, str8_lit("\"")); }
+    String8 text = str8_list_join(arena, &quoted, 0);
+    for(U64 j = 0; j < text.size; j++)
+    {
+      U8 c = text.str[j];
+      if(uishell_store_char_in(c, str8_lit("()%!^\"<>&|"))) { str8_list_push(arena, &out, str8_lit("^")); }
+      str8_list_push(arena, &out, str8(&text.str[j], 1));
+    }
+#else
+    B32 plain = arg.size != 0;
+    for(U64 j = 0; j < arg.size; j++)
+    {
+      U8 c = arg.str[j];
+      plain = plain && (char_is_alpha(c) || char_is_digit(c, 10) || uishell_store_char_in(c, str8_lit("_-+=@%:,./")));
+    }
+    if(plain) { str8_list_push(arena, &out, arg); }
+    else
+    {
+      str8_list_push(arena, &out, str8_lit("'"));
+      U64 start = 0;
+      for(U64 j = 0; j <= arg.size; j++)
+      {
+        if(j < arg.size && arg.str[j] != '\'') { continue; }
+        str8_list_push(arena, &out, str8_substr(arg, r1u64(start, j)));
+        if(j < arg.size) { str8_list_push(arena, &out, str8_lit("'\\''")); }
+        start = j+1;
+      }
+      str8_list_push(arena, &out, str8_lit("'"));
+    }
+#endif
+    str8_list_push(arena, &parts, str8_list_join(arena, &out, 0));
+  }
+  StringJoin join = {.sep = str8_lit(" ")};
+  return str8_list_join(arena, &parts, &join);
+}
+
 internal UIShell_ViewSpec
 uishell_store_spec_from_andamento(Arena *arena, AndamentoViewSpec *s)
 {
@@ -413,10 +493,10 @@ uishell_store_spec_from_andamento(Arena *arena, AndamentoViewSpec *s)
   spec.command = uishell_sidebar_string(s->command);
   if(s->argc)
   {
-    String8List argv = {0};
-    for(U64 i = 0; i < s->argc; i++) { str8_list_push(arena, &argv, uishell_sidebar_string(s->argv[i])); }
-    StringJoin join = {.sep = str8_lit(" ")};
-    spec.command = str8_list_join(arena, &argv, &join);
+    spec.argv = push_array(arena, String8, s->argc);
+    spec.argc = s->argc;
+    for(U64 i = 0; i < s->argc; i++) { spec.argv[i] = push_str8_copy(arena, uishell_sidebar_string(s->argv[i])); }
+    spec.command = uishell_store_command_line(arena, spec.argv, spec.argc);
   }
   spec.has_cwd = s->has_cwd != 0;
   spec.cwd = uishell_sidebar_string(s->cwd);
@@ -428,14 +508,29 @@ uishell_store_spec_from_andamento(Arena *arena, AndamentoViewSpec *s)
   return spec;
 }
 
+// `spec` as Andamento takes it. A View holds only the command line it runs:
+// when that is still the line of `was`'s argv (the slot's spec, if any), the
+// slot keeps its argv rather than becoming this host's shell line.
 internal AndamentoViewSpec
-uishell_store_andamento_spec(UIShell_ViewSpec *spec)
+uishell_store_andamento_spec(Arena *arena, UIShell_ViewSpec *spec, AndamentoViewSpec *was)
 {
   AndamentoViewSpec s = {0};
   s.content = spec->content;
   s.entity = uishell_sidebar_entity(spec->provider, spec->kind, spec->id);
   s.facet = uishell_sidebar_text(spec->facet);
   s.command = uishell_sidebar_text(spec->command);
+  if(spec->content == ANDAMENTO_SLOT_COMMAND && was && was->content == ANDAMENTO_SLOT_COMMAND && was->argc)
+  {
+    UIShell_ViewSpec prior = uishell_store_spec_from_andamento(arena, was);
+    if(str8_match(prior.command, spec->command, 0))
+    {
+      AndamentoText *argv = push_array(arena, AndamentoText, prior.argc);
+      for(U64 i = 0; i < prior.argc; i++) { argv[i] = uishell_sidebar_text(prior.argv[i]); }
+      s.command = (AndamentoText){0};
+      s.argv = argv;
+      s.argc = prior.argc;
+    }
+  }
   s.has_cwd = spec->has_cwd;
   s.cwd = uishell_sidebar_text(spec->cwd);
   s.path = uishell_sidebar_text(spec->path);
@@ -1701,11 +1796,12 @@ uishell_store_keep(CFG_Node *view)
     AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
     AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, workspace, 0));
     AndamentoSlot slot = {0};
-    U32 rebind = uishell_store_slot_find(slots, key, &slot) ? slot.rebind : ANDAMENTO_REBIND_REPLACE;
-    andamento_slots_free(slots);
-    AndamentoViewSpec out = uishell_store_andamento_spec(&spec);
+    B32 exists = uishell_store_slot_find(slots, key, &slot);
+    U32 rebind = exists ? slot.rebind : ANDAMENTO_REBIND_REPLACE;
+    AndamentoViewSpec out = uishell_store_andamento_spec(scratch.arena, &spec, exists ? &slot.spec : 0);
     char *error = 0;
     uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_set(state->core, workspace, uishell_sidebar_text(key), &out, rebind, &error)), error);
+    andamento_slots_free(slots);
   }
   scratch_end(scratch);
 }
@@ -2045,7 +2141,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     if(exists && uishell_store_spec_match(&spec, &current)) { continue; }
     // An override keeps the provider's rebind policy: changing the content
     // isn't changing the policy.
-    AndamentoViewSpec out = uishell_store_andamento_spec(&spec);
+    AndamentoViewSpec out = uishell_store_andamento_spec(arena, &spec, exists ? &slot.spec : 0);
     char *error = 0;
     ok = uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_set(state->core, workspace, uishell_sidebar_text(doc.keys[i]),
                                                                                     &out, exists ? slot.rebind : ANDAMENTO_REBIND_REPLACE, &error)), error);
