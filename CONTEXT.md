@@ -316,7 +316,7 @@ The per-element tree published to the platform's assistive-technology APIs (UIA,
 _Avoid_: Semantic tree, a11y dump
 
 **Automation ID**:
-A stable, locale-independent identifier for a **Semantic Tree** node, an **Accessibility Tree** node or a command. It survives relaunch and translation, and never derives from display text.
+A locale-independent identifier for a **Semantic Tree** node, an **Accessibility Tree** node or a command. It is stable for as long as its node exists. A durable ID also survives relaunch; one for a window or overlay lasts only while the app runs. It is stored with its node, never recovered from a UI key, and never derived from display text.
 _Avoid_: Label, display name, UI key
 
 **Caller Context**:
