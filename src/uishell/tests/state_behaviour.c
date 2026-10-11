@@ -474,6 +474,21 @@ state_workspace_labelled(CFG_Node *window, String8 label)
 // Selected Views, at the generation the window last saw. Andamento owns it
 // once a commit changed its structure; one that changed only weights or
 // selections leaves it following the provider (ADR 0013).
+// Whether two documents' panels are the same; weights within rounding, the
+// root's not at all.
+internal B32
+state_same_panel(AndamentoDocPanel const *p, AndamentoDocPanel const *q, B32 root)
+{
+  if(!p || !q) { return p == q; }
+  B32 same = (str8_match(uishell_sidebar_string(p->id), uishell_sidebar_string(q->id), 0) && p->kind == q->kind &&
+              (p->kind != ANDAMENTO_PANEL_SPLIT || p->axis == q->axis) && (root || abs_f32((F32)(p->weight-q->weight)) < 1e-6f) &&
+              p->child_count == q->child_count && p->tab_count == q->tab_count &&
+              str8_match(uishell_sidebar_string(p->selected), uishell_sidebar_string(q->selected), 0));
+  for(U64 i = 0; same && i < p->tab_count; i++) { same = str8_match(uishell_sidebar_string(p->tabs[i]), uishell_sidebar_string(q->tabs[i]), 0); }
+  for(U64 i = 0; same && i < p->child_count; i++) { same = state_same_panel(&p->children[i], &q->children[i], 0); }
+  return same;
+}
+
 internal void
 state_check_committed(RD_WindowState *ws)
 {
@@ -485,27 +500,12 @@ state_check_committed(RD_WindowState *ws)
   {
     CFG_Node *owner = n->v;
     UIShell_StoreDoc doc = uishell_store_doc(scratch.arena, owner);
-    AndamentoArrangement *stored = andamento_arrangement_acquire(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0);
-    AndamentoArrangementInfo info = {0};
-    B32 same = stored && andamento_arrangement_info(stored, &info) &&
-      info.panel_count == doc.panel_count && info.tab_count == doc.tab_count &&
-      str8_match(uishell_store_setting(owner, str8_lit("arrangement_generation")), push_str8f(scratch.arena, "%I64u", info.generation), 0);
-    for(U64 i = 0; same && i < info.panel_count; i++)
-    {
-      AndamentoPanel p = {0}, q = doc.panels[i];
-      andamento_arrangement_panel(stored, i, &p);
-      same = (str8_match(uishell_sidebar_string(p.id), uishell_sidebar_string(q.id), 0) && p.parent == q.parent && p.kind == q.kind &&
-              (p.kind != ANDAMENTO_PANEL_SPLIT || p.axis == q.axis) && (i == 0 || abs_f32((F32)(p.weight-q.weight)) < 1e-6f) &&
-              p.tab_count == q.tab_count && p.first_tab == q.first_tab && p.selected == q.selected);
-    }
-    for(U64 i = 0; same && i < info.tab_count; i++)
-    {
-      AndamentoTab t = {0};
-      andamento_arrangement_tab(stored, i, &t);
-      same = !t.gone && str8_match(uishell_sidebar_string(t.slot), doc.keys[i], 0);
-    }
+    AndamentoWorkspaceArrangement *stored = andamento_arrangement_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0);
+    B32 same = stored && state_same_panel(stored->doc.root, doc.panel_count ? doc.panels : 0, 1) &&
+      str8_match(uishell_store_setting(owner, str8_lit("arrangement_generation")), push_str8f(scratch.arena, "%I64u", stored->generation), 0);
+    for(U64 i = 0; same && stored && i < stored->note_count; i++) { same = stored->notes[i].kind != ANDAMENTO_NOTE_GONE; }
     if(!same) { fprintf(stderr, "Workspace %.*s is not the arrangement Andamento keeps\n", str8_varg(rd_label_from_cfg(owner))); state_failures++; }
-    andamento_arrangement_release(stored);
+    andamento_arrangement_free(stored);
   }
   scratch_end(scratch);
 }
@@ -1033,16 +1033,15 @@ entry_point(CmdLine *cmdline)
     window = cfg_node_from_id(ws->cfg_id);
     CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
     AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace));
-    AndamentoArrangement *stored = andamento_arrangement_acquire(state->core, id, 0);
-    AndamentoArrangementInfo info = {0};
-    StateCheck(stored && andamento_arrangement_info(stored, &info) && info.panel_count == 3);
-    AndamentoPanel panels[3] = {0};
-    AndamentoTab *tabs = push_array(scratch.arena, AndamentoTab, info.tab_count);
-    for(U64 i = 0; i < info.panel_count && i < 3; i++) { andamento_arrangement_panel(stored, i, &panels[i]); }
-    for(U64 i = 0; i < info.tab_count; i++) { andamento_arrangement_tab(stored, i, &tabs[i]); }
-    panels[1].weight = panels[2].weight = 0.5;
-    StateCheck(andamento_set_arrangement(state->core, id, panels, 3, tabs, info.tab_count, info.generation, 0, 0) == ANDAMENTO_ARRANGEMENT_COMMITTED);
-    andamento_arrangement_release(stored);
+    AndamentoWorkspaceArrangement *stored = andamento_arrangement_get(state->core, id, 0);
+    StateCheck(stored && stored->doc.root && stored->doc.root->child_count == 2);
+    AndamentoDocPanel root = *stored->doc.root, children[2] = {stored->doc.root->children[0], stored->doc.root->children[1]};
+    children[0].weight = children[1].weight = 0.5;
+    root.children = children;
+    AndamentoWorkspaceArrangement *committed = andamento_arrangement_commit(state->core, id, &(AndamentoArrangementDoc){&root}, stored->generation, 0);
+    StateCheck(committed && committed->status == ANDAMENTO_ARRANGEMENT_COMMITTED);
+    andamento_arrangement_free(committed);
+    andamento_arrangement_free(stored);
     CFG_PanelTree tree = state_panels(scratch.arena, workspace);
     CFG_Node *first_cfg = tree.root->first->cfg;
     String8 weight = push_str8_copy(scratch.arena, first_cfg->string);
@@ -1195,18 +1194,10 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
     StateCheck(state->store_commits == commits+1);
     state_check_committed(ws);
-    AndamentoArrangement *stored = andamento_arrangement_acquire(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)), 0);
-    AndamentoArrangementInfo info = {0};
+    UIShell_StoreDoc doc = uishell_store_doc(scratch.arena, workspace);
     B32 before = 0;
-    for(U64 i = 0; stored && andamento_arrangement_info(stored, &info) && i+1 < info.tab_count; i++)
-    {
-      AndamentoTab a = {0}, b = {0};
-      andamento_arrangement_tab(stored, i, &a);
-      andamento_arrangement_tab(stored, i+1, &b);
-      before = before || (str8_match(uishell_sidebar_string(a.slot), moved, 0) && str8_match(uishell_sidebar_string(b.slot), str8_lit("u:3"), 0));
-    }
+    for(U64 i = 0; i+1 < doc.tab_count; i++) { before = before || (str8_match(doc.keys[i], moved, 0) && str8_match(doc.keys[i+1], str8_lit("u:3"), 0)); }
     StateCheck(before);
-    andamento_arrangement_release(stored);
   }
 
   //- A Cleat daemon session is a portable Target Resolution: saved with its
@@ -1276,11 +1267,9 @@ entry_point(CmdLine *cmdline)
     rd_state->frame_index += 1;
     rd_boundary_resize_commit();
     state_frame(ws);
-    AndamentoArrangement *stored = andamento_arrangement_acquire(state->core, id, 0);
-    AndamentoArrangementInfo info = {0};
-    StateCheck(stored && andamento_arrangement_info(stored, &info) && !info.owned &&
-               andamento_arrangement_flags(stored) == ANDAMENTO_ARRANGEMENT_FLAG_SOFT);
-    andamento_arrangement_release(stored);
+    AndamentoWorkspaceArrangement *stored = andamento_arrangement_get(state->core, id, 0);
+    StateCheck(stored && !stored->owned && stored->flags == ANDAMENTO_ARRANGEMENT_FLAG_SOFT);
+    andamento_arrangement_free(stored);
     String8 weight = push_str8_copy(scratch.arena, state_panels(scratch.arena, reviewer).root->first->cfg->string);
     StateCheck(!str8_match(weight, str8_lit("1"), 0));
     state_reviewer_version = 2;
@@ -1333,19 +1322,17 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
     state_frame(ws);
     AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
-    AndamentoArrangement *stored = andamento_arrangement_acquire(state->core, id, 0);
-    AndamentoArrangementInfo info = {0};
-    StateCheck(stored && andamento_arrangement_info(stored, &info) && info.owned && andamento_arrangement_flags(stored) == 0);
-    andamento_arrangement_release(stored);
+    AndamentoWorkspaceArrangement *stored = andamento_arrangement_get(state->core, id, 0);
+    StateCheck(stored && stored->owned && stored->flags == 0);
+    andamento_arrangement_free(stored);
     String8 before = push_str8_copy(scratch.arena, state_workspaces_text(scratch.arena));
     state_reviewer_version = 3;
     state_producer(state);
     state_frame(ws);
     state_frame(ws);
-    stored = andamento_arrangement_acquire(state->core, id, 0);
-    StateCheck(stored && andamento_arrangement_info(stored, &info) && info.owned &&
-               (andamento_arrangement_flags(stored) & ANDAMENTO_ARRANGEMENT_FLAG_PROVIDER_CHANGED));
-    andamento_arrangement_release(stored);
+    stored = andamento_arrangement_get(state->core, id, 0);
+    StateCheck(stored && stored->owned && (stored->flags & ANDAMENTO_ARRANGEMENT_FLAG_PROVIDER_CHANGED));
+    andamento_arrangement_free(stored);
     CFG_Node *log = state_slot_view(reviewer, str8_lit("log"));
     StateCheck(str8_match(rd_expr_from_cfg(log), str8_lit("tail -f test.log"), 0));
     StateCheck(state_offers(log, UIShell_SlotAction_Reattach) && state_offers(log, UIShell_SlotAction_Remove));
@@ -1358,9 +1345,9 @@ entry_point(CmdLine *cmdline)
     StateCheck(state_offers(primary, UIShell_SlotAction_KeepLayout) && state_offers(primary, UIShell_SlotAction_FollowLayout));
     uishell_store_act(primary, UIShell_SlotAction_KeepLayout);
     state_frame(ws);
-    stored = andamento_arrangement_acquire(state->core, id, 0);
-    StateCheck(stored && andamento_arrangement_info(stored, &info) && info.owned && andamento_arrangement_flags(stored) == 0);
-    andamento_arrangement_release(stored);
+    stored = andamento_arrangement_get(state->core, id, 0);
+    StateCheck(stored && stored->owned && stored->flags == 0);
+    andamento_arrangement_free(stored);
     StateCheck(!state_offers(primary, UIShell_SlotAction_KeepLayout));
     // Taking the reused slot as the provider's settles it.
     uishell_store_act(log, UIShell_SlotAction_Reattach);
@@ -1499,7 +1486,7 @@ entry_point(CmdLine *cmdline)
   //- A change is written a second after it is first seen, not at once.
   {
     state = ws->sidebar;
-    String8 path = push_str8f(scratch.arena, "%S/dashboard.kdl", state->records_dir);
+    String8 path = push_str8f(scratch.arena, "%S/dashboard.record", state->records_dir);
     UIShell_DisplayControlIterator it = {state->snapshot};
     AndamentoControl control = {0}; AndamentoText name = {0};
     size_t toggle = ANDAMENTO_NONE;
@@ -1531,10 +1518,10 @@ entry_point(CmdLine *cmdline)
     StateCheck(str8_find_needle(presentation, 0, str8_lit("window:"), 0) < presentation.size);
     // A workspace's name is its record's (an overlay edit), not this device's.
     CFG_Node *notes = state_workspace_labelled(cfg_node_from_id(ws->cfg_id), str8_lit("Notes"));
-    String8 record = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/workspace-%S.kdl", dashboard_a, uishell_workspace_id_text_from_cfg(notes)));
+    String8 record = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/workspace-%S.record", dashboard_a, uishell_workspace_id_text_from_cfg(notes)));
     StateCheck(str8_find_needle(presentation, 0, str8_lit("Notes"), 0) == presentation.size &&
-               str8_find_needle(record, 0, str8_lit("name \"Notes\""), 0) < record.size);
-    StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/dashboard.kdl", dashboard_a)));
+               str8_find_needle(record, 0, str8_lit("Notes"), 0) < record.size);
+    StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/dashboard.record", dashboard_a)));
     String8 user = data_from_file_path(scratch.arena, rd_state->user_path);
     StateCheck(str8_find_needle(user, 0, str8_lit("keybindings"), 0) < user.size &&
                str8_find_needle(user, 0, str8_lit("\nwindow:"), 0) == user.size);
@@ -1575,8 +1562,8 @@ entry_point(CmdLine *cmdline)
       StateCheck(state_find_local(ws->sidebar, str8_lit("Only in B")) != ANDAMENTO_NONE);
       StateCheck(state_find_local(ws->sidebar, str8_lit("Notes")) == ANDAMENTO_NONE);
     }
-    StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/workspace-%S.kdl", dashboard_b, only_b_id)));
-    StateCheck(!file_path_exists(push_str8f(scratch.arena, "%S/workspace-%S.kdl", dashboard_a, only_b_id)));
+    StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/workspace-%S.record", dashboard_b, only_b_id)));
+    StateCheck(!file_path_exists(push_str8f(scratch.arena, "%S/workspace-%S.record", dashboard_a, only_b_id)));
     // Without --dashboard, a launch opens the one opened last.
     rd_autosave();
     state_pump();

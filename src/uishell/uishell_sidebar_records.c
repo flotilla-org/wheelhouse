@@ -2,19 +2,23 @@
 // owns the sidebar's logical state: display values, row collapse, sibling
 // orders, and local sections, groups and pins (the `dashboard` record); and
 // each workspace it knows, with its subject and the rows on its path as last
-// seen (`workspace/<id>`). It exports them as records and imports them into
-// a fresh core before the first observe; Wheelhouse only stores them, in
-// the Dashboard directory (uishell_dashboard.c). Each window still has its
-// own core, so only the first window's are the Dashboard's own:
+// seen (`workspace/<id>`). It hands them out as records, bytes private to
+// it, and takes them back into a fresh core before the first observe;
+// Wheelhouse only stores them, in the Dashboard directory
+// (uishell_dashboard.c). Each window still has its own core, so only the
+// first window's are the Dashboard's own:
 //
 //   <Dashboard>/                     the first window's
-//     dashboard.kdl
-//     workspace-<Workspace ID>.kdl
+//     dashboard.record
+//     workspace-<Workspace ID>.record
 //   <Dashboard>/windows/<andamento_records id>/   any other window's
 //
 // A record is written when its generation changes: a second after the first
 // change, through a temporary file renamed over the old one, and at once
 // when the sidebar is released (its window closing, or quitting).
+//
+// Only the dashboard record is read here, for what Andamento has no getter
+// for yet; a workspace record is never read.
 
 enum { UIShell_RecordsDelayMs = 1000 };
 
@@ -245,7 +249,7 @@ internal String8
 uishell_sidebar_record_export(Arena *arena, Andamento *core, String8 name)
 {
   AndamentoBytes bytes = {0};
-  if(!core || !andamento_record_export(core, uishell_sidebar_text(name), &bytes, 0)) { return str8_zero(); }
+  if(!core || !andamento_record_get(core, uishell_sidebar_text(name), &bytes, 0)) { return str8_zero(); }
   return uishell_sidebar_bytes_copy(arena, bytes);
 }
 
@@ -265,7 +269,7 @@ uishell_sidebar_record_generation(Andamento *core, String8 name)
   return andamento_record_generation(core, uishell_sidebar_text(name), 0);
 }
 
-// The file a record is stored in: `dashboard.kdl`, `workspace-<id>.kdl`.
+// The file a record is stored in: `dashboard.record`, `workspace-<id>.record`.
 // Bytes a file name can't hold become '_' (no record names have them yet).
 internal String8
 uishell_sidebar_record_file(Arena *arena, String8 dir, String8 name)
@@ -277,16 +281,16 @@ uishell_sidebar_record_file(Arena *arena, String8 dir, String8 name)
     if(c == '/') { file.str[i] = '-'; }
     else if(!char_is_alpha(c) && !char_is_digit(c, 10) && c != '-' && c != '.' && c != '_') { file.str[i] = '_'; }
   }
-  return push_str8f(arena, "%S/%S.kdl", dir, file);
+  return push_str8f(arena, "%S/%S.record", dir, file);
 }
 
 // The record a file in the directory holds; empty for any other file.
 internal String8
 uishell_sidebar_record_name(Arena *arena, String8 file)
 {
-  String8 workspace = str8_lit("workspace-"), kdl = str8_lit(".kdl");
-  if(!str8_match(str8_postfix(file, kdl.size), kdl, 0)) { return str8_zero(); }
-  String8 stem = str8_chop(file, kdl.size);
+  String8 workspace = str8_lit("workspace-"), extension = str8_lit(".record");
+  if(!str8_match(str8_postfix(file, extension.size), extension, 0)) { return str8_zero(); }
+  String8 stem = str8_chop(file, extension.size);
   if(str8_match(stem, str8_lit("dashboard"), 0)) { return push_str8_copy(arena, stem); }
   if(str8_match(str8_prefix(stem, workspace.size), workspace, 0) && stem.size > workspace.size)
   { return push_str8f(arena, "workspace/%S", str8_skip(stem, workspace.size)); }
@@ -348,9 +352,9 @@ uishell_sidebar_record_note(UIShell_SidebarState *state, String8 name, U64 gener
 
 // Writes the records whose generation moved since they were written, and
 // deletes those Andamento no longer has (a forgotten workspace's), once due:
-// a second after a change was first seen, or with `flush`, now. Reading a
-// generation encodes its record, so they are read only when one may have
-// moved: after a new snapshot, when the names changed, or while due.
+// a second after a change was first seen, or with `flush`, now. Generations
+// are read only when one may have moved: after a new snapshot, when the
+// names changed, or while due.
 internal void
 uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush)
 {
@@ -622,7 +626,7 @@ uishell_sidebar_records_load(UIShell_SidebarState *state, CFG_Node *window)
   {
     String8 text = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/%S", dir, file->string));
     char *error = 0;
-    if(andamento_record_import(state->core, uishell_sidebar_text(name->string), uishell_sidebar_text(text), &error))
+    if(andamento_record_put(state->core, uishell_sidebar_text(name->string), uishell_sidebar_text(text), &error))
     { uishell_sidebar_record_note(state, name->string, uishell_sidebar_record_generation(state->core, name->string)); }
     else
     {

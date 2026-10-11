@@ -571,7 +571,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   error = 0; display.core = andamento_create(daily.str, daily.size, &error);
   DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
   error = 0;
-  DockFailure(!uishell_sidebar_result(&display, andamento_record_import(display.core, uishell_sidebar_text(str8_lit("dashboard")),
+  DockFailure(!uishell_sidebar_result(&display, andamento_record_put(display.core, uishell_sidebar_text(str8_lit("dashboard")),
     uishell_sidebar_text(record), &error), error));
   uishell_sidebar_refresh(&display);
   uishell_sidebar_snapshot_node(display.snapshot, 0, &section);
@@ -827,7 +827,7 @@ uishell_section_placement_restart(Arena *arena, UIShell_SectionPlacement *p, Str
   cfg_node_insert_child(rd_state->cfg, p->user, p->user->last, window);
   cfg_node_release(rd_state->cfg, p->window);
   Andamento *core = andamento_create(config.str, config.size, 0);
-  if(core && record.size) { andamento_record_import(core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0); }
+  if(core && record.size) { andamento_record_put(core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0); }
   uishell_section_placement_use(p, window, core);
   uishell_sidebar_store_load(&p->sidebar, window);
   uishell_section_placement_frame(p);

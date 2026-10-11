@@ -291,7 +291,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   if(restored.core)
   {
     error = 0;
-    ReorderCheck(uishell_sidebar_result(&restored, andamento_record_import(restored.core, uishell_sidebar_text(str8_lit("dashboard")),
+    ReorderCheck(uishell_sidebar_result(&restored, andamento_record_put(restored.core, uishell_sidebar_text(str8_lit("dashboard")),
       uishell_sidebar_text(record), &error), error), "the dashboard record imports");
     for(U64 i = 0; i < ArrayCount(entities)+1; i++)
     {

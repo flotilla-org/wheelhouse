@@ -112,7 +112,7 @@ uishell_hover_card_test_restart_pins(UIShell_SidebarState *state, CFG_Node *wind
   UIShell_SidebarState fresh = {0};
   fresh.core = andamento_create(config.str, config.size, 0);
   CFG_Node *copy = cfg_node_new(rd_state->cfg, cfg_node_child_from_string(cfg_node_root(), str8_lit("transient")), str8_lit("pins_after_restart"));
-  if(fresh.core && andamento_record_import(fresh.core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0))
+  if(fresh.core && andamento_record_put(fresh.core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0))
   { uishell_sidebar_local_seed(uishell_sidebar_dashboard(&fresh), copy, str8_lit("section"), str8_lit(".section"), str8_zero(), str8_zero()); }
   uishell_sidebar_release(&fresh);
   scratch_end(scratch);
