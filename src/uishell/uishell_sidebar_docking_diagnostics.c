@@ -249,6 +249,23 @@ uishell_sidebar_docking_drain(UIShell_CmdNode *before)
   }
 }
 
+// A boolean display variable's value as its first control shows it: 1 or 0,
+// or -1 when no control shows it.
+internal S32
+uishell_sidebar_docking_variable(AndamentoSnapshot *snapshot, String8 variable)
+{
+  for(U64 i = 0; snapshot && i < andamento_snapshot_node_count(snapshot); i++)
+  {
+    AndamentoNode node = {0}; andamento_snapshot_node(snapshot, i, &node);
+    for(U64 c = 0; c < node.control_count; c++)
+    {
+      AndamentoControl control = {0}; andamento_snapshot_control(snapshot, node.first_control+c, &control);
+      if(control.value_kind == ANDAMENTO_VALUE_BOOL && str8_match(uishell_sidebar_string(control.variable), variable, 0)) { return !!control.checked; }
+    }
+  }
+  return -1;
+}
+
 internal B32
 uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
 {
@@ -558,7 +575,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   display.core = andamento_create(daily.str, daily.size, &error);
   DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
   uishell_sidebar_refresh(&display);
-  AndamentoNode section = {0}; uishell_sidebar_snapshot_node(display.snapshot, 0, &section);
+  AndamentoNode section = {0}; andamento_snapshot_node(display.snapshot, 0, &section);
   AndamentoControl control = {0};
   andamento_snapshot_control(display.snapshot, section.first_control, &control);
   B32 default_value = control.checked;
@@ -566,7 +583,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!andamento_dispatch(display.core, display.snapshot, control.action, &error));
   if(error) { andamento_string_free(error); }
   uishell_sidebar_refresh(&display);
-  String8 record = uishell_sidebar_record_export(scratch.arena, display.core, str8_lit("dashboard"));
+  String8 record = uishell_sidebar_record_get(scratch.arena, display.core, str8_lit("dashboard"));
   uishell_sidebar_release(&display); MemoryZeroStruct(&display);
   error = 0; display.core = andamento_create(daily.str, daily.size, &error);
   DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
@@ -574,7 +591,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!uishell_sidebar_result(&display, andamento_record_put(display.core, uishell_sidebar_text(str8_lit("dashboard")),
     uishell_sidebar_text(record), &error), error));
   uishell_sidebar_refresh(&display);
-  uishell_sidebar_snapshot_node(display.snapshot, 0, &section);
+  andamento_snapshot_node(display.snapshot, 0, &section);
   andamento_snapshot_control(display.snapshot, section.first_control, &control);
   DockFailure(!!control.checked == default_value);
   // Exercise real header buttons at both acceptance widths, including their
@@ -704,7 +721,9 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   }
   uishell_sidebar_section_set_collapsed(view, 0);
   ws->sidebar = state;
-  // Values of display variables that don't persist stay out of the record.
+  // Values of display variables that don't persist stay out of the record:
+  // restored where the variable persists, it has its default again, while
+  // one that persists keeps its value.
   String8 persisted = str8_lit("display-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role history\" icon=\"R\" persist=true");
   U64 declaration_at = str8_find_needle(daily, 0, persisted, 0);
   DockFailure(declaration_at == daily.size);
@@ -713,10 +732,23 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   error = 0;
   DockFailure(!andamento_configure(display.core, uishell_sidebar_text(ephemeral), &error));
   if(error) { andamento_string_free(error); }
+  error = 0;
+  DockFailure(!uishell_sidebar_result(&display, andamento_set_display_variable(display.core, uishell_sidebar_text(str8_lit("show-role-attempts")),
+                                                                                uishell_sidebar_text(str8_lit("true")), &error), error));
   uishell_sidebar_refresh(&display);
-  record = uishell_sidebar_record_export(scratch.arena, display.core, str8_lit("dashboard"));
-  DockFailure(str8_find_needle(record, 0, str8_lit("display \"show-issues\""), 0) == record.size);
-  DockFailure(str8_find_needle(record, 0, str8_lit("show-role-attempts"), 0) != record.size);
+  S32 issues = uishell_sidebar_docking_variable(display.snapshot, str8_lit("show-issues"));
+  DockFailure(issues < 0 || uishell_sidebar_docking_variable(display.snapshot, str8_lit("show-role-attempts")) != 1);
+  record = uishell_sidebar_record_get(scratch.arena, display.core, str8_lit("dashboard"));
+  UIShell_SidebarState reread = {.initialized = 1};
+  error = 0; reread.core = andamento_create(daily.str, daily.size, &error);
+  DockFailure(!uishell_sidebar_result(&reread, reread.core != 0, error));
+  error = 0;
+  DockFailure(!uishell_sidebar_result(&reread, andamento_record_put(reread.core, uishell_sidebar_text(str8_lit("dashboard")),
+    uishell_sidebar_text(record), &error), error));
+  uishell_sidebar_refresh(&reread);
+  DockFailure(uishell_sidebar_docking_variable(reread.snapshot, str8_lit("show-issues")) != issues);
+  DockFailure(uishell_sidebar_docking_variable(reread.snapshot, str8_lit("show-role-attempts")) != 0);
+  uishell_sidebar_release(&reread);
   uishell_sidebar_release(&display);
   ws->active_panel_id = saved_sidebar_focus;
   cfg_node_release(rd_state->cfg, workspace);
@@ -821,7 +853,7 @@ internal String8
 uishell_section_placement_restart(Arena *arena, UIShell_SectionPlacement *p, String8 config)
 {
   String8 text = uishell_workspace_store_window_text(arena, str8_zero(), p->window);
-  String8 record = uishell_sidebar_record_export(arena, p->sidebar.core, str8_lit("dashboard"));
+  String8 record = uishell_sidebar_record_get(arena, p->sidebar.core, str8_lit("dashboard"));
   CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(arena, rd_state->cfg, p->schemas, str8_zero(), text);
   CFG_Node *window = loaded.first ? loaded.first->v : &cfg_nil_node;
   cfg_node_insert_child(rd_state->cfg, p->user, p->user->last, window);

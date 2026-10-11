@@ -318,26 +318,24 @@ uishell_logical_rows(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *st
     if(status.size) { str8_list_pushf(arena, &flags, " status=%S", uishell_logical_quote(arena, status)); }
     if(node.collapsed && uishell_sidebar_has_children(state, i)) { str8_list_push(arena, &flags, str8_lit(" collapsed")); }
     if(role == UIShell_SidebarRole_PassThrough) { str8_list_push(arena, &flags, str8_lit(" untitled")); }
-    AndamentoText provider = {0};
-    uint32_t stale = 0;
-    if(andamento_snapshot_node_provider(state->snapshot, i, &provider, &stale))
-    { str8_list_push(arena, &flags, uishell_logical_provider(arena, uishell_sidebar_string(provider), stale)); }
+    if(!node.is_section)
+    { str8_list_push(arena, &flags, uishell_logical_provider(arena, uishell_sidebar_string(node.entity.provider), node.stale)); }
     uishell_logical_linef(t, depth+depths[i], "row %S %S%S",
-      uishell_logical_entity(arena, uishell_sidebar_string(node.entity_kind), uishell_sidebar_string(node.entity_id)),
+      uishell_logical_entity(arena, uishell_sidebar_string(node.entity.kind), uishell_sidebar_string(node.entity.id)),
       title, str8_list_join(arena, &flags, 0));
   }
 }
 
 // An entity named in a saved order, labelled as its row is.
 internal String8
-uishell_logical_order_entity(Arena *arena, UIShell_SidebarState *state, String8 kind, String8 id)
+uishell_logical_order_entity(Arena *arena, UIShell_SidebarState *state, AndamentoEntity entity)
 {
-  String8 name = uishell_logical_entity(arena, kind, id);
+  String8 name = uishell_logical_entity(arena, uishell_sidebar_string(entity.kind), uishell_sidebar_string(entity.id));
   for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
   {
     AndamentoNode node = {0};
-    uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-    if(str8_match(uishell_sidebar_string(node.entity_kind), kind, 0) && str8_match(uishell_sidebar_string(node.entity_id), id, 0))
+    andamento_snapshot_node(state->snapshot, i, &node);
+    if(!node.is_section && uishell_sidebar_card_entity_match(node.entity, entity))
     { return push_str8f(arena, "%S %S", name, uishell_logical_quote(arena, uishell_sidebar_string(node.label))); }
   }
   return push_str8f(arena, "%S (absent)", name);
@@ -349,24 +347,23 @@ internal void
 uishell_logical_orders(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *state)
 {
   Arena *arena = t->arena;
-  for(UIShell_KdlNode *order = uishell_sidebar_dashboard(state); order; order = order->next)
+  AndamentoDashboard *dashboard = uishell_sidebar_dashboard(state);
+  for(U64 o = 0; dashboard && o < dashboard->order_count; o++)
   {
-    if(!str8_match(order->name, str8_lit("order"), 0)) { continue; }
-    String8 under = str8_lit("(no rows)");
-    U64 row = uishell_sidebar_order_row(state, order);
-    if(row != ANDAMENTO_NONE)
+    AndamentoSiblingOrder *order = (AndamentoSiblingOrder *)&dashboard->orders[o];
+    String8 loop = uishell_sidebar_string(order->loop_key), under = str8_lit("(no rows)");
+    for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
       AndamentoNode node = {0}, parent = {0};
-      uishell_sidebar_snapshot_node(state->snapshot, row, &node);
+      andamento_snapshot_node(state->snapshot, i, &node);
+      if(node.is_section || node.parent == ANDAMENTO_NONE || !str8_match(uishell_sidebar_string(node.loop_key), loop, 0)) { continue; }
       uishell_sidebar_node_at(state, node.parent, &parent);
       under = uishell_logical_quote(arena, parent.is_section ? uishell_logical_section_title(state, parent) : uishell_sidebar_string(parent.label));
+      break;
     }
     uishell_logical_linef(t, depth, "order under %S", under);
-    for(UIShell_KdlNode *e = order->first; e; e = e->next)
-    {
-      if(!str8_match(e->name, str8_lit("entity"), 0) || e->arg_count < 2) { continue; }
-      uishell_logical_linef(t, depth+1, "%S", uishell_logical_order_entity(arena, state, e->args[0], e->args[1]));
-    }
+    for(U64 e = 0; e < order->entity_count; e++)
+    { uishell_logical_linef(t, depth+1, "%S", uishell_logical_order_entity(arena, state, order->entities[e])); }
   }
 }
 

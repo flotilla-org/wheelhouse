@@ -26,7 +26,7 @@
 // a Unix socket beside it in its private directory or a named pipe, served
 // as ADR 0011 says. Patches arriving there are applied with that
 // subscription as their provider; the local endpoint's (one-off scripts, the
-// git watcher) are the "local" provider. Wheelhouse runs
+// git watcher) are the host's own ("wheelhouse"). Wheelhouse runs
 // `flotilla pm connect --wheelhouse-socket <its endpoint>` for each and
 // restarts it when it exits (connector.rs). While a connector is down its
 // provider is stale: its facts are kept and marked, rather than expiring,
@@ -48,12 +48,10 @@ uishell_subscription_set_stale(UIShell_Subscription *s, B32 stale)
   rd_request_frame();
 }
 
-// A new core: ABI 2 calls and the local endpoint publish as "local", and a
-// subscription that is stale now is stale there too.
+// A new core: a subscription that is stale now is stale there too.
 internal void
 uishell_subscriptions_prepare_core(Andamento *core)
 {
-  andamento_set_default_provider(core, uishell_sidebar_text(str8_lit("local")), 0);
   for(UIShell_Subscription *s = uishell_subscriptions.first; s; s = s->next)
   { if(s->stale) { andamento_provider_set_stale(core, uishell_sidebar_text(s->id), 1, 0); } }
 }
@@ -291,11 +289,13 @@ uishell_subscriptions_poll(void)
 }
 
 // How the logical state names a provider: its subscription's position in
-// the Dashboard, "local", or "removed" for one it no longer has.
+// the Dashboard, "local" for Andamento's or the host's own, or "removed" for
+// one it no longer has.
 internal String8
 uishell_subscription_label(Arena *arena, String8 provider)
 {
-  if(!provider.size || str8_match(provider, str8_lit("local"), 0)) { return str8_lit("local"); }
+  if(!provider.size || str8_match(provider, uishell_sidebar_local_provider, 0) || str8_match(provider, uishell_sidebar_host_provider, 0))
+  { return str8_lit("local"); }
   U64 index = 1;
   for(UIShell_Subscription *s = uishell_subscriptions.first; s; s = s->next, index++)
   { if(str8_match(s->id, provider, 0)) { return push_str8f(arena, "%I64u", index); } }

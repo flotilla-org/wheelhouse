@@ -13,27 +13,29 @@ enum
   UIShell_HoverCardInlineFallbackHeightEM = 8,
   UIShell_HoverCardPinnedMinimumHeightEM = 4,
   UIShell_HoverCardPinnedGapPT = 8,
-  // ABI 2 detail_action exposes slot 0 (primary) and slot 1 (copy URL).
+  // A detail's actions: slot 0 (primary) and slot 1 (copy URL).
   UIShell_HoverCardActionCount = 2,
 };
 StaticAssert(UIShell_HoverCardNearGapPT > UIShell_HoverCardCorridorPaddingPT, hover_card_scan_gap);
 
 internal AndamentoEntity
 uishell_sidebar_card_entity(AndamentoNode node)
-{ return (AndamentoEntity){node.entity_kind, node.entity_id}; }
+{ return node.entity; }
 
 internal B32
 uishell_sidebar_card_entity_match(AndamentoEntity a, AndamentoEntity b)
 {
-  return str8_match(uishell_sidebar_string(a.kind), uishell_sidebar_string(b.kind), 0) &&
+  return str8_match(uishell_sidebar_string(a.provider), uishell_sidebar_string(b.provider), 0) &&
+         str8_match(uishell_sidebar_string(a.kind), uishell_sidebar_string(b.kind), 0) &&
          str8_match(uishell_sidebar_string(a.id), uishell_sidebar_string(b.id), 0);
 }
 
 internal AndamentoEntity
 uishell_sidebar_card_entity_copy(Arena *arena, AndamentoEntity entity)
 {
-  return (AndamentoEntity){uishell_sidebar_text(push_str8_copy(arena, uishell_sidebar_string(entity.kind))),
-                           uishell_sidebar_text(push_str8_copy(arena, uishell_sidebar_string(entity.id)))};
+  return uishell_sidebar_entity(push_str8_copy(arena, uishell_sidebar_string(entity.provider)),
+                                push_str8_copy(arena, uishell_sidebar_string(entity.kind)),
+                                push_str8_copy(arena, uishell_sidebar_string(entity.id)));
 }
 
 // Labels change independently of the retained navigation path. Reuse their
@@ -59,21 +61,21 @@ uishell_sidebar_card_retain_label(UIShell_HoverCard *card, String8 label)
 internal U64
 uishell_sidebar_card_find(UIShell_SidebarState *state, AndamentoEntity entity, AndamentoNode *out)
 {
-  U64 index = state->snapshot ? andamento_snapshot_detail_find(state->snapshot, entity.kind, entity.id) : ANDAMENTO_NONE;
+  U64 index = state->snapshot ? andamento_snapshot_detail_find(state->snapshot, entity) : ANDAMENTO_NONE;
   // Every card path funnels through exact identity lookup: current, outgoing,
   // navigated, related, pinned/docked and detached targets all demand here.
   if(index == ANDAMENTO_NONE && state->snapshot && state->core)
   {
     char *error = 0;
-    index = andamento_snapshot_detail_request(state->core, state->snapshot, entity.kind, entity.id, &error);
+    index = andamento_snapshot_detail_request(state->core, state->snapshot, entity, &error);
     if(error) { uishell_sidebar_result(state, 0, error); }
   }
   AndamentoDetail detail = {0};
   if(index == ANDAMENTO_NONE) { return ANDAMENTO_NONE; }
   if(out)
   {
-    if(!uishell_sidebar_snapshot_detail(state->snapshot, index, &detail)) { return ANDAMENTO_NONE; }
-    *out = (AndamentoNode){.entity_kind = detail.entity.kind, .entity_id = detail.entity.id,
+    if(!andamento_snapshot_detail(state->snapshot, index, &detail)) { return ANDAMENTO_NONE; }
+    *out = (AndamentoNode){.entity = detail.entity,
       .label = detail.label, .activate = detail.activate, .detail_count = detail.field_count,
       .state = detail.has_workspace ? ANDAMENTO_LIVE : ANDAMENTO_LATENT, .workspace_id = detail.workspace_id};
   }
@@ -455,7 +457,7 @@ uishell_sidebar_card_age(U64 now, U64 observed)
 internal String8
 uishell_sidebar_card_role_text(UIShell_SidebarState *state, U64 index, U32 role)
 {
-  AndamentoDetail detail = {0}; uishell_sidebar_snapshot_detail(state->snapshot, index, &detail);
+  AndamentoDetail detail = {0}; andamento_snapshot_detail(state->snapshot, index, &detail);
   for(U64 f = 0; f < detail.field_count; f++)
   {
     AndamentoDetailField field = {0}; andamento_snapshot_detail_field(state->snapshot, index, f, &field);
@@ -643,13 +645,14 @@ uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *car
 internal void
 uishell_sidebar_card_preview(RD_WindowState *ws, U64 slot, AndamentoNode node, F32 width)
 {
-  if(node.state == ANDAMENTO_LIVE && node.workspace_id)
+  CFG_ID workspace = node.state == ANDAMENTO_LIVE ? uishell_sidebar_node_cfg(&node) : 0;
+  if(workspace)
   {
-    rd_workspace_preview_demand_push(ws, node.workspace_id, width);
-    RD_SurfaceCacheNode *mini = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(node.workspace_id));
+    rd_workspace_preview_demand_push(ws, workspace, width);
+    RD_SurfaceCacheNode *mini = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(workspace));
     UI_PrefHeight(ui_px(width*0.625f, 1))
     {
-      UI_Box *preview_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder, "###hover_preview_%I64u_%I64u", slot, node.workspace_id);
+      UI_Box *preview_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder, "###hover_preview_%I64u_%I64u", slot, workspace);
       if(mini)
       {
         RD_WorkspacePreviewDraw *preview = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
@@ -714,7 +717,7 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
                             U64 slot, AndamentoNode node, U64 index, F32 width, B32 interactive)
 {
   AndamentoDetail detail = {0};
-  if(!uishell_sidebar_snapshot_detail(state->snapshot, index, &detail)) { return ANDAMENTO_NONE; }
+  if(!andamento_snapshot_detail(state->snapshot, index, &detail)) { return ANDAMENTO_NONE; }
   uishell_sidebar_card_header(state, card, index, detail, width, interactive);
   uishell_sidebar_card_facts(state, card, index, detail, width, interactive);
   uishell_sidebar_card_related(state, card, slot, index, detail, width, interactive);

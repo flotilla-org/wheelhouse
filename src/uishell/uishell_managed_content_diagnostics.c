@@ -69,7 +69,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   ManagedCheck(state.core != 0, "shared core initializes");
   andamento_string_free(error);
   error = 0;
-  andamento_apply_entity(state.core, 0, uishell_sidebar_text(str8_lit("role")), uishell_sidebar_text(str8_lit("p/governor")),
+  andamento_apply_entity(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")), uishell_sidebar_text(str8_lit("p/governor")),
     uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
   andamento_string_free(error);
   uishell_sidebar_refresh(&state);
@@ -77,7 +77,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   for(U64 i = 0; state.snapshot && i < andamento_snapshot_node_count(state.snapshot); i++)
   {
     AndamentoNode node = {0};
-    if(uishell_sidebar_snapshot_node(state.snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("role"), 0))
+    if(andamento_snapshot_node(state.snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0))
     { activate = node.activate; }
   }
   ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(state.core, state.snapshot, activate, 0), "role entry dispatches its opening");
@@ -114,7 +114,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   facts[1].text = uishell_sidebar_text(str8_lit("two"));
   facts[2].text = uishell_sidebar_text(str8_lit("printf B; read answer"));
   error = 0;
-  B32 applied = andamento_apply_entity(state.core, 1, uishell_sidebar_text(str8_lit("role")),
+  B32 applied = andamento_apply_entity(state.core, 1, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
     uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
   ManagedCheck(applied, "desired replacement facts accepted");
   andamento_string_free(error);
@@ -134,14 +134,14 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   ManagedCheck(tv->session == unchanged, "repeated observation does not restart terminal");
   facts[0].text = uishell_sidebar_text(str8_lit("held"));
   error = 0;
-  andamento_apply_entity(state.core, 2, uishell_sidebar_text(str8_lit("role")),
+  andamento_apply_entity(state.core, 2, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
     uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 1, &error);
   andamento_string_free(error);
   uishell_sidebar_reconcile_workspace(&state, workspace);
   ManagedCheck(tv->session == unchanged, "explicit held state retains existing content");
   facts[0].text = uishell_sidebar_text(str8_lit("ready"));
   error = 0;
-  andamento_apply_entity(state.core, 3, uishell_sidebar_text(str8_lit("role")),
+  andamento_apply_entity(state.core, 3, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
     uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
   andamento_string_free(error);
   uishell_sidebar_reconcile_workspace(&state, workspace);
@@ -154,7 +154,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     facts[1].text = uishell_sidebar_text(str8_lit("three"));
     facts[2].text = uishell_sidebar_text(str8_lit("printf D; read answer"));
     error = 0;
-    andamento_apply_entity(state.core, 4, uishell_sidebar_text(str8_lit("role")),
+    andamento_apply_entity(state.core, 4, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
       uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
     andamento_string_free(error);
     uishell_sidebar_reconcile_workspace(&state, workspace);
@@ -181,7 +181,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     facts[0].text = uishell_sidebar_text(str8_lit("ready"));
     for(U32 i = 1; i < 3; i++) { facts[i].text = uishell_sidebar_text(str8_cstring(values[i])); }
     error = 0;
-    andamento_apply_entity(opened.core, 4, uishell_sidebar_text(str8_lit("role")),
+    andamento_apply_entity(opened.core, 4, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
       uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
     andamento_string_free(error);
     error = 0;
@@ -191,7 +191,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     for(U64 i = 0; snapshot && i < andamento_snapshot_node_count(snapshot); i++)
     {
       AndamentoNode node = {0};
-      if(uishell_sidebar_snapshot_node(snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("role"), 0))
+      if(andamento_snapshot_node(snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0))
       { activate = node.activate; }
     }
     ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(opened.core, snapshot, activate, 0), "role entry dispatches its opening");
@@ -209,13 +209,12 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     // As the workspace store keys it, its first plan finds it current.
     uishell_managed_set(role_view, str8_lit("slot"), str8_lit("primary"));
     uishell_sidebar_reconcile_workspace(&opened, role_workspace);
-    AndamentoSlotPlan *plan = andamento_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(role_workspace)),
+    AndamentoSlotContent *plan = andamento_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(role_workspace)),
       uishell_sidebar_text(str8_lit("primary")), uishell_sidebar_text(cfg_node_child_from_string(role_view, str8_lit("applied"))->first->string), 0);
-    AndamentoSlotContent content = {0};
-    ManagedCheck(plan && andamento_slot_plan_get(plan, &content) && content.state == ANDAMENTO_CONTENT_CURRENT &&
+    ManagedCheck(plan && plan->state == ANDAMENTO_CONTENT_CURRENT &&
                  str8_match(rd_expr_from_cfg(role_view), str8_lit("printf C; read answer"), 0),
                  "first plan for freshly opened content is current, without restarting it");
-    andamento_slot_plan_release(plan);
+    andamento_slot_plan_free(plan);
     andamento_destroy(opened.core);
     cfg_node_release(rd_state->cfg, role_workspace);
   }
@@ -236,15 +235,15 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     producer[1].kind = ANDAMENTO_FACT_TEXT;
     // /tmp may be a symlink (macOS); compare directory identity, not spelling.
     producer[1].text = uishell_sidebar_text(str8_lit("test \"$PWD\" -ef /tmp && printf W; read answer"));
-    ManagedCheck(andamento_apply_entity(opened.core, 0, uishell_sidebar_text(str8_lit("worktree")),
+    ManagedCheck(andamento_apply_entity(opened.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("worktree")),
       uishell_sidebar_text(str8_lit("producer-worktree")), uishell_sidebar_text(str8_lit("fixture")), producer, 2, 0),
       "producer recipe and root accepted without managed state");
     uishell_sidebar_refresh(&opened);
     size_t activate = ANDAMENTO_NONE;
     for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(opened.snapshot, i, &node);
-      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("producer-worktree"), 0))
+      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("producer-worktree"), 0))
       { ManagedCheck(node.state == ANDAMENTO_LATENT, "producer worktree starts latent"); activate = node.activate; }
     }
     ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(opened.core, opened.snapshot, activate, 0),
@@ -278,9 +277,9 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     B32 matched = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(opened.snapshot, i, &node);
-      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("producer-worktree"), 0))
-      { matched = node.state == ANDAMENTO_LIVE && node.workspace_id == existing->id; activate = node.activate; }
+      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("producer-worktree"), 0))
+      { matched = node.state == ANDAMENTO_LIVE && uishell_sidebar_node_cfg(&node) == existing->id; activate = node.activate; }
     }
     ManagedCheck(matched, "existing terminal directory marks producer worktree open");
     ManagedCheck(andamento_dispatch(opened.core, opened.snapshot, activate, 0), "matched worktree dispatches focus");
@@ -297,9 +296,9 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     B32 latent = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(opened.snapshot, i, &node);
-      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("producer-worktree"), 0))
-      { latent = node.state == ANDAMENTO_LATENT; if(!latent) { fprintf(stderr, "Unexpected worktree state=%u workspace=%lu after cwd change (existing=%lu)\n", node.state, node.workspace_id, existing->id); } }
+      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("producer-worktree"), 0))
+      { latent = node.state == ANDAMENTO_LATENT; if(!latent) { fprintf(stderr, "Unexpected worktree state=%u workspace=%lu after cwd change (existing=%lu)\n", node.state, uishell_sidebar_node_cfg(&node), existing->id); } }
     }
     ManagedCheck(latent, "directory change removes derived open association");
     cfg_node_release(rd_state->cfg, existing);

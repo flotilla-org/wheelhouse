@@ -116,7 +116,7 @@ uses a single terminal. Each entry creates or focuses its own workspace. Close i
 with the toolbar control to make the example available again. The facts and
 status in this fixture are examples, not live git or Flotilla information.
 
-Builds require the sibling `../andamento` checkout with C ABI 3. Wheelhouse builds the FFI and core through a separate Cargo consumer workspace with a committed lockfile in `tools/andamento-build/`, so no Zellij checkout is needed. Override its location with `WHEELHOUSE_ANDAMENTO_DIR`, or its Cargo output directory with `WHEELHOUSE_ANDAMENTO_TARGET_DIR`. The build explicitly selects the native Rust target rather than Andamento's WASM default. The multi-terminal resource list lives in `data/sidebar/resources.json`, with the primary first. This is host-side fixture data; dynamic terminal resource discovery and updates are not implemented yet. Fixture inputs live in `data/sidebar/`; the build embeds them into the executable.
+Builds require the sibling `../andamento` checkout with C ABI 4. Wheelhouse builds the FFI and core through a separate Cargo consumer workspace with a committed lockfile in `tools/andamento-build/`, so no Zellij checkout is needed. Override its location with `WHEELHOUSE_ANDAMENTO_DIR`, or its Cargo output directory with `WHEELHOUSE_ANDAMENTO_TARGET_DIR`. The build explicitly selects the native Rust target rather than Andamento's WASM default. The multi-terminal resource list lives in `data/sidebar/resources.json`, with the primary first. This is host-side fixture data; dynamic terminal resource discovery and updates are not implemented yet. Fixture inputs live in `data/sidebar/`; the build embeds them into the executable.
 
 On macOS (or Linux with a display), run the native workspace bridge checks with:
 
@@ -345,7 +345,8 @@ and Wheelhouse runs `flotilla pm connect --wheelhouse-socket <its endpoint>` for
 (`--flotilla_bin`, else `FLOTILLA_BIN`, else `flotilla`), restarting it after 1s,
 doubling to 30s, when it exits. While a connector is down its rows stay, marked
 stale, until it publishes again. The `--andamento_socket` endpoint itself, which
-the git watcher and one-off scripts use, is the `local` provider.
+the git watcher and one-off scripts use, is the host's own `wheelhouse` provider
+(`local` is Andamento's, for the sections, groups and pins it keeps).
 
 The command palette's **Add Flotilla Subscription** takes a daemon endpoint
 (`default` for Flotilla's own) and starts its connector; **Remove Subscription** takes

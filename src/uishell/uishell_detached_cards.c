@@ -95,8 +95,7 @@ uishell_sidebar_card_pin_control(UIShell_HoverCard *card)
     CFG_Node *target = uishell_sidebar_pin_target(cfg_node_from_id(ws->cfg_id));
     for(CFG_Node *c = target->first; c != &cfg_nil_node && !pinned; c = c->next)
     {
-      AndamentoEntity saved = {uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("kind"))->first->string),
-                               uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("entity"))->first->string)};
+      AndamentoEntity saved = uishell_sidebar_pin_entity(c);
       pinned = str8_match(c->string, str8_lit("card"), 0) && uishell_sidebar_card_entity_match(saved, card->path[card->depth-1]);
     }
   }
@@ -181,8 +180,7 @@ uishell_sidebar_pin_find(CFG_Node *window, AndamentoEntity entity, B32 area_only
       for(CFG_Node *c = group->first; c != &cfg_nil_node; c = c->next)
       {
         if(!str8_match(c->string, str8_lit("card"), 0)) { continue; }
-        AndamentoEntity saved = {uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("kind"))->first->string),
-                                 uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("entity"))->first->string)};
+        AndamentoEntity saved = uishell_sidebar_pin_entity(c);
         if(uishell_sidebar_card_entity_match(saved, entity)) { return c; }
       }
     }
@@ -337,8 +335,7 @@ uishell_sidebar_pin_deduplicate(CFG_Node *window)
   for(CFG_NodePtrNode *n = cards.first; n; n = n->next, index++)
   {
     CFG_Node *c = n->v;
-    AndamentoEntity entity = {uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("kind"))->first->string),
-                              uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("entity"))->first->string)};
+    AndamentoEntity entity = uishell_sidebar_pin_entity(c);
     B32 duplicate = 0;
     U64 k = 0;
     for(CFG_NodePtrNode *m = cards.first; m != n && !duplicate; m = m->next, k++)
@@ -348,8 +345,7 @@ uishell_sidebar_pin_deduplicate(CFG_Node *window)
       if(!earlier_kept) { continue; }
       if(legacy[index])
       {
-        AndamentoEntity other = {uishell_sidebar_text(cfg_node_child_from_string(m->v, str8_lit("kind"))->first->string),
-                                 uishell_sidebar_text(cfg_node_child_from_string(m->v, str8_lit("entity"))->first->string)};
+        AndamentoEntity other = uishell_sidebar_pin_entity(m->v);
         duplicate = legacy[k] && uishell_sidebar_card_entity_match(entity, other);
       }
       else { duplicate = str8_match(uishell_sidebar_pin_ghost(c), uishell_sidebar_pin_ghost(m->v), 0); }
@@ -401,8 +397,7 @@ uishell_sidebar_pin_add(UIShell_SidebarState *state, CFG_Node *area, U64 index, 
   CFG_Node *saved = cfg_node_new(rd_state->cfg, area, str8_lit("card"));
   uishell_sidebar_pin_place(area, saved, index);
   uishell_sidebar_pin_new_ghost(saved);
-  uishell_sidebar_pin_set_field(saved, str8_lit("kind"), uishell_sidebar_string(entity.kind));
-  uishell_sidebar_pin_set_field(saved, str8_lit("entity"), uishell_sidebar_string(entity.id));
+  uishell_sidebar_pin_set_entity(saved, entity);
   AndamentoNode node = {0};
   String8 label = uishell_sidebar_card_find(state, entity, &node) != ANDAMENTO_NONE ? uishell_sidebar_string(node.label) : fallback_label;
   uishell_sidebar_pin_set_field(saved, str8_lit("label"), label);
@@ -433,8 +428,7 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
   for(CFG_Node *c = target->first; reveal == &cfg_nil_node && c != &cfg_nil_node; c = c->next)
   {
     if(!str8_match(c->string, str8_lit("card"), 0)) { continue; }
-    AndamentoEntity pinned = {uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("kind"))->first->string),
-                              uishell_sidebar_text(cfg_node_child_from_string(c, str8_lit("entity"))->first->string)};
+    AndamentoEntity pinned = uishell_sidebar_pin_entity(c);
     if(uishell_sidebar_card_entity_match(pinned, entity)) { reveal = c; }
   }
   if(reveal != &cfg_nil_node && !new_area)
@@ -686,11 +680,11 @@ uishell_sidebar_detached_apply(RD_WindowState *ws, UIShell_HoverCard *card)
       c->source_row = c->source_key;
       for(U64 i = 0; ws->sidebar->snapshot && i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
       {
-        AndamentoNode node = {0}; uishell_sidebar_snapshot_node(ws->sidebar->snapshot, i, &node);
+        AndamentoNode node = {0}; andamento_snapshot_node(ws->sidebar->snapshot, i, &node);
         if(str8_match(c->source_key, uishell_sidebar_string(node.key), 0) &&
            str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0) && node.parent != ANDAMENTO_NONE)
         {
-          AndamentoNode parent = {0}; uishell_sidebar_snapshot_node(ws->sidebar->snapshot, node.parent, &parent);
+          AndamentoNode parent = {0}; andamento_snapshot_node(ws->sidebar->snapshot, node.parent, &parent);
           c->source_row = push_str8_copy(c->arena, uishell_sidebar_string(parent.key)); break;
         }
       }
@@ -932,8 +926,8 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
       // One home: this group.
       cfg_node_release(rd_state->cfg, cfg_node_child_from_string(workspace, str8_lit("lives_with")));
       uishell_sidebar_local_set_field(workspace, str8_lit("lives_in"), group_id);
-      placed = (AndamentoEntity){uishell_sidebar_text(str8_lit(".workspace")),
-                                 uishell_sidebar_text(push_str8_copy(scratch.arena, uishell_sidebar_local_entity(workspace)))};
+      placed = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit(".workspace"),
+                                      push_str8_copy(scratch.arena, uishell_sidebar_local_entity(workspace)));
     }
     else
     {
@@ -947,8 +941,8 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
         saved = uishell_sidebar_pin_add(state, group, max_U64, entity, label, source, row);
         if(card) { uishell_sidebar_card_close(card); }
       }
-      placed = (AndamentoEntity){uishell_sidebar_text(str8_lit(".ref")),
-                                 uishell_sidebar_text(push_str8_copy(scratch.arena, uishell_sidebar_pin_ghost(saved)))};
+      placed = uishell_sidebar_entity(uishell_sidebar_local_provider, str8_lit(".ref"),
+                                      push_str8_copy(scratch.arena, uishell_sidebar_pin_ghost(saved)));
     }
     uishell_sidebar_group_order(state, placed);
     scratch_end(scratch);
@@ -1018,7 +1012,7 @@ uishell_sidebar_detached_finish(RD_WindowState *ws)
       B32 present = 0;
       for(U64 i = 0; ws->sidebar->snapshot && i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
       {
-        AndamentoNode node = {0}; uishell_sidebar_snapshot_node(ws->sidebar->snapshot, i, &node);
+        AndamentoNode node = {0}; andamento_snapshot_node(ws->sidebar->snapshot, i, &node);
         if(str8_match(c->source_key, uishell_sidebar_string(node.key), 0)) { present = 1; break; }
       }
       if(!present || uishell_sidebar_card_find(ws->sidebar, c->path[c->depth-1], 0) == ANDAMENTO_NONE)
@@ -1037,8 +1031,7 @@ uishell_sidebar_saved_card(RD_WindowState *ws, CFG_Node *saved)
   UIShell_HoverCard *c = uishell_sidebar_detached_alloc(ws);
   c->arena = arena_alloc(); c->capacity = UIShell_HoverCardInitialPathCapacity; c->depth = 1;
   c->path = push_array(c->arena, AndamentoEntity, c->capacity);
-  AndamentoEntity entity = {uishell_sidebar_text(cfg_node_child_from_string(saved, str8_lit("kind"))->first->string),
-                           uishell_sidebar_text(cfg_node_child_from_string(saved, str8_lit("entity"))->first->string)};
+  AndamentoEntity entity = uishell_sidebar_pin_entity(saved);
   c->path[0] = uishell_sidebar_card_entity_copy(c->arena, entity);
   c->source_key = push_str8_copy(c->arena, cfg_node_child_from_string(saved, str8_lit("source"))->first->string);
   uishell_sidebar_card_retain_label(c, cfg_node_child_from_string(saved, str8_lit("label"))->first->string);

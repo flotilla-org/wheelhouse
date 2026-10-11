@@ -3418,12 +3418,13 @@ uishell_workspace_cfg_has_subject(CFG_Node *workspace)
 }
 
 // The provider of a subject workspace's entity: the Dashboard subscription
-// it came from, or "local" (not stored) for one-off scripts and fixtures.
+// it came from, or (not stored) the host's own, for one-off scripts and
+// fixtures.
 internal String8
 uishell_workspace_cfg_subject_provider(CFG_Node *workspace)
 {
   String8 provider = cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_provider"))->first->string;
-  return provider.size ? provider : str8_lit("local");
+  return provider.size ? provider : uishell_sidebar_host_provider;
 }
 
 internal UIShell_WorkspaceMount *

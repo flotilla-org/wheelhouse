@@ -21,15 +21,43 @@ class Text(C.Structure):
     def string(self):
         return C.string_at(self.data, self.len).decode() if self.len else ''
 
-class Node(C.Structure):
-    _fields_ = [('parent', Size), ('is_section', U32)] + [(x, Text) for x in
-        ['key', 'entity_kind', 'entity_id', 'label', 'layout', 'form']] + [
-        ('state', U32), ('workspace_id', U64)] + [(x, U32) for x in
-        ['selected', 'openable', 'collapsed', 'pinned']] + [(x, Size) for x in
-        ['first_field', 'field_count', 'first_detail', 'detail_count', 'first_control', 'control_count', 'activate', 'toggle']]
+class Entity(C.Structure):
+    _fields_ = [('provider', Text), ('kind', Text), ('id', Text)]
 
-class RegionHints(C.Structure):
-    _fields_ = [("default_host", Text), ("has_order", U32), ("order", C.c_int64)]
+
+class WorkspaceId(C.Structure):
+    _fields_ = [('bytes', C.c_uint8 * 16)]
+
+
+# This test names workspaces by small numbers: Workspace ID n is n in the
+# last eight bytes, big-endian; 0 is none.
+def workspace_id(number):
+    result = WorkspaceId()
+    for i, byte in enumerate(number.to_bytes(8, 'big')):
+        result.bytes[8 + i] = byte
+    return result
+
+
+def workspace_number(identity):
+    return int.from_bytes(bytes(identity.bytes), 'big')
+
+
+def workspace_text(number):
+    raw = bytes(workspace_id(number).bytes).hex()
+    return '-'.join([raw[:8], raw[8:12], raw[12:16], raw[16:20], raw[20:]])
+
+
+class Node(C.Structure):
+    _fields_ = [('parent', Size), ('is_section', U32), ('key', Text), ('entity', Entity), ('stale', U32)] + [
+        (x, Text) for x in ['label', 'layout', 'form', 'loop_key']] + [
+        ('state', U32), ('workspace', WorkspaceId)] + [(x, U32) for x in
+        ['selected', 'openable', 'collapsed', 'pinned']] + [
+        ('default_host', Text), ('has_order', U32), ('order', C.c_int64)] + [(x, Size) for x in
+        ['first_field', 'field_count', 'first_detail', 'detail_count', 'first_control', 'control_count', 'activate', 'toggle',
+         'copy_url']]
+    entity_kind = property(lambda self: self.entity.kind)
+    entity_id = property(lambda self: self.entity.id)
+    workspace_id = property(lambda self: workspace_number(self.workspace))
 
 
 class Field(C.Structure):
@@ -38,42 +66,55 @@ class Field(C.Structure):
 
 class Control(C.Structure):
     _fields_ = [("kind", U32), ("label", Text), ("glyph", Text), ("action", Size),
-                ("value_kind", U32), ("checked", U32), ("value", Text)]
+                ("value_kind", U32), ("checked", U32), ("value", Text), ("variable", Text), ("persist", U32)]
 
 
 class Effect(C.Structure):
-    _fields_ = [('kind', U32), ('request_id', U64), ('workspace_id', U64)] + [(x, Text) for x in
-        ['entity_kind', 'entity_id', 'name', 'recipe']] + [('has_cwd', U32), ('cwd', Text)]
+    _fields_ = [('kind', U32), ('request_id', U64), ('workspace', WorkspaceId), ('entity', Entity)] + [
+        (x, Text) for x in ['name', 'recipe']] + [('has_cwd', U32), ('cwd', Text),
+        ('has_primary_target', U32), ('primary_target', Text)]
+    workspace_id = property(lambda self: workspace_number(self.workspace))
+
 
 class Workspace(C.Structure):
-    _fields_ = [('id', U64), ('position', Size), ('name', Text), ('selected', U32)]
+    _fields_ = [('id', WorkspaceId), ('position', Size), ('name', Text), ('selected', U32)]
+
+    def __init__(self, number=0, position=0, name=None, selected=0):
+        super().__init__(workspace_id(number), position, name or Text(), selected)
+
+
+# Every patch comes from one subscription.
+PROVIDER = Text.of('native-test')
 
 
 def load(path):
     lib = C.CDLL(str(path))
     signatures = {
+        'abi_version': (U32, []),
         'create': (Ptr, [C.c_char_p, Size, Ptr]), 'destroy': (None, [Ptr]),
         'configure': (U32, [Ptr, Text, Ptr]),
         'tick': (U32, [Ptr, U64, Ptr]),
         'snapshot_is_current': (U32, [Ptr, Ptr, Ptr]),
-        'snapshot_region_hints': (U32, [Ptr, Size, C.POINTER(RegionHints)]),
         'snapshot_field': (U32, [Ptr, Size, C.POINTER(Field)]),
-        'snapshot_copy_url_action': (Size, [Ptr, Size]),
-        'snapshot_node_loop_key': (U32, [Ptr, Size, C.POINTER(Text)]),
-        'apply_patch_json': (U32, [Ptr, U64, Text, Ptr]),
+        'apply_patch_json': (U32, [Ptr, U64, Text, Text, Ptr]),
         'snapshot_acquire': (Ptr, [Ptr, Ptr]), 'snapshot_release': (None, [Ptr]),
         'snapshot_node_count': (Size, [Ptr]), 'snapshot_node': (U32, [Ptr, Size, C.POINTER(Node)]),
         'snapshot_control': (U32, [Ptr, Size, C.POINTER(Control)]),
         'snapshot_diagnostic_count': (Size, [Ptr]),
         'dispatch': (U32, [Ptr, Ptr, Size, Ptr]), 'effects_take': (Ptr, [Ptr, Ptr]),
         'effects_count': (Size, [Ptr]), 'effects_get': (U32, [Ptr, Size, C.POINTER(Effect)]),
-        'effects_primary_target': (U32, [Ptr, Size, C.POINTER(Text)]),
-        'effects_release': (None, [Ptr]), 'complete': (U32, [Ptr, U64, U32, U64, Text, Ptr]),
+        'effects_release': (None, [Ptr]), 'complete': (U32, [Ptr, U64, U32, WorkspaceId, Text, Ptr]),
         'observe': (U32, [Ptr, C.POINTER(Workspace), Size, Ptr, Size, Ptr]),
     }
     for name, (result, args) in signatures.items():
         fn = getattr(lib, 'andamento_' + name)
         fn.restype, fn.argtypes = result, args
+    assert lib.andamento_abi_version() == 4
+    # The tests' own forms: patches from PROVIDER, workspaces by number.
+    apply_patch_json, complete = lib.andamento_apply_patch_json, lib.andamento_complete
+    lib.andamento_apply_patch_json = lambda core, now, json, error: apply_patch_json(core, now, PROVIDER, json, error)
+    lib.andamento_complete = lambda core, request, outcome, number, message, error: complete(
+        core, request, outcome, workspace_id(number), message, error)
     return lib
 
 
@@ -95,7 +136,10 @@ class NativeSidebarTests(unittest.TestCase):
                  patch('convoy', 'c', **{'flotilla.project': 'p', 'flotilla.convoy': 'c',
                                       'action.primary.target': 'vessel:v', 'action.primary.recipe': 'flotilla attach --host test terminal'}),
                  patch('convoy', 'c2', **{'flotilla.project': 'p', 'flotilla.convoy': 'c2'}),
+                 # The convoy's explicit target names this vessel by its own: a
+                 # provider's fallback target is qualified by its provider.
                  patch('vessel', 'v', **{'flotilla.project': 'p', 'flotilla.convoy': 'c', 'flotilla.vessel': 'v',
+                                       'action.primary.target': 'vessel:v',
                                        'action.primary.recipe': 'flotilla attach --host test terminal', 'status.attention': True}),
                  patch('vessel', 'unavailable', **{'flotilla.convoy': 'c2'}),
                  patch('session', 'session', **{'action.primary.recipe': 'flotilla attach terminal'}),
@@ -106,17 +150,8 @@ class NativeSidebarTests(unittest.TestCase):
 
     def test_region_hints_match_shipped_order(self):
         # Shipped placement hints preserve today's order across the native ABI.
-        snapshot = lib.andamento_snapshot_acquire(self.core, None)
-        self.snapshots.append(snapshot)
-        hints_seen = []
-        for index in range(lib.andamento_snapshot_node_count(snapshot)):
-            node, hints = Node(), RegionHints()
-            self.assertEqual(lib.andamento_snapshot_node(snapshot, index, C.byref(node)), 1)
-            if node.is_section:
-                self.assertEqual(lib.andamento_snapshot_region_hints(snapshot, index, C.byref(hints)), 1)
-                hints_seen.append((node.key.string(), hints.default_host.string(), hints.has_order, hints.order))
-            else:
-                self.assertEqual(lib.andamento_snapshot_region_hints(snapshot, index, C.byref(hints)), 0)
+        _, nodes = self.snapshot()
+        hints_seen = [(n.key.string(), n.default_host.string(), n.has_order, n.order) for n in nodes if n.is_section]
         # The workspace fallback is always emitted, unhinted; Wheelhouse places it last.
         self.assertEqual(hints_seen, [('tree', 'sidebar', 1, 10), ('sessions', 'sidebar', 1, 20),
                                      ('attention', 'sidebar', 1, 30), ('git', 'sidebar', 1, 40),
@@ -286,11 +321,11 @@ int main(void) {
                               ('issue-137', 'https://forge.example/org/wheelhouse/ticket/137')]:
             index = next(i for i, n in enumerate(nodes) if n.entity_id.string() == identity)
             self.assertEqual(self.dispatch(snapshot, nodes[index].activate)[0::3], (3, url))
-            copy = lib.andamento_snapshot_copy_url_action(snapshot, index)
+            copy = nodes[index].copy_url
             self.assertNotEqual(copy, Size(-1).value)
             self.assertEqual(self.dispatch(snapshot, copy)[0::3], (4, url))
         missing = next(i for i, n in enumerate(nodes) if n.entity_id.string() == 'no-forge')
-        self.assertEqual(lib.andamento_snapshot_copy_url_action(snapshot, missing), Size(-1).value)
+        self.assertEqual(nodes[missing].copy_url, Size(-1).value)
         self.assertFalse(nodes[missing].openable)
         self.assertEqual(self.values(snapshot, nodes[missing])[0], '!2508')
         pr = next(n for n in nodes if n.entity_id.string() == 'pr-281')
@@ -313,7 +348,7 @@ int main(void) {
             self.assertTrue(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(update)), None))
             snapshot, nodes = self.snapshot()
             index = next(i for i, n in enumerate(nodes) if n.entity_id.string() == 'pr-281')
-            self.assertEqual(lib.andamento_snapshot_copy_url_action(snapshot, index), Size(-1).value)
+            self.assertEqual(nodes[index].copy_url, Size(-1).value)
             self.assertEqual(self.dispatch(snapshot, nodes[index].activate)[0], 2)  # inspect, no URL launch
 
     # Role attachment/status come from lifted facts. Forward edges supply current
@@ -665,11 +700,11 @@ int main(void) {
         role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
         self.assertEqual(lib.andamento_dispatch(self.core, snapshot, role.activate, None), 1)
         batch = lib.andamento_effects_take(self.core, None)
-        effect, target = Effect(), Text()
+        effect = Effect()
         self.assertEqual(lib.andamento_effects_get(batch, 0, C.byref(effect)), 1)
         self.assertEqual((effect.kind, effect.recipe.string()), (1, 'flotilla attach --host test g-v'))
-        self.assertEqual(lib.andamento_effects_primary_target(batch, 0, C.byref(target)), 1)
-        self.assertEqual(target.string(), 'vessel:g-v')
+        self.assertEqual(effect.has_primary_target, 1)
+        self.assertEqual(effect.primary_target.string(), 'vessel:g-v')
         lib.andamento_effects_release(batch)
 
     def test_held_and_removed_roles(self):
@@ -807,7 +842,7 @@ int main(void) {
                 elif scenario == 'unplaced-kind':
                     self.assertTrue(lib.andamento_apply_patch_json(self.core, 12, Text.of(json.dumps(update)), None))
                 binding = patch(kind, identity)
-                binding['target'] = {'kind': 'tab', 'value': 70}
+                binding['target'] = {'kind': 'tab', 'value': workspace_text(70)}
                 self.assertTrue(lib.andamento_apply_patch_json(self.core, 12, Text.of(json.dumps(binding)), None))
                 workspace = Workspace(70, 0, Text.of('Open workspace'), 1)
                 self.assertTrue(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None))
@@ -1047,10 +1082,8 @@ int main(void) {
         for index, node in enumerate(nodes):
             if node.entity_id.string() not in ('v', 'v2'):
                 continue
-            key = Text()
-            self.assertEqual(lib.andamento_snapshot_node_loop_key(snapshot, index, C.byref(key)), 1)
-            self.assertTrue(key.len)
-            keys.setdefault(node.entity_id.string(), []).append(key.string())
+            self.assertTrue(node.loop_key.len)
+            keys.setdefault(node.entity_id.string(), []).append(node.loop_key.string())
         self.assertEqual(keys['v'][0], keys['v2'][0])
         self.assertNotEqual(keys['v'][0], keys['v'][1])
 

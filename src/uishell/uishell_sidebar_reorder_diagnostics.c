@@ -22,9 +22,9 @@ uishell_sidebar_reorder_ids(Arena *arena, UIShell_SidebarState *state, String8 k
   String8List ids = {0};
   for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-    if(!node.is_section && str8_match(uishell_sidebar_string(node.entity_kind), kind, 0))
-    { str8_list_push(arena, &ids, uishell_sidebar_string(node.entity_id)); }
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    if(!node.is_section && str8_match(uishell_sidebar_string(node.entity.kind), kind, 0))
+    { str8_list_push(arena, &ids, uishell_sidebar_string(node.entity.id)); }
   }
   StringJoin join = {.sep = str8_lit(" ")};
   return str8_list_join(arena, &ids, &join);
@@ -36,8 +36,8 @@ uishell_sidebar_reorder_node(UIShell_SidebarState *state, String8 id)
   AndamentoNode node = {0};
   for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
   {
-    uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-    if(!node.is_section && str8_match(uishell_sidebar_string(node.entity_id), id, 0)) { return node; }
+    andamento_snapshot_node(state->snapshot, i, &node);
+    if(!node.is_section && str8_match(uishell_sidebar_string(node.entity.id), id, 0)) { return node; }
   }
   return (AndamentoNode){0};
 }
@@ -215,7 +215,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
       "\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}},"
       "\"flotilla.project\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}}},\"unset\":[]}",
       entities[i][0], entities[i][1], entities[i][1], entities[i][2]);
-    ok &= andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(patch), 0);
+    ok &= andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0);
   }
   uishell_sidebar_refresh(&state);
   UIShell_ControlledSplit split = *host_split;
@@ -251,17 +251,20 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   String8 loop = uishell_sidebar_loop_key(state.snapshot, 0);
   for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
   {
-    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state.snapshot, i, &node);
-    if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("c1"), 0))
+    AndamentoNode node = {0}; andamento_snapshot_node(state.snapshot, i, &node);
+    if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("c1"), 0))
     { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(state.snapshot, i)); }
   }
   // Andamento keeps the run's full order in its dashboard record.
   String8List leaves = {0};
-  for(UIShell_KdlNode *order = uishell_sidebar_dashboard(&state); order; order = order->next)
+  AndamentoDashboard *dashboard = uishell_sidebar_dashboard(&state);
+  for(U64 o = 0; dashboard && o < dashboard->order_count; o++)
   {
-    if(!str8_match(order->name, str8_lit("order"), 0)) { continue; }
-    for(UIShell_KdlNode *e = order->first; e; e = e->next)
-    { if(str8_match(e->name, str8_lit("entity"), 0)) { str8_list_pushf(scratch.arena, &leaves, "%S %S", e->args[0], e->args[1]); } }
+    AndamentoSiblingOrder *order = (AndamentoSiblingOrder *)&dashboard->orders[o];
+    for(U64 e = 0; e < order->entity_count; e++)
+    {
+      str8_list_pushf(scratch.arena, &leaves, "%S %S", uishell_sidebar_string(order->entities[e].kind), uishell_sidebar_string(order->entities[e].id));
+    }
   }
   StringJoin join = {.sep = str8_lit(" ")};
   ReorderCheck(str8_match(str8_list_join(scratch.arena, &leaves, &join), str8_lit("convoy c2 convoy c3 convoy c1"), 0),
@@ -284,7 +287,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
 
   // The record restores into a fresh core before any rows, and new rows
   // merge by data order.
-  String8 record = uishell_sidebar_record_export(scratch.arena, state.core, str8_lit("dashboard"));
+  String8 record = uishell_sidebar_record_get(scratch.arena, state.core, str8_lit("dashboard"));
   UIShell_SidebarState restored = {.initialized = 1};
   error = 0; restored.core = andamento_create(config.str, config.size, &error);
   ok &= uishell_sidebar_result(&restored, restored.core != 0, error);
@@ -299,7 +302,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
       String8 patch = push_str8f(scratch.arena,
         "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"%s\",\"id\":\"%s\"}},\"source_id\":\"reorder-test\",\"set\":{"
         "\"flotilla.project\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}}},\"unset\":[]}", e[0], e[1], e[2]);
-      ok &= andamento_apply_patch_json(restored.core, 0, uishell_sidebar_text(patch), 0);
+      ok &= andamento_apply_patch_json(restored.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0);
     }
     uishell_sidebar_refresh(&restored);
     ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &restored, convoy), str8_lit("c2 c3 c4 c1"), 0), "restored order merges c4 after c3");
@@ -344,9 +347,9 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     uishell_sidebar_refresh(&state);
     for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
     {
-      AndamentoNode n = {0}; uishell_sidebar_snapshot_node(state.snapshot, i, &n);
-      if(str8_match(uishell_sidebar_string(n.entity_kind), str8_lit(".ref"), 0) && shown_count < 3)
-      { shown[shown_count++] = push_str8_copy(scratch.arena, uishell_sidebar_string(n.entity_id)); }
+      AndamentoNode n = {0}; andamento_snapshot_node(state.snapshot, i, &n);
+      if(str8_match(uishell_sidebar_string(n.entity.kind), str8_lit(".ref"), 0) && shown_count < 3)
+      { shown[shown_count++] = push_str8_copy(scratch.arena, uishell_sidebar_string(n.entity.id)); }
     }
     ReorderCheck(ghost.started && ghost.lifted, "a dragged row lifts and follows the pointer");
     ReorderCheck(ghost.lift_text_inside, "the lifted copy is the row: its whole icon and label inside it");
@@ -419,8 +422,8 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     String8 label = str8_zero();
     for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
     {
-      AndamentoNode n = {0}; uishell_sidebar_snapshot_node(state.snapshot, i, &n);
-      if(!str8_match(uishell_sidebar_string(n.entity_kind), str8_lit(".section"), 0) || !str8_match(uishell_sidebar_string(n.entity_id), id, 0)) { continue; }
+      AndamentoNode n = {0}; andamento_snapshot_node(state.snapshot, i, &n);
+      if(!str8_match(uishell_sidebar_string(n.entity.kind), str8_lit(".section"), 0) || !str8_match(uishell_sidebar_string(n.entity.id), id, 0)) { continue; }
       published++;
       label = push_str8_copy(scratch.arena, uishell_sidebar_string(n.label));
     }

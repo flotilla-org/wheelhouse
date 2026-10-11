@@ -10,7 +10,7 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
   uishell_sidebar_benchmark_uncached = 0;
   U64 count = andamento_snapshot_node_count(state->snapshot);
   AndamentoNode *nodes = push_array(scratch.arena, AndamentoNode, count);
-  for(U64 i = 0; i < count; i++) { uishell_sidebar_snapshot_node(state->snapshot, i, &nodes[i]); }
+  for(U64 i = 0; i < count; i++) { andamento_snapshot_node(state->snapshot, i, &nodes[i]); }
   String8 identity = str8_lit("bench-project-0");
   String8 label = uishell_sidebar_context_label(state, nodes, count, identity);
   ok &= str8_match(label, str8_lit("Benchmark project 0"), 0);
@@ -29,13 +29,13 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
       "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"project\",\"id\":\"bench-project-0\"}},"
       "\"source_id\":\"benchmark\",\"set\":{\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}}},\"unset\":[]}", values[i]);
     error = 0;
-    B32 applied = andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(patch), &error);
+    B32 applied = andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error);
     ok &= uishell_sidebar_result(state, applied, error);
     uishell_sidebar_refresh(state);
     ok &= !state->labels && !state->labels_snapshot;
     count = andamento_snapshot_node_count(state->snapshot);
     nodes = push_array(scratch.arena, AndamentoNode, count);
-    for(U64 n = 0; n < count; n++) { uishell_sidebar_snapshot_node(state->snapshot, n, &nodes[n]); }
+    for(U64 n = 0; n < count; n++) { andamento_snapshot_node(state->snapshot, n, &nodes[n]); }
     ok &= str8_match(uishell_sidebar_context_label(state, nodes, count, identity), str8_cstring(values[i]), 0);
   }
   uishell_sidebar_labels_invalidate(state);
@@ -70,7 +70,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
       U64 end = start;
       while(end < patches.size && patches.str[end] != '\n') { end++; }
       error = 0;
-      B32 applied = andamento_apply_patch_json(state.core, 0,
+      B32 applied = andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider),
         uishell_sidebar_text(str8_substr(patches, r1u64(start, end))), &error);
       ok &= uishell_sidebar_result(&state, applied, error);
       start = end+1;
@@ -90,7 +90,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
         project ? "project" : "issue", number, project ? number : number%10,
         project ? "false" : "true");
       error = 0;
-      B32 applied = andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(patch), &error);
+      B32 applied = andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error);
       ok &= uishell_sidebar_result(&state, applied, error);
     }
     uishell_sidebar_refresh(&state);
@@ -226,10 +226,10 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     // Releasing it as a window's would release the window's local sections.
     state.window = 0;
     uishell_sidebar_dashboard(&state);
-    ok &= state.dashboard_arena != 0;
+    ok &= state.dashboard != 0;
     uishell_sidebar_release(&state);
     B32 released = !state.core && !state.snapshot && !state.labels_arena &&
-      !state.records_arena && !state.records && !state.dashboard_arena && !state.dashboard &&
+      !state.records_arena && !state.records && !state.dashboard &&
       !state.titles_arena && !state.titles_snapshot && !state.titles && !state.title_count && !state.sidebar_notes_arena;
     for(U64 i = 0; i < ArrayCount(state.cards); i++) { released &= !state.cards[i].arena; }
     ok &= released;

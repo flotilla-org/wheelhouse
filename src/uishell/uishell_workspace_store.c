@@ -433,7 +433,7 @@ uishell_store_andamento_spec(UIShell_ViewSpec *spec)
 {
   AndamentoViewSpec s = {0};
   s.content = spec->content;
-  s.entity = (AndamentoEntity3){uishell_sidebar_text(spec->provider), uishell_sidebar_text(spec->kind), uishell_sidebar_text(spec->id)};
+  s.entity = uishell_sidebar_entity(spec->provider, spec->kind, spec->id);
   s.facet = uishell_sidebar_text(spec->facet);
   s.command = uishell_sidebar_text(spec->command);
   s.has_cwd = spec->has_cwd;
@@ -598,11 +598,11 @@ uishell_store_key_valid(String8 key)
 internal B32
 uishell_store_slot_find(AndamentoSlots *slots, String8 key, AndamentoSlot *out)
 {
-  for(U64 i = 0; slots && i < andamento_slots_count(slots); i++)
+  for(U64 i = 0; slots && i < slots->slot_count; i++)
   {
-    AndamentoSlot slot = {0};
-    if(andamento_slots_get(slots, i, &slot) && str8_match(uishell_sidebar_string(slot.key), key, 0))
-    { if(out) { *out = slot; } return 1; }
+    if(!str8_match(uishell_sidebar_string(slots->slots[i].key), key, 0)) { continue; }
+    if(out) { *out = slots->slots[i]; }
+    return 1;
   }
   return 0;
 }
@@ -621,12 +621,11 @@ typedef struct UIShell_StoreDoc UIShell_StoreDoc;
 struct UIShell_StoreDoc
 {
   RD_Arrangement *arrangement;
-  // Breadth-first, so each split's children are adjacent; the root first.
+  // In preorder, each naming its parent by index.
   AndamentoDocPanel *panels;
   U64 panel_count;
-  // Each panel's Selected View: an index into tabs, or ANDAMENTO_NONE.
-  U64 *selected;
-  // Slot keys in tree order, each panel's adjacent, and their Views.
+  // Slot keys in tree order, each panel's adjacent (its `tabs`), and their
+  // Views.
   AndamentoText *tabs;
   CFG_Node **views;
   String8 *keys;
@@ -642,14 +641,6 @@ uishell_store_previous_of(CFG_Node *view)
   return uishell_store_setting(view, str8_lit("previous_of"));
 }
 
-// Points each panel's Selected View at its tab's key.
-internal void
-uishell_store_doc_select(UIShell_StoreDoc *doc)
-{
-  for(U64 i = 0; i < doc->panel_count; i++)
-  { doc->panels[i].selected = doc->selected[i] == ANDAMENTO_NONE ? (AndamentoText){0} : doc->tabs[doc->selected[i]]; }
-}
-
 // The owner's panel tree as an arrangement document, its tabs named by
 // their Views' slot keys.
 internal UIShell_StoreDoc
@@ -663,20 +654,34 @@ uishell_store_doc(Arena *arena, CFG_Node *owner)
     for(RD_ArrangementTab *t = p->first_tab; t; t = t->next) { doc.tab_count += !uishell_store_previous_of(cfg_node_from_id(t->view)).size; }
   }
   doc.panels = push_array(arena, AndamentoDocPanel, doc.panel_count);
-  doc.selected = push_array(arena, U64, doc.panel_count);
   doc.tabs = push_array(arena, AndamentoText, doc.tab_count);
   doc.views = push_array(arena, CFG_Node *, doc.tab_count);
   doc.keys = push_array(arena, String8, doc.tab_count);
-  // Tabs in tree order: where each panel's start, and which it selects.
   RD_ArrangementPanel **order = push_array(arena, RD_ArrangementPanel *, doc.panel_count);
-  U64 *first = push_array(arena, U64, doc.panel_count), *count = push_array(arena, U64, doc.panel_count);
-  U64 *selected = push_array(arena, U64, doc.panel_count);
   U64 index = 0, tab = 0;
   for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p), index++)
   {
     order[index] = p;
-    first[index] = tab;
-    selected[index] = ANDAMENTO_NONE;
+    AndamentoDocPanel *out = &doc.panels[index];
+    out->parent = ANDAMENTO_NONE;
+    for(U64 j = index; j > 0 && out->parent == ANDAMENTO_NONE; j--) { if(order[j-1] == p->parent) { out->parent = j-1; } }
+    // A provider's panel keeps the ID its document gave it (`doc_id`).
+    String8 doc_id = uishell_store_setting(cfg_node_from_id(p->cfg), str8_lit("doc_id"));
+    out->id = uishell_sidebar_text(doc_id.size ? doc_id : push_str8f(arena, "%I64u", p->id));
+    // Andamento takes finite positive weights; the root's means nothing. A
+    // weight is written as config writes it (0.7, not 0.699999988), which
+    // reads back as the same F32.
+    F32 weight = p == a->root ? 1.f : p->weight;
+    out->weight = (weight > 0 && weight < 1e30f) ? f64_from_str8(rd_arrangement_weight_string(arena, weight)) : 0.01;
+    out->selected = ANDAMENTO_NONE;
+    if(p->first != &rd_nil_arrangement_panel)
+    {
+      out->kind = ANDAMENTO_PANEL_SPLIT;
+      out->axis = rd_arrangement_split_axis(a, p) == Axis2_X ? ANDAMENTO_AXIS_ROW : ANDAMENTO_AXIS_COLUMN;
+      continue;
+    }
+    out->kind = ANDAMENTO_PANEL_TABS;
+    out->tabs = doc.tabs+tab;
     // A previous instance selected stands for its Slot's View.
     String8 selected_previous = uishell_store_previous_of(cfg_node_from_id(p->selected));
     for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
@@ -686,45 +691,12 @@ uishell_store_doc(Arena *arena, CFG_Node *owner)
       doc.views[tab] = view;
       doc.keys[tab] = uishell_store_setting(view, str8_lit("slot"));
       doc.tabs[tab] = uishell_sidebar_text(doc.keys[tab]);
-      if(t->view == p->selected || (selected_previous.size && str8_match(selected_previous, doc.keys[tab], 0))) { selected[index] = tab; }
+      if(t->view == p->selected || (selected_previous.size && str8_match(selected_previous, doc.keys[tab], 0)))
+      { out->selected = out->tab_count; }
+      out->tab_count += 1;
       tab++;
     }
-    count[index] = tab-first[index];
   }
-  // Panels breadth-first, each split's children queued together.
-  RD_ArrangementPanel **queue = push_array(arena, RD_ArrangementPanel *, doc.panel_count);
-  U64 queued = 0;
-  if(doc.panel_count) { queue[queued++] = a->root; }
-  for(U64 i = 0; i < doc.panel_count; i++)
-  {
-    RD_ArrangementPanel *p = queue[i];
-    AndamentoDocPanel *out = &doc.panels[i];
-    // A provider's panel keeps the ID its document gave it (`doc_id`).
-    String8 doc_id = uishell_store_setting(cfg_node_from_id(p->cfg), str8_lit("doc_id"));
-    out->id = uishell_sidebar_text(doc_id.size ? doc_id : push_str8f(arena, "%I64u", p->id));
-    // Andamento takes finite positive weights; the root's means nothing. A
-    // weight is written as config writes it (0.7, not 0.699999988), which
-    // reads back as the same F32.
-    F32 weight = p == a->root ? 1.f : p->weight;
-    out->weight = (weight > 0 && weight < 1e30f) ? f64_from_str8(rd_arrangement_weight_string(arena, weight)) : 0.01;
-    doc.selected[i] = ANDAMENTO_NONE;
-    if(p->first != &rd_nil_arrangement_panel)
-    {
-      out->kind = ANDAMENTO_PANEL_SPLIT;
-      out->axis = rd_arrangement_split_axis(a, p) == Axis2_X ? ANDAMENTO_AXIS_ROW : ANDAMENTO_AXIS_COLUMN;
-      out->children = &doc.panels[queued];
-      for(RD_ArrangementPanel *child = p->first; child != &rd_nil_arrangement_panel; child = child->next)
-      { queue[queued++] = child; out->child_count += 1; }
-      continue;
-    }
-    U64 j = 0;
-    while(order[j] != p) { j++; }
-    out->kind = ANDAMENTO_PANEL_TABS;
-    out->tabs = doc.tabs+first[j];
-    out->tab_count = count[j];
-    doc.selected[i] = selected[j];
-  }
-  uishell_store_doc_select(&doc);
   return doc;
 }
 
@@ -740,11 +712,11 @@ uishell_store_doc_hash(UIShell_StoreDoc *doc)
     U64 weight_bits = 0;
     MemoryCopy(&weight_bits, &p->weight, sizeof(weight_bits));
     hash = uishell_store_hash_text(hash, uishell_sidebar_string(p->id));
+    hash = hash*33 + p->parent;
     hash = hash*33 + weight_bits;
     hash = hash*33 + p->kind*7 + p->axis;
-    hash = hash*33 + p->child_count;
     hash = hash*33 + p->tab_count;
-    hash = hash*33 + doc->selected[i];
+    hash = hash*33 + p->selected;
   }
   for(U64 i = 0; i < doc->tab_count; i++)
   {
@@ -769,11 +741,7 @@ uishell_store_assign_keys(Arena *arena, UIShell_StoreDoc *doc, AndamentoSlots *s
   B32 changed = 0;
   U64 next = 1;
   for(U64 i = 0; i < doc->tab_count; i++) { next = Max(next, uishell_store_user_number(doc->keys[i])+1); }
-  for(U64 i = 0; slots && i < andamento_slots_count(slots); i++)
-  {
-    AndamentoSlot slot = {0};
-    if(andamento_slots_get(slots, i, &slot)) { next = Max(next, uishell_store_user_number(uishell_sidebar_string(slot.key))+1); }
-  }
+  for(U64 i = 0; slots && i < slots->slot_count; i++) { next = Max(next, uishell_store_user_number(uishell_sidebar_string(slots->slots[i].key))+1); }
   for(U64 i = 0; i < doc->tab_count; i++)
   {
     B32 unique = uishell_store_key_valid(doc->keys[i]) && !uishell_store_key_in(doc->keys[i], doc->keys, i);
@@ -797,7 +765,6 @@ uishell_store_assign_keys(Arena *arena, UIShell_StoreDoc *doc, AndamentoSlots *s
     uishell_store_set_setting(doc->views[i], str8_lit("slot"), key);
     changed = 1;
   }
-  uishell_store_doc_select(doc);
   return changed;
 }
 
@@ -885,7 +852,7 @@ uishell_store_save_resolution(UIShell_SidebarState *state, AndamentoWorkspaceId 
     {
       uint32_t result = UIShell_StoreCall(state, andamento_slot_resolution_clear(state->core, workspace, uishell_sidebar_text(key),
                                                                                 saved->generation, 0, &error));
-      uishell_sidebar_result(state, result != ANDAMENTO_RESOLUTION_INVALID, error);
+      uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
       error = 0;
     }
   }
@@ -900,8 +867,8 @@ uishell_store_save_resolution(UIShell_SidebarState *state, AndamentoWorkspaceId 
       uishell_sidebar_text(str8_lit("cleat-session")), fields, count, uishell_sidebar_text(applied),
       saved ? saved->generation : 0, 0, &error));
     // Stale: another save came first; the next plan carries it.
-    same = result == ANDAMENTO_RESOLUTION_COMMITTED;
-    uishell_sidebar_result(state, result != ANDAMENTO_RESOLUTION_INVALID, error);
+    same = result == ANDAMENTO_COMMITTED;
+    uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
     error = 0;
   }
   if(same) { uishell_store_set_setting(view, str8_lit("portable"), portable); }
@@ -910,115 +877,52 @@ uishell_store_save_resolution(UIShell_SidebarState *state, AndamentoWorkspaceId 
 }
 
 //- Building the panel tree from Andamento's document
+//
+// Both arrangements cross as the same document (AndamentoArrangementDoc):
+// panels in preorder, each naming its parent by index. A panel tree's splits
+// alternate axes, so a split along its parent's axis gives its children to
+// the parent, each scaled to the share it had. Building is one pass over the
+// panels: each that makes a panel is added to its tree parent's.
 
-typedef struct UIShell_StorePanel UIShell_StorePanel;
-struct UIShell_StorePanel
+typedef struct UIShell_DocShape UIShell_DocShape;
+struct UIShell_DocShape
 {
-  UIShell_StorePanel *first, *last, *next;
-  String8 id;
-  F64 weight;
-  U32 kind, axis;
-  U64 first_tab, tab_count, selected;
+  // Per panel: whether it is a split lifted into its parent (it makes no
+  // panel), the panel it is added to (an earlier one that makes a panel, or
+  // ANDAMENTO_NONE for a root), and its weight there.
+  B32 *lifted;
+  U64 *parent;
+  F32 *weight;
 };
 
-// Andamento's document as trees whose splits alternate axes, as a panel
-// tree's must: a split along its parent's axis gives its children to the
-// parent, each scaled to the share it had. Each panel by its index: a root
-// is one whose parent is NONE (the sidebar's document has several).
-internal UIShell_StorePanel **
-uishell_store_panel_array(Arena *arena, AndamentoArrangement *arrangement, U64 count)
+internal UIShell_DocShape
+uishell_store_doc_shape(Arena *arena, AndamentoArrangementDoc const *doc)
 {
-  UIShell_StorePanel **all = push_array(arena, UIShell_StorePanel *, count);
+  U64 count = doc->panel_count;
+  UIShell_DocShape shape = {push_array(arena, B32, count+1), push_array(arena, U64, count+1), push_array(arena, F32, count+1)};
+  F64 *weight = push_array(arena, F64, count+1), *children = push_array(arena, F64, count+1);
   for(U64 i = 0; i < count; i++)
   {
-    AndamentoPanel p = {0};
-    andamento_arrangement_panel(arrangement, i, &p);
-    UIShell_StorePanel *panel = all[i] = push_array(arena, UIShell_StorePanel, 1);
-    panel->id = push_str8_copy(arena, uishell_sidebar_string(p.id));
-    panel->weight = p.weight;
-    panel->kind = p.kind;
-    panel->axis = p.axis;
-    panel->first_tab = p.first_tab;
-    panel->tab_count = p.tab_count;
-    panel->selected = p.selected;
-    if(p.parent < i) { SLLQueuePush(all[p.parent]->first, all[p.parent]->last, panel); }
+    U64 up = doc->panels[i].parent;
+    if(up < i) { children[up] += doc->panels[i].weight; }
   }
-  for(U64 i = count; i > 0; i--)
+  for(U64 i = 0; i < count; i++)
   {
-    UIShell_StorePanel *parent = all[i-1];
-    if(parent->kind != ANDAMENTO_PANEL_SPLIT) { continue; }
-    UIShell_StorePanel *first = 0, *last = 0;
-    for(UIShell_StorePanel *child = parent->first, *next = 0; child; child = next)
+    AndamentoDocPanel const *p = &doc->panels[i];
+    U64 up = p->parent < i ? p->parent : ANDAMENTO_NONE;
+    weight[i] = p->weight;
+    // A lifted split's children are its parent's, sharing its weight.
+    if(up != ANDAMENTO_NONE && shape.lifted[up])
     {
-      next = child->next;
-      child->next = 0;
-      if(child->kind == ANDAMENTO_PANEL_SPLIT && child->axis == parent->axis)
-      {
-        F64 total = 0;
-        for(UIShell_StorePanel *g = child->first; g; g = g->next) { total += g->weight; }
-        for(UIShell_StorePanel *g = child->first, *g_next = 0; g; g = g_next)
-        {
-          g_next = g->next;
-          g->next = 0;
-          g->weight = total > 0 ? child->weight*g->weight/total : child->weight;
-          SLLQueuePush(first, last, g);
-        }
-        continue;
-      }
-      SLLQueuePush(first, last, child);
+      weight[i] = children[up] > 0 ? weight[up]*p->weight/children[up] : weight[up];
+      up = shape.parent[up];
     }
-    parent->first = first;
-    parent->last = last;
+    shape.lifted[i] = up != ANDAMENTO_NONE && p->kind == ANDAMENTO_PANEL_SPLIT && doc->panels[up].kind == ANDAMENTO_PANEL_SPLIT &&
+      p->axis == doc->panels[up].axis;
+    shape.parent[i] = up;
+    shape.weight[i] = (F32)weight[i];
   }
-  return all;
-}
-
-// A workspace's document as a tree whose splits alternate axes, as
-// uishell_store_panel_array makes the sidebar's. Its tabs are appended to
-// `tabs`, in tree order, which first_tab and selected index.
-internal UIShell_StorePanel *
-uishell_store_panel_from_doc(Arena *arena, AndamentoDocPanel const *p, AndamentoText *tabs, U64 *tab_count)
-{
-  UIShell_StorePanel *panel = push_array(arena, UIShell_StorePanel, 1);
-  panel->id = push_str8_copy(arena, uishell_sidebar_string(p->id));
-  panel->weight = p->weight;
-  panel->kind = p->kind;
-  panel->axis = p->axis;
-  panel->first_tab = *tab_count;
-  panel->tab_count = p->tab_count;
-  panel->selected = ANDAMENTO_NONE;
-  for(U64 t = 0; t < p->tab_count; t++)
-  {
-    if(str8_match(uishell_sidebar_string(p->tabs[t]), uishell_sidebar_string(p->selected), 0)) { panel->selected = t; }
-    tabs[(*tab_count)++] = p->tabs[t];
-  }
-  for(U64 c = 0; c < p->child_count; c++)
-  {
-    UIShell_StorePanel *child = uishell_store_panel_from_doc(arena, &p->children[c], tabs, tab_count);
-    if(child->kind != ANDAMENTO_PANEL_SPLIT || child->axis != panel->axis) { SLLQueuePush(panel->first, panel->last, child); continue; }
-    F64 total = 0;
-    for(UIShell_StorePanel *g = child->first; g; g = g->next) { total += g->weight; }
-    for(UIShell_StorePanel *g = child->first, *next = 0; g; g = next)
-    {
-      next = g->next;
-      g->next = 0;
-      g->weight = total > 0 ? child->weight*g->weight/total : child->weight;
-      SLLQueuePush(panel->first, panel->last, g);
-    }
-  }
-  return panel;
-}
-
-// Counts a document's panels and tabs, and finds its largest numeric ID.
-internal void
-uishell_store_doc_measure(AndamentoDocPanel const *p, U64 *panels, U64 *tabs, U64 *max_id)
-{
-  if(!p) { return; }
-  String8 id = uishell_sidebar_string(p->id);
-  if(str8_is_integer(id, 10) && id.size < 18) { *max_id = Max(*max_id, u64_from_str8(id, 10)); }
-  *panels += 1;
-  *tabs += p->tab_count;
-  for(U64 c = 0; c < p->child_count; c++) { uishell_store_doc_measure(&p->children[c], panels, tabs, max_id); }
+  return shape;
 }
 
 // Whether Andamento noted `key` as `kind` (ANDAMENTO_NOTE_*).
@@ -1041,12 +945,12 @@ uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Worksp
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
   AndamentoWorkspaceId workspace = uishell_sidebar_workspace(id);
-  AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_acquire(state->core, workspace, 0));
+  AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, workspace, 0));
   AndamentoWorkspaceArrangement *stored = slots ? UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0)) : 0;
   B32 built = stored != 0;
   if(built && generation_out) { *generation_out = stored->generation; }
   CFG_Node *device = cfg_node_child_from_string(owner, str8_lit("arrangement_presentation"));
-  if(built && !stored->doc.root && device == &cfg_nil_node) { built = 0; }
+  if(built && stored->doc.panel_count == 0 && device == &cfg_nil_node) { built = 0; }
   if(built)
   {
     // What this device kept, and the Views and panels config has now.
@@ -1067,11 +971,14 @@ uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Worksp
         if(uishell_store_previous_of(view).size) { cfg_node_ptr_list_push(arena, &previous, view); }
       }
     }
-    U64 panel_count = 0, tab_count = 0, max_id = 0;
-    uishell_store_doc_measure(stored->doc.root, &panel_count, &tab_count, &max_id);
-    AndamentoText *tabs = push_array(arena, AndamentoText, tab_count);
-    tab_count = 0;
-    UIShell_StorePanel *root = stored->doc.root ? uishell_store_panel_from_doc(arena, stored->doc.root, tabs, &tab_count) : 0;
+    AndamentoArrangementDoc *doc = &stored->doc;
+    UIShell_DocShape shape = uishell_store_doc_shape(arena, doc);
+    U64 max_id = 0;
+    for(U64 i = 0; i < doc->panel_count; i++)
+    {
+      String8 text = uishell_sidebar_string(doc->panels[i].id);
+      if(str8_is_integer(text, 10) && text.size < 18) { max_id = Max(max_id, u64_from_str8(text, 10)); }
+    }
 
     // Andamento's IDs are this device's numbers once it has committed; a
     // provider's hint names panels in words, which get numbers here, and
@@ -1090,62 +997,56 @@ uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Worksp
       if(str8_match(c->string, str8_lit("panel"), 0) && str8_is_integer(number, 10) && number.size < 18) { max_id = Max(max_id, u64_from_str8(number, 10)); }
     }
     U64 fresh = max_id+1;
-    if(!root) { rd_arrangement_discard(a); }
+    if(!doc->panel_count) { rd_arrangement_discard(a); }
     else { rd_arrangement_clear(a); }
     // Allocations stay clear of the IDs set below until they are all set.
     a->next_id = max_id + (1ull << 40);
-    struct Pending { struct Pending *next; UIShell_StorePanel *panel; RD_PanelID parent; } *queue = 0, *queue_last = 0;
-    if(root)
-    {
-      struct Pending *start = push_array(arena, struct Pending, 1);
-      start->panel = root;
-      SLLQueuePush(queue, queue_last, start);
-    }
-    if(root && root->kind == ANDAMENTO_PANEL_SPLIT) { a->root_axis = root->axis == ANDAMENTO_AXIS_ROW ? Axis2_X : Axis2_Y; }
+    if(doc->panel_count && doc->panels[0].kind == ANDAMENTO_PANEL_SPLIT)
+    { a->root_axis = doc->panels[0].axis == ANDAMENTO_AXIS_ROW ? Axis2_X : Axis2_Y; }
     U64 ids_used = 0;
-    RD_PanelID *ids = push_array(arena, RD_PanelID, panel_count+1);
-    String8 *words = push_array(arena, String8, panel_count+1);
-    for(struct Pending *item = queue; item; item = item->next)
+    RD_PanelID *ids = push_array(arena, RD_PanelID, doc->panel_count+1);
+    String8 *words = push_array(arena, String8, doc->panel_count+1);
+    // Each panel's panel in the tree.
+    RD_PanelID *made = push_array(arena, RD_PanelID, doc->panel_count+1);
+    for(U64 index = 0; index < doc->panel_count; index++)
     {
-      UIShell_StorePanel *src = item->panel;
-      RD_PanelID panel_id = item->parent ? rd_arrangement_add(a, item->parent, (F32)src->weight) : a->root->id;
+      AndamentoDocPanel *src = &doc->panels[index];
+      U64 up = shape.parent[index];
+      if(index && up == ANDAMENTO_NONE) { continue; }
+      if(shape.lifted[index]) { made[index] = made[up]; continue; }
+      RD_PanelID panel_id = up != ANDAMENTO_NONE ? rd_arrangement_add(a, made[up], shape.weight[index]) : a->root->id;
       RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(a, panel_id);
-      B32 word = !(str8_is_integer(src->id, 10) && src->id.size < 18);
-      RD_PanelID wanted = word ? 0 : u64_from_str8(src->id, 10);
-      for(U64 i = 0; i < old_count && word && !wanted; i++) { if(str8_match(old_words[i], src->id, 0)) { wanted = old_ids[i]; } }
+      String8 src_id = uishell_sidebar_string(src->id);
+      B32 word = !(str8_is_integer(src_id, 10) && src_id.size < 18);
+      RD_PanelID wanted = word ? 0 : u64_from_str8(src_id, 10);
+      for(U64 i = 0; i < old_count && word && !wanted; i++) { if(str8_match(old_words[i], src_id, 0)) { wanted = old_ids[i]; } }
       for(CFG_Node *c = device->first; c != &cfg_nil_node && word && !wanted; c = c->next)
       {
         String8 number = uishell_store_setting(c, str8_lit("id"));
-        if(str8_match(c->string, str8_lit("panel"), 0) && str8_match(uishell_store_setting(c, str8_lit("doc_id")), src->id, 0) &&
+        if(str8_match(c->string, str8_lit("panel"), 0) && str8_match(uishell_store_setting(c, str8_lit("doc_id")), src_id, 0) &&
            str8_is_integer(number, 10) && number.size < 18) { wanted = u64_from_str8(number, 10); }
       }
       for(U64 i = 0; i < ids_used && wanted; i++) { if(ids[i] == wanted) { wanted = 0; } }
       if(!wanted) { wanted = fresh++; }
       panel->id = wanted;
-      words[ids_used] = word ? src->id : str8_zero();
+      made[index] = wanted;
+      words[ids_used] = word ? push_str8_copy(arena, src_id) : str8_zero();
       ids[ids_used++] = wanted;
       for(U64 i = 0; i < old_count; i++) { if(old_ids[i] == wanted) { panel->cfg = old_cfgs[i]; } }
-      for(UIShell_StorePanel *child = src->first; child; child = child->next)
-      {
-        struct Pending *pending = push_array(arena, struct Pending, 1);
-        pending->panel = child;
-        pending->parent = wanted;
-        SLLQueuePush(queue, queue_last, pending);
-      }
       if(src->kind != ANDAMENTO_PANEL_TABS) { continue; }
       CFG_ID prev = 0, selected = 0;
-      for(U64 t = src->first_tab; t < src->first_tab+src->tab_count && t < tab_count; t++)
+      for(U64 t = 0; t < src->tab_count; t++)
       {
-        String8 key = uishell_sidebar_string(tabs[t]);
+        String8 key = uishell_sidebar_string(src->tabs[t]);
         B32 gone = uishell_store_noted(stored, ANDAMENTO_NOTE_GONE, key);
         CFG_Node *view = &cfg_nil_node;
         for(U64 i = 0; i < current.tab_count && view == &cfg_nil_node; i++)
         { if(str8_match(current.keys[i], key, 0)) { view = current.views[i]; } }
+        AndamentoSlot slot = {0};
+        B32 known = !gone && uishell_store_slot_find(slots, key, &slot);
         if(view == &cfg_nil_node)
         {
-          AndamentoSlot slot = {0};
           UIShell_ViewSpec spec = {0};
-          B32 known = !gone && uishell_store_slot_find(slots, key, &slot);
           if(known) { spec = uishell_store_spec_from_andamento(arena, &slot.spec); }
           view = uishell_store_view_from_spec(key, known ? &spec : 0);
           // This device's settings for it, Target Resolutions included.
@@ -1153,29 +1054,22 @@ uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Worksp
           {
             B32 settings = str8_match(c->string, str8_lit("view"), 0) || str8_match(c->string, str8_lit("resolution"), 0);
             if(!settings || !str8_match(uishell_store_setting(c, str8_lit("slot")), key, 0)) { continue; }
-            for(CFG_Node *s = c->first; s != &cfg_nil_node; s = s->next)
+            for(CFG_Node *setting = c->first; setting != &cfg_nil_node; setting = setting->next)
             {
-              if(str8_match(s->string, str8_lit("slot"), 0)) { continue; }
-              cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, s->string));
-              cfg_node_insert_child(rd_state->cfg, view, view->last, cfg_node_deep_copy(rd_state->cfg, s));
+              if(str8_match(setting->string, str8_lit("slot"), 0)) { continue; }
+              cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, setting->string));
+              cfg_node_insert_child(rd_state->cfg, view, view->last, cfg_node_deep_copy(rd_state->cfg, setting));
             }
           }
           // A portable resolution Andamento saved, tried before the View
           // starts anything of its own.
-          if(known)
-          {
-            AndamentoSlotResolution *saved = UIShell_StoreCall(state, andamento_slot_resolution_acquire(state->core, workspace, tabs[t], 0));
-            AndamentoResolution resolution = {0};
-            if(saved && andamento_slot_resolution_get(saved, &resolution)) { uishell_store_restore_resolution(view, &resolution); }
-            andamento_slot_resolution_release(saved);
-          }
+          if(known && slot.has_saved) { uishell_store_restore_resolution(view, &slot.saved); }
         }
         // Whether it follows its provider, as committing would mark it.
-        AndamentoSlot placed = {0};
-        if(!gone && uishell_store_slot_find(slots, key, &placed) && !str8_match(view->string, str8_lit("placeholder"), 0))
-        { uishell_store_mark_follows(view, (placed.in_baseline && !placed.detached) || placed.spec.content == ANDAMENTO_SLOT_FACET); }
+        if(known && !str8_match(view->string, str8_lit("placeholder"), 0))
+        { uishell_store_mark_follows(view, (slot.in_baseline && !slot.detached) || slot.spec.content == ANDAMENTO_SLOT_FACET); }
         rd_arrangement_insert_tab(a, view->id, wanted, prev, 0);
-        if(t-src->first_tab == src->selected) { selected = view->id; }
+        if(t == src->selected) { selected = view->id; }
         prev = view->id;
         for(CFG_NodePtrNode *p = previous.first; p; p = p->next)
         {
@@ -1214,7 +1108,7 @@ uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Worksp
     uishell_store_set_setting(owner, str8_lit("arrangement_generation"), push_str8f(arena, "%I64u", stored->generation));
   }
   andamento_arrangement_free(stored);
-  andamento_slots_release(slots);
+  andamento_slots_free(slots);
   scratch_end(scratch);
   return built;
 }
@@ -1429,13 +1323,12 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
     if(!uishell_store_key_valid(key) || cfg_node_from_id(view->id) != view) { continue; }
     String8 applied = push_str8_copy(arena, uishell_store_setting(view, str8_lit("applied")));
     char *error = 0;
-    AndamentoSlotPlan *plan = UIShell_StoreCall(state, andamento_slot_plan(state->core, workspace, uishell_sidebar_text(key),
-                                                                           uishell_sidebar_text(applied), &error));
+    AndamentoSlotContent *plan = UIShell_StoreCall(state, andamento_slot_plan(state->core, workspace, uishell_sidebar_text(key),
+                                                                              uishell_sidebar_text(applied), &error));
     andamento_string_free(error);
-    AndamentoSlotContent content = {0};
-    if(!plan || !andamento_slot_plan_get(plan, &content)) { andamento_slot_plan_release(plan); continue; }
-    AndamentoResolution saved_value = {0};
-    AndamentoResolution *saved = andamento_slot_plan_resolution(plan, &saved_value) ? &saved_value : 0;
+    if(!plan) { continue; }
+    AndamentoSlotContent content = *plan;
+    AndamentoResolution *saved = plan->has_saved ? &plan->saved : 0;
     String8 asks = str8_zero();
     if(content.state == ANDAMENTO_CONTENT_UPDATING)
     {
@@ -1466,7 +1359,7 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
       UIShell_StoreCall(state, andamento_slot_release_previous(state->core, workspace, uishell_sidebar_text(key), &error));
       andamento_string_free(error);
     }
-    andamento_slot_plan_release(plan);
+    andamento_slot_plan_free(plan);
   }
   // A slot its provider removed: its instance closes (replace) or stays
   // until the user closes it (keep-previous, ask); either way, once it is
@@ -1528,10 +1421,10 @@ uishell_store_answer(CFG_Node *view, B32 accept)
   Temp scratch = scratch_begin(0, 0);
   key = push_str8_copy(scratch.arena, key);
   AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
-  AndamentoSlotPlan *plan = UIShell_StoreCall(state, andamento_slot_plan(state->core, workspace, uishell_sidebar_text(key),
+  AndamentoSlotContent *plan = UIShell_StoreCall(state, andamento_slot_plan(state->core, workspace, uishell_sidebar_text(key),
     uishell_sidebar_text(push_str8_copy(scratch.arena, uishell_store_setting(view, str8_lit("applied")))), 0));
-  AndamentoSlotContent content = {0};
-  if(plan && andamento_slot_plan_get(plan, &content) && content.state == ANDAMENTO_CONTENT_UPDATING)
+  AndamentoSlotContent content = plan ? *plan : (AndamentoSlotContent){0};
+  if(plan && content.state == ANDAMENTO_CONTENT_UPDATING)
   {
     if(accept)
     {
@@ -1545,7 +1438,7 @@ uishell_store_answer(CFG_Node *view, B32 accept)
       uishell_store_drop_setting(view, str8_lit("asks"));
     }
   }
-  andamento_slot_plan_release(plan);
+  andamento_slot_plan_free(plan);
   rd_request_frame();
   scratch_end(scratch);
 }
@@ -1621,13 +1514,12 @@ uishell_store_sync_name(UIShell_SidebarState *state, CFG_Node *owner)
   AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
   if(!andamento_workspace_registered(state->core, workspace, 0)) { return; }
   Temp scratch = scratch_begin(0, 0);
-  AndamentoOverlay *overlay = UIShell_StoreCall(state, andamento_overlay_acquire(state->core, workspace, 0));
-  AndamentoOverlayInfo info = {0};
-  if(overlay && andamento_overlay_info(overlay, &info))
+  AndamentoOverlay *overlay = UIShell_StoreCall(state, andamento_overlay_get(state->core, workspace, 0));
+  if(overlay)
   {
     String8 settings[2] = {str8_lit("label"), str8_lit("theme")};
-    B32 has_remote[2] = {info.has_name != 0, info.has_mood != 0};
-    String8 remote[2] = {uishell_sidebar_string(info.name), uishell_sidebar_string(info.mood)};
+    B32 has_remote[2] = {overlay->has_name != 0, overlay->has_mood != 0};
+    String8 remote[2] = {uishell_sidebar_string(overlay->name), uishell_sidebar_string(overlay->mood)};
     for(U64 i = 0; i < 2; i++)
     {
       String8 mark_key = uishell_store_owner_runtime_keys[i];
@@ -1657,7 +1549,7 @@ uishell_store_sync_name(UIShell_SidebarState *state, CFG_Node *owner)
       }
     }
   }
-  andamento_overlay_release(overlay);
+  andamento_overlay_free(overlay);
   scratch_end(scratch);
 }
 
@@ -1686,38 +1578,35 @@ uishell_store_read_overlay(UIShell_SidebarState *state, CFG_Node *window)
     UIShell_StoreEntry *entry = uishell_store_entry(state, uishell_workspace_id_from_cfg(n->v));
     entry->flags = 0; entry->flag_count = 0; entry->tombstones = 0; entry->tombstone_count = 0; entry->arrangement_flags = 0;
     AndamentoWorkspaceId workspace = uishell_sidebar_workspace(entry->id);
-    AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_acquire(state->core, workspace, 0));
-    U64 count = slots ? andamento_slots_count(slots) : 0;
+    AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, workspace, 0));
+    U64 count = slots ? slots->slot_count : 0;
     entry->flags = push_array(arena, UIShell_StoreFlag, count);
     for(U64 i = 0; i < count; i++)
     {
-      AndamentoSlot slot = {0};
-      U32 flags = andamento_slots_flags(slots, i);
-      if(!flags || !andamento_slots_get(slots, i, &slot)) { continue; }
-      entry->flags[entry->flag_count++] = (UIShell_StoreFlag){push_str8_copy(arena, uishell_sidebar_string(slot.key)), flags};
+      AndamentoSlot *slot = &slots->slots[i];
+      if(!slot->flags) { continue; }
+      entry->flags[entry->flag_count++] = (UIShell_StoreFlag){push_str8_copy(arena, uishell_sidebar_string(slot->key)), slot->flags};
     }
-    andamento_slots_release(slots);
     AndamentoWorkspaceArrangement *arrangement = slots ? UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0)) : 0;
     entry->arrangement_flags = arrangement ? arrangement->flags : 0;
     andamento_arrangement_free(arrangement);
-    AndamentoOverlay *overlay = slots ? UIShell_StoreCall(state, andamento_overlay_acquire(state->core, workspace, 0)) : 0;
-    AndamentoOverlayInfo info = {0};
+    AndamentoOverlay *overlay = slots ? UIShell_StoreCall(state, andamento_overlay_get(state->core, workspace, 0)) : 0;
+    andamento_slots_free(slots);
     entry->departed = 0;
     entry->departed_count = 0;
-    if(overlay && andamento_overlay_info(overlay, &info))
+    if(overlay)
     {
-      entry->tombstones = push_array(arena, String8, info.note_count);
-      entry->departed = push_array(arena, UIShell_StoreFlag, info.note_count);
-      for(U64 i = 0; i < info.note_count; i++)
+      entry->tombstones = push_array(arena, String8, overlay->note_count);
+      entry->departed = push_array(arena, UIShell_StoreFlag, overlay->note_count);
+      for(U64 i = 0; i < overlay->note_count; i++)
       {
-        AndamentoOverlayNote note = {0};
-        if(!andamento_overlay_note(overlay, i, &note)) { continue; }
-        String8 key = push_str8_copy(arena, uishell_sidebar_string(note.key));
-        if(note.kind == ANDAMENTO_OVERLAY_TOMBSTONED) { entry->tombstones[entry->tombstone_count++] = key; }
-        if(note.kind == ANDAMENTO_OVERLAY_DEPARTED) { entry->departed[entry->departed_count++] = (UIShell_StoreFlag){key, note.rebind}; }
+        AndamentoOverlayNote *note = &overlay->notes[i];
+        String8 key = push_str8_copy(arena, uishell_sidebar_string(note->key));
+        if(note->kind == ANDAMENTO_OVERLAY_TOMBSTONED) { entry->tombstones[entry->tombstone_count++] = key; }
+        if(note->kind == ANDAMENTO_OVERLAY_DEPARTED) { entry->departed[entry->departed_count++] = (UIShell_StoreFlag){key, note->rebind}; }
       }
     }
-    andamento_overlay_release(overlay);
+    andamento_overlay_free(overlay);
   }
   scratch_end(scratch);
 }
@@ -1767,7 +1656,7 @@ uishell_store_resolve_arrangement(CFG_Node *view, U32 choice)
   {
     char *error = 0;
     uint32_t result = UIShell_StoreCall(state, andamento_arrangement_resolve(state->core, workspace, choice, stored->generation, 0, &error));
-    uishell_sidebar_result(state, result != ANDAMENTO_ARRANGEMENT_INVALID, error);
+    uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
   }
   andamento_arrangement_free(stored);
 }
@@ -1810,10 +1699,10 @@ uishell_store_keep(CFG_Node *view)
   if(state && key.size && uishell_store_spec_from_view(scratch.arena, view, &spec, taken, &taken_count))
   {
     AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
-    AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_acquire(state->core, workspace, 0));
+    AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, workspace, 0));
     AndamentoSlot slot = {0};
     U32 rebind = uishell_store_slot_find(slots, key, &slot) ? slot.rebind : ANDAMENTO_REBIND_REPLACE;
-    andamento_slots_release(slots);
+    andamento_slots_free(slots);
     AndamentoViewSpec out = uishell_store_andamento_spec(&spec);
     char *error = 0;
     uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_set(state->core, workspace, uishell_sidebar_text(key), &out, rebind, &error)), error);
@@ -2086,13 +1975,13 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   // An empty workspace never committed has nothing to keep.
   if(changed && !marked && doc.panel_count == 0) { changed = 0; entry->hash = hash; }
   if(!changed && !revision_moved) { scratch_end(scratch); return; }
-  AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_acquire(state->core, workspace, 0));
+  AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, workspace, 0));
   AndamentoWorkspaceArrangement *stored = slots ? UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0)) : 0;
   // A workspace Andamento doesn't know yet (a subject's registers once it
   // has opened) is committed when it does.
   if(!stored)
   {
-    andamento_slots_release(slots);
+    andamento_slots_free(slots);
     scratch_end(scratch);
     return;
   }
@@ -2103,11 +1992,11 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   if(fresh != &cfg_nil_node)
   {
     cfg_node_release(rd_state->cfg, fresh);
-    if(stored->doc.root)
+    if(stored->doc.panel_count)
     {
       uishell_store_assign_keys(arena, &doc, slots);
       andamento_arrangement_free(stored);
-      andamento_slots_release(slots);
+      andamento_slots_free(slots);
       uishell_store_build(state, owner, id, &entry->generation);
       UIShell_StoreDoc built = uishell_store_doc(arena, owner);
       entry->hash = uishell_store_doc_hash(&built);
@@ -2125,7 +2014,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
       entry->hash = uishell_store_doc_hash(&rebuilt);
     }
     andamento_arrangement_free(stored);
-    andamento_slots_release(slots);
+    andamento_slots_free(slots);
     scratch_end(scratch);
     return;
   }
@@ -2166,14 +2055,15 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   // names them: the user's own are removed, and a provider's is tombstoned,
   // hidden, while its provider keeps it (ADR 0013). A slot the stored
   // document tabs that this one never had (Andamento placed it since) stays.
-  U64 stored_panels = 0, stored_tab_count = 0, stored_max = 0;
-  uishell_store_doc_measure(stored->doc.root, &stored_panels, &stored_tab_count, &stored_max);
-  AndamentoText *stored_tabs = push_array(arena, AndamentoText, stored_tab_count);
-  stored_tab_count = 0;
-  if(stored->doc.root) { uishell_store_panel_from_doc(arena, stored->doc.root, stored_tabs, &stored_tab_count); }
-  for(U64 i = 0; ok && i < stored_tab_count; i++)
+  String8List stored_keys = {0};
+  for(U64 i = 0; i < stored->doc.panel_count; i++)
   {
-    String8 key = push_str8_copy(arena, uishell_sidebar_string(stored_tabs[i]));
+    AndamentoDocPanel *p = &stored->doc.panels[i];
+    for(U64 t = 0; t < p->tab_count; t++) { str8_list_push(arena, &stored_keys, push_str8_copy(arena, uishell_sidebar_string(p->tabs[t]))); }
+  }
+  for(String8Node *n = stored_keys.first; ok && n; n = n->next)
+  {
+    String8 key = n->string;
     if(uishell_store_noted(stored, ANDAMENTO_NOTE_PLACED, key) || uishell_store_noted(stored, ANDAMENTO_NOTE_GONE, key)) { continue; }
     if(uishell_store_key_in(key, doc.keys, doc.tab_count) || !uishell_store_slot_find(slots, key, 0)) { continue; }
     char *remove_error = 0;
@@ -2183,7 +2073,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   // The document, at the generation this device last saw.
   U64 expected = marked && entry->generation ? entry->generation : stored->generation;
   andamento_arrangement_free(stored);
-  AndamentoArrangementDoc out = {doc.panel_count ? doc.panels : 0};
+  AndamentoArrangementDoc out = {doc.panels, doc.panel_count};
   AndamentoWorkspaceArrangement *after = 0;
   char *error = 0;
   for(U32 attempt = 0; ok && attempt < 2; attempt++)
@@ -2192,16 +2082,16 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     andamento_arrangement_free(after);
     after = UIShell_StoreCall(state, andamento_arrangement_commit(state->core, workspace, &out, expected, &error));
     state->store_commits += 1;
-    if(!after || after->status != ANDAMENTO_ARRANGEMENT_STALE) { break; }
+    if(!after || after->status != ANDAMENTO_STALE) { break; }
     // Stale: Andamento reconciled a provider's change since. Committing at
     // the new generation reconciles it again, keeping both.
     expected = after->generation;
   }
-  B32 committed = ok && after && after->status == ANDAMENTO_ARRANGEMENT_COMMITTED;
+  B32 committed = ok && after && after->status == ANDAMENTO_COMMITTED;
   if(ok && !committed)
   { uishell_sidebar_set_error(state, error ? str8_cstring(error) : str8_lit("The workspace's arrangement was not committed")); }
   andamento_string_free(error);
-  andamento_slots_release(slots);
+  andamento_slots_free(slots);
   entry->hash = hash;
   if(committed)
   {
