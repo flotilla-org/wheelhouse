@@ -34,6 +34,7 @@ subscriptions
         row project/fleet "Fleet via beta" provider=1
         row vessel/fleet-v "Fleet vessel via alpha" live status="waiting" provider=removed
         row vessel/fleet-v "Fleet vessel via beta" openable status="waiting" provider=1
+          pin project/fleet "Fleet via beta" card provider=1
 ## after a restart: beta reconnected from the Dashboard
 subscriptions
   subscription 1 flotilla daemon="ssh://beta"
@@ -41,3 +42,4 @@ subscriptions
         row project/fleet "Fleet via beta" provider=1
         row vessel/fleet-v "Fleet vessel via alpha" live provider=removed
         row vessel/fleet-v "Fleet vessel via beta" openable status="waiting" provider=1
+          pin project/fleet "Fleet via beta" card provider=1

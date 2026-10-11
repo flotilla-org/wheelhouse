@@ -856,6 +856,79 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       }
       CardCheck(title && identity && facts == expected_facts, "each shipped template renders its header and facts");
     }
+    fprintf(stderr, "Hover card diagnostics: subscription entities\n");
+    // An entity from a Dashboard subscription is keyed by the subscription's
+    // provider, and the host's fixture has the same kinds and IDs: hovering
+    // its row opens its own card, and its relations (stamped with its
+    // provider) navigate within the subscription.
+    {
+      UIShell_SidebarState subscribed = {.initialized = 1};
+      subscribed.core = andamento_create(config.str, config.size, 0);
+      CardCheck(subscribed.core != 0, "subscription fixture initializes");
+      String8 provider = str8_lit("01a12a71-c309-714c-bc8f-619c6d7fbb28");
+      String8 patches = str8_cstring((char *)uishell_sidebar_fixture_patches);
+      for(U64 start = 0; subscribed.core && start < patches.size;)
+      {
+        U64 end = start;
+        while(end < patches.size && patches.str[end] != '\n') { end++; }
+        andamento_apply_patch_json(subscribed.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0);
+        start = end+1;
+      }
+      String8 subscription_patches[] = {
+        str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"project\",\"id\":\"p\"}},\"source_id\":\"connector\",\"unset\":[],\"set\":{"
+                 "\"flotilla.project\":{\"value\":{\"type\":\"text\",\"value\":\"p\"}},\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"Subscribed project\"}},"
+                 "\"related.entities\":{\"value\":{\"type\":\"entity-refs\",\"value\":[{\"kind\":\"role\",\"id\":\"p/governor\"}]}}}}"),
+        str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"role\",\"id\":\"p/governor\"}},\"source_id\":\"connector\",\"unset\":[],\"set\":{"
+                 "\"flotilla.project\":{\"value\":{\"type\":\"text\",\"value\":\"p\"}},\"flotilla.role\":{\"value\":{\"type\":\"text\",\"value\":\"p/governor\"}},"
+                 "\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"Subscribed governor\"}}}}"),
+      };
+      for(U64 i = 0; subscribed.core && i < ArrayCount(subscription_patches); i++)
+      {
+        CardCheck(andamento_apply_patch_json(subscribed.core, 0, uishell_sidebar_text(provider), uishell_sidebar_text(subscription_patches[i]), 0),
+                  "subscription fixture patch applies");
+      }
+      if(subscribed.core) { uishell_sidebar_refresh(&subscribed); }
+      AndamentoEntity project = uishell_sidebar_entity(provider, str8_lit("project"), str8_lit("p"));
+      AndamentoNode row = {0}; B32 has_row = 0;
+      for(U64 i = 0; subscribed.snapshot && i < andamento_snapshot_node_count(subscribed.snapshot) && !has_row; i++)
+      {
+        andamento_snapshot_node(subscribed.snapshot, i, &row);
+        has_row = !row.is_section && uishell_sidebar_card_entity_match(row.entity, project);
+      }
+      CardCheck(has_row, "a subscription's project has its row, under its provider");
+      UIShell_HoverCard *sub_card = &subscribed.cards[0];
+      if(has_row)
+      {
+        test->mouse = v2f32(50, 115);
+        uishell_sidebar_card_source_at(&subscribed, row, hover, str8_zero(), 0, 1000000);
+        uishell_sidebar_card_source_at(&subscribed, row, hover, str8_zero(), 0, 1000000+UIShell_HoverCardOpenDelayUS);
+        CardCheck(sub_card->open && uishell_sidebar_card_entity_match(sub_card->path[0], project),
+                  "hovering a subscription entity's row opens its card, keyed by its provider");
+        AndamentoNode node = {0};
+        U64 index = uishell_sidebar_card_find(&subscribed, project, &node);
+        CardCheck(index != ANDAMENTO_NONE && str8_match(uishell_sidebar_string(node.label), str8_lit("Subscribed project"), 0),
+                  "a subscription entity's card finds its own details, not the host's same kind and ID");
+        B32 title = 0;
+        if(index != ANDAMENTO_NONE)
+        {
+          UI_EventList events = {0};
+          ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+          MemoryZeroArray(test->hover_card_keys);
+          UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+          UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_ChildLayoutAxis(Axis2_Y)
+          { uishell_sidebar_card_content(&subscribed, ws, sub_card, 0, node, index, 400, 0); }
+          ui_end_build();
+          for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+          { title |= str8_match(ui_box_display_string(box), str8_lit("Subscribed project"), 0); }
+        }
+        CardCheck(title, "a subscription entity's card renders its details");
+        CardCheck(uishell_hover_card_test_click(ws, &subscribed, sub_card, str8_lit("Subscribed governor"), 0) && sub_card->depth == 2 &&
+                  uishell_sidebar_card_entity_match(sub_card->path[1], uishell_sidebar_entity(provider, str8_lit("role"), str8_lit("p/governor"))),
+                  "a subscription entity's relation navigates to the subscription's entity");
+        uishell_sidebar_card_close(sub_card);
+      }
+      uishell_sidebar_release(&subscribed);
+    }
     CardCheck(str8_match(uishell_sidebar_card_age(60000, 0), str8_lit("1m ago"), 0) &&
               str8_match(uishell_sidebar_card_age(3600000, 0), str8_lit("1h ago"), 0) &&
               str8_match(uishell_sidebar_card_age(86400000, 0), str8_lit("1d ago"), 0) &&

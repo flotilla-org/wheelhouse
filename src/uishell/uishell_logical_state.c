@@ -386,10 +386,12 @@ uishell_logical_local(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
       for(CFG_Node *card = group->first; card != &cfg_nil_node; card = card->next)
       {
         if(!str8_match(card->string, str8_lit("card"), 0)) { continue; }
-        uishell_logical_linef(t, depth+2, "pin %S %S %s",
-          uishell_logical_entity(arena, uishell_sidebar_local_field(card, str8_lit("kind")), uishell_sidebar_local_field(card, str8_lit("entity"))),
+        AndamentoEntity target = uishell_sidebar_pin_entity(card);
+        uishell_logical_linef(t, depth+2, "pin %S %S %s%S",
+          uishell_logical_entity(arena, uishell_sidebar_string(target.kind), uishell_sidebar_string(target.id)),
           uishell_logical_quote(arena, uishell_sidebar_local_field(card, str8_lit("label"))),
-          cfg_node_child_from_string(card, str8_lit("compact")) != &cfg_nil_node ? "row" : "card");
+          cfg_node_child_from_string(card, str8_lit("compact")) != &cfg_nil_node ? "row" : "card",
+          uishell_logical_provider(arena, uishell_sidebar_string(target.provider), 0));
       }
     }
   }

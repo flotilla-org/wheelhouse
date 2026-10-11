@@ -620,7 +620,7 @@ uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *car
         UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.5f-badge_width), 1))
         {
           if(interactive && available)
-          { link = uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###related_%I64u_%I64u_%S_%I64u_%S", uishell_sidebar_string(relation.display_text), slot, relation.entity.kind.len, uishell_sidebar_string(relation.entity.kind), relation.entity.id.len, uishell_sidebar_string(relation.entity.id))); }
+          { link = uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###related_%I64u_%I64u_%S_%I64u_%S_%I64u_%S", uishell_sidebar_string(relation.display_text), slot, relation.entity.provider.len, uishell_sidebar_string(relation.entity.provider), relation.entity.kind.len, uishell_sidebar_string(relation.entity.kind), relation.entity.id.len, uishell_sidebar_string(relation.entity.id))); }
           else { UI_TagF("weak") { ui_label(uishell_sidebar_string(relation.display_text)); } }
         }
         UI_PrefWidth(ui_px(badge_width, 1)) UI_TagF("weak")

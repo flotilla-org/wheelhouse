@@ -1778,6 +1778,45 @@ entry_point(CmdLine *cmdline)
     StateCheck(state_count_from(ws->sidebar, project, fleet, beta_id, &stale) == 1 && !stale);
     state_write(dir, "subscriptions_fresh.txt");
 
+    //- A subscription's entity has a hover card, as a local one does: its
+    // row's card opens on the entity under the subscription's provider (the
+    // same kind and ID from the host's provider is another entity) with its
+    // details. Pinned, the pin keeps the provider.
+    AndamentoEntity fleet_beta = uishell_sidebar_entity(push_str8_copy(scratch.arena, beta_id), project, fleet);
+    CFG_Node *fleet_pin = &cfg_nil_node;
+    {
+      AndamentoNode row = {0};
+      for(U64 i = 0; i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
+      {
+        AndamentoNode node = {0};
+        andamento_snapshot_node(ws->sidebar->snapshot, i, &node);
+        if(!node.is_section && uishell_sidebar_card_entity_match(node.entity, fleet_beta)) { row = node; break; }
+      }
+      StateCheck(uishell_sidebar_card_entity_match(row.entity, fleet_beta));
+      // Hovering the row past the open delay, as the sidebar's render reports it.
+      UIShell_HoverCard *card = &ws->sidebar->cards[0];
+      UI_Box source = {.key = ui_key_make(0x5eb5), .rect = r2f32p(0, 0, 100, 20)};
+      UI_Signal hover = {.box = &source, .f = UI_SignalFlag_Hovering};
+      uishell_sidebar_card_source_at(ws->sidebar, row, hover, str8_zero(), 0, 1000000);
+      uishell_sidebar_card_source_at(ws->sidebar, row, hover, str8_zero(), 0, 1000000+UIShell_HoverCardOpenDelayUS);
+      StateCheck(card->open && card->depth == 1 && uishell_sidebar_card_entity_match(card->path[0], fleet_beta));
+      AndamentoNode found = {0};
+      U64 index = card->open ? uishell_sidebar_card_find(ws->sidebar, card->path[0], &found) : ANDAMENTO_NONE;
+      AndamentoDetail detail = {0};
+      StateCheck(index != ANDAMENTO_NONE && andamento_snapshot_detail(ws->sidebar->snapshot, index, &detail));
+      StateCheck(uishell_sidebar_card_entity_match(detail.entity, fleet_beta) && detail.field_count > 0 &&
+                 str8_match(uishell_sidebar_string(detail.label), str8_lit("Fleet via beta"), 0));
+      StateCheck(uishell_sidebar_card_find(ws->sidebar, uishell_sidebar_entity(uishell_sidebar_host_provider, project, fleet), 0) == ANDAMENTO_NONE);
+      // Pin on its hover card.
+      fleet_pin = uishell_sidebar_card_pin(ws, card, 0);
+      StateCheck(fleet_pin != &cfg_nil_node && uishell_sidebar_card_entity_match(uishell_sidebar_pin_entity(fleet_pin), fleet_beta));
+      uishell_sidebar_card_close(card);
+      state_frame(ws);
+      // Its ghost row offers the subscription entity's card.
+      AndamentoNode ghost = {0};
+      StateCheck(state_find(ws->sidebar, str8_lit(".ref"), uishell_sidebar_pin_ghost(fleet_pin), &ghost));
+    }
+
     //- Removing a subscription stops its connector and retracts its facts;
     // the workspace open on its vessel stays, retained.
     uishell_cmd("remove_subscription", .window = window->id, .string = alpha_id);
@@ -1796,6 +1835,19 @@ entry_point(CmdLine *cmdline)
     StateWaitFor(ws, state_count_from(ws->sidebar, project, fleet, beta_id, 0) == 1 &&
                      state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
     state_write(dir, "subscriptions_restarted.txt");
+    // The pin of beta's project survives the restart with its provider, and
+    // its card, opened from the saved pin, finds its details.
+    {
+      CFG_Node *pin = uishell_sidebar_pin_find(cfg_node_from_id(ws->cfg_id), fleet_beta, 0);
+      StateCheck(pin != &cfg_nil_node);
+      UIShell_HoverCard *pinned = pin != &cfg_nil_node ? uishell_sidebar_saved_card(ws, pin) : 0;
+      AndamentoNode found = {0};
+      StateCheck(pinned && uishell_sidebar_card_entity_match(pinned->path[0], fleet_beta) &&
+                 uishell_sidebar_card_find(ws->sidebar, pinned->path[0], &found) != ANDAMENTO_NONE &&
+                 str8_match(uishell_sidebar_string(found.label), str8_lit("Fleet via beta"), 0));
+      if(pinned) { uishell_sidebar_card_close(pinned); }
+      state_frame(ws);
+    }
     uishell_subscriptions_close();
   }
 
