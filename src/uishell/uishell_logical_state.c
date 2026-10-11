@@ -389,18 +389,10 @@ uishell_logical_local(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
       for(CFG_Node *card = group->first; card != &cfg_nil_node; card = card->next)
       {
         if(!str8_match(card->string, str8_lit("card"), 0)) { continue; }
-        // A pin to a View names it by its Slot; one whose View went away is
-        // flagged, kept until the user removes it.
-        RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
-        UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
-        String8 view = uishell_sidebar_local_field(card, str8_lit("view"));
-        String8 slot = str8_skip(view, str8_find_needle(view, 0, str8_lit("/"), 0)+1);
-        B32 gone = state && uishell_store_pin_gone(state, uishell_sidebar_local_field(card, str8_lit("ghost")));
-        uishell_logical_linef(t, depth+2, "pin %S %S %s%S%s",
+        uishell_logical_linef(t, depth+2, "pin %S %S %s",
           uishell_logical_entity(arena, uishell_sidebar_local_field(card, str8_lit("kind")), uishell_sidebar_local_field(card, str8_lit("entity"))),
           uishell_logical_quote(arena, uishell_sidebar_local_field(card, str8_lit("label"))),
-          cfg_node_child_from_string(card, str8_lit("compact")) != &cfg_nil_node ? "row" : "card",
-          view.size ? push_str8f(arena, " view=%S", uishell_logical_quote(arena, slot)) : str8_zero(), gone ? " view-gone" : "");
+          cfg_node_child_from_string(card, str8_lit("compact")) != &cfg_nil_node ? "row" : "card");
       }
     }
   }

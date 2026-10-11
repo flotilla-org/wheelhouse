@@ -64,8 +64,4 @@ internal String8 uishell_slot_badge(Arena *arena, CFG_Node *view);
 // and returns what is left of `rect` for the View.
 internal Rng2F32 uishell_slot_banner(CFG_Node *view, Rng2F32 rect);
 
-// Pins `view`, a workspace's View, to a section of the user's own; nil when
-// it can't (uishell_workspace_store.c).
-internal CFG_Node *uishell_store_pin_view(RD_WindowState *ws, CFG_Node *view);
-
 #endif // UISHELL_WORKSPACE_STORE_H

@@ -1397,31 +1397,6 @@ entry_point(CmdLine *cmdline)
     state_check_committed(ws);
   }
 
-  //- A pin to a View: when the View goes, the pin is kept, flagged, until
-  // the user removes it.
-  {
-    CFG_Node *notes = state_slot_view(reviewer, str8_lit("notes"));
-    uishell_cmd("pin_view", .window = window->id, .view = notes->id);
-    state_frame(ws);
-    String8 text = uishell_logical_state_text(scratch.arena);
-    StateCheck(str8_find_needle(text, 0, str8_lit("pin role/p/reviewer \"reviewer: notes\" row view=\"notes\"\n"), 0) < text.size);
-    uishell_cmd("close_tab", .window = window->id, .panel = notes->parent->id, .tab = notes->id);
-    state_frame(ws);
-    state_frame(ws);
-    text = uishell_logical_state_text(scratch.arena);
-    StateCheck(str8_find_needle(text, 0, str8_lit("pin role/p/reviewer \"reviewer: notes\" row view=\"notes\" view-gone\n"), 0) < text.size);
-    StateCheck(str8_find_needle(text, 0, str8_lit("row .ref \"reviewer\" live status=\"view gone\""), 0) < text.size);
-    // Removing the pin settles it (andamento_local_remove).
-    CFG_Node *root = uishell_sidebar_local_tree(window), *pin = &cfg_nil_node;
-    for(CFG_Node *n = root; n != &cfg_nil_node; n = cfg_node_rec__depth_first(root, n).next)
-    { if(str8_match(n->string, str8_lit("view"), 0) && n->parent->string.size && str8_match(n->parent->string, str8_lit("card"), 0)) { pin = n->parent; } }
-    StateCheck(pin != &cfg_nil_node);
-    cfg_node_release(rd_state->cfg, pin);
-    state_frame(ws);
-    state_frame(ws);
-    StateCheck(state->store_pin_gone_count == 0);
-  }
-
   //- Renaming a workspace and giving it a mood are overlay edits: they are
   // in its record, not this device's file, and survive a restart.
   {

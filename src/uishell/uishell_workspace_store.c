@@ -1606,8 +1606,8 @@ uishell_store_retry(UIShell_SidebarState *state, CFG_Node *owner)
 // the name and mood Andamento has (`named`, `mooded`; runtime-only), so the
 // presentation file leaves them out. After each sync the overlay's flags are
 // read for the notices: each Slot's (DETACHED, CHANGED, REMOVED, REBIND),
-// the arrangement's (PROVIDER_CHANGED, SOFT, UNRESOLVED), the slots
-// tombstones hide, and Dashboard pins whose View went away.
+// the arrangement's (PROVIDER_CHANGED, SOFT, UNRESOLVED), and the slots
+// tombstones hide.
 
 read_only global String8 uishell_store_owner_runtime_keys[] = {str8_lit_comp("named"), str8_lit_comp("mooded")};
 
@@ -1672,8 +1672,7 @@ uishell_store_entry_find(UIShell_SidebarState *state, UIShell_WorkspaceId id)
 internal UIShell_StoreEntry *uishell_store_entry(UIShell_SidebarState *state, UIShell_WorkspaceId id);
 internal CFG_NodePtrList uishell_store_owners(Arena *arena, CFG_Node *window);
 
-// Reads what Andamento says of each workspace's overlay, and of the
-// Dashboard's pins, for the notices.
+// Reads what Andamento says of each workspace's overlay, for the notices.
 internal void
 uishell_store_read_overlay(UIShell_SidebarState *state, CFG_Node *window)
 {
@@ -1720,21 +1719,6 @@ uishell_store_read_overlay(UIShell_SidebarState *state, CFG_Node *window)
     }
     andamento_overlay_release(overlay);
   }
-  state->store_pins_gone = 0;
-  state->store_pin_gone_count = 0;
-  AndamentoDashboardOverlay *dashboard = UIShell_StoreCall(state, andamento_dashboard_overlay_acquire(state->core, 0));
-  AndamentoDashboardOverlayInfo info = {0};
-  if(dashboard && andamento_dashboard_overlay_info(dashboard, &info))
-  {
-    state->store_pins_gone = push_array(arena, String8, info.note_count);
-    for(U64 i = 0; i < info.note_count; i++)
-    {
-      AndamentoDashboardNote note = {0};
-      if(andamento_dashboard_overlay_note(dashboard, i, &note) && note.kind == ANDAMENTO_DASHBOARD_PIN)
-      { state->store_pins_gone[state->store_pin_gone_count++] = push_str8_copy(arena, uishell_sidebar_string(note.key)); }
-    }
-  }
-  andamento_dashboard_overlay_release(dashboard);
   scratch_end(scratch);
 }
 
@@ -1752,14 +1736,6 @@ uishell_store_arrangement_flags(UIShell_SidebarState *state, CFG_Node *owner)
 {
   UIShell_StoreEntry *entry = state ? uishell_store_entry_find(state, uishell_workspace_id_from_cfg(owner)) : 0;
   return entry ? entry->arrangement_flags : 0;
-}
-
-// Whether the pin (a local ref) with ID `ref` names a View that went away.
-internal B32
-uishell_store_pin_gone(UIShell_SidebarState *state, String8 ref)
-{
-  for(U64 i = 0; state && i < state->store_pin_gone_count; i++) { if(str8_match(state->store_pins_gone[i], ref, 0)) { return 1; } }
-  return 0;
 }
 
 // Whether `view` is a View of `owner`'s first tab panel, which shows the
@@ -1852,38 +1828,6 @@ uishell_store_remove(CFG_Node *view)
   if(view->parent == &cfg_nil_node) { return; }
   UIShell_RegsScope(.window = rd_window_from_cfg(view)->id, .panel = view->parent->id, .view = view->id, .tab = view->id)
   { uishell_cmd("close_tab"); }
-}
-
-// Pins `view`, a workspace's View, where Pin puts a card: a pin of its
-// workspace's entity that names the View (`view`: "<workspace-id>/<slot>").
-// When the View goes, Andamento flags the pin rather than dropping it.
-internal CFG_Node *uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area);
-internal CFG_Node *uishell_sidebar_pin_add(UIShell_SidebarState *state, CFG_Node *area, U64 index, AndamentoEntity entity,
-                                           String8 fallback_label, String8 source, B32 compact);
-internal CFG_Node *
-uishell_store_pin_view(RD_WindowState *ws, CFG_Node *view)
-{
-  CFG_Node *owner = uishell_store_view_owner(view);
-  String8 key = uishell_store_setting(view, str8_lit("slot"));
-  if(owner == &cfg_nil_node || str8_match(owner->string, str8_lit("window"), 0) || !key.size || !ws->sidebar) { return &cfg_nil_node; }
-  CFG_Node *area = uishell_sidebar_pin_area(ws, 0);
-  if(area == &cfg_nil_node) { return &cfg_nil_node; }
-  Temp scratch = scratch_begin(0, 0);
-  String8 id = uishell_workspace_id_text_from_cfg(owner);
-  AndamentoEntity entity = {uishell_sidebar_text(str8_lit(".workspace")), uishell_sidebar_text(id)};
-  if(uishell_workspace_cfg_has_subject(owner))
-  {
-    entity.kind = uishell_sidebar_text(uishell_store_setting(owner, str8_lit("sidebar_entity_kind")));
-    entity.id = uishell_sidebar_text(uishell_store_setting(owner, str8_lit("sidebar_entity_id")));
-  }
-  // Named for the View, not only its workspace's entity.
-  String8 label = rd_label_from_cfg(view);
-  label = push_str8f(scratch.arena, "%S: %S", rd_label_from_cfg(owner), label.size ? label : key);
-  CFG_Node *pin = uishell_sidebar_pin_add(ws->sidebar, area, max_U64, entity, label, str8_zero(), 1);
-  uishell_store_set_setting(pin, str8_lit("label"), label);
-  uishell_store_set_setting(pin, str8_lit("view"), push_str8f(scratch.arena, "%S/%S", id, key));
-  scratch_end(scratch);
-  return pin;
 }
 
 //- Notices
@@ -2376,8 +2320,6 @@ uishell_workspace_store_release(UIShell_SidebarState *state)
   if(state->store_arena) { arena_release(state->store_arena); }
   if(state->store_overlay_arena) { arena_release(state->store_overlay_arena); }
   state->store_arena = state->store_overlay_arena = 0;
-  state->store_pins_gone = 0;
-  state->store_pin_gone_count = 0;
   state->store_entries = 0;
   state->store_entry_count = state->store_entry_capacity = 0;
   state->store_synced = 0;
