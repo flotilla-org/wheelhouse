@@ -103,10 +103,15 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     cfg_node_unhook(rd_state->cfg, window, old_inventory);
     cfg_node_unhook(rd_state->cfg, window, old_host);
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
-    CFG_Node *host = uishell_sidebar_dock_layout(&split);
-    U64 sections = 0;
-    for(CFG_Node *panel = host->first; panel != &cfg_nil_node; panel = panel->next) { sections++; }
-    ok &= sections == 4;
+    uishell_sidebar_dock_layout(&split);
+    // The shipped KDL may add regions (such as local sections); the benchmark
+    // needs the four it measures.
+    String8 measured[] = {str8_lit("tree"), str8_lit("sessions"), str8_lit("attention"), str8_lit("git")};
+    for(U64 i = 0; i < ArrayCount(measured); i++)
+    {
+      if(uishell_sidebar_region_view(window, measured[i]) == &cfg_nil_node)
+      { ok = 0; fprintf(stderr, "FAIL sidebar benchmark: no %.*s section\n", str8_varg(measured[i])); }
+    }
     for(U64 merged = 0; merged < layouts; merged++)
     {
       if(merged)
