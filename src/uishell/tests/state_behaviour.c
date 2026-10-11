@@ -836,18 +836,20 @@ entry_point(CmdLine *cmdline)
   {
     CFG_Node *view = uishell_sidebar_new_section(state, window);
     StateCheck(view != &cfg_nil_node);
-    CFG_Node *section = uishell_sidebar_local_section(window, uishell_sidebar_local_key_id(uishell_sidebar_section_key(view)));
+    String8 section = push_str8_copy(scratch.arena, uishell_sidebar_local_key_id(uishell_sidebar_section_key(view)));
     // Its name field opened; typing a name and Enter applies it.
-    uishell_sidebar_local_rename(section, str8_lit("Builds"));
+    uishell_sidebar_local_rename_section(window, section, str8_lit("Builds"));
     state->rename_node = 0;
-    CFG_Node *group = uishell_sidebar_local_only_group(section);
-    uishell_sidebar_make(window, (UIShell_MakeAction){UIShell_Make_Workspace, str8_lit("New workspace"), group->id}, str8_lit("Build logs"));
+    UIShell_LocalGroup *group = uishell_sidebar_local_only_group(uishell_sidebar_local_section(window, section));
+    StateCheck(group != 0);
+    String8 group_id = push_str8_copy(scratch.arena, group->id);
+    uishell_sidebar_make(window, (UIShell_MakeAction){UIShell_Make_Workspace, str8_lit("New workspace"), group_id}, str8_lit("Build logs"));
     state_frame(ws);
     // Pin on the project's hover card.
     AndamentoEntity path[] = {uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("project"), str8_lit("p"))};
     UIShell_HoverCard card = {.path = path, .depth = 1, .retained_label = str8_lit("Example project")};
-    CFG_Node *pin = uishell_sidebar_card_pin(ws, &card, 0);
-    StateCheck(pin != &cfg_nil_node && pin->parent == group);
+    UIShell_LocalPin *pin = uishell_sidebar_card_pin(ws, &card, 0);
+    StateCheck(pin && str8_match(pin->group->id, group_id, 0));
     state_frame(ws);
   }
 
@@ -1780,11 +1782,9 @@ entry_point(CmdLine *cmdline)
     CFG_Node *view = uishell_sidebar_region_view(window, key);
     StateCheck(view != &cfg_nil_node);
     String8 sidebar_before = state_sidebar_text(scratch.arena);
-    CFG_Node *group = uishell_sidebar_local_new_group(window, str8_lit("Transient"));
-    CFG_Node *added = uishell_sidebar_local_new_view(view->parent, group->parent);
+    CFG_Node *added = uishell_sidebar_local_new_view(view->parent, str8_lit("transient"));
     StateCheck(added != &cfg_nil_node && cfg_node_child_from_string(view, str8_lit("selected")) == &cfg_nil_node);
     cfg_node_release(rd_state->cfg, added);
-    cfg_node_release(rd_state->cfg, group->parent);
     state_frame(ws);
     StateCheck(cfg_node_child_from_string(view, str8_lit("selected")) != &cfg_nil_node);
     StateCheck(str8_match(state_sidebar_text(scratch.arena), sidebar_before, 0));
@@ -1907,7 +1907,7 @@ entry_point(CmdLine *cmdline)
     // same kind and ID from the host's provider is another entity) with its
     // details. Pinned, the pin keeps the provider.
     AndamentoEntity fleet_beta = uishell_sidebar_entity(push_str8_copy(scratch.arena, beta_id), project, fleet);
-    CFG_Node *fleet_pin = &cfg_nil_node;
+    String8 fleet_pin = str8_zero();
     {
       AndamentoNode row = {0};
       for(U64 i = 0; i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
@@ -1932,13 +1932,14 @@ entry_point(CmdLine *cmdline)
                  str8_match(uishell_sidebar_string(detail.label), str8_lit("Fleet via beta"), 0));
       StateCheck(uishell_sidebar_card_find(ws->sidebar, uishell_sidebar_entity(uishell_sidebar_host_provider, project, fleet), 0) == ANDAMENTO_NONE);
       // Pin on its hover card.
-      fleet_pin = uishell_sidebar_card_pin(ws, card, 0);
-      StateCheck(fleet_pin != &cfg_nil_node && uishell_sidebar_card_entity_match(uishell_sidebar_pin_entity(fleet_pin), fleet_beta));
+      UIShell_LocalPin *pinned = uishell_sidebar_card_pin(ws, card, 0);
+      StateCheck(pinned && uishell_sidebar_card_entity_match(uishell_sidebar_pin_entity(pinned), fleet_beta));
+      fleet_pin = pinned ? push_str8_copy(scratch.arena, pinned->ghost) : str8_zero();
       uishell_sidebar_card_close(card);
       state_frame(ws);
       // Its ghost row offers the subscription entity's card.
       AndamentoNode ghost = {0};
-      StateCheck(state_find(ws->sidebar, str8_lit(".ref"), uishell_sidebar_pin_ghost(fleet_pin), &ghost));
+      StateCheck(state_find(ws->sidebar, str8_lit(".ref"), fleet_pin, &ghost));
     }
 
     //- Removing a subscription stops its connector and retracts its facts;
@@ -1962,9 +1963,9 @@ entry_point(CmdLine *cmdline)
     // The pin of beta's project survives the restart with its provider, and
     // its card, opened from the saved pin, finds its details.
     {
-      CFG_Node *pin = uishell_sidebar_pin_find(cfg_node_from_id(ws->cfg_id), fleet_beta, 0);
-      StateCheck(pin != &cfg_nil_node);
-      UIShell_HoverCard *pinned = pin != &cfg_nil_node ? uishell_sidebar_saved_card(ws, pin) : 0;
+      UIShell_LocalPin *pin = uishell_sidebar_pin_find(cfg_node_from_id(ws->cfg_id), fleet_beta);
+      StateCheck(pin != 0);
+      UIShell_HoverCard *pinned = pin ? uishell_sidebar_saved_card(ws, pin) : 0;
       AndamentoNode found = {0};
       StateCheck(pinned && uishell_sidebar_card_entity_match(pinned->path[0], fleet_beta) &&
                  uishell_sidebar_card_find(ws->sidebar, pinned->path[0], &found) != ANDAMENTO_NONE &&

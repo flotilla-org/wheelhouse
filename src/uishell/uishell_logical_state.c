@@ -195,9 +195,9 @@ uishell_logical_workspace(UIShell_LogicalText *t, U64 depth, CFG_Node *window, C
   { home = push_str8f(arena, " local with=project/%S", uishell_sidebar_local_home(owner)); }
   else
   {
-    CFG_Node *group = uishell_sidebar_local_group(window, uishell_sidebar_local_field(owner, str8_lit("lives_in")));
-    if(group != &cfg_nil_node && cfg_node_child_from_string(group, str8_lit("default")) == &cfg_nil_node)
-    { home = push_str8f(arena, " local group=%S", uishell_logical_quote(arena, uishell_sidebar_local_field(group, str8_lit("label")))); }
+    UIShell_LocalGroup *group = uishell_sidebar_local_group(window, uishell_sidebar_local_lives_in(owner));
+    if(group && !group->is_default)
+    { home = push_str8f(arena, " local group=%S", uishell_logical_quote(arena, group->label)); }
   }
   // Its mood, and what its Workspace Overlay says of its arrangement: the
   // provider changed one the user owns, soft overrides (sizes, tabs) apply,
@@ -265,8 +265,8 @@ uishell_logical_section_key_title(Arena *arena, UIShell_SidebarState *state, CFG
     uishell_sidebar_node_at(state, i, &node);
     if(node.is_section && str8_match(uishell_sidebar_string(node.key), key, 0)) { return uishell_logical_section_title(state, node); }
   }
-  CFG_Node *section = uishell_sidebar_local_section(window, uishell_sidebar_local_key_id(key));
-  if(section != &cfg_nil_node) { return uishell_sidebar_local_title(arena, section); }
+  UIShell_LocalSection *section = uishell_sidebar_local_section(window, uishell_sidebar_local_key_id(key));
+  if(section) { return uishell_sidebar_local_title(arena, section); }
   return str8_lit("(unknown section)");
 }
 
@@ -367,30 +367,28 @@ uishell_logical_orders(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *
   }
 }
 
-// Sections and groups people made, and the pins in each group (the
-// window's working copy of what Andamento keeps).
+// Sections and groups people made, and the pins in each group, as
+// Andamento's Dashboard has them.
 internal void
 uishell_logical_local(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
 {
   Arena *arena = t->arena;
-  CFG_Node *root = uishell_sidebar_local_tree(window);
-  for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
+  UIShell_Locals *locals = uishell_sidebar_window_locals(window);
+  for(U64 s = 0; s < locals->section_count; s++)
   {
-    if(!str8_match(section->string, str8_lit("section"), 0)) { continue; }
+    UIShell_LocalSection *section = &locals->sections[s];
     uishell_logical_linef(t, depth, "section %S", uishell_logical_quote(arena, uishell_sidebar_local_title(arena, section)));
-    for(CFG_Node *group = section->first; group != &cfg_nil_node; group = group->next)
+    for(U64 g = 0; g < section->group_count; g++)
     {
-      if(!str8_match(group->string, str8_lit("group"), 0)) { continue; }
-      uishell_logical_linef(t, depth+1, "group %S%s", uishell_logical_quote(arena, uishell_sidebar_local_field(group, str8_lit("label"))),
-        uishell_sidebar_local_is_default(group) ? " default" : "");
-      for(CFG_Node *card = group->first; card != &cfg_nil_node; card = card->next)
+      UIShell_LocalGroup *group = &section->groups[g];
+      uishell_logical_linef(t, depth+1, "group %S%s", uishell_logical_quote(arena, group->label), group->is_default ? " default" : "");
+      for(U64 p = 0; p < group->pin_count; p++)
       {
-        if(!str8_match(card->string, str8_lit("card"), 0)) { continue; }
-        AndamentoEntity target = uishell_sidebar_pin_entity(card);
+        UIShell_LocalPin *pin = &group->pins[p];
+        AndamentoEntity target = uishell_sidebar_pin_entity(pin);
         uishell_logical_linef(t, depth+2, "pin %S %S %s%S",
           uishell_logical_entity(arena, uishell_sidebar_string(target.kind), uishell_sidebar_string(target.id)),
-          uishell_logical_quote(arena, uishell_sidebar_local_field(card, str8_lit("label"))),
-          cfg_node_child_from_string(card, str8_lit("compact")) != &cfg_nil_node ? "row" : "card",
+          uishell_logical_quote(arena, pin->label), pin->compact ? "row" : "card",
           uishell_logical_provider(arena, uishell_sidebar_string(target.provider), 0));
       }
     }

@@ -469,7 +469,7 @@ uishell_sidebar_card_role_text(UIShell_SidebarState *state, U64 index, U32 role)
 internal void uishell_sidebar_card_title_handle(UIShell_HoverCard *card, String8 text);
 internal void uishell_sidebar_card_drag_from(UIShell_HoverCard *card, UI_Signal drag);
 
-internal void uishell_sidebar_ghost_set_expanded(CFG_Node *saved, B32 expanded);
+internal void uishell_sidebar_ghost_set_expanded(CFG_Node *window, String8 ghost, B32 expanded);
 
 internal void
 uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card,
@@ -484,13 +484,13 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
   // title line is where the card drags from.
   F32 header_em = floor_f32(ui_top_font_size()*0.82f);
   // A pinned card collapses to its compact ghost row.
-  B32 collapsible = interactive && card->placement == UIShell_CardPlacement_Pinned && card->saved;
+  B32 collapsible = interactive && card->placement == UIShell_CardPlacement_Pinned && card->pin_size;
   F32 collapse_width = collapsible ? ui_top_font_size()*1.5f : 0;
   F32 badge_width = badge.size ? Min(width*0.3f, fnt_dim_from_tag_size_string(rd_font_from_slot(RD_FontSlot_Main), header_em, 0, ui_top_tab_size(), badge).x+header_em) : 0;
   UI_Row UI_FontSize(header_em) UI_TagF("weak") RD_Font(RD_FontSlot_Main)
   {
     if(collapsible && ui_clicked(uishell_sidebar_disclosure(1, str8_lit("###card_collapse"))))
-    { uishell_sidebar_ghost_set_expanded(cfg_node_from_id(card->saved), 0); }
+    { uishell_sidebar_ghost_set_expanded(cfg_node_from_id(rd_window_state_from_os_handle(ui_state->window)->cfg_id), str8(card->pin, card->pin_size), 0); }
     UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak") RD_Font(RD_FontSlot_Icons)
     { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_icon(detail.entity.kind)]); }
     UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-collapse_width), 1)) UI_TagF("weak")

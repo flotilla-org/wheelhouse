@@ -437,9 +437,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   // there holding its ghost (drag-model.md: "a docking site: a new pinned
   // area"), through the real docking sites.
   {
-    CFG_Node *local = uishell_sidebar_local_tree(window);
-    U64 sections_before = 0;
-    for(CFG_Node *n = local->first; n != &cfg_nil_node; n = n->next) { sections_before += str8_match(n->string, str8_lit("section"), 0); }
+    U64 sections_before = uishell_sidebar_window_locals(window)->section_count;
     UI_Key site_key = ui_key_from_stringf(ui_key_zero(), "drop_boundary_%p_%p", host, second_panel);
     UIShell_CmdNode *cmds_before = rd_state->cmds[0].last;
     Vec2F32 pointer = v2f32(-100, -100), start = pointer;
@@ -478,8 +476,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       uishell_sidebar_drag_finish(ws);
       if(frame == 5) { started = rd_drag_is_active(); }
     }
-    U64 sections_after = 0;
-    for(CFG_Node *n = local->first; n != &cfg_nil_node; n = n->next) { sections_after += str8_match(n->string, str8_lit("section"), 0); }
+    UIShell_Locals *locals = uishell_sidebar_window_locals(window);
+    U64 sections_after = locals->section_count;
     if(!started || !site_seen || sections_after != sections_before+1)
     {
       fprintf(stderr, "FAIL dock: a row dropped on the pill between sections makes a section there (started %d, site %d, sections %llu -> %llu)\n",
@@ -490,12 +488,14 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     // The split it asked for puts the View in a panel of its own, above the
     // pill's lower section.
     uishell_sidebar_docking_drain(cmds_before);
-    CFG_Node *made = sections_after > sections_before ? local->last : &cfg_nil_node;
-    CFG_Node *made_view = uishell_sidebar_local_view(window, cfg_node_child_from_string(made, str8_lit("group")));
-    DockFailure(made != &cfg_nil_node && (made_view == &cfg_nil_node || made_view->parent->parent != host || made_view->parent->next != second_panel));
+    Temp made_scratch = scratch_begin(0, 0);
+    String8 made = sections_after > sections_before ? push_str8_copy(made_scratch.arena, locals->sections[sections_after-1].id) : str8_zero();
+    CFG_Node *made_view = made.size ? uishell_sidebar_local_view(window, made) : &cfg_nil_node;
+    DockFailure(made.size && (made_view == &cfg_nil_node || made_view->parent->parent != host || made_view->parent->next != second_panel));
     // Remove the section, its View and its panel.
     if(made_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made_view->parent); }
-    if(made != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made); }
+    if(made.size) { uishell_sidebar_local_forget_section(window, made); }
+    scratch_end(made_scratch);
   }
   // Merge through the production command, then split the merged panel in the
   // opposite direction. This exercises host-root retention on split/collapse.

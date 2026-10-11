@@ -199,7 +199,8 @@ uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush)
 //- The Dashboard's local entities and saved orders (andamento_dashboard_get)
 
 // Andamento's Dashboard, read again when the dashboard record's generation
-// moves.
+// moves. Its local sections, groups and pins are read through
+// uishell_sidebar_locals.
 internal AndamentoDashboard *
 uishell_sidebar_dashboard(UIShell_SidebarState *state)
 {
@@ -223,124 +224,6 @@ uishell_sidebar_order_saved(UIShell_SidebarState *state, String8 loop)
 }
 
 //- Loading
-
-internal AndamentoLocalFact *
-uishell_sidebar_dashboard_fact(AndamentoLocalEntity *local, String8 key)
-{
-  for(U64 i = 0; i < local->fact_count; i++)
-  { if(str8_match(uishell_sidebar_string(local->facts[i].key), key, 0)) { return (AndamentoLocalFact *)&local->facts[i]; } }
-  return 0;
-}
-
-internal String8
-uishell_sidebar_dashboard_text(AndamentoLocalEntity *local, String8 key)
-{
-  AndamentoLocalFact *fact = uishell_sidebar_dashboard_fact(local, key);
-  return fact && fact->kind == ANDAMENTO_FACT_TEXT ? uishell_sidebar_string(fact->text) : str8_zero();
-}
-
-internal B32
-uishell_sidebar_dashboard_true(AndamentoLocalEntity *local, String8 key)
-{
-  AndamentoLocalFact *fact = uishell_sidebar_dashboard_fact(local, key);
-  return fact && fact->kind == ANDAMENTO_FACT_BOOL && fact->integer != 0;
-}
-
-// An entity-reference fact's entity; an empty one without it.
-internal AndamentoEntity
-uishell_sidebar_dashboard_entity(AndamentoLocalEntity *local, String8 key)
-{
-  AndamentoLocalFact *fact = uishell_sidebar_dashboard_fact(local, key);
-  return fact && fact->kind == ANDAMENTO_FACT_ENTITY ? fact->entity : (AndamentoEntity){0};
-}
-
-internal U64
-uishell_sidebar_local_position(AndamentoLocalEntity *local)
-{
-  U64 position = max_U64;
-  try_u64_from_str8_c_rules(uishell_sidebar_dashboard_text(local, str8_lit(".position")), &position);
-  return position;
-}
-
-// Adds to `parent`, in position order, a `name` node for each local entity
-// of `kind` whose `link` fact names `owner` (each one, without a link), as
-// uishell_sidebar_local_entities publishes them.
-internal void
-uishell_sidebar_local_seed(AndamentoDashboard *dashboard, CFG_Node *parent, String8 name, String8 kind, String8 link, String8 owner)
-{
-  Temp scratch = scratch_begin(0, 0);
-  U64 found = 0;
-  AndamentoLocalEntity **matches = push_array(scratch.arena, AndamentoLocalEntity *, dashboard->local_count+1);
-  for(U64 i = 0; i < dashboard->local_count; i++)
-  {
-    AndamentoLocalEntity *n = (AndamentoLocalEntity *)&dashboard->locals[i];
-    if(!str8_match(uishell_sidebar_string(n->entity.kind), kind, 0)) { continue; }
-    if(link.size && !str8_match(uishell_sidebar_string(uishell_sidebar_dashboard_entity(n, link).id), owner, 0)) { continue; }
-    // Insertion keeps them in position order, ties in Andamento's order.
-    U64 at = found++;
-    for(; at > 0 && uishell_sidebar_local_position(matches[at-1]) > uishell_sidebar_local_position(n); at--) { matches[at] = matches[at-1]; }
-    matches[at] = n;
-  }
-  for(U64 i = 0; i < found; i++)
-  {
-    AndamentoLocalEntity *local = matches[i];
-    CFG_Node *node = cfg_node_new(rd_state->cfg, parent, name);
-    String8 id = uishell_sidebar_string(local->entity.id);
-    if(str8_match(kind, str8_lit(".ref"), 0))
-    {
-      uishell_sidebar_local_set_field(node, str8_lit("ghost"), id);
-      AndamentoEntity target = uishell_sidebar_dashboard_entity(local, str8_lit(".target"));
-      if(target.kind.len) { uishell_sidebar_pin_set_entity(node, target); }
-      String8 fields[] = {str8_lit("label"), str8_lit("source")}, facts[] = {str8_lit(".label"), str8_lit(".source")};
-      for(U64 f = 0; f < ArrayCount(fields); f++)
-      {
-        String8 value = uishell_sidebar_dashboard_text(local, facts[f]);
-        if(value.size) { uishell_sidebar_local_set_field(node, fields[f], value); }
-      }
-      if(uishell_sidebar_dashboard_true(local, str8_lit(".compact"))) { cfg_node_new(rd_state->cfg, node, str8_lit("compact")); }
-      continue;
-    }
-    uishell_sidebar_local_set_field(node, str8_lit("id"), id);
-    String8 label = uishell_sidebar_dashboard_text(local, str8_lit("display.label"));
-    if(str8_match(kind, str8_lit(".group"), 0))
-    {
-      uishell_sidebar_local_set_field(node, str8_lit("label"), label);
-      if(uishell_sidebar_dashboard_true(local, str8_lit(".default"))) { cfg_node_new(rd_state->cfg, node, str8_lit("default")); }
-      uishell_sidebar_local_seed(dashboard, node, str8_lit("card"), str8_lit(".ref"), str8_lit(".group"), id);
-      continue;
-    }
-    uishell_sidebar_local_seed(dashboard, node, str8_lit("group"), str8_lit(".group"), str8_lit(".section"), id);
-    // A section is published under its title, a name of its own only when
-    // that differs from its groups' names.
-    if(label.size && !str8_match(label, uishell_sidebar_local_title(scratch.arena, node), 0))
-    { uishell_sidebar_local_set_field(node, str8_lit("label"), label); }
-  }
-  scratch_end(scratch);
-}
-
-// Makes the window's working copy of its local sections, groups and pins
-// from the Dashboard Andamento restored.
-internal void
-uishell_sidebar_local_load(UIShell_SidebarState *state, CFG_Node *window)
-{
-  cfg_node_release(rd_state->cfg, uishell_sidebar_local_tree(window));
-  AndamentoDashboard *dashboard = uishell_sidebar_dashboard(state);
-  if(dashboard && dashboard->local_count)
-  {
-    uishell_sidebar_local_seed(dashboard, uishell_sidebar_local_tree_alloc(window), str8_lit("section"), str8_lit(".section"),
-                               str8_zero(), str8_zero());
-  }
-  // Andamento holds what was last published, so publishing removes any
-  // entity the copy left out (one whose section or group had gone).
-  uishell_sidebar_local_published_clear(state);
-  for(U64 i = 0; dashboard && i < dashboard->local_count; i++)
-  {
-    Temp scratch = scratch_begin(0, 0);
-    AndamentoEntity e = dashboard->locals[i].entity;
-    uishell_sidebar_local_published_add(state, push_str8f(scratch.arena, "%S/%S", uishell_sidebar_string(e.kind), uishell_sidebar_string(e.id)), 0);
-    scratch_end(scratch);
-  }
-}
 
 // Imports the window's records into its new core, before its first observe:
 // the dashboard first, then each workspace's (which registers it and binds
@@ -401,6 +284,5 @@ uishell_sidebar_records_load(UIShell_SidebarState *state, CFG_Node *window)
     }
     if(!kept) { andamento_workspace_forget(state->core, uishell_sidebar_workspace(id), 0); }
   }
-  uishell_sidebar_local_load(state, window);
   scratch_end(scratch);
 }
