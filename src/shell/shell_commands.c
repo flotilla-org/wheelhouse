@@ -1063,9 +1063,6 @@ uishell_dispatch_panel_command(String8 name)
       RD_PanelID split_id = rd_arrangement_panel_from_cfg(arrangement, split_panel->id)->id;
       CFG_Node *dragdrop_origin_panel_cfg = cfg_node_from_id(uishell_regs()->panel);
       B32 do_drop = do_dragdrop_split && moving_view != &cfg_nil_node && dragdrop_origin_panel_cfg != &cfg_nil_node;
-      // Closing the focused source hands focus to its heir, after the new
-      // panel takes it below.
-      B32 origin_focused = panel_tree.focused->cfg == dragdrop_origin_panel_cfg;
       RD_ArrangementDrop drop = {0};
       if(do_drop) { drop = uishell_drop_view(arrangement, moving_view, split_panel, split_dir, &cfg_nil_node); }
       else
@@ -1146,14 +1143,6 @@ uishell_dispatch_panel_command(String8 name)
         UIShell_RegsScope(.panel = new_panel_cfg->id)
         {
           uishell_push_cmd_current(str8_lit("tab_bar_bottom"));
-        }
-      }
-
-      if(drop.heir != 0 && origin_focused)
-      {
-        UIShell_RegsScope(.panel = rd_arrangement_panel_from_id(arrangement, drop.heir)->cfg)
-        {
-          uishell_push_cmd_current(str8_lit("focus_panel"));
         }
       }
     }

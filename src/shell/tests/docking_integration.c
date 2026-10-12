@@ -438,8 +438,7 @@ entry_point(CmdLine *cmdline)
     IntegrationCheck(rendered == predicted);
   }
   // Splitting the last View out of the focused Panel closes it in the same
-  // edit and queues focus for its heir after the new panel's, as the queued
-  // close did.
+  // edit, and focus follows the View into the new panel (#329).
   {
     panels = integration_reset_panels(window, Axis2_X);
     CFG_Node *origin = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
@@ -452,13 +451,12 @@ entry_point(CmdLine *cmdline)
     integration_rect = r2f32p(0, 0, 2400, 1600);
     UIShell_CmdNode *before_cmd = integration_move(window, source, destination, Dir2_Right);
     IntegrationCheck(cfg_node_from_id(origin_id) == &cfg_nil_node && !integration_close_queued(before_cmd));
-    CFG_ID last_focus = 0, first_focus = 0;
+    CFG_ID last_focus = 0;
     for(UIShell_CmdNode *n = before_cmd ? before_cmd->next : rd_state->cmds[0].first; n; n = n->next)
     {
-      if(str8_match(n->cmd.name, str8_lit("focus_panel"), 0))
-      { if(first_focus == 0) { first_focus = n->cmd.regs->panel; } last_focus = n->cmd.regs->panel; }
+      if(str8_match(n->cmd.name, str8_lit("focus_panel"), 0)) { last_focus = n->cmd.regs->panel; }
     }
-    IntegrationCheck(first_focus == source->parent->id && last_focus == destination->id);
+    IntegrationCheck(last_focus == source->parent->id);
   }
   integration_rect.y1 = 480;
   // A shown target is remeasured when the drop is committed after a resize.

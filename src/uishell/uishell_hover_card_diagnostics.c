@@ -2162,11 +2162,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       abs_f32((F32)f64_from_str8(first_survivor->string)-.15f) < .0001f &&
       abs_f32((F32)f64_from_str8(last_survivor->string)-.45f) < .0001f,
       "empty source collapse flattens survivors and retains their allocation");
-    B32 focused_survivor = 0;
+    CFG_ID last_focus = 0;
     for(UIShell_CmdNode *n = before_collapse ? before_collapse->next : rd_state->cmds[0].first; n; n = n->next)
-    { if(str8_match(n->cmd.name, str8_lit("focus_panel"), 0))
-      { focused_survivor |= n->cmd.regs->panel == first_survivor->id; } }
-    CardCheck(focused_survivor, "closing the focused source selects the first surviving leaf, not the released split");
+    { if(str8_match(n->cmd.name, str8_lit("focus_panel"), 0)) { last_focus = n->cmd.regs->panel; } }
+    CardCheck(last_focus == moving_section->parent->id, "closing the focused source leaves focus with the View, in its new panel (#329)");
     cfg_node_release(rd_state->cfg, collapse_root);
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("control_views_split_x")));
     if(collapse_axis != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, collapse_axis); }
