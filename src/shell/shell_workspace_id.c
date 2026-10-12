@@ -129,7 +129,8 @@ uishell_workspace_id_from_cfg(CFG_Node *workspace)
   UIShell_WorkspaceId id = {0};
   if(workspace == &cfg_nil_node) { return id; }
   CFG_Node *saved = cfg_node_child_from_string(workspace, str8_lit("workspace_id"));
-  if(!uishell_workspace_id_from_string(saved->first->string, &id))
+  // The zero ID is "none" to the index, so a saved one is made anew too.
+  if(!uishell_workspace_id_from_string(saved->first->string, &id) || uishell_workspace_id_is_zero(id))
   {
     Temp scratch = scratch_begin(0, 0);
     id = uishell_workspace_id_make();
