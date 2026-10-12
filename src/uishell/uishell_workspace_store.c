@@ -65,6 +65,7 @@
 //       panel: {id: 2 selected tabs_on_bottom}   Presentation State, by panel ID
 //       view: {slot: "u:3" daemon}               a View's logical settings its spec doesn't hold
 //       resolution: {slot: "u:3" session: ..}    a daemon session Andamento hasn't saved
+//       previous: {terminal: {previous_of: ..}}  a Slot's previous instance, whole
 //     }
 //     view_presentation: {                       each View's Presentation State, by View
 //       workspace: {key: "u:3" label: "Shell"}   Address (shell_core.c, "View Presentation
@@ -1061,8 +1062,9 @@ uishell_store_noted(AndamentoWorkspaceArrangement *a, U32 kind, String8 key)
 
 // Replaces `owner`'s panel tree with Andamento's document, keeping the View
 // node of every slot it still tabs and the node (with its Presentation
-// State) of every panel whose ID it keeps. New Views take their settings
-// from the device-local `arrangement_presentation`, which goes. Returns
+// State) of every panel whose ID it keeps. New Views take their settings,
+// and Slots their previous instances, from the device-local
+// `arrangement_presentation`, which goes. Returns
 // whether Andamento had a document to build.
 internal B32
 uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_WorkspaceId id, U64 *generation_out)
@@ -1095,6 +1097,20 @@ uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Worksp
         CFG_Node *view = cfg_node_from_id(t->view);
         if(uishell_store_previous_of(view).size) { cfg_node_ptr_list_push(arena, &previous, view); }
       }
+    }
+    // And those this device kept, for Slots config has none beside (a
+    // restart): one per Slot.
+    CFG_NodePtrList restored = {0};
+    for(CFG_Node *c = device->first; c != &cfg_nil_node; c = c->next)
+    {
+      String8 of = uishell_store_previous_of(c->first);
+      if(!str8_match(c->string, str8_lit("previous"), 0) || !of.size) { continue; }
+      B32 kept = 0;
+      for(CFG_NodePtrNode *p = previous.first; p && !kept; p = p->next) { kept = str8_match(uishell_store_previous_of(p->v), of, 0); }
+      if(kept) { continue; }
+      CFG_Node *view = cfg_node_deep_copy(rd_state->cfg, c->first);
+      cfg_node_ptr_list_push(arena, &previous, view);
+      cfg_node_ptr_list_push(arena, &restored, view);
     }
     AndamentoArrangementDoc *doc = &stored->doc;
     UIShell_DocShape shape = uishell_store_doc_shape(arena, doc);
@@ -1211,6 +1227,11 @@ uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Worksp
     a->next_id = fresh;
     for(U64 i = 0; i < ids_used; i++) { a->next_id = Max(a->next_id, ids[i]+1); }
     rd_arrangement_save(rd_state->cfg, a);
+    // A kept previous instance whose Slot the document no longer tabs goes.
+    for(CFG_NodePtrNode *p = restored.first; p; p = p->next)
+    {
+      if(p->v->parent == &cfg_nil_node) { cfg_node_release(rd_state->cfg, p->v); }
+    }
     for(U64 i = 0; i < ids_used; i++)
     {
       CFG_Node *node = cfg_node_from_id(rd_arrangement_panel_from_id(a, ids[i])->cfg);
@@ -1511,8 +1532,8 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
     }
     if(asks.size) { uishell_store_set_setting(view, str8_lit("asks"), asks); }
     else { uishell_store_drop_setting(view, str8_lit("asks")); }
-    // A previous instance the user closed, or none kept (a restart, content
-    // that couldn't keep one), is released.
+    // A previous instance the user closed, or none kept (content that
+    // couldn't keep one), is released.
     if(content.has_previous && !uishell_store_key_in(key, previous, previous_count))
     {
       error = 0;
@@ -2467,6 +2488,21 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
       {
         CFG_Node *view = cfg_node_from_id(t->view);
         String8 key = uishell_store_setting(view, str8_lit("slot"));
+        // A Slot's previous instance isn't in Andamento's document: this
+        // device keeps it whole, without what is this run's.
+        if(!key.size && uishell_store_previous_of(view).size)
+        {
+          CFG_Node *kept = cfg_node_deep_copy(copy_state, view);
+          for(CFG_Node *c = kept->first, *next = 0; c != &cfg_nil_node; c = next)
+          {
+            next = c->next;
+            if(str8_match(c->string, str8_lit("selected"), 0) ||
+               uishell_store_key_in(c->string, uishell_store_runtime_keys, ArrayCount(uishell_store_runtime_keys)))
+            { cfg_node_release(copy_state, c); }
+          }
+          CFG_Node *entry = cfg_node_new(copy_state, device, str8_lit("previous"));
+          cfg_node_insert_child(copy_state, entry, entry->last, kept);
+        }
         if(!key.size) { continue; }
         UIShell_ViewSpec spec = {0};
         String8 taken[4];

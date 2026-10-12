@@ -1402,6 +1402,22 @@ entry_point(CmdLine *cmdline)
     CFG_Node *previous = state_previous_view(reviewer, str8_lit("partner"));
     StateCheck(str8_match(rd_expr_from_cfg(partner), str8_lit("attach partner 3"), 0) && !uishell_store_setting(partner, str8_lit("session")).size);
     StateCheck(str8_match(uishell_store_setting(previous, str8_lit("session")), str8_lit("S1"), 0));
+    // The previous instance, with the session it shows, survives a restart
+    // until the user releases it.
+    rd_autosave();
+    state_pump();
+    ws = state_restart(ws, &theme, str8_zero());
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    reviewer = state_workspace_labelled(window, str8_lit("reviewer"));
+    partner = state_slot_view(reviewer, str8_lit("partner"));
+    previous = state_previous_view(reviewer, str8_lit("partner"));
+    StateCheck(previous != &cfg_nil_node && previous->parent == partner->parent &&
+               str8_match(uishell_store_setting(previous, str8_lit("session")), str8_lit("S1"), 0));
+    // Andamento's binding keeps its previous instance in memory only: after
+    // the restart it is this device's alone.
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == ANDAMENTO_CONTENT_CURRENT);
+    StateCheck(state_offers(previous, UIShell_SlotAction_ReleasePrevious));
     uishell_store_act(previous, UIShell_SlotAction_ReleasePrevious);
     state_frame(ws);
     StateCheck(state_previous_view(reviewer, str8_lit("partner")) == &cfg_nil_node);
