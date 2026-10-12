@@ -373,6 +373,10 @@ entry_point(CmdLine *cmd_line)
       uishell_subscriptions_close();
       wheelhouse_ingress_stop(uishell_ingress);
       uishell_ingress = 0;
+#if OS_MAC
+      // A logout or shutdown that asked Wheelhouse to quit waits for this.
+      mac_wm_quit_finished();
+#endif
     }break;
 
     case ExecMode_Help:

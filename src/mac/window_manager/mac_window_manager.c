@@ -147,9 +147,25 @@
   // It does not depend on balancing submenu delegate callbacks.
   if([notification object] == [NSApp mainMenu]) { [self finishMenuTracking]; }
 }
-// Quit from the Dock, logout or shutdown ends in -terminate:, which would
-// exit() without the app's teardown (its connectors left running); it quits
-// as the Quit menu item does instead.
+// Quit from the Dock, logout and shutdown send the quit Apple Event, whose
+// default handler calls -terminate:. That would exit() without the app's
+// teardown (its connectors left running), cancelling it tells the system that
+// Wheelhouse refused a logout, and NSTerminateLater waits in a nested run loop
+// that never runs Wheelhouse's frames, so Exit could not finish. Instead the
+// event is left unanswered while Exit tears down, as the Quit menu item does,
+// and answered once teardown is done (mac_wm_quit_finished). The system waits
+// for that answer and sees Wheelhouse agree to quit.
+- (void)handleQuitEvent:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)reply
+{
+  // Already quitting: answer this one now; the first is answered when done.
+  if(mac_wm_state->quit_suspension != 0) { return; }
+  MAC_WM_Window *window = mac_wm_menu_command_target_window();
+  if(window == 0) { window = mac_wm_state->first_window; }
+  if(window == 0) { [NSApp terminate:self]; return; }
+  mac_wm_state->quit_suspension = [[NSAppleEventManager sharedAppleEventManager] suspendCurrentAppleEvent];
+  mac_wm_push_menu_command_for_window(window, str8_lit("exit"));
+}
+// Anything else that calls -terminate: quits as the Quit menu item does.
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
 {
   MAC_WM_Window *window = mac_wm_menu_command_target_window();
@@ -391,6 +407,17 @@ internal void
 mac_wm_push_menu_command_for_window(MAC_WM_Window *window, String8 command_name)
 {
   mac_wm_push_menu_command_for_window_at_pos(window, command_name, v2f32(0, 0));
+}
+
+internal void
+mac_wm_quit_finished(void)
+{
+  if(mac_wm_state != 0 && mac_wm_state->quit_suspension != 0)
+  {
+    // Sends the suspended quit event's reply now; no event pump is needed.
+    [[NSAppleEventManager sharedAppleEventManager] resumeWithSuspensionID:mac_wm_state->quit_suspension];
+    mac_wm_state->quit_suspension = 0;
+  }
 }
 
 internal void
@@ -804,6 +831,11 @@ wm_init(void)
                         name:NSApplicationDidResignActiveNotification object:NSApp];
   [NSApp setDelegate:mac_wm_state->menu_target];
   [NSApp finishLaunching];
+  // After finishLaunching, which installs AppKit's own handler for it.
+  [[NSAppleEventManager sharedAppleEventManager] setEventHandler:mac_wm_state->menu_target
+                                                     andSelector:@selector(handleQuitEvent:withReplyEvent:)
+                                                   forEventClass:kCoreEventClass
+                                                      andEventID:kAEQuitApplication];
   mac_wm_apply_menu_mode(mac_wm_state->menu_mode);
 }
 
