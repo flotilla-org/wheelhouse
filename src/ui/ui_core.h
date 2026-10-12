@@ -704,7 +704,6 @@ struct UI_State
   UI_HoverCardMask *hover_card_extra;
   UI_Key hover_card_keys[2];
   Rng2F32 hover_card_rects[2];
-  U64 edit_owner_view;
 
   //- rjf: main arena
   Arena *arena;

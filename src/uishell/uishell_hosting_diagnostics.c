@@ -18,7 +18,9 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
     HostingCheck(str8_match(setting.action, i == 0 ? str8_lit("Hosting unavailable") : i == 1 ? str8_lit("Hand to daemon") : str8_lit("Adopt"), 0), "action label follows hosting");
   }
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
-  CFG_Node *panel = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
+  // An arrangement of its own beside the window's, so its Views have
+  // addresses of their own.
+  CFG_Node *panel = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, window, str8_lit("hosting_diagnostic")), str8_lit("panels"));
   CFG_Node *view = rd_cfg_new_view_tab(panel, str8_lit("terminal"), str8_zero(), 1);
   // A never-built, unselected terminal has no runtime state. Hosting lookup
   // must safely report unavailable and leave the action disabled.
@@ -27,21 +29,21 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
   for(U64 slot = 0; slot < rd_state->view_state_slots_count; slot++)
   {
     for(RD_ViewState *state = rd_state->view_state_slots[slot].first; state; state = state->hash_next)
-    { had_state |= state->cfg_id == untouched->id; }
+    { had_state |= rd_view_address_match(state->view, rd_view_address_from_cfg(untouched)); }
   }
   HostingCheck(!had_state, "untouched terminal begins without view state");
   UIShell_RuntimeSetting untouched_setting = uishell_runtime_setting(scratch.arena, untouched, str8_lit("terminal_hosting"));
   HostingCheck(str8_match(untouched_setting.value, str8_lit("unavailable"), 0) && untouched_setting.command.size == 0,
                "never-built hidden terminal is unavailable with no action");
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(panel), .tab = view->id, .view = view->id)
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(panel), .tab = rd_view_address_from_cfg(view), .view = rd_view_address_from_cfg(view))
   {
     // Issue #109: hosting overlay is per-view and absent means off.
+    // The overlay is the View's Presentation State.
     HostingCheck(!rd_view_setting_b32_from_name(str8_lit("show_hosting_overlay")), "overlay defaults off");
-    cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("show_hosting_overlay"));
-    CFG_Node *overlay = cfg_node_child_from_string(view, str8_lit("show_hosting_overlay"));
-    cfg_node_new(rd_state->cfg, overlay, str8_lit("1"));
-    HostingCheck(rd_view_setting_b32_from_name(str8_lit("show_hosting_overlay")), "overlay can be enabled for this view");
-    cfg_node_release(rd_state->cfg, overlay);
+    rd_view_setting_set(uishell_regs()->view, str8_lit("show_hosting_overlay"), str8_lit("1"));
+    HostingCheck(rd_view_setting_b32_from_name(str8_lit("show_hosting_overlay")) &&
+                 cfg_node_child_from_string(view, str8_lit("show_hosting_overlay")) == &cfg_nil_node, "overlay can be enabled for this view");
+    rd_view_setting_clear(uishell_regs()->view, str8_lit("show_hosting_overlay"));
     HostingCheck(!rd_view_setting_b32_from_name(str8_lit("show_hosting_overlay")), "removing override restores off");
     // Runtime metadata/actions are schema rows and cannot enter text editing.
     char *keys[] = {"hosting", "hosting_action"};
@@ -73,19 +75,15 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
     ui_select_state(test_ui);
     for(U32 enabled = 0; enabled < 3; enabled++)
     {
-      if(enabled == 1)
-      {
-        CFG_Node *node = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("show_hosting_overlay"));
-        cfg_node_new(rd_state->cfg, node, str8_lit("1"));
-      }
-      if(enabled == 2) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("show_hosting_overlay"))); }
+      if(enabled == 1) { rd_view_setting_set(rd_view_address_from_cfg(view), str8_lit("show_hosting_overlay"), str8_lit("1")); }
+      if(enabled == 2) { rd_view_setting_clear(rd_view_address_from_cfg(view), str8_lit("show_hosting_overlay")); }
       UI_EventList events = {0};
       UI_AnimationInfo animation = {0};
       ui_begin_build(ws->os, &events, &ws->ui->icon_info, ws->theme, &animation, 1.f/60, 1.f/60);
       UI_Key root_key = ui_key_from_string(ui_active_seed_key(), str8_lit("terminal_root"));
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
       {
-        wh_view_ui_direct(wh_renderer_from_name(str8_lit("terminal")), view, r2f32p(0, 0, 640, 480));
+        wh_view_ui_direct(wh_renderer_from_name(str8_lit("terminal")), rd_view_address_from_cfg(view), r2f32p(0, 0, 640, 480));
       }
       UI_Box *pill = ui_box_from_key(ui_key_from_string(root_key, str8_lit("terminal_hosting")));
       HostingCheck((!ui_box_is_nil(pill) && pill->last_touched_build_index == ui_state->build_index) == (enabled == 1), "canvas pill follows off/on/off setting");
@@ -98,7 +96,7 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
     B32 saw_value = 0, saw_action = 0;
     Vec2F32 action_pos = {0};
     UIShell_CmdNode *before_action = rd_state->cmds[0].last;
-    UIShell_RegsScope(.view = settings->id)
+    UIShell_RegsScope(.view = rd_view_address_from_cfg(settings))
     for(U32 frame = 0; frame < 5; frame++)
     {
       UI_EventList events = {0};
@@ -114,7 +112,7 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
       ui_begin_build(ws->os, &events, &ws->ui->icon_info, ws->theme, &animation, 1.f/60, 1.f/60);
       if(frame >= 3) { ui_state->mouse = action_pos; }
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) UI_PrefHeight(ui_em(3, 1))
-      { wh_view_ui_direct(wh_renderer_from_name(str8_lit("watch")), settings, r2f32p(0, 0, 640, 480)); }
+      { wh_view_ui_direct(wh_renderer_from_name(str8_lit("watch")), rd_view_address_from_cfg(settings), r2f32p(0, 0, 640, 480)); }
       ui_end_build();
       for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
       {
@@ -134,7 +132,10 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
     for(UIShell_CmdNode *n = before_action ? before_action->next : rd_state->cmds[0].first; n; n = n->next)
     {
       if(str8_match(n->cmd.name, str8_lit("terminal_transfer"), 0))
-      { routed |= n->cmd.regs->view == view->id && n->cmd.regs->tab == view->id; }
+      {
+        RD_ViewAddress address = rd_view_address_from_cfg(view);
+        routed |= rd_view_address_match(n->cmd.regs->view, address) && rd_view_address_match(n->cmd.regs->tab, address);
+      }
     }
     HostingCheck(routed, "settings click routes action to owning terminal");
     ui_select_state(saved_ui);
@@ -144,7 +145,7 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
                  cfg_node_child_from_string(view, str8_lit("hosting_action")) == &cfg_nil_node, "runtime metadata is not persisted");
     uishell_terminal_runtime_release(tv);
   }
-  cfg_node_release(rd_state->cfg, panel);
+  cfg_node_release(rd_state->cfg, panel->parent);
 #undef HostingCheck
   scratch_end(scratch);
   return failures == 0;

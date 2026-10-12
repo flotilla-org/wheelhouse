@@ -277,7 +277,7 @@ uishell_overview_benchmark_end(void)
     String8 marker = str8_lit("FINAL UPDATE");
     for(U32 i = 0; i < b->count; i += 1)
     {
-      RD_ViewState *view = rd_view_state_from_cfg(cfg_node_from_id(b->views[i]));
+      RD_ViewState *view = rd_view_state_from_view(rd_view_address_from_cfg(cfg_node_from_id(b->views[i])), 0);
       UIShell_TerminalViewState *terminal = (UIShell_TerminalViewState *)view->user_data;
       if(terminal != 0)
       {

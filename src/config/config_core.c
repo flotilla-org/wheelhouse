@@ -162,6 +162,17 @@ cfg_change_gen(void)
   return result;
 }
 
+internal U64
+cfg_tree_gen(void)
+{
+  U64 result = 0;
+  if(cfg_ctx != 0)
+  {
+    result = cfg_ctx->tree_gen;
+  }
+  return result;
+}
+
 internal CFG_Node *
 cfg_node_root(void)
 {
@@ -594,6 +605,7 @@ internal CFG_Node *
 cfg_node_alloc(CFG_State *state)
 {
   state->ctx.change_gen += 1;
+  state->ctx.tree_gen += 1;
   
   // rjf: allocate
   CFG_Node *result = state->free;
@@ -638,6 +650,7 @@ internal void
 cfg_node_release(CFG_State *state, CFG_Node *node)
 {
   state->ctx.change_gen += 1;
+  state->ctx.tree_gen += 1;
   
   Temp scratch = scratch_begin(0, 0);
   
@@ -773,6 +786,7 @@ cfg_node_equip_string(CFG_State *state, CFG_Node *node, String8 string)
   cfg_string_release(state, node->string);
   node->string = cfg_string_alloc(state, string);
   state->ctx.change_gen += 1;
+  state->ctx.tree_gen += 1;
 }
 
 internal void
@@ -798,6 +812,7 @@ cfg_node_insert_child(CFG_State *state, CFG_Node *parent, CFG_Node *prev_child, 
     }
     DLLInsert_NPZ(&cfg_nil_node, parent->first, parent->last, prev_child, new_child, next, prev);
     new_child->parent = parent;
+    state->ctx.tree_gen += 1;
   }
 }
 
@@ -808,6 +823,7 @@ cfg_node_unhook(CFG_State *state, CFG_Node *parent, CFG_Node *child)
   {
     DLLRemove_NPZ(&cfg_nil_node, parent->first, parent->last, child, next, prev);
     child->parent = &cfg_nil_node;
+    state->ctx.tree_gen += 1;
   }
 }
 

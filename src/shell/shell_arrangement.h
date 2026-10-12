@@ -59,14 +59,78 @@ struct RD_PanelAddress
 
 read_only global RD_PanelAddress rd_nil_panel_address = {0};
 
+// A View is addressed by its owner, its key in the owner's namespace, and
+// its instance (CONTEXT.md, "View Address"). Whatever refers to a View (a
+// panel's tabs, UI keys, command registers, its view state and Presentation
+// State) does so by address; the config node a View is mirrored to is
+// reached through it (rd_cfg_from_view). Its key is saved on that node:
+//   Workspace  a Slot's View, `slot "<slot key>"`; its previous instance,
+//              `previous_of "<slot key>"`; a View of a Floating Panel the
+//              workspace hosts, `slot "u:<n>"`; a View made for a provider's
+//              slot, until the workspace store keys it, `resource_id`
+//   Dashboard  a sidebar section, `section "<section key>"`
+//   Window     any other View of the window's sidebar or of a Floating Panel
+//              the window hosts, `slot "u:<n>"`
+//   Transient  a View of an immediate tree (rd_immediate_cfg_from_key): the
+//              tree's key and the View's kind, which nothing saves
+// The "u:<n>" keys of a Workspace, and of a window, are one namespace each:
+// saving an arrangement gives a View without a key the next free one
+// (rd_view_key_assign).
+typedef enum RD_ViewOwnerKind
+{
+  RD_ViewOwnerKind_Null,
+  RD_ViewOwnerKind_Workspace,
+  RD_ViewOwnerKind_Dashboard,
+  RD_ViewOwnerKind_Window,
+  RD_ViewOwnerKind_Transient,
+} RD_ViewOwnerKind;
+
+typedef enum RD_ViewInstance
+{
+  RD_ViewInstance_Current,
+  // The instance a keep-previous rebind kept beside its Slot's View.
+  RD_ViewInstance_Previous,
+} RD_ViewInstance;
+
+// Plain data, without padding: copied, compared and hashed whole.
+typedef struct RD_ViewAddress RD_ViewAddress;
+struct RD_ViewAddress
+{
+  RD_ViewOwnerKind owner;
+  RD_ViewInstance instance;
+  // The owner's ID: a Workspace ID; for the Dashboard, and a window, the
+  // Window ID of the window that shows it; zero for a transient host.
+  UIShell_WorkspaceId id;
+  // The key, hashed (rd_view_key_hash).
+  U128 key;
+};
+StaticAssert(sizeof(RD_ViewAddress) == sizeof(RD_ViewOwnerKind)+sizeof(RD_ViewInstance)+sizeof(UIShell_WorkspaceId)+sizeof(U128), rd_view_address_unpadded);
+
+read_only global RD_ViewAddress rd_nil_view_address = {0};
+
+typedef struct RD_ViewAddressNode RD_ViewAddressNode;
+struct RD_ViewAddressNode
+{
+  RD_ViewAddressNode *next;
+  RD_ViewAddress v;
+};
+
+typedef struct RD_ViewAddressList RD_ViewAddressList;
+struct RD_ViewAddressList
+{
+  RD_ViewAddressNode *first;
+  RD_ViewAddressNode *last;
+  U64 count;
+};
+
 typedef struct RD_ArrangementTab RD_ArrangementTab;
 struct RD_ArrangementTab
 {
   RD_ArrangementTab *next;
   RD_ArrangementTab *prev;
-  // The View's config node, which saving moves but never recreates (its
-  // runtime state, such as a live terminal, is keyed by it). Its `slot`
-  // setting names its Slot in Andamento's document.
+  // The View's config node, which saving moves but never recreates. Its key
+  // names it in its owner (its View Address), and a Slot's names it in
+  // Andamento's document.
   CFG_ID view;
 };
 
@@ -159,8 +223,9 @@ struct RD_PanelNode
   Side tab_side;
   
   // rjf: which tabs are attached
-  CFG_NodePtrList tabs;
-  CFG_Node *selected_tab;
+  RD_ViewAddressList tabs;
+  // Nil when it has none.
+  RD_ViewAddress selected_tab;
 };
 
 typedef struct RD_PanelTree RD_PanelTree;
@@ -185,7 +250,6 @@ read_only global RD_PanelNode rd_nil_panel_node =
   &rd_nil_panel_node,
   &rd_nil_panel_node,
   &rd_nil_panel_node,
-  .selected_tab = &cfg_nil_node,
 };
 
 // The config keys around a root panel node, by the root's name.
@@ -220,9 +284,44 @@ internal B32 rd_panel_owner_match(RD_PanelOwner a, RD_PanelOwner b);
 internal B32 rd_panel_address_match(RD_PanelAddress a, RD_PanelAddress b);
 internal RD_PanelAddress rd_panel_address(RD_PanelOwner owner, RD_PanelID id);
 
+//- View addresses
+// Where a host keeps its Views' Presentation State (rd_view_presentation):
+// `view_presentation:{<owner kind name>:{key:"<key>" [previous] <settings>}}`.
+#define RD_VIEW_PRESENTATION_ROOT str8_lit("view_presentation")
+internal RD_ViewAddress rd_view_address_make(RD_ViewOwnerKind owner, UIShell_WorkspaceId id, String8 key, RD_ViewInstance instance);
+internal B32 rd_view_address_match(RD_ViewAddress a, RD_ViewAddress b);
+internal B32 rd_view_address_is_nil(RD_ViewAddress view);
+internal U128 rd_view_key_hash(String8 key);
+internal String8 rd_view_owner_kind_name(RD_ViewOwnerKind kind);
+internal void rd_view_address_list_push(Arena *arena, RD_ViewAddressList *list, RD_ViewAddress view);
+// The key saved on a View node, and its instance; empty when it has none.
+internal String8 rd_view_key_from_cfg(CFG_Node *view, RD_ViewInstance *instance_out);
+// Which owner `view`, a tab of an arrangement, belongs to, and the node its
+// namespace is kept on: its workspace, or a window (also when the window's
+// own panels are its workspace). Null outside an arrangement.
+internal RD_ViewOwnerKind rd_view_owner_kind_from_tab(CFG_Node *view, CFG_Node **host_out);
+// The address of `view`, a tab of an arrangement whose panels are `owner`'s;
+// nil when it has no key.
+internal RD_ViewAddress rd_view_address_from_tab(RD_PanelOwner owner, CFG_Node *view);
+// The Views of `host`'s namespace for `owner`: the tabs of its arrangements
+// that are `owner`'s, in tree order.
+internal CFG_NodePtrList rd_view_namespace_views(Arena *arena, CFG_Node *host, RD_ViewOwnerKind owner);
+// The highest n of a "u:<n>" key among `host`'s Views of `owner` and the
+// Presentation State it keeps for them; 0 for none.
+internal U64 rd_view_user_number_max(CFG_Node *host, RD_ViewOwnerKind owner);
+// Gives `view`, a tab of a Workspace or a window, the next free "u:<n>" of
+// its owner's namespace when it has no key or, with `unique`, when another
+// View there has its key. Sections keep theirs. Returns whether it did.
+internal B32 rd_view_key_assign(CFG_State *state, CFG_Node *view, B32 unique);
+// Told of each View node a save moves from elsewhere, before the move
+// (`moved` 0) and after it: the shell keeps a View's state and Presentation
+// State with it when the move changes its address.
+typedef void RD_ArrangementViewMoveHook(CFG_Node *view, B32 moved);
+global RD_ArrangementViewMoveHook *rd_arrangement_view_move_hook = 0;
+
 //- The renderer's panel tree
-// The arrangement's panels, addressed as `owner`'s, and their tabs as View
-// nodes, with the Presentation State saved on each panel's node: the focus
+// The arrangement's panels, addressed as `owner`'s, and their tabs by View
+// Address, with the Presentation State saved on each panel's node: the focus
 // mark (`selected`; the last marked panel in tree order has focus) and
 // `tabs_on_bottom`. Valid until the config changes.
 internal RD_PanelTree rd_panel_tree_from_arrangement(Arena *arena, RD_PanelOwner owner, RD_Arrangement *arrangement);

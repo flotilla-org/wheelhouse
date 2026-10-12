@@ -14,11 +14,14 @@ uishell_query_ui_diagnostics(RD_WindowState *ws)
   rd_state->cmds_arenas[0] = rd_state->cmds_arenas[1] = arena;
   rd_state->cmds_gen = 0;
   ws->ui = test; ui_select_state(test);
-  CFG_Node *view = cfg_node_new(rd_state->cfg, cfg_node_from_id(ws->cfg_id), str8_lit("text"));
-  RD_ViewState *vs = rd_view_state_from_cfg(view);
+  // A View in an arrangement of its own, beside the window's, so it has an
+  // address.
+  CFG_Node *host = cfg_node_new(rd_state->cfg, cfg_node_from_id(ws->cfg_id), str8_lit("query_diagnostic"));
+  CFG_Node *view = rd_cfg_new_view_tab(cfg_node_new(rd_state->cfg, host, str8_lit("panels")), str8_lit("text"), str8_zero(), 1);
+  RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
   B32 ok = 1;
 #define QueryCheck(expr) do { if(!(expr)) { fprintf(stderr, "FAIL embedded query UI %d: %s\n", __LINE__, #expr); ok = 0; } } while(0)
-  UIShell_RegsScope(.window = ws->cfg_id, .view = view->id, .tab = view->id,
+  UIShell_RegsScope(.window = ws->cfg_id, .view = rd_view_address_from_cfg(view), .tab = rd_view_address_from_cfg(view),
                     .edit_owner_key = ui_key_zero(), .edit_owner_captured = 0)
   {
     for(U64 frame = 0; frame < 8; frame++)
@@ -81,13 +84,13 @@ uishell_query_ui_diagnostics(RD_WindowState *ws)
       QueryCheck(cfg_node_child_from_string(query, str8_lit("input"))->first->string.size == 0);
       QueryCheck(vs->query_is_open && str8_match(rd_view_query_input(), str8_lit("replacement"), 0));
       QueryCheck(str8_match(rd_view_query_cmd(), str8_lit("search"), 0));
-      QueryCheck(uishell_regs()->view == view->id);
-      UIShell_RegsScope(.view = lister->id)
+      QueryCheck(rd_view_address_match(uishell_regs()->view, rd_view_address_from_cfg(view)));
+      UIShell_RegsScope(.view = rd_view_address_from_cfg(lister))
       { uishell_cmd("update_query", .string = str8_lit("palette edited")); uishell_edit_drain_commands(); }
     }
     uishell_cmd("cancel_query"); uishell_edit_drain_commands();
   }
-  cfg_node_release(rd_state->cfg, view);
+  cfg_node_release(rd_state->cfg, host);
   ui_state_release(test); ws->ui = saved_window_ui; ui_select_state(saved_ui);
   rd_state->cmds[0] = saved_commands[0]; rd_state->cmds[1] = saved_commands[1];
   rd_state->cmds_arenas[0] = saved_arenas[0]; rd_state->cmds_arenas[1] = saved_arenas[1];

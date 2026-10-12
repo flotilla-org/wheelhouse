@@ -302,6 +302,12 @@ rd_cfg_is_project_filtered(CFG_Node *cfg)
 }
 
 internal B32
+rd_view_is_project_filtered(RD_ViewAddress view)
+{
+  return rd_cfg_is_project_filtered(rd_cfg_from_view(view));
+}
+
+internal B32
 rd_tab_is_shown(CFG_ID view)
 {
   return !rd_cfg_is_project_filtered(cfg_node_from_id(view));
@@ -435,96 +441,44 @@ rd_default_setting_from_names(String8 schema_name, String8 setting_name)
   return result;
 }
 
+// Setting `name` where the registers point: the View's own (its Presentation
+// State, then its node), its Workspace's, its window's, the user's, then the
+// project's; then those scopes' schema defaults, in the same order. Without
+// a View, or for a transient one, the Workspace and window are the
+// register panel's host's, else the register window's. With none of those
+// (before any window builds) there is no setting.
 internal String8
 rd_setting_from_name(String8 name)
 {
   String8 result = {0};
-  if(name.size != 0)
+  RD_ViewAddress view = rd_view_address_is_nil(uishell_regs()->view) ? uishell_regs()->tab : uishell_regs()->view;
+  CFG_Node *view_cfg = rd_cfg_from_view(view);
+  CFG_Node *start = view.owner != RD_ViewOwnerKind_Transient ? view_cfg : &cfg_nil_node;
+  if(start == &cfg_nil_node) { start = rd_cfg_from_panel_owner(uishell_regs()->panel.owner); }
+  if(start == &cfg_nil_node) { start = cfg_node_from_id(uishell_regs()->window); }
+  if(name.size != 0 && (view_cfg != &cfg_nil_node || start != &cfg_nil_node))
   {
-    Temp scratch = scratch_begin(0, 0);
-    
-    // rjf: find most-granular config scopes to begin looking for the setting
-    typedef struct CfgSeedTask CfgSeedTask;
-    struct CfgSeedTask
+    CFG_Node *workspace = &cfg_nil_node;
+    for(CFG_Node *c = start; c != &cfg_nil_node && workspace == &cfg_nil_node; c = c->parent)
     {
-      CfgSeedTask *next;
-      CFG_Node *cfg;
-      B32 allow_bucket_chains;
+      if(str8_match(c->string, str8_lit("workspace"), 0) || str8_match(c->string, str8_lit("detached_workspace"), 0)) { workspace = c; }
+    }
+    CFG_Node *window = rd_window_from_cfg(start);
+    if(window == &cfg_nil_node) { window = cfg_node_from_id(uishell_regs()->window); }
+    // A window is a tree of the user bucket it was loaded into.
+    CFG_Node *user = str8_match(window->parent->string, str8_lit("user"), 0) ? window->parent : cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+    CFG_Node *scopes[] =
+    {
+      rd_view_presentation_from_view(view), view_cfg, workspace, window, user, cfg_node_child_from_string(cfg_node_root(), str8_lit("project")),
     };
-    CFG_Node *view_cfg = cfg_node_from_id(uishell_regs()->view);
-    if(view_cfg == &cfg_nil_node)
-    {
-      view_cfg = cfg_node_from_id(uishell_regs()->tab);
-    }
-    CfgSeedTask panel_task = {0, &cfg_nil_node, 1};
-    // A panel's own node holds no settings, so they resolve from its owner's.
-    if(panel_task.cfg == &cfg_nil_node) { panel_task.cfg = rd_cfg_from_panel_owner(uishell_regs()->panel.owner); }
-    if(panel_task.cfg == &cfg_nil_node) { panel_task.cfg = cfg_node_from_id(uishell_regs()->window); }
-    CfgSeedTask view_task = {&panel_task, view_cfg, 1};
-    CfgSeedTask *first_task = &view_task;
-    CfgSeedTask *last_task = &panel_task;
-    
-    // rjf: for each task, look for the setting, follow parent chain upwards
     CFG_Node *setting = &cfg_nil_node;
-    for(CfgSeedTask *t = first_task; t != 0; t = t->next)
-    {
-      for(CFG_Node *cfg = t->cfg; cfg != &cfg_nil_node; cfg = cfg->parent)
-      {
-        setting = cfg_node_child_from_string(cfg, name);
-        if(setting != &cfg_nil_node)
-        {
-          goto break_all;
-        }
-        if(cfg->parent == cfg_node_root() && t->allow_bucket_chains)
-        {
-          String8 next_bucket = {0};
-          B32 allow_bucket_chains = 0;
-          if(str8_match(cfg->string, str8_lit("user"), 0))
-          {
-            next_bucket = str8_lit("project");
-          }
-          else if(str8_match(cfg->string, str8_lit("project"), 0))
-          {
-            next_bucket = str8_lit("user");
-          }
-          else
-          {
-            allow_bucket_chains = 1;
-            next_bucket = str8_lit("user");
-          }
-          if(next_bucket.size != 0)
-          {
-            CfgSeedTask *task = push_array(scratch.arena, CfgSeedTask, 1);
-            SLLQueuePush(first_task, last_task, task);
-            task->cfg = cfg_node_child_from_string(cfg_node_root(), next_bucket);
-            task->allow_bucket_chains = allow_bucket_chains;
-          }
-        }
-      }
-    }
-    break_all:;
-    
-    // rjf: return resultant child string stored under this key
+    for EachElement(i, scopes) { if(setting == &cfg_nil_node) { setting = cfg_node_child_from_string(scopes[i], name); } }
     result = setting->first->string;
-    
-    // rjf: no result -> look for default in schemas
-    if(result.size == 0)
+    // The Presentation State record's string names its owner, not a schema.
+    for(U64 i = 1; i < ArrayCount(scopes) && result.size == 0; i += 1)
     {
-      for(CfgSeedTask *t = first_task; t != 0; t = t->next)
-      {
-        for(CFG_Node *cfg = t->cfg; cfg != &cfg_nil_node; cfg = cfg->parent)
-        {
-          result = rd_default_setting_from_names(cfg->string, name);
-          if(result.size != 0)
-          {
-            goto break_all2;
-          }
-        }
-      }
-      break_all2:;
+      if(scopes[i] != &cfg_nil_node) { result = rd_default_setting_from_names(scopes[i]->string, name); }
     }
-    
-    scratch_end(scratch);
   }
   return result;
 }
@@ -927,7 +881,7 @@ rd_eval_space_read(E_Space space, void *out, E_SpaceRangeInfo *out_range_info, R
       CFG_Node *cfg = root_cfg;
       if(child_key.size != 0)
       {
-        cfg = cfg_node_child_from_string(root_cfg, child_key);
+        cfg = rd_cfg_setting_child(root_cfg, child_key);
       }
       
       //- rjf: determine data to read from, depending on child type in schema
@@ -1073,7 +1027,7 @@ rd_eval_space_write(E_Space space, void *in, Rng1U64 range)
         // rjf: modifying a label? -> poison this identifier in the macro map
         if(str8_match(child_key, str8_lit("label"), 0))
         {
-          String8 pre_edit_label = rd_label_from_cfg(root_cfg);
+          String8 pre_edit_label = rd_cfg_setting_child(root_cfg, child_key)->first->string;
           if(!str8_match(pre_edit_label, write_string, 0))
           {
             E_Expr *expr = e_string2expr_map_lookup(e_ir_ctx->macro_map, pre_edit_label);
@@ -1085,16 +1039,19 @@ rd_eval_space_write(E_Space space, void *in, Rng1U64 range)
           }
         }
         
-        // rjf: zero-range? delete child
+        // rjf: zero-range? delete child (a View's from its Presentation State,
+        // and any its node still has)
         if(range.min == range.max)
         {
+          CFG_Node *setting = rd_cfg_setting_child(root_cfg, child_key);
+          if(setting->parent != root_cfg) { cfg_node_release(rd_state->cfg, setting); }
           cfg_node_release(rd_state->cfg, cfg_node_child_from_string(root_cfg, child_key));
         }
         
         // rjf: non-zero-range? create child if needed & write value
         else
         {
-          CFG_Node *child_cfg = cfg_node_child_from_string_or_alloc(rd_state->cfg, root_cfg, child_key);
+          CFG_Node *child_cfg = cfg_node_child_from_string_or_alloc(rd_state->cfg, rd_cfg_setting_home(root_cfg, child_key), child_key);
           cfg_node_new_replace(rd_state->cfg, child_cfg, write_string);
         }
       }
@@ -1449,30 +1406,23 @@ rd_view_from_eval(CFG_Node *parent, E_Eval eval)
 }
 
 internal RD_ViewState *
-rd_view_state_from_cfg(CFG_Node *cfg)
-{
-  return rd_view_state_from_key(cfg->id, 0);
-}
-
-internal RD_ViewState *
-rd_view_state_from_key(CFG_ID id, U64 sub_key)
+rd_view_state_from_view(RD_ViewAddress view, U64 sub_key)
 {
   RD_ViewState *view_state = &rd_nil_view_state;
-  if(id != 0 && sub_key == 0 &&
-     id == rd_state->view_state_last_accessed_id &&
-     id == rd_state->view_state_last_accessed->cfg_id &&
-     rd_state->view_state_last_accessed->sub_key == 0)
+  if(sub_key == 0 && rd_state->view_state_last_accessed != 0 && rd_state->view_state_last_accessed != &rd_nil_view_state &&
+     rd_state->view_state_last_accessed->sub_key == 0 &&
+     rd_view_address_match(rd_state->view_state_last_accessed->view, view))
   {
     view_state = rd_state->view_state_last_accessed;
   }
   else
   {
-    U64 hash = u64_djb2_hash_from_str8(str8_struct(&id));
+    U64 hash = u64_djb2_hash_from_str8(str8_struct(&view));
     U64 slot_idx = hash%rd_state->view_state_slots_count;
     RD_ViewStateSlot *slot = &rd_state->view_state_slots[slot_idx];
     for(RD_ViewState *v = slot->first; v != 0; v = v->hash_next)
     {
-      if(v->cfg_id == id && v->sub_key == sub_key)
+      if(v->sub_key == sub_key && rd_view_address_match(v->view, view))
       {
         view_state = v;
         break;
@@ -1491,11 +1441,11 @@ rd_view_state_from_key(CFG_ID id, U64 sub_key)
       view_state = push_array(rd_state->arena, RD_ViewState, 1);
     }
     MemoryCopyStruct(view_state, &rd_nil_view_state);
-    U64 hash = u64_djb2_hash_from_str8(str8_struct(&id));
+    U64 hash = u64_djb2_hash_from_str8(str8_struct(&view));
     U64 slot_idx = hash%rd_state->view_state_slots_count;
     RD_ViewStateSlot *slot = &rd_state->view_state_slots[slot_idx];
     DLLPushBack_NP(slot->first, slot->last, view_state, hash_next, hash_prev);
-    view_state->cfg_id = id;
+    view_state->view = view;
     view_state->sub_key = sub_key;
     view_state->arena = arena_alloc();
     view_state->arena_reset_pos = arena_pos(view_state->arena);
@@ -1508,7 +1458,6 @@ rd_view_state_from_key(CFG_ID id, U64 sub_key)
   if(sub_key == 0)
   {
     rd_state->view_state_last_accessed = view_state;
-    rd_state->view_state_last_accessed_id = id;
   }
   return view_state;
 }
@@ -1516,21 +1465,25 @@ rd_view_state_from_key(CFG_ID id, U64 sub_key)
 //- View state lifetime
 //
 // A View's state is its runtime instance's: a terminal's session, a query's
-// cursor. A View node is one runtime instance of its Slot, so a Slot that
-// keeps its previous instance has a state for each. The state is made when
-// the View first needs it, and lives while the node is somewhere live,
-// drawn or not:
+// cursor. It is keyed by the View's address, whose instance tells a Slot's
+// View from the previous instance kept beside it, so a Slot that keeps its
+// previous instance has a state for each. The state is made when the View
+// first needs it, and lives while its address resolves to a View somewhere
+// live, drawn or not:
 // - a Slot's View, while its workspace is materialized. A tab that isn't
 //   selected, is filtered out by project, or is in a Floating Panel that
 //   isn't drawn keeps its state. Removing the Slot, closing or keeping the
 //   workspace, and closing the window release it. A Kept Workspace's Views
 //   start again when it reopens: a terminal with a session re-attaches.
 // - a View that isn't a Slot, with its owner: the sidebar's and Floating
-//   Panels' with their window, and an immediate tree's (command palette,
-//   queries, hover evaluation) with that tree, which lives while it is hot
-//   (rd_immediate_cfg_from_key).
+//   Panels' with their window or workspace, and an immediate tree's
+//   (command palette, queries, hover evaluation) with that tree, which lives
+//   while it is hot (rd_immediate_cfg_from_key).
 // - a visualizer in a watch row (a state with a sub-key), while its row is
 //   built, and never longer than its View.
+// A move that changes a View's address (into another owner, which may give
+// it another key) takes its state along (rd_view_moved), as a keep-previous
+// rebind takes the replaced instance's to the previous instance's address.
 
 internal B32
 rd_view_node_is_live(CFG_Node *view)
@@ -1554,13 +1507,12 @@ rd_view_state_release(RD_ViewState *vs)
     arena_release(ext->arena);
   }
   arena_release(vs->arena);
-  U64 hash = u64_djb2_hash_from_str8(str8_struct(&vs->cfg_id));
+  U64 hash = u64_djb2_hash_from_str8(str8_struct(&vs->view));
   RD_ViewStateSlot *slot = &rd_state->view_state_slots[hash%rd_state->view_state_slots_count];
   DLLRemove_NP(slot->first, slot->last, vs, hash_next, hash_prev);
   if(rd_state->view_state_last_accessed == vs)
   {
     rd_state->view_state_last_accessed = &rd_nil_view_state;
-    rd_state->view_state_last_accessed_id = 0;
   }
   SLLStackPush_N(rd_state->free_view_state, vs, hash_next);
 }
@@ -1573,10 +1525,46 @@ rd_view_states_release_unowned(void)
     for(RD_ViewState *vs = rd_state->view_state_slots[slot_idx].first, *next; vs != 0; vs = next)
     {
       next = vs->hash_next;
-      B32 live = rd_view_node_is_live(cfg_node_from_id(vs->cfg_id));
+      B32 live = rd_view_node_is_live(rd_cfg_from_view(vs->view));
       if(vs->sub_key != 0 && vs->last_frame_index_touched+2 < rd_state->frame_index) { live = 0; }
       if(!live) { rd_view_state_release(vs); }
     }
+  }
+}
+
+internal void
+rd_view_states_rekey(RD_ViewAddress from, RD_ViewAddress to)
+{
+  if(rd_view_address_match(from, to)) { return; }
+  U64 from_hash = u64_djb2_hash_from_str8(str8_struct(&from));
+  U64 to_hash = u64_djb2_hash_from_str8(str8_struct(&to));
+  RD_ViewStateSlot *from_slot = &rd_state->view_state_slots[from_hash%rd_state->view_state_slots_count];
+  RD_ViewStateSlot *to_slot = &rd_state->view_state_slots[to_hash%rd_state->view_state_slots_count];
+  for(RD_ViewState *vs = from_slot->first, *next; vs != 0; vs = next)
+  {
+    next = vs->hash_next;
+    if(!rd_view_address_match(vs->view, from)) { continue; }
+    // The View at `to` already has a state under this sub-key: it keeps it.
+    B32 taken = 0;
+    for(RD_ViewState *other = to_slot->first; other != 0 && !taken; other = other->hash_next)
+    { taken = other->sub_key == vs->sub_key && rd_view_address_match(other->view, to); }
+    if(taken) { rd_view_state_release(vs); continue; }
+    DLLRemove_NP(from_slot->first, from_slot->last, vs, hash_next, hash_prev);
+    vs->view = to;
+    DLLPushBack_NP(to_slot->first, to_slot->last, vs, hash_next, hash_prev);
+  }
+  rd_state->view_state_last_accessed = &rd_nil_view_state;
+}
+
+internal void
+rd_view_states_release_view(RD_ViewAddress view)
+{
+  U64 hash = u64_djb2_hash_from_str8(str8_struct(&view));
+  RD_ViewStateSlot *slot = &rd_state->view_state_slots[hash%rd_state->view_state_slots_count];
+  for(RD_ViewState *vs = slot->first, *next; vs != 0; vs = next)
+  {
+    next = vs->hash_next;
+    if(rd_view_address_match(vs->view, view)) { rd_view_state_release(vs); }
   }
 }
 
@@ -1597,26 +1585,23 @@ rd_view_user_data(RD_ViewState *vs, U64 size)
 //- Renderer contexts
 
 internal WH_ViewContext
-wh_view_context_from_cfg(Arena *arena, CFG_Node *view, WH_Renderer *renderer, void *state, Rng2F32 rect)
+wh_view_context_from_view(Arena *arena, RD_ViewAddress view, WH_Renderer *renderer, void *state, Rng2F32 rect)
 {
   WH_ViewContext ctx = {0};
-  uishell_store_view_slot(arena, view, &ctx.slot, &ctx.spec, &ctx.status, &ctx.resolution);
-  for(CFG_Node *p = view->parent; p != &cfg_nil_node; p = p->parent)
-  {
-    if(str8_match(p->string, str8_lit("immediate"), 0)) { ctx.status |= WH_SlotStatus_Floating; break; }
-  }
+  uishell_store_view_slot(arena, rd_cfg_from_view(view), &ctx.slot, &ctx.spec, &ctx.status, &ctx.resolution);
+  if(view.owner == RD_ViewOwnerKind_Transient) { ctx.status |= WH_SlotStatus_Floating; }
   ctx.state = state;
   ctx.state_size = state ? renderer->state_size : 0;
-  ctx.settings.view = view->id;
+  ctx.settings.view = view;
   ctx.rect = rect;
   return ctx;
 }
 
 internal void
-wh_view_ui_direct(WH_Renderer *renderer, CFG_Node *view, Rng2F32 rect)
+wh_view_ui_direct(WH_Renderer *renderer, RD_ViewAddress view, Rng2F32 rect)
 {
   Temp scratch = scratch_begin(0, 0);
-  WH_ViewContext ctx = wh_view_context_from_cfg(scratch.arena, view, renderer, rd_view_user_data(rd_view_state_from_cfg(view), renderer->state_size), rect);
+  WH_ViewContext ctx = wh_view_context_from_view(scratch.arena, view, renderer, rd_view_user_data(rd_view_state_from_view(view, 0), renderer->state_size), rect);
   renderer->ui(&ctx);
   scratch_end(scratch);
 }
@@ -1632,7 +1617,7 @@ wh_view_state_checked(WH_ViewContext *ctx, U64 size)
 internal String8
 wh_view_setting(WH_ViewContext *ctx, String8 name)
 {
-  return rd_view_setting_from_cfg(cfg_node_from_id(ctx->settings.view), name);
+  return rd_view_setting_from_view(ctx->settings.view, name);
 }
 
 internal B32
@@ -1660,9 +1645,9 @@ WH_VIEW_UI_FUNCTION_DEF(null)
 
 
 internal UI_Key
-rd_view_surface_key(CFG_ID view)
+rd_view_surface_key(RD_ViewAddress view)
 {
-  return ui_key_from_stringf(ui_key_zero(), "###view_surface_%I64u", view);
+  return ui_key_from_stringf(rd_view_ui_key(view), "###view_surface");
 }
 
 internal B32
@@ -1820,9 +1805,8 @@ WH_VIEW_UI_FUNCTION_DEF(pending)
       UIShell_Cmd *cmd = &cmd_node->cmd;
       uishell_push_stored_cmd(cmd->name, cmd->regs);
     }
-    CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-    cfg_node_equip_string(rd_state->cfg, view, new_view_name);
-    RD_ViewState *vs = rd_view_state_from_cfg(view);
+    RD_ViewState *vs = rd_view_state_from_view(uishell_regs()->view, 0);
+    cfg_node_equip_string(rd_state->cfg, rd_cfg_from_view(uishell_regs()->view), new_view_name);
     for(RD_ArenaExt *ext = vs->first_arena_ext; ext != 0; ext = ext->next)
     {
       arena_release(ext->arena);
@@ -1848,8 +1832,9 @@ internal void
 rd_view_ui(Rng2F32 rect)
 {
   ProfBeginFunction();
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-  RD_ViewState *vs = rd_view_state_from_cfg(view);
+  RD_ViewAddress address = uishell_regs()->view;
+  CFG_Node *view = rd_cfg_from_view(address);
+  RD_ViewState *vs = rd_view_state_from_view(address, 0);
   String8 expr_string = rd_expr_from_cfg(view);
   WH_Renderer *renderer = wh_renderer_from_name(view->string);
 
@@ -1860,15 +1845,7 @@ rd_view_ui(Rng2F32 rect)
   {
     rd_workspace_surface_mark_unversioned_view();
   }
-  B32 view_is_floating = 0;
-  for(CFG_Node *p = view->parent; p != &cfg_nil_node; p = p->parent)
-  {
-    if(str8_match(p->string, str8_lit("immediate"), 0))
-    {
-      view_is_floating = 1;
-      break;
-    }
-  }
+  B32 view_is_floating = address.owner == RD_ViewOwnerKind_Transient;
   
   //////////////////////////////
   //- rjf: query extension
@@ -1878,7 +1855,7 @@ rd_view_ui(Rng2F32 rect)
   CFG_Node *cmd_root = cfg_node_child_from_string(query_root, str8_lit("cmd"));
   String8 current_input = input_root->first->string;
   B32 search_row_is_open = (vs->query_is_open);
-  F32 search_row_open_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "search_row_open_%p", view),
+  F32 search_row_open_t = ui_anim(ui_key_from_stringf(rd_view_ui_key(address), "search_row_open"),
                                   (F32)!!search_row_is_open,
                                   .initial = (F32)!!search_row_is_open,
                                   .epsilon = 0.01f,
@@ -1987,12 +1964,11 @@ rd_view_ui(Rng2F32 rect)
     // floater shows scaled (#253); laying it out in the floater would resize
     // a terminal's session.
     B32 dragged = rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
-      rd_state->drag_drop_regs->view == uishell_regs()->view &&
-      !rd_view_drag_preview_is_live(cfg_node_from_id(uishell_regs()->view));
+      rd_view_address_match(rd_state->drag_drop_regs->view, address) && !rd_view_drag_preview_is_live(view);
     if(DEV_draw_view_surfaces || DEV_crt_views || dragged)
     {
       container_flags |= UI_BoxFlag_RenderToSurface;
-      container_key = rd_view_surface_key(uishell_regs()->view);
+      container_key = rd_view_surface_key(address);
     }
     view_container = ui_build_box_from_key(container_flags, container_key);
     if(DEV_crt_views)
@@ -2016,7 +1992,7 @@ rd_view_ui(Rng2F32 rect)
     UI_PrefHeight(ui_px(floor_f32(ui_top_font_size()*rd_setting_f32_from_name(str8_lit("row_height"))), 1.f))
   {
     Temp scratch = scratch_begin(0, 0);
-    WH_ViewContext ctx = wh_view_context_from_cfg(scratch.arena, view, renderer, rd_view_user_data(vs, renderer->state_size), rect);
+    WH_ViewContext ctx = wh_view_context_from_view(scratch.arena, address, renderer, rd_view_user_data(vs, renderer->state_size), rect);
     if(wh_renderer_has_trait(renderer, RD_ViewTrait_LegacyEval))
     {
       ctx.legacy_eval = e_eval_from_string(expr_string);
@@ -2134,31 +2110,28 @@ rd_view_ui(Rng2F32 rect)
 internal Arena *
 rd_view_arena(void)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-  RD_ViewState *view_state = rd_view_state_from_cfg(view);
+  RD_ViewState *view_state = rd_view_state_from_view(uishell_regs()->view, 0);
   return view_state->arena;
 }
 
 internal UI_ScrollPt2
 rd_view_scroll_pos(void)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-  RD_ViewState *view_state = rd_view_state_from_cfg(view);
+  RD_ViewState *view_state = rd_view_state_from_view(uishell_regs()->view, 0);
   return view_state->scroll_pos;
 }
 
 internal EV_View *
 rd_view_eval_view(void)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-  RD_ViewState *view_state = rd_view_state_from_cfg(view);
+  RD_ViewState *view_state = rd_view_state_from_view(uishell_regs()->view, 0);
   return view_state->ev_view;
 }
 
 internal String8
 rd_view_query_cmd(void)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
+  CFG_Node *view = rd_cfg_from_view(uishell_regs()->view);
   CFG_Node *query = cfg_node_child_from_string(view, str8_lit("query"));
   CFG_Node *cmd = cfg_node_child_from_string(query, str8_lit("cmd"));
   String8 string = cmd->first->string;
@@ -2168,7 +2141,7 @@ rd_view_query_cmd(void)
 internal String8
 rd_view_query_input(void)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
+  CFG_Node *view = rd_cfg_from_view(uishell_regs()->view);
   CFG_Node *query = cfg_node_child_from_string(view, str8_lit("query"));
   CFG_Node *input = cfg_node_child_from_string(query, str8_lit("input"));
   String8 string = input->first->string;
@@ -2178,18 +2151,7 @@ rd_view_query_input(void)
 internal String8
 rd_view_setting_from_name(String8 name)
 {
-  return rd_view_setting_from_cfg(cfg_node_from_id(uishell_regs()->view), name);
-}
-
-internal String8
-rd_view_setting_from_cfg(CFG_Node *view, String8 name)
-{
-  String8 result = cfg_node_child_from_string(view, name)->first->string;
-  if(result.size == 0)
-  {
-    result = rd_default_setting_from_names(view->string, name);
-  }
-  return result;
+  return rd_view_setting_from_view(uishell_regs()->view, name);
 }
 
 internal B32
@@ -2295,16 +2257,14 @@ rd_lang_kind_from_eval(E_Eval eval)
 internal void *
 rd_view_state_by_size(U64 size)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-  RD_ViewState *view_state = rd_view_state_from_cfg(view);
+  RD_ViewState *view_state = rd_view_state_from_view(uishell_regs()->view, 0);
   return rd_view_user_data(view_state, size);
 }
 
 internal Arena *
 rd_push_view_arena(void)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-  RD_ViewState *view_state = rd_view_state_from_cfg(view);
+  RD_ViewState *view_state = rd_view_state_from_view(uishell_regs()->view, 0);
   RD_ArenaExt *ext = push_array(view_state->arena, RD_ArenaExt, 1);
   ext->arena = arena_alloc();
   SLLQueuePush(view_state->first_arena_ext, view_state->last_arena_ext, ext);
@@ -2316,7 +2276,7 @@ rd_push_view_arena(void)
 internal void
 rd_store_view_expr_string(String8 string)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
+  CFG_Node *view = rd_cfg_from_view(uishell_regs()->view);
   CFG_Node *expr = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("expression"));
   cfg_node_new_replace(rd_state->cfg, expr, string);
 }
@@ -2324,8 +2284,7 @@ rd_store_view_expr_string(String8 string)
 internal void
 rd_store_view_loading_info(B32 is_loading, U64 progress_u64, U64 progress_u64_target)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-  RD_ViewState *view_state = rd_view_state_from_cfg(view);
+  RD_ViewState *view_state = rd_view_state_from_view(uishell_regs()->view, 0);
   B32 loading_state_is_new = (is_loading && view_state->loading_t_target != (F32)!!is_loading);
   view_state->loading_t_target = (F32)!!is_loading;
   view_state->loading_progress_v = progress_u64;
@@ -2339,17 +2298,14 @@ rd_store_view_loading_info(B32 is_loading, U64 progress_u64, U64 progress_u64_ta
 internal void
 rd_store_view_scroll_pos(UI_ScrollPt2 pos)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-  RD_ViewState *view_state = rd_view_state_from_cfg(view);
+  RD_ViewState *view_state = rd_view_state_from_view(uishell_regs()->view, 0);
   view_state->scroll_pos = pos;
 }
 
 internal void
 rd_store_view_param(String8 key, String8 value)
 {
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-  CFG_Node *child = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, key);
-  cfg_node_new_replace(rd_state->cfg, child, value);
+  rd_view_setting_set(uishell_regs()->view, key, value);
 }
 
 internal void
@@ -2761,13 +2717,14 @@ internal UI_BOX_CUSTOM_DRAW(rd_workspace_preview_box_draw)
 // such as a background tab, shows its title alone. A View that is harmless
 // to lay out again (RD_ViewTrait_LiveDragPreview) is shown live instead.
 internal void
-rd_drag_view_floater_ui(RD_WindowState *ws, CFG_Node *view)
+rd_drag_view_floater_ui(RD_WindowState *ws, RD_ViewAddress address)
 {
   Temp scratch = scratch_begin(0, 0);
+  CFG_Node *view = rd_cfg_from_view(address);
   UI_Size main_width = ui_top_pref_width();
   UI_Size main_height = ui_top_pref_height();
   UI_TextAlign main_text_align = ui_top_text_alignment();
-  RD_SurfaceCacheNode *surface = rd_window_surface_node_lookup(ws, rd_view_surface_key(view->id).u64[0]);
+  RD_SurfaceCacheNode *surface = rd_window_surface_node_lookup(ws, rd_view_surface_key(address).u64[0]);
   if(surface != 0 && (r_handle_match(surface->texture, r_handle_zero()) || surface->size.x <= 0 || surface->size.y <= 0)) { surface = 0; }
   B32 live = rd_view_drag_preview_is_live(view);
   if(live) { surface = 0; }
@@ -3219,6 +3176,358 @@ rd_panel_tree_from_cfg(Arena *arena, CFG_Node *panels_root)
   return rd_panel_tree_from_arrangement(arena, rd_panel_owner_from_cfg(panels_root), rd_arrangement_from_cfg(arena, panels_root));
 }
 
+//- View addresses
+
+// An immediate tree's View (rd_immediate_cfg_from_key) is the tree's: keyed
+// by the tree's key and its kind, as a tree can show one kind after another.
+internal B32
+rd_view_is_transient(CFG_Node *view)
+{
+  CFG_Node *immediate = view->parent->parent;
+  return str8_match(immediate->string, str8_lit("immediate"), 0) && immediate->parent->parent == cfg_node_root() &&
+    str8_match(immediate->parent->string, str8_lit("transient"), 0);
+}
+
+internal RD_ViewAddress
+rd_view_address_from_cfg(CFG_Node *view)
+{
+  RD_ViewAddress result = {0};
+  if(view == &cfg_nil_node) { return result; }
+  if(rd_view_is_transient(view))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    result.owner = RD_ViewOwnerKind_Transient;
+    result.key = rd_view_key_hash(push_str8f(scratch.arena, "%S/%S", view->parent->string, view->string));
+    scratch_end(scratch);
+    return result;
+  }
+  return rd_view_address_from_tab(rd_panel_owner_from_cfg(view), view);
+}
+
+internal CFG_Node *
+rd_cfg_from_view(RD_ViewAddress view)
+{
+  if(rd_view_address_is_nil(view)) { return &cfg_nil_node; }
+  U64 hash = u64_djb2_hash_from_str8(str8_struct(&view));
+  RD_ViewCfgCacheSlot *slot = &rd_state->view_cfg_cache[hash%ArrayCount(rd_state->view_cfg_cache)];
+  U64 tree_gen = cfg_tree_gen();
+  if(rd_view_address_match(slot->view, view) && slot->ctx == cfg_ctx)
+  {
+    CFG_Node *cached = cfg_node_from_id(slot->cfg);
+    if(cached != &cfg_nil_node && (slot->tree_gen == tree_gen || rd_view_address_match(rd_view_address_from_cfg(cached), view)))
+    {
+      slot->tree_gen = tree_gen;
+      return cached;
+    }
+  }
+  Temp scratch = scratch_begin(0, 0);
+  CFG_NodePtrList candidates = {0};
+  switch(view.owner)
+  {
+    default:{}break;
+    case RD_ViewOwnerKind_Workspace:
+    {
+      CFG_Node *host = cfg_node_from_id(uishell_workspace_cfg_id_from_id(view.id));
+      candidates = rd_view_namespace_views(scratch.arena, host, view.owner);
+    }break;
+    case RD_ViewOwnerKind_Dashboard:
+    case RD_ViewOwnerKind_Window:
+    {
+      candidates = rd_view_namespace_views(scratch.arena, uishell_window_from_id(view.id), view.owner);
+    }break;
+    case RD_ViewOwnerKind_Transient:
+    {
+      CFG_Node *transient = cfg_node_child_from_string(cfg_node_root(), str8_lit("transient"));
+      for(CFG_Node *immediate = transient->first; immediate != &cfg_nil_node; immediate = immediate->next)
+      {
+        if(!str8_match(immediate->string, str8_lit("immediate"), 0)) { continue; }
+        for(CFG_Node *tree = immediate->first; tree != &cfg_nil_node; tree = tree->next)
+        {
+          for(CFG_Node *c = tree->first; c != &cfg_nil_node; c = c->next) { cfg_node_ptr_list_push(scratch.arena, &candidates, c); }
+        }
+      }
+    }break;
+  }
+  CFG_Node *result = &cfg_nil_node;
+  for(CFG_NodePtrNode *n = candidates.first; n != 0 && result == &cfg_nil_node; n = n->next)
+  {
+    if(view.owner != RD_ViewOwnerKind_Transient)
+    {
+      RD_ViewInstance instance = RD_ViewInstance_Current;
+      String8 key = rd_view_key_from_cfg(n->v, &instance);
+      if(instance != view.instance || !u128_match(rd_view_key_hash(key), view.key)) { continue; }
+    }
+    if(rd_view_address_match(rd_view_address_from_cfg(n->v), view)) { result = n->v; }
+  }
+  scratch_end(scratch);
+  if(result != &cfg_nil_node)
+  {
+    slot->view = view;
+    slot->ctx = cfg_ctx;
+    slot->cfg = result->id;
+    slot->tree_gen = tree_gen;
+  }
+  return result;
+}
+
+internal UI_Key
+rd_view_ui_key(RD_ViewAddress view)
+{
+  U64 id[2] = {0};
+  MemoryCopy(id, view.id.v, sizeof(id));
+  return ui_key_from_stringf(ui_key_zero(), "view_%i_%i_%I64x_%I64x_%I64x_%I64x", view.owner, view.instance, id[0], id[1], view.key.u64[0], view.key.u64[1]);
+}
+
+internal void
+rd_view_readdress(RD_ViewAddress from, RD_ViewAddress to)
+{
+  if(rd_view_address_is_nil(from) || rd_view_address_is_nil(to) || rd_view_address_match(from, to)) { return; }
+  rd_view_states_rekey(from, to);
+  rd_view_presentation_readdress(from, to);
+  uishell_jackstay_rekey(from, to);
+}
+
+// rd_arrangement_view_move_hook: a View a save moves into another owner
+// keeps what is keyed by its address, under the address the move gave it.
+internal void
+rd_view_moved(CFG_Node *view, B32 moved)
+{
+  if(!moved)
+  {
+    if(rd_state->view_move_arena == 0) { rd_state->view_move_arena = arena_alloc(); }
+    RD_ViewMove *move = push_array(rd_state->view_move_arena, RD_ViewMove, 1);
+    move->view = view->id;
+    move->from = rd_view_address_from_cfg(view);
+    SLLStackPush(rd_state->first_view_move, move);
+    return;
+  }
+  for(RD_ViewMove **link = &rd_state->first_view_move; *link != 0; link = &(*link)->next)
+  {
+    RD_ViewMove *move = *link;
+    if(move->view != view->id) { continue; }
+    *link = move->next;
+    rd_view_readdress(move->from, rd_view_address_from_cfg(view));
+    break;
+  }
+  if(rd_state->first_view_move == 0 && rd_state->view_move_arena != 0) { arena_clear(rd_state->view_move_arena); }
+}
+
+internal RD_DockView
+rd_dock_view_from_address(RD_ViewAddress view)
+{
+  return rd_dock_view_from_cfg(rd_cfg_from_view(view));
+}
+
+internal RD_PanelAddress
+rd_panel_from_view(RD_ViewAddress view)
+{
+  return rd_panel_from_cfg(rd_cfg_from_view(view));
+}
+
+//- View Presentation State (CONTEXT.md, "Presentation State")
+//
+// A View's settings are logical, or this device's. Its logical settings are
+// its node's, as Andamento has them: its key, its View Spec, its portable
+// Target Resolution, its Slot's plan progress, and what docking and queries
+// keep on it (rd_view_logical_settings). Every other setting (a label, a
+// font size, a cursor or scroll position, a machine-local Target Resolution
+// such as `attach_token`) is Presentation State, kept by View Address in its
+// owner's host, which the Dashboard's presentation file saves with it: a
+// workspace's in its node, the Dashboard's and a window's own in the window:
+//
+//   view_presentation: {
+//     workspace: {key: "u:3" font_size: 14}
+//     workspace: {key: "partner" previous attach_token: "..."}
+//   }
+//
+// A transient View keeps everything on its node. Settings resolve
+// explicitly (rd_setting_from_name): the View's own, its Workspace's, its
+// window's, the user's (then the project's), then those scopes' schema
+// defaults.
+
+read_only global String8 rd_view_logical_settings[] =
+{
+  // Identity, and the arrangement's mark.
+  str8_lit_comp("slot"), str8_lit_comp("previous_of"), str8_lit_comp("section"), str8_lit_comp("resource_id"), str8_lit_comp("selected"),
+  // The View Spec (uishell_workspace_store.c, "View Specs").
+  str8_lit_comp("expression"), str8_lit_comp("cwd"), str8_lit_comp("content"), str8_lit_comp("url"),
+  str8_lit_comp("source_endpoint"), str8_lit_comp("source_socket"), str8_lit_comp("input_endpoint"), str8_lit_comp("input_socket"),
+  str8_lit_comp("media_endpoint"), str8_lit_comp("media_socket"), str8_lit_comp("d3d11_endpoint"), str8_lit_comp("porthole_endpoint"),
+  // The portable Target Resolution, and the daemon hosting a terminal.
+  str8_lit_comp("session"), str8_lit_comp("daemon_name"), str8_lit_comp("daemon"),
+  // The Slot's plan progress (uishell_workspace_store.c, "Slot plans").
+  str8_lit_comp("follows_provider"), str8_lit_comp("applied"), str8_lit_comp("asks"), str8_lit_comp("declined"),
+  str8_lit_comp("update_failed"), str8_lit_comp("portable"), str8_lit_comp("applied_spec"),
+  // A tab's project, docking's restore mark, and queries' state.
+  str8_lit_comp("project"), str8_lit_comp("section_hint_pending"),
+  str8_lit_comp("query"), str8_lit_comp("lister"), str8_lit_comp("explicit_root"), str8_lit_comp("autocomplete"),
+  str8_lit_comp("activate_with_single_click"),
+};
+
+internal B32
+rd_view_setting_is_logical(String8 name)
+{
+  for EachElement(i, rd_view_logical_settings) { if(str8_match(rd_view_logical_settings[i], name, 0)) { return 1; } }
+  return 0;
+}
+
+internal CFG_Node *
+rd_view_presentation_host(RD_ViewAddress view)
+{
+  CFG_Node *host = &cfg_nil_node;
+  switch(view.owner)
+  {
+    default:{}break;
+    case RD_ViewOwnerKind_Workspace:{host = cfg_node_from_id(uishell_workspace_cfg_id_from_id(view.id));}break;
+    case RD_ViewOwnerKind_Dashboard:
+    case RD_ViewOwnerKind_Window:{host = uishell_window_from_id(view.id);}break;
+  }
+  return host;
+}
+
+internal CFG_Node *
+rd_view_presentation_from_view(RD_ViewAddress view)
+{
+  if(rd_view_address_is_nil(view) || view.owner == RD_ViewOwnerKind_Transient) { return &cfg_nil_node; }
+  U64 hash = u64_djb2_hash_from_str8(str8_struct(&view));
+  RD_ViewCfgCacheSlot *slot = &rd_state->view_presentation_cache[hash%ArrayCount(rd_state->view_presentation_cache)];
+  U64 tree_gen = cfg_tree_gen();
+  // Misses are cached too: making, releasing, renaming or moving any node
+  // bumps the tree's generation, so a record changed since is never hidden.
+  if(rd_view_address_match(slot->view, view) && slot->ctx == cfg_ctx && slot->tree_gen == tree_gen) { return cfg_node_from_id(slot->cfg); }
+  CFG_Node *result = &cfg_nil_node;
+  String8 owner = rd_view_owner_kind_name(view.owner);
+  CFG_Node *root = cfg_node_child_from_string(rd_view_presentation_host(view), RD_VIEW_PRESENTATION_ROOT);
+  for(CFG_Node *c = root->first; c != &cfg_nil_node && result == &cfg_nil_node; c = c->next)
+  {
+    B32 previous = cfg_node_child_from_string(c, str8_lit("previous")) != &cfg_nil_node;
+    if(str8_match(c->string, owner, 0) && previous == (view.instance == RD_ViewInstance_Previous) &&
+       u128_match(rd_view_key_hash(cfg_node_child_from_string(c, str8_lit("key"))->first->string), view.key))
+    { result = c; }
+  }
+  slot->view = view;
+  slot->ctx = cfg_ctx;
+  slot->cfg = result->id;
+  slot->tree_gen = tree_gen;
+  return result;
+}
+
+internal CFG_Node *
+rd_view_presentation_alloc(RD_ViewAddress view)
+{
+  CFG_Node *record = rd_view_presentation_from_view(view);
+  if(record != &cfg_nil_node || rd_view_address_is_nil(view) || view.owner == RD_ViewOwnerKind_Transient) { return record; }
+  String8 key = rd_view_key_from_cfg(rd_cfg_from_view(view), 0);
+  CFG_Node *host = rd_view_presentation_host(view);
+  if(key.size == 0 || host == &cfg_nil_node) { return record; }
+  Temp scratch = scratch_begin(0, 0);
+  key = push_str8_copy(scratch.arena, key);
+  CFG_Node *root = cfg_node_child_from_string_or_alloc(rd_state->cfg, host, RD_VIEW_PRESENTATION_ROOT);
+  record = cfg_node_new(rd_state->cfg, root, rd_view_owner_kind_name(view.owner));
+  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, record, str8_lit("key")), key);
+  if(view.instance == RD_ViewInstance_Previous) { cfg_node_new(rd_state->cfg, record, str8_lit("previous")); }
+  scratch_end(scratch);
+  return record;
+}
+
+internal void
+rd_view_presentation_readdress(RD_ViewAddress from, RD_ViewAddress to)
+{
+  CFG_Node *record = rd_view_presentation_from_view(from);
+  if(record == &cfg_nil_node) { return; }
+  CFG_Node *host = rd_view_presentation_host(to);
+  String8 key = rd_view_key_from_cfg(rd_cfg_from_view(to), 0);
+  // Where the View can keep none, it goes.
+  if(host == &cfg_nil_node || key.size == 0)
+  {
+    cfg_node_release(rd_state->cfg, record);
+    return;
+  }
+  // A record already at the new address is no live View's (the View moving
+  // there has it now), so the View's own replaces it.
+  rd_view_presentation_release(to);
+  Temp scratch = scratch_begin(0, 0);
+  key = push_str8_copy(scratch.arena, key);
+  CFG_Node *root = cfg_node_child_from_string_or_alloc(rd_state->cfg, host, RD_VIEW_PRESENTATION_ROOT);
+  if(record->parent != root) { cfg_node_insert_child(rd_state->cfg, root, root->last, record); }
+  cfg_node_equip_string(rd_state->cfg, record, rd_view_owner_kind_name(to.owner));
+  cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, record, str8_lit("key")), key);
+  CFG_Node *previous = cfg_node_child_from_string(record, str8_lit("previous"));
+  if(to.instance == RD_ViewInstance_Previous && previous == &cfg_nil_node) { cfg_node_new(rd_state->cfg, record, str8_lit("previous")); }
+  if(to.instance != RD_ViewInstance_Previous && previous != &cfg_nil_node) { cfg_node_release(rd_state->cfg, previous); }
+  scratch_end(scratch);
+}
+
+internal void
+rd_view_presentation_release(RD_ViewAddress view)
+{
+  CFG_Node *record = rd_view_presentation_from_view(view);
+  if(record != &cfg_nil_node) { cfg_node_release(rd_state->cfg, record); }
+}
+
+// The node is read for every setting, as rd_cfg_setting_child reads it: a
+// transient View keeps all its settings there, and a test or diagnostic may
+// set one there directly. Store loads put only logical settings on a
+// Workspace's View nodes (uishell_store_build), so nothing saved before
+// Presentation State is read back from a node.
+internal String8
+rd_view_setting_from_view(RD_ViewAddress view, String8 name)
+{
+  CFG_Node *node = rd_cfg_from_view(view);
+  CFG_Node *setting = cfg_node_child_from_string(rd_view_presentation_from_view(view), name);
+  if(setting == &cfg_nil_node) { setting = cfg_node_child_from_string(node, name); }
+  String8 result = setting->first->string;
+  if(result.size == 0) { result = rd_default_setting_from_names(node->string, name); }
+  return result;
+}
+
+internal String8
+rd_view_label_from_cfg(CFG_Node *view)
+{
+  CFG_Node *label = cfg_node_child_from_string(rd_view_presentation_from_view(rd_view_address_from_cfg(view)), str8_lit("label"));
+  return label != &cfg_nil_node ? label->first->string : rd_label_from_cfg(view);
+}
+
+internal void
+rd_view_setting_set(RD_ViewAddress view, String8 name, String8 value)
+{
+  CFG_Node *home = rd_view_setting_is_logical(name) || view.owner == RD_ViewOwnerKind_Transient ? rd_cfg_from_view(view) : rd_view_presentation_alloc(view);
+  if(home == &cfg_nil_node) { return; }
+  cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, home, name), value);
+}
+
+internal void
+rd_view_setting_clear(RD_ViewAddress view, String8 name)
+{
+  CFG_Node *homes[] = {rd_view_presentation_from_view(view), rd_cfg_from_view(view)};
+  for EachElement(i, homes)
+  {
+    CFG_Node *setting = cfg_node_child_from_string(homes[i], name);
+    if(setting != &cfg_nil_node) { cfg_node_release(rd_state->cfg, setting); }
+  }
+}
+
+// The child holding config node `cfg`'s setting `name`: for a View, its
+// Presentation State's, then its node's.
+internal CFG_Node *
+rd_cfg_setting_child(CFG_Node *cfg, String8 name)
+{
+  CFG_Node *setting = &cfg_nil_node;
+  if(!rd_view_setting_is_logical(name)) { setting = cfg_node_child_from_string(rd_view_presentation_from_view(rd_view_address_from_cfg(cfg)), name); }
+  if(setting == &cfg_nil_node) { setting = cfg_node_child_from_string(cfg, name); }
+  return setting;
+}
+
+// Where a write of config node `cfg`'s setting `name` goes: a View's
+// Presentation State for one of its presentation settings, else the node.
+internal CFG_Node *
+rd_cfg_setting_home(CFG_Node *cfg, String8 name)
+{
+  RD_ViewAddress view = rd_view_address_from_cfg(cfg);
+  if(rd_view_address_is_nil(view) || view.owner == RD_ViewOwnerKind_Transient || rd_view_setting_is_logical(name)) { return cfg; }
+  return rd_view_presentation_alloc(view);
+}
+
 //~ Workspace mounts
 
 internal UIShell_WorkspaceMount
@@ -3303,10 +3612,10 @@ uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg)
 internal UIShell_WorkspaceMount
 uishell_workspace_mount_from_current_regs(Arena *arena)
 {
-  CFG_Node *cfg = cfg_node_from_id(uishell_regs()->view);
+  CFG_Node *cfg = rd_cfg_from_view(uishell_regs()->view);
   if(cfg == &cfg_nil_node)
   {
-    cfg = cfg_node_from_id(uishell_regs()->tab);
+    cfg = rd_cfg_from_view(uishell_regs()->tab);
   }
   if(cfg == &cfg_nil_node && rd_cfg_from_panel_owner(uishell_regs()->panel.owner) != &cfg_nil_node)
   {
@@ -3893,10 +4202,10 @@ rd_dock_host_from_panel(RD_PanelAddress panel, F32 width)
 }
 
 internal B32
-rd_panel_drag_target(CFG_Node *view, RD_PanelAddress destination, F32 width)
+rd_panel_drag_target(RD_ViewAddress view, RD_PanelAddress destination, F32 width)
 {
   RD_DockHost host = rd_dock_host_from_panel(destination, width);
-  if(view == &cfg_nil_node && rd_state->drag_drop_creation_name.size)
+  if(rd_view_address_is_nil(view) && rd_state->drag_drop_creation_name.size)
   {
     RD_ViewRegistration *registration = rd_dock_view_from_name(rd_state->drag_drop_creation_name);
     RD_DockProposal p = {0};
@@ -3908,7 +4217,7 @@ rd_panel_drag_target(CFG_Node *view, RD_PanelAddress destination, F32 width)
     p.control_surfaces_after = registration && (registration->traits & RD_ViewTrait_SelectsWorkspaces) ? 2 : 1;
     return host.kind < RD_DockHostKind_COUNT && rd_dock_check(registration, p) == RD_DockRule_Valid;
   }
-  return rd_dock_drag_target(view, host);
+  return rd_dock_drag_target(rd_dock_view_from_address(view), host);
 }
 
 // A panel's UI key seed: its boxes and animations are keyed from it, so they
@@ -3929,7 +4238,7 @@ rd_panel_catchall_drop_site_key(RD_PanelAddress panel)
 
 // Existing Views and creation drags use the same sites, geometry and commands.
 internal void
-rd_panel_drag_drop(RD_PanelAddress destination, Dir2 direction, CFG_ID previous_tab)
+rd_panel_drag_drop(RD_PanelAddress destination, Dir2 direction, RD_ViewAddress previous_tab)
 {
   if(rd_state->drag_drop_commit)
   { rd_state->drag_drop_commit(destination, direction, previous_tab); }
@@ -4246,7 +4555,7 @@ rd_drop_bar_ui(RD_DropBar *bar)
     target.p0.v[bar->axis] = Max(target.p0.v[bar->axis], bar->pos - reach);
     target.p1.v[bar->axis] = Min(target.p1.v[bar->axis], bar->pos + reach);
     rd_drop_preview(target);
-    if(rd_drag_drop()) { rd_panel_drag_drop(bar->dst, bar->dir, 0); }
+    if(rd_drag_drop()) { rd_panel_drag_drop(bar->dst, bar->dir, rd_nil_view_address); }
   }
 }
 
@@ -4322,7 +4631,7 @@ rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
   RD_DockGeometry result = {.mount = mount, .measured = 1};
   RD_WindowState *ws = rd_window_state_from_cfg__existing(mount->owner_cfg);
   if(ws == &rd_nil_window_state) { return result; }
-  UIShell_RegsScope(.window = mount->window_cfg->id, .panel = rd_nil_panel_address, .view = 0, .tab = 0)
+  UIShell_RegsScope(.window = mount->window_cfg->id, .panel = rd_nil_panel_address, .view = rd_nil_view_address, .tab = rd_nil_view_address)
   {
     // Window build pushes this same window-level rd_font_size before control
     // chrome/panel layout; per-View font scopes start inside those panel bodies.
@@ -4345,12 +4654,12 @@ rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
 }
 
 internal F32
-rd_dock_width_from_geometry_for_view(RD_DockGeometry *geometry, RD_PanelAddress destination, Dir2 dir, CFG_Node *moving_view)
+rd_dock_width_from_geometry_for_view(RD_DockGeometry *geometry, RD_PanelAddress destination, Dir2 dir, RD_ViewAddress moving_view)
 {
   // A View can begin a drag midway through the panel-area build. Measure on
   // the first target query, including queries from later leaves in that frame.
   if(!geometry->measured) { *geometry = rd_dock_geometry_from_mount(geometry->mount); }
-  // Nil CFG nodes self-link and have ID 0, which no tab has. Thus a nil View
+  // A nil View resolves to the nil node, whose ID 0 no tab has. Thus it
   // safely selects insertion-only measurement below, as does a destination
   // the measured mount does not show (an unrendered Floating Panel's). The
   // mount's arrangement is read again as config has it now: sizing may have
@@ -4359,7 +4668,7 @@ rd_dock_width_from_geometry_for_view(RD_DockGeometry *geometry, RD_PanelAddress 
   RD_Arrangement *arrangement = rd_arrangement_from_cfg(scratch.arena, cfg_node_from_id(geometry->mount->arrangement->saved_root));
   RD_PanelID panel = rd_panel_owner_match(destination.owner, geometry->mount->owner) ? destination.id : 0;
   F32 width = rd_dock_moving_width(arrangement, panel,
-    moving_view->id, rd_tab_is_shown, geometry->area, dir, geometry->inset);
+    rd_cfg_from_view(moving_view)->id, rd_tab_is_shown, geometry->area, dir, geometry->inset);
   scratch_end(scratch);
   return width;
 }
@@ -4370,13 +4679,13 @@ rd_dock_width_from_geometry(RD_DockGeometry *geometry, RD_PanelAddress destinati
   // Only measurements are cached; read the arrangement and active View anew
   // and simulate the proposal on a copy on every query, including a
   // cancelled/restarted drag this frame.
-  CFG_Node *view = rd_drag_is_active() ? cfg_node_from_id(rd_state->drag_drop_regs->view) : &cfg_nil_node;
+  RD_ViewAddress view = rd_drag_is_active() ? rd_state->drag_drop_regs->view : rd_nil_view_address;
   return rd_dock_width_from_geometry_for_view(geometry, destination, dir, view);
 }
 
 // Commands build and release their temporary tree and remeasure current size.
 internal F32
-rd_dock_target_width(Arena *arena, RD_PanelAddress destination, Dir2 dir, CFG_Node *view, B32 *unavailable)
+rd_dock_target_width(Arena *arena, RD_PanelAddress destination, Dir2 dir, RD_ViewAddress view, B32 *unavailable)
 {
   Temp temp = temp_begin(arena);
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_panel_owner(arena, destination.owner);
@@ -4407,7 +4716,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
   struct TabTask
   {
     TabTask *next;
-    CFG_Node *tab;
+    RD_ViewAddress tab;
     DR_FStrList fstrs;
     F32 tab_width;
   };
@@ -4442,7 +4751,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
     RD_DropBars drop_bars = {0};
     if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View) ProfScope("boundary drop sites")
     {
-      CFG_Node *drag_view = cfg_node_from_id(rd_state->drag_drop_regs->view);
+      RD_ViewAddress drag_view = rd_state->drag_drop_regs->view;
       U64 cap = 2;
       for(RD_PanelNode *panel = panel_tree.root; panel != &rd_nil_panel_node; panel = rd_panel_node_rec__depth_first_pre(panel_tree.root, panel).next)
       { for(RD_PanelNode *child = panel->first; child != &rd_nil_panel_node; child = child->next) { cap += 2; } }
@@ -4721,28 +5030,28 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           B32 reset = (window_layout_reset || ws->frames_alive < 5 || is_changing_panel_boundaries);
           F32 tab_close_width_px = ui_top_font_size()*2.5f;
           F32 max_tab_width_px = ui_top_font_size()*20.f;
-          for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next)
+          for(RD_ViewAddressNode *n = panel->tabs.first; n != 0; n = n->next)
           {
-            CFG_Node *tab = n->v;
-            if(rd_cfg_is_project_filtered(tab))
+            RD_ViewAddress tab = n->v;
+            if(rd_view_is_project_filtered(tab))
             {
               continue;
             }
-            B32 tab_is_selected = (tab == panel->selected_tab);
+            B32 tab_is_selected = rd_view_address_match(tab, panel->selected_tab);
             // Selected tabs are integrated with the panel body, so title text
             // resolves from body text rather than tab text.
             UI_TagF(tab_is_selected ? "." : "inactive")
             {
               TabTask *t = push_array(scratch.arena, TabTask, 1);
               t->tab = tab;
-              t->fstrs = rd_title_fstrs_from_cfg(scratch.arena, tab, 0);
+              t->fstrs = rd_title_fstrs_from_cfg(scratch.arena, rd_cfg_from_view(tab), 0);
               F32 tab_width_target = dr_dim_from_fstrs(ui_top_tab_size(), &t->fstrs).x + tab_close_width_px + ui_top_font_size()*(1.f+UIShell_GripWidthEM);
               if(plan->presentation == RD_DockPresentation_Tabs && tab_is_selected && panel_tree.focused == panel)
               {
                 tab_width_target += tab_close_width_px;
               }
               tab_width_target = Min(max_tab_width_px, tab_width_target);
-              t->tab_width = floor_f32(ui_anim(ui_key_from_stringf(ui_key_zero(), "tab_width_%p", tab), tab_width_target, .initial = reset ? tab_width_target : 0, .rate = rd_state->menu_animation_rate));
+              t->tab_width = floor_f32(ui_anim(ui_key_from_stringf(rd_view_ui_key(tab), "tab_width"), tab_width_target, .initial = reset ? tab_width_target : 0, .rate = rd_state->menu_animation_rate));
               SLLQueuePush(plan->first_tab_task, plan->last_tab_task, t);
               plan->tab_task_count += 1;
             }
@@ -4759,12 +5068,13 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           {
             F32 tab_x0 = tab_x;
             F32 tab_x1 = tab_x + task->tab_width;
-            if(task->tab == panel->selected_tab)
+            if(rd_view_address_match(task->tab, panel->selected_tab))
             {
               F32 visible_x0 = Max(tab_x0, plan->tab_bar_rect.x0);
               F32 visible_x1 = Min(tab_x1, plan->tab_bar_rect.x1);
-              UI_Key tab_column_key = ui_key_from_stringf(tab_bar_key, "tab_column_%p", task->tab);
-              UI_Key tab_box_key = ui_key_from_stringf(tab_column_key, "tab_%p", task->tab);
+              U64 tab_key = rd_view_ui_key(task->tab).u64[0];
+              UI_Key tab_column_key = ui_key_from_stringf(tab_bar_key, "tab_column_%I64x", tab_key);
+              UI_Key tab_box_key = ui_key_from_stringf(tab_column_key, "tab_%I64x", tab_key);
               UI_Box *prev_tab_box = ui_box_from_key(tab_box_key);
               if(!ui_box_is_nil(prev_tab_box))
               {
@@ -4866,9 +5176,10 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                 !ws->ui->hover_card_focus &&
                                 panel_tree.focused == panel &&
                                 rd_dock_host_kind_from_panel_owner(panel->address.owner) == active_host_kind);
-        CFG_Node *selected_tab = panel->selected_tab;
-        RD_ViewState *selected_tab_view_state = rd_view_state_from_cfg(selected_tab);
-        ProfScope("leaf panel UI work - %.*s: %.*s", str8_varg(selected_tab->string), str8_varg(rd_expr_from_cfg(selected_tab)))
+        RD_ViewAddress selected_tab = panel->selected_tab;
+        CFG_Node *selected_tab_cfg = rd_cfg_from_view(selected_tab);
+        RD_ViewState *selected_tab_view_state = rd_view_state_from_view(selected_tab, 0);
+        ProfScope("leaf panel UI work - %.*s: %.*s", str8_varg(selected_tab_cfg->string), str8_varg(rd_expr_from_cfg(selected_tab_cfg)))
           UI_Focus(panel_is_focused ? UI_FocusKind_Null : UI_FocusKind_Off)
         {
           //////////////////////////
@@ -4928,7 +5239,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //
           if(build_panel && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && contains_2f32(panel_rect, ui_mouse()))
           {
-            CFG_Node *view = cfg_node_from_id(rd_state->drag_drop_regs->view);
+            RD_ViewAddress view = rd_state->drag_drop_regs->view;
             if(rd_panel_drag_target(view, panel->address, rd_dock_width_from_geometry(&dock_geometry, panel->address, Dir2_Invalid)))
             {
               F32 em = ui_top_font_size(), gap = rd_drop_target_gap();
@@ -4960,7 +5271,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                   Rng2F32 target = panel_rect;
                   target.v[side_flip(side)].v[axis] = (panel_rect.p0.v[axis] + panel_rect.p1.v[axis])*0.5f;
                   rd_drop_preview(target);
-                  if(rd_drag_drop()) { rd_panel_drag_drop(panel->address, dir, 0); }
+                  if(rd_drag_drop()) { rd_panel_drag_drop(panel->address, dir, rd_nil_view_address); }
                 }
               }
             }
@@ -4971,7 +5282,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //
           UI_Key catchall_drop_site_key = rd_panel_catchall_drop_site_key(panel->address);
           if(build_panel && dim_2f32(tab_drop_strip).x > 0 && dim_2f32(tab_drop_strip).y > 0 && rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
-             rd_panel_drag_target(cfg_node_from_id(rd_state->drag_drop_regs->view), panel->address, rd_dock_width_from_geometry(&dock_geometry, panel->address, Dir2_Invalid))) UI_Rect(tab_drop_strip)
+             rd_panel_drag_target(rd_state->drag_drop_regs->view, panel->address, rd_dock_width_from_geometry(&dock_geometry, panel->address, Dir2_Invalid))) UI_Rect(tab_drop_strip)
           {
             UI_Box *catchall_drop_site = ui_build_box_from_key(UI_BoxFlag_DropSite, catchall_drop_site_key);
             ui_signal_from_box(catchall_drop_site);
@@ -5055,10 +5366,10 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           {
             //- rjf: push interaction registers, fill with per-view states
             uishell_push_regs(.panel = panel->address,
-                         .tab = selected_tab->id,
-                         .view = selected_tab->id);
+                         .tab = selected_tab,
+                         .view = selected_tab);
             {
-              String8 view_expr = rd_expr_from_cfg(selected_tab);
+              String8 view_expr = rd_expr_from_cfg(selected_tab_cfg);
               String8 view_file_path = rd_file_path_from_eval_string(rd_frame_arena(), view_expr);
               // NOTE(rjf): we want to only fill out this view's file path slot if it
               // evaluates one - this way, a view can use the slot to know the selected
@@ -5073,17 +5384,17 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             //- rjf: visualizers -> accept expression drops
             UI_Box *view_drop_site = &ui_nil_box;
             {
-              WH_Renderer *renderer = wh_visualizer_from_name(selected_tab->string);
+              WH_Renderer *renderer = wh_visualizer_from_name(selected_tab_cfg->string);
               if(wh_renderer_has_trait(renderer, RD_ViewTrait_ExpressionDrop) &&
                  rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_Expr)
               {
                 UI_FixedSize(dim_2f32(content_rect))
-                  view_drop_site = ui_build_box_from_stringf(UI_BoxFlag_DropSite|UI_BoxFlag_Floating, "drop_site_%I64x", selected_tab->id);
+                  view_drop_site = ui_build_box_from_key(UI_BoxFlag_DropSite|UI_BoxFlag_Floating, ui_key_from_stringf(rd_view_ui_key(selected_tab), "drop_site"));
               }
             }
             
             //- uishell: a Slot's notice, in a banner above its View
-            if(selected_tab != &cfg_nil_node) { content_rect = uishell_slot_banner(selected_tab, content_rect); }
+            if(!rd_view_address_is_nil(selected_tab)) { content_rect = uishell_slot_banner(selected_tab_cfg, content_rect); }
             
             //- rjf: build view container
             UI_Box *view_container_box = &ui_nil_box;
@@ -5095,7 +5406,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             }
             
             //- rjf: build empty view
-            UI_Parent(view_container_box) if(selected_tab == &cfg_nil_node && panel->parent != &rd_nil_panel_node)
+            UI_Parent(view_container_box) if(rd_view_address_is_nil(selected_tab) && panel->parent != &rd_nil_panel_node)
             {
               ui_set_next_flags(UI_BoxFlag_DefaultFocusNav);
               UI_Focus(UI_FocusKind_On) UI_WidthFill UI_HeightFill UI_NamedColumn(str8_lit("empty_view")) UI_TagF("weak")
@@ -5118,7 +5429,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             }
             
             //- rjf: build tab view
-            UI_Parent(view_container_box) if(selected_tab != &cfg_nil_node) ProfScope("build tab view")
+            UI_Parent(view_container_box) if(!rd_view_address_is_nil(selected_tab)) ProfScope("build tab view")
             {
               rd_view_ui(content_rect);
             }
@@ -5207,15 +5518,15 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           // A sidebar section's header places its own tab drops.
           B32 tab_drop_is_active = rd_drag_is_active() && ui_key_match(ui_drop_hot_key(), catchall_drop_site_key) &&
             chrome_plan->presentation != RD_DockPresentation_SectionHeader;
-          CFG_Node *tab_drop_prev = &cfg_nil_node;
+          RD_ViewAddress tab_drop_prev = rd_nil_view_address;
           if(build_panel)
           {
             F32 best_prev_distance_px = 1000000.f;
-            TabTask start_boundary_tab_task = {first_tab_task, &cfg_nil_node};
+            TabTask start_boundary_tab_task = {first_tab_task};
             F32 off = tab_gap_px;
             for(TabTask *task = &start_boundary_tab_task; task != 0; task = task->next)
             {
-              if(task->tab != &cfg_nil_node && task != first_tab_task)
+              if(!rd_view_address_is_nil(task->tab) && task != first_tab_task)
               {
                 off += tab_gap_px;
               }
@@ -5235,14 +5546,14 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //
           if(tab_drop_is_active && rd_panel_address_match(rd_state->drag_drop_regs->panel, panel->address))
           {
-            TabTask start_boundary_tab_task = {first_tab_task, &cfg_nil_node};
-            if(tab_drop_prev->id == rd_state->drag_drop_regs->view)
+            TabTask start_boundary_tab_task = {first_tab_task};
+            if(rd_view_address_match(tab_drop_prev, rd_state->drag_drop_regs->view))
             {
               tab_drop_is_active = 0;
             }
             if(tab_drop_is_active) for(TabTask *t = &start_boundary_tab_task; t != 0; t = t->next)
             {
-              if(t->tab == tab_drop_prev && t->next != 0 && t->next->tab->id == rd_state->drag_drop_regs->view)
+              if(rd_view_address_match(t->tab, tab_drop_prev) && t->next != 0 && rd_view_address_match(t->next->tab, rd_state->drag_drop_regs->view))
               {
                 tab_drop_is_active = 0;
                 break;
@@ -5256,32 +5567,33 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           if(build_panel && chrome_plan->presentation != RD_DockPresentation_SectionHeader) UI_Focus(UI_FocusKind_Off) UI_Parent(tab_bar_box) UI_Padding(ui_px(tab_gap_px, 1.f)) UI_PrefHeight(ui_pct(1, 0)) UI_TagF("tab")
           {
             F32 corner_radius = ui_top_font_size()*0.6f;
-            TabTask start_boundary_tab_task = {first_tab_task, &cfg_nil_node};
+            TabTask start_boundary_tab_task = {first_tab_task};
             UI_CornerRadius00(panel->tab_side == Side_Min ? corner_radius : 0)
               UI_CornerRadius01(panel->tab_side == Side_Min ? 0 : corner_radius)
               UI_CornerRadius10(panel->tab_side == Side_Min ? corner_radius : 0)
               UI_CornerRadius11(panel->tab_side == Side_Min ? 0 : corner_radius)
               for(TabTask *tab_task = &start_boundary_tab_task; tab_task != 0; tab_task = tab_task->next)
             {
-              CFG_Node *tab = tab_task->tab;
+              RD_ViewAddress tab = tab_task->tab;
+              U64 tab_key = rd_view_ui_key(tab).u64[0];
               
               //- rjf: build tab
               DR_FStrList tab_fstrs = tab_task->fstrs;
               F32 tab_width_px = tab_task->tab_width;
-              if(tab != &cfg_nil_node) UIShell_RegsScope(.panel = panel->address, .view = tab->id, .tab = tab->id)
+              if(!rd_view_address_is_nil(tab)) UIShell_RegsScope(.panel = panel->address, .view = tab, .tab = tab)
               {
                 // rjf: gather info for this tab
-                B32 tab_is_selected = (tab == panel->selected_tab);
+                B32 tab_is_selected = rd_view_address_match(tab, panel->selected_tab);
                 B32 tab_is_auto = rd_view_setting_b32_from_name(str8_lit("auto"));
                 
                 // rjf: begin vertical region for this tab
                 ui_set_next_child_layout_axis(Axis2_Y);
                 ui_set_next_pref_width(ui_px(tab_width_px, 1));
-                UI_Box *tab_column_box = ui_build_box_from_stringf(!is_changing_panel_boundaries*UI_BoxFlag_AnimatePosX, "tab_column_%p", tab);
+                UI_Box *tab_column_box = ui_build_box_from_stringf(!is_changing_panel_boundaries*UI_BoxFlag_AnimatePosX, "tab_column_%I64x", tab_key);
                 
                 // rjf: choose palette
                 B32 omit_name = 0;
-                if(rd_drag_is_active() && rd_state->drag_drop_regs->view == tab->id && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View)
+                if(rd_drag_is_active() && rd_view_address_match(rd_state->drag_drop_regs->view, tab) && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View)
                 {
                   omit_name = 1;
                 }
@@ -5321,7 +5633,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                                               (UI_BoxFlag_DrawDropShadow * (tab_is_selected && !omit_name))|
                                                               UI_BoxFlag_DisableFocusBorder|
                                                               UI_BoxFlag_Clickable,
-                                                              "tab_%p", tab);
+                                                              "tab_%I64x", tab_key);
                   if(tab_is_selected && panel_border_px >= 1.f && !omit_name)
                   {
                     RD_SelectedTabFrameDrawData *frame_draw = push_array(ui_build_arena(), RD_SelectedTabFrameDrawData, 1);
@@ -5383,7 +5695,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                                                      UI_BoxFlag_DrawText|
                                                                      UI_BoxFlag_DrawHotEffects|
                                                                      UI_BoxFlag_DrawActiveEffects,
-                                                                     "%S###edit_view_%p", rd_icon_kind_text_table[RD_IconKind_Gear], tab);
+                                                                     "%S###edit_view_%I64x", rd_icon_kind_text_table[RD_IconKind_Gear], tab_key);
                         UI_Signal sig = ui_signal_from_box(edit_box);
                         if(ui_pressed(sig))
                         {
@@ -5396,7 +5708,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                           {
                             uishell_cmd("push_query",
                                    .ui_key       = sig.box->key,
-                                   .expr         = push_str8f(scratch.arena, "query:config.$%I64x", tab->id));
+                                   .expr         = push_str8f(scratch.arena, "query:config.$%I64x", rd_cfg_from_view(tab)->id));
                           }
                         }
                       }
@@ -5409,13 +5721,13 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                       UI_VisualMarginY(tab_button_margin_y)
                       UI_CornerRadius(tab_button_radius)
                     {
-                      UI_Box *close_box = ui_build_box_from_stringf((rd_dock_can_close(tab) ? 0 : UI_BoxFlag_Disabled)|UI_BoxFlag_Clickable|
+                      UI_Box *close_box = ui_build_box_from_stringf((rd_dock_can_close(rd_dock_view_from_address(tab)) ? 0 : UI_BoxFlag_Disabled)|UI_BoxFlag_Clickable|
                                                                     UI_BoxFlag_DrawBorder|
                                                                     UI_BoxFlag_DrawBackground|
                                                                     UI_BoxFlag_DrawText|
                                                                     UI_BoxFlag_DrawHotEffects|
                                                                     UI_BoxFlag_DrawActiveEffects,
-                                                                    "%S###close_view_%p", rd_icon_kind_text_table[RD_IconKind_X], tab);
+                                                                    "%S###close_view_%I64x", rd_icon_kind_text_table[RD_IconKind_X], tab_key);
                       UI_Signal sig = ui_signal_from_box(close_box);
                       if(ui_clicked(sig) || ui_middle_clicked(sig))
                       {
@@ -5440,7 +5752,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                     {
                       uishell_cmd("push_query",
                              .ui_key       = sig.box->key,
-                             .expr         = push_str8f(scratch.arena, "query:config.$%I64x", tab->id));
+                             .expr         = push_str8f(scratch.arena, "query:config.$%I64x", rd_cfg_from_view(tab)->id));
                     }
                     else if(ui_middle_clicked(sig))
                     {
@@ -5462,12 +5774,12 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
               if(tab_drop_is_active &&
                  rd_drag_is_active() &&
                  rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View &&
-                 tab == tab_drop_prev)
+                 rd_view_address_match(tab, tab_drop_prev))
               {
                 // rjf: begin vertical region for this spot
                 ui_set_next_child_layout_axis(Axis2_Y);
                 ui_set_next_pref_width(ui_px(ui_top_font_size()*4.f, 1));
-                UI_Box *tab_column_box = ui_build_box_from_stringf(!is_changing_panel_boundaries*UI_BoxFlag_AnimatePosX, "tab_column_%p", tab);
+                UI_Box *tab_column_box = ui_build_box_from_stringf(!is_changing_panel_boundaries*UI_BoxFlag_AnimatePosX, "tab_column_%I64x", tab_key);
                 
                 // rjf: build spot container box
                 UI_Parent(tab_column_box)
@@ -5587,7 +5899,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //
           if(tab_drop_is_active && rd_drag_drop() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View)
           {
-            rd_panel_drag_drop(panel->address, Dir2_Invalid, tab_drop_prev->id);
+            rd_panel_drag_drop(panel->address, Dir2_Invalid, tab_drop_prev);
           }
           
           //////////////////////////
@@ -5972,8 +6284,8 @@ rd_window_frame(void)
   //- rjf: @window_frame_part fill panel/view interaction registers
   //
   uishell_regs()->panel = panel_tree.focused->address;
-  uishell_regs()->tab   = panel_tree.focused->selected_tab->id;
-  uishell_regs()->view = panel_tree.focused->selected_tab->id;
+  uishell_regs()->tab   = panel_tree.focused->selected_tab;
+  uishell_regs()->view = panel_tree.focused->selected_tab;
   
   //////////////////////////////
   //- rjf: @window_frame_part compute window's theme
@@ -6167,7 +6479,7 @@ rd_window_frame(void)
     {
       // rjf: get top-level font size info
       F32 top_level_font_size = 0;
-      UIShell_RegsScope(.view = 0, .tab = 0) top_level_font_size = rd_font_size();
+      UIShell_RegsScope(.view = rd_nil_view_address, .tab = rd_nil_view_address) top_level_font_size = rd_font_size();
       
       // rjf: build icon info
       UI_IconInfo icon_info = {0};
@@ -6350,11 +6662,11 @@ rd_window_frame(void)
     if(rd_drag_is_active() && window_is_focused)
       UIShell_RegsScope(.window = rd_state->drag_drop_regs->window,
                    .panel = rd_state->drag_drop_regs->panel,
-                   .tab = 0,
+                   .tab = rd_nil_view_address,
                    .view = rd_state->drag_drop_regs->view)
     {
       Temp scratch = scratch_begin(0, 0);
-      CFG_Node *view = cfg_node_from_id(rd_state->drag_drop_regs->view);
+      CFG_Node *view = rd_cfg_from_view(rd_state->drag_drop_regs->view);
       {
         //- rjf: tab dragging
         if(rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && view != &cfg_nil_node)
@@ -6372,7 +6684,7 @@ rd_window_frame(void)
           {
             cfg_node_child_from_string_or_alloc(rd_state->cfg, immediate_parent, str8_lit("hot"));
           }
-          rd_drag_view_floater_ui(ws, view);
+          rd_drag_view_floater_ui(ws, rd_state->drag_drop_regs->view);
         }
       }
       scratch_end(scratch);
@@ -6758,7 +7070,7 @@ rd_window_frame(void)
         
         // rjf: determine container size
         EV_BlockTree predicted_block_tree = {0};
-        UIShell_RegsScope(.view = view->id, .tab = 0)
+        UIShell_RegsScope(.view = rd_view_address_from_cfg(view), .tab = rd_nil_view_address)
         {
           String8 expr = rd_expr_from_cfg(view);
           E_Eval list_eval = e_eval_from_string(expr);
@@ -6808,10 +7120,10 @@ rd_window_frame(void)
               panel = rd_panel_node_rec__depth_first_pre(panel_tree.root, panel).next)
           {
             if(panel->first != &rd_nil_panel_node) { continue; }
-            CFG_Node *tab = panel->selected_tab;
-            if(tab != &cfg_nil_node)
+            RD_ViewAddress tab = panel->selected_tab;
+            if(!rd_view_address_is_nil(tab))
             {
-              RD_ViewState *vs = rd_view_state_from_cfg(tab);
+              RD_ViewState *vs = rd_view_state_from_view(tab, 0);
               Rng2F32 panel_rect = rd_target_rect_from_panel_node(content_rect, panel_tree.root, panel);
               if(contains_2f32(panel_rect, ui_mouse()) &&
                  (abs_f32(vs->scroll_pos.x.off) > 0.01f ||
@@ -6865,7 +7177,7 @@ rd_window_frame(void)
           
           // rjf: determine size of hover evaluation container
           EV_BlockTree predicted_block_tree = {0};
-          UIShell_RegsScope(.view = view->id, .tab = 0)
+          UIShell_RegsScope(.view = rd_view_address_from_cfg(view), .tab = rd_nil_view_address)
           {
             ev_key_set_expansion(rd_view_eval_view(), ev_key_root(), ev_key_make(ev_hash_from_key(ev_key_root()), 1), 1);
             predicted_block_tree = ev_block_tree_from_eval(scratch.arena, rd_view_eval_view(), str8_zero(), hover_eval);
@@ -6946,7 +7258,7 @@ rd_window_frame(void)
         CFG_Node *query = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("query"));
         B32 is_lister = (cfg_node_child_from_string(view, str8_lit("lister")) != &cfg_nil_node);
         B32 root_is_explicit = (cfg_node_child_from_string(view, str8_lit("explicit_root")) != &cfg_nil_node);
-        RD_ViewState *vs = rd_view_state_from_cfg(view);
+        RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
         
         // rjf: did this view ID change? -> reset open animation
         B32 reset_open = 0;
@@ -7006,7 +7318,7 @@ rd_window_frame(void)
         
         // rjf: compute query view's top-level rectangle
         Rng2F32 rect = {0};
-        UIShell_RegsScope(.view = view->id, .tab = 0)
+        UIShell_RegsScope(.view = rd_view_address_from_cfg(view), .tab = rd_nil_view_address)
         {
           F32 row_height_px = ui_top_font_size() * rd_setting_f32_from_name(str8_lit("row_height"));
           Vec2F32 content_rect_center = center_2f32(content_rect);
@@ -7018,7 +7330,7 @@ rd_window_frame(void)
           F32 query_height_px = max_query_height_px;
           if(size_query_by_expr_eval)
           {
-            F32 search_row_open_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "search_row_open_%p", view),
+            F32 search_row_open_t = ui_anim(ui_key_from_stringf(rd_view_ui_key(rd_view_address_from_cfg(view)), "search_row_open"),
                                             (F32)!!vs->query_is_open,
                                             .initial = (F32)!!vs->query_is_open,
                                             .epsilon = 0.01f,
@@ -7079,7 +7391,7 @@ rd_window_frame(void)
         B32 is_focused    = t->is_focused;
         B32 is_anchored   = t->is_anchored;
         B32 only_secondary_navigation = t->only_secondary_navigation;
-        F32 open_t        = ui_anim(ui_key_from_stringf(ui_key_zero(), "floating_view_open_%p", view), 1.f,
+        F32 open_t        = ui_anim(ui_key_from_stringf(rd_view_ui_key(rd_view_address_from_cfg(view)), "floating_view_open"), 1.f,
                                     .rate = is_anchored ? fast_open_rate : slow_open_rate,
                                     .reset = t->reset_open,
                                     .initial = 0.f);
@@ -7107,7 +7419,7 @@ rd_window_frame(void)
           {
             uishell_regs()->cfg = t->regs->cfg;
           }
-          uishell_regs()->view = view->id;
+          uishell_regs()->view = rd_view_address_from_cfg(view);
           String8 view_expr = rd_expr_from_cfg(view);
           String8 view_file_path = rd_file_path_from_eval_string(rd_frame_arena(), view_expr);
           // NOTE(rjf): we want to only fill out this view's file path slot if it
@@ -7141,7 +7453,7 @@ rd_window_frame(void)
                                                   UI_BoxFlag_DisableFocusOverlay|
                                                   UI_BoxFlag_DrawDropShadow|
                                                   (UI_BoxFlag_SquishAnchored*!!is_anchored),
-                                                  "floating_view_container_%p", view);
+                                                  "floating_view_container_%I64x", rd_view_ui_key(rd_view_address_from_cfg(view)).u64[0]);
           }
           
           // rjf: peek press inside/outside events
@@ -7187,7 +7499,7 @@ rd_window_frame(void)
           
           // rjf: build loading overlay
           {
-            RD_ViewState *vs = rd_view_state_from_cfg(view);
+            RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
             F32 loading_t = vs->loading_t;
             if(loading_t > 0.01f) UI_Parent(loading_overlay_container)
             {
@@ -7261,7 +7573,7 @@ rd_window_frame(void)
         if(t == query_floating_view_task)
         {
           CFG_Node *view = query_floating_view_task->view;
-          RD_ViewState *vs = rd_view_state_from_cfg(query_floating_view_task->view);
+          RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(query_floating_view_task->view), 0);
           String8 cmd_name = ws->query_regs->cmd_name;
           UIShell_AppCmdInfo cmd_info = uishell_app_cmd_info_from_string(cmd_name);
           
@@ -9966,7 +10278,7 @@ uishell_regs_fill_slot_from_string(UIShell_ContextRegSlot slot, String8 query_ex
         CFG_Node *immediate = rd_immediate_cfg_from_keyf("###regs_fill_slot_view");
         CFG_Node *view = cfg_node_newf(rd_state->cfg, immediate, "watch");
         cfg_node_newf(rd_state->cfg, view, "lister");
-        RD_ViewState *vs = rd_view_state_from_cfg(view);
+        RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
         EV_View *eval_view = vs->ev_view;
         {
           ev_key_set_expansion(eval_view, ev_key_root(), ev_key_make(ev_hash_from_key(ev_key_root()), 1), 1);
@@ -9977,7 +10289,7 @@ uishell_regs_fill_slot_from_string(UIShell_ContextRegSlot slot, String8 query_ex
           // view info in the block tree build via shell-layer eval hooks, but we
           // should really keep all parameterization info in eval views themselves,
           // to not couple block tree building with frontend state...
-          UIShell_RegsScope(.window = 0, .panel = rd_nil_panel_address, .view = view->id)
+          UIShell_RegsScope(.window = 0, .panel = rd_nil_panel_address, .view = rd_view_address_from_cfg(view))
           {
             block_tree = ev_block_tree_from_eval(scratch.arena, eval_view, string, eval);
             block_ranges = ev_block_range_list_from_tree(scratch.arena, &block_tree);
@@ -10071,7 +10383,7 @@ uishell_push_stored_cmd(String8 name, UIShell_Regs *regs)
     if(ws != &rd_nil_window_state && ws->ui)
     {
       captured.edit_owner_key = ws->ui->edit_owner_key;
-      if(ws->ui->edit_owner_terminal) { captured.view = ws->ui->edit_owner_view; }
+      if(ws->ui->edit_owner_terminal) { captured.view = ws->edit_owner_view; }
     }
     captured.edit_owner_captured = 1;
   }
@@ -10103,7 +10415,7 @@ uishell_next_view_cmd(UIShell_Cmd **cmd)
 {
   for(;uishell_next_cmd(cmd);)
   {
-    if(uishell_regs()->view == cmd[0]->regs->view)
+    if(rd_view_address_match(uishell_regs()->view, cmd[0]->regs->view))
     {
       break;
     }
@@ -10269,6 +10581,8 @@ rd_cfg_new_view_tab(CFG_Node *parent, String8 view, String8 expr, B32 selected)
   {
     cfg_node_new(rd_state->cfg, tab, str8_lit("selected"));
   }
+  // Placed in a panel, it has a key there, as saving would give it.
+  rd_view_key_assign(rd_state->cfg, tab, 0);
   return tab;
 }
 
@@ -10495,8 +10809,10 @@ rd_init(CmdLine *cmdln)
   {
     rd_state->view_state_slots_count = 4096;
     rd_state->view_state_slots = push_array(arena, RD_ViewStateSlot, rd_state->view_state_slots_count);
+    rd_state->view_state_last_accessed = &rd_nil_view_state;
+    rd_arrangement_view_move_hook = rd_view_moved;
   }
-  
+
   //- rjf: setup initial target from command line args
   String8 implicit_user_arg = {0};
   String8 implicit_project_arg = {0};
@@ -10922,11 +11238,11 @@ rd_frame(void)
       RD_PanelTree panel_tree = workspace ? workspace->mount.panel_tree : (RD_PanelTree){&rd_nil_panel_node};
       for(RD_PanelNode *p = panel_tree.root; p != &rd_nil_panel_node; p = rd_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
       {
-        if(p->selected_tab != &cfg_nil_node) { continue; }
-        for(CFG_NodePtrNode *tab_n = p->tabs.first; tab_n != 0; tab_n = tab_n->next)
+        if(!rd_view_address_is_nil(p->selected_tab)) { continue; }
+        for(RD_ViewAddressNode *tab_n = p->tabs.first; tab_n != 0; tab_n = tab_n->next)
         {
-          if(rd_cfg_is_project_filtered(tab_n->v)) { continue; }
-          uishell_cmd("focus_tab", .panel = p->address, .tab = tab_n->v->id);
+          if(rd_view_is_project_filtered(tab_n->v)) { continue; }
+          uishell_cmd("focus_tab", .panel = p->address, .tab = tab_n->v);
           break;
         }
       }
@@ -11017,7 +11333,7 @@ rd_frame(void)
         {
           vs->scroll_pos.y.off = 0;
         }
-        CFG_Node *vcfg = cfg_node_from_id(vs->cfg_id);
+        CFG_Node *vcfg = rd_cfg_from_view(vs->view);
         if(cfg_node_child_from_string(vcfg, str8_lit("selected")) != &cfg_nil_node)
         {
           if(vs->loading_t_target > 0.5f && any_window_is_focused)
@@ -11204,12 +11520,12 @@ rd_frame(void)
         RD_PanelTree panel_tree = workspace_mount->panel_tree;
         uishell_regs()->window = ws->cfg_id;
         uishell_regs()->panel  = panel_tree.focused->address;
-        uishell_regs()->tab    = panel_tree.focused->selected_tab->id;
-        uishell_regs()->view   = panel_tree.focused->selected_tab->id;
+        uishell_regs()->tab    = panel_tree.focused->selected_tab;
+        uishell_regs()->view   = panel_tree.focused->selected_tab;
         scratch_end(scratch);
       }
       B32 card_took_event = uishell_sidebar_card_wm_event(ws, event);
-      CFG_Node *focused_view = cfg_node_from_id(uishell_regs()->view);
+      CFG_Node *focused_view = rd_cfg_from_view(uishell_regs()->view);
       // Terminal views get physical keyboard input before command bindings; Super stays available for app shortcuts.
       B32 terminal_input_is_focused = (ws != 0 &&
                                        ws != &rd_nil_window_state &&
@@ -11231,11 +11547,11 @@ rd_frame(void)
       if(!take) { take = uishell_route_edit_activation(scratch.arena, ws, event, terminal_edit_owner); }
       String8 repeat_page_command = {0};
       if(!take) { take = uishell_terminal_page_binding_event(ws, event,
-        terminal_input_is_focused ? focused_view->id : 0, &repeat_page_command); }
+        terminal_input_is_focused ? uishell_regs()->view : rd_nil_view_address, &repeat_page_command); }
       if(repeat_page_command.size) { uishell_cmd("run_command", .cmd_name = repeat_page_command); }
       if(!take && ws != 0 && ws != &rd_nil_window_state &&
          !rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused && !ws->ui->hover_card_focus)
-        take = uishell_jackstay_event(focused_view->id,event);
+        take = uishell_jackstay_event(uishell_regs()->view, event);
       
       //- rjf: try drag/drop drop-kickoff
       if(rd_drag_is_active() && event->kind == WM_EventKind_Release && event->key == WM_Key_LeftMouseButton)
@@ -11468,9 +11784,9 @@ rd_frame(void)
               p != &rd_nil_panel_node;
               p = rd_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
           {
-            for(CFG_NodePtrNode *tab_n = p->tabs.first; tab_n != 0; tab_n = tab_n->next)
+            for(RD_ViewAddressNode *tab_n = p->tabs.first; tab_n != 0; tab_n = tab_n->next)
             {
-              CFG_Node *tab = tab_n->v;
+              CFG_Node *tab = rd_cfg_from_view(tab_n->v);
               E_TypeKey type_key = e_string2typekey_map_lookup(rd_state->meta_name2type_map, tab->string);
               E_Space space = rd_eval_space_from_cfg(tab);
               E_Expr *expr = e_push_expr(scratch.arena, E_ExprKind_LeafOffset, r1u64(0, 0));
@@ -11817,14 +12133,14 @@ rd_frame(void)
       RD_PanelTree panel_tree = workspace_mount->panel_tree;
       for(RD_PanelNode *p = panel_tree.root; p != &rd_nil_panel_node; p = rd_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
       {
-        for(CFG_NodePtrNode *tab_n = p->tabs.first; tab_n != 0; tab_n = tab_n->next)
+        for(RD_ViewAddressNode *tab_n = p->tabs.first; tab_n != 0; tab_n = tab_n->next)
         {
-          CFG_Node *tab = tab_n->v;
+          CFG_Node *tab = rd_cfg_from_view(tab_n->v);
           if(rd_cfg_is_project_filtered(tab))
           {
             continue;
           }
-          UIShell_RegsScope(.tab = tab->id, .view = tab->id)
+          UIShell_RegsScope(.tab = tab_n->v, .view = tab_n->v)
           {
             String8 eval_string = rd_expr_from_cfg(tab);
             String8 file_path = rd_file_path_from_eval_string(scratch.arena, eval_string);

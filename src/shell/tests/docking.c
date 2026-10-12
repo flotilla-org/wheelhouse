@@ -48,12 +48,22 @@ dock_host(CFG_Node *destination, F32 width)
   return destination == &cfg_nil_node ? none : rd_dock_host_from_cfg(destination, width);
 }
 
-// The renderer's reading of the saved tree, its panels unowned here.
+// The shell's Workspace and Window IDs aren't in these tests: every panel
+// and View is addressed as one zero-ID owner's.
+read_only global RD_PanelOwner test_owner = {RD_PanelOwnerKind_Workspace};
+
+// The renderer's reading of the saved tree.
 internal RD_PanelTree
 panel_tree(Arena *arena, CFG_Node *root)
 {
-  RD_PanelOwner owner = {0};
-  return rd_panel_tree_from_arrangement(arena, owner, rd_arrangement_from_cfg(arena, root));
+  return rd_panel_tree_from_arrangement(arena, test_owner, rd_arrangement_from_cfg(arena, root));
+}
+
+// Whether a tab of the renderer's tree is `view`.
+internal B32
+tab_is(RD_ViewAddress tab, CFG_Node *view)
+{
+  return !rd_view_address_is_nil(tab) && rd_view_address_match(tab, rd_view_address_from_tab(test_owner, view));
 }
 
 // Each arrangement restore saved loads again with no broken invariant.
@@ -145,13 +155,13 @@ entry_point(CmdLine *cmdline)
   CFG_ID selector_id = selecting_view->id, text_id = text->id;
   // These are the very queries made by split, boundary and catch-all drop sites.
   // Rejection includes the selected workspace and the legacy window mount.
-  Check(!rd_dock_drag_target(selecting_view, dock_host(panels, 640)));
-  Check(!rd_dock_drag_target(selecting_view, dock_host(window, 640)));
-  Check(rd_dock_drag_target(selecting_view, dock_host(sidebar, 640)));
-  Check(rd_dock_drag_target(terminal, dock_host(panels, 640)));
-  Check(!rd_dock_drag_target(text, dock_host(sidebar, 640)));
-  Check(!rd_dock_can_close(selecting_view));
-  Check(rd_dock_can_close(terminal));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(selecting_view), dock_host(panels, 640)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(selecting_view), dock_host(window, 640)));
+  Check(rd_dock_drag_target(rd_dock_view_from_cfg(selecting_view), dock_host(sidebar, 640)));
+  Check(rd_dock_drag_target(rd_dock_view_from_cfg(terminal), dock_host(panels, 640)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(text), dock_host(sidebar, 640)));
+  Check(!rd_dock_can_close(rd_dock_view_from_cfg(selecting_view)));
+  Check(rd_dock_can_close(rd_dock_view_from_cfg(terminal)));
   // Creating content is allowed; creating or duplicating the selector would
   // introduce a second Control Surface into its Controlled Split.
   Check(rd_dock_can_create(str8_lit("terminal"), dock_host(panels, RD_DOCK_UNMEASURED_WIDTH)));
@@ -164,24 +174,24 @@ entry_point(CmdLine *cmdline)
   // Fleet sections belong to the root Controlled Split, regardless of a
   // destination's tab styling or the workspace currently selected there.
   CFG_Node *section_panel = cfg_node_new(cfg, sidebar, str8_lit("1"));
-  CFG_Node *section = cfg_node_new(cfg, section_panel, str8_lit("sidebar_section"));
+  CFG_Node *section = cfg_node_new(cfg, section_panel, str8_lit("sidebar_section")); rd_view_key_assign(cfg, section, 0);
   cfg_node_new(cfg, cfg_node_new(cfg, section, str8_lit("section")), str8_lit("attention"));
   CFG_ID section_id = section->id;
-  Check(rd_dock_drag_target(section, dock_host(section_panel, 640)));
-  Check(!rd_dock_drag_target(section, dock_host(panels, 640)));
+  Check(rd_dock_drag_target(rd_dock_view_from_cfg(section), dock_host(section_panel, 640)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(section), dock_host(panels, 640)));
   Check(!rd_dock_can_create(str8_lit("sidebar_section"), dock_host(panels, RD_DOCK_UNMEASURED_WIDTH)));
   CFG_Node *legacy_panels = cfg_node_new(cfg, window, str8_lit("panels"));
-  Check(!rd_dock_drag_target(section, dock_host(legacy_panels, 640)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(section), dock_host(legacy_panels, 640)));
   CFG_Node *root_floating = cfg_node_new(cfg, window, str8_lit("floating_panels"));
-  Check(rd_dock_drag_target(section, dock_host(root_floating, 640)));
+  Check(rd_dock_drag_target(rd_dock_view_from_cfg(section), dock_host(root_floating, 640)));
   CFG_Node *child_floating = cfg_node_new(cfg, workspace, str8_lit("floating_panels"));
-  Check(!rd_dock_drag_target(section, dock_host(child_floating, 640)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(section), dock_host(child_floating, 640)));
   CFG_Node *other_workspace = cfg_node_new(cfg, window, str8_lit("workspace"));
   CFG_Node *other_panels = cfg_node_new(cfg, other_workspace, str8_lit("panels"));
-  Check(!rd_dock_drag_target(terminal, dock_host(other_panels, 640)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(terminal), dock_host(other_panels, 640)));
   CFG_Node *other_window = cfg_node_new(cfg, cfg_node_root(), str8_lit("window"));
   CFG_Node *other_sidebar = cfg_node_new(cfg, other_window, RD_DOCK_SIDEBAR_ROOT);
-  Check(!rd_dock_drag_target(section, dock_host(other_sidebar, 640)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(section), dock_host(other_sidebar, 640)));
   // Repair old cross-level placements into a leaf, preserving identity and settings.
   cfg_node_unhook(cfg, section_panel, section);
   cfg_node_insert_child(cfg, panels, panels->last, section);
@@ -208,32 +218,32 @@ entry_point(CmdLine *cmdline)
   Check(selecting_view->parent == sidebar && text->parent == panels && terminal->parent == panels);
   // Duplicate singleton declarations cannot create a second Control Surface.
   // Restore prefers the valid placement even when an invalid copy comes first.
-  CFG_Node *duplicate = cfg_node_new(cfg, panels, str8_lit("workspace_selector"));
+  CFG_Node *duplicate = cfg_node_new(cfg, panels, str8_lit("workspace_selector")); rd_view_key_assign(cfg, duplicate, 0);
   CFG_ID duplicate_id = duplicate->id;
-  Check(!rd_dock_drag_target(selecting_view, dock_host(sidebar, 640)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(selecting_view), dock_host(sidebar, 640)));
   rd_dock_restore_window(cfg, window);
   Check(cfg_node_from_id(duplicate_id) == &cfg_nil_node);
   Check(selecting_view->parent == sidebar && selecting_view->id == selector_id);
   Check(rd_dock_instances(window, selector) == 1);
-  Check(rd_dock_drag_target(selecting_view, dock_host(sidebar, 640)));
+  Check(rd_dock_drag_target(rd_dock_view_from_cfg(selecting_view), dock_host(sidebar, 640)));
   // Invalid content under the sidebar falls back to a leaf of a split root.
   CFG_Node *split = cfg_node_new(cfg, cfg_node_root(), str8_lit("window"));
   CFG_Node *split_panels = cfg_node_new(cfg, split, str8_lit("panels"));
   CFG_Node *leaf = cfg_node_new(cfg, split_panels, str8_lit("0.5"));
   cfg_node_new(cfg, split_panels, str8_lit("0.5"));
   CFG_Node *split_sidebar = cfg_node_new(cfg, split, RD_DOCK_SIDEBAR_ROOT);
-  CFG_Node *misplaced = cfg_node_new(cfg, split_sidebar, str8_lit("terminal"));
+  CFG_Node *misplaced = cfg_node_new(cfg, split_sidebar, str8_lit("terminal")); rd_view_key_assign(cfg, misplaced, 0);
   rd_dock_restore_window(cfg, split);
   Check(misplaced->parent == leaf);
-  Check(panel_tree(arena, split_panels).root->first->tabs.first->v == misplaced);
+  Check(tab_is(panel_tree(arena, split_panels).root->first->tabs.first->v, misplaced));
   // The selector cannot cross Controlled Splits, which would leave one split
   // without its Control Surface and give the other two.
-  Check(!rd_dock_drag_target(selecting_view, dock_host(split_sidebar, 640)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(selecting_view), dock_host(split_sidebar, 640)));
   // When all copies are invalid, tree order is the deterministic tie-breaker.
   CFG_Node *all_invalid = cfg_node_new(cfg, cfg_node_root(), str8_lit("window"));
   CFG_Node *invalid_panels = cfg_node_new(cfg, all_invalid, str8_lit("panels"));
-  CFG_Node *first_selector = cfg_node_new(cfg, invalid_panels, str8_lit("workspace_selector"));
-  CFG_Node *second_selector = cfg_node_new(cfg, invalid_panels, str8_lit("workspace_selector"));
+  CFG_Node *first_selector = cfg_node_new(cfg, invalid_panels, str8_lit("workspace_selector")); rd_view_key_assign(cfg, first_selector, 0);
+  CFG_Node *second_selector = cfg_node_new(cfg, invalid_panels, str8_lit("workspace_selector")); rd_view_key_assign(cfg, second_selector, 0);
   CFG_ID second_id = second_selector->id;
   rd_dock_restore_window(cfg, all_invalid);
   Check(first_selector->parent == cfg_node_child_from_string(all_invalid, RD_DOCK_SIDEBAR_ROOT));
@@ -244,10 +254,10 @@ entry_point(CmdLine *cmdline)
   cfg_node_new(cfg, subject, str8_lit("convoy:example"));
   CFG_Node *floating = cfg_node_new(cfg, workspace, str8_lit("floating_panels"));
   CFG_Node *floating_panel = cfg_node_new(cfg, floating, str8_lit("1"));
-  CFG_Node *floating_text = cfg_node_new(cfg, floating_panel, str8_lit("text"));
+  CFG_Node *floating_text = cfg_node_new(cfg, floating_panel, str8_lit("text")); rd_view_key_assign(cfg, floating_text, 0);
   RD_DockHost floating_host = rd_dock_host_from_cfg(floating_panel, 100);
   Check(floating_host.kind == RD_DockHostKind_FloatingPanel && floating_host.has_workspace_subject);
-  Check(rd_dock_drag_target(floating_text, dock_host(floating_panel, 100)));
+  Check(rd_dock_drag_target(rd_dock_view_from_cfg(floating_text), dock_host(floating_panel, 100)));
   // A subject-dependent section can use its Workspace context while floating
   // if it does not require a host. Missing context is rejected by the checker.
   RD_ViewRegistration subject_view = {str8_lit_comp("subject"), RD_ViewTrait_Section|RD_ViewTrait_NeedsWorkspaceSubject, 0, RD_DockHostKind_WorkspaceRegion};
@@ -273,13 +283,13 @@ entry_point(CmdLine *cmdline)
   // The registered scroll-region diagnostic fixture requires 128px. These
   // boundary widths exercise the production drag query and registry lookup,
   // so bypassing width checks in the drag adapter cannot survive.
-  CFG_Node *width_fixture = cfg_node_new(cfg, panels, str8_lit("scroll_region_fixture"));
+  CFG_Node *width_fixture = cfg_node_new(cfg, panels, str8_lit("scroll_region_fixture")); rd_view_key_assign(cfg, width_fixture, 0);
   F32 query_widths[] = {0, 127, 128, 129, 640};
   B32 expected_widths[] = {0, 0, 1, 1, 1};
   for(U64 i = 0; i < ArrayCount(query_widths); i++)
-  { Check(rd_dock_drag_target(width_fixture, dock_host(panels, query_widths[i])) == expected_widths[i]); }
+  { Check(rd_dock_drag_target(rd_dock_view_from_cfg(width_fixture), dock_host(panels, query_widths[i])) == expected_widths[i]); }
   // Repairing a layout with nothing to repair preserves order and generation.
-  CFG_Node *following_view = cfg_node_new(cfg, panels, str8_lit("text"));
+  CFG_Node *following_view = cfg_node_new(cfg, panels, str8_lit("text")); rd_view_key_assign(cfg, following_view, 0);
   rd_dock_restore_window(cfg, window);
   U64 before_default = cfg_change_gen();
   CFG_Node *before_prev = width_fixture->prev;
@@ -288,10 +298,10 @@ entry_point(CmdLine *cmdline)
   Check(width_fixture->next == following_view && panels->last == following_view);
   // Unknown saved content must remain removable even though it cannot be
   // created, duplicated or offered a docking target without declared traits.
-  CFG_Node *unknown_saved = cfg_node_new(cfg, panels, str8_lit("unknown_saved_view"));
-  Check(rd_dock_can_close(unknown_saved));
-  Check(!rd_dock_drag_target(unknown_saved, dock_host(panels, 640)));
-  Check(!rd_dock_can_close(&cfg_nil_node));
+  CFG_Node *unknown_saved = cfg_node_new(cfg, panels, str8_lit("unknown_saved_view")); rd_view_key_assign(cfg, unknown_saved, 0);
+  Check(rd_dock_can_close(rd_dock_view_from_cfg(unknown_saved)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(unknown_saved), dock_host(panels, 640)));
+  Check(!rd_dock_can_close(rd_dock_view_from_cfg(&cfg_nil_node)));
   Check(rd_dock_creation(str8_lit("unknown_saved_view"), dock_host(panels, RD_DOCK_UNMEASURED_WIDTH)) == RD_DockRule_RegisteredView);
   Check(rd_dock_rule_message(RD_DockRule_RegisteredView).size != 0);
   // A View restore moves between two layouts leaves one arrangement for the
@@ -308,7 +318,7 @@ entry_point(CmdLine *cmdline)
     CFG_ID misplaced_id = misplaced->id;
     rd_dock_restore_window(cfg, moving);
     Check(cfg_node_from_id(misplaced_id) == misplaced && misplaced->parent == left);
-    Check(panel_tree(arena, moving_panels).root->first->tabs.last->v == misplaced);
+    Check(tab_is(panel_tree(arena, moving_panels).root->first->tabs.last->v, misplaced));
     Check(source->parent == moving_sidebar && restore_child(source, "sidebar_section", 0) != &cfg_nil_node);
     Check(restore_child(source, "terminal", 0) == &cfg_nil_node);
     Check(restore_saved_valid(arena, moving_panels) && restore_saved_valid(arena, moving_sidebar));
@@ -342,7 +352,7 @@ entry_point(CmdLine *cmdline)
     Check(cfg_node_child_from_string(second, str8_lit("section_hint_pending")) != &cfg_nil_node);
     Check(cfg_node_child_from_string(hosted, str8_lit("section_hint_pending")) != &cfg_nil_node);
     RD_PanelTree strays_tree = panel_tree(arena, strays_sidebar);
-    Check(strays_tree.root->tabs.count == 4 && strays_tree.root->tabs.last->v == hosted);
+    Check(strays_tree.root->tabs.count == 4 && tab_is(strays_tree.root->tabs.last->v, hosted));
     Check(restore_child(restore_child(strays_workspace, "panels", 0), "terminal", 0) != &cfg_nil_node);
     Check(restore_saved_valid(arena, strays_sidebar));
     cfg_node_release(cfg, strays);
@@ -374,8 +384,8 @@ entry_point(CmdLine *cmdline)
     CFG_Node *selected_terminal = restore_child(destination, "terminal", 0);
     rd_dock_restore_window(cfg, selection);
     RD_PanelTree tree = panel_tree(arena, destination);
-    Check(jackstay->parent == destination && tree.root->tabs.last->v == jackstay);
-    Check(tree.root->selected_tab == (marked ? jackstay : selected_terminal));
+    Check(jackstay->parent == destination && tab_is(tree.root->tabs.last->v, jackstay));
+    Check(tab_is(tree.root->selected_tab, marked ? jackstay : selected_terminal));
     Check((cfg_node_child_from_string(selected_terminal, str8_lit("selected")) != &cfg_nil_node) == !marked);
     // The panel it left keeps its own Selected View, or has none if it left.
     CFG_Node *section = restore_child(source, "sidebar_section", 0);
@@ -388,8 +398,8 @@ entry_point(CmdLine *cmdline)
   CFG_Node *empty = cfg_node_new(cfg, cfg_node_root(), str8_lit("window"));
   rd_dock_restore_window(cfg, empty);
   Check(empty->first == &cfg_nil_node);
-  Check(!rd_dock_drag_target(&cfg_nil_node, dock_host(panels, 640)));
-  Check(!rd_dock_drag_target(terminal, dock_host(&cfg_nil_node, 640)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(&cfg_nil_node), dock_host(panels, 640)));
+  Check(!rd_dock_drag_target(rd_dock_view_from_cfg(terminal), dock_host(&cfg_nil_node, 640)));
   cfg_state_release(cfg);
   arena_release(arena);
   fprintf(stderr, "Docking validity: %u failures\n", failures);

@@ -3866,7 +3866,6 @@ ui_clear_edit_owner(UI_State *state)
   state->edit_owner_build = 0;
   state->edit_owner_selection = 0;
   state->edit_owner_terminal = 0;
-  state->edit_owner_view = 0;
   state->edit_owner_user = 0;
   state->edit_owner_enabled = 0;
   state->edit_owner_dispatch = 0;
@@ -3879,7 +3878,6 @@ ui_register_text_edit_owner(UI_Key key, TxtPt cursor, TxtPt mark)
   ui_state->edit_owner_build = ui_state->build_index;
   ui_state->edit_owner_selection = !txt_pt_match(cursor, mark);
   ui_state->edit_owner_terminal = 0;
-  ui_state->edit_owner_view = 0;
   ui_state->edit_owner_user = 0;
   ui_state->edit_owner_enabled = 0;
   ui_state->edit_owner_dispatch = 0;

@@ -63,14 +63,19 @@
 //   workspace: { ... arrangement_generation: 7
 //     arrangement_presentation: {
 //       panel: {id: 2 selected tabs_on_bottom}   Presentation State, by panel ID
-//       view: {slot: "u:3" label: "Shell"}       a View's settings its spec doesn't hold
-//       resolution: {slot: "u:3" attach_token: ..}  machine-local Target Resolutions
-//   } }
+//       view: {slot: "u:3" daemon}               a View's logical settings its spec doesn't hold
+//       resolution: {slot: "u:3" session: ..}    a daemon session Andamento hasn't saved
+//       previous: {terminal: {previous_of: ..}}  a Slot's previous instance, whole
+//     }
+//     view_presentation: {                       each View's Presentation State, by View
+//       workspace: {key: "u:3" label: "Shell"}   Address (shell_core.c, "View Presentation
+//   } }                                          State"): its label, its machine-local
+//                                                Target Resolutions, ...
 //
 // A View whose slot follows its provider (`follows_provider`) keeps all of
-// its settings here: what it runs is the provider's content as this device
-// last resolved it, and its next plan applies the provider's again. Floating
-// Panels are Presentation State, and their Views are not Slots.
+// its logical settings here: what it runs is the provider's content as this
+// device last resolved it, and its next plan applies the provider's again.
+// Floating Panels are Presentation State, and their Views are not Slots.
 //
 // Target Resolutions (CONTEXT.md): which are portable is Wheelhouse's call.
 // A terminal's Cleat daemon session is: its `session` and `daemon_name`,
@@ -79,9 +84,9 @@
 // starts without an instance (a restart, another device) attaches through
 // it before starting afresh ("Portable Target Resolutions" below). A session
 // saved from another machine is left alone: Cleat reaches daemons on this
-// one only. The rest are machine-local and stay here: `attach_token` and
-// `porthole_session` (a capture session on this machine) and
-// `managed_target` (the target this device last applied). A Jackstay
+// one only. The rest are machine-local, the View's Presentation State:
+// `attach_token` and `porthole_session` (a capture session on this machine)
+// and `managed_target` (the target this device last applied). A Jackstay
 // endpoint is part of its View Spec, so Andamento has it already.
 
 StaticAssert(WH_Content_Command == 1<<ANDAMENTO_SLOT_COMMAND && WH_Content_File == 1<<ANDAMENTO_SLOT_FILE &&
@@ -384,7 +389,8 @@ uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UISh
 {
   String8 *resolved[] = {&resolution->session, &resolution->daemon_name, &resolution->attach_token,
                          &resolution->managed_target, &resolution->porthole_session};
-  for(U64 i = 0; i < ArrayCount(resolved); i++) { *resolved[i] = uishell_store_setting(view, uishell_store_resolution_keys[i]); }
+  // A machine-local one is the View's Presentation State.
+  for(U64 i = 0; i < ArrayCount(resolved); i++) { *resolved[i] = rd_cfg_setting_child(view, uishell_store_resolution_keys[i])->first->string; }
   if(str8_match(view->string, str8_lit("placeholder"), 0)) { *status |= WH_SlotStatus_Placeholder; }
   CFG_Node *owner = uishell_store_view_owner(view);
   String8 key = uishell_store_setting(view, str8_lit("slot"));
@@ -742,6 +748,18 @@ uishell_store_previous_of(CFG_Node *view)
   return uishell_store_setting(view, str8_lit("previous_of"));
 }
 
+// The View of Slot `key` in `owner`, or (RD_ViewInstance_Previous) the
+// previous instance kept beside it, by address.
+internal RD_ViewAddress
+uishell_store_slot_view(CFG_Node *owner, String8 key, RD_ViewInstance instance)
+{
+  // Read, never assigned: an arrangement's workspace has had its ID since
+  // the inventory first listed it.
+  UIShell_WorkspaceId id = {0};
+  uishell_workspace_id_from_string(uishell_store_setting(owner, str8_lit("workspace_id")), &id);
+  return rd_view_address_make(RD_ViewOwnerKind_Workspace, id, key, instance);
+}
+
 // The owner's panel tree as an arrangement document, its tabs named by
 // their Views' slot keys.
 internal UIShell_StoreDoc
@@ -837,10 +855,12 @@ uishell_store_doc_hash(UIShell_StoreDoc *doc)
 // resource_id) when Andamento has that slot, else "u:<resource_id>", else
 // the next "u:<n>". Returns whether any changed; a View's key is saved on it.
 internal B32
-uishell_store_assign_keys(Arena *arena, UIShell_StoreDoc *doc, AndamentoSlots *slots)
+uishell_store_assign_keys(Arena *arena, CFG_Node *owner, UIShell_StoreDoc *doc, AndamentoSlots *slots)
 {
   B32 changed = 0;
-  U64 next = 1;
+  // Past every key of the workspace's namespace (its Floating Panels' Views
+  // and the Presentation State it keeps included), so no View takes another's.
+  U64 next = rd_view_user_number_max(owner, RD_ViewOwnerKind_Workspace)+1;
   for(U64 i = 0; i < doc->tab_count; i++) { next = Max(next, uishell_store_user_number(doc->keys[i])+1); }
   for(U64 i = 0; slots && i < slots->slot_count; i++) { next = Max(next, uishell_store_user_number(uishell_sidebar_string(slots->slots[i].key))+1); }
   for(U64 i = 0; i < doc->tab_count; i++)
@@ -863,7 +883,12 @@ uishell_store_assign_keys(Arena *arena, UIShell_StoreDoc *doc, AndamentoSlots *s
     }
     doc->keys[i] = key;
     doc->tabs[i] = uishell_sidebar_text(key);
+    // The View keeps what its address keyed, unless an earlier tab had that
+    // address too (a copy), which keeps it.
+    RD_ViewAddress was = rd_view_address_from_cfg(doc->views[i]);
+    B32 shared = uishell_store_key_in(rd_view_key_from_cfg(doc->views[i], 0), doc->keys, i);
     uishell_store_set_setting(doc->views[i], str8_lit("slot"), key);
+    if(!shared) { rd_view_readdress(was, rd_view_address_from_cfg(doc->views[i])); }
     changed = 1;
   }
   return changed;
@@ -1037,8 +1062,9 @@ uishell_store_noted(AndamentoWorkspaceArrangement *a, U32 kind, String8 key)
 
 // Replaces `owner`'s panel tree with Andamento's document, keeping the View
 // node of every slot it still tabs and the node (with its Presentation
-// State) of every panel whose ID it keeps. New Views take their settings
-// from the device-local `arrangement_presentation`, which goes. Returns
+// State) of every panel whose ID it keeps. New Views take their settings,
+// and Slots their previous instances, from the device-local
+// `arrangement_presentation`, which goes. Returns
 // whether Andamento had a document to build.
 internal B32
 uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_WorkspaceId id, U64 *generation_out)
@@ -1071,6 +1097,20 @@ uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Worksp
         CFG_Node *view = cfg_node_from_id(t->view);
         if(uishell_store_previous_of(view).size) { cfg_node_ptr_list_push(arena, &previous, view); }
       }
+    }
+    // And those this device kept, for Slots config has none beside (a
+    // restart): one per Slot.
+    CFG_NodePtrList restored = {0};
+    for(CFG_Node *c = device->first; c != &cfg_nil_node; c = c->next)
+    {
+      String8 of = uishell_store_previous_of(c->first);
+      if(!str8_match(c->string, str8_lit("previous"), 0) || !of.size) { continue; }
+      B32 kept = 0;
+      for(CFG_NodePtrNode *p = previous.first; p && !kept; p = p->next) { kept = str8_match(uishell_store_previous_of(p->v), of, 0); }
+      if(kept) { continue; }
+      CFG_Node *view = cfg_node_deep_copy(rd_state->cfg, c->first);
+      cfg_node_ptr_list_push(arena, &previous, view);
+      cfg_node_ptr_list_push(arena, &restored, view);
     }
     AndamentoArrangementDoc *doc = &stored->doc;
     UIShell_DocShape shape = uishell_store_doc_shape(arena, doc);
@@ -1150,14 +1190,17 @@ uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Worksp
           UIShell_ViewSpec spec = {0};
           if(known) { spec = uishell_store_spec_from_andamento(arena, &slot.spec); }
           view = uishell_store_view_from_spec(key, known ? &spec : 0);
-          // This device's settings for it, Target Resolutions included.
+          // This device's part of its logical settings (a daemon session
+          // Andamento hasn't saved, the daemon hosting it). Its Presentation
+          // State is its owner's (rd_view_presentation_from_view); a file saved
+          // before kept that here too, which is not taken over.
           for(CFG_Node *c = device->first; c != &cfg_nil_node; c = c->next)
           {
             B32 settings = str8_match(c->string, str8_lit("view"), 0) || str8_match(c->string, str8_lit("resolution"), 0);
             if(!settings || !str8_match(uishell_store_setting(c, str8_lit("slot")), key, 0)) { continue; }
             for(CFG_Node *setting = c->first; setting != &cfg_nil_node; setting = setting->next)
             {
-              if(str8_match(setting->string, str8_lit("slot"), 0)) { continue; }
+              if(str8_match(setting->string, str8_lit("slot"), 0) || !rd_view_setting_is_logical(setting->string)) { continue; }
               cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, setting->string));
               cfg_node_insert_child(rd_state->cfg, view, view->last, cfg_node_deep_copy(rd_state->cfg, setting));
             }
@@ -1184,6 +1227,11 @@ uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Worksp
     a->next_id = fresh;
     for(U64 i = 0; i < ids_used; i++) { a->next_id = Max(a->next_id, ids[i]+1); }
     rd_arrangement_save(rd_state->cfg, a);
+    // A kept previous instance whose Slot the document no longer tabs goes.
+    for(CFG_NodePtrNode *p = restored.first; p; p = p->next)
+    {
+      if(p->v->parent == &cfg_nil_node) { cfg_node_release(rd_state->cfg, p->v); }
+    }
     for(U64 i = 0; i < ids_used; i++)
     {
       CFG_Node *node = cfg_node_from_id(rd_arrangement_panel_from_id(a, ids[i])->cfg);
@@ -1313,7 +1361,7 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
   if(str8_match(view->string, str8_lit("placeholder"), 0)) { keep_previous = 0; }
   B32 in_place = !shows && terminal && str8_match(kind, view->string, 0) && !keep_previous;
   UIShell_ManagedPrepared prepared = {0};
-  B32 ok = !in_place || uishell_managed_prepare(rd_view_state_from_cfg(view)->user_data, recipe.command, recipe.has_cwd, recipe.cwd, &prepared);
+  B32 ok = !in_place || uishell_managed_prepare(rd_view_state_from_view(rd_view_address_from_cfg(view), 0)->user_data, recipe.command, recipe.has_cwd, recipe.cwd, &prepared);
   char *error = 0;
   ok = ok && UIShell_StoreCall(state, andamento_slot_valid(state->core, workspace, uishell_sidebar_text(key), content->token, &error));
   andamento_string_free(error);
@@ -1327,23 +1375,43 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
   }
   else
   {
+    RD_ViewAddress replaced = rd_view_address_from_cfg(view);
     CFG_Node *next = uishell_store_view_from_spec(key, &recipe);
-    // What the old View carried that is this device's: its label, that it
-    // follows its provider, and the daemon hosting a terminal.
-    String8 carried[] = {str8_lit("label"), str8_lit("resource_id"), str8_lit("follows_provider"), str8_lit("daemon"), str8_lit("daemon_name")};
-    U64 carried_count = str8_match(next->string, str8_lit("terminal"), 0) ? ArrayCount(carried) : 3;
+    // What the old View carried that is this device's: its label (its
+    // Presentation State's), that it follows its provider, and the daemon
+    // hosting a terminal.
+    CFG_Node *label = cfg_node_child_from_string(rd_view_presentation_from_view(replaced), str8_lit("label"));
+    String8 carried_label = push_str8_copy(arena, label->first->string);
+    String8 carried[] = {str8_lit("resource_id"), str8_lit("follows_provider"), str8_lit("daemon"), str8_lit("daemon_name")};
+    U64 carried_count = str8_match(next->string, str8_lit("terminal"), 0) ? ArrayCount(carried) : 2;
     for(U64 i = 0; i < carried_count; i++)
     {
       CFG_Node *c = cfg_node_child_from_string(view, carried[i]);
       if(c == &cfg_nil_node || cfg_node_child_from_string(next, carried[i]) != &cfg_nil_node) { continue; }
       cfg_node_insert_child(rd_state->cfg, next, next->last, cfg_node_deep_copy(rd_state->cfg, c));
     }
-    if(content->has_target) { uishell_store_set_setting(next, str8_lit("managed_target"), uishell_sidebar_string(content->target)); }
     RD_Arrangement *a = rd_arrangement_from_owner(arena, owner, str8_lit("panels"));
     RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(a, view->id);
     rd_arrangement_insert_tab(a, next->id, panel->id, uishell_store_tab_before(a, view->id), panel->selected == view->id);
     if(keep_previous)
     {
+      // A Slot keeps one previous instance: an older one closes, with its
+      // state and Presentation State, so the replaced View can take its
+      // address.
+      RD_ViewAddress previous = uishell_store_slot_view(owner, key, RD_ViewInstance_Previous);
+      CFG_Node *older = rd_cfg_from_view(previous);
+      if(older != &cfg_nil_node && older != view)
+      {
+        RD_ArrangementPanel *older_panel = rd_arrangement_panel_from_view(a, older->id);
+        if(older_panel->selected == older->id)
+        {
+          RD_ArrangementTab *t = rd_arrangement_tab_from_view(older_panel, older->id);
+          rd_arrangement_select(a, older_panel->id, t->prev ? t->prev->view : t->next ? t->next->view : 0);
+        }
+        rd_arrangement_remove_tab(a, older->id);
+        rd_view_states_release_view(previous);
+        rd_view_presentation_release(previous);
+      }
       uishell_store_drop_setting(view, str8_lit("slot"));
       uishell_store_set_setting(view, str8_lit("previous_of"), key);
       for(U64 i = 0; i < ArrayCount(uishell_store_runtime_keys); i++)
@@ -1351,6 +1419,18 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
     }
     else { rd_arrangement_remove_tab(a, view->id); }
     rd_arrangement_save(rd_state->cfg, a);
+    // The new View takes the Slot's address. The instance it replaced keeps
+    // its state and Presentation State at the previous instance's, or loses
+    // them with its node.
+    if(keep_previous) { rd_view_readdress(replaced, rd_view_address_from_cfg(view)); }
+    else
+    {
+      rd_view_states_release_view(replaced);
+      rd_view_presentation_release(replaced);
+    }
+    RD_ViewAddress shown = rd_view_address_from_cfg(next);
+    if(label != &cfg_nil_node) { rd_view_setting_set(shown, str8_lit("label"), carried_label); }
+    if(content->has_target) { rd_view_setting_set(shown, str8_lit("managed_target"), uishell_sidebar_string(content->target)); }
     result = next;
   }
   scratch_end(scratch);
@@ -1452,8 +1532,8 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
     }
     if(asks.size) { uishell_store_set_setting(view, str8_lit("asks"), asks); }
     else { uishell_store_drop_setting(view, str8_lit("asks")); }
-    // A previous instance the user closed, or none kept (a restart, content
-    // that couldn't keep one), is released.
+    // A previous instance the user closed, or none kept (content that
+    // couldn't keep one), is released.
     if(content.has_previous && !uishell_store_key_in(key, previous, previous_count))
     {
       error = 0;
@@ -1818,7 +1898,7 @@ internal void
 uishell_store_remove(CFG_Node *view)
 {
   if(view->parent == &cfg_nil_node) { return; }
-  UIShell_RegsScope(.window = rd_window_from_cfg(view)->id, .panel = rd_panel_from_cfg(view), .view = view->id, .tab = view->id)
+  UIShell_RegsScope(.window = rd_window_from_cfg(view)->id, .panel = rd_panel_from_cfg(view), .view = rd_view_address_from_cfg(view), .tab = rd_view_address_from_cfg(view))
   { uishell_cmd("close_tab"); }
 }
 
@@ -1847,12 +1927,7 @@ read_only global String8 uishell_slot_action_labels[UIShell_SlotAction_COUNT] =
 internal B32
 uishell_store_keeps_previous(CFG_Node *owner, String8 key)
 {
-  CFG_Node *panels = cfg_node_child_from_string(owner, str8_lit("panels"));
-  for(CFG_Node *n = panels; n != &cfg_nil_node; n = cfg_node_rec__depth_first(panels, n).next)
-  {
-    if(str8_match(n->string, str8_lit("previous_of"), 0) && str8_match(n->first->string, key, 0)) { return 1; }
-  }
-  return 0;
+  return rd_cfg_from_view(uishell_store_slot_view(owner, key, RD_ViewInstance_Previous)) != &cfg_nil_node;
 }
 
 // `view`'s notices, most pressing first; at most `cap` of them.
@@ -2119,7 +2194,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     cfg_node_release(rd_state->cfg, fresh);
     if(stored->doc.panel_count)
     {
-      uishell_store_assign_keys(arena, &doc, slots);
+      uishell_store_assign_keys(arena, owner, &doc, slots);
       andamento_arrangement_free(stored);
       andamento_slots_free(slots);
       uishell_store_build(state, owner, id, &entry->generation);
@@ -2143,7 +2218,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     scratch_end(scratch);
     return;
   }
-  if(uishell_store_assign_keys(arena, &doc, slots)) { hash = uishell_store_doc_hash(&doc); }
+  if(uishell_store_assign_keys(arena, owner, &doc, slots)) { hash = uishell_store_doc_hash(&doc); }
 
   // New and changed slots. A slot following its provider is the provider's,
   // and a placeholder's keeps the spec it was made from.
@@ -2413,6 +2488,21 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
       {
         CFG_Node *view = cfg_node_from_id(t->view);
         String8 key = uishell_store_setting(view, str8_lit("slot"));
+        // A Slot's previous instance isn't in Andamento's document: this
+        // device keeps it whole, without what is this run's.
+        if(!key.size && uishell_store_previous_of(view).size)
+        {
+          CFG_Node *kept = cfg_node_deep_copy(copy_state, view);
+          for(CFG_Node *c = kept->first, *next = 0; c != &cfg_nil_node; c = next)
+          {
+            next = c->next;
+            if(str8_match(c->string, str8_lit("selected"), 0) ||
+               uishell_store_key_in(c->string, uishell_store_runtime_keys, ArrayCount(uishell_store_runtime_keys)))
+            { cfg_node_release(copy_state, c); }
+          }
+          CFG_Node *entry = cfg_node_new(copy_state, device, str8_lit("previous"));
+          cfg_node_insert_child(copy_state, entry, entry->last, kept);
+        }
         if(!key.size) { continue; }
         UIShell_ViewSpec spec = {0};
         String8 taken[4];

@@ -13,7 +13,7 @@ struct UIShell_JackstayImport
 struct UIShell_JackstayView
 {
   UIShell_JackstayView *next;
-  CFG_ID id;
+  RD_ViewAddress view;
   WH_Jackstay *session;
   R_Handle texture; // shown: an owned upload, or an entry of imports
   B32 texture_owned;
@@ -36,10 +36,16 @@ struct UIShell_JackstayView
 };
 global UIShell_JackstayView *uishell_jackstay_views;
 internal void uishell_jackstay_wake(void *unused) { (void)unused; wm_send_wakeup_event(); }
-internal UIShell_JackstayView *uishell_jackstay_find(CFG_ID id)
+internal UIShell_JackstayView *uishell_jackstay_find(RD_ViewAddress view)
 {
-  for(UIShell_JackstayView *v=uishell_jackstay_views;v;v=v->next) if(v->id==id)return v;
+  for(UIShell_JackstayView *v=uishell_jackstay_views;v;v=v->next) if(rd_view_address_match(v->view,view))return v;
   return 0;
+}
+// A move that changes the View's address keeps its session.
+internal void uishell_jackstay_rekey(RD_ViewAddress from,RD_ViewAddress to)
+{
+  UIShell_JackstayView *v=uishell_jackstay_find(from);
+  if(v && !uishell_jackstay_find(to))v->view=to;
 }
 internal void uishell_jackstay_unfocus(UIShell_JackstayView *v)
 {
@@ -74,9 +80,9 @@ internal U32 uishell_jackstay_modifiers(WM_Modifiers flags)
   return ((flags&WM_Modifier_Ctrl)?FT_INPUT_CONTROL:0)|((flags&WM_Modifier_Shift)?FT_INPUT_SHIFT:0)|
          ((flags&WM_Modifier_Alt)?FT_INPUT_ALT:0)|((flags&WM_Modifier_Super)?FT_INPUT_SUPER:0);
 }
-internal B32 uishell_jackstay_event(CFG_ID id,WM_Event *event)
+internal B32 uishell_jackstay_event(RD_ViewAddress view,WM_Event *event)
 {
-  UIShell_JackstayView *v=uishell_jackstay_find(id);
+  UIShell_JackstayView *v=uishell_jackstay_find(view);
   if(!v || !v->session || !v->focused)return 0;
   if(event->kind==WM_EventKind_WindowLoseFocus) {uishell_jackstay_unfocus(v);return 0;}
   if(event->kind==WM_EventKind_Press && event->key==WM_Key_Esc &&
@@ -234,7 +240,7 @@ internal void uishell_jackstay_tick(B32 before,B32 quit)
     UIShell_JackstayView *v=*link;
     if(before){v->focus_requested=0;}
     else if(!v->focus_requested)uishell_jackstay_unfocus(v);
-    CFG_Node *cfg=cfg_node_from_id(v->id);
+    CFG_Node *cfg=rd_cfg_from_view(v->view);
     if(quit || cfg==&cfg_nil_node || !str8_match(cfg->string,str8_lit("jackstay"),0))
     {
       if(!v->closing)uishell_jackstay_drop_frames(v);
@@ -275,8 +281,7 @@ internal String8 uishell_jackstay_mode_label(U32 mode)
 // Remove a one-shot view setting so the layout never saves it back.
 internal void uishell_jackstay_forget_setting(String8 key)
 {
-  CFG_Node *setting=cfg_node_child_from_string(cfg_node_from_id(uishell_regs()->view),key);
-  if(setting!=&cfg_nil_node)cfg_node_release(rd_state->cfg,setting);
+  rd_view_setting_clear(uishell_regs()->view,key);
 }
 internal void uishell_jackstay_open(UIShell_JackstayView *v,B32 control)
 {
@@ -300,9 +305,9 @@ internal void uishell_jackstay_open(UIShell_JackstayView *v,B32 control)
 WH_VIEW_UI_FUNCTION_DEF(jackstay)
 {
   Rng2F32 rect = ctx->rect;
-  CFG_ID id=uishell_regs()->view;
-  UIShell_JackstayView *v=uishell_jackstay_find(id);
-  if(!v) {v=calloc(1,sizeof(*v));v->id=id;v->next=uishell_jackstay_views;uishell_jackstay_views=v;}
+  RD_ViewAddress view=ctx->settings.view;
+  UIShell_JackstayView *v=uishell_jackstay_find(view);
+  if(!v) {v=calloc(1,sizeof(*v));v->view=view;v->next=uishell_jackstay_views;uishell_jackstay_views=v;}
   if(v->disconnecting && wh_js_destroy(&v->session)) {
     v->disconnecting=0;v->content_focus=0;uishell_jackstay_unfocus(v);
   }
@@ -458,7 +463,8 @@ WH_VIEW_UI_FUNCTION_DEF(jackstay)
 }
 #else
 internal B32 uishell_jackstay_pending(void){return 0;}
-internal B32 uishell_jackstay_event(CFG_ID id,WM_Event *event){(void)id;(void)event;return 0;}
+internal B32 uishell_jackstay_event(RD_ViewAddress view,WM_Event *event){(void)view;(void)event;return 0;}
+internal void uishell_jackstay_rekey(RD_ViewAddress from,RD_ViewAddress to){(void)from;(void)to;}
 internal void uishell_jackstay_tick(B32 before,B32 quit){(void)before;(void)quit;}
 WH_VIEW_UI_FUNCTION_DEF(jackstay){(void)ctx;ui_label(str8_lit("This build does not include Jackstay."));}
 #endif
