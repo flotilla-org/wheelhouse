@@ -103,6 +103,12 @@ struct UIShell_StoreEntry
   // The document and specs last committed or built, and its generation.
   U64 hash;
   U64 generation;
+  // That document's slot keys, hashed: the tabs this device has seen. A tab
+  // the stored document has and this one lacks was closed here only if it is
+  // among them; otherwise it arrived since and this device never showed it.
+  U64 *seen;
+  U64 seen_count;
+  U64 seen_capacity;
   // What Andamento says of its Workspace Overlay, as last read
   // (uishell_store_read_overlay): the flags of each flagged Slot, the keys
   // tombstones hide, and the arrangement's flags.
@@ -1472,9 +1478,10 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
       rd_arrangement_remove_tab(a, view->id);
       rd_arrangement_save(rd_state->cfg, a);
     }
+    // A failed release is reported; the next overlay read finds the slot
+    // still departed, and this tries again.
     char *error = 0;
-    UIShell_StoreCall(state, andamento_slot_release_previous(state->core, workspace, uishell_sidebar_text(key), &error));
-    andamento_string_free(error);
+    uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_release_previous(state->core, workspace, uishell_sidebar_text(key), &error)), error);
     // Released: no longer departed.
     entry->departed[i] = entry->departed[--entry->departed_count];
   }
@@ -2021,6 +2028,28 @@ uishell_store_entry(UIShell_SidebarState *state, UIShell_WorkspaceId id)
   return entry;
 }
 
+// `doc` is what this device last committed or built for `entry`.
+internal void
+uishell_store_saw(UIShell_SidebarState *state, UIShell_StoreEntry *entry, UIShell_StoreDoc *doc)
+{
+  entry->hash = uishell_store_doc_hash(doc);
+  if(doc->tab_count > entry->seen_capacity)
+  {
+    entry->seen_capacity = Max(16, doc->tab_count*2);
+    entry->seen = push_array_no_zero(state->store_arena, U64, entry->seen_capacity);
+  }
+  for(U64 i = 0; i < doc->tab_count; i++) { entry->seen[i] = uishell_sidebar_hash_text(5381, doc->keys[i]); }
+  entry->seen_count = doc->tab_count;
+}
+
+internal B32
+uishell_store_has_seen(UIShell_StoreEntry *entry, String8 key)
+{
+  U64 hash = uishell_sidebar_hash_text(5381, key);
+  for(U64 i = 0; i < entry->seen_count; i++) { if(entry->seen[i] == hash) { return 1; } }
+  return 0;
+}
+
 // The window's workspaces with an arrangement: its own layout once it is
 // one, and its open and kept workspaces.
 internal CFG_NodePtrList
@@ -2069,7 +2098,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   B32 marked = cfg_node_child_from_string(owner, str8_lit("arrangement_generation")) != &cfg_nil_node;
   B32 changed = !keyed || entry->hash != hash;
   // An empty workspace never committed has nothing to keep.
-  if(changed && !marked && doc.panel_count == 0) { changed = 0; entry->hash = hash; }
+  if(changed && !marked && doc.panel_count == 0) { changed = 0; uishell_store_saw(state, entry, &doc); }
   if(!changed && !revision_moved) { scratch_end(scratch); return; }
   AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, workspace, 0));
   AndamentoWorkspaceArrangement *stored = slots ? UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0)) : 0;
@@ -2095,7 +2124,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
       andamento_slots_free(slots);
       uishell_store_build(state, owner, id, &entry->generation);
       UIShell_StoreDoc built = uishell_store_doc(arena, owner);
-      entry->hash = uishell_store_doc_hash(&built);
+      uishell_store_saw(state, entry, &built);
       scratch_end(scratch);
       return;
     }
@@ -2107,7 +2136,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     {
       uishell_store_build(state, owner, id, &entry->generation);
       UIShell_StoreDoc rebuilt = uishell_store_doc(arena, owner);
-      entry->hash = uishell_store_doc_hash(&rebuilt);
+      uishell_store_saw(state, entry, &rebuilt);
     }
     andamento_arrangement_free(stored);
     andamento_slots_free(slots);
@@ -2149,8 +2178,9 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
 
   // Slots whose tabs the user closed go first, so the document no longer
   // names them: the user's own are removed, and a provider's is tombstoned,
-  // hidden, while its provider keeps it (ADR 0013). A slot the stored
-  // document tabs that this one never had (Andamento placed it since) stays.
+  // hidden, while its provider keeps it (ADR 0013). They must go before the
+  // commit, or its reconcile would place them again. A slot the stored
+  // document tabs that this device never saw (placed since) stays.
   String8List stored_keys = {0};
   for(U64 i = 0; i < stored->doc.panel_count; i++)
   {
@@ -2160,7 +2190,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   for(String8Node *n = stored_keys.first; ok && n; n = n->next)
   {
     String8 key = n->string;
-    if(uishell_store_noted(stored, ANDAMENTO_NOTE_PLACED, key) || uishell_store_noted(stored, ANDAMENTO_NOTE_GONE, key)) { continue; }
+    if(!uishell_store_has_seen(entry, key)) { continue; }
     if(uishell_store_key_in(key, doc.keys, doc.tab_count) || !uishell_store_slot_find(slots, key, 0)) { continue; }
     char *remove_error = 0;
     uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_remove(state->core, workspace, uishell_sidebar_text(key), &remove_error)), remove_error);
@@ -2191,6 +2221,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   entry->hash = hash;
   if(committed)
   {
+    uishell_store_saw(state, entry, &doc);
     entry->generation = after->generation;
     uishell_store_set_setting(owner, str8_lit("arrangement_generation"), push_str8f(arena, "%I64u", after->generation));
     // Anything Andamento placed (slots the document had no tab for) joins
@@ -2201,7 +2232,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     {
       uishell_store_build(state, owner, id, &entry->generation);
       UIShell_StoreDoc rebuilt = uishell_store_doc(arena, owner);
-      entry->hash = uishell_store_doc_hash(&rebuilt);
+      uishell_store_saw(state, entry, &rebuilt);
     }
   }
   andamento_arrangement_free(after);
@@ -2263,7 +2294,7 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
     if(entry->hash == hash)
     {
       UIShell_StoreDoc after = uishell_store_doc(scratch.arena, owner);
-      entry->hash = uishell_store_doc_hash(&after);
+      uishell_store_saw(state, entry, &after);
     }
   }
   state->store_synced = 1;
@@ -2292,7 +2323,7 @@ uishell_workspace_store_load(UIShell_SidebarState *state, CFG_Node *window)
     if(uishell_store_build(state, owner, id, &entry->generation))
     {
       UIShell_StoreDoc doc = uishell_store_doc(scratch.arena, owner);
-      entry->hash = uishell_store_doc_hash(&doc);
+      uishell_store_saw(state, entry, &doc);
     }
   }
   // Names and moods too, which the presentation file leaves to Andamento.

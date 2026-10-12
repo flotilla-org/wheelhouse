@@ -1427,6 +1427,37 @@ entry_point(CmdLine *cmdline)
     state_check_committed(ws);
   }
 
+  //- A slot that comes back in the frame the user closes a tab isn't what
+  // the user closed: this device never showed it. Reattached elsewhere (as
+  // another frontend would), the provider's hint places it, which Andamento
+  // doesn't note as placed.
+  {
+    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    CFG_Node *watch = state_slot_view(reviewer, str8_lit("watch"));
+    StateCheck(watch != &cfg_nil_node && state_slot_view(reviewer, str8_lit("log")) == &cfg_nil_node);
+    StateCheck(andamento_slot_reattach(state->core, id, uishell_sidebar_text(str8_lit("log")), 0));
+    if(watch != &cfg_nil_node) { uishell_cmd("close_tab", .window = window->id, .panel = watch->parent->id, .tab = watch->id); }
+    state_frame(ws);
+    state_frame(ws);
+    String8 text = state_workspaces_text(scratch.arena);
+    B32 kept = state_slot_view(reviewer, str8_lit("log")) != &cfg_nil_node &&
+               str8_find_needle(text, 0, str8_lit("      hidden slot=\"log\"\n"), 0) == text.size;
+    StateCheck(kept);
+    if(!kept) { fprintf(stderr, "the reattached log was hidden with the closed tab:\n%.*s\n", str8_varg(text)); }
+    StateCheck(state_slot_view(reviewer, str8_lit("watch")) == &cfg_nil_node &&
+               str8_find_needle(text, 0, str8_lit("      hidden slot=\"watch\"\n"), 0) < text.size);
+    // Back as it was: watch shown, log hidden.
+    StateCheck(andamento_slot_reattach(state->core, id, uishell_sidebar_text(str8_lit("watch")), 0));
+    state_frame(ws);
+    state_frame(ws);
+    CFG_Node *log = state_slot_view(reviewer, str8_lit("log"));
+    if(log != &cfg_nil_node) { uishell_cmd("close_tab", .window = window->id, .panel = log->parent->id, .tab = log->id); }
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(state_slot_view(reviewer, str8_lit("watch")) != &cfg_nil_node && state_slot_view(reviewer, str8_lit("log")) == &cfg_nil_node);
+    state_check_committed(ws);
+  }
+
   //- A split is structural: the overlay owns the arrangement from then on,
   // and a provider's later change to it is flagged, not applied, until the
   // user keeps theirs or follows the provider's. The provider reusing the
