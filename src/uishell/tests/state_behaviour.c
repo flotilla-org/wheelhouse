@@ -5,7 +5,8 @@
 // (uishell_logical_state.c), restarts, and writes it again; the script
 // compares both with goldens. With --state_phase it runs instead as two
 // processes, the second a fresh launch against the files the first left
-// (entry_point says how), so nothing in memory survives the restart.
+// (entry_point says how), so nothing in memory survives the restart. Another
+// such pair restarts Views' Presentation State (state_views_phase).
 //
 // A restart is the production one in-process: autosave writes the user file
 // and the Dashboard's presentation (rd_autosave), the window state and its
@@ -694,6 +695,152 @@ state_open_v(RD_WindowState *ws)
   return workspace;
 }
 
+//- View Presentation State across a fresh-process restart
+//
+// --state_phase:views_save gives three Views Presentation State through the
+// View font size commands: a workspace's View, a terminal in that
+// workspace's Floating Panel, and a keep-previous Slot's previous instance.
+// It writes each View's address with what it set (views.txt) and quits.
+// --state_phase:views_restart is the next launch, a fresh process: each
+// address finds a View of the same kind again, where it was, with what was
+// set.
+
+internal String8
+state_view_hex(Arena *arena, RD_ViewAddress view)
+{
+  String8 bytes = str8_struct(&view);
+  String8List parts = {0};
+  for(U64 i = 0; i < bytes.size; i++) { str8_list_pushf(arena, &parts, "%02x", (U32)bytes.str[i]); }
+  return str8_list_join(arena, &parts, 0);
+}
+
+internal RD_ViewAddress
+state_view_from_hex(String8 hex)
+{
+  RD_ViewAddress view = {0};
+  U8 *bytes = (U8 *)&view;
+  for(U64 i = 0; i < sizeof(view) && 2*i+1 < hex.size; i++) { bytes[i] = (U8)u64_from_str8(str8_substr(hex, r1u64(2*i, 2*i+2)), 16); }
+  return view;
+}
+
+// Where `view` is: "workspace", "floating" (a workspace's Floating Panel)
+// or "previous" (a Slot's previous instance).
+internal String8
+state_view_place(CFG_Node *view)
+{
+  if(rd_dock_floating_panel_from_cfg(view->parent) != &cfg_nil_node) { return str8_lit("floating"); }
+  if(uishell_store_previous_of(view).size) { return str8_lit("previous"); }
+  return str8_lit("workspace");
+}
+
+internal void
+state_views_phase(String8 dir, String8 phase, UI_Theme *theme)
+{
+  Temp scratch = scratch_begin(0, 0);
+  String8 path = push_str8f(scratch.arena, "%S/views.txt", dir);
+  // The reviewer's partner Slot has moved on to its second target, keeping
+  // the first as its previous instance.
+  state_reviewer_partner = 2;
+  if(str8_match(phase, str8_lit("views_restart"), 0))
+  {
+    state_pump();
+    RD_WindowState *ws = state_open_window(theme);
+    state_frame(ws);
+    state_frame(ws);
+    String8 text = data_from_file_path(scratch.arena, path);
+    StateCheck(text.size != 0);
+    U64 count = 0;
+    U8 splits[] = {'\n'};
+    String8List lines = str8_split(scratch.arena, text, splits, ArrayCount(splits), 0);
+    for(String8Node *n = lines.first; n; n = n->next)
+    {
+      // <address> <kind> <place> <font size>
+      U8 space[] = {' '};
+      String8List fields = str8_split(scratch.arena, n->string, space, ArrayCount(space), 0);
+      if(fields.node_count != 4) { continue; }
+      RD_ViewAddress view = state_view_from_hex(fields.first->string);
+      String8 kind = fields.first->next->string, place = fields.first->next->next->string, size = fields.last->string;
+      CFG_Node *node = rd_cfg_from_view(view);
+      B32 found = node != &cfg_nil_node && str8_match(node->string, kind, 0) && str8_match(state_view_place(node), place, 0);
+      String8 got = rd_view_setting_from_view(view, str8_lit("font_size"));
+      StateCheck(found && str8_match(got, size, 0));
+      if(!found || !str8_match(got, size, 0))
+      { fprintf(stderr, "View %.*s %.*s: %s, font_size \"%.*s\" for \"%.*s\"\n", str8_varg(kind), str8_varg(place), found ? "found" : "not found", str8_varg(got), str8_varg(size)); }
+      count++;
+    }
+    StateCheck(count == 3);
+    state_quit(ws);
+    scratch_end(scratch);
+    fprintf(stderr, "State behaviour (View Presentation State, fresh-process restart): %u failures\n", state_failures);
+    abort_self(state_failures ? 1 : 0);
+  }
+
+  state_pump();
+  RD_WindowState *ws = state_open_window(theme);
+  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  uishell_cmd("new_workspace", .window = window->id);
+  state_frame(ws);
+  CFG_Node *work = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
+  CFG_Node *views[3] = {&cfg_nil_node, &cfg_nil_node, &cfg_nil_node};
+  RD_PanelNode *leaf = state_panels(scratch.arena, work).root;
+  for(; leaf->first != &rd_nil_panel_node; leaf = leaf->first) {}
+  views[0] = rd_cfg_from_view(leaf->tabs.first->v);
+  // A terminal in the workspace's Floating Panel. No command floats a
+  // workspace's tab; the config is edited directly, and saving the
+  // arrangement keys its View in the workspace's namespace.
+  {
+    CFG_Node *host = cfg_node_child_from_string_or_alloc(rd_state->cfg, work, str8_lit("floating_panels"));
+    RD_Arrangement *floating = rd_arrangement_new(scratch.arena, host, str8_lit("1"));
+    CFG_Node *terminal = rd_cfg_new_view_tab(&cfg_nil_node, str8_lit("terminal"), str8_lit("make watch"), 0);
+    rd_arrangement_insert_tab(floating, terminal->id, rd_arrangement_clear(floating), 0, 1);
+    rd_arrangement_save(rd_state->cfg, floating);
+    state_frame(ws);
+    views[1] = terminal;
+  }
+  // The reviewer's partner Slot, rebound once.
+  {
+    state_reviewer_partner = 1;
+    UIShell_SidebarState *state = ws->sidebar;
+    state_producer(state);
+    state_frame(ws);
+    CFG_Node *reviewer = state_open_subject(ws, str8_lit("role"), str8_lit("p/reviewer"));
+    state_frame(ws);
+    state_frame(ws);
+    state_reviewer_partner = 2;
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    views[2] = state_previous_view(reviewer, str8_lit("partner"));
+  }
+  // A View's font size command, once for the first, twice smaller for the
+  // second, and twice larger for the third.
+  char *commands[] = {"inc_view_font_size", "dec_view_font_size", "inc_view_font_size"};
+  U64 times[] = {1, 2, 2};
+  String8List lines = {0};
+  for(U64 i = 0; i < ArrayCount(views); i++)
+  {
+    StateCheck(views[i] != &cfg_nil_node);
+    if(views[i] == &cfg_nil_node) { continue; }
+    RD_ViewAddress view = rd_view_address_from_cfg(views[i]);
+    StateCheck(!rd_view_address_is_nil(view) && rd_cfg_from_view(view) == views[i]);
+    for(U64 t = 0; t < times[i]; t++)
+    {
+      uishell_push_stored_cmd(str8_cstring(commands[i]), &(UIShell_Regs){UISHELL_REGS_LIT_INIT_TOP .window = window->id, .view = view});
+      state_frame(ws);
+    }
+    // It is Presentation State, not on the View's node.
+    String8 size = push_str8_copy(scratch.arena, rd_view_setting_from_view(view, str8_lit("font_size")));
+    StateCheck(size.size != 0 && cfg_node_child_from_string(views[i], str8_lit("font_size")) == &cfg_nil_node);
+    str8_list_pushf(scratch.arena, &lines, "%S %S %S %S\n", state_view_hex(scratch.arena, view), views[i]->string, state_view_place(views[i]), size);
+  }
+  StateCheck(str8_match(state_view_place(views[1]), str8_lit("floating"), 0) && str8_match(state_view_place(views[2]), str8_lit("previous"), 0));
+  StateCheck(write_data_to_file_path(path, str8_list_join(scratch.arena, &lines, 0)));
+  state_quit(ws);
+  scratch_end(scratch);
+  fprintf(stderr, "State behaviour (View Presentation State, save for a fresh-process restart): %u failures\n", state_failures);
+  abort_self(state_failures ? 1 : 0);
+}
+
 internal void
 entry_point(CmdLine *cmdline)
 {
@@ -727,6 +874,8 @@ entry_point(CmdLine *cmdline)
   String8 phase = cmd_line_string(cmdline, str8_lit("state_phase"));
   String8 ids_path = push_str8f(scratch.arena, "%S/workspace_ids.txt", dir);
   StringJoin lines = {.sep = str8_lit("\n")};
+  if(str8_match(phase, str8_lit("views_save"), 0) || str8_match(phase, str8_lit("views_restart"), 0))
+  { state_views_phase(dir, phase, &theme); }
   if(str8_match(phase, str8_lit("restart"), 0))
   {
     // The producer, another process, reports what it did when the first

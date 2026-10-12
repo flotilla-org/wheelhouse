@@ -147,6 +147,14 @@ fresh_dir.mkdir()
 run_scenario(fresh_dir, '--state_phase:save')
 run_scenario(fresh_dir, '--state_phase:restart')
 fresh_before = (fresh_dir/'before_restart.txt').read_text().splitlines()
+
+# Views' Presentation State across a fresh-process restart: each View the
+# first process gave some finds it again, at the same View Address.
+views_dir = BUILD / 'state_behaviour_views'
+shutil.rmtree(views_dir, ignore_errors=True)
+views_dir.mkdir()
+run_scenario(views_dir, '--state_phase:views_save')
+run_scenario(views_dir, '--state_phase:views_restart')
 fresh = (fresh_dir/'fresh_restart.txt').read_text().splitlines()
 
 # Known losses across a restart today, and what ends each.
