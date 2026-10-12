@@ -106,7 +106,7 @@ uishell_preview_diagnostics(RD_WindowState *ws)
       if(frame == 9) { ws->drop_completion_panel = rd_nil_panel_address; }
       if(frame == 6)
       {
-        for(U32 i = 0; i < 2; i++) { rd_view_state_from_cfg(views[i])->contents_are_focused = 0; }
+        for(U32 i = 0; i < 2; i++) { rd_view_state_from_view(rd_view_address_from_cfg(views[i]), 0)->contents_are_focused = 0; }
       }
       UI_IconInfo icons = ws->ui->icon_info;
       UI_AnimationInfo animation = {0};
@@ -138,13 +138,13 @@ uishell_preview_diagnostics(RD_WindowState *ws)
         }
         if(preview)
         {
-          PreviewCheck(uishell_regs()->view == before.view && rd_panel_address_match(uishell_regs()->panel, before.panel), "preview preserves live command target");
+          PreviewCheck(rd_view_address_match(uishell_regs()->view, before.view) && rd_panel_address_match(uishell_regs()->panel, before.panel), "preview preserves live command target");
           PreviewCheck(ui_key_match(hot, ui_hot_key()) && ui_key_match(active, ui_active_key(UI_MouseButtonKind_Left)), "preview preserves live hot/active keys");
           PreviewCheck(events.count == event_count, "preview does not consume remaining input");
-          if(press) { PreviewCheck(!rd_view_state_from_cfg(views[i])->contents_are_focused, "overlapping preview press does not focus view contents"); }
+          if(press) { PreviewCheck(!rd_view_state_from_view(rd_view_address_from_cfg(views[i]), 0)->contents_are_focused, "overlapping preview press does not focus view contents"); }
           if(file_drop) { PreviewCheck(rd_panel_address_match(ws->drop_completion_panel, drop_completion_panel), "preview file drop does not retarget completion"); }
         }
-        else if(press) { PreviewCheck(rd_view_state_from_cfg(views[i])->contents_are_focused, "live view accepts press focus"); }
+        else if(press) { PreviewCheck(rd_view_state_from_view(rd_view_address_from_cfg(views[i]), 0)->contents_are_focused, "live view accepts press focus"); }
         else if(file_drop)
         {
           PreviewCheck(events.count == 0, "direct live workspace accepts file drop");

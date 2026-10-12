@@ -118,6 +118,21 @@ read_only global RD_ViewRegistration rd_view_registrations[] =
 };
 #undef RD_DOCK_DECLARE
 
+// A View as docking checks it: what it is, and where it is now. Live queries
+// describe a View by its View Address (the shell's rd_dock_view_from_address);
+// restore, which walks saved config, by its node.
+typedef struct RD_DockView RD_DockView;
+struct RD_DockView
+{
+  // Whether there is such a View.
+  B32 exists;
+  // 0 for saved content that isn't a registered View.
+  RD_ViewRegistration *registration;
+  // The host it is in, and the level (layout owner) it belongs to.
+  RD_DockHost source;
+  CFG_ID level;
+};
+
 internal RD_ViewRegistration *rd_dock_view_from_name(String8 name);
 internal RD_DockRule rd_dock_check(RD_ViewRegistration *view, RD_DockProposal proposal);
 internal RD_DockHost rd_dock_host_from_cfg(CFG_Node *cfg, F32 width);
@@ -126,17 +141,19 @@ internal RD_DockHostKind rd_dock_host_kind_from_panel_owner(RD_PanelOwner owner)
 // The Floating Panel `cfg` is in or is: the root of its own arrangement. Nil
 // outside Floating Panels, and for a View saved directly in the host.
 internal CFG_Node *rd_dock_floating_panel_from_cfg(CFG_Node *cfg);
+// The View saved as `view`; one that doesn't exist for nil.
+internal RD_DockView rd_dock_view_from_cfg(CFG_Node *view);
 // Placing `view` in a panel of `destination`, the host that panel is in at
 // its available width (the shell's rd_dock_host_from_panel); a host of no
 // kind (RD_DockHostKind_COUNT) is no destination.
-internal RD_DockRule rd_dock_placement(CFG_Node *view, RD_DockHost destination);
+internal RD_DockRule rd_dock_placement(RD_DockView view, RD_DockHost destination);
 // The production drag-target query, shared by all View drop sites.
-internal B32 rd_dock_drag_target(CFG_Node *view, RD_DockHost destination);
+internal B32 rd_dock_drag_target(RD_DockView view, RD_DockHost destination);
 internal RD_DockRule rd_dock_creation(String8 name, RD_DockHost destination);
-internal RD_DockRule rd_dock_closure(CFG_Node *view);
+internal RD_DockRule rd_dock_closure(RD_DockView view);
 internal String8 rd_dock_rule_message(RD_DockRule rule);
 internal B32 rd_dock_can_create(String8 name, RD_DockHost destination);
-internal B32 rd_dock_can_close(CFG_Node *view);
+internal B32 rd_dock_can_close(RD_DockView view);
 
 //- Repair: restore, the sidebar's edits outside docking
 

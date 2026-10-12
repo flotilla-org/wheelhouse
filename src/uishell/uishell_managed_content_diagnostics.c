@@ -29,10 +29,10 @@ uishell_managed_diagnostic_frame(RD_WindowState *ws, CFG_Node *view)
   UI_AnimationInfo animation = {0};
   UI_EventList events = {0};
   ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(view), .view = view->id)
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(view), .view = rd_view_address_from_cfg(view))
   UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
   {
-    wh_view_ui_direct(wh_renderer_from_name(str8_lit("terminal")), view, r2f32p(0, 0, 640, 480));
+    wh_view_ui_direct(wh_renderer_from_name(str8_lit("terminal")), rd_view_address_from_cfg(view), r2f32p(0, 0, 640, 480));
   }
   ui_end_build();
 }
@@ -92,16 +92,16 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   CFG_Node *workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
   CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
   RD_PanelTree opened_tree = rd_panel_tree_from_cfg(scratch.arena, panels);
-  CFG_Node *view = opened_tree.root != &rd_nil_panel_node && opened_tree.root->tabs.first ? opened_tree.root->tabs.first->v : &cfg_nil_node;
+  CFG_Node *view = opened_tree.root != &rd_nil_panel_node && opened_tree.root->tabs.first ? rd_cfg_from_view(opened_tree.root->tabs.first->v) : &cfg_nil_node;
   uishell_managed_set(view, str8_lit("slot"), str8_lit("primary"));
   CFG_Node *slot = cfg_node_child_from_string(view, str8_lit("slot"));
   CFG_Node *personal = rd_cfg_new_view_tab(panels, str8_lit("terminal_fixture"), str8_zero(), 0);
   CFG_ID workspace_id = workspace->id, view_id = view->id, personal_id = personal->id;
   uishell_managed_diagnostic_frame(ws, view);
-  UIShell_TerminalViewState *tv = rd_view_state_from_cfg(view)->user_data;
+  UIShell_TerminalViewState *tv = rd_view_state_from_view(rd_view_address_from_cfg(view), 0)->user_data;
   ManagedCheck(tv && uishell_managed_diagnostic_marker(tv->session, 'A'), "original live terminal emits A");
   UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(panels), .dst_panel = rd_panel_from_cfg(panels),
-                   .view = view->id, .dir2 = Dir2_Right)
+                   .view = rd_view_address_from_cfg(view), .dir2 = Dir2_Right)
   { uishell_dispatch_panel_command(str8_lit("split_panel")); }
   CFG_Node *moved_panel = view->parent;
   uishell_managed_diagnostic_frame(ws, view);
@@ -212,7 +212,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     CFG_Node *role_view = &cfg_nil_node;
     CFG_Node *role_panels = cfg_node_child_from_string(role_workspace, str8_lit("panels"));
     RD_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, role_panels);
-    if(tree.root != &rd_nil_panel_node && tree.root->tabs.first) { role_view = tree.root->tabs.first->v; }
+    if(tree.root != &rd_nil_panel_node && tree.root->tabs.first) { role_view = rd_cfg_from_view(tree.root->tabs.first->v); }
     ManagedCheck(str8_match(cfg_node_child_from_string(role_workspace, str8_lit("sidebar_entity_kind"))->first->string, str8_lit("role"), 0) &&
                  str8_match(cfg_node_child_from_string(role_view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0),
                  "opened workspace records its current managed target");
@@ -263,11 +263,11 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     CFG_Node *worktree_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     CFG_Node *worktree_panels = cfg_node_child_from_string(worktree_workspace, str8_lit("panels"));
     RD_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, worktree_panels);
-    CFG_Node *worktree_view = tree.root->tabs.first ? tree.root->tabs.first->v : &cfg_nil_node;
+    CFG_Node *worktree_view = tree.root->tabs.first ? rd_cfg_from_view(tree.root->tabs.first->v) : &cfg_nil_node;
     ManagedCheck(str8_match(cfg_node_child_from_string(worktree_view, str8_lit("cwd"))->first->string, str8_lit("/tmp"), 0),
                  "materialized producer terminal saves git.root");
     uishell_managed_diagnostic_frame(ws, worktree_view);
-    UIShell_TerminalViewState *worktree_tv = rd_view_state_from_cfg(worktree_view)->user_data;
+    UIShell_TerminalViewState *worktree_tv = rd_view_state_from_view(rd_view_address_from_cfg(worktree_view), 0)->user_data;
     ManagedCheck(worktree_tv && uishell_managed_diagnostic_marker(worktree_tv->session, 'W'),
                  "materialized producer terminal actually runs at git.root");
     // As in the UI frame, acknowledge the new topology before closing it.

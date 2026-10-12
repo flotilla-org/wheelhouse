@@ -63,11 +63,11 @@ struct WH_TargetResolution
 };
 
 // A View's presentation settings, read through wh_view_setting*: its own,
-// then its Renderer's schema defaults. Backed by config for now.
+// then its Renderer's schema defaults.
 typedef struct WH_ViewSettings WH_ViewSettings;
 struct WH_ViewSettings
 {
-  CFG_ID view;
+  RD_ViewAddress view;
 };
 
 // Defined by the store that produces it (uishell_workspace_store.h).
@@ -242,9 +242,9 @@ struct UIShell_Regs
 {
   CFG_ID window;
   RD_PanelAddress panel;
-  CFG_ID tab;
-  CFG_ID view;
-  CFG_ID prev_tab;
+  RD_ViewAddress tab;
+  RD_ViewAddress view;
+  RD_ViewAddress prev_tab;
   RD_PanelAddress dst_panel;
   CFG_ID cfg;
   CFG_IDList cfg_list;
@@ -364,7 +364,7 @@ struct RD_ViewState
   // rjf: hash links & key
   RD_ViewState *hash_next;
   RD_ViewState *hash_prev;
-  CFG_ID cfg_id;
+  RD_ViewAddress view;
   U64 sub_key;
 
   // rjf: touch info
@@ -408,6 +408,27 @@ struct RD_ViewStateSlot
 {
   RD_ViewState *first;
   RD_ViewState *last;
+};
+
+// A View Address resolved to its node (rd_cfg_from_view), trusted while the
+// config tree is as it was then (cfg_tree_gen), else checked again.
+typedef struct RD_ViewCfgCacheSlot RD_ViewCfgCacheSlot;
+struct RD_ViewCfgCacheSlot
+{
+  RD_ViewAddress view;
+  CFG_Ctx *ctx;
+  CFG_ID cfg;
+  U64 tree_gen;
+};
+
+// A View an arrangement save is moving, and its address before the move
+// (rd_arrangement_view_move_hook).
+typedef struct RD_ViewMove RD_ViewMove;
+struct RD_ViewMove
+{
+  RD_ViewMove *next;
+  CFG_ID view;
+  RD_ViewAddress from;
 };
 
 ////////////////////////////////
@@ -723,7 +744,10 @@ struct RD_WindowState
 
   // Page ownership belongs to the native window through matching release.
   UIShell_TerminalPageOwner terminal_page_keys[WM_Key_COUNT];
-  CFG_ID terminal_page_views[WM_Key_COUNT];
+  RD_ViewAddress terminal_page_views[WM_Key_COUNT];
+  // The terminal View that owns semantic edits, while the UI's edit owner is
+  // a terminal (ui->edit_owner_terminal).
+  RD_ViewAddress edit_owner_view;
 
   // rjf: root controlled split runtime state
   UIShell_SidebarState *sidebar;
@@ -1034,7 +1058,7 @@ struct RD_State
   RD_DragDropState drag_drop_state;
   // Creation drags share panel sites without allocating a saved View until drop.
   String8 drag_drop_creation_name;
-  void (*drag_drop_commit)(RD_PanelAddress destination, Dir2 direction, CFG_ID previous_tab);
+  void (*drag_drop_commit)(RD_PanelAddress destination, Dir2 direction, RD_ViewAddress previous_tab);
   RD_BoundaryResize boundary_resize;
 
   // rjf: cfg state
@@ -1055,8 +1079,12 @@ struct RD_State
   U64 view_state_slots_count;
   RD_ViewStateSlot *view_state_slots;
   RD_ViewState *free_view_state;
-  CFG_ID view_state_last_accessed_id;
   RD_ViewState *view_state_last_accessed;
+  // View Address -> node (rd_cfg_from_view), checked on each hit.
+  RD_ViewCfgCacheSlot view_cfg_cache[256];
+  // Views a save is moving.
+  Arena *view_move_arena;
+  RD_ViewMove *first_view_move;
 
   // rjf: bind change
   Arena *bind_change_arena;
@@ -1172,12 +1200,12 @@ internal WH_Renderer *wh_renderer_from_index(U64 idx);
 internal WH_Renderer *wh_visualizer_from_name(String8 name);
 internal B32 wh_renderer_has_trait(WH_Renderer *renderer, RD_ViewTraits traits);
 
-// The context for building `view` (a View node) in `rect` this frame, with
-// `state` its Renderer's state (sized by the caller from the registry).
-internal WH_ViewContext wh_view_context_from_cfg(Arena *arena, CFG_Node *view, WH_Renderer *renderer, void *state, Rng2F32 rect);
+// The context for building `view` in `rect` this frame, with `state` its
+// Renderer's state (sized by the caller from the registry).
+internal WH_ViewContext wh_view_context_from_view(Arena *arena, RD_ViewAddress view, WH_Renderer *renderer, void *state, Rng2F32 rect);
 // Builds `view` with `renderer` alone, without rd_view_ui's container and
 // query bar: for diagnostics that drive one Renderer.
-internal void wh_view_ui_direct(WH_Renderer *renderer, CFG_Node *view, Rng2F32 rect);
+internal void wh_view_ui_direct(WH_Renderer *renderer, RD_ViewAddress view, Rng2F32 rect);
 // The ctx's state, checked to be a `size`-byte state: wh_view_state(ctx, T).
 internal void *wh_view_state_checked(WH_ViewContext *ctx, U64 size);
 #define wh_view_state(ctx, T) ((T *)wh_view_state_checked((ctx), sizeof(T)))
@@ -1197,7 +1225,7 @@ internal String8 rd_drag_refusal_text(Arena *arena);
 internal Vec4F32 rd_drag_refusal_color(void);
 internal void rd_drag_refusal_badge_ui(Rng2F32 anchor);
 internal UI_Key rd_panel_catchall_drop_site_key(RD_PanelAddress panel);
-internal void rd_panel_drag_drop(RD_PanelAddress destination, Dir2 direction, CFG_ID previous_tab);
+internal void rd_panel_drag_drop(RD_PanelAddress destination, Dir2 direction, RD_ViewAddress previous_tab);
 // A borderless button of size w x h that hovers as a circle of diameter d,
 // centred in it.
 #define RD_RoundButtonStyle(w, h, d) UI_TagF("implicit") UI_CornerRadius((d)*0.5f) \
@@ -1221,6 +1249,7 @@ internal void rd_set_hover_regs(UIShell_ContextRegSlot slot);
 //~ rjf: Config Functions
 
 internal B32 rd_cfg_is_project_filtered(CFG_Node *cfg);
+internal B32 rd_view_is_project_filtered(RD_ViewAddress view);
 // The visibility rule docking gives the arrangement (RD_ArrangementTabRule):
 // a tab is shown unless its View is filtered out of the current project.
 internal B32 rd_tab_is_shown(CFG_ID view);
@@ -1292,10 +1321,18 @@ internal String8 rd_query_from_eval_string(Arena *arena, String8 string);
 //~ rjf: View Functions
 
 internal CFG_Node *rd_view_from_eval(CFG_Node *parent, E_Eval eval);
-internal RD_ViewState *rd_view_state_from_cfg(CFG_Node *cfg);
-// A View's state record under `sub_key`: 0 for the View itself, else a
+//- View Addresses (shell_arrangement.h), resolved through the config nodes
+// Views are mirrored to.
+// `view`'s address: a tab of an arrangement, or a View of an immediate tree;
+// nil for any other node, and for a tab without a key.
+internal RD_ViewAddress rd_view_address_from_cfg(CFG_Node *view);
+// The node the View at `view` is mirrored to, or nil.
+internal CFG_Node *rd_cfg_from_view(RD_ViewAddress view);
+// The seed of every UI key of `view`'s boxes and animations.
+internal UI_Key rd_view_ui_key(RD_ViewAddress view);
+// `view`'s state record under `sub_key`: 0 for the View itself, else a
 // Renderer it embeds (a watch cell's visualizer).
-internal RD_ViewState *rd_view_state_from_key(CFG_ID id, U64 sub_key);
+internal RD_ViewState *rd_view_state_from_view(RD_ViewAddress view, U64 sub_key);
 // `vs`'s Renderer state, `size` bytes, allocated on first use and checked
 // against the size it was allocated with.
 internal void *rd_view_user_data(RD_ViewState *vs, U64 size);
@@ -1306,10 +1343,18 @@ internal void rd_view_state_release(RD_ViewState *vs);
 // Releases the states of Views that have left a live place, and of watch
 // rows' visualizers no longer built. Run once a frame, before Views build.
 internal void rd_view_states_release_unowned(void);
-internal UI_Key rd_view_surface_key(CFG_ID view);
+// Keeps the states of the View at `from` under `to`.
+internal void rd_view_states_rekey(RD_ViewAddress from, RD_ViewAddress to);
+// The View at `from` is now at `to` (a move into another owner, a key the
+// workspace store gave it, a keep-previous rebind): what is keyed by its
+// address follows it.
+internal void rd_view_readdress(RD_ViewAddress from, RD_ViewAddress to);
+// Releases `view`'s states: another View is taking its address.
+internal void rd_view_states_release_view(RD_ViewAddress view);
+internal UI_Key rd_view_surface_key(RD_ViewAddress view);
 internal B32 rd_view_drag_preview_is_live(CFG_Node *view);
 internal void rd_view_ui(Rng2F32 rect);
-internal void rd_drag_view_floater_ui(RD_WindowState *ws, CFG_Node *view);
+internal void rd_drag_view_floater_ui(RD_WindowState *ws, RD_ViewAddress view);
 
 ////////////////////////////////
 //~ rjf: View Building API
@@ -1389,11 +1434,14 @@ internal RD_Arrangement *rd_arrangement_from_panel_owner(Arena *arena, RD_PanelO
 internal CFG_Node *rd_cfg_from_panel(RD_PanelAddress panel);
 // The panel `cfg` is (a panel node) or has as a tab (a View).
 internal RD_PanelAddress rd_panel_from_cfg(CFG_Node *cfg);
+// The panel that has `view` as a tab.
+internal RD_PanelAddress rd_panel_from_view(RD_ViewAddress view);
 // The panel tree of the arrangement saved as `panels_root`.
 internal RD_PanelTree rd_panel_tree_from_cfg(Arena *arena, CFG_Node *panels_root);
 // The seed of every UI key of `panel`'s boxes and animations.
 internal UI_Key rd_panel_ui_key(RD_PanelAddress panel);
 internal RD_DockHost rd_dock_host_from_panel(RD_PanelAddress panel, F32 width);
+internal RD_DockView rd_dock_view_from_address(RD_ViewAddress view);
 
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_panel_owner(Arena *arena, RD_PanelOwner owner);
@@ -1518,9 +1566,9 @@ internal CFG_Node *rd_new_view_tab(RD_Arrangement *arrangement, RD_PanelID panel
 internal void rd_init(CmdLine *cmdln);
 internal void rd_frame(void);
 
-internal F32 rd_dock_target_width(Arena *arena, RD_PanelAddress destination, Dir2 dir, CFG_Node *view, B32 *unavailable);
+internal F32 rd_dock_target_width(Arena *arena, RD_PanelAddress destination, Dir2 dir, RD_ViewAddress view, B32 *unavailable);
 internal F32 rd_panel_inset_px(F32 font_size);
 
-internal B32 rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, RD_PanelAddress destination, Dir2 dir);
+internal B32 rd_dock_move_allowed(Arena *arena, char *operation, RD_ViewAddress view, RD_PanelAddress destination, Dir2 dir);
 
 #endif // SHELL_CORE_H

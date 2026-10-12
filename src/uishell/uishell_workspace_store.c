@@ -742,6 +742,18 @@ uishell_store_previous_of(CFG_Node *view)
   return uishell_store_setting(view, str8_lit("previous_of"));
 }
 
+// The View of Slot `key` in `owner`, or (RD_ViewInstance_Previous) the
+// previous instance kept beside it, by address.
+internal RD_ViewAddress
+uishell_store_slot_view(CFG_Node *owner, String8 key, RD_ViewInstance instance)
+{
+  // Read, never assigned: an arrangement's workspace has had its ID since
+  // the inventory first listed it.
+  UIShell_WorkspaceId id = {0};
+  uishell_workspace_id_from_string(uishell_store_setting(owner, str8_lit("workspace_id")), &id);
+  return rd_view_address_make(RD_ViewOwnerKind_Workspace, id, key, instance);
+}
+
 // The owner's panel tree as an arrangement document, its tabs named by
 // their Views' slot keys.
 internal UIShell_StoreDoc
@@ -837,10 +849,12 @@ uishell_store_doc_hash(UIShell_StoreDoc *doc)
 // resource_id) when Andamento has that slot, else "u:<resource_id>", else
 // the next "u:<n>". Returns whether any changed; a View's key is saved on it.
 internal B32
-uishell_store_assign_keys(Arena *arena, UIShell_StoreDoc *doc, AndamentoSlots *slots)
+uishell_store_assign_keys(Arena *arena, CFG_Node *owner, UIShell_StoreDoc *doc, AndamentoSlots *slots)
 {
   B32 changed = 0;
-  U64 next = 1;
+  // Past every key of the workspace's namespace (its Floating Panels' Views
+  // and the Presentation State it keeps included), so no View takes another's.
+  U64 next = rd_view_user_number_max(owner, RD_ViewOwnerKind_Workspace)+1;
   for(U64 i = 0; i < doc->tab_count; i++) { next = Max(next, uishell_store_user_number(doc->keys[i])+1); }
   for(U64 i = 0; slots && i < slots->slot_count; i++) { next = Max(next, uishell_store_user_number(uishell_sidebar_string(slots->slots[i].key))+1); }
   for(U64 i = 0; i < doc->tab_count; i++)
@@ -863,7 +877,12 @@ uishell_store_assign_keys(Arena *arena, UIShell_StoreDoc *doc, AndamentoSlots *s
     }
     doc->keys[i] = key;
     doc->tabs[i] = uishell_sidebar_text(key);
+    // The View keeps what its address keyed, unless an earlier tab had that
+    // address too (a copy), which keeps it.
+    RD_ViewAddress was = rd_view_address_from_cfg(doc->views[i]);
+    B32 shared = uishell_store_key_in(rd_view_key_from_cfg(doc->views[i], 0), doc->keys, i);
     uishell_store_set_setting(doc->views[i], str8_lit("slot"), key);
+    if(!shared) { rd_view_readdress(was, rd_view_address_from_cfg(doc->views[i])); }
     changed = 1;
   }
   return changed;
@@ -1313,7 +1332,7 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
   if(str8_match(view->string, str8_lit("placeholder"), 0)) { keep_previous = 0; }
   B32 in_place = !shows && terminal && str8_match(kind, view->string, 0) && !keep_previous;
   UIShell_ManagedPrepared prepared = {0};
-  B32 ok = !in_place || uishell_managed_prepare(rd_view_state_from_cfg(view)->user_data, recipe.command, recipe.has_cwd, recipe.cwd, &prepared);
+  B32 ok = !in_place || uishell_managed_prepare(rd_view_state_from_view(rd_view_address_from_cfg(view), 0)->user_data, recipe.command, recipe.has_cwd, recipe.cwd, &prepared);
   char *error = 0;
   ok = ok && UIShell_StoreCall(state, andamento_slot_valid(state->core, workspace, uishell_sidebar_text(key), content->token, &error));
   andamento_string_free(error);
@@ -1327,6 +1346,7 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
   }
   else
   {
+    RD_ViewAddress replaced = rd_view_address_from_cfg(view);
     CFG_Node *next = uishell_store_view_from_spec(key, &recipe);
     // What the old View carried that is this device's: its label, that it
     // follows its provider, and the daemon hosting a terminal.
@@ -1351,6 +1371,10 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
     }
     else { rd_arrangement_remove_tab(a, view->id); }
     rd_arrangement_save(rd_state->cfg, a);
+    // The new View takes the Slot's address. The instance it replaced keeps
+    // its state at the previous instance's, or loses it with its node.
+    if(keep_previous) { rd_view_readdress(replaced, rd_view_address_from_cfg(view)); }
+    else { rd_view_states_release_view(replaced); }
     result = next;
   }
   scratch_end(scratch);
@@ -1818,7 +1842,7 @@ internal void
 uishell_store_remove(CFG_Node *view)
 {
   if(view->parent == &cfg_nil_node) { return; }
-  UIShell_RegsScope(.window = rd_window_from_cfg(view)->id, .panel = rd_panel_from_cfg(view), .view = view->id, .tab = view->id)
+  UIShell_RegsScope(.window = rd_window_from_cfg(view)->id, .panel = rd_panel_from_cfg(view), .view = rd_view_address_from_cfg(view), .tab = rd_view_address_from_cfg(view))
   { uishell_cmd("close_tab"); }
 }
 
@@ -1847,12 +1871,7 @@ read_only global String8 uishell_slot_action_labels[UIShell_SlotAction_COUNT] =
 internal B32
 uishell_store_keeps_previous(CFG_Node *owner, String8 key)
 {
-  CFG_Node *panels = cfg_node_child_from_string(owner, str8_lit("panels"));
-  for(CFG_Node *n = panels; n != &cfg_nil_node; n = cfg_node_rec__depth_first(panels, n).next)
-  {
-    if(str8_match(n->string, str8_lit("previous_of"), 0) && str8_match(n->first->string, key, 0)) { return 1; }
-  }
-  return 0;
+  return rd_cfg_from_view(uishell_store_slot_view(owner, key, RD_ViewInstance_Previous)) != &cfg_nil_node;
 }
 
 // `view`'s notices, most pressing first; at most `cap` of them.
@@ -2119,7 +2138,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     cfg_node_release(rd_state->cfg, fresh);
     if(stored->doc.panel_count)
     {
-      uishell_store_assign_keys(arena, &doc, slots);
+      uishell_store_assign_keys(arena, owner, &doc, slots);
       andamento_arrangement_free(stored);
       andamento_slots_free(slots);
       uishell_store_build(state, owner, id, &entry->generation);
@@ -2143,7 +2162,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     scratch_end(scratch);
     return;
   }
-  if(uishell_store_assign_keys(arena, &doc, slots)) { hash = uishell_store_doc_hash(&doc); }
+  if(uishell_store_assign_keys(arena, owner, &doc, slots)) { hash = uishell_store_doc_hash(&doc); }
 
   // New and changed slots. A slot following its provider is the provider's,
   // and a placeholder's keeps the spec it was made from.

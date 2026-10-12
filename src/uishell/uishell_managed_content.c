@@ -61,12 +61,12 @@ internal void
 uishell_managed_install(CFG_Node *view, UIShell_ManagedPrepared *prepared, String8 command, B32 has_cwd, String8 cwd,
                         B32 has_target, String8 target)
 {
-  RD_ViewState *vs = rd_view_state_from_cfg(view);
+  RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
   UIShell_TerminalViewState *tv = vs->user_data;
   // All mutation and token validation happen on the UI thread; no ingress patch
   // can intervene between validation, installation and acknowledgement.
   if(tv) { uishell_terminal_runtime_release(tv); }
-  UIShell_RegsScope(.view = view->id) { rd_store_view_expr_string(command); }
+  UIShell_RegsScope(.view = rd_view_address_from_cfg(view)) { rd_store_view_expr_string(command); }
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("session")));
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("daemon_name")));
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("cwd")));
@@ -78,7 +78,7 @@ uishell_managed_install(CFG_Node *view, UIShell_ManagedPrepared *prepared, Strin
     tv->initialized = 1;
     tv->provider = prepared->provider;
     tv->session = prepared->session;
-    uishell_terminal_clipboard_register(tv, view->id, uishell_regs()->window);
+    uishell_terminal_clipboard_register(tv, rd_view_address_from_cfg(view), uishell_regs()->window);
     vs->release_user_data = uishell_terminal_runtime_release;
     cleat_provider_set_wake_callback(prepared->provider, uishell_terminal_provider_wake, tv);
   }
@@ -91,7 +91,7 @@ uishell_managed_install(CFG_Node *view, UIShell_ManagedPrepared *prepared, Strin
 internal B32
 uishell_managed_daemon_backed(CFG_Node *view)
 {
-  RD_ViewState *vs = rd_view_state_from_cfg(view);
+  RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
   UIShell_TerminalViewState *tv = vs->user_data;
   if(cfg_node_child_from_string(view, str8_lit("daemon")) != &cfg_nil_node) { return 1; }
   if(tv && tv->initialized) { return tv->daemon_backend; }

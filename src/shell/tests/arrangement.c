@@ -37,13 +37,15 @@ child(CFG_Node *node, char *name)
   return cfg_node_child_from_string(node, str8_cstring(name));
 }
 
-// The renderer's reading of the saved tree. Its panels' addresses have no
-// owner here: the shell's Workspace and Window IDs aren't in these tests.
+// The shell's Workspace and Window IDs aren't in these tests: every panel
+// and View is addressed as one zero-ID owner's.
+read_only global RD_PanelOwner test_owner = {RD_PanelOwnerKind_Workspace};
+
+// The renderer's reading of the saved tree.
 internal RD_PanelTree
 render_tree(Arena *arena, CFG_Node *root)
 {
-  RD_PanelOwner owner = {0};
-  return rd_panel_tree_from_arrangement(arena, owner, rd_arrangement_from_cfg(arena, root));
+  return rd_panel_tree_from_arrangement(arena, test_owner, rd_arrangement_from_cfg(arena, root));
 }
 
 // A Floating Panel is its own root.
@@ -84,7 +86,9 @@ check_saved(Arena *arena, RD_Arrangement *edited, CFG_Node *owner)
   {
     RD_PanelNode *node = rd_panel_node_from_id(tree.root, p->id);
     Check(node != &rd_nil_panel_node && node->split_axis == rd_arrangement_split_axis(edited, p) && node->pct_of_parent == p->weight);
-    Check(node->tabs.count == p->tab_count && node->selected_tab->id == p->selected);
+    // Saving gave every View a key, so each tab has an address of its own.
+    Check(node->tabs.count == p->tab_count && rd_view_address_match(node->selected_tab, rd_view_address_from_tab(test_owner, cfg_node_from_id(p->selected))));
+    for(RD_ArrangementTab *t = p->first_tab; t; t = t->next) { Check(!rd_view_address_is_nil(rd_view_address_from_tab(test_owner, cfg_node_from_id(t->view)))); }
     for(U64 i = 0; i < ArrayCount(areas); i++)
     {
       Rng2F32 x = rd_arrangement_rect(edited, areas[i], p), y = rd_target_rect_from_panel_node(areas[i], tree.root, node);
@@ -310,7 +314,7 @@ entry_point(CmdLine *cmdline)
     Check(child(a, "selected") == &cfg_nil_node && child(copy, "selected") != &cfg_nil_node);
     Check(str8_match(child(copy, "label")->first->string, str8_lit("A"), 0));
     // A new View goes after the last tab, before the panel's options.
-    CFG_Node *built = cfg_node_new(cfg, &cfg_nil_node, str8_lit("text"));
+    CFG_Node *built = cfg_node_new(cfg, &cfg_nil_node, str8_lit("text")); rd_view_key_assign(cfg, built, 0);
     Check(rd_arrangement_move_tab(arrangement, built->id, left, terminal->id));
     check_saved(arena, arrangement, window);
     Check(terminal->next == built && child(left_node, "tabs_on_bottom")->prev == built);
@@ -518,7 +522,7 @@ entry_point(CmdLine *cmdline)
     RD_PanelID first = rd_arrangement_add(sidebar, 0, 1.f);
     RD_PanelID second = rd_arrangement_add(sidebar, sidebar->root->id, 1.f);
     Check(first != 0 && second != 0 && rd_arrangement_add(sidebar, 0, 1.f) == 0 && rd_arrangement_add(sidebar, 99, 1.f) == 0);
-    CFG_Node *a = cfg_node_new(cfg, &cfg_nil_node, str8_lit("text"));
+    CFG_Node *a = cfg_node_new(cfg, &cfg_nil_node, str8_lit("text")); rd_view_key_assign(cfg, a, 0);
     Check(rd_arrangement_move_tab(sidebar, a->id, first, 0));
     rd_arrangement_save(cfg, sidebar);
     CFG_Node *root = child(window, "control_views");
@@ -556,7 +560,8 @@ entry_point(CmdLine *cmdline)
     Check(child(root, "selected") == &cfg_nil_node && child(root, "tabs_on_bottom") == &cfg_nil_node && child(root, "section_collapsed") == &cfg_nil_node);
     Check(child(leaf, "selected") != &cfg_nil_node && child(leaf, "tabs_on_bottom") != &cfg_nil_node && child(leaf, "section_collapsed") != &cfg_nil_node);
     RD_PanelTree tree = render_tree(arena, root);
-    Check(tree.focused == tree.root->first && tree.root->first->tab_side == Side_Max && tree.root->first->selected_tab == text);
+    Check(tree.focused == tree.root->first && tree.root->first->tab_side == Side_Max &&
+          rd_view_address_match(tree.root->first->selected_tab, rd_view_address_from_tab(test_owner, text)));
     cfg_node_release(cfg, window);
   }
 
@@ -598,7 +603,7 @@ entry_point(CmdLine *cmdline)
     RD_PanelID side = rd_arrangement_split(arrangement, root, Dir2_Right);
     rd_arrangement_resize(arrangement, root, 0.22f, 0);
     Check(rd_arrangement_panel_from_id(arrangement, root)->weight == 0.72f && rd_arrangement_panel_from_id(arrangement, side)->weight == 0.28f);
-    CFG_Node *made = cfg_node_new(cfg, &cfg_nil_node, str8_lit("text"));
+    CFG_Node *made = cfg_node_new(cfg, &cfg_nil_node, str8_lit("text")); rd_view_key_assign(cfg, made, 0);
     Check(rd_arrangement_move_tab(arrangement, made->id, side, 0) && rd_arrangement_move_tab(arrangement, kept, root, 0));
     check_saved(arena, arrangement, owner);
     CFG_Node *root_node = child(owner, "panels");
@@ -614,7 +619,7 @@ entry_point(CmdLine *cmdline)
     cfg_node_release(cfg, child(fresh, "panels"));
     arrangement = rd_arrangement_from_owner(arena, fresh, str8_lit("panels"));
     root = rd_arrangement_clear(arrangement);
-    CFG_Node *tab = cfg_node_new(cfg, &cfg_nil_node, str8_lit("terminal"));
+    CFG_Node *tab = cfg_node_new(cfg, &cfg_nil_node, str8_lit("terminal")); rd_view_key_assign(cfg, tab, 0);
     Check(rd_arrangement_move_tab(arrangement, tab->id, root, 0));
     check_saved(arena, arrangement, fresh);
     Check(tab->parent == child(fresh, "panels") && child(tab, "selected") != &cfg_nil_node && child(fresh, "split_x") == &cfg_nil_node);
@@ -696,7 +701,7 @@ entry_point(CmdLine *cmdline)
     Check(cfg_change_gen() == gen);
     RD_Arrangement *created = rd_arrangement_new(arena, host, str8_lit("1"));
     RD_PanelID root = rd_arrangement_clear(created);
-    CFG_Node *view = cfg_node_new(cfg, &cfg_nil_node, str8_lit("terminal"));
+    CFG_Node *view = cfg_node_new(cfg, &cfg_nil_node, str8_lit("terminal")); rd_view_key_assign(cfg, view, 0);
     Check(rd_arrangement_move_tab(created, view->id, root, 0));
     rd_arrangement_save(cfg, created);
     check_saved(arena, created, host->last);

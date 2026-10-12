@@ -483,7 +483,7 @@ uishell_logical_presentation(UIShell_LogicalText *t, U64 depth, CFG_Node *window
   else
   {
     uishell_logical_linef(t, depth+1, "focused panel %S: %S", uishell_logical_panel_path(arena, tree.root, tree.focused),
-      tree.focused->selected_tab != &cfg_nil_node ? uishell_logical_tab(arena, tree.focused->selected_tab, 0) : str8_lit("no tab"));
+      !rd_view_address_is_nil(tree.focused->selected_tab) ? uishell_logical_tab(arena, rd_cfg_from_view(tree.focused->selected_tab), 0) : str8_lit("no tab"));
   }
   // Which host takes input: the sidebar's sections, the workspace, or none
   // until something is focused.

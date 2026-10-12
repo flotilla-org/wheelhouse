@@ -153,16 +153,28 @@ rd_dock_view_level(RD_ViewRegistration *registration, CFG_Node *view)
   return rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH).level;
 }
 
-internal RD_DockRule
-rd_dock_placement(CFG_Node *view, RD_DockHost destination)
+internal RD_DockView
+rd_dock_view_from_cfg(CFG_Node *view)
 {
-  if(view == &cfg_nil_node || destination.kind >= RD_DockHostKind_COUNT) { return RD_DockRule_RegisteredView; }
-  RD_DockHost source = rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH);
+  RD_DockView result = {0};
+  if(view == &cfg_nil_node) { return result; }
+  result.exists = 1;
+  result.registration = rd_dock_view_from_name(view->string);
+  result.source = rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH);
+  result.level = rd_dock_view_level(result.registration, view);
+  return result;
+}
+
+internal RD_DockRule
+rd_dock_placement(RD_DockView view, RD_DockHost destination)
+{
+  if(!view.exists || destination.kind >= RD_DockHostKind_COUNT) { return RD_DockRule_RegisteredView; }
+  RD_DockHost source = view.source;
   RD_DockProposal p = {0};
   p.host = destination;
   p.selected_workspace_region = source.controlled_split;
-  RD_ViewRegistration *registration = rd_dock_view_from_name(view->string);
-  p.view_level = rd_dock_view_level(registration, view);
+  RD_ViewRegistration *registration = view.registration;
+  p.view_level = view.level;
   p.instances_after = 1;
   p.control_surfaces_after = 1; // TODO(#164): derive counts from nested Controlled Splits.
   // The current root Control Surface is implicit.
@@ -179,7 +191,7 @@ rd_dock_placement(CFG_Node *view, RD_DockHost destination)
 }
 
 internal B32
-rd_dock_drag_target(CFG_Node *view, RD_DockHost destination)
+rd_dock_drag_target(RD_DockView view, RD_DockHost destination)
 {
   return rd_dock_placement(view, destination) == RD_DockRule_Valid;
 }
@@ -201,15 +213,15 @@ rd_dock_creation(String8 name, RD_DockHost destination)
 }
 
 internal RD_DockRule
-rd_dock_closure(CFG_Node *view)
+rd_dock_closure(RD_DockView view)
 {
-  if(view == &cfg_nil_node) { return RD_DockRule_RegisteredView; }
+  if(!view.exists) { return RD_DockRule_RegisteredView; }
   RD_DockProposal p = {0};
-  p.host = rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH);
+  p.host = view.source;
   p.closing = 1;
   // TODO(#164): derive this with placement/creation counts from nested splits.
   p.control_surfaces_after = 1;
-  return rd_dock_check(rd_dock_view_from_name(view->string), p);
+  return rd_dock_check(view.registration, p);
 }
 
 internal B32
@@ -217,7 +229,7 @@ rd_dock_can_create(String8 name, RD_DockHost destination)
 { return rd_dock_creation(name, destination) == RD_DockRule_Valid; }
 
 internal B32
-rd_dock_can_close(CFG_Node *view)
+rd_dock_can_close(RD_DockView view)
 { return rd_dock_closure(view) == RD_DockRule_Valid; }
 
 internal String8
@@ -443,7 +455,7 @@ rd_dock_restore_window(CFG_State *state, CFG_Node *window)
   // stray saved where it is valid stays, as it always has.
   for(RD_DockSavedView *v = views.first; v != 0; v = v->next)
   {
-    if(v->view == &cfg_nil_node || rd_dock_placement(v->view, rd_dock_host_from_cfg(v->view->parent, RD_DOCK_UNMEASURED_WIDTH)) == RD_DockRule_Valid) { continue; }
+    if(v->view == &cfg_nil_node || rd_dock_placement(rd_dock_view_from_cfg(v->view), rd_dock_host_from_cfg(v->view->parent, RD_DOCK_UNMEASURED_WIDTH)) == RD_DockRule_Valid) { continue; }
     // Region-specific defaults are Andamento's. Preserve the need to place
     // the section by its hints after this generic safety fallback, and mark
     // the panel it leaves: the sidebar's next commit leaves both out, then
@@ -472,6 +484,14 @@ rd_dock_restore_window(CFG_State *state, CFG_Node *window)
     v->document = destination;
     v->panel = leaf;
     v->holder = 0;
+  }
+  // Every View has a key in its owner's namespace: one saved without one (an
+  // older file, a hand edit) is given one by saving its arrangement.
+  for(RD_DockSavedView *v = views.first; v != 0; v = v->next)
+  {
+    if(v->view == &cfg_nil_node || !rd_dock_saved_view_is_tab(v) || rd_view_key_from_cfg(v->view, 0).size) { continue; }
+    RD_ViewOwnerKind owner = rd_view_owner_kind_from_tab(v->view, 0);
+    if(owner == RD_ViewOwnerKind_Workspace || owner == RD_ViewOwnerKind_Window) { v->document->dirty = 1; }
   }
   rd_dock_documents_save(state, &documents);
   scratch_end(scratch);

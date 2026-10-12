@@ -64,6 +64,15 @@ uishell_selection_fixture_release(UIShell_SelectionFixture *f)
   if(f->tv.cell_cache.arena) { arena_release(f->tv.cell_cache.arena); }
 }
 
+// A stand-in View Address, told apart by `n`; nil for 0 (no focused View).
+internal RD_ViewAddress
+uishell_selection_test_view(U64 n)
+{
+  RD_ViewAddress view = {0};
+  if(n) { view.owner = RD_ViewOwnerKind_Transient; view.key.u64[0] = n; }
+  return view;
+}
+
 internal UIShell_TerminalMouseResult
 uishell_selection_test_mouse(UIShell_SelectionFixture *f, UI_EventKind kind, WM_Modifiers mods, S64 row, S64 col)
 {
@@ -538,7 +547,7 @@ uishell_terminal_override_diagnostics(void)
     if(semantic) { OverrideCheck(uishell_terminal_key_event(&f.tv, &page, CLEAT_KEY_ACTION_PRESS)); }
     else
     {
-      OverrideCheck(uishell_terminal_page_binding_event(window, &wm, 42, &command));
+      OverrideCheck(uishell_terminal_page_binding_event(window, &wm, uishell_selection_test_view(42), &command));
       OverrideCheck(uishell_terminal_page_command(&f.tv, command, f.tv.rows));
     }
     OverrideCheck(f.viewport_count == 1 && !f.sent_count);
@@ -546,10 +555,10 @@ uishell_terminal_override_diagnostics(void)
     if(semantic) { OverrideCheck(uishell_terminal_key_event(&f.tv, &page, CLEAT_KEY_ACTION_PRESS)); }
     else
     {
-      OverrideCheck(uishell_terminal_page_binding_event(window, &wm, 42, &command));
+      OverrideCheck(uishell_terminal_page_binding_event(window, &wm, uishell_selection_test_view(42), &command));
       OverrideCheck(uishell_terminal_page_command(&f.tv, command, f.tv.rows));
       wm.kind = WM_EventKind_Release; wm.modifiers = 0;
-      OverrideCheck(uishell_terminal_page_binding_event(window, &wm, 42, &command));
+      OverrideCheck(uishell_terminal_page_binding_event(window, &wm, uishell_selection_test_view(42), &command));
     }
     OverrideCheck(f.viewport_count == 2 && !f.sent_count && f.viewport[0].delta_rows == (down ? 3 : -3) && f.viewport[1].delta_rows == (down ? 6 : -6));
     scratch_end(page_scratch);
@@ -614,17 +623,17 @@ uishell_terminal_override_diagnostics(void)
     RD_WindowState *second = push_array(scratch.arena, RD_WindowState, 1);
     // Accepted configurable page commands latch in the invoking window. A
     // modifier change, focus change or another window cannot leak its release.
-    uishell_terminal_page_binding_accept(first, WM_Key_Up, str8_lit("terminal_scroll_page_up"), 42);
+    uishell_terminal_page_binding_accept(first, WM_Key_Up, str8_lit("terminal_scroll_page_up"), uishell_selection_test_view(42));
     WM_Event event = {.kind = WM_EventKind_Press, .key = WM_Key_Up};
     String8 repeat = {0};
-    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 42, &repeat));
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(42), &repeat));
     OverrideCheck(str8_match(repeat, str8_lit("terminal_scroll_page_up"), 0));
     repeat = str8_zero();
-    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 43, &repeat) && !repeat.size);
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(43), &repeat) && !repeat.size);
     event.kind = WM_EventKind_Release; event.modifiers = WM_Modifier_Shift;
-    OverrideCheck(!uishell_terminal_page_binding_event(second, &event, 42, &repeat));
-    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 0, &repeat) && !first->terminal_page_keys[WM_Key_Up]);
-    OverrideCheck(!uishell_terminal_page_binding_event(first, &event, 42, &repeat));
+    OverrideCheck(!uishell_terminal_page_binding_event(second, &event, uishell_selection_test_view(42), &repeat));
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(0), &repeat) && !first->terminal_page_keys[WM_Key_Up]);
+    OverrideCheck(!uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(42), &repeat));
     // Physical Shift-page uses the same window seam, including focus-loss
     // release ownership, while plain page remains an application gesture.
     event = (WM_Event){.kind = WM_EventKind_Press, .key = WM_Key_PageUp};
@@ -632,38 +641,38 @@ uishell_terminal_override_diagnostics(void)
     event.modifiers = WM_Modifier_Shift;
     String8 physical = uishell_terminal_shift_page_command(&event);
     OverrideCheck(str8_match(physical, str8_lit("terminal_scroll_page_up"), 0));
-    uishell_terminal_page_binding_accept(first, event.key, physical, 42);
+    uishell_terminal_page_binding_accept(first, event.key, physical, uishell_selection_test_view(42));
     event.kind = WM_EventKind_Release; event.modifiers = 0;
-    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 0, &repeat));
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(0), &repeat));
     // Adding Shift after an application page press cannot reclassify repeats
     // or swallow the application's matching release.
     first->terminal_page_keys[WM_Key_PageDown] = UIShell_TerminalPageOwner_Application;
     event = (WM_Event){.kind = WM_EventKind_Press, .key = WM_Key_PageDown, .modifiers = WM_Modifier_Shift};
-    OverrideCheck(!uishell_terminal_page_binding_event(first, &event, 42, &repeat));
+    OverrideCheck(!uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(42), &repeat));
     OverrideCheck(first->terminal_page_keys[WM_Key_PageDown] == UIShell_TerminalPageOwner_Application);
     event.kind = WM_EventKind_Release;
-    OverrideCheck(!uishell_terminal_page_binding_event(first, &event, 42, &repeat) && !first->terminal_page_keys[WM_Key_PageDown]);
+    OverrideCheck(!uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(42), &repeat) && !first->terminal_page_keys[WM_Key_PageDown]);
     // Losing focus clears application latches and view references, while a
     // cancelled local latch consumes its late release without scrolling.
     first->terminal_page_keys[WM_Key_PageDown] = UIShell_TerminalPageOwner_Application;
-    uishell_terminal_page_binding_accept(first, WM_Key_PageUp, str8_lit("terminal_scroll_page_up"), 42);
+    uishell_terminal_page_binding_accept(first, WM_Key_PageUp, str8_lit("terminal_scroll_page_up"), uishell_selection_test_view(42));
     event = (WM_Event){.kind = WM_EventKind_WindowLoseFocus}; repeat = str8_zero();
-    OverrideCheck(!uishell_terminal_page_binding_event(first, &event, 0, &repeat));
-    OverrideCheck(!first->terminal_page_keys[WM_Key_PageDown] && !first->terminal_page_views[WM_Key_PageUp]);
+    OverrideCheck(!uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(0), &repeat));
+    OverrideCheck(!first->terminal_page_keys[WM_Key_PageDown] && rd_view_address_is_nil(first->terminal_page_views[WM_Key_PageUp]));
     event = (WM_Event){.kind = WM_EventKind_Release, .key = WM_Key_PageUp};
-    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 42, &repeat) && !repeat.size);
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(42), &repeat) && !repeat.size);
     event = (WM_Event){.kind = WM_EventKind_Press, .key = WM_Key_PageDown, .modifiers = WM_Modifier_Shift};
-    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 42, &repeat));
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(42), &repeat));
     OverrideCheck(str8_match(repeat, str8_lit("terminal_scroll_page_down"), 0));
     event.kind = WM_EventKind_WindowLoseFocus; repeat = str8_zero();
-    uishell_terminal_page_binding_event(first, &event, 0, &repeat);
+    uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(0), &repeat);
     event.kind = WM_EventKind_Press; event.is_repeat = 1;
-    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 42, &repeat) && !repeat.size);
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(42), &repeat) && !repeat.size);
     event.is_repeat = 0;
-    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 42, &repeat) && repeat.size);
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(42), &repeat) && repeat.size);
     event.kind = WM_EventKind_Release;
-    OverrideCheck(uishell_terminal_page_binding_event(first, &event, 42, &repeat));
-    uishell_terminal_page_binding_accept(first, WM_Key_Down, str8_lit("copy"), 42);
+    OverrideCheck(uishell_terminal_page_binding_event(first, &event, uishell_selection_test_view(42), &repeat));
+    uishell_terminal_page_binding_accept(first, WM_Key_Down, str8_lit("copy"), uishell_selection_test_view(42));
     OverrideCheck(!first->terminal_page_keys[WM_Key_Down]);
     scratch_end(scratch);
   }

@@ -91,7 +91,7 @@ uishell_edit_drain_commands(void)
 }
 
 internal void
-uishell_edit_set_window(RD_WindowState *ws, CFG_ID view)
+uishell_edit_set_window(RD_WindowState *ws, RD_ViewAddress view)
 {
   uishell_base_regs()->window = ws->cfg_id;
   uishell_base_regs()->view = uishell_base_regs()->tab = view;
@@ -153,10 +153,13 @@ uishell_edit_command_diagnostics(B32 native)
     windows[w].ui->build_index = 1;
     windows[w].order_next = w ? &rd_nil_window_state : &windows[1];
     windows[w].hash_next = w ? 0 : &windows[1];
+    // Each window's own panels hold its two terminals, keyed as a save keys
+    // them, so each View has an address of its own.
+    CFG_Node *panels = cfg_node_new(state.cfg, window, str8_lit("panels"));
     for(U64 p = 0; p < 2; p++)
     {
-      CFG_Node *panel = cfg_node_new(state.cfg, window, str8_lit("panel"));
-      views[w][p] = cfg_node_new(state.cfg, panel, str8_lit("terminal"));
+      CFG_Node *panel = cfg_node_new(state.cfg, panels, str8_lit("0.5"));
+      views[w][p] = cfg_node_new(state.cfg, panel, str8_lit("terminal")); rd_view_key_assign(state.cfg, views[w][p], 0);
       UIShell_EditTransport *t = &terminals[w][p];
       uishell_selection_fixture_init(&t->fixture);
       t->connection = CLEAT_SESSION_STREAMING; t->role = CLEAT_ROLE_CONTROLLER;
@@ -188,8 +191,8 @@ uishell_edit_command_diagnostics(B32 native)
   for(U64 contents = 0; contents < 2; contents++)
   {
     RD_WindowState *ws = &windows[w];
-    uishell_edit_set_window(ws, views[w][p]->id);
-    RD_ViewState *vs = rd_view_state_from_cfg(views[w][p]);
+    uishell_edit_set_window(ws, rd_view_address_from_cfg(views[w][p]));
+    RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(views[w][p]), 0);
     vs->query_is_open = 0;
     uishell_cmd("run_command", .cmd_name = query_commands[c]);
     uishell_edit_drain_commands();
@@ -201,8 +204,8 @@ uishell_edit_command_diagnostics(B32 native)
     String8 other_text[2][2] = {0}, other_command[2][2] = {0};
     for(U64 ow = 0; ow < 2; ow++) for(U64 op = 0; op < 2; op++)
     {
-      other_states[ow][op] = *rd_view_state_from_cfg(views[ow][op]);
-      UIShell_RegsScope(.view = views[ow][op]->id)
+      other_states[ow][op] = *rd_view_state_from_view(rd_view_address_from_cfg(views[ow][op]), 0);
+      UIShell_RegsScope(.view = rd_view_address_from_cfg(views[ow][op]))
       {
         other_text[ow][op] = push_str8_copy(arena, rd_view_query_input());
         other_command[ow][op] = push_str8_copy(arena, rd_view_query_cmd());
@@ -216,16 +219,16 @@ uishell_edit_command_diagnostics(B32 native)
     EditCheck(vs->query_mark.line == 1 && vs->query_mark.column == 1);
     EditCheck(str8_match(rd_view_query_input(), query_inputs[t], 0));
     EditCheck(str8_match(rd_view_query_cmd(), query_commands[c], 0));
-    EditCheck(uishell_regs()->view == views[w][p]->id && uishell_regs()->window == ws->cfg_id);
+    EditCheck(rd_view_address_match(uishell_regs()->view, rd_view_address_from_cfg(views[w][p])) && uishell_regs()->window == ws->cfg_id);
     for(U64 ow = 0; ow < 2; ow++) for(U64 op = 0; op < 2; op++)
     {
       if(ow == w && op == p) { continue; }
-      RD_ViewState *other = rd_view_state_from_cfg(views[ow][op]);
+      RD_ViewState *other = rd_view_state_from_view(rd_view_address_from_cfg(views[ow][op]), 0);
       EditCheck(other->query_is_open == other_states[ow][op].query_is_open &&
                 other->contents_are_focused == other_states[ow][op].contents_are_focused);
       EditCheck(other->query_cursor.column == other_states[ow][op].query_cursor.column &&
                 other->query_mark.column == other_states[ow][op].query_mark.column);
-      UIShell_RegsScope(.view = views[ow][op]->id)
+      UIShell_RegsScope(.view = rd_view_address_from_cfg(views[ow][op]))
       {
         EditCheck(str8_match(rd_view_query_input(), other_text[ow][op], 0));
         EditCheck(str8_match(rd_view_query_cmd(), other_command[ow][op], 0));
@@ -256,8 +259,8 @@ uishell_edit_command_diagnostics(B32 native)
     uishell_query_fixture_flags = keep*UIShell_QueryFlag_KeepOldInput|select*UIShell_QueryFlag_SelectOldInput;
     uishell_query_fixture_slot = file ? UIShell_AppRegSlot_FilePath : UIShell_AppRegSlot_String;
     RD_WindowState *ws = &windows[0];
-    uishell_edit_set_window(ws, views[0][0]->id);
-    RD_ViewState *vs = rd_view_state_from_cfg(views[0][0]);
+    uishell_edit_set_window(ws, rd_view_address_from_cfg(views[0][0]));
+    RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(views[0][0]), 0);
     vs->query_is_open = 0;
     uishell_cmd("update_query", .string = str8_lit("old")); uishell_edit_drain_commands();
     uishell_cmd("push_query", .cmd_name = str8_lit("query_fixture")); uishell_edit_drain_commands();
@@ -292,8 +295,8 @@ uishell_edit_command_diagnostics(B32 native)
     cfg_node_new(state.cfg, binding, str8_lit("alt"));
     state.key_map = cfg_key_map_from_cfg(arena);
     RD_WindowState *ws = &windows[w];
-    uishell_edit_set_window(ws, views[w][0]->id);
-    RD_ViewState *vs = rd_view_state_from_cfg(views[w][0]);
+    uishell_edit_set_window(ws, rd_view_address_from_cfg(views[w][0]));
+    RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(views[w][0]), 0);
     vs->query_is_open = 0;
     WM_Event press = {.kind = WM_EventKind_Press, .window = ws->os, .key = WM_Key_K, .modifiers = WM_Modifier_Alt};
     EditCheck(!uishell_route_edit_activation(arena, ws, &press, 0));
@@ -361,7 +364,7 @@ uishell_edit_command_diagnostics(B32 native)
   // Native menus remain application actions with no live window or an
   // unmatched handle. The real command drain creates the requested window CFG.
   RD_WindowState *menu_windows[] = {0, &rd_nil_window_state, &windows[0]};
-  for(U64 i = 0; i < ArrayCount(menu_windows); i++) UIShell_RegsScope(.window = 0, .view = 0, .tab = 0)
+  for(U64 i = 0; i < ArrayCount(menu_windows); i++) UIShell_RegsScope(.window = 0, .view = rd_nil_view_address, .tab = rd_nil_view_address)
   {
     CFG_Node *previous = user->last;
     WM_Event menu = {.kind = WM_EventKind_MenuCommand, .window = {999}, .string = str8_lit("open_window")};
@@ -379,7 +382,7 @@ uishell_edit_command_diagnostics(B32 native)
   // owner, clearing its latch even when modifiers change before key-up.
   {
     RD_WindowState *ws = &windows[0];
-    uishell_edit_set_window(ws, views[0][0]->id);
+    uishell_edit_set_window(ws, rd_view_address_from_cfg(views[0][0]));
     uishell_edit_bindings(arena, state.cfg, user, 0);
     CFG_Node *bindings = cfg_node_child_from_string(user, str8_lit("keybindings"));
     CFG_Node *binding = cfg_node_new(state.cfg, bindings, str8_zero());
@@ -390,15 +393,15 @@ uishell_edit_command_diagnostics(B32 native)
     WM_Event press = {.kind = WM_EventKind_Press, .window = ws->os, .key = WM_Key_PageUp, .modifiers = WM_Modifier_Super};
     EditCheck(!uishell_route_edit_activation(arena, ws, &press, 1));
     EditCheck(uishell_route_command_activation(arena, ws, &press, 1, 1));
-    EditCheck(ws->terminal_page_views[WM_Key_PageUp] == views[0][0]->id);
+    EditCheck(rd_view_address_match(ws->terminal_page_views[WM_Key_PageUp], rd_view_address_from_cfg(views[0][0])));
     uishell_edit_drain_commands();
     WM_Event release = {.kind = WM_EventKind_Release, .window = ws->os, .key = WM_Key_PageUp};
     B32 take = uishell_route_edit_activation(arena, ws, &release, 1);
     EditCheck(!take);
     String8 repeat = {0};
-    if(!take) { take = uishell_terminal_page_binding_event(ws, &release, views[0][0]->id, &repeat); }
+    if(!take) { take = uishell_terminal_page_binding_event(ws, &release, rd_view_address_from_cfg(views[0][0]), &repeat); }
     EditCheck(take);
-    EditCheck(!ws->terminal_page_keys[WM_Key_PageUp] && !ws->terminal_page_views[WM_Key_PageUp]);
+    EditCheck(!ws->terminal_page_keys[WM_Key_PageUp] && rd_view_address_is_nil(ws->terminal_page_views[WM_Key_PageUp]));
     EditCheck(!ws->edit_chord_held[WM_Key_PageUp]);
   }
 
@@ -421,8 +424,8 @@ uishell_edit_command_diagnostics(B32 native)
     RD_WindowState *ws = &windows[w];
     UIShell_EditTransport *t = &terminals[w][p];
     UI_Key key = ui_key_make(100+w*2+p);
-    uishell_edit_set_window(ws, views[w][p]->id);
-    uishell_terminal_register_edit_owner(key, &t->fixture.tv, views[w][p]->id);
+    uishell_edit_set_window(ws, rd_view_address_from_cfg(views[w][p]));
+    uishell_terminal_register_edit_owner(key, &t->fixture.tv, rd_view_address_from_cfg(views[w][p]));
     U64 before_inputs = t->fixture.sent_count;
     uishell_cmd("select_all");
     EditCheck(uishell_edit_drain_commands() == 1);
@@ -488,10 +491,10 @@ uishell_edit_command_diagnostics(B32 native)
     state.popup_active = 1;
     EditCheck(!uishell_edit_command_enabled(str8_lit("copy"), ws));
     state.popup_active = 0;
-    U64 owner_view = ws->ui->edit_owner_view;
-    ws->ui->edit_owner_view = 0;
+    RD_ViewAddress owner_view = ws->edit_owner_view;
+    ws->edit_owner_view = rd_nil_view_address;
     EditCheck(!uishell_edit_command_enabled(str8_lit("paste"), ws));
-    ws->ui->edit_owner_view = owner_view;
+    ws->edit_owner_view = owner_view;
     // All reported transport/role combinations enforce disabled Paste before reading/sending.
     for(U32 connection = CLEAT_SESSION_CONNECTING; connection <= CLEAT_SESSION_CLOSED; connection++)
     for(U32 role = CLEAT_ROLE_UNKNOWN; role <= CLEAT_ROLE_CONTROLLER; role++)
@@ -541,8 +544,8 @@ uishell_edit_command_diagnostics(B32 native)
     state.key_map = cfg_key_map_from_cfg(arena);
     RD_WindowState *ws = &windows[0];
     UIShell_EditTransport *t = &terminals[0][0];
-    uishell_edit_set_window(ws, views[0][0]->id);
-    uishell_terminal_register_edit_owner(ui_key_make(100), &t->fixture.tv, views[0][0]->id);
+    uishell_edit_set_window(ws, rd_view_address_from_cfg(views[0][0]));
+    uishell_terminal_register_edit_owner(ui_key_make(100), &t->fixture.tv, rd_view_address_from_cfg(views[0][0]));
     uishell_cmd("select_all"); uishell_edit_drain_commands();
     U64 inputs = t->fixture.sent_count, writes = clip.writes;
     WM_Event events[] = {
@@ -580,7 +583,7 @@ uishell_edit_command_diagnostics(B32 native)
   for(U64 surface = 0; surface < 3; surface++)
   {
     RD_WindowState *ws = &windows[w];
-    uishell_edit_set_window(ws, views[w][0]->id);
+    uishell_edit_set_window(ws, rd_view_address_from_cfg(views[w][0]));
     UI_Key key = ui_key_make(200+w*3+surface);
     U8 buffer[64] = "alpha \xce\xbb"; U64 size = sizeof("alpha \xce\xbb")-1;
     TxtPt cursor = txt_pt(1, size+1), mark = txt_pt(1, 1);
@@ -666,11 +669,11 @@ uishell_edit_command_diagnostics(B32 native)
       UI_Key key = ui_key_make(700+editor);
       U8 buffer[64] = "native field"; U64 size = sizeof("native field")-1;
       TxtPt cursor = txt_pt(1, size+1), mark = txt_pt(1, 1);
-      uishell_edit_set_window(ws, views[0][0]->id);
+      uishell_edit_set_window(ws, rd_view_address_from_cfg(views[0][0]));
       if(editor) { ui_register_text_edit_owner(key, cursor, mark); }
       else
       {
-        uishell_terminal_register_edit_owner(key, &t->fixture.tv, views[0][0]->id);
+        uishell_terminal_register_edit_owner(key, &t->fixture.tv, rd_view_address_from_cfg(views[0][0]));
         uishell_cmd("select_all"); uishell_edit_drain_commands();
       }
       MAC_WM_Window *target = mac_wm_window_from_handle(ws->os);
@@ -765,9 +768,9 @@ uishell_edit_command_diagnostics(B32 native)
     }
     // Real Cocoa clipboard bytes go through the structured paste consumer too.
     RD_WindowState *ws = &windows[0];
-    uishell_edit_set_window(ws, views[0][0]->id);
+    uishell_edit_set_window(ws, rd_view_address_from_cfg(views[0][0]));
     UIShell_EditTransport *t = &terminals[0][0];
-    uishell_terminal_register_edit_owner(ui_key_make(799), &t->fixture.tv, views[0][0]->id);
+    uishell_terminal_register_edit_owner(ui_key_make(799), &t->fixture.tv, rd_view_address_from_cfg(views[0][0]));
     wm_clipboard_io = (WM_ClipboardIO){0};
     wm_set_clipboard_text(str8_lit("Cocoa clipboard\n\xce\xbb"));
     U64 count = t->fixture.sent_count;
@@ -818,7 +821,10 @@ uishell_edit_menu_ui_diagnostics(RD_WindowState *ws)
   rd_state->cmds_arenas[0] = rd_state->cmds_arenas[1] = arena;
   rd_state->cmds_gen = 0; rd_state->popup_active = 0; ws->query_is_active = 0;
   ws->ui = test; ui_select_state(test);
-  CFG_Node *view = cfg_node_new(rd_state->cfg, cfg_node_from_id(ws->cfg_id), str8_lit("terminal"));
+  // A terminal in an arrangement of its own beside the window's, so it has
+  // an address of its own.
+  CFG_Node *host = cfg_node_new(rd_state->cfg, cfg_node_from_id(ws->cfg_id), str8_lit("edit_menu_diagnostic"));
+  CFG_Node *view = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, host, str8_lit("panels")), str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, view, 0);
   UIShell_SelectionFixture fixture; uishell_selection_fixture_init(&fixture);
   UIShell_EditClipboard clip = {0};
   wm_clipboard_io = (WM_ClipboardIO){&clip, uishell_edit_clip_write, uishell_edit_clip_read};
@@ -826,7 +832,7 @@ uishell_edit_menu_ui_diagnostics(RD_WindowState *ws)
 #define MenuEditCheck(expr) do { if(!(expr)) { fprintf(stderr, "FAIL custom Edit menu %d: %s\n", __LINE__, #expr); ok = 0; } } while(0)
   UI_Key root_key = ui_key_make(88001), owner_key = ui_key_make(88002);
   RD_AppMenuSpecList specs = uishell_shell_edit_menu_specs();
-  UIShell_RegsScope(.window = ws->cfg_id, .view = view->id, .edit_owner_key = ui_key_zero(), .edit_owner_captured = 0)
+  UIShell_RegsScope(.window = ws->cfg_id, .view = rd_view_address_from_cfg(view), .edit_owner_key = ui_key_zero(), .edit_owner_captured = 0)
   {
     // Both full and compact menu contents consume the same action availability
     // and route through actual buttons, not a test-only activation callback.
@@ -854,7 +860,7 @@ uishell_edit_menu_ui_diagnostics(RD_WindowState *ws)
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         ui_state->mouse = mouse;
         ui_state->edit_menu_focus = 1;
-        uishell_terminal_register_edit_owner(owner_key, &fixture.tv, view->id);
+        uishell_terminal_register_edit_owner(owner_key, &fixture.tv, rd_view_address_from_cfg(view));
         ui_set_next_rect(r2f32p(0, 0, 400, 400));
         UI_Box *root = ui_build_box_from_key(0, root_key);
         UI_Parent(root) UI_ChildLayoutAxis(Axis2_Y)
@@ -875,7 +881,7 @@ uishell_edit_menu_ui_diagnostics(RD_WindowState *ws)
       if(!action) { MenuEditCheck(str8_match(str8(clip.bytes, clip.size), str8_lit("abcdef\nghijkl\nmnopqr"), 0)); }
     }
   }
-  cfg_node_release(rd_state->cfg, view);
+  cfg_node_release(rd_state->cfg, host);
   uishell_selection_fixture_release(&fixture);
   wm_clipboard_io = saved_clipboard;
   ws->ui = saved_window_ui; ui_select_state(saved_ui);

@@ -58,6 +58,15 @@ uishell_clipboard_fixture_host_context(void *user, UIShell_TerminalViewState *tv
     f->contexts[0].controller, f->contexts[0].supported);
 }
 
+// A stand-in View Address for a fixture terminal with no View.
+internal RD_ViewAddress
+uishell_clipboard_fixture_view(U64 n)
+{
+  RD_ViewAddress view = {RD_ViewOwnerKind_Transient};
+  view.key.u64[0] = n;
+  return view;
+}
+
 internal B32
 uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
 {
@@ -71,25 +80,29 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   CFG_Node *workspace = cfg_node_new(cfg, window, str8_lit("workspace"));
   CFG_Node *panels = cfg_node_new(cfg, workspace, str8_lit("panels"));
   cfg_node_new(cfg, panels, str8_lit("selected"));
-  CFG_Node *view = cfg_node_new(cfg, panels, str8_lit("terminal"));
+  CFG_Node *view = cfg_node_new(cfg, panels, str8_lit("terminal")); rd_view_key_assign(cfg, view, 0);
   CFG_Node *selected = cfg_node_new(cfg, view, str8_lit("selected"));
-  CFG_Node *watcher = cfg_node_new(cfg, panels, str8_lit("terminal"));
+  CFG_Node *watcher = cfg_node_new(cfg, panels, str8_lit("terminal")); rd_view_key_assign(cfg, watcher, 0);
   CFG_Node *other_workspace = cfg_node_new(cfg, window, str8_lit("workspace"));
   CFG_Node *other_panels = cfg_node_new(cfg, other_workspace, str8_lit("panels"));
   cfg_node_new(cfg, other_panels, str8_lit("selected"));
-  CFG_Node *preview = cfg_node_new(cfg, other_panels, str8_lit("terminal"));
+  CFG_Node *preview = cfg_node_new(cfg, other_panels, str8_lit("terminal")); rd_view_key_assign(cfg, preview, 0);
   cfg_node_new(cfg, preview, str8_lit("selected"));
+  // Built directly, so each View gets the key a save would give it.
+  CFG_Node *keyed[] = {view, watcher, preview};
+  for(U64 i = 0; i < ArrayCount(keyed); i++) { rd_view_key_assign(cfg, keyed[i], 0); }
+  RD_ViewAddress view_address = rd_view_address_from_cfg(view);
   RD_WindowState *ws = push_array(arena, RD_WindowState, 1);
   ws->ui = push_array(arena, UI_State, 1);
-  ws->ui->edit_owner_terminal = 1; ws->ui->edit_owner_user = tv; ws->ui->edit_owner_view = view->id;
+  ws->ui->edit_owner_terminal = 1; ws->ui->edit_owner_user = tv; ws->edit_owner_view = view_address;
   ws->cfg_id = window->id; ws->root_controlled_split_initialized = 1;
   ws->root_controlled_split_selected_workspace_id = workspace->id;
   rd_state->window_state_last_accessed_id = window->id; rd_state->window_state_last_accessed = ws;
   RD_ViewState *vs = push_array(arena, RD_ViewState, 1);
-  vs->cfg_id = view->id; vs->user_data = tv; vs->user_data_size = sizeof(*tv);
-  rd_state->view_state_last_accessed_id = view->id; rd_state->view_state_last_accessed = vs;
+  vs->view = view_address; vs->user_data = tv; vs->user_data_size = sizeof(*tv);
+  rd_state->view_state_last_accessed = vs;
   uishell_terminal_clipboard_views = 0;
-  uishell_terminal_clipboard_register(tv, view->id, window->id);
+  uishell_terminal_clipboard_register(tv, view_address, window->id);
   UIShell_TerminalClipboardOps ops = {uishell_clipboard_fixture_acquire, uishell_clipboard_fixture_release,
     uishell_clipboard_fixture_write, uishell_clipboard_fixture_host_context, uishell_clipboard_fixture_dropped, f};
   B32 ok = 1;
@@ -183,14 +196,14 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   uishell_clipboard_fixture_event(f, ++sequence, 0, 1, str8_lit("hydration"));
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
   HostClipboardCheck(f->writes == before && f->released == 1, "retained fixture cannot deliver clipboard");
-  CFG_ID original_view_id = tv->clipboard_view_id;
-  tv->clipboard_view_id = 0;
+  RD_ViewAddress original_view = tv->clipboard_view;
+  tv->clipboard_view = rd_nil_view_address;
   HostClipboardCheck(uishell_terminal_clipboard_host_context(tv, 1, 1, 1).context_missing,
                      "missing view has a distinct host-context reason");
   uishell_clipboard_fixture_event(f, ++sequence, 0, 1, str8_lit("missing host"));
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
   HostClipboardCheck(f->writes == before && f->released == 1, "missing host discards and releases");
-  tv->clipboard_view_id = original_view_id;
+  tv->clipboard_view = original_view;
   uishell_terminal_clipboard_unregister(tv);
 
 #undef HostClipboardCheck
@@ -227,7 +240,7 @@ uishell_terminal_clipboard_diagnostics(void)
   f->contexts[0] = (UIShell_TerminalClipboardContext){.allowed=1, .input_owner=1, .window_active=1, .live=1, .controller=1, .supported=1};
   UIShell_TerminalClipboardOps ops = {uishell_clipboard_fixture_acquire, uishell_clipboard_fixture_release,
     uishell_clipboard_fixture_write, uishell_clipboard_fixture_context, uishell_clipboard_fixture_dropped, f};
-  uishell_terminal_clipboard_register(&f->views[0], 1, 1);
+  uishell_terminal_clipboard_register(&f->views[0], uishell_clipboard_fixture_view(1), 1);
   B32 ok = 1;
 #define ClipboardCheck(c, why) do { if(!(c)) { fprintf(stderr, "clipboard: %s\n", why); ok = 0; } } while(0)
   U64 seq = 0;
@@ -324,7 +337,7 @@ uishell_terminal_clipboard_diagnostics(void)
   // then retain the consumed identity when the active reference is removed.
   f->views[1].session = f->views[0].session;
   f->contexts[1] = (UIShell_TerminalClipboardContext){.allowed=1, .input_owner=0, .window_active=0, .live=1, .controller=1, .supported=1};
-  uishell_terminal_clipboard_register(&f->views[1], 2, 2);
+  uishell_terminal_clipboard_register(&f->views[1], uishell_clipboard_fixture_view(2), 2);
   uishell_clipboard_fixture_event(f, ++seq, 1, 1, str8_lit("alias"));
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
   ClipboardCheck(f->writes == before+1 && f->released == 1, "inactive window alias cannot steal active reference event");

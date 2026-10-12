@@ -297,7 +297,7 @@ uishell_sidebar_section_drag_section(CFG_Node *window)
 {
   if(!rd_drag_is_active() || rd_state->drag_drop_regs_slot != UIShell_ContextRegSlot_View ||
      rd_state->drag_drop_regs->window != window->id || rd_state->drag_drop_commit == uishell_sidebar_section_drop_commit) { return 0; }
-  UIShell_LocalGroup *group = uishell_sidebar_local_view_group(window, cfg_node_from_id(rd_state->drag_drop_regs->view));
+  UIShell_LocalGroup *group = uishell_sidebar_local_view_group(window, rd_cfg_from_view(rd_state->drag_drop_regs->view));
   if(!group || uishell_sidebar_local_section_is_default(group->section)) { return 0; }
   return group->section;
 }
@@ -620,8 +620,8 @@ uishell_sidebar_local_section_menu(UIShell_SidebarState *state, CFG_Node *window
       }
       UIShell_LocalGroup *only = uishell_sidebar_local_only_group(section);
       if(only) { uishell_sidebar_local_group_items(state, window, only, loop, 0); }
-      if(view != &cfg_nil_node && rd_dock_can_close(view) && ui_clicked(ui_button(str8_lit("Hide"))))
-      { UIShell_RegsScope(.tab = view->id, .view = view->id) { uishell_cmd("close_tab"); } ui_ctx_menu_close(); }
+      if(view != &cfg_nil_node && rd_dock_can_close(rd_dock_view_from_cfg(view)) && ui_clicked(ui_button(str8_lit("Hide"))))
+      { UIShell_RegsScope(.tab = rd_view_address_from_cfg(view), .view = rd_view_address_from_cfg(view)) { uishell_cmd("close_tab"); } ui_ctx_menu_close(); }
       if(!uishell_sidebar_local_section_is_default(section)) { uishell_sidebar_local_delete_button(state, window, section, 0); }
     }
   }

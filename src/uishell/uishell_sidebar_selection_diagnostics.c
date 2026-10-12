@@ -128,7 +128,7 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
     state.managed_cfg_generation = cfg_change_gen(); state.managed_dirty = 0;
     UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-    UIShell_RegsScope(.window = host_split->owner_cfg->id, .view = view->id, .panel = rd_panel_from_cfg(view))
+    UIShell_RegsScope(.window = host_split->owner_cfg->id, .view = rd_view_address_from_cfg(view), .panel = rd_panel_from_cfg(view))
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     { uishell_sidebar_render(r2f32p(0, 0, width ? 800 : 240, 600), &split,
         (UIShell_SidebarRenderParams){docked ? UIShell_SidebarRenderMode_SectionPanel : UIShell_SidebarRenderMode_DiagnosticAggregate, str8_lit("tree")}); }

@@ -229,19 +229,18 @@ uishell_dispatch_config_command(String8 name)
         RD_PanelTree panels = workspace_mount->panel_tree;
         for(RD_PanelNode *panel = panels.root; panel != &rd_nil_panel_node; panel = rd_panel_node_rec__depth_first_pre(panels.root, panel).next)
         {
-          if(rd_cfg_is_project_filtered(panel->selected_tab))
+          if(rd_view_is_project_filtered(panel->selected_tab))
           {
-            CFG_Node *fallback_tab = &cfg_nil_node;
-            for(CFG_NodePtrNode *tab_n = panel->tabs.first; tab_n != 0; tab_n = tab_n->next)
+            RD_ViewAddress fallback_tab = rd_nil_view_address;
+            for(RD_ViewAddressNode *tab_n = panel->tabs.first; tab_n != 0; tab_n = tab_n->next)
             {
-              CFG_Node *tab = tab_n->v;
-              if(!rd_cfg_is_project_filtered(tab))
+              if(!rd_view_is_project_filtered(tab_n->v))
               {
-                fallback_tab = tab;
+                fallback_tab = tab_n->v;
                 break;
               }
             }
-            UIShell_RegsScope(.panel = panel->address, .tab = fallback_tab->id)
+            UIShell_RegsScope(.panel = panel->address, .tab = fallback_tab)
             {
               uishell_push_cmd_current(str8_lit("focus_tab"));
             }

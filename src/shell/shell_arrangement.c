@@ -405,8 +405,11 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
     { cfg_node_new_replace(state, id_node, id); }
   }
 
-  // Each node under its parent, in order; Views carry their own settings.
+  // Each node under its parent, in order; Views carry their own logical
+  // settings (their Presentation State is their host's, by View Address).
   // Parents are placed before their children, so no node lands inside itself.
+  // The Views that come from another panel, or from none.
+  CFG_NodePtrList moved = {0};
   CFG_Node *root_node = cfg_node_from_id(root->cfg);
   if(root_node->parent != owner) { cfg_node_insert_child(state, owner, owner->last, root_node); }
   for(RD_ArrangementPanel *p = root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(root, p))
@@ -424,6 +427,11 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
     {
       CFG_Node *view = cfg_node_from_id(tab->view);
       if(view == &cfg_nil_node) { continue; }
+      if(view->parent != node)
+      {
+        cfg_node_ptr_list_push(scratch.arena, &moved, view);
+        if(rd_arrangement_view_move_hook) { rd_arrangement_view_move_hook(view, 0); }
+      }
       rd_arrangement_place_cfg(state, node, prev, view, RD_ArrangementChild_Tab);
       prev = view;
     }
@@ -488,6 +496,23 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
   }
   arrangement->first_removed = 0;
   arrangement->saved_root = root->cfg;
+
+  // Every View has a key in its owner's namespace. One from elsewhere, maybe
+  // another owner, keeps its key only while no View there has it.
+  for(RD_ArrangementPanel *p = root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(root, p))
+  {
+    for(RD_ArrangementTab *tab = p->first_tab; tab != 0; tab = tab->next)
+    {
+      CFG_Node *view = cfg_node_from_id(tab->view);
+      B32 from_elsewhere = 0;
+      for(CFG_NodePtrNode *n = moved.first; n != 0 && !from_elsewhere; n = n->next) { from_elsewhere = n->v == view; }
+      if(view != &cfg_nil_node) { rd_view_key_assign(state, view, from_elsewhere); }
+    }
+  }
+  if(rd_arrangement_view_move_hook)
+  {
+    for(CFG_NodePtrNode *n = moved.first; n != 0; n = n->next) { rd_arrangement_view_move_hook(n->v, 1); }
+  }
   scratch_end(scratch);
 }
 
@@ -511,6 +536,246 @@ rd_panel_address(RD_PanelOwner owner, RD_PanelID id)
 {
   RD_PanelAddress address = {owner, id};
   return address;
+}
+
+////////////////////////////////
+//~ View Addresses
+
+StaticAssert(sizeof(RD_ViewAddress) == 2*sizeof(U32) + sizeof(UIShell_WorkspaceId) + sizeof(U128), rd_view_address_unpadded);
+
+internal RD_ViewAddress
+rd_view_address_make(RD_ViewOwnerKind owner, UIShell_WorkspaceId id, String8 key, RD_ViewInstance instance)
+{
+  RD_ViewAddress result = {0};
+  if(owner == RD_ViewOwnerKind_Null || key.size == 0) { return result; }
+  result.owner = owner;
+  result.instance = instance;
+  result.id = id;
+  result.key = rd_view_key_hash(key);
+  return result;
+}
+
+internal B32
+rd_view_address_match(RD_ViewAddress a, RD_ViewAddress b)
+{
+  return MemoryMatchStruct(&a, &b);
+}
+
+internal B32
+rd_view_address_is_nil(RD_ViewAddress view)
+{
+  return view.owner == RD_ViewOwnerKind_Null;
+}
+
+internal U128
+rd_view_key_hash(String8 key)
+{
+  return u128_hash_from_str8(key);
+}
+
+internal String8
+rd_view_owner_kind_name(RD_ViewOwnerKind kind)
+{
+  switch(kind)
+  {
+    default:{}break;
+    case RD_ViewOwnerKind_Workspace:{return str8_lit("workspace");}break;
+    case RD_ViewOwnerKind_Dashboard:{return str8_lit("dashboard");}break;
+    case RD_ViewOwnerKind_Window:{return str8_lit("window");}break;
+    case RD_ViewOwnerKind_Transient:{return str8_lit("transient");}break;
+  }
+  return str8_zero();
+}
+
+internal void
+rd_view_address_list_push(Arena *arena, RD_ViewAddressList *list, RD_ViewAddress view)
+{
+  RD_ViewAddressNode *node = push_array(arena, RD_ViewAddressNode, 1);
+  node->v = view;
+  SLLQueuePush(list->first, list->last, node);
+  list->count += 1;
+}
+
+// A sidebar section View, keyed by the section it shows. One that names no
+// section is keyed as any other View of its window.
+internal B32
+rd_view_is_section(CFG_Node *view)
+{
+  return str8_match(view->string, str8_lit("sidebar_section"), 0) &&
+    cfg_node_child_from_string(view, str8_lit("section"))->first->string.size != 0;
+}
+
+internal String8
+rd_view_key_from_cfg(CFG_Node *view, RD_ViewInstance *instance_out)
+{
+  RD_ViewInstance instance = RD_ViewInstance_Current;
+  String8 key = str8_zero();
+  if(rd_view_is_section(view)) { key = cfg_node_child_from_string(view, str8_lit("section"))->first->string; }
+  else
+  {
+    key = cfg_node_child_from_string(view, str8_lit("slot"))->first->string;
+    if(!key.size)
+    {
+      key = cfg_node_child_from_string(view, str8_lit("previous_of"))->first->string;
+      if(key.size) { instance = RD_ViewInstance_Previous; }
+    }
+    // A workspace View made for a provider's slot, until the workspace store
+    // keys it (which knows whether Andamento has that slot): that slot's key.
+    if(!key.size) { key = cfg_node_child_from_string(view, str8_lit("resource_id"))->first->string; }
+  }
+  if(instance_out) { *instance_out = instance; }
+  return key;
+}
+
+internal RD_ViewOwnerKind
+rd_view_owner_kind_from_tab(CFG_Node *view, CFG_Node **host_out)
+{
+  B32 section = rd_view_is_section(view);
+  RD_ViewOwnerKind kind = RD_ViewOwnerKind_Null;
+  CFG_Node *host = &cfg_nil_node;
+  for(CFG_Node *c = view->parent; c != &cfg_nil_node && kind == RD_ViewOwnerKind_Null; c = c->parent)
+  {
+    if(str8_match(c->string, str8_lit("panels"), 0)) { host = c->parent; kind = RD_ViewOwnerKind_Workspace; }
+    else if(str8_match(c->string, str8_lit("control_views"), 0) ||
+            (str8_match(c->string, str8_lit("floating_panels"), 0) && str8_match(c->parent->string, str8_lit("window"), 0)))
+    { host = c->parent; kind = section ? RD_ViewOwnerKind_Dashboard : RD_ViewOwnerKind_Window; }
+    else if(str8_match(c->string, str8_lit("floating_panels"), 0)) { host = c->parent; kind = RD_ViewOwnerKind_Workspace; }
+  }
+  if(host_out) { *host_out = host; }
+  return kind;
+}
+
+internal RD_ViewAddress
+rd_view_address_from_tab(RD_PanelOwner owner, CFG_Node *view)
+{
+  RD_ViewInstance instance = RD_ViewInstance_Current;
+  String8 key = rd_view_key_from_cfg(view, &instance);
+  RD_ViewOwnerKind kind = owner.kind == RD_PanelOwnerKind_Null ? RD_ViewOwnerKind_Null : rd_view_owner_kind_from_tab(view, 0);
+  return rd_view_address_make(kind, owner.id, key, instance);
+}
+
+// The Views of `host`'s namespace for `owner` (rd_view_owner_kind_from_tab):
+// the tabs of its arrangements, in tree order.
+internal void
+rd_view_namespace_views__walk(Arena *arena, CFG_NodePtrList *list, CFG_Node *container)
+{
+  // Without recursion: a hand-edited split chain can be very deep.
+  CFG_Node *panel = container, *c = container->first;
+  for(;;)
+  {
+    if(c == &cfg_nil_node)
+    {
+      if(panel == container) { break; }
+      c = panel->next;
+      panel = panel->parent;
+      continue;
+    }
+    RD_ArrangementChild kind = rd_arrangement_child_from_cfg(c);
+    if(kind == RD_ArrangementChild_Panel) { panel = c; c = c->first; continue; }
+    if(kind == RD_ArrangementChild_Tab) { cfg_node_ptr_list_push(arena, list, c); }
+    c = c->next;
+  }
+}
+
+internal CFG_NodePtrList
+rd_view_namespace_views(Arena *arena, CFG_Node *host, RD_ViewOwnerKind owner)
+{
+  CFG_NodePtrList list = {0};
+  B32 window = str8_match(host->string, str8_lit("window"), 0);
+  CFG_Node *roots[2] = {&cfg_nil_node, &cfg_nil_node};
+  if(owner == RD_ViewOwnerKind_Workspace)
+  {
+    roots[0] = cfg_node_child_from_string(host, str8_lit("panels"));
+    if(!window) { roots[1] = cfg_node_child_from_string(host, str8_lit("floating_panels")); }
+  }
+  else if(owner == RD_ViewOwnerKind_Window || owner == RD_ViewOwnerKind_Dashboard)
+  {
+    roots[0] = cfg_node_child_from_string(host, str8_lit("control_views"));
+    roots[1] = cfg_node_child_from_string(host, str8_lit("floating_panels"));
+  }
+  for(U64 i = 0; i < ArrayCount(roots); i++)
+  {
+    if(roots[i] == &cfg_nil_node) { continue; }
+    // A Floating Panel host's panels are each a root.
+    if(str8_match(roots[i]->string, str8_lit("floating_panels"), 0))
+    {
+      for(CFG_Node *c = roots[i]->first; c != &cfg_nil_node; c = c->next)
+      { if(rd_arrangement_child_from_cfg(c) == RD_ArrangementChild_Panel) { rd_view_namespace_views__walk(arena, &list, c); } }
+    }
+    else { rd_view_namespace_views__walk(arena, &list, roots[i]); }
+  }
+  // Sections are the Dashboard's; anything else in a window's sidebar is the
+  // window's.
+  for(CFG_NodePtrNode *n = list.first, *prev = 0; n != 0; n = n->next)
+  {
+    B32 section = rd_view_is_section(n->v);
+    B32 keep = owner == RD_ViewOwnerKind_Workspace || (owner == RD_ViewOwnerKind_Dashboard) == section;
+    if(keep) { prev = n; continue; }
+    if(prev) { prev->next = n->next; } else { list.first = n->next; }
+    if(list.last == n) { list.last = prev; }
+    list.count -= 1;
+  }
+  return list;
+}
+
+// The n of a "u:<n>" key, else 0.
+internal U64
+rd_view_user_number(String8 key)
+{
+  String8 digits = str8_skip(key, 2);
+  B32 user = str8_match(str8_prefix(key, 2), str8_lit("u:"), 0) && digits.size != 0 && digits.size < 18 && str8_is_integer(digits, 10);
+  return user ? u64_from_str8(digits, 10) : 0;
+}
+
+internal U64
+rd_view_user_number_max(CFG_Node *host, RD_ViewOwnerKind owner)
+{
+  Temp scratch = scratch_begin(0, 0);
+  U64 max = 0;
+  CFG_NodePtrList views = rd_view_namespace_views(scratch.arena, host, owner);
+  for(CFG_NodePtrNode *n = views.first; n != 0; n = n->next) { max = Max(max, rd_view_user_number(rd_view_key_from_cfg(n->v, 0))); }
+  // A key whose Presentation State is still kept isn't reused, so a new
+  // View never takes over another's settings.
+  String8 name = rd_view_owner_kind_name(owner);
+  for(CFG_Node *c = cfg_node_child_from_string(host, RD_VIEW_PRESENTATION_ROOT)->first; c != &cfg_nil_node; c = c->next)
+  {
+    if(str8_match(c->string, name, 0)) { max = Max(max, rd_view_user_number(cfg_node_child_from_string(c, str8_lit("key"))->first->string)); }
+  }
+  scratch_end(scratch);
+  return max;
+}
+
+internal B32
+rd_view_key_assign(CFG_State *state, CFG_Node *view, B32 unique)
+{
+  CFG_Node *host = &cfg_nil_node;
+  RD_ViewOwnerKind owner = rd_view_owner_kind_from_tab(view, &host);
+  if(owner != RD_ViewOwnerKind_Workspace && owner != RD_ViewOwnerKind_Window) { return 0; }
+  RD_ViewInstance instance = RD_ViewInstance_Current;
+  String8 key = rd_view_key_from_cfg(view, &instance);
+  B32 assign = key.size == 0;
+  if(!assign && unique)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    CFG_NodePtrList views = rd_view_namespace_views(scratch.arena, host, owner);
+    for(CFG_NodePtrNode *n = views.first; n != 0 && !assign; n = n->next)
+    {
+      RD_ViewInstance other = RD_ViewInstance_Current;
+      assign = n->v != view && str8_match(rd_view_key_from_cfg(n->v, &other), key, 0) && other == instance;
+    }
+    scratch_end(scratch);
+  }
+  if(!assign) { return 0; }
+  // A previous instance whose Slot isn't here is a View of its own.
+  CFG_Node *previous_of = cfg_node_child_from_string(view, str8_lit("previous_of"));
+  if(previous_of != &cfg_nil_node) { cfg_node_release(state, previous_of); }
+  Temp scratch = scratch_begin(0, 0);
+  String8 next = push_str8f(scratch.arena, "u:%I64u", rd_view_user_number_max(host, owner)+1);
+  CFG_Node *slot = cfg_node_child_from_string(view, str8_lit("slot"));
+  if(slot == &cfg_nil_node) { slot = cfg_node_new(state, view, str8_lit("slot")); }
+  cfg_node_new_replace(state, slot, next);
+  scratch_end(scratch);
+  return 1;
 }
 
 ////////////////////////////////
@@ -539,8 +804,8 @@ rd_panel_tree_from_arrangement(Arena *arena, RD_PanelOwner owner, RD_Arrangement
     }
     for(RD_ArrangementTab *tab = s->first_tab; tab != 0; tab = tab->next)
     {
-      CFG_Node *view = cfg_node_from_id(tab->view);
-      cfg_node_ptr_list_push(arena, &d->tabs, view);
+      RD_ViewAddress view = rd_view_address_from_tab(owner, cfg_node_from_id(tab->view));
+      rd_view_address_list_push(arena, &d->tabs, view);
       if(tab->view == s->selected) { d->selected_tab = view; }
     }
     d->parent = parent;

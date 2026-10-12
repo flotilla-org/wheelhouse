@@ -168,7 +168,7 @@ uishell_sidebar_store_assign_keys(CFG_Node *window)
   RD_Arrangement **arrangements = uishell_sidebar_store_arrangements(scratch.arena, window, &count);
   String8List keys = {0};
   CFG_NodePtrList unkeyed = {0};
-  U64 next = 1;
+  U64 next = rd_view_user_number_max(window, RD_ViewOwnerKind_Window)+1;
   for(U64 i = 0; i < count; i++)
   {
     RD_Arrangement *a = arrangements[i];
@@ -189,7 +189,11 @@ uishell_sidebar_store_assign_keys(CFG_Node *window)
     }
   }
   for(CFG_NodePtrNode *n = unkeyed.first; n; n = n->next)
-  { uishell_store_set_setting(n->v, str8_lit("slot"), push_str8f(scratch.arena, "u:%I64u", next++)); }
+  {
+    RD_ViewAddress was = rd_view_address_from_cfg(n->v);
+    uishell_store_set_setting(n->v, str8_lit("slot"), push_str8f(scratch.arena, "u:%I64u", next++));
+    rd_view_readdress(was, rd_view_address_from_cfg(n->v));
+  }
   scratch_end(scratch);
   return unkeyed.count != 0;
 }

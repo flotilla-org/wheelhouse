@@ -30,9 +30,9 @@ uishell_terminal_clipboard_unregister(UIShell_TerminalViewState *tv)
 }
 
 internal void
-uishell_terminal_clipboard_register(UIShell_TerminalViewState *tv, CFG_ID view, CFG_ID window)
+uishell_terminal_clipboard_register(UIShell_TerminalViewState *tv, RD_ViewAddress view, CFG_ID window)
 {
-  tv->clipboard_view_id = view;
+  tv->clipboard_view = view;
   tv->clipboard_window_id = window;
   if(!tv->clipboard_registered)
   {
@@ -84,7 +84,7 @@ uishell_terminal_clipboard_reject(UIShell_TerminalViewState *tv, char const *rea
   // count is the cumulative total; lost_or_rejected is this observation's delta.
   if(previous < 4)
   { fprintf(stderr, "terminal clipboard effect discarded (view=%llu count=%llu lost_or_rejected=%llu reason=%s)\n",
-            (unsigned long long)tv->clipboard_view_id, (unsigned long long)tv->clipboard_rejected, (unsigned long long)count, reason); }
+            (unsigned long long)tv->clipboard_view.key.u64[0], (unsigned long long)tv->clipboard_rejected, (unsigned long long)count, reason); }
 }
 
 internal void
@@ -218,7 +218,7 @@ internal UIShell_TerminalClipboardContext
 uishell_terminal_clipboard_host_context(UIShell_TerminalViewState *tv, B32 window_active, B32 controller, B32 supported)
 {
   UIShell_TerminalClipboardContext result = {.context_missing = 1};
-  CFG_Node *view = cfg_node_from_id(tv->clipboard_view_id);
+  CFG_Node *view = rd_cfg_from_view(tv->clipboard_view);
   CFG_Node *window = cfg_node_from_id(tv->clipboard_window_id);
   RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
   if(view == &cfg_nil_node || window == &cfg_nil_node || ws == &rd_nil_window_state) { return result; }
@@ -235,13 +235,13 @@ uishell_terminal_clipboard_host_context(UIShell_TerminalViewState *tv, B32 windo
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   UIShell_WorkspaceMount *mount = uishell_controlled_split_selected_mount(&split);
   result.input_owner = mount && mount->panel_tree.focused &&
-    mount->panel_tree.focused->selected_tab == view && tv->focus_active &&
-    ws->ui && ws->ui->edit_owner_terminal && ws->ui->edit_owner_user == tv && ws->ui->edit_owner_view == view->id &&
+    rd_view_address_match(mount->panel_tree.focused->selected_tab, tv->clipboard_view) && tv->focus_active &&
+    ws->ui && ws->ui->edit_owner_terminal && ws->ui->edit_owner_user == tv && rd_view_address_match(ws->edit_owner_view, tv->clipboard_view) &&
     tv->input_frame + 1 == rd_state->frame_index && !ws->query_is_active && !rd_state->popup_active && !ws->menu_bar_focused && !ws->hover_eval_focused && (!ws->ui || (!ws->ui->ctx_menu_open && !ws->ui->next_ctx_menu_open));
   result.window_active = window_active;
   result.live = !rd_state->quit && !ws->workspace_zoom_open &&
     !rd_state->frame_replay.suppress_input && !rd_state->frame_replay.prepare_window && rd_state->frame_replay.fixed_dt == 0 &&
-    str8_match(view->string, str8_lit("terminal"), 0) && rd_view_state_from_cfg(view)->user_data == tv;
+    str8_match(view->string, str8_lit("terminal"), 0) && rd_view_state_from_view(tv->clipboard_view, 0)->user_data == tv;
   result.controller = controller;
   result.supported = supported;
   scratch_end(scratch);

@@ -37,7 +37,8 @@ struct UIShell_TerminalViewState
   B32 initialized;
   UIShell_TerminalViewState *clipboard_next;
   B32 clipboard_registered;
-  CFG_ID clipboard_view_id, clipboard_window_id;
+  RD_ViewAddress clipboard_view;
+  CFG_ID clipboard_window_id;
   cleat_session *clipboard_session;
   U8 clipboard_epoch[16];
   U64 clipboard_connection, clipboard_sequence;
@@ -109,7 +110,7 @@ struct UIShell_TerminalViewState
 global UIShell_TerminalViewState *uishell_terminal_gestures;
 global UIShell_TerminalViewState *uishell_terminal_clipboard_views;
 internal void uishell_terminal_clipboard_unregister(UIShell_TerminalViewState *tv);
-internal void uishell_terminal_clipboard_register(UIShell_TerminalViewState *tv, CFG_ID view, CFG_ID window);
+internal void uishell_terminal_clipboard_register(UIShell_TerminalViewState *tv, RD_ViewAddress view, CFG_ID window);
 internal void uishell_terminal_clipboard_dispatch(void);
 
 internal void
@@ -156,13 +157,14 @@ uishell_terminal_edit_enabled(void *user, String8 command)
 internal void uishell_terminal_edit_dispatch(void *user, String8 command, String8 paste);
 
 internal void
-uishell_terminal_register_edit_owner(UI_Key key, UIShell_TerminalViewState *tv, CFG_ID view)
+uishell_terminal_register_edit_owner(UI_Key key, UIShell_TerminalViewState *tv, RD_ViewAddress view)
 {
   ui_state->edit_owner_key = key;
   ui_state->edit_owner_build = ui_state->build_index;
   ui_state->edit_owner_terminal = 1;
   ui_state->edit_owner_user = tv;
-  ui_state->edit_owner_view = view;
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(cfg_node_from_id(uishell_regs()->window));
+  if(ws != &rd_nil_window_state) { ws->edit_owner_view = view; }
   ui_state->edit_owner_enabled = uishell_terminal_edit_enabled;
   ui_state->edit_owner_dispatch = uishell_terminal_edit_dispatch;
 }
@@ -1093,7 +1095,7 @@ uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
     }
   }
   
-  CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
+  CFG_Node *view = rd_cfg_from_view(uishell_regs()->view);
   
   if(block->parent != &ev_nil_block && maybe_table_type->kind == E_TypeKind_Lens &&
      str8_match(maybe_table_type->name, str8_lit("columns"), 0) && maybe_table_type->count >= 1)
@@ -1672,7 +1674,7 @@ uishell_watch_complete_or_activate(E_Eval eval, String8 cmd_name)
         {
           // A palette is a temporary lister view. Run view-scoped actions on
           // the view which opened it, as complete_query does for queried commands.
-          CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
+          CFG_Node *view = rd_cfg_from_view(uishell_regs()->view);
           RD_WindowState *ws = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
           if(cfg_node_child_from_string(view, str8_lit("lister")) != &cfg_nil_node && ws->query_regs != 0)
           {
@@ -1697,8 +1699,8 @@ WH_VIEW_UI_FUNCTION_DEF(watch)
   Temp scratch = scratch_begin(0, 0);
   RD_Font(RD_FontSlot_Code)
   {
-    CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
-    RD_ViewState *vs = rd_view_state_from_cfg(view);
+    CFG_Node *view = rd_cfg_from_view(uishell_regs()->view);
+    RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
     String8 expr_string = rd_expr_from_cfg(view);
     if(expr_string.size == 0)
     {
@@ -2334,7 +2336,7 @@ WH_VIEW_UI_FUNCTION_DEF(watch)
                   {
                     if(ui_clicked(ui_buttonf("%S###runtime_%I64x", setting.action, row_hash)))
                     {
-                      UIShell_RegsScope(.tab = owner->id, .view = owner->id, .cfg = owner->id)
+                      UIShell_RegsScope(.tab = rd_view_address_from_cfg(owner), .view = rd_view_address_from_cfg(owner), .cfg = owner->id)
                       {
                         uishell_push_cmd_current(setting.command);
                       }
@@ -2349,7 +2351,7 @@ WH_VIEW_UI_FUNCTION_DEF(watch)
                   // An embedded Renderer draws the cell's value, not a Slot,
                   // with state of its own beside the watch's.
                   WH_Renderer *renderer = cell_info.renderer;
-                  RD_ViewState *cell_state = rd_view_state_from_key(uishell_regs()->view, (row_hash ^ u64_djb2_hash_from_str8(renderer->name)) | 1);
+                  RD_ViewState *cell_state = rd_view_state_from_view(uishell_regs()->view, (row_hash ^ u64_djb2_hash_from_str8(renderer->name)) | 1);
                   WH_ViewContext cell_ctx = {0};
                   cell_ctx.state = rd_view_user_data(cell_state, renderer->state_size);
                   cell_ctx.state_size = cell_ctx.state ? renderer->state_size : 0;
@@ -2563,8 +2565,8 @@ WH_VIEW_UI_FUNCTION_DEF(watch)
                         if(rd_panel_owner_match(parent_panel.owner, workspace_mount.owner) &&
                            rd_panel_node_from_id(workspace_mount.panel_tree.root, parent_panel.id) != &rd_nil_panel_node)
                         {
-                          uishell_regs()->tab = cfg->id;
-                          uishell_regs()->view = cfg->id;
+                          uishell_regs()->tab = rd_view_address_from_cfg(cfg);
+                          uishell_regs()->view = rd_view_address_from_cfg(cfg);
                         }
                       }
                       uishell_push_cmd_current(cell_info.cmd_name);
@@ -3881,7 +3883,7 @@ uishell_terminal_shift_page_command(WM_Event const *event)
 
 // Physical Shift-page and accepted config bindings share one window owner.
 internal void
-uishell_terminal_page_binding_accept(RD_WindowState *ws, WM_Key key, String8 command, CFG_ID view)
+uishell_terminal_page_binding_accept(RD_WindowState *ws, WM_Key key, String8 command, RD_ViewAddress view)
 {
   if(key <= WM_Key_Null || key >= WM_Key_COUNT) { return; }
   if(str8_match(command, str8_lit("terminal_scroll_page_up"), 0)) { ws->terminal_page_keys[key] = UIShell_TerminalPageOwner_Up; }
@@ -3891,7 +3893,7 @@ uishell_terminal_page_binding_accept(RD_WindowState *ws, WM_Key key, String8 com
 }
 
 internal B32
-uishell_terminal_page_binding_event(RD_WindowState *ws, WM_Event const *event, CFG_ID focused_view, String8 *command)
+uishell_terminal_page_binding_event(RD_WindowState *ws, WM_Event const *event, RD_ViewAddress focused_view, String8 *command)
 {
   if(!ws || ws == &rd_nil_window_state) { return 0; }
   if(event->kind == WM_EventKind_WindowLoseFocus)
@@ -3901,7 +3903,7 @@ uishell_terminal_page_binding_event(RD_WindowState *ws, WM_Event const *event, C
       UIShell_TerminalPageOwner owner = ws->terminal_page_keys[key];
       ws->terminal_page_keys[key] = owner == UIShell_TerminalPageOwner_Application ? UIShell_TerminalPageOwner_None :
         owner == UIShell_TerminalPageOwner_None ? UIShell_TerminalPageOwner_None : UIShell_TerminalPageOwner_Cancelled;
-      ws->terminal_page_views[key] = 0;
+      ws->terminal_page_views[key] = rd_nil_view_address;
     }
     return 0;
   }
@@ -3911,7 +3913,7 @@ uishell_terminal_page_binding_event(RD_WindowState *ws, WM_Event const *event, C
   // starts a new gesture; a repeat cannot revive a cancelled action.
   if(owner == UIShell_TerminalPageOwner_Cancelled && event->kind == WM_EventKind_Press && !event->is_repeat)
   { ws->terminal_page_keys[event->key] = owner = UIShell_TerminalPageOwner_None; }
-  if(owner == UIShell_TerminalPageOwner_None && event->kind == WM_EventKind_Press && focused_view &&
+  if(owner == UIShell_TerminalPageOwner_None && event->kind == WM_EventKind_Press && !rd_view_address_is_nil(focused_view) &&
      (event->key == WM_Key_PageUp || event->key == WM_Key_PageDown))
   {
     *command = uishell_terminal_shift_page_command(event);
@@ -3924,13 +3926,14 @@ uishell_terminal_page_binding_event(RD_WindowState *ws, WM_Event const *event, C
   if(event->kind == WM_EventKind_Release)
   {
     ws->terminal_page_keys[event->key] = UIShell_TerminalPageOwner_None;
-    ws->terminal_page_views[event->key] = 0;
+    ws->terminal_page_views[event->key] = rd_nil_view_address;
     return owner != UIShell_TerminalPageOwner_Application;
   }
   if(owner == UIShell_TerminalPageOwner_Application) { return 0; }
   if(event->kind == WM_EventKind_Press)
   {
-    if(owner != UIShell_TerminalPageOwner_Cancelled && focused_view && focused_view == ws->terminal_page_views[event->key])
+    if(owner != UIShell_TerminalPageOwner_Cancelled && !rd_view_address_is_nil(focused_view) &&
+       rd_view_address_match(focused_view, ws->terminal_page_views[event->key]))
     { *command = owner == UIShell_TerminalPageOwner_Up ? str8_lit("terminal_scroll_page_up") : str8_lit("terminal_scroll_page_down"); }
     return 1;
   }
@@ -4050,7 +4053,7 @@ uishell_runtime_setting(Arena *arena, CFG_Node *cfg, String8 name)
   {
     // The accessor allocates a zero-initialized view state for untouched tabs.
     // Still guard both the accessor result and its optional runtime data.
-    RD_ViewState *state = rd_view_state_from_cfg(cfg);
+    RD_ViewState *state = rd_view_state_from_view(rd_view_address_from_cfg(cfg), 0);
     UIShell_TerminalViewState *tv = state != 0 && state != &rd_nil_view_state ? state->user_data : 0;
     cleat_str hosting = {0};
     if(tv != 0 && tv->session != 0 && cleat_session_hosting(tv->session, &hosting) && hosting.len != 0)
@@ -4066,11 +4069,11 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
   Rng2F32 rect = ctx->rect;
   Temp scratch = scratch_begin(0, 0);
   UIShell_TerminalViewState *tv = wh_view_state(ctx, UIShell_TerminalViewState);
-  rd_view_state_from_cfg(cfg_node_from_id(uishell_regs()->view))->release_user_data = uishell_terminal_runtime_release;
+  rd_view_state_from_view(uishell_regs()->view, 0)->release_user_data = uishell_terminal_runtime_release;
   tv->native_view = 1;
   tv->input_frame = rd_state->frame_index;
   tv->input_window = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window))->os;
-  CFG_Node *view_cfg = cfg_node_from_id(uishell_regs()->view);
+  CFG_Node *view_cfg = rd_cfg_from_view(uishell_regs()->view);
   B32 fixture_mode = str8_match(view_cfg->string, str8_lit("terminal_fixture"), 0);
   B32 benchmark_mode = uishell_overview_benchmark.enabled &&
     cfg_node_child_from_string(view_cfg, str8_lit("overview_fixture")) != &cfg_nil_node;
@@ -4207,7 +4210,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     if(metrics != 0) { metrics->provider_start_us += now_time_us()-provider_start_us; }
   }
   B32 session_ready = (!fixture_mode && tv->provider != 0 && tv->session != 0);
-  if(session_ready) { uishell_terminal_clipboard_register(tv, view_cfg->id, uishell_regs()->window); }
+  if(session_ready) { uishell_terminal_clipboard_register(tv, uishell_regs()->view, uishell_regs()->window); }
   for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
   {
     if(session_ready && str8_match(cmd->name, str8_lit("terminal_transfer"), 0)) { uishell_terminal_move(tv, 0); }

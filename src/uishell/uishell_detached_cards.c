@@ -22,7 +22,7 @@ uishell_sidebar_card_request(UIShell_HoverCard *card, UIShell_CardPlacement plac
 }
 
 internal void
-uishell_sidebar_drag_panel_drop(RD_PanelAddress destination, Dir2 direction, CFG_ID previous_tab)
+uishell_sidebar_drag_panel_drop(RD_PanelAddress destination, Dir2 direction, RD_ViewAddress previous_tab)
 {
   RD_WindowState *ws = rd_window_state_from_cfg__existing(cfg_node_from_id(rd_state->drag_drop_regs->window));
   if(ws == &rd_nil_window_state || !ws->sidebar || (!ws->sidebar->drag_card && !ws->sidebar->row_drag_key.size)) { return; }
@@ -38,8 +38,8 @@ uishell_sidebar_drag_panel_drop(RD_PanelAddress destination, Dir2 direction, CFG
 internal void
 uishell_sidebar_drag_begin(RD_WindowState *ws)
 {
-  ws->sidebar->drop_panel = rd_nil_panel_address; ws->sidebar->drop_previous_tab = 0; ws->sidebar->reorder_build = 0; ws->sidebar->group_claim_build = 0;
-  UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = rd_nil_panel_address, .tab = 0) { rd_drag_begin(UIShell_ContextRegSlot_View); }
+  ws->sidebar->drop_panel = rd_nil_panel_address; ws->sidebar->drop_previous_tab = rd_nil_view_address; ws->sidebar->reorder_build = 0; ws->sidebar->group_claim_build = 0;
+  UIShell_RegsScope(.window = ws->cfg_id, .view = rd_nil_view_address, .panel = rd_nil_panel_address, .tab = rd_nil_view_address) { rd_drag_begin(UIShell_ContextRegSlot_View); }
   rd_state->drag_drop_creation_name = str8_lit("sidebar_section");
   rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
 }
@@ -531,7 +531,7 @@ uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area)
       if(state->drop_direction != Dir2_Invalid)
       {
         uishell_cmd("split_panel", .window = ws->cfg_id, .dst_panel = destination,
-          .panel = destination, .view = view->id, .dir2 = state->drop_direction);
+          .panel = destination, .view = rd_view_address_from_cfg(view), .dir2 = state->drop_direction);
       }
     }
     // Keep the allocation selected by the same split geometry shown during drag.
@@ -852,7 +852,7 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
       UIShell_LocalSection *section = uishell_sidebar_local_new_section(window);
       String8 section_id = section ? push_str8_copy(scratch.arena, section->id) : str8_zero();
       uishell_sidebar_local_move_group(window, dragged_id, section_id, str8_zero());
-      CFG_Node *previous = cfg_node_from_id(state->drop_previous_tab);
+      CFG_Node *previous = rd_cfg_from_view(state->drop_previous_tab);
       uishell_sidebar_local_new_view_after(strip, section_id, rd_panel_address_match(rd_panel_from_cfg(previous), strip) ? previous : &cfg_nil_node);
       uishell_sidebar_drag_clear(state);
       scratch_end(scratch);

@@ -10,7 +10,7 @@ internal F32
 integration_width(CFG_Node *destination, Dir2 dir)
 {
   Temp scratch = scratch_begin(0, 0);
-  F32 width = rd_dock_target_width(scratch.arena, rd_panel_from_cfg(destination), dir, &cfg_nil_node, 0);
+  F32 width = rd_dock_target_width(scratch.arena, rd_panel_from_cfg(destination), dir, rd_nil_view_address, 0);
   scratch_end(scratch);
   return width;
 }
@@ -37,9 +37,9 @@ integration_drag_site(RD_WindowState *ws, CFG_Node *source, CFG_Node *destinatio
     dir == Dir2_Invalid ? rd_panel_catchall_drop_site_key(destination_panel) :
     ui_key_from_stringf(rd_panel_ui_key(destination_panel), "drop_split_%S", site_name);
   F32 layout_font_size = 0;
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_nil_panel_address, .view = 0, .tab = 0)
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_nil_panel_address, .view = rd_nil_view_address, .tab = rd_nil_view_address)
   { layout_font_size = rd_font_size(); }
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(source), .view = source->id)
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(source), .view = rd_view_address_from_cfg(source))
   {
     rd_drag_begin(UIShell_ContextRegSlot_View);
     UI_IconInfo icons = {0}; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
@@ -79,7 +79,7 @@ integration_panel_frame(RD_WindowState *ws, CFG_Node *window, CFG_Node *leaf, Ve
   rd_state->frame_index += 1;
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_cfg(scratch.arena, window);
   F32 layout_font_size = 0;
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_nil_panel_address, .view = 0, .tab = 0)
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_nil_panel_address, .view = rd_nil_view_address, .tab = rd_nil_view_address)
   { layout_font_size = rd_font_size(); }
   UI_EventList events = {0};
   if(kind != UI_EventKind_Null)
@@ -115,7 +115,7 @@ internal UIShell_CmdNode *
 integration_move(CFG_Node *window, CFG_Node *source, CFG_Node *destination, Dir2 dir)
 {
   UIShell_CmdNode *before = rd_state->cmds[0].last;
-  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(source), .view = source->id,
+  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(source), .view = rd_view_address_from_cfg(source),
                    .dst_panel = rd_panel_from_cfg(destination), .dir2 = dir)
   {
     if(dir == Dir2_Invalid) { uishell_dispatch_tab_command(str8_lit("move_view")); }
@@ -164,7 +164,7 @@ entry_point(CmdLine *cmdline)
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, window, str8_lit("font_size")), str8_lit("24"));
   cfg_node_new(rd_state->cfg, window, str8_lit("control_split_collapsed"));
   CFG_Node *panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
-  CFG_Node *source = cfg_node_new(rd_state->cfg, panels, str8_lit("scroll_region_fixture"));
+  CFG_Node *source = cfg_node_new(rd_state->cfg, panels, str8_lit("scroll_region_fixture")); rd_view_key_assign(rd_state->cfg, source, 0);
   // Keep a second tab so moving the fixture cannot close the source panel.
   cfg_node_new(rd_state->cfg, panels, str8_lit("terminal"));
   integration_rect = r2f32p(0, 0, 640, 480);
@@ -189,7 +189,7 @@ entry_point(CmdLine *cmdline)
     panels = integration_reset_panels(window, axis);
     CFG_Node *origin = shape ? cfg_node_new(rd_state->cfg, panels, str8_lit("0.3")) : panels;
     CFG_Node *destination = shape ? cfg_node_new(rd_state->cfg, panels, str8_lit("0.7")) : panels;
-    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
+    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture")); rd_view_key_assign(rd_state->cfg, source, 0);
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, source, str8_lit("font_size")), str8_lit("72"));
     cfg_node_new(rd_state->cfg, origin, str8_lit("terminal"));
     cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
@@ -212,7 +212,7 @@ entry_point(CmdLine *cmdline)
       F32 shown_width = integration_rect.x1;
       integration_rect.x1 *= 0.5f;
       U64 resized_gen = cfg_change_gen();
-      UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(origin), .view = source->id,
+      UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(origin), .view = rd_view_address_from_cfg(source),
                        .dst_panel = rd_panel_from_cfg(destination), .dir2 = dir)
       {
         rd_drag_begin(UIShell_ContextRegSlot_View);
@@ -233,7 +233,7 @@ entry_point(CmdLine *cmdline)
       cfg_node_new(rd_state->cfg, extra, str8_lit("terminal"));
       U64 changed_layout_gen = cfg_change_gen();
       IntegrationCheck(integration_width(destination, dir) < 128);
-      UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(origin), .view = source->id,
+      UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(origin), .view = rd_view_address_from_cfg(source),
                        .dst_panel = rd_panel_from_cfg(destination), .dir2 = dir)
       {
         if(dir == Dir2_Invalid) { uishell_dispatch_tab_command(str8_lit("move_view")); }
@@ -247,7 +247,7 @@ entry_point(CmdLine *cmdline)
     // Scripted commands must enforce the same measured rule as drag feedback.
     CFG_Node *before_parent = source->parent;
     U64 before_gen = cfg_change_gen();
-    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(origin), .view = source->id,
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(origin), .view = rd_view_address_from_cfg(source),
                      .dst_panel = rd_panel_from_cfg(destination), .dir2 = dir)
     {
       if(dir == Dir2_Invalid) { uishell_dispatch_tab_command(str8_lit("move_view")); }
@@ -278,17 +278,18 @@ entry_point(CmdLine *cmdline)
     cfg_node_new(rd_state->cfg, drag_origins[0], str8_lit("scroll_region_fixture")),
     cfg_node_new(rd_state->cfg, drag_origins[1], str8_lit("scroll_region_fixture")),
   };
+  for(U32 i = 0; i < ArrayCount(drag_views); i++) { rd_view_key_assign(rd_state->cfg, drag_views[i], 0); }
   UIShell_WorkspaceMount drag_mount = uishell_workspace_mount_from_cfg(scratch.arena, drag_destination);
   RD_DockGeometry drag_geometry = rd_dock_geometry_from_mount(&drag_mount);
   F32 drag_widths[2] = {0};
   for(U32 i = 0; i < ArrayCount(drag_origins); i++)
   {
     CFG_Node *drag_view = drag_views[i];
-    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(drag_origins[i]), .view = drag_view->id)
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(drag_origins[i]), .view = rd_view_address_from_cfg(drag_view))
     {
       rd_drag_begin(UIShell_ContextRegSlot_View);
       drag_widths[i] = rd_dock_width_from_geometry(&drag_geometry, rd_panel_from_cfg(drag_destination), Dir2_Invalid);
-      IntegrationCheck(drag_widths[i] == rd_dock_target_width(scratch.arena, rd_panel_from_cfg(drag_destination), Dir2_Invalid, drag_view, 0));
+      IntegrationCheck(drag_widths[i] == rd_dock_target_width(scratch.arena, rd_panel_from_cfg(drag_destination), Dir2_Invalid, rd_view_address_from_cfg(drag_view), 0));
       rd_drag_kill();
     }
   }
@@ -302,11 +303,11 @@ entry_point(CmdLine *cmdline)
     panels = integration_reset_panels(window, axis);
     CFG_Node *origin = cfg_node_new(rd_state->cfg, panels, str8_lit("0.5"));
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, panels, str8_lit("0.5")), str8_lit("terminal"));
-    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
+    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture")); rd_view_key_assign(rd_state->cfg, source, 0);
     CFG_ID origin_id = origin->id;
     integration_rect.x1 = 1200;
     Dir2 dir = directions[direction];
-    F32 predicted = rd_dock_target_width(scratch.arena, rd_panel_from_cfg(origin), dir, source, 0);
+    F32 predicted = rd_dock_target_width(scratch.arena, rd_panel_from_cfg(origin), dir, rd_view_address_from_cfg(source), 0);
     U64 before_gen = cfg_change_gen();
     IntegrationCheck(predicted >= 128 && cfg_change_gen() == before_gen);
     UIShell_CmdNode *before_cmd = integration_move(window, source, origin, dir);
@@ -326,7 +327,7 @@ entry_point(CmdLine *cmdline)
     panels = integration_reset_panels(window, axis);
     CFG_Node *origin = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
     CFG_Node *destination = cfg_node_new(rd_state->cfg, panels, str8_lit("0.7"));
-    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
+    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture")); rd_view_key_assign(rd_state->cfg, source, 0);
     cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
     Dir2 dir = directions[direction];
     // With two siblings: a center move fills the root; matching-axis
@@ -335,7 +336,7 @@ entry_point(CmdLine *cmdline)
     F32 fraction = dir == Dir2_Invalid ? 1.f :
       axis2_from_dir2(dir) == Axis2_X ? (axis == Axis2_X ? 0.416666f : 0.5f) : 1.f;
     F32 inset = 0;
-    UIShell_RegsScope(.window = window->id, .panel = rd_nil_panel_address, .view = 0, .tab = 0)
+    UIShell_RegsScope(.window = window->id, .panel = rd_nil_panel_address, .view = rd_nil_view_address, .tab = rd_nil_view_address)
     { inset = rd_panel_inset_px(rd_font_size()); }
     for(U32 pixels = 100; pixels < 1600; pixels++)
     {
@@ -396,7 +397,7 @@ entry_point(CmdLine *cmdline)
       for(U32 child = 0; child < 2; child++)
       { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, keep, str8_lit("0.5")), str8_lit("terminal")); }
     }
-    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
+    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture")); rd_view_key_assign(rd_state->cfg, source, 0);
     cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
     CFG_ID origin_id = origin->id;
     if(shape == 2)
@@ -408,7 +409,7 @@ entry_point(CmdLine *cmdline)
       cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, panels, str8_lit("0.2")), str8_lit("terminal"));
       // move_view ignores project-filtered sibling tabs for source closure;
       // split_panel retains a source with any tab. Both outcomes must match UI.
-      CFG_Node *hidden = cfg_node_new(rd_state->cfg, origin, str8_lit("terminal"));
+      CFG_Node *hidden = cfg_node_new(rd_state->cfg, origin, str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, hidden, 0);
       cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, hidden, str8_lit("project")), str8_lit("/unselected-project"));
       IntegrationCheck(rd_cfg_is_project_filtered(hidden));
     }
@@ -423,12 +424,12 @@ entry_point(CmdLine *cmdline)
     integration_rect = r2f32p(0, 0, 2400, 1600);
     Dir2 dir = directions[direction];
     U64 before_gen = cfg_change_gen();
-    F32 predicted = rd_dock_target_width(scratch.arena, rd_panel_from_cfg(destination), dir, source, 0);
+    F32 predicted = rd_dock_target_width(scratch.arena, rd_panel_from_cfg(destination), dir, rd_view_address_from_cfg(source), 0);
     IntegrationCheck(predicted >= 128);
     if(shape < 3) { IntegrationCheck(integration_drag_site(ws, source, destination, dir, 0)); }
     // Malformed zero-sized destinations have no reachable UI hit region;
     // validate the production feedback checker with the measured proposal.
-    else { IntegrationCheck(rd_dock_drag_target(source, rd_dock_host_from_panel(rd_panel_from_cfg(destination), predicted))); }
+    else { IntegrationCheck(rd_dock_drag_target(rd_dock_view_from_cfg(source), rd_dock_host_from_panel(rd_panel_from_cfg(destination), predicted))); }
     IntegrationCheck(cfg_change_gen() == before_gen);
     UIShell_CmdNode *before_cmd = integration_move(window, source, destination, dir);
     IntegrationCheck(!integration_close_queued(before_cmd));
@@ -446,7 +447,7 @@ entry_point(CmdLine *cmdline)
     CFG_Node *destination = cfg_node_new(rd_state->cfg, panels, str8_lit("0.4"));
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, panels, str8_lit("0.3")), str8_lit("terminal"));
     cfg_node_new(rd_state->cfg, origin, str8_lit("selected"));
-    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
+    source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture")); rd_view_key_assign(rd_state->cfg, source, 0);
     cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
     CFG_ID origin_id = origin->id;
     integration_rect = r2f32p(0, 0, 2400, 1600);
@@ -467,12 +468,12 @@ entry_point(CmdLine *cmdline)
     CFG_Node *middle = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
     CFG_Node *right = cfg_node_new(rd_state->cfg, panels, str8_lit("0.4"));
     cfg_node_new(rd_state->cfg, left, str8_lit("terminal"));
-    CFG_Node *closing = cfg_node_new(rd_state->cfg, middle, str8_lit("terminal"));
+    CFG_Node *closing = cfg_node_new(rd_state->cfg, middle, str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, closing, 0);
     cfg_node_new(rd_state->cfg, middle, str8_lit("selected"));
-    CFG_Node *kept = cfg_node_new(rd_state->cfg, right, str8_lit("terminal"));
+    CFG_Node *kept = cfg_node_new(rd_state->cfg, right, str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, kept, 0);
     CFG_ID middle_id = middle->id;
     UIShell_CmdNode *before_cmd = rd_state->cmds[0].last;
-    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(middle), .tab = closing->id) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(middle), .tab = rd_view_address_from_cfg(closing)) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
     IntegrationCheck(cfg_node_from_id(middle_id) == &cfg_nil_node);
     RD_Arrangement *closed = rd_arrangement_from_cfg(scratch.arena, panels);
     IntegrationCheck(closed->root->child_count == 2);
@@ -486,10 +487,10 @@ entry_point(CmdLine *cmdline)
     // The two left collapse into one when either closes; the last stays.
     CFG_Node *other = left->first;
     while(other != &cfg_nil_node && !str8_match(other->string, str8_lit("terminal"), 0)) { other = other->next; }
-    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(left), .tab = other->id) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(left), .tab = rd_view_address_from_cfg(other)) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
     closed = rd_arrangement_from_cfg(scratch.arena, cfg_node_child_from_string(window, str8_lit("panels")));
     IntegrationCheck(closed->root->first == &rd_nil_arrangement_panel && rd_arrangement_panel_from_view(closed, kept->id) == closed->root);
-    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(kept), .tab = kept->id) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(kept), .tab = rd_view_address_from_cfg(kept)) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
     closed = rd_arrangement_from_cfg(scratch.arena, cfg_node_child_from_string(window, str8_lit("panels")));
     IntegrationCheck(closed->root != &rd_nil_arrangement_panel && closed->root->tab_count == 0);
   }
@@ -499,7 +500,7 @@ entry_point(CmdLine *cmdline)
   panels = cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
   CFG_Node *origin = cfg_node_new(rd_state->cfg, panels, str8_lit("0.5"));
   CFG_Node *destination = cfg_node_new(rd_state->cfg, panels, str8_lit("0.5"));
-  source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture"));
+  source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture")); rd_view_key_assign(rd_state->cfg, source, 0);
   cfg_node_new(rd_state->cfg, origin, str8_lit("terminal"));
   cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
   integration_rect.x1 = 640;
@@ -507,7 +508,7 @@ entry_point(CmdLine *cmdline)
   integration_rect.x1 = 100;
   U64 before_resize = cfg_change_gen();
   log_scope_begin();
-  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(origin), .view = source->id, .dst_panel = rd_panel_from_cfg(destination))
+  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(origin), .view = rd_view_address_from_cfg(source), .dst_panel = rd_panel_from_cfg(destination))
   { uishell_dispatch_tab_command(str8_lit("move_view")); }
   LogScopeResult resize_log = log_scope_end(scratch.arena);
   String8 explanation = rd_dock_rule_message(RD_DockRule_MinimumWidth);
@@ -528,17 +529,17 @@ entry_point(CmdLine *cmdline)
   LogScopeResult drag_log = log_scope_end(scratch.arena);
   // Active-drag geometry without window state is silent, and zero measured.
   IntegrationCheck(dim_2f32(absent_geometry.area).x == 0 && drag_log.strings[LogMsgKind_UserError].size == 0);
-  CFG_Node *unopened_source = cfg_node_new(rd_state->cfg, unopened_origin, str8_lit("scroll_region_fixture"));
+  CFG_Node *unopened_source = cfg_node_new(rd_state->cfg, unopened_origin, str8_lit("scroll_region_fixture")); rd_view_key_assign(rd_state->cfg, unopened_source, 0);
   log_scope_begin();
-  IntegrationCheck(!rd_dock_move_allowed(scratch.arena, "move", unopened_source, rd_panel_from_cfg(unopened_panel), Dir2_Invalid));
+  IntegrationCheck(!rd_dock_move_allowed(scratch.arena, "move", rd_view_address_from_cfg(unopened_source), rd_panel_from_cfg(unopened_panel), Dir2_Invalid));
   LogScopeResult missing_log = log_scope_end(scratch.arena);
   String8 missing_reason = str8_lit("destination has no live window state");
   IntegrationCheck(str8_find_needle(missing_log.strings[LogMsgKind_UserError], 0, missing_reason, 0) !=
                    missing_log.strings[LogMsgKind_UserError].size);
   // Zero-minimum commands into an unopened host succeed without an error.
-  CFG_Node *unconstrained = cfg_node_new(rd_state->cfg, unopened_origin, str8_lit("terminal"));
+  CFG_Node *unconstrained = cfg_node_new(rd_state->cfg, unopened_origin, str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, unconstrained, 0);
   log_scope_begin();
-  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(unopened_origin), .view = unconstrained->id, .dst_panel = rd_panel_from_cfg(unopened_panel))
+  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(unopened_origin), .view = rd_view_address_from_cfg(unconstrained), .dst_panel = rd_panel_from_cfg(unopened_panel))
   { uishell_dispatch_tab_command(str8_lit("move_view")); }
   LogScopeResult accepted_log = log_scope_end(scratch.arena);
   IntegrationCheck(unconstrained->parent == unopened_panel && accepted_log.strings[LogMsgKind_UserError].size == 0);
@@ -555,9 +556,9 @@ entry_point(CmdLine *cmdline)
   RD_DockGeometry floating_geometry = rd_dock_geometry_from_mount(&floating_mount);
   F32 floating_width = rd_dock_width_from_geometry(&floating_geometry, floating_mount.panel_tree.root->address, Dir2_Invalid);
   IntegrationCheck(floating_width == 0);
-  IntegrationCheck(rd_dock_placement(source, rd_dock_host_from_cfg(floating, floating_width)) == RD_DockRule_MinimumWidth);
+  IntegrationCheck(rd_dock_placement(rd_dock_view_from_cfg(source), rd_dock_host_from_cfg(floating, floating_width)) == RD_DockRule_MinimumWidth);
   CFG_Node *ordinary = origin->last;
-  IntegrationCheck(rd_dock_placement(ordinary, rd_dock_host_from_cfg(floating, floating_width)) == RD_DockRule_Valid);
+  IntegrationCheck(rd_dock_placement(rd_dock_view_from_cfg(ordinary), rd_dock_host_from_cfg(floating, floating_width)) == RD_DockRule_Valid);
   cfg_node_release(rd_state->cfg, floating);
   // Restore retains its structural policy even when geometry is too narrow.
   rd_dock_restore_window(rd_state->cfg, window);
@@ -572,14 +573,14 @@ entry_point(CmdLine *cmdline)
     CFG_Node *workspace_panels = cfg_node_new(rd_state->cfg, workspace, str8_lit("panels"));
     CFG_Node *left = cfg_node_new(rd_state->cfg, workspace_panels, str8_lit("0.5"));
     CFG_Node *right = cfg_node_new(rd_state->cfg, workspace_panels, str8_lit("0.5"));
-    CFG_Node *lone = cfg_node_new(rd_state->cfg, left, str8_lit("terminal"));
+    CFG_Node *lone = cfg_node_new(rd_state->cfg, left, str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, lone, 0);
     cfg_node_new(rd_state->cfg, right, str8_lit("terminal"));
     CFG_Node *host = cfg_node_new(rd_state->cfg, workspace, str8_lit("floating_panels"));
     CFG_Node *first = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
     CFG_Node *second = cfg_node_new(rd_state->cfg, host, str8_lit("1"));
-    CFG_Node *a = cfg_node_new(rd_state->cfg, first, str8_lit("text"));
-    CFG_Node *b = cfg_node_new(rd_state->cfg, first, str8_lit("terminal"));
-    CFG_Node *c = cfg_node_new(rd_state->cfg, second, str8_lit("terminal"));
+    CFG_Node *a = cfg_node_new(rd_state->cfg, first, str8_lit("text")); rd_view_key_assign(rd_state->cfg, a, 0);
+    CFG_Node *b = cfg_node_new(rd_state->cfg, first, str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, b, 0);
+    CFG_Node *c = cfg_node_new(rd_state->cfg, second, str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, c, 0);
     cfg_node_new(rd_state->cfg, a, str8_lit("selected"));
     cfg_node_new(rd_state->cfg, c, str8_lit("selected"));
     CFG_ID left_id = left->id;
@@ -594,14 +595,14 @@ entry_point(CmdLine *cmdline)
     IntegrationCheck(cfg_node_child_from_string(first, str8_lit("id")) == &cfg_nil_node);
     IntegrationCheck(cfg_node_child_from_string(host, str8_lit("split_x")) == &cfg_nil_node);
     // Selecting a tab moves the mark.
-    UIShell_RegsScope(.window = other->id, .tab = b->id) { uishell_dispatch_tab_command(str8_lit("focus_tab")); }
+    UIShell_RegsScope(.window = other->id, .tab = rd_view_address_from_cfg(b)) { uishell_dispatch_tab_command(str8_lit("focus_tab")); }
     IntegrationCheck(cfg_node_child_from_string(b, str8_lit("selected")) != &cfg_nil_node);
     IntegrationCheck(cfg_node_child_from_string(a, str8_lit("selected")) == &cfg_nil_node);
     // Reordering a tab moves it within its Floating Panel.
-    UIShell_RegsScope(.window = other->id, .tab = a->id) { uishell_dispatch_tab_command(str8_lit("move_tab_right")); }
+    UIShell_RegsScope(.window = other->id, .tab = rd_view_address_from_cfg(a)) { uishell_dispatch_tab_command(str8_lit("move_tab_right")); }
     UIShell_Cmd *reorder = &rd_state->cmds[0].last->cmd;
-    IntegrationCheck(str8_match(reorder->name, str8_lit("move_view"), 0) && rd_panel_address_match(reorder->regs->dst_panel, rd_panel_from_cfg(first)) && reorder->regs->prev_tab == b->id);
-    UIShell_RegsScope(.window = other->id, .view = a->id, .dst_panel = rd_panel_from_cfg(first), .prev_tab = b->id)
+    IntegrationCheck(str8_match(reorder->name, str8_lit("move_view"), 0) && rd_panel_address_match(reorder->regs->dst_panel, rd_panel_from_cfg(first)) && rd_view_address_match(reorder->regs->prev_tab, rd_view_address_from_cfg(b)));
+    UIShell_RegsScope(.window = other->id, .view = rd_view_address_from_cfg(a), .dst_panel = rd_panel_from_cfg(first), .prev_tab = rd_view_address_from_cfg(b))
     { uishell_dispatch_tab_command(str8_lit("move_view")); }
     IntegrationCheck(a->parent == first && b->next == a);
     // Another Floating Panel's source is reselected; emptied, it stays.
@@ -610,12 +611,12 @@ entry_point(CmdLine *cmdline)
     integration_move(other, a, second, Dir2_Invalid);
     IntegrationCheck(a->parent == second && first->parent == host && cfg_node_child_from_string(first, str8_lit("text")) == &cfg_nil_node);
     // Duplicating places the copy after its source; closing releases it.
-    UIShell_RegsScope(.window = other->id, .tab = c->id) { uishell_dispatch_tab_command(str8_lit("duplicate_tab")); }
+    UIShell_RegsScope(.window = other->id, .tab = rd_view_address_from_cfg(c)) { uishell_dispatch_tab_command(str8_lit("duplicate_tab")); }
     CFG_Node *copy = c->next;
     IntegrationCheck(copy->parent == second && str8_match(copy->string, str8_lit("terminal"), 0));
     IntegrationCheck(cfg_node_child_from_string(copy, str8_lit("selected")) != &cfg_nil_node);
     CFG_ID copy_id = copy->id;
-    UIShell_RegsScope(.window = other->id, .tab = copy_id) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+    UIShell_RegsScope(.window = other->id, .tab = rd_view_address_from_cfg(cfg_node_from_id(copy_id))) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
     IntegrationCheck(cfg_node_from_id(copy_id) == &cfg_nil_node);
     // A new tab goes after the last tab, before the panel's ID.
     UIShell_RegsScope(.window = other->id, .panel = rd_panel_from_cfg(second), .string = str8_lit("text"), .expr = str8_zero())
@@ -628,7 +629,7 @@ entry_point(CmdLine *cmdline)
     UIShell_RegsScope(.window = other->id, .panel = rd_panel_from_cfg(second)) { uishell_dispatch_panel_command(str8_lit("new_panel_right")); }
     IntegrationCheck(cfg_change_gen() == split_gen && b->parent == second && second->parent == host);
     // A move out into the workspace reselects the Floating Panel it left.
-    UIShell_RegsScope(.window = other->id, .tab = c->id) { uishell_dispatch_tab_command(str8_lit("focus_tab")); }
+    UIShell_RegsScope(.window = other->id, .tab = rd_view_address_from_cfg(c)) { uishell_dispatch_tab_command(str8_lit("focus_tab")); }
     integration_move(other, c, right, Dir2_Invalid);
     IntegrationCheck(c->parent == right && second->first == a && cfg_node_child_from_string(a, str8_lit("selected")) != &cfg_nil_node);
     cfg_node_release(rd_state->cfg, other);
@@ -720,22 +721,22 @@ entry_point(CmdLine *cmdline)
     CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
     String8 id_text = str8_lit("0192f0c4-1c2d-7a3b-8c4d-5e6f70819203");
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("workspace_id")), id_text);
-    CFG_Node *slotted = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("panels")), str8_lit("terminal"));
+    CFG_Node *slotted = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("panels")), str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, slotted, 0);
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, slotted, str8_lit("slot")), str8_lit("u:1"));
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, slotted, str8_lit("expression")), str8_lit("make test"));
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, slotted, str8_lit("session")), str8_lit("s-1"));
     WH_Renderer *terminal = wh_renderer_from_name(str8_lit("terminal"));
-    RD_ViewState *vs = rd_view_state_from_cfg(slotted);
-    WH_ViewContext ctx = wh_view_context_from_cfg(scratch.arena, slotted, terminal, rd_view_user_data(vs, terminal->state_size), r2f32p(0, 0, 64, 48));
+    RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(slotted), 0);
+    WH_ViewContext ctx = wh_view_context_from_view(scratch.arena, rd_view_address_from_cfg(slotted), terminal, rd_view_user_data(vs, terminal->state_size), r2f32p(0, 0, 64, 48));
     UIShell_WorkspaceId id = {0};
     IntegrationCheck(uishell_workspace_id_from_string(id_text, &id) && uishell_workspace_id_match(ctx.slot.workspace, id));
     IntegrationCheck(str8_match(ctx.slot.key, str8_lit("u:1"), 0) && ctx.status == WH_SlotStatus_Slot);
     IntegrationCheck(ctx.spec && ctx.spec->content == ANDAMENTO_SLOT_COMMAND && str8_match(ctx.spec->command, str8_lit("make test"), 0));
     IntegrationCheck(str8_match(ctx.resolution.session, str8_lit("s-1"), 0) && ctx.rect.x1 == 64);
     IntegrationCheck(wh_view_state(&ctx, UIShell_TerminalViewState) == vs->user_data);
-    CFG_Node *floating = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, window, str8_lit("floating_panels")), str8_lit("text"));
+    CFG_Node *floating = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, window, str8_lit("floating_panels")), str8_lit("text")); rd_view_key_assign(rd_state->cfg, floating, 0);
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, floating, str8_lit("slot")), str8_lit("u:2"));
-    WH_ViewContext floating_ctx = wh_view_context_from_cfg(scratch.arena, floating, wh_renderer_from_name(str8_lit("text")), 0, r2f32p(0, 0, 1, 1));
+    WH_ViewContext floating_ctx = wh_view_context_from_view(scratch.arena, rd_view_address_from_cfg(floating), wh_renderer_from_name(str8_lit("text")), 0, r2f32p(0, 0, 1, 1));
     IntegrationCheck(floating_ctx.status == 0 && floating_ctx.slot.key.size == 0 && floating_ctx.spec == 0);
     cfg_node_release(rd_state->cfg, workspace);
     cfg_node_release(rd_state->cfg, floating->parent);

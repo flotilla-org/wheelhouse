@@ -109,6 +109,8 @@ struct CFG_Ctx
   U64 id_slots_count;
   CFG_NodePtrSlot *id_slots;
   U64 change_gen;
+  // Moves with any change, moves included, which change_gen doesn't count.
+  U64 tree_gen;
   CFG_ID last_accessed_id;
   CFG_Node *last_accessed;
 };
@@ -186,6 +188,7 @@ internal void cfg_ctx_select(CFG_Ctx *ctx);
 
 //- rjf: tree navigations
 internal U64 cfg_change_gen(void);
+internal U64 cfg_tree_gen(void);
 internal CFG_Node *cfg_node_root(void);
 internal CFG_Node *cfg_node_from_id(CFG_ID id);
 internal CFG_Node *cfg_node_child_from_string(CFG_Node *parent, String8 string);
