@@ -5306,10 +5306,10 @@ rd_drop_preview(Rng2F32 target)
   Vec2F32 centre = center_2f32(target);
   Rng2F32 rect =
   {
-    ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v0"), target.x0, .initial = centre.x, .rate = rd_state->menu_animation_rate),
-    ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v1"), target.y0, .initial = centre.y, .rate = rd_state->menu_animation_rate),
-    ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v2"), target.x1, .initial = centre.x, .rate = rd_state->menu_animation_rate),
-    ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v3"), target.y1, .initial = centre.y, .rate = rd_state->menu_animation_rate),
+    .x0 = ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v0"), target.x0, .initial = centre.x, .rate = rd_state->menu_animation_rate),
+    .y0 = ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v1"), target.y0, .initial = centre.y, .rate = rd_state->menu_animation_rate),
+    .x1 = ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v2"), target.x1, .initial = centre.x, .rate = rd_state->menu_animation_rate),
+    .y1 = ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v3"), target.y1, .initial = centre.y, .rate = rd_state->menu_animation_rate),
   };
   UI_Rect(rect) UI_CornerRadius(ui_top_font_size()) UI_BackgroundColor(rd_drop_accent(0.12f))
     DeferLoop(ui_push_border_color(rd_drop_accent(0.7f)), ui_pop_border_color())
@@ -6924,8 +6924,8 @@ internal UI_BOX_CUSTOM_DRAW(rd_workspace_detach_icon_draw)
   String8 color_tags[] = {str8_lit("weak"), str8_lit("text")};
   Vec4F32 color = ui_color_from_tags_key_extras(box->tags_key, (String8Array){color_tags, ArrayCount(color_tags)});
   Rng2F32 parts[] = {
-    {0, 2, 4, 10}, {4, 3, 7, 4}, {4, 8, 7, 9},
-    {9, 2, 10, 10}, {10, 2, 12, 3}, {10, 9, 12, 10},
+    r2f32p(0, 2, 4, 10), r2f32p(4, 3, 7, 4), r2f32p(4, 8, 7, 9),
+    r2f32p(9, 2, 10, 10), r2f32p(10, 2, 12, 3), r2f32p(10, 9, 12, 10),
   };
   for(U64 i = 0; i < ArrayCount(parts); i++)
   {
@@ -9467,8 +9467,8 @@ rd_window_frame(void)
               }
               Vec2F32 cell_p0 =
               {
-                workspace_rect.x0 + pad + (F32)col*(cell_w + pad),
-                workspace_rect.y0 + pad + (F32)row*(cell_h + pad),
+                .x = workspace_rect.x0 + pad + (F32)col*(cell_w + pad),
+                .y = workspace_rect.y0 + pad + (F32)row*(cell_h + pad),
               };
               F32 img_w = cell_w;
               F32 img_h = floor_f32(img_w/aspect);
@@ -9646,7 +9646,7 @@ rd_window_frame(void)
     {
       Rng2F32 rect = wm_client_rect_from_window(ws->os);
       Vec2F32 size = dim_2f32(rect);
-      Vec2S32 buckets_dim = {(S32)(size.x/heatmap_bucket_size), (S32)(size.y/heatmap_bucket_size)};
+      Vec2S32 buckets_dim = v2s32((S32)(size.x/heatmap_bucket_size), (S32)(size.y/heatmap_bucket_size));
       heatmap_bucket_pitch = buckets_dim.x;
       heatmap_bucket_count = buckets_dim.x*buckets_dim.y;
       heatmap_buckets = push_array(scratch.arena, U64, heatmap_bucket_count);
@@ -9866,8 +9866,8 @@ rd_window_frame(void)
           shadow_color.w *= 0.5f*box->active_t;
           Vec2F32 shadow_size =
           {
-            (box_bg_rect.x1 - box_bg_rect.x0)*0.60f*box->active_t,
-            (box_bg_rect.y1 - box_bg_rect.y0)*0.60f*box->active_t,
+            .x = (box_bg_rect.x1 - box_bg_rect.x0)*0.60f*box->active_t,
+            .y = (box_bg_rect.y1 - box_bg_rect.y0)*0.60f*box->active_t,
           };
           shadow_size.x = Clamp(0, shadow_size.x, box->font_size*2.f);
           shadow_size.y = Clamp(0, shadow_size.y, box->font_size*2.f);

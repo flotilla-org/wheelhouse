@@ -5347,10 +5347,10 @@ uishell_terminal_draw_missing_glyph(Rng2F32 cell_rect, Vec4F32 color)
   F32 inset_y = Clamp(1.f, floor_f32(cell_height*0.20f), cell_height*0.35f);
   Rng2F32 r =
   {
-    floor_f32(cell_rect.x0 + inset_x),
-    floor_f32(cell_rect.y0 + inset_y),
-    ceil_f32(cell_rect.x1 - inset_x),
-    ceil_f32(cell_rect.y1 - inset_y),
+    .x0 = floor_f32(cell_rect.x0 + inset_x),
+    .y0 = floor_f32(cell_rect.y0 + inset_y),
+    .x1 = ceil_f32(cell_rect.x1 - inset_x),
+    .y1 = ceil_f32(cell_rect.y1 - inset_y),
   };
   dr_rect(r2f32p(r.x0, r.y0, r.x1, r.y0 + thickness), color, 0, 0, 0);
   dr_rect(r2f32p(r.x0, r.y1 - thickness, r.x1, r.y1), color, 0, 0, 0);
@@ -5995,10 +5995,10 @@ uishell_terminal_draw_cursor_overlay(UIShell_TerminalCellFeed const *feed, U64 c
       U64 cursor_cols = uishell_terminal_cursor_cols(feed, cell_count, cursor);
       Rng2F32 cell_rect =
       {
-        floor_f32(canvas_rect.x0 + (F32)cursor.col*cell_width_px),
-        floor_f32(canvas_rect.y0 + (F32)cursor.row*cell_height_px),
-        ceil_f32(canvas_rect.x0 + (F32)(cursor.col + cursor_cols)*cell_width_px),
-        ceil_f32(canvas_rect.y0 + (F32)(cursor.row + 1)*cell_height_px),
+        .x0 = floor_f32(canvas_rect.x0 + (F32)cursor.col*cell_width_px),
+        .y0 = floor_f32(canvas_rect.y0 + (F32)cursor.row*cell_height_px),
+        .x1 = ceil_f32(canvas_rect.x0 + (F32)(cursor.col + cursor_cols)*cell_width_px),
+        .y1 = ceil_f32(canvas_rect.y0 + (F32)(cursor.row + 1)*cell_height_px),
       };
       switch(cursor.style)
       {
@@ -7461,10 +7461,10 @@ uishell_terminal_diagnostic_check_run_at_row_baseline_draw(FNT_Run run, Vec2F32 
               FNT_Piece *piece = &run.pieces.v[piece_idx];
               Rng2F32 expected_dst =
               {
-                text_p.x + advance - piece->origin_from_left,
-                text_p.y - piece->baseline_from_top,
-                text_p.x + advance - piece->origin_from_left + piece->draw_dim.x,
-                text_p.y - piece->baseline_from_top + piece->draw_dim.y,
+                .x0 = text_p.x + advance - piece->origin_from_left,
+                .y0 = text_p.y - piece->baseline_from_top,
+                .x1 = text_p.x + advance - piece->origin_from_left + piece->draw_dim.x,
+                .y1 = text_p.y - piece->baseline_from_top + piece->draw_dim.y,
               };
               R_Rect2DInst *inst = &insts[inst_idx];
               if(abs_f32(inst->dst.x0 - expected_dst.x0) > 0.001f ||
@@ -9644,8 +9644,8 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
           {
             Vec2F32 text_pos =
             {
-              canvas_rect.x0 + (F32)run_col_start*cell_width_px,
-              text_y,
+              .x = canvas_rect.x0 + (F32)run_col_start*cell_width_px,
+              .y = text_y,
             };
             FNT_Run joined_run = dr_fnt_run_from_string(run_font, font_size, 0, 0, raster_flags, joined);
             if(renderer->trace_enabled && (renderer->trace_all_rows || renderer->trace_row == row_idx))
@@ -9672,10 +9672,10 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
           }
           Rng2F32 cell_rect =
           {
-            floor_f32(canvas_rect.x0 + (F32)col_idx*cell_width_px),
-            row_y0,
-            ceil_f32(canvas_rect.x0 + (F32)(col_idx + cell_cols)*cell_width_px),
-            row_y1,
+            .x0 = floor_f32(canvas_rect.x0 + (F32)col_idx*cell_width_px),
+            .y0 = row_y0,
+            .x1 = ceil_f32(canvas_rect.x0 + (F32)(col_idx + cell_cols)*cell_width_px),
+            .y1 = row_y1,
           };
           if(cell->grapheme_count == 1)
           {

@@ -186,7 +186,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
                !ui_key_match(nav->default_nav_focus_hot_key, overflow->key))
             { event.v = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Tab}; }
             if(frame == 10)
-            { event.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(viewport->rect), .delta_2f32 = {-1000, 0}, .scroll_is_precise = 1}; }
+            { event.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(viewport->rect), .delta_2f32 = v2f32(-1000, 0), .scroll_is_precise = 1}; }
             if(event.v.kind != UI_EventKind_Null) { events.first = events.last = &event; events.count = 1; }
             ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
             ui_state->mouse = frame == 15 ? v2f32(-100, -100) : center_2f32(viewport->rect);

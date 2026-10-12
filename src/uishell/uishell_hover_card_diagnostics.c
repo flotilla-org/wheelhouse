@@ -210,7 +210,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   CardCheck(!card->open, "engaged card closes after 400ms outside");
   uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 2100000);
   card->rect = r2f32p(180, 90, 400, 300);
-  WM_Event click = {.kind = WM_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = {200, 150}};
+  WM_Event click = {.kind = WM_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = v2f32(200, 150)};
   uishell_sidebar_card_wm_event(ws, &click);
   CardCheck(card->focused && test->hover_card_focus, "click focuses the card");
   uishell_sidebar_card_tick(card, v2f32(500, 350), 2200000);
@@ -288,7 +288,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   {
     UI_EventList events = {0};
     UI_Event press = {.kind = frame == 2 ? UI_EventKind_Release : UI_EventKind_Press,
-                      .key = WM_Key_LeftMouseButton, .pos = {100, 100}};
+                      .key = WM_Key_LeftMouseButton, .pos = v2f32(100, 100)};
     if(frame) { ui_event_list_push(test->arena, &events, &press); }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     // A batched click must still be blocked when the final mouse moved away.
@@ -335,7 +335,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   {
     UI_EventList events = {0};
     UI_Event event = {.kind = frame == 2 ? UI_EventKind_Release : UI_EventKind_Press,
-                      .key = WM_Key_LeftMouseButton, .pos = {150, 100}};
+                      .key = WM_Key_LeftMouseButton, .pos = v2f32(150, 100)};
     if(frame) { ui_event_list_push(test->arena, &events, &event); }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     test->mouse = event.pos;

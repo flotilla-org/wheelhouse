@@ -77,7 +77,7 @@ internal UIShell_TerminalMouseResult
 uishell_selection_test_mouse(UIShell_SelectionFixture *f, UI_EventKind kind, WM_Modifiers mods, S64 row, S64 col)
 {
   UI_Event evt = {.kind = kind, .key = kind == UI_EventKind_MouseMove ? WM_Key_Null : WM_Key_LeftMouseButton,
-    .modifiers = mods, .pos = {(F32)col*10+5, (F32)row*10+5}};
+    .modifiers = mods, .pos = v2f32((F32)col*10+5, (F32)row*10+5)};
   return uishell_terminal_mouse_event(&f->tv, &evt, r2f32p(0, 0, 60, 30), 10, 10);
 }
 
@@ -330,7 +330,7 @@ uishell_terminal_selection_ui_diagnostics(RD_WindowState *ws)
     UI_EventNode nodes[6] = {0};
     UI_EventKind kinds[] = {UI_EventKind_Press, UI_EventKind_MouseMove, UI_EventKind_Release,
                             UI_EventKind_Press, UI_EventKind_MouseMove, UI_EventKind_Release};
-    Vec2F32 positions[] = {{15, 5}, {35, 15}, {35, 15}, {25, 5}, {45, 15}, {95, 45}};
+    Vec2F32 positions[] = {v2f32(15, 5), v2f32(35, 15), v2f32(35, 15), v2f32(25, 5), v2f32(45, 15), v2f32(95, 45)};
     UI_EventList events = {0};
     for(U32 i = 0; i < 6; i++)
     {
@@ -364,7 +364,7 @@ uishell_terminal_selection_ui_diagnostics(RD_WindowState *ws)
     ok &= f.tv.has_selection && !f.tv.left_owner && !f.tv.mouse_buttons_held;
     // Ordinary clickable widgets keep hover decoration without consuming the
     // move; an opted-in terminal underneath can still receive that message.
-    UI_EventNode hover = {.v = {.kind = UI_EventKind_MouseMove, .pos = {45, 15}}};
+    UI_EventNode hover = {.v = {.kind = UI_EventKind_MouseMove, .pos = v2f32(45, 15)}};
     events.first = events.last = &hover; events.count = 1;
     sibling->flags &= ~UI_BoxFlag_CollectMouseMotion;
     sibling_signal = ui_signal_from_box(sibling);
@@ -373,7 +373,7 @@ uishell_terminal_selection_ui_diagnostics(RD_WindowState *ws)
     ok &= signal.mouse_events.count == 1 && events.count == 0;
     // A non-terminal control's active drag retains its signal and cannot lose
     // motion to a terminal beside/under it, even inside the terminal bounds.
-    hover.v = (UI_Event){.kind = UI_EventKind_MouseMove, .pos = {45, 15}};
+    hover.v = (UI_Event){.kind = UI_EventKind_MouseMove, .pos = v2f32(45, 15)};
     events.first = events.last = &hover; events.count = 1;
     test->active_box_key[UI_MouseButtonKind_Left] = sibling->key;
     sibling_signal = ui_signal_from_box(sibling);
@@ -411,7 +411,7 @@ uishell_terminal_selection_ui_diagnostics(RD_WindowState *ws)
     UIShell_SelectionFixture f; uishell_selection_fixture_init(&f);
     f.tv.native_view = 1; f.tv.input_window = ws->os; f.tv.input_frame = rd_state->frame_index + 7;
     f.tv.mouse_tracking_mode = CLEAT_MOUSE_TRACKING_NORMAL;
-    UI_Event event = {.kind = UI_EventKind_Press, .key = button ? WM_Key_RightMouseButton : WM_Key_MiddleMouseButton, .pos = {15, 5}};
+    UI_Event event = {.kind = UI_EventKind_Press, .key = button ? WM_Key_RightMouseButton : WM_Key_MiddleMouseButton, .pos = v2f32(15, 5)};
     uishell_terminal_mouse_event(&f.tv, &event, r2f32p(0, 0, 60, 30), 10, 10);
     uishell_terminal_retire_gestures(1);
     ok &= f.sent_count == 2 && f.sent[1].mouse_kind == CLEAT_MOUSE_RELEASE && !f.tv.mouse_buttons_held && !f.tv.gesture_registered;
@@ -455,7 +455,7 @@ uishell_terminal_override_diagnostics(void)
     S64 initial = f.viewport_top;
     f.tv.has_selection = 1;
     UI_Event wheel = {.kind = UI_EventKind_Scroll, .modifiers = WM_Modifier_Shift,
-      .pos = {25, 15}, .delta_2f32 = {0, precise ? sign*2.5f : sign*30.f}, .scroll_is_precise = precise};
+      .pos = v2f32(25, 15), .delta_2f32 = v2f32(0, precise ? sign*2.5f : sign*30.f), .scroll_is_precise = precise};
     // Sub-row deltas accumulate exactly; local events produce viewport requests
     // only, even with capture, no history and either bound.
     U32 events = precise ? 4 : 1;
@@ -485,7 +485,7 @@ uishell_terminal_override_diagnostics(void)
     UIShell_SelectionFixture f; uishell_selection_fixture_init(&f);
     f.viewport_max = 10; f.viewport_top = 5;
     UI_Event wheel = {.kind = UI_EventKind_Scroll, .modifiers = WM_Modifier_Shift,
-      .delta_2f32 = {0, 7.5f}, .scroll_is_precise = 1};
+      .delta_2f32 = v2f32(0, 7.5f), .scroll_is_precise = 1};
     // Reversal cancels accumulated sub-rows. Geometry changes use current cell
     // height without reinterpreting previous fractions or inverting direction.
     uishell_terminal_wheel_event(&f.tv, &wheel, canvas);
@@ -504,7 +504,7 @@ uishell_terminal_override_diagnostics(void)
     // Precise application input accumulates separately per modifier stream;
     // adding Shift cannot transfer any local sub-row movement to the process.
     UI_Event wheel = {.kind = UI_EventKind_Scroll, .scroll_is_precise = 1,
-      .pos = {100, -20}, .delta_2f32 = {5, 5}};
+      .pos = v2f32(100, -20), .delta_2f32 = v2f32(5, 5)};
     uishell_terminal_wheel_event(&f.tv, &wheel, canvas);
     wheel.modifiers = WM_Modifier_Ctrl; uishell_terminal_wheel_event(&f.tv, &wheel, canvas);
     wheel.modifiers = WM_Modifier_Shift; uishell_terminal_wheel_event(&f.tv, &wheel, canvas);
@@ -524,7 +524,7 @@ uishell_terminal_override_diagnostics(void)
     // AppKit Shift mouse wheels can arrive on X. The forced local override
     // uses that signed axis when Y is zero, including precise trackpad fractions.
     UI_Event wheel = {.kind = UI_EventKind_Scroll, .modifiers = WM_Modifier_Shift,
-      .delta_2f32 = {precise ? sign*5.f : sign*30.f, 0}, .scroll_is_precise = precise};
+      .delta_2f32 = v2f32(precise ? sign*5.f : sign*30.f, 0), .scroll_is_precise = precise};
     for(U32 n = 0; n < (precise ? 2 : 1); n++) { uishell_terminal_wheel_event(&f.tv, &wheel, canvas); }
     OverrideCheck(!f.sent_count && f.viewport_count == 1 && f.viewport[0].delta_rows == sign && f.viewport_top == 5+sign);
     uishell_selection_fixture_release(&f);
@@ -536,7 +536,7 @@ uishell_terminal_override_diagnostics(void)
     f.viewport_max = 100; f.viewport_top = 50;
     UI_Event page = {.kind = semantic ? UI_EventKind_Navigate : UI_EventKind_Press,
       .key = down ? WM_Key_PageDown : WM_Key_PageUp, .modifiers = semantic ? 0 : WM_Modifier_Shift,
-      .flags = semantic ? UI_EventFlag_KeepMark : 0, .delta_unit = UI_EventDeltaUnit_Page, .delta_2s32 = {0, down ? 1 : -1}};
+      .flags = semantic ? UI_EventFlag_KeepMark : 0, .delta_unit = UI_EventDeltaUnit_Page, .delta_2s32 = v2s32(0, down ? 1 : -1)};
     // Drive the native shell ownership consumer and its actual semantic
     // command consumer together: one physical press yields one viewport request,
     // never a second UI Navigate/key event. Semantic commands act once too.
@@ -583,7 +583,7 @@ uishell_terminal_override_diagnostics(void)
     f.tv.native_view = 1;
     f.tv.mouse_tracking_mode = capture ? CLEAT_MOUSE_TRACKING_NORMAL : CLEAT_MOUSE_TRACKING_NONE;
     UI_Event middle = {.kind = UI_EventKind_Press, .key = WM_Key_MiddleMouseButton,
-      .modifiers = shift ? WM_Modifier_Shift : 0, .pos = {15, 5}};
+      .modifiers = shift ? WM_Modifier_Shift : 0, .pos = v2f32(15, 5)};
     B32 local = shift || !capture;
     // A complete middle gesture has one owner; local presses request exactly
     // one structured selection Paste, while empty selection is a consumed noop.
@@ -608,7 +608,7 @@ uishell_terminal_override_diagnostics(void)
     // Independent local middle ownership must not cancel #154's active left
     // rectangle owner. Both complete gestures remain absent from child input.
     uishell_selection_test_mouse(&f, UI_EventKind_Press, WM_Modifier_Shift|WM_Modifier_Alt, 0, 0);
-    UI_Event middle = {.kind = UI_EventKind_Press, .key = WM_Key_MiddleMouseButton, .modifiers = WM_Modifier_Shift, .pos = {15, 15}};
+    UI_Event middle = {.kind = UI_EventKind_Press, .key = WM_Key_MiddleMouseButton, .modifiers = WM_Modifier_Shift, .pos = v2f32(15, 15)};
     OverrideCheck(uishell_terminal_mouse_event(&f.tv, &middle, canvas, 10, 10).paste_selection);
     middle.kind = UI_EventKind_Release; middle.modifiers = 0;
     uishell_terminal_mouse_event(&f.tv, &middle, canvas, 10, 10);
@@ -695,7 +695,7 @@ uishell_terminal_override_ui_diagnostics(RD_WindowState *ws)
   {
     nodes[n].v = (UI_Event){.kind = UI_EventKind_Scroll,
       .modifiers = n == 1 ? WM_Modifier_Ctrl : WM_Modifier_Shift,
-      .pos = {15+(F32)n*10, 15}, .delta_2f32 = {0, n == 1 ? -30.f : 5.f},
+      .pos = v2f32(15+(F32)n*10, 15), .delta_2f32 = v2f32(0, n == 1 ? -30.f : 5.f),
       .scroll_is_precise = n != 1};
     if(n >= 4) { nodes[n].v = (UI_Event){.kind = n == 4 ? UI_EventKind_Press : UI_EventKind_Release,
       .key = WM_Key_MiddleMouseButton, .modifiers = n == 4 ? WM_Modifier_Shift : 0,
