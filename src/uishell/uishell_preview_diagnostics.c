@@ -103,7 +103,7 @@ uishell_preview_diagnostics(RD_WindowState *ws)
       B32 overview = frame >= 4 && frame < 8;
       B32 press = frame == 2 || frame == 6;
       B32 file_drop = frame == 5 || frame == 9;
-      if(frame == 9) { ws->drop_completion_panel = 0; }
+      if(frame == 9) { ws->drop_completion_panel = rd_nil_panel_address; }
       if(frame == 6)
       {
         for(U32 i = 0; i < 2; i++) { rd_view_state_from_cfg(views[i])->contents_are_focused = 0; }
@@ -130,7 +130,7 @@ uishell_preview_diagnostics(RD_WindowState *ws)
         UIShell_Regs before = *uishell_regs();
         UI_Key hot = ui_hot_key(), active = ui_active_key(UI_MouseButtonKind_Left);
         U64 event_count = events.count;
-        CFG_ID drop_completion_panel = ws->drop_completion_panel;
+        RD_PanelAddress drop_completion_panel = ws->drop_completion_panel;
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         UI_Parent(wrappers[i]) UI_Focus(preview ? UI_FocusKind_Off : UI_FocusKind_On)
         {
@@ -138,17 +138,17 @@ uishell_preview_diagnostics(RD_WindowState *ws)
         }
         if(preview)
         {
-          PreviewCheck(uishell_regs()->view == before.view && uishell_regs()->panel == before.panel, "preview preserves live command target");
+          PreviewCheck(uishell_regs()->view == before.view && rd_panel_address_match(uishell_regs()->panel, before.panel), "preview preserves live command target");
           PreviewCheck(ui_key_match(hot, ui_hot_key()) && ui_key_match(active, ui_active_key(UI_MouseButtonKind_Left)), "preview preserves live hot/active keys");
           PreviewCheck(events.count == event_count, "preview does not consume remaining input");
           if(press) { PreviewCheck(!rd_view_state_from_cfg(views[i])->contents_are_focused, "overlapping preview press does not focus view contents"); }
-          if(file_drop) { PreviewCheck(ws->drop_completion_panel == drop_completion_panel, "preview file drop does not retarget completion"); }
+          if(file_drop) { PreviewCheck(rd_panel_address_match(ws->drop_completion_panel, drop_completion_panel), "preview file drop does not retarget completion"); }
         }
         else if(press) { PreviewCheck(rd_view_state_from_cfg(views[i])->contents_are_focused, "live view accepts press focus"); }
         else if(file_drop)
         {
           PreviewCheck(events.count == 0, "direct live workspace accepts file drop");
-          PreviewCheck(ws->drop_completion_panel != drop_completion_panel, "direct live file drop targets panel");
+          PreviewCheck(!rd_panel_address_match(ws->drop_completion_panel, drop_completion_panel), "direct live file drop targets panel");
         }
       }
       ws->active_workspace_surface_entry = 0;

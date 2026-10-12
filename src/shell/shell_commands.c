@@ -604,7 +604,7 @@ uishell_dispatch_command_palette_command(String8 name)
     Temp scratch = scratch_begin(0, 0);
     UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
     CFG_Node *window = workspace_mount.window_cfg;
-    CFG_PanelTree panel_tree = workspace_mount.panel_tree;
+    RD_PanelTree panel_tree = workspace_mount.panel_tree;
     CFG_Node *tab = panel_tree.focused->selected_tab;
     String8List exprs = {0};
     str8_list_pushf(scratch.arena, &exprs, "query:commands");
@@ -697,11 +697,11 @@ rd_dock_command_allowed(char *action, String8 view, RD_DockRule rule)
 }
 
 internal B32
-rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, CFG_Node *destination, Dir2 dir)
+rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, RD_PanelAddress destination, Dir2 dir)
 {
   B32 unavailable = 0;
   F32 width = rd_dock_target_width(arena, destination, dir, view, &unavailable);
-  RD_DockRule rule = rd_dock_placement(view, destination, width);
+  RD_DockRule rule = rd_dock_placement(view, rd_dock_host_from_panel(destination, width));
   if(rule == RD_DockRule_MinimumWidth && unavailable)
   { log_user_errorf("Docking geometry unavailable: destination has no live window state."); }
   return rd_dock_command_allowed(operation, view->string, rule);
@@ -716,21 +716,19 @@ rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, CFG_Node *de
 // tabs (#358) or when it is a workspace panel emptied into one of its own
 // workspace's Floating Panels.
 internal RD_ArrangementDrop
-uishell_drop_view(RD_Arrangement *arrangement, CFG_Node *view, CFG_Node *destination, Dir2 dir, CFG_Node *prev)
+uishell_drop_view(RD_Arrangement *arrangement, CFG_Node *view, RD_PanelAddress destination, Dir2 dir, CFG_Node *prev)
 {
-  CFG_Node *source = view->parent;
-  RD_PanelID panel = rd_arrangement_panel_from_cfg(arrangement, destination->id)->id;
-  RD_ArrangementDrop drop = rd_arrangement_drop(arrangement, view->id, panel, dir, prev->id, rd_tab_is_shown);
+  RD_PanelAddress source = rd_panel_from_cfg(view);
+  RD_ArrangementDrop drop = rd_arrangement_drop(arrangement, view->id, destination.id, dir, prev->id, rd_tab_is_shown);
   if(drop.panel == 0) { return drop; }
   rd_arrangement_save(rd_state->cfg, arrangement);
   if(drop.source == 0)
   {
     Temp scratch = scratch_begin(&arrangement->arena, 1);
-    RD_Arrangement *left = uishell_arrangement_from_cfg(scratch.arena, source);
-    RD_Arrangement *workspace = uishell_workspace_mount_from_cfg(scratch.arena, destination).arrangement;
-    RD_ArrangementPanel *left_panel = rd_arrangement_panel_from_cfg(left, source->id);
-    B32 may_close = left_panel->tab_count == 0 || (rd_dock_floating_panel_from_cfg(destination) != &cfg_nil_node &&
-      rd_arrangement_panel_from_cfg(workspace, source->id) != &rd_nil_arrangement_panel);
+    RD_Arrangement *left = rd_arrangement_from_panel_owner(scratch.arena, source.owner);
+    RD_ArrangementPanel *left_panel = rd_arrangement_panel_from_id(left, source.id);
+    B32 may_close = left_panel->tab_count == 0 || (destination.owner.kind == RD_PanelOwnerKind_Floating &&
+      source.owner.kind == RD_PanelOwnerKind_Workspace && rd_cfg_from_panel_owner(source.owner) == rd_cfg_from_panel_owner(destination.owner));
     if(rd_arrangement_settle(left, left_panel->id, dir, rd_tab_is_shown, may_close))
     { rd_arrangement_save(rd_state->cfg, left); }
     scratch_end(scratch);
@@ -747,14 +745,9 @@ uishell_dispatch_tab_command(String8 name)
   {
     Temp scratch = scratch_begin(0, 0);
     CFG_Node *tab = cfg_node_from_id(uishell_regs()->tab);
-    CFG_Node *panel = tab->parent;
-    if(panel == &cfg_nil_node)
-    {
-      panel = cfg_node_from_id(uishell_regs()->panel);
-    }
-    RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, panel);
-    RD_PanelID panel_id = rd_arrangement_panel_from_cfg(arrangement, panel->id)->id;
-    if(rd_arrangement_select(arrangement, panel_id, tab->id)) { rd_arrangement_save(rd_state->cfg, arrangement); }
+    RD_PanelAddress panel = tab->parent != &cfg_nil_node ? rd_panel_from_cfg(tab) : uishell_regs()->panel;
+    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+    if(rd_arrangement_select(arrangement, panel.id, tab->id)) { rd_arrangement_save(rd_state->cfg, arrangement); }
     scratch_end(scratch);
   }
   else if(str8_match(name, str8_lit("next_tab"), 0) ||
@@ -763,7 +756,7 @@ uishell_dispatch_tab_command(String8 name)
     Temp scratch = scratch_begin(0, 0);
     B32 is_next = str8_match(name, str8_lit("next_tab"), 0);
     UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
-    RD_ArrangementPanel *focused = rd_arrangement_panel_from_cfg(workspace_mount.arrangement, workspace_mount.panel_tree.focused->cfg->id);
+    RD_ArrangementPanel *focused = rd_arrangement_panel_from_id(workspace_mount.arrangement, workspace_mount.panel_tree.focused->address.id);
     RD_ArrangementTab *selected = 0;
     for(RD_ArrangementTab *tab = focused->first_tab; tab != 0; tab = tab->next)
     {
@@ -795,8 +788,9 @@ uishell_dispatch_tab_command(String8 name)
   {
     Temp scratch = scratch_begin(0, 0);
     CFG_Node *tab = cfg_node_from_id(uishell_regs()->tab);
-    RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, tab);
-    RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(arrangement, tab->id);
+    RD_PanelAddress address = rd_panel_from_cfg(tab);
+    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, address.owner);
+    RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(arrangement, address.id);
     CFG_NodePtrList filtered_tabs = {0};
     for(RD_ArrangementTab *n = panel->first_tab; n != 0; n = n->next)
     {
@@ -831,7 +825,7 @@ uishell_dispatch_tab_command(String8 name)
     {
       new_prev = filtered_tabs.last->v;
     }
-    UIShell_RegsScope(.dst_panel = panel->cfg, .view = tab->id, .prev_tab = new_prev->id)
+    UIShell_RegsScope(.dst_panel = address, .view = tab->id, .prev_tab = new_prev->id)
     {
       uishell_push_cmd_current(str8_lit("move_view"));
     }
@@ -841,9 +835,10 @@ uishell_dispatch_tab_command(String8 name)
   {
     Temp scratch = scratch_begin(0, 0);
     String8 expr_file_path = rd_file_path_from_eval_string(scratch.arena, uishell_regs()->expr);
-    CFG_Node *panel = cfg_node_from_id(uishell_regs()->panel);
-    if(panel == &cfg_nil_node)
+    RD_PanelAddress panel = uishell_regs()->panel;
+    if(rd_cfg_from_panel(panel) == &cfg_nil_node)
     {
+      panel = rd_nil_panel_address;
       CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
       if(window == &cfg_nil_node)
       {
@@ -860,15 +855,16 @@ uishell_dispatch_tab_command(String8 name)
       if(window != &cfg_nil_node)
       {
         UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, window);
-        CFG_PanelTree panel_tree = workspace_mount.panel_tree;
-        panel = panel_tree.focused->cfg;
+        RD_PanelTree panel_tree = workspace_mount.panel_tree;
+        panel = panel_tree.focused->address;
       }
     }
-    if(panel == &cfg_nil_node)
+    if(rd_cfg_from_panel(panel) == &cfg_nil_node)
     {
       log_user_errorf("Couldn't open a new tab because no panel was available.");
     }
-    else if(rd_dock_command_allowed("create", uishell_regs()->string, rd_dock_creation(uishell_regs()->string, panel)))
+    else if(rd_dock_command_allowed("create", uishell_regs()->string,
+              rd_dock_creation(uishell_regs()->string, rd_dock_host_from_panel(panel, RD_DOCK_UNMEASURED_WIDTH))))
     {
       CFG_Node *tab = cfg_node_new(rd_state->cfg, &cfg_nil_node, uishell_regs()->string);
       CFG_Node *expr = cfg_node_new(rd_state->cfg, tab, str8_lit("expression"));
@@ -878,8 +874,8 @@ uishell_dispatch_tab_command(String8 name)
         CFG_Node *project = cfg_node_new(rd_state->cfg, tab, str8_lit("project"));
         cfg_node_new(rd_state->cfg, project, rd_state->project_path);
       }
-      RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, panel);
-      RD_ArrangementPanel *destination = rd_arrangement_panel_from_cfg(arrangement, panel->id);
+      RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+      RD_ArrangementPanel *destination = rd_arrangement_panel_from_id(arrangement, panel.id);
       if(rd_arrangement_move_tab(arrangement, tab->id, destination->id, destination->last_tab ? destination->last_tab->view : 0))
       { rd_arrangement_save(rd_state->cfg, arrangement); }
       else { cfg_node_release(rd_state->cfg, tab); }
@@ -893,12 +889,12 @@ uishell_dispatch_tab_command(String8 name)
   else if(str8_match(name, str8_lit("duplicate_tab"), 0))
   {
     CFG_Node *src = cfg_node_from_id(uishell_regs()->tab);
-    if(!rd_dock_command_allowed("duplicate", src->string, rd_dock_creation(src->string, src->parent))) { return 1; }
+    RD_PanelAddress panel = rd_panel_from_cfg(src);
+    if(!rd_dock_command_allowed("duplicate", src->string, rd_dock_creation(src->string, rd_dock_host_from_panel(panel, RD_DOCK_UNMEASURED_WIDTH)))) { return 1; }
     Temp scratch = scratch_begin(0, 0);
     CFG_Node *dst = cfg_node_deep_copy(rd_state->cfg, src);
-    RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, src);
-    RD_PanelID panel = rd_arrangement_panel_from_view(arrangement, src->id)->id;
-    if(rd_arrangement_move_tab(arrangement, dst->id, panel, src->id)) { rd_arrangement_save(rd_state->cfg, arrangement); }
+    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+    if(rd_arrangement_move_tab(arrangement, dst->id, panel.id, src->id)) { rd_arrangement_save(rd_state->cfg, arrangement); }
     else { cfg_node_release(rd_state->cfg, dst); }
     UIShell_RegsScope(.tab = dst->id)
     {
@@ -911,9 +907,10 @@ uishell_dispatch_tab_command(String8 name)
     Temp scratch = scratch_begin(0, 0);
     CFG_Node *tab = cfg_node_from_id(uishell_regs()->tab);
     if(!rd_dock_command_allowed("close", tab->string, rd_dock_closure(tab))) { scratch_end(scratch); return 1; }
-    RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, tab);
-    RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(arrangement, tab->id);
-    B32 focused = rd_panel_tree_from_arrangement(scratch.arena, arrangement).focused->cfg->id == panel->cfg;
+    RD_PanelAddress address = rd_panel_from_cfg(tab);
+    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, address.owner);
+    RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(arrangement, address.id);
+    B32 focused = rd_panel_tree_from_arrangement(scratch.arena, address.owner, arrangement).focused->address.id == panel->id;
     if(panel->selected == tab->id)
     {
       B32 found_selected = 0;
@@ -947,7 +944,7 @@ uishell_dispatch_tab_command(String8 name)
       rd_arrangement_save(rd_state->cfg, arrangement);
       if(heir != 0 && focused)
       {
-        UIShell_RegsScope(.panel = rd_arrangement_panel_from_id(arrangement, heir)->cfg)
+        UIShell_RegsScope(.panel = rd_panel_address(address.owner, heir))
         {
           uishell_push_cmd_current(str8_lit("focus_panel"));
         }
@@ -960,15 +957,15 @@ uishell_dispatch_tab_command(String8 name)
     Temp scratch = scratch_begin(0, 0);
     CFG_Node *view = cfg_node_from_id(uishell_regs()->view);
     CFG_Node *prev_tab = cfg_node_from_id(uishell_regs()->prev_tab);
-    CFG_Node *dst_panel = cfg_node_from_id(uishell_regs()->dst_panel);
-    if(dst_panel != &cfg_nil_node && prev_tab != view && rd_dock_move_allowed(scratch.arena, "move", view, dst_panel, Dir2_Invalid))
+    RD_PanelAddress dst_panel = uishell_regs()->dst_panel;
+    if(rd_cfg_from_panel(dst_panel) != &cfg_nil_node && prev_tab != view && rd_dock_move_allowed(scratch.arena, "move", view, dst_panel, Dir2_Invalid))
     {
-      uishell_drop_view(uishell_arrangement_from_cfg(scratch.arena, dst_panel), view, dst_panel, Dir2_Invalid, prev_tab);
-      UIShell_RegsScope(.panel = dst_panel->id, .tab = view->id)
+      uishell_drop_view(rd_arrangement_from_panel_owner(scratch.arena, dst_panel.owner), view, dst_panel, Dir2_Invalid, prev_tab);
+      UIShell_RegsScope(.panel = dst_panel, .tab = view->id)
       {
         uishell_push_cmd_current(str8_lit("focus_tab"));
       }
-      UIShell_RegsScope(.panel = dst_panel->id)
+      UIShell_RegsScope(.panel = dst_panel)
       {
         uishell_push_cmd_current(str8_lit("focus_panel"));
       }
@@ -988,12 +985,12 @@ uishell_dispatch_tab_command(String8 name)
   // the arrangement rather than in it.
   else if(str8_match(name, str8_lit("tab_bar_top"), 0))
   {
-    CFG_Node *panel = cfg_node_from_id(uishell_regs()->panel);
+    CFG_Node *panel = rd_cfg_from_panel(uishell_regs()->panel);
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(panel, str8_lit("tabs_on_bottom")));
   }
   else if(str8_match(name, str8_lit("tab_bar_bottom"), 0))
   {
-    CFG_Node *panel = cfg_node_from_id(uishell_regs()->panel);
+    CFG_Node *panel = rd_cfg_from_panel(uishell_regs()->panel);
     cfg_node_child_from_string_or_alloc(rd_state->cfg, panel, str8_lit("tabs_on_bottom"));
   }
   else if(str8_match(name, str8_lit("tab_settings"), 0))
@@ -1033,7 +1030,7 @@ uishell_dispatch_panel_command(String8 name)
   {
     Temp scratch = scratch_begin(0, 0);
     Dir2 split_dir = Dir2_Invalid;
-    CFG_Node *split_panel = &cfg_nil_node;
+    RD_PanelAddress split_panel = rd_nil_panel_address;
     B32 do_dragdrop_split = 0;
     if(str8_match(name, str8_lit("new_panel_left"), 0))
     {
@@ -1054,38 +1051,37 @@ uishell_dispatch_panel_command(String8 name)
     else
     {
       split_dir = uishell_regs()->dir2;
-      split_panel = cfg_node_from_id(uishell_regs()->dst_panel);
+      split_panel = uishell_regs()->dst_panel;
       do_dragdrop_split = 1;
     }
 
     if(split_dir != Dir2_Invalid)
     {
       Axis2 split_axis = axis2_from_dir2(split_dir);
-      if(split_panel == &cfg_nil_node)
+      if(rd_cfg_from_panel(split_panel) == &cfg_nil_node)
       {
-        split_panel = cfg_node_from_id(uishell_regs()->panel);
+        split_panel = uishell_regs()->panel;
       }
       CFG_Node *moving_view = cfg_node_from_id(uishell_regs()->view);
       if(do_dragdrop_split && !rd_dock_move_allowed(scratch.arena, "split with", moving_view, split_panel, split_dir))
       { scratch_end(scratch); return 1; }
       // A Floating Panel holds tabs, never splits.
-      if(rd_dock_floating_panel_from_cfg(split_panel) != &cfg_nil_node) { scratch_end(scratch); return 1; }
+      if(split_panel.owner.kind == RD_PanelOwnerKind_Floating) { scratch_end(scratch); return 1; }
       // rd_dock_moving_width runs the same drop on a copy to measure the
       // result; preserve agreement with the command/render differential scenarios.
-      UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, split_panel);
-      CFG_PanelTree panel_tree = workspace_mount.panel_tree;
-      CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, split_panel);
+      UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_panel_owner(scratch.arena, split_panel.owner);
+      RD_PanelTree panel_tree = workspace_mount.panel_tree;
+      RD_PanelNode *panel = rd_panel_node_from_id(panel_tree.root, split_panel.id);
       RD_Arrangement *arrangement = workspace_mount.arrangement;
-      RD_PanelID split_id = rd_arrangement_panel_from_cfg(arrangement, split_panel->id)->id;
-      CFG_Node *dragdrop_origin_panel_cfg = cfg_node_from_id(uishell_regs()->panel);
-      B32 do_drop = do_dragdrop_split && moving_view != &cfg_nil_node && dragdrop_origin_panel_cfg != &cfg_nil_node;
+      B32 do_drop = do_dragdrop_split && moving_view != &cfg_nil_node && rd_cfg_from_panel(uishell_regs()->panel) != &cfg_nil_node;
       RD_ArrangementDrop drop = {0};
       if(do_drop) { drop = uishell_drop_view(arrangement, moving_view, split_panel, split_dir, &cfg_nil_node); }
       else
       {
-        drop.panel = rd_arrangement_split(arrangement, split_id, split_dir);
+        drop.panel = rd_arrangement_split(arrangement, split_panel.id, split_dir);
         if(drop.panel != 0) { rd_arrangement_save(rd_state->cfg, arrangement); }
       }
+      RD_PanelAddress new_panel_address = rd_panel_address(workspace_mount.owner, drop.panel);
       CFG_Node *new_panel_cfg = cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, drop.panel)->cfg);
 
       {
@@ -1093,54 +1089,57 @@ uishell_dispatch_panel_command(String8 name)
         if(ws != &rd_nil_window_state)
         {
           ui_select_state(ws->ui);
-          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, new_panel_cfg);
-          CFG_PanelTree new_panel_tree = new_workspace_mount.panel_tree;
-          CFG_PanelNode *new_panel = cfg_panel_node_from_tree_cfg(new_panel_tree.root, new_panel_cfg);
+          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_panel_owner(scratch.arena, workspace_mount.owner);
+          RD_PanelTree new_panel_tree = new_workspace_mount.panel_tree;
+          RD_PanelNode *new_panel = rd_panel_node_from_id(new_panel_tree.root, drop.panel);
           Rng2F32 stub_content_rect = r2f32p(0, 0, 1000, 1000);
           Vec2F32 stub_content_rect_dim = dim_2f32(stub_content_rect);
-          Rng2F32 new_rect_px  = cfg_target_rect_from_panel_node(stub_content_rect, new_panel_tree.root, new_panel);
+          Rng2F32 new_rect_px  = rd_target_rect_from_panel_node(stub_content_rect, new_panel_tree.root, new_panel);
           Rng2F32 new_rect_pct = r2f32p(new_rect_px.x0/stub_content_rect_dim.x,
                                         new_rect_px.y0/stub_content_rect_dim.y,
                                         new_rect_px.x1/stub_content_rect_dim.x,
                                         new_rect_px.y1/stub_content_rect_dim.y);
-          if(new_panel->prev != &cfg_nil_panel_node)
+          if(new_panel->prev != &rd_nil_panel_node)
           {
-            Rng2F32 target_prev_rect_px  = cfg_target_rect_from_panel_node(stub_content_rect, panel_tree.root, cfg_panel_node_from_tree_cfg(panel_tree.root, new_panel->prev->cfg));
+            UI_Key prev_key = rd_panel_ui_key(new_panel->prev->address);
+            Rng2F32 target_prev_rect_px  = rd_target_rect_from_panel_node(stub_content_rect, panel_tree.root, rd_panel_node_from_id(panel_tree.root, new_panel->prev->address.id));
             Rng2F32 target_prev_rect_pct = r2f32p(target_prev_rect_px.x0/stub_content_rect_dim.x,
                                                   target_prev_rect_px.y0/stub_content_rect_dim.y,
                                                   target_prev_rect_px.x1/stub_content_rect_dim.x,
                                                   target_prev_rect_px.y1/stub_content_rect_dim.y);
-            Rng2F32 prev_rect_pct = r2f32p(uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_x0", new_panel->prev->cfg), target_prev_rect_pct.x0, target_prev_rect_pct.x0, 0),
-                                           uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_y0", new_panel->prev->cfg), target_prev_rect_pct.y0, target_prev_rect_pct.y0, 0),
-                                           uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_x1", new_panel->prev->cfg), target_prev_rect_pct.x1, target_prev_rect_pct.x1, 0),
-                                           uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_y1", new_panel->prev->cfg), target_prev_rect_pct.y1, target_prev_rect_pct.y1, 0));
+            Rng2F32 prev_rect_pct = r2f32p(uishell_panel_anim(ui_key_from_stringf(prev_key, "x0"), target_prev_rect_pct.x0, target_prev_rect_pct.x0, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(prev_key, "y0"), target_prev_rect_pct.y0, target_prev_rect_pct.y0, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(prev_key, "x1"), target_prev_rect_pct.x1, target_prev_rect_pct.x1, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(prev_key, "y1"), target_prev_rect_pct.y1, target_prev_rect_pct.y1, 0));
             new_rect_pct = prev_rect_pct;
             new_rect_pct.p0.v[split_axis] = new_rect_pct.p1.v[split_axis];
           }
-          if(new_panel->next != &cfg_nil_panel_node)
+          if(new_panel->next != &rd_nil_panel_node)
           {
-            Rng2F32 target_next_rect_px  = cfg_target_rect_from_panel_node(stub_content_rect, panel_tree.root, cfg_panel_node_from_tree_cfg(panel_tree.root, new_panel->next->cfg));
+            UI_Key next_key = rd_panel_ui_key(new_panel->next->address);
+            Rng2F32 target_next_rect_px  = rd_target_rect_from_panel_node(stub_content_rect, panel_tree.root, rd_panel_node_from_id(panel_tree.root, new_panel->next->address.id));
             Rng2F32 target_next_rect_pct = r2f32p(target_next_rect_px.x0/stub_content_rect_dim.x,
                                                   target_next_rect_px.y0/stub_content_rect_dim.y,
                                                   target_next_rect_px.x1/stub_content_rect_dim.x,
                                                   target_next_rect_px.y1/stub_content_rect_dim.y);
-            Rng2F32 next_rect_pct = r2f32p(uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_x0", new_panel->next->cfg), target_next_rect_pct.x0, target_next_rect_pct.x0, 0),
-                                           uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_y0", new_panel->next->cfg), target_next_rect_pct.y0, target_next_rect_pct.y0, 0),
-                                           uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_x1", new_panel->next->cfg), target_next_rect_pct.x1, target_next_rect_pct.x1, 0),
-                                           uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_y1", new_panel->next->cfg), target_next_rect_pct.y1, target_next_rect_pct.y1, 0));
+            Rng2F32 next_rect_pct = r2f32p(uishell_panel_anim(ui_key_from_stringf(next_key, "x0"), target_next_rect_pct.x0, target_next_rect_pct.x0, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(next_key, "y0"), target_next_rect_pct.y0, target_next_rect_pct.y0, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(next_key, "x1"), target_next_rect_pct.x1, target_next_rect_pct.x1, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(next_key, "y1"), target_next_rect_pct.y1, target_next_rect_pct.y1, 0));
             new_rect_pct = next_rect_pct;
             new_rect_pct.p1.v[split_axis] = new_rect_pct.p0.v[split_axis];
           }
-          uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_x0", new_panel->cfg), new_rect_pct.x0, new_rect_pct.x0, 1);
-          uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_x1", new_panel->cfg), new_rect_pct.x1, new_rect_pct.x1, 1);
-          uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_y0", new_panel->cfg), new_rect_pct.y0, new_rect_pct.y0, 1);
-          uishell_panel_anim(ui_key_from_stringf(ui_key_zero(), "panel_%p_y1", new_panel->cfg), new_rect_pct.y1, new_rect_pct.y1, 1);
+          UI_Key new_key = rd_panel_ui_key(new_panel->address);
+          uishell_panel_anim(ui_key_from_stringf(new_key, "x0"), new_rect_pct.x0, new_rect_pct.x0, 1);
+          uishell_panel_anim(ui_key_from_stringf(new_key, "x1"), new_rect_pct.x1, new_rect_pct.x1, 1);
+          uishell_panel_anim(ui_key_from_stringf(new_key, "y0"), new_rect_pct.y0, new_rect_pct.y0, 1);
+          uishell_panel_anim(ui_key_from_stringf(new_key, "y1"), new_rect_pct.y1, new_rect_pct.y1, 1);
         }
       }
 
       if(do_drop && new_panel_cfg != &cfg_nil_node)
       {
-        UIShell_RegsScope(.panel = new_panel_cfg->id, .tab = moving_view->id)
+        UIShell_RegsScope(.panel = new_panel_address, .tab = moving_view->id)
         {
           uishell_push_cmd_current(str8_lit("focus_tab"));
         }
@@ -1148,7 +1147,7 @@ uishell_dispatch_panel_command(String8 name)
 
       if(new_panel_cfg != &cfg_nil_node)
       {
-        UIShell_RegsScope(.panel = new_panel_cfg->id)
+        UIShell_RegsScope(.panel = new_panel_address)
         {
           uishell_push_cmd_current(str8_lit("focus_panel"));
         }
@@ -1156,7 +1155,7 @@ uishell_dispatch_panel_command(String8 name)
 
       if(panel->tab_side == Side_Max && split_axis == Axis2_X)
       {
-        UIShell_RegsScope(.panel = new_panel_cfg->id)
+        UIShell_RegsScope(.panel = new_panel_address)
         {
           uishell_push_cmd_current(str8_lit("tab_bar_bottom"));
         }
@@ -1168,15 +1167,15 @@ uishell_dispatch_panel_command(String8 name)
   {
     Temp scratch = scratch_begin(0, 0);
     UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
-    CFG_Node *panel = cfg_node_from_id(uishell_regs()->panel);
+    RD_PanelAddress panel = uishell_regs()->panel;
     RD_Arrangement *arrangement = workspace_mount.arrangement;
-    RD_PanelID heir = rd_arrangement_close(arrangement, rd_arrangement_panel_from_cfg(arrangement, panel->id)->id);
+    RD_PanelID heir = rd_arrangement_close(arrangement, rd_panel_owner_match(panel.owner, workspace_mount.owner) ? panel.id : 0);
     if(heir != 0)
     {
       rd_arrangement_save(rd_state->cfg, arrangement);
-      if(workspace_mount.panel_tree.focused->cfg == panel)
+      if(rd_panel_address_match(workspace_mount.panel_tree.focused->address, panel))
       {
-        UIShell_RegsScope(.panel = rd_arrangement_panel_from_id(arrangement, heir)->cfg)
+        UIShell_RegsScope(.panel = rd_panel_address(workspace_mount.owner, heir))
         {
           uishell_push_cmd_current(str8_lit("focus_panel"));
         }
@@ -1187,10 +1186,10 @@ uishell_dispatch_panel_command(String8 name)
   else if(str8_match(name, str8_lit("rotate_panel_columns"), 0))
   {
     Temp scratch = scratch_begin(0, 0);
-    CFG_Node *panel_cfg = cfg_node_from_id(uishell_regs()->panel);
-    RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, panel_cfg);
+    RD_PanelAddress panel = uishell_regs()->panel;
+    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
     RD_ArrangementPanel *parent = &rd_nil_arrangement_panel;
-    for(RD_ArrangementPanel *p = rd_arrangement_panel_from_cfg(arrangement, panel_cfg->id)->parent; p != &rd_nil_arrangement_panel; p = p->parent)
+    for(RD_ArrangementPanel *p = rd_arrangement_panel_from_id(arrangement, panel.id)->parent; p != &rd_nil_arrangement_panel; p = p->parent)
     {
       if(rd_arrangement_split_axis(arrangement, p) == Axis2_X)
       {
@@ -1208,35 +1207,35 @@ uishell_dispatch_panel_command(String8 name)
           str8_match(name, str8_lit("prev_panel"), 0))
   {
     Temp scratch = scratch_begin(0, 0);
-    U64 panel_sib_off = str8_match(name, str8_lit("next_panel"), 0) ? OffsetOf(CFG_PanelNode, next) : OffsetOf(CFG_PanelNode, prev);
-    U64 panel_child_off = str8_match(name, str8_lit("next_panel"), 0) ? OffsetOf(CFG_PanelNode, first) : OffsetOf(CFG_PanelNode, last);
+    U64 panel_sib_off = str8_match(name, str8_lit("next_panel"), 0) ? OffsetOf(RD_PanelNode, next) : OffsetOf(RD_PanelNode, prev);
+    U64 panel_child_off = str8_match(name, str8_lit("next_panel"), 0) ? OffsetOf(RD_PanelNode, first) : OffsetOf(RD_PanelNode, last);
     UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
-    CFG_PanelTree panel_tree = workspace_mount.panel_tree;
-    CFG_PanelNode *next_focused = &cfg_nil_panel_node;
-    for(CFG_PanelNode *p = panel_tree.focused;
-        p != &cfg_nil_panel_node;
-        p = cfg_panel_node_rec__depth_first(panel_tree.root, p, panel_sib_off, panel_child_off).next)
+    RD_PanelTree panel_tree = workspace_mount.panel_tree;
+    RD_PanelNode *next_focused = &rd_nil_panel_node;
+    for(RD_PanelNode *p = panel_tree.focused;
+        p != &rd_nil_panel_node;
+        p = rd_panel_node_rec__depth_first(panel_tree.root, p, panel_sib_off, panel_child_off).next)
     {
-      if(p != panel_tree.focused && p->first == &cfg_nil_panel_node)
+      if(p != panel_tree.focused && p->first == &rd_nil_panel_node)
       {
         next_focused = p;
         break;
       }
     }
-    if(next_focused == &cfg_nil_panel_node)
+    if(next_focused == &rd_nil_panel_node)
     {
-      for(CFG_PanelNode *p = panel_tree.root;
-          p != &cfg_nil_panel_node;
-          p = cfg_panel_node_rec__depth_first(panel_tree.root, p, panel_sib_off, panel_child_off).next)
+      for(RD_PanelNode *p = panel_tree.root;
+          p != &rd_nil_panel_node;
+          p = rd_panel_node_rec__depth_first(panel_tree.root, p, panel_sib_off, panel_child_off).next)
       {
-        if(p != panel_tree.focused && p->first == &cfg_nil_panel_node)
+        if(p != panel_tree.focused && p->first == &rd_nil_panel_node)
         {
           next_focused = p;
           break;
         }
       }
     }
-    UIShell_RegsScope(.panel = next_focused->cfg->id)
+    UIShell_RegsScope(.panel = next_focused->address)
     {
       uishell_push_cmd_current(str8_lit("focus_panel"));
     }
@@ -1245,15 +1244,17 @@ uishell_dispatch_panel_command(String8 name)
   else if(str8_match(name, str8_lit("focus_panel"), 0))
   {
     Temp scratch = scratch_begin(0, 0);
-    CFG_Node *panel = cfg_node_from_id(uishell_regs()->panel);
-    UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, panel);
-    CFG_PanelTree panel_tree = workspace_mount.panel_tree;
+    // The focus mark is Presentation State on the panel's node; one mark
+    // moves there from wherever in its tree it was.
+    RD_PanelAddress address = uishell_regs()->panel;
+    CFG_Node *panel = rd_cfg_from_panel(address);
+    RD_Arrangement *arrangement = uishell_workspace_mount_from_panel_owner(scratch.arena, address.owner).arrangement;
     CFG_Node *selection_cfg = &cfg_nil_node;
-    for(CFG_PanelNode *p = panel_tree.root;
-        p != &cfg_nil_panel_node;
-        p = cfg_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
+    for(RD_ArrangementPanel *p = arrangement->root;
+        p != &rd_nil_arrangement_panel;
+        p = rd_arrangement_next(arrangement->root, p))
     {
-      CFG_Node *p_cfg = p->cfg;
+      CFG_Node *p_cfg = cfg_node_from_id(p->cfg);
       CFG_Node *p_selection = cfg_node_child_from_string(p_cfg, str8_lit("selected"));
       if(selection_cfg == &cfg_nil_node)
       {
@@ -1275,7 +1276,7 @@ uishell_dispatch_panel_command(String8 name)
       CFG_Node *window = rd_window_from_cfg(panel);
       RD_WindowState *ws = rd_window_state_from_cfg(window);
       ws->menu_bar_focused = 0;
-      ws->active_panel_id = panel->id;
+      ws->active_panel = address;
     }
     scratch_end(scratch);
   }
@@ -1303,39 +1304,39 @@ uishell_dispatch_panel_command(String8 name)
       panel_change_dir = v2s32(+0, +1);
     }
     UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
-    CFG_PanelTree panel_tree = workspace_mount.panel_tree;
-    CFG_PanelNode *src_panel = panel_tree.focused;
-    Rng2F32 src_panel_rect = cfg_target_rect_from_panel_node(r2f32(v2f32(0, 0), v2f32(1000, 1000)), panel_tree.root, src_panel);
+    RD_PanelTree panel_tree = workspace_mount.panel_tree;
+    RD_PanelNode *src_panel = panel_tree.focused;
+    Rng2F32 src_panel_rect = rd_target_rect_from_panel_node(r2f32(v2f32(0, 0), v2f32(1000, 1000)), panel_tree.root, src_panel);
     Vec2F32 src_panel_center = center_2f32(src_panel_rect);
     Vec2F32 src_panel_half_dim = scale_2f32(dim_2f32(src_panel_rect), 0.5f);
     Vec2F32 travel_dim = add_2f32(src_panel_half_dim, v2f32(10.f, 10.f));
     Vec2F32 travel_dst = add_2f32(src_panel_center, mul_2f32(travel_dim, v2f32((F32)panel_change_dir.x, (F32)panel_change_dir.y)));
-    CFG_PanelNode *dst_root = &cfg_nil_panel_node;
-    for(CFG_PanelNode *p = panel_tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
+    RD_PanelNode *dst_root = &rd_nil_panel_node;
+    for(RD_PanelNode *p = panel_tree.root; p != &rd_nil_panel_node; p = rd_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
     {
-      if(p == src_panel || p->first != &cfg_nil_panel_node)
+      if(p == src_panel || p->first != &rd_nil_panel_node)
       {
         continue;
       }
-      Rng2F32 p_rect = cfg_target_rect_from_panel_node(r2f32(v2f32(0, 0), v2f32(1000, 1000)), panel_tree.root, p);
+      Rng2F32 p_rect = rd_target_rect_from_panel_node(r2f32(v2f32(0, 0), v2f32(1000, 1000)), panel_tree.root, p);
       if(contains_2f32(p_rect, travel_dst))
       {
         dst_root = p;
         break;
       }
     }
-    if(dst_root != &cfg_nil_panel_node)
+    if(dst_root != &rd_nil_panel_node)
     {
-      CFG_PanelNode *dst_panel = &cfg_nil_panel_node;
-      for(CFG_PanelNode *p = dst_root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(dst_root, p).next)
+      RD_PanelNode *dst_panel = &rd_nil_panel_node;
+      for(RD_PanelNode *p = dst_root; p != &rd_nil_panel_node; p = rd_panel_node_rec__depth_first_pre(dst_root, p).next)
       {
-        if(p->first == &cfg_nil_panel_node && p != src_panel)
+        if(p->first == &rd_nil_panel_node && p != src_panel)
         {
           dst_panel = p;
           break;
         }
       }
-      UIShell_RegsScope(.panel = dst_panel->cfg->id)
+      UIShell_RegsScope(.panel = dst_panel->address)
       {
         uishell_push_cmd_current(str8_lit("focus_panel"));
       }
@@ -1435,7 +1436,7 @@ uishell_new_workspace(CFG_Node *window)
   {
     ws->root_controlled_split_initialized = 1;
     ws->root_controlled_split_selected_workspace_id = workspace->id;
-    ws->active_panel_id = 0;
+    ws->active_panel = rd_nil_panel_address;
   }
   UISHELL_APP_DEFAULT_WORKSPACE_PANELS(window, workspace);
   scratch_end(scratch);
@@ -1506,7 +1507,7 @@ uishell_dispatch_window_command(String8 name)
     {
       ws->root_controlled_split_initialized = 1;
       ws->root_controlled_split_selected_workspace_id = workspace->id;
-      ws->active_panel_id = 0;
+      ws->active_panel = rd_nil_panel_address;
       ws->window_layout_reset = 1;
     }
   }

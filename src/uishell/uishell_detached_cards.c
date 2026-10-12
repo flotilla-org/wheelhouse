@@ -22,7 +22,7 @@ uishell_sidebar_card_request(UIShell_HoverCard *card, UIShell_CardPlacement plac
 }
 
 internal void
-uishell_sidebar_drag_panel_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab)
+uishell_sidebar_drag_panel_drop(RD_PanelAddress destination, Dir2 direction, CFG_ID previous_tab)
 {
   RD_WindowState *ws = rd_window_state_from_cfg__existing(cfg_node_from_id(rd_state->drag_drop_regs->window));
   if(ws == &rd_nil_window_state || !ws->sidebar || (!ws->sidebar->drag_card && !ws->sidebar->row_drag_key.size)) { return; }
@@ -38,8 +38,8 @@ uishell_sidebar_drag_panel_drop(CFG_ID destination, Dir2 direction, CFG_ID previ
 internal void
 uishell_sidebar_drag_begin(RD_WindowState *ws)
 {
-  ws->sidebar->drop_panel = 0; ws->sidebar->drop_previous_tab = 0; ws->sidebar->reorder_build = 0; ws->sidebar->group_claim_build = 0;
-  UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = 0, .tab = 0) { rd_drag_begin(UIShell_ContextRegSlot_View); }
+  ws->sidebar->drop_panel = rd_nil_panel_address; ws->sidebar->drop_previous_tab = 0; ws->sidebar->reorder_build = 0; ws->sidebar->group_claim_build = 0;
+  UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = rd_nil_panel_address, .tab = 0) { rd_drag_begin(UIShell_ContextRegSlot_View); }
   rd_state->drag_drop_creation_name = str8_lit("sidebar_section");
   rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
 }
@@ -336,9 +336,8 @@ uishell_sidebar_pin_update(CFG_Node *window, String8 ghost, UIShell_LocalPin val
 // pointer: its panel's edge pills and tab strip sit outside its body
 // (drag-model.md, "Drop-target visuals").
 internal B32
-uishell_sidebar_drop_claimable(CFG_Node *panel)
+uishell_sidebar_drop_claimable(void)
 {
-  (void)panel;
   return ui_key_match(ui_drop_hot_key(), ui_key_zero());
 }
 
@@ -473,20 +472,18 @@ uishell_sidebar_local_new_group(CFG_Node *window, String8 label)
 // A selected section View showing local section `section`, in `panel`,
 // after `prev` (nil: first).
 internal CFG_Node *
-uishell_sidebar_local_new_view_after(CFG_Node *panel, String8 section, CFG_Node *prev)
+uishell_sidebar_local_new_view_after(RD_PanelAddress panel, String8 section, CFG_Node *prev)
 {
   Temp scratch = scratch_begin(0, 0);
-  CFG_Node *window = panel;
-  while(window != &cfg_nil_node && !str8_match(window->string, str8_lit("window"), 0)) { window = window->parent; }
+  CFG_Node *window = rd_window_from_cfg(rd_cfg_from_panel_owner(panel.owner));
   UIShell_LocalSection *local = uishell_sidebar_local_section(window, section);
   String8 key = uishell_sidebar_local_key(scratch.arena, section);
   String8 label = local ? uishell_sidebar_local_title(scratch.arena, local) : str8_lit("Section");
-  RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, panel);
-  RD_PanelID panel_id = rd_arrangement_panel_from_cfg(arrangement, panel->id)->id;
+  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
   CFG_Node *view = &cfg_nil_node;
-  if(panel_id != 0)
+  if(rd_arrangement_panel_from_id(arrangement, panel.id) != &rd_nil_arrangement_panel)
   {
-    view = uishell_sidebar_section_view_new(arrangement, panel_id, prev->id, key, label);
+    view = uishell_sidebar_section_view_new(arrangement, panel.id, prev->id, key, label);
     rd_arrangement_save(rd_state->cfg, arrangement);
   }
   scratch_end(scratch);
@@ -495,12 +492,11 @@ uishell_sidebar_local_new_view_after(CFG_Node *panel, String8 section, CFG_Node 
 
 // The same, after `panel`'s last tab.
 internal CFG_Node *
-uishell_sidebar_local_new_view(CFG_Node *panel, String8 section)
+uishell_sidebar_local_new_view(RD_PanelAddress panel, String8 section)
 {
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, panel);
-  RD_PanelID panel_id = rd_arrangement_panel_from_cfg(arrangement, panel->id)->id;
-  CFG_Node *prev = cfg_node_from_id(uishell_sidebar_last_tab(arrangement, panel_id));
+  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+  CFG_Node *prev = cfg_node_from_id(uishell_sidebar_last_tab(arrangement, panel.id));
   scratch_end(scratch);
   return uishell_sidebar_local_new_view_after(panel, section, prev);
 }
@@ -516,14 +512,15 @@ uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area)
 {
   UIShell_SidebarState *state = ws->sidebar;
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
-  CFG_Node *destination = cfg_node_from_id(state->drop_panel);
+  RD_PanelAddress destination = state->drop_panel;
+  CFG_Node *destination_cfg = rd_cfg_from_panel(destination);
   UIShell_LocalGroup *area = new_area ? 0 : uishell_sidebar_pin_target(window);
-  if(new_area && destination != &cfg_nil_node)
+  if(new_area && destination_cfg != &cfg_nil_node)
   {
-    if(!rd_dock_can_create(str8_lit("sidebar_section"), destination)) { return 0; }
+    if(!rd_dock_can_create(str8_lit("sidebar_section"), rd_dock_host_from_panel(destination, RD_DOCK_UNMEASURED_WIDTH))) { return 0; }
     if(state->drop_direction == Dir2_Invalid)
     {
-      for(CFG_Node *v = destination->first; v != &cfg_nil_node && !area; v = v->next)
+      for(CFG_Node *v = destination_cfg->first; v != &cfg_nil_node && !area; v = v->next)
       { area = uishell_sidebar_local_view_group(window, v); }
     }
     if(!area)
@@ -533,8 +530,8 @@ uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area)
       CFG_Node *view = uishell_sidebar_local_new_view(destination, area->section->id);
       if(state->drop_direction != Dir2_Invalid)
       {
-        uishell_cmd("split_panel", .window = ws->cfg_id, .dst_panel = destination->id,
-          .panel = destination->id, .view = view->id, .dir2 = state->drop_direction);
+        uishell_cmd("split_panel", .window = ws->cfg_id, .dst_panel = destination,
+          .panel = destination, .view = view->id, .dir2 = state->drop_direction);
       }
     }
     // Keep the allocation selected by the same split geometry shown during drag.
@@ -545,7 +542,7 @@ uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area)
     // Validate a tentative destination before lifting tabs or changing ratios.
     CFG_Node prospective_root = {.string = RD_DOCK_SIDEBAR_ROOT, .parent = window};
     CFG_Node prospective_panel = {.string = str8_lit("1"), .parent = &prospective_root};
-    if(!rd_dock_can_create(str8_lit("sidebar_section"), &prospective_panel)) { return 0; }
+    if(!rd_dock_can_create(str8_lit("sidebar_section"), rd_dock_host_from_cfg(&prospective_panel, RD_DOCK_UNMEASURED_WIDTH))) { return 0; }
     // An equal share of the sidebar (a sidebar merged into one panel keeps
     // its tabs in a panel of their own), before a requested panel, else at
     // the top, where a new pin is seen.
@@ -554,7 +551,7 @@ uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area)
     Temp scratch = scratch_begin(0, 0);
     RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
     RD_PanelID panel = rd_arrangement_add(sidebar, sidebar->root->id, 0);
-    RD_ArrangementPanel *before = rd_arrangement_panel_from_cfg(sidebar, state->pin_before);
+    RD_ArrangementPanel *before = rd_arrangement_panel_from_id(sidebar, state->pin_before);
     rd_arrangement_reorder(sidebar, panel, before->parent == sidebar->root ? before->prev->id : 0);
     uishell_sidebar_section_view_new(sidebar, panel, 0, uishell_sidebar_local_key(scratch.arena, area->section->id),
                                      uishell_sidebar_local_title(scratch.arena, area->section));
@@ -688,7 +685,7 @@ uishell_sidebar_drag_clear(UIShell_SidebarState *state)
   state->row_drag_key = state->row_drag_loop = state->row_drag_label = str8_zero();
   state->row_drag_entity = (AndamentoEntity){0};
   state->row_drag_released = 0;
-  state->drop_panel = 0; state->reorder_build = 0;
+  state->drop_panel = rd_nil_panel_address; state->reorder_build = 0;
   state->row_drag_workspace = 0; state->home_build = 0; state->group_claim_build = 0;
 }
 
@@ -808,7 +805,7 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
     return;
   }
   B32 released = row ? state->row_drag_released : card->drag_released;
-  if((card && !card->open) || (!rd_drag_is_active() && !released && !state->drop_panel))
+  if((card && !card->open) || (!rd_drag_is_active() && !released && !state->drop_panel.id))
   {
     if(rd_state->drag_drop_commit == uishell_sidebar_drag_panel_drop && rd_state->drag_drop_regs->window == ws->cfg_id)
     { rd_drag_kill(); }
@@ -831,7 +828,7 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   // workspace moves there (Option/Alt adds a ghost of it instead), a pinned
   // card moves its own ghost there, and anything else becomes a ghost there,
   // a row as a row and a card as a card. A committed edge site still wins.
-  B32 edge = state->drop_panel && state->drop_direction != Dir2_Invalid;
+  B32 edge = state->drop_panel.id && state->drop_direction != Dir2_Invalid;
   UIShell_LocalGroup *group = !edge && uishell_sidebar_group_claimed(state) ? uishell_sidebar_local_group(window, state->group_claim_id) : 0;
   // A local group's header moves the group: over a group in another
   // section, into that section after it; on a docking site, into the
@@ -848,20 +845,20 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
     { uishell_sidebar_drag_clear(state); scratch_end(scratch); return; }
     // On a section's tab strip, the group joins as a tab at the gap (#282):
     // a new section of its own, shown after the tab the gap follows.
-    CFG_Node *strip = cfg_node_from_id(state->drop_panel);
-    if(!group && strip != &cfg_nil_node && state->drop_direction == Dir2_Invalid &&
-       !dragged_group->is_default && rd_dock_can_create(str8_lit("sidebar_section"), strip))
+    RD_PanelAddress strip = state->drop_panel;
+    if(!group && rd_cfg_from_panel(strip) != &cfg_nil_node && state->drop_direction == Dir2_Invalid &&
+       !dragged_group->is_default && rd_dock_can_create(str8_lit("sidebar_section"), rd_dock_host_from_panel(strip, RD_DOCK_UNMEASURED_WIDTH)))
     {
       UIShell_LocalSection *section = uishell_sidebar_local_new_section(window);
       String8 section_id = section ? push_str8_copy(scratch.arena, section->id) : str8_zero();
       uishell_sidebar_local_move_group(window, dragged_id, section_id, str8_zero());
       CFG_Node *previous = cfg_node_from_id(state->drop_previous_tab);
-      uishell_sidebar_local_new_view_after(strip, section_id, previous->parent == strip ? previous : &cfg_nil_node);
+      uishell_sidebar_local_new_view_after(strip, section_id, rd_panel_address_match(rd_panel_from_cfg(previous), strip) ? previous : &cfg_nil_node);
       uishell_sidebar_drag_clear(state);
       scratch_end(scratch);
       return;
     }
-    if(!group && state->drop_panel)
+    if(!group && state->drop_panel.id)
     {
       UIShell_Locals *locals = uishell_sidebar_window_locals(window);
       String8 last_section = locals->section_count ? push_str8_copy(scratch.arena, locals->sections[locals->section_count-1].id) : str8_zero();
@@ -928,7 +925,7 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   UIShell_LocalGroup *area = 0;
   U64 index = max_U64;
   UIShell_CardPlacement placement = card ? uishell_sidebar_card_drag_target(ws, card, ui_mouse()) : UIShell_CardPlacement_Float;
-  B32 docked = placement != UIShell_CardPlacement_Inline && state->drop_panel;
+  B32 docked = placement != UIShell_CardPlacement_Inline && state->drop_panel.id;
   // A site that can't take a pinned area leaves `area` 0: the drop falls
   // through to the row's or card's own targets below.
   if(docked) { area = uishell_sidebar_pin_area(ws, 1); index = max_U64; }

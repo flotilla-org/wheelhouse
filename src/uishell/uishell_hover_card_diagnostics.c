@@ -15,12 +15,12 @@ uishell_hover_card_test_center_drop(RD_WindowState *ws, UIShell_HoverCard *card,
   CFG_Node *view = group ? uishell_sidebar_local_view(window, group->section->id) : &cfg_nil_node;
   card->open = card->moving = card->drag_released = card->engaged = 1;
   ws->sidebar->drag_card = card;
-  UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = 0)
+  UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = rd_nil_panel_address)
   { rd_drag_begin(UIShell_ContextRegSlot_View); }
   rd_state->drag_drop_creation_name = str8_lit("sidebar_section");
   rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
   rd_state->drag_drop_state = RD_DragDropState_Dropping;
-  if(rd_drag_drop()) { rd_panel_drag_drop(view->parent->id, Dir2_Invalid, view->id); }
+  if(rd_drag_drop()) { rd_panel_drag_drop(rd_panel_from_cfg(view), Dir2_Invalid, view->id); }
   UI_EventList events = {0}; UI_AnimationInfo animation = {0};
   UI_IconInfo icons = ws->ui->icon_info;
   ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
@@ -1092,13 +1092,14 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // A normal tab drag after Escape must queue a move, never call the
     // cancelled card's creation callback.
     UIShell_CmdNode *before_normal_drag = rd_state->cmds[0].last;
-    UIShell_RegsScope(.window = ws->cfg_id, .panel = 123, .view = 456)
+    RD_PanelAddress normal_source = {{RD_PanelOwnerKind_Workspace}, 123}, normal_destination = {{RD_PanelOwnerKind_Workspace}, 789};
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = normal_source, .view = 456)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
-    rd_panel_drag_drop(789, Dir2_Invalid, 0);
+    rd_panel_drag_drop(normal_destination, Dir2_Invalid, 0);
     UIShell_CmdNode *normal_move = before_normal_drag ? before_normal_drag->next : rd_state->cmds[0].first;
     CardCheck(normal_move && str8_match(normal_move->cmd.name, str8_lit("move_view"), 0) &&
-      normal_move->cmd.regs->panel == 123 && normal_move->cmd.regs->view == 456 &&
-      normal_move->cmd.regs->dst_panel == 789 && !rd_state->drag_drop_commit && !rd_state->drag_drop_creation_name.size,
+      rd_panel_address_match(normal_move->cmd.regs->panel, normal_source) && normal_move->cmd.regs->view == 456 &&
+      rd_panel_address_match(normal_move->cmd.regs->dst_panel, normal_destination) && !rd_state->drag_drop_commit && !rd_state->drag_drop_creation_name.size,
       "normal tab drag after Escape queues its move without the cancelled creation callback");
     rd_drag_kill();
     UIShell_RegsScope(.window = ws->cfg_id) { rd_drag_begin(UIShell_ContextRegSlot_View); }
@@ -1228,7 +1229,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       // Pins render in their local section's View, as tree rows and cards.
       UIShell_LocalGroup *pin_group = uishell_sidebar_local_group(window, center_area);
       CFG_Node *pin_view = uishell_sidebar_local_view(window, pin_group ? pin_group->section->id : str8_zero());
-      UIShell_RegsScope(.window = window->id, .view = pin_view->id, .panel = pin_view->parent->id)
+      UIShell_RegsScope(.window = window->id, .view = pin_view->id, .panel = rd_panel_from_cfg(pin_view))
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
       {
         // A real View receives window coordinates under a parent already at
@@ -1309,7 +1310,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     fixture.drag_card = pinned; pinned->moving = pinned->drag_released = 1;
     UIShell_LocalGroup *area_group = uishell_sidebar_local_group(window, area);
     CFG_Node *area_view = uishell_sidebar_local_view(window, area_group ? area_group->section->id : str8_zero());
-    fixture.drop_panel = area_view->parent->id; fixture.drop_direction = Dir2_Down;
+    fixture.drop_panel = rd_panel_from_cfg(area_view); fixture.drop_direction = Dir2_Down;
     uishell_sidebar_drag_finish(ws);
     UIShell_LocalPin *moved = uishell_sidebar_pin_by_ghost(window, saved_ghost);
     CardCheck(moved && !str8_match(moved->group->id, area, 0) && pinned->open && !fixture.drag_card,
@@ -1440,7 +1441,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         { ui_event_list_push(test->arena, &events, &event); }
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         test->mouse = at; test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
-        UIShell_RegsScope(.window = window->id, .view = ghost_view->id, .panel = ghost_view->parent->id)
+        UIShell_RegsScope(.window = window->id, .view = ghost_view->id, .panel = rd_panel_from_cfg(ghost_view))
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         {
           UI_Box *view_parent;
@@ -1557,7 +1558,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       cfg_node_insert_child(rd_state->cfg, root, &cfg_nil_node, top_panel);
       UIShell_LocalGroup *top_group = uishell_sidebar_local_new_group(window, str8_lit("Top"));
       String8 top_id = push_str8_copy(entity_arena, top_group->id), top_section = push_str8_copy(entity_arena, top_group->section->id);
-      CFG_Node *top_view = uishell_sidebar_local_new_view(top_panel, top_section);
+      CFG_Node *top_view = uishell_sidebar_local_new_view(rd_panel_from_cfg(top_panel), top_section);
       UIShell_LocalGroup *target = uishell_sidebar_pin_target(window);
       CardCheck(target && str8_match(target->id, top_id, 0), "Pin goes to the topmost showing local section");
       cfg_node_release(rd_state->cfg, cfg_node_child_from_string(top_view, str8_lit("selected")));
@@ -1628,7 +1629,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(panel_scratch.arena, window, host);
           mount.arrangement = rd_arrangement_from_cfg(panel_scratch.arena, drag_root);
           mount.arrangement->root_axis = Axis2_X;
-          mount.panel_tree = rd_panel_tree_from_arrangement(panel_scratch.arena, mount.arrangement);
+          mount.panel_tree = rd_panel_tree_from_arrangement(panel_scratch.arena, mount.owner, mount.arrangement);
           UIShell_RegsScope(.window = window->id)
           { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
           scratch_end(panel_scratch);
@@ -1682,7 +1683,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         // The drag root splits along x, whatever the window's sidebar axis.
         mount.arrangement = rd_arrangement_from_cfg(panel_scratch.arena, drag_root);
         mount.arrangement->root_axis = Axis2_X;
-        mount.panel_tree = rd_panel_tree_from_arrangement(panel_scratch.arena, mount.arrangement);
+        mount.panel_tree = rd_panel_tree_from_arrangement(panel_scratch.arena, mount.owner, mount.arrangement);
         UIShell_RegsScope(.window = window->id)
         { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
         scratch_end(panel_scratch);
@@ -1833,7 +1834,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(panel_scratch.arena, window, host);
           mount.arrangement = rd_arrangement_from_cfg(panel_scratch.arena, drag_root);
           mount.arrangement->root_axis = Axis2_X;
-          mount.panel_tree = rd_panel_tree_from_arrangement(panel_scratch.arena, mount.arrangement);
+          mount.panel_tree = rd_panel_tree_from_arrangement(panel_scratch.arena, mount.owner, mount.arrangement);
           UIShell_RegsScope(.window = window->id)
           { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
           scratch_end(panel_scratch);
@@ -1972,7 +1973,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     UI_EventList tolerance_events = {0};
     ui_begin_build(ws->os, &tolerance_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
-    UIShell_RegsScope(.window = window->id, .view = tolerance_view->id, .panel = tolerance_view->parent->id)
+    UIShell_RegsScope(.window = window->id, .view = tolerance_view->id, .panel = rd_panel_from_cfg(tolerance_view))
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
     { wh_view_ui_direct(wh_renderer_from_name(str8_lit("sidebar_section")), cfg_node_from_id(uishell_regs()->view), r2f32p(17, 29, 297, 1629)); }
     ui_end_build();
@@ -2048,18 +2049,19 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       U64 sections_before = uishell_sidebar_window_locals(window)->section_count;
       UIShell_LocalGroup *existing_local = uishell_sidebar_local_new_group(window, str8_lit("Pinned"));
       String8 existing_group = push_str8_copy(entity_arena, existing_local->id);
-      CFG_Node *existing = uishell_sidebar_local_new_view(destination, existing_local->section->id);
+      RD_PanelAddress destination_panel = rd_panel_from_cfg(destination);
+      CFG_Node *existing = uishell_sidebar_local_new_view(destination_panel, existing_local->section->id);
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
       original->engaged = original->focused = original->moving = original->drag_released = 1;
       fixture.drag_card = original;
-      UIShell_RegsScope(.window = window->id, .view = 0, .panel = 0)
+      UIShell_RegsScope(.window = window->id, .view = 0, .panel = rd_nil_panel_address)
       { rd_drag_begin(UIShell_ContextRegSlot_View); }
       rd_state->drag_drop_creation_name = str8_lit("sidebar_section");
       rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
-      CardCheck(rd_panel_drag_target(&cfg_nil_node, destination, 320), "creation drag uses the registered panel validity checker");
+      CardCheck(rd_panel_drag_target(&cfg_nil_node, destination_panel, 320), "creation drag uses the registered panel validity checker");
       rd_state->drag_drop_state = RD_DragDropState_Dropping;
       UIShell_CmdNode *before_drop = rd_state->cmds[0].last;
-      if(rd_drag_drop()) { rd_panel_drag_drop(destination->id, directions[d], existing->id); }
+      if(rd_drag_drop()) { rd_panel_drag_drop(destination_panel, directions[d], existing->id); }
       UI_EventList drop_events = {0};
       ui_begin_build(ws->os, &drop_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       test->mouse = v2f32(500, 100);
@@ -2086,22 +2088,22 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CFG_Node *settled_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
       Temp drop_scratch = scratch_begin(0, 0);
       UIShell_WorkspaceMount drop_mount = uishell_workspace_mount_from_owner_cfg(drop_scratch.arena, window, settled_host);
-      CFG_PanelNode *drop_root = drop_mount.panel_tree.root;
+      RD_PanelNode *drop_root = drop_mount.panel_tree.root;
       CardCheck(entry && !original->open &&
         cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node,
         "accepted card drop pins once and opts into saved panel sizing");
-      CFG_PanelNode *target_root = nested ? drop_root->first : drop_root;
+      RD_PanelNode *target_root = nested ? drop_root->first : drop_root;
       if(nested)
-      { CardCheck(drop_root->child_count == 2 && drop_root->last->cfg == neighbour &&
+      { CardCheck(drop_root->child_count == 2 && rd_panel_address_match(drop_root->last->address, rd_panel_from_cfg(neighbour)) &&
           abs_f32(drop_root->last->pct_of_parent-.4f) < .0001f, "nested drop preserves the other panel and outer allocation"); }
       if(directions[d] == Dir2_Invalid)
       { CardCheck(area && str8_match(area->id, existing_group, 0) && target_root->child_count == 0, "center drop joins the group of the exact existing section"); }
       else
       {
         Side side = side_from_dir2(directions[d]);
-        CFG_PanelNode *placed = side == Side_Min ? target_root->first : target_root->last;
+        RD_PanelNode *placed = side == Side_Min ? target_root->first : target_root->last;
         CardCheck(target_root->child_count == 2 && target_root->split_axis == axis2_from_dir2(directions[d]) &&
-          area && placed->cfg == uishell_sidebar_local_view(window, area->section->id)->parent && abs_f32(placed->pct_of_parent-.5f) < .0001f,
+          area && rd_panel_address_match(placed->address, rd_panel_from_cfg(uishell_sidebar_local_view(window, area->section->id))) && abs_f32(placed->pct_of_parent-.5f) < .0001f,
           "directional card drop matches the ordinary half-panel split and side");
       }
       scratch_end(drop_scratch);
@@ -2142,9 +2144,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     cfg_node_new(rd_state->cfg, last_survivor, str8_lit("sidebar_section"));
     CFG_ID survivor_id = survivor->id;
     UIShell_CmdNode *before_collapse = rd_state->cmds[0].last;
-    UIShell_RegsScope(.window = window->id, .panel = source_panel->id, .view = moving_section->id, .tab = 0)
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(source_panel), .view = moving_section->id, .tab = 0)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
-    rd_panel_drag_drop(other->id, Dir2_Up, 0);
+    rd_panel_drag_drop(rd_panel_from_cfg(other), Dir2_Up, 0);
     rd_drag_kill();
     CFG_ID source_panel_id = source_panel->id;
     for(UIShell_CmdNode *n = before_collapse ? before_collapse->next : rd_state->cmds[0].first; n; n = n->next)
@@ -2162,10 +2164,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       abs_f32((F32)f64_from_str8(first_survivor->string)-.15f) < .0001f &&
       abs_f32((F32)f64_from_str8(last_survivor->string)-.45f) < .0001f,
       "empty source collapse flattens survivors and retains their allocation");
-    CFG_ID last_focus = 0;
+    RD_PanelAddress last_focus = rd_nil_panel_address;
     for(UIShell_CmdNode *n = before_collapse ? before_collapse->next : rd_state->cmds[0].first; n; n = n->next)
     { if(str8_match(n->cmd.name, str8_lit("focus_panel"), 0)) { last_focus = n->cmd.regs->panel; } }
-    CardCheck(last_focus == moving_section->parent->id, "closing the focused source leaves focus with the View, in its new panel (#329)");
+    CardCheck(rd_panel_address_match(last_focus, rd_panel_from_cfg(moving_section)), "closing the focused source leaves focus with the View, in its new panel (#329)");
     cfg_node_release(rd_state->cfg, collapse_root);
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("control_views_split_x")));
     if(collapse_axis != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, collapse_axis); }

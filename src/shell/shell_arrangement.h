@@ -21,6 +21,44 @@
 // Stable within its arrangement; 0 is no panel.
 typedef U64 RD_PanelID;
 
+// A Panel ID is unique only within its arrangement, so a panel is addressed
+// by its arrangement's owner and its ID (CONTEXT.md, "Panel ID"). Whatever
+// refers to a panel (the renderer's panel tree, UI keys, command registers,
+// a window's Active Panel, a drag) does so by address; the config node a
+// panel is mirrored to is reached through it (rd_cfg_from_panel).
+typedef enum RD_PanelOwnerKind
+{
+  RD_PanelOwnerKind_Null,
+  // A Workspace's panels. A window's own panels are a Workspace too.
+  RD_PanelOwnerKind_Workspace,
+  // The sidebar's dock: the Dashboard's arrangement, as one host shows it.
+  RD_PanelOwnerKind_Sidebar,
+  // A Floating Panel's arrangement.
+  RD_PanelOwnerKind_Floating,
+} RD_PanelOwnerKind;
+
+typedef struct RD_PanelOwner RD_PanelOwner;
+struct RD_PanelOwner
+{
+  RD_PanelOwnerKind kind;
+  // A Workspace's Workspace ID. For the sidebar and Floating Panels, their
+  // host's: its window's Window ID, or the Workspace ID of a workspace that
+  // hosts them.
+  UIShell_WorkspaceId id;
+  // A Floating Panel's place among its host's, from 1, as the sidebar's
+  // document names them (uishell_sidebar_store.c); 0 for other owners.
+  U64 floating;
+};
+
+typedef struct RD_PanelAddress RD_PanelAddress;
+struct RD_PanelAddress
+{
+  RD_PanelOwner owner;
+  RD_PanelID id;
+};
+
+read_only global RD_PanelAddress rd_nil_panel_address = {0};
+
 typedef struct RD_ArrangementTab RD_ArrangementTab;
 struct RD_ArrangementTab
 {
@@ -101,6 +139,55 @@ read_only global RD_ArrangementPanel rd_nil_arrangement_panel =
   &rd_nil_arrangement_panel,
 };
 
+// The renderer's view of an arrangement (rd_panel_tree_from_arrangement).
+typedef struct RD_PanelNode RD_PanelNode;
+struct RD_PanelNode
+{
+  RD_PanelNode *first;
+  RD_PanelNode *last;
+  RD_PanelNode *next;
+  RD_PanelNode *prev;
+  RD_PanelNode *parent;
+  U64 child_count;
+  RD_PanelAddress address;
+  
+  // rjf: split data
+  Axis2 split_axis;
+  F32 pct_of_parent;
+  
+  // rjf: tab params
+  Side tab_side;
+  
+  // rjf: which tabs are attached
+  CFG_NodePtrList tabs;
+  CFG_Node *selected_tab;
+};
+
+typedef struct RD_PanelTree RD_PanelTree;
+struct RD_PanelTree
+{
+  RD_PanelNode *root;
+  RD_PanelNode *focused;
+};
+
+typedef struct RD_PanelNodeRec RD_PanelNodeRec;
+struct RD_PanelNodeRec
+{
+  RD_PanelNode *next;
+  S32 push_count;
+  S32 pop_count;
+};
+
+read_only global RD_PanelNode rd_nil_panel_node =
+{
+  &rd_nil_panel_node,
+  &rd_nil_panel_node,
+  &rd_nil_panel_node,
+  &rd_nil_panel_node,
+  &rd_nil_panel_node,
+  .selected_tab = &cfg_nil_node,
+};
+
 // The config keys around a root panel node, by the root's name.
 typedef struct RD_ArrangementKeys RD_ArrangementKeys;
 struct RD_ArrangementKeys
@@ -128,14 +215,24 @@ internal RD_Arrangement *rd_arrangement_copy(Arena *arena, RD_Arrangement *src);
 // and the root node it was loaded from when it was discarded.
 internal void rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement);
 
+//- Panel addresses
+internal B32 rd_panel_owner_match(RD_PanelOwner a, RD_PanelOwner b);
+internal B32 rd_panel_address_match(RD_PanelAddress a, RD_PanelAddress b);
+internal RD_PanelAddress rd_panel_address(RD_PanelOwner owner, RD_PanelID id);
+
 //- The renderer's panel tree
-// The arrangement's panels and tabs as config nodes, with the Presentation
-// State saved on each panel's node: the focus mark (`selected`; the last
-// marked panel in tree order has focus) and `tabs_on_bottom`. Valid until
-// the config changes.
-internal CFG_PanelTree rd_panel_tree_from_arrangement(Arena *arena, RD_Arrangement *arrangement);
-// Loads `panels_root` and returns its panel tree.
-internal CFG_PanelTree rd_panel_tree_from_cfg(Arena *arena, CFG_Node *panels_root);
+// The arrangement's panels, addressed as `owner`'s, and their tabs as View
+// nodes, with the Presentation State saved on each panel's node: the focus
+// mark (`selected`; the last marked panel in tree order has focus) and
+// `tabs_on_bottom`. Valid until the config changes.
+internal RD_PanelTree rd_panel_tree_from_arrangement(Arena *arena, RD_PanelOwner owner, RD_Arrangement *arrangement);
+internal RD_PanelNodeRec rd_panel_node_rec__depth_first(RD_PanelNode *root, RD_PanelNode *panel, U64 sib_off, U64 child_off);
+#define rd_panel_node_rec__depth_first_pre(root, p)     rd_panel_node_rec__depth_first((root), (p), OffsetOf(RD_PanelNode, next), OffsetOf(RD_PanelNode, first))
+#define rd_panel_node_rec__depth_first_pre_rev(root, p) rd_panel_node_rec__depth_first((root), (p), OffsetOf(RD_PanelNode, prev), OffsetOf(RD_PanelNode, last))
+// The panel with `id` under `root`, or the nil panel.
+internal RD_PanelNode *rd_panel_node_from_id(RD_PanelNode *root, RD_PanelID id);
+internal Rng2F32 rd_target_rect_from_panel_node_child(Rng2F32 parent_rect, RD_PanelNode *parent, RD_PanelNode *panel);
+internal Rng2F32 rd_target_rect_from_panel_node(Rng2F32 root_rect, RD_PanelNode *root, RD_PanelNode *panel);
 
 //- Queries; each returns the nil panel when there is none
 // The panel after `panel` in tree order (pre-order) under `root`.

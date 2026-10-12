@@ -20,9 +20,9 @@ enum
 ////////////////////////////////
 //~ Renderers (uishell/uishell_renderers.h)
 
+#include "shell_workspace_id.h"
 #include "shell_arrangement.h"
 #include "shell_docking.h"
-#include "shell_workspace_id.h"
 
 // Where a Slot is: its workspace's ID and its slot key. Zero for a View that
 // is not a Slot: a control view, a Floating Panel's View, a query or palette.
@@ -241,11 +241,11 @@ typedef struct UIShell_Regs UIShell_Regs;
 struct UIShell_Regs
 {
   CFG_ID window;
-  CFG_ID panel;
+  RD_PanelAddress panel;
   CFG_ID tab;
   CFG_ID view;
   CFG_ID prev_tab;
-  CFG_ID dst_panel;
+  RD_PanelAddress dst_panel;
   CFG_ID cfg;
   CFG_IDList cfg_list;
   String8 file_path;
@@ -681,7 +681,8 @@ struct RD_WindowState
   RD_WindowState *order_prev;
   RD_WindowState *hash_next;
   RD_WindowState *hash_prev;
-  CFG_ID active_panel_id;
+  // The Active Panel.
+  RD_PanelAddress active_panel;
   CFG_ID cfg_id;
   U64 frames_alive;
   U64 last_frame_index_touched;
@@ -732,7 +733,7 @@ struct RD_WindowState
 
   // rjf: drop-completion state
   Arena *drop_completion_arena;
-  CFG_ID drop_completion_panel;
+  RD_PanelAddress drop_completion_panel;
   RD_DropCompletionTask *top_drop_completion_task;
 
   // rjf: query state
@@ -866,8 +867,8 @@ struct RD_BoundaryResize
 {
   Arena *arena;
   UI_Key key;              // the boundary's box; zero when no drag is in flight
-  CFG_ID root;             // the arrangement's root panel node
-  CFG_ID panel;            // the boundary is after this panel's node
+  RD_PanelOwner owner;     // the arrangement's
+  RD_PanelID panel;        // the boundary is after this panel
   F32 delta;               // moved by, and held at least `floor` from either end
   F32 floor;
   Vec2F32 laid_out;        // both sides' laid out shares as the drag began
@@ -1033,7 +1034,7 @@ struct RD_State
   RD_DragDropState drag_drop_state;
   // Creation drags share panel sites without allocating a saved View until drop.
   String8 drag_drop_creation_name;
-  void (*drag_drop_commit)(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
+  void (*drag_drop_commit)(RD_PanelAddress destination, Dir2 direction, CFG_ID previous_tab);
   RD_BoundaryResize boundary_resize;
 
   // rjf: cfg state
@@ -1097,8 +1098,6 @@ read_only global RD_WindowState rd_nil_window_state =
 };
 
 global RD_State *rd_state = 0;
-global CFG_ID rd_last_drag_drop_panel = 0;
-global CFG_ID rd_last_drag_drop_prev_tab = 0;
 
 ////////////////////////////////
 //~ rjf: Workspace Runtime Types
@@ -1113,8 +1112,9 @@ struct UIShell_WorkspaceMount
   Axis2 root_split_axis;
   // As loaded. Commands may edit and save it; `panel_tree` stays as loaded.
   RD_Arrangement *arrangement;
-  // The renderer's view of `arrangement`.
-  CFG_PanelTree panel_tree;
+  // The renderer's view of `arrangement`, its panels addressed as `owner`'s.
+  RD_PanelOwner owner;
+  RD_PanelTree panel_tree;
   // Both show a boundary drag in flight, not what config has
   // (rd_boundary_resize_show).
   B32 resizing;
@@ -1196,8 +1196,8 @@ internal String8 rd_drag_refusal(void);
 internal String8 rd_drag_refusal_text(Arena *arena);
 internal Vec4F32 rd_drag_refusal_color(void);
 internal void rd_drag_refusal_badge_ui(Rng2F32 anchor);
-internal UI_Key rd_panel_catchall_drop_site_key(CFG_Node *panel);
-internal void rd_panel_drag_drop(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
+internal UI_Key rd_panel_catchall_drop_site_key(RD_PanelAddress panel);
+internal void rd_panel_drag_drop(RD_PanelAddress destination, Dir2 direction, CFG_ID previous_tab);
 // A borderless button of size w x h that hovers as a circle of diameter d,
 // centred in it.
 #define RD_RoundButtonStyle(w, h, d) UI_TagF("implicit") UI_CornerRadius((d)*0.5f) \
@@ -1368,11 +1368,38 @@ internal F32 rd_workspace_preview_demand_width(RD_WindowState *ws, U64 workspace
 internal void rd_window_surface_cache_evict(RD_WindowState *ws);
 internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);
 internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);
+
+//- Panel addresses (shell_arrangement.h), resolved through the config nodes
+// arrangements are mirrored to.
+// The owner of `host`'s arrangement of `kind`: a window or a workspace hosts
+// its sidebar and Floating Panels (the `floating`th, from 1); a workspace's
+// panels, or a window's own, are a Workspace's.
+internal RD_PanelOwner rd_panel_owner_from_host(RD_PanelOwnerKind kind, CFG_Node *host, U64 floating);
+// The owner of the arrangement `cfg` (a panel node or a View) is in.
+internal RD_PanelOwner rd_panel_owner_from_cfg(CFG_Node *cfg);
+// The owner's host: a window or a workspace node.
+internal CFG_Node *rd_cfg_from_panel_owner(RD_PanelOwner owner);
+// The root panel node the owner's arrangement is saved as, or nil.
+internal CFG_Node *rd_cfg_root_from_panel_owner(RD_PanelOwner owner);
+// The owner's arrangement, as config has it; an empty one when it has no
+// panels, which saves in the owner's host (Floating Panels excepted).
+internal RD_Arrangement *rd_arrangement_from_panel_owner(Arena *arena, RD_PanelOwner owner);
+// The node `panel` is mirrored to, which keeps its Presentation State; nil
+// when there is no such panel.
+internal CFG_Node *rd_cfg_from_panel(RD_PanelAddress panel);
+// The panel `cfg` is (a panel node) or has as a tab (a View).
+internal RD_PanelAddress rd_panel_from_cfg(CFG_Node *cfg);
+// The panel tree of the arrangement saved as `panels_root`.
+internal RD_PanelTree rd_panel_tree_from_cfg(Arena *arena, CFG_Node *panels_root);
+// The seed of every UI key of `panel`'s boxes and animations.
+internal UI_Key rd_panel_ui_key(RD_PanelAddress panel);
+internal RD_DockHost rd_dock_host_from_panel(RD_PanelAddress panel, F32 width);
+
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner);
+internal UIShell_WorkspaceMount uishell_workspace_mount_from_panel_owner(Arena *arena, RD_PanelOwner owner);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_window(Arena *arena, CFG_Node *window);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_current_regs(Arena *arena);
-internal RD_Arrangement *uishell_arrangement_from_cfg(Arena *arena, CFG_Node *cfg);
 internal UIShell_ControlledSplit uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window);
 internal void rd_window_save_presentation(RD_WindowState *ws);
 internal void rd_window_restore_presentation(RD_WindowState *ws);
@@ -1491,9 +1518,9 @@ internal CFG_Node *rd_new_view_tab(RD_Arrangement *arrangement, RD_PanelID panel
 internal void rd_init(CmdLine *cmdln);
 internal void rd_frame(void);
 
-internal F32 rd_dock_target_width(Arena *arena, CFG_Node *destination, Dir2 dir, CFG_Node *view, B32 *unavailable);
+internal F32 rd_dock_target_width(Arena *arena, RD_PanelAddress destination, Dir2 dir, CFG_Node *view, B32 *unavailable);
 internal F32 rd_panel_inset_px(F32 font_size);
 
-internal B32 rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, CFG_Node *destination, Dir2 dir);
+internal B32 rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, RD_PanelAddress destination, Dir2 dir);
 
 #endif // SHELL_CORE_H

@@ -125,7 +125,7 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
       pointer = ui_box_is_nil(to) ? add_2f32(start, offset) :
         v2f32(start.x, to->rect.y0+dim_2f32(to->rect).y*to_fraction);
     }
-    if(frame == 4 && mode == UIShell_ReorderMode_Dock) { uishell_sidebar_drag_panel_drop(view->parent->id, Dir2_Down, 0); }
+    if(frame == 4 && mode == UIShell_ReorderMode_Dock) { uishell_sidebar_drag_panel_drop(rd_panel_from_cfg(view), Dir2_Down, 0); }
     if(frame == 1 || frame == 4)
     {
       event.v = (UI_Event){.kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release,
@@ -136,13 +136,12 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
     ui_state->mouse = pointer;
     state->managed_cfg_generation = cfg_change_gen(); state->managed_dirty = 0;
     uishell_sidebar_row_lift(state);
-    UIShell_RegsScope(.window = split->owner_cfg->id, .view = view->id, .panel = view->parent->id)
+    UIShell_RegsScope(.window = split->owner_cfg->id, .view = view->id, .panel = rd_panel_from_cfg(view))
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     { uishell_sidebar_render(r2f32p(0, 0, 320, 600), split, (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, str8_lit("tree")}); }
-    // The local group's section, as its View renders it, in a stand-in panel
-    // (the window).
+    // The local group's section, as its View renders it, outside any panel.
     if(pinned_area.size)
-    UIShell_RegsScope(.window = split->owner_cfg->id, .view = 0, .panel = split->owner_cfg->id)
+    UIShell_RegsScope(.window = split->owner_cfg->id, .view = 0, .panel = rd_nil_panel_address)
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     {
       UIShell_LocalGroup *area = uishell_sidebar_local_group(split->owner_cfg, pinned_area);

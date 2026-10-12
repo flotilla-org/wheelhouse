@@ -33,7 +33,7 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
   UIShell_RuntimeSetting untouched_setting = uishell_runtime_setting(scratch.arena, untouched, str8_lit("terminal_hosting"));
   HostingCheck(str8_match(untouched_setting.value, str8_lit("unavailable"), 0) && untouched_setting.command.size == 0,
                "never-built hidden terminal is unavailable with no action");
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = panel->id, .tab = view->id, .view = view->id)
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(panel), .tab = view->id, .view = view->id)
   {
     // Issue #109: hosting overlay is per-view and absent means off.
     HostingCheck(!rd_view_setting_b32_from_name(str8_lit("show_hosting_overlay")), "overlay defaults off");

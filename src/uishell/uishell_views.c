@@ -2559,9 +2559,9 @@ WH_VIEW_UI_FUNCTION_DEF(watch)
                       if(cfg != &cfg_nil_node)
                       {
                         UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, cfg);
-                        CFG_PanelTree panels = workspace_mount.panel_tree;
-                        CFG_PanelNode *parent_panel_node = cfg_panel_node_from_tree_cfg(panels.root, cfg->parent);
-                        if(parent_panel_node != &cfg_nil_panel_node)
+                        RD_PanelAddress parent_panel = rd_panel_from_cfg(cfg);
+                        if(rd_panel_owner_match(parent_panel.owner, workspace_mount.owner) &&
+                           rd_panel_node_from_id(workspace_mount.panel_tree.root, parent_panel.id) != &rd_nil_panel_node)
                         {
                           uishell_regs()->tab = cfg->id;
                           uishell_regs()->view = cfg->id;
@@ -2831,7 +2831,7 @@ WH_VIEW_UI_FUNCTION_DEF(sessions)
           {
             // open a Terminal View attached to this daemon session, in this
             // panel; the tab persists in the workspace and reattaches by id
-            CFG_Node *panel = cfg_node_from_id(uishell_regs()->panel);
+            CFG_Node *panel = rd_cfg_from_panel(uishell_regs()->panel);
             CFG_Node *tab = rd_cfg_new_view_tab(panel, str8_lit("terminal"), str8_zero(), 1);
             CFG_Node *session_cfg = cfg_node_new(rd_state->cfg, tab, str8_lit("session"));
             cfg_node_new(rd_state->cfg, session_cfg, row->session_id);
