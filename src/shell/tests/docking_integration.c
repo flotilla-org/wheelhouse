@@ -494,6 +494,30 @@ entry_point(CmdLine *cmdline)
     closed = rd_arrangement_from_cfg(scratch.arena, cfg_node_child_from_string(window, str8_lit("panels")));
     IntegrationCheck(closed->root != &rd_nil_arrangement_panel && closed->root->tab_count == 0);
   }
+  // A View re-addressed onto an address that still has a Presentation State
+  // record, which no live View can own, keeps its own settings, and the
+  // address keeps one record.
+  {
+    panels = integration_reset_panels(window, Axis2_X);
+    CFG_Node *view = cfg_node_new(rd_state->cfg, panels, str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, view, 0);
+    RD_ViewAddress from = rd_view_address_from_cfg(view);
+    rd_view_setting_set(from, str8_lit("font_size"), str8_lit("10"));
+    CFG_Node *root = cfg_node_child_from_string(window, RD_VIEW_PRESENTATION_ROOT);
+    CFG_Node *stale = cfg_node_new(rd_state->cfg, root, rd_view_owner_kind_name(from.owner));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, stale, str8_lit("key")), str8_lit("u:99"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, stale, str8_lit("font_size")), str8_lit("20"));
+    cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("slot")), str8_lit("u:99"));
+    RD_ViewAddress to = rd_view_address_from_cfg(view);
+    IntegrationCheck(!rd_view_address_match(from, to));
+    rd_view_readdress(from, to);
+    IntegrationCheck(str8_match(rd_view_setting_from_view(to, str8_lit("font_size")), str8_lit("10"), 0));
+    IntegrationCheck(rd_view_presentation_from_view(from) == &cfg_nil_node);
+    U64 records = 0;
+    for(CFG_Node *c = root->first; c != &cfg_nil_node; c = c->next)
+    { records += str8_match(cfg_node_child_from_string(c, str8_lit("key"))->first->string, str8_lit("u:99"), 0); }
+    IntegrationCheck(records == 1);
+    cfg_node_release(rd_state->cfg, root);
+  }
   integration_rect.y1 = 480;
   // A shown target is remeasured when the drop is committed after a resize.
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));

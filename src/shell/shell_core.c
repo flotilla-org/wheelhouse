@@ -3392,6 +3392,8 @@ rd_view_presentation_from_view(RD_ViewAddress view)
   U64 hash = u64_djb2_hash_from_str8(str8_struct(&view));
   RD_ViewCfgCacheSlot *slot = &rd_state->view_presentation_cache[hash%ArrayCount(rd_state->view_presentation_cache)];
   U64 tree_gen = cfg_tree_gen();
+  // Misses are cached too: making, releasing, renaming or moving any node
+  // bumps the tree's generation, so a record changed since is never hidden.
   if(rd_view_address_match(slot->view, view) && slot->ctx == cfg_ctx && slot->tree_gen == tree_gen) { return cfg_node_from_id(slot->cfg); }
   CFG_Node *result = &cfg_nil_node;
   String8 owner = rd_view_owner_kind_name(view.owner);
@@ -3435,12 +3437,15 @@ rd_view_presentation_readdress(RD_ViewAddress from, RD_ViewAddress to)
   if(record == &cfg_nil_node) { return; }
   CFG_Node *host = rd_view_presentation_host(to);
   String8 key = rd_view_key_from_cfg(rd_cfg_from_view(to), 0);
-  // Where the View can keep none, or keeps its own already, it goes.
-  if(host == &cfg_nil_node || key.size == 0 || rd_view_presentation_from_view(to) != &cfg_nil_node)
+  // Where the View can keep none, it goes.
+  if(host == &cfg_nil_node || key.size == 0)
   {
     cfg_node_release(rd_state->cfg, record);
     return;
   }
+  // A record already at the new address is no live View's (the View moving
+  // there has it now), so the View's own replaces it.
+  rd_view_presentation_release(to);
   Temp scratch = scratch_begin(0, 0);
   key = push_str8_copy(scratch.arena, key);
   CFG_Node *root = cfg_node_child_from_string_or_alloc(rd_state->cfg, host, RD_VIEW_PRESENTATION_ROOT);
@@ -3460,6 +3465,11 @@ rd_view_presentation_release(RD_ViewAddress view)
   if(record != &cfg_nil_node) { cfg_node_release(rd_state->cfg, record); }
 }
 
+// The node is read for every setting, as rd_cfg_setting_child reads it: a
+// transient View keeps all its settings there, and a test or diagnostic may
+// set one there directly. Store loads put only logical settings on a
+// Workspace's View nodes (uishell_store_build), so nothing saved before
+// Presentation State is read back from a node.
 internal String8
 rd_view_setting_from_view(RD_ViewAddress view, String8 name)
 {

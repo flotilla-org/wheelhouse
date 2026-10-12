@@ -104,6 +104,7 @@ struct RD_ViewAddress
   // The key, hashed (rd_view_key_hash).
   U128 key;
 };
+StaticAssert(sizeof(RD_ViewAddress) == sizeof(RD_ViewOwnerKind)+sizeof(RD_ViewInstance)+sizeof(UIShell_WorkspaceId)+sizeof(U128), rd_view_address_unpadded);
 
 read_only global RD_ViewAddress rd_nil_view_address = {0};
 
