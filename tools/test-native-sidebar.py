@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check the shipped native template against Andamento's real typed C ABI."""
 import ctypes as C
+import faulthandler
 import itertools
 import json
 import os
@@ -9,6 +10,8 @@ from pathlib import Path
 import sys
 import unittest
 
+# A crash inside a ctypes call (#336) prints every thread's Python stack.
+faulthandler.enable()
 ROOT = Path(__file__).resolve().parents[1]
 U32, U64, Size, Ptr = C.c_uint32, C.c_uint64, C.c_size_t, C.c_void_p
 
