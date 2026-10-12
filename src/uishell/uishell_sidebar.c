@@ -3792,10 +3792,17 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     // A footer being named that stopped being shown (its group collapsed or
     // went, its section closed) is done naming; it opens fresh next time.
     if(state->make_key && state->make_build+1 < ui_state->build_index) { state->make_key = 0; }
+    // Andamento plans only the Slots of workspaces it knows, so a workspace
+    // opened since the last observation (this window's first frame, or a
+    // card's action) is observed before its Slots are planned (#360).
     if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
     {
-      for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
+      uishell_sidebar_observe(state, split);
+      Temp scratch = scratch_begin(0, 0);
+      UIShell_ControlledSplit current = uishell_root_controlled_split_from_window(scratch.arena, split->owner_cfg);
+      for(UIShell_MaterializedWorkspace *w = current.inventory.first; w; w = w->next)
       { uishell_sidebar_reconcile_workspace(state, w->mount.owner_cfg); }
+      scratch_end(scratch);
       state->managed_cfg_generation = cfg_change_gen();
       state->managed_dirty = 0;
     }
