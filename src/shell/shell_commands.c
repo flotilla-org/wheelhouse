@@ -1551,6 +1551,8 @@ uishell_dispatch_window_command(String8 name)
           cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
           cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
           cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("workspace_id")));
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("arrangement_generation")));
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("arrangement_presentation")));
         }
         else if(detach && uishell_workspace_cfg_has_subject(workspace) &&
                 !uishell_sidebar_workspace_subject_ended(rd_window_state_from_cfg(window), workspace->id))

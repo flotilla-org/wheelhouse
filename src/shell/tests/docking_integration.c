@@ -140,7 +140,7 @@ entry_point(CmdLine *cmdline)
 {
   U32 failures = 0;
   wm_init(); fp_init(); r_init(cmdline); fnt_init(); rd_init(cmdline);
-  rd_state->view_ui_rule_map = rd_view_ui_rule_map_make(rd_state->arena, 512);
+  rd_state->headless_views = 1;
   e_select_cache(rd_state->eval_cache);
   E_BaseCtx base_ctx = {.address_arch = Arch_CURRENT, .space_gen = rd_eval_space_gen,
                        .space_read = rd_eval_space_read, .space_write = rd_eval_space_write}; e_select_base_ctx(&base_ctx);
@@ -659,6 +659,53 @@ entry_point(CmdLine *cmdline)
       integration_event_gap_us = 1000000;
       IntegrationCheck(str8_match(left->string, str8_lit("0.500000"), 0) && str8_match(right->string, str8_lit("0.500000"), 0));
     }
+  }
+
+  //- The Renderer registry: docking's entries are its own, and View Spec
+  // content routes to the Renderer that shows it.
+  for(U64 i = 0; i < WH_RendererIndex_COUNT; i++)
+  {
+    WH_Renderer *renderer = wh_renderer_from_index(i);
+    IntegrationCheck(renderer->registration == &rd_view_registrations[i] && str8_match(renderer->name, renderer->registration->name, 0));
+    IntegrationCheck(wh_renderer_from_name(renderer->name) == renderer && renderer->ui != 0);
+    IntegrationCheck(!!(renderer->content & WH_Content_Dashboard) == !!(renderer->registration->traits & RD_ViewTrait_Control));
+  }
+  IntegrationCheck(wh_renderer_from_name(str8_lit("no_such_view")) == &wh_nil_renderer);
+  IntegrationCheck(str8_match(wh_renderer_from_content(WH_Content_Command)->name, str8_lit("terminal"), 0));
+  IntegrationCheck(str8_match(wh_renderer_from_content(WH_Content_Facet)->name, str8_lit("terminal"), 0));
+  IntegrationCheck(str8_match(wh_renderer_from_content(WH_Content_File)->name, str8_lit("text"), 0));
+  IntegrationCheck(str8_match(wh_renderer_from_content(WH_Content_Jackstay)->name, str8_lit("jackstay"), 0));
+  IntegrationCheck(str8_match(wh_renderer_from_content(WH_Content_Unshown)->name, str8_lit("placeholder"), 0));
+  IntegrationCheck(wh_renderer_from_content(WH_Content_Url) == &wh_nil_renderer);
+  // Headless, no Visualizer draws (as before the registry, when none was
+  // registered outside a frame).
+  IntegrationCheck(wh_visualizer_from_name(str8_lit("text")) == &wh_nil_renderer);
+
+  //- A View in a workspace's arrangement is a Slot, with its spec and
+  // resolution; a Floating Panel's View is not.
+  {
+    CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+    String8 id_text = str8_lit("0192f0c4-1c2d-7a3b-8c4d-5e6f70819203");
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("workspace_id")), id_text);
+    CFG_Node *slotted = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("panels")), str8_lit("terminal"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, slotted, str8_lit("slot")), str8_lit("u:1"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, slotted, str8_lit("expression")), str8_lit("make test"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, slotted, str8_lit("session")), str8_lit("s-1"));
+    WH_Renderer *terminal = wh_renderer_from_name(str8_lit("terminal"));
+    RD_ViewState *vs = rd_view_state_from_cfg(slotted);
+    WH_ViewContext ctx = wh_view_context_from_cfg(scratch.arena, slotted, terminal, rd_view_user_data(vs, terminal->state_size), r2f32p(0, 0, 64, 48));
+    UIShell_WorkspaceId id = {0};
+    IntegrationCheck(uishell_workspace_id_from_string(id_text, &id) && uishell_workspace_id_match(ctx.slot.workspace, id));
+    IntegrationCheck(str8_match(ctx.slot.key, str8_lit("u:1"), 0) && ctx.status == WH_SlotStatus_Slot);
+    IntegrationCheck(ctx.spec && ctx.spec->content == ANDAMENTO_SLOT_COMMAND && str8_match(ctx.spec->command, str8_lit("make test"), 0));
+    IntegrationCheck(str8_match(ctx.resolution.session, str8_lit("s-1"), 0) && ctx.rect.x1 == 64);
+    IntegrationCheck(wh_view_state(&ctx, UIShell_TerminalViewState) == vs->user_data);
+    CFG_Node *floating = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, window, str8_lit("floating_panels")), str8_lit("text"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, floating, str8_lit("slot")), str8_lit("u:2"));
+    WH_ViewContext floating_ctx = wh_view_context_from_cfg(scratch.arena, floating, wh_renderer_from_name(str8_lit("text")), 0, r2f32p(0, 0, 1, 1));
+    IntegrationCheck(floating_ctx.status == 0 && floating_ctx.slot.key.size == 0 && floating_ctx.spec == 0);
+    cfg_node_release(rd_state->cfg, workspace);
+    cfg_node_release(rd_state->cfg, floating->parent);
   }
 
   scratch_end(scratch);

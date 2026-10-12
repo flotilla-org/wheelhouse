@@ -80,9 +80,10 @@ uishell_logical_entity(Arena *arena, String8 kind, String8 id)
 
 //- Workspaces
 
-// A tab: its View kind, then what defines its content. A terminal is its
-// command and launch directory (and daemon hosting), a Jackstay View its
-// source endpoints, anything else its expression.
+// A tab: its View kind, its Slot's key, then what defines its content. A
+// terminal is its command and launch directory (and daemon hosting), a
+// Jackstay View its source endpoints, a placeholder the content it can't
+// show, anything else its expression.
 internal String8
 uishell_logical_tab(Arena *arena, CFG_Node *tab, B32 selected)
 {
@@ -90,13 +91,16 @@ uishell_logical_tab(Arena *arena, CFG_Node *tab, B32 selected)
   {
     "cwd", "daemon", "daemon_name",
     "source_endpoint", "source_socket", "input_endpoint", "input_socket",
-    "media_endpoint", "media_socket", "d3d11_endpoint", "porthole_endpoint",
+    "media_endpoint", "media_socket", "d3d11_endpoint", "porthole_endpoint", "content",
   };
   String8List parts = {0};
   str8_list_pushf(arena, &parts, "tab %S", tab->string);
   String8 label = rd_label_from_cfg(tab);
   if(label.size) { str8_list_pushf(arena, &parts, " %S", uishell_logical_quote(arena, label)); }
-  String8 slot = cfg_node_child_from_string(tab, str8_lit("resource_id"))->first->string;
+  // Its Slot's key in Andamento (uishell_workspace_store.c); before it has
+  // one, the provider's slot it was made for.
+  String8 slot = cfg_node_child_from_string(tab, str8_lit("slot"))->first->string;
+  if(!slot.size) { slot = cfg_node_child_from_string(tab, str8_lit("resource_id"))->first->string; }
   if(slot.size) { str8_list_pushf(arena, &parts, " slot=%S", uishell_logical_quote(arena, slot)); }
   String8 expr = rd_expr_from_cfg(tab);
   if(expr.size)
@@ -117,12 +121,18 @@ uishell_logical_tab(Arena *arena, CFG_Node *tab, B32 selected)
 }
 
 // A sidebar View names the section it shows by title; other Views are tabs.
+// A section whose key no longer resolves is flagged (template drift), and
+// the leftover section is hidden while it stands aside.
 internal String8
 uishell_logical_view(Arena *arena, CFG_Node *view, B32 selected)
 {
   if(!str8_match(view->string, str8_lit("sidebar_section"), 0)) { return uishell_logical_tab(arena, view, selected); }
-  return push_str8f(arena, "section %S%s%s", uishell_logical_quote(arena, rd_label_from_cfg(view)),
-    selected ? " selected" : "", uishell_sidebar_section_collapsed(view) ? " collapsed" : "");
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(rd_window_from_cfg(view));
+  UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
+  B32 gone = state && uishell_sidebar_section_gone(state, uishell_sidebar_section_key(view));
+  return push_str8f(arena, "section %S%s%s%s%s", uishell_logical_quote(arena, rd_label_from_cfg(view)),
+    selected ? " selected" : "", uishell_sidebar_section_collapsed(view) ? " collapsed" : "",
+    uishell_sidebar_view_hidden(view) ? " hidden" : "", gone ? " flagged" : "");
 }
 
 // An arrangement's panels: splits with their axis, each child's weight to
@@ -380,12 +390,13 @@ uishell_logical_sidebar_arrangement(UIShell_LogicalText *t, U64 depth, CFG_Node 
       uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
     }
   }
-  CFG_Node *inventory = cfg_node_child_from_string(window, str8_lit("section_positions"));
-  for(CFG_Node *record = inventory->first; record != &cfg_nil_node; record = record->next)
+  // Andamento's notes: the sections closed on purpose.
+  for(U64 i = 0; state && i < state->sidebar_closed_count; i++)
   {
-    if(cfg_node_child_from_string(record, str8_lit("closed")) == &cfg_nil_node) { continue; }
-    uishell_logical_linef(t, depth+1, "closed %S",
-      uishell_logical_quote(t->arena, uishell_logical_section_key_title(t->arena, state, window, record->string)));
+    String8 key = state->sidebar_closed[i];
+    uishell_logical_linef(t, depth+1, "closed %S%s",
+      uishell_logical_quote(t->arena, uishell_logical_section_key_title(t->arena, state, window, key)),
+      uishell_sidebar_section_gone(state, key) ? " flagged" : "");
   }
 }
 

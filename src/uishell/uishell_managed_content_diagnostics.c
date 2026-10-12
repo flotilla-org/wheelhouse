@@ -32,8 +32,7 @@ uishell_managed_diagnostic_frame(RD_WindowState *ws, CFG_Node *view)
   UIShell_RegsScope(.window = ws->cfg_id, .panel = view->parent->id, .view = view->id)
   UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
   {
-    E_Eval eval = {0};
-    RD_VIEW_UI_FUNCTION_NAME(terminal)(eval, r2f32p(0, 0, 640, 480));
+    wh_view_ui_direct(wh_renderer_from_name(str8_lit("terminal")), view, r2f32p(0, 0, 640, 480));
   }
   ui_end_build();
 }
