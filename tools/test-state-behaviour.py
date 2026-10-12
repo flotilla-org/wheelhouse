@@ -32,6 +32,8 @@ import subprocess
 import sys
 import tempfile
 
+from shell_embed import shell_embed_object
+
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / 'build'
 GOLDENS = ROOT / 'src/uishell/tests/state_behaviour'
@@ -59,13 +61,14 @@ source = BUILD / 'state_behaviour.c'
 source.write_text(prefix + '\n#include "uishell/tests/state_behaviour.c"\n')
 binary = BUILD / 'state_behaviour'
 andamento, cleat = args.andamento_lib.resolve(), args.cleat_lib.resolve()
-command = shlex.split(os.environ.get('CC', 'clang')) + [
+compiler = shlex.split(os.environ.get('CC', 'clang'))
+command = compiler + [
     '-g', '-O0', '-D_GNU_SOURCE', '-DBUILD_DEBUG=1', '-DNO_ASYNC=1',
     '-DWM_STUB=1', '-DR_BACKEND=0', '-DFP_BACKEND=0', '-ffunction-sections', '-fdata-sections',
     '-Wno-initializer-overrides', '-Wno-unused-value',
     '-Wno-incompatible-pointer-types-discards-qualifiers',
     '-I'+str(ROOT/'src'), '-I'+str(args.andamento_include.resolve()),
-    '-I'+str(args.cleat_include.resolve()), str(source),
+    '-I'+str(args.cleat_include.resolve()), str(source), str(shell_embed_object(compiler)),
     '-L'+str(andamento), '-landamento_ffi', '-lwheelhouse_ingress', '-Wl,-rpath,'+str(andamento),
     '-L'+str(cleat), '-lcleat', '-Wl,-rpath,'+str(cleat), '-lpthread', '-lm', '-ldl',
     '-Wl,--gc-sections', '-o', str(binary)]

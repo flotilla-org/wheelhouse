@@ -228,6 +228,7 @@ struct MG_Layer
   String8List c_catchall;
   String8List c_header;
   String8List c_footer;
+  String8List c_embeds;
 };
 
 typedef struct MG_LayerNode MG_LayerNode;

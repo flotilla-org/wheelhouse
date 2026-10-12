@@ -186,7 +186,9 @@ With those arrays stubbed out:
 
 Moving the fonts to C23 `#embed`, `.incbin` in a separate object, or loading
 them at run time is the single biggest build win, and needs no build-system
-change. After that the backend (about 1.1 s) dominates. About 19% of
+change. After that the backend (about 1.1 s) dominates. (Done in #302: the
+bytes now go to `shell.embed.meta.c`, compiled once to `build/shell_embed.o`
+and rebuilt only when it changes; `shell.meta.h` declares them `extern`.) About 19% of
 per-function time goes to `*_diagnostics.c`, which ships in the main binary.
 
 **Conclusions:**
