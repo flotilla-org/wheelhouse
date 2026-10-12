@@ -47,41 +47,6 @@ rd_dock_check(RD_ViewRegistration *view, RD_DockProposal p)
   return RD_DockRule_Valid;
 }
 
-internal RD_DockHost
-rd_dock_host_from_cfg(CFG_Node *cfg, F32 width)
-{
-  RD_DockHost host = {RD_DockHostKind_WorkspaceRegion, 0, 0, 0, width};
-  for(CFG_Node *c = cfg; c != &cfg_nil_node; c = c->parent)
-  {
-    // A layout's owner identifies its level. Legacy window.panels is a child
-    // workspace, even though it predates an explicit workspace config node.
-    if(!host.level)
-    {
-      if(str8_match(c->string, RD_DOCK_SIDEBAR_ROOT, 0) ||
-         str8_match(c->string, str8_lit("floating_panels"), 0))
-      { host.level = c->parent->id; }
-      else if(str8_match(c->string, str8_lit("panels"), 0))
-      {
-        host.level = str8_match(c->parent->string, str8_lit("workspace"), 0) ? c->parent->id : c->id;
-      }
-    }
-    if(str8_match(c->string, RD_DOCK_SIDEBAR_ROOT, 0)) { host.kind = RD_DockHostKind_Sidebar; }
-    if(str8_match(c->string, str8_lit("floating_panels"), 0)) { host.kind = RD_DockHostKind_FloatingPanel; }
-    if(str8_match(c->string, str8_lit("workspace"), 0))
-    {
-      host.has_workspace_subject = cfg_node_child_from_string(c, str8_lit("subject")) != &cfg_nil_node;
-    }
-    if(str8_match(c->string, str8_lit("window"), 0))
-    {
-      host.controlled_split = c->id;
-      // The current root Controlled Split owns every Workspace Mount in this
-      // window. Its region identity stays fixed when Visible Workspace changes.
-      if(host.kind == RD_DockHostKind_WorkspaceRegion) { host.workspace_region = c->id; }
-      break;
-    }
-  }
-  return host;
-}
 
 internal RD_DockHostKind
 rd_dock_host_kind_from_panel_owner(RD_PanelOwner owner)
@@ -91,78 +56,13 @@ rd_dock_host_kind_from_panel_owner(RD_PanelOwner owner)
   return RD_DockHostKind_WorkspaceRegion;
 }
 
-// Split/leaf discriminator: recurse through layout containers, never through
-// a View's settings, even when their keys resemble layout node names.
-internal B32
-rd_dock_is_container(CFG_Node *cfg)
-{
-  if(str8_match(cfg->string, str8_lit("workspace"), 0) ||
-     str8_match(cfg->string, str8_lit("panels"), 0) ||
-     str8_match(cfg->string, RD_DOCK_SIDEBAR_ROOT, 0) ||
-     str8_match(cfg->string, str8_lit("floating_panels"), 0)) { return 1; }
-  // Match a single MD numeric token without allocating a token array. Numeric
-  // tokens start with a digit, .digit or -digit, then contain alnum, _ or . .
-  String8 name = cfg->string;
-  if(name.size == 0) { return 0; }
-  B32 start = char_is_digit(name.str[0], 10) ||
-    (name.size > 1 && (name.str[0] == '.' || name.str[0] == '-') && char_is_digit(name.str[1], 10));
-  if(!start) { return 0; }
-  for(U64 i = 1; i < name.size; i++)
-  { if(!char_is_alpha(name.str[i]) && !char_is_digit(name.str[i], 10) && name.str[i] != '_' && name.str[i] != '.') { return 0; } }
-  return 1;
-}
-
-// A Floating Panel is a panel node directly under a `floating_panels` host.
-internal CFG_Node *
-rd_dock_floating_panel_from_cfg(CFG_Node *cfg)
-{
-  for(CFG_Node *c = cfg; c != &cfg_nil_node && !str8_match(c->string, str8_lit("window"), 0); c = c->parent)
-  {
-    if(str8_match(c->parent->string, str8_lit("floating_panels"), 0)) { return rd_dock_is_container(c) ? c : &cfg_nil_node; }
-  }
-  return &cfg_nil_node;
-}
-
-internal CFG_Node *
-rd_dock_window(CFG_Node *cfg)
-{
-  for(CFG_Node *c = cfg; c != &cfg_nil_node; c = c->parent)
-  { if(str8_match(c->string, str8_lit("window"), 0)) { return c; } }
-  return &cfg_nil_node;
-}
-
-internal U32
-rd_dock_instances(CFG_Node *container, RD_ViewRegistration *registration)
-{
-  Temp scratch = scratch_begin(0, 0);
-  RD_DockDocuments documents = {scratch.arena};
-  RD_DockSavedViewList views = rd_dock_saved_views(&documents, container);
-  U32 count = 0;
-  for(RD_DockSavedView *v = views.first; v != 0; v = v->next) { count += rd_dock_view_from_name(v->view->string) == registration; }
-  scratch_end(scratch);
-  return count;
-}
-
 // These declarations use the root split's Andamento state, not the subject
-// of whichever child workspace happens to contain an old saved placement.
+// of whichever child workspace happens to contain an old placement.
 internal CFG_ID
-rd_dock_view_level(RD_ViewRegistration *registration, CFG_Node *view)
+rd_dock_view_level(RD_ViewRegistration *registration, RD_DockHost host)
 {
-  if(registration && (registration->traits & RD_ViewTrait_ControlSplitScope))
-  { return rd_dock_window(view)->id; }
-  return rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH).level;
-}
-
-internal RD_DockView
-rd_dock_view_from_cfg(CFG_Node *view)
-{
-  RD_DockView result = {0};
-  if(view == &cfg_nil_node) { return result; }
-  result.exists = 1;
-  result.registration = rd_dock_view_from_name(view->string);
-  result.source = rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH);
-  result.level = rd_dock_view_level(result.registration, view);
-  return result;
+  if(registration && (registration->traits & RD_ViewTrait_ControlSplitScope)) { return host.controlled_split; }
+  return host.level;
 }
 
 internal RD_DockRule
@@ -180,7 +80,7 @@ rd_dock_placement(RD_DockView view, RD_DockHost destination)
   // The current root Control Surface is implicit.
   if(registration && (registration->traits & RD_ViewTrait_Singleton))
   {
-    p.instances_after = rd_dock_instances(cfg_node_from_id(destination.controlled_split), registration);
+    p.instances_after = rd_dock_instance_count ? rd_dock_instance_count(destination.controlled_split, registration) : 1;
     if(source.controlled_split != p.host.controlled_split) { p.instances_after++; }
   }
   // Moving a selector to another Controlled Split would remove the source's
@@ -205,7 +105,7 @@ rd_dock_creation(String8 name, RD_DockHost destination)
   p.host = destination;
   p.view_level = (view->traits & RD_ViewTrait_ControlSplitScope) ? destination.controlled_split : p.host.level;
   p.selected_workspace_region = p.host.controlled_split;
-  p.instances_after = (view->traits & RD_ViewTrait_Singleton) ? rd_dock_instances(cfg_node_from_id(destination.controlled_split), view)+1 : 1;
+  p.instances_after = (view->traits & RD_ViewTrait_Singleton) && rd_dock_instance_count ? rd_dock_instance_count(destination.controlled_split, view)+1 : 1;
   // TODO(#164): derive this with placement/closure counts from nested splits.
   // A creation must not add another selector to the implicit root surface.
   p.control_surfaces_after = view && (view->traits & RD_ViewTrait_SelectsWorkspaces) ? 2 : 1;
@@ -251,162 +151,17 @@ rd_dock_rule_message(RD_DockRule rule)
   return str8_lit("invalid docking rule");
 }
 
-// Prefer a valid saved placement; tree order breaks ties. Assess placement
-// with one proposed instance so duplicate cardinality does not mask validity.
-internal B32
-rd_dock_saved_placement_valid(CFG_Node *view)
-{
-  RD_DockProposal p = {0};
-  p.host = rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH);
-  p.selected_workspace_region = p.host.controlled_split;
-  p.instances_after = p.control_surfaces_after = 1;
-  RD_ViewRegistration *registration = rd_dock_view_from_name(view->string);
-  p.view_level = rd_dock_view_level(registration, view);
-  return rd_dock_check(registration, p) == RD_DockRule_Valid;
-}
-
 ////////////////////////////////
 //~ Repair
 
 internal RD_DockDocument *
-rd_dock_documents_add(RD_DockDocuments *documents, RD_Arrangement *arrangement)
+rd_dock_documents_add(RD_DockDocuments *documents, RD_Arrangement *arrangement, RD_DockHost host)
 {
   RD_DockDocument *document = push_array(documents->arena, RD_DockDocument, 1);
   document->arrangement = arrangement;
+  document->host = host;
   SLLQueuePush(documents->first, documents->last, document);
   return document;
-}
-
-internal RD_DockDocument *
-rd_dock_document_from_owner(RD_DockDocuments *documents, CFG_Node *owner, String8 root_name)
-{
-  CFG_Node *root = cfg_node_child_from_string(owner, root_name);
-  for(RD_DockDocument *d = documents->first; d != 0; d = d->next)
-  {
-    RD_Arrangement *a = d->arrangement;
-    if(root != &cfg_nil_node ? a->saved_root == root->id :
-       (a->owner == owner->id && a->saved_root == 0 && str8_match(a->root_name, root_name, 0))) { return d; }
-  }
-  return rd_dock_documents_add(documents, rd_arrangement_from_owner(documents->arena, owner, root_name));
-}
-
-internal void
-rd_dock_documents_add_floating(RD_DockDocuments *documents, CFG_Node *host)
-{
-  for(CFG_Node *c = host->first; c != &cfg_nil_node; c = c->next)
-  {
-    if(rd_dock_floating_panel_from_cfg(c) == c) { rd_dock_documents_add(documents, rd_arrangement_from_cfg(documents->arena, c)); }
-  }
-}
-
-internal RD_ArrangementPanel *
-rd_dock_panel_from_cfg(RD_DockDocuments *documents, CFG_ID cfg, RD_DockDocument **document_out)
-{
-  for(RD_DockDocument *d = documents->first; d != 0; d = d->next)
-  {
-    RD_ArrangementPanel *panel = rd_arrangement_panel_from_cfg(d->arrangement, cfg);
-    if(panel != &rd_nil_arrangement_panel) { *document_out = d; return panel; }
-  }
-  *document_out = 0;
-  return &rd_nil_arrangement_panel;
-}
-
-// Restore walks only layout containers, never View settings (whose keys can
-// also be View names).
-internal void
-rd_dock_saved_views__walk(RD_DockDocuments *documents, RD_DockSavedViewList *list, CFG_Node *container,
-                          RD_DockDocument *document, RD_ArrangementPanel *panel, CFG_ID holder)
-{
-  RD_DockDocument *container_document = 0;
-  RD_ArrangementPanel *container_panel = rd_dock_panel_from_cfg(documents, container->id, &container_document);
-  B32 in_panel = container_panel != &rd_nil_arrangement_panel;
-  if(in_panel) { document = container_document; panel = container_panel; holder = 0; }
-  for(CFG_Node *c = container->first; c != &cfg_nil_node; c = c->next)
-  {
-    if(rd_dock_view_from_name(c->string))
-    {
-      RD_DockSavedView *saved = push_array(documents->arena, RD_DockSavedView, 1);
-      saved->view = c;
-      saved->document = document;
-      saved->panel = document ? panel : &rd_nil_arrangement_panel;
-      saved->holder = holder;
-      SLLQueuePush(list->first, list->last, saved);
-      list->count += 1;
-    }
-    // A container saved in a panel that is not a child panel is one of its
-    // tabs: anything inside it is a stray.
-    else if(rd_dock_is_container(c))
-    { rd_dock_saved_views__walk(documents, list, c, document, panel, in_panel ? c->id : holder); }
-  }
-}
-
-internal RD_DockSavedViewList
-rd_dock_saved_views(RD_DockDocuments *documents, CFG_Node *container)
-{
-  RD_DockSavedViewList list = {0};
-  if(container != &cfg_nil_node) { rd_dock_saved_views__walk(documents, &list, container, 0, &rd_nil_arrangement_panel, 0); }
-  return list;
-}
-
-internal B32
-rd_dock_saved_view_is_tab(RD_DockSavedView *view)
-{
-  return view->document != 0 && view->holder == 0;
-}
-
-internal void
-rd_dock_documents_save(CFG_State *state, RD_DockDocuments *documents)
-{
-  for(U32 pass = 0; pass < 2; pass += 1)
-  {
-    for(RD_DockDocument *d = documents->first; d != 0; d = d->next)
-    {
-      if(d->dirty && (pass == 1 || d->took))
-      {
-        rd_arrangement_save(state, d->arrangement);
-        d->dirty = d->took = 0;
-      }
-    }
-  }
-}
-
-// A window's own layout, its workspaces' and the sidebar, and every Floating
-// Panel under them.
-internal void
-rd_dock_documents_add_window(RD_DockDocuments *documents, CFG_Node *window)
-{
-  rd_dock_document_from_owner(documents, window, RD_DOCK_SIDEBAR_ROOT);
-  rd_dock_document_from_owner(documents, window, str8_lit("panels"));
-  for(CFG_Node *c = window->first; c != &cfg_nil_node; c = c->next)
-  {
-    if(str8_match(c->string, str8_lit("floating_panels"), 0)) { rd_dock_documents_add_floating(documents, c); }
-    if(!str8_match(c->string, str8_lit("workspace"), 0)) { continue; }
-    rd_dock_document_from_owner(documents, c, str8_lit("panels"));
-    for(CFG_Node *host = c->first; host != &cfg_nil_node; host = host->next)
-    {
-      if(str8_match(host->string, str8_lit("floating_panels"), 0)) { rd_dock_documents_add_floating(documents, host); }
-    }
-  }
-}
-
-// Where a View refused where it is saved goes: the sidebar, or the layout of
-// the workspace it was saved under (else the window's first, else the
-// window's own).
-internal RD_DockDocument *
-rd_dock_restore_destination(RD_DockDocuments *documents, CFG_Node *window, RD_DockSavedView *saved)
-{
-  RD_ViewRegistration *registration = rd_dock_view_from_name(saved->view->string);
-  if(registration->default_host == RD_DockHostKind_Sidebar)
-  { return rd_dock_document_from_owner(documents, window, RD_DOCK_SIDEBAR_ROOT); }
-  CFG_Node *owner = window;
-  for(CFG_Node *n = saved->view->parent; n != &cfg_nil_node && n != window; n = n->parent)
-  { if(str8_match(n->string, str8_lit("workspace"), 0)) { owner = n; break; } }
-  if(owner == window)
-  {
-    CFG_Node *workspace = cfg_node_child_from_string(window, str8_lit("workspace"));
-    if(workspace != &cfg_nil_node) { owner = workspace; }
-  }
-  return rd_dock_document_from_owner(documents, owner, str8_lit("panels"));
 }
 
 // A split root cannot hold tabs.
@@ -419,82 +174,107 @@ rd_dock_restore_leaf(RD_Arrangement *arrangement)
   return leaf;
 }
 
-internal void
-rd_dock_restore_window(CFG_State *state, CFG_Node *window)
+// A View as restore found it: where it is, and whether it was its panel's
+// Selected View there.
+typedef struct RD_DockRestoreView RD_DockRestoreView;
+struct RD_DockRestoreView
 {
-  Temp scratch = scratch_begin(0, 0);
-  RD_DockDocuments documents = {scratch.arena};
-  rd_dock_documents_add_window(&documents, window);
-  RD_DockSavedViewList views = rd_dock_saved_views(&documents, window);
+  RD_DockRestoreView *next;
+  RD_ViewAddress view;
+  RD_ViewRegistration *registration;
+  RD_DockDocument *document;
+  RD_PanelID panel;
+  B32 selected;
+  B32 gone;
+};
 
-  // One copy of each singleton: the first in config order, unless a later
-  // one is saved where it is valid and the first is not.
-  RD_DockSavedView *keepers[ArrayCount(rd_view_registrations)] = {0};
-  for(RD_DockSavedView *v = views.first; v != 0; v = v->next)
-  {
-    RD_ViewRegistration *registration = rd_dock_view_from_name(v->view->string);
-    if(!(registration->traits & RD_ViewTrait_Singleton)) { continue; }
-    RD_DockSavedView **keeper = &keepers[registration-rd_view_registrations];
-    if(!*keeper || (!rd_dock_saved_placement_valid((*keeper)->view) && rd_dock_saved_placement_valid(v->view))) { *keeper = v; }
-  }
-  for(RD_DockSavedView *v = views.first; v != 0; v = v->next)
-  {
-    RD_ViewRegistration *registration = rd_dock_view_from_name(v->view->string);
-    if(!(registration->traits & RD_ViewTrait_Singleton) || keepers[registration-rd_view_registrations] == v) { continue; }
-    RD_DockDocument *document = v->document ? v->document : rd_dock_restore_destination(&documents, window, v);
-    if(rd_dock_saved_view_is_tab(v)) { rd_arrangement_remove_tab(document->arrangement, v->view->id); }
-    else { rd_arrangement_release_orphan(document->arrangement, v->view->id); }
-    document->dirty = 1;
-    v->view = &cfg_nil_node;
-  }
-  // The checker counts saved instances, so the copies go before it runs.
-  rd_dock_documents_save(state, &documents);
+// Whether the checker accepts `view` where it is, assessed with one
+// instance so that duplicate cardinality does not mask validity.
+internal B32
+rd_dock_restore_valid(RD_DockRestoreView *view)
+{
+  RD_DockProposal p = {0};
+  p.host = view->document->host;
+  p.selected_workspace_region = p.host.controlled_split;
+  p.instances_after = p.control_surfaces_after = 1;
+  p.view_level = rd_dock_view_level(view->registration, p.host);
+  return rd_dock_check(view->registration, p) == RD_DockRule_Valid;
+}
 
-  // A View the checker refuses where it is saved moves to the end of its
-  // default host's first leaf, keeping its node, settings and identity. A
-  // stray saved where it is valid stays, as it always has.
-  for(RD_DockSavedView *v = views.first; v != 0; v = v->next)
+internal RD_ViewAddressList
+rd_dock_restore(RD_DockDocuments *documents, RD_DockRegistration *registration)
+{
+  Arena *arena = documents->arena;
+  RD_ViewAddressList pending = {0};
+  RD_DockRestoreView *first = 0, *last = 0;
+  for(RD_DockDocument *d = documents->first; d != 0; d = d->next)
   {
-    if(v->view == &cfg_nil_node || rd_dock_placement(rd_dock_view_from_cfg(v->view), rd_dock_host_from_cfg(v->view->parent, RD_DOCK_UNMEASURED_WIDTH)) == RD_DockRule_Valid) { continue; }
-    // Region-specific defaults are Andamento's. Preserve the need to place
-    // the section by its hints after this generic safety fallback, and mark
-    // the panel it leaves: the sidebar's next commit leaves both out, then
-    // restores the section (uishell_sidebar_store.c).
-    if(str8_match(v->view->string, str8_lit("sidebar_section"), 0))
+    RD_Arrangement *a = d->arrangement;
+    for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
     {
-      cfg_node_child_from_string_or_alloc(state, v->view, str8_lit("section_hint_pending"));
-      CFG_Node *panel = cfg_node_from_id(v->panel->cfg);
-      if(panel != &cfg_nil_node) { cfg_node_child_from_string_or_alloc(state, panel, str8_lit("section_hint_cleanup")); }
+      for(RD_ArrangementTab *tab = p->first_tab; tab != 0; tab = tab->next)
+      {
+        RD_DockRestoreView *v = push_array(arena, RD_DockRestoreView, 1);
+        v->view = tab->view;
+        v->registration = registration(tab->view);
+        v->document = d;
+        v->panel = p->id;
+        v->selected = rd_view_address_match(p->selected, tab->view);
+        SLLQueuePush(first, last, v);
+      }
     }
-    RD_DockDocument *destination = rd_dock_restore_destination(&documents, window, v);
+  }
+
+  // One copy of each singleton: the first in tree order, unless a later one
+  // is where it is valid and the first is not.
+  RD_DockRestoreView *keepers[ArrayCount(rd_view_registrations)] = {0};
+  for(RD_DockRestoreView *v = first; v != 0; v = v->next)
+  {
+    if(!v->registration || !(v->registration->traits & RD_ViewTrait_Singleton)) { continue; }
+    RD_DockRestoreView **keeper = &keepers[v->registration-rd_view_registrations];
+    if(!*keeper || (!rd_dock_restore_valid(*keeper) && rd_dock_restore_valid(v))) { *keeper = v; }
+  }
+  for(RD_DockRestoreView *v = first; v != 0; v = v->next)
+  {
+    if(!v->registration || !(v->registration->traits & RD_ViewTrait_Singleton) || keepers[v->registration-rd_view_registrations] == v) { continue; }
+    rd_arrangement_remove_tab(v->document->arrangement, v->view);
+    v->document->dirty = 1;
+    v->gone = 1;
+  }
+
+  // A View the checker refuses where it is moves to the end of its default
+  // host's first leaf, keeping its address. A sidebar section moved so is
+  // placed by its hints once the sidebar commits (`pending`), and the panel
+  // it leaves goes with it then.
+  for(RD_DockRestoreView *v = first; v != 0; v = v->next)
+  {
+    // Content that isn't a registered View has no default host: it stays.
+    if(v->gone || !v->registration || rd_dock_restore_valid(v)) { continue; }
+    RD_DockDocument *destination = v->registration->default_host == RD_DockHostKind_Sidebar ? documents->sidebar :
+      v->document->workspace ? v->document->workspace : documents->workspace;
+    if(destination == 0) { continue; }
+    if(str8_match(v->registration->name, str8_lit("sidebar_section"), 0))
+    {
+      rd_view_address_list_push(arena, &pending, v->view);
+      RD_ArrangementPanel *source = rd_arrangement_panel_from_id(v->document->arrangement, v->panel);
+      if(source != &rd_nil_arrangement_panel && !source->restore_emptied) { source->restore_emptied = 1; v->document->dirty = 1; }
+    }
     RD_ArrangementPanel *leaf = rd_dock_restore_leaf(destination->arrangement);
     // A default can still lack context (for example a required subject).
     // Moving a View already there would only reorder it.
-    if(rd_dock_saved_view_is_tab(v) && v->document == destination && v->panel == leaf) { continue; }
-    // The destination keeps its Selected View unless this one was selected.
-    B32 selected = cfg_node_child_from_string(v->view, str8_lit("selected")) != &cfg_nil_node;
-    if(rd_dock_saved_view_is_tab(v) && v->document != destination)
+    if(v->document == destination && v->panel == leaf->id) { continue; }
+    if(v->document != destination)
     {
-      rd_arrangement_detach_tab(v->document->arrangement, v->view->id);
+      rd_arrangement_detach_tab(v->document->arrangement, v->view);
       v->document->dirty = 1;
     }
-    rd_arrangement_insert_tab(destination->arrangement, v->view->id, leaf->id, leaf->last_tab ? leaf->last_tab->view : 0, selected);
+    // The destination keeps its Selected View unless this one was selected.
+    rd_arrangement_insert_tab(destination->arrangement, v->view, leaf->id, leaf->last_tab ? leaf->last_tab->view : rd_nil_view_address, v->selected);
     destination->dirty = 1;
-    destination->took |= v->document != destination;
     v->document = destination;
-    v->panel = leaf;
-    v->holder = 0;
+    v->panel = leaf->id;
   }
-  // Every View has a key in its owner's namespace: one saved without one (an
-  // older file, a hand edit) is given one by saving its arrangement.
-  for(RD_DockSavedView *v = views.first; v != 0; v = v->next)
-  {
-    if(v->view == &cfg_nil_node || !rd_dock_saved_view_is_tab(v) || rd_view_key_from_cfg(v->view, 0).size) { continue; }
-    RD_ViewOwnerKind owner = rd_view_owner_kind_from_tab(v->view, 0);
-    if(owner == RD_ViewOwnerKind_Workspace || owner == RD_ViewOwnerKind_Window) { v->document->dirty = 1; }
-  }
-  rd_dock_documents_save(state, &documents);
-  scratch_end(scratch);
+  return pending;
 }
 
 // The proposal runs the commands' drop on a copy, which closes an emptied
@@ -503,12 +283,12 @@ rd_dock_restore_window(CFG_State *state, CFG_Node *window)
 // area for the root). Tabs occupy vertical chrome only; the panel inset
 // consumes both X edges.
 internal F32
-rd_dock_moving_width(RD_Arrangement *arrangement, RD_PanelID destination, CFG_ID view,
+rd_dock_moving_width(RD_Arrangement *arrangement, RD_PanelID destination, RD_ViewAddress view,
                      RD_ArrangementTabRule *shown, Rng2F32 area, Dir2 dir, F32 inset)
 {
   Temp scratch = scratch_begin(0, 0);
   RD_Arrangement *proposal = rd_arrangement_copy(scratch.arena, arrangement);
-  RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(proposal, rd_arrangement_drop(proposal, view, destination, dir, 0, shown).panel);
+  RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(proposal, rd_arrangement_drop(proposal, view, destination, dir, rd_nil_view_address, shown).panel);
   if(panel == &rd_nil_arrangement_panel)
   {
     proposal = rd_arrangement_copy(scratch.arena, arrangement);

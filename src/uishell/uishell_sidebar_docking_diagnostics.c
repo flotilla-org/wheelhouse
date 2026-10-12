@@ -100,6 +100,83 @@ uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   return ok;
 }
 
+// Exercise the shared panel host, not the former stacked sidebar adapter.
+internal void
+uishell_sidebar_docking_drain(UIShell_CmdNode *before)
+{
+  for(UIShell_CmdNode *n = before ? before->next : rd_state->cmds[0].first; n; n = n->next) UIShell_RegsScope()
+  {
+    MemoryCopyStruct(uishell_regs(), n->cmd.regs);
+    if(!uishell_dispatch_tab_command(n->cmd.name)) { uishell_dispatch_panel_command(n->cmd.name); }
+  }
+}
+
+// What changes when the config or any arrangement does: both only count up.
+internal U64
+uishell_sidebar_docking_gen(void)
+{
+  return cfg_change_gen() + rd_state->arrangement_version;
+}
+
+// The first section View among `panel`'s tabs, or nil.
+internal CFG_Node *
+uishell_sidebar_docking_section(RD_PanelAddress panel)
+{
+  RD_ArrangementPanel *p = rd_arrangement_panel_from_id(rd_arrangement_live(panel.owner), panel.id);
+  for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
+  {
+    CFG_Node *view = rd_cfg_from_view(t->view);
+    if(str8_match(view->string, str8_lit("sidebar_section"), 0)) { return view; }
+  }
+  return &cfg_nil_node;
+}
+
+// The weight of `panel` of its owner's live arrangement.
+internal F32
+uishell_sidebar_docking_weight(RD_PanelAddress panel)
+{
+  return rd_arrangement_panel_from_id(rd_arrangement_live(panel.owner), panel.id)->weight;
+}
+
+// Moves `view` into the first leaf of `host`'s (a workspace's) panels, as a
+// layout saved before the docking checker refused that would have it; an
+// emptied panel it leaves goes.
+internal void
+uishell_sidebar_docking_misplace(CFG_Node *view, CFG_Node *host)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_ViewAddress address = rd_view_address_from_cfg(view);
+  RD_PanelAddress from = rd_panel_from_view(address);
+  RD_PanelAddress leaf = rd_fixture_leaf(rd_fixture_owner(host));
+  RD_Arrangement *to = rd_arrangement_from_panel_owner(scratch.arena, leaf.owner);
+  rd_arrangement_move_tab(to, address, leaf.id, rd_nil_view_address);
+  rd_arrangement_set(to);
+  RD_Arrangement *source = rd_arrangement_from_panel_owner(scratch.arena, from.owner);
+  RD_ArrangementPanel *left = rd_arrangement_panel_from_id(source, from.id);
+  if(left != &rd_nil_arrangement_panel && left->tab_count == 0 && left->first == &rd_nil_arrangement_panel)
+  {
+    if(left == source->root) { rd_arrangement_discard(source); }
+    else { rd_arrangement_remove(source, from.id); }
+    rd_arrangement_set(source);
+  }
+  scratch_end(scratch);
+}
+
+// Whether `view` is where the docking checker accepts it, and the kind of
+// host it is in.
+internal B32
+uishell_sidebar_docking_valid(CFG_Node *view)
+{
+  RD_DockView dock_view = rd_dock_view_from_address(rd_view_address_from_cfg(view));
+  return dock_view.exists && rd_panel_from_cfg(view).id != 0 && rd_dock_placement(dock_view, dock_view.source) == RD_DockRule_Valid;
+}
+
+internal RD_DockHostKind
+uishell_sidebar_docking_host_kind(CFG_Node *view)
+{
+  return rd_dock_view_from_address(rd_view_address_from_cfg(view)).source.kind;
+}
+
 // Exercise the production tab strip with enough tabs to overflow it. (A
 // sidebar panel has no strip: its header holds its Views.)
 internal B32
@@ -112,13 +189,9 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
   B32 ok = 1;
   {
     CFG_Node *owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-    CFG_Node *panel = cfg_node_new(rd_state->cfg, owner, str8_lit("panels"));
+    RD_PanelAddress panel = rd_fixture_leaf(rd_fixture_owner(owner));
     CFG_Node *last = &cfg_nil_node;
-    for(U32 i = 0; i < 12; i++)
-    {
-      last = cfg_node_new(rd_state->cfg, panel, str8_lit("text")); rd_view_key_assign(rd_state->cfg, last, 0);
-      if(i == 0) { cfg_node_new(rd_state->cfg, last, str8_lit("selected")); }
-    }
+    for(U32 i = 0; i < 12; i++) { last = rd_fixture_view(panel, str8_lit("text"), str8_zero(), i == 0); }
     ws->window_layout_reset = 1;
     UI_Box *bar = &ui_nil_box;
     UI_Box *last_grip = &ui_nil_box;
@@ -139,7 +212,7 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
       UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
       { rd_panel_area_ui(scratch, r2f32p(0, 0, 180, 100), r2f32p(0, 0, 180, 100), ws, &mount, 1, 0, 0, 0, 0); }
       ui_end_build();
-      bar = ui_box_from_key(ui_key_from_stringf(rd_panel_ui_key(rd_panel_from_cfg(panel)), "tab_bar"));
+      bar = ui_box_from_key(ui_key_from_stringf(rd_panel_ui_key(panel), "tab_bar"));
       U64 last_key = rd_view_ui_key(rd_view_address_from_cfg(last)).u64[0];
       UI_Key column = ui_key_from_stringf(bar->key, "tab_column_%I64x", last_key);
       UI_Key tab = ui_key_from_stringf(column, "tab_%I64x", last_key);
@@ -151,6 +224,7 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
        last_grip->rect.x0 < bar->rect.x0-1 || last_grip->rect.x1 > bar->rect.x1+1)
     { ok = 0; fprintf(stderr, "FAIL many-tab scroll/grip reachability: offset=%g bar=[%g,%g] grip=[%g,%g]\n", bar->view_off_target.x, bar->rect.x0, bar->rect.x1, last_grip->rect.x0, last_grip->rect.x1); }
     cfg_node_release(rd_state->cfg, owner);
+    rd_arrangements_release_unowned();
   }
   ui_select_state(saved); ui_state_release(test); scratch_end(scratch);
   return ok;
@@ -163,10 +237,10 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
 {
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *owner = split->owner_cfg;
-  CFG_Node *saved_host = cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT);
+  RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, owner, 0);
+  RD_FixtureSaved saved_layout = rd_fixture_isolate(scratch.arena, sidebar_owner);
   CFG_Node *saved_inventory = cfg_node_child_from_string(owner, str8_lit("sidebar_generation"));
   CFG_Node *saved_sizing = cfg_node_child_from_string(owner, str8_lit("sidebar_layout_sized"));
-  cfg_node_unhook(rd_state->cfg, owner, saved_host);
   cfg_node_unhook(rd_state->cfg, owner, saved_inventory);
   cfg_node_unhook(rd_state->cfg, owner, saved_sizing);
   UIShell_SidebarState *saved_sidebar = ws->sidebar;
@@ -180,27 +254,28 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   // The fixture is the window's sidebar while it runs: Andamento's
   // arrangement is built for it.
   fixture.window = owner->id;
-  CFG_Node *host = uishell_sidebar_dock_layout(split);
+  uishell_sidebar_dock_layout(split);
   String8 keys[] = {str8_lit("sessions"), str8_lit("git")};
   for(U32 i = 0; i < ArrayCount(keys); i++)
   {
     if(uishell_sidebar_region_view(owner, keys[i]) == &cfg_nil_node)
     { ok = 0; fprintf(stderr, "FAIL saved header fixture must declare %.*s\n", (int)keys[i].size, keys[i].str); }
   }
-  CFG_NodePtrList panels = {0};
-  for(CFG_Node *panel = host->first; panel != &cfg_nil_node; panel = panel->next)
   {
-    // Not the host's own `id`.
-    if(!rd_dock_is_container(panel)) { continue; }
-    cfg_node_ptr_list_push(scratch.arena, &panels, panel);
-    String8 key = cfg_node_child_from_string(cfg_node_child_from_string(panel, str8_lit("sidebar_section")), str8_lit("section"))->first->string;
-    cfg_node_equip_stringf(rd_state->cfg, panel, "%f", str8_match(key, keys[0], 0) || str8_match(key, keys[1], 0) ? 0.f : 1.f/Max(1, panels.count));
+    RD_Arrangement *dock = rd_arrangement_from_panel_owner(scratch.arena, sidebar_owner);
+    U64 count = 0;
+    for(RD_ArrangementPanel *panel = dock->root->first; panel != &rd_nil_arrangement_panel; panel = panel->next)
+    {
+      count += 1;
+      String8 key = uishell_sidebar_section_key(uishell_sidebar_docking_section(rd_panel_address(sidebar_owner, panel->id)));
+      panel->weight = str8_match(key, keys[0], 0) || str8_match(key, keys[1], 0) ? 0.f : 1.f/Max(1, count);
+    }
+    // Normalize only the fixture's healthy shares. Keep the reported zeros.
+    F32 total = 0;
+    for(RD_ArrangementPanel *panel = dock->root->first; panel != &rd_nil_arrangement_panel; panel = panel->next) { total += panel->weight; }
+    for(RD_ArrangementPanel *panel = dock->root->first; panel != &rd_nil_arrangement_panel; panel = panel->next) { panel->weight /= Max(.01f, total); }
+    rd_arrangement_set(dock);
   }
-  // Normalize only the fixture's healthy shares. Keep the reported zeros.
-  F32 total = 0;
-  for(CFG_NodePtrNode *n = panels.first; n; n = n->next) { total += (F32)f64_from_str8(n->v->string); }
-  for(CFG_NodePtrNode *n = panels.first; n; n = n->next)
-  { cfg_node_equip_stringf(rd_state->cfg, n->v, "%f", (F32)f64_from_str8(n->v->string)/Max(.01f, total)); }
   CFG_Node *manual = manual_sizing ? cfg_node_new(rd_state->cfg, split->owner_cfg, str8_lit("sidebar_layout_sized")) : &cfg_nil_node;
   UI_State *saved = ui_state, *test = ui_state_alloc(); ui_select_state(test);
   U64 settled_generation = 0;
@@ -211,8 +286,8 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
     UIShell_RegsScope(.window = split->owner_cfg->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     { uishell_control_surface_ui(r2f32p(17, 29, 337, 769), split); }
     ui_end_build();
-    if(frame == 3) { settled_generation = cfg_change_gen(); }
-    if(frame == 4 && cfg_change_gen() != settled_generation)
+    if(frame == 3) { settled_generation = uishell_sidebar_docking_gen(); }
+    if(frame == 4 && uishell_sidebar_docking_gen() != settled_generation)
     { ok = 0; fprintf(stderr, "FAIL header repair must stay idle after settling\n"); }
   }
   for(U32 i = 0; i < ArrayCount(keys); i++)
@@ -225,10 +300,9 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
     if(ui_box_is_nil(header) || dim_2f32(visible).y < 24.f-1)
     { ok = 0; fprintf(stderr, "FAIL saved section header %.*s: visible height %g\n", (int)keys[i].size, keys[i].str, dim_2f32(visible).y); }
   }
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT));
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(owner, str8_lit("sidebar_generation")));
   if(manual != &cfg_nil_node) { cfg_node_release(rd_state->cfg, manual); }
-  if(saved_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, owner, owner->last, saved_host); }
+  rd_fixture_restore(saved_layout);
   if(saved_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, owner, owner->last, saved_inventory); }
   if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, owner, owner->last, saved_sizing); }
   ws->sidebar = saved_sidebar;
@@ -239,16 +313,6 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   return ok;
 }
 
-// Exercise the shared panel host, not the former stacked sidebar adapter.
-internal void
-uishell_sidebar_docking_drain(UIShell_CmdNode *before)
-{
-  for(UIShell_CmdNode *n = before ? before->next : rd_state->cmds[0].first; n; n = n->next) UIShell_RegsScope()
-  {
-    MemoryCopyStruct(uishell_regs(), n->cmd.regs);
-    if(!uishell_dispatch_tab_command(n->cmd.name)) { uishell_dispatch_panel_command(n->cmd.name); }
-  }
-}
 
 // A boolean display variable's value as its first control shows it: 1 or 0,
 // or -1 when no control shows it.
@@ -278,10 +342,10 @@ uishell_sidebar_close_middle_diagnostics(RD_WindowState *ws, UIShell_ControlledS
 #define CloseFailure(expr) do { if(expr) { failures++; fprintf(stderr, "FAIL sidebar close line %u: %s\n", __LINE__, #expr); } } while(0)
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *window = split->owner_cfg;
-  CFG_Node *saved_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+  RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+  RD_FixtureSaved saved_layout = rd_fixture_isolate(scratch.arena, owner);
   CFG_Node *saved_inventory = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
   CFG_Node *saved_sizing = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized"));
-  cfg_node_unhook(rd_state->cfg, window, saved_host);
   cfg_node_unhook(rd_state->cfg, window, saved_inventory);
   cfg_node_unhook(rd_state->cfg, window, saved_sizing);
   UIShell_SidebarState *saved_sidebar = ws->sidebar;
@@ -305,14 +369,14 @@ uishell_sidebar_close_middle_diagnostics(RD_WindowState *ws, UIShell_ControlledS
     ui_end_build();
   }
   // Three stacked sections, each alone in its leaf and shown.
-  RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
+  RD_Arrangement *sidebar = rd_arrangement_from_panel_owner(scratch.arena, owner);
   RD_ArrangementPanel *middle = &rd_nil_arrangement_panel;
   for(RD_ArrangementPanel *p = sidebar->root->first; p != &rd_nil_arrangement_panel && middle == &rd_nil_arrangement_panel; p = p->next)
   {
     B32 stacked = p->prev != &rd_nil_arrangement_panel && p->next != &rd_nil_arrangement_panel;
     for(RD_ArrangementPanel *q = p->prev; stacked && q != p->next->next; q = q->next)
     {
-      CFG_Node *view = q->first_tab ? cfg_node_from_id(q->first_tab->view) : &cfg_nil_node;
+      CFG_Node *view = q->first_tab ? rd_cfg_from_view(q->first_tab->view) : &cfg_nil_node;
       stacked = q->first == &rd_nil_arrangement_panel && q->tab_count == 1 && str8_match(view->string, str8_lit("sidebar_section"), 0) &&
         !uishell_sidebar_view_hidden(view) && !uishell_sidebar_section_collapsed(view);
     }
@@ -321,24 +385,24 @@ uishell_sidebar_close_middle_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   CloseFailure(middle == &rd_nil_arrangement_panel);
   if(middle != &rd_nil_arrangement_panel)
   {
-    CFG_Node *above = cfg_node_from_id(middle->prev->cfg), *below = cfg_node_from_id(middle->next->cfg);
-    CFG_Node *closing = cfg_node_from_id(middle->first_tab->view);
-    CFG_ID middle_cfg = middle->cfg;
-    RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+    CFG_Node *closing = rd_cfg_from_view(middle->first_tab->view);
+    RD_PanelAddress middle_panel = rd_panel_address(owner, middle->id);
     RD_PanelAddress above_panel = rd_panel_address(owner, middle->prev->id), below_panel = rd_panel_address(owner, middle->next->id);
     UIShell_CmdNode *before = rd_state->cmds[0].last;
-    UIShell_RegsScope(.window = window->id, .panel = rd_panel_address(owner, middle->id), .view = rd_view_address_from_cfg(closing), .tab = rd_view_address_from_cfg(closing))
+    UIShell_RegsScope(.window = window->id, .panel = middle_panel, .view = rd_view_address_from_cfg(closing), .tab = rd_view_address_from_cfg(closing))
     { uishell_dispatch_tab_command(str8_lit("close_tab")); }
     uishell_sidebar_docking_drain(before);
-    CloseFailure(cfg_node_from_id(middle_cfg) != &cfg_nil_node);
+    CloseFailure(rd_panel_exists(middle_panel));
     // Sized by hand, evenly, so both sides have room to give.
-    U64 count = 0;
-    for(CFG_Node *c = above->parent->first; c != &cfg_nil_node; c = c->next) { count += rd_dock_is_container(c); }
-    for(CFG_Node *c = above->parent->first; c != &cfg_nil_node; c = c->next)
-    { if(rd_dock_is_container(c)) { cfg_node_equip_stringf(rd_state->cfg, c, "%f", 1.f/Max(1, count)); } }
+    {
+      RD_Arrangement *even = rd_arrangement_from_panel_owner(scratch.arena, owner);
+      RD_ArrangementPanel *parent = rd_arrangement_panel_from_id(even, above_panel.id)->parent;
+      for(RD_ArrangementPanel *c = parent->first; c != &rd_nil_arrangement_panel; c = c->next) { c->weight = 1.f/Max(1, parent->child_count); }
+      rd_arrangement_set(even);
+    }
     uishell_sidebar_manual_sizing(window, 1);
     // Drag the boundary above the section below down, through real events.
-    String8 above_before = {0};
+    F32 above_before = 0;
     Vec2F32 start = {0};
     B32 found = 0;
     for(U32 frame = 0; frame < 8; frame++)
@@ -350,7 +414,7 @@ uishell_sidebar_close_middle_diagnostics(RD_WindowState *ws, UIShell_ControlledS
       {
         found = !ui_box_is_nil(boundary);
         start = center_2f32(boundary->rect);
-        above_before = push_str8_copy(scratch.arena, above->string);
+        above_before = uishell_sidebar_docking_weight(above_panel);
       }
       if(found && frame >= 3 && frame <= 5)
       {
@@ -365,20 +429,19 @@ uishell_sidebar_close_middle_diagnostics(RD_WindowState *ws, UIShell_ControlledS
       { uishell_control_surface_ui(rect, split); }
       ui_end_build();
     }
-    sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
+    sidebar = rd_arrangement_live(owner);
     B32 empty = 0;
     for(RD_ArrangementPanel *p = sidebar->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(sidebar->root, p))
     { empty |= p != sidebar->root && p->first == &rd_nil_arrangement_panel && p->tab_count == 0; }
     CloseFailure(empty);
-    CloseFailure(above->next != below);
+    CloseFailure(rd_arrangement_panel_from_id(sidebar, above_panel.id)->next->id != below_panel.id);
     CloseFailure(!found);
-    CloseFailure(found && (F32)f64_from_str8(above->string) <= (F32)f64_from_str8(above_before)+.0001f);
+    CloseFailure(found && uishell_sidebar_docking_weight(above_panel) <= above_before+.0001f);
   }
   ui_kill_action();
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT));
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_generation")));
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")));
-  if(saved_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_host); }
+  rd_fixture_restore(saved_layout);
   if(saved_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_inventory); }
   if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_sizing); }
   ws->sidebar = saved_sidebar;
@@ -395,15 +458,15 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
 {
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
-  CFG_Node *saved_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
-  cfg_node_unhook(rd_state->cfg, window, saved_host);
+  // The sidebar follows Andamento's placement afresh, its Views kept by key,
+  // and is put back as it was after.
+  RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+  RD_Arrangement *saved_layout = rd_arrangement_from_panel_owner(scratch.arena, sidebar_owner);
   CFG_Node *saved_positions = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
   if(saved_positions != &cfg_nil_node) { cfg_node_unhook(rd_state->cfg, window, saved_positions); }
   U32 failures = 0;
 #define DockFailure(expr) do { if(expr) { failures++; fprintf(stderr, "FAIL sidebar docking line %u: %s\n", __LINE__, #expr); } } while(0)
-  CFG_Node *saved_axis = cfg_node_child_from_string(window, str8_lit("control_views_split_x"));
   CFG_Node *saved_sizing = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized"));
-  cfg_node_unhook(rd_state->cfg, window, saved_axis);
   cfg_node_unhook(rd_state->cfg, window, saved_sizing);
   UIShell_SidebarState *saved_sidebar = ws->sidebar;
   B32 saved_fixture = uishell_sidebar_fixture, saved_subject = uishell_sidebar_subject_fixture;
@@ -411,13 +474,13 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   UIShell_SidebarState unavailable = {.initialized = 1};
   ws->sidebar = &unavailable;
-  U64 before_unavailable = cfg_change_gen();
-  DockFailure(uishell_sidebar_dock_layout(&split) != &cfg_nil_node);
-  DockFailure(cfg_change_gen() != before_unavailable);
+  U64 before_unavailable = uishell_sidebar_docking_gen();
+  uishell_sidebar_dock_layout(&split);
+  DockFailure(uishell_sidebar_docking_gen() != before_unavailable);
   ws->sidebar = 0;
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
-  CFG_Node *host = uishell_sidebar_dock_layout(&split);
-  DockFailure(host == &cfg_nil_node);
+  uishell_sidebar_dock_layout(&split);
+  DockFailure(rd_arrangement_live(sidebar_owner)->root == &rd_nil_arrangement_panel);
   DockFailure(!uishell_sidebar_restore_menu_diagnostics(ws, &split));
   DockFailure(!uishell_sidebar_tab_overflow_diagnostics(ws));
   DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 1));
@@ -425,11 +488,10 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!uishell_sidebar_close_middle_diagnostics(ws, &split));
   // Two adjacent scrolling sections: Andamento places pinned regions
   // (controls) first, so they're found by key, not position.
-  CFG_Node *first_panel = uishell_sidebar_region_view(window, str8_lit("tree"))->parent, *second_panel = first_panel->next;
-  U64 first_index = 0;
-  for(CFG_Node *c = host->first; c != first_panel && c != &cfg_nil_node; c = c->next) { first_index++; }
-  CFG_Node *view = cfg_node_child_from_string(first_panel, str8_lit("sidebar_section"));
-  CFG_Node *second_view = cfg_node_child_from_string(second_panel, str8_lit("sidebar_section"));
+  RD_PanelAddress first_panel = rd_panel_from_cfg(uishell_sidebar_region_view(window, str8_lit("tree")));
+  RD_PanelAddress second_panel = rd_panel_address(sidebar_owner, rd_arrangement_panel_from_id(rd_arrangement_live(sidebar_owner), first_panel.id)->next->id);
+  CFG_Node *view = uishell_sidebar_docking_section(first_panel);
+  CFG_Node *second_view = uishell_sidebar_docking_section(second_panel);
   CFG_ID view_id = view->id;
   String8 key = push_str8_copy(scratch.arena, cfg_node_child_from_string(view, str8_lit("section"))->first->string);
   String8 second_key = push_str8_copy(scratch.arena, cfg_node_child_from_string(second_view, str8_lit("section"))->first->string);
@@ -476,17 +538,17 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       }
     }
     DockFailure(events.count != 0);
-    if(frame == 25) { settled_cfg_gen = cfg_change_gen(); }
-    if(frame > 25) { DockFailure(cfg_change_gen() != settled_cfg_gen); }
-    UI_Key tabbar = ui_key_from_stringf(rd_panel_ui_key(rd_panel_from_cfg(first_panel)), "tab_bar");
+    if(frame == 25) { settled_cfg_gen = uishell_sidebar_docking_gen(); }
+    if(frame > 25) { DockFailure(uishell_sidebar_docking_gen() != settled_cfg_gen); }
+    UI_Key tabbar = ui_key_from_stringf(rd_panel_ui_key(first_panel), "tab_bar");
     DockFailure(!ui_box_is_nil(ui_box_from_key(tabbar)));
   }
   // Drive a real boundary drag, serialize its manual allocation, then
   // double-click the boundary to return to content-based default sizing.
   // A press alone writes no sizes.
-  String8 pressed_from = {0};
-  F32 default_pct = (F32)f64_from_str8(first_panel->string);
-  UI_Key boundary_key = ui_key_from_stringf(rd_panel_ui_key(rd_panel_from_cfg(first_panel)), "boundary_%I64u", rd_panel_from_cfg(second_panel).id);
+  F32 pressed_from = 0;
+  F32 default_pct = uishell_sidebar_docking_weight(first_panel);
+  UI_Key boundary_key = ui_key_from_stringf(rd_panel_ui_key(first_panel), "boundary_%I64u", second_panel.id);
   Vec2F32 drag_start = {0};
   for(U32 frame = 0; frame < 12; frame++)
   {
@@ -509,44 +571,31 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     { uishell_control_surface_ui(r2f32p(17, 29, 337, 229), &split); }
     ui_end_build();
-    if(frame == 0) { pressed_from = push_str8_copy(scratch.arena, first_panel->string); }
-    if(frame == 1) { DockFailure(!str8_match(first_panel->string, pressed_from, 0)); }
+    if(frame == 0) { pressed_from = uishell_sidebar_docking_weight(first_panel); }
+    if(frame == 1) { DockFailure(uishell_sidebar_docking_weight(first_panel) != pressed_from); }
     if(frame == 4)
     {
       DockFailure(cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) == &cfg_nil_node);
-      DockFailure(abs_f32((F32)f64_from_str8(first_panel->string)-default_pct) < .0001f);
+      F32 dragged = uishell_sidebar_docking_weight(first_panel);
+      DockFailure(abs_f32(dragged-default_pct) < .0001f);
       // The drag keeps the saved sizes summing to one.
       F32 saved_sum = 0;
-      for(CFG_Node *c = first_panel->parent->first; c != &cfg_nil_node; c = c->next) { saved_sum += (F32)f64_from_str8(c->string); }
+      RD_ArrangementPanel *parent = rd_arrangement_panel_from_id(rd_arrangement_live(sidebar_owner), first_panel.id)->parent;
+      for(RD_ArrangementPanel *c = parent->first; c != &rd_nil_arrangement_panel; c = c->next) { saved_sum += c->weight; }
       DockFailure(abs_f32(saved_sum-1.f) > .001f);
-      CFG_State *loaded_cfg = cfg_state_alloc();
-      String8 text = cfg_string_from_tree(scratch.arena, rd_state->cfg_schema_table, str8_zero(), window);
-      CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(scratch.arena, loaded_cfg, rd_state->cfg_schema_table, str8_zero(), text);
-      DockFailure(loaded.count != 1);
-      CFG_Node *restored_window = loaded.first->v;
-      CFG_Node *restored_root = cfg_node_child_from_string(restored_window, RD_DOCK_SIDEBAR_ROOT);
-      CFG_Node *restored_first = restored_root->first;
-      for(U64 i = 0; i < first_index; i++) { restored_first = restored_first->next; }
-      DockFailure(cfg_node_child_from_string(restored_window, str8_lit("sidebar_layout_sized")) == &cfg_nil_node);
-      DockFailure(!str8_match(restored_first->string, first_panel->string, 0));
-      UIShell_ControlledSplit restored_split = {.owner_cfg = restored_window};
-      // Arrangements name their nodes by ID in the selected config.
-      CFG_Ctx *saved_ctx = cfg_ctx;
-      cfg_ctx_select(cfg_state_ctx(loaded_cfg));
-      UIShell_WorkspaceMount restored_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, restored_window, restored_root);
+      // Sizing the sidebar again keeps sizes set by hand.
+      UIShell_WorkspaceMount sized_mount = uishell_workspace_mount_from_sidebar(scratch.arena, window);
       UI_FontSize(11)
-      { uishell_sidebar_size_panels(&restored_split, &restored_mount, r2f32p(17, 29, 337, 229-uishell_sidebar_footer_height(ws))); }
-      cfg_ctx_select(saved_ctx);
-      DockFailure(!str8_match(restored_first->string, first_panel->string, 0));
-      cfg_state_release(loaded_cfg);
+      { uishell_sidebar_size_panels(&split, &sized_mount, r2f32p(17, 29, 337, 229-uishell_sidebar_footer_height(ws))); }
+      DockFailure(abs_f32(uishell_sidebar_docking_weight(first_panel)-dragged) > .0001f);
     }
   }
   DockFailure(cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node);
-  DockFailure(abs_f32((F32)f64_from_str8(first_panel->string)-default_pct) > .0001f);
+  DockFailure(abs_f32(uishell_sidebar_docking_weight(first_panel)-default_pct) > .0001f);
   // Beside a collapsed section there's no boundary to drag: it would only
   // eat into the size the section returns to when expanded.
   {
-    CFG_Node *collapsed = cfg_node_new(rd_state->cfg, second_view, str8_lit("section_collapsed"));
+    uishell_sidebar_section_set_collapsed(second_view, 1);
     for(U32 frame = 0; frame < 2; frame++)
     {
       UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
@@ -556,14 +605,14 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       ui_end_build();
     }
     if(!ui_box_is_nil(ui_box_from_key(boundary_key))) { fprintf(stderr, "FAIL dock: a boundary beside a collapsed section can be dragged\n"); failures++; }
-    cfg_node_release(rd_state->cfg, collapsed);
+    uishell_sidebar_section_set_collapsed(second_view, 0);
   }
   // A row dragged onto the pill between two sections makes a new section
   // there holding its ghost (drag-model.md: "a docking site: a new pinned
   // area"), through the real docking sites.
   {
     U64 sections_before = uishell_sidebar_window_locals(window)->section_count;
-    UI_Key site_key = ui_key_from_stringf(rd_panel_ui_key(rd_panel_from_cfg(host)), "drop_boundary_%I64u", rd_panel_from_cfg(second_panel).id);
+    UI_Key site_key = ui_key_from_stringf(rd_panel_ui_key(rd_panel_address(sidebar_owner, rd_arrangement_live(sidebar_owner)->root->id)), "drop_boundary_%I64u", second_panel.id);
     UIShell_CmdNode *cmds_before = rd_state->cmds[0].last;
     Vec2F32 pointer = v2f32(-100, -100), start = pointer;
     B32 started = 0, site_seen = 0;
@@ -616,20 +665,22 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     Temp made_scratch = scratch_begin(0, 0);
     String8 made = sections_after > sections_before ? push_str8_copy(made_scratch.arena, locals->sections[sections_after-1].id) : str8_zero();
     CFG_Node *made_view = made.size ? uishell_sidebar_local_view(window, made) : &cfg_nil_node;
-    DockFailure(made.size && (made_view == &cfg_nil_node || made_view->parent->parent != host || made_view->parent->next != second_panel));
+    RD_Arrangement *made_dock = rd_arrangement_live(sidebar_owner);
+    RD_ArrangementPanel *made_panel = rd_arrangement_panel_from_view(made_dock, rd_view_address_from_cfg(made_view));
+    DockFailure(made.size && (made_view == &cfg_nil_node || made_panel->parent != made_dock->root || made_panel->next->id != second_panel.id));
     // Remove the section, its View and its panel.
-    if(made_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made_view->parent); }
+    if(made_view != &cfg_nil_node) { rd_fixture_remove_panel(rd_panel_from_cfg(made_view)); }
     if(made.size) { uishell_sidebar_local_forget_section(window, made); }
     scratch_end(made_scratch);
   }
   // Merge through the production command, then split the merged panel in the
   // opposite direction. This exercises host-root retention on split/collapse.
   UIShell_CmdNode *before = rd_state->cmds[0].last;
-  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(second_panel), .view = rd_view_address_from_cfg(second_view),
-                   .dst_panel = rd_panel_from_cfg(first_panel), .prev_tab = rd_view_address_from_cfg(view))
+  UIShell_RegsScope(.window = window->id, .panel = second_panel, .view = rd_view_address_from_cfg(second_view),
+                   .dst_panel = first_panel, .prev_tab = rd_view_address_from_cfg(view))
   { uishell_dispatch_tab_command(str8_lit("move_view")); }
   uishell_sidebar_docking_drain(before);
-  DockFailure(second_view->parent != view->parent);
+  DockFailure(!rd_panel_address_match(rd_panel_from_cfg(second_view), rd_panel_from_cfg(view)));
   UIShell_WorkspaceMount merged = uishell_workspace_mount_from_cfg(scratch.arena, view);
   DockFailure(rd_dock_presentation(RD_DockHostKind_Sidebar,
     rd_panel_node_from_id(merged.panel_tree.root, rd_panel_from_cfg(view).id)->tabs.count) != RD_DockPresentation_SectionHeader);
@@ -638,14 +689,14 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
                    .dst_panel = rd_panel_from_cfg(view), .dir2 = Dir2_Right)
   { uishell_dispatch_panel_command(str8_lit("split_panel")); }
   uishell_sidebar_docking_drain(before);
-  DockFailure(view->parent == second_view->parent);
-  DockFailure(rd_dock_host_from_cfg(second_view, 320).kind != RD_DockHostKind_Sidebar);
-  DockFailure(cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT) == &cfg_nil_node);
+  DockFailure(rd_panel_address_match(rd_panel_from_cfg(view), rd_panel_from_cfg(second_view)));
+  DockFailure(uishell_sidebar_docking_host_kind(second_view) != RD_DockHostKind_Sidebar);
+  DockFailure(rd_arrangement_live(sidebar_owner)->root == &rd_nil_arrangement_panel);
   // Child workspace targets must stay absent, and commands enforce the same
   // level boundary even when called without a drag. Old previews' saved
   // cross-level placements must recover into the root Control Region.
   CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-  CFG_Node *panels = cfg_node_new(rd_state->cfg, workspace, str8_lit("panels"));
+  RD_PanelAddress panels = rd_fixture_leaf(rd_fixture_owner(workspace));
   UIShell_WorkspaceMount child_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace);
   UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(view), .view = rd_view_address_from_cfg(view))
   {
@@ -668,30 +719,29 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     DockFailure(!ui_box_is_nil(ui_box_from_key(catchall)));
     rd_drag_kill();
   }
-  CFG_Node *original_panel = view->parent;
-  U64 before_rejected = cfg_change_gen();
+  RD_PanelAddress original_panel = rd_panel_from_cfg(view);
+  U64 before_rejected = uishell_sidebar_docking_gen();
   log_scope_begin();
   before = rd_state->cmds[0].last;
   UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(view), .view = rd_view_address_from_cfg(view),
-                   .dst_panel = rd_panel_from_cfg(panels), .prev_tab = rd_nil_view_address)
+                   .dst_panel = panels, .prev_tab = rd_nil_view_address)
   { uishell_dispatch_tab_command(str8_lit("move_view")); }
   uishell_sidebar_docking_drain(before);
   UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(view), .view = rd_view_address_from_cfg(view),
-                   .dst_panel = rd_panel_from_cfg(panels), .dir2 = Dir2_Right)
+                   .dst_panel = panels, .dir2 = Dir2_Right)
   { uishell_dispatch_panel_command(str8_lit("split_panel")); }
   LogScopeResult rejected = log_scope_end(scratch.arena);
   DockFailure(str8_find_needle(rejected.strings[LogMsgKind_UserError], 0,
     str8_lit("different Controlled Split level"), 0) == rejected.strings[LogMsgKind_UserError].size);
-  DockFailure(view->parent != original_panel || cfg_change_gen() != before_rejected);
-  cfg_node_unhook(rd_state->cfg, original_panel, view);
-  cfg_node_insert_child(rd_state->cfg, panels, panels->last, view);
-  rd_dock_restore_window(rd_state->cfg, window);
-  DockFailure(view->parent == panels || view->id != view_id);
-  DockFailure(rd_dock_host_from_cfg(view, 320).kind != RD_DockHostKind_Sidebar);
-  CFG_Node *recovered_panel = view->parent;
-  U64 recovered_gen = cfg_change_gen();
-  rd_dock_restore_window(rd_state->cfg, window);
-  DockFailure(view->parent != recovered_panel || cfg_change_gen() != recovered_gen);
+  DockFailure(!rd_panel_address_match(rd_panel_from_cfg(view), original_panel) || uishell_sidebar_docking_gen() != before_rejected);
+  uishell_sidebar_docking_misplace(view, workspace);
+  rd_dock_restore_window(window);
+  DockFailure(rd_panel_owner_match(rd_panel_from_cfg(view).owner, panels.owner) || view->id != view_id);
+  DockFailure(uishell_sidebar_docking_host_kind(view) != RD_DockHostKind_Sidebar);
+  RD_PanelAddress recovered_panel = rd_panel_from_cfg(view);
+  U64 recovered_gen = uishell_sidebar_docking_gen();
+  rd_dock_restore_window(window);
+  DockFailure(!rd_panel_address_match(rd_panel_from_cfg(view), recovered_panel) || uishell_sidebar_docking_gen() != recovered_gen);
   // A display value crosses to a new core instance in Andamento's dashboard
   // record, imported before the first snapshot as at startup.
   UIShell_SidebarState display = {0};
@@ -877,12 +927,10 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   uishell_sidebar_release(&display);
   ws->active_panel = saved_sidebar_focus;
   cfg_node_release(rd_state->cfg, workspace);
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT));
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("control_views_split_x")));
+  rd_arrangements_release_unowned();
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")));
-  if(saved_axis != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_axis); }
+  rd_arrangement_set(saved_layout);
   if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_sizing); }
-  if(saved_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_host); }
   CFG_Node *test_positions = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
   if(test_positions != &cfg_nil_node) { cfg_node_release(rd_state->cfg, test_positions); }
   if(saved_positions != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_positions); }
@@ -895,30 +943,37 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
 #undef DockFailure
 }
 
-// Saving gives each panel node its `id`, after its own panels; panels a test
-// adds by hand land after it.
-internal CFG_Node *
-uishell_section_placement_last_panel(CFG_Node *host)
+// The placement scenarios read the window's dock by panel: the panels of its
+// root split, first, last and after `panel` (0 for none), and the one a
+// View is a tab of (0 when it's not in the dock).
+internal RD_Arrangement *
+uishell_section_placement_dock(CFG_Node *window)
 {
-  CFG_Node *n = host->last;
-  for(; n != &cfg_nil_node && !rd_dock_is_container(n); n = n->prev) {}
-  return n;
+  return rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
 }
 
-internal CFG_Node *
-uishell_section_placement_first_panel(CFG_Node *host)
+internal RD_PanelID
+uishell_section_placement_first_panel(CFG_Node *window)
 {
-  CFG_Node *n = host->first;
-  for(; n != &cfg_nil_node && !rd_dock_is_container(n); n = n->next) {}
-  return n;
+  return uishell_section_placement_dock(window)->root->first->id;
 }
 
-internal CFG_Node *
-uishell_section_placement_next_panel(CFG_Node *panel)
+internal RD_PanelID
+uishell_section_placement_last_panel(CFG_Node *window)
 {
-  CFG_Node *n = panel->next;
-  for(; n != &cfg_nil_node && !rd_dock_is_container(n); n = n->next) {}
-  return n;
+  return uishell_section_placement_dock(window)->root->last->id;
+}
+
+internal RD_PanelID
+uishell_section_placement_next_panel(CFG_Node *window, RD_PanelID panel)
+{
+  return rd_arrangement_panel_from_id(uishell_section_placement_dock(window), panel)->next->id;
+}
+
+internal RD_PanelID
+uishell_section_placement_panel(CFG_Node *window, CFG_Node *view)
+{
+  return rd_arrangement_panel_from_view(uishell_section_placement_dock(window), rd_view_address_from_cfg(view))->id;
 }
 
 // The headless sidebar of the placement scenarios: one window, its core and
@@ -943,7 +998,7 @@ uishell_section_placement_use(UIShell_SectionPlacement *p, CFG_Node *window, And
     uishell_sidebar_replace_snapshot(s, 0);
     andamento_destroy(s->core);
     s->core = core;
-    s->sidebar_synced = 0; s->sidebar_hash = s->sidebar_generation = 0;
+    s->sidebar_synced = 0; s->sidebar_version = s->sidebar_generation = 0;
   }
   p->window = window;
   s->window = window->id;
@@ -955,11 +1010,11 @@ uishell_section_placement_use(UIShell_SectionPlacement *p, CFG_Node *window, And
 
 // A frame: the sidebar commits what changed, or follows Andamento, then lays
 // itself out.
-internal CFG_Node *
+internal void
 uishell_section_placement_frame(UIShell_SectionPlacement *p)
 {
   uishell_sidebar_store_sync(&p->sidebar, p->window, 0);
-  return uishell_sidebar_dock_layout(&p->split);
+  uishell_sidebar_dock_layout(&p->split);
 }
 
 internal B32
@@ -971,6 +1026,14 @@ uishell_section_placement_configure(UIShell_SectionPlacement *p, String8 config)
   return ok;
 }
 
+// A window of the placement scenarios goes, with its arrangements.
+internal void
+uishell_section_placement_release_window(CFG_Node *window)
+{
+  cfg_node_release(rd_state->cfg, window);
+  rd_arrangements_release_unowned();
+}
+
 // A restart: the window as the presentation file holds it, read back, and a
 // new core with `config` that imports the dashboard record. Returns the
 // window's text.
@@ -979,10 +1042,10 @@ uishell_section_placement_restart(Arena *arena, UIShell_SectionPlacement *p, Str
 {
   String8 text = uishell_workspace_store_window_text(arena, str8_zero(), p->window);
   String8 record = uishell_sidebar_record_get(arena, p->sidebar.core, str8_lit("dashboard"));
+  uishell_section_placement_release_window(p->window);
   CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(arena, rd_state->cfg, p->schemas, str8_zero(), text);
   CFG_Node *window = loaded.first ? loaded.first->v : &cfg_nil_node;
   cfg_node_insert_child(rd_state->cfg, p->user, p->user->last, window);
-  cfg_node_release(rd_state->cfg, p->window);
   Andamento *core = andamento_create(config.str, config.size, 0);
   if(core && record.size) { andamento_record_put(core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0); }
   uishell_section_placement_use(p, window, core);
@@ -1032,25 +1095,27 @@ uishell_section_placement_diagnostics(String8 source_path)
     if(source_core)
     {
       uishell_section_placement_use(&p, window, source_core);
-      CFG_Node *source_host = uishell_section_placement_frame(&p);
-      PlacementCheck(source_host != &cfg_nil_node && source_host->first != &cfg_nil_node);
+      uishell_section_placement_frame(&p);
+      PlacementCheck(uishell_section_placement_first_panel(window) != 0);
       // The unhinted workspace fallback follows every hinted shipped region.
       CFG_Node *source_fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
-      PlacementCheck(source_fallback != &cfg_nil_node && uishell_section_placement_last_panel(source_host) == source_fallback->parent);
-      if(source_host->first != &cfg_nil_node)
+      PlacementCheck(source_fallback != &cfg_nil_node && uishell_section_placement_last_panel(window) == uishell_section_placement_panel(window, source_fallback));
+      if(uishell_section_placement_first_panel(window) != 0)
       {
-        CFG_Node *moved = uishell_section_placement_last_panel(source_host);
-        cfg_node_insert_child(state.cfg, source_host, &cfg_nil_node, moved);
+        RD_PanelID moved = uishell_section_placement_last_panel(window);
+        RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(window));
+        rd_arrangement_reorder(dock, moved, 0);
+        rd_arrangement_set(dock);
         uishell_section_placement_frame(&p);
-        PlacementCheck(uishell_section_placement_first_panel(source_host) == moved);
+        PlacementCheck(uishell_section_placement_first_panel(window) == moved);
         String8 text = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), window);
         PlacementCheck(text.size != 0);
       }
       uishell_sidebar_reset_regions(window);
-      PlacementCheck(uishell_section_placement_last_panel(cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT)) ==
-                     uishell_sidebar_region_view(window, str8_lit(".unplaced"))->parent);
+      PlacementCheck(uishell_section_placement_last_panel(window) ==
+                     uishell_section_placement_panel(window, uishell_sidebar_region_view(window, str8_lit(".unplaced"))));
     }
-    cfg_node_release(state.cfg, window);
+    uishell_section_placement_release_window(window);
     window = cfg_node_new(state.cfg, p.user, str8_lit("window"));
   }
   String8 config = str8_lit(
@@ -1059,7 +1124,8 @@ uishell_section_placement_diagnostics(String8 source_path)
   Andamento *core = andamento_create(config.str, config.size, 0);
   PlacementCheck(core != 0);
   uishell_section_placement_use(&p, window, core);
-  CFG_Node *host = uishell_section_placement_frame(&p);
+  uishell_section_placement_frame(&p);
+  RD_PanelOwner dock_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
   CFG_Node *a = uishell_sidebar_region_view(window, str8_lit("a"));
   CFG_Node *b = uishell_sidebar_region_view(window, str8_lit("b"));
   // Defaults are stable by hint, regardless of declaration order.
@@ -1067,43 +1133,50 @@ uishell_section_placement_diagnostics(String8 source_path)
   // Andamento always declares the unhinted workspace fallback; it sorts last.
   CFG_Node *fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
   PlacementCheck(fallback != &cfg_nil_node);
-  PlacementCheck(uishell_section_placement_first_panel(host) == a->parent && uishell_section_placement_next_panel(a->parent) == b->parent &&
-                 uishell_section_placement_last_panel(host) == fallback->parent);
+  PlacementCheck(uishell_section_placement_first_panel(window) == uishell_section_placement_panel(window, a) &&
+                 uishell_section_placement_next_panel(window, uishell_section_placement_panel(window, a)) == uishell_section_placement_panel(window, b) &&
+                 uishell_section_placement_last_panel(window) == uishell_section_placement_panel(window, fallback));
   CFG_ID a_id = a->id, b_id = b->id;
   // A user reorder changes only layout: one commit, and nothing more after.
-  cfg_node_insert_child(state.cfg, host, &cfg_nil_node, b->parent);
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(window));
+    rd_arrangement_reorder(dock, uishell_section_placement_panel(window, b), 0);
+    rd_arrangement_set(dock);
+  }
   U64 commits = p.sidebar.sidebar_commits;
   uishell_section_placement_frame(&p);
-  PlacementCheck(uishell_section_placement_first_panel(host) == b->parent && a->id == a_id && b->id == b_id);
+  PlacementCheck(uishell_section_placement_first_panel(window) == uishell_section_placement_panel(window, b) && a->id == a_id && b->id == b_id);
   PlacementCheck(p.sidebar.sidebar_commits == commits+1);
-  U64 generation = cfg_change_gen(), title_builds = p.sidebar.title_builds;
+  U64 generation = uishell_sidebar_docking_gen(), title_builds = p.sidebar.title_builds;
   uishell_section_placement_frame(&p);
-  PlacementCheck(cfg_change_gen() == generation && p.sidebar.title_builds == title_builds && p.sidebar.sidebar_commits == commits+1);
-  // An empty saved panel shows nothing: it goes, and the commit after
-  // records the sidebar without it (#358).
-  CFG_Node *empty_panel = cfg_node_new(state.cfg, host, str8_lit("0.25"));
-  CFG_ID empty_id = empty_panel->id;
+  PlacementCheck(uishell_sidebar_docking_gen() == generation && p.sidebar.title_builds == title_builds && p.sidebar.sidebar_commits == commits+1);
+  // An empty panel shows nothing: it goes, and the commit after records the
+  // sidebar without it (#358).
+  RD_PanelID empty_id = 0;
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(window));
+    empty_id = rd_arrangement_add(dock, dock->root->id, 0.25f);
+    rd_arrangement_set(dock);
+  }
   commits = p.sidebar.sidebar_commits;
   uishell_section_placement_frame(&p);
-  PlacementCheck(cfg_node_from_id(empty_id) == &cfg_nil_node && p.sidebar.sidebar_commits == commits+1);
-  // Duplicates, as a hand edit or an old layout saves them: the first copy
-  // in the dock wins, and Floating Panels come after the dock. A panel the
-  // repair empties goes; unrelated content and its panel's share stay.
-  CFG_Node *duplicate_panel = cfg_node_new(state.cfg, host, str8_lit("0.125"));
-  CFG_Node *duplicate = cfg_node_new(state.cfg, duplicate_panel, str8_lit("sidebar_section")); rd_view_key_assign(state.cfg, duplicate, 0);
-  cfg_node_new(state.cfg, cfg_node_new(state.cfg, duplicate, str8_lit("section")), str8_lit("a"));
-  CFG_Node *unrelated = cfg_node_new(state.cfg, duplicate_panel, str8_lit("text")); rd_view_key_assign(state.cfg, unrelated, 0);
-  cfg_node_new(state.cfg, cfg_node_new(state.cfg, unrelated, str8_lit("label")), str8_lit("unrelated"));
-  CFG_Node *empty_duplicate_panel = cfg_node_new(state.cfg, host, str8_lit("0.0625"));
-  duplicate = cfg_node_new(state.cfg, empty_duplicate_panel, str8_lit("sidebar_section")); rd_view_key_assign(state.cfg, duplicate, 0);
-  cfg_node_new(state.cfg, cfg_node_new(state.cfg, duplicate, str8_lit("section")), str8_lit("a"));
-  CFG_Node *duplicate_floating = cfg_node_child_from_string_or_alloc(state.cfg, window, str8_lit("floating_panels"));
-  for(U32 i = 0; i < 2; i++)
+  PlacementCheck(!rd_panel_exists(rd_panel_address(dock_owner, empty_id)) && p.sidebar.sidebar_commits == commits+1);
+  // A View of the window's own in the dock, and a Floating Panel's, keep
+  // their places, Views and shares across a restart.
+  CFG_Node *unrelated = &cfg_nil_node;
   {
-    CFG_Node *floating_panel = cfg_node_new(state.cfg, duplicate_floating, i ? str8_lit("0.25") : str8_lit("0.5"));
-    CFG_Node *floating_copy = cfg_node_new(state.cfg, floating_panel, str8_lit("sidebar_section")); rd_view_key_assign(state.cfg, floating_copy, 0);
-    cfg_node_new(state.cfg, cfg_node_new(state.cfg, floating_copy, str8_lit("section")), i ? str8_lit("b") : str8_lit("a"));
-    if(!i) { cfg_node_new(state.cfg, floating_panel, str8_lit("text")); }
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(window));
+    RD_PanelID unrelated_panel = rd_arrangement_add(dock, dock->root->id, 0.125f);
+    unrelated = rd_view_alloc(dock_owner, str8_lit("text"), str8_zero());
+    cfg_node_new(state.cfg, cfg_node_new(state.cfg, unrelated, str8_lit("label")), str8_lit("unrelated"));
+    rd_arrangement_move_tab(dock, rd_view_address_from_cfg(unrelated), unrelated_panel, rd_nil_view_address);
+    rd_arrangement_set(dock);
+    RD_Arrangement *floating = rd_arrangement_alloc(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, window, rd_floating_count(window)+1));
+    RD_PanelID floating_panel = rd_arrangement_clear(floating);
+    CFG_Node *floating_view = rd_view_alloc(floating->owner, str8_lit("text"), str8_zero());
+    rd_arrangement_move_tab(floating, rd_view_address_from_cfg(floating_view), floating_panel, rd_nil_view_address);
+    rd_arrangement_set(floating);
+    rd_panel_setting_set(rd_panel_address(floating->owner, floating_panel), str8_lit("share"), str8_lit("0.5"));
   }
   uishell_section_placement_frame(&p);
   // The restart reads it back from the presentation file and the record.
@@ -1111,28 +1184,36 @@ uishell_section_placement_diagnostics(String8 source_path)
   PlacementCheck(str8_find_needle(text, 0, str8_lit("control_views"), 0) == text.size);
   PlacementCheck(str8_find_needle(text, 0, str8_lit("sidebar_presentation"), 0) < text.size);
   CFG_Node *restored = p.window;
-  CFG_Node *restored_host = cfg_node_child_from_string(restored, RD_DOCK_SIDEBAR_ROOT);
-  CFG_Node *first = uishell_section_placement_first_panel(restored_host);
-  PlacementCheck(str8_match(cfg_node_child_from_string(cfg_node_child_from_string(first, str8_lit("sidebar_section")), str8_lit("section"))->first->string, str8_lit("b"), 0));
-  CFG_Node *restored_unrelated_panel = &cfg_nil_node;
-  for(CFG_Node *n = restored_host->first; n != &cfg_nil_node; n = n->next)
-  { if(cfg_node_child_from_string(n, str8_lit("text")) != &cfg_nil_node) { restored_unrelated_panel = n; } }
-  PlacementCheck(restored_unrelated_panel != &cfg_nil_node && uishell_sidebar_find_view(restored_unrelated_panel, str8_lit("a")) == &cfg_nil_node);
+  b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  PlacementCheck(uishell_section_placement_first_panel(restored) == uishell_section_placement_panel(restored, b));
+  RD_PanelAddress restored_unrelated_panel = {0};
+  {
+    RD_Arrangement *dock = uishell_section_placement_dock(restored);
+    for(RD_ArrangementPanel *n = dock->root; n != &rd_nil_arrangement_panel; n = rd_arrangement_next(dock->root, n))
+    {
+      for(RD_ArrangementTab *t = n->first_tab; t; t = t->next)
+      { if(str8_match(rd_cfg_from_view(t->view)->string, str8_lit("text"), 0)) { restored_unrelated_panel = rd_panel_address(dock_owner, n->id); unrelated = rd_cfg_from_view(t->view); } }
+    }
+  }
+  PlacementCheck(restored_unrelated_panel.id != 0);
   // Its share is this device's, as content sizes it, kept by key.
-  PlacementCheck(abs_f32((F32)f64_from_str8(restored_unrelated_panel->string)-.125f) < .00001f);
-  PlacementCheck(str8_match(cfg_node_child_from_string(cfg_node_child_from_string(restored_unrelated_panel, str8_lit("text")), str8_lit("label"))->first->string,
-                            str8_lit("unrelated"), 0));
-  CFG_Node *restored_floating = cfg_node_child_from_string(restored, str8_lit("floating_panels"));
-  PlacementCheck(uishell_sidebar_find_view(restored_floating, str8_lit("a")) == &cfg_nil_node);
-  PlacementCheck(uishell_sidebar_find_view(restored_floating, str8_lit("b")) == &cfg_nil_node);
-  PlacementCheck(uishell_section_placement_first_panel(restored_floating) == uishell_section_placement_last_panel(restored_floating));
-  PlacementCheck(str8_match(uishell_section_placement_first_panel(restored_floating)->string, str8_lit("0.5"), 0));
-  PlacementCheck(cfg_node_child_from_string(uishell_section_placement_first_panel(restored_floating), str8_lit("text")) != &cfg_nil_node);
-  generation = cfg_change_gen();
+  PlacementCheck(restored_unrelated_panel.id != 0 && abs_f32(uishell_sidebar_docking_weight(restored_unrelated_panel)-.125f) < .00001f);
+  PlacementCheck(str8_match(cfg_node_child_from_string(unrelated, str8_lit("label"))->first->string, str8_lit("unrelated"), 0));
+  RD_PanelOwner restored_floating = rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, restored, 1);
+  PlacementCheck(rd_floating_count(restored) == 1);
+  PlacementCheck(rd_fixture_count(restored_floating, str8_lit("sidebar_section")) == 0);
+  PlacementCheck(rd_fixture_count(restored_floating, str8_lit("text")) == 1);
+  PlacementCheck(str8_match(rd_panel_setting(rd_panel_address(restored_floating, rd_arrangement_live(restored_floating)->root->id), str8_lit("share")), str8_lit("0.5"), 0));
+  generation = uishell_sidebar_docking_gen();
   uishell_section_placement_frame(&p);
-  PlacementCheck(cfg_change_gen() == generation);
-  cfg_node_release(state.cfg, restored_floating); // Remove the floating fixture.
-  cfg_node_release(state.cfg, restored_unrelated_panel); // Remove this scenario's unrelated fixture.
+  PlacementCheck(uishell_sidebar_docking_gen() == generation);
+  // Remove the floating and unrelated fixtures.
+  {
+    RD_Arrangement *floating = rd_arrangement_from_panel_owner(scratch.arena, restored_floating);
+    rd_arrangement_discard(floating);
+    rd_arrangement_set(floating);
+    if(restored_unrelated_panel.id != 0) { rd_fixture_remove_panel(restored_unrelated_panel); }
+  }
   uishell_section_placement_frame(&p);
   // Adding a hinted region places it before its next hinted neighbour,
   // without changing the saved pair's order.
@@ -1140,10 +1221,10 @@ uishell_section_placement_diagnostics(String8 source_path)
   PlacementCheck(uishell_section_placement_configure(&p, added));
   CFG_Node *c = uishell_sidebar_region_view(restored, str8_lit("c"));
   a = uishell_sidebar_region_view(restored, str8_lit("a")); b = uishell_sidebar_region_view(restored, str8_lit("b"));
-  PlacementCheck(c != &cfg_nil_node && uishell_section_placement_next_panel(c->parent) == b->parent &&
-                 uishell_section_placement_next_panel(b->parent) == a->parent);
+  PlacementCheck(c != &cfg_nil_node && uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, c)) == uishell_section_placement_panel(restored, b) &&
+                 uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, b)) == uishell_section_placement_panel(restored, a));
   // Closing a section is remembered, distinct from one never seen.
-  cfg_node_release(state.cfg, c);
+  rd_fixture_remove_panel(rd_panel_from_cfg(c));
   uishell_section_placement_frame(&p);
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("c")) == &cfg_nil_node);
   PlacementCheck(uishell_section_placement_closed(&p, str8_lit("c")));
@@ -1153,36 +1234,43 @@ uishell_section_placement_diagnostics(String8 source_path)
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("c")) == &cfg_nil_node);
   PlacementCheck(uishell_section_placement_closed(&p, str8_lit("c")));
   // Sizes set by hand are the document's: Restore gives an equal share of
-  // the dock, the others scaled to make room, even from a corrupt weight.
+  // the dock, the others scaled to make room, even from a zero weight.
   cfg_node_new(state.cfg, restored, str8_lit("sidebar_layout_sized"));
-  a = uishell_sidebar_region_view(restored, str8_lit("a"));
-  b = uishell_sidebar_region_view(restored, str8_lit("b"));
-  cfg_node_equip_string(state.cfg, a->parent, str8_lit("0bad"));
-  cfg_node_equip_string(state.cfg, b->parent, str8_lit("0.75"));
-  CFG_Node *zero_share = cfg_node_new(state.cfg, a->parent->parent, str8_lit("0"));
-  CFG_ID zero_id = zero_share->id;
+  RD_PanelID zero_id = 0;
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(restored));
+    RD_ArrangementPanel *a_panel = rd_arrangement_panel_from_view(dock, rd_view_address_from_cfg(uishell_sidebar_region_view(restored, str8_lit("a"))));
+    RD_ArrangementPanel *b_panel = rd_arrangement_panel_from_view(dock, rd_view_address_from_cfg(uishell_sidebar_region_view(restored, str8_lit("b"))));
+    a_panel->weight = 0;
+    b_panel->weight = .75f;
+    zero_id = rd_arrangement_add(dock, a_panel->parent->id, .5f);
+    rd_arrangement_panel_from_id(dock, zero_id)->weight = 0;
+    rd_arrangement_set(dock);
+  }
   uishell_section_placement_frame(&p);
   // Restore is idempotent, even twice before another frame.
   PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("c")));
   c = uishell_sidebar_region_view(restored, str8_lit("c"));
-  PlacementCheck(c != &cfg_nil_node && rd_dock_saved_placement_valid(c));
+  PlacementCheck(c != &cfg_nil_node && uishell_sidebar_docking_valid(c));
   a = uishell_sidebar_region_view(restored, str8_lit("a"));
   b = uishell_sidebar_region_view(restored, str8_lit("b"));
-  zero_share = cfg_node_from_id(zero_id);
-  PlacementCheck((F32)f64_from_str8(a->parent->string) > 0);
-  PlacementCheck((F32)f64_from_str8(b->parent->string) > 0);
-  PlacementCheck(zero_share == &cfg_nil_node || (F32)f64_from_str8(zero_share->string) > 0);
+  PlacementCheck(uishell_sidebar_docking_weight(rd_panel_from_cfg(a)) > 0);
+  PlacementCheck(uishell_sidebar_docking_weight(rd_panel_from_cfg(b)) > 0);
+  PlacementCheck(!rd_panel_exists(rd_panel_address(dock_owner, zero_id)) || uishell_sidebar_docking_weight(rd_panel_address(dock_owner, zero_id)) > 0);
   F32 restored_sum = 0;
-  for(CFG_Node *n = c->parent->parent->first; n != &cfg_nil_node; n = n->next)
-  { if(rd_dock_is_container(n)) { restored_sum += (F32)f64_from_str8(n->string); } }
+  {
+    RD_Arrangement *dock = uishell_section_placement_dock(restored);
+    RD_ArrangementPanel *parent = rd_arrangement_panel_from_id(dock, uishell_section_placement_panel(restored, c))->parent;
+    for(RD_ArrangementPanel *n = parent->first; n != &rd_nil_arrangement_panel; n = n->next) { restored_sum += n->weight; }
+  }
   PlacementCheck(abs_f32(restored_sum-1.f) < .0001f);
   PlacementCheck(!uishell_section_placement_closed(&p, str8_lit("c")));
   CFG_ID restored_c_id = c->id;
-  generation = cfg_change_gen();
+  generation = uishell_sidebar_docking_gen();
   PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("c")));
-  PlacementCheck(c->id == restored_c_id && cfg_change_gen() == generation);
+  PlacementCheck(c->id == restored_c_id && uishell_sidebar_docking_gen() == generation);
   PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("undeclared")));
-  PlacementCheck(cfg_change_gen() == generation);
+  PlacementCheck(uishell_sidebar_docking_gen() == generation);
   uishell_section_placement_restart(scratch.arena, &p, added);
   restored = p.window;
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("c")) != &cfg_nil_node);
@@ -1202,78 +1290,74 @@ uishell_section_placement_diagnostics(String8 source_path)
   PlacementCheck(uishell_section_placement_configure(&p, added));
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("b")) == b && !uishell_sidebar_section_gone(&p.sidebar, str8_lit("b")));
   PlacementCheck(uishell_section_placement_configure(&p, removed));
-  cfg_node_release(state.cfg, b);
+  rd_fixture_remove_panel(rd_panel_from_cfg(b));
   uishell_section_placement_frame(&p);
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("b")) == &cfg_nil_node && !uishell_sidebar_section_gone(&p.sidebar, str8_lit("b")));
   PlacementCheck(!uishell_section_placement_closed(&p, str8_lit("b")));
   // Reset clears closes and user positions, restoring all hints.
   PlacementCheck(uishell_section_placement_configure(&p, added));
-  uishell_sidebar_reset_regions(restored); restored_host = uishell_section_placement_frame(&p);
+  uishell_sidebar_reset_regions(restored); uishell_section_placement_frame(&p);
   a = uishell_sidebar_region_view(restored, str8_lit("a")); b = uishell_sidebar_region_view(restored, str8_lit("b"));
   c = uishell_sidebar_region_view(restored, str8_lit("c"));
-  PlacementCheck(uishell_section_placement_first_panel(restored_host) == a->parent && uishell_section_placement_next_panel(a->parent) == c->parent &&
-                 uishell_section_placement_next_panel(c->parent) == b->parent);
+  PlacementCheck(uishell_section_placement_first_panel(restored) == uishell_section_placement_panel(restored, a) &&
+                 uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, a)) == uishell_section_placement_panel(restored, c) &&
+                 uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, c)) == uishell_section_placement_panel(restored, b));
   fallback = uishell_sidebar_region_view(restored, str8_lit(".unplaced"));
-  PlacementCheck(fallback != &cfg_nil_node && uishell_section_placement_next_panel(b->parent) == fallback->parent &&
-                 uishell_section_placement_last_panel(restored_host) == fallback->parent);
+  PlacementCheck(fallback != &cfg_nil_node && uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, b)) == uishell_section_placement_panel(restored, fallback) &&
+                 uishell_section_placement_last_panel(restored) == uishell_section_placement_panel(restored, fallback));
   // A saved user split stays whole when a new neighbour is hinted before a
   // View within it: the whole subtree is the anchor.
-  CFG_Node *nested = cfg_node_new(state.cfg, restored_host, str8_lit("0.5"));
-  cfg_node_insert_child(state.cfg, restored_host, b->parent->prev, nested);
-  cfg_node_new(state.cfg, nested, str8_lit("split_x"));
-  CFG_Node *nested_b = b->parent; CFG_ID nested_b_id = b->id;
-  cfg_node_insert_child(state.cfg, nested, nested->last, nested_b);
+  RD_PanelID nested = 0;
+  CFG_ID nested_b_id = b->id;
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(restored));
+    RD_ArrangementPanel *b_panel = rd_arrangement_panel_from_view(dock, rd_view_address_from_cfg(b));
+    RD_PanelID b_prev = b_panel->prev->id;
+    nested = rd_arrangement_add(dock, dock->root->id, .5f);
+    rd_arrangement_reorder(dock, nested, b_prev);
+    rd_arrangement_panel_from_id(dock, nested)->weight = .5f;
+    RD_PanelID inner = rd_arrangement_add(dock, nested, 0);
+    rd_arrangement_move_tab(dock, rd_view_address_from_cfg(b), inner, rd_nil_view_address);
+    rd_arrangement_remove(dock, b_panel->id);
+    rd_arrangement_set(dock);
+  }
   uishell_section_placement_frame(&p);
   String8 nested_added = push_str8f(scratch.arena, "%Sregion \"d\" root-template=\"flotilla/region/tree\" order=17\n", added);
   PlacementCheck(uishell_section_placement_configure(&p, nested_added));
   CFG_Node *d = uishell_sidebar_region_view(restored, str8_lit("d"));
   b = uishell_sidebar_region_view(restored, str8_lit("b"));
-  PlacementCheck(d != &cfg_nil_node && b->id == nested_b_id && rd_dock_is_container(b->parent->parent) &&
-                 uishell_section_placement_next_panel(d->parent) == b->parent->parent);
-  PlacementCheck(str8_match(b->parent->parent->string, str8_lit("0.5"), 0));
+  {
+    RD_Arrangement *dock = uishell_section_placement_dock(restored);
+    RD_ArrangementPanel *b_parent = rd_arrangement_panel_from_view(dock, rd_view_address_from_cfg(b))->parent;
+    PlacementCheck(d != &cfg_nil_node && b->id == nested_b_id && b_parent != dock->root && b_parent->parent == dock->root &&
+                   uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, d)) == b_parent->id);
+    PlacementCheck(abs_f32(b_parent->weight-.5f) < .00001f);
+  }
   // A section saved inside a child Workspace level is refused by the shared
   // checker: the frame's safety restore marks it, and it goes where its hint
-  // says, keeping its identity; the level it was in goes.
-  CFG_Node *invalid_workspace = cfg_node_new(state.cfg, restored_host, str8_lit("workspace"));
-  CFG_ID invalid_workspace_id = invalid_workspace->id;
-  CFG_Node *invalid_panels = cfg_node_new(state.cfg, invalid_workspace, str8_lit("panels"));
-  CFG_Node *invalid_panel = cfg_node_new(state.cfg, invalid_panels, str8_lit("1"));
-  CFG_ID invalid_panel_id = invalid_panel->id, invalid_view_id = a->id;
-  CFG_Node *old_a_panel = a->parent;
-  cfg_node_insert_child(state.cfg, invalid_panel, invalid_panel->last, a);
-  cfg_node_release(state.cfg, old_a_panel);
-  PlacementCheck(!rd_dock_saved_placement_valid(a));
-  rd_dock_restore_window(state.cfg, restored);
+  // says, keeping its identity; the level it was in loses it.
+  CFG_Node *invalid_workspace = cfg_node_new(state.cfg, restored, str8_lit("workspace"));
+  RD_PanelOwner invalid_owner = rd_fixture_owner(invalid_workspace);
+  CFG_ID invalid_view_id = a->id;
+  uishell_sidebar_docking_misplace(a, invalid_workspace);
+  PlacementCheck(!uishell_sidebar_docking_valid(a));
+  rd_dock_restore_window(restored);
   PlacementCheck(cfg_node_child_from_string(a, str8_lit("section_hint_pending")) != &cfg_nil_node);
   uishell_section_placement_frame(&p);
   a = uishell_sidebar_region_view(restored, str8_lit("a"));
-  PlacementCheck(a->id == invalid_view_id && rd_dock_saved_placement_valid(a));
+  PlacementCheck(a->id == invalid_view_id && uishell_sidebar_docking_valid(a));
   PlacementCheck(cfg_node_child_from_string(a, str8_lit("section_hint_pending")) == &cfg_nil_node);
-  PlacementCheck(cfg_node_from_id(invalid_panel_id) == &cfg_nil_node);
-  PlacementCheck(cfg_node_from_id(invalid_workspace_id) == &cfg_nil_node);
-  // A sidebar saved before Andamento kept it is adopted by its first commit:
-  // what it lacks is closed. A region declared after that is new.
-  cfg_node_release(state.cfg, uishell_sidebar_region_view(restored, str8_lit("d")));
-  cfg_node_release(state.cfg, cfg_node_child_from_string(restored, str8_lit("sidebar_generation")));
-  {
-    String8 legacy = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), restored);
-    CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(scratch.arena, state.cfg, &schemas, str8_zero(), legacy);
-    PlacementCheck(loaded.count == 1);
-    cfg_node_insert_child(state.cfg, p.user, p.user->last, loaded.first->v);
-    cfg_node_release(state.cfg, restored);
-    restored = loaded.first->v;
-    uishell_section_placement_use(&p, restored, andamento_create(nested_added.str, nested_added.size, 0));
-    uishell_section_placement_frame(&p);
-  }
-  PlacementCheck(cfg_node_child_from_string(restored, str8_lit("sidebar_generation")) != &cfg_nil_node);
-  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("d")) == &cfg_nil_node && uishell_section_placement_closed(&p, str8_lit("d")));
-  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("a")) != &cfg_nil_node);
-  String8 post_upgrade = push_str8f(scratch.arena, "%Sregion \"e\" root-template=\"flotilla/region/tree\" order=25\n", nested_added);
-  PlacementCheck(uishell_section_placement_configure(&p, post_upgrade));
-  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("e")) != &cfg_nil_node);
+  PlacementCheck(rd_fixture_count(invalid_owner, str8_lit("sidebar_section")) == 0);
+  uishell_section_placement_release_window(invalid_workspace);
   // An empty declaration flags every section rather than clearing them
   // (Andamento, "Template key drift"); a declaration that has them again
   // finds them where they were.
+  rd_fixture_remove_panel(rd_panel_from_cfg(uishell_sidebar_region_view(restored, str8_lit("d"))));
+  uishell_section_placement_frame(&p);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("d")) == &cfg_nil_node && uishell_section_placement_closed(&p, str8_lit("d")));
+  String8 post_upgrade = push_str8f(scratch.arena, "%Sregion \"e\" root-template=\"flotilla/region/tree\" order=25\n", nested_added);
+  PlacementCheck(uishell_section_placement_configure(&p, post_upgrade));
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("e")) != &cfg_nil_node);
   PlacementCheck(uishell_section_placement_configure(&p, str8_lit("template \"empty\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Empty\"; }\n")));
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("a")) != &cfg_nil_node && uishell_sidebar_section_gone(&p.sidebar, str8_lit("a")));
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("e")) != &cfg_nil_node && uishell_sidebar_section_gone(&p.sidebar, str8_lit("e")));
@@ -1294,37 +1378,40 @@ uishell_section_placement_diagnostics(String8 source_path)
     CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
     CFG_Node *y = uishell_sidebar_region_view(restored, str8_lit("y"));
     CFG_ID existing_x = x->id;
-    U64 existing_generation = cfg_change_gen();
+    U64 existing_generation = uishell_sidebar_docking_gen();
     PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")));
-    PlacementCheck(x->id == existing_x && cfg_change_gen() == existing_generation);
+    PlacementCheck(x->id == existing_x && uishell_sidebar_docking_gen() == existing_generation);
     PlacementCheck(x != &cfg_nil_node && y != &cfg_nil_node);
-    PlacementCheck(uishell_section_placement_next_panel(x->parent) == y->parent);
-    PlacementCheck(rd_dock_saved_placement_valid(x) && rd_dock_saved_placement_valid(y));
-    PlacementCheck(rd_dock_host_from_cfg(x, RD_DOCK_UNMEASURED_WIDTH).kind ==
-      (variant == 2 ? RD_DockHostKind_FloatingPanel : RD_DockHostKind_Sidebar));
+    {
+      // Next in the dock, or in the next Floating Panel.
+      RD_PanelAddress x_panel = rd_panel_from_cfg(x), y_panel = rd_panel_from_cfg(y);
+      B32 floating = x_panel.owner.kind == RD_PanelOwnerKind_Floating;
+      PlacementCheck(floating ? y_panel.owner.kind == RD_PanelOwnerKind_Floating && y_panel.owner.floating == x_panel.owner.floating+1 :
+                     rd_panel_owner_match(x_panel.owner, y_panel.owner) &&
+                     rd_arrangement_panel_from_id(rd_arrangement_live(x_panel.owner), x_panel.id)->next->id == y_panel.id);
+    }
+    PlacementCheck(uishell_sidebar_docking_valid(x) && uishell_sidebar_docking_valid(y));
+    PlacementCheck(uishell_sidebar_docking_host_kind(x) == (variant == 2 ? RD_DockHostKind_FloatingPanel : RD_DockHostKind_Sidebar));
     if(variant == 2)
     {
       // Startup first applies generic safety restore. A floating region hint
       // must still win when the sidebar commits that recovered View.
-      CFG_Node *floating = cfg_node_child_from_string(restored, str8_lit("floating_panels"));
-      CFG_Node *bad_workspace = cfg_node_new(state.cfg, floating, str8_lit("workspace"));
-      CFG_Node *bad_panels = cfg_node_new(state.cfg, bad_workspace, str8_lit("panels"));
-      CFG_Node *bad_panel = cfg_node_new(state.cfg, bad_panels, str8_lit("1"));
-      CFG_ID bad_id = bad_panel->id, x_id = x->id;
-      CFG_Node *previous_panel = x->parent;
-      cfg_node_insert_child(state.cfg, bad_panel, bad_panel->last, x);
-      cfg_node_release(state.cfg, previous_panel);
-      rd_dock_restore_window(state.cfg, restored);
+      CFG_Node *bad_workspace = cfg_node_new(state.cfg, restored, str8_lit("workspace"));
+      RD_PanelOwner bad_owner = rd_fixture_owner(bad_workspace);
+      CFG_ID x_id = x->id;
+      uishell_sidebar_docking_misplace(x, bad_workspace);
+      rd_dock_restore_window(restored);
       PlacementCheck(cfg_node_child_from_string(x, str8_lit("section_hint_pending")) != &cfg_nil_node);
       uishell_section_placement_frame(&p);
-      PlacementCheck(x->id == x_id && rd_dock_saved_placement_valid(x));
-      PlacementCheck(rd_dock_host_from_cfg(x, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_FloatingPanel);
-      PlacementCheck(cfg_node_from_id(bad_id) == &cfg_nil_node);
+      PlacementCheck(x->id == x_id && uishell_sidebar_docking_valid(x));
+      PlacementCheck(uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_FloatingPanel);
+      PlacementCheck(rd_fixture_count(bad_owner, str8_lit("sidebar_section")) == 0);
       PlacementCheck(cfg_node_child_from_string(x, str8_lit("section_hint_pending")) == &cfg_nil_node);
+      uishell_section_placement_release_window(bad_workspace);
       // A changed host hint moves nothing already placed.
       String8 changed_host = str8_lit("region \"x\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\"\nregion \"y\" root-template=\"flotilla/region/tree\"\n");
       PlacementCheck(uishell_section_placement_configure(&p, changed_host));
-      PlacementCheck(x->id == x_id && rd_dock_host_from_cfg(x, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_FloatingPanel);
+      PlacementCheck(x->id == x_id && uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_FloatingPanel);
     }
   }
   // Unusual numeric and reserved-looking keys survive the record and the
@@ -1355,21 +1442,23 @@ uishell_section_placement_diagnostics(String8 source_path)
     "region \"x\" root-template=\"renamed\" form=\"compact\" default-host=\"floating\"\n"
     "template \"renamed\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Renamed\"; }\n");
   PlacementCheck(uishell_section_placement_configure(&p, retitled));
-  PlacementCheck(saved_x->id == saved_x_id && rd_dock_host_from_cfg(saved_x, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar);
+  PlacementCheck(saved_x->id == saved_x_id && uishell_sidebar_docking_host_kind(saved_x) == RD_DockHostKind_Sidebar);
   PlacementCheck(str8_match(cfg_node_child_from_string(saved_x, str8_lit("label"))->first->string, str8_lit("Renamed"), 0));
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("y"))->id == kept_y_id && uishell_sidebar_section_gone(&p.sidebar, str8_lit("y")));
   // A provider outage changes nothing.
   CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
   AndamentoSnapshot *saved_snapshot = p.sidebar.snapshot; p.sidebar.snapshot = 0;
-  generation = cfg_change_gen(); uishell_sidebar_dock_layout(&p.split);
-  PlacementCheck(cfg_change_gen() == generation && uishell_sidebar_region_view(restored, str8_lit("x")) == x);
+  generation = uishell_sidebar_docking_gen(); uishell_sidebar_dock_layout(&p.split);
+  PlacementCheck(uishell_sidebar_docking_gen() == generation && uishell_sidebar_region_view(restored, str8_lit("x")) == x);
   p.sidebar.snapshot = saved_snapshot;
   // Closing every section leaves the dock empty across a restart.
   String8 only_x = str8_lit("region \"x\" root-template=\"flotilla/region/tree\"\n");
   PlacementCheck(uishell_section_placement_configure(&p, only_x));
-  cfg_node_release(state.cfg, uishell_sidebar_region_view(restored, str8_lit("y")));
-  cfg_node_release(state.cfg, uishell_sidebar_region_view(restored, str8_lit(".unplaced")));
-  cfg_node_release(state.cfg, x);
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(restored));
+    rd_arrangement_discard(dock);
+    rd_arrangement_set(dock);
+  }
   uishell_section_placement_frame(&p);
   uishell_section_placement_restart(scratch.arena, &p, only_x);
   restored = p.window;
@@ -1378,52 +1467,60 @@ uishell_section_placement_diagnostics(String8 source_path)
   // Restore needs the snapshot and the window's sidebar; with them, the
   // section goes to the dock, not into a child Workspace level.
   CFG_Node *child = cfg_node_new(state.cfg, restored, str8_lit("workspace"));
-  CFG_Node *child_panels = cfg_node_new(state.cfg, child, str8_lit("panels"));
-  cfg_node_new(state.cfg, child_panels, str8_lit("1"));
+  RD_PanelOwner child_owner = rd_fixture_owner(child);
+  rd_fixture_leaf(child_owner);
   uishell_section_placement_frame(&p);
   saved_snapshot = p.sidebar.snapshot; p.sidebar.snapshot = 0;
-  generation = cfg_change_gen();
-  PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("x")) && cfg_change_gen() == generation);
+  generation = uishell_sidebar_docking_gen();
+  PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("x")) && uishell_sidebar_docking_gen() == generation);
   p.ws.sidebar = 0;
-  PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("x")) && cfg_change_gen() == generation);
+  PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("x")) && uishell_sidebar_docking_gen() == generation);
   p.ws.sidebar = &p.sidebar;
   p.sidebar.snapshot = saved_snapshot;
   PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")));
   x = uishell_sidebar_region_view(restored, str8_lit("x"));
-  PlacementCheck(rd_dock_saved_placement_valid(x));
-  PlacementCheck(rd_dock_host_from_cfg(x, RD_DOCK_UNMEASURED_WIDTH).kind == RD_DockHostKind_Sidebar);
-  PlacementCheck(uishell_sidebar_find_view(child_panels, str8_lit("x")) == &cfg_nil_node);
-  generation = cfg_change_gen();
-  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")) && cfg_change_gen() == generation);
+  PlacementCheck(uishell_sidebar_docking_valid(x));
+  PlacementCheck(uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_Sidebar);
+  PlacementCheck(rd_fixture_count(child_owner, str8_lit("sidebar_section")) == 0);
+  generation = uishell_sidebar_docking_gen();
+  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")) && uishell_sidebar_docking_gen() == generation);
   // Restoring into a dock that is one panel with a View of its own lifts
   // that panel, with its Presentation State, into a split: half each.
-  cfg_node_release(state.cfg, x);
+  CFG_Node *ordinary = &cfg_nil_node;
+  RD_PanelAddress leaf = {0};
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(restored));
+    RD_PanelID root = rd_arrangement_clear(dock);
+    ordinary = rd_view_alloc(dock_owner, str8_lit("text"), str8_zero());
+    rd_arrangement_move_tab(dock, rd_view_address_from_cfg(ordinary), root, rd_nil_view_address);
+    rd_arrangement_set(dock);
+    leaf = rd_panel_address(dock_owner, root);
+  }
   uishell_section_placement_frame(&p);
-  CFG_Node *merged = cfg_node_child_from_string(restored, RD_DOCK_SIDEBAR_ROOT);
-  for(CFG_Node *n = merged->first, *next; n != &cfg_nil_node; n = next)
-  { next = n->next; if(rd_dock_is_container(n)) { cfg_node_release(state.cfg, n); } }
-  CFG_Node *ordinary = cfg_node_new(state.cfg, merged, str8_lit("text")); rd_view_key_assign(state.cfg, ordinary, 0);
   CFG_ID ordinary_id = ordinary->id;
-  cfg_node_new(state.cfg, ordinary, str8_lit("selected"));
-  CFG_Node *leaf_selected = cfg_node_new(state.cfg, merged, str8_lit("selected"));
-  CFG_Node *leaf_tabs = cfg_node_new(state.cfg, merged, str8_lit("tabs_on_bottom"));
+  rd_panel_focus_mark(leaf);
+  rd_panel_flag_set(leaf, str8_lit("tabs_on_bottom"), 1);
   uishell_section_placement_frame(&p);
   PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")));
-  merged = cfg_node_child_from_string(restored, RD_DOCK_SIDEBAR_ROOT);
   x = uishell_sidebar_region_view(restored, str8_lit("x"));
-  PlacementCheck(ordinary->id == ordinary_id && ordinary->parent != merged && ordinary->parent != x->parent);
-  PlacementCheck(leaf_selected->parent == ordinary->parent && leaf_tabs->parent == ordinary->parent);
-  RD_PanelTree lifted = rd_panel_tree_from_cfg(scratch.arena, merged);
-  RD_PanelNode *lifted_leaf = rd_panel_node_from_id(lifted.root, rd_panel_from_cfg(ordinary).id);
-  PlacementCheck(lifted_leaf->tab_side == Side_Max && rd_view_address_match(lifted_leaf->selected_tab, rd_view_address_from_cfg(ordinary)));
-  PlacementCheck(lifted.focused == lifted_leaf);
-  PlacementCheck(abs_f32((F32)f64_from_str8(ordinary->parent->string)-.5f) < .00001f);
-  PlacementCheck(abs_f32((F32)f64_from_str8(x->parent->string)-.5f) < .00001f);
+  {
+    RD_Arrangement *dock = uishell_section_placement_dock(restored);
+    RD_PanelID ordinary_panel = uishell_section_placement_panel(restored, ordinary);
+    PlacementCheck(ordinary->id == ordinary_id && ordinary_panel != dock->root->id && ordinary_panel != uishell_section_placement_panel(restored, x));
+    RD_PanelTree lifted = rd_panel_tree_from_arrangement(scratch.arena, dock_owner, dock);
+    RD_PanelNode *lifted_leaf = rd_panel_node_from_id(lifted.root, ordinary_panel);
+    PlacementCheck(lifted_leaf->tab_side == Side_Max && rd_view_address_match(lifted_leaf->selected_tab, rd_view_address_from_cfg(ordinary)));
+    PlacementCheck(lifted.focused == lifted_leaf);
+    PlacementCheck(abs_f32(rd_arrangement_panel_from_id(dock, ordinary_panel)->weight-.5f) < .00001f);
+    PlacementCheck(abs_f32(rd_arrangement_panel_from_id(dock, uishell_section_placement_panel(restored, x))->weight-.5f) < .00001f);
+  }
   uishell_sidebar_replace_snapshot(&p.sidebar, 0);
   andamento_destroy(p.sidebar.core);
   if(p.sidebar.titles_arena) { arena_release(p.sidebar.titles_arena); }
   if(p.sidebar.roles_arena) { arena_release(p.sidebar.roles_arena); }
   if(p.sidebar.sidebar_notes_arena) { arena_release(p.sidebar.sidebar_notes_arena); }
+  uishell_section_placement_release_window(p.user);
+  if(state.live_arrangement_arena) { arena_release(state.live_arrangement_arena); }
   cfg_state_release(state.cfg); cfg_ctx_select(saved_ctx); rd_state = saved_rd;
   fprintf(stderr, "Section placement diagnostics: %s (hints, reorder, restart, add, close, drift, reset)\n", failures ? "FAILED" : "passed");
 #undef PlacementCheck

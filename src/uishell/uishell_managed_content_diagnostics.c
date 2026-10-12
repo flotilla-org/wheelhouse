@@ -90,22 +90,22 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     uishell_sidebar_observe(&state, &split);
   }
   CFG_Node *workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
-  CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-  RD_PanelTree opened_tree = rd_panel_tree_from_cfg(scratch.arena, panels);
+  RD_PanelAddress panels = rd_fixture_leaf(rd_fixture_owner(workspace));
+  RD_PanelTree opened_tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace).panel_tree;
   CFG_Node *view = opened_tree.root != &rd_nil_panel_node && opened_tree.root->tabs.first ? rd_cfg_from_view(opened_tree.root->tabs.first->v) : &cfg_nil_node;
-  uishell_managed_set(view, str8_lit("slot"), str8_lit("primary"));
+  rd_view_rekey(view, str8_lit("primary"));
   CFG_Node *slot = cfg_node_child_from_string(view, str8_lit("slot"));
-  CFG_Node *personal = rd_cfg_new_view_tab(panels, str8_lit("terminal_fixture"), str8_zero(), 0);
+  CFG_Node *personal = rd_fixture_view(panels, str8_lit("terminal_fixture"), str8_zero(), 0);
   CFG_ID workspace_id = workspace->id, view_id = view->id, personal_id = personal->id;
   uishell_managed_diagnostic_frame(ws, view);
   UIShell_TerminalViewState *tv = rd_view_state_from_view(rd_view_address_from_cfg(view), 0)->user_data;
   ManagedCheck(tv && uishell_managed_diagnostic_marker(tv->session, 'A'), "original live terminal emits A");
-  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(panels), .dst_panel = rd_panel_from_cfg(panels),
+  UIShell_RegsScope(.window = window->id, .panel = panels, .dst_panel = panels,
                    .view = rd_view_address_from_cfg(view), .dir2 = Dir2_Right)
   { uishell_dispatch_panel_command(str8_lit("split_panel")); }
-  CFG_Node *moved_panel = view->parent;
+  RD_PanelAddress moved_panel = rd_panel_from_cfg(view);
   uishell_managed_diagnostic_frame(ws, view);
-  ManagedCheck(view->parent != personal->parent, "production split command moves managed view beside user view");
+  ManagedCheck(!rd_panel_address_match(moved_panel, rd_panel_from_cfg(personal)), "production split command moves managed view beside user view");
   // Its first plan finds it showing its resolution already: nothing restarts.
   cleat_session *first = tv->session;
   uishell_sidebar_reconcile_workspace(&state, workspace);
@@ -125,9 +125,9 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   uishell_sidebar_reconcile_workspace(&state, workspace);
   uishell_managed_diagnostic_frame(ws, view);
   ManagedCheck(uishell_managed_diagnostic_marker(tv->session, 'B'), "same terminal view now receives B via its slot plan");
-  ManagedCheck(workspace->id == workspace_id && view->id == view_id && view->parent == moved_panel,
+  ManagedCheck(workspace->id == workspace_id && view->id == view_id && rd_panel_address_match(rd_panel_from_cfg(view), moved_panel),
                "workspace, view identity and moved panel survive replacement");
-  ManagedCheck(cfg_node_from_id(personal_id) == personal && personal->parent != moved_panel,
+  ManagedCheck(cfg_node_from_id(personal_id) == personal && !rd_panel_address_match(rd_panel_from_cfg(personal), moved_panel),
                "user-added view remains in its panel");
   ManagedCheck(cfg_node_child_from_string(view, str8_lit("session")) == &cfg_nil_node &&
                str8_match(rd_expr_from_cfg(view), str8_lit("printf B; read answer"), 0),
@@ -210,14 +210,13 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     uishell_sidebar_observe(&opened, &split);
     CFG_Node *role_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     CFG_Node *role_view = &cfg_nil_node;
-    CFG_Node *role_panels = cfg_node_child_from_string(role_workspace, str8_lit("panels"));
-    RD_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, role_panels);
+    RD_PanelTree tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, role_workspace).panel_tree;
     if(tree.root != &rd_nil_panel_node && tree.root->tabs.first) { role_view = rd_cfg_from_view(tree.root->tabs.first->v); }
     ManagedCheck(str8_match(cfg_node_child_from_string(role_workspace, str8_lit("sidebar_entity_kind"))->first->string, str8_lit("role"), 0) &&
                  str8_match(rd_cfg_setting_child(role_view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0),
                  "opened workspace records its current managed target");
     // As the workspace store keys it, its first plan finds it current.
-    uishell_managed_set(role_view, str8_lit("slot"), str8_lit("primary"));
+    rd_view_rekey(role_view, str8_lit("primary"));
     uishell_sidebar_reconcile_workspace(&opened, role_workspace);
     AndamentoSlotContent *plan = andamento_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(role_workspace)),
       uishell_sidebar_text(str8_lit("primary")), uishell_sidebar_text(cfg_node_child_from_string(role_view, str8_lit("applied"))->first->string), 0);
@@ -261,8 +260,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_effects(&opened, &split);
     CFG_Node *worktree_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
-    CFG_Node *worktree_panels = cfg_node_child_from_string(worktree_workspace, str8_lit("panels"));
-    RD_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, worktree_panels);
+    RD_PanelTree tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, worktree_workspace).panel_tree;
     CFG_Node *worktree_view = tree.root->tabs.first ? rd_cfg_from_view(tree.root->tabs.first->v) : &cfg_nil_node;
     ManagedCheck(str8_match(cfg_node_child_from_string(worktree_view, str8_lit("cwd"))->first->string, str8_lit("/tmp"), 0),
                  "materialized producer terminal saves git.root");
@@ -278,8 +276,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_observe(&opened, &split);
     CFG_Node *existing = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-    CFG_Node *existing_panels = cfg_node_new(rd_state->cfg, existing, str8_lit("panels"));
-    CFG_Node *existing_view = rd_cfg_new_view_tab(existing_panels, str8_lit("terminal"), str8_lit("read original"), 1);
+    CFG_Node *existing_view = rd_fixture_view(rd_fixture_leaf(rd_fixture_owner(existing)), str8_lit("terminal"), str8_lit("read original"), 1);
     uishell_managed_set(existing_view, str8_lit("cwd"), str8_lit("/tmp"));
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     U64 workspace_count = split.inventory.count;

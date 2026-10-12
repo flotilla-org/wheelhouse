@@ -183,7 +183,7 @@ uishell_logical_panels(UIShell_LogicalText *t, U64 depth, RD_ArrangementPanel *p
   }
   uishell_logical_linef(t, depth, "%S", head);
   for(RD_ArrangementTab *tab = panel->first_tab; tab; tab = tab->next)
-  { uishell_logical_linef(t, depth+1, "%S", uishell_logical_view(t->arena, cfg_node_from_id(tab->view), tab->view == panel->selected)); }
+  { uishell_logical_linef(t, depth+1, "%S", uishell_logical_view(t->arena, rd_cfg_from_view(tab->view), rd_view_address_match(tab->view, panel->selected))); }
 }
 
 internal void
@@ -418,22 +418,20 @@ internal void
 uishell_logical_sidebar_arrangement(UIShell_LogicalText *t, U64 depth, CFG_Node *window, UIShell_SidebarState *state)
 {
   uishell_logical_linef(t, depth, "sidebar arrangement");
-  CFG_Node *sidebar = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
-  if(sidebar != &cfg_nil_node)
+  RD_Arrangement *sidebar = rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
+  if(sidebar->root != &rd_nil_arrangement_panel)
   {
     uishell_logical_linef(t, depth+1, "docked");
-    RD_Arrangement *arrangement = rd_arrangement_from_cfg(t->arena, sidebar);
-    uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
+    uishell_logical_panels(t, depth+2, sidebar->root, sidebar->root_axis, 1);
   }
-  CFG_Node *floating = cfg_node_child_from_string(window, str8_lit("floating_panels"));
-  if(floating != &cfg_nil_node)
+  U64 floating = rd_floating_count(window);
+  if(floating != 0)
   {
     uishell_logical_linef(t, depth+1, "floating");
     // Each Floating Panel is its own arrangement.
-    for(CFG_Node *c = floating->first; c != &cfg_nil_node; c = c->next)
+    for(U64 n = 1; n <= floating; n++)
     {
-      if(rd_dock_floating_panel_from_cfg(c) != c) { continue; }
-      RD_Arrangement *arrangement = rd_arrangement_from_cfg(t->arena, c);
+      RD_Arrangement *arrangement = rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, window, n));
       uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
     }
   }
@@ -505,7 +503,7 @@ uishell_logical_presentation(UIShell_LogicalText *t, U64 depth, CFG_Node *window
   // Which host takes input: the sidebar's sections, the workspace, or none
   // until something is focused.
   char *input = "none";
-  if(rd_cfg_from_panel(ws->active_panel) != &cfg_nil_node)
+  if(rd_panel_exists(ws->active_panel))
   {
     RD_PanelOwnerKind kind = ws->active_panel.owner.kind;
     input = kind == RD_PanelOwnerKind_Sidebar || kind == RD_PanelOwnerKind_Floating ? "sidebar" : "workspace";

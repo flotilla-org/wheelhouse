@@ -16,6 +16,9 @@ import tempfile
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import workspace_seed
+
 # A crash inside a ctypes call (#336) prints every thread's Python stack.
 faulthandler.enable()
 ROOT = Path(__file__).resolve().parents[1]
@@ -428,15 +431,13 @@ class IngressTests(unittest.TestCase):
     def test_native_process_applies_producer_patch(self):
         path = os.path.join(self.dir.name, 'native.sock')
         binary = str(Path(os.environ['WHEELHOUSE_TEST_BINARY']).resolve())
-        # Windows are a Dashboard's Presentation State, kept beside an explicit --user file.
+        # Windows are a Dashboard's Presentation State, kept beside an explicit
+        # --user file; the workspace's tabs are its record's, in the Dashboard.
         Path(self.dir.name, 'dashboard').mkdir()
         Path(self.dir.name, 'dashboard', 'id').write_text('ingress')
-        Path(self.dir.name, 'presentation').mkdir()
-        Path(self.dir.name, 'presentation', 'ingress.wheelhouse').write_text(
-            'window: {\nsize: 900 600\nworkspace: {\nlabel: "Observed"\npanels: {\n'
-            'terminal: {\nexpression: "read answer"\ncwd: "/tmp"\nselected\n}\n'
-            'terminal: {\nexpression: "read answer"\ncwd: "' + self.dir.name + '"\n}\n'
-            'terminal: {\nexpression: "read answer"\n}\n}\n}\n}\n')
+        workspace_seed.seed(Path(self.dir.name, 'dashboard'), Path(self.dir.name, 'presentation', 'ingress.wheelhouse'),
+                            [workspace_seed.terminal('read answer', '/tmp'), workspace_seed.terminal('read answer', self.dir.name),
+                             workspace_seed.terminal('read answer')], label='Observed')
         with tempfile.TemporaryFile() as log:
             process = subprocess.Popen([binary, '--user:' + self.dir.name + '/user',
                                         '--dashboard:' + self.dir.name + '/dashboard',

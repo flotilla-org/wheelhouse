@@ -60,15 +60,14 @@ uishell_overview_benchmark_window(RD_WindowState *ws)
   {
     // Refuse existing workspace content rather than mutating a user's layout.
     if(cfg_node_child_from_string(window, str8_lit("workspace")) != &cfg_nil_node ||
-       cfg_node_child_from_string(window, str8_lit("panels")) != &cfg_nil_node)
+       rd_arrangement_live(rd_fixture_owner(window))->root != &rd_nil_arrangement_panel)
     { fprintf(stderr, "benchmark needs an empty fixture window\n"); abort_self(2); }
     for(U32 i=0; i<b->count; i++)
     {
       CFG_Node *owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-      CFG_Node *panels = cfg_node_new(rd_state->cfg, owner, str8_lit("panels"));
-      CFG_Node *panel = cfg_node_new(rd_state->cfg, panels, str8_lit("1"));
-      cfg_node_new(rd_state->cfg, panel, str8_lit("selected"));
-      CFG_Node *view = rd_cfg_new_view_tab(panel, str8_lit("terminal"), b->command, 1);
+      RD_PanelAddress panel = rd_fixture_leaf(rd_fixture_owner(owner));
+      CFG_Node *view = rd_fixture_view(panel, str8_lit("terminal"), b->command, 1);
+      rd_panel_focus_mark(panel);
       cfg_node_new(rd_state->cfg, view, b->live ? str8_lit("overview_live") : str8_lit("overview_fixture"));
       b->owners[i] = owner->id; b->views[i] = view->id;
     }

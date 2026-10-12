@@ -430,12 +430,11 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   // View becomes its section's View, keeping its label, selection and
   // collapse, and its pins move into the section's one group.
   {
-    B32 had_floating = cfg_node_child_from_string(window, str8_lit("floating_panels")) != &cfg_nil_node;
-    CFG_Node *floating = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("floating_panels"));
-    CFG_Node *panel = cfg_node_new(rd_state->cfg, floating, str8_lit("1"));
-    CFG_Node *old_area = cfg_node_new(rd_state->cfg, panel, str8_lit("pinned_cards")); rd_view_key_assign(rd_state->cfg, old_area, 0);
+    RD_Arrangement *floating = rd_arrangement_alloc(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, window, rd_floating_count(window)+1));
+    RD_PanelID panel = rd_arrangement_clear(floating);
+    CFG_Node *old_area = rd_cfg_from_view(rd_new_view_tab(floating, panel, str8_lit("pinned_cards"), str8_zero()));
+    rd_arrangement_set(floating);
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, old_area, str8_lit("label")), str8_lit("Floating pins"));
-    cfg_node_new(rd_state->cfg, old_area, str8_lit("selected"));
     cfg_node_new(rd_state->cfg, old_area, str8_lit("section_collapsed"));
     CFG_Node *card = cfg_node_new(rd_state->cfg, old_area, str8_lit("card"));
     char *fields[][2] = {{"ghost", "floating-pin"}, {"kind", "convoy"}, {"entity", "c1"}};
@@ -443,18 +442,21 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, card, str8_cstring(fields[f][0])), str8_cstring(fields[f][1])); }
     cfg_node_new(rd_state->cfg, card, str8_lit("compact"));
     uishell_sidebar_pin_migrate(window);
-    CFG_Node *migrated = cfg_node_child_from_string(panel, str8_lit("sidebar_section"));
+    RD_ArrangementPanel *migrated_panel = rd_arrangement_panel_from_id(rd_arrangement_live(floating->owner), panel);
+    CFG_Node *migrated = migrated_panel->tab_count == 1 ? rd_cfg_from_view(migrated_panel->first_tab->view) : &cfg_nil_node;
     UIShell_LocalGroup *group = uishell_sidebar_local_view_group(window, migrated);
     UIShell_LocalPin *pin = group && group->pin_count == 1 ? &group->pins[0] : 0;
-    ReorderCheck(cfg_node_child_from_string(panel, str8_lit("pinned_cards")) == &cfg_nil_node && migrated != &cfg_nil_node &&
-                 cfg_node_child_from_string(migrated, str8_lit("selected")) != &cfg_nil_node &&
-                 cfg_node_child_from_string(migrated, str8_lit("section_collapsed")) != &cfg_nil_node &&
+    ReorderCheck(str8_match(migrated->string, str8_lit("sidebar_section"), 0) &&
+                 rd_view_address_match(migrated_panel->selected, rd_view_address_from_cfg(migrated)) &&
+                 uishell_sidebar_section_collapsed(migrated) &&
                  group && str8_match(uishell_sidebar_local_title(scratch.arena, group->section), str8_lit("Floating pins"), 0) &&
                  pin && str8_match(pin->ghost, str8_lit("floating-pin"), 0) && str8_match(uishell_sidebar_string(pin->target.id), str8_lit("c1"), 0) &&
                  !uishell_sidebar_pin_expanded(pin),
                  "a floating pinned area migrates in place into a section and group, keeping its pins and state");
     if(group) { uishell_sidebar_local_forget_section(window, push_str8_copy(scratch.arena, group->section->id)); }
-    if(had_floating) { cfg_node_release(rd_state->cfg, panel); } else { cfg_node_release(rd_state->cfg, floating); }
+    RD_Arrangement *gone = rd_arrangement_from_panel_owner(scratch.arena, floating->owner);
+    rd_arrangement_discard(gone);
+    rd_arrangement_set(gone);
   }
 
   // A reordered run's row offers Reset order, which returns it to data order.

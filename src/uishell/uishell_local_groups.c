@@ -113,20 +113,19 @@ uishell_sidebar_local_close_views(CFG_Node *window, String8 id)
   Temp scratch = scratch_begin(0, 0);
   String8 key = uishell_sidebar_local_key(scratch.arena, id);
   UIShell_SidebarDocks docks = uishell_sidebar_docks(scratch.arena, window);
-  for(RD_DockSavedView *v = docks.views.first; v != 0; v = v->next)
+  for(UIShell_SidebarDockView *v = docks.first; v != 0; v = v->next)
   {
-    if(!str8_match(v->view->string, str8_lit("sidebar_section"), 0) ||
-       !str8_match(uishell_sidebar_section_key(v->view), key, 0)) { continue; }
-    RD_ArrangementPanel *panel = v->panel;
-    RD_ArrangementTab *tab = 0;
-    for(RD_ArrangementTab *t = panel->first_tab; t != 0 && rd_dock_saved_view_is_tab(v); t = t->next) { if(t->view == v->view->id) { tab = t; } }
+    if(!str8_match(v->node->string, str8_lit("sidebar_section"), 0) ||
+       !str8_match(uishell_sidebar_section_key(v->node), key, 0)) { continue; }
+    RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(v->arrangement, v->panel);
+    RD_ArrangementTab *tab = rd_arrangement_tab_from_view(panel, v->view);
     RD_ArrangementTab *neighbour = tab == 0 ? 0 : tab->next ? tab->next : tab->prev;
-    B32 selected = tab != 0 && panel->selected == tab->view;
-    RD_DockDocument *document = v->document;
+    RD_ViewAddress next = neighbour ? neighbour->view : rd_nil_view_address;
+    B32 selected = tab != 0 && rd_view_address_match(panel->selected, tab->view);
     uishell_sidebar_docks_remove(&docks, v);
-    if(selected && neighbour) { rd_arrangement_select(document->arrangement, panel->id, neighbour->view); }
+    if(selected && neighbour) { rd_arrangement_select(v->arrangement, panel->id, next); }
   }
-  uishell_sidebar_docks_save(&docks);
+  uishell_sidebar_docks_set(&docks);
   scratch_end(scratch);
 }
 
@@ -620,7 +619,7 @@ uishell_sidebar_local_section_menu(UIShell_SidebarState *state, CFG_Node *window
       }
       UIShell_LocalGroup *only = uishell_sidebar_local_only_group(section);
       if(only) { uishell_sidebar_local_group_items(state, window, only, loop, 0); }
-      if(view != &cfg_nil_node && rd_dock_can_close(rd_dock_view_from_cfg(view)) && ui_clicked(ui_button(str8_lit("Hide"))))
+      if(view != &cfg_nil_node && rd_dock_can_close(rd_dock_view_from_address(rd_view_address_from_cfg(view))) && ui_clicked(ui_button(str8_lit("Hide"))))
       { UIShell_RegsScope(.tab = rd_view_address_from_cfg(view), .view = rd_view_address_from_cfg(view)) { uishell_cmd("close_tab"); } ui_ctx_menu_close(); }
       if(!uishell_sidebar_local_section_is_default(section)) { uishell_sidebar_local_delete_button(state, window, section, 0); }
     }

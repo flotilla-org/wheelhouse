@@ -169,6 +169,8 @@ internal void
 entry_point(CmdLine *cmd_line)
 {
   if(!uishell_prepare_terminal_environment()) { abort_self(1); }
+  // Headless diagnostics read panels' focus before rd_init.
+  rd_panel_presentation_hook = rd_panel_presentation;
   if(cmd_line_has_flag(cmd_line, str8_lit("terminal_clipboard_diagnostics")))
   { abort_self(uishell_terminal_clipboard_diagnostics() ? 0 : 1); }
   // Pure terminal model checks also run in headless build environments.

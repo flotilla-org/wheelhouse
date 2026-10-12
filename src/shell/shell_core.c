@@ -308,9 +308,9 @@ rd_view_is_project_filtered(RD_ViewAddress view)
 }
 
 internal B32
-rd_tab_is_shown(CFG_ID view)
+rd_tab_is_shown(RD_ViewAddress view)
 {
-  return !rd_cfg_is_project_filtered(cfg_node_from_id(view));
+  return !rd_view_is_project_filtered(view);
 }
 
 internal Vec4F32
@@ -1535,7 +1535,7 @@ rd_view_states_release_unowned(void)
 internal void
 rd_view_states_rekey(RD_ViewAddress from, RD_ViewAddress to)
 {
-  if(rd_view_address_match(from, to)) { return; }
+  if(rd_view_address_match(from, to) || rd_state->view_state_slots_count == 0) { return; }
   U64 from_hash = u64_djb2_hash_from_str8(str8_struct(&from));
   U64 to_hash = u64_djb2_hash_from_str8(str8_struct(&to));
   RD_ViewStateSlot *from_slot = &rd_state->view_state_slots[from_hash%rd_state->view_state_slots_count];
@@ -3053,27 +3053,26 @@ uishell_workspace_cfg_from_cfg(CFG_Node *cfg)
 }
 
 // Repair only at explicit mutation boundaries, before callers build trees or
-// retain CFG_Node pointers. Mount accessors themselves never mutate layouts.
+// retain addresses. Mount accessors themselves never mutate layouts.
 internal void
 rd_dock_restore_layouts(void)
 {
-  if(rd_state->docking_restore_gen != cfg_change_gen())
+  if(rd_state->docking_restore_version != rd_state->arrangement_version)
   {
     Temp restore = scratch_begin(0, 0);
     CFG_NodePtrList windows = cfg_node_top_level_list_from_string(restore.arena, str8_lit("window"));
-    for(CFG_NodePtrNode *n = windows.first; n; n = n->next) { rd_dock_restore_window(rd_state->cfg, n->v); }
-    rd_state->docking_restore_gen = cfg_change_gen();
+    for(CFG_NodePtrNode *n = windows.first; n; n = n->next) { rd_dock_restore_window(n->v); }
+    rd_state->docking_restore_version = rd_state->arrangement_version;
     scratch_end(restore);
   }
 }
 
-//~ Panel addresses (shell_arrangement.h). Arrangements are still mirrored to
-// config, so an owner is found by its host's node there: a window by its
-// Window ID, a workspace by its Workspace ID.
+//~ Panel addresses (shell_arrangement.h). An owner is found by its host's
+// node: a window by its Window ID, a workspace by its Workspace ID.
 
 // The owner of `host`'s arrangement of `kind`. A window that shows
-// workspaces of its own and has no panels of its own is given no Workspace
-// ID for them (uishell_root_controlled_split_from_window).
+// workspaces of its own is given no Workspace ID for panels of its own until
+// it has some (uishell_root_controlled_split_from_window).
 internal RD_PanelOwner
 rd_panel_owner_from_host(RD_PanelOwnerKind kind, CFG_Node *host, U64 floating)
 {
@@ -3081,29 +3080,12 @@ rd_panel_owner_from_host(RD_PanelOwnerKind kind, CFG_Node *host, U64 floating)
   owner.floating = floating;
   B32 window = str8_match(host->string, str8_lit("window"), 0);
   if(kind != RD_PanelOwnerKind_Workspace && window) { owner.id = uishell_window_id_from_cfg(host); }
-  else if(!window || cfg_node_child_from_string(host, str8_lit("panels")) != &cfg_nil_node ||
-          cfg_node_child_from_string(host, str8_lit("workspace_id")) != &cfg_nil_node)
+  // Only a window has a sidebar.
+  else if(kind == RD_PanelOwnerKind_Sidebar || host == &cfg_nil_node) {}
+  else if(!window || cfg_node_child_from_string(host, str8_lit("workspace_id")) != &cfg_nil_node ||
+          cfg_node_child_from_string(host, str8_lit("workspace")) == &cfg_nil_node)
   { owner.id = uishell_workspace_id_from_cfg(host); }
   return owner;
-}
-
-internal RD_PanelOwner
-rd_panel_owner_from_cfg(CFG_Node *cfg)
-{
-  CFG_Node *floating = rd_dock_floating_panel_from_cfg(cfg);
-  if(floating != &cfg_nil_node)
-  {
-    U64 n = 0;
-    for(CFG_Node *c = floating; c != &cfg_nil_node; c = c->prev) { n += rd_dock_floating_panel_from_cfg(c) == c; }
-    return rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, floating->parent->parent, n);
-  }
-  for(CFG_Node *c = cfg; c != &cfg_nil_node; c = c->parent)
-  {
-    if(str8_match(c->string, RD_DOCK_SIDEBAR_ROOT, 0)) { return rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, c->parent, 0); }
-    if(str8_match(c->string, str8_lit("panels"), 0)) { return rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, c->parent, 0); }
-  }
-  RD_PanelOwner none = {0};
-  return none;
 }
 
 internal CFG_Node *
@@ -3115,68 +3097,279 @@ rd_cfg_from_panel_owner(RD_PanelOwner owner)
   return host;
 }
 
-internal CFG_Node *
-rd_cfg_root_from_panel_owner(RD_PanelOwner owner)
+internal B32
+rd_panel_exists(RD_PanelAddress panel)
 {
-  CFG_Node *host = rd_cfg_from_panel_owner(owner), *root = &cfg_nil_node;
-  switch(owner.kind)
+  return panel.id != 0 && rd_arrangement_panel_from_id(rd_arrangement_live(panel.owner), panel.id) != &rd_nil_arrangement_panel;
+}
+
+//~ Live arrangements (ADR 0012)
+//
+// Each owner's arrangement is kept here whole, typed (shell_arrangement.h):
+// what the renderer lays out and what the stores commit to Andamento
+// (uishell_workspace_store.c, uishell_sidebar_store.c). A command edits a
+// copy and sets it. Each set has a version, by which the stores and repair
+// know what changed; setting an arrangement the owner has already changes
+// nothing. A View is in one place: an owner that takes one gives it its
+// namespace, and the arrangement it came from loses its tab.
+
+read_only global RD_Arrangement rd_nil_arrangement = {0, {RD_PanelOwnerKind_Null}, &rd_nil_arrangement_panel, Axis2_Y};
+
+internal RD_LiveArrangement *
+rd_live_arrangement_find(RD_PanelOwner owner)
+{
+  for(RD_LiveArrangement *l = rd_state->first_live_arrangement; l != 0; l = l->next)
   {
-    default:{}break;
-    case RD_PanelOwnerKind_Workspace:{root = cfg_node_child_from_string(host, str8_lit("panels"));}break;
-    case RD_PanelOwnerKind_Sidebar:{root = cfg_node_child_from_string(host, RD_DOCK_SIDEBAR_ROOT);}break;
-    case RD_PanelOwnerKind_Floating:
-    {
-      U64 n = 0;
-      for(CFG_Node *c = cfg_node_child_from_string(host, str8_lit("floating_panels"))->first; c != &cfg_nil_node && n < owner.floating; c = c->next)
-      {
-        if(rd_dock_floating_panel_from_cfg(c) == c && ++n == owner.floating) { root = c; }
-      }
-    }break;
+    if(rd_panel_owner_match(l->arrangement->owner, owner)) { return l; }
   }
-  return root;
+  return 0;
+}
+
+internal RD_Arrangement *
+rd_arrangement_live(RD_PanelOwner owner)
+{
+  RD_LiveArrangement *live = rd_live_arrangement_find(owner);
+  return live ? live->arrangement : (RD_Arrangement *)&rd_nil_arrangement;
 }
 
 internal RD_Arrangement *
 rd_arrangement_from_panel_owner(Arena *arena, RD_PanelOwner owner)
 {
-  // A workspace or sidebar without panels yet saves its first in its host.
-  CFG_Node *host = rd_cfg_from_panel_owner(owner);
-  if(owner.kind == RD_PanelOwnerKind_Workspace) { return rd_arrangement_from_owner(arena, host, str8_lit("panels")); }
-  if(owner.kind == RD_PanelOwnerKind_Sidebar) { return rd_arrangement_from_owner(arena, host, RD_DOCK_SIDEBAR_ROOT); }
-  return rd_arrangement_from_cfg(arena, rd_cfg_root_from_panel_owner(owner));
+  RD_LiveArrangement *live = rd_live_arrangement_find(owner);
+  return live ? rd_arrangement_copy(arena, live->arrangement) : rd_arrangement_alloc(arena, owner);
 }
 
-internal CFG_Node *
-rd_cfg_from_panel(RD_PanelAddress panel)
+internal U64
+rd_arrangement_version(RD_PanelOwner owner)
 {
+  RD_LiveArrangement *live = rd_live_arrangement_find(owner);
+  return live ? live->version : 0;
+}
+
+internal U64
+rd_floating_count(CFG_Node *host)
+{
+  RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, host, 0);
+  U64 count = 0;
+  for(RD_LiveArrangement *l = rd_state->first_live_arrangement; l != 0; l = l->next)
+  {
+    RD_PanelOwner o = l->arrangement->owner;
+    if(o.kind == RD_PanelOwnerKind_Floating && uishell_workspace_id_match(o.id, owner.id)) { count = Max(count, o.floating); }
+  }
+  return count;
+}
+
+// A View node goes, with the Presentation State its host keeps for it,
+// unless another View there has its address (one that took its place, as a
+// rebind's new instance does).
+internal void
+rd_view_release(CFG_Node *view)
+{
+  RD_ViewAddress address = rd_view_address_from_cfg(view);
+  CFG_Node *host = &cfg_nil_node;
+  RD_ViewOwnerKind kind = rd_view_owner_kind_from_cfg(view, &host);
+  B32 taken = 0;
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
-  CFG_Node *result = cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, panel.id)->cfg);
+  CFG_NodePtrList others = rd_view_namespace_views(scratch.arena, host, kind);
+  for(CFG_NodePtrNode *n = others.first; n != 0 && !taken; n = n->next)
+  { taken = n->v != view && rd_view_address_match(rd_view_address_from_cfg(n->v), address); }
   scratch_end(scratch);
+  if(!taken) { rd_view_presentation_release(address); }
+  cfg_node_release(rd_state->cfg, view);
+}
+
+// Moves `view` into the namespace of the Views `owner`'s panels have, if it
+// isn't there, keeping its key while no View there has it. What is keyed by
+// its address follows it. Returns its address.
+internal RD_ViewAddress
+rd_view_take(CFG_Node *view, RD_PanelOwner owner)
+{
+  CFG_Node *host = &cfg_nil_node;
+  RD_ViewOwnerKind kind = rd_view_owner_kind_from_panel_owner(owner, view, &host);
+  RD_ViewAddress from = rd_view_address_from_cfg(view);
+  if(kind == RD_ViewOwnerKind_Null || host == &cfg_nil_node) { return from; }
+  CFG_Node *home = rd_view_namespace(host, kind);
+  if(view->parent == home) { return from; }
+  cfg_node_insert_child(rd_state->cfg, home, home->last, view);
+  rd_view_key_assign(view, 1);
+  RD_ViewAddress to = rd_view_address_from_cfg(view);
+  rd_view_readdress(from, to);
+  return to;
+}
+
+// rd_dock_instance_count: the tabs of `registration`'s Views among the
+// arrangements of the window `controlled_split`, kept workspaces aside.
+internal U32
+rd_dock_instances(CFG_ID controlled_split, RD_ViewRegistration *registration)
+{
+  U32 count = 0;
+  for(RD_LiveArrangement *l = rd_state->first_live_arrangement; l != 0; l = l->next)
+  {
+    CFG_Node *host = rd_cfg_from_panel_owner(l->arrangement->owner);
+    if(rd_window_from_cfg(host)->id != controlled_split || str8_match(host->string, str8_lit("detached_workspace"), 0)) { continue; }
+    RD_Arrangement *a = l->arrangement;
+    for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+    {
+      for(RD_ArrangementTab *tab = p->first_tab; tab != 0; tab = tab->next)
+      { count += rd_dock_view_from_name(rd_cfg_from_view(tab->view)->string) == registration; }
+    }
+  }
+  return count;
+}
+
+internal void rd_panel_presentation_arranged(RD_Arrangement *arrangement);
+
+internal void
+rd_arrangement_set(RD_Arrangement *arrangement)
+{
+  RD_PanelOwner owner = arrangement->owner;
+  if(owner.kind == RD_PanelOwnerKind_Null || uishell_workspace_id_is_zero(owner.id)) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  // Each tab's View is this owner's, and nowhere else. A tab whose View has
+  // gone is dropped.
+  for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p))
+  {
+    for(RD_ArrangementTab *tab = p->first_tab, *next = 0; tab != 0; tab = next)
+    {
+      next = tab->next;
+      RD_ViewAddress from = tab->view;
+      CFG_Node *view = rd_cfg_from_view(from);
+      if(view == &cfg_nil_node)
+      {
+        if(rd_view_address_match(p->selected, from)) { p->selected = rd_nil_view_address; }
+        DLLRemove_NPZ((RD_ArrangementTab *)0, p->first_tab, p->last_tab, tab, next, prev);
+        p->tab_count -= 1;
+        continue;
+      }
+      RD_ViewAddress to = rd_view_take(view, owner);
+      if(!rd_view_address_match(from, to)) { rd_arrangement_readdress(arrangement, from, to); }
+      for(RD_LiveArrangement *l = rd_state->first_live_arrangement; l != 0; l = l->next)
+      {
+        RD_Arrangement *other = l->arrangement;
+        if(rd_panel_owner_match(other->owner, owner)) { continue; }
+        rd_arrangement_readdress(other, from, to);
+        if(rd_arrangement_detach_tab(other, to)) { l->version = ++rd_state->arrangement_version; }
+      }
+    }
+  }
+  // The Views of removed tabs go, but those an arrangement has.
+  for(RD_ArrangementTab *tab = arrangement->first_removed; tab != 0; tab = tab->next)
+  {
+    B32 kept = rd_arrangement_panel_from_view(arrangement, tab->view) != &rd_nil_arrangement_panel;
+    for(RD_LiveArrangement *l = rd_state->first_live_arrangement; l != 0 && !kept; l = l->next)
+    { kept = !rd_panel_owner_match(l->arrangement->owner, owner) && rd_arrangement_panel_from_view(l->arrangement, tab->view) != &rd_nil_arrangement_panel; }
+    CFG_Node *view = rd_cfg_from_view(tab->view);
+    if(!kept && view != &cfg_nil_node) { rd_view_release(view); }
+  }
+  arrangement->first_removed = 0;
+  // Its panels' Presentation State.
+  rd_panel_presentation_arranged(arrangement);
+  for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p)) { p->options_from = 0; }
+  RD_LiveArrangement *live = rd_live_arrangement_find(owner);
+  if(owner.kind == RD_PanelOwnerKind_Floating && arrangement->root == &rd_nil_arrangement_panel)
+  {
+    // An emptied Floating Panel goes, and those after it move up.
+    for(RD_LiveArrangement **link = &rd_state->first_live_arrangement; *link != 0;)
+    {
+      RD_LiveArrangement *l = *link;
+      RD_PanelOwner *o = &l->arrangement->owner;
+      if(l == live) { *link = l->next; arena_release(l->arena); SLLStackPush(rd_state->free_live_arrangement, l); continue; }
+      if(o->kind == RD_PanelOwnerKind_Floating && uishell_workspace_id_match(o->id, owner.id) && o->floating > owner.floating)
+      {
+        o->floating -= 1;
+        l->version = ++rd_state->arrangement_version;
+      }
+      link = &l->next;
+    }
+    rd_state->arrangement_version += 1;
+  }
+  else if(!live || !rd_arrangement_match(live->arrangement, arrangement))
+  {
+    Arena *arena = arena_alloc();
+    RD_Arrangement *copy = rd_arrangement_copy(arena, arrangement);
+    if(live) { arena_release(live->arena); }
+    else
+    {
+      live = rd_state->free_live_arrangement;
+      if(live) { SLLStackPop(rd_state->free_live_arrangement); }
+      else
+      {
+        if(!rd_state->live_arrangement_arena) { rd_state->live_arrangement_arena = arena_alloc(); }
+        live = push_array(rd_state->live_arrangement_arena, RD_LiveArrangement, 1);
+      }
+      SLLStackPush(rd_state->first_live_arrangement, live);
+    }
+    live->arena = arena;
+    live->arrangement = copy;
+    live->version = ++rd_state->arrangement_version;
+  }
+  scratch_end(scratch);
+}
+
+internal void
+rd_arrangement_present_weight(RD_PanelAddress panel, F32 weight)
+{
+  RD_LiveArrangement *live = rd_live_arrangement_find(panel.owner);
+  RD_ArrangementPanel *p = live ? rd_arrangement_panel_from_id(live->arrangement, panel.id) : &rd_nil_arrangement_panel;
+  if(p != &rd_nil_arrangement_panel && p->parent != &rd_nil_arrangement_panel) { p->weight = weight; }
+}
+
+// The live arrangements of owners that have gone (a workspace closed, a
+// window released) go too.
+internal void
+rd_arrangements_release_unowned(void)
+{
+  for(RD_LiveArrangement **link = &rd_state->first_live_arrangement; *link != 0;)
+  {
+    RD_LiveArrangement *l = *link;
+    if(rd_cfg_from_panel_owner(l->arrangement->owner) == &cfg_nil_node)
+    {
+      *link = l->next;
+      arena_release(l->arena);
+      SLLStackPush(rd_state->free_live_arrangement, l);
+    }
+    else { link = &l->next; }
+  }
+}
+
+internal RD_PanelAddress
+rd_panel_from_view(RD_ViewAddress view)
+{
+  RD_PanelAddress result = {0};
+  if(rd_view_address_is_nil(view) || view.owner == RD_ViewOwnerKind_Transient) { return result; }
+  for(RD_LiveArrangement *l = rd_state->first_live_arrangement; l != 0 && result.id == 0; l = l->next)
+  {
+    RD_Arrangement *a = l->arrangement;
+    if(!uishell_workspace_id_match(a->owner.id, view.id)) { continue; }
+    RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(a, view);
+    if(panel != &rd_nil_arrangement_panel) { result = rd_panel_address(a->owner, panel->id); }
+  }
   return result;
 }
 
 internal RD_PanelAddress
 rd_panel_from_cfg(CFG_Node *cfg)
 {
-  RD_PanelAddress result = {rd_panel_owner_from_cfg(cfg)};
-  if(result.owner.kind == RD_PanelOwnerKind_Null) { return result; }
-  Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, result.owner);
-  RD_ArrangementPanel *panel = rd_arrangement_panel_from_cfg(arrangement, cfg->id);
-  if(panel == &rd_nil_arrangement_panel) { panel = rd_arrangement_panel_from_view(arrangement, cfg->id); }
-  result.id = panel->id;
-  scratch_end(scratch);
-  return result;
+  return rd_panel_from_view(rd_view_address_from_cfg(cfg));
 }
 
-internal RD_PanelTree
-rd_panel_tree_from_cfg(Arena *arena, CFG_Node *panels_root)
+internal B32
+rd_view_is_selected(RD_ViewAddress view)
 {
-  return rd_panel_tree_from_arrangement(arena, rd_panel_owner_from_cfg(panels_root), rd_arrangement_from_cfg(arena, panels_root));
+  RD_PanelAddress panel = rd_panel_from_view(view);
+  RD_ArrangementPanel *p = rd_arrangement_panel_from_id(rd_arrangement_live(panel.owner), panel.id);
+  return panel.id != 0 && rd_view_address_match(p->selected, view);
 }
 
 //- View addresses
+//
+// A View's node is in its owner's namespace, beside its host's other Views
+// and in no panel: a workspace's are its `views` (a window's own panels'
+// too), and a window's sidebar's and Floating Panels' are its
+// `window_views`. The arrangement that has its tab says where it is shown.
+
+#define RD_VIEW_NAMESPACE_WORKSPACE str8_lit("views")
+#define RD_VIEW_NAMESPACE_WINDOW str8_lit("window_views")
 
 // An immediate tree's View (rd_immediate_cfg_from_key) is the tree's: keyed
 // by the tree's key and its kind, as a tree can show one kind after another.
@@ -3186,6 +3379,163 @@ rd_view_is_transient(CFG_Node *view)
   CFG_Node *immediate = view->parent->parent;
   return str8_match(immediate->string, str8_lit("immediate"), 0) && immediate->parent->parent == cfg_node_root() &&
     str8_match(immediate->parent->string, str8_lit("transient"), 0);
+}
+
+// A sidebar section View, keyed by the section it shows. One that names no
+// section is keyed as any other View of its window.
+internal B32
+rd_view_is_section(CFG_Node *view)
+{
+  return str8_match(view->string, str8_lit("sidebar_section"), 0) &&
+    cfg_node_child_from_string(view, str8_lit("section"))->first->string.size != 0;
+}
+
+internal String8
+rd_view_key_from_cfg(CFG_Node *view, RD_ViewInstance *instance_out)
+{
+  RD_ViewInstance instance = RD_ViewInstance_Current;
+  String8 key = str8_zero();
+  if(rd_view_is_section(view)) { key = cfg_node_child_from_string(view, str8_lit("section"))->first->string; }
+  else
+  {
+    key = cfg_node_child_from_string(view, str8_lit("slot"))->first->string;
+    if(!key.size)
+    {
+      key = cfg_node_child_from_string(view, str8_lit("previous_of"))->first->string;
+      if(key.size) { instance = RD_ViewInstance_Previous; }
+    }
+    // A workspace View made for a provider's slot, until the workspace store
+    // keys it (which knows whether Andamento has that slot): that slot's key.
+    if(!key.size) { key = cfg_node_child_from_string(view, str8_lit("resource_id"))->first->string; }
+  }
+  if(instance_out) { *instance_out = instance; }
+  return key;
+}
+
+internal RD_ViewOwnerKind
+rd_view_owner_kind_from_cfg(CFG_Node *view, CFG_Node **host_out)
+{
+  RD_ViewOwnerKind kind = RD_ViewOwnerKind_Null;
+  CFG_Node *home = view->parent, *host = &cfg_nil_node;
+  if(str8_match(home->string, RD_VIEW_NAMESPACE_WORKSPACE, 0)) { kind = RD_ViewOwnerKind_Workspace; host = home->parent; }
+  else if(str8_match(home->string, RD_VIEW_NAMESPACE_WINDOW, 0))
+  {
+    kind = rd_view_is_section(view) ? RD_ViewOwnerKind_Dashboard : RD_ViewOwnerKind_Window;
+    host = home->parent;
+  }
+  if(host_out) { *host_out = host; }
+  return kind;
+}
+
+internal RD_ViewOwnerKind
+rd_view_owner_kind_from_panel_owner(RD_PanelOwner owner, CFG_Node *view, CFG_Node **host_out)
+{
+  CFG_Node *host = rd_cfg_from_panel_owner(owner);
+  B32 window = str8_match(host->string, str8_lit("window"), 0);
+  RD_ViewOwnerKind kind = RD_ViewOwnerKind_Null;
+  if(owner.kind == RD_PanelOwnerKind_Workspace || (owner.kind == RD_PanelOwnerKind_Floating && !window)) { kind = RD_ViewOwnerKind_Workspace; }
+  else if(owner.kind != RD_PanelOwnerKind_Null) { kind = rd_view_is_section(view) ? RD_ViewOwnerKind_Dashboard : RD_ViewOwnerKind_Window; }
+  if(host_out) { *host_out = host; }
+  return kind;
+}
+
+internal CFG_Node *
+rd_view_namespace(CFG_Node *host, RD_ViewOwnerKind owner)
+{
+  String8 name = owner == RD_ViewOwnerKind_Workspace ? RD_VIEW_NAMESPACE_WORKSPACE : RD_VIEW_NAMESPACE_WINDOW;
+  return host == &cfg_nil_node ? &cfg_nil_node : cfg_node_child_from_string_or_alloc(rd_state->cfg, host, name);
+}
+
+internal CFG_NodePtrList
+rd_view_namespace_views(Arena *arena, CFG_Node *host, RD_ViewOwnerKind owner)
+{
+  CFG_NodePtrList list = {0};
+  if(owner == RD_ViewOwnerKind_Null || owner == RD_ViewOwnerKind_Transient) { return list; }
+  String8 name = owner == RD_ViewOwnerKind_Workspace ? RD_VIEW_NAMESPACE_WORKSPACE : RD_VIEW_NAMESPACE_WINDOW;
+  for(CFG_Node *c = cfg_node_child_from_string(host, name)->first; c != &cfg_nil_node; c = c->next)
+  {
+    // Sections are the Dashboard's; any other View of a window is its own.
+    if(owner != RD_ViewOwnerKind_Workspace && (owner == RD_ViewOwnerKind_Dashboard) != rd_view_is_section(c)) { continue; }
+    cfg_node_ptr_list_push(arena, &list, c);
+  }
+  return list;
+}
+
+// The n of a "u:<n>" key, else 0.
+internal U64
+rd_view_user_number(String8 key)
+{
+  String8 digits = str8_skip(key, 2);
+  B32 user = str8_match(str8_prefix(key, 2), str8_lit("u:"), 0) && digits.size != 0 && digits.size < 18 && str8_is_integer(digits, 10);
+  return user ? u64_from_str8(digits, 10) : 0;
+}
+
+internal U64
+rd_view_user_number_max(CFG_Node *host, RD_ViewOwnerKind owner)
+{
+  Temp scratch = scratch_begin(0, 0);
+  U64 max = 0;
+  CFG_NodePtrList views = rd_view_namespace_views(scratch.arena, host, owner);
+  for(CFG_NodePtrNode *n = views.first; n != 0; n = n->next) { max = Max(max, rd_view_user_number(rd_view_key_from_cfg(n->v, 0))); }
+  // A key whose Presentation State is still kept isn't reused, so a new
+  // View never takes over another's settings.
+  String8 name = rd_view_owner_kind_name(owner);
+  for(CFG_Node *c = cfg_node_child_from_string(host, RD_VIEW_PRESENTATION_ROOT)->first; c != &cfg_nil_node; c = c->next)
+  {
+    if(str8_match(c->string, name, 0)) { max = Max(max, rd_view_user_number(cfg_node_child_from_string(c, str8_lit("key"))->first->string)); }
+  }
+  scratch_end(scratch);
+  return max;
+}
+
+// Gives `view`, a View of a workspace's or a window's namespace, the next
+// free "u:<n>" key there when it has no key or, with `unique`, when another
+// View there has its key. Sections keep theirs. Returns whether it did.
+internal B32
+rd_view_key_assign(CFG_Node *view, B32 unique)
+{
+  CFG_Node *host = &cfg_nil_node;
+  RD_ViewOwnerKind owner = rd_view_owner_kind_from_cfg(view, &host);
+  if(owner != RD_ViewOwnerKind_Workspace && owner != RD_ViewOwnerKind_Window) { return 0; }
+  RD_ViewInstance instance = RD_ViewInstance_Current;
+  String8 key = rd_view_key_from_cfg(view, &instance);
+  B32 assign = key.size == 0;
+  if(!assign && unique)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    CFG_NodePtrList views = rd_view_namespace_views(scratch.arena, host, owner);
+    for(CFG_NodePtrNode *n = views.first; n != 0 && !assign; n = n->next)
+    {
+      RD_ViewInstance other = RD_ViewInstance_Current;
+      assign = n->v != view && str8_match(rd_view_key_from_cfg(n->v, &other), key, 0) && other == instance;
+    }
+    scratch_end(scratch);
+  }
+  if(!assign) { return 0; }
+  // A previous instance whose Slot isn't here is a View of its own.
+  CFG_Node *previous_of = cfg_node_child_from_string(view, str8_lit("previous_of"));
+  if(previous_of != &cfg_nil_node) { cfg_node_release(rd_state->cfg, previous_of); }
+  Temp scratch = scratch_begin(0, 0);
+  String8 next = push_str8f(scratch.arena, "u:%I64u", rd_view_user_number_max(host, owner)+1);
+  cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("slot")), next);
+  scratch_end(scratch);
+  return 1;
+}
+
+internal CFG_Node *
+rd_view_alloc(RD_PanelOwner owner, String8 kind, String8 expr)
+{
+  CFG_Node *host = &cfg_nil_node;
+  RD_ViewOwnerKind view_owner = rd_view_owner_kind_from_panel_owner(owner, &cfg_nil_node, &host);
+  CFG_Node *home = rd_view_namespace(host, view_owner);
+  if(home == &cfg_nil_node) { return &cfg_nil_node; }
+  CFG_Node *view = cfg_node_new(rd_state->cfg, home, kind);
+  if(expr.size) { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("expression")), expr); }
+  rd_view_key_assign(view, 0);
+  // A key a released View had this frame is this one's: none of that
+  // View's state is.
+  if(rd_state->view_state_slots_count) { rd_view_states_release_view(rd_view_address_from_cfg(view)); }
+  return view;
 }
 
 internal RD_ViewAddress
@@ -3201,7 +3551,13 @@ rd_view_address_from_cfg(CFG_Node *view)
     scratch_end(scratch);
     return result;
   }
-  return rd_view_address_from_tab(rd_panel_owner_from_cfg(view), view);
+  CFG_Node *host = &cfg_nil_node;
+  RD_ViewOwnerKind kind = rd_view_owner_kind_from_cfg(view, &host);
+  if(kind == RD_ViewOwnerKind_Null) { return result; }
+  RD_ViewInstance instance = RD_ViewInstance_Current;
+  String8 key = rd_view_key_from_cfg(view, &instance);
+  UIShell_WorkspaceId id = kind == RD_ViewOwnerKind_Workspace ? uishell_workspace_id_from_cfg(host) : uishell_window_id_from_cfg(host);
+  return rd_view_address_make(kind, id, key, instance);
 }
 
 internal CFG_Node *
@@ -3287,41 +3643,111 @@ rd_view_readdress(RD_ViewAddress from, RD_ViewAddress to)
   uishell_jackstay_rekey(from, to);
 }
 
-// rd_arrangement_view_move_hook: a View a save moves into another owner
-// keeps what is keyed by its address, under the address the move gave it.
 internal void
-rd_view_moved(CFG_Node *view, B32 moved)
+rd_view_rekey(CFG_Node *view, String8 key)
 {
-  if(!moved)
+  Temp scratch = scratch_begin(0, 0);
+  key = push_str8_copy(scratch.arena, key);
+  RD_ViewAddress from = rd_view_address_from_cfg(view);
+  cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("slot")), key);
+  RD_ViewAddress to = rd_view_address_from_cfg(view);
+  rd_view_readdress(from, to);
+  for(RD_LiveArrangement *l = rd_state->first_live_arrangement; l != 0; l = l->next)
   {
-    if(rd_state->view_move_arena == 0) { rd_state->view_move_arena = arena_alloc(); }
-    RD_ViewMove *move = push_array(rd_state->view_move_arena, RD_ViewMove, 1);
-    move->view = view->id;
-    move->from = rd_view_address_from_cfg(view);
-    SLLStackPush(rd_state->first_view_move, move);
-    return;
+    if(rd_arrangement_readdress(l->arrangement, from, to)) { l->version = ++rd_state->arrangement_version; }
   }
-  for(RD_ViewMove **link = &rd_state->first_view_move; *link != 0; link = &(*link)->next)
-  {
-    RD_ViewMove *move = *link;
-    if(move->view != view->id) { continue; }
-    *link = move->next;
-    rd_view_readdress(move->from, rd_view_address_from_cfg(view));
-    break;
-  }
-  if(rd_state->first_view_move == 0 && rd_state->view_move_arena != 0) { arena_clear(rd_state->view_move_arena); }
+  scratch_end(scratch);
+}
+
+// The host the panels of `owner` are in, `width` wide, as the docking
+// checker sees it: a level of its own for each workspace and for a window's
+// own panels, and the window's for its sidebar and Floating Panels.
+internal RD_DockHost
+rd_dock_host_from_owner(RD_PanelOwner owner, F32 width)
+{
+  RD_DockHost host = {RD_DockHostKind_COUNT};
+  CFG_Node *host_cfg = rd_cfg_from_panel_owner(owner);
+  CFG_Node *window = rd_window_from_cfg(host_cfg);
+  if(window == &cfg_nil_node) { return host; }
+  B32 in_window = host_cfg == window;
+  host.kind = rd_dock_host_kind_from_panel_owner(owner);
+  host.controlled_split = window->id;
+  // The current root Controlled Split owns every Workspace Mount in this
+  // window. Its region identity stays fixed when Visible Workspace changes.
+  if(host.kind == RD_DockHostKind_WorkspaceRegion) { host.workspace_region = window->id; }
+  host.has_workspace_subject = !in_window && cfg_node_child_from_string(host_cfg, str8_lit("subject")) != &cfg_nil_node;
+  host.available_width = width;
+  // A window's own panels are a level apart from its sidebar's.
+  host.level = !in_window ? host_cfg->id : owner.kind == RD_PanelOwnerKind_Workspace ? ~window->id : window->id;
+  return host;
 }
 
 internal RD_DockView
 rd_dock_view_from_address(RD_ViewAddress view)
 {
-  return rd_dock_view_from_cfg(rd_cfg_from_view(view));
+  RD_DockView result = {0};
+  CFG_Node *node = rd_cfg_from_view(view);
+  if(node == &cfg_nil_node) { return result; }
+  result.exists = 1;
+  result.registration = rd_dock_view_from_name(node->string);
+  RD_PanelAddress panel = rd_panel_from_view(view);
+  RD_PanelOwner owner = panel.owner;
+  // A View in no panel is where its namespace is.
+  if(panel.id == 0)
+  {
+    CFG_Node *host = &cfg_nil_node;
+    RD_ViewOwnerKind kind = rd_view_owner_kind_from_cfg(node, &host);
+    owner = rd_panel_owner_from_host(kind == RD_ViewOwnerKind_Workspace ? RD_PanelOwnerKind_Workspace : RD_PanelOwnerKind_Sidebar, host, 0);
+  }
+  result.source = rd_dock_host_from_owner(owner, RD_DOCK_UNMEASURED_WIDTH);
+  result.level = rd_dock_view_level(result.registration, result.source);
+  return result;
 }
 
-internal RD_PanelAddress
-rd_panel_from_view(RD_ViewAddress view)
+// rd_dock_restore over a window's arrangements: its sidebar and Floating
+// Panels, its own panels, and each open workspace's and its Floating
+// Panels. A section restore moved is placed by its hints once the sidebar
+// commits (`section_hint_pending`, uishell_sidebar_store.c).
+internal RD_ViewRegistration *
+rd_dock_registration(RD_ViewAddress view)
 {
-  return rd_panel_from_cfg(rd_cfg_from_view(view));
+  return rd_dock_view_from_name(rd_cfg_from_view(view)->string);
+}
+
+internal RD_DockDocument *
+rd_dock_documents_add_owner(RD_DockDocuments *documents, RD_PanelOwner owner)
+{
+  return rd_dock_documents_add(documents, rd_arrangement_from_panel_owner(documents->arena, owner), rd_dock_host_from_owner(owner, RD_DOCK_UNMEASURED_WIDTH));
+}
+
+internal void
+rd_dock_restore_window(CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_DockDocuments documents = {scratch.arena};
+  documents.sidebar = rd_dock_documents_add_owner(&documents, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
+  for(U64 n = 1; n <= rd_floating_count(window); n++)
+  { rd_dock_documents_add_owner(&documents, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, window, n)); }
+  RD_PanelOwner own = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, window, 0);
+  RD_DockDocument *own_document = uishell_workspace_id_is_zero(own.id) ? 0 : rd_dock_documents_add_owner(&documents, own);
+  for(CFG_Node *c = window->first; c != &cfg_nil_node; c = c->next)
+  {
+    if(!str8_match(c->string, str8_lit("workspace"), 0)) { continue; }
+    RD_DockDocument *workspace = rd_dock_documents_add_owner(&documents, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, c, 0));
+    if(!documents.workspace) { documents.workspace = workspace; }
+    for(U64 n = 1; n <= rd_floating_count(c); n++)
+    { rd_dock_documents_add_owner(&documents, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, c, n))->workspace = workspace; }
+  }
+  if(!documents.workspace) { documents.workspace = own_document; }
+  RD_ViewAddressList pending = rd_dock_restore(&documents, rd_dock_registration);
+  // Marked while they still have the addresses restore found them by.
+  for(RD_ViewAddressNode *n = pending.first; n != 0; n = n->next)
+  {
+    CFG_Node *view = rd_cfg_from_view(n->v);
+    if(view != &cfg_nil_node) { cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("section_hint_pending")); }
+  }
+  for(RD_DockDocument *d = documents.first; d != 0; d = d->next) { if(d->dirty) { rd_arrangement_set(d->arrangement); } }
+  scratch_end(scratch);
 }
 
 //- View Presentation State (CONTEXT.md, "Presentation State")
@@ -3468,7 +3894,7 @@ rd_view_presentation_release(RD_ViewAddress view)
 // The node is read for every setting, as rd_cfg_setting_child reads it: a
 // transient View keeps all its settings there, and a test or diagnostic may
 // set one there directly. Store loads put only logical settings on a
-// Workspace's View nodes (uishell_store_build), so nothing saved before
+// Workspace's View nodes (uishell_store_follow), so nothing saved before
 // Presentation State is read back from a node.
 internal String8
 rd_view_setting_from_view(RD_ViewAddress view, String8 name)
@@ -3528,31 +3954,403 @@ rd_cfg_setting_home(CFG_Node *cfg, String8 name)
   return rd_view_presentation_alloc(view);
 }
 
+//- Panel Presentation State (CONTEXT.md, "Presentation State")
+//
+// What a panel shows is its arrangement's; how this device shows it is kept
+// beside the arrangement, by panel address, in its owner's host (a
+// workspace's node, the window for a window's own panels and its sidebar),
+// which the Dashboard's presentation file saves with it:
+//
+//   panel_presentation: {
+//     workspace: {panel: 3 focused tabs_on_bottom}
+//     sidebar: {panel: 2 section_collapsed}
+//     floating: {floating: 1 panel: 1 section_collapsed}
+//   }
+//
+// `focused` is the focus mark (the last marked panel in tree order has
+// focus). A panel's record goes when its arrangement is saved without it,
+// and moves with the tabs of a panel lifted into a split
+// (rd_arrangement_add). A Floating Panel's are by its place among its
+// host's, which those after one that goes move up.
+
+internal U64
+rd_panel_presentation_number(CFG_Node *record, String8 name)
+{
+  String8 n = cfg_node_child_from_string(record, name)->first->string;
+  return n.size && n.size < 18 && str8_is_integer(n, 10) ? u64_from_str8(n, 10) : 0;
+}
+
+internal B32
+rd_panel_presentation_is(CFG_Node *record, RD_PanelOwner owner)
+{
+  return str8_match(record->string, rd_panel_owner_kind_name(owner.kind), 0) &&
+    rd_panel_presentation_number(record, str8_lit("floating")) == owner.floating;
+}
+
+internal RD_PanelID
+rd_panel_presentation_id(CFG_Node *record)
+{
+  return rd_panel_presentation_number(record, str8_lit("panel"));
+}
+
+internal CFG_Node *
+rd_panel_presentation_from_panel(RD_PanelAddress panel)
+{
+  CFG_Node *root = cfg_node_child_from_string(rd_cfg_from_panel_owner(panel.owner), RD_PANEL_PRESENTATION_ROOT);
+  for(CFG_Node *c = root->first; c != &cfg_nil_node && panel.id != 0; c = c->next)
+  {
+    if(rd_panel_presentation_is(c, panel.owner) && rd_panel_presentation_id(c) == panel.id) { return c; }
+  }
+  return &cfg_nil_node;
+}
+
+internal CFG_Node *
+rd_panel_presentation_alloc(RD_PanelAddress panel)
+{
+  CFG_Node *record = rd_panel_presentation_from_panel(panel);
+  CFG_Node *host = rd_cfg_from_panel_owner(panel.owner);
+  if(record != &cfg_nil_node || host == &cfg_nil_node || panel.id == 0) { return record; }
+  CFG_Node *root = cfg_node_child_from_string_or_alloc(rd_state->cfg, host, RD_PANEL_PRESENTATION_ROOT);
+  record = cfg_node_new(rd_state->cfg, root, rd_panel_owner_kind_name(panel.owner.kind));
+  if(panel.owner.floating) { cfg_node_newf(rd_state->cfg, cfg_node_new(rd_state->cfg, record, str8_lit("floating")), "%I64u", panel.owner.floating); }
+  cfg_node_newf(rd_state->cfg, cfg_node_new(rd_state->cfg, record, str8_lit("panel")), "%I64u", panel.id);
+  return record;
+}
+
+internal B32
+rd_panel_flag(RD_PanelAddress panel, String8 name)
+{
+  return cfg_node_child_from_string(rd_panel_presentation_from_panel(panel), name) != &cfg_nil_node;
+}
+
+internal String8
+rd_panel_setting(RD_PanelAddress panel, String8 name)
+{
+  return cfg_node_child_from_string(rd_panel_presentation_from_panel(panel), name)->first->string;
+}
+
+internal void
+rd_panel_setting_set(RD_PanelAddress panel, String8 name, String8 value)
+{
+  CFG_Node *record = rd_panel_presentation_alloc(panel);
+  if(record == &cfg_nil_node || str8_match(cfg_node_child_from_string(record, name)->first->string, value, 0)) { return; }
+  cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, record, name), value);
+}
+
+internal void
+rd_panel_flag_set(RD_PanelAddress panel, String8 name, B32 on)
+{
+  if(on == rd_panel_flag(panel, name)) { return; }
+  CFG_Node *record = rd_panel_presentation_alloc(panel);
+  if(on) { cfg_node_new(rd_state->cfg, record, name); return; }
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(record, name));
+  // Only what names it is left.
+  B32 empty = 1;
+  for(CFG_Node *c = record->first; c != &cfg_nil_node && empty; c = c->next)
+  { empty = str8_match(c->string, str8_lit("panel"), 0) || str8_match(c->string, str8_lit("floating"), 0); }
+  if(empty) { cfg_node_release(rd_state->cfg, record); }
+}
+
+internal void
+rd_panel_focus_mark(RD_PanelAddress panel)
+{
+  CFG_Node *root = cfg_node_child_from_string(rd_cfg_from_panel_owner(panel.owner), RD_PANEL_PRESENTATION_ROOT);
+  for(CFG_Node *c = root->first, *next = &cfg_nil_node; c != &cfg_nil_node; c = next)
+  {
+    next = c->next;
+    RD_PanelID id = rd_panel_presentation_id(c);
+    if(rd_panel_presentation_is(c, panel.owner) && id != panel.id) { rd_panel_flag_set(rd_panel_address(panel.owner, id), str8_lit("focused"), 0); }
+  }
+  rd_panel_flag_set(panel, str8_lit("focused"), 1);
+}
+
+// rd_panel_presentation_hook.
+internal RD_PanelPresentation
+rd_panel_presentation(RD_PanelAddress panel)
+{
+  RD_PanelPresentation result = {0};
+  CFG_Node *record = rd_panel_presentation_from_panel(panel);
+  result.focused = cfg_node_child_from_string(record, str8_lit("focused")) != &cfg_nil_node;
+  result.tabs_on_bottom = cfg_node_child_from_string(record, str8_lit("tabs_on_bottom")) != &cfg_nil_node;
+  return result;
+}
+
+// As `arrangement` is set: a lifted panel takes the Presentation State of
+// the panel whose tabs it took, and a panel the arrangement no longer has
+// loses its own.
+internal void
+rd_panel_presentation_arranged(RD_Arrangement *arrangement)
+{
+  RD_PanelOwner owner = arrangement->owner;
+  CFG_Node *root = cfg_node_child_from_string(rd_cfg_from_panel_owner(owner), RD_PANEL_PRESENTATION_ROOT);
+  if(root == &cfg_nil_node) { return; }
+  for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p))
+  {
+    CFG_Node *from = rd_panel_presentation_from_panel(rd_panel_address(owner, p->options_from));
+    if(p->options_from == 0 || from == &cfg_nil_node) { continue; }
+    CFG_Node *to = rd_panel_presentation_from_panel(rd_panel_address(owner, p->id));
+    if(to != &cfg_nil_node) { cfg_node_release(rd_state->cfg, to); }
+    cfg_node_new_replacef(rd_state->cfg, cfg_node_child_from_string(from, str8_lit("panel")), "%I64u", p->id);
+  }
+  for(CFG_Node *c = root->first, *next = &cfg_nil_node; c != &cfg_nil_node; c = next)
+  {
+    next = c->next;
+    if(rd_panel_presentation_is(c, owner) && rd_arrangement_panel_from_id(arrangement, rd_panel_presentation_id(c)) == &rd_nil_arrangement_panel)
+    { cfg_node_release(rd_state->cfg, c); }
+  }
+  // A Floating Panel that goes takes its place with it.
+  if(owner.kind == RD_PanelOwnerKind_Floating && arrangement->root == &rd_nil_arrangement_panel)
+  {
+    String8 kind = rd_panel_owner_kind_name(owner.kind);
+    for(CFG_Node *c = root->first; c != &cfg_nil_node; c = c->next)
+    {
+      U64 n = rd_panel_presentation_number(c, str8_lit("floating"));
+      if(str8_match(c->string, kind, 0) && n > owner.floating)
+      { cfg_node_new_replacef(rd_state->cfg, cfg_node_child_from_string(c, str8_lit("floating")), "%I64u", n-1); }
+    }
+  }
+  if(root->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, root); }
+}
+
+//- Orphaned Presentation State
+//
+// A View's Presentation State goes with it (rd_view_release), and a panel's
+// with the panel when its arrangement is set without it; a record left by
+// an older build, a hand edit or a crash has nothing to go with. Before the
+// presentation file is saved, the records of `host` (a window, or an open
+// workspace) whose View or panel is nowhere go. Only owners whose
+// arrangements are live are judged: a kept workspace's Views are its
+// record's until it reopens.
+internal void
+rd_presentation_sweep(CFG_Node *host)
+{
+  B32 window = str8_match(host->string, str8_lit("window"), 0);
+  if(!window && !str8_match(host->string, str8_lit("workspace"), 0)) { return; }
+  // Views, by the address each record names.
+  CFG_Node *views = cfg_node_child_from_string(host, RD_VIEW_PRESENTATION_ROOT);
+  for(CFG_Node *c = views->first, *next = &cfg_nil_node; c != &cfg_nil_node; c = next)
+  {
+    next = c->next;
+    RD_ViewOwnerKind kinds[] = {RD_ViewOwnerKind_Workspace, RD_ViewOwnerKind_Dashboard, RD_ViewOwnerKind_Window};
+    RD_ViewOwnerKind kind = RD_ViewOwnerKind_Null;
+    for(U64 i = 0; i < ArrayCount(kinds); i++) { if(str8_match(c->string, rd_view_owner_kind_name(kinds[i]), 0)) { kind = kinds[i]; } }
+    if(kind == RD_ViewOwnerKind_Null) { continue; }
+    // A window's own Views are a Workspace's once it has a Workspace ID.
+    if(kind == RD_ViewOwnerKind_Workspace && window && cfg_node_child_from_string(host, str8_lit("workspace_id")) == &cfg_nil_node) { continue; }
+    if(kind != RD_ViewOwnerKind_Workspace && !window) { continue; }
+    RD_PanelOwner owner = kind == RD_ViewOwnerKind_Workspace ? rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, host, 0) :
+                                                               rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, host, 0);
+    if(rd_arrangement_version(owner) == 0) { continue; }
+    UIShell_WorkspaceId id = kind == RD_ViewOwnerKind_Workspace ? owner.id : uishell_window_id_from_cfg(host);
+    RD_ViewInstance instance = cfg_node_child_from_string(c, str8_lit("previous")) != &cfg_nil_node ? RD_ViewInstance_Previous : RD_ViewInstance_Current;
+    RD_ViewAddress address = rd_view_address_make(kind, id, cfg_node_child_from_string(c, str8_lit("key"))->first->string, instance);
+    if(rd_cfg_from_view(address) == &cfg_nil_node) { cfg_node_release(rd_state->cfg, c); }
+  }
+  if(views != &cfg_nil_node && views->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, views); }
+  // Panels, by owner and Panel ID.
+  CFG_Node *panels = cfg_node_child_from_string(host, RD_PANEL_PRESENTATION_ROOT);
+  for(CFG_Node *c = panels->first, *next = &cfg_nil_node; c != &cfg_nil_node; c = next)
+  {
+    next = c->next;
+    RD_PanelOwnerKind kinds[] = {RD_PanelOwnerKind_Workspace, RD_PanelOwnerKind_Sidebar, RD_PanelOwnerKind_Floating};
+    RD_PanelOwnerKind kind = RD_PanelOwnerKind_Null;
+    for(U64 i = 0; i < ArrayCount(kinds); i++) { if(str8_match(c->string, rd_panel_owner_kind_name(kinds[i]), 0)) { kind = kinds[i]; } }
+    if(kind == RD_PanelOwnerKind_Null || (kind == RD_PanelOwnerKind_Sidebar && !window)) { continue; }
+    if(kind == RD_PanelOwnerKind_Workspace && window && cfg_node_child_from_string(host, str8_lit("workspace_id")) == &cfg_nil_node) { continue; }
+    U64 floating = rd_panel_presentation_number(c, str8_lit("floating"));
+    RD_PanelOwner owner = rd_panel_owner_from_host(kind, host, floating);
+    B32 gone = kind == RD_PanelOwnerKind_Floating ? floating == 0 || floating > rd_floating_count(host) : 0;
+    if(!gone && rd_arrangement_version(owner) == 0) { continue; }
+    if(gone || !rd_panel_exists(rd_panel_address(owner, rd_panel_presentation_id(c)))) { cfg_node_release(rd_state->cfg, c); }
+  }
+  if(panels != &cfg_nil_node && panels->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, panels); }
+}
+
+//- Fixtures: arrangements diagnostics and tests build directly, through the
+// same operations commands use.
+
+// `host`'s (a workspace's, or a window's own) panels' owner.
+internal RD_PanelOwner
+rd_fixture_owner(CFG_Node *host)
+{
+  return rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, host, 0);
+}
+
+// The first leaf of `owner`'s arrangement, which is made a single empty
+// panel when it has none.
+internal RD_PanelAddress
+rd_fixture_leaf(RD_PanelOwner owner)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, owner);
+  B32 empty = a->root == &rd_nil_arrangement_panel;
+  RD_ArrangementPanel *leaf = rd_dock_restore_leaf(a);
+  RD_PanelAddress result = rd_panel_address(owner, leaf->id);
+  if(empty) { rd_arrangement_set(a); }
+  scratch_end(scratch);
+  return result;
+}
+
+// A new View of `kind` showing `expr` as `panel`'s last tab, its Selected
+// View if `select`.
+internal CFG_Node *
+rd_fixture_view(RD_PanelAddress panel, String8 kind, String8 expr, B32 select)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+  RD_ArrangementPanel *p = rd_arrangement_panel_from_id(a, panel.id);
+  CFG_Node *view = rd_view_alloc(panel.owner, kind, expr);
+  rd_arrangement_insert_tab(a, rd_view_address_from_cfg(view), panel.id, p->last_tab ? p->last_tab->view : rd_nil_view_address, select);
+  rd_arrangement_set(a);
+  scratch_end(scratch);
+  return view;
+}
+
+// The panel splitting `panel` along `dir` makes.
+internal RD_PanelAddress
+rd_fixture_split(RD_PanelAddress panel, Dir2 dir)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+  RD_PanelAddress result = rd_panel_address(panel.owner, rd_arrangement_split(a, panel.id, dir));
+  rd_arrangement_set(a);
+  scratch_end(scratch);
+  return result;
+}
+
+// The tabs of `owner`'s arrangement whose View is of `kind`.
+internal U64
+rd_fixture_count(RD_PanelOwner owner, String8 kind)
+{
+  U64 count = 0;
+  RD_Arrangement *a = rd_arrangement_live(owner);
+  for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+  {
+    for(RD_ArrangementTab *t = p->first_tab; t; t = t->next) { count += str8_match(rd_cfg_from_view(t->view)->string, kind, 0); }
+  }
+  return count;
+}
+
+// The View of `owner`'s first tab of `kind`, or nil.
+internal CFG_Node *
+rd_fixture_find(RD_PanelOwner owner, String8 kind)
+{
+  RD_Arrangement *a = rd_arrangement_live(owner);
+  for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+  {
+    for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
+    {
+      CFG_Node *view = rd_cfg_from_view(t->view);
+      if(str8_match(view->string, kind, 0)) { return view; }
+    }
+  }
+  return &cfg_nil_node;
+}
+
+// Removes `view`'s tab, which releases it.
+internal void
+rd_fixture_remove(CFG_Node *view)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_ViewAddress address = rd_view_address_from_cfg(view);
+  RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_from_view(address).owner);
+  if(rd_arrangement_remove_tab(a, address)) { rd_arrangement_set(a); }
+  scratch_end(scratch);
+}
+
+// Makes `view` its panel's Selected View; with `on` 0, its panel has none.
+internal void
+rd_fixture_select(CFG_Node *view, B32 on)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_ViewAddress address = rd_view_address_from_cfg(view);
+  RD_PanelAddress panel = rd_panel_from_view(address);
+  RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+  if(rd_arrangement_select(a, panel.id, on ? address : rd_nil_view_address)) { rd_arrangement_set(a); }
+  scratch_end(scratch);
+}
+
+// Removes `panel` and its Views, its siblings keeping their weights.
+internal void
+rd_fixture_remove_panel(RD_PanelAddress panel)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+  if(rd_arrangement_remove(a, panel.id)) { rd_arrangement_set(a); }
+  scratch_end(scratch);
+}
+
+// Sets `owner`'s arrangement aside, with its host's Views and Presentation
+// State, leaving it empty for a fixture to build; rd_fixture_restore puts it
+// back as it was, and drops whatever the fixture made.
+internal RD_FixtureSaved
+rd_fixture_isolate(Arena *arena, RD_PanelOwner owner)
+{
+  RD_FixtureSaved saved = {0};
+  saved.layout = rd_arrangement_from_panel_owner(arena, owner);
+  saved.host = rd_cfg_from_panel_owner(owner);
+  B32 workspace = owner.kind == RD_PanelOwnerKind_Workspace || str8_match(saved.host->string, str8_lit("workspace"), 0);
+  String8 names[] = {workspace ? RD_VIEW_NAMESPACE_WORKSPACE : RD_VIEW_NAMESPACE_WINDOW, RD_PANEL_PRESENTATION_ROOT, RD_VIEW_PRESENTATION_ROOT};
+  CFG_Node **nodes[] = {&saved.views, &saved.panel_presentation, &saved.view_presentation};
+  for(U64 i = 0; i < ArrayCount(names); i++)
+  {
+    *nodes[i] = cfg_node_child_from_string(saved.host, names[i]);
+    cfg_node_unhook(rd_state->cfg, saved.host, *nodes[i]);
+  }
+  rd_arrangement_set(rd_arrangement_alloc(arena, owner));
+  return saved;
+}
+
+internal void
+rd_fixture_restore(RD_FixtureSaved saved)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *host = saved.host;
+  B32 workspace = saved.layout->owner.kind == RD_PanelOwnerKind_Workspace || str8_match(host->string, str8_lit("workspace"), 0);
+  String8 names[] = {workspace ? RD_VIEW_NAMESPACE_WORKSPACE : RD_VIEW_NAMESPACE_WINDOW, RD_PANEL_PRESENTATION_ROOT, RD_VIEW_PRESENTATION_ROOT};
+  CFG_Node *nodes[] = {saved.views, saved.panel_presentation, saved.view_presentation};
+  // The layout's Views are back before it is set, which keeps its tabs; its
+  // Presentation State after, which setting it leaves alone.
+  for(U64 i = 0; i < ArrayCount(names); i++) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(host, names[i])); }
+  if(nodes[0] != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, host, host->last, nodes[0]); }
+  RD_Arrangement *layout = rd_arrangement_copy(scratch.arena, saved.layout);
+  rd_arrangement_set(layout);
+  for(U64 i = 1; i < ArrayCount(names); i++)
+  {
+    if(nodes[i] != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, host, host->last, nodes[i]); }
+  }
+  scratch_end(scratch);
+}
+
 //~ Workspace mounts
 
 internal UIShell_WorkspaceMount
 uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner)
 {
-  B32 sidebar = str8_match(owner->string, RD_DOCK_SIDEBAR_ROOT, 0);
-  CFG_Node *panels_root = sidebar ? owner : cfg_node_child_from_string(owner, str8_lit("panels"));
-  RD_ArrangementKeys layout = rd_arrangement_keys(arena, panels_root);
-  CFG_Node *axis_owner = layout.owner != &cfg_nil_node ? layout.owner : (sidebar ? window : owner);
-  Axis2 root_split_axis = cfg_node_child_from_string(axis_owner, layout.axis_key) != &cfg_nil_node ? Axis2_X : Axis2_Y;
-  RD_Arrangement *arrangement = rd_arrangement_from_cfg(arena, panels_root);
-  CFG_Node *workspace = str8_match(owner->string, str8_lit("workspace"), 0) ? owner : &cfg_nil_node;
-  RD_PanelOwner panel_owner = sidebar ? rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, owner->parent, 0) :
-    rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, owner, 0);
-  UIShell_WorkspaceMount mount =
-  {
-    owner,
-    window,
-    workspace,
-    panels_root,
-    root_split_axis,
-    arrangement,
-    panel_owner,
-    rd_panel_tree_from_arrangement(arena, panel_owner, arrangement),
-  };
+  RD_PanelOwner panel_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, owner, 0);
+  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(arena, panel_owner);
+  UIShell_WorkspaceMount mount = {0};
+  mount.owner_cfg = owner;
+  mount.window_cfg = window;
+  mount.workspace_cfg = str8_match(owner->string, str8_lit("workspace"), 0) ? owner : &cfg_nil_node;
+  mount.arrangement = arrangement;
+  mount.owner = panel_owner;
+  mount.panel_tree = rd_panel_tree_from_arrangement(arena, panel_owner, arrangement);
+  return mount;
+}
+
+internal UIShell_WorkspaceMount
+uishell_workspace_mount_from_sidebar(Arena *arena, CFG_Node *window)
+{
+  RD_PanelOwner panel_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(arena, panel_owner);
+  UIShell_WorkspaceMount mount = {0};
+  mount.owner_cfg = window;
+  mount.window_cfg = window;
+  mount.workspace_cfg = &cfg_nil_node;
+  mount.arrangement = arrangement;
+  mount.owner = panel_owner;
+  mount.panel_tree = rd_panel_tree_from_arrangement(arena, panel_owner, arrangement);
   return mount;
 }
 
@@ -3561,8 +4359,8 @@ internal UIShell_WorkspaceMount
 uishell_workspace_mount_from_panel_owner(Arena *arena, RD_PanelOwner owner)
 {
   CFG_Node *host = rd_cfg_from_panel_owner(owner);
-  CFG_Node *owner_cfg = owner.kind == RD_PanelOwnerKind_Sidebar ? cfg_node_child_from_string(host, RD_DOCK_SIDEBAR_ROOT) : host;
-  return uishell_workspace_mount_from_owner_cfg(arena, rd_window_from_cfg(host), owner_cfg);
+  if(owner.kind == RD_PanelOwnerKind_Sidebar) { return uishell_workspace_mount_from_sidebar(arena, host); }
+  return uishell_workspace_mount_from_owner_cfg(arena, rd_window_from_cfg(host), host);
 }
 
 internal UIShell_WorkspaceMount
@@ -3591,22 +4389,16 @@ uishell_workspace_mount_from_window(Arena *arena, CFG_Node *window)
   return mount;
 }
 
+// The mount of the panels View `cfg` is in, else of the workspace (or the
+// window) `cfg` is in.
 internal UIShell_WorkspaceMount
 uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg)
 {
+  RD_PanelAddress panel = rd_panel_from_cfg(cfg);
+  if(panel.id != 0) { return uishell_workspace_mount_from_panel_owner(arena, panel.owner); }
   CFG_Node *window = rd_window_from_cfg(cfg);
   CFG_Node *workspace = uishell_workspace_cfg_from_cfg(cfg);
-  CFG_Node *owner = workspace != &cfg_nil_node ? workspace : window;
-  for(CFG_Node *c = cfg; c != &cfg_nil_node && c != window; c = c->parent)
-  {
-    if(str8_match(c->string, RD_DOCK_SIDEBAR_ROOT, 0))
-    {
-      owner = c;
-      break;
-    }
-  }
-  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(arena, window, owner);
-  return mount;
+  return uishell_workspace_mount_from_owner_cfg(arena, window, workspace != &cfg_nil_node ? workspace : window);
 }
 
 internal UIShell_WorkspaceMount
@@ -3654,12 +4446,14 @@ uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window)
   }
   
   UIShell_MaterializedWorkspaceInventory inventory = {0};
-  CFG_Node *legacy_panels_root = cfg_node_child_from_string(window, str8_lit("panels"));
-  // Andamento keeps a committed layout's arrangement, which a window saved
-  // since has no panels for until its records are read
+  // A window shows panels of its own beside its workspaces when it has an
+  // arrangement of its own, or Andamento keeps one for it, which a window
+  // saved since has none of until its records are read
   // (uishell_workspace_store.c).
-  B32 legacy_committed = cfg_node_child_from_string(window, str8_lit("arrangement_generation")) != &cfg_nil_node;
-  if(workspace_cfgs.count == 0 || legacy_panels_root != &cfg_nil_node || legacy_committed)
+  B32 own_panels = cfg_node_child_from_string(window, str8_lit("workspace_id")) != &cfg_nil_node &&
+    rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, window, 0))->root != &rd_nil_arrangement_panel;
+  B32 own_committed = cfg_node_child_from_string(window, str8_lit("arrangement_generation")) != &cfg_nil_node;
+  if(workspace_cfgs.count == 0 || own_panels || own_committed)
   {
     UIShell_MaterializedWorkspace *workspace = push_array(arena, UIShell_MaterializedWorkspace, 1);
     workspace->id = window->id;
@@ -3722,17 +4516,16 @@ uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window)
 //
 // Until workspaces have IDs (state model step 1 re-keys these by Workspace
 // ID), the user file marks the visible workspace's node `visible`, and the
-// window's `input_host` names the panel tree whose focused (`selected`) panel
-// takes input: `sidebar` or `workspace`. Each tree's focused panel is saved
-// already. The window state is the live copy; it is written to config before
+// window's `input_host` names the panel tree whose focused panel takes
+// input: `sidebar` or `workspace`. Each tree's focus mark is its panels'
+// Presentation State already. The window state is the live copy; it is written to config before
 // each save rather than wherever it changes, and only where it differs.
 
 internal String8
 rd_window_input_host(RD_WindowState *ws, CFG_Node *window)
 {
   String8 host = str8_zero();
-  CFG_Node *active = rd_cfg_from_panel(ws->active_panel);
-  if(active != &cfg_nil_node && rd_window_from_cfg(active) == window)
+  if(rd_panel_exists(ws->active_panel) && rd_window_from_cfg(rd_cfg_from_panel_owner(ws->active_panel.owner)) == window)
   {
     RD_DockHostKind kind = rd_dock_host_kind_from_panel_owner(ws->active_panel.owner);
     if(kind == RD_DockHostKind_Sidebar) { host = str8_lit("sidebar"); }
@@ -3782,10 +4575,9 @@ rd_window_restore_presentation(RD_WindowState *ws)
   Temp scratch = scratch_begin(0, 0);
   String8 host = cfg_node_child_from_string(window, str8_lit("input_host"))->first->string;
   RD_PanelTree tree = {&rd_nil_panel_node, &rd_nil_panel_node};
-  CFG_Node *sidebar = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
-  if(str8_match(host, str8_lit("sidebar"), 0) && sidebar != &cfg_nil_node)
+  if(str8_match(host, str8_lit("sidebar"), 0))
   {
-    tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, sidebar).panel_tree;
+    tree = uishell_workspace_mount_from_sidebar(scratch.arena, window).panel_tree;
   }
   else if(str8_match(host, str8_lit("workspace"), 0))
   {
@@ -4195,9 +4987,8 @@ rd_panel_frame_segment_list_push_unique(Arena *arena, RD_PanelFrameSegmentList *
 internal RD_DockHost
 rd_dock_host_from_panel(RD_PanelAddress panel, F32 width)
 {
-  CFG_Node *root = rd_cfg_root_from_panel_owner(panel.owner);
   RD_DockHost host = {RD_DockHostKind_COUNT};
-  if(panel.id != 0 && root != &cfg_nil_node) { host = rd_dock_host_from_cfg(root, width); }
+  if(panel.id != 0 && rd_arrangement_live(panel.owner)->root != &rd_nil_arrangement_panel) { host = rd_dock_host_from_owner(panel.owner, width); }
   return host;
 }
 
@@ -4213,7 +5004,7 @@ rd_panel_drag_target(RD_ViewAddress view, RD_PanelAddress destination, F32 width
     p.view_level = rd_state->drag_drop_regs->window;
     p.selected_workspace_region = rd_state->drag_drop_regs->window;
     p.instances_after = registration && (registration->traits & RD_ViewTrait_Singleton) ?
-      rd_dock_instances(cfg_node_from_id(host.controlled_split), registration)+1 : 1;
+      rd_dock_instances(host.controlled_split, registration)+1 : 1;
     p.control_surfaces_after = registration && (registration->traits & RD_ViewTrait_SelectsWorkspaces) ? 2 : 1;
     return host.kind < RD_DockHostKind_COUNT && rd_dock_check(registration, p) == RD_DockRule_Valid;
   }
@@ -4221,7 +5012,7 @@ rd_panel_drag_target(RD_ViewAddress view, RD_PanelAddress destination, F32 width
 }
 
 // A panel's UI key seed: its boxes and animations are keyed from it, so they
-// follow the panel, not the config node it is mirrored to.
+// follow the panel by its address.
 internal UI_Key
 rd_panel_ui_key(RD_PanelAddress panel)
 {
@@ -4254,9 +5045,9 @@ rd_panel_drag_drop(RD_PanelAddress destination, Dir2 direction, RD_ViewAddress p
 // gesture ends)
 //
 // A boundary drag resizes a copy of the arrangement each frame, and the
-// panel areas render from that copy (rd_boundary_resize_show). It saves once,
+// panel areas render from that copy (rd_boundary_resize_show). It sets once,
 // when the mouse is released. A drag that ends any other way (its boundary
-// went away, the action was killed) saved nothing, so there is nothing to put
+// went away, the action was killed) set nothing, so there is nothing to put
 // back.
 
 internal void
@@ -4267,20 +5058,20 @@ rd_boundary_resize_end(void)
   MemoryZeroStruct(resize);
 }
 
-// Copies the arrangement as config has it, reloading it first if config
-// changed under the drag (a command, a section appearing), and applies the
-// drag to the copy.
+// Copies the owner's arrangement, copying it again first if it was set
+// under the drag (a command, a section appearing), and applies the drag to
+// the copy.
 internal void
 rd_boundary_resize_apply(void)
 {
   RD_BoundaryResize *resize = &rd_state->boundary_resize;
-  if(resize->base == 0 || resize->cfg_gen != cfg_change_gen())
+  if(resize->base == 0 || resize->version != rd_arrangement_version(resize->owner))
   {
     arena_clear(resize->arena);
     resize->base = rd_arrangement_from_panel_owner(resize->arena, resize->owner);
     if(resize->base->root == &rd_nil_arrangement_panel) { rd_boundary_resize_end(); return; }
     resize->base_pos = arena_pos(resize->arena);
-    resize->cfg_gen = cfg_change_gen();
+    resize->version = rd_arrangement_version(resize->owner);
   }
   arena_pop_to(resize->arena, resize->base_pos);
   resize->live = rd_arrangement_copy(resize->arena, resize->base);
@@ -4331,14 +5122,14 @@ rd_boundary_resize_commit(void)
 {
   RD_BoundaryResize *resize = &rd_state->boundary_resize;
   if(resize->moved) { rd_boundary_resize_apply(); }
-  if(resize->moved && resize->arena) { rd_arrangement_save(rd_state->cfg, resize->live); }
+  if(resize->moved && resize->arena) { rd_arrangement_set(resize->live); }
   rd_boundary_resize_end();
 }
 
 // Shows the drag in flight on `mount`'s arrangement, if there is one: its
 // arrangement and panel tree become copies of the drag's. Everything that
-// lays panels out calls this before reading weights. Commands load what
-// config has, never this. A drag not seen since last frame has ended
+// lays panels out calls this before reading weights. Commands copy the live
+// arrangement, never this. A drag not seen since last frame has ended
 // without a release, and is dropped.
 internal void
 rd_boundary_resize_show(Arena *arena, UIShell_WorkspaceMount *mount)
@@ -4346,7 +5137,7 @@ rd_boundary_resize_show(Arena *arena, UIShell_WorkspaceMount *mount)
   RD_BoundaryResize *resize = &rd_state->boundary_resize;
   if(resize->arena && resize->frame_index+1 < rd_state->frame_index) { rd_boundary_resize_end(); }
   if(mount->resizing || resize->arena == 0 || !rd_panel_owner_match(mount->owner, resize->owner)) { return; }
-  if(resize->cfg_gen != cfg_change_gen()) { rd_boundary_resize_apply(); }
+  if(resize->version != rd_arrangement_version(resize->owner)) { rd_boundary_resize_apply(); }
   if(resize->arena == 0) { return; }
   mount->arrangement = rd_arrangement_copy(arena, resize->live);
   mount->panel_tree = rd_panel_tree_from_arrangement(arena, mount->owner, mount->arrangement);
@@ -4659,16 +5450,14 @@ rd_dock_width_from_geometry_for_view(RD_DockGeometry *geometry, RD_PanelAddress 
   // A View can begin a drag midway through the panel-area build. Measure on
   // the first target query, including queries from later leaves in that frame.
   if(!geometry->measured) { *geometry = rd_dock_geometry_from_mount(geometry->mount); }
-  // A nil View resolves to the nil node, whose ID 0 no tab has. Thus it
-  // safely selects insertion-only measurement below, as does a destination
-  // the measured mount does not show (an unrendered Floating Panel's). The
-  // mount's arrangement is read again as config has it now: sizing may have
-  // written its weights since.
+  // A nil View, which no tab has, selects insertion-only measurement below,
+  // as does a destination the measured mount does not show (an unrendered
+  // Floating Panel's). The mount's arrangement is read again as it is now:
+  // sizing may have set its weights since.
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *arrangement = rd_arrangement_from_cfg(scratch.arena, cfg_node_from_id(geometry->mount->arrangement->saved_root));
+  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, geometry->mount->owner);
   RD_PanelID panel = rd_panel_owner_match(destination.owner, geometry->mount->owner) ? destination.id : 0;
-  F32 width = rd_dock_moving_width(arrangement, panel,
-    rd_cfg_from_view(moving_view)->id, rd_tab_is_shown, geometry->area, dir, geometry->inset);
+  F32 width = rd_dock_moving_width(arrangement, panel, moving_view, rd_tab_is_shown, geometry->area, dir, geometry->inset);
   scratch_end(scratch);
   return width;
 }
@@ -4708,7 +5497,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
   B32 window_layout_reset = ws->window_layout_reset;
   // A focused panel takes input when the Active Panel is in its kind of host;
   // with no Active Panel, a workspace's does.
-  RD_DockHostKind active_host_kind = rd_cfg_from_panel(ws->active_panel) != &cfg_nil_node ?
+  RD_DockHostKind active_host_kind = rd_panel_exists(ws->active_panel) ?
     rd_dock_host_kind_from_panel_owner(ws->active_panel.owner) : RD_DockHostKind_WorkspaceRegion;
   Rng2F32 panel_area_rect = content_rect; // captured before the per-panel `content_rect` shadows it (for tabs-in-title-bar edge detection)
 
@@ -4861,7 +5650,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             Temp temp = temp_begin(scratch.arena);
             RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(temp.arena, mount->owner);
             rd_arrangement_equalize(arrangement, min_child->address.id);
-            rd_arrangement_save(rd_state->cfg, arrangement);
+            rd_arrangement_set(arrangement);
             temp_end(temp);
           }
           else if(ui_pressed(sig))
@@ -5973,10 +6762,10 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
 {
   if(dim_2f32(rect).x <= 0 || dim_2f32(rect).y <= 0) { return; }
   Temp scratch = scratch_begin(0, 0);
-  CFG_Node *root = uishell_sidebar_dock_layout(split);
-  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, split->owner_cfg, root);
-  // The sidebar's panel tree points into the config until it is drawn: its
-  // sections' renders leave the stores' syncs for the end.
+  uishell_sidebar_dock_layout(split);
+  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_sidebar(scratch.arena, split->owner_cfg);
+  // The sidebar's sections' renders leave the stores' syncs for the end, so
+  // the arrangement laid out is the one drawn.
   uishell_sidebar_store_frame_begin();
   // Sizing reads the weights too.
   rd_boundary_resize_show(scratch.arena, &mount);
@@ -5987,7 +6776,7 @@ uishell_control_surface_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   Rng2F32 panels_rect = rect;
   panels_rect.y1 -= footer_height;
   ws->sidebar->pin_before = 0;
-  if(root != &cfg_nil_node)
+  if(mount.arrangement->root != &rd_nil_arrangement_panel)
   {
     if(ws->sidebar->drag_card && mount.panel_tree.root != &rd_nil_panel_node)
     {
@@ -10581,19 +11370,17 @@ rd_cfg_new_view_tab(CFG_Node *parent, String8 view, String8 expr, B32 selected)
   {
     cfg_node_new(rd_state->cfg, tab, str8_lit("selected"));
   }
-  // Placed in a panel, it has a key there, as saving would give it.
-  rd_view_key_assign(rd_state->cfg, tab, 0);
   return tab;
 }
 
-// A new View as `panel`'s last tab and its Selected View. Saving the
-// arrangement places its node.
-internal CFG_Node *
+// A new View as `panel`'s last tab and its Selected View, in the namespace
+// of `arrangement`'s owner.
+internal RD_ViewAddress
 rd_new_view_tab(RD_Arrangement *arrangement, RD_PanelID panel, String8 view, String8 expr)
 {
-  CFG_Node *tab = rd_cfg_new_view_tab(&cfg_nil_node, view, expr, 0);
+  RD_ViewAddress tab = rd_view_address_from_cfg(rd_view_alloc(arrangement->owner, view, expr));
   RD_ArrangementTab *last = rd_arrangement_panel_from_id(arrangement, panel)->last_tab;
-  rd_arrangement_move_tab(arrangement, tab->id, panel, last ? last->view : 0);
+  rd_arrangement_move_tab(arrangement, tab, panel, last ? last->view : rd_nil_view_address);
   return tab;
 }
 
@@ -10810,7 +11597,8 @@ rd_init(CmdLine *cmdln)
     rd_state->view_state_slots_count = 4096;
     rd_state->view_state_slots = push_array(arena, RD_ViewStateSlot, rd_state->view_state_slots_count);
     rd_state->view_state_last_accessed = &rd_nil_view_state;
-    rd_arrangement_view_move_hook = rd_view_moved;
+    rd_panel_presentation_hook = rd_panel_presentation;
+    rd_dock_instance_count = rd_dock_instances;
   }
 
   //- rjf: setup initial target from command line args
@@ -11284,11 +12072,13 @@ rd_frame(void)
   }
   
   //////////////////////////////
-  //- release the states of Views that left a live place
+  //- release the states of Views that left a live place, and the
+  // arrangements of owners that went
   //
   if(rd_state->frame_depth == 1)
   {
     rd_view_states_release_unowned();
+    rd_arrangements_release_unowned();
   }
   
   //////////////////////////////
@@ -11334,7 +12124,7 @@ rd_frame(void)
           vs->scroll_pos.y.off = 0;
         }
         CFG_Node *vcfg = rd_cfg_from_view(vs->view);
-        if(cfg_node_child_from_string(vcfg, str8_lit("selected")) != &cfg_nil_node)
+        if(rd_view_is_selected(vs->view) || cfg_node_child_from_string(vcfg, str8_lit("selected")) != &cfg_nil_node)
         {
           if(vs->loading_t_target > 0.5f && any_window_is_focused)
           {

@@ -1318,14 +1318,14 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(moved && !str8_match(moved->group->id, area, 0) && pinned->open && !fixture.drag_card,
               "dragging a pinned card to a docking site moves its own ghost to the new area");
     area_group = uishell_sidebar_local_group(window, area);
-    CardCheck(area_group && area_group->pin_count == 0 && rd_dock_can_close(rd_dock_view_from_cfg(area_view)),
+    CardCheck(area_group && area_group->pin_count == 0 && rd_dock_can_close(rd_dock_view_from_address(rd_view_address_from_cfg(area_view))),
               "moving the last pin preserves an empty group whose section can be closed");
     if(moved && !str8_match(moved->group->id, area, 0))
     {
       String8 new_section = push_str8_copy(entity_arena, moved->group->section->id);
       CFG_Node *new_view = uishell_sidebar_local_view(window, new_section);
       uishell_sidebar_pin_place(window, saved_ghost, area, max_U64);
-      if(new_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, new_view); }
+      if(new_view != &cfg_nil_node) { rd_fixture_remove(new_view); }
       uishell_sidebar_local_forget_section(window, new_section);
     }
     if(cmds_before_move) { cmds_before_move->next = 0; } else { rd_state->cmds[0].first = 0; }
@@ -1552,38 +1552,41 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       if(uishell_sidebar_pin_by_ghost(window, hold_pin)) { uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, hold_pin))); }
       uishell_sidebar_detached_finish(ws);
     }
+    RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
     // Pin goes to the topmost local section that is showing; with none
     // showing, it makes one at the top of the sidebar.
     {
-      CFG_Node *root = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
-      CFG_Node *top_panel = cfg_node_new(rd_state->cfg, root, str8_lit("0.2"));
-      cfg_node_insert_child(rd_state->cfg, root, &cfg_nil_node, top_panel);
+      Temp hide_scratch = scratch_begin(0, 0);
+      RD_Arrangement *top_layout = rd_arrangement_from_panel_owner(hide_scratch.arena, sidebar_owner);
+      RD_PanelID top_panel = rd_arrangement_add(top_layout, top_layout->root->id, 0.2f);
+      rd_arrangement_reorder(top_layout, top_panel, 0);
+      rd_arrangement_set(top_layout);
       UIShell_LocalGroup *top_group = uishell_sidebar_local_new_group(window, str8_lit("Top"));
       String8 top_id = push_str8_copy(entity_arena, top_group->id), top_section = push_str8_copy(entity_arena, top_group->section->id);
-      CFG_Node *top_view = uishell_sidebar_local_new_view(rd_panel_from_cfg(top_panel), top_section);
+      CFG_Node *top_view = uishell_sidebar_local_new_view(rd_panel_address(sidebar_owner, top_panel), top_section);
       UIShell_LocalGroup *target = uishell_sidebar_pin_target(window);
       CardCheck(target && str8_match(target->id, top_id, 0), "Pin goes to the topmost showing local section");
-      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(top_view, str8_lit("selected")));
+      rd_fixture_select(top_view, 0);
       target = uishell_sidebar_pin_target(window);
       CardCheck(!target || !str8_match(target->id, top_id, 0), "a section that isn't its panel's selected tab isn't where Pin goes");
-      cfg_node_release(rd_state->cfg, top_panel);
+      rd_fixture_remove_panel(rd_panel_address(sidebar_owner, top_panel));
       uishell_sidebar_local_forget_section(window, top_section);
       // Hide every showing local section: Pin makes a new one at the top.
-      CFG_NodePtrList hidden = {0};
-      Temp hide_scratch = scratch_begin(0, 0);
+      RD_ViewAddressList hidden = {0};
       for(UIShell_LocalGroup *g = uishell_sidebar_pin_target(window); g; g = uishell_sidebar_pin_target(window))
       {
         CFG_Node *v = uishell_sidebar_local_view(window, g->section->id);
-        cfg_node_release(rd_state->cfg, cfg_node_child_from_string(v, str8_lit("selected")));
-        cfg_node_ptr_list_push(hide_scratch.arena, &hidden, v);
+        rd_fixture_select(v, 0);
+        rd_view_address_list_push(hide_scratch.arena, &hidden, rd_view_address_from_cfg(v));
       }
       UIShell_LocalGroup *made = uishell_sidebar_pin_area(ws, 0);
       String8 made_section = made ? push_str8_copy(hide_scratch.arena, made->section->id) : str8_zero();
       CFG_Node *made_view = made ? uishell_sidebar_local_view(window, made_section) : &cfg_nil_node;
-      CardCheck(made && made_view != &cfg_nil_node && root->first == made_view->parent,
+      RD_PanelAddress made_panel = rd_panel_from_cfg(made_view);
+      CardCheck(made && made_view != &cfg_nil_node && rd_arrangement_live(sidebar_owner)->root->first->id == made_panel.id,
                 "with no section showing, Pin makes one at the top of the sidebar");
-      for(CFG_NodePtrNode *n = hidden.first; n; n = n->next) { cfg_node_child_from_string_or_alloc(rd_state->cfg, n->v, str8_lit("selected")); }
-      if(made_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made_view->parent); }
+      for(RD_ViewAddressNode *n = hidden.first; n; n = n->next) { rd_fixture_select(rd_cfg_from_view(n->v), 1); }
+      if(made_view != &cfg_nil_node) { rd_fixture_remove_panel(made_panel); }
       if(made) { uishell_sidebar_local_forget_section(window, made_section); }
       scratch_end(hide_scratch);
     }
@@ -1594,11 +1597,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     original->open = 0;
     // The grip starts a drag in the first View; a later leaf must build drop
     // sites in that same frame, before the next panel-area entry.
-    CFG_Node *drag_root = cfg_node_new(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
     // The pin's group shows in its section's View; publish it so it's placed.
     CFG_Node *drag_view = uishell_sidebar_local_view(window, drag_pin_entry->group->section->id);
-    cfg_node_child_from_string_or_alloc(rd_state->cfg, drag_view, str8_lit("selected"));
-    CFG_Node *drag_panel = drag_view->parent;
+    rd_fixture_select(drag_view, 1);
     {
       Temp publish_scratch = scratch_begin(0, 0);
       UIShell_ControlledSplit publish_split = uishell_root_controlled_split_from_window(publish_scratch.arena, window);
@@ -1606,11 +1607,20 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_refresh(&fixture);
       scratch_end(publish_scratch);
     }
-    CFG_Node *drag_parent = drag_panel->parent, *drag_previous = drag_panel->prev;
-    String8 drag_share = push_str8_copy(test->arena, drag_panel->string);
-    cfg_node_insert_child(rd_state->cfg, drag_root, &cfg_nil_node, drag_panel);
-    cfg_node_equip_string(rd_state->cfg, drag_panel, str8_lit("0.5"));
-    cfg_node_new(rd_state->cfg, drag_root, str8_lit("0.5"));
+    // What the panel area shows: the section's panel's tabs beside an empty
+    // panel, split along x whatever the window's sidebar axis.
+    RD_Arrangement *drag_layout = rd_arrangement_alloc(test->arena, sidebar_owner);
+    drag_layout->root_axis = Axis2_X;
+    RD_PanelID drag_panel = 0;
+    {
+      RD_Arrangement *live = rd_arrangement_live(sidebar_owner);
+      RD_ArrangementPanel *source = rd_arrangement_panel_from_view(live, rd_view_address_from_cfg(drag_view));
+      RD_PanelID drag_root = rd_arrangement_clear(drag_layout);
+      drag_panel = rd_arrangement_add(drag_layout, drag_root, 0.5f);
+      rd_arrangement_add(drag_layout, drag_root, 0.5f);
+      for(RD_ArrangementTab *t = source->first_tab; t; t = t->next)
+      { rd_arrangement_insert_tab(drag_layout, t->view, drag_panel, t->prev ? t->prev->view : rd_nil_view_address, rd_view_address_match(t->view, source->selected)); }
+    }
     // Its cap comes out from the title line, not the body; once out, it
     // stays while the pointer is anywhere on the card.
     {
@@ -1627,10 +1637,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1);
           Andamento *drag_core = fixture.core; fixture.core = 0;
           Temp panel_scratch = scratch_begin(0, 0);
-          CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
-          UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(panel_scratch.arena, window, host);
-          mount.arrangement = rd_arrangement_from_cfg(panel_scratch.arena, drag_root);
-          mount.arrangement->root_axis = Axis2_X;
+          UIShell_WorkspaceMount mount = uishell_workspace_mount_from_sidebar(panel_scratch.arena, window);
+          mount.arrangement = rd_arrangement_copy(panel_scratch.arena, drag_layout);
           mount.panel_tree = rd_panel_tree_from_arrangement(panel_scratch.arena, mount.owner, mount.arrangement);
           UIShell_RegsScope(.window = window->id)
           { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
@@ -1680,11 +1688,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1);
         Andamento *drag_core = fixture.core; fixture.core = 0;
         Temp panel_scratch = scratch_begin(0, 0);
-        CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
-        UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(panel_scratch.arena, window, host);
-        // The drag root splits along x, whatever the window's sidebar axis.
-        mount.arrangement = rd_arrangement_from_cfg(panel_scratch.arena, drag_root);
-        mount.arrangement->root_axis = Axis2_X;
+        UIShell_WorkspaceMount mount = uishell_workspace_mount_from_sidebar(panel_scratch.arena, window);
+        mount.arrangement = rd_arrangement_copy(panel_scratch.arena, drag_layout);
         mount.panel_tree = rd_panel_tree_from_arrangement(panel_scratch.arena, mount.owner, mount.arrangement);
         UIShell_RegsScope(.window = window->id)
         { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
@@ -1812,7 +1817,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // The pins' section title drags its View, as any section title does.
     {
       ui_kill_action(); rd_drag_kill();
-      CFG_Node *area_view = cfg_node_child_from_string(drag_panel, str8_lit("sidebar_section"));
+      CFG_Node *area_view = &cfg_nil_node;
+      for(RD_ArrangementTab *t = rd_arrangement_panel_from_id(drag_layout, drag_panel)->first_tab; t && area_view == &cfg_nil_node; t = t->next)
+      {
+        CFG_Node *v = rd_cfg_from_view(t->view);
+        if(str8_match(v->string, str8_lit("sidebar_section"), 0)) { area_view = v; }
+      }
       String8 area_title = push_str8f(test->arena, "###section_%S", cfg_node_child_from_string(area_view, str8_lit("section"))->first->string);
       CardCheck(area_view != &cfg_nil_node, "the emptied pins' section remains as a View");
       Vec2F32 area_start = {0};
@@ -1832,10 +1842,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         {
           Andamento *area_core = fixture.core; fixture.core = 0;
           Temp panel_scratch = scratch_begin(0, 0);
-          CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
-          UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(panel_scratch.arena, window, host);
-          mount.arrangement = rd_arrangement_from_cfg(panel_scratch.arena, drag_root);
-          mount.arrangement->root_axis = Axis2_X;
+          UIShell_WorkspaceMount mount = uishell_workspace_mount_from_sidebar(panel_scratch.arena, window);
+          mount.arrangement = rd_arrangement_copy(panel_scratch.arena, drag_layout);
           mount.panel_tree = rd_panel_tree_from_arrangement(panel_scratch.arena, mount.owner, mount.arrangement);
           UIShell_RegsScope(.window = window->id)
           { rd_panel_area_ui(panel_scratch, r2f32p(0, 0, 1000, 700), r2f32p(0, 0, 1000, 700), ws, &mount, 1, 0, 0, 0, 0); }
@@ -1926,9 +1934,6 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       }
     }
     uishell_sidebar_card_close(drag_pin);
-    cfg_node_insert_child(rd_state->cfg, drag_parent, drag_previous, drag_panel);
-    cfg_node_equip_string(rd_state->cfg, drag_panel, drag_share);
-    cfg_node_release(rd_state->cfg, drag_root);
 
     // A source-bound card closes when its exact placement is removed.
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
@@ -1994,8 +1999,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CFG_Node *invalid_owner = cfg_node_new(rd_state->cfg, window, str8_lit("invalid_owner"));
       if(root_exists)
       {
-        CFG_Node *invalid_root = cfg_node_new(rd_state->cfg, invalid_owner, RD_DOCK_SIDEBAR_ROOT);
-        cfg_node_new(rd_state->cfg, invalid_root, str8_lit("sidebar_section"));
+        CFG_Node *invalid_views = cfg_node_new(rd_state->cfg, invalid_owner, str8_lit("window_views"));
+        cfg_node_new(rd_state->cfg, invalid_views, str8_lit("sidebar_section"));
       }
       Temp failed_scratch = scratch_begin(0, 0);
       String8 before_failure = cfg_string_from_tree(failed_scratch.arena, rd_state->cfg_schema_table, str8_zero(), invalid_owner);
@@ -2011,47 +2016,50 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     }
     fprintf(stderr, "Hover card diagnostics: merged layout\n");
     // Adding a new area to a merged root leaf preserves its existing tabs.
-    CFG_Node *old_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
-    cfg_node_unhook(rd_state->cfg, window, old_host);
-    CFG_Node *merged_host = cfg_node_new(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
-    CFG_Node *existing_view = cfg_node_new(rd_state->cfg, merged_host, str8_lit("sidebar_section")); rd_view_key_assign(rd_state->cfg, existing_view, 0);
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, existing_view, str8_lit("section")), str8_lit("projects"));
-    unique = uishell_sidebar_card_pin(ws, original, 1);
-    CardCheck(unique && existing_view->parent != merged_host &&
-              existing_view->parent->parent == merged_host, "new pinned area preserves tabs in a merged sidebar root");
-    F32 sum = 0;
-    for(CFG_Node *n = merged_host->first; n != &cfg_nil_node; n = n->next) { sum += (F32)f64_from_str8(n->string); }
-    CardCheck(abs_f32(sum-1) < .0001f, "new area normalizes saved panel ratios");
-    cfg_node_release(rd_state->cfg, merged_host);
-    cfg_node_insert_child(rd_state->cfg, window, window->last, old_host);
+    {
+      // No docking site from an earlier drag: Pin's own placement.
+      fixture.drop_panel = rd_nil_panel_address;
+      RD_FixtureSaved saved = rd_fixture_isolate(entity_arena, sidebar_owner);
+      RD_Arrangement *merged = rd_arrangement_from_panel_owner(entity_arena, sidebar_owner);
+      RD_PanelID merged_root = rd_arrangement_clear(merged);
+      CFG_Node *existing_view = uishell_sidebar_section_view_new(window, merged, merged_root, rd_nil_view_address, str8_lit("projects"), str8_lit("Projects"));
+      rd_arrangement_set(merged);
+      unique = uishell_sidebar_card_pin(ws, original, 1);
+      RD_Arrangement *live = rd_arrangement_live(sidebar_owner);
+      RD_ArrangementPanel *existing_panel = rd_arrangement_panel_from_view(live, rd_view_address_from_cfg(existing_view));
+      CardCheck(unique && existing_panel->id != merged_root &&
+                existing_panel->parent->id == merged_root, "new pinned area preserves tabs in a merged sidebar root");
+      F32 sum = 0;
+      for(RD_ArrangementPanel *n = live->root->first; n != &rd_nil_arrangement_panel; n = n->next) { sum += n->weight; }
+      CardCheck(abs_f32(sum-1) < .0001f, "new area normalizes saved panel ratios");
+      rd_fixture_restore(saved);
+    }
 
     fprintf(stderr, "Hover card diagnostics: shared panel drops\n");
     // A center joins its target; directional drops use the ordinary split
     // command and retain the measured ratios, rather than global rebalancing.
-    cfg_node_unhook(rd_state->cfg, window, old_host);
+    RD_FixtureSaved drops_saved = rd_fixture_isolate(entity_arena, sidebar_owner);
     B32 sized_before = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
     Dir2 directions[] = {Dir2_Invalid, Dir2_Up, Dir2_Down, Dir2_Left, Dir2_Right};
-    CFG_Node *saved_drop_axis = cfg_node_child_from_string(window, str8_lit("control_views_split_x"));
-    cfg_node_unhook(rd_state->cfg, window, saved_drop_axis);
     for(U64 nested = 0; nested < 2; nested++)
     for(U64 d = 0; d < ArrayCount(directions); d++)
     {
-      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("control_views_split_x")));
-      if(nested && axis2_from_dir2(directions[d]) == Axis2_Y)
-      { cfg_node_new(rd_state->cfg, window, str8_lit("control_views_split_x")); }
-      CFG_Node *host = cfg_node_new(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
-      CFG_Node *destination = host, *neighbour = &cfg_nil_node;
+      RD_Arrangement *layout = rd_arrangement_alloc(entity_arena, sidebar_owner);
+      layout->root_axis = nested && axis2_from_dir2(directions[d]) == Axis2_Y ? Axis2_X : Axis2_Y;
+      RD_PanelID destination = rd_arrangement_clear(layout), neighbour = 0;
       if(nested)
       {
-        destination = cfg_node_new(rd_state->cfg, host, str8_lit("0.6"));
-        neighbour = cfg_node_new(rd_state->cfg, host, str8_lit("0.4"));
-        cfg_node_new(rd_state->cfg, neighbour, str8_lit("sidebar_section"));
+        RD_PanelID host = destination;
+        destination = rd_arrangement_add(layout, host, 0.6f);
+        neighbour = rd_arrangement_add(layout, host, 0.4f);
+        uishell_sidebar_section_view_new(window, layout, neighbour, rd_nil_view_address, str8_lit("fixture-neighbour"), str8_lit("Neighbour"));
       }
+      rd_arrangement_set(layout);
       uishell_sidebar_local_ensure_default(&fixture);
       U64 sections_before = uishell_sidebar_window_locals(window)->section_count;
       UIShell_LocalGroup *existing_local = uishell_sidebar_local_new_group(window, str8_lit("Pinned"));
       String8 existing_group = push_str8_copy(entity_arena, existing_local->id);
-      RD_PanelAddress destination_panel = rd_panel_from_cfg(destination);
+      RD_PanelAddress destination_panel = rd_panel_address(sidebar_owner, destination);
       CFG_Node *existing = uishell_sidebar_local_new_view(destination_panel, existing_local->section->id);
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
       original->engaged = original->focused = original->moving = original->drag_released = 1;
@@ -2087,19 +2095,21 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         if(str8_match(n->cmd.name, str8_lit("split_panel"), 0)) UIShell_RegsScope()
         { MemoryCopyStruct(uishell_regs(), n->cmd.regs); uishell_dispatch_panel_command(n->cmd.name); }
       }
-      CFG_Node *settled_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
       Temp drop_scratch = scratch_begin(0, 0);
-      UIShell_WorkspaceMount drop_mount = uishell_workspace_mount_from_owner_cfg(drop_scratch.arena, window, settled_host);
+      UIShell_WorkspaceMount drop_mount = uishell_workspace_mount_from_sidebar(drop_scratch.arena, window);
       RD_PanelNode *drop_root = drop_mount.panel_tree.root;
       CardCheck(entry && !original->open &&
         cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node,
         "accepted card drop pins once and opts into saved panel sizing");
-      RD_PanelNode *target_root = nested ? drop_root->first : drop_root;
+      // A split across the destination's parent's axis splits it; along it,
+      // it adds a sibling there.
+      RD_PanelNode *destination_node = rd_panel_node_from_id(drop_root, destination);
+      RD_PanelNode *target_root = destination_node->first != &rd_nil_panel_node ? destination_node : destination_node->parent;
       if(nested)
-      { CardCheck(drop_root->child_count == 2 && rd_panel_address_match(drop_root->last->address, rd_panel_from_cfg(neighbour)) &&
+      { CardCheck(drop_root->child_count == 2 && rd_panel_address_match(drop_root->last->address, rd_panel_address(sidebar_owner, neighbour)) &&
           abs_f32(drop_root->last->pct_of_parent-.4f) < .0001f, "nested drop preserves the other panel and outer allocation"); }
       if(directions[d] == Dir2_Invalid)
-      { CardCheck(area && str8_match(area->id, existing_group, 0) && target_root->child_count == 0, "center drop joins the group of the exact existing section"); }
+      { CardCheck(area && str8_match(area->id, existing_group, 0) && destination_node->child_count == 0, "center drop joins the group of the exact existing section"); }
       else
       {
         Side side = side_from_dir2(directions[d]);
@@ -2109,7 +2119,6 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           "directional card drop matches the ordinary half-panel split and side");
       }
       scratch_end(drop_scratch);
-      cfg_node_release(rd_state->cfg, settled_host);
       // The sections this case made go with their Views.
       {
         UIShell_Locals *locals = uishell_sidebar_window_locals(window);
@@ -2119,38 +2128,34 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       }
       rd_state->drag_drop_creation_name = str8_zero(); rd_state->drag_drop_commit = 0;
     }
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("control_views_split_x")));
-    if(saved_drop_axis != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_drop_axis); }
     uishell_sidebar_manual_sizing(window, sized_before);
-    cfg_node_insert_child(rd_state->cfg, window, window->last, old_host);
+    rd_fixture_restore(drops_saved);
 
     // Dropping the last workspace tab out of a nested split closes its empty
     // source Panel. Collapsing that branch flattens the surviving split.
     fprintf(stderr, "Hover card diagnostics: focused source collapse\n");
-    cfg_node_unhook(rd_state->cfg, window, old_host);
-    CFG_Node *collapse_axis = cfg_node_child_from_string(window, str8_lit("control_views_split_x"));
-    cfg_node_unhook(rd_state->cfg, window, collapse_axis);
-    cfg_node_new(rd_state->cfg, window, str8_lit("control_views_split_x"));
-    CFG_Node *collapse_root = cfg_node_new(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
-    CFG_Node *branch = cfg_node_new(rd_state->cfg, collapse_root, str8_lit("0.6"));
-    CFG_Node *other = cfg_node_new(rd_state->cfg, collapse_root, str8_lit("0.4"));
-    cfg_node_new(rd_state->cfg, other, str8_lit("sidebar_section"));
-    CFG_Node *source_panel = cfg_node_new(rd_state->cfg, branch, str8_lit("0.5"));
-    cfg_node_new(rd_state->cfg, source_panel, str8_lit("selected"));
-    CFG_Node *moving_section = cfg_node_new(rd_state->cfg, source_panel, str8_lit("sidebar_section")); rd_view_key_assign(rd_state->cfg, moving_section, 0);
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, moving_section, str8_lit("section")), str8_lit("workspaces"));
-    CFG_Node *survivor = cfg_node_new(rd_state->cfg, branch, str8_lit("0.5"));
-    CFG_Node *first_survivor = cfg_node_new(rd_state->cfg, survivor, str8_lit("0.25"));
-    cfg_node_new(rd_state->cfg, first_survivor, str8_lit("pinned_cards"));
-    CFG_Node *last_survivor = cfg_node_new(rd_state->cfg, survivor, str8_lit("0.75"));
-    cfg_node_new(rd_state->cfg, last_survivor, str8_lit("sidebar_section"));
-    CFG_ID survivor_id = survivor->id;
+    RD_FixtureSaved collapse_saved = rd_fixture_isolate(entity_arena, sidebar_owner);
+    RD_Arrangement *collapse = rd_arrangement_alloc(entity_arena, sidebar_owner);
+    collapse->root_axis = Axis2_X;
+    RD_PanelID collapse_root = rd_arrangement_clear(collapse);
+    RD_PanelID branch = rd_arrangement_add(collapse, collapse_root, 0.6f);
+    RD_PanelID other = rd_arrangement_add(collapse, collapse_root, 0.4f);
+    uishell_sidebar_section_view_new(window, collapse, other, rd_nil_view_address, str8_lit("fixture-other"), str8_lit("Other"));
+    RD_PanelID source_panel = rd_arrangement_add(collapse, branch, 0.5f);
+    CFG_Node *moving_section = uishell_sidebar_section_view_new(window, collapse, source_panel, rd_nil_view_address, str8_lit("workspaces"), str8_lit("Workspaces"));
+    RD_ViewAddress moving_address = rd_view_address_from_cfg(moving_section);
+    RD_PanelID survivor = rd_arrangement_add(collapse, branch, 0.5f);
+    RD_PanelID first_survivor = rd_arrangement_add(collapse, survivor, 0.25f);
+    rd_arrangement_move_tab(collapse, rd_view_address_from_cfg(rd_view_alloc(sidebar_owner, str8_lit("pinned_cards"), str8_zero())), first_survivor, rd_nil_view_address);
+    RD_PanelID last_survivor = rd_arrangement_add(collapse, survivor, 0.75f);
+    uishell_sidebar_section_view_new(window, collapse, last_survivor, rd_nil_view_address, str8_lit("fixture-survivor"), str8_lit("Survivor"));
+    rd_arrangement_set(collapse);
+    rd_panel_focus_mark(rd_panel_address(sidebar_owner, source_panel));
     UIShell_CmdNode *before_collapse = rd_state->cmds[0].last;
-    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(source_panel), .view = rd_view_address_from_cfg(moving_section), .tab = rd_nil_view_address)
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_address(sidebar_owner, source_panel), .view = moving_address, .tab = rd_nil_view_address)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
-    rd_panel_drag_drop(rd_panel_from_cfg(other), Dir2_Up, rd_nil_view_address);
+    rd_panel_drag_drop(rd_panel_address(sidebar_owner, other), Dir2_Up, rd_nil_view_address);
     rd_drag_kill();
-    CFG_ID source_panel_id = source_panel->id;
     for(UIShell_CmdNode *n = before_collapse ? before_collapse->next : rd_state->cmds[0].first; n; n = n->next)
     {
       if(str8_match(n->cmd.name, str8_lit("split_panel"), 0)) UIShell_RegsScope()
@@ -2159,21 +2164,21 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         uishell_dispatch_panel_command(n->cmd.name);
       }
     }
-    CardCheck(cfg_node_from_id(source_panel_id) == &cfg_nil_node && moving_section->parent != &cfg_nil_node,
-      "workspace section drop splits its destination and closes the empty source Panel");
-    CardCheck(cfg_node_from_id(survivor_id) == &cfg_nil_node &&
-      first_survivor->parent == collapse_root && last_survivor->parent == collapse_root &&
-      abs_f32((F32)f64_from_str8(first_survivor->string)-.15f) < .0001f &&
-      abs_f32((F32)f64_from_str8(last_survivor->string)-.45f) < .0001f,
-      "empty source collapse flattens survivors and retains their allocation");
+    {
+      RD_Arrangement *live = rd_arrangement_live(sidebar_owner);
+      RD_ArrangementPanel *first = rd_arrangement_panel_from_id(live, first_survivor), *last = rd_arrangement_panel_from_id(live, last_survivor);
+      CardCheck(!rd_panel_exists(rd_panel_address(sidebar_owner, source_panel)) && rd_panel_from_view(moving_address).id != 0,
+        "workspace section drop splits its destination and closes the empty source Panel");
+      CardCheck(!rd_panel_exists(rd_panel_address(sidebar_owner, survivor)) &&
+        first->parent->id == collapse_root && last->parent->id == collapse_root &&
+        abs_f32(first->weight-.15f) < .0001f && abs_f32(last->weight-.45f) < .0001f,
+        "empty source collapse flattens survivors and retains their allocation");
+    }
     RD_PanelAddress last_focus = rd_nil_panel_address;
     for(UIShell_CmdNode *n = before_collapse ? before_collapse->next : rd_state->cmds[0].first; n; n = n->next)
     { if(str8_match(n->cmd.name, str8_lit("focus_panel"), 0)) { last_focus = n->cmd.regs->panel; } }
-    CardCheck(rd_panel_address_match(last_focus, rd_panel_from_cfg(moving_section)), "closing the focused source leaves focus with the View, in its new panel (#329)");
-    cfg_node_release(rd_state->cfg, collapse_root);
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("control_views_split_x")));
-    if(collapse_axis != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, collapse_axis); }
-    cfg_node_insert_child(rd_state->cfg, window, window->last, old_host);
+    CardCheck(rd_panel_address_match(last_focus, rd_panel_from_view(moving_address)), "closing the focused source leaves focus with the View, in its new panel (#329)");
+    rd_fixture_restore(collapse_saved);
 
     // The empty ordinary areas are confined to this diagnostic's disposable profile.
     uishell_sidebar_card_close(original);
@@ -2250,7 +2255,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       }
       uishell_sidebar_detached_finish(ws);
       CFG_Node *drop_view = uishell_sidebar_local_view(window, group_section);
-      if(drop_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, drop_view); }
+      if(drop_view != &cfg_nil_node) { rd_fixture_remove(drop_view); }
       uishell_sidebar_local_forget_section(window, group_section);
       scratch_end(scratch);
     }

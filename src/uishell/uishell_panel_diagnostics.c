@@ -30,9 +30,9 @@ uishell_panel_drop_site_overlap_diagnostics(RD_WindowState *ws)
   U32 failures = 0;
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   CFG_Node *owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-  CFG_Node *root = cfg_node_new(rd_state->cfg, owner, str8_lit("panels"));
+  RD_PanelAddress root = rd_fixture_leaf(rd_fixture_owner(owner));
   CFG_Node *tabs[5];
-  for(U32 i = 0; i < ArrayCount(tabs); i++) { tabs[i] = rd_cfg_new_view_tab(root, str8_lit("terminal_fixture"), str8_zero(), i == 0); }
+  for(U32 i = 0; i < ArrayCount(tabs); i++) { tabs[i] = rd_fixture_view(root, str8_lit("terminal_fixture"), str8_zero(), i == 0); }
   // root X [Y [t1, X [t2, t4], t3], t0]
   struct { U32 view, beside; Dir2 dir; } splits[] = {{1, 0, Dir2_Left}, {2, 1, Dir2_Down}, {3, 2, Dir2_Down}, {4, 2, Dir2_Right}};
   for(U32 i = 0; i < ArrayCount(splits); i++)
@@ -88,15 +88,14 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc();
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   CFG_Node *owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-  cfg_node_new(rd_state->cfg, owner, str8_lit("split_x"));
-  CFG_Node *panels = cfg_node_new(rd_state->cfg, owner, str8_lit("panels"));
-  cfg_node_new(rd_state->cfg, panels, str8_lit("selected"));
-  CFG_Node *view = rd_cfg_new_view_tab(panels, str8_lit("terminal_fixture"), str8_zero(), 1);
-  rd_cfg_new_view_tab(panels, str8_lit("terminal_fixture"), str8_zero(), 0);
+  RD_PanelAddress panels = rd_fixture_leaf(rd_fixture_owner(owner));
+  CFG_Node *view = rd_fixture_view(panels, str8_lit("terminal_fixture"), str8_zero(), 1);
+  rd_fixture_view(panels, str8_lit("terminal_fixture"), str8_zero(), 0);
+  rd_panel_focus_mark(panels);
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, owner);
   U32 failures = 0;
   ui_select_state(test_ui);
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(panels), .view = rd_view_address_from_cfg(view))
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = panels, .view = rd_view_address_from_cfg(view))
   {
     rd_drag_begin(UIShell_ContextRegSlot_View);
     UI_IconInfo icons = ws->ui->icon_info;
@@ -144,8 +143,8 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   }
   // A View that opts in to a live preview (text, binary) is laid out again in
   // the floater rather than drawn to a texture.
-  CFG_Node *text_view = rd_cfg_new_view_tab(panels, str8_lit("text"), str8_zero(), 0);
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(panels), .view = rd_view_address_from_cfg(text_view))
+  CFG_Node *text_view = rd_fixture_view(panels, str8_lit("text"), str8_zero(), 0);
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = panels, .view = rd_view_address_from_cfg(text_view))
   {
     rd_drag_begin(UIShell_ContextRegSlot_View);
     UI_IconInfo icons = ws->ui->icon_info;
@@ -213,21 +212,16 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   // Use a workspace separate from the window's selected workspace so a
   // window-level lookup cannot accidentally supply the correct panel tree.
   CFG_Node *other = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-  cfg_node_new(rd_state->cfg, other, str8_lit("split_x"));
-  CFG_Node *other_panels = cfg_node_new(rd_state->cfg, other, str8_lit("panels"));
-  CFG_Node *middle = 0, *moving_view = 0, *destination = 0;
-  for(U32 i = 0; i < 3; i++)
-  {
-    CFG_Node *panel = cfg_node_new(rd_state->cfg, other_panels, str8_lit("0.333333"));
-    CFG_Node *tab = rd_cfg_new_view_tab(panel, str8_lit("terminal_fixture"), str8_zero(), 1);
-    if(i == 0) { destination = panel; }
-    if(i == 1) { middle = panel; moving_view = tab; }
-  }
-  CFG_ID middle_id = middle->id;
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(middle), .view = rd_view_address_from_cfg(moving_view),
-                   .dst_panel = rd_panel_from_cfg(destination), .prev_tab = rd_nil_view_address)
+  RD_PanelAddress destination = rd_fixture_leaf(rd_fixture_owner(other));
+  RD_PanelAddress middle = rd_fixture_split(destination, Dir2_Right);
+  RD_PanelAddress last = rd_fixture_split(middle, Dir2_Right);
+  CFG_Node *moving_view = rd_fixture_view(middle, str8_lit("terminal_fixture"), str8_zero(), 1);
+  rd_fixture_view(destination, str8_lit("terminal_fixture"), str8_zero(), 1);
+  rd_fixture_view(last, str8_lit("terminal_fixture"), str8_zero(), 1);
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = middle, .view = rd_view_address_from_cfg(moving_view),
+                   .dst_panel = destination, .prev_tab = rd_nil_view_address)
   { uishell_dispatch_tab_command(str8_lit("move_view")); }
-  failures += cfg_node_from_id(middle_id) != &cfg_nil_node;
+  failures += rd_panel_exists(middle);
   RD_PanelTree remaining = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, other).panel_tree;
   F32 total = 0;
   for(RD_PanelNode *p = remaining.root->first; p != &rd_nil_panel_node; p = p->next)
@@ -240,10 +234,10 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   for(U32 i = 0; i < ArrayCount(directions); i++)
   {
     CFG_Node *split_owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-    CFG_Node *root = cfg_node_new(rd_state->cfg, split_owner, str8_lit("panels"));
-    CFG_Node *moving = rd_cfg_new_view_tab(root, str8_lit("terminal_fixture"), str8_zero(), 1);
-    rd_cfg_new_view_tab(root, str8_lit("terminal_fixture"), str8_zero(), 0);
-    UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(root), .dst_panel = rd_panel_from_cfg(root),
+    RD_PanelAddress root = rd_fixture_leaf(rd_fixture_owner(split_owner));
+    CFG_Node *moving = rd_fixture_view(root, str8_lit("terminal_fixture"), str8_zero(), 1);
+    rd_fixture_view(root, str8_lit("terminal_fixture"), str8_zero(), 0);
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = root, .dst_panel = root,
                      .view = rd_view_address_from_cfg(moving), .dir2 = directions[i])
     { uishell_dispatch_panel_command(str8_lit("split_panel")); }
     RD_PanelTree tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, split_owner).panel_tree;
@@ -256,36 +250,34 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   // Commands must enforce the same validity as drag queries. Exercise real
   // create, duplicate, close, move and drag-split dispatchers, not helper mocks.
   CFG_Node *commands_owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-  CFG_Node *commands_panel = cfg_node_new(rd_state->cfg, commands_owner, str8_lit("panels"));
-  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(commands_panel), .string = str8_lit("text"), .expr = str8_zero())
+  RD_PanelOwner commands = rd_fixture_owner(commands_owner);
+  RD_PanelAddress commands_panel = rd_fixture_leaf(commands);
+  UIShell_RegsScope(.window = window->id, .panel = commands_panel, .string = str8_lit("text"), .expr = str8_zero())
   { uishell_dispatch_tab_command(str8_lit("build_tab")); }
-  CFG_Node *created = cfg_node_child_from_string(commands_panel, str8_lit("text"));
+  CFG_Node *created = rd_fixture_find(commands, str8_lit("text"));
   failures += created == &cfg_nil_node;
   UIShell_RegsScope(.tab = rd_view_address_from_cfg(created))
   { uishell_dispatch_tab_command(str8_lit("duplicate_tab")); }
-  CFG_NodePtrList copies = cfg_node_child_list_from_string(scratch.arena, commands_panel, str8_lit("text"));
-  failures += copies.count != 2;
+  failures += rd_fixture_count(commands, str8_lit("text")) != 2;
   CFG_ID created_id = created->id;
   UIShell_RegsScope(.tab = rd_view_address_from_cfg(cfg_node_from_id(created_id)))
   { uishell_dispatch_tab_command(str8_lit("close_tab")); }
   failures += cfg_node_from_id(created_id) != &cfg_nil_node;
-  CFG_Node *control = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
-  CFG_Node *selector = cfg_node_new(rd_state->cfg, control, str8_lit("workspace_selector")); rd_view_key_assign(rd_state->cfg, selector, 0);
-  rd_view_key_assign(rd_state->cfg, selector, 0);
+  RD_PanelOwner control = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+  CFG_Node *selector = rd_fixture_view(rd_fixture_leaf(control), str8_lit("workspace_selector"), str8_zero(), 0);
   CFG_ID selector_id = selector->id;
   log_scope_begin();
-  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(commands_panel), .string = str8_lit("unknown_saved_view"))
+  UIShell_RegsScope(.window = window->id, .panel = commands_panel, .string = str8_lit("unknown_saved_view"))
   { uishell_dispatch_tab_command(str8_lit("build_tab")); }
-  failures += cfg_node_child_from_string(commands_panel, str8_lit("unknown_saved_view")) != &cfg_nil_node;
-  CFG_Node *unknown = cfg_node_new(rd_state->cfg, commands_panel, str8_lit("unknown_saved_view")); rd_view_key_assign(rd_state->cfg, unknown, 0);
-  rd_view_key_assign(rd_state->cfg, unknown, 0);
+  failures += rd_fixture_count(commands, str8_lit("unknown_saved_view")) != 0;
+  CFG_Node *unknown = rd_fixture_view(commands_panel, str8_lit("unknown_saved_view"), str8_zero(), 0);
   CFG_ID unknown_id = unknown->id;
   // An unknown saved View cannot duplicate, but closing must remove it so a
   // typo or unavailable extension never traps content in the saved layout.
   UIShell_RegsScope(.tab = rd_view_address_from_cfg(cfg_node_from_id(unknown_id)))
   { uishell_dispatch_tab_command(str8_lit("duplicate_tab")); }
   failures += cfg_node_from_id(unknown_id) != unknown;
-  failures += cfg_node_child_list_from_string(scratch.arena, commands_panel, str8_lit("unknown_saved_view")).count != 1;
+  failures += rd_fixture_count(commands, str8_lit("unknown_saved_view")) != 1;
   UIShell_RegsScope(.tab = rd_view_address_from_cfg(cfg_node_from_id(unknown_id)))
   { uishell_dispatch_tab_command(str8_lit("close_tab")); }
   failures += cfg_node_from_id(unknown_id) != &cfg_nil_node;
@@ -294,9 +286,9 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     uishell_dispatch_tab_command(str8_lit("duplicate_tab"));
     uishell_dispatch_tab_command(str8_lit("close_tab"));
   }
-  UIShell_RegsScope(.view = rd_view_address_from_cfg(cfg_node_from_id(selector_id)), .dst_panel = rd_panel_from_cfg(commands_panel), .prev_tab = rd_nil_view_address)
+  UIShell_RegsScope(.view = rd_view_address_from_cfg(cfg_node_from_id(selector_id)), .dst_panel = commands_panel, .prev_tab = rd_nil_view_address)
   { uishell_dispatch_tab_command(str8_lit("move_view")); }
-  UIShell_RegsScope(.view = rd_view_address_from_cfg(cfg_node_from_id(selector_id)), .dst_panel = rd_panel_from_cfg(commands_panel), .dir2 = Dir2_Left)
+  UIShell_RegsScope(.view = rd_view_address_from_cfg(cfg_node_from_id(selector_id)), .dst_panel = commands_panel, .dir2 = Dir2_Left)
   { uishell_dispatch_panel_command(str8_lit("split_panel")); }
   LogScopeResult rejected = log_scope_end(scratch.arena);
   // Every refusal names its action and the returned validity rule.
@@ -304,23 +296,23 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   char *actions[] = {"Cannot create", "Cannot duplicate", "Cannot close", "Cannot move", "Cannot split with", "not registered"};
   for(U64 i = 0; i < ArrayCount(actions); i++)
   { failures += str8_find_needle(errors, 0, str8_cstring(actions[i]), 0) == errors.size; }
-  failures += cfg_node_from_id(selector_id) != selector || selector->parent != control;
-  failures += cfg_node_child_list_from_string(scratch.arena, control, str8_lit("workspace_selector")).count != 1;
+  failures += cfg_node_from_id(selector_id) != selector || rd_panel_from_cfg(selector).owner.kind != RD_PanelOwnerKind_Sidebar;
+  failures += rd_fixture_count(control, str8_lit("workspace_selector")) != 1;
   RD_PanelTree command_tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, commands_owner).panel_tree;
   failures += command_tree.root->child_count != 0;
-  // Reading mounts must not repair or release nodes retained by a caller.
-  CFG_Node *invalid_copy = cfg_node_new(rd_state->cfg, commands_panel, str8_lit("workspace_selector")); rd_view_key_assign(rd_state->cfg, invalid_copy, 0);
+  // Reading mounts must not repair or release Views retained by a caller.
+  CFG_Node *invalid_copy = rd_fixture_view(commands_panel, str8_lit("workspace_selector"), str8_zero(), 0);
   CFG_ID invalid_id = invalid_copy->id;
   U64 before_read = cfg_change_gen();
   uishell_workspace_mount_from_owner_cfg(scratch.arena, window, commands_owner);
-  failures += cfg_change_gen() != before_read || cfg_node_from_id(invalid_id) != invalid_copy || invalid_copy->parent != commands_panel;
+  failures += cfg_change_gen() != before_read || cfg_node_from_id(invalid_id) != invalid_copy || !rd_panel_address_match(rd_panel_from_cfg(invalid_copy), commands_panel);
   // Explicit repair prefers the valid selector and settles its generation.
   rd_dock_restore_layouts();
   failures += cfg_node_from_id(invalid_id) != &cfg_nil_node || cfg_node_from_id(selector_id) != selector;
   U64 after_repair = cfg_change_gen();
   rd_dock_restore_layouts();
   failures += cfg_change_gen() != after_repair;
-  cfg_node_release(rd_state->cfg, selector);
+  rd_fixture_remove(selector);
   cfg_node_release(rd_state->cfg, commands_owner);
   ui_select_state(saved_ui);
   ui_state_release(test_ui);

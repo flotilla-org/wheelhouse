@@ -108,9 +108,7 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
       uishell_sidebar_refresh(&state);
     }
     section.collapsed = section_closed;
-    CFG_Node *collapsed = cfg_node_child_from_string(view, str8_lit("section_collapsed"));
-    if(section_closed && collapsed == &cfg_nil_node) { cfg_node_new(rd_state->cfg, view, str8_lit("section_collapsed")); }
-    if(!section_closed && collapsed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, collapsed); }
+    uishell_sidebar_section_set_collapsed(view, section_closed);
     split.inventory.selected = selection ? &convoy : &vessel;
     uishell_sidebar_observe(&state, &split);
     ok &= uishell_sidebar_coverage_diagnostics(&state, &split);
@@ -141,8 +139,7 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
     ok &= pass;
     ui_select_state(saved_ui); ui_state_release(test_ui);
   }
-  CFG_Node *collapsed = cfg_node_child_from_string(view, str8_lit("section_collapsed"));
-  if(collapsed != &cfg_nil_node) { cfg_node_release(rd_state->cfg, collapsed); }
+  uishell_sidebar_section_set_collapsed(view, 0);
   ws->sidebar = saved; rd_state->menu_animation_rate = saved_rate;
   uishell_sidebar_release(&state);
   scratch_end(scratch);

@@ -14,6 +14,9 @@ import tempfile
 import threading
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import workspace_seed
+
 # Shared state/snapshot field order emitted by jackstay-native-source.c.
 State = namedtuple('State', 'downs ups buttons held cleanup keys text')
 
@@ -37,12 +40,12 @@ with tempfile.TemporaryDirectory(prefix='wh-js-native-', dir='/tmp') as temporar
     subprocess.run(['swiftc', str(ROOT / 'tools/jackstay-native-driver.swift'),
                     '-o', str(work/'driver')], check=True)
     path = work/'source.sock'
-    # Windows are a Dashboard's Presentation State, kept beside an explicit --user file.
+    # Windows are a Dashboard's Presentation State, kept beside an explicit
+    # --user file; the window's tab is its workspace record's, in the Dashboard.
     (work/'dashboard').mkdir(exist_ok=True)
     (work/'dashboard/id').write_text('jackstay')
-    (work/'presentation').mkdir(exist_ok=True)
-    (work/'presentation/jackstay.wheelhouse').write_text('window:\n{\n size: 1100 760\n panels: selected jackstay:\n {\n '
-                            f'source_socket: "{path}"\n selected\n' + ' }\n}\n')
+    workspace_seed.seed(work/'dashboard', work/'presentation/jackstay.wheelhouse',
+                        [workspace_seed.jackstay('source_socket', str(path))], size=(1100, 760))
     lines = queue.Queue()
     source = subprocess.Popen([str(work/'source'), str(path)], stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)

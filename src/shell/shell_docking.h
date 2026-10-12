@@ -5,8 +5,6 @@
 // Restore deliberately ignores physical width: resizing is not structural repair.
 #define RD_DOCK_UNMEASURED_WIDTH 3.402823466e38f
 
-#define RD_DOCK_SIDEBAR_ROOT str8_lit("control_views")
-
 typedef enum RD_DockHostKind
 {
   RD_DockHostKind_Sidebar,
@@ -118,9 +116,8 @@ read_only global RD_ViewRegistration rd_view_registrations[] =
 };
 #undef RD_DOCK_DECLARE
 
-// A View as docking checks it: what it is, and where it is now. Live queries
-// describe a View by its View Address (the shell's rd_dock_view_from_address);
-// restore, which walks saved config, by its node.
+// A View as docking checks it: what it is, and where it is now, as the shell
+// finds it by its View Address (rd_dock_view_from_address).
 typedef struct RD_DockView RD_DockView;
 struct RD_DockView
 {
@@ -133,16 +130,18 @@ struct RD_DockView
   CFG_ID level;
 };
 
+// How many Views of `registration` the Controlled Split `controlled_split`
+// has: the shell counts the tabs of its window's arrangements.
+typedef U32 RD_DockInstanceCount(CFG_ID controlled_split, RD_ViewRegistration *registration);
+global RD_DockInstanceCount *rd_dock_instance_count = 0;
+
 internal RD_ViewRegistration *rd_dock_view_from_name(String8 name);
 internal RD_DockRule rd_dock_check(RD_ViewRegistration *view, RD_DockProposal proposal);
-internal RD_DockHost rd_dock_host_from_cfg(CFG_Node *cfg, F32 width);
 // The kind of host a panel owner's panels are in.
 internal RD_DockHostKind rd_dock_host_kind_from_panel_owner(RD_PanelOwner owner);
-// The Floating Panel `cfg` is in or is: the root of its own arrangement. Nil
-// outside Floating Panels, and for a View saved directly in the host.
-internal CFG_Node *rd_dock_floating_panel_from_cfg(CFG_Node *cfg);
-// The View saved as `view`; one that doesn't exist for nil.
-internal RD_DockView rd_dock_view_from_cfg(CFG_Node *view);
+// The level a View in `host` belongs to: its host's, or for a View of the
+// root Controlled Split's own scope, that split's.
+internal CFG_ID rd_dock_view_level(RD_ViewRegistration *registration, RD_DockHost host);
 // Placing `view` in a panel of `destination`, the host that panel is in at
 // its available width (the shell's rd_dock_host_from_panel); a host of no
 // kind (RD_DockHostKind_COUNT) is no destination.
@@ -155,18 +154,21 @@ internal String8 rd_dock_rule_message(RD_DockRule rule);
 internal B32 rd_dock_can_create(String8 name, RD_DockHost destination);
 internal B32 rd_dock_can_close(RD_DockView view);
 
-//- Repair: restore, the sidebar's edits outside docking
+//- Repair: restore, over a window's arrangements
 
-// The arrangements a repair edits, each loaded once and saved together.
+// An arrangement a restore checks and may edit, with the host its panels
+// are in.
 typedef struct RD_DockDocument RD_DockDocument;
 struct RD_DockDocument
 {
   RD_DockDocument *next;
   RD_Arrangement *arrangement;
+  RD_DockHost host;
+  // Where a View refused here goes when its default host is a Workspace
+  // Region: the arrangement of the workspace this one belongs to, or 0 for
+  // the window's first.
+  RD_DockDocument *workspace;
   B32 dirty;
-  // It took a View from another arrangement, so it saves first: the panel
-  // node that View leaves may be released when its own arrangement saves.
-  B32 took;
 };
 
 typedef struct RD_DockDocuments RD_DockDocuments;
@@ -175,61 +177,31 @@ struct RD_DockDocuments
   Arena *arena;
   RD_DockDocument *first;
   RD_DockDocument *last;
+  // Where refused Views go by default host: the sidebar's dock, and the
+  // window's first workspace (else its own panels).
+  RD_DockDocument *sidebar;
+  RD_DockDocument *workspace;
 };
 
-// A registered View saved under a layout container, as the pre-pass found it.
-typedef struct RD_DockSavedView RD_DockSavedView;
-struct RD_DockSavedView
-{
-  RD_DockSavedView *next;
-  CFG_Node *view;
-  // The arrangement and panel that have it as a tab. A stray, saved in no
-  // panel, has the ones whose tab (`holder`) it is saved inside, or none.
-  RD_DockDocument *document;
-  RD_ArrangementPanel *panel;
-  CFG_ID holder;
-};
+// What a View is, by its address: the shell reads its config node's kind.
+typedef RD_ViewRegistration *RD_DockRegistration(RD_ViewAddress view);
 
-typedef struct RD_DockSavedViewList RD_DockSavedViewList;
-struct RD_DockSavedViewList
-{
-  RD_DockSavedView *first;
-  RD_DockSavedView *last;
-  U64 count;
-};
-
-// The arrangement saved as `owner`'s `root_name` child, loaded (or, with
-// none, an empty one that saves there) the first time it is asked for.
-internal RD_DockDocument *rd_dock_document_from_owner(RD_DockDocuments *documents, CFG_Node *owner, String8 root_name);
-// Adds an arrangement the repair made, such as a new Floating Panel.
-internal RD_DockDocument *rd_dock_documents_add(RD_DockDocuments *documents, RD_Arrangement *arrangement);
-// Loads each Floating Panel in `host`.
-internal void rd_dock_documents_add_floating(RD_DockDocuments *documents, CFG_Node *host);
-// The pre-pass: every registered View saved under `container`'s layout
-// containers, in config order (a split's tabs and child panels interleaved,
-// as the file reads them), and which of the loaded arrangements has it. The
-// one walk of saved layout config; it also finds the strays no arrangement
-// loads: Views directly under a workspace or a Floating Panels host, in a
-// second `panels` or `control_views` root, or inside a tab.
-internal RD_DockSavedViewList rd_dock_saved_views(RD_DockDocuments *documents, CFG_Node *container);
-// Whether the pre-pass found `view` as a tab of an arrangement.
-internal B32 rd_dock_saved_view_is_tab(RD_DockSavedView *view);
-// Saves the arrangements marked dirty: those that took Views first, then the
-// rest, each in the order they were loaded.
-internal void rd_dock_documents_save(CFG_State *state, RD_DockDocuments *documents);
+internal RD_DockDocument *rd_dock_documents_add(RD_DockDocuments *documents, RD_Arrangement *arrangement, RD_DockHost host);
 // The leaf a View restore moves goes to: down the first children of the
 // root, which is made when there is none.
 internal RD_ArrangementPanel *rd_dock_restore_leaf(RD_Arrangement *arrangement);
-// Repairs a window's saved layouts through their arrangements: one copy of
-// each singleton, and each View saved where the checker refuses it moved to
-// its default host.
-internal void rd_dock_restore_window(CFG_State *state, CFG_Node *window);
+// Repairs a window's arrangements, every one in `documents`: one copy of
+// each singleton, and each View its host refuses moved to its default host,
+// keeping its address. Marks the documents it edits dirty, and returns the
+// sidebar sections it moved, which the sidebar places by their hints once
+// committed (uishell_sidebar_store.c).
+internal RD_ViewAddressList rd_dock_restore(RD_DockDocuments *documents, RD_DockRegistration *registration);
 
 // The body width `destination` (or the panel a split there makes) would have
 // once a drop of `view` completes, measured on a copy; `shown` is the rule
-// the drop commands settle its source with. With no View (0) it measures the
-// split alone.
-internal F32 rd_dock_moving_width(RD_Arrangement *arrangement, RD_PanelID destination, CFG_ID view,
+// the drop commands settle its source with. With no View (nil) it measures
+// the split alone.
+internal F32 rd_dock_moving_width(RD_Arrangement *arrangement, RD_PanelID destination, RD_ViewAddress view,
                                  RD_ArrangementTabRule *shown, Rng2F32 area, Dir2 dir, F32 inset);
 
 #endif

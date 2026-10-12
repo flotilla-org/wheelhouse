@@ -628,7 +628,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   UIShell_RegsScope(.window = window->id, .cfg = window->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); }
   split = uishell_root_controlled_split_from_window(scratch.arena, window);
   LifecycleCheck(split.inventory.count == 1 && split.inventory.first->mount.workspace_cfg != &cfg_nil_node &&
-                 cfg_node_child_from_string(window, str8_lit("panels")) == &cfg_nil_node,
+                 rd_arrangement_live(rd_fixture_owner(window))->root == &rd_nil_arrangement_panel,
                  "closing the last, window-backed workspace leaves one fresh workspace");
 
   //- A workspace whose group is gone lives in the default group, whatever id
