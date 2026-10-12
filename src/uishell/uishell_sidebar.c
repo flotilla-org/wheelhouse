@@ -5268,9 +5268,13 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
   U64 count = 0;
   for(CFG_PanelNode *panel = root->first; panel != &cfg_nil_panel_node; panel = panel->next)
   {
-    if(uishell_sidebar_panel_empty(panel)) { panel->pct_of_parent = 0; continue; }
+    if(uishell_sidebar_panel_empty(panel)) { continue; }
     if(panel->first != &cfg_nil_panel_node || panel->tabs.count != 1) { return; }
     count += 1;
+  }
+  for(CFG_PanelNode *panel = root->first; panel != &cfg_nil_panel_node; panel = panel->next)
+  {
+    if(uishell_sidebar_panel_empty(panel)) { panel->pct_of_parent = 0; }
   }
   if(count == 0) { return; }
   Temp scratch = scratch_begin(0, 0);
