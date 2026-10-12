@@ -1102,7 +1102,7 @@ uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
   {
     U64 column_count = maybe_table_type->count;
     info.cell_style_key = push_str8f(arena, "table_%I64u_cols", column_count);
-    CFG_Node *style = cfg_node_child_from_string(view, info.cell_style_key);
+    CFG_Node *style = rd_cfg_setting_child(view, info.cell_style_key);
     CFG_Node *w_cfg = style->first;
     E_ParentKey(row->eval.key)
     {
@@ -1250,7 +1250,7 @@ uishell_watch_row_info_from_row(Arena *arena, EV_Row *row)
       }
     }
     info.cell_style_key = str8_lit("normal");
-    CFG_Node *style = cfg_node_child_from_string(view, info.cell_style_key);
+    CFG_Node *style = rd_cfg_setting_child(view, info.cell_style_key);
     CFG_Node *w_cfg = style->first;
     uishell_watch_cell_list_push_new(arena, &info.cells, UIShell_WatchCellKind_Eval, row->eval,
                                      .flags = UIShell_WatchCellFlag_Expr|UIShell_WatchCellFlag_NoEval|UIShell_WatchCellFlag_Indented,
@@ -2420,7 +2420,7 @@ WH_VIEW_UI_FUNCTION_DEF(watch)
                   {
                     CFG_Node *cfg = rd_cfg_from_eval_space(cell->eval.space);
                     String8 child_key = e_string_from_id(cell->eval.space.u64s[1]);
-                    CFG_Node *child_cfg = cfg_node_child_from_string(cfg, child_key);
+                    CFG_Node *child_cfg = rd_cfg_setting_child(cfg, child_key);
                     if(child_cfg != &cfg_nil_node)
                     {
                       MD_NodePtrList schemas = cfg_schemas_from_name(scratch.arena, rd_state->cfg_schema_table, cfg->string);

@@ -71,7 +71,8 @@ uishell_managed_install(CFG_Node *view, UIShell_ManagedPrepared *prepared, Strin
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("daemon_name")));
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("cwd")));
   if(has_cwd) { uishell_managed_set(view, str8_lit("cwd"), cwd); }
-  if(has_target) { uishell_managed_set(view, str8_lit("managed_target"), target); }
+  // The target this device applied is a machine-local Target Resolution.
+  if(has_target) { rd_view_setting_set(rd_view_address_from_cfg(view), str8_lit("managed_target"), target); }
   if(prepared->session)
   {
     tv->session_colors = prepared->colors;

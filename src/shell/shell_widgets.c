@@ -15,7 +15,8 @@ rd_title_fstrs_from_cfg(Arena *arena, CFG_Node *cfg, B32 include_extras)
     B32 is_disabled = rd_disabled_from_cfg(cfg);
     RD_Location loc = rd_location_from_cfg(cfg);
     String8 name_string = rd_name_from_cfg(cfg);
-    String8 label_string = rd_label_from_cfg(cfg);
+    // A View's label is its Presentation State (rd_view_label_from_cfg).
+    String8 label_string = rd_view_label_from_cfg(cfg);
     String8 expr_string = rd_expr_from_cfg(cfg);
     String8 collection_name = {0};
     String8 file_path = rd_path_from_cfg(cfg);

@@ -1408,8 +1408,10 @@ uishell_dispatch_font_command(String8 name)
     uishell_regs()->view = old_view;
     uishell_regs()->tab = old_tab;
     F32 new_font_size = Clamp(6.f, current_font_size + delta, 72.f);
-    CFG_Node *font_size_cfg = cfg_node_child_from_string_or_alloc(rd_state->cfg, cfg, str8_lit("font_size"));
-    cfg_node_new_replacef(rd_state->cfg, font_size_cfg, "%I64u", (U64)new_font_size);
+    // A View's font size is its Presentation State; a window's is on its node.
+    String8 font_size = push_str8f(rd_frame_arena(), "%I64u", (U64)new_font_size);
+    if(window_scope) { cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, cfg, str8_lit("font_size")), font_size); }
+    else { rd_view_setting_set(uishell_regs()->view, str8_lit("font_size"), font_size); }
   }
 
   return result;

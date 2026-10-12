@@ -281,8 +281,7 @@ internal String8 uishell_jackstay_mode_label(U32 mode)
 // Remove a one-shot view setting so the layout never saves it back.
 internal void uishell_jackstay_forget_setting(String8 key)
 {
-  CFG_Node *setting=cfg_node_child_from_string(rd_cfg_from_view(uishell_regs()->view),key);
-  if(setting!=&cfg_nil_node)cfg_node_release(rd_state->cfg,setting);
+  rd_view_setting_clear(uishell_regs()->view,key);
 }
 internal void uishell_jackstay_open(UIShell_JackstayView *v,B32 control)
 {

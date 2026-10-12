@@ -1819,6 +1819,7 @@ uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *res
   // whose first is selected.
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *primary_tab = &cfg_nil_node, *overflow_tab = &cfg_nil_node;
+  CFG_Node **tabs = push_array(scratch.arena, CFG_Node *, count);
   RD_Arrangement *arrangement = rd_arrangement_from_owner(scratch.arena, workspace, str8_lit("panels"));
   RD_PanelID primary = rd_arrangement_clear(arrangement), overflow = primary;
   if(count > 1)
@@ -1834,12 +1835,11 @@ uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *res
     command = resource->windows_command;
 #endif
     CFG_Node *tab = rd_new_view_tab(arrangement, i == 0 ? primary : overflow, str8_lit("terminal"), str8_cstring(command));
+    tabs[i] = tab;
     if(i == 0) { primary_tab = tab; }
     if(i == 1) { overflow_tab = tab; }
     CFG_Node *id = cfg_node_new(rd_state->cfg, tab, str8_lit("resource_id"));
     cfg_node_new(rd_state->cfg, id, str8_cstring(resource->id));
-    CFG_Node *label = cfg_node_new(rd_state->cfg, tab, str8_lit("label"));
-    cfg_node_new(rd_state->cfg, label, str8_cstring(resource->label));
     if(cwd.size)
     {
       CFG_Node *dir = cfg_node_new(rd_state->cfg, tab, str8_lit("cwd"));
@@ -1848,6 +1848,9 @@ uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *res
   }
   if(overflow_tab != &cfg_nil_node) { rd_arrangement_select(arrangement, overflow, overflow_tab->id); }
   rd_arrangement_save(rd_state->cfg, arrangement);
+  // Each resource's label is its View's Presentation State, kept by the
+  // address saving gave it.
+  for(U64 i = 0; i < count; i++) { rd_view_setting_set(rd_view_address_from_cfg(tabs[i]), str8_lit("label"), str8_cstring(resources[i].label)); }
   // The primary panel has focus (Presentation State, on its node).
   cfg_node_new(rd_state->cfg, cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, primary)->cfg), str8_lit("selected"));
   scratch_end(scratch);
@@ -1927,7 +1930,7 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
           // Content opened from the current managed resolution is already
           // current; recording its target stops the first plan restarting it.
           if(effect.has_primary_target)
-          { uishell_managed_set(tab, str8_lit("managed_target"), uishell_sidebar_string(effect.primary_target)); }
+          { rd_view_setting_set(rd_view_address_from_cfg(tab), str8_lit("managed_target"), uishell_sidebar_string(effect.primary_target)); }
           scratch_end(scratch);
         }
       }
@@ -2348,7 +2351,7 @@ uishell_sidebar_header_separator(UIShell_HeaderTabs *tabs)
 internal String8
 uishell_sidebar_view_title(Arena *arena, CFG_Node *view)
 {
-  String8 label = rd_label_from_cfg(view);
+  String8 label = rd_view_label_from_cfg(view);
   if(label.size) { return label; }
   DR_FStrList fstrs = rd_title_fstrs_from_cfg(arena, view, 0);
   return dr_string_from_fstrs(arena, &fstrs);

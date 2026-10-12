@@ -98,7 +98,7 @@ uishell_logical_tab(Arena *arena, CFG_Node *tab, B32 selected)
   };
   String8List parts = {0};
   str8_list_pushf(arena, &parts, "tab %S", tab->string);
-  String8 label = rd_label_from_cfg(tab);
+  String8 label = rd_view_label_from_cfg(tab);
   if(label.size) { str8_list_pushf(arena, &parts, " %S", uishell_logical_quote(arena, label)); }
   // Its Slot's key in Andamento (uishell_workspace_store.c); before it has
   // one, the provider's slot it was made for. A Slot's previous instance

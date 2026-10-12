@@ -1080,8 +1080,10 @@ struct RD_State
   RD_ViewStateSlot *view_state_slots;
   RD_ViewState *free_view_state;
   RD_ViewState *view_state_last_accessed;
-  // View Address -> node (rd_cfg_from_view), checked on each hit.
+  // View Address -> node (rd_cfg_from_view), checked on each hit, and ->
+  // its Presentation State (rd_view_presentation_from_view).
   RD_ViewCfgCacheSlot view_cfg_cache[256];
+  RD_ViewCfgCacheSlot view_presentation_cache[256];
   // Views a save is moving.
   Arena *view_move_arena;
   RD_ViewMove *first_view_move;
@@ -1330,6 +1332,27 @@ internal RD_ViewAddress rd_view_address_from_cfg(CFG_Node *view);
 internal CFG_Node *rd_cfg_from_view(RD_ViewAddress view);
 // The seed of every UI key of `view`'s boxes and animations.
 internal UI_Key rd_view_ui_key(RD_ViewAddress view);
+//- View Presentation State: a View's settings that aren't logical, kept by
+// its address in its owner's host (shell_core.c, "View Presentation State").
+internal B32 rd_view_setting_is_logical(String8 name);
+// The record of `view`'s Presentation State, or nil; one made if it has none.
+internal CFG_Node *rd_view_presentation_from_view(RD_ViewAddress view);
+internal CFG_Node *rd_view_presentation_alloc(RD_ViewAddress view);
+// The View at `from` is now at `to`: its Presentation State goes with it.
+internal void rd_view_presentation_readdress(RD_ViewAddress from, RD_ViewAddress to);
+internal void rd_view_presentation_release(RD_ViewAddress view);
+// `view`'s own setting `name` (its Presentation State's, then its node's),
+// else its Renderer's schema default.
+internal String8 rd_view_setting_from_view(RD_ViewAddress view, String8 name);
+internal String8 rd_view_label_from_cfg(CFG_Node *view);
+// Sets `view`'s setting `name` where it lives: a logical one on its node,
+// any other in its Presentation State (a transient View's on its node).
+internal void rd_view_setting_set(RD_ViewAddress view, String8 name, String8 value);
+internal void rd_view_setting_clear(RD_ViewAddress view, String8 name);
+// A config node's setting as the settings editor reads and writes it: a
+// View's presentation settings are its Presentation State's.
+internal CFG_Node *rd_cfg_setting_child(CFG_Node *cfg, String8 name);
+internal CFG_Node *rd_cfg_setting_home(CFG_Node *cfg, String8 name);
 // `view`'s state record under `sub_key`: 0 for the View itself, else a
 // Renderer it embeds (a watch cell's visualizer).
 internal RD_ViewState *rd_view_state_from_view(RD_ViewAddress view, U64 sub_key);
@@ -1366,7 +1389,6 @@ internal EV_View *rd_view_eval_view(void);
 internal String8 rd_view_query_cmd(void);
 internal String8 rd_view_query_input(void);
 internal String8 rd_view_setting_from_name(String8 string);
-internal String8 rd_view_setting_from_cfg(CFG_Node *view, String8 string);
 internal B32 rd_setting_b32_from_string(String8 string);
 internal U64 rd_setting_u64_from_string(String8 string);
 internal F32 rd_setting_f32_from_string(String8 string);

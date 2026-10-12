@@ -38,12 +38,12 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
   UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(panel), .tab = rd_view_address_from_cfg(view), .view = rd_view_address_from_cfg(view))
   {
     // Issue #109: hosting overlay is per-view and absent means off.
+    // The overlay is the View's Presentation State.
     HostingCheck(!rd_view_setting_b32_from_name(str8_lit("show_hosting_overlay")), "overlay defaults off");
-    cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("show_hosting_overlay"));
-    CFG_Node *overlay = cfg_node_child_from_string(view, str8_lit("show_hosting_overlay"));
-    cfg_node_new(rd_state->cfg, overlay, str8_lit("1"));
-    HostingCheck(rd_view_setting_b32_from_name(str8_lit("show_hosting_overlay")), "overlay can be enabled for this view");
-    cfg_node_release(rd_state->cfg, overlay);
+    rd_view_setting_set(uishell_regs()->view, str8_lit("show_hosting_overlay"), str8_lit("1"));
+    HostingCheck(rd_view_setting_b32_from_name(str8_lit("show_hosting_overlay")) &&
+                 cfg_node_child_from_string(view, str8_lit("show_hosting_overlay")) == &cfg_nil_node, "overlay can be enabled for this view");
+    rd_view_setting_clear(uishell_regs()->view, str8_lit("show_hosting_overlay"));
     HostingCheck(!rd_view_setting_b32_from_name(str8_lit("show_hosting_overlay")), "removing override restores off");
     // Runtime metadata/actions are schema rows and cannot enter text editing.
     char *keys[] = {"hosting", "hosting_action"};
@@ -75,12 +75,8 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
     ui_select_state(test_ui);
     for(U32 enabled = 0; enabled < 3; enabled++)
     {
-      if(enabled == 1)
-      {
-        CFG_Node *node = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("show_hosting_overlay"));
-        cfg_node_new(rd_state->cfg, node, str8_lit("1"));
-      }
-      if(enabled == 2) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("show_hosting_overlay"))); }
+      if(enabled == 1) { rd_view_setting_set(rd_view_address_from_cfg(view), str8_lit("show_hosting_overlay"), str8_lit("1")); }
+      if(enabled == 2) { rd_view_setting_clear(rd_view_address_from_cfg(view), str8_lit("show_hosting_overlay")); }
       UI_EventList events = {0};
       UI_AnimationInfo animation = {0};
       ui_begin_build(ws->os, &events, &ws->ui->icon_info, ws->theme, &animation, 1.f/60, 1.f/60);

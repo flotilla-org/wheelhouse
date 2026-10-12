@@ -348,6 +348,51 @@ rd_arrangement_place_cfg(CFG_State *state, CFG_Node *parent, CFG_Node *prev, CFG
   if(at != child) { cfg_node_insert_child(state, parent, prev, child); }
 }
 
+internal void rd_view_namespace_views__walk(Arena *arena, CFG_NodePtrList *list, CFG_Node *container);
+
+// A View node (`view`), or a panel node with the Views left in it, goes, with
+// the Presentation State their host keeps for them, unless another View
+// there has the address (one that took its place, as a rebind's new
+// instance does).
+internal void
+rd_arrangement_release_cfg(CFG_State *state, CFG_Node *node, B32 view)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_NodePtrList views = {0};
+  if(view) { cfg_node_ptr_list_push(scratch.arena, &views, node); }
+  else { rd_view_namespace_views__walk(scratch.arena, &views, node); }
+  for(CFG_NodePtrNode *v = views.first; v != 0; v = v->next)
+  {
+    CFG_Node *host = &cfg_nil_node;
+    RD_ViewOwnerKind owner = rd_view_owner_kind_from_tab(v->v, &host);
+    RD_ViewInstance instance = RD_ViewInstance_Current;
+    String8 key = rd_view_key_from_cfg(v->v, &instance);
+    CFG_Node *root = cfg_node_child_from_string(host, RD_VIEW_PRESENTATION_ROOT);
+    if(owner == RD_ViewOwnerKind_Null || key.size == 0 || root == &cfg_nil_node) { continue; }
+    B32 taken = 0;
+    CFG_NodePtrList others = rd_view_namespace_views(scratch.arena, host, owner);
+    for(CFG_NodePtrNode *n = others.first; n != 0 && !taken; n = n->next)
+    {
+      RD_ViewInstance other = RD_ViewInstance_Current;
+      B32 going = 0;
+      for(CFG_NodePtrNode *g = views.first; g != 0 && !going; g = g->next) { going = g->v == n->v; }
+      taken = !going && str8_match(rd_view_key_from_cfg(n->v, &other), key, 0) && other == instance;
+    }
+    for(CFG_Node *c = root->first; c != &cfg_nil_node && !taken; c = c->next)
+    {
+      if(str8_match(c->string, rd_view_owner_kind_name(owner), 0) &&
+         str8_match(cfg_node_child_from_string(c, str8_lit("key"))->first->string, key, 0) &&
+         (cfg_node_child_from_string(c, str8_lit("previous")) != &cfg_nil_node) == (instance == RD_ViewInstance_Previous))
+      {
+        cfg_node_release(state, c);
+        break;
+      }
+    }
+  }
+  scratch_end(scratch);
+  cfg_node_release(state, node);
+}
+
 internal void
 rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
 {
@@ -358,11 +403,11 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
   {
     // Discarded, or never had panels: the old root node and removed Views go.
     CFG_Node *saved_root = cfg_node_from_id(arrangement->saved_root);
-    if(saved_root != &cfg_nil_node) { cfg_node_release(state, saved_root); }
+    if(saved_root != &cfg_nil_node) { rd_arrangement_release_cfg(state, saved_root, 0); }
     for(RD_ArrangementTab *tab = arrangement->first_removed; tab != 0; tab = tab->next)
     {
       CFG_Node *view = cfg_node_from_id(tab->view);
-      if(view != &cfg_nil_node) { cfg_node_release(state, view); }
+      if(view != &cfg_nil_node) { rd_arrangement_release_cfg(state, view, 1); }
     }
     arrangement->first_removed = 0;
     arrangement->saved_root = 0;
@@ -484,7 +529,7 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
   for(CFG_NodePtrNode *n = saved.first; n != 0; n = n->next)
   {
     CFG_ID id = n->v->id;
-    if(id != 0 && *rd_arrangement_id_set_slot(&used, id) != id) { cfg_node_release(state, n->v); }
+    if(id != 0 && *rd_arrangement_id_set_slot(&used, id) != id) { rd_arrangement_release_cfg(state, n->v, 0); }
   }
 
   // Removed tabs' Views go, unless a tab took them back.
@@ -492,7 +537,7 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
   {
     CFG_Node *view = cfg_node_from_id(tab->view);
     if(view != &cfg_nil_node && rd_arrangement_panel_from_view(arrangement, tab->view) == &rd_nil_arrangement_panel)
-    { cfg_node_release(state, view); }
+    { rd_arrangement_release_cfg(state, view, 1); }
   }
   arrangement->first_removed = 0;
   arrangement->saved_root = root->cfg;

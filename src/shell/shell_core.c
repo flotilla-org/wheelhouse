@@ -441,96 +441,44 @@ rd_default_setting_from_names(String8 schema_name, String8 setting_name)
   return result;
 }
 
+// Setting `name` where the registers point: the View's own (its Presentation
+// State, then its node), its Workspace's, its window's, the user's, then the
+// project's; then those scopes' schema defaults, in the same order. Without
+// a View, or for a transient one, the Workspace and window are the
+// register panel's host's, else the register window's. With none of those
+// (before any window builds) there is no setting.
 internal String8
 rd_setting_from_name(String8 name)
 {
   String8 result = {0};
-  if(name.size != 0)
+  RD_ViewAddress view = rd_view_address_is_nil(uishell_regs()->view) ? uishell_regs()->tab : uishell_regs()->view;
+  CFG_Node *view_cfg = rd_cfg_from_view(view);
+  CFG_Node *start = view.owner != RD_ViewOwnerKind_Transient ? view_cfg : &cfg_nil_node;
+  if(start == &cfg_nil_node) { start = rd_cfg_from_panel_owner(uishell_regs()->panel.owner); }
+  if(start == &cfg_nil_node) { start = cfg_node_from_id(uishell_regs()->window); }
+  if(name.size != 0 && (view_cfg != &cfg_nil_node || start != &cfg_nil_node))
   {
-    Temp scratch = scratch_begin(0, 0);
-    
-    // rjf: find most-granular config scopes to begin looking for the setting
-    typedef struct CfgSeedTask CfgSeedTask;
-    struct CfgSeedTask
+    CFG_Node *workspace = &cfg_nil_node;
+    for(CFG_Node *c = start; c != &cfg_nil_node && workspace == &cfg_nil_node; c = c->parent)
     {
-      CfgSeedTask *next;
-      CFG_Node *cfg;
-      B32 allow_bucket_chains;
+      if(str8_match(c->string, str8_lit("workspace"), 0) || str8_match(c->string, str8_lit("detached_workspace"), 0)) { workspace = c; }
+    }
+    CFG_Node *window = rd_window_from_cfg(start);
+    if(window == &cfg_nil_node) { window = cfg_node_from_id(uishell_regs()->window); }
+    // A window is a tree of the user bucket it was loaded into.
+    CFG_Node *user = str8_match(window->parent->string, str8_lit("user"), 0) ? window->parent : cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+    CFG_Node *scopes[] =
+    {
+      rd_view_presentation_from_view(view), view_cfg, workspace, window, user, cfg_node_child_from_string(cfg_node_root(), str8_lit("project")),
     };
-    CFG_Node *view_cfg = rd_cfg_from_view(uishell_regs()->view);
-    if(view_cfg == &cfg_nil_node)
-    {
-      view_cfg = rd_cfg_from_view(uishell_regs()->tab);
-    }
-    CfgSeedTask panel_task = {0, &cfg_nil_node, 1};
-    // A panel's own node holds no settings, so they resolve from its owner's.
-    if(panel_task.cfg == &cfg_nil_node) { panel_task.cfg = rd_cfg_from_panel_owner(uishell_regs()->panel.owner); }
-    if(panel_task.cfg == &cfg_nil_node) { panel_task.cfg = cfg_node_from_id(uishell_regs()->window); }
-    CfgSeedTask view_task = {&panel_task, view_cfg, 1};
-    CfgSeedTask *first_task = &view_task;
-    CfgSeedTask *last_task = &panel_task;
-    
-    // rjf: for each task, look for the setting, follow parent chain upwards
     CFG_Node *setting = &cfg_nil_node;
-    for(CfgSeedTask *t = first_task; t != 0; t = t->next)
-    {
-      for(CFG_Node *cfg = t->cfg; cfg != &cfg_nil_node; cfg = cfg->parent)
-      {
-        setting = cfg_node_child_from_string(cfg, name);
-        if(setting != &cfg_nil_node)
-        {
-          goto break_all;
-        }
-        if(cfg->parent == cfg_node_root() && t->allow_bucket_chains)
-        {
-          String8 next_bucket = {0};
-          B32 allow_bucket_chains = 0;
-          if(str8_match(cfg->string, str8_lit("user"), 0))
-          {
-            next_bucket = str8_lit("project");
-          }
-          else if(str8_match(cfg->string, str8_lit("project"), 0))
-          {
-            next_bucket = str8_lit("user");
-          }
-          else
-          {
-            allow_bucket_chains = 1;
-            next_bucket = str8_lit("user");
-          }
-          if(next_bucket.size != 0)
-          {
-            CfgSeedTask *task = push_array(scratch.arena, CfgSeedTask, 1);
-            SLLQueuePush(first_task, last_task, task);
-            task->cfg = cfg_node_child_from_string(cfg_node_root(), next_bucket);
-            task->allow_bucket_chains = allow_bucket_chains;
-          }
-        }
-      }
-    }
-    break_all:;
-    
-    // rjf: return resultant child string stored under this key
+    for EachElement(i, scopes) { if(setting == &cfg_nil_node) { setting = cfg_node_child_from_string(scopes[i], name); } }
     result = setting->first->string;
-    
-    // rjf: no result -> look for default in schemas
-    if(result.size == 0)
+    // The Presentation State record's string names its owner, not a schema.
+    for(U64 i = 1; i < ArrayCount(scopes) && result.size == 0; i += 1)
     {
-      for(CfgSeedTask *t = first_task; t != 0; t = t->next)
-      {
-        for(CFG_Node *cfg = t->cfg; cfg != &cfg_nil_node; cfg = cfg->parent)
-        {
-          result = rd_default_setting_from_names(cfg->string, name);
-          if(result.size != 0)
-          {
-            goto break_all2;
-          }
-        }
-      }
-      break_all2:;
+      if(scopes[i] != &cfg_nil_node) { result = rd_default_setting_from_names(scopes[i]->string, name); }
     }
-    
-    scratch_end(scratch);
   }
   return result;
 }
@@ -933,7 +881,7 @@ rd_eval_space_read(E_Space space, void *out, E_SpaceRangeInfo *out_range_info, R
       CFG_Node *cfg = root_cfg;
       if(child_key.size != 0)
       {
-        cfg = cfg_node_child_from_string(root_cfg, child_key);
+        cfg = rd_cfg_setting_child(root_cfg, child_key);
       }
       
       //- rjf: determine data to read from, depending on child type in schema
@@ -1079,7 +1027,7 @@ rd_eval_space_write(E_Space space, void *in, Rng1U64 range)
         // rjf: modifying a label? -> poison this identifier in the macro map
         if(str8_match(child_key, str8_lit("label"), 0))
         {
-          String8 pre_edit_label = rd_label_from_cfg(root_cfg);
+          String8 pre_edit_label = rd_cfg_setting_child(root_cfg, child_key)->first->string;
           if(!str8_match(pre_edit_label, write_string, 0))
           {
             E_Expr *expr = e_string2expr_map_lookup(e_ir_ctx->macro_map, pre_edit_label);
@@ -1091,16 +1039,19 @@ rd_eval_space_write(E_Space space, void *in, Rng1U64 range)
           }
         }
         
-        // rjf: zero-range? delete child
+        // rjf: zero-range? delete child (a View's from its Presentation State,
+        // and any its node still has)
         if(range.min == range.max)
         {
+          CFG_Node *setting = rd_cfg_setting_child(root_cfg, child_key);
+          if(setting->parent != root_cfg) { cfg_node_release(rd_state->cfg, setting); }
           cfg_node_release(rd_state->cfg, cfg_node_child_from_string(root_cfg, child_key));
         }
         
         // rjf: non-zero-range? create child if needed & write value
         else
         {
-          CFG_Node *child_cfg = cfg_node_child_from_string_or_alloc(rd_state->cfg, root_cfg, child_key);
+          CFG_Node *child_cfg = cfg_node_child_from_string_or_alloc(rd_state->cfg, rd_cfg_setting_home(root_cfg, child_key), child_key);
           cfg_node_new_replace(rd_state->cfg, child_cfg, write_string);
         }
       }
@@ -1666,7 +1617,7 @@ wh_view_state_checked(WH_ViewContext *ctx, U64 size)
 internal String8
 wh_view_setting(WH_ViewContext *ctx, String8 name)
 {
-  return rd_view_setting_from_cfg(rd_cfg_from_view(ctx->settings.view), name);
+  return rd_view_setting_from_view(ctx->settings.view, name);
 }
 
 internal B32
@@ -2200,18 +2151,7 @@ rd_view_query_input(void)
 internal String8
 rd_view_setting_from_name(String8 name)
 {
-  return rd_view_setting_from_cfg(rd_cfg_from_view(uishell_regs()->view), name);
-}
-
-internal String8
-rd_view_setting_from_cfg(CFG_Node *view, String8 name)
-{
-  String8 result = cfg_node_child_from_string(view, name)->first->string;
-  if(result.size == 0)
-  {
-    result = rd_default_setting_from_names(view->string, name);
-  }
-  return result;
+  return rd_view_setting_from_view(uishell_regs()->view, name);
 }
 
 internal B32
@@ -2365,9 +2305,7 @@ rd_store_view_scroll_pos(UI_ScrollPt2 pos)
 internal void
 rd_store_view_param(String8 key, String8 value)
 {
-  CFG_Node *view = rd_cfg_from_view(uishell_regs()->view);
-  CFG_Node *child = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, key);
-  cfg_node_new_replace(rd_state->cfg, child, value);
+  rd_view_setting_set(uishell_regs()->view, key, value);
 }
 
 internal void
@@ -3345,6 +3283,7 @@ rd_view_readdress(RD_ViewAddress from, RD_ViewAddress to)
 {
   if(rd_view_address_is_nil(from) || rd_view_address_is_nil(to) || rd_view_address_match(from, to)) { return; }
   rd_view_states_rekey(from, to);
+  rd_view_presentation_readdress(from, to);
   uishell_jackstay_rekey(from, to);
 }
 
@@ -3383,6 +3322,200 @@ internal RD_PanelAddress
 rd_panel_from_view(RD_ViewAddress view)
 {
   return rd_panel_from_cfg(rd_cfg_from_view(view));
+}
+
+//- View Presentation State (CONTEXT.md, "Presentation State")
+//
+// A View's settings are logical, or this device's. Its logical settings are
+// its node's, as Andamento has them: its key, its View Spec, its portable
+// Target Resolution, its Slot's plan progress, and what docking and queries
+// keep on it (rd_view_logical_settings). Every other setting (a label, a
+// font size, a cursor or scroll position, a machine-local Target Resolution
+// such as `attach_token`) is Presentation State, kept by View Address in its
+// owner's host, which the Dashboard's presentation file saves with it: a
+// workspace's in its node, the Dashboard's and a window's own in the window:
+//
+//   view_presentation: {
+//     workspace: {key: "u:3" font_size: 14}
+//     workspace: {key: "partner" previous attach_token: "..."}
+//   }
+//
+// A transient View keeps everything on its node. Settings resolve
+// explicitly (rd_setting_from_name): the View's own, its Workspace's, its
+// window's, the user's (then the project's), then those scopes' schema
+// defaults.
+
+read_only global String8 rd_view_logical_settings[] =
+{
+  // Identity, and the arrangement's mark.
+  str8_lit_comp("slot"), str8_lit_comp("previous_of"), str8_lit_comp("section"), str8_lit_comp("resource_id"), str8_lit_comp("selected"),
+  // The View Spec (uishell_workspace_store.c, "View Specs").
+  str8_lit_comp("expression"), str8_lit_comp("cwd"), str8_lit_comp("content"), str8_lit_comp("url"),
+  str8_lit_comp("source_endpoint"), str8_lit_comp("source_socket"), str8_lit_comp("input_endpoint"), str8_lit_comp("input_socket"),
+  str8_lit_comp("media_endpoint"), str8_lit_comp("media_socket"), str8_lit_comp("d3d11_endpoint"), str8_lit_comp("porthole_endpoint"),
+  // The portable Target Resolution, and the daemon hosting a terminal.
+  str8_lit_comp("session"), str8_lit_comp("daemon_name"), str8_lit_comp("daemon"),
+  // The Slot's plan progress (uishell_workspace_store.c, "Slot plans").
+  str8_lit_comp("follows_provider"), str8_lit_comp("applied"), str8_lit_comp("asks"), str8_lit_comp("declined"),
+  str8_lit_comp("update_failed"), str8_lit_comp("portable"), str8_lit_comp("applied_spec"),
+  // A tab's project, docking's restore mark, and queries' state.
+  str8_lit_comp("project"), str8_lit_comp("section_hint_pending"),
+  str8_lit_comp("query"), str8_lit_comp("lister"), str8_lit_comp("explicit_root"), str8_lit_comp("autocomplete"),
+  str8_lit_comp("activate_with_single_click"),
+};
+
+internal B32
+rd_view_setting_is_logical(String8 name)
+{
+  for EachElement(i, rd_view_logical_settings) { if(str8_match(rd_view_logical_settings[i], name, 0)) { return 1; } }
+  return 0;
+}
+
+internal CFG_Node *
+rd_view_presentation_host(RD_ViewAddress view)
+{
+  CFG_Node *host = &cfg_nil_node;
+  switch(view.owner)
+  {
+    default:{}break;
+    case RD_ViewOwnerKind_Workspace:{host = cfg_node_from_id(uishell_workspace_cfg_id_from_id(view.id));}break;
+    case RD_ViewOwnerKind_Dashboard:
+    case RD_ViewOwnerKind_Window:{host = uishell_window_from_id(view.id);}break;
+  }
+  return host;
+}
+
+internal CFG_Node *
+rd_view_presentation_from_view(RD_ViewAddress view)
+{
+  if(rd_view_address_is_nil(view) || view.owner == RD_ViewOwnerKind_Transient) { return &cfg_nil_node; }
+  U64 hash = u64_djb2_hash_from_str8(str8_struct(&view));
+  RD_ViewCfgCacheSlot *slot = &rd_state->view_presentation_cache[hash%ArrayCount(rd_state->view_presentation_cache)];
+  U64 tree_gen = cfg_tree_gen();
+  if(rd_view_address_match(slot->view, view) && slot->ctx == cfg_ctx && slot->tree_gen == tree_gen) { return cfg_node_from_id(slot->cfg); }
+  CFG_Node *result = &cfg_nil_node;
+  String8 owner = rd_view_owner_kind_name(view.owner);
+  CFG_Node *root = cfg_node_child_from_string(rd_view_presentation_host(view), RD_VIEW_PRESENTATION_ROOT);
+  for(CFG_Node *c = root->first; c != &cfg_nil_node && result == &cfg_nil_node; c = c->next)
+  {
+    B32 previous = cfg_node_child_from_string(c, str8_lit("previous")) != &cfg_nil_node;
+    if(str8_match(c->string, owner, 0) && previous == (view.instance == RD_ViewInstance_Previous) &&
+       u128_match(rd_view_key_hash(cfg_node_child_from_string(c, str8_lit("key"))->first->string), view.key))
+    { result = c; }
+  }
+  slot->view = view;
+  slot->ctx = cfg_ctx;
+  slot->cfg = result->id;
+  slot->tree_gen = tree_gen;
+  return result;
+}
+
+internal CFG_Node *
+rd_view_presentation_alloc(RD_ViewAddress view)
+{
+  CFG_Node *record = rd_view_presentation_from_view(view);
+  if(record != &cfg_nil_node || rd_view_address_is_nil(view) || view.owner == RD_ViewOwnerKind_Transient) { return record; }
+  String8 key = rd_view_key_from_cfg(rd_cfg_from_view(view), 0);
+  CFG_Node *host = rd_view_presentation_host(view);
+  if(key.size == 0 || host == &cfg_nil_node) { return record; }
+  Temp scratch = scratch_begin(0, 0);
+  key = push_str8_copy(scratch.arena, key);
+  CFG_Node *root = cfg_node_child_from_string_or_alloc(rd_state->cfg, host, RD_VIEW_PRESENTATION_ROOT);
+  record = cfg_node_new(rd_state->cfg, root, rd_view_owner_kind_name(view.owner));
+  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, record, str8_lit("key")), key);
+  if(view.instance == RD_ViewInstance_Previous) { cfg_node_new(rd_state->cfg, record, str8_lit("previous")); }
+  scratch_end(scratch);
+  return record;
+}
+
+internal void
+rd_view_presentation_readdress(RD_ViewAddress from, RD_ViewAddress to)
+{
+  CFG_Node *record = rd_view_presentation_from_view(from);
+  if(record == &cfg_nil_node) { return; }
+  CFG_Node *host = rd_view_presentation_host(to);
+  String8 key = rd_view_key_from_cfg(rd_cfg_from_view(to), 0);
+  // Where the View can keep none, or keeps its own already, it goes.
+  if(host == &cfg_nil_node || key.size == 0 || rd_view_presentation_from_view(to) != &cfg_nil_node)
+  {
+    cfg_node_release(rd_state->cfg, record);
+    return;
+  }
+  Temp scratch = scratch_begin(0, 0);
+  key = push_str8_copy(scratch.arena, key);
+  CFG_Node *root = cfg_node_child_from_string_or_alloc(rd_state->cfg, host, RD_VIEW_PRESENTATION_ROOT);
+  if(record->parent != root) { cfg_node_insert_child(rd_state->cfg, root, root->last, record); }
+  cfg_node_equip_string(rd_state->cfg, record, rd_view_owner_kind_name(to.owner));
+  cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, record, str8_lit("key")), key);
+  CFG_Node *previous = cfg_node_child_from_string(record, str8_lit("previous"));
+  if(to.instance == RD_ViewInstance_Previous && previous == &cfg_nil_node) { cfg_node_new(rd_state->cfg, record, str8_lit("previous")); }
+  if(to.instance != RD_ViewInstance_Previous && previous != &cfg_nil_node) { cfg_node_release(rd_state->cfg, previous); }
+  scratch_end(scratch);
+}
+
+internal void
+rd_view_presentation_release(RD_ViewAddress view)
+{
+  CFG_Node *record = rd_view_presentation_from_view(view);
+  if(record != &cfg_nil_node) { cfg_node_release(rd_state->cfg, record); }
+}
+
+internal String8
+rd_view_setting_from_view(RD_ViewAddress view, String8 name)
+{
+  CFG_Node *node = rd_cfg_from_view(view);
+  CFG_Node *setting = cfg_node_child_from_string(rd_view_presentation_from_view(view), name);
+  if(setting == &cfg_nil_node) { setting = cfg_node_child_from_string(node, name); }
+  String8 result = setting->first->string;
+  if(result.size == 0) { result = rd_default_setting_from_names(node->string, name); }
+  return result;
+}
+
+internal String8
+rd_view_label_from_cfg(CFG_Node *view)
+{
+  CFG_Node *label = cfg_node_child_from_string(rd_view_presentation_from_view(rd_view_address_from_cfg(view)), str8_lit("label"));
+  return label != &cfg_nil_node ? label->first->string : rd_label_from_cfg(view);
+}
+
+internal void
+rd_view_setting_set(RD_ViewAddress view, String8 name, String8 value)
+{
+  CFG_Node *home = rd_view_setting_is_logical(name) || view.owner == RD_ViewOwnerKind_Transient ? rd_cfg_from_view(view) : rd_view_presentation_alloc(view);
+  if(home == &cfg_nil_node) { return; }
+  cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, home, name), value);
+}
+
+internal void
+rd_view_setting_clear(RD_ViewAddress view, String8 name)
+{
+  CFG_Node *homes[] = {rd_view_presentation_from_view(view), rd_cfg_from_view(view)};
+  for EachElement(i, homes)
+  {
+    CFG_Node *setting = cfg_node_child_from_string(homes[i], name);
+    if(setting != &cfg_nil_node) { cfg_node_release(rd_state->cfg, setting); }
+  }
+}
+
+// The child holding config node `cfg`'s setting `name`: for a View, its
+// Presentation State's, then its node's.
+internal CFG_Node *
+rd_cfg_setting_child(CFG_Node *cfg, String8 name)
+{
+  CFG_Node *setting = &cfg_nil_node;
+  if(!rd_view_setting_is_logical(name)) { setting = cfg_node_child_from_string(rd_view_presentation_from_view(rd_view_address_from_cfg(cfg)), name); }
+  if(setting == &cfg_nil_node) { setting = cfg_node_child_from_string(cfg, name); }
+  return setting;
+}
+
+// Where a write of config node `cfg`'s setting `name` goes: a View's
+// Presentation State for one of its presentation settings, else the node.
+internal CFG_Node *
+rd_cfg_setting_home(CFG_Node *cfg, String8 name)
+{
+  RD_ViewAddress view = rd_view_address_from_cfg(cfg);
+  if(rd_view_address_is_nil(view) || view.owner == RD_ViewOwnerKind_Transient || rd_view_setting_is_logical(name)) { return cfg; }
+  return rd_view_presentation_alloc(view);
 }
 
 //~ Workspace mounts

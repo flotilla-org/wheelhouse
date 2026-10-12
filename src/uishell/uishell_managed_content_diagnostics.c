@@ -163,7 +163,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     andamento_string_free(error);
     uishell_sidebar_reconcile_workspace(&state, workspace);
     ManagedCheck(tv->session == unchanged && str8_match(rd_expr_from_cfg(view), str8_lit("printf B; read answer"), 0) &&
-                 str8_match(cfg_node_child_from_string(view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0) &&
+                 str8_match(rd_cfg_setting_child(view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0) &&
                  str8_match(cfg_node_child_from_string(view, str8_lit("previous_of"))->first->string, str8_lit("primary"), 0),
                  "daemon-backed primary view is kept as the previous instance, not replaced");
     cfg_node_release(rd_state->cfg, daemon);
@@ -214,7 +214,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     RD_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, role_panels);
     if(tree.root != &rd_nil_panel_node && tree.root->tabs.first) { role_view = rd_cfg_from_view(tree.root->tabs.first->v); }
     ManagedCheck(str8_match(cfg_node_child_from_string(role_workspace, str8_lit("sidebar_entity_kind"))->first->string, str8_lit("role"), 0) &&
-                 str8_match(cfg_node_child_from_string(role_view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0),
+                 str8_match(rd_cfg_setting_child(role_view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0),
                  "opened workspace records its current managed target");
     // As the workspace store keys it, its first plan finds it current.
     uishell_managed_set(role_view, str8_lit("slot"), str8_lit("primary"));

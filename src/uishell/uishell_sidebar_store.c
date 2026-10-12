@@ -58,11 +58,12 @@
 //   sidebar_presentation: {
 //     panel: {id: "3" selected tabs_on_bottom}   a panel's Presentation State, by document ID
 //     panel: {id: "f1.1" share: 0.5}             a Floating Panel's share of its host
-//     section: {key: "attention" section_collapsed weight: 0.25}
-//                                                a section View's own settings, and the
-//                                                size content gave it
+//     section: {key: "attention" weight: 0.25}   the size content gave a section
 //     view: {terminal: {slot: "u:1" ...}}        a View of this host's own, whole
 //   }
+//
+// Each View's Presentation State is the window's `view_presentation`, by View
+// Address (shell_core.c, "View Presentation State"), saved with the window.
 //
 // A docked section the sidebar sizes from its content (no
 // `sidebar_layout_sized`) is committed with weight 1: its size is this
