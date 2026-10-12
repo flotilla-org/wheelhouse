@@ -421,10 +421,14 @@ entry_point(CmdLine *cmdline)
         MG_Layer *layer = mg_layer_from_key(layer_key);
         String8 data = data_from_file_path(mg_arena, node->first->string);
         String8 embed_string = mg_c_array_literal_contents_from_data(data);
-        str8_list_pushf(mg_arena, &layer->h_tables, "read_only global U8 %S__data[] =\n{\n", node->string);
-        str8_list_push (mg_arena, &layer->h_tables, embed_string);
-        str8_list_pushf(mg_arena, &layer->h_tables, "};\n\n");
-        str8_list_pushf(mg_arena, &layer->h_tables, "read_only global String8 %S = {%S__data, sizeof(%S__data)};\n",
+        // NOTE: the bytes go to <layer>.embed.meta.c, compiled as its own
+        // object, so the unity build parses only this declaration. Like the
+        // generated tables, the String8 is a plain extern global.
+        str8_list_pushf(mg_arena, &layer->h_tables, "extern String8 %S;\n", node->string);
+        str8_list_pushf(mg_arena, &layer->c_embeds, "read_only global U8 %S__data[] =\n{\n", node->string);
+        str8_list_push (mg_arena, &layer->c_embeds, embed_string);
+        str8_list_pushf(mg_arena, &layer->c_embeds, "};\n\n");
+        str8_list_pushf(mg_arena, &layer->c_embeds, "String8 %S = {%S__data, sizeof(%S__data)};\n",
                         node->string,
                         node->string,
                         node->string);
@@ -633,6 +637,27 @@ entry_point(CmdLine *cmdline)
               {
                 fwrite(n->string.str, n->string.size, 1, c);
               }
+            }
+            fclose(c);
+          }
+          if(layer->c_embeds.first != 0)
+          {
+            String8 embed_path = push_str8f(mg_arena, "%S/%S.embed.meta.c", layer_generated_folder, layer_key_filename);
+            FILE *c = fopen((char *)embed_path.str, "w");
+            fprintf(c, "// Copyright (c) Epic Games Tools\n");
+            fprintf(c, "// Licensed under the MIT license (https://opensource.org/license/mit/)\n\n");
+            fprintf(c, "//- GENERATED CODE\n\n");
+            if(!layer->is_library)
+            {
+              fprintf(c, "C_LINKAGE_BEGIN\n");
+            }
+            for(String8Node *n = layer->c_embeds.first; n != 0; n = n->next)
+            {
+              fwrite(n->string.str, n->string.size, 1, c);
+            }
+            if(!layer->is_library)
+            {
+              fprintf(c, "C_LINKAGE_END\n");
             }
             fclose(c);
           }

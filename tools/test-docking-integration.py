@@ -15,6 +15,8 @@ from pathlib import Path
 import shlex
 import subprocess
 
+from shell_embed import shell_embed_object
+
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / 'build'
 BUILD.mkdir(exist_ok=True)
@@ -44,14 +46,15 @@ internal Rng2F32 integration_client_rect(WM_Window window);
 ''')
 source = BUILD / 'docking_integration.c'
 source.write_text(prefix + '\n#include "shell/tests/docking_integration.c"\n')
-command = shlex.split(os.environ.get('CC', 'clang')) + [
+compiler = shlex.split(os.environ.get('CC', 'clang'))
+command = compiler + [
     # Keep debug assertions; the generated prefix excludes arena inspection only.
     '-g', '-O0', '-D_GNU_SOURCE', '-DBUILD_DEBUG=1', '-DNO_ASYNC=1',
     '-DWM_STUB=1', '-DR_BACKEND=0', '-DFP_BACKEND=0', '-ffunction-sections', '-fdata-sections',
     '-Wno-initializer-overrides', '-Wno-unused-value',
     '-Wno-incompatible-pointer-types-discards-qualifiers',
     '-I'+str(ROOT/'src'), '-I'+str(args.andamento_include.resolve()),
-    '-I'+str(args.cleat_include.resolve()), str(source),
+    '-I'+str(args.cleat_include.resolve()), str(source), str(shell_embed_object(compiler)),
     '-L'+str(andamento), '-landamento_ffi', '-lwheelhouse_ingress', '-Wl,-rpath,'+str(andamento),
     '-L'+str(cleat), '-lcleat', '-Wl,-rpath,'+str(cleat), '-lpthread', '-lm', '-ldl',
     '-Wl,--gc-sections', '-o', str(BUILD/'docking_integration')]
