@@ -16,110 +16,13 @@ cfg_window_from_cfg(CFG_Node *cfg)
   return result;
 }
 
-// A panel's children are its sub-panels, its Views and these options.
+// A panel's children are its sub-panels, its Views and these options. `id`
+// is the panel's stable ID (shell_arrangement.h).
 internal B32
 cfg_panel_child_is_option(String8 name)
 {
-  return str8_match(name, str8_lit("tabs_on_bottom"), 0) || str8_match(name, str8_lit("section_collapsed"), 0);
-}
-
-internal CFG_PanelTree
-cfg_panel_tree_from_panels_cfg(Arena *arena, CFG_Node *panels_root, Axis2 root_split_axis)
-{
-  Temp scratch = scratch_begin(&arena, 1);
-  CFG_PanelNode *dst_root = &cfg_nil_panel_node;
-  CFG_PanelNode *dst_focused = &cfg_nil_panel_node;
-  {
-    Axis2 active_split_axis = root_split_axis;
-    CFG_NodeRec rec = {0};
-    CFG_PanelNode *dst_active_parent = &cfg_nil_panel_node;
-    for(CFG_Node *src = panels_root; src != &cfg_nil_node; src = rec.next)
-    {
-      // rjf: build a panel node
-      CFG_PanelNode *dst = push_array(arena, CFG_PanelNode, 1);
-      MemoryCopyStruct(dst, &cfg_nil_panel_node);
-      dst->parent = dst_active_parent;
-      if(dst_active_parent != &cfg_nil_panel_node)
-      {
-        DLLPushBack_NPZ(&cfg_nil_panel_node, dst_active_parent->first, dst_active_parent->last, dst, next, prev);
-        dst_active_parent->child_count += 1;
-      }
-      if(dst_root == &cfg_nil_panel_node)
-      {
-        dst_root = dst;
-      }
-      
-      // rjf: extract cfg info
-      B32 panel_has_children = 0;
-      dst->cfg = src;
-      dst->pct_of_parent = (src == panels_root ? 1.f : (F32)f64_from_str8(src->string));
-      dst->tab_side = (cfg_node_child_from_string(src, str8_lit("tabs_on_bottom")) != &cfg_nil_node ? Side_Max : Side_Min);
-      dst->split_axis = active_split_axis;
-      for(CFG_Node *src_child = src->first; src_child != &cfg_nil_node; src_child = src_child->next)
-      {
-        MD_TokenizeResult tokenize = md_tokenize_from_text(scratch.arena, src_child->string);
-        if(tokenize.tokens.count == 1 && tokenize.tokens.v[0].flags & MD_TokenFlag_Numeric)
-        {
-          panel_has_children = 1;
-        }
-        else if(cfg_panel_child_is_option(src_child->string))
-        {
-          // NOTE(rjf): skip - this is a panel option.
-        }
-        else if(str8_match(src_child->string, str8_lit("selected"), 0))
-        {
-          dst_focused = dst;
-        }
-        else if(tokenize.tokens.count == 1 && tokenize.tokens.v[0].flags & MD_TokenFlag_Identifier)
-        {
-          cfg_node_ptr_list_push(arena, &dst->tabs, src_child);
-          if(cfg_node_child_from_string(src_child, str8_lit("selected")) != &cfg_nil_node)
-          {
-            dst->selected_tab = src_child;
-          }
-        }
-      }
-      
-      // rjf: recurse
-      rec = cfg_node_rec__depth_first(panels_root, src);
-      if(!panel_has_children)
-      {
-        MemoryZeroStruct(&rec);
-        rec.next = &cfg_nil_node;
-        for(CFG_Node *p = src; p != panels_root && p != &cfg_nil_node; p = p->parent, rec.pop_count += 1)
-        {
-          if(p->next != &cfg_nil_node)
-          {
-            rec.next = p->next;
-            break;
-          }
-        }
-      }
-      if(rec.push_count > 0)
-      {
-        dst_active_parent = dst;
-        active_split_axis = axis2_flip(active_split_axis);
-      }
-      else for(S32 pop_idx = 0; pop_idx < rec.pop_count; pop_idx += 1)
-      {
-        dst_active_parent = dst_active_parent->parent;
-        active_split_axis = axis2_flip(active_split_axis);
-      }
-    }
-  }
-  scratch_end(scratch);
-  CFG_PanelTree tree = {dst_root, dst_focused};
-  return tree;
-}
-
-internal CFG_PanelTree
-cfg_panel_tree_from_cfg(Arena *arena, CFG_Node *cfg_root)
-{
-  CFG_Node *wcfg = cfg_window_from_cfg(cfg_root);
-  CFG_Node *panels_root = cfg_node_child_from_string(wcfg, str8_lit("panels"));
-  Axis2 root_split_axis = cfg_node_child_from_string(wcfg, str8_lit("split_x")) != &cfg_nil_node ? Axis2_X : Axis2_Y;
-  CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(arena, panels_root, root_split_axis);
-  return tree;
+  return str8_match(name, str8_lit("tabs_on_bottom"), 0) || str8_match(name, str8_lit("section_collapsed"), 0) ||
+    str8_match(name, str8_lit("id"), 0);
 }
 
 internal CFG_PanelNodeRec

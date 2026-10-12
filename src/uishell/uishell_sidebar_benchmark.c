@@ -10,7 +10,7 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
   uishell_sidebar_benchmark_uncached = 0;
   U64 count = andamento_snapshot_node_count(state->snapshot);
   AndamentoNode *nodes = push_array(scratch.arena, AndamentoNode, count);
-  for(U64 i = 0; i < count; i++) { andamento_snapshot_node(state->snapshot, i, &nodes[i]); }
+  for(U64 i = 0; i < count; i++) { uishell_sidebar_snapshot_node(state->snapshot, i, &nodes[i]); }
   String8 identity = str8_lit("bench-project-0");
   String8 label = uishell_sidebar_context_label(state, nodes, count, identity);
   ok &= str8_match(label, str8_lit("Benchmark project 0"), 0);
@@ -35,7 +35,7 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
     ok &= !state->labels && !state->labels_snapshot;
     count = andamento_snapshot_node_count(state->snapshot);
     nodes = push_array(scratch.arena, AndamentoNode, count);
-    for(U64 n = 0; n < count; n++) { andamento_snapshot_node(state->snapshot, n, &nodes[n]); }
+    for(U64 n = 0; n < count; n++) { uishell_sidebar_snapshot_node(state->snapshot, n, &nodes[n]); }
     ok &= str8_match(uishell_sidebar_context_label(state, nodes, count, identity), str8_cstring(values[i]), 0);
   }
   uishell_sidebar_labels_invalidate(state);

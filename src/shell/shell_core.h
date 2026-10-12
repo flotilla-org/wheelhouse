@@ -20,7 +20,9 @@ enum
 ////////////////////////////////
 //~ rjf: View UI Hook Types
 
+#include "shell_arrangement.h"
 #include "shell_docking.h"
+#include "shell_workspace_id.h"
 
 #define RD_VIEW_UI_FUNCTION_SIG(name) void name(E_Eval eval, Rng2F32 rect)
 #define RD_VIEW_UI_FUNCTION_NAME(name) rd_view_ui__##name
@@ -801,6 +803,28 @@ struct RD_FrameReplay
   void (*prepare_window)(RD_WindowState *ws);
 };
 
+// A panel boundary drag in flight (ADR 0012: an arrangement is committed
+// when its gesture ends). Rendering shows `live`, the arrangement as config
+// has it with the drag applied; config is untouched until the drag ends.
+typedef struct RD_BoundaryResize RD_BoundaryResize;
+struct RD_BoundaryResize
+{
+  Arena *arena;
+  UI_Key key;              // the boundary's box; zero when no drag is in flight
+  CFG_ID root;             // the arrangement's root panel node
+  CFG_ID panel;            // the boundary is after this panel's node
+  F32 delta;               // moved by, and held at least `floor` from either end
+  F32 floor;
+  Vec2F32 laid_out;        // both sides' laid out shares as the drag began
+  B32 moved;               // the boundary has moved since the press
+  // The arrangement as config has it, and a copy with the drag applied.
+  RD_Arrangement *base;
+  U64 base_pos;
+  RD_Arrangement *live;
+  U64 cfg_gen;             // the config `base` was loaded from
+  U64 frame_index;         // the last frame the drag was seen
+};
+
 typedef struct RD_State RD_State;
 struct RD_State
 {
@@ -908,6 +932,7 @@ struct RD_State
 
   // rjf: autosave state
   F32 seconds_until_autosave;
+  U64 autosave_change_gen; // config generation the last autosave wrote
 
   // rjf: commands
   UIShell_CmdPack *first_cmd_pack;
@@ -951,6 +976,7 @@ struct RD_State
   // Creation drags share panel sites without allocating a saved View until drop.
   String8 drag_drop_creation_name;
   void (*drag_drop_commit)(CFG_ID destination, Dir2 direction, CFG_ID previous_tab);
+  RD_BoundaryResize boundary_resize;
 
   // rjf: cfg state
   CFG_State *cfg;
@@ -1024,7 +1050,13 @@ struct UIShell_WorkspaceMount
   CFG_Node *workspace_cfg;
   CFG_Node *panels_root;
   Axis2 root_split_axis;
+  // As loaded. Commands may edit and save it; `panel_tree` stays as loaded.
+  RD_Arrangement *arrangement;
+  // The renderer's view of `arrangement`.
   CFG_PanelTree panel_tree;
+  // Both show a boundary drag in flight, not what config has
+  // (rd_boundary_resize_show).
+  B32 resizing;
 };
 
 typedef struct UIShell_MaterializedWorkspace UIShell_MaterializedWorkspace;
@@ -1033,6 +1065,7 @@ struct UIShell_MaterializedWorkspace
   UIShell_MaterializedWorkspace *next;
   UIShell_MaterializedWorkspace *prev;
   CFG_ID id;
+  UIShell_WorkspaceId workspace_id;
   String8 display_name;
   UIShell_WorkspaceMount mount;
 };
@@ -1107,6 +1140,9 @@ internal void rd_set_hover_regs(UIShell_ContextRegSlot slot);
 //~ rjf: Config Functions
 
 internal B32 rd_cfg_is_project_filtered(CFG_Node *cfg);
+// The visibility rule docking gives the arrangement (RD_ArrangementTabRule):
+// a tab is shown unless its View is filtered out of the current project.
+internal B32 rd_tab_is_shown(CFG_ID view);
 
 internal Vec4F32 rd_hsva_from_cfg(CFG_Node *cfg);
 internal Vec4F32 rd_color_from_cfg(CFG_Node *cfg);
@@ -1239,6 +1275,10 @@ internal UIShell_WorkspaceMount uishell_workspace_mount_from_window(Arena *arena
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_current_regs(Arena *arena);
 internal UIShell_ControlledSplit uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window);
+internal void rd_window_save_presentation(RD_WindowState *ws);
+internal void rd_window_restore_presentation(RD_WindowState *ws);
+internal void rd_save_presentation(void);
+internal B32 rd_autosave(void);
 internal void uishell_sidebar_reset_regions(CFG_Node *owner);
 internal B32 uishell_controlled_split_workspace_can_close(UIShell_ControlledSplit *split, UIShell_MaterializedWorkspace *workspace);
 internal B32 uishell_workspace_cfg_has_subject(CFG_Node *workspace);

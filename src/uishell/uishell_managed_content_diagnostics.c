@@ -163,7 +163,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     for(U64 i = 0; snapshot && i < andamento_snapshot_node_count(snapshot); i++)
     {
       AndamentoNode node = {0};
-      if(andamento_snapshot_node(snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("role"), 0))
+      if(uishell_sidebar_snapshot_node(snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("role"), 0))
       { activate = node.activate; }
     }
     ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(opened.core, snapshot, activate, 0), "role entry dispatches its opening");
@@ -173,13 +173,13 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     CFG_Node *role_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     CFG_Node *role_view = &cfg_nil_node;
     CFG_Node *role_panels = cfg_node_child_from_string(role_workspace, str8_lit("panels"));
-    CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(scratch.arena, role_panels, Axis2_X);
+    CFG_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, role_panels);
     if(tree.root != &cfg_nil_panel_node && tree.root->tabs.first) { role_view = tree.root->tabs.first->v; }
     ManagedCheck(str8_match(cfg_node_child_from_string(role_workspace, str8_lit("sidebar_entity_kind"))->first->string, str8_lit("role"), 0) &&
                  str8_match(cfg_node_child_from_string(role_view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0),
                  "opened workspace records its current managed target");
     error = 0;
-    AndamentoContentPlan *plan = andamento_content_plan(opened.core, role_workspace->id,
+    AndamentoContentPlan *plan = andamento_content_plan3(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(role_workspace)),
       uishell_sidebar_text(str8_lit("role")), uishell_sidebar_text(str8_lit("p/governor")),
       uishell_sidebar_text(cfg_node_child_from_string(role_view, str8_lit("managed_target"))->first->string),
       uishell_sidebar_text(rd_expr_from_cfg(role_view)), 0, (AndamentoText){0}, &error);
@@ -215,7 +215,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     size_t activate = ANDAMENTO_NONE;
     for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(opened.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("producer-worktree"), 0))
       { ManagedCheck(node.state == ANDAMENTO_LATENT, "producer worktree starts latent"); activate = node.activate; }
     }
@@ -225,7 +225,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     uishell_sidebar_effects(&opened, &split);
     CFG_Node *worktree_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     CFG_Node *worktree_panels = cfg_node_child_from_string(worktree_workspace, str8_lit("panels"));
-    CFG_PanelTree tree = cfg_panel_tree_from_panels_cfg(scratch.arena, worktree_panels, Axis2_X);
+    CFG_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, worktree_panels);
     CFG_Node *worktree_view = tree.root->tabs.first ? tree.root->tabs.first->v : &cfg_nil_node;
     ManagedCheck(str8_match(cfg_node_child_from_string(worktree_view, str8_lit("cwd"))->first->string, str8_lit("/tmp"), 0),
                  "materialized producer terminal saves git.root");
@@ -250,7 +250,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     B32 matched = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(opened.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("producer-worktree"), 0))
       { matched = node.state == ANDAMENTO_LIVE && node.workspace_id == existing->id; activate = node.activate; }
     }
@@ -269,7 +269,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     B32 latent = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(opened.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("producer-worktree"), 0))
       { latent = node.state == ANDAMENTO_LATENT; if(!latent) { fprintf(stderr, "Unexpected worktree state=%u workspace=%lu after cwd change (existing=%lu)\n", node.state, node.workspace_id, existing->id); } }
     }
