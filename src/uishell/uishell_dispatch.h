@@ -33,13 +33,7 @@ uishell_write_config_data(Arena *arena, String8 dst_path, String8 bucket_name, U
       B32 is_window = str8_match(child->string, str8_lit("window"), 0);
       if((part == UIShell_ConfigPart_Settings && is_window) || (part == UIShell_ConfigPart_Windows && !is_window)) { continue; }
       // The Dashboard's windows leave each workspace's arrangement to
-      // Andamento's records, keeping only this device's part of it, and
-      // none of what nothing has.
-      if(part == UIShell_ConfigPart_Windows)
-      {
-        rd_presentation_sweep(child);
-        for(CFG_Node *c = child->first; c != &cfg_nil_node; c = c->next) { rd_presentation_sweep(c); }
-      }
+      // Andamento's records, keeping only this device's part of it.
       String8 root_path = str8_chop_last_slash(dst_path);
       str8_list_push(arena, &strings, part == UIShell_ConfigPart_Windows ?
                      uishell_workspace_store_window_text(arena, root_path, child) :
@@ -379,6 +373,15 @@ uishell_dispatch_config_command(String8 name)
     if(has_dashboard)
     {
       uishell_dashboard_save_identity();
+      // The presentation file saves none of what nothing has: the windows'
+      // and their open workspaces' orphaned Presentation State goes first.
+      CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+      for(CFG_Node *window = user->first; window != &cfg_nil_node; window = window->next)
+      {
+        if(!str8_match(window->string, str8_lit("window"), 0)) { continue; }
+        rd_presentation_sweep(window);
+        for(CFG_Node *c = window->first; c != &cfg_nil_node; c = c->next) { rd_presentation_sweep(c); }
+      }
       uishell_write_config_data(scratch.arena, dashboard->presentation_path, str8_lit("user"), UIShell_ConfigPart_Windows,
                                 str8_lit("presentation"), str8_zero());
     }
