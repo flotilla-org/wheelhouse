@@ -19,6 +19,9 @@ extern "C" fn handle(signal: libc::c_int) {
         }
         return;
     }
+    // The handler interrupts whatever the thread was doing; `write` can set
+    // errno, which that code may be about to read.
+    let saved = unsafe { *errno() };
     let byte = 1u8;
     unsafe {
         libc::write(
@@ -26,7 +29,18 @@ extern "C" fn handle(signal: libc::c_int) {
             &byte as *const u8 as *const _,
             1,
         );
+        *errno() = saved;
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+unsafe fn errno() -> *mut libc::c_int {
+    unsafe { libc::__error() }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+unsafe fn errno() -> *mut libc::c_int {
+    unsafe { libc::__errno_location() }
 }
 
 /// Installs the handlers once; `wake` runs on a background thread when the
