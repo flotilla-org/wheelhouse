@@ -8,7 +8,7 @@
 //     id                               its Dashboard ID (UUIDv7), written on first save
 //     dashboard.record, workspace-<id>.record  Andamento's records (uishell_sidebar_records.c)
 //     subscriptions.wheelhouse         its provider subscriptions (uishell_subscriptions.c)
-//     windows/<andamento_records id>/  records of the process's other windows
+//     windows/<Window ID>/             records of the process's other windows
 //   <device>/
 //     last_dashboard                   the directory opened last
 //     presentation/<Dashboard ID>.wheelhouse   its windows, and this device's part of their workspaces
@@ -207,7 +207,7 @@ uishell_dashboard_load_windows(CFG_Node *user, String8 user_path)
 // A window's Andamento records directory: the Dashboard's own for the
 // presentation's first window, one under `windows/` for any other.
 internal String8
-uishell_dashboard_records_dir(Arena *arena, CFG_Node *window, String8 records_id)
+uishell_dashboard_records_dir(Arena *arena, CFG_Node *window, String8 window_id)
 {
   UIShell_Dashboard *d = &uishell_dashboard;
   if(!d->dir.size) { return str8_zero(); }
@@ -215,5 +215,5 @@ uishell_dashboard_records_dir(Arena *arena, CFG_Node *window, String8 records_id
   CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
   B32 first = windows.first != 0 && windows.first->v == window;
   scratch_end(scratch);
-  return first ? push_str8_copy(arena, d->dir) : push_str8f(arena, "%S/windows/%S", d->dir, records_id);
+  return first ? push_str8_copy(arena, d->dir) : push_str8f(arena, "%S/windows/%S", d->dir, window_id);
 }

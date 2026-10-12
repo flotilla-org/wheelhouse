@@ -423,6 +423,11 @@ state_workspace_ids(Arena *arena)
   for(CFG_NodePtrNode *n = windows.first; n; n = n->next)
   {
     CFG_Node *window = n->v;
+    // The window's own Window ID is kept the same way.
+    String8 window_id = cfg_node_child_from_string(window, str8_lit("window_id"))->first->string;
+    UIShell_WindowId parsed_window_id = {0};
+    StateCheck(uishell_workspace_id_from_string(window_id, &parsed_window_id) && (parsed_window_id.v[6] >> 4) == 7);
+    str8_list_pushf(arena, &result, "(window ID) %S", window_id);
     if(cfg_node_child_from_string(window, str8_lit("workspace_id")) != &cfg_nil_node)
     { str8_list_pushf(arena, &result, "(window) %S", cfg_node_child_from_string(window, str8_lit("workspace_id"))->first->string); }
     for(CFG_Node *c = window->first; c != &cfg_nil_node; c = c->next)
@@ -928,7 +933,7 @@ entry_point(CmdLine *cmdline)
   state_frame(ws);
   state_write(dir, "before_restart.txt");
   String8List ids_before = state_workspace_ids(scratch.arena);
-  StateCheck(ids_before.node_count == 7);
+  StateCheck(ids_before.node_count == 8);
   if(str8_match(phase, str8_lit("save"), 0))
   {
     StateCheck(write_data_to_file_path(ids_path, str8_list_join(scratch.arena, &ids_before, &lines)));
@@ -1900,6 +1905,20 @@ entry_point(CmdLine *cmdline)
     StateCheck(id.size == 36 && str8_match(reference->string, id, 0));
     StateCheck(cfg_node_child_from_string(legacy, str8_lit("local_entity")) == &cfg_nil_node);
     StateCheck(uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_cfg(legacy)) == legacy->id);
+  }
+
+  //- A window saved before Window IDs, which named its records directory by
+  // an ID of its own: that ID becomes its Window ID, so the directory stays
+  // its own.
+  {
+    window = cfg_node_from_id(ws->cfg_id);
+    StateCheck(uishell_window_from_id(uishell_window_id_from_cfg(window)) == window);
+    String8 records = str8_lit("01890a5d-ac96-774b-bcce-b302099a8057");
+    CFG_Node *legacy = cfg_node_new(rd_state->cfg, &cfg_nil_node, str8_lit("window"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, legacy, str8_lit("andamento_records")), records);
+    StateCheck(str8_match(uishell_window_id_text_from_cfg(legacy), records, 0));
+    StateCheck(cfg_node_child_from_string(legacy, str8_lit("andamento_records")) == &cfg_nil_node);
+    cfg_node_release(rd_state->cfg, legacy);
   }
 
   //- Subscriptions. A Dashboard without any has only local facts. Adding

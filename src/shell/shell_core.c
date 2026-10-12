@@ -3002,6 +3002,8 @@ rd_window_state_from_cfg(CFG_Node *cfg)
     
     // rjf: fill out window
     ws->cfg_id = id;
+    // A window has its Window ID from when it opens.
+    uishell_window_id_from_cfg(window_cfg);
     ws->arena = arena_alloc();
     ws->root_controlled_split_initialized = 1;
     ws->root_controlled_split_selected_workspace_id = id;

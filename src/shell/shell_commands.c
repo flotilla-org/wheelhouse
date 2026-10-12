@@ -1464,6 +1464,7 @@ uishell_dispatch_window_command(String8 name)
       if(!str8_match(old_child->string, str8_lit("panels"), 0) &&
          !str8_match(old_child->string, str8_lit("workspace"), 0) &&
          !str8_match(old_child->string, str8_lit("workspace_id"), 0) &&
+         !str8_match(old_child->string, str8_lit("window_id"), 0) &&
          !str8_match(old_child->string, str8_lit("size"), 0) &&
          !str8_match(old_child->string, str8_lit("pos"), 0) &&
          !str8_match(old_child->string, str8_lit("monitor"), 0) &&
