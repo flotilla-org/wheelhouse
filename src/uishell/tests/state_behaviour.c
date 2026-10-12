@@ -545,6 +545,19 @@ state_check_sidebar_committed(RD_WindowState *ws)
   scratch_end(scratch);
 }
 
+// Whether the window's docked sidebar has a leaf with no tabs.
+internal B32
+state_sidebar_has_empty_leaf(CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
+  B32 empty = 0;
+  for(RD_ArrangementPanel *p = sidebar->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(sidebar->root, p))
+  { empty |= p != sidebar->root && p->first == &rd_nil_arrangement_panel && p->tab_count == 0; }
+  scratch_end(scratch);
+  return empty;
+}
+
 // The View of Slot `key` in `workspace`, or nil.
 internal CFG_Node *
 state_slot_view(CFG_Node *workspace, String8 key)
@@ -858,9 +871,26 @@ entry_point(CmdLine *cmdline)
     String8 git = state_section_key(scratch.arena, state, str8_lit("Git"));
     CFG_Node *view = uishell_sidebar_region_view(window, git);
     StateCheck(view != &cfg_nil_node);
+    CFG_ID git_panel = view->parent->id;
     uishell_cmd("close_tab", .window = window->id, .panel = view->parent->id, .tab = view->id);
     state_frame(ws);
     StateCheck(uishell_sidebar_region_view(window, git) == &cfg_nil_node);
+    // Its panel went with it, and Andamento keeps the sidebar without it
+    // (#358).
+    StateCheck(cfg_node_from_id(git_panel) == &cfg_nil_node && !state_sidebar_has_empty_leaf(window));
+    state_check_sidebar_committed(ws);
+    // An empty leaf saved before then (a file from an older build) goes on
+    // the next frame, and the commit after drops it too. No command makes
+    // one; the config is edited directly.
+    {
+      CFG_Node *host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+      cfg_node_new(rd_state->cfg, host, str8_lit("0.1"));
+      StateCheck(state_sidebar_has_empty_leaf(window));
+      state_frame(ws);
+      state_frame(ws);
+      StateCheck(!state_sidebar_has_empty_leaf(window));
+      state_check_sidebar_committed(ws);
+    }
     CFG_Node *attention = uishell_sidebar_region_view(window, state_section_key(scratch.arena, state, str8_lit("Attention")));
     StateCheck(attention != &cfg_nil_node);
     // The section header's disclosure.

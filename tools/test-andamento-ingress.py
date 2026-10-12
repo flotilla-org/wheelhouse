@@ -2,6 +2,7 @@
 """Exercise real HTTP/UDS ingress and the real Andamento C decoder."""
 import concurrent.futures
 import ctypes as C
+import faulthandler
 import http.client
 import json
 import importlib.util
@@ -15,6 +16,8 @@ import tempfile
 import time
 import unittest
 
+# A crash inside a ctypes call (#336) prints every thread's Python stack.
+faulthandler.enable()
 ROOT = Path(__file__).resolve().parents[1]
 LIBDIR = Path(sys.argv.pop(1))
 WINDOWS = sys.platform == 'win32'

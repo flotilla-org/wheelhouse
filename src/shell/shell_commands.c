@@ -712,8 +712,9 @@ rd_dock_move_allowed(Arena *arena, char *operation, CFG_Node *view, CFG_Node *de
 // `destination`'s. When the panel the View left is in it, the same edit
 // settles that panel (rd_arrangement_drop), closing it if the drop emptied
 // it. A panel in another arrangement (the sidebar's or a Floating Panel's)
-// is settled in that one and only reselected, except that a workspace panel
-// emptied into one of its own workspace's Floating Panels closes.
+// is settled in that one: reselected, and closed when the drop left it no
+// tabs (#358) or when it is a workspace panel emptied into one of its own
+// workspace's Floating Panels.
 internal RD_ArrangementDrop
 uishell_drop_view(RD_Arrangement *arrangement, CFG_Node *view, CFG_Node *destination, Dir2 dir, CFG_Node *prev)
 {
@@ -727,9 +728,10 @@ uishell_drop_view(RD_Arrangement *arrangement, CFG_Node *view, CFG_Node *destina
     Temp scratch = scratch_begin(&arrangement->arena, 1);
     RD_Arrangement *left = uishell_arrangement_from_cfg(scratch.arena, source);
     RD_Arrangement *workspace = uishell_workspace_mount_from_cfg(scratch.arena, destination).arrangement;
-    B32 may_close = rd_dock_floating_panel_from_cfg(destination) != &cfg_nil_node &&
-      rd_arrangement_panel_from_cfg(workspace, source->id) != &rd_nil_arrangement_panel;
-    if(rd_arrangement_settle(left, rd_arrangement_panel_from_cfg(left, source->id)->id, dir, rd_tab_is_shown, may_close))
+    RD_ArrangementPanel *left_panel = rd_arrangement_panel_from_cfg(left, source->id);
+    B32 may_close = left_panel->tab_count == 0 || (rd_dock_floating_panel_from_cfg(destination) != &cfg_nil_node &&
+      rd_arrangement_panel_from_cfg(workspace, source->id) != &rd_nil_arrangement_panel);
+    if(rd_arrangement_settle(left, left_panel->id, dir, rd_tab_is_shown, may_close))
     { rd_arrangement_save(rd_state->cfg, left); }
     scratch_end(scratch);
   }
@@ -911,6 +913,7 @@ uishell_dispatch_tab_command(String8 name)
     if(!rd_dock_command_allowed("close", tab->string, rd_dock_closure(tab))) { scratch_end(scratch); return 1; }
     RD_Arrangement *arrangement = uishell_arrangement_from_cfg(scratch.arena, tab);
     RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(arrangement, tab->id);
+    B32 focused = rd_panel_tree_from_arrangement(scratch.arena, arrangement).focused->cfg->id == panel->cfg;
     if(panel->selected == tab->id)
     {
       B32 found_selected = 0;
@@ -936,7 +939,20 @@ uishell_dispatch_tab_command(String8 name)
         uishell_push_cmd_current(str8_lit("focus_tab"));
       }
     }
-    if(rd_arrangement_remove_tab(arrangement, tab->id)) { rd_arrangement_save(rd_state->cfg, arrangement); }
+    if(rd_arrangement_remove_tab(arrangement, tab->id))
+    {
+      // A panel left with no tabs goes, and its siblings grow into its space
+      // (#358); a root panel stays. Focus passes to its heir.
+      RD_PanelID heir = panel->tab_count == 0 ? rd_arrangement_close(arrangement, panel->id) : 0;
+      rd_arrangement_save(rd_state->cfg, arrangement);
+      if(heir != 0 && focused)
+      {
+        UIShell_RegsScope(.panel = rd_arrangement_panel_from_id(arrangement, heir)->cfg)
+        {
+          uishell_push_cmd_current(str8_lit("focus_panel"));
+        }
+      }
+    }
     scratch_end(scratch);
   }
   else if(str8_match(name, str8_lit("move_view"), 0))
@@ -1063,9 +1079,6 @@ uishell_dispatch_panel_command(String8 name)
       RD_PanelID split_id = rd_arrangement_panel_from_cfg(arrangement, split_panel->id)->id;
       CFG_Node *dragdrop_origin_panel_cfg = cfg_node_from_id(uishell_regs()->panel);
       B32 do_drop = do_dragdrop_split && moving_view != &cfg_nil_node && dragdrop_origin_panel_cfg != &cfg_nil_node;
-      // Closing the focused source hands focus to its heir, after the new
-      // panel takes it below.
-      B32 origin_focused = panel_tree.focused->cfg == dragdrop_origin_panel_cfg;
       RD_ArrangementDrop drop = {0};
       if(do_drop) { drop = uishell_drop_view(arrangement, moving_view, split_panel, split_dir, &cfg_nil_node); }
       else
@@ -1146,14 +1159,6 @@ uishell_dispatch_panel_command(String8 name)
         UIShell_RegsScope(.panel = new_panel_cfg->id)
         {
           uishell_push_cmd_current(str8_lit("tab_bar_bottom"));
-        }
-      }
-
-      if(drop.heir != 0 && origin_focused)
-      {
-        UIShell_RegsScope(.panel = rd_arrangement_panel_from_id(arrangement, drop.heir)->cfg)
-        {
-          uishell_push_cmd_current(str8_lit("focus_panel"));
         }
       }
     }

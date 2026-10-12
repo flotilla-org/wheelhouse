@@ -160,7 +160,13 @@ def check(executable):
                 return path.read_bytes() if path.exists() else b""
 
             def render_log():
-                return log_path.read_bytes() if log_path.exists() else b""
+                # Wheelhouse may have the log open for writing, which on
+                # Windows can refuse a read; the callers poll, so the next
+                # poll reads it.
+                try:
+                    return log_path.read_bytes() if log_path.exists() else b""
+                except PermissionError:
+                    return b""
 
             log_path = directory / "logs/ui_thread.uishell_log"
             def diagnostics():

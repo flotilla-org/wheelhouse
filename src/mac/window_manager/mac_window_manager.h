@@ -92,6 +92,7 @@ struct MAC_WM_FileDropNode
 @interface MAC_WM_MenuTarget : NSObject<NSMenuDelegate, NSApplicationDelegate>
 - (void)menuItemSelected:(id)sender;
 - (void)finishMenuTracking;
+- (void)handleQuitEvent:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)reply;
 @end
 
 #define MAC_WM_TITLE_BAR_CLIENT_AREA_CAP 128
@@ -138,6 +139,7 @@ struct MAC_WM_State
   MAC_WM_FileDropNode *free_file_drop_node;
   B32 key_is_down[WM_Key_COUNT];
   B32 suppress_reentrant_frame; // set during toggleFullScreen: - its synchronous notifications must not re-enter the frame hook
+  NSAppleEventManagerSuspensionID quit_suspension; // the quit Apple Event, answered once teardown is done
 };
 
 global MAC_WM_State *mac_wm_state = 0;
@@ -154,6 +156,9 @@ internal MAC_WM_Window *mac_wm_window_to_focus_after_close(MAC_WM_Window *window
 internal Vec2F32 mac_wm_close_menu_pos_from_window(MAC_WM_Window *window);
 internal void mac_wm_push_menu_command_for_window_at_pos(MAC_WM_Window *window, String8 command_name, Vec2F32 pos);
 internal void mac_wm_push_menu_command_for_window(MAC_WM_Window *window, String8 command_name);
+// Exit's teardown is done: agrees to a quit the system asked for (logout,
+// shutdown, Quit from the Dock), which waits for this answer.
+internal void mac_wm_quit_finished(void);
 internal B32 mac_wm_pasteboard_has_file_paths(NSPasteboard *pasteboard);
 internal void mac_wm_push_file_drop(MAC_WM_Window *window, Vec2F32 pos, NSPasteboard *pasteboard);
 internal MAC_WM_ChromeMode mac_wm_chrome_mode_from_window_decorations(B32 enabled);

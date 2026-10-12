@@ -18,9 +18,11 @@ int main(void)
   // same preparation function runs in the real app before Cleat is opened.
   char const *flags[] = {"NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "FORCE_COLOR",
     "CI", "GITHUB_ACTIONS", "CODEX_CI", "CODEX_THREAD_ID", "CLAUDECODE",
-    "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID"};
+    "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLEAT_SESSION",
+    "CLEAT_DAEMON", "CLEAT_OUTPUT_DAEMON"};
   char const *keep[] = {"PATH", "TERM", "TERM_PROGRAM", "COLORTERM",
-    "WHEELHOUSE_SOCKET", "FLOTILLA_BIN", "WHEELHOUSE_ENV_TEST_CREDENTIAL"};
+    "WHEELHOUSE_SOCKET", "FLOTILLA_BIN", "WHEELHOUSE_ENV_TEST_CREDENTIAL",
+    "CLEAT_RUNTIME_DIR"};
   for(size_t i = 0; i < sizeof(flags)/sizeof(flags[0]); i++)
   { set_test_variable(flags[i], i%2 ? "runner" : ""); }
   for(size_t i = 0; i < sizeof(keep)/sizeof(keep[0]); i++)

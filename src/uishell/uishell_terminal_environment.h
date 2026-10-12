@@ -12,6 +12,10 @@
 // do not give new shells the enclosing runner's colour policy or agent identity.
 // Run once at startup, before opening providers or starting GUI worker threads.
 // Cleat owns TERM/TERM_PROGRAM/COLORTERM; do not replace its terminal identity.
+// An enclosing Cleat session's identity (CLEAT_SESSION, CLEAT_DAEMON,
+// CLEAT_OUTPUT_DAEMON) names that session, not ours: in-process terminals get
+// no coordinates, and a daemon sets its own children's. CLEAT_RUNTIME_DIR
+// stays: it is also where Wheelhouse's own daemon-backed terminals live.
 static int
 uishell_prepare_terminal_environment(void)
 {
@@ -20,6 +24,7 @@ uishell_prepare_terminal_environment(void)
     "NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "FORCE_COLOR",
     "CI", "GITHUB_ACTIONS", "CODEX_CI", "CODEX_THREAD_ID",
     "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
+    "CLEAT_SESSION", "CLEAT_DAEMON", "CLEAT_OUTPUT_DAEMON",
   };
   int good = 1;
   for(size_t i = 0; i < sizeof(names)/sizeof(names[0]); i++)
