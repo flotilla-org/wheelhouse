@@ -10257,6 +10257,27 @@ uishell_route_command_activation(Arena *arena, RD_WindowState *ws, WM_Event *eve
   return take;
 }
 
+// Closes a window state whose config is gone or untouched, with its sidebar
+// (Andamento core) and native window.
+internal void
+rd_window_state_release(RD_WindowState *ws)
+{
+  U64 slot_idx = u64_djb2_hash_from_str8(str8_struct(&ws->cfg_id))%rd_state->window_state_slots_count;
+  rd_drag_kill_from_window(ws->cfg_id);
+  uishell_sidebar_release(ws->sidebar);
+  ui_state_release(ws->ui);
+  r_window_unequip(ws->os, ws->r);
+  wm_window_close(ws->os);
+  arena_release(ws->drop_completion_arena);
+  arena_release(ws->query_arena);
+  arena_release(ws->hover_eval_arena);
+  arena_release(ws->autocomp_arena);
+  arena_release(ws->arena);
+  DLLRemove_NPZ(&rd_nil_window_state, rd_state->first_window_state, rd_state->last_window_state, ws, order_next, order_prev);
+  DLLRemove_NP(rd_state->window_state_slots[slot_idx].first, rd_state->window_state_slots[slot_idx].last, ws, hash_next, hash_prev);
+  SLLStackPush_N(rd_state->free_window_state, ws, order_next);
+}
+
 internal void
 rd_frame(void)
 {
@@ -11396,19 +11417,7 @@ rd_frame(void)
         CFG_Node *cfg = cfg_node_from_id(ws->cfg_id);
         if(cfg == &cfg_nil_node || ws->last_frame_index_touched < rd_state->frame_index || rd_state->quit)
         {
-          rd_drag_kill_from_window(ws->cfg_id);
-          uishell_sidebar_release(ws->sidebar);
-          ui_state_release(ws->ui);
-          r_window_unequip(ws->os, ws->r);
-          wm_window_close(ws->os);
-          arena_release(ws->drop_completion_arena);
-          arena_release(ws->query_arena);
-          arena_release(ws->hover_eval_arena);
-          arena_release(ws->autocomp_arena);
-          arena_release(ws->arena);
-          DLLRemove_NPZ(&rd_nil_window_state, rd_state->first_window_state, rd_state->last_window_state, ws, order_next, order_prev);
-          DLLRemove_NP(rd_state->window_state_slots[slot_idx].first, rd_state->window_state_slots[slot_idx].last, ws, hash_next, hash_prev);
-          SLLStackPush_N(rd_state->free_window_state, ws, order_next);
+          rd_window_state_release(ws);
         }
       }
     }
