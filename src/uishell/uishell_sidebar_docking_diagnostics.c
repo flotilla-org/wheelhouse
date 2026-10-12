@@ -266,6 +266,127 @@ uishell_sidebar_docking_variable(AndamentoSnapshot *snapshot, String8 variable)
   return -1;
 }
 
+// Closing a middle section with its close button closes its panel too
+// (#358): no empty leaf stays between the sections either side of it, and
+// the boundary between them drags, moving their saved sizes. On a sidebar
+// of its own, built from the fixture, as the saved header check's is.
+internal B32
+uishell_sidebar_close_middle_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *split)
+{
+  U32 failures = 0;
+#define CloseFailure(expr) do { if(expr) { failures++; fprintf(stderr, "FAIL sidebar close line %u: %s\n", __LINE__, #expr); } } while(0)
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *window = split->owner_cfg;
+  CFG_Node *saved_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+  CFG_Node *saved_inventory = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
+  CFG_Node *saved_sizing = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized"));
+  cfg_node_unhook(rd_state->cfg, window, saved_host);
+  cfg_node_unhook(rd_state->cfg, window, saved_inventory);
+  cfg_node_unhook(rd_state->cfg, window, saved_sizing);
+  UIShell_SidebarState *saved_sidebar = ws->sidebar;
+  UIShell_SidebarState fixture = {.initialized = 1};
+  String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
+  char *error = 0;
+  fixture.core = andamento_create(daily.str, daily.size, &error);
+  CloseFailure(!uishell_sidebar_result(&fixture, fixture.core != 0, error));
+  uishell_sidebar_refresh(&fixture);
+  ws->sidebar = &fixture;
+  fixture.window = window->id;
+  UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc(); ui_select_state(test_ui);
+  Rng2F32 rect = r2f32p(17, 29, 337, 769);
+  for(U32 frame = 0; frame < 3; frame++)
+  {
+    UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = v2f32(-100, -100);
+    UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_control_surface_ui(rect, split); }
+    ui_end_build();
+  }
+  // Three stacked sections, each alone in its leaf and shown.
+  RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
+  RD_ArrangementPanel *middle = &rd_nil_arrangement_panel;
+  for(RD_ArrangementPanel *p = sidebar->root->first; p != &rd_nil_arrangement_panel && middle == &rd_nil_arrangement_panel; p = p->next)
+  {
+    B32 stacked = p->prev != &rd_nil_arrangement_panel && p->next != &rd_nil_arrangement_panel;
+    for(RD_ArrangementPanel *q = p->prev; stacked && q != p->next->next; q = q->next)
+    {
+      CFG_Node *view = q->first_tab ? cfg_node_from_id(q->first_tab->view) : &cfg_nil_node;
+      stacked = q->first == &rd_nil_arrangement_panel && q->tab_count == 1 && str8_match(view->string, str8_lit("sidebar_section"), 0) &&
+        !uishell_sidebar_view_hidden(view) && !uishell_sidebar_section_collapsed(view);
+    }
+    if(stacked) { middle = p; }
+  }
+  CloseFailure(middle == &rd_nil_arrangement_panel);
+  if(middle != &rd_nil_arrangement_panel)
+  {
+    CFG_Node *above = cfg_node_from_id(middle->prev->cfg), *below = cfg_node_from_id(middle->next->cfg);
+    CFG_Node *closing = cfg_node_from_id(middle->first_tab->view);
+    CFG_ID middle_cfg = middle->cfg;
+    UIShell_CmdNode *before = rd_state->cmds[0].last;
+    UIShell_RegsScope(.window = window->id, .panel = middle_cfg, .view = closing->id, .tab = closing->id)
+    { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+    uishell_sidebar_docking_drain(before);
+    CloseFailure(cfg_node_from_id(middle_cfg) != &cfg_nil_node);
+    // Sized by hand, evenly, so both sides have room to give.
+    U64 count = 0;
+    for(CFG_Node *c = above->parent->first; c != &cfg_nil_node; c = c->next) { count += rd_dock_is_container(c); }
+    for(CFG_Node *c = above->parent->first; c != &cfg_nil_node; c = c->next)
+    { if(rd_dock_is_container(c)) { cfg_node_equip_stringf(rd_state->cfg, c, "%f", 1.f/Max(1, count)); } }
+    uishell_sidebar_manual_sizing(window, 1);
+    // Drag the boundary above the section below down, through real events.
+    String8 above_before = {0};
+    Vec2F32 start = {0};
+    B32 found = 0;
+    for(U32 frame = 0; frame < 8; frame++)
+    {
+      UI_Box *boundary = ui_box_from_key(ui_key_from_stringf(ui_state->root->key, "###%p_%p", above, below));
+      UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0};
+      UI_EventList events = {0}; UI_EventNode event = {0};
+      if(frame == 3)
+      {
+        found = !ui_box_is_nil(boundary);
+        start = center_2f32(boundary->rect);
+        above_before = push_str8_copy(scratch.arena, above->string);
+      }
+      if(found && frame >= 3 && frame <= 5)
+      {
+        event.v = (UI_Event){.key = WM_Key_LeftMouseButton,
+          .kind = frame == 3 ? UI_EventKind_Press : frame == 4 ? UI_EventKind_MouseMove : UI_EventKind_Release,
+          .pos = add_2f32(start, v2f32(0, frame == 3 ? 0 : 24)), .timestamp_us = 20000000+frame*20000};
+        events.first = events.last = &event; events.count = 1;
+      }
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = events.count ? event.v.pos : v2f32(-100, -100);
+      UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_control_surface_ui(rect, split); }
+      ui_end_build();
+    }
+    sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
+    B32 empty = 0;
+    for(RD_ArrangementPanel *p = sidebar->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(sidebar->root, p))
+    { empty |= p != sidebar->root && p->first == &rd_nil_arrangement_panel && p->tab_count == 0; }
+    CloseFailure(empty);
+    CloseFailure(above->next != below);
+    CloseFailure(!found);
+    CloseFailure(found && (F32)f64_from_str8(above->string) <= (F32)f64_from_str8(above_before)+.0001f);
+  }
+  ui_kill_action();
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT));
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_generation")));
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")));
+  if(saved_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_host); }
+  if(saved_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_inventory); }
+  if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_sizing); }
+  ws->sidebar = saved_sidebar;
+  // Releasing it as a window's would release the window's local sections.
+  fixture.window = 0;
+  uishell_sidebar_release(&fixture);
+  ui_select_state(saved_ui); ui_state_release(test_ui); scratch_end(scratch);
+#undef CloseFailure
+  return failures == 0;
+}
+
 internal B32
 uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
 {
@@ -298,6 +419,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!uishell_sidebar_tab_overflow_diagnostics(ws));
   DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 1));
   DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 0));
+  DockFailure(!uishell_sidebar_close_middle_diagnostics(ws, &split));
   // Two adjacent scrolling sections: Andamento places pinned regions
   // (controls) first, so they're found by key, not position.
   CFG_Node *first_panel = uishell_sidebar_region_view(window, str8_lit("tree"))->parent, *second_panel = first_panel->next;
@@ -954,12 +1076,13 @@ uishell_section_placement_diagnostics(String8 source_path)
   U64 generation = cfg_change_gen(), title_builds = p.sidebar.title_builds;
   uishell_section_placement_frame(&p);
   PlacementCheck(cfg_change_gen() == generation && p.sidebar.title_builds == title_builds && p.sidebar.sidebar_commits == commits+1);
-  // An unrelated, intentionally empty saved panel stays.
-  CFG_Node *reserved_panel = cfg_node_new(state.cfg, host, str8_lit("0.25"));
-  CFG_ID reserved_id = reserved_panel->id;
+  // An empty saved panel shows nothing: it goes, and the commit after
+  // records the sidebar without it (#358).
+  CFG_Node *empty_panel = cfg_node_new(state.cfg, host, str8_lit("0.25"));
+  CFG_ID empty_id = empty_panel->id;
+  commits = p.sidebar.sidebar_commits;
   uishell_section_placement_frame(&p);
-  PlacementCheck(cfg_node_from_id(reserved_id) == reserved_panel);
-  cfg_node_release(state.cfg, reserved_panel);
+  PlacementCheck(cfg_node_from_id(empty_id) == &cfg_nil_node && p.sidebar.sidebar_commits == commits+1);
   // Duplicates, as a hand edit or an old layout saves them: the first copy
   // in the dock wins, and Floating Panels come after the dock. A panel the
   // repair empties goes; unrelated content and its panel's share stay.

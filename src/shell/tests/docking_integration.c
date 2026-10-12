@@ -458,6 +458,40 @@ entry_point(CmdLine *cmdline)
     }
     IntegrationCheck(last_focus == source->parent->id);
   }
+  // Closing a panel's last tab closes the panel (#358): the panel beside it
+  // takes its space and, when it had focus, focus. The last panel stays.
+  {
+    panels = integration_reset_panels(window, Axis2_X);
+    CFG_Node *left = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
+    CFG_Node *middle = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
+    CFG_Node *right = cfg_node_new(rd_state->cfg, panels, str8_lit("0.4"));
+    cfg_node_new(rd_state->cfg, left, str8_lit("terminal"));
+    CFG_Node *closing = cfg_node_new(rd_state->cfg, middle, str8_lit("terminal"));
+    cfg_node_new(rd_state->cfg, middle, str8_lit("selected"));
+    CFG_Node *kept = cfg_node_new(rd_state->cfg, right, str8_lit("terminal"));
+    CFG_ID middle_id = middle->id;
+    UIShell_CmdNode *before_cmd = rd_state->cmds[0].last;
+    UIShell_RegsScope(.window = window->id, .panel = middle->id, .tab = closing->id) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+    IntegrationCheck(cfg_node_from_id(middle_id) == &cfg_nil_node);
+    RD_Arrangement *closed = rd_arrangement_from_cfg(scratch.arena, panels);
+    IntegrationCheck(closed->root->child_count == 2);
+    F32 weights = 0;
+    for(RD_ArrangementPanel *p = closed->root->first; p != &rd_nil_arrangement_panel; p = p->next) { weights += p->weight; }
+    IntegrationCheck(abs_f32(weights-1.f) < .001f);
+    CFG_ID last_focus = 0;
+    for(UIShell_CmdNode *n = before_cmd ? before_cmd->next : rd_state->cmds[0].first; n; n = n->next)
+    { if(str8_match(n->cmd.name, str8_lit("focus_panel"), 0)) { last_focus = n->cmd.regs->panel; } }
+    IntegrationCheck(last_focus == left->id);
+    // The two left collapse into one when either closes; the last stays.
+    CFG_Node *other = left->first;
+    while(other != &cfg_nil_node && !str8_match(other->string, str8_lit("terminal"), 0)) { other = other->next; }
+    UIShell_RegsScope(.window = window->id, .panel = left->id, .tab = other->id) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+    closed = rd_arrangement_from_cfg(scratch.arena, cfg_node_child_from_string(window, str8_lit("panels")));
+    IntegrationCheck(closed->root->first == &rd_nil_arrangement_panel && rd_arrangement_panel_from_view(closed, kept->id) == closed->root);
+    UIShell_RegsScope(.window = window->id, .panel = kept->parent->id, .tab = kept->id) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+    closed = rd_arrangement_from_cfg(scratch.arena, cfg_node_child_from_string(window, str8_lit("panels")));
+    IntegrationCheck(closed->root != &rd_nil_arrangement_panel && closed->root->tab_count == 0);
+  }
   integration_rect.y1 = 480;
   // A shown target is remeasured when the drop is committed after a resize.
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
