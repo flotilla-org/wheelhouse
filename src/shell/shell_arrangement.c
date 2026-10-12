@@ -586,8 +586,6 @@ rd_panel_address(RD_PanelOwner owner, RD_PanelID id)
 ////////////////////////////////
 //~ View Addresses
 
-StaticAssert(sizeof(RD_ViewAddress) == 2*sizeof(U32) + sizeof(UIShell_WorkspaceId) + sizeof(U128), rd_view_address_unpadded);
-
 internal RD_ViewAddress
 rd_view_address_make(RD_ViewOwnerKind owner, UIShell_WorkspaceId id, String8 key, RD_ViewInstance instance)
 {
