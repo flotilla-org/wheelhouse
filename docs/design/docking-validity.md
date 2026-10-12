@@ -52,11 +52,12 @@ another Controlled Split are refused because they would remove one split's
 only Control Surface and add a second to the other. Nested Controlled Splits
 will supply their own binding identities in #164.
 
-The configuration adapter recognizes `panels` and numeric split children,
-`control_views` (sidebar declarations), and `floating_panels`. The latter two
-are placement declarations, not newly rendered docking hosts. At frame
-boundaries and immediately after loading config, configuration changes trigger
-repair of saved window layouts; mount getters never mutate or release nodes.
+Restore checks a window's typed arrangements (`rd_dock_restore`): its
+sidebar's, its root-level Floating Panels', its own panels', and each
+Workspace's with its Floating Panels'. The sidebar and root-level Floating
+Panels are placement declarations, not newly rendered docking hosts. At frame
+boundaries and immediately after loading, a change to any arrangement triggers
+repair of the window's layouts; mount getters never mutate or set arrangements.
 Invalid placements return to their registered default: the sidebar or the
 first Panel leaf of their Workspace (the first remembered Workspace when the
 source has no Workspace). View identity and settings are retained. Duplicate
@@ -116,7 +117,7 @@ its temporary panel tree before returning.
 
 
 Projects, Sessions, Attention and Git are `sidebar_section` Views in the
-window's `control_views` panel tree, the live copy of the Dashboard's sidebar
+window's sidebar arrangement, the live copy of the Dashboard's sidebar
 arrangement that Andamento keeps (`src/uishell/uishell_sidebar_store.c`). The shared panel renderer gives every sidebar
 panel a section header, whose titles are its Views' tabs. Ordinary workspace
 content uses normal tabs. Placement creation, moves, drops and restore use the existing

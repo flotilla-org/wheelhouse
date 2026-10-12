@@ -345,15 +345,16 @@ uishell_default_workspace_panels(CFG_Node *window, CFG_Node *panels_owner)
 {
   // A text panel beside a narrower output panel, replacing what was there.
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *arrangement = rd_arrangement_from_owner(scratch.arena, panels_owner, str8_lit("panels"));
+  RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, panels_owner, 0);
+  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, owner);
   RD_PanelID main_panel = rd_arrangement_clear(arrangement);
   RD_PanelID side_panel = rd_arrangement_split(arrangement, main_panel, Dir2_Right);
   rd_arrangement_resize(arrangement, main_panel, 0.22f, 0);
   rd_new_view_tab(arrangement, main_panel, str8_lit("text"), str8_zero());
   rd_new_view_tab(arrangement, side_panel, str8_lit("text"), str8_lit("query:output"));
-  rd_arrangement_save(rd_state->cfg, arrangement);
+  rd_arrangement_set(arrangement);
   // The main panel has focus (its Presentation State).
-  rd_panel_focus_mark(rd_panel_address(rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, panels_owner, 0), main_panel));
+  rd_panel_focus_mark(rd_panel_address(owner, main_panel));
   scratch_end(scratch);
   
   RD_WindowState *ws = rd_window_state_from_cfg(window);

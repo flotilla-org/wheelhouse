@@ -14,6 +14,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import workspace_seed
+
 
 READY_MARKER = "WheelhouseInputReady"
 
@@ -119,16 +122,12 @@ def check(executable):
         directory = Path(tmp)
         expression = subprocess.list2cmdline([
             sys.executable, str(Path(__file__).resolve()), "--child", tmp])
-        expression = expression.replace("\\", "\\\\").replace('"', '\\"')
-        # Windows are a Dashboard's Presentation State, kept beside an explicit --user file.
+        # Windows are a Dashboard's Presentation State, kept beside an explicit
+        # --user file; the window's tab is its workspace record's, in the Dashboard.
         (directory / "dashboard").mkdir()
         (directory / "dashboard" / "id").write_text("input")
-        (directory / "presentation").mkdir()
-        (directory / "presentation" / "input.wheelhouse").write_text(
-            '// uishell 0.1.0 presentation file\nwindow:\n{\n  size: 900 600\n'
-            '  panels:\n  {\n    1.0:\n    {\n      terminal:\n      {\n'
-            f'        expression: "{expression}"\n        selected\n'
-            '      }\n      selected\n    }\n  }\n}\n')
+        workspace_seed.seed(directory / "dashboard", directory / "presentation" / "input.wheelhouse",
+                            [workspace_seed.terminal(expression)])
         (directory / "project").write_text("// isolated input regression\n")
         started = time.monotonic()
         process = subprocess.Popen([str(executable), "--terminal_glyph_trace",

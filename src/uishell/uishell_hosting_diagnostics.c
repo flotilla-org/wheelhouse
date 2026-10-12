@@ -18,13 +18,14 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
     HostingCheck(str8_match(setting.action, i == 0 ? str8_lit("Hosting unavailable") : i == 1 ? str8_lit("Hand to daemon") : str8_lit("Adopt"), 0), "action label follows hosting");
   }
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
-  // An arrangement of its own beside the window's, so its Views have
+  // A workspace of its own beside the window's, so its Views have
   // addresses of their own.
-  CFG_Node *panel = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, window, str8_lit("hosting_diagnostic")), str8_lit("panels"));
-  CFG_Node *view = rd_cfg_new_view_tab(panel, str8_lit("terminal"), str8_zero(), 1);
+  CFG_Node *host = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+  RD_PanelAddress panel = rd_fixture_leaf(rd_fixture_owner(host));
+  CFG_Node *view = rd_fixture_view(panel, str8_lit("terminal"), str8_zero(), 1);
   // A never-built, unselected terminal has no runtime state. Hosting lookup
   // must safely report unavailable and leave the action disabled.
-  CFG_Node *untouched = rd_cfg_new_view_tab(panel, str8_lit("terminal"), str8_zero(), 0);
+  CFG_Node *untouched = rd_fixture_view(panel, str8_lit("terminal"), str8_zero(), 0);
   B32 had_state = 0;
   for(U64 slot = 0; slot < rd_state->view_state_slots_count; slot++)
   {
@@ -35,7 +36,7 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
   UIShell_RuntimeSetting untouched_setting = uishell_runtime_setting(scratch.arena, untouched, str8_lit("terminal_hosting"));
   HostingCheck(str8_match(untouched_setting.value, str8_lit("unavailable"), 0) && untouched_setting.command.size == 0,
                "never-built hidden terminal is unavailable with no action");
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(panel), .tab = rd_view_address_from_cfg(view), .view = rd_view_address_from_cfg(view))
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = rd_view_address_from_cfg(view), .view = rd_view_address_from_cfg(view))
   {
     // Issue #109: hosting overlay is per-view and absent means off.
     // The overlay is the View's Presentation State.
@@ -90,7 +91,7 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
       ui_end_build();
     }
     // Exercise the same schema-driven lister used by Selected Tab Settings.
-    CFG_Node *settings = rd_cfg_new_view_tab(panel, str8_lit("watch"),
+    CFG_Node *settings = rd_fixture_view(panel, str8_lit("watch"),
                                            push_str8f(scratch.arena, "query:config.$%I64x", view->id), 0);
     cfg_node_new(rd_state->cfg, settings, str8_lit("lister"));
     B32 saw_value = 0, saw_action = 0;
@@ -145,7 +146,8 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
                  cfg_node_child_from_string(view, str8_lit("hosting_action")) == &cfg_nil_node, "runtime metadata is not persisted");
     uishell_terminal_runtime_release(tv);
   }
-  cfg_node_release(rd_state->cfg, panel->parent);
+  cfg_node_release(rd_state->cfg, host);
+  rd_arrangements_release_unowned();
 #undef HostingCheck
   scratch_end(scratch);
   return failures == 0;

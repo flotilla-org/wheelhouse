@@ -312,25 +312,29 @@ struct UIShell_SidebarState
   UIShell_WorkspaceId *observed;
   U64 observed_count;
   // Workspace arrangements and Slots in Andamento (uishell_workspace_store.c):
-  // each workspace's document as last committed or built; the config gen,
-  // workspaces' tree hash, content revision and snapshot count last synced;
-  // and the calls and
-  // commits made, which the behaviour harness counts across a gesture.
+  // each workspace's arrangement as last committed or followed; the config
+  // gen, arrangement version, content revision and snapshot count last
+  // synced; and the calls and commits made, which the behaviour harness
+  // counts across a gesture.
   Arena *store_arena;
   UIShell_StoreEntry *store_entries;
   U64 store_entry_count, store_entry_capacity;
   B32 store_synced;
-  U64 store_cfg_gen, store_tree_hash, store_content_revision, store_snapshot_count;
+  U64 store_cfg_gen, store_arrangement_version, store_content_revision, store_snapshot_count;
   U64 store_calls, store_commits;
   // What Andamento last said of the Workspace Overlays (flags, tombstones;
   // uishell_store_read_overlay).
   Arena *store_overlay_arena;
   // The Dashboard's sidebar arrangement in Andamento (uishell_sidebar_store.c):
-  // the document as last committed or built, and its generation; the
-  // snapshot count last synced; what Andamento's notes say is
-  // closed and what no longer resolves (template drift); and the commits
-  // made, which the behaviour harness counts across a gesture.
-  U64 sidebar_hash, sidebar_generation;
+  // its arrangements' version as last committed or followed, the document
+  // then, and its generation; the snapshot count last synced; what
+  // Andamento's notes say is closed and what no longer resolves (template
+  // drift); and the commits made, which the behaviour harness counts across
+  // a gesture.
+  U64 sidebar_version, sidebar_generation;
+  Arena *sidebar_seen_arena;
+  AndamentoSidebarDoc sidebar_seen;
+  B32 sidebar_seen_valid;
   B32 sidebar_synced;
   U64 sidebar_snapshot_count;
   Arena *sidebar_notes_arena;
@@ -572,7 +576,9 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     if(state->sidebar_notes_arena) { arena_release(state->sidebar_notes_arena); state->sidebar_notes_arena = 0; }
     state->sidebar_closed = state->sidebar_gone = 0;
     state->sidebar_closed_count = state->sidebar_gone_count = 0;
-    state->sidebar_hash = state->sidebar_generation = 0;
+    state->sidebar_version = state->sidebar_generation = 0;
+    if(state->sidebar_seen_arena) { arena_release(state->sidebar_seen_arena); state->sidebar_seen_arena = 0; }
+    state->sidebar_seen_valid = 0;
     state->sidebar_synced = 0;
     uishell_sidebar_labels_invalidate(state);
     if(state->labels_arena) { arena_release(state->labels_arena); state->labels_arena = 0; }
@@ -771,19 +777,19 @@ uishell_sidebar_workdirs(Arena *arena, UIShell_ControlledSplit *split)
   for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
   {
     CFG_Node *workspace = w->mount.owner_cfg;
-    RD_Arrangement *arrangement = rd_arrangement_from_owner(arena, workspace, str8_lit("panels"));
+    RD_Arrangement *arrangement = rd_arrangement_live(w->mount.owner);
     for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p))
     {
       for(RD_ArrangementTab *tab = p->first_tab; tab; tab = tab->next)
       {
-        CFG_Node *view = cfg_node_from_id(tab->view);
+        CFG_Node *view = rd_cfg_from_view(tab->view);
         if(!str8_match(view->string, str8_lit("terminal"), 0)) { continue; }
         CFG_Node *cwd_node = cfg_node_child_from_string(view, str8_lit("cwd"));
         if(cwd_node == &cfg_nil_node || cwd_node->first == &cfg_nil_node) { continue; }
         String8 cwd = cwd_node->first->string;
         if(!cwd.size) { continue; }
         UIShell_Workdir *dir = push_array(arena, UIShell_Workdir, 1);
-        dir->value = (WheelhouseWorkdir){w->id, tab->view,
+        dir->value = (WheelhouseWorkdir){w->id, view->id,
           uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string),
           uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string),
           uishell_ingress_text(cwd), {0}};
@@ -945,24 +951,40 @@ read_only global String8 uishell_sidebar_default_local_id = str8_lit_comp("works
 internal void uishell_sidebar_pin_migrate(CFG_Node *window);
 internal AndamentoDashboard *uishell_sidebar_dashboard(UIShell_SidebarState *state);
 
+// A tab of the sidebar's arrangements, as UIShell_SidebarDocks found it: its
+// View (nil once removed) and where it is.
+typedef struct UIShell_SidebarDockView UIShell_SidebarDockView;
+struct UIShell_SidebarDockView
+{
+  UIShell_SidebarDockView *next;
+  RD_ViewAddress view;
+  CFG_Node *node;
+  RD_Arrangement *arrangement;
+  U64 index;
+  RD_PanelID panel;
+};
+
 // An owner's sidebar and its Floating Panels as the sidebar's edits outside
 // docking see them (the pinned_cards migration, closing a local section's
-// Views, building the live copy from Andamento's document): each loaded
-// once, edited through its arrangement and saved together. `views` is the
-// pre-pass over both, the sidebar first; a View removed since has a nil node.
+// Views, following Andamento's document): each copied once, edited and set
+// together. `arrangements` are the dock, then each Floating Panel; `first`
+// is every tab of them, in that order.
 typedef struct UIShell_SidebarDocks UIShell_SidebarDocks;
 struct UIShell_SidebarDocks
 {
   CFG_Node *owner;
-  RD_DockDocuments documents;
-  RD_DockDocument *sidebar;
-  RD_DockSavedViewList views;
+  Arena *arena;
+  RD_Arrangement **arrangements;
+  B32 *dirty;
+  U64 count;
+  UIShell_SidebarDockView *first;
+  UIShell_SidebarDockView *last;
 };
 
 internal String8 uishell_sidebar_section_key(CFG_Node *view);
 internal UIShell_SidebarDocks uishell_sidebar_docks(Arena *arena, CFG_Node *owner);
-internal void uishell_sidebar_docks_remove(UIShell_SidebarDocks *docks, RD_DockSavedView *view);
-internal void uishell_sidebar_docks_save(UIShell_SidebarDocks *docks);
+internal void uishell_sidebar_docks_remove(UIShell_SidebarDocks *docks, UIShell_SidebarDockView *view);
+internal void uishell_sidebar_docks_set(UIShell_SidebarDocks *docks);
 
 //- Reading them
 
@@ -1820,7 +1842,8 @@ uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *res
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *primary_tab = &cfg_nil_node, *overflow_tab = &cfg_nil_node;
   CFG_Node **tabs = push_array(scratch.arena, CFG_Node *, count);
-  RD_Arrangement *arrangement = rd_arrangement_from_owner(scratch.arena, workspace, str8_lit("panels"));
+  RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, workspace, 0);
+  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, owner);
   RD_PanelID primary = rd_arrangement_clear(arrangement), overflow = primary;
   if(count > 1)
   {
@@ -1834,25 +1857,30 @@ uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *res
 #if OS_WINDOWS
     command = resource->windows_command;
 #endif
-    CFG_Node *tab = rd_new_view_tab(arrangement, i == 0 ? primary : overflow, str8_lit("terminal"), str8_cstring(command));
+    // Keyed by the provider's slot it is made for, until the workspace
+    // store keys it.
+    CFG_Node *tab = rd_cfg_new_view_tab(rd_view_namespace(workspace, RD_ViewOwnerKind_Workspace), str8_lit("terminal"), str8_cstring(command), 0);
+    CFG_Node *id = cfg_node_new(rd_state->cfg, tab, str8_lit("resource_id"));
+    cfg_node_new(rd_state->cfg, id, str8_cstring(resource->id));
+    RD_PanelID panel = i == 0 ? primary : overflow;
+    RD_ArrangementTab *last = rd_arrangement_panel_from_id(arrangement, panel)->last_tab;
+    rd_arrangement_move_tab(arrangement, rd_view_address_from_cfg(tab), panel, last ? last->view : rd_nil_view_address);
     tabs[i] = tab;
     if(i == 0) { primary_tab = tab; }
     if(i == 1) { overflow_tab = tab; }
-    CFG_Node *id = cfg_node_new(rd_state->cfg, tab, str8_lit("resource_id"));
-    cfg_node_new(rd_state->cfg, id, str8_cstring(resource->id));
     if(cwd.size)
     {
       CFG_Node *dir = cfg_node_new(rd_state->cfg, tab, str8_lit("cwd"));
       cfg_node_new(rd_state->cfg, dir, cwd);
     }
   }
-  if(overflow_tab != &cfg_nil_node) { rd_arrangement_select(arrangement, overflow, overflow_tab->id); }
-  rd_arrangement_save(rd_state->cfg, arrangement);
-  // Each resource's label is its View's Presentation State, kept by the
-  // address saving gave it.
+  if(overflow_tab != &cfg_nil_node) { rd_arrangement_select(arrangement, overflow, rd_view_address_from_cfg(overflow_tab)); }
+  rd_arrangement_set(arrangement);
+  // Each resource's label is its View's Presentation State, kept by its
+  // address.
   for(U64 i = 0; i < count; i++) { rd_view_setting_set(rd_view_address_from_cfg(tabs[i]), str8_lit("label"), str8_cstring(resources[i].label)); }
   // The primary panel has focus (its Presentation State).
-  rd_panel_focus_mark(rd_panel_address(rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, workspace, 0), primary));
+  rd_panel_focus_mark(rd_panel_address(owner, primary));
   scratch_end(scratch);
   return primary_tab;
 }
@@ -2281,11 +2309,11 @@ internal void
 uishell_sidebar_select_view(CFG_Node *view)
 {
   Temp scratch = scratch_begin(0, 0);
-  RD_PanelOwner owner = rd_panel_owner_from_cfg(view);
-  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, owner);
-  RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(arrangement, view->id);
-  if(panel != &rd_nil_arrangement_panel && panel->selected != view->id && rd_arrangement_select(arrangement, panel->id, view->id))
-  { rd_arrangement_save(rd_state->cfg, arrangement); }
+  RD_ViewAddress address = rd_view_address_from_cfg(view);
+  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_from_view(address).owner);
+  RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(arrangement, address);
+  if(panel != &rd_nil_arrangement_panel && !rd_view_address_match(panel->selected, address) && rd_arrangement_select(arrangement, panel->id, address))
+  { rd_arrangement_set(arrangement); }
   scratch_end(scratch);
 }
 
@@ -2350,15 +2378,18 @@ uishell_sidebar_view_title(Arena *arena, CFG_Node *view)
   return dr_string_from_fstrs(arena, &fstrs);
 }
 
-// Whether a panel's child is one of its tabs, as rd_arrangement_from_cfg
-// reads them: an identifier that isn't a panel option.
-internal B32
-uishell_sidebar_is_tab(CFG_Node *c)
+// The Views of `panel`'s tabs that the current project shows, in order.
+internal CFG_NodePtrList
+uishell_sidebar_panel_tabs(Arena *arena, RD_PanelAddress panel)
 {
-  U8 first = c->string.size ? c->string.str[0] : 0;
-  return (char_is_alpha(first) || first == '_') && !str8_match(c->string, str8_lit("selected"), 0) &&
-    !cfg_panel_child_is_option(c->string) &&
-    !rd_cfg_is_project_filtered(c);
+  CFG_NodePtrList tabs = {0};
+  RD_ArrangementPanel *p = rd_arrangement_panel_from_id(rd_arrangement_live(panel.owner), panel.id);
+  for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
+  {
+    CFG_Node *view = rd_cfg_from_view(t->view);
+    if(view != &cfg_nil_node && !rd_cfg_is_project_filtered(view)) { cfg_node_ptr_list_push(arena, &tabs, view); }
+  }
+  return tabs;
 }
 
 // A whole section, dragged by its grip, drops all its Views together
@@ -2387,11 +2418,9 @@ uishell_sidebar_section_drop_apply(RD_WindowState *ws)
   if(!state || !state->section_drop) { return; }
   state->section_drop = 0;
   RD_PanelAddress source = state->section_drop_source, destination = state->section_drop_panel;
-  CFG_Node *source_cfg = rd_cfg_from_panel(source);
-  if(source_cfg == &cfg_nil_node || rd_cfg_from_panel(destination) == &cfg_nil_node) { return; }
+  if(!rd_panel_exists(source) || !rd_panel_exists(destination)) { return; }
   Temp scratch = scratch_begin(0, 0);
-  CFG_NodePtrList tabs = {0};
-  for(CFG_Node *c = source_cfg->first; c != &cfg_nil_node; c = c->next) { if(uishell_sidebar_is_tab(c)) { cfg_node_ptr_list_push(scratch.arena, &tabs, c); } }
+  CFG_NodePtrList tabs = uishell_sidebar_panel_tabs(scratch.arena, source);
   B32 collapsed = rd_panel_flag(source, str8_lit("section_collapsed"));
   RD_ViewAddress prev = state->section_drop_prev;
   CFG_NodePtrNode *n = tabs.first;
@@ -2420,21 +2449,21 @@ uishell_sidebar_section_drop_apply(RD_WindowState *ws)
   scratch_end(scratch);
 }
 
-// The tabs of `view`'s panel, `panel`, as rd_arrangement_from_cfg reads
-// them. Compact titles share `budget`, each at least 3em wide.
+// The tabs of `view`'s panel, `panel`, that the current project shows.
+// Compact titles share `budget`, each at least 3em wide.
 internal UIShell_HeaderTabs
 uishell_sidebar_header_tabs(Arena *arena, RD_PanelAddress panel, CFG_Node *view, F32 budget)
 {
   UIShell_HeaderTabs tabs = {panel};
-  U64 cap = 0;
-  for(CFG_Node *c = view->parent->first; c != &cfg_nil_node; c = c->next) { cap += 1; }
+  CFG_NodePtrList shown = uishell_sidebar_panel_tabs(arena, panel);
+  U64 cap = shown.count+1;
   tabs.v = push_array(arena, CFG_Node *, cap);
   tabs.titles = push_array(arena, String8, cap);
   tabs.hidden = push_array(arena, B32, cap);
   tabs.boxes = push_array(arena, UI_Box *, cap);
-  for(CFG_Node *c = view->parent->first; c != &cfg_nil_node; c = c->next)
+  for(CFG_NodePtrNode *n = shown.first; n; n = n->next)
   {
-    if(!uishell_sidebar_is_tab(c)) { continue; }
+    CFG_Node *c = n->v;
     if(c == view) { tabs.selected = tabs.count; }
     tabs.titles[tabs.count] = upper_from_str8(arena, uishell_sidebar_view_title(arena, c));
     tabs.boxes[tabs.count] = &ui_nil_box;
@@ -2498,7 +2527,7 @@ uishell_sidebar_header_tabs_ui(UIShell_HeaderTabs *tabs, U64 from, U64 to)
     if(ui_dragging(sig) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
     { UIShell_RegsScope(.panel = tabs->panel, .view = rd_view_address_from_cfg(tab), .tab = rd_view_address_from_cfg(tab)) { rd_drag_begin(UIShell_ContextRegSlot_View); } }
     else if(ui_clicked(sig) && !rd_drag_is_active()) { uishell_sidebar_header_select(tabs->panel, tab); }
-    else if(ui_middle_clicked(sig) && rd_dock_can_close(rd_dock_view_from_cfg(tab)))
+    else if(ui_middle_clicked(sig) && rd_dock_can_close(rd_dock_view_from_address(rd_view_address_from_cfg(tab))))
     { UIShell_RegsScope(.panel = tabs->panel, .view = rd_view_address_from_cfg(tab), .tab = rd_view_address_from_cfg(tab)) { uishell_cmd("close_tab"); } }
     tabs->boxes[i] = box;
   }
@@ -4102,9 +4131,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             UI_Signal drag = uishell_sidebar_grip(str8_lit("section_drag"), str8_lit("Drag section"));
             if(ui_dragging(drag) && !rd_drag_is_active() && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT)
             {
-              CFG_Node *panel = rd_cfg_from_panel(uishell_regs()->panel);
-              U64 views = 0;
-              for(CFG_Node *c = panel->first; c != &cfg_nil_node; c = c->next) { views += uishell_sidebar_is_tab(c); }
+              U64 views = uishell_sidebar_panel_tabs(scratch.arena, uishell_regs()->panel).count;
               rd_drag_begin(UIShell_ContextRegSlot_View);
               if(views > 1) { rd_state->drag_drop_commit = uishell_sidebar_section_drop_commit; }
             }
@@ -4224,9 +4251,11 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           }
           else if(ui_clicked(close))
           {
-            for(CFG_Node *v = view->parent->first; v != &cfg_nil_node; v = v->next)
+            CFG_NodePtrList closing = uishell_sidebar_panel_tabs(scratch.arena, rd_panel_from_cfg(view));
+            for(CFG_NodePtrNode *n = closing.first; n; n = n->next)
             {
-              if(!uishell_sidebar_is_tab(v) || !rd_dock_can_close(rd_dock_view_from_cfg(v))) { continue; }
+              CFG_Node *v = n->v;
+              if(!rd_dock_can_close(rd_dock_view_from_address(rd_view_address_from_cfg(v)))) { continue; }
               UIShell_RegsScope(.panel = rd_panel_from_cfg(v), .view = rd_view_address_from_cfg(v), .tab = rd_view_address_from_cfg(v)) { uishell_cmd("close_tab"); }
             }
           }
@@ -4853,24 +4882,6 @@ uishell_sidebar_section_key(CFG_Node *view)
   return cfg_node_child_from_string(view, str8_lit("section"))->first->string;
 }
 
-// Saved arrangements use the same panel tree as Workspace Regions. Section
-// identity comes from the snapshot; no placement hints are written into KDL.
-// The first section View showing `key` under `container`, strays included.
-internal CFG_Node *
-uishell_sidebar_find_view(CFG_Node *container, String8 key)
-{
-  Temp scratch = scratch_begin(0, 0);
-  RD_DockDocuments documents = {scratch.arena};
-  RD_DockSavedViewList views = rd_dock_saved_views(&documents, container);
-  CFG_Node *result = &cfg_nil_node;
-  for(RD_DockSavedView *v = views.first; v != 0 && result == &cfg_nil_node; v = v->next)
-  {
-    if(str8_match(v->view->string, str8_lit("sidebar_section"), 0) &&
-       str8_match(uishell_sidebar_section_key(v->view), key, 0)) { result = v->view; }
-  }
-  scratch_end(scratch);
-  return result;
-}
 
 // The sections the snapshot declares, in its order (UIShell_SectionTitle).
 // A container of local sections is not one: they are, in its place. Built
@@ -4942,95 +4953,31 @@ uishell_sidebar_view_hidden(CFG_Node *view)
   return title && title->hidden;
 }
 
-// The View showing `key`, docked or floating.
+// The section View showing `key`, docked or floating.
 internal CFG_Node *
 uishell_sidebar_region_view(CFG_Node *owner, String8 key)
 {
-  CFG_Node *view = uishell_sidebar_find_view(cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT), key);
-  if(view == &cfg_nil_node)
-  { view = uishell_sidebar_find_view(cfg_node_child_from_string(owner, str8_lit("floating_panels")), key); }
-  return view;
+  return rd_cfg_from_view(rd_view_address_make(RD_ViewOwnerKind_Dashboard, uishell_window_id_from_cfg(owner), key, RD_ViewInstance_Current));
 }
 
-// A new section View showing `key`, as the Selected View of the
-// arrangement's `panel`, after `prev` (0: first). Saving places it.
+// A new section View of `window`'s showing `key`, as the Selected View of
+// the arrangement's `panel`, after `prev` (nil: first).
 internal CFG_Node *
-uishell_sidebar_section_view_new(RD_Arrangement *arrangement, RD_PanelID panel, CFG_ID prev, String8 key, String8 label)
+uishell_sidebar_section_view_new(CFG_Node *window, RD_Arrangement *arrangement, RD_PanelID panel, RD_ViewAddress prev, String8 key, String8 label)
 {
-  CFG_Node *view = cfg_node_new(rd_state->cfg, &cfg_nil_node, str8_lit("sidebar_section"));
+  CFG_Node *view = cfg_node_new(rd_state->cfg, rd_view_namespace(window, RD_ViewOwnerKind_Dashboard), str8_lit("sidebar_section"));
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")), key);
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), label);
-  cfg_node_new(rd_state->cfg, view, str8_lit("selected"));
-  rd_arrangement_move_tab(arrangement, view->id, panel, prev);
+  rd_arrangement_move_tab(arrangement, rd_view_address_from_cfg(view), panel, prev);
   return view;
 }
 
-// The View of the arrangement's `panel`'s last tab, or 0.
-internal CFG_ID
+// The View of the arrangement's `panel`'s last tab, or nil.
+internal RD_ViewAddress
 uishell_sidebar_last_tab(RD_Arrangement *arrangement, RD_PanelID panel)
 {
   RD_ArrangementTab *last = rd_arrangement_panel_from_id(arrangement, panel)->last_tab;
-  return last ? last->view : 0;
-}
-
-// Whether a panel of the sidebar's arrangement still has something in it: a
-// child panel, a registered View, or a tab saving other layout config.
-internal B32
-uishell_sidebar_arrangement_panel_has_content(RD_ArrangementPanel *panel)
-{
-  if(panel->first != &rd_nil_arrangement_panel) { return 1; }
-  for(RD_ArrangementTab *tab = panel->first_tab; tab != 0; tab = tab->next)
-  {
-    CFG_Node *view = cfg_node_from_id(tab->view);
-    if(rd_dock_view_from_name(view->string) || rd_dock_is_container(view)) { return 1; }
-  }
-  return 0;
-}
-
-//- The sidebar's documents
-
-internal UIShell_SidebarDocks
-uishell_sidebar_docks(Arena *arena, CFG_Node *owner)
-{
-  UIShell_SidebarDocks docks = {owner, {arena}};
-  CFG_Node *host = cfg_node_child_from_string(owner, str8_lit("floating_panels"));
-  docks.sidebar = rd_dock_document_from_owner(&docks.documents, owner, RD_DOCK_SIDEBAR_ROOT);
-  rd_dock_documents_add_floating(&docks.documents, host);
-  // Only this owner's hosts; child Workspace Regions own independent layouts.
-  docks.views = rd_dock_saved_views(&docks.documents, cfg_node_child_from_string(owner, RD_DOCK_SIDEBAR_ROOT));
-  RD_DockSavedViewList floating = rd_dock_saved_views(&docks.documents, host);
-  if(floating.first)
-  {
-    if(docks.views.last) { docks.views.last->next = floating.first; } else { docks.views.first = floating.first; }
-    docks.views.last = floating.last;
-    docks.views.count += floating.count;
-  }
-  return docks;
-}
-
-// Saving releases `view`; its panel stays until the next frame's layout
-// closes it if it has no tabs left (uishell_sidebar_close_empty_panels).
-internal void
-uishell_sidebar_docks_remove(UIShell_SidebarDocks *docks, RD_DockSavedView *view)
-{
-  if(rd_dock_saved_view_is_tab(view))
-  {
-    rd_arrangement_remove_tab(view->document->arrangement, view->view->id);
-    view->document->dirty = 1;
-  }
-  else
-  {
-    RD_DockDocument *document = view->document ? view->document : docks->sidebar;
-    rd_arrangement_release_orphan(document->arrangement, view->view->id);
-    document->dirty = 1;
-  }
-  view->view = &cfg_nil_node;
-}
-
-internal void
-uishell_sidebar_docks_save(UIShell_SidebarDocks *docks)
-{
-  rd_dock_documents_save(rd_state->cfg, &docks->documents);
+  return last ? last->view : rd_nil_view_address;
 }
 
 // A sidebar leaf with no tabs shows nothing: one saved before closing a
@@ -5043,7 +4990,7 @@ uishell_sidebar_close_empty_panels(CFG_Node *window)
 {
   if(uishell_store_gesture_in_flight()) { return; }
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
+  RD_Arrangement *sidebar = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
   B32 changed = 0;
   for(B32 again = 1; again;)
   {
@@ -5054,7 +5001,7 @@ uishell_sidebar_close_empty_panels(CFG_Node *window)
       { rd_arrangement_close(sidebar, p->id); changed = again = 1; break; }
     }
   }
-  if(changed) { rd_arrangement_save(rd_state->cfg, sidebar); }
+  if(changed) { rd_arrangement_set(sidebar); }
   scratch_end(scratch);
 }
 
@@ -5062,18 +5009,17 @@ uishell_sidebar_close_empty_panels(CFG_Node *window)
 // sections are (uishell_sidebar_store.c), which the live copy is built from
 // once, and committed from as it changes. What stays here: KDL titles refresh
 // section Views' labels, and saved pinned areas become sections.
-internal CFG_Node *
+internal void
 uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
 {
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
-  if(!state->snapshot) { return cfg_node_child_from_string(split->owner_cfg, RD_DOCK_SIDEBAR_ROOT); }
+  if(!state->snapshot) { return; }
   uishell_sidebar_store_load(state, split->owner_cfg);
   uishell_sidebar_close_empty_panels(split->owner_cfg);
   uishell_sidebar_store_labels(state, split->owner_cfg);
   // Pins are independent Views and survive a section's removal.
   uishell_sidebar_pin_migrate(split->owner_cfg);
-  return cfg_node_child_from_string(split->owner_cfg, RD_DOCK_SIDEBAR_ROOT);
 }
 
 // The Sections menu's Restore: Andamento places the section by its hints,
@@ -5111,15 +5057,15 @@ internal CFG_Node *
 uishell_sidebar_new_section(UIShell_SidebarState *state, CFG_Node *window)
 {
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
+  RD_Arrangement *sidebar = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
   if(sidebar->root == &rd_nil_arrangement_panel) { scratch_end(scratch); return &cfg_nil_node; }
   RD_PanelID panel = sidebar->root->first != &rd_nil_arrangement_panel ? rd_arrangement_add(sidebar, sidebar->root->id, 0.25f) : sidebar->root->id;
   UIShell_LocalGroup *group = uishell_sidebar_local_new_group(window, str8_lit("New section"));
   if(!group) { scratch_end(scratch); return &cfg_nil_node; }
   String8 title = uishell_sidebar_local_title(scratch.arena, group->section);
   String8 key = uishell_sidebar_local_key(scratch.arena, group->section->id);
-  CFG_Node *view = uishell_sidebar_section_view_new(sidebar, panel, uishell_sidebar_last_tab(sidebar, panel), key, title);
-  rd_arrangement_save(rd_state->cfg, sidebar);
+  CFG_Node *view = uishell_sidebar_section_view_new(window, sidebar, panel, uishell_sidebar_last_tab(sidebar, panel), key, title);
+  rd_arrangement_set(sidebar);
   uishell_sidebar_local_begin_rename(state, uishell_sidebar_section_handle(group->section), title);
   scratch_end(scratch);
   return view;
@@ -5252,17 +5198,10 @@ uishell_sidebar_size_panels(UIShell_ControlledSplit *split, UIShell_WorkspaceMou
   uishell_sidebar_collapse_space(mount->panel_tree.root, dim_2f32(rect).y, uishell_sidebar_row_height());
 }
 
-// The node `panel`, of `mount`'s tree, is mirrored to.
-internal CFG_Node *
-uishell_sidebar_panel_cfg(UIShell_WorkspaceMount *mount, RD_PanelNode *panel)
-{
-  return cfg_node_from_id(rd_arrangement_panel_from_id(mount->arrangement, panel->address.id)->cfg);
-}
-
-// The sizes to lay out from before collapse: manual (saved, repaired) or
-// automatic (from content), written to the config. The pixel geometry is
-// Presentation State, so it writes panel weights directly rather than
-// editing the arrangement.
+// The sizes to lay out from before collapse: manual (saved, and repaired in
+// the arrangement) or automatic (from content). Sizes from content are this
+// device's: they are the live arrangement's weights, kept there without
+// setting it (rd_arrangement_present_weight), and never committed.
 internal void
 uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_WorkspaceMount *mount, Rng2F32 rect)
 {
@@ -5323,13 +5262,15 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
       if(!changed) { break; }
     }
     U64 i = 0;
+    RD_Arrangement *repaired = rd_arrangement_from_panel_owner(scratch.arena, mount->owner);
     for(RD_PanelNode *panel = root->first; panel != &rd_nil_panel_node; panel = panel->next)
     {
       if(uishell_sidebar_panel_empty(panel)) { continue; }
       F32 share = fixed[i++] ? minimum : weight > 0 ? Max(0.f, panel->pct_of_parent)*remaining/weight : remaining/Max(1, unfixed);
       panel->pct_of_parent = share;
-      if(!mount->resizing) { cfg_node_equip_stringf(rd_state->cfg, uishell_sidebar_panel_cfg(mount, panel), "%f", share); }
+      rd_arrangement_panel_from_id(repaired, panel->address.id)->weight = (F32)f64_from_str8(push_str8f(scratch.arena, "%f", share));
     }
+    if(!mount->resizing) { rd_arrangement_set(repaired); }
     scratch_end(scratch); return;
   }
   F32 *heights = push_array(scratch.arena, F32, count);
@@ -5372,10 +5313,9 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
     if(uishell_sidebar_panel_empty(panel)) { continue; }
     panel->pct_of_parent = (headers[n]+heights[n])/Max(1.f, dim_2f32(rect).y);
     n++;
-    CFG_Node *panel_cfg = uishell_sidebar_panel_cfg(mount, panel);
-    F32 saved = (F32)f64_from_str8(panel_cfg->string);
+    F32 saved = rd_arrangement_panel_from_id(rd_arrangement_live(mount->owner), panel->address.id)->weight;
     if(abs_f32(saved-panel->pct_of_parent) > 0.0001f)
-    { cfg_node_equip_stringf(rd_state->cfg, panel_cfg, "%f", panel->pct_of_parent); }
+    { rd_arrangement_present_weight(panel->address, (F32)f64_from_str8(push_str8f(scratch.arena, "%f", panel->pct_of_parent))); }
   }
   scratch_end(scratch);
 }
@@ -5413,7 +5353,7 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
     UI_Parent(notice) UI_PrefHeight(ui_pct(1, 1))
     {
       String8 message = state->error[0] ? str8_cstring((char *)state->error) : state->inspection[0] ? str8_cstring((char *)state->inspection) : uishell_sidebar_string(diagnostic);
-      // The footer survives an empty control_views tree. Section restoration
+      // The footer survives an empty sidebar. Section restoration
       // must remain reachable after closing the last selector section too.
       UI_Key menu_key = ui_key_from_string(root->key, str8_lit("section_restore_menu"));
       F32 menu_width = ui_top_font_size()*24.f;
@@ -5742,14 +5682,12 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     CFG_Node *workspace = cfg_node_from_id(created);
     ok = split.inventory.count == before+1 && workspace != &cfg_nil_node &&
          cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id")) != &cfg_nil_node;
-    CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-    RD_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, panels);
-    ok = ok && cfg_node_child_from_string(workspace, str8_lit("split_x")) != &cfg_nil_node &&
+    RD_PanelTree tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace).panel_tree;
+    ok = ok && uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace).arrangement->root_axis == Axis2_X &&
          tree.root->child_count == 2 && tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 2;
     CFG_Node *tools_tab = rd_cfg_from_view(tree.root->last->tabs.last->v);
     // Simulate selecting the second overflow tab; refocusing must preserve it.
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(rd_cfg_from_view(tree.root->last->selected_tab), str8_lit("selected")));
-    cfg_node_new(rd_state->cfg, tools_tab, str8_lit("selected"));
+    uishell_sidebar_select_view(tools_tab);
     uishell_sidebar_observe(state, &split);
     B32 live = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
@@ -5766,7 +5704,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     uishell_sidebar_effects(state, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     ok = ok && split.inventory.count == before+1 && ws->root_controlled_split_selected_workspace_id == created;
-    tree = rd_panel_tree_from_cfg(scratch.arena, panels);
+    tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace).panel_tree;
     ok = ok && rd_cfg_from_view(tree.root->last->selected_tab) == tools_tab;
     uishell_sidebar_refresh(state);
     // Reveal prefers the nested tree occurrence over Attention, expands its
@@ -5810,7 +5748,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     while(!reveal_section_node.is_section && reveal_section_node.parent != ANDAMENTO_NONE)
     { andamento_snapshot_node(state->snapshot, reveal_section_node.parent, &reveal_section_node); }
     String8 reveal_key = uishell_sidebar_string(reveal_section_node.key);
-    CFG_Node *reveal_view = uishell_sidebar_find_view(uishell_sidebar_dock_layout(&split), reveal_key);
+    uishell_sidebar_dock_layout(&split);
+    CFG_Node *reveal_view = uishell_sidebar_region_view(window, reveal_key);
     ok = ok && reveal_view != &cfg_nil_node;
     uishell_sidebar_section_set_collapsed(reveal_view, 1);
     UI_State *saved_reveal_ui = ui_state, *reveal_ui = ui_state_alloc();
@@ -5868,11 +5807,9 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     ok = ok && split.inventory.count == before+1;
     workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
-    panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-    tree = rd_panel_tree_from_cfg(scratch.arena, panels);
+    tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace).panel_tree;
     tools_tab = rd_cfg_from_view(tree.root->last->tabs.last->v);
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(rd_cfg_from_view(tree.root->last->selected_tab), str8_lit("selected")));
-    cfg_node_new(rd_state->cfg, tools_tab, str8_lit("selected"));
+    uishell_sidebar_select_view(tools_tab);
     // A new core instance binds saved workspaces from their records without
     // duplicating them. A frame observes the new workspace before then.
     uishell_sidebar_observe(state, &split);
@@ -5889,7 +5826,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
       AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
       restored_live |= node.state == ANDAMENTO_LIVE;
     }
-    tree = rd_panel_tree_from_cfg(scratch.arena, panels);
+    tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace).panel_tree;
     ok = ok && restored_live && rd_cfg_from_view(tree.root->last->selected_tab) == tools_tab &&
          tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 2;
     // Authoritative end and focus retain the host's user-selected overflow tab
@@ -5925,7 +5862,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = uishell_sidebar_result(state, retained_call_ok, error) && ok;
     uishell_sidebar_effects(state, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
-    tree = rd_panel_tree_from_cfg(scratch.arena, panels);
+    tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace).panel_tree;
     ok = ok && split.inventory.count == before+1 &&
          ws->root_controlled_split_selected_workspace_id == workspace->id &&
          rd_cfg_from_view(tree.root->last->selected_tab) == tools_tab &&
@@ -5969,7 +5906,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
       { recipe_restored |= node.state == ANDAMENTO_LIVE && uishell_sidebar_node_cfg(&node) == workspace->id; }
     }
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
-    tree = rd_panel_tree_from_cfg(scratch.arena, panels);
+    tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace).panel_tree;
     restore_ok = restore_ok && recipe_restored && split.inventory.count == before+1 &&
                  rd_cfg_from_view(tree.root->last->selected_tab) == tools_tab;
     fprintf(stderr, "Sidebar unavailable restore diagnostics: %s\n", restore_ok ? "passed" : "FAILED");

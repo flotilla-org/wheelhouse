@@ -96,12 +96,18 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     uishell_sidebar_refresh(&state);
     ok &= uishell_sidebar_benchmark_label_lifecycle(&state);
     ws->sidebar = &state;
-    CFG_Node *old_host = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
     // Andamento keeps the sidebar's arrangement once this marks it. Isolate
-    // it with the layout so the fixture's is built from Andamento's.
+    // it with the layout and its Views so the fixture's follows Andamento's.
+    RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+    RD_Arrangement *old_layout = rd_arrangement_from_panel_owner(scratch.arena, sidebar_owner);
+    CFG_Node *old_views = cfg_node_child_from_string(window, str8_lit("window_views"));
     CFG_Node *old_inventory = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
     cfg_node_unhook(rd_state->cfg, window, old_inventory);
-    cfg_node_unhook(rd_state->cfg, window, old_host);
+    cfg_node_unhook(rd_state->cfg, window, old_views);
+    {
+      RD_Arrangement *empty = rd_arrangement_alloc(scratch.arena, sidebar_owner);
+      rd_arrangement_set(empty);
+    }
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     state.window = window->id;
     uishell_sidebar_dock_layout(&split);
@@ -123,15 +129,15 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
         String8 sources[] = {str8_lit("sessions"), str8_lit("git")};
         for(U64 pair = 0; pair < ArrayCount(destinations); pair++)
         {
-          CFG_Node *selected = uishell_sidebar_region_view(window, destinations[pair]);
-          CFG_Node *view = uishell_sidebar_region_view(window, sources[pair]);
-          RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
-          RD_ArrangementPanel *destination = rd_arrangement_panel_from_view(sidebar, selected->id);
-          RD_ArrangementPanel *source = rd_arrangement_panel_from_view(sidebar, view->id);
-          rd_arrangement_select(sidebar, destination->id, selected->id);
-          rd_arrangement_insert_tab(sidebar, view->id, destination->id, destination->last_tab->view, 0);
-          if(!uishell_sidebar_arrangement_panel_has_content(source)) { rd_arrangement_remove(sidebar, source->id); }
-          rd_arrangement_save(rd_state->cfg, sidebar);
+          RD_ViewAddress selected = rd_view_address_from_cfg(uishell_sidebar_region_view(window, destinations[pair]));
+          RD_ViewAddress view = rd_view_address_from_cfg(uishell_sidebar_region_view(window, sources[pair]));
+          RD_Arrangement *sidebar = rd_arrangement_from_panel_owner(scratch.arena, sidebar_owner);
+          RD_ArrangementPanel *destination = rd_arrangement_panel_from_view(sidebar, selected);
+          RD_ArrangementPanel *source = rd_arrangement_panel_from_view(sidebar, view);
+          rd_arrangement_select(sidebar, destination->id, selected);
+          rd_arrangement_insert_tab(sidebar, view, destination->id, destination->last_tab->view, 0);
+          if(source->first == &rd_nil_arrangement_panel && source->tab_count == 0) { rd_arrangement_remove(sidebar, source->id); }
+          rd_arrangement_set(sidebar);
         }
       }
       for(U64 scrolling = 0; scrolling < inputs; scrolling++)
@@ -214,8 +220,14 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
         ui_select_state(saved_ui); ui_state_release(test_ui);
       }
     }
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT));
-    if(old_host != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, old_host); }
+    {
+      RD_Arrangement *fixture = rd_arrangement_from_panel_owner(scratch.arena, sidebar_owner);
+      rd_arrangement_discard(fixture);
+      rd_arrangement_set(fixture);
+    }
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("window_views")));
+    if(old_views != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, old_views); }
+    rd_arrangement_set(old_layout);
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_generation")));
     if(old_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, old_inventory); }
     // A real state owns core/snapshot, labels, cards and records resources.

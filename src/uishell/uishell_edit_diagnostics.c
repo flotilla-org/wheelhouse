@@ -153,13 +153,15 @@ uishell_edit_command_diagnostics(B32 native)
     windows[w].ui->build_index = 1;
     windows[w].order_next = w ? &rd_nil_window_state : &windows[1];
     windows[w].hash_next = w ? 0 : &windows[1];
-    // Each window's own panels hold its two terminals, keyed as a save keys
-    // them, so each View has an address of its own.
-    CFG_Node *panels = cfg_node_new(state.cfg, window, str8_lit("panels"));
+    // Each window's own panels hold its two terminals, each View with an
+    // address of its own.
+    RD_Arrangement *panels = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, window, 0));
+    RD_PanelID panel_ids[2] = {rd_arrangement_clear(panels)};
+    panel_ids[1] = rd_arrangement_split(panels, panel_ids[0], Dir2_Right);
+    for(U64 p = 0; p < 2; p++) { views[w][p] = rd_cfg_from_view(rd_new_view_tab(panels, panel_ids[p], str8_lit("terminal"), str8_zero())); }
+    rd_arrangement_set(panels);
     for(U64 p = 0; p < 2; p++)
     {
-      CFG_Node *panel = cfg_node_new(state.cfg, panels, str8_lit("0.5"));
-      views[w][p] = cfg_node_new(state.cfg, panel, str8_lit("terminal")); rd_view_key_assign(state.cfg, views[w][p], 0);
       UIShell_EditTransport *t = &terminals[w][p];
       uishell_selection_fixture_init(&t->fixture);
       t->connection = CLEAT_SESSION_STREAMING; t->role = CLEAT_ROLE_CONTROLLER;
@@ -373,8 +375,9 @@ uishell_edit_command_diagnostics(B32 native)
     EditCheck(user->last != previous && str8_match(user->last->string, str8_lit("window"), 0));
     if(user->last != previous)
     {
-      EditCheck(cfg_node_child_from_string(user->last, str8_lit("panels")) != &cfg_nil_node);
+      EditCheck(rd_arrangement_live(rd_fixture_owner(user->last))->root != &rd_nil_arrangement_panel);
       cfg_node_release(state.cfg, user->last);
+      rd_arrangements_release_unowned();
     }
   }
 
@@ -821,10 +824,10 @@ uishell_edit_menu_ui_diagnostics(RD_WindowState *ws)
   rd_state->cmds_arenas[0] = rd_state->cmds_arenas[1] = arena;
   rd_state->cmds_gen = 0; rd_state->popup_active = 0; ws->query_is_active = 0;
   ws->ui = test; ui_select_state(test);
-  // A terminal in an arrangement of its own beside the window's, so it has
-  // an address of its own.
+  // A terminal of a host of its own beside the window's, so it has an
+  // address of its own.
   CFG_Node *host = cfg_node_new(rd_state->cfg, cfg_node_from_id(ws->cfg_id), str8_lit("edit_menu_diagnostic"));
-  CFG_Node *view = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, host, str8_lit("panels")), str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, view, 0);
+  CFG_Node *view = rd_view_alloc(rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, host, 0), str8_lit("terminal"), str8_zero());
   UIShell_SelectionFixture fixture; uishell_selection_fixture_init(&fixture);
   UIShell_EditClipboard clip = {0};
   wm_clipboard_io = (WM_ClipboardIO){&clip, uishell_edit_clip_write, uishell_edit_clip_read};

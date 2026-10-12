@@ -29,15 +29,11 @@ uishell_preview_diagnostics(RD_WindowState *ws)
   for(U32 i = 0; i < 2; i++)
   {
     owners[i] = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
-    cfg_node_new(rd_state->cfg, owners[i], str8_lit("split_x"));
-    CFG_Node *panels = cfg_node_new(rd_state->cfg, owners[i], str8_lit("panels"));
-    for(U32 p = 0; p < 2; p++)
-    {
-      CFG_Node *panel = cfg_node_new(rd_state->cfg, panels, str8_lit("0.5"));
-      CFG_Node *view = rd_cfg_new_view_tab(panel, str8_lit("terminal_fixture"), str8_zero(), 1);
-      if(p == 0) { views[i] = view; }
-    }
-    rd_panel_focus_mark(rd_panel_from_cfg(panels->first));
+    RD_PanelAddress first = rd_fixture_leaf(rd_fixture_owner(owners[i]));
+    RD_PanelAddress second = rd_fixture_split(first, Dir2_Right);
+    views[i] = rd_fixture_view(first, str8_lit("terminal_fixture"), str8_zero(), 1);
+    rd_fixture_view(second, str8_lit("terminal_fixture"), str8_zero(), 1);
+    rd_panel_focus_mark(first);
     mounts[i] = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, owners[i]);
   }
   U32 failures = 0;
@@ -167,6 +163,7 @@ uishell_preview_diagnostics(RD_WindowState *ws)
   ui_select_state(saved_ui);
   ui_state_release(test_ui);
   for(U32 i = 0; i < 2; i++) { cfg_node_release(rd_state->cfg, owners[i]); }
+  rd_arrangements_release_unowned();
   scratch_end(scratch);
   failures += !uishell_scroll_preview_diagnostics(ws);
   fprintf(stderr, "Preview diagnostics: %u failures\n", failures);

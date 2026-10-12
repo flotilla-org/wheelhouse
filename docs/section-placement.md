@@ -10,13 +10,14 @@ the template and the local sections declare; its rules are in Andamento's
 key, a local section's is `.section:<id>`, and `.unplaced` is the workspace
 fallback.
 
-Wheelhouse keeps the live copy in the window's `control_views` and
-`floating_panels` (`src/uishell/uishell_sidebar_store.c`). Docking edits it as
-before, through the shared docking checker; at the end of a gesture the whole
-document is committed (`andamento_set_sidebar_arrangement`). Closing a section
-is committing without it. When Andamento changes the document itself (a newly
+Wheelhouse's live copy is the window's typed arrangements: the dock's and each
+Floating Panel's (`src/shell/shell_core.c`, "Live arrangements";
+`src/uishell/uishell_sidebar_store.c`). Docking edits it as before, through
+the shared docking checker; at the end of a gesture the whole document is
+committed (`andamento_sidebar_arrangement_commit`). Closing a section is
+committing without it. When Andamento changes the document itself (a newly
 declared section placed by its hints, a duplicate removed, another frontend's
-commit), the live copy is rebuilt from it. The Sections menu's Restore and
+commit), the live copy follows it. The Sections menu's Restore and
 Reset To Default Panel Layout are Andamento's calls.
 
 The rules Andamento applies, as Wheelhouse's C reconciliation did before:

@@ -77,23 +77,24 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   f->contexts[0] = (UIShell_TerminalClipboardContext){.allowed=1, .input_owner=1, .window_active=1, .live=1, .controller=1, .supported=1};
   CFG_Node *user = cfg_node_new(cfg, cfg_node_root(), str8_lit("user"));
   CFG_Node *window = cfg_node_new(cfg, user, str8_lit("window"));
+  // A workspace of one panel, its terminal selected beside another, and a
+  // second workspace showing a terminal.
   CFG_Node *workspace = cfg_node_new(cfg, window, str8_lit("workspace"));
-  CFG_Node *panels = cfg_node_new(cfg, workspace, str8_lit("panels"));
-  CFG_Node *view = cfg_node_new(cfg, panels, str8_lit("terminal")); rd_view_key_assign(cfg, view, 0);
-  CFG_Node *selected = cfg_node_new(cfg, view, str8_lit("selected"));
-  CFG_Node *watcher = cfg_node_new(cfg, panels, str8_lit("terminal")); rd_view_key_assign(cfg, watcher, 0);
+  RD_Arrangement *panels = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, workspace, 0));
+  RD_PanelAddress panel = rd_panel_address(panels->owner, rd_arrangement_clear(panels));
+  RD_ViewAddress view_address = rd_new_view_tab(panels, panel.id, str8_lit("terminal"), str8_zero());
+  RD_ViewAddress watcher_address = rd_new_view_tab(panels, panel.id, str8_lit("terminal"), str8_zero());
+  rd_arrangement_select(panels, panel.id, view_address);
+  rd_arrangement_set(panels);
+  CFG_Node *view = rd_cfg_from_view(view_address);
   CFG_Node *other_workspace = cfg_node_new(cfg, window, str8_lit("workspace"));
-  CFG_Node *other_panels = cfg_node_new(cfg, other_workspace, str8_lit("panels"));
-  CFG_Node *preview = cfg_node_new(cfg, other_panels, str8_lit("terminal")); rd_view_key_assign(cfg, preview, 0);
-  cfg_node_new(cfg, preview, str8_lit("selected"));
-  // Built directly, so each View gets the key a save would give it.
-  CFG_Node *keyed[] = {view, watcher, preview};
-  for(U64 i = 0; i < ArrayCount(keyed); i++) { rd_view_key_assign(cfg, keyed[i], 0); }
+  RD_Arrangement *other_panels = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, other_workspace, 0));
+  RD_PanelID other_panel = rd_arrangement_clear(other_panels);
+  rd_new_view_tab(other_panels, other_panel, str8_lit("terminal"), str8_zero());
+  rd_arrangement_set(other_panels);
   // Each workspace's panel has focus (its Presentation State).
-  RD_PanelAddress panel = rd_panel_from_cfg(panels);
   rd_panel_focus_mark(panel);
-  rd_panel_focus_mark(rd_panel_from_cfg(other_panels));
-  RD_ViewAddress view_address = rd_view_address_from_cfg(view);
+  rd_panel_focus_mark(rd_panel_address(other_panels->owner, other_panel));
   RD_WindowState *ws = push_array(arena, RD_WindowState, 1);
   ws->ui = push_array(arena, UI_State, 1);
   ws->ui->edit_owner_terminal = 1; ws->ui->edit_owner_user = tv; ws->edit_owner_view = view_address;
@@ -188,12 +189,13 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   cfg_node_release(cfg, deny);
   // Current selected-tab config wins even if the previous build still reports
   // terminal focus. Hydrated/previews and replaced view types are never owners.
-  cfg_node_release(cfg, selected);
-  CFG_Node *watcher_selected = cfg_node_new(cfg, watcher, str8_lit("selected"));
+  rd_arrangement_select(panels, panel.id, watcher_address);
+  rd_arrangement_set(panels);
   uishell_clipboard_fixture_event(f, ++sequence, 0, 1, str8_lit("old tab"));
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
   HostClipboardCheck(f->writes == before && f->released == 1, "tab change before drain");
-  cfg_node_release(cfg, watcher_selected); cfg_node_new(cfg, view, str8_lit("selected"));
+  rd_arrangement_select(panels, panel.id, view_address);
+  rd_arrangement_set(panels);
   cfg_node_equip_string(cfg, view, str8_lit("terminal_fixture"));
   uishell_clipboard_fixture_event(f, ++sequence, 0, 1, str8_lit("hydration"));
   uishell_terminal_clipboard_dispatch_with_ops(&ops);

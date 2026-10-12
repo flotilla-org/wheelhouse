@@ -421,14 +421,15 @@ struct RD_ViewCfgCacheSlot
   U64 tree_gen;
 };
 
-// A View an arrangement save is moving, and its address before the move
-// (rd_arrangement_view_move_hook).
-typedef struct RD_ViewMove RD_ViewMove;
-struct RD_ViewMove
+// An owner's live arrangement (shell_core.c, "Live arrangements"), in an
+// arena of its own, and the version it was last set at.
+typedef struct RD_LiveArrangement RD_LiveArrangement;
+struct RD_LiveArrangement
 {
-  RD_ViewMove *next;
-  CFG_ID view;
-  RD_ViewAddress from;
+  RD_LiveArrangement *next;
+  Arena *arena;
+  RD_Arrangement *arrangement;
+  U64 version;
 };
 
 ////////////////////////////////
@@ -884,8 +885,8 @@ struct RD_FrameReplay
 };
 
 // A panel boundary drag in flight (ADR 0012: an arrangement is committed
-// when its gesture ends). Rendering shows `live`, the arrangement as config
-// has it with the drag applied; config is untouched until the drag ends.
+// when its gesture ends). Rendering shows `live`, the owner's arrangement
+// with the drag applied; the arrangement is set once, when the drag ends.
 typedef struct RD_BoundaryResize RD_BoundaryResize;
 struct RD_BoundaryResize
 {
@@ -897,11 +898,11 @@ struct RD_BoundaryResize
   F32 floor;
   Vec2F32 laid_out;        // both sides' laid out shares as the drag began
   B32 moved;               // the boundary has moved since the press
-  // The arrangement as config has it, and a copy with the drag applied.
+  // The owner's arrangement, and a copy with the drag applied.
   RD_Arrangement *base;
   U64 base_pos;
   RD_Arrangement *live;
-  U64 cfg_gen;             // the config `base` was loaded from
+  U64 version;             // the version of the arrangement `base` copies
   U64 frame_index;         // the last frame the drag was seen
 };
 
@@ -1084,9 +1085,12 @@ struct RD_State
   // its Presentation State (rd_view_presentation_from_view).
   RD_ViewCfgCacheSlot view_cfg_cache[256];
   RD_ViewCfgCacheSlot view_presentation_cache[256];
-  // Views a save is moving.
-  Arena *view_move_arena;
-  RD_ViewMove *first_view_move;
+  // Each owner's live arrangement, and the last version any was set at.
+  Arena *live_arrangement_arena;
+  RD_LiveArrangement *first_live_arrangement;
+  RD_LiveArrangement *free_live_arrangement;
+  U64 arrangement_version;
+  U64 docking_restore_version;
 
   // rjf: bind change
   Arena *bind_change_arena;
@@ -1135,17 +1139,17 @@ global RD_State *rd_state = 0;
 typedef struct UIShell_WorkspaceMount UIShell_WorkspaceMount;
 struct UIShell_WorkspaceMount
 {
+  // The workspace (or the window, for its own panels or its sidebar).
   CFG_Node *owner_cfg;
   CFG_Node *window_cfg;
   CFG_Node *workspace_cfg;
-  CFG_Node *panels_root;
-  Axis2 root_split_axis;
-  // As loaded. Commands may edit and save it; `panel_tree` stays as loaded.
+  // A copy of the owner's arrangement. Commands may edit and set it;
+  // `panel_tree` stays as it was.
   RD_Arrangement *arrangement;
   // The renderer's view of `arrangement`, its panels addressed as `owner`'s.
   RD_PanelOwner owner;
   RD_PanelTree panel_tree;
-  // Both show a boundary drag in flight, not what config has
+  // Both show a boundary drag in flight, not the live arrangement
   // (rd_boundary_resize_show).
   B32 resizing;
 };
@@ -1254,7 +1258,7 @@ internal B32 rd_cfg_is_project_filtered(CFG_Node *cfg);
 internal B32 rd_view_is_project_filtered(RD_ViewAddress view);
 // The visibility rule docking gives the arrangement (RD_ArrangementTabRule):
 // a tab is shown unless its View is filtered out of the current project.
-internal B32 rd_tab_is_shown(CFG_ID view);
+internal B32 rd_tab_is_shown(RD_ViewAddress view);
 
 internal Vec4F32 rd_hsva_from_cfg(CFG_Node *cfg);
 internal Vec4F32 rd_color_from_cfg(CFG_Node *cfg);
@@ -1323,13 +1327,32 @@ internal String8 rd_query_from_eval_string(Arena *arena, String8 string);
 //~ rjf: View Functions
 
 internal CFG_Node *rd_view_from_eval(CFG_Node *parent, E_Eval eval);
-//- View Addresses (shell_arrangement.h), resolved through the config nodes
-// Views are mirrored to.
-// `view`'s address: a tab of an arrangement, or a View of an immediate tree;
-// nil for any other node, and for a tab without a key.
+//- View Addresses (shell_arrangement.h). A View's config node, which holds
+// its logical settings, is kept in its owner's namespace: a workspace's (or
+// a window's own panels') `views`, a window's `window_views`.
+#define RD_VIEW_PRESENTATION_ROOT str8_lit("view_presentation")
+// `view`'s address: a View of an owner's namespace, or of an immediate
+// tree; nil for any other node, and for a View without a key.
 internal RD_ViewAddress rd_view_address_from_cfg(CFG_Node *view);
-// The node the View at `view` is mirrored to, or nil.
+// The node of the View at `view`, or nil.
 internal CFG_Node *rd_cfg_from_view(RD_ViewAddress view);
+// The key saved on a View node, and its instance; empty when it has none.
+internal String8 rd_view_key_from_cfg(CFG_Node *view, RD_ViewInstance *instance_out);
+// Which owner's namespace `view` is in, and the node that keeps it (its
+// workspace, or a window). Null outside one.
+internal RD_ViewOwnerKind rd_view_owner_kind_from_cfg(CFG_Node *view, CFG_Node **host_out);
+// The Views of `host`'s namespace for `owner`.
+internal CFG_NodePtrList rd_view_namespace_views(Arena *arena, CFG_Node *host, RD_ViewOwnerKind owner);
+// The highest n of a "u:<n>" key among `host`'s Views of `owner` and the
+// Presentation State it keeps for them; 0 for none.
+internal U64 rd_view_user_number_max(CFG_Node *host, RD_ViewOwnerKind owner);
+// A new View of kind `kind` showing `expr`, in the namespace of the Views
+// `owner`'s panels have, with the next free "u:<n>" key there. It is in no
+// panel until an arrangement takes it.
+internal CFG_Node *rd_view_alloc(RD_PanelOwner owner, String8 kind, String8 expr);
+// The View owner, and the node keeping its namespace, that a View in
+// `owner`'s panels belongs to (a section in a window's is the Dashboard's).
+internal RD_ViewOwnerKind rd_view_owner_kind_from_panel_owner(RD_PanelOwner owner, CFG_Node *view, CFG_Node **host_out);
 // The seed of every UI key of `view`'s boxes and animations.
 internal UI_Key rd_view_ui_key(RD_ViewAddress view);
 //- View Presentation State: a View's settings that aren't logical, kept by
@@ -1436,23 +1459,79 @@ internal void rd_window_surface_cache_evict(RD_WindowState *ws);
 internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);
 internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);
 
-//- Panel addresses (shell_arrangement.h), resolved through the config nodes
-// arrangements are mirrored to.
+//- Panel addresses (shell_arrangement.h)
 // The owner of `host`'s arrangement of `kind`: a window or a workspace hosts
 // its sidebar and Floating Panels (the `floating`th, from 1); a workspace's
 // panels, or a window's own, are a Workspace's.
 internal RD_PanelOwner rd_panel_owner_from_host(RD_PanelOwnerKind kind, CFG_Node *host, U64 floating);
-// The owner of the arrangement `cfg` (a panel node or a View) is in.
-internal RD_PanelOwner rd_panel_owner_from_cfg(CFG_Node *cfg);
 // The owner's host: a window or a workspace node.
 internal CFG_Node *rd_cfg_from_panel_owner(RD_PanelOwner owner);
-// The root panel node the owner's arrangement is saved as, or nil.
-internal CFG_Node *rd_cfg_root_from_panel_owner(RD_PanelOwner owner);
-// The owner's arrangement, as config has it; an empty one when it has no
-// panels, which saves in the owner's host (Floating Panels excepted).
+// Whether `panel` is a panel of its owner's live arrangement.
+internal B32 rd_panel_exists(RD_PanelAddress panel);
+//- Live arrangements (shell_core.c): each owner's arrangement, as the
+// renderer shows it and Andamento is sent it.
+// A copy of `owner`'s live arrangement, to edit and set; an empty one of its
+// own when it has none.
 internal RD_Arrangement *rd_arrangement_from_panel_owner(Arena *arena, RD_PanelOwner owner);
-// The node `panel` is mirrored to; nil when there is no such panel.
-internal CFG_Node *rd_cfg_from_panel(RD_PanelAddress panel);
+// `owner`'s live arrangement itself, to read and not keep: setting any
+// arrangement may replace it. A nil one when it has none.
+internal RD_Arrangement *rd_arrangement_live(RD_PanelOwner owner);
+// The version `owner`'s live arrangement was last set at; 0 for none.
+internal U64 rd_arrangement_version(RD_PanelOwner owner);
+// How many Floating Panels `host` (a window or a workspace) has.
+internal U64 rd_floating_count(CFG_Node *host);
+// Makes `arrangement` its owner's live arrangement. A View one of its tabs
+// brings from another owner moves into this owner's namespace, keeping
+// what is keyed by its address under the address the move gives it (and a
+// tab of it, anywhere, follows); the Views of tabs it removed go, but those
+// an arrangement has; a lifted panel takes its Presentation State along,
+// and a panel it no longer has loses its own. An emptied Floating Panel
+// goes, and those after it in its host move up. Setting what it has
+// already changes nothing.
+internal void rd_arrangement_set(RD_Arrangement *arrangement);
+// Gives `panel` of its owner's live arrangement `weight` without setting it:
+// this device's size for it, which commits leave out, as the sidebar's sizes
+// from content are.
+internal void rd_arrangement_present_weight(RD_PanelAddress panel, F32 weight);
+// The live arrangements of owners that have gone go too.
+internal void rd_arrangements_release_unowned(void);
+// The View of `view`, released, with its Presentation State unless another
+// View there has its address.
+internal void rd_view_release(CFG_Node *view);
+// Gives `view` the key (`slot`) `key`: what is keyed by its address, and
+// every tab of it, follows it to its new address.
+internal void rd_view_rekey(CFG_Node *view, String8 key);
+// The namespace `host` keeps its Views of `owner` in, made if it has none.
+internal CFG_Node *rd_view_namespace(CFG_Node *host, RD_ViewOwnerKind owner);
+// Gives `view` a free "u:<n>" key of its namespace when it has none or,
+// with `unique`, when another View there has its key. Returns whether it did.
+internal B32 rd_view_key_assign(CFG_Node *view, B32 unique);
+internal RD_DockHost rd_dock_host_from_owner(RD_PanelOwner owner, F32 width);
+internal void rd_dock_restore_window(CFG_Node *window);
+//- Fixtures (shell_core.c): arrangements diagnostics and tests build.
+internal RD_PanelOwner rd_fixture_owner(CFG_Node *host);
+internal RD_PanelAddress rd_fixture_leaf(RD_PanelOwner owner);
+internal CFG_Node *rd_fixture_view(RD_PanelAddress panel, String8 kind, String8 expr, B32 select);
+internal RD_PanelAddress rd_fixture_split(RD_PanelAddress panel, Dir2 dir);
+internal U64 rd_fixture_count(RD_PanelOwner owner, String8 kind);
+internal CFG_Node *rd_fixture_find(RD_PanelOwner owner, String8 kind);
+internal void rd_fixture_remove(CFG_Node *view);
+internal void rd_fixture_select(CFG_Node *view, B32 on);
+internal void rd_fixture_remove_panel(RD_PanelAddress panel);
+// A fixture of its own for `owner`: its arrangement, Views and Presentation
+// State set aside (rd_fixture_isolate) and put back (rd_fixture_restore).
+typedef struct RD_FixtureSaved RD_FixtureSaved;
+struct RD_FixtureSaved
+{
+  RD_Arrangement *layout;
+  CFG_Node *host;
+  CFG_Node *views;
+  CFG_Node *panel_presentation;
+  CFG_Node *view_presentation;
+};
+internal RD_FixtureSaved rd_fixture_isolate(Arena *arena, RD_PanelOwner owner);
+internal void rd_fixture_restore(RD_FixtureSaved saved);
+internal U32 rd_dock_instances(CFG_ID controlled_split, RD_ViewRegistration *registration);
 // A panel's Presentation State (shell_core.c, "Panel Presentation State"):
 // its record, which a panel without any has none of; a flag of it, such as
 // `tabs_on_bottom` or `section_collapsed`, which setting makes a record for;
@@ -1461,20 +1540,27 @@ internal CFG_Node *rd_cfg_from_panel(RD_PanelAddress panel);
 internal CFG_Node *rd_panel_presentation_from_panel(RD_PanelAddress panel);
 internal B32 rd_panel_flag(RD_PanelAddress panel, String8 name);
 internal void rd_panel_flag_set(RD_PanelAddress panel, String8 name, B32 on);
+// A value of `panel`'s Presentation State, such as where a Floating Panel
+// floats among its host's (`share`); empty for none.
+internal String8 rd_panel_setting(RD_PanelAddress panel, String8 name);
+internal void rd_panel_setting_set(RD_PanelAddress panel, String8 name, String8 value);
 internal void rd_panel_focus_mark(RD_PanelAddress panel);
 internal RD_PanelPresentation rd_panel_presentation(RD_PanelAddress panel);
-// The panel `cfg` is (a panel node) or has as a tab (a View).
+// The panel that has View `cfg`, or `view`, as a tab.
 internal RD_PanelAddress rd_panel_from_cfg(CFG_Node *cfg);
-// The panel that has `view` as a tab.
 internal RD_PanelAddress rd_panel_from_view(RD_ViewAddress view);
-// The panel tree of the arrangement saved as `panels_root`.
-internal RD_PanelTree rd_panel_tree_from_cfg(Arena *arena, CFG_Node *panels_root);
+// Whether `view` is its panel's Selected View. (A transient View's tree
+// marks its own `selected`.)
+internal B32 rd_view_is_selected(RD_ViewAddress view);
 // The seed of every UI key of `panel`'s boxes and animations.
 internal UI_Key rd_panel_ui_key(RD_PanelAddress panel);
 internal RD_DockHost rd_dock_host_from_panel(RD_PanelAddress panel, F32 width);
 internal RD_DockView rd_dock_view_from_address(RD_ViewAddress view);
 
+// A workspace's panels (a workspace node, or a window for its own), or the
+// sidebar's, as a window mounts them.
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner);
+internal UIShell_WorkspaceMount uishell_workspace_mount_from_sidebar(Arena *arena, CFG_Node *window);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_panel_owner(Arena *arena, RD_PanelOwner owner);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_window(Arena *arena, CFG_Node *window);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg);
@@ -1588,8 +1674,10 @@ internal RD_AppMenuSpecList rd_app_menu_specs(void);
 internal void rd_app_menu_buttons(RD_AppMenuSpec *spec);
 internal void rd_app_menu_spec_content(RD_AppMenuSpec *spec);
 internal String8 rd_app_data_folder(Arena *arena);
+// A new View of an immediate tree.
 internal CFG_Node *rd_cfg_new_view_tab(CFG_Node *parent, String8 view, String8 expr, B32 selected);
-internal CFG_Node *rd_new_view_tab(RD_Arrangement *arrangement, RD_PanelID panel, String8 view, String8 expr);
+// A new View in `arrangement`'s `panel`, after its last tab.
+internal RD_ViewAddress rd_new_view_tab(RD_Arrangement *arrangement, RD_PanelID panel, String8 view, String8 expr);
 
 ////////////////////////////////
 //~ rjf: Main Layer Top-Level Calls

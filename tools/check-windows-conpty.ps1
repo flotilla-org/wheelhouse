@@ -39,29 +39,28 @@ $WorkDir = Join-Path ([System.IO.Path]::GetTempPath()) ("wheelhouse-conpty-" + [
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 $User = Join-Path $WorkDir "user"
 $Project = Join-Path $WorkDir "project"
-# Windows are a Dashboard's Presentation State, kept beside an explicit --user file.
+# Windows are a Dashboard's Presentation State, kept beside an explicit
+# --user file; a workspace's tabs are its record's, in the Dashboard
+# (tools/workspace_seed.py writes the same).
 $Dashboard = Join-Path $WorkDir "dashboard"
 New-Item -ItemType Directory -Force -Path $Dashboard, (Join-Path $WorkDir "presentation") | Out-Null
 Set-Content -Path (Join-Path $Dashboard "id") -Encoding ascii -Value "conpty"
 # One window, one panel, one terminal tab running cmd.exe in-process.
+$WorkspaceId = [System.Guid]::NewGuid().ToString()
+Set-Content -Path (Join-Path $Dashboard "workspace-$WorkspaceId.record") -Encoding ascii -Value (@'
+{"subject":{"entity":null,"retained":[]},
+ "slots":{"baseline":null,"edits":{},"user":[{"key":"u:1","spec":{"content":{"Local":{"Command":{"line":{"Shell":"cmd.exe"},"cwd":null}}},"presentation":"terminal"},"rebind":"Replace"}],"name":null,"mood":null,"departed":{}},
+ "arrangement":{"owned":true,"doc":{"root":{"id":"1","weight":1.0,"node":{"Tabs":{"tabs":["u:1"],"selected":"u:1"}}}},"placed":[],"soft":{},"provider_changed":false},
+ "resolutions":{}}
+'@)
 Set-Content -Path (Join-Path $WorkDir "presentation\conpty.wheelhouse") -Encoding ascii -Value @"
 // uishell 0.1.0 presentation file
 
 window:
 {
   size: 900.000000 600.000000
-  panels:
-  {
-    1.0:
-    {
-      terminal:
-      {
-        expression: "cmd.exe"
-        selected
-      }
-      selected
-    }
-  }
+  workspace_id: "$WorkspaceId"
+  arrangement_presentation: { }
 }
 "@
 Set-Content -Path $Project -Encoding ascii -Value "// uishell 0.1.0 project file"

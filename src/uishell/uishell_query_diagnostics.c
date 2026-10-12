@@ -14,10 +14,10 @@ uishell_query_ui_diagnostics(RD_WindowState *ws)
   rd_state->cmds_arenas[0] = rd_state->cmds_arenas[1] = arena;
   rd_state->cmds_gen = 0;
   ws->ui = test; ui_select_state(test);
-  // A View in an arrangement of its own, beside the window's, so it has an
+  // A View in a workspace of its own, beside the window's, so it has an
   // address.
-  CFG_Node *host = cfg_node_new(rd_state->cfg, cfg_node_from_id(ws->cfg_id), str8_lit("query_diagnostic"));
-  CFG_Node *view = rd_cfg_new_view_tab(cfg_node_new(rd_state->cfg, host, str8_lit("panels")), str8_lit("text"), str8_zero(), 1);
+  CFG_Node *host = cfg_node_new(rd_state->cfg, cfg_node_from_id(ws->cfg_id), str8_lit("workspace"));
+  CFG_Node *view = rd_fixture_view(rd_fixture_leaf(rd_fixture_owner(host)), str8_lit("text"), str8_zero(), 1);
   RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
   B32 ok = 1;
 #define QueryCheck(expr) do { if(!(expr)) { fprintf(stderr, "FAIL embedded query UI %d: %s\n", __LINE__, #expr); ok = 0; } } while(0)
@@ -91,6 +91,7 @@ uishell_query_ui_diagnostics(RD_WindowState *ws)
     uishell_cmd("cancel_query"); uishell_edit_drain_commands();
   }
   cfg_node_release(rd_state->cfg, host);
+  rd_arrangements_release_unowned();
   ui_state_release(test); ws->ui = saved_window_ui; ui_select_state(saved_ui);
   rd_state->cmds[0] = saved_commands[0]; rd_state->cmds[1] = saved_commands[1];
   rd_state->cmds_arenas[0] = saved_arenas[0]; rd_state->cmds_arenas[1] = saved_arenas[1];

@@ -2833,14 +2833,19 @@ WH_VIEW_UI_FUNCTION_DEF(sessions)
           {
             // open a Terminal View attached to this daemon session, in this
             // panel; the tab persists in the workspace and reattaches by id
-            CFG_Node *panel = rd_cfg_from_panel(uishell_regs()->panel);
-            CFG_Node *tab = rd_cfg_new_view_tab(panel, str8_lit("terminal"), str8_zero(), 1);
-            CFG_Node *session_cfg = cfg_node_new(rd_state->cfg, tab, str8_lit("session"));
-            cfg_node_new(rd_state->cfg, session_cfg, row->session_id);
-            if(daemon_name.size != 0)
+            RD_PanelAddress panel = uishell_regs()->panel;
+            RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+            if(rd_arrangement_panel_from_id(arrangement, panel.id) != &rd_nil_arrangement_panel)
             {
-              CFG_Node *daemon_cfg = cfg_node_new(rd_state->cfg, tab, str8_lit("daemon_name"));
-              cfg_node_new(rd_state->cfg, daemon_cfg, daemon_name);
+              CFG_Node *tab = rd_cfg_from_view(rd_new_view_tab(arrangement, panel.id, str8_lit("terminal"), str8_zero()));
+              CFG_Node *session_cfg = cfg_node_new(rd_state->cfg, tab, str8_lit("session"));
+              cfg_node_new(rd_state->cfg, session_cfg, row->session_id);
+              if(daemon_name.size != 0)
+              {
+                CFG_Node *daemon_cfg = cfg_node_new(rd_state->cfg, tab, str8_lit("daemon_name"));
+                cfg_node_new(rd_state->cfg, daemon_cfg, daemon_name);
+              }
+              rd_arrangement_set(arrangement);
             }
           }
         }
