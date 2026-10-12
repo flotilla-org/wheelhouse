@@ -1374,6 +1374,23 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
     rd_arrangement_insert_tab(a, next->id, panel->id, uishell_store_tab_before(a, view->id), panel->selected == view->id);
     if(keep_previous)
     {
+      // A Slot keeps one previous instance: an older one closes, with its
+      // state and Presentation State, so the replaced View can take its
+      // address.
+      RD_ViewAddress previous = uishell_store_slot_view(owner, key, RD_ViewInstance_Previous);
+      CFG_Node *older = rd_cfg_from_view(previous);
+      if(older != &cfg_nil_node && older != view)
+      {
+        RD_ArrangementPanel *older_panel = rd_arrangement_panel_from_view(a, older->id);
+        if(older_panel->selected == older->id)
+        {
+          RD_ArrangementTab *t = rd_arrangement_tab_from_view(older_panel, older->id);
+          rd_arrangement_select(a, older_panel->id, t->prev ? t->prev->view : t->next ? t->next->view : 0);
+        }
+        rd_arrangement_remove_tab(a, older->id);
+        rd_view_states_release_view(previous);
+        rd_view_presentation_release(previous);
+      }
       uishell_store_drop_setting(view, str8_lit("slot"));
       uishell_store_set_setting(view, str8_lit("previous_of"), key);
       for(U64 i = 0; i < ArrayCount(uishell_store_runtime_keys); i++)

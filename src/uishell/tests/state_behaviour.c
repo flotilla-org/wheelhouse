@@ -1192,6 +1192,23 @@ entry_point(CmdLine *cmdline)
     StateCheck(state_offers(previous, UIShell_SlotAction_ReleasePrevious) && state_offers(partner, UIShell_SlotAction_ReleasePrevious));
     // The document has the Slot once: the previous instance isn't one.
     state_check_committed(ws);
+    // Rebinding again before the user releases it keeps one previous
+    // instance, the one just replaced; the older one closes.
+    for(U32 target = 22; target != 0; target = target == 22 ? 2 : 0)
+    {
+      state_reviewer_partner = target;
+      state_producer(state);
+      state_frame(ws);
+      state_frame(ws);
+      U32 shown = 0;
+      String8 replaced = target == 22 ? str8_lit("attach partner 2") : str8_lit("attach partner 22");
+      partner = state_slot_view(reviewer, str8_lit("partner"));
+      previous = state_previous_view(reviewer, str8_lit("partner"));
+      StateCheck(str8_match(rd_expr_from_cfg(previous), replaced, 0));
+      for(CFG_Node *tab = partner->parent->first; tab != &cfg_nil_node; tab = tab->next)
+      { shown += str8_match(uishell_store_previous_of(tab), str8_lit("partner"), 0); }
+      StateCheck(shown == 1);
+    }
     uishell_store_act(previous, UIShell_SlotAction_ReleasePrevious);
     state_frame(ws);
     StateCheck(state_previous_view(reviewer, str8_lit("partner")) == &cfg_nil_node);
