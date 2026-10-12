@@ -3001,6 +3001,16 @@ uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg)
   return mount;
 }
 
+// The arrangement commands edit for `cfg`: its Floating Panel's own, or its
+// mount's (a workspace's or the sidebar's).
+internal RD_Arrangement *
+uishell_arrangement_from_cfg(Arena *arena, CFG_Node *cfg)
+{
+  CFG_Node *floating = rd_dock_floating_panel_from_cfg(cfg);
+  if(floating != &cfg_nil_node) { return rd_arrangement_from_cfg(arena, floating); }
+  return uishell_workspace_mount_from_cfg(arena, cfg).arrangement;
+}
+
 internal UIShell_WorkspaceMount
 uishell_workspace_mount_from_current_regs(Arena *arena)
 {
@@ -3228,6 +3238,15 @@ uishell_workspace_cfg_has_subject(CFG_Node *workspace)
   // A missing child is cfg_nil_node, whose first is also nil with an empty string.
   return (cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string.size != 0 &&
           cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string.size != 0);
+}
+
+// The provider of a subject workspace's entity: the Dashboard subscription
+// it came from, or "local" (not stored) for one-off scripts and fixtures.
+internal String8
+uishell_workspace_cfg_subject_provider(CFG_Node *workspace)
+{
+  String8 provider = cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_provider"))->first->string;
+  return provider.size ? provider : str8_lit("local");
 }
 
 internal UIShell_WorkspaceMount *
@@ -9920,6 +9939,17 @@ rd_cfg_new_view_tab(CFG_Node *parent, String8 view, String8 expr, B32 selected)
   return tab;
 }
 
+// A new View as `panel`'s last tab and its Selected View. Saving the
+// arrangement places its node.
+internal CFG_Node *
+rd_new_view_tab(RD_Arrangement *arrangement, RD_PanelID panel, String8 view, String8 expr)
+{
+  CFG_Node *tab = rd_cfg_new_view_tab(&cfg_nil_node, view, expr, 0);
+  RD_ArrangementTab *last = rd_arrangement_panel_from_id(arrangement, panel)->last_tab;
+  rd_arrangement_move_tab(arrangement, tab->id, panel, last ? last->view : 0);
+  return tab;
+}
+
 internal void
 rd_vocab_info_map_insert(Arena *arena, RD_VocabInfoMap *map, RD_VocabInfo *info)
 {
@@ -10243,6 +10273,7 @@ rd_init(CmdLine *cmdln)
     }
     
     // rjf: do initial app load
+    UISHELL_APP_OPEN_DASHBOARD(cmdln);
     UISHELL_APP_INITIAL_LOAD(user_path, project_path);
     if(cmd_line_has_flag(cmdln, str8_lit("terminal_fixture")) ||
        cmd_line_has_flag(cmdln, str8_lit("terminal-fixture")))

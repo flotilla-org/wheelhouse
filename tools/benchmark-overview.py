@@ -132,9 +132,14 @@ def main():
             key = f'{count}-{repeat}'
             run = args.output / key
             run.mkdir()
-            (run / 'user').write_text('window:\n{\n size: 1200 800\n}\n')
+            # Windows are a Dashboard's Presentation State, kept beside an explicit --user file.
+            (run / 'dashboard').mkdir()
+            (run / 'dashboard/id').write_text('benchmark')
+            (run / 'presentation').mkdir()
+            (run / 'presentation/benchmark.wheelhouse').write_text('window:\n{\n size: 1200 800\n}\n')
             (run / 'project').write_text('')
             command = [str(binary), f'--user:{run.resolve()}/user', f'--project:{run.resolve()}/project',
+                       f'--dashboard:{run.resolve()}/dashboard',
                        f'--overview_benchmark:{run.resolve()}', f'--overview_benchmark_count:{count}']
             if not args.preview_refresh_budget:
                 command.append('--no_preview_refresh_budget')

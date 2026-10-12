@@ -55,6 +55,8 @@
 #include "uishell/uishell_commands.h"
 #include "uishell/uishell_meta.h"
 #include "uishell/uishell_eval.h"
+#include "uishell/uishell_dashboard.h"
+#include "uishell/uishell_subscriptions.h"
 #include "uishell/uishell_dispatch.h"
 #include "uishell/uishell_terminal_provider.h"
 #include "uishell/uishell_terminal_environment.h"
@@ -95,6 +97,8 @@
 #include "uishell/uishell_views.c"
 #include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
+#include "uishell/uishell_dashboard.c"
+#include "uishell/uishell_subscriptions.c"
 #include "uishell/uishell_logical_state.c"
 #include "uishell/uishell_terminal_clipboard.c"
 #include "uishell/uishell_terminal_clipboard_diagnostics.c"
@@ -135,6 +139,14 @@ frame(void)
 {
   // rd_frame destroys window/UI state on quit. Keep pumping asynchronous
   // session cleanup without building another frame from that retired state.
+  // SIGTERM, SIGINT or SIGHUP quit as Exit does, so the Dashboard's
+  // connectors are stopped below entry_point's loop (quit.rs).
+  local_persist B32 quit_signalled = 0;
+  if(!rd_state->quit && !quit_signalled && wheelhouse_quit_signalled())
+  {
+    quit_signalled = 1;
+    uishell_cmd("exit");
+  }
   if(!rd_state->quit)
   {
     uishell_sidebar_poll_live();
@@ -188,6 +200,8 @@ entry_point(CmdLine *cmd_line)
     case ExecMode_Normal:
     {
       wm_init();
+      if(!wheelhouse_quit_signals_install(wm_send_wakeup_event))
+      { fprintf(stderr, "Quit signals could not be handled; they end Wheelhouse without stopping its connectors\n"); }
       fp_init();
       r_init(cmd_line);
       fnt_init();
@@ -237,6 +251,20 @@ entry_point(CmdLine *cmd_line)
         uishell_ingress = wheelhouse_ingress_start_recorded(socket_path.str, socket_path.size, wm_send_wakeup_event,
           recording_path.str, recording_path.size, recording_bytes, recording_files, error, sizeof(error));
         if(uishell_ingress == 0) { fprintf(stderr, "Sidebar ingress: %s\n", error); abort_self(1); }
+        // Subscriptions' endpoints record beside it.
+        uishell_subscriptions.record = recording_path.size != 0;
+        uishell_subscriptions.record_bytes = recording_bytes;
+        uishell_subscriptions.record_files = recording_files;
+      }
+      // The Dashboard gains the Flotilla subscription a launcher asks for
+      // (for its daemon, or Flotilla's default) unless it has one already.
+      if(cmd_line_has_flag(cmd_line, str8_lit("flotilla_subscription")))
+      { uishell_subscription_ensure(str8_lit("flotilla"), cmd_line_string(cmd_line, str8_lit("flotilla_subscription"))); }
+      // Each subscription's endpoint is named after the local one.
+      if(socket_path.size != 0)
+      {
+        uishell_subscriptions_go_live(socket_path, cmd_line_string(cmd_line, str8_lit("flotilla_bin")),
+          str8_chop_last_slash(rd_state->log_path));
       }
 #if OS_MAC || OS_LINUX
       if(cmd_line_has_flag(cmd_line, str8_lit("managed_content_diagnostics")))
@@ -338,6 +366,10 @@ entry_point(CmdLine *cmd_line)
           abort_self(ok ? 0 : 1);
         }
       }
+      // Every way out of the loop (Exit, the last window closed, Quit on
+      // macOS, a quit signal) comes here: connectors stop before Wheelhouse
+      // exits. Should it end otherwise, they end with it (connector.rs).
+      uishell_subscriptions_close();
       wheelhouse_ingress_stop(uishell_ingress);
       uishell_ingress = 0;
     }break;
@@ -347,12 +379,19 @@ entry_point(CmdLine *cmd_line)
       wm_graphical_message(0,
                            str8_lit("Wheelhouse - Help"),
                            str8_lit("Wheelhouse composes workspaces from tabbed panels and embedded views.\n\n"
+                                    "--dashboard:<name|path>\n"
+                                    "Open this Dashboard: its workspaces, sidebar and windows. A name is a directory under dashboards/ in the "
+                                    "platform's config folder (beside an explicit --user file). Without it, the Dashboard opened last, else \"default\".\n\n"
                                     "--user:<path>\n"
-                                    "Use to specify the location of a user file for window, panel, keybinding, theme, and visual settings.\n\n"
+                                    "Use to specify the location of a user file for this device's keybinding, theme, font, and visual settings.\n\n"
                                     "--project:<path>\n"
                                     "Use to specify the location of a project file for app-specific settings.\n\n"
                                     "--andamento_socket:<path> --andamento_config:<KDL path>\n"
-                                    "Accept live metadata over HTTP/UDS using the specified sidebar template.\n\n"
+                                    "Accept live metadata over HTTP/UDS using the specified sidebar template. Each of the Dashboard's "
+                                    "subscriptions gets an endpoint of its own named after this one, and its connector is started.\n\n"
+                                    "--flotilla_subscription[:<daemon>] --flotilla_bin:<path>\n"
+                                    "Add a Flotilla subscription for this daemon (default: Flotilla's own) to the Dashboard unless it has one; "
+                                    "connectors run this Flotilla (default: $FLOTILLA_BIN, else flotilla).\n\n"
                                     "--scroll_region_fixture\nOpen the two-axis scrollbar fixture.\n\n"
                                     "--managed_content_diagnostics\nRun managed terminal reconciliation checks and exit (Unix).\n\n"
                                     "--shared_ui_diagnostics --shared_ui_fixture_dir:DIR\nRun config, file-picker and Metal blur regressions using an empty temporary directory.\n\n"

@@ -33,4 +33,30 @@ extern void wheelhouse_ingress_poll_observed(WheelhouseIngress *,
   uint32_t (*)(void *, WheelhouseWorkdirEmit, void *), void *);
 extern void wheelhouse_ingress_stop(WheelhouseIngress *);
 extern uint64_t wheelhouse_ingress_now_ms(void);
+
+// A connector: a command supervised on a thread of its own (connector.rs).
+// start copies argv (program first) and env (changes to this process's
+// environment: "NAME=value" sets, "NAME" removes), appends the command's
+// output to log, and returns
+// NULL with a NUL-terminated error on failure. When the command exits it is
+// restarted after 1s, doubling to 30s (reset by a run of 30s or more); the
+// log notes each exit. wake runs on the supervisor thread whenever the
+// command starts or exits. running reports whether it runs now and, when
+// starts is not NULL, how many times it has started. stop ends it and what
+// it started (its process group, or job on Windows) and releases the handle;
+// NULL is accepted. stop_begin asks it to stop without waiting, so several
+// can stop at once before each is stopped. Should Wheelhouse end without
+// stopping it, it ends too (connector.rs).
+typedef struct WheelhouseConnector WheelhouseConnector;
+extern WheelhouseConnector *wheelhouse_connector_start(const WheelhouseIngressText *argv, size_t argc,
+  const WheelhouseIngressText *env, size_t env_count, WheelhouseIngressText log, void (*)(void), uint8_t *, size_t);
+extern uint32_t wheelhouse_connector_running(const WheelhouseConnector *, uint64_t *starts);
+extern void wheelhouse_connector_stop_begin(WheelhouseConnector *);
+extern void wheelhouse_connector_stop(WheelhouseConnector *);
+
+// SIGTERM, SIGINT and SIGHUP ask to quit (quit.rs): the first runs wake on a
+// background thread and makes quit_signalled true; a second ends the process.
+// install returns 0 on failure; on Windows it does nothing.
+extern uint32_t wheelhouse_quit_signals_install(void (*)(void));
+extern uint32_t wheelhouse_quit_signalled(void);
 #endif

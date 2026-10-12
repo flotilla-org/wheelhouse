@@ -39,6 +39,19 @@ including chunked requests, applies. Maximum decoded body size is 1 MiB.
 assert that the UI has processed any facts. Connections may be reused; clients
 must read the HTTP response before considering delivery successful.
 
+### Subscription endpoints
+
+Each of the Dashboard's subscriptions has an endpoint of its own, named after
+this one with `-<subscription ID>` appended (`facts.sock-<ID>` beside it, or
+`\\.\pipe\<name>-<ID>`), served the same way. Wheelhouse gives it to that
+subscription's connector (`flotilla pm connect --wheelhouse-socket <endpoint>`,
+with `WHEELHOUSE_SOCKET` set to it). Andamento stamps every patch arriving there
+with the subscription ID as its provider, whatever the patch says; patches on
+the `--andamento_socket` endpoint itself belong to the `local` provider, as do
+one-off scripts and the git watcher that use it. While the connector is down,
+its provider's facts are kept and marked stale instead of expiring; they are
+fresh again once a patch arrives. Removing the subscription retracts them.
+
 ## Delivery and lifetime
 
 Delivery is at least once. Retry transport failures and 5xx responses with a
@@ -80,7 +93,8 @@ It is off by default: the ordinary router installs no recorder, performs no
 recording work, and creates no recording files. All producers use the same
 recorder on Unix sockets and Windows named pipes; no producer changes are needed.
 
-The active file is `logs/ingress.jsonl`, beside `ui_thread.uishell_log` in the app
+Each subscription's endpoint records to `logs/ingress-<subscription ID>.jsonl`
+with the same limits. The active file is `logs/ingress.jsonl`, beside `ui_thread.uishell_log` in the app
 data folder. With an explicit `--user:<file>`, both logs live beside that file;
 the daily driver uses its persistent settings folder. Default retention is four
 files of at most 4 MiB each (16 MiB total), including the active file.

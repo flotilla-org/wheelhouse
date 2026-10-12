@@ -5,7 +5,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   Temp scratch = scratch_begin(0, 0);
   UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {0};
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
-  fixture.initialized = fixture.restored = 1;
+  fixture.initialized = 1;
   String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
   fixture.core = andamento_create(config.str, config.size, 0);
   if(!fixture.core)

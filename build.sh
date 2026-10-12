@@ -223,6 +223,9 @@ then
       # Restart behaviour against golden logical-state snapshots (#314).
       CC="$compiler" python3 ../tools/test-state-behaviour.py "$andamento_lib_dir" "$cleat_lib_dir" \
         --andamento-include "$andamento_dir/crates/andamento-ffi/include" --cleat-include "$cleat_dir/crates/cleat/include"
+      # Ingress, its recorder, and connector supervision (src/ingress).
+      cargo test --manifest-path "$repo_root/build/andamento/Cargo.toml" -p wheelhouse-native-deps --lib --locked \
+        --target "$andamento_target" --target-dir "$andamento_target_dir" $cargo_profile_flags
     fi
   fi
   $compile -c ../src/uishell/uishell_main.c $out uishell_main.o

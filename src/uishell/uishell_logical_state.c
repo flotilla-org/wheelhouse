@@ -1,18 +1,22 @@
-// The logical state as text (uishell_logical_state.h). It reads the user
-// config tree and each window's current Andamento snapshot and changes
-// neither, so it can run between any two commands.
+// The logical state as text (uishell_logical_state.h). It reads the config
+// tree and each window's current Andamento snapshot and dashboard record and
+// changes none of them, so it can run between any two commands.
 //
+//   subscriptions         the Dashboard's, in order: kind, daemon, stale
 //   window <n>
 //     workspaces          selector order; subject or local; kept; arrangement
 //     sidebar             persisted display values; rows as Andamento presents
-//                         them; saved sibling orders; local sections and pins
+//                         them; the sibling orders it keeps; local sections
+//                         and pins
 //     sidebar arrangement where sections are docked, and which are closed
 //   presentation
 //     window <n>          visible workspace, focused panel, input host
 //
 // Things are named by meaning: workspaces by label, rows by entity and label,
 // sections by title. Wheelhouse's own entities (.workspace, .section, .group,
-// .ref) have generated ids, so their labels stand in for them.
+// .ref) have generated ids, so their labels stand in for them. An entity
+// from a subscription names it by position (provider=<n>, or "removed");
+// "local" ones say nothing.
 
 typedef struct UIShell_LogicalText UIShell_LogicalText;
 struct UIShell_LogicalText
@@ -55,6 +59,16 @@ uishell_logical_quote(Arena *arena, String8 s)
   str8_list_push(arena, &parts, str8_skip(s, start));
   str8_list_push(arena, &parts, str8_lit("\""));
   return str8_list_join(arena, &parts, 0);
+}
+
+// " provider=<n>" (and " stale") for a subscription's entity; empty for a
+// local one.
+internal String8
+uishell_logical_provider(Arena *arena, String8 provider, B32 stale)
+{
+  String8 label = uishell_subscription_label(arena, provider);
+  if(str8_match(label, str8_lit("local"), 0)) { return str8_zero(); }
+  return push_str8f(arena, " provider=%S%s", label, stale ? " stale" : "");
 }
 
 internal String8
@@ -146,9 +160,10 @@ uishell_logical_workspace(UIShell_LogicalText *t, U64 depth, CFG_Node *window, C
   String8 home = str8_lit(" local");
   if(uishell_workspace_cfg_has_subject(owner))
   {
-    home = push_str8f(arena, " subject=%S/%S",
+    home = push_str8f(arena, " subject=%S/%S%S",
       cfg_node_child_from_string(owner, str8_lit("sidebar_entity_kind"))->first->string,
-      cfg_node_child_from_string(owner, str8_lit("sidebar_entity_id"))->first->string);
+      cfg_node_child_from_string(owner, str8_lit("sidebar_entity_id"))->first->string,
+      uishell_logical_provider(arena, uishell_workspace_cfg_subject_provider(owner), 0));
   }
   else if(uishell_sidebar_local_home(owner).size)
   { home = push_str8f(arena, " local with=project/%S", uishell_sidebar_local_home(owner)); }
@@ -260,6 +275,10 @@ uishell_logical_rows(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *st
     if(status.size) { str8_list_pushf(arena, &flags, " status=%S", uishell_logical_quote(arena, status)); }
     if(node.collapsed && uishell_sidebar_has_children(state, i)) { str8_list_push(arena, &flags, str8_lit(" collapsed")); }
     if(role == UIShell_SidebarRole_PassThrough) { str8_list_push(arena, &flags, str8_lit(" untitled")); }
+    AndamentoText provider = {0};
+    uint32_t stale = 0;
+    if(andamento_snapshot_node_provider(state->snapshot, i, &provider, &stale))
+    { str8_list_push(arena, &flags, uishell_logical_provider(arena, uishell_sidebar_string(provider), stale)); }
     uishell_logical_linef(t, depth+depths[i], "row %S %S%S",
       uishell_logical_entity(arena, uishell_sidebar_string(node.entity_kind), uishell_sidebar_string(node.entity_id)),
       title, str8_list_join(arena, &flags, 0));
@@ -281,37 +300,40 @@ uishell_logical_order_entity(Arena *arena, UIShell_SidebarState *state, String8 
   return push_str8f(arena, "%S (absent)", name);
 }
 
-// Each saved sibling order, named by the row (or region) its run is under.
+// Each sibling order Andamento keeps, named by the row (or region) its run
+// is under.
 internal void
-uishell_logical_orders(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *state, CFG_Node *window)
+uishell_logical_orders(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *state)
 {
   Arena *arena = t->arena;
-  CFG_Node *orders = cfg_node_child_from_string(window, str8_lit("sidebar_order"));
-  for(CFG_Node *run = orders->first; run != &cfg_nil_node; run = run->next)
+  for(UIShell_KdlNode *order = uishell_sidebar_dashboard(state); order; order = order->next)
   {
+    if(!str8_match(order->name, str8_lit("order"), 0)) { continue; }
     String8 under = str8_lit("(no rows)");
-    for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+    U64 row = uishell_sidebar_order_row(state, order);
+    if(row != ANDAMENTO_NONE)
     {
-      if(!str8_match(uishell_sidebar_loop_key(state->snapshot, i), run->string, 0)) { continue; }
       AndamentoNode node = {0}, parent = {0};
-      uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-      if(node.parent == ANDAMENTO_NONE) { under = str8_lit("(top level)"); break; }
+      uishell_sidebar_snapshot_node(state->snapshot, row, &node);
       uishell_sidebar_node_at(state, node.parent, &parent);
       under = uishell_logical_quote(arena, parent.is_section ? uishell_logical_section_title(state, parent) : uishell_sidebar_string(parent.label));
-      break;
     }
     uishell_logical_linef(t, depth, "order under %S", under);
-    for(CFG_Node *n = run->first; n != &cfg_nil_node && n->next != &cfg_nil_node; n = n->next->next)
-    { uishell_logical_linef(t, depth+1, "%S", uishell_logical_order_entity(arena, state, n->string, n->next->string)); }
+    for(UIShell_KdlNode *e = order->first; e; e = e->next)
+    {
+      if(!str8_match(e->name, str8_lit("entity"), 0) || e->arg_count < 2) { continue; }
+      uishell_logical_linef(t, depth+1, "%S", uishell_logical_order_entity(arena, state, e->args[0], e->args[1]));
+    }
   }
 }
 
-// Sections and groups people made, and the pins in each group.
+// Sections and groups people made, and the pins in each group (the
+// window's working copy of what Andamento keeps).
 internal void
 uishell_logical_local(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
 {
   Arena *arena = t->arena;
-  CFG_Node *root = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+  CFG_Node *root = uishell_sidebar_local_tree(window);
   for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
   {
     if(!str8_match(section->string, str8_lit("section"), 0)) { continue; }
@@ -339,15 +361,24 @@ internal void
 uishell_logical_sidebar_arrangement(UIShell_LogicalText *t, U64 depth, CFG_Node *window, UIShell_SidebarState *state)
 {
   uishell_logical_linef(t, depth, "sidebar arrangement");
-  String8 hosts[] = {RD_DOCK_SIDEBAR_ROOT, str8_lit("floating_panels")};
-  char *names[] = {"docked", "floating"};
-  for(U64 h = 0; h < ArrayCount(hosts); h++)
+  CFG_Node *sidebar = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
+  if(sidebar != &cfg_nil_node)
   {
-    CFG_Node *host = cfg_node_child_from_string(window, hosts[h]);
-    if(host == &cfg_nil_node) { continue; }
-    uishell_logical_linef(t, depth+1, "%s", names[h]);
-    RD_Arrangement *arrangement = uishell_workspace_mount_from_owner_cfg(t->arena, window, host).arrangement;
+    uishell_logical_linef(t, depth+1, "docked");
+    RD_Arrangement *arrangement = uishell_arrangement_from_cfg(t->arena, sidebar);
     uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
+  }
+  CFG_Node *floating = cfg_node_child_from_string(window, str8_lit("floating_panels"));
+  if(floating != &cfg_nil_node)
+  {
+    uishell_logical_linef(t, depth+1, "floating");
+    // Each Floating Panel is its own arrangement.
+    for(CFG_Node *c = floating->first; c != &cfg_nil_node; c = c->next)
+    {
+      if(rd_dock_floating_panel_from_cfg(c) != c) { continue; }
+      RD_Arrangement *arrangement = uishell_arrangement_from_cfg(t->arena, c);
+      uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
+    }
   }
   CFG_Node *inventory = cfg_node_child_from_string(window, str8_lit("section_positions"));
   for(CFG_Node *record = inventory->first; record != &cfg_nil_node; record = record->next)
@@ -371,7 +402,7 @@ uishell_logical_sidebar(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
     uishell_logical_linef(t, depth+1, "rows");
     uishell_logical_rows(t, depth+2, state);
     uishell_logical_linef(t, depth+1, "orders");
-    uishell_logical_orders(t, depth+2, state, window);
+    uishell_logical_orders(t, depth+2, state);
   }
   uishell_logical_linef(t, depth+1, "local");
   uishell_logical_local(t, depth+2, window);
@@ -431,7 +462,15 @@ uishell_logical_state_text(Arena *arena)
   Temp scratch = scratch_begin(&arena, 1);
   UIShell_LogicalText t = {scratch.arena};
   CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
+  uishell_logical_linef(&t, 0, "subscriptions%s", uishell_subscriptions.first ? "" : " none");
   U64 number = 1;
+  for(UIShell_Subscription *s = uishell_subscriptions.first; s; s = s->next, number++)
+  {
+    uishell_logical_linef(&t, 1, "subscription %I64u %S%S%s", number, s->kind,
+      s->daemon.size ? push_str8f(t.arena, " daemon=%S", uishell_logical_quote(t.arena, s->daemon)) : str8_zero(),
+      s->stale ? " stale" : "");
+  }
+  number = 1;
   for(CFG_NodePtrNode *n = windows.first; n; n = n->next, number++)
   {
     uishell_logical_linef(&t, 0, "window %I64u", number);

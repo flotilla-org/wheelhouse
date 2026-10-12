@@ -6,15 +6,21 @@
 // compares both with goldens.
 //
 // A restart is the production one in-process: autosave writes the user file
-// (rd_autosave), the window state and its Andamento core are released
-// as a frame does once their config is gone, the initial load reopens the file
-// (UISHELL_APP_INITIAL_LOAD, which repairs layouts), and a fresh core runs the
-// sidebar's first-frame path. Config is edited directly only where no command
+// and the Dashboard's presentation (rd_autosave), the window state and its
+// Andamento core are released as a frame does once their config is gone,
+// writing its records into the Dashboard directory, the Dashboard is opened
+// as --dashboard opens it (uishell_dashboard_open) when the restart names
+// one, the initial load reopens the files (UISHELL_APP_INITIAL_LOAD, which
+// repairs layouts), and a fresh core runs the sidebar's first-frame path. Config is edited directly only where no command
 // or sidebar action exists; each such place says so.
 //
 // The fixture's producer is Andamento's patch ABI: the sidebar fixture's facts
 // (as --sidebar_subject_fixture), plus what the scenario's producer changes
 // later. A restarted producer reports its current state again.
+//
+// Subscriptions run live: each gets its endpoint, named after
+// --andamento_socket, and its connector, a stand-in for `flotilla pm
+// connect` (--flotilla_bin, written by the script) that publishes over it.
 
 #define StateCheck(x) do { if(!(x)) { fprintf(stderr, "FAIL state behaviour line %d: %s\n", __LINE__, #x); state_failures++; } } while(0)
 global U32 state_failures;
@@ -82,9 +88,8 @@ state_frame(RD_WindowState *ws)
 }
 
 // A window's first frame: a new window state and Andamento core (fixture
-// facts, saved orders and display values), what the producer reports now,
-// then the sidebar's first build: observe, rebind saved subject workspaces
-// (uishell_sidebar_restore) and reconcile docked sections.
+// facts, and the window's records imported), what the producer reports now,
+// then the sidebar's first build: observe and reconcile docked sections.
 internal RD_WindowState *
 state_open_window(UI_Theme *theme)
 {
@@ -104,9 +109,31 @@ state_open_window(UI_Theme *theme)
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   uishell_sidebar_observe(state, &split);
   uishell_sidebar_refresh(state);
-  uishell_sidebar_restore(state, &split);
   scratch_end(scratch);
   state_frame(ws);
+  return ws;
+}
+
+// The production restart: autosave writes the user file and presentation,
+// the window state and its Andamento core are released (writing its
+// records), the process opens `dashboard` if given (a launch with
+// --dashboard:<dashboard>), else the same Dashboard, and the initial load
+// reopens the files for a new window state and core.
+internal RD_WindowState *
+state_restart(RD_WindowState *ws, UI_Theme *theme, String8 dashboard)
+{
+  Temp scratch = scratch_begin(0, 0);
+  // Nothing may have changed since the last autosave.
+  rd_autosave();
+  state_pump();
+  rd_window_state_release(ws);
+  if(dashboard.size) { uishell_dashboard_open(dashboard, str8_chop_last_slash(rd_state->user_path)); }
+  String8 user_path = push_str8_copy(scratch.arena, rd_state->user_path);
+  String8 project_path = push_str8_copy(scratch.arena, rd_state->project_path);
+  UISHELL_APP_INITIAL_LOAD(user_path, project_path);
+  state_pump();
+  ws = state_open_window(theme);
+  scratch_end(scratch);
   return ws;
 }
 
@@ -176,6 +203,43 @@ state_open_subject(RD_WindowState *ws, String8 kind, String8 id)
   return workspace;
 }
 
+// Rows of entity `kind`/`id` from `provider`, and (optional) whether one of
+// them is stale.
+internal U64
+state_count_from(UIShell_SidebarState *state, String8 kind, String8 id, String8 provider, B32 *stale)
+{
+  U64 count = 0;
+  for(U64 i = 0; state->snapshot && i < andamento_snapshot_node_count(state->snapshot); i++)
+  {
+    AndamentoNode node = {0};
+    AndamentoText from = {0};
+    uint32_t node_stale = 0;
+    uishell_sidebar_snapshot_node(state->snapshot, i, &node);
+    if(node.is_section || !str8_match(uishell_sidebar_string(node.entity_kind), kind, 0) ||
+       !str8_match(uishell_sidebar_string(node.entity_id), id, 0) ||
+       !andamento_snapshot_node_provider(state->snapshot, i, &from, &node_stale) ||
+       !str8_match(uishell_sidebar_string(from), provider, 0)) { continue; }
+    count++;
+    if(stale && node_stale) { *stale = 1; }
+  }
+  return count;
+}
+
+// Frames, with live ingress polled before each as a frame does, until `cond`
+// holds or ten seconds pass.
+#define StateWaitFor(ws, cond) do \
+{ \
+  U64 deadline_ = wheelhouse_ingress_now_ms() + 10000; \
+  for(;;) \
+  { \
+    uishell_sidebar_poll_live(); \
+    state_frame(ws); \
+    if(cond) { break; } \
+    if(wheelhouse_ingress_now_ms() > deadline_) { StateCheck(cond); break; } \
+    sleep_ms(20); \
+  } \
+} while(0)
+
 internal CFG_PanelTree
 state_panels(Arena *arena, CFG_Node *workspace)
 {
@@ -232,7 +296,7 @@ internal void
 entry_point(CmdLine *cmdline)
 {
   String8 dir = cmd_line_string(cmdline, str8_lit("state_dir"));
-  if(!dir.size) { fprintf(stderr, "state behaviour needs --state_dir:DIR --user:FILE\n"); abort_self(2); }
+  if(!dir.size) { fprintf(stderr, "state behaviour needs --state_dir:DIR --user:FILE --dashboard:DIR\n"); abort_self(2); }
   // As --sidebar_subject_fixture: the daily-driver sidebar with fixture facts.
   uishell_sidebar_fixture = uishell_sidebar_subject_fixture = 1;
   wm_init(); fp_init(); r_init(cmdline); fnt_init(); rd_init(cmdline);
@@ -337,8 +401,8 @@ entry_point(CmdLine *cmdline)
     AndamentoEntity *order = push_array(scratch.arena, AndamentoEntity, count);
     for(U64 i = 0; i < count; i++) { order[i] = siblings[count-1-i]; }
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
-    uishell_sidebar_publish_local(state, &split);
-    uishell_sidebar_set_order(state, window, loop, order, count);
+    uishell_sidebar_publish(state, &split);
+    uishell_sidebar_set_order(state, loop, order, count);
     state_frame(ws);
   }
 
@@ -410,14 +474,7 @@ entry_point(CmdLine *cmdline)
   StateCheck(ids_before.node_count == 7);
 
   //- Restart.
-  StateCheck(rd_autosave());
-  state_pump();
-  rd_window_state_release(ws);
-  String8 user_path = push_str8_copy(scratch.arena, rd_state->user_path);
-  String8 project_path = push_str8_copy(scratch.arena, rd_state->project_path);
-  UISHELL_APP_INITIAL_LOAD(user_path, project_path);
-  state_pump();
-  ws = state_open_window(&theme);
+  ws = state_restart(ws, &theme, str8_zero());
   state_write(dir, "after_restart.txt");
 
   //- Every workspace, kept ones included, has the ID it had.
@@ -444,9 +501,114 @@ entry_point(CmdLine *cmdline)
   StateCheck(rd_autosave());
   state_pump();
 
+  //- A change is written a second after it is first seen, not at once.
+  {
+    state = ws->sidebar;
+    String8 path = push_str8f(scratch.arena, "%S/dashboard.kdl", state->records_dir);
+    UIShell_DisplayControlIterator it = {state->snapshot};
+    AndamentoControl control = {0}; AndamentoText name = {0};
+    size_t toggle = ANDAMENTO_NONE;
+    while(uishell_sidebar_next_persistent_control(&it, &control, &name))
+    { if(str8_match(uishell_sidebar_string(name), str8_lit("show-role-attempts"), 0)) { toggle = control.action; break; } }
+    String8 before = data_from_file_path(scratch.arena, path);
+    state_click(ws, toggle);
+    U64 now = 1000000;
+    uishell_sidebar_records_save(state, now, 0);
+    uishell_sidebar_records_save(state, now+999, 0);
+    StateCheck(str8_match(data_from_file_path(scratch.arena, path), before, 0));
+    uishell_sidebar_records_save(state, now+1000, 0);
+    String8 after = data_from_file_path(scratch.arena, path);
+    StateCheck(!str8_match(after, before, 0) && str8_find_needle(after, 0, str8_lit("display \"show-role-attempts\" true"), 0) < after.size);
+  }
+
+  //- The Dashboard directory named on the command line holds the records;
+  // this device's area holds its windows, and the user file only settings.
+  UIShell_Dashboard *dashboard = &uishell_dashboard;
+  String8 dashboard_a = push_str8_copy(scratch.arena, dashboard->dir);
+  {
+    uishell_cmd("write_user_data");
+    state_pump();
+    StateCheck(str8_match(dashboard_a, push_str8f(scratch.arena, "%S/dashboard-a", dir), 0));
+    StateCheck(str8_match(str8_skip_chop_whitespace(data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/id", dashboard_a))),
+                          dashboard->id, 0));
+    StateCheck(str8_match(dashboard->presentation_path, push_str8f(scratch.arena, "%S/presentation/%S.wheelhouse", dir, dashboard->id), 0));
+    String8 presentation = data_from_file_path(scratch.arena, dashboard->presentation_path);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("Notes"), 0) < presentation.size);
+    StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/dashboard.kdl", dashboard_a)));
+    String8 user = data_from_file_path(scratch.arena, rd_state->user_path);
+    StateCheck(str8_find_needle(user, 0, str8_lit("keybindings"), 0) < user.size &&
+               str8_find_needle(user, 0, str8_lit("\nwindow:"), 0) == user.size);
+  }
+
+  //- A Dashboard opened for the first time starts afresh, and two opened
+  // alternately keep their own workspaces, sidebars and records.
+  {
+    String8List ids_a = state_workspace_ids(scratch.arena);
+    String8 dashboard_b = push_str8f(scratch.arena, "%S/dashboard-b", dir);
+    ws = state_restart(ws, &theme, dashboard_b);
+    StateCheck(str8_match(dashboard->dir, dashboard_b, 0));
+    StateCheck(state_find_local(ws->sidebar, str8_lit("Notes")) == ANDAMENTO_NONE);
+    window = cfg_node_from_id(ws->cfg_id);
+    uishell_cmd("new_workspace", .window = window->id);
+    state_frame(ws);
+    CFG_Node *only_b = cfg_node_child_list_from_string(scratch.arena, window, str8_lit("workspace")).last->v;
+    cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, only_b, str8_lit("label")), str8_lit("Only in B"));
+    state_frame(ws);
+    String8 only_b_id = push_str8_copy(scratch.arena, uishell_workspace_id_text_from_cfg(only_b));
+    String8List ids_b = state_workspace_ids(scratch.arena);
+    for(String8Node *b = ids_b.first; b; b = b->next)
+    {
+      String8 id = str8_postfix(b->string, 36);
+      for(String8Node *a = ids_a.first; a; a = a->next) { StateCheck(str8_find_needle(a->string, 0, id, 0) == a->string.size); }
+    }
+    for(U32 round = 0; round < 2; round++)
+    {
+      ws = state_restart(ws, &theme, dashboard_a);
+      StringJoin join = {.sep = str8_lit("\n")};
+      String8List ids = state_workspace_ids(scratch.arena);
+      StateCheck(str8_match(str8_list_join(scratch.arena, &ids_a, &join), str8_list_join(scratch.arena, &ids, &join), 0));
+      StateCheck(state_find_local(ws->sidebar, str8_lit("Notes")) != ANDAMENTO_NONE);
+      StateCheck(state_find_local(ws->sidebar, str8_lit("Only in B")) == ANDAMENTO_NONE);
+      ws = state_restart(ws, &theme, dashboard_b);
+      ids = state_workspace_ids(scratch.arena);
+      StateCheck(str8_match(str8_list_join(scratch.arena, &ids_b, &join), str8_list_join(scratch.arena, &ids, &join), 0));
+      StateCheck(state_find_local(ws->sidebar, str8_lit("Only in B")) != ANDAMENTO_NONE);
+      StateCheck(state_find_local(ws->sidebar, str8_lit("Notes")) == ANDAMENTO_NONE);
+    }
+    StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/workspace-%S.kdl", dashboard_b, only_b_id)));
+    StateCheck(!file_path_exists(push_str8f(scratch.arena, "%S/workspace-%S.kdl", dashboard_a, only_b_id)));
+    // Without --dashboard, a launch opens the one opened last.
+    rd_autosave();
+    state_pump();
+    uishell_dashboard_open(str8_zero(), dir);
+    StateCheck(str8_match(dashboard->dir, dashboard_b, 0));
+  }
+
+  //- A user file saved before Dashboards keeps its windows, unread: no
+  // Dashboard imports them, and an older build still finds them.
+  {
+    rd_autosave();
+    state_pump();
+    rd_window_state_release(ws);
+    String8 user_path = push_str8_copy(scratch.arena, rd_state->user_path);
+    StateCheck(append_data_to_file_path(user_path, str8_lit("window:\n{\n size: 900 600\n workspace:\n {\n  label: \"Before Dashboards\"\n }\n}\n")));
+    UISHELL_APP_INITIAL_LOAD(user_path, rd_state->project_path);
+    state_pump();
+    ws = state_open_window(&theme);
+    StateCheck(state_find_local(ws->sidebar, str8_lit("Before Dashboards")) == ANDAMENTO_NONE);
+    StateCheck(state_find_local(ws->sidebar, str8_lit("Only in B")) != ANDAMENTO_NONE);
+    uishell_cmd("write_user_data");
+    state_pump();
+    String8 user = data_from_file_path(scratch.arena, user_path);
+    StateCheck(str8_find_needle(user, 0, str8_lit("Before Dashboards"), 0) < user.size);
+    String8 presentation = data_from_file_path(scratch.arena, dashboard->presentation_path);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("Before Dashboards"), 0) == presentation.size);
+  }
+
   //- A local workspace saved before Workspace IDs, whose sidebar entity was
   // a GUID of its own: its ID takes the GUID's place wherever the window
-  // names it (as a pin's or a saved order's entity).
+  // names it (as a pin's or a saved order's entity, in the keys saved before
+  // records, which a new core imports after IDs are given).
   {
     window = cfg_node_from_id(ws->cfg_id);
     String8 guid = str8_lit("0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0");
@@ -457,6 +619,88 @@ entry_point(CmdLine *cmdline)
     StateCheck(id.size == 36 && str8_match(reference->string, id, 0));
     StateCheck(cfg_node_child_from_string(legacy, str8_lit("local_entity")) == &cfg_nil_node);
     StateCheck(uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_cfg(legacy)) == legacy->id);
+  }
+
+  //- Subscriptions. A Dashboard without any has only local facts. Adding
+  // one saves it in the Dashboard and starts its connector on its own
+  // endpoint; two publishing the same project and vessel make two of each.
+  {
+    StateCheck(uishell_subscriptions.first == 0);
+    String8 local = cmd_line_string(cmdline, str8_lit("andamento_socket"));
+    StateCheck(local.size != 0);
+    uishell_subscriptions_go_live(local, cmd_line_string(cmdline, str8_lit("flotilla_bin")), dir);
+    window = cfg_node_from_id(ws->cfg_id);
+    uishell_cmd("add_flotilla_subscription", .window = window->id, .string = str8_lit("ssh://alpha"));
+    uishell_cmd("add_flotilla_subscription", .window = window->id, .string = str8_lit("ssh://beta"));
+    // The same daemon again adds nothing.
+    uishell_cmd("add_flotilla_subscription", .window = window->id, .string = str8_lit("ssh://beta"));
+    state_pump();
+    StateCheck(uishell_subscriptions.count == 2);
+    UIShell_Subscription *alpha = uishell_subscription_from_text(str8_lit("ssh://alpha"));
+    UIShell_Subscription *beta = uishell_subscription_from_text(str8_lit("ssh://beta"));
+    StateCheck(alpha && beta && alpha != beta);
+    String8 alpha_id = push_str8_copy(scratch.arena, alpha->id), beta_id = push_str8_copy(scratch.arena, beta->id);
+    UIShell_WorkspaceId parsed = {0};
+    StateCheck(uishell_workspace_id_from_string(alpha_id, &parsed) && (parsed.v[6] >> 4) == 7);
+    StateCheck(str8_match(alpha->endpoint, push_str8f(scratch.arena, "%S-%S", local, alpha_id), 0));
+    String8 saved = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/subscriptions.kdl", dashboard->dir));
+    StateCheck(str8_find_needle(saved, 0, push_str8f(scratch.arena, "subscription \"%S\" {\n    kind \"flotilla\"\n    daemon \"ssh://alpha\"\n}", alpha_id), 0) < saved.size);
+    StateCheck(str8_find_needle(saved, 0, beta_id, 0) < saved.size);
+    String8 project = str8_lit("project"), fleet = str8_lit("fleet"), vessel = str8_lit("vessel"), fleet_v = str8_lit("fleet-v");
+    StateWaitFor(ws, state_count_from(ws->sidebar, project, fleet, alpha_id, 0) == 1 && state_count_from(ws->sidebar, project, fleet, beta_id, 0) == 1 &&
+                     state_count_from(ws->sidebar, vessel, fleet_v, alpha_id, 0) >= 1 && state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
+    StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/flotilla-%S.log", dir, alpha_id)));
+    // Opening alpha's vessel opens a workspace on it, not on beta's.
+    size_t activate = ANDAMENTO_NONE;
+    for(U64 i = 0; i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
+    {
+      AndamentoNode node = {0}; AndamentoText from = {0};
+      uishell_sidebar_snapshot_node(ws->sidebar->snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity_id), fleet_v, 0) && andamento_snapshot_node_provider(ws->sidebar->snapshot, i, &from, 0) &&
+         str8_match(uishell_sidebar_string(from), alpha_id, 0) && node.openable) { activate = node.activate; break; }
+    }
+    state_click(ws, activate);
+    CFG_Node *opened = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
+    StateCheck(str8_match(uishell_workspace_cfg_subject_provider(opened), alpha_id, 0));
+    StateWaitFor(ws, state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
+    state_write(dir, "subscriptions_two.txt");
+
+    //- A connector going down makes its provider stale: its rows stay,
+    // marked, past their facts' lifetime, until it publishes again.
+    String8 stop_beta = push_str8f(scratch.arena, "%S/stop-beta", dir);
+    StateCheck(write_data_to_file_path(stop_beta, str8_lit("stop\n")));
+    StateWaitFor(ws, beta->stale);
+    U64 until = wheelhouse_ingress_now_ms() + 3000;
+    StateWaitFor(ws, wheelhouse_ingress_now_ms() > until);
+    B32 stale = 0;
+    StateCheck(state_count_from(ws->sidebar, project, fleet, beta_id, &stale) == 1 && stale);
+    StateCheck(!alpha->stale && state_count_from(ws->sidebar, project, fleet, alpha_id, 0) == 1);
+    state_write(dir, "subscriptions_stale.txt");
+    StateCheck(delete_file_at_path(stop_beta));
+    StateWaitFor(ws, !beta->stale);
+    stale = 0;
+    StateCheck(state_count_from(ws->sidebar, project, fleet, beta_id, &stale) == 1 && !stale);
+    state_write(dir, "subscriptions_fresh.txt");
+
+    //- Removing a subscription stops its connector and retracts its facts;
+    // the workspace open on its vessel stays, retained.
+    uishell_cmd("remove_subscription", .window = window->id, .string = alpha_id);
+    state_pump();
+    StateWaitFor(ws, state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
+    StateCheck(uishell_subscriptions.count == 1 && uishell_subscription_from_text(alpha_id) == 0);
+    StateCheck(state_count_from(ws->sidebar, vessel, fleet_v, alpha_id, 0) >= 1);
+    StateCheck(cfg_node_from_id(ws->root_controlled_split_selected_workspace_id) == opened);
+    saved = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/subscriptions.kdl", dashboard->dir));
+    StateCheck(str8_find_needle(saved, 0, alpha_id, 0) == saved.size && str8_find_needle(saved, 0, beta_id, 0) < saved.size);
+    state_write(dir, "subscriptions_removed.txt");
+
+    //- A restart opens the Dashboard's subscriptions again and reconnects them.
+    ws = state_restart(ws, &theme, push_str8_copy(scratch.arena, dashboard->dir));
+    StateCheck(uishell_subscriptions.count == 1 && str8_match(uishell_subscriptions.first->id, beta_id, 0));
+    StateWaitFor(ws, state_count_from(ws->sidebar, project, fleet, beta_id, 0) == 1 &&
+                     state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
+    state_write(dir, "subscriptions_restarted.txt");
+    uishell_subscriptions_close();
   }
 
   scratch_end(scratch);

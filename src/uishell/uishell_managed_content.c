@@ -72,16 +72,16 @@ uishell_sidebar_reconcile_workspace(UIShell_SidebarState *state, CFG_Node *works
   String8 id = cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string;
   if(!kind.size || !id.size) { return; }
   Temp scratch = scratch_begin(0, 0);
-  CFG_Node *panels = cfg_node_child_from_string(workspace, str8_lit("panels"));
-  CFG_PanelTree tree = rd_panel_tree_from_cfg(scratch.arena, panels);
+  RD_Arrangement *arrangement = rd_arrangement_from_owner(scratch.arena, workspace, str8_lit("panels"));
   CFG_Node *primary = &cfg_nil_node;
   U64 matches = 0;
-  for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+  for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p))
   {
-    for(CFG_NodePtrNode *tab = p->tabs.first; tab; tab = tab->next)
+    for(RD_ArrangementTab *tab = p->first_tab; tab; tab = tab->next)
     {
-      if(str8_match(cfg_node_child_from_string(tab->v, str8_lit("resource_id"))->first->string, str8_lit("primary"), 0))
-      { primary = tab->v; matches++; }
+      CFG_Node *view = cfg_node_from_id(tab->view);
+      if(str8_match(cfg_node_child_from_string(view, str8_lit("resource_id"))->first->string, str8_lit("primary"), 0))
+      { primary = view; matches++; }
     }
   }
   // Missing/ambiguous/user-replaced slots are not a license to overwrite a view.
@@ -91,9 +91,10 @@ uishell_sidebar_reconcile_workspace(UIShell_SidebarState *state, CFG_Node *works
     CFG_Node *cwd = cfg_node_child_from_string(primary, str8_lit("cwd"));
     char *error = 0;
     UIShell_WorkspaceId workspace_id = uishell_workspace_id_from_cfg(workspace);
-    AndamentoContentPlan *plan = andamento_content_plan3(state->core, uishell_sidebar_workspace(workspace_id),
-      uishell_sidebar_text(kind), uishell_sidebar_text(id), uishell_sidebar_text(target),
-      uishell_sidebar_text(rd_expr_from_cfg(primary)), cwd != &cfg_nil_node,
+    AndamentoEntity3 entity = {uishell_sidebar_text(uishell_workspace_cfg_subject_provider(workspace)),
+      uishell_sidebar_text(kind), uishell_sidebar_text(id)};
+    AndamentoContentPlan *plan = andamento_content_plan_entity(state->core, uishell_sidebar_workspace(workspace_id),
+      entity, uishell_sidebar_text(target), uishell_sidebar_text(rd_expr_from_cfg(primary)), cwd != &cfg_nil_node,
       uishell_sidebar_text(cwd->first->string), &error);
     if(uishell_sidebar_result(state, plan != 0, error))
     {

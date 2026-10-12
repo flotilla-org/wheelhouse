@@ -159,12 +159,11 @@ below the normal name budget, the name gives space to the chip viewport. Failed
 display-value restore reconciliation is tracked separately in #185.
 
 Boolean display controls use the declared glyph and tooltip label. A checked
-button has the selection fill and border. Persistent values are stored by the
-variable's stable identity under the window's `sidebar_display` node in the
-saved user configuration. Panel resets replace the panels subtree and retain
-these window values. Undeclared and `persist=false` variables are excluded. This
-uses the additive Andamento ABI 2 accessor from andamento#125, without changing
-core toggle behavior.
+button has the selection fill and border. Andamento keeps persistent values in
+its dashboard record, which Wheelhouse saves beside the user file (state model
+step 3; until then they were replayed from the window's `sidebar_display` node).
+Panel resets replace the panels subtree and keep these values. `persist=false`
+variables are excluded.
 
 ## Kiwi human review
 

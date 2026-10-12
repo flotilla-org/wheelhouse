@@ -1274,6 +1274,7 @@ internal UIShell_WorkspaceMount uishell_workspace_mount_from_owner_cfg(Arena *ar
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_window(Arena *arena, CFG_Node *window);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_current_regs(Arena *arena);
+internal RD_Arrangement *uishell_arrangement_from_cfg(Arena *arena, CFG_Node *cfg);
 internal UIShell_ControlledSplit uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window);
 internal void rd_window_save_presentation(RD_WindowState *ws);
 internal void rd_window_restore_presentation(RD_WindowState *ws);
@@ -1282,6 +1283,7 @@ internal B32 rd_autosave(void);
 internal void uishell_sidebar_reset_regions(CFG_Node *owner);
 internal B32 uishell_controlled_split_workspace_can_close(UIShell_ControlledSplit *split, UIShell_MaterializedWorkspace *workspace);
 internal B32 uishell_workspace_cfg_has_subject(CFG_Node *workspace);
+internal String8 uishell_workspace_cfg_subject_provider(CFG_Node *workspace);
 internal UIShell_WorkspaceMount *uishell_controlled_split_selected_mount(UIShell_ControlledSplit *split);
 internal Rng2F32 uishell_controlled_split_control_rect(UIShell_ControlledSplit *split, Rng2F32 rect);
 internal Rng2F32 uishell_controlled_split_workspace_rect(UIShell_ControlledSplit *split, Rng2F32 rect);
@@ -1383,6 +1385,7 @@ internal void rd_app_menu_buttons(RD_AppMenuSpec *spec);
 internal void rd_app_menu_spec_content(RD_AppMenuSpec *spec);
 internal String8 rd_app_data_folder(Arena *arena);
 internal CFG_Node *rd_cfg_new_view_tab(CFG_Node *parent, String8 view, String8 expr, B32 selected);
+internal CFG_Node *rd_new_view_tab(RD_Arrangement *arrangement, RD_PanelID panel, String8 view, String8 expr);
 
 ////////////////////////////////
 //~ rjf: Main Layer Top-Level Calls

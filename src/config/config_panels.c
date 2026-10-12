@@ -17,12 +17,14 @@ cfg_window_from_cfg(CFG_Node *cfg)
 }
 
 // A panel's children are its sub-panels, its Views and these options. `id`
-// is the panel's stable ID (shell_arrangement.h).
+// is the panel's stable ID (shell_arrangement.h); `section_hint_cleanup`
+// marks a panel restore took a sidebar section out of, for the sidebar's
+// reconciliation to remove if nothing is left in it.
 internal B32
 cfg_panel_child_is_option(String8 name)
 {
   return str8_match(name, str8_lit("tabs_on_bottom"), 0) || str8_match(name, str8_lit("section_collapsed"), 0) ||
-    str8_match(name, str8_lit("id"), 0);
+    str8_match(name, str8_lit("id"), 0) || str8_match(name, str8_lit("section_hint_cleanup"), 0);
 }
 
 internal CFG_PanelNodeRec

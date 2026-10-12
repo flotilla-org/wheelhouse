@@ -185,6 +185,8 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   CFG_NodePtrList panels = {0};
   for(CFG_Node *panel = host->first; panel != &cfg_nil_node; panel = panel->next)
   {
+    // Not the host's own `id`.
+    if(!rd_dock_is_container(panel)) { continue; }
     cfg_node_ptr_list_push(scratch.arena, &panels, panel);
     String8 key = cfg_node_child_from_string(cfg_node_child_from_string(panel, str8_lit("sidebar_section")), str8_lit("section"))->first->string;
     cfg_node_equip_stringf(rd_state->cfg, panel, "%f", str8_match(key, keys[0], 0) || str8_match(key, keys[1], 0) ? 0.f : 1.f/Max(1, panels.count));
@@ -254,23 +256,17 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
 #define DockFailure(expr) do { if(expr) { failures++; fprintf(stderr, "FAIL sidebar docking line %u: %s\n", __LINE__, #expr); } } while(0)
   CFG_Node *saved_axis = cfg_node_child_from_string(window, str8_lit("control_views_split_x"));
   CFG_Node *saved_sizing = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized"));
-  CFG_Node *saved_display = cfg_node_child_from_string(window, str8_lit("sidebar_display"));
   cfg_node_unhook(rd_state->cfg, window, saved_axis);
   cfg_node_unhook(rd_state->cfg, window, saved_sizing);
-  cfg_node_unhook(rd_state->cfg, window, saved_display);
   UIShell_SidebarState *saved_sidebar = ws->sidebar;
   B32 saved_fixture = uishell_sidebar_fixture, saved_subject = uishell_sidebar_subject_fixture;
   uishell_sidebar_fixture = 1; uishell_sidebar_subject_fixture = 0;
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
   UIShell_SidebarState unavailable = {.initialized = 1};
   ws->sidebar = &unavailable;
-  CFG_Node *empty_saved = cfg_node_new(rd_state->cfg, window, str8_lit("sidebar_display"));
-  cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, empty_saved, str8_lit("show-issues")), str8_lit("false"));
   U64 before_unavailable = cfg_change_gen();
-  uishell_sidebar_restore_display(&unavailable, window);
   DockFailure(uishell_sidebar_dock_layout(&split) != &cfg_nil_node);
   DockFailure(cfg_change_gen() != before_unavailable);
-  cfg_node_release(rd_state->cfg, empty_saved);
   ws->sidebar = 0;
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
   CFG_Node *host = uishell_sidebar_dock_layout(&split);
@@ -412,7 +408,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   // there holding its ghost (drag-model.md: "a docking site: a new pinned
   // area"), through the real docking sites.
   {
-    CFG_Node *local = cfg_node_child_from_string(window, str8_lit("sidebar_local"));
+    CFG_Node *local = uishell_sidebar_local_tree(window);
     U64 sections_before = 0;
     for(CFG_Node *n = local->first; n != &cfg_nil_node; n = n->next) { sections_before += str8_match(n->string, str8_lit("section"), 0); }
     UI_Key site_key = ui_key_from_stringf(ui_key_zero(), "drop_boundary_%p_%p", host, second_panel);
@@ -542,8 +538,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   U64 recovered_gen = cfg_change_gen();
   rd_dock_restore_window(rd_state->cfg, window);
   DockFailure(view->parent != recovered_panel || cfg_change_gen() != recovered_gen);
-  // Persistence crosses a new core instance, through the same code used at
-  // application startup. Ephemeral declarations are excluded from storage.
+  // A display value crosses to a new core instance in Andamento's dashboard
+  // record, imported before the first snapshot as at startup.
   UIShell_SidebarState display = {0};
   String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
   char *error = 0;
@@ -558,17 +554,14 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!andamento_dispatch(display.core, display.snapshot, control.action, &error));
   if(error) { andamento_string_free(error); }
   uishell_sidebar_refresh(&display);
-  uishell_sidebar_save_display(&display, window);
-  CFG_State *persisted_cfg = cfg_state_alloc();
-  String8 saved_text = cfg_string_from_tree(scratch.arena, rd_state->cfg_schema_table, str8_zero(), window);
-  CFG_NodePtrList loaded_display = cfg_node_ptr_list_from_string(scratch.arena, persisted_cfg, rd_state->cfg_schema_table, str8_zero(), saved_text);
-  DockFailure(loaded_display.count != 1);
+  String8 record = uishell_sidebar_record_export(scratch.arena, display.core, str8_lit("dashboard"));
   uishell_sidebar_release(&display); MemoryZeroStruct(&display);
   error = 0; display.core = andamento_create(daily.str, daily.size, &error);
   DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
+  error = 0;
+  DockFailure(!uishell_sidebar_result(&display, andamento_record_import(display.core, uishell_sidebar_text(str8_lit("dashboard")),
+    uishell_sidebar_text(record), &error), error));
   uishell_sidebar_refresh(&display);
-  uishell_sidebar_restore_display(&display, loaded_display.first->v);
-  cfg_state_release(persisted_cfg);
   uishell_sidebar_snapshot_node(display.snapshot, 0, &section);
   andamento_snapshot_control(display.snapshot, section.first_control, &control);
   DockFailure(!!control.checked == default_value);
@@ -699,7 +692,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   }
   uishell_sidebar_section_set_collapsed(view, 0);
   ws->sidebar = state;
-  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_display")));
+  // Values of display variables that don't persist stay out of the record.
   String8 persisted = str8_lit("display-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role history\" icon=\"R\" persist=true");
   U64 declaration_at = str8_find_needle(daily, 0, persisted, 0);
   DockFailure(declaration_at == daily.size);
@@ -709,13 +702,10 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!andamento_configure(display.core, uishell_sidebar_text(ephemeral), &error));
   if(error) { andamento_string_free(error); }
   uishell_sidebar_refresh(&display);
-  uishell_sidebar_save_display(&display, window);
-  CFG_Node *storage = cfg_node_child_from_string(window, str8_lit("sidebar_display"));
-  DockFailure(cfg_node_child_from_string(storage, str8_lit("show-issues")) == &cfg_nil_node);
-  DockFailure(cfg_node_child_from_string(storage, str8_lit("show-role-attempts")) != &cfg_nil_node);
+  record = uishell_sidebar_record_export(scratch.arena, display.core, str8_lit("dashboard"));
+  DockFailure(str8_find_needle(record, 0, str8_lit("display \"show-issues\""), 0) == record.size);
+  DockFailure(str8_find_needle(record, 0, str8_lit("show-role-attempts"), 0) != record.size);
   uishell_sidebar_release(&display);
-  cfg_node_release(rd_state->cfg, storage);
-  if(saved_display != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_display); }
   ws->active_panel_id = saved_sidebar_focus;
   cfg_node_release(rd_state->cfg, workspace);
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT));
@@ -734,6 +724,24 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   fprintf(stderr, "Sidebar docking diagnostics: %u failures\n", failures);
   return failures == 0;
 #undef DockFailure
+}
+
+// Saving gives each panel node its `id`, after its own panels; panels a test
+// adds by hand land after it.
+internal CFG_Node *
+uishell_section_placement_last_panel(CFG_Node *host)
+{
+  CFG_Node *n = host->last;
+  for(; n != &cfg_nil_node && !rd_dock_is_container(n); n = n->prev) {}
+  return n;
+}
+
+internal CFG_Node *
+uishell_section_placement_next_panel(CFG_Node *panel)
+{
+  CFG_Node *n = panel->next;
+  for(; n != &cfg_nil_node && !rd_dock_is_container(n); n = n->next) {}
+  return n;
 }
 
 // Headless lifecycle scenarios use the real native snapshot and config codec.
@@ -770,10 +778,10 @@ uishell_section_placement_diagnostics(String8 source_path)
       PlacementCheck(source_host != &cfg_nil_node && source_host->first != &cfg_nil_node);
       // The unhinted workspace fallback follows every hinted shipped region.
       CFG_Node *source_fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
-      PlacementCheck(source_fallback != &cfg_nil_node && source_host->last == source_fallback->parent);
+      PlacementCheck(source_fallback != &cfg_nil_node && uishell_section_placement_last_panel(source_host) == source_fallback->parent);
       if(source_host->first != &cfg_nil_node)
       {
-        CFG_Node *moved = source_host->last;
+        CFG_Node *moved = uishell_section_placement_last_panel(source_host);
         cfg_node_insert_child(state.cfg, source_host, &cfg_nil_node, moved);
         uishell_sidebar_dock_layout(&split);
         PlacementCheck(source_host->first == moved);
@@ -799,7 +807,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   // Andamento always emits the unhinted workspace fallback; it sorts last.
   CFG_Node *fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
   PlacementCheck(fallback != &cfg_nil_node);
-  PlacementCheck(host->first == a->parent && a->parent->next == b->parent && host->last == fallback->parent);
+  PlacementCheck(host->first == a->parent && a->parent->next == b->parent && uishell_section_placement_last_panel(host) == fallback->parent);
   CFG_ID a_id = a->id, b_id = b->id;
   // A user reorder changes only layout, and reconciliation is idempotent.
   cfg_node_insert_child(state.cfg, host, &cfg_nil_node, b->parent);
@@ -946,7 +954,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   c = uishell_sidebar_region_view(restored, str8_lit("c"));
   PlacementCheck(restored_host->first == a->parent && a->parent->next == c->parent && c->parent->next == b->parent);
   fallback = uishell_sidebar_region_view(restored, str8_lit(".unplaced"));
-  PlacementCheck(fallback != &cfg_nil_node && b->parent->next == fallback->parent && restored_host->last == fallback->parent);
+  PlacementCheck(fallback != &cfg_nil_node && b->parent->next == fallback->parent && uishell_section_placement_last_panel(restored_host) == fallback->parent);
   // A saved user split remains intact when a new neighbour is hinted before
   // a View within it. The whole subtree is the insertion anchor.
   CFG_Node *nested = cfg_node_new(state.cfg, restored_host, str8_lit("0.5"));
@@ -958,7 +966,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   uishell_sidebar_replace_snapshot(&sidebar, andamento_snapshot_acquire(core, 0));
   uishell_sidebar_dock_layout(&split);
   CFG_Node *d = uishell_sidebar_region_view(restored, str8_lit("d"));
-  PlacementCheck(d != &cfg_nil_node && d->parent->next == nested);
+  PlacementCheck(d != &cfg_nil_node && uishell_section_placement_next_panel(d->parent) == nested);
   PlacementCheck(b->id == nested_b_id && b->parent == nested_b && nested_b->parent == nested);
   PlacementCheck(str8_match(nested->string, str8_lit("0.5"), 0));
   // A saved section inside a child Workspace level is rejected by the shared
@@ -1050,7 +1058,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   UIShell_SectionPlacement rejected = {str8_lit("reject"), str8_lit("Reject"), str8_lit("floating"), 0};
   U64 reject_generation = cfg_change_gen();
   for(U32 attempt = 0; attempt < 2; attempt++)
-  { PlacementCheck(uishell_sidebar_place_region(reject_owner, &rejected, 1, 0, unknown_view) == unknown_view); }
+  { PlacementCheck(uishell_sidebar_place_region(reject_owner, &rejected, 1, 0, unknown_view, 1.f) == unknown_view); }
   PlacementCheck(cfg_change_gen() == reject_generation && reject_owner->first == unknown_view && unknown_view->next == &cfg_nil_node);
   cfg_node_release(state.cfg, reject_owner);
   // Unusual numeric and reserved-looking ids survive the actual config codec.
