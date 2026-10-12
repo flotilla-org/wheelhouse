@@ -1115,6 +1115,26 @@ entry_point(CmdLine *cmdline)
     state_check_sidebar_committed(ws);
   }
 
+  //- Presentation State whose View or panel is nowhere (an older build's,
+  // a hand edit's) isn't saved again; what Views and panels have is.
+  {
+    window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *views = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, RD_VIEW_PRESENTATION_ROOT);
+    CFG_Node *stray_view = cfg_node_new(rd_state->cfg, views, str8_lit("window"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, stray_view, str8_lit("key")), str8_lit("u:9999"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, stray_view, str8_lit("label")), str8_lit("Stray view record"));
+    CFG_Node *panels = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, RD_PANEL_PRESENTATION_ROOT);
+    CFG_Node *stray_panel = cfg_node_new(rd_state->cfg, panels, str8_lit("sidebar"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, stray_panel, str8_lit("panel")), str8_lit("9999"));
+    cfg_node_new(rd_state->cfg, stray_panel, str8_lit("tabs_on_bottom"));
+    rd_autosave();
+    state_pump();
+    String8 presentation = data_from_file_path(scratch.arena, uishell_dashboard.presentation_path);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("Stray view record"), 0) == presentation.size);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("panel: 9999"), 0) == presentation.size);
+    StateCheck(str8_find_needle(presentation, 0, str8_lit("section_collapsed"), 0) < presentation.size);
+  }
+
   //- Every workspace, kept ones included, has the ID it had.
   String8List ids_after = state_workspace_ids(scratch.arena);
   StateCheck(ids_after.node_count == ids_before.node_count);

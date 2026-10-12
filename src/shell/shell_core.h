@@ -1364,6 +1364,9 @@ internal CFG_Node *rd_view_presentation_alloc(RD_ViewAddress view);
 // The View at `from` is now at `to`: its Presentation State goes with it.
 internal void rd_view_presentation_readdress(RD_ViewAddress from, RD_ViewAddress to);
 internal void rd_view_presentation_release(RD_ViewAddress view);
+// Drops `host`'s (a window's, or an open workspace's) Presentation State
+// records whose View or panel is nowhere, before they are saved.
+internal void rd_presentation_sweep(CFG_Node *host);
 // `view`'s own setting `name` (its Presentation State's, then its node's),
 // else its Renderer's schema default.
 internal String8 rd_view_setting_from_view(RD_ViewAddress view, String8 name);

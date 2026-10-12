@@ -4112,6 +4112,60 @@ rd_panel_presentation_arranged(RD_Arrangement *arrangement)
   if(root->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, root); }
 }
 
+//- Orphaned Presentation State
+//
+// A View's Presentation State goes with it (rd_view_release), and a panel's
+// with the panel when its arrangement is set without it; a record left by
+// an older build, a hand edit or a crash has nothing to go with. Before the
+// presentation file is saved, the records of `host` (a window, or an open
+// workspace) whose View or panel is nowhere go. Only owners whose
+// arrangements are live are judged: a kept workspace's Views are its
+// record's until it reopens.
+internal void
+rd_presentation_sweep(CFG_Node *host)
+{
+  B32 window = str8_match(host->string, str8_lit("window"), 0);
+  if(!window && !str8_match(host->string, str8_lit("workspace"), 0)) { return; }
+  // Views, by the address each record names.
+  CFG_Node *views = cfg_node_child_from_string(host, RD_VIEW_PRESENTATION_ROOT);
+  for(CFG_Node *c = views->first, *next = &cfg_nil_node; c != &cfg_nil_node; c = next)
+  {
+    next = c->next;
+    RD_ViewOwnerKind kinds[] = {RD_ViewOwnerKind_Workspace, RD_ViewOwnerKind_Dashboard, RD_ViewOwnerKind_Window};
+    RD_ViewOwnerKind kind = RD_ViewOwnerKind_Null;
+    for(U64 i = 0; i < ArrayCount(kinds); i++) { if(str8_match(c->string, rd_view_owner_kind_name(kinds[i]), 0)) { kind = kinds[i]; } }
+    if(kind == RD_ViewOwnerKind_Null) { continue; }
+    // A window's own Views are a Workspace's once it has a Workspace ID.
+    if(kind == RD_ViewOwnerKind_Workspace && window && cfg_node_child_from_string(host, str8_lit("workspace_id")) == &cfg_nil_node) { continue; }
+    if(kind != RD_ViewOwnerKind_Workspace && !window) { continue; }
+    RD_PanelOwner owner = kind == RD_ViewOwnerKind_Workspace ? rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, host, 0) :
+                                                               rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, host, 0);
+    if(rd_arrangement_version(owner) == 0) { continue; }
+    UIShell_WorkspaceId id = kind == RD_ViewOwnerKind_Workspace ? owner.id : uishell_window_id_from_cfg(host);
+    RD_ViewInstance instance = cfg_node_child_from_string(c, str8_lit("previous")) != &cfg_nil_node ? RD_ViewInstance_Previous : RD_ViewInstance_Current;
+    RD_ViewAddress address = rd_view_address_make(kind, id, cfg_node_child_from_string(c, str8_lit("key"))->first->string, instance);
+    if(rd_cfg_from_view(address) == &cfg_nil_node) { cfg_node_release(rd_state->cfg, c); }
+  }
+  if(views != &cfg_nil_node && views->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, views); }
+  // Panels, by owner and Panel ID.
+  CFG_Node *panels = cfg_node_child_from_string(host, RD_PANEL_PRESENTATION_ROOT);
+  for(CFG_Node *c = panels->first, *next = &cfg_nil_node; c != &cfg_nil_node; c = next)
+  {
+    next = c->next;
+    RD_PanelOwnerKind kinds[] = {RD_PanelOwnerKind_Workspace, RD_PanelOwnerKind_Sidebar, RD_PanelOwnerKind_Floating};
+    RD_PanelOwnerKind kind = RD_PanelOwnerKind_Null;
+    for(U64 i = 0; i < ArrayCount(kinds); i++) { if(str8_match(c->string, rd_panel_owner_kind_name(kinds[i]), 0)) { kind = kinds[i]; } }
+    if(kind == RD_PanelOwnerKind_Null || (kind == RD_PanelOwnerKind_Sidebar && !window)) { continue; }
+    if(kind == RD_PanelOwnerKind_Workspace && window && cfg_node_child_from_string(host, str8_lit("workspace_id")) == &cfg_nil_node) { continue; }
+    U64 floating = rd_panel_presentation_number(c, str8_lit("floating"));
+    RD_PanelOwner owner = rd_panel_owner_from_host(kind, host, floating);
+    B32 gone = kind == RD_PanelOwnerKind_Floating ? floating == 0 || floating > rd_floating_count(host) : 0;
+    if(!gone && rd_arrangement_version(owner) == 0) { continue; }
+    if(gone || !rd_panel_exists(rd_panel_address(owner, rd_panel_presentation_id(c)))) { cfg_node_release(rd_state->cfg, c); }
+  }
+  if(panels != &cfg_nil_node && panels->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, panels); }
+}
+
 //- Fixtures: arrangements diagnostics and tests build directly, through the
 // same operations commands use.
 
