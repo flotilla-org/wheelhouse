@@ -1135,6 +1135,58 @@ entry_point(CmdLine *cmdline)
     StateCheck(str8_find_needle(presentation, 0, str8_lit("section_collapsed"), 0) < presentation.size);
   }
 
+  //- A sidebar arrangement set and set back is no change: nothing is
+  // committed, and a document Andamento moved meanwhile is followed, not
+  // committed over.
+  {
+    window = cfg_node_from_id(ws->cfg_id);
+    UIShell_SidebarState *state = ws->sidebar;
+    RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+    state_frame(ws);
+    U64 commits = state->sidebar_commits;
+    RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, owner);
+    RD_ArrangementPanel *p = a->root->first;
+    StateCheck(p != &rd_nil_arrangement_panel);
+    F32 weight = p->weight;
+    for(U32 moved = 0; moved < 2 && p != &rd_nil_arrangement_panel; moved++)
+    {
+      p->weight = weight*0.5f;
+      rd_arrangement_set(a);
+      p->weight = weight;
+      rd_arrangement_set(a);
+      if(moved)
+      {
+        // Andamento's document moves: the same sections, two swapped.
+        AndamentoSidebarArrangement *stored = andamento_sidebar_arrangement_get(state->core, 0);
+        StateCheck(stored != 0);
+        if(!stored) { break; }
+        AndamentoSidebarDoc doc = stored->doc;
+        AndamentoDocPanel *panels = push_array(scratch.arena, AndamentoDocPanel, doc.dock.panel_count);
+        MemoryCopy(panels, doc.dock.panels, sizeof(AndamentoDocPanel)*doc.dock.panel_count);
+        B32 swapped = 0;
+        for(U64 i = 0; i < doc.dock.panel_count && !swapped; i++)
+        for(U64 j = i+1; j < doc.dock.panel_count && !swapped; j++)
+        {
+          if(panels[i].kind != ANDAMENTO_PANEL_TABS || panels[j].kind != ANDAMENTO_PANEL_TABS || panels[i].parent != panels[j].parent ||
+             panels[i].parent == ANDAMENTO_NONE) { continue; }
+          AndamentoDocPanel t = panels[i]; panels[i] = panels[j]; panels[j] = t;
+          swapped = 1;
+        }
+        StateCheck(swapped);
+        doc.dock.panels = panels;
+        char *error = 0;
+        AndamentoSidebarArrangement *after = andamento_sidebar_arrangement_commit(state->core, &doc, stored->generation, &error);
+        StateCheck(after && after->status == ANDAMENTO_COMMITTED);
+        andamento_string_free(error);
+        andamento_sidebar_arrangement_free(after);
+        andamento_sidebar_arrangement_free(stored);
+      }
+      state_frame(ws);
+      StateCheck(state->sidebar_commits == commits);
+      state_check_sidebar_committed(ws);
+    }
+  }
+
   //- Every workspace, kept ones included, has the ID it had.
   String8List ids_after = state_workspace_ids(scratch.arena);
   StateCheck(ids_after.node_count == ids_before.node_count);

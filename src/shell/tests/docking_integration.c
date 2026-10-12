@@ -837,6 +837,79 @@ entry_point(CmdLine *cmdline)
     rd_arrangement_set(gone);
   }
 
+  //- Panels' Presentation State follows their arrangement as it is set
+  // (rd_panel_presentation_arranged), and before a save what has no View or
+  // panel goes, but only an owner whose arrangement is live is judged
+  // (rd_presentation_sweep).
+  {
+    CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("workspace_id")), str8_lit("0192f0c4-1c2d-7a3b-8c4d-5e6f70819204"));
+    RD_PanelOwner owner = rd_fixture_owner(workspace);
+    RD_PanelAddress root = rd_fixture_leaf(owner);
+    CFG_Node *view = rd_fixture_view(root, str8_lit("terminal"), str8_zero(), 1);
+    String8 flag = str8_lit("tabs_on_bottom");
+    rd_panel_flag_set(root, flag, 1);
+    // A panel lifted out of the root with its tabs takes the root's record.
+    RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, owner);
+    RD_PanelAddress added = rd_panel_address(owner, rd_arrangement_add(a, root.id, 0));
+    RD_PanelAddress lifted = rd_panel_address(owner, a->root->first->id);
+    rd_arrangement_set(a);
+    IntegrationCheck(lifted.id != root.id && rd_panel_flag(lifted, flag));
+    IntegrationCheck(!rd_panel_flag(root, flag) && !rd_panel_flag(added, flag));
+    // A panel the arrangement is set without loses its record.
+    rd_panel_flag_set(added, flag, 1);
+    a = rd_arrangement_from_panel_owner(scratch.arena, owner);
+    IntegrationCheck(rd_arrangement_remove(a, added.id));
+    rd_arrangement_set(a);
+    IntegrationCheck(rd_panel_presentation_from_panel(added) == &cfg_nil_node && rd_panel_flag(lifted, flag));
+    // The Floating Panels after one that goes move up, and their records
+    // with them.
+    RD_PanelAddress first = integration_floating(workspace, 1);
+    RD_PanelAddress second = integration_floating(workspace, 2);
+    rd_panel_flag_set(first, flag, 1);
+    rd_panel_flag_set(second, str8_lit("focused"), 1);
+    RD_Arrangement *gone = rd_arrangement_from_panel_owner(scratch.arena, first.owner);
+    rd_arrangement_discard(gone);
+    rd_arrangement_set(gone);
+    RD_PanelAddress moved = rd_panel_address(rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, workspace, 1), second.id);
+    IntegrationCheck(rd_floating_count(workspace) == 1 && rd_panel_flag(moved, str8_lit("focused")) && !rd_panel_flag(moved, flag));
+    // The sweep: a panel's or a View's record with nothing goes; a live
+    // panel's, Floating Panel's and View's stay.
+    RD_ViewAddress live_view = rd_view_address_from_cfg(view);
+    rd_view_setting_set(live_view, str8_lit("font_size"), str8_lit("10"));
+    RD_PanelAddress orphan_panel = rd_panel_address(owner, 99);
+    rd_panel_flag_set(orphan_panel, flag, 1);
+    CFG_Node *views = cfg_node_child_from_string(workspace, RD_VIEW_PRESENTATION_ROOT);
+    CFG_Node *orphan_view = cfg_node_new(rd_state->cfg, views, rd_view_owner_kind_name(RD_ViewOwnerKind_Workspace));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, orphan_view, str8_lit("key")), str8_lit("u:99"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, orphan_view, str8_lit("font_size")), str8_lit("20"));
+    rd_presentation_sweep(workspace);
+    IntegrationCheck(rd_panel_presentation_from_panel(orphan_panel) == &cfg_nil_node);
+    IntegrationCheck(rd_panel_flag(lifted, flag) && rd_panel_flag(moved, str8_lit("focused")));
+    IntegrationCheck(str8_match(rd_view_setting_from_view(live_view, str8_lit("font_size")), str8_lit("10"), 0));
+    U64 view_records = 0;
+    for(CFG_Node *c = views->first; c != &cfg_nil_node; c = c->next) { view_records += 1; }
+    IntegrationCheck(view_records == 1);
+    // A kept workspace (no live arrangement) keeps its records until it
+    // reopens.
+    CFG_Node *kept = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, kept, str8_lit("workspace_id")), str8_lit("0192f0c4-1c2d-7a3b-8c4d-5e6f70819205"));
+    RD_PanelAddress kept_panel = rd_panel_address(rd_fixture_owner(kept), 5);
+    rd_panel_flag_set(kept_panel, flag, 1);
+    CFG_Node *kept_views = cfg_node_child_from_string_or_alloc(rd_state->cfg, kept, RD_VIEW_PRESENTATION_ROOT);
+    CFG_Node *kept_view = cfg_node_new(rd_state->cfg, kept_views, rd_view_owner_kind_name(RD_ViewOwnerKind_Workspace));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, kept_view, str8_lit("key")), str8_lit("u:5"));
+    IntegrationCheck(rd_arrangement_version(kept_panel.owner) == 0 && rd_panel_flag(kept_panel, flag));
+    rd_presentation_sweep(kept);
+    IntegrationCheck(rd_panel_flag(kept_panel, flag) && kept_views->first == kept_view);
+    cfg_node_release(rd_state->cfg, kept);
+    gone = rd_arrangement_from_panel_owner(scratch.arena, moved.owner);
+    rd_arrangement_discard(gone);
+    rd_arrangement_set(gone);
+    cfg_node_release(rd_state->cfg, workspace);
+    rd_arrangements_release_unowned();
+  }
+
   scratch_end(scratch);
   fprintf(stderr, "Docking integration: %u failures\n", failures);
   abort_self(failures ? 1 : 0);
