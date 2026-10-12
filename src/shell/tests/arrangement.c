@@ -41,6 +41,27 @@ child(CFG_Node *node, char *name)
 // and View is addressed as one zero-ID owner's.
 read_only global RD_PanelOwner test_owner = {RD_PanelOwnerKind_Workspace};
 
+// The shell keeps panels' Presentation State beside their arrangement
+// (rd_panel_presentation_hook); these tests keep one panel's focus and one's
+// tab bar side, and the last move of a lifted panel's.
+global RD_PanelID test_focused, test_tabs_on_bottom, test_options_from, test_options_to;
+
+internal RD_PanelPresentation
+test_presentation(RD_PanelAddress panel)
+{
+  RD_PanelPresentation result = {panel.id == test_focused, panel.id == test_tabs_on_bottom};
+  return result;
+}
+
+internal void
+test_saved(CFG_Node *root, RD_Arrangement *arrangement)
+{
+  for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p))
+  {
+    if(p->options_from) { test_options_from = p->options_from; test_options_to = p->id; }
+  }
+}
+
 // The renderer's reading of the saved tree.
 internal RD_PanelTree
 render_tree(Arena *arena, CFG_Node *root)
@@ -133,6 +154,8 @@ entry_point(CmdLine *cmdline)
   Arena *arena = arena_alloc();
   cfg = cfg_state_alloc();
   cfg_ctx_select(cfg_state_ctx(cfg));
+  rd_panel_presentation_hook = test_presentation;
+  rd_arrangement_saved_hook = test_saved;
 
   // Today's shapes load as the renderer reads them, and saving them changes
   // nothing but adding each panel's ID; Views and panels keep their nodes.
@@ -157,18 +180,21 @@ entry_point(CmdLine *cmdline)
     Check(cfg_node_from_id(terminal_id) == terminal && terminal->parent == right->first && cfg_node_from_id(right_id) == right);
     Check(str8_match(child(terminal, "label")->first->string, str8_lit("Build"), 0));
     Check(str8_match(right->string, str8_lit("0.28"), 0) && child(panels->first->next, "tabs_on_bottom") != &cfg_nil_node);
-    Check(child(panels, "selected") != &cfg_nil_node && str8_match(child(right, "id")->first->string, str8_lit("3"), 0));
-    // A split's `id` and focus mark are not panels to the renderer.
+    Check(str8_match(child(right, "id")->first->string, str8_lit("3"), 0));
+    // A split's `id` and the options it saved before are not panels to the
+    // renderer.
     RD_PanelTree tree = render_tree(arena, panels);
     U64 tree_count = 0;
     for(RD_PanelNode *p = tree.root; p != &rd_nil_panel_node; p = rd_panel_node_rec__depth_first_pre(tree.root, p).next) { tree_count += 1; }
-    Check(tree.root->child_count == 2 && tree.focused == tree.root && tree_count == 5);
-    // It reads the Presentation State saved beside each panel: the tab bar's
-    // side, and focus on the last marked panel in tree order.
+    Check(tree.root->child_count == 2 && tree.focused == &rd_nil_panel_node && tree_count == 5);
+    // It reads each panel's Presentation State beside it: the tab bar's
+    // side, and focus.
+    test_tabs_on_bottom = tree.root->first->address.id;
+    test_focused = rd_arrangement_panel_from_cfg(rd_arrangement_from_cfg(arena, panels), right->first->id)->id;
+    tree = render_tree(arena, panels);
     Check(tree.root->first->tab_side == Side_Max && tree.root->last->tab_side == Side_Min);
-    CFG_Node *mark = cfg_node_new(cfg, right->first, str8_lit("selected"));
-    Check(render_tree(arena, panels).focused->address.id == rd_arrangement_panel_from_cfg(rd_arrangement_from_cfg(arena, panels), right->first->id)->id);
-    cfg_node_release(cfg, mark);
+    Check(tree.focused->address.id == test_focused);
+    test_focused = test_tabs_on_bottom = 0;
     // The sidebar's arrangement saves under its own keys.
     CFG_Node *sidebar = child(window, "control_views");
     RD_Arrangement *side = rd_arrangement_from_cfg(arena, sidebar);
@@ -557,11 +583,13 @@ entry_point(CmdLine *cmdline)
     CFG_Node *leaf = text->parent;
     Check(child(window, "control_views") == root && leaf->parent == root && terminal->parent == leaf && leaf != root);
     Check(str8_match(child(root, "id")->first->string, str8_lit("4"), 0) && !str8_match(child(leaf, "id")->first->string, str8_lit("4"), 0));
-    Check(child(root, "selected") == &cfg_nil_node && child(root, "tabs_on_bottom") == &cfg_nil_node && child(root, "section_collapsed") == &cfg_nil_node);
-    Check(child(leaf, "selected") != &cfg_nil_node && child(leaf, "tabs_on_bottom") != &cfg_nil_node && child(leaf, "section_collapsed") != &cfg_nil_node);
+    // The shell is told the lifted panel takes the root's Presentation State.
+    Check(test_options_from == 4 && test_options_to == lifted->id);
+    test_options_from = test_options_to = 0;
+    check_saved(arena, sidebar, window);
+    Check(test_options_from == 0);
     RD_PanelTree tree = render_tree(arena, root);
-    Check(tree.focused == tree.root->first && tree.root->first->tab_side == Side_Max &&
-          rd_view_address_match(tree.root->first->selected_tab, rd_view_address_from_tab(test_owner, text)));
+    Check(rd_view_address_match(tree.root->first->selected_tab, rd_view_address_from_tab(test_owner, text)));
     cfg_node_release(cfg, window);
   }
 

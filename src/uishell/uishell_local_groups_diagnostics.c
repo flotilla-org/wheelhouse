@@ -963,14 +963,11 @@ uishell_local_groups_diagnostics(CFG_Node *window)
                 ui_box_is_nil(uishell_local_groups_box(west)),
                 "too narrow, the titles that don't fit go behind a +N chip");
     uishell_local_groups_narrow = 0;
-    // Collapse is the section's: clicking the selected title stores it on
-    // the panel, and no View keeps its own.
+    // Collapse is the section's: clicking the selected title stores it as
+    // the panel's Presentation State, and no View keeps its own.
     String8 south_title = push_str8f(arena, "###section_%S", cfg_node_child_from_string(views[1], str8_lit("section"))->first->string);
     uishell_local_groups_click(ws, window, arena, south_title, WM_Key_LeftMouseButton);
-    B32 views_clear = 1;
-    for(U64 i = 0; i < 3; i++) { views_clear &= cfg_node_child_from_string(views[i], str8_lit("section_collapsed")) == &cfg_nil_node; }
-    GroupsCheck(cfg_node_child_from_string(panel, str8_lit("section_collapsed")) != &cfg_nil_node && views_clear &&
-                uishell_sidebar_section_collapsed(views[2]),
+    GroupsCheck(rd_panel_flag(rd_panel_from_cfg(panel), str8_lit("section_collapsed")) && uishell_sidebar_section_collapsed(views[2]),
                 "collapsing stores it on the section's panel, so every View in it shows collapsed");
     uishell_sidebar_section_set_collapsed(views[1], 0);
     // × closes the whole section: every View in it.
@@ -1050,9 +1047,10 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   {
     // Its own config, selected while in use: arrangements name their nodes by
     // ID, looked up in the selected config.
-    CFG_State *cfg = cfg_state_alloc();
+    CFG_State *cfg = cfg_state_alloc(), *saved_cfg = rd_state->cfg;
     CFG_Ctx *saved_ctx = cfg_ctx;
     cfg_ctx_select(cfg_state_ctx(cfg));
+    rd_state->cfg = cfg;
     // A window in the config's tree, so its sections' addresses resolve.
     CFG_Node *owner = cfg_node_new(cfg, cfg_node_new(cfg, cfg_node_root(), str8_lit("user")), str8_lit("window"));
     cfg_node_new(cfg, owner, str8_lit("sidebar_layout_sized"));
@@ -1077,15 +1075,15 @@ uishell_local_groups_diagnostics(CFG_Node *window)
       CFG_Node *view = cfg_node_new(cfg, leaves[i], str8_lit("sidebar_section")); rd_view_key_assign(cfg, view, 0);
       cfg_node_new(cfg, cfg_node_new(cfg, view, str8_lit("section")), push_str8f(arena, "test_%I64u", i));
       cfg_node_new(cfg, view, str8_lit("selected"));
-      if(i == 0 || i == 1) { cfg_node_new(cfg, view, str8_lit("section_collapsed")); }
     }
+    for(U64 i = 0; i < 2; i++) { uishell_sidebar_section_set_collapsed(leaves[i]->first, 1); }
     UIShell_ControlledSplit owner_split = {.owner_cfg = owner};
     Rng2F32 rect = r2f32p(0, 0, 300, 600);
     F32 header = 0, collapsed_h = 0;
     for(U32 pass = 0; pass < 3; pass++)
     {
-      if(pass == 1) { cfg_node_new(cfg, cfg_node_child_from_string(leaves[2], str8_lit("sidebar_section")), str8_lit("section_collapsed")); }
-      if(pass == 2) { cfg_node_new(cfg, cfg_node_child_from_string(leaves[3], str8_lit("sidebar_section")), str8_lit("section_collapsed")); }
+      if(pass == 1) { uishell_sidebar_section_set_collapsed(cfg_node_child_from_string(leaves[2], str8_lit("sidebar_section")), 1); }
+      if(pass == 2) { uishell_sidebar_section_set_collapsed(cfg_node_child_from_string(leaves[3], str8_lit("sidebar_section")), 1); }
       UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(arena, owner, root);
       F32 row_h = 0, last_h = 0;
       UI_FontSize(11)
@@ -1120,6 +1118,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     GroupsCheck(str8_match(root->first->string, str8_lit("0.5"), 0) && str8_match(row->string, str8_lit("0.5"), 0) &&
                 str8_match(root->last->string, str8_lit("1"), 0),
                 "collapsing never rewrites the sizes saved by hand");
+    rd_state->cfg = saved_cfg;
     cfg_ctx_select(saved_ctx);
     cfg_state_release(cfg);
   }

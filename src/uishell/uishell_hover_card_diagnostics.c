@@ -2136,7 +2136,6 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CFG_Node *other = cfg_node_new(rd_state->cfg, collapse_root, str8_lit("0.4"));
     cfg_node_new(rd_state->cfg, other, str8_lit("sidebar_section"));
     CFG_Node *source_panel = cfg_node_new(rd_state->cfg, branch, str8_lit("0.5"));
-    cfg_node_new(rd_state->cfg, source_panel, str8_lit("selected"));
     CFG_Node *moving_section = cfg_node_new(rd_state->cfg, source_panel, str8_lit("sidebar_section")); rd_view_key_assign(rd_state->cfg, moving_section, 0);
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, moving_section, str8_lit("section")), str8_lit("workspaces"));
     CFG_Node *survivor = cfg_node_new(rd_state->cfg, branch, str8_lit("0.5"));
@@ -2145,6 +2144,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CFG_Node *last_survivor = cfg_node_new(rd_state->cfg, survivor, str8_lit("0.75"));
     cfg_node_new(rd_state->cfg, last_survivor, str8_lit("sidebar_section"));
     CFG_ID survivor_id = survivor->id;
+    rd_panel_focus_mark(rd_panel_from_cfg(source_panel));
     UIShell_CmdNode *before_collapse = rd_state->cmds[0].last;
     UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(source_panel), .view = rd_view_address_from_cfg(moving_section), .tab = rd_nil_view_address)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }

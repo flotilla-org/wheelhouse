@@ -448,7 +448,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     UIShell_LocalPin *pin = group && group->pin_count == 1 ? &group->pins[0] : 0;
     ReorderCheck(cfg_node_child_from_string(panel, str8_lit("pinned_cards")) == &cfg_nil_node && migrated != &cfg_nil_node &&
                  cfg_node_child_from_string(migrated, str8_lit("selected")) != &cfg_nil_node &&
-                 cfg_node_child_from_string(migrated, str8_lit("section_collapsed")) != &cfg_nil_node &&
+                 uishell_sidebar_section_collapsed(migrated) &&
                  group && str8_match(uishell_sidebar_local_title(scratch.arena, group->section), str8_lit("Floating pins"), 0) &&
                  pin && str8_match(pin->ghost, str8_lit("floating-pin"), 0) && str8_match(uishell_sidebar_string(pin->target.id), str8_lit("c1"), 0) &&
                  !uishell_sidebar_pin_expanded(pin),

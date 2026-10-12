@@ -67,8 +67,8 @@ uishell_overview_benchmark_window(RD_WindowState *ws)
       CFG_Node *owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
       CFG_Node *panels = cfg_node_new(rd_state->cfg, owner, str8_lit("panels"));
       CFG_Node *panel = cfg_node_new(rd_state->cfg, panels, str8_lit("1"));
-      cfg_node_new(rd_state->cfg, panel, str8_lit("selected"));
       CFG_Node *view = rd_cfg_new_view_tab(panel, str8_lit("terminal"), b->command, 1);
+      rd_panel_focus_mark(rd_panel_from_cfg(panel));
       cfg_node_new(rd_state->cfg, view, b->live ? str8_lit("overview_live") : str8_lit("overview_fixture"));
       b->owners[i] = owner->id; b->views[i] = view->id;
     }

@@ -227,6 +227,7 @@ uishell_sidebar_pin_migrate(CFG_Node *window)
   Temp scratch = scratch_begin(0, 0);
   UIShell_SidebarState *state = uishell_sidebar_window_state(window);
   UIShell_SidebarDocks docks = uishell_sidebar_docks(scratch.arena, window);
+  CFG_NodePtrList collapsed = {0};
   for(RD_DockSavedView *saved = docks.views.first; saved != 0; saved = saved->next)
   {
     CFG_Node *v = saved->view;
@@ -240,10 +241,11 @@ uishell_sidebar_pin_migrate(CFG_Node *window)
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("section")), uishell_sidebar_local_key(scratch.arena, section_id));
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, view, str8_lit("label")), uishell_sidebar_local_title(scratch.arena, group->section));
     if(selected) { cfg_node_new(rd_state->cfg, view, str8_lit("selected")); }
-    // The area's own state: its collapsed header. Its other children were
-    // its label and selection, carried above; a pin's form travels with it.
+    // The area's own state: its collapsed header, which its panel takes once
+    // it is placed. Its other children were its label and selection, carried
+    // above; a pin's form travels with it.
     if(cfg_node_child_from_string(v, str8_lit("section_collapsed")) != &cfg_nil_node)
-    { cfg_node_new(rd_state->cfg, view, str8_lit("section_collapsed")); }
+    { cfg_node_ptr_list_push(scratch.arena, &collapsed, view); }
     U64 index = 0;
     String8List legacy = {0};
     for(CFG_Node *c = v->first; c != &cfg_nil_node; c = c->next)
@@ -277,6 +279,7 @@ uishell_sidebar_pin_migrate(CFG_Node *window)
     uishell_sidebar_docks_remove(&docks, saved);
   }
   uishell_sidebar_docks_save(&docks);
+  for(CFG_NodePtrNode *n = collapsed.first; n != 0; n = n->next) { uishell_sidebar_section_set_collapsed(n->v, 1); }
   scratch_end(scratch);
 }
 

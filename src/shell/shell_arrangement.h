@@ -156,8 +156,8 @@ struct RD_ArrangementPanel
   // The config node it was loaded from or saved to; 0 until first saved.
   CFG_ID cfg;
   // A panel that took another's tabs (rd_arrangement_add) takes that panel's
-  // Presentation State with them when first saved: the node it moves from.
-  CFG_ID options_from;
+  // Presentation State with them when first saved: the panel it moves from.
+  RD_PanelID options_from;
 };
 
 typedef struct RD_Arrangement RD_Arrangement;
@@ -319,11 +319,29 @@ internal B32 rd_view_key_assign(CFG_State *state, CFG_Node *view, B32 unique);
 typedef void RD_ArrangementViewMoveHook(CFG_Node *view, B32 moved);
 global RD_ArrangementViewMoveHook *rd_arrangement_view_move_hook = 0;
 
+//- Panel Presentation State
+// What the shell keeps beside an arrangement for each of its panels
+// (shell_core.c, "Panel Presentation State"), by panel address.
+typedef struct RD_PanelPresentation RD_PanelPresentation;
+struct RD_PanelPresentation
+{
+  // The focus mark: the last marked panel in tree order has focus.
+  B32 focused;
+  B32 tabs_on_bottom;
+};
+typedef RD_PanelPresentation RD_PanelPresentationHook(RD_PanelAddress panel);
+global RD_PanelPresentationHook *rd_panel_presentation_hook = 0;
+// Told of each arrangement a save wrote, `root` its root panel node (before
+// a discarded one goes): the shell moves a lifted panel's Presentation State
+// to it (`options_from`), and drops that of panels it no longer has.
+typedef void RD_ArrangementSavedHook(CFG_Node *root, RD_Arrangement *arrangement);
+global RD_ArrangementSavedHook *rd_arrangement_saved_hook = 0;
+internal String8 rd_panel_owner_kind_name(RD_PanelOwnerKind kind);
+
 //- The renderer's panel tree
 // The arrangement's panels, addressed as `owner`'s, and their tabs by View
-// Address, with the Presentation State saved on each panel's node: the focus
-// mark (`selected`; the last marked panel in tree order has focus) and
-// `tabs_on_bottom`. Valid until the config changes.
+// Address, with each panel's Presentation State (rd_panel_presentation_hook).
+// Valid until the config changes.
 internal RD_PanelTree rd_panel_tree_from_arrangement(Arena *arena, RD_PanelOwner owner, RD_Arrangement *arrangement);
 internal RD_PanelNodeRec rd_panel_node_rec__depth_first(RD_PanelNode *root, RD_PanelNode *panel, U64 sib_off, U64 child_off);
 #define rd_panel_node_rec__depth_first_pre(root, p)     rd_panel_node_rec__depth_first((root), (p), OffsetOf(RD_PanelNode, next), OffsetOf(RD_PanelNode, first))

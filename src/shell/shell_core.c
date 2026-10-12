@@ -3528,6 +3528,150 @@ rd_cfg_setting_home(CFG_Node *cfg, String8 name)
   return rd_view_presentation_alloc(view);
 }
 
+//- Panel Presentation State (CONTEXT.md, "Presentation State")
+//
+// What a panel shows is its arrangement's; how this device shows it is kept
+// beside the arrangement, by panel address, in its owner's host (a
+// workspace's node, the window for a window's own panels and its sidebar),
+// which the Dashboard's presentation file saves with it:
+//
+//   panel_presentation: {
+//     workspace: {panel: 3 focused tabs_on_bottom}
+//     sidebar: {panel: 2 section_collapsed}
+//     floating: {floating: 1 panel: 1 section_collapsed}
+//   }
+//
+// `focused` is the focus mark (the last marked panel in tree order has
+// focus). A panel's record goes when its arrangement is saved without it,
+// and moves with the tabs of a panel lifted into a split
+// (rd_arrangement_add). A Floating Panel's are by its place among its
+// host's, which those after one that goes move up.
+
+internal U64
+rd_panel_presentation_number(CFG_Node *record, String8 name)
+{
+  String8 n = cfg_node_child_from_string(record, name)->first->string;
+  return n.size && n.size < 18 && str8_is_integer(n, 10) ? u64_from_str8(n, 10) : 0;
+}
+
+internal B32
+rd_panel_presentation_is(CFG_Node *record, RD_PanelOwner owner)
+{
+  return str8_match(record->string, rd_panel_owner_kind_name(owner.kind), 0) &&
+    rd_panel_presentation_number(record, str8_lit("floating")) == owner.floating;
+}
+
+internal RD_PanelID
+rd_panel_presentation_id(CFG_Node *record)
+{
+  return rd_panel_presentation_number(record, str8_lit("panel"));
+}
+
+internal CFG_Node *
+rd_panel_presentation_from_panel(RD_PanelAddress panel)
+{
+  CFG_Node *root = cfg_node_child_from_string(rd_cfg_from_panel_owner(panel.owner), RD_PANEL_PRESENTATION_ROOT);
+  for(CFG_Node *c = root->first; c != &cfg_nil_node && panel.id != 0; c = c->next)
+  {
+    if(rd_panel_presentation_is(c, panel.owner) && rd_panel_presentation_id(c) == panel.id) { return c; }
+  }
+  return &cfg_nil_node;
+}
+
+internal CFG_Node *
+rd_panel_presentation_alloc(RD_PanelAddress panel)
+{
+  CFG_Node *record = rd_panel_presentation_from_panel(panel);
+  CFG_Node *host = rd_cfg_from_panel_owner(panel.owner);
+  if(record != &cfg_nil_node || host == &cfg_nil_node || panel.id == 0) { return record; }
+  CFG_Node *root = cfg_node_child_from_string_or_alloc(rd_state->cfg, host, RD_PANEL_PRESENTATION_ROOT);
+  record = cfg_node_new(rd_state->cfg, root, rd_panel_owner_kind_name(panel.owner.kind));
+  if(panel.owner.floating) { cfg_node_newf(rd_state->cfg, cfg_node_new(rd_state->cfg, record, str8_lit("floating")), "%I64u", panel.owner.floating); }
+  cfg_node_newf(rd_state->cfg, cfg_node_new(rd_state->cfg, record, str8_lit("panel")), "%I64u", panel.id);
+  return record;
+}
+
+internal B32
+rd_panel_flag(RD_PanelAddress panel, String8 name)
+{
+  return cfg_node_child_from_string(rd_panel_presentation_from_panel(panel), name) != &cfg_nil_node;
+}
+
+internal void
+rd_panel_flag_set(RD_PanelAddress panel, String8 name, B32 on)
+{
+  if(on == rd_panel_flag(panel, name)) { return; }
+  CFG_Node *record = rd_panel_presentation_alloc(panel);
+  if(on) { cfg_node_new(rd_state->cfg, record, name); return; }
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(record, name));
+  // Only what names it is left.
+  B32 empty = 1;
+  for(CFG_Node *c = record->first; c != &cfg_nil_node && empty; c = c->next)
+  { empty = str8_match(c->string, str8_lit("panel"), 0) || str8_match(c->string, str8_lit("floating"), 0); }
+  if(empty) { cfg_node_release(rd_state->cfg, record); }
+}
+
+internal void
+rd_panel_focus_mark(RD_PanelAddress panel)
+{
+  CFG_Node *root = cfg_node_child_from_string(rd_cfg_from_panel_owner(panel.owner), RD_PANEL_PRESENTATION_ROOT);
+  for(CFG_Node *c = root->first, *next = &cfg_nil_node; c != &cfg_nil_node; c = next)
+  {
+    next = c->next;
+    RD_PanelID id = rd_panel_presentation_id(c);
+    if(rd_panel_presentation_is(c, panel.owner) && id != panel.id) { rd_panel_flag_set(rd_panel_address(panel.owner, id), str8_lit("focused"), 0); }
+  }
+  rd_panel_flag_set(panel, str8_lit("focused"), 1);
+}
+
+// rd_panel_presentation_hook.
+internal RD_PanelPresentation
+rd_panel_presentation(RD_PanelAddress panel)
+{
+  RD_PanelPresentation result = {0};
+  CFG_Node *record = rd_panel_presentation_from_panel(panel);
+  result.focused = cfg_node_child_from_string(record, str8_lit("focused")) != &cfg_nil_node;
+  result.tabs_on_bottom = cfg_node_child_from_string(record, str8_lit("tabs_on_bottom")) != &cfg_nil_node;
+  return result;
+}
+
+// rd_arrangement_saved_hook: a lifted panel takes the Presentation State of
+// the panel whose tabs it took, and a panel the arrangement no longer has
+// loses its own.
+internal void
+rd_panel_presentation_saved(CFG_Node *root_cfg, RD_Arrangement *arrangement)
+{
+  RD_PanelOwner owner = rd_panel_owner_from_cfg(root_cfg);
+  CFG_Node *root = cfg_node_child_from_string(rd_cfg_from_panel_owner(owner), RD_PANEL_PRESENTATION_ROOT);
+  if(root == &cfg_nil_node) { return; }
+  for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p))
+  {
+    CFG_Node *from = rd_panel_presentation_from_panel(rd_panel_address(owner, p->options_from));
+    if(p->options_from == 0 || from == &cfg_nil_node) { continue; }
+    CFG_Node *to = rd_panel_presentation_from_panel(rd_panel_address(owner, p->id));
+    if(to != &cfg_nil_node) { cfg_node_release(rd_state->cfg, to); }
+    cfg_node_new_replacef(rd_state->cfg, cfg_node_child_from_string(from, str8_lit("panel")), "%I64u", p->id);
+  }
+  for(CFG_Node *c = root->first, *next = &cfg_nil_node; c != &cfg_nil_node; c = next)
+  {
+    next = c->next;
+    if(rd_panel_presentation_is(c, owner) && rd_arrangement_panel_from_id(arrangement, rd_panel_presentation_id(c)) == &rd_nil_arrangement_panel)
+    { cfg_node_release(rd_state->cfg, c); }
+  }
+  // A Floating Panel that goes takes its place with it.
+  if(owner.kind == RD_PanelOwnerKind_Floating && arrangement->root == &rd_nil_arrangement_panel)
+  {
+    String8 kind = rd_panel_owner_kind_name(owner.kind);
+    for(CFG_Node *c = root->first; c != &cfg_nil_node; c = c->next)
+    {
+      U64 n = rd_panel_presentation_number(c, str8_lit("floating"));
+      if(str8_match(c->string, kind, 0) && n > owner.floating)
+      { cfg_node_new_replacef(rd_state->cfg, cfg_node_child_from_string(c, str8_lit("floating")), "%I64u", n-1); }
+    }
+  }
+  if(root->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, root); }
+}
+
 //~ Workspace mounts
 
 internal UIShell_WorkspaceMount
@@ -10811,6 +10955,8 @@ rd_init(CmdLine *cmdln)
     rd_state->view_state_slots = push_array(arena, RD_ViewStateSlot, rd_state->view_state_slots_count);
     rd_state->view_state_last_accessed = &rd_nil_view_state;
     rd_arrangement_view_move_hook = rd_view_moved;
+    rd_panel_presentation_hook = rd_panel_presentation;
+    rd_arrangement_saved_hook = rd_panel_presentation_saved;
   }
 
   //- rjf: setup initial target from command line args

@@ -90,9 +90,9 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   CFG_Node *owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
   cfg_node_new(rd_state->cfg, owner, str8_lit("split_x"));
   CFG_Node *panels = cfg_node_new(rd_state->cfg, owner, str8_lit("panels"));
-  cfg_node_new(rd_state->cfg, panels, str8_lit("selected"));
   CFG_Node *view = rd_cfg_new_view_tab(panels, str8_lit("terminal_fixture"), str8_zero(), 1);
   rd_cfg_new_view_tab(panels, str8_lit("terminal_fixture"), str8_zero(), 0);
+  rd_panel_focus_mark(rd_panel_from_cfg(panels));
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, owner);
   U32 failures = 0;
   ui_select_state(test_ui);

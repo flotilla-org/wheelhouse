@@ -1851,8 +1851,8 @@ uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *res
   // Each resource's label is its View's Presentation State, kept by the
   // address saving gave it.
   for(U64 i = 0; i < count; i++) { rd_view_setting_set(rd_view_address_from_cfg(tabs[i]), str8_lit("label"), str8_cstring(resources[i].label)); }
-  // The primary panel has focus (Presentation State, on its node).
-  cfg_node_new(rd_state->cfg, cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, primary)->cfg), str8_lit("selected"));
+  // The primary panel has focus (its Presentation State).
+  rd_panel_focus_mark(rd_panel_address(rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, workspace, 0), primary));
   scratch_end(scratch);
   return primary_tab;
 }
@@ -2258,28 +2258,21 @@ internal void uishell_sidebar_local_section_menu(UIShell_SidebarState *state, CF
                                                  String8 loop, UI_Key menu);
 
 //~ A sidebar section, its panel, collapses as a whole (sidebar-headers.md):
-// the state is a panel option. Like tabs_on_bottom it is Presentation State,
-// edited here rather than through the arrangement, which carries it along
-// when it moves a panel's tabs. A layout from before kept it on a View; the
-// View's own still counts until the section next opens or closes; drop that
-// fallback once layouts saved before #268 no longer need to load.
+// the state is a flag of the panel's Presentation State, like tabs_on_bottom
+// (rd_panel_flag), which goes with the panel's tabs when the arrangement
+// lifts them into a split.
 
 internal B32
 uishell_sidebar_section_collapsed(CFG_Node *view)
 {
-  return cfg_node_child_from_string(view->parent, str8_lit("section_collapsed")) != &cfg_nil_node ||
-    cfg_node_child_from_string(view, str8_lit("section_collapsed")) != &cfg_nil_node;
+  return rd_panel_flag(rd_panel_from_cfg(view), str8_lit("section_collapsed"));
 }
 
 internal void
 uishell_sidebar_section_set_collapsed(CFG_Node *view, B32 collapsed)
 {
-  CFG_Node *panel = view->parent;
-  if(panel == &cfg_nil_node) { return; }
-  for(CFG_Node *v = panel->first; v != &cfg_nil_node; v = v->next)
-  { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(v, str8_lit("section_collapsed"))); }
-  if(collapsed) { cfg_node_child_from_string_or_alloc(rd_state->cfg, panel, str8_lit("section_collapsed")); }
-  else { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(panel, str8_lit("section_collapsed"))); }
+  RD_PanelAddress panel = rd_panel_from_cfg(view);
+  if(panel.id != 0) { rd_panel_flag_set(panel, str8_lit("section_collapsed"), collapsed); }
 }
 
 // Makes `view` its panel's Selected View, without the focus a click on its
@@ -2399,7 +2392,7 @@ uishell_sidebar_section_drop_apply(RD_WindowState *ws)
   Temp scratch = scratch_begin(0, 0);
   CFG_NodePtrList tabs = {0};
   for(CFG_Node *c = source_cfg->first; c != &cfg_nil_node; c = c->next) { if(uishell_sidebar_is_tab(c)) { cfg_node_ptr_list_push(scratch.arena, &tabs, c); } }
-  B32 collapsed = cfg_node_child_from_string(source_cfg, str8_lit("section_collapsed")) != &cfg_nil_node;
+  B32 collapsed = rd_panel_flag(source, str8_lit("section_collapsed"));
   RD_ViewAddress prev = state->section_drop_prev;
   CFG_NodePtrNode *n = tabs.first;
   if(n && state->section_drop_direction != Dir2_Invalid)
@@ -2408,7 +2401,7 @@ uishell_sidebar_section_drop_apply(RD_WindowState *ws)
     { uishell_dispatch_panel_command(str8_lit("split_panel")); }
     destination = rd_panel_from_cfg(n->v);
     // The section keeps its collapse in its new place.
-    if(collapsed) { cfg_node_child_from_string_or_alloc(rd_state->cfg, rd_cfg_from_panel(destination), str8_lit("section_collapsed")); }
+    if(collapsed) { rd_panel_flag_set(destination, str8_lit("section_collapsed"), 1); }
     prev = rd_view_address_from_cfg(n->v);
     n = n->next;
   }
@@ -5819,7 +5812,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     String8 reveal_key = uishell_sidebar_string(reveal_section_node.key);
     CFG_Node *reveal_view = uishell_sidebar_find_view(uishell_sidebar_dock_layout(&split), reveal_key);
     ok = ok && reveal_view != &cfg_nil_node;
-    cfg_node_child_from_string_or_alloc(rd_state->cfg, reveal_view, str8_lit("section_collapsed"));
+    uishell_sidebar_section_set_collapsed(reveal_view, 1);
     UI_State *saved_reveal_ui = ui_state, *reveal_ui = ui_state_alloc();
     ui_select_state(reveal_ui);
     state->reveal_workspace_id = created;
@@ -5833,13 +5826,12 @@ uishell_sidebar_diagnostics(CFG_Node *window)
       { uishell_sidebar_render(r2f32p(0, 0, 320, 240), &split,
           (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, reveal_key}); }
       ui_end_build();
-      B32 revealed = cfg_node_child_from_string(reveal_view, str8_lit("section_collapsed")) == &cfg_nil_node &&
-                     state->reveal_workspace_id == 0;
+      B32 revealed = !uishell_sidebar_section_collapsed(reveal_view) && state->reveal_workspace_id == 0;
       if(!revealed) { fprintf(stderr, "FAIL docked section Reveal frame %u: still collapsed or request pending\n", frame); }
       ok = revealed && ok;
     }
     state->reveal_workspace_id = 0;
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(reveal_view, str8_lit("section_collapsed")));
+    uishell_sidebar_section_set_collapsed(reveal_view, 0);
     ui_select_state(saved_reveal_ui); ui_state_release(reveal_ui);
     ok = uishell_sidebar_scroll_diagnostics(ws, &split) && ok;
     ok = uishell_sidebar_git_diagnostics(ws, &split) && ok;

@@ -62,15 +62,17 @@
 //
 //   workspace: { ... arrangement_generation: 7
 //     arrangement_presentation: {
-//       panel: {id: 2 selected tabs_on_bottom}   Presentation State, by panel ID
+//       panel: {id: 2 doc_id: "main"}            the number a provider's panel has here
 //       view: {slot: "u:3" daemon}               a View's logical settings its spec doesn't hold
 //       resolution: {slot: "u:3" session: ..}    a daemon session Andamento hasn't saved
 //       previous: {terminal: {previous_of: ..}}  a Slot's previous instance, whole
 //     }
 //     view_presentation: {                       each View's Presentation State, by View
 //       workspace: {key: "u:3" label: "Shell"}   Address (shell_core.c, "View Presentation
-//   } }                                          State"): its label, its machine-local
-//                                                Target Resolutions, ...
+//     }                                          State"): its label, its machine-local
+//     panel_presentation: {                      Target Resolutions, ...; and each panel's,
+//       workspace: {panel: 2 focused}            by panel address (shell_core.c, "Panel
+//   } }                                          Presentation State")
 //
 // A View whose slot follows its provider (`follows_provider`) keeps all of
 // its logical settings here: what it runs is the provider's content as this
@@ -1061,10 +1063,9 @@ uishell_store_noted(AndamentoWorkspaceArrangement *a, U32 kind, String8 key)
 }
 
 // Replaces `owner`'s panel tree with Andamento's document, keeping the View
-// node of every slot it still tabs and the node (with its Presentation
-// State) of every panel whose ID it keeps. New Views take their settings,
-// and Slots their previous instances, from the device-local
-// `arrangement_presentation`, which goes. Returns
+// node of every slot it still tabs and the node of every panel whose ID it
+// keeps. New Views take their settings, and Slots their previous instances,
+// from the device-local `arrangement_presentation`, which goes. Returns
 // whether Andamento had a document to build.
 internal B32
 uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_WorkspaceId id, U64 *generation_out)
@@ -1238,20 +1239,6 @@ uishell_store_build(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Worksp
       if(node == &cfg_nil_node) { continue; }
       if(words[i].size) { uishell_store_set_setting(node, str8_lit("doc_id"), words[i]); }
       else { uishell_store_drop_setting(node, str8_lit("doc_id")); }
-    }
-    // Presentation State for panels this tree had no node for.
-    for(CFG_Node *c = device->first; c != &cfg_nil_node; c = c->next)
-    {
-      if(!str8_match(c->string, str8_lit("panel"), 0)) { continue; }
-      String8 panel_id = uishell_store_setting(c, str8_lit("id"));
-      RD_ArrangementPanel *panel = str8_is_integer(panel_id, 10) ? rd_arrangement_panel_from_id(a, u64_from_str8(panel_id, 10)) : &rd_nil_arrangement_panel;
-      CFG_Node *node = cfg_node_from_id(panel->cfg);
-      if(node == &cfg_nil_node) { continue; }
-      for(CFG_Node *s = c->first; s != &cfg_nil_node; s = s->next)
-      {
-        if(str8_match(s->string, str8_lit("id"), 0) || cfg_node_child_from_string(node, s->string) != &cfg_nil_node) { continue; }
-        cfg_node_insert_child(rd_state->cfg, node, node->last, cfg_node_deep_copy(rd_state->cfg, s));
-      }
     }
     if(device != &cfg_nil_node) { cfg_node_release(rd_state->cfg, device); }
     uishell_store_set_setting(owner, str8_lit("arrangement_generation"), push_str8f(arena, "%I64u", stored->generation));
@@ -2473,16 +2460,13 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
     RD_Arrangement *a = rd_arrangement_from_cfg(scratch.arena, panels);
     for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
     {
-      CFG_Node *node = cfg_node_from_id(p->cfg), *entry = &cfg_nil_node;
-      for(CFG_Node *c = node->first; c != &cfg_nil_node; c = c->next)
+      // The number a provider's panel has here.
+      CFG_Node *doc_id = cfg_node_child_from_string(cfg_node_from_id(p->cfg), str8_lit("doc_id"));
+      if(doc_id != &cfg_nil_node)
       {
-        if(rd_arrangement_child_from_cfg(c) != RD_ArrangementChild_Other || str8_match(c->string, str8_lit("id"), 0)) { continue; }
-        if(entry == &cfg_nil_node)
-        {
-          entry = cfg_node_new(copy_state, device, str8_lit("panel"));
-          cfg_node_new(copy_state, cfg_node_new(copy_state, entry, str8_lit("id")), push_str8f(scratch.arena, "%I64u", p->id));
-        }
-        cfg_node_insert_child(copy_state, entry, entry->last, cfg_node_deep_copy(copy_state, c));
+        CFG_Node *entry = cfg_node_new(copy_state, device, str8_lit("panel"));
+        cfg_node_new(copy_state, cfg_node_new(copy_state, entry, str8_lit("id")), push_str8f(scratch.arena, "%I64u", p->id));
+        cfg_node_insert_child(copy_state, entry, entry->last, cfg_node_deep_copy(copy_state, doc_id));
       }
       for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
       {

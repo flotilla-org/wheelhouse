@@ -989,17 +989,15 @@ uishell_dispatch_tab_command(String8 name)
     wm_set_clipboard_text(full_path);
     scratch_end(scratch);
   }
-  // The tab bar's side is Presentation State kept on the panel's node, beside
-  // the arrangement rather than in it.
+  // The tab bar's side is the panel's Presentation State, beside the
+  // arrangement rather than in it.
   else if(str8_match(name, str8_lit("tab_bar_top"), 0))
   {
-    CFG_Node *panel = rd_cfg_from_panel(uishell_regs()->panel);
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(panel, str8_lit("tabs_on_bottom")));
+    rd_panel_flag_set(uishell_regs()->panel, str8_lit("tabs_on_bottom"), 0);
   }
   else if(str8_match(name, str8_lit("tab_bar_bottom"), 0))
   {
-    CFG_Node *panel = rd_cfg_from_panel(uishell_regs()->panel);
-    cfg_node_child_from_string_or_alloc(rd_state->cfg, panel, str8_lit("tabs_on_bottom"));
+    if(rd_cfg_from_panel(uishell_regs()->panel) != &cfg_nil_node) { rd_panel_flag_set(uishell_regs()->panel, str8_lit("tabs_on_bottom"), 1); }
   }
   else if(str8_match(name, str8_lit("tab_settings"), 0))
   {
@@ -1251,42 +1249,18 @@ uishell_dispatch_panel_command(String8 name)
   }
   else if(str8_match(name, str8_lit("focus_panel"), 0))
   {
-    Temp scratch = scratch_begin(0, 0);
-    // The focus mark is Presentation State on the panel's node; one mark
-    // moves there from wherever in its tree it was.
+    // The focus mark is the panel's Presentation State; one mark moves there
+    // from wherever in its arrangement it was.
     RD_PanelAddress address = uishell_regs()->panel;
     CFG_Node *panel = rd_cfg_from_panel(address);
-    RD_Arrangement *arrangement = uishell_workspace_mount_from_panel_owner(scratch.arena, address.owner).arrangement;
-    CFG_Node *selection_cfg = &cfg_nil_node;
-    for(RD_ArrangementPanel *p = arrangement->root;
-        p != &rd_nil_arrangement_panel;
-        p = rd_arrangement_next(arrangement->root, p))
-    {
-      CFG_Node *p_cfg = cfg_node_from_id(p->cfg);
-      CFG_Node *p_selection = cfg_node_child_from_string(p_cfg, str8_lit("selected"));
-      if(selection_cfg == &cfg_nil_node)
-      {
-        selection_cfg = p_selection;
-      }
-      else for(CFG_Node *s = p_selection; s != &cfg_nil_node; s = cfg_node_child_from_string(p_cfg, str8_lit("selected")))
-      {
-        cfg_node_release(rd_state->cfg, s);
-      }
-    }
-    if(selection_cfg == &cfg_nil_node)
-    {
-      selection_cfg = cfg_node_alloc(rd_state->cfg);
-      cfg_node_equip_string(rd_state->cfg, selection_cfg, str8_lit("selected"));
-    }
     if(panel != &cfg_nil_node)
     {
-      cfg_node_insert_child(rd_state->cfg, panel, &cfg_nil_node, selection_cfg);
+      rd_panel_focus_mark(address);
       CFG_Node *window = rd_window_from_cfg(panel);
       RD_WindowState *ws = rd_window_state_from_cfg(window);
       ws->menu_bar_focused = 0;
       ws->active_panel = address;
     }
-    scratch_end(scratch);
   }
   else if(str8_match(name, str8_lit("focus_panel_right"), 0) ||
           str8_match(name, str8_lit("focus_panel_left"), 0) ||
@@ -1488,12 +1462,20 @@ uishell_dispatch_window_command(String8 name)
         cfg_node_release(rd_state->cfg, cfg_node_child_from_string(new_child, str8_lit("workspace_id")));
       }
     }
-    // One empty panel, which has focus (Presentation State, on its node).
+    // The copied sidebar keeps its panels' Presentation State; the old
+    // window's own panels' isn't the new one's.
+    CFG_Node *panel_presentation = cfg_node_child_from_string(new_window, RD_PANEL_PRESENTATION_ROOT);
+    for(CFG_Node *c = panel_presentation->first, *next = &cfg_nil_node; c != &cfg_nil_node; c = next)
+    {
+      next = c->next;
+      if(str8_match(c->string, rd_panel_owner_kind_name(RD_PanelOwnerKind_Workspace), 0)) { cfg_node_release(rd_state->cfg, c); }
+    }
+    // One empty panel, which has focus (its Presentation State).
     Temp scratch = scratch_begin(0, 0);
     RD_Arrangement *arrangement = rd_arrangement_from_owner(scratch.arena, new_window, str8_lit("panels"));
     RD_PanelID panel = rd_arrangement_clear(arrangement);
     rd_arrangement_save(rd_state->cfg, arrangement);
-    cfg_node_new(rd_state->cfg, cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, panel)->cfg), str8_lit("selected"));
+    rd_panel_focus_mark(rd_panel_address(rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, new_window, 0), panel));
     scratch_end(scratch);
   }
   else if(str8_match(name, str8_lit("new_workspace"), 0))

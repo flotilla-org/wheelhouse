@@ -1451,9 +1451,18 @@ internal CFG_Node *rd_cfg_root_from_panel_owner(RD_PanelOwner owner);
 // The owner's arrangement, as config has it; an empty one when it has no
 // panels, which saves in the owner's host (Floating Panels excepted).
 internal RD_Arrangement *rd_arrangement_from_panel_owner(Arena *arena, RD_PanelOwner owner);
-// The node `panel` is mirrored to, which keeps its Presentation State; nil
-// when there is no such panel.
+// The node `panel` is mirrored to; nil when there is no such panel.
 internal CFG_Node *rd_cfg_from_panel(RD_PanelAddress panel);
+// A panel's Presentation State (shell_core.c, "Panel Presentation State"):
+// its record, which a panel without any has none of; a flag of it, such as
+// `tabs_on_bottom` or `section_collapsed`, which setting makes a record for;
+// and the focus mark, which one panel of its arrangement has.
+#define RD_PANEL_PRESENTATION_ROOT str8_lit("panel_presentation")
+internal CFG_Node *rd_panel_presentation_from_panel(RD_PanelAddress panel);
+internal B32 rd_panel_flag(RD_PanelAddress panel, String8 name);
+internal void rd_panel_flag_set(RD_PanelAddress panel, String8 name, B32 on);
+internal void rd_panel_focus_mark(RD_PanelAddress panel);
+internal RD_PanelPresentation rd_panel_presentation(RD_PanelAddress panel);
 // The panel `cfg` is (a panel node) or has as a tab (a View).
 internal RD_PanelAddress rd_panel_from_cfg(CFG_Node *cfg);
 // The panel that has `view` as a tab.

@@ -352,8 +352,8 @@ uishell_default_workspace_panels(CFG_Node *window, CFG_Node *panels_owner)
   rd_new_view_tab(arrangement, main_panel, str8_lit("text"), str8_zero());
   rd_new_view_tab(arrangement, side_panel, str8_lit("text"), str8_lit("query:output"));
   rd_arrangement_save(rd_state->cfg, arrangement);
-  // The main panel has focus (Presentation State, on its node).
-  cfg_node_new(rd_state->cfg, cfg_node_from_id(rd_arrangement_panel_from_id(arrangement, main_panel)->cfg), str8_lit("selected"));
+  // The main panel has focus (its Presentation State).
+  rd_panel_focus_mark(rd_panel_address(rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, panels_owner, 0), main_panel));
   scratch_end(scratch);
   
   RD_WindowState *ws = rd_window_state_from_cfg(window);

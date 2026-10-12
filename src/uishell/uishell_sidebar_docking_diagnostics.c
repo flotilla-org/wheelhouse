@@ -546,7 +546,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   // Beside a collapsed section there's no boundary to drag: it would only
   // eat into the size the section returns to when expanded.
   {
-    CFG_Node *collapsed = cfg_node_new(rd_state->cfg, second_view, str8_lit("section_collapsed"));
+    uishell_sidebar_section_set_collapsed(second_view, 1);
     for(U32 frame = 0; frame < 2; frame++)
     {
       UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
@@ -556,7 +556,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       ui_end_build();
     }
     if(!ui_box_is_nil(ui_box_from_key(boundary_key))) { fprintf(stderr, "FAIL dock: a boundary beside a collapsed section can be dragged\n"); failures++; }
-    cfg_node_release(rd_state->cfg, collapsed);
+    uishell_sidebar_section_set_collapsed(second_view, 0);
   }
   // A row dragged onto the pill between two sections makes a new section
   // there holding its ghost (drag-model.md: "a docking site: a new pinned
@@ -1405,14 +1405,14 @@ uishell_section_placement_diagnostics(String8 source_path)
   CFG_Node *ordinary = cfg_node_new(state.cfg, merged, str8_lit("text")); rd_view_key_assign(state.cfg, ordinary, 0);
   CFG_ID ordinary_id = ordinary->id;
   cfg_node_new(state.cfg, ordinary, str8_lit("selected"));
-  CFG_Node *leaf_selected = cfg_node_new(state.cfg, merged, str8_lit("selected"));
-  CFG_Node *leaf_tabs = cfg_node_new(state.cfg, merged, str8_lit("tabs_on_bottom"));
+  RD_PanelAddress leaf = rd_panel_from_cfg(merged);
+  rd_panel_focus_mark(leaf);
+  rd_panel_flag_set(leaf, str8_lit("tabs_on_bottom"), 1);
   uishell_section_placement_frame(&p);
   PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")));
   merged = cfg_node_child_from_string(restored, RD_DOCK_SIDEBAR_ROOT);
   x = uishell_sidebar_region_view(restored, str8_lit("x"));
   PlacementCheck(ordinary->id == ordinary_id && ordinary->parent != merged && ordinary->parent != x->parent);
-  PlacementCheck(leaf_selected->parent == ordinary->parent && leaf_tabs->parent == ordinary->parent);
   RD_PanelTree lifted = rd_panel_tree_from_cfg(scratch.arena, merged);
   RD_PanelNode *lifted_leaf = rd_panel_node_from_id(lifted.root, rd_panel_from_cfg(ordinary).id);
   PlacementCheck(lifted_leaf->tab_side == Side_Max && rd_view_address_match(lifted_leaf->selected_tab, rd_view_address_from_cfg(ordinary)));

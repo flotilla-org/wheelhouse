@@ -56,14 +56,15 @@
 //
 //   sidebar_generation: 12
 //   sidebar_presentation: {
-//     panel: {id: "3" selected tabs_on_bottom}   a panel's Presentation State, by document ID
 //     panel: {id: "f1.1" share: 0.5}             a Floating Panel's share of its host
 //     section: {key: "attention" weight: 0.25}   the size content gave a section
 //     view: {terminal: {slot: "u:1" ...}}        a View of this host's own, whole
 //   }
 //
 // Each View's Presentation State is the window's `view_presentation`, by View
-// Address (shell_core.c, "View Presentation State"), saved with the window.
+// Address (shell_core.c, "View Presentation State"), and each panel's its
+// `panel_presentation`, by panel address ("Panel Presentation State"), both
+// saved with the window.
 //
 // A docked section the sidebar sizes from its content (no
 // `sidebar_layout_sized`) is committed with weight 1: its size is this
@@ -526,14 +527,12 @@ uishell_sidebar_store_fill(UIShell_SidebarBuild *b, RD_Arrangement *a, Andamento
     made[index] = wanted;
     ids[ids_used++] = wanted;
     // A panel keeps its node by ID, and the root keeps the root's. A leaf
-    // Andamento lifted out of the root (it keeps the root's ID) takes the
-    // root's Presentation State with it.
+    // Andamento lifted out of the root keeps the root's ID, and so its
+    // Presentation State.
     if(up == ANDAMENTO_NONE && old_count) { panel->cfg = old_cfgs[0]; }
-    for(U64 i = 0; i < old_count && up != ANDAMENTO_NONE; i++)
+    for(U64 i = 1; i < old_count && up != ANDAMENTO_NONE; i++)
     {
-      if(old_ids[i] != wanted) { continue; }
-      if(i == 0) { panel->options_from = old_cfgs[i]; }
-      else { panel->cfg = old_cfgs[i]; }
+      if(old_ids[i] == wanted) { panel->cfg = old_cfgs[i]; }
     }
     UIShell_SidebarBuilt *built = push_array(arena, UIShell_SidebarBuilt, 1);
     built->id = push_str8_copy(arena, uishell_sidebar_string(src->id));
@@ -761,21 +760,12 @@ uishell_sidebar_store_build(UIShell_SidebarState *state, CFG_Node *window)
   host = cfg_node_child_from_string(window, str8_lit("floating_panels"));
   if(host != &cfg_nil_node && host->first == &cfg_nil_node) { cfg_node_release(rd_state->cfg, host); }
 
-  // This device's Presentation State for each panel; a safety restore's
-  // marks are done with.
+  // A safety restore's marks are done with.
   for(UIShell_SidebarBuilt *built = b.first_built; built; built = built->next)
   {
     CFG_Node *node = cfg_node_from_id(rd_arrangement_panel_from_id(built->arrangement, built->panel)->cfg);
-    if(node == &cfg_nil_node) { continue; }
     CFG_Node *cleanup = cfg_node_child_from_string(node, str8_lit("section_hint_cleanup"));
     if(cleanup != &cfg_nil_node) { cfg_node_release(rd_state->cfg, cleanup); }
-    CFG_Node *entry = uishell_sidebar_store_device(device, str8_lit("panel"), str8_lit("id"), built->id);
-    for(CFG_Node *s = entry->first; s != &cfg_nil_node; s = s->next)
-    {
-      if(str8_match(s->string, str8_lit("id"), 0) || str8_match(s->string, str8_lit("share"), 0) ||
-         cfg_node_child_from_string(node, s->string) != &cfg_nil_node) { continue; }
-      cfg_node_insert_child(rd_state->cfg, node, node->last, cfg_node_deep_copy(rd_state->cfg, s));
-    }
   }
   for(U64 t = 0; t < b.tab_count; t++)
   {
@@ -1102,13 +1092,6 @@ uishell_sidebar_store_presentation(CFG_State *copy_state, CFG_Node *window, CFG_
     {
       CFG_Node *node = cfg_node_from_id(p->cfg), *entry = &cfg_nil_node;
       String8 id = uishell_sidebar_store_panel_id(arena, i, p->id);
-      for(CFG_Node *c = node->first; c != &cfg_nil_node; c = c->next)
-      {
-        if(rd_arrangement_child_from_cfg(c) != RD_ArrangementChild_Other || str8_match(c->string, str8_lit("id"), 0) ||
-           str8_match(c->string, str8_lit("section_hint_cleanup"), 0)) { continue; }
-        uishell_sidebar_store_entry(copy_state, device, &entry, str8_lit("panel"), str8_lit("id"), id);
-        cfg_node_insert_child(copy_state, entry, entry->last, cfg_node_deep_copy(copy_state, c));
-      }
       // Where a Floating Panel floats among the others.
       if(i && p == a->root)
       {

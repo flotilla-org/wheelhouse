@@ -34,10 +34,10 @@ uishell_preview_diagnostics(RD_WindowState *ws)
     for(U32 p = 0; p < 2; p++)
     {
       CFG_Node *panel = cfg_node_new(rd_state->cfg, panels, str8_lit("0.5"));
-      if(p == 0) { cfg_node_new(rd_state->cfg, panel, str8_lit("selected")); }
       CFG_Node *view = rd_cfg_new_view_tab(panel, str8_lit("terminal_fixture"), str8_zero(), 1);
       if(p == 0) { views[i] = view; }
     }
+    rd_panel_focus_mark(rd_panel_from_cfg(panels->first));
     mounts[i] = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, owners[i]);
   }
   U32 failures = 0;

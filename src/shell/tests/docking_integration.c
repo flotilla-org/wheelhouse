@@ -107,6 +107,7 @@ integration_reset_panels(CFG_Node *window, Axis2 axis)
 {
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("panels")));
   cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, RD_PANEL_PRESENTATION_ROOT));
   if(axis == Axis2_X) { cfg_node_new(rd_state->cfg, window, str8_lit("split_x")); }
   return cfg_node_new(rd_state->cfg, window, str8_lit("panels"));
 }
@@ -446,9 +447,9 @@ entry_point(CmdLine *cmdline)
     CFG_Node *origin = cfg_node_new(rd_state->cfg, panels, str8_lit("0.3"));
     CFG_Node *destination = cfg_node_new(rd_state->cfg, panels, str8_lit("0.4"));
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, panels, str8_lit("0.3")), str8_lit("terminal"));
-    cfg_node_new(rd_state->cfg, origin, str8_lit("selected"));
     source = cfg_node_new(rd_state->cfg, origin, str8_lit("scroll_region_fixture")); rd_view_key_assign(rd_state->cfg, source, 0);
     cfg_node_new(rd_state->cfg, destination, str8_lit("terminal"));
+    rd_panel_focus_mark(rd_panel_from_cfg(origin));
     CFG_ID origin_id = origin->id;
     integration_rect = r2f32p(0, 0, 2400, 1600);
     UIShell_CmdNode *before_cmd = integration_move(window, source, destination, Dir2_Right);
@@ -469,8 +470,8 @@ entry_point(CmdLine *cmdline)
     CFG_Node *right = cfg_node_new(rd_state->cfg, panels, str8_lit("0.4"));
     cfg_node_new(rd_state->cfg, left, str8_lit("terminal"));
     CFG_Node *closing = cfg_node_new(rd_state->cfg, middle, str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, closing, 0);
-    cfg_node_new(rd_state->cfg, middle, str8_lit("selected"));
     CFG_Node *kept = cfg_node_new(rd_state->cfg, right, str8_lit("terminal")); rd_view_key_assign(rd_state->cfg, kept, 0);
+    rd_panel_focus_mark(rd_panel_from_cfg(middle));
     CFG_ID middle_id = middle->id;
     UIShell_CmdNode *before_cmd = rd_state->cmds[0].last;
     UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(middle), .tab = rd_view_address_from_cfg(closing)) { uishell_dispatch_tab_command(str8_lit("close_tab")); }

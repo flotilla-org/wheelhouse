@@ -403,6 +403,7 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
   {
     // Discarded, or never had panels: the old root node and removed Views go.
     CFG_Node *saved_root = cfg_node_from_id(arrangement->saved_root);
+    if(saved_root != &cfg_nil_node && rd_arrangement_saved_hook) { rd_arrangement_saved_hook(saved_root, arrangement); }
     if(saved_root != &cfg_nil_node) { rd_arrangement_release_cfg(state, saved_root, 0); }
     for(RD_ArrangementTab *tab = arrangement->first_removed; tab != 0; tab = tab->next)
     {
@@ -482,19 +483,6 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
     }
   }
 
-  // A panel that took another's tabs takes its Presentation State too.
-  for(RD_ArrangementPanel *p = root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(root, p))
-  {
-    CFG_Node *from = cfg_node_from_id(p->options_from), *node = cfg_node_from_id(p->cfg);
-    for(CFG_Node *c = from->first, *next = &cfg_nil_node; c != &cfg_nil_node && from != node; c = next)
-    {
-      next = c->next;
-      if(rd_arrangement_child_from_cfg(c) == RD_ArrangementChild_Other && !str8_match(c->string, str8_lit("id"), 0))
-      { cfg_node_insert_child(state, node, node->last, c); }
-    }
-    p->options_from = 0;
-  }
-
   // Only the Selected View is marked `selected`, whatever marks Views brought
   // with them.
   for(RD_ArrangementPanel *p = root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(root, p))
@@ -558,6 +546,9 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
   {
     for(CFG_NodePtrNode *n = moved.first; n != 0; n = n->next) { rd_arrangement_view_move_hook(n->v, 1); }
   }
+  // A panel that took another's tabs takes its Presentation State too.
+  if(rd_arrangement_saved_hook) { rd_arrangement_saved_hook(cfg_node_from_id(root->cfg), arrangement); }
+  for(RD_ArrangementPanel *p = root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(root, p)) { p->options_from = 0; }
   scratch_end(scratch);
 }
 
@@ -581,6 +572,19 @@ rd_panel_address(RD_PanelOwner owner, RD_PanelID id)
 {
   RD_PanelAddress address = {owner, id};
   return address;
+}
+
+internal String8
+rd_panel_owner_kind_name(RD_PanelOwnerKind kind)
+{
+  switch(kind)
+  {
+    default:{}break;
+    case RD_PanelOwnerKind_Workspace:{return str8_lit("workspace");}break;
+    case RD_PanelOwnerKind_Sidebar:{return str8_lit("sidebar");}break;
+    case RD_PanelOwnerKind_Floating:{return str8_lit("floating");}break;
+  }
+  return str8_zero();
 }
 
 ////////////////////////////////
@@ -839,11 +843,11 @@ rd_panel_tree_from_arrangement(Arena *arena, RD_PanelOwner owner, RD_Arrangement
     d->split_axis = axis;
     d->pct_of_parent = s->weight;
     d->tab_side = Side_Min;
-    CFG_Node *cfg = cfg_node_from_id(s->cfg);
-    for(CFG_Node *c = cfg->first; c != &cfg_nil_node; c = c->next)
+    if(rd_panel_presentation_hook)
     {
-      if(str8_match(c->string, str8_lit("selected"), 0)) { tree.focused = d; }
-      else if(str8_match(c->string, str8_lit("tabs_on_bottom"), 0)) { d->tab_side = Side_Max; }
+      RD_PanelPresentation presentation = rd_panel_presentation_hook(d->address);
+      if(presentation.focused) { tree.focused = d; }
+      if(presentation.tabs_on_bottom) { d->tab_side = Side_Max; }
     }
     for(RD_ArrangementTab *tab = s->first_tab; tab != 0; tab = tab->next)
     {
@@ -1184,7 +1188,7 @@ rd_arrangement_add(RD_Arrangement *arrangement, RD_PanelID parent_id, F32 weight
     lifted->last_tab = parent->last_tab;
     lifted->tab_count = parent->tab_count;
     lifted->selected = parent->selected;
-    lifted->options_from = parent->cfg;
+    lifted->options_from = parent->id;
     parent->first_tab = parent->last_tab = 0;
     parent->tab_count = 0;
     parent->selected = 0;

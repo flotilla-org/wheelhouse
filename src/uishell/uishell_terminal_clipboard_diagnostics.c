@@ -79,18 +79,20 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   CFG_Node *window = cfg_node_new(cfg, user, str8_lit("window"));
   CFG_Node *workspace = cfg_node_new(cfg, window, str8_lit("workspace"));
   CFG_Node *panels = cfg_node_new(cfg, workspace, str8_lit("panels"));
-  cfg_node_new(cfg, panels, str8_lit("selected"));
   CFG_Node *view = cfg_node_new(cfg, panels, str8_lit("terminal")); rd_view_key_assign(cfg, view, 0);
   CFG_Node *selected = cfg_node_new(cfg, view, str8_lit("selected"));
   CFG_Node *watcher = cfg_node_new(cfg, panels, str8_lit("terminal")); rd_view_key_assign(cfg, watcher, 0);
   CFG_Node *other_workspace = cfg_node_new(cfg, window, str8_lit("workspace"));
   CFG_Node *other_panels = cfg_node_new(cfg, other_workspace, str8_lit("panels"));
-  cfg_node_new(cfg, other_panels, str8_lit("selected"));
   CFG_Node *preview = cfg_node_new(cfg, other_panels, str8_lit("terminal")); rd_view_key_assign(cfg, preview, 0);
   cfg_node_new(cfg, preview, str8_lit("selected"));
   // Built directly, so each View gets the key a save would give it.
   CFG_Node *keyed[] = {view, watcher, preview};
   for(U64 i = 0; i < ArrayCount(keyed); i++) { rd_view_key_assign(cfg, keyed[i], 0); }
+  // Each workspace's panel has focus (its Presentation State).
+  RD_PanelAddress panel = rd_panel_from_cfg(panels);
+  rd_panel_focus_mark(panel);
+  rd_panel_focus_mark(rd_panel_from_cfg(other_panels));
   RD_ViewAddress view_address = rd_view_address_from_cfg(view);
   RD_WindowState *ws = push_array(arena, RD_WindowState, 1);
   ws->ui = push_array(arena, UI_State, 1);
@@ -154,12 +156,12 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   }
   // A workspace without an Active Panel has a nil panel sentinel and cannot
   // deliver, even if the previously rendered terminal still reports focus.
-  cfg_node_release(cfg, cfg_node_child_from_string(panels, str8_lit("selected")));
+  rd_panel_flag_set(panel, str8_lit("focused"), 0);
   U64 before_nil_panel = f->writes;
   uishell_clipboard_fixture_event(f, ++sequence, 0, 1, str8_lit("no active panel"));
   uishell_terminal_clipboard_dispatch_with_ops(&ops);
   HostClipboardCheck(f->writes == before_nil_panel && f->released == 1, "nil Active Panel drops effect");
-  cfg_node_new(cfg, panels, str8_lit("selected"));
+  rd_panel_focus_mark(panel);
   // User deny cannot be overridden by a view setting; denying does not change
   // the independently maintained local selection or operator Copy interface.
   CFG_Node *deny = cfg_node_new(cfg, user, str8_lit("deny_application_clipboard_writes"));
