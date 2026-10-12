@@ -1,13 +1,13 @@
 // Every drop site box under `box`, except panels' catch-all sites, which
 // cover their whole panel by design.
 internal void
-uishell_panel_drop_sites(Arena *arena, UI_Box *box, CFG_PanelTree *tree, UI_Box ***sites, U64 *count)
+uishell_panel_drop_sites(Arena *arena, UI_Box *box, RD_PanelTree *tree, UI_Box ***sites, U64 *count)
 {
   for(UI_Box *child = box->first; !ui_box_is_nil(child); child = child->next)
   {
     B32 catchall = 0;
-    for(CFG_PanelNode *p = tree->root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree->root, p).next)
-    { catchall |= ui_key_match(child->key, rd_panel_catchall_drop_site_key(p->cfg)); }
+    for(RD_PanelNode *p = tree->root; p != &rd_nil_panel_node; p = rd_panel_node_rec__depth_first_pre(tree->root, p).next)
+    { catchall |= ui_key_match(child->key, rd_panel_catchall_drop_site_key(p->address)); }
     if(child->flags & UI_BoxFlag_DropSite && !catchall)
     {
       UI_Box **grown = push_array(arena, UI_Box *, *count+1);
@@ -36,27 +36,27 @@ uishell_panel_drop_site_overlap_diagnostics(RD_WindowState *ws)
   // root X [Y [t1, X [t2, t4], t3], t0]
   struct { U32 view, beside; Dir2 dir; } splits[] = {{1, 0, Dir2_Left}, {2, 1, Dir2_Down}, {3, 2, Dir2_Down}, {4, 2, Dir2_Right}};
   for(U32 i = 0; i < ArrayCount(splits); i++)
-    UIShell_RegsScope(.window = ws->cfg_id, .panel = tabs[splits[i].view]->parent->id, .dst_panel = tabs[splits[i].beside]->parent->id,
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(tabs[splits[i].view]), .dst_panel = rd_panel_from_cfg(tabs[splits[i].beside]),
                       .view = tabs[splits[i].view]->id, .dir2 = splits[i].dir)
   { uishell_dispatch_panel_command(str8_lit("split_panel")); }
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(arena, window, owner);
-  CFG_PanelTree tree = mount.panel_tree;
+  RD_PanelTree tree = mount.panel_tree;
   B32 nested = tree.root->child_count == 2 && tree.root->first->child_count == 3 && tree.root->first->first->next->child_count == 2;
   fprintf(stderr, "%s drop-site overlap layout: a row in the middle of a column\n", nested ? "PASS" : "FAIL");
   failures += !nested;
   Rng2F32 area = r2f32p(0, 0, 900, 600);
-  for(CFG_PanelNode *leaf = tree.root; nested && leaf != &cfg_nil_panel_node; leaf = cfg_panel_node_rec__depth_first_pre(tree.root, leaf).next)
+  for(RD_PanelNode *leaf = tree.root; nested && leaf != &rd_nil_panel_node; leaf = rd_panel_node_rec__depth_first_pre(tree.root, leaf).next)
   {
-    if(leaf->first != &cfg_nil_panel_node) { continue; }
+    if(leaf->first != &rd_nil_panel_node) { continue; }
     UI_State *test_ui = ui_state_alloc(), *saved_ui = ui_state;
     ui_select_state(test_ui);
     UI_Box **sites = 0; U64 count = 0;
-    UIShell_RegsScope(.window = ws->cfg_id, .panel = tabs[0]->parent->id, .view = tabs[0]->id)
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(tabs[0]), .view = tabs[0]->id)
     {
       rd_drag_begin(UIShell_ContextRegSlot_View);
       UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
       ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-      ui_state->mouse = center_2f32(cfg_target_rect_from_panel_node(area, tree.root, leaf));
+      ui_state->mouse = center_2f32(rd_target_rect_from_panel_node(area, tree.root, leaf));
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
       { rd_panel_area_ui(scratch, area, area, ws, &mount, 1, 0, 0, 0, 0); }
       ui_end_build();
@@ -70,7 +70,7 @@ uishell_panel_drop_site_overlap_diagnostics(RD_WindowState *ws)
       if(both.x1 - both.x0 > 0.5f && both.y1 - both.y0 > 0.5f) { overlaps += 1; }
     }
     B32 ok = count >= 8 && overlaps == 0;
-    fprintf(stderr, "%s drop sites don't overlap over panel %p (%llu sites, %u overlaps)\n", ok ? "PASS" : "FAIL", leaf->cfg, (unsigned long long)count, overlaps);
+    fprintf(stderr, "%s drop sites don't overlap over panel %llu (%llu sites, %u overlaps)\n", ok ? "PASS" : "FAIL", (unsigned long long)leaf->address.id, (unsigned long long)count, overlaps);
     failures += !ok;
     ui_select_state(saved_ui);
     ui_state_release(test_ui);
@@ -96,7 +96,7 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, owner);
   U32 failures = 0;
   ui_select_state(test_ui);
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = panels->id, .view = view->id)
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(panels), .view = view->id)
   {
     rd_drag_begin(UIShell_ContextRegSlot_View);
     UI_IconInfo icons = ws->ui->icon_info;
@@ -113,13 +113,13 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     char *names[] = {"up", "down", "left", "right"};
     for(U32 i = 0; i < ArrayCount(names); i++)
     {
-      UI_Key key = ui_key_from_stringf(ui_key_zero(), "drop_split_%s_%p", names[i], panels);
+      UI_Key key = ui_key_from_stringf(rd_panel_ui_key(mount.panel_tree.root->address), "drop_split_%s", names[i]);
       B32 exists = !ui_box_is_nil(ui_box_from_key(key));
       fprintf(stderr, "%s single-panel drop target: %s\n", exists ? "PASS" : "FAIL", names[i]);
       failures += !exists;
     }
-    B32 no_centre = ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "drop_split_center_%p", panels)));
-    UI_Box *strip = ui_box_from_key(rd_panel_catchall_drop_site_key(panels));
+    B32 no_centre = ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(rd_panel_ui_key(mount.panel_tree.root->address), "drop_split_center")));
+    UI_Box *strip = ui_box_from_key(rd_panel_catchall_drop_site_key(mount.panel_tree.root->address));
     B32 on_strip = !ui_box_is_nil(strip) && !contains_2f32(strip->rect, ui_state->mouse) && dim_2f32(strip->rect).y < 100;
     fprintf(stderr, "%s single panel: no centre pill; tabs drop on its strip\n", no_centre && on_strip ? "PASS" : "FAIL");
     failures += !(no_centre && on_strip);
@@ -145,7 +145,7 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   // A View that opts in to a live preview (text, binary) is laid out again in
   // the floater rather than drawn to a texture.
   CFG_Node *text_view = rd_cfg_new_view_tab(panels, str8_lit("text"), str8_zero(), 0);
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = panels->id, .view = text_view->id)
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(panels), .view = text_view->id)
   {
     rd_drag_begin(UIShell_ContextRegSlot_View);
     UI_IconInfo icons = ws->ui->icon_info;
@@ -224,13 +224,13 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     if(i == 1) { middle = panel; moving_view = tab; }
   }
   CFG_ID middle_id = middle->id;
-  UIShell_RegsScope(.window = ws->cfg_id, .panel = middle->id, .view = moving_view->id,
-                   .dst_panel = destination->id, .prev_tab = 0)
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(middle), .view = moving_view->id,
+                   .dst_panel = rd_panel_from_cfg(destination), .prev_tab = 0)
   { uishell_dispatch_tab_command(str8_lit("move_view")); }
   failures += cfg_node_from_id(middle_id) != &cfg_nil_node;
-  CFG_PanelTree remaining = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, other).panel_tree;
+  RD_PanelTree remaining = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, other).panel_tree;
   F32 total = 0;
-  for(CFG_PanelNode *p = remaining.root->first; p != &cfg_nil_panel_node; p = p->next)
+  for(RD_PanelNode *p = remaining.root->first; p != &rd_nil_panel_node; p = p->next)
   { total += p->pct_of_parent; }
   B32 filled = remaining.root->child_count == 2 && abs_f32(total-1.f) < 0.0001f;
   fprintf(stderr, "%s remaining panels fill workspace: %.6f\n", filled ? "PASS" : "FAIL", total);
@@ -243,10 +243,10 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     CFG_Node *root = cfg_node_new(rd_state->cfg, split_owner, str8_lit("panels"));
     CFG_Node *moving = rd_cfg_new_view_tab(root, str8_lit("terminal_fixture"), str8_zero(), 1);
     rd_cfg_new_view_tab(root, str8_lit("terminal_fixture"), str8_zero(), 0);
-    UIShell_RegsScope(.window = ws->cfg_id, .panel = root->id, .dst_panel = root->id,
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_panel_from_cfg(root), .dst_panel = rd_panel_from_cfg(root),
                      .view = moving->id, .dir2 = directions[i])
     { uishell_dispatch_panel_command(str8_lit("split_panel")); }
-    CFG_PanelTree tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, split_owner).panel_tree;
+    RD_PanelTree tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, split_owner).panel_tree;
     B32 valid = tree.root->child_count == 2 && tree.root->split_axis == axis2_from_dir2(directions[i]) &&
       tree.root->first->tabs.count == 1 && tree.root->last->tabs.count == 1;
     fprintf(stderr, "%s split/move direction %u preserves both views\n", valid ? "PASS" : "FAIL", i);
@@ -257,7 +257,7 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   // create, duplicate, close, move and drag-split dispatchers, not helper mocks.
   CFG_Node *commands_owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
   CFG_Node *commands_panel = cfg_node_new(rd_state->cfg, commands_owner, str8_lit("panels"));
-  UIShell_RegsScope(.window = window->id, .panel = commands_panel->id, .string = str8_lit("text"), .expr = str8_zero())
+  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(commands_panel), .string = str8_lit("text"), .expr = str8_zero())
   { uishell_dispatch_tab_command(str8_lit("build_tab")); }
   CFG_Node *created = cfg_node_child_from_string(commands_panel, str8_lit("text"));
   failures += created == &cfg_nil_node;
@@ -273,7 +273,7 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   CFG_Node *selector = cfg_node_new(rd_state->cfg, control, str8_lit("workspace_selector"));
   CFG_ID selector_id = selector->id;
   log_scope_begin();
-  UIShell_RegsScope(.window = window->id, .panel = commands_panel->id, .string = str8_lit("unknown_saved_view"))
+  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(commands_panel), .string = str8_lit("unknown_saved_view"))
   { uishell_dispatch_tab_command(str8_lit("build_tab")); }
   failures += cfg_node_child_from_string(commands_panel, str8_lit("unknown_saved_view")) != &cfg_nil_node;
   CFG_Node *unknown = cfg_node_new(rd_state->cfg, commands_panel, str8_lit("unknown_saved_view"));
@@ -292,9 +292,9 @@ uishell_panel_diagnostics(RD_WindowState *ws)
     uishell_dispatch_tab_command(str8_lit("duplicate_tab"));
     uishell_dispatch_tab_command(str8_lit("close_tab"));
   }
-  UIShell_RegsScope(.view = selector_id, .dst_panel = commands_panel->id, .prev_tab = 0)
+  UIShell_RegsScope(.view = selector_id, .dst_panel = rd_panel_from_cfg(commands_panel), .prev_tab = 0)
   { uishell_dispatch_tab_command(str8_lit("move_view")); }
-  UIShell_RegsScope(.view = selector_id, .dst_panel = commands_panel->id, .dir2 = Dir2_Left)
+  UIShell_RegsScope(.view = selector_id, .dst_panel = rd_panel_from_cfg(commands_panel), .dir2 = Dir2_Left)
   { uishell_dispatch_panel_command(str8_lit("split_panel")); }
   LogScopeResult rejected = log_scope_end(scratch.arena);
   // Every refusal names its action and the returned validity rule.
@@ -304,7 +304,7 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   { failures += str8_find_needle(errors, 0, str8_cstring(actions[i]), 0) == errors.size; }
   failures += cfg_node_from_id(selector_id) != selector || selector->parent != control;
   failures += cfg_node_child_list_from_string(scratch.arena, control, str8_lit("workspace_selector")).count != 1;
-  CFG_PanelTree command_tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, commands_owner).panel_tree;
+  RD_PanelTree command_tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, commands_owner).panel_tree;
   failures += command_tree.root->child_count != 0;
   // Reading mounts must not repair or release nodes retained by a caller.
   CFG_Node *invalid_copy = cfg_node_new(rd_state->cfg, commands_panel, str8_lit("workspace_selector"));

@@ -304,7 +304,7 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
   {
     rd_drag_kill();
     state->drag_card->moving = state->drag_card->drag_released = state->drag_card->focused = 0;
-    state->drag_card = 0; state->drop_panel = 0;
+    state->drag_card = 0; state->drop_panel = rd_nil_panel_address;
     state->card_escape_down = 1; ws->ui->hover_card_focus = 0;
     rd_request_frame();
     return 1;

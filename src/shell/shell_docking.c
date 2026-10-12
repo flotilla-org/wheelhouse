@@ -83,6 +83,14 @@ rd_dock_host_from_cfg(CFG_Node *cfg, F32 width)
   return host;
 }
 
+internal RD_DockHostKind
+rd_dock_host_kind_from_panel_owner(RD_PanelOwner owner)
+{
+  if(owner.kind == RD_PanelOwnerKind_Sidebar) { return RD_DockHostKind_Sidebar; }
+  if(owner.kind == RD_PanelOwnerKind_Floating) { return RD_DockHostKind_FloatingPanel; }
+  return RD_DockHostKind_WorkspaceRegion;
+}
+
 // Split/leaf discriminator: recurse through layout containers, never through
 // a View's settings, even when their keys resemble layout node names.
 internal B32
@@ -146,12 +154,12 @@ rd_dock_view_level(RD_ViewRegistration *registration, CFG_Node *view)
 }
 
 internal RD_DockRule
-rd_dock_placement(CFG_Node *view, CFG_Node *destination, F32 width)
+rd_dock_placement(CFG_Node *view, RD_DockHost destination)
 {
-  if(view == &cfg_nil_node || destination == &cfg_nil_node) { return RD_DockRule_RegisteredView; }
+  if(view == &cfg_nil_node || destination.kind >= RD_DockHostKind_COUNT) { return RD_DockRule_RegisteredView; }
   RD_DockHost source = rd_dock_host_from_cfg(view->parent, RD_DOCK_UNMEASURED_WIDTH);
   RD_DockProposal p = {0};
-  p.host = rd_dock_host_from_cfg(destination, width);
+  p.host = destination;
   p.selected_workspace_region = source.controlled_split;
   RD_ViewRegistration *registration = rd_dock_view_from_name(view->string);
   p.view_level = rd_dock_view_level(registration, view);
@@ -160,7 +168,7 @@ rd_dock_placement(CFG_Node *view, CFG_Node *destination, F32 width)
   // The current root Control Surface is implicit.
   if(registration && (registration->traits & RD_ViewTrait_Singleton))
   {
-    p.instances_after = rd_dock_instances(rd_dock_window(destination), registration);
+    p.instances_after = rd_dock_instances(cfg_node_from_id(destination.controlled_split), registration);
     if(source.controlled_split != p.host.controlled_split) { p.instances_after++; }
   }
   // Moving a selector to another Controlled Split would remove the source's
@@ -171,25 +179,25 @@ rd_dock_placement(CFG_Node *view, CFG_Node *destination, F32 width)
 }
 
 internal B32
-rd_dock_drag_target(CFG_Node *view, CFG_Node *destination, F32 width)
+rd_dock_drag_target(CFG_Node *view, RD_DockHost destination)
 {
-  return rd_dock_placement(view, destination, width) == RD_DockRule_Valid;
+  return rd_dock_placement(view, destination) == RD_DockRule_Valid;
 }
 
 internal RD_DockRule
-rd_dock_creation(String8 name, CFG_Node *destination)
+rd_dock_creation(String8 name, RD_DockHost destination)
 {
   RD_ViewRegistration *view = rd_dock_view_from_name(name);
   if(!view) { return RD_DockRule_RegisteredView; }
   RD_DockProposal p = {0};
-  p.host = rd_dock_host_from_cfg(destination, RD_DOCK_UNMEASURED_WIDTH);
-  p.view_level = (view->traits & RD_ViewTrait_ControlSplitScope) ? rd_dock_window(destination)->id : p.host.level;
+  p.host = destination;
+  p.view_level = (view->traits & RD_ViewTrait_ControlSplitScope) ? destination.controlled_split : p.host.level;
   p.selected_workspace_region = p.host.controlled_split;
-  p.instances_after = (view->traits & RD_ViewTrait_Singleton) ? rd_dock_instances(rd_dock_window(destination), view)+1 : 1;
+  p.instances_after = (view->traits & RD_ViewTrait_Singleton) ? rd_dock_instances(cfg_node_from_id(destination.controlled_split), view)+1 : 1;
   // TODO(#164): derive this with placement/closure counts from nested splits.
   // A creation must not add another selector to the implicit root surface.
   p.control_surfaces_after = view && (view->traits & RD_ViewTrait_SelectsWorkspaces) ? 2 : 1;
-  return destination != &cfg_nil_node ? rd_dock_check(view, p) : RD_DockRule_HostAcceptance;
+  return destination.kind < RD_DockHostKind_COUNT ? rd_dock_check(view, p) : RD_DockRule_HostAcceptance;
 }
 
 internal RD_DockRule
@@ -205,7 +213,7 @@ rd_dock_closure(CFG_Node *view)
 }
 
 internal B32
-rd_dock_can_create(String8 name, CFG_Node *destination)
+rd_dock_can_create(String8 name, RD_DockHost destination)
 { return rd_dock_creation(name, destination) == RD_DockRule_Valid; }
 
 internal B32
@@ -435,7 +443,7 @@ rd_dock_restore_window(CFG_State *state, CFG_Node *window)
   // stray saved where it is valid stays, as it always has.
   for(RD_DockSavedView *v = views.first; v != 0; v = v->next)
   {
-    if(v->view == &cfg_nil_node || rd_dock_placement(v->view, v->view->parent, RD_DOCK_UNMEASURED_WIDTH) == RD_DockRule_Valid) { continue; }
+    if(v->view == &cfg_nil_node || rd_dock_placement(v->view, rd_dock_host_from_cfg(v->view->parent, RD_DOCK_UNMEASURED_WIDTH)) == RD_DockRule_Valid) { continue; }
     // Region-specific defaults are Andamento's. Preserve the need to place
     // the section by its hints after this generic safety fallback, and mark
     // the panel it leaves: the sidebar's next commit leaves both out, then

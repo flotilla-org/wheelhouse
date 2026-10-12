@@ -6,6 +6,7 @@
 #include "mdesk/mdesk.h"
 #include "window_manager/window_manager_inc.h"
 #include "config/config_inc.h"
+#include "shell/shell_workspace_id.h"
 #include "shell/shell_arrangement.h"
 #include "shell/shell_docking.h"
 #include "base/base_inc.c"
@@ -36,11 +37,13 @@ child(CFG_Node *node, char *name)
   return cfg_node_child_from_string(node, str8_cstring(name));
 }
 
-// The renderer's reading of the saved tree.
-internal CFG_PanelTree
+// The renderer's reading of the saved tree. Its panels' addresses have no
+// owner here: the shell's Workspace and Window IDs aren't in these tests.
+internal RD_PanelTree
 render_tree(Arena *arena, CFG_Node *root)
 {
-  return rd_panel_tree_from_cfg(arena, root);
+  RD_PanelOwner owner = {0};
+  return rd_panel_tree_from_arrangement(arena, owner, rd_arrangement_from_cfg(arena, root));
 }
 
 // A Floating Panel is its own root.
@@ -75,16 +78,16 @@ check_saved(Arena *arena, RD_Arrangement *edited, CFG_Node *owner)
   U64 gen = cfg_change_gen();
   rd_arrangement_save(cfg, loaded);
   Check(cfg_change_gen() == gen);
-  CFG_PanelTree tree = render_tree(arena, root);
+  RD_PanelTree tree = render_tree(arena, root);
   Rng2F32 areas[] = {r2f32p(0, 0, 1000, 700), r2f32p(3.5f, 7.25f, 1283.75f, 911.5f)};
   for(RD_ArrangementPanel *p = edited->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(edited->root, p))
   {
-    CFG_PanelNode *node = cfg_panel_node_from_tree_cfg(tree.root, cfg_node_from_id(p->cfg));
-    Check(node != &cfg_nil_panel_node && node->split_axis == rd_arrangement_split_axis(edited, p) && node->pct_of_parent == p->weight);
+    RD_PanelNode *node = rd_panel_node_from_id(tree.root, p->id);
+    Check(node != &rd_nil_panel_node && node->split_axis == rd_arrangement_split_axis(edited, p) && node->pct_of_parent == p->weight);
     Check(node->tabs.count == p->tab_count && node->selected_tab->id == p->selected);
     for(U64 i = 0; i < ArrayCount(areas); i++)
     {
-      Rng2F32 x = rd_arrangement_rect(edited, areas[i], p), y = cfg_target_rect_from_panel_node(areas[i], tree.root, node);
+      Rng2F32 x = rd_arrangement_rect(edited, areas[i], p), y = rd_target_rect_from_panel_node(areas[i], tree.root, node);
       Check(MemoryMatchStruct(&x, &y));
     }
   }
@@ -152,13 +155,15 @@ entry_point(CmdLine *cmdline)
     Check(str8_match(right->string, str8_lit("0.28"), 0) && child(panels->first->next, "tabs_on_bottom") != &cfg_nil_node);
     Check(child(panels, "selected") != &cfg_nil_node && str8_match(child(right, "id")->first->string, str8_lit("3"), 0));
     // A split's `id` and focus mark are not panels to the renderer.
-    CFG_PanelTree tree = render_tree(arena, panels);
-    Check(tree.root->child_count == 2 && tree.focused == tree.root && cfg_panel_node_from_tree_cfg(tree.root, child(right, "id")) == &cfg_nil_panel_node);
+    RD_PanelTree tree = render_tree(arena, panels);
+    U64 tree_count = 0;
+    for(RD_PanelNode *p = tree.root; p != &rd_nil_panel_node; p = rd_panel_node_rec__depth_first_pre(tree.root, p).next) { tree_count += 1; }
+    Check(tree.root->child_count == 2 && tree.focused == tree.root && tree_count == 5);
     // It reads the Presentation State saved beside each panel: the tab bar's
     // side, and focus on the last marked panel in tree order.
     Check(tree.root->first->tab_side == Side_Max && tree.root->last->tab_side == Side_Min);
     CFG_Node *mark = cfg_node_new(cfg, right->first, str8_lit("selected"));
-    Check(render_tree(arena, panels).focused->cfg == right->first);
+    Check(render_tree(arena, panels).focused->address.id == rd_arrangement_panel_from_cfg(rd_arrangement_from_cfg(arena, panels), right->first->id)->id);
     cfg_node_release(cfg, mark);
     // The sidebar's arrangement saves under its own keys.
     CFG_Node *sidebar = child(window, "control_views");
@@ -550,7 +555,7 @@ entry_point(CmdLine *cmdline)
     Check(str8_match(child(root, "id")->first->string, str8_lit("4"), 0) && !str8_match(child(leaf, "id")->first->string, str8_lit("4"), 0));
     Check(child(root, "selected") == &cfg_nil_node && child(root, "tabs_on_bottom") == &cfg_nil_node && child(root, "section_collapsed") == &cfg_nil_node);
     Check(child(leaf, "selected") != &cfg_nil_node && child(leaf, "tabs_on_bottom") != &cfg_nil_node && child(leaf, "section_collapsed") != &cfg_nil_node);
-    CFG_PanelTree tree = render_tree(arena, root);
+    RD_PanelTree tree = render_tree(arena, root);
     Check(tree.focused == tree.root->first && tree.root->first->tab_side == Side_Max && tree.root->first->selected_tab == text);
     cfg_node_release(cfg, window);
   }

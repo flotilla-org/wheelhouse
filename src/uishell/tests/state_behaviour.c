@@ -392,7 +392,7 @@ state_count_from(UIShell_SidebarState *state, String8 kind, String8 id, String8 
   } \
 } while(0)
 
-internal CFG_PanelTree
+internal RD_PanelTree
 state_panels(Arena *arena, CFG_Node *workspace)
 {
   return uishell_workspace_mount_from_owner_cfg(arena, rd_window_from_cfg(workspace), workspace).panel_tree;
@@ -423,6 +423,11 @@ state_workspace_ids(Arena *arena)
   for(CFG_NodePtrNode *n = windows.first; n; n = n->next)
   {
     CFG_Node *window = n->v;
+    // The window's own Window ID is kept the same way.
+    String8 window_id = cfg_node_child_from_string(window, str8_lit("window_id"))->first->string;
+    UIShell_WindowId parsed_window_id = {0};
+    StateCheck(uishell_workspace_id_from_string(window_id, &parsed_window_id) && (parsed_window_id.v[6] >> 4) == 7);
+    str8_list_pushf(arena, &result, "(window ID) %S", window_id);
     if(cfg_node_child_from_string(window, str8_lit("workspace_id")) != &cfg_nil_node)
     { str8_list_pushf(arena, &result, "(window) %S", cfg_node_child_from_string(window, str8_lit("workspace_id"))->first->string); }
     for(CFG_Node *c = window->first; c != &cfg_nil_node; c = c->next)
@@ -768,34 +773,34 @@ entry_point(CmdLine *cmdline)
   CFG_Node *work = locals.first->v, *notes = locals.last->v;
   // No command renames a workspace; Workspace Settings edits its label in place.
   cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string(notes, str8_lit("label")), str8_lit("Notes"));
-  CFG_PanelTree tree = state_panels(scratch.arena, work);
-  CFG_Node *editor_panel = tree.root->first->cfg, *output_panel = tree.root->last->cfg;
+  RD_PanelTree tree = state_panels(scratch.arena, work);
+  CFG_Node *editor_panel = rd_cfg_from_panel(tree.root->first->address), *output_panel = rd_cfg_from_panel(tree.root->last->address);
   CFG_Node *output = output_panel->first;
-  uishell_cmd("build_tab", .window = window->id, .panel = editor_panel->id, .string = str8_lit("terminal"), .expr = str8_lit("make test"));
+  uishell_cmd("build_tab", .window = window->id, .panel = rd_panel_from_cfg(editor_panel), .string = str8_lit("terminal"), .expr = str8_lit("make test"));
   state_frame(ws);
   // A new tab is the panel's last; its node sits among the panel's tabs.
   tree = state_panels(scratch.arena, work);
-  CFG_Node *terminal = cfg_panel_node_from_tree_cfg(tree.root, editor_panel)->tabs.last->v;
+  CFG_Node *terminal = rd_panel_node_from_id(tree.root, rd_panel_from_cfg(editor_panel).id)->tabs.last->v;
   StateCheck(str8_match(terminal->string, str8_lit("terminal"), 0));
   // A launch directory comes from a provider's recipe or hand editing; no
   // command sets one.
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, terminal, str8_lit("cwd")), str8_lit("/src/wheelhouse"));
-  uishell_cmd("split_panel", .window = window->id, .panel = editor_panel->id, .view = terminal->id,
-              .dst_panel = editor_panel->id, .dir2 = Dir2_Down);
+  uishell_cmd("split_panel", .window = window->id, .panel = rd_panel_from_cfg(editor_panel), .view = terminal->id,
+              .dst_panel = rd_panel_from_cfg(editor_panel), .dir2 = Dir2_Down);
   state_frame(ws);
   CFG_Node *terminal_panel = terminal->parent;
   StateCheck(terminal_panel != editor_panel);
   // Moving the last tab out of a panel closes it.
-  uishell_cmd("move_view", .window = window->id, .panel = output_panel->id, .view = output->id,
-              .dst_panel = terminal_panel->id, .prev_tab = terminal->id);
+  uishell_cmd("move_view", .window = window->id, .panel = rd_panel_from_cfg(output_panel), .view = output->id,
+              .dst_panel = rd_panel_from_cfg(terminal_panel), .prev_tab = terminal->id);
   state_frame(ws);
   StateCheck(output->parent == terminal_panel);
   // A Jackstay View in the other one.
-  CFG_Node *notes_panel = state_panels(scratch.arena, notes).root->first->cfg;
-  uishell_cmd("build_tab", .window = window->id, .panel = notes_panel->id, .string = str8_lit("jackstay"));
+  CFG_Node *notes_panel = rd_cfg_from_panel(state_panels(scratch.arena, notes).root->first->address);
+  uishell_cmd("build_tab", .window = window->id, .panel = rd_panel_from_cfg(notes_panel), .string = str8_lit("jackstay"));
   state_frame(ws);
   tree = state_panels(scratch.arena, notes);
-  CFG_Node *jackstay = cfg_panel_node_from_tree_cfg(tree.root, notes_panel)->tabs.last->v;
+  CFG_Node *jackstay = rd_panel_node_from_id(tree.root, rd_panel_from_cfg(notes_panel).id)->tabs.last->v;
   StateCheck(str8_match(jackstay->string, str8_lit("jackstay"), 0));
   // Its address field saves the endpoint on Connect; no command does.
   cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, jackstay, str8_lit("source_endpoint")), str8_lit("porthole-demo"));
@@ -806,7 +811,7 @@ entry_point(CmdLine *cmdline)
   CFG_Node *multi = state_open_subject(ws, str8_lit("vessel"), str8_lit("multi"));
   tree = state_panels(scratch.arena, multi);
   CFG_Node *tools = tree.root->last->tabs.last->v;
-  uishell_cmd("focus_tab", .window = window->id, .panel = tools->parent->id, .tab = tools->id);
+  uishell_cmd("focus_tab", .window = window->id, .panel = rd_panel_from_cfg(tools), .tab = tools->id);
   state_frame(ws);
   CFG_Node *kept = state_open_subject(ws, str8_lit("vessel"), str8_lit("v"));
   uishell_cmd("detach_workspace", .window = window->id, .cfg = kept->id);
@@ -872,7 +877,7 @@ entry_point(CmdLine *cmdline)
     CFG_Node *view = uishell_sidebar_region_view(window, git);
     StateCheck(view != &cfg_nil_node);
     CFG_ID git_panel = view->parent->id;
-    uishell_cmd("close_tab", .window = window->id, .panel = view->parent->id, .tab = view->id);
+    uishell_cmd("close_tab", .window = window->id, .panel = rd_panel_from_cfg(view), .tab = view->id);
     state_frame(ws);
     StateCheck(uishell_sidebar_region_view(window, git) == &cfg_nil_node);
     // Its panel went with it, and Andamento keeps the sidebar without it
@@ -902,7 +907,7 @@ entry_point(CmdLine *cmdline)
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     CFG_Node *root = uishell_sidebar_dock_layout(&split);
     UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, root);
-    CFG_PanelNode *leaf = &cfg_nil_panel_node;
+    RD_PanelNode *leaf = &rd_nil_panel_node;
     F32 sum = 0, header_h = 0;
     B32 collapsed = 0;
     UI_IconInfo icons = {0}; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
@@ -910,7 +915,7 @@ entry_point(CmdLine *cmdline)
     UI_FontSize(11)
     {
       uishell_sidebar_size_panels(&split, &mount, r2f32p(0, 0, 300, 600));
-      for(CFG_PanelNode *p = mount.panel_tree.root->first; p != &cfg_nil_panel_node; p = p->next)
+      for(RD_PanelNode *p = mount.panel_tree.root->first; p != &rd_nil_panel_node; p = p->next)
       {
         sum += p->pct_of_parent;
         if(p->selected_tab == attention) { leaf = p; }
@@ -918,17 +923,17 @@ entry_point(CmdLine *cmdline)
       collapsed = uishell_sidebar_panel_collapsed(leaf, uishell_sidebar_row_height(), &header_h);
     }
     ui_end_build();
-    StateCheck(leaf != &cfg_nil_panel_node && collapsed);
+    StateCheck(leaf != &rd_nil_panel_node && collapsed);
     StateCheck(abs_f32(leaf->pct_of_parent*600.f - header_h) < 1.f && abs_f32(sum-1.f) < .001f);
   }
 
   //- Presentation: the split local workspace visible, its terminal focused.
   uishell_cmd("select_workspace", .window = window->id, .cfg = work->id);
-  uishell_cmd("focus_panel", .window = window->id, .panel = terminal_panel->id);
+  uishell_cmd("focus_panel", .window = window->id, .panel = rd_panel_from_cfg(terminal_panel));
   state_frame(ws);
   state_write(dir, "before_restart.txt");
   String8List ids_before = state_workspace_ids(scratch.arena);
-  StateCheck(ids_before.node_count == 7);
+  StateCheck(ids_before.node_count == 8);
   if(str8_match(phase, str8_lit("save"), 0))
   {
     StateCheck(write_data_to_file_path(ids_path, str8_list_join(scratch.arena, &ids_before, &lines)));
@@ -982,8 +987,8 @@ entry_point(CmdLine *cmdline)
     window = cfg_node_from_id(ws->cfg_id);
     CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
     UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace);
-    CFG_PanelNode *first = mount.panel_tree.root->first;
-    CFG_Node *first_cfg = first->cfg;
+    RD_PanelNode *first = mount.panel_tree.root->first;
+    CFG_Node *first_cfg = rd_cfg_from_panel(first->address);
     String8 weight_before = push_str8_copy(scratch.arena, first_cfg->string);
     U64 calls = state->store_calls, commits = state->store_commits;
     rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_drag")), &mount, first);
@@ -1011,8 +1016,8 @@ entry_point(CmdLine *cmdline)
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     CFG_Node *root = uishell_sidebar_dock_layout(&split);
     UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, root);
-    CFG_PanelNode *first = mount.panel_tree.root->first;
-    CFG_Node *first_cfg = first->cfg;
+    RD_PanelNode *first = mount.panel_tree.root->first;
+    CFG_Node *first_cfg = rd_cfg_from_panel(first->address);
     String8 weight_before = push_str8_copy(scratch.arena, first_cfg->string);
     U64 calls = state->store_calls, commits = state->sidebar_commits;
     rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_sidebar_drag")), &mount, first);
@@ -1074,12 +1079,12 @@ entry_point(CmdLine *cmdline)
     web.presentation = uishell_sidebar_text(str8_lit("web"));
     StateCheck(andamento_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:web")), &web, ANDAMENTO_REBIND_REPLACE, 0));
     // Any edit commits: the terminal tab selected.
-    CFG_PanelTree panels = state_panels(scratch.arena, workspace);
+    RD_PanelTree panels = state_panels(scratch.arena, workspace);
     CFG_Node *make = &cfg_nil_node;
-    for(CFG_PanelNode *p = panels.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(panels.root, p).next)
+    for(RD_PanelNode *p = panels.root; p != &rd_nil_panel_node; p = rd_panel_node_rec__depth_first_pre(panels.root, p).next)
     { for(CFG_NodePtrNode *t = p->tabs.first; t; t = t->next) { if(str8_match(t->v->string, str8_lit("terminal"), 0)) { make = t->v; } } }
     StateCheck(make != &cfg_nil_node);
-    uishell_cmd("focus_tab", .window = window->id, .panel = make->parent->id, .tab = make->id);
+    uishell_cmd("focus_tab", .window = window->id, .panel = rd_panel_from_cfg(make), .tab = make->id);
     state_frame(ws);
     state_frame(ws);
     String8 text = state_workspaces_text(scratch.arena);
@@ -1114,12 +1119,12 @@ entry_point(CmdLine *cmdline)
     StateCheck(committed && committed->status == ANDAMENTO_COMMITTED);
     andamento_arrangement_free(committed);
     andamento_arrangement_free(stored);
-    CFG_PanelTree tree = state_panels(scratch.arena, workspace);
-    CFG_Node *first_cfg = tree.root->first->cfg;
+    RD_PanelTree tree = state_panels(scratch.arena, workspace);
+    CFG_Node *first_cfg = rd_cfg_from_panel(tree.root->first->address);
     String8 weight = push_str8_copy(scratch.arena, first_cfg->string);
     CFG_Node *other = tree.root->first->tabs.first->v == tree.root->first->selected_tab ? tree.root->first->tabs.last->v : tree.root->first->tabs.first->v;
     U64 commits = state->store_commits;
-    uishell_cmd("focus_tab", .window = window->id, .panel = first_cfg->id, .tab = other->id);
+    uishell_cmd("focus_tab", .window = window->id, .panel = rd_panel_from_cfg(first_cfg), .tab = other->id);
     state_frame(ws);
     StateCheck(state->store_commits == commits+2);
     StateCheck(str8_match(first_cfg->string, weight, 0) && cfg_node_child_from_string(other, str8_lit("selected")) != &cfg_nil_node);
@@ -1407,7 +1412,7 @@ entry_point(CmdLine *cmdline)
     reviewer = state_workspace_labelled(window, str8_lit("reviewer"));
     AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
     UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, reviewer);
-    CFG_PanelNode *first = mount.panel_tree.root->first;
+    RD_PanelNode *first = mount.panel_tree.root->first;
     rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_soft_drag")), &mount, first);
     rd_state->frame_index += 1;
     rd_boundary_resize_move(0.1f, 0.05f, 1);
@@ -1418,7 +1423,7 @@ entry_point(CmdLine *cmdline)
     AndamentoWorkspaceArrangement *stored = andamento_arrangement_get(state->core, id, 0);
     StateCheck(stored && !stored->owned && stored->flags == ANDAMENTO_ARRANGEMENT_FLAG_SOFT);
     andamento_arrangement_free(stored);
-    String8 weight = push_str8_copy(scratch.arena, state_panels(scratch.arena, reviewer).root->first->cfg->string);
+    String8 weight = push_str8_copy(scratch.arena, rd_cfg_from_panel(state_panels(scratch.arena, reviewer).root->first->address)->string);
     StateCheck(!str8_match(weight, str8_lit("1"), 0));
     state_reviewer_version = 2;
     state_producer(state);
@@ -1427,7 +1432,7 @@ entry_point(CmdLine *cmdline)
     CFG_Node *notes = state_slot_view(reviewer, str8_lit("notes"));
     StateCheck(notes != &cfg_nil_node && notes->parent == state_slot_view(reviewer, str8_lit("log"))->parent &&
                str8_match(rd_expr_from_cfg(notes), str8_lit("less NOTES.md"), 0));
-    StateCheck(str8_match(state_panels(scratch.arena, reviewer).root->first->cfg->string, weight, 0));
+    StateCheck(str8_match(rd_cfg_from_panel(state_panels(scratch.arena, reviewer).root->first->address)->string, weight, 0));
     String8 text = state_workspaces_text(scratch.arena);
     StateCheck(str8_find_needle(text, 0, str8_lit("workspace \"reviewer\" subject=role/p/reviewer soft\n"), 0) < text.size);
     state_check_committed(ws);
@@ -1438,7 +1443,7 @@ entry_point(CmdLine *cmdline)
   {
     CFG_Node *log = state_slot_view(reviewer, str8_lit("log"));
     StateCheck(state_offers(log, UIShell_SlotAction_None) == 0);
-    uishell_cmd("close_tab", .window = window->id, .panel = log->parent->id, .tab = log->id);
+    uishell_cmd("close_tab", .window = window->id, .panel = rd_panel_from_cfg(log), .tab = log->id);
     state_frame(ws);
     state_frame(ws);
     StateCheck(state_slot_view(reviewer, str8_lit("log")) == &cfg_nil_node);
@@ -1466,7 +1471,7 @@ entry_point(CmdLine *cmdline)
     CFG_Node *watch = state_slot_view(reviewer, str8_lit("watch"));
     StateCheck(watch != &cfg_nil_node && state_slot_view(reviewer, str8_lit("log")) == &cfg_nil_node);
     StateCheck(andamento_slot_reattach(state->core, id, uishell_sidebar_text(str8_lit("log")), 0));
-    if(watch != &cfg_nil_node) { uishell_cmd("close_tab", .window = window->id, .panel = watch->parent->id, .tab = watch->id); }
+    if(watch != &cfg_nil_node) { uishell_cmd("close_tab", .window = window->id, .panel = rd_panel_from_cfg(watch), .tab = watch->id); }
     state_frame(ws);
     state_frame(ws);
     String8 text = state_workspaces_text(scratch.arena);
@@ -1481,7 +1486,7 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
     state_frame(ws);
     CFG_Node *log = state_slot_view(reviewer, str8_lit("log"));
-    if(log != &cfg_nil_node) { uishell_cmd("close_tab", .window = window->id, .panel = log->parent->id, .tab = log->id); }
+    if(log != &cfg_nil_node) { uishell_cmd("close_tab", .window = window->id, .panel = rd_panel_from_cfg(log), .tab = log->id); }
     state_frame(ws);
     state_frame(ws);
     StateCheck(state_slot_view(reviewer, str8_lit("watch")) != &cfg_nil_node && state_slot_view(reviewer, str8_lit("log")) == &cfg_nil_node);
@@ -1494,8 +1499,8 @@ entry_point(CmdLine *cmdline)
   // tombstoned key for other content shows it again, flagged.
   {
     CFG_Node *notes = state_slot_view(reviewer, str8_lit("notes"));
-    uishell_cmd("split_panel", .window = window->id, .panel = notes->parent->id, .view = notes->id,
-                .dst_panel = notes->parent->id, .dir2 = Dir2_Down);
+    uishell_cmd("split_panel", .window = window->id, .panel = rd_panel_from_cfg(notes), .view = notes->id,
+                .dst_panel = rd_panel_from_cfg(notes), .dir2 = Dir2_Down);
     state_frame(ws);
     state_frame(ws);
     AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
@@ -1843,7 +1848,7 @@ entry_point(CmdLine *cmdline)
     CFG_Node *view = uishell_sidebar_region_view(window, key);
     StateCheck(view != &cfg_nil_node);
     String8 sidebar_before = state_sidebar_text(scratch.arena);
-    CFG_Node *added = uishell_sidebar_local_new_view(view->parent, str8_lit("transient"));
+    CFG_Node *added = uishell_sidebar_local_new_view(rd_panel_from_cfg(view->parent), str8_lit("transient"));
     StateCheck(added != &cfg_nil_node && cfg_node_child_from_string(view, str8_lit("selected")) == &cfg_nil_node);
     cfg_node_release(rd_state->cfg, added);
     state_frame(ws);
@@ -1900,6 +1905,20 @@ entry_point(CmdLine *cmdline)
     StateCheck(id.size == 36 && str8_match(reference->string, id, 0));
     StateCheck(cfg_node_child_from_string(legacy, str8_lit("local_entity")) == &cfg_nil_node);
     StateCheck(uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_cfg(legacy)) == legacy->id);
+  }
+
+  //- A window saved before Window IDs, which named its records directory by
+  // an ID of its own: that ID becomes its Window ID, so the directory stays
+  // its own.
+  {
+    window = cfg_node_from_id(ws->cfg_id);
+    StateCheck(uishell_window_from_id(uishell_window_id_from_cfg(window)) == window);
+    String8 records = str8_lit("01890a5d-ac96-774b-bcce-b302099a8057");
+    CFG_Node *legacy = cfg_node_new(rd_state->cfg, &cfg_nil_node, str8_lit("window"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, legacy, str8_lit("andamento_records")), records);
+    StateCheck(str8_match(uishell_window_id_text_from_cfg(legacy), records, 0));
+    StateCheck(cfg_node_child_from_string(legacy, str8_lit("andamento_records")) == &cfg_nil_node);
+    cfg_node_release(rd_state->cfg, legacy);
   }
 
   //- Subscriptions. A Dashboard without any has only local facts. Adding
@@ -2046,18 +2065,18 @@ entry_point(CmdLine *cmdline)
   {
     window = cfg_node_from_id(ws->cfg_id);
     CFG_Node *workspace = state_open_v(ws);
-    CFG_PanelTree tree = state_panels(scratch.arena, workspace);
-    CFG_PanelNode *leaf = tree.root;
-    while(leaf->first != &cfg_nil_panel_node) { leaf = leaf->first; }
-    CFG_Node *panel = leaf->cfg;
+    RD_PanelTree tree = state_panels(scratch.arena, workspace);
+    RD_PanelNode *leaf = tree.root;
+    while(leaf->first != &rd_nil_panel_node) { leaf = leaf->first; }
+    CFG_Node *panel = rd_cfg_from_panel(leaf->address);
     char *commands[] = {"make watch", "tail -f build.log", "htop"};
     CFG_Node *terminals[4] = {0};
     for(U64 i = 0; i < ArrayCount(commands); i++)
     {
-      uishell_cmd("build_tab", .window = window->id, .panel = panel->id, .string = str8_lit("terminal"), .expr = str8_cstring(commands[i]));
+      uishell_cmd("build_tab", .window = window->id, .panel = rd_panel_from_cfg(panel), .string = str8_lit("terminal"), .expr = str8_cstring(commands[i]));
       state_frame(ws);
       tree = state_panels(scratch.arena, workspace);
-      terminals[i] = cfg_panel_node_from_tree_cfg(tree.root, panel)->tabs.last->v;
+      terminals[i] = rd_panel_node_from_id(tree.root, rd_panel_from_cfg(panel).id)->tabs.last->v;
       StateCheck(str8_match(terminals[i]->string, str8_lit("terminal"), 0));
     }
     // A terminal saves its daemon session's ID when it starts one, and a
@@ -2068,7 +2087,7 @@ entry_point(CmdLine *cmdline)
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, filtered, str8_lit("project")), str8_lit("/elsewhere"));
     StateCheck(rd_cfg_is_project_filtered(filtered));
     tree = state_panels(scratch.arena, workspace);
-    StateCheck(cfg_panel_node_from_tree_cfg(tree.root, panel)->selected_tab == terminals[2]);
+    StateCheck(rd_panel_node_from_id(tree.root, rd_panel_from_cfg(panel).id)->selected_tab == terminals[2]);
     // No command puts a terminal in a Floating Panel; a detached card is
     // the only thing that makes one.
     CFG_Node *floating_panel = cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("floating_panels")), str8_lit("1"));
@@ -2124,7 +2143,7 @@ entry_point(CmdLine *cmdline)
     for(U64 i = 1; i < ArrayCount(tvs); i++) { StateCheck(state_terminal_running(tvs[i])); }
 
     // Closing a tab releases its runtime; closing the workspace, the rest.
-    uishell_cmd("close_tab", .window = window->id, .panel = panel->id, .tab = filtered->id);
+    uishell_cmd("close_tab", .window = window->id, .panel = rd_panel_from_cfg(panel), .tab = filtered->id);
     state_frame(ws);
     StateCheck(state_runtimes_released == released+5 && !state_has_view_state(filtered->id));
     StateCheck(state_terminal_running(tvs[2]) && state_terminal_running(tvs[3]));

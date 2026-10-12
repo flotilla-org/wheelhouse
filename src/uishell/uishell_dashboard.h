@@ -27,7 +27,7 @@ internal void uishell_dashboard_open(String8 dashboard, String8 folder);
 internal void uishell_dashboard_open_from_cmd_line(CmdLine *cmd_line);
 internal B32 uishell_dashboard_make_directories(String8 path);
 internal void uishell_dashboard_load_windows(CFG_Node *user, String8 user_path);
-internal String8 uishell_dashboard_records_dir(Arena *arena, CFG_Node *window, String8 records_id);
+internal String8 uishell_dashboard_records_dir(Arena *arena, CFG_Node *window, String8 window_id);
 internal void uishell_dashboard_save_identity(void);
 
 #endif // UISHELL_DASHBOARD_H

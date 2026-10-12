@@ -405,7 +405,7 @@ uishell_logical_sidebar_arrangement(UIShell_LogicalText *t, U64 depth, CFG_Node 
   if(sidebar != &cfg_nil_node)
   {
     uishell_logical_linef(t, depth+1, "docked");
-    RD_Arrangement *arrangement = uishell_arrangement_from_cfg(t->arena, sidebar);
+    RD_Arrangement *arrangement = rd_arrangement_from_cfg(t->arena, sidebar);
     uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
   }
   CFG_Node *floating = cfg_node_child_from_string(window, str8_lit("floating_panels"));
@@ -416,7 +416,7 @@ uishell_logical_sidebar_arrangement(UIShell_LogicalText *t, U64 depth, CFG_Node 
     for(CFG_Node *c = floating->first; c != &cfg_nil_node; c = c->next)
     {
       if(rd_dock_floating_panel_from_cfg(c) != c) { continue; }
-      RD_Arrangement *arrangement = uishell_arrangement_from_cfg(t->arena, c);
+      RD_Arrangement *arrangement = rd_arrangement_from_cfg(t->arena, c);
       uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
     }
   }
@@ -455,13 +455,13 @@ uishell_logical_sidebar(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
 // A panel's path from its tree's root: child positions from one, joined by
 // dots ("root" for the root itself).
 internal String8
-uishell_logical_panel_path(Arena *arena, CFG_PanelNode *root, CFG_PanelNode *panel)
+uishell_logical_panel_path(Arena *arena, RD_PanelNode *root, RD_PanelNode *panel)
 {
   String8 path = str8_zero();
-  for(CFG_PanelNode *p = panel; p != root && p != &cfg_nil_panel_node; p = p->parent)
+  for(RD_PanelNode *p = panel; p != root && p != &rd_nil_panel_node; p = p->parent)
   {
     U64 index = 1;
-    for(CFG_PanelNode *s = p->prev; s != &cfg_nil_panel_node; s = s->prev) { index++; }
+    for(RD_PanelNode *s = p->prev; s != &rd_nil_panel_node; s = s->prev) { index++; }
     path = path.size ? push_str8f(arena, "%I64u.%S", index, path) : push_str8f(arena, "%I64u", index);
   }
   return path.size ? path : str8_lit("root");
@@ -478,8 +478,8 @@ uishell_logical_presentation(UIShell_LogicalText *t, U64 depth, CFG_Node *window
   UIShell_MaterializedWorkspace *visible = split.inventory.selected;
   if(!visible) { uishell_logical_linef(t, depth+1, "visible workspace none"); return; }
   uishell_logical_linef(t, depth+1, "visible workspace %S", uishell_logical_quote(arena, visible->display_name));
-  CFG_PanelTree tree = visible->mount.panel_tree;
-  if(tree.focused == &cfg_nil_panel_node) { uishell_logical_linef(t, depth+1, "focused panel none"); }
+  RD_PanelTree tree = visible->mount.panel_tree;
+  if(tree.focused == &rd_nil_panel_node) { uishell_logical_linef(t, depth+1, "focused panel none"); }
   else
   {
     uishell_logical_linef(t, depth+1, "focused panel %S: %S", uishell_logical_panel_path(arena, tree.root, tree.focused),
@@ -488,11 +488,10 @@ uishell_logical_presentation(UIShell_LogicalText *t, U64 depth, CFG_Node *window
   // Which host takes input: the sidebar's sections, the workspace, or none
   // until something is focused.
   char *input = "none";
-  for(CFG_Node *c = cfg_node_from_id(ws->active_panel_id); c != &cfg_nil_node && c != window; c = c->parent)
+  if(rd_cfg_from_panel(ws->active_panel) != &cfg_nil_node)
   {
-    input = "workspace";
-    if(str8_match(c->string, RD_DOCK_SIDEBAR_ROOT, 0) || str8_match(c->string, str8_lit("floating_panels"), 0))
-    { input = "sidebar"; break; }
+    RD_PanelOwnerKind kind = ws->active_panel.owner.kind;
+    input = kind == RD_PanelOwnerKind_Sidebar || kind == RD_PanelOwnerKind_Floating ? "sidebar" : "workspace";
   }
   uishell_logical_linef(t, depth+1, "input %s", input);
 }

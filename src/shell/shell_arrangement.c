@@ -492,24 +492,47 @@ rd_arrangement_save(CFG_State *state, RD_Arrangement *arrangement)
 }
 
 ////////////////////////////////
+//~ Panel Addresses
+
+internal B32
+rd_panel_owner_match(RD_PanelOwner a, RD_PanelOwner b)
+{
+  return a.kind == b.kind && a.floating == b.floating && MemoryMatch(a.id.v, b.id.v, sizeof(a.id.v));
+}
+
+internal B32
+rd_panel_address_match(RD_PanelAddress a, RD_PanelAddress b)
+{
+  return a.id == b.id && rd_panel_owner_match(a.owner, b.owner);
+}
+
+internal RD_PanelAddress
+rd_panel_address(RD_PanelOwner owner, RD_PanelID id)
+{
+  RD_PanelAddress address = {owner, id};
+  return address;
+}
+
+////////////////////////////////
 //~ The Renderer's Panel Tree
 
-internal CFG_PanelTree
-rd_panel_tree_from_arrangement(Arena *arena, RD_Arrangement *arrangement)
+internal RD_PanelTree
+rd_panel_tree_from_arrangement(Arena *arena, RD_PanelOwner owner, RD_Arrangement *arrangement)
 {
-  CFG_PanelTree tree = {&cfg_nil_panel_node, &cfg_nil_panel_node};
+  RD_PanelTree tree = {&rd_nil_panel_node, &rd_nil_panel_node};
   RD_ArrangementPanel *root = arrangement->root;
-  CFG_PanelNode *parent = &cfg_nil_panel_node;
+  RD_PanelNode *parent = &rd_nil_panel_node;
   Axis2 axis = arrangement->root_axis;
   for(RD_ArrangementPanel *s = root; s != &rd_nil_arrangement_panel;)
   {
-    CFG_PanelNode *d = push_array(arena, CFG_PanelNode, 1);
-    MemoryCopyStruct(d, &cfg_nil_panel_node);
-    d->cfg = cfg_node_from_id(s->cfg);
+    RD_PanelNode *d = push_array(arena, RD_PanelNode, 1);
+    MemoryCopyStruct(d, &rd_nil_panel_node);
+    d->address = rd_panel_address(owner, s->id);
     d->split_axis = axis;
     d->pct_of_parent = s->weight;
     d->tab_side = Side_Min;
-    for(CFG_Node *c = d->cfg->first; c != &cfg_nil_node; c = c->next)
+    CFG_Node *cfg = cfg_node_from_id(s->cfg);
+    for(CFG_Node *c = cfg->first; c != &cfg_nil_node; c = c->next)
     {
       if(str8_match(c->string, str8_lit("selected"), 0)) { tree.focused = d; }
       else if(str8_match(c->string, str8_lit("tabs_on_bottom"), 0)) { d->tab_side = Side_Max; }
@@ -521,10 +544,10 @@ rd_panel_tree_from_arrangement(Arena *arena, RD_Arrangement *arrangement)
       if(tab->view == s->selected) { d->selected_tab = view; }
     }
     d->parent = parent;
-    if(parent == &cfg_nil_panel_node) { tree.root = d; }
+    if(parent == &rd_nil_panel_node) { tree.root = d; }
     else
     {
-      DLLPushBack_NPZ(&cfg_nil_panel_node, parent->first, parent->last, d, next, prev);
+      DLLPushBack_NPZ(&rd_nil_panel_node, parent->first, parent->last, d, next, prev);
       parent->child_count += 1;
     }
     if(s->first != &rd_nil_arrangement_panel)
@@ -544,10 +567,104 @@ rd_panel_tree_from_arrangement(Arena *arena, RD_Arrangement *arrangement)
   return tree;
 }
 
-internal CFG_PanelTree
-rd_panel_tree_from_cfg(Arena *arena, CFG_Node *panels_root)
+internal RD_PanelNodeRec
+rd_panel_node_rec__depth_first(RD_PanelNode *root, RD_PanelNode *panel, U64 sib_off, U64 child_off)
 {
-  return rd_panel_tree_from_arrangement(arena, rd_arrangement_from_cfg(arena, panels_root));
+  RD_PanelNodeRec rec = {&rd_nil_panel_node};
+  if(*MemberFromOffset(RD_PanelNode **, panel, child_off) != &rd_nil_panel_node)
+  {
+    rec.next = *MemberFromOffset(RD_PanelNode **, panel, child_off);
+    rec.push_count += 1;
+  }
+  else for(RD_PanelNode *p = panel; p != &rd_nil_panel_node && p != root; p = p->parent, rec.pop_count += 1)
+  {
+    if(*MemberFromOffset(RD_PanelNode **, p, sib_off) != &rd_nil_panel_node)
+    {
+      rec.next = *MemberFromOffset(RD_PanelNode **, p, sib_off);
+      break;
+    }
+  }
+  return rec;
+}
+
+internal RD_PanelNode *
+rd_panel_node_from_id(RD_PanelNode *root, RD_PanelID id)
+{
+  for(RD_PanelNode *p = root; p != &rd_nil_panel_node && id != 0; p = rd_panel_node_rec__depth_first_pre(root, p).next)
+  {
+    if(p->address.id == id) { return p; }
+  }
+  return &rd_nil_panel_node;
+}
+
+internal Rng2F32
+rd_target_rect_from_panel_node_child(Rng2F32 parent_rect, RD_PanelNode *parent, RD_PanelNode *panel)
+{
+  Rng2F32 rect = parent_rect;
+  if(parent != &rd_nil_panel_node)
+  {
+    Vec2F32 parent_rect_size = dim_2f32(parent_rect);
+    Axis2 axis = parent->split_axis;
+    rect.p1.v[axis] = rect.p0.v[axis];
+    for(RD_PanelNode *child = parent->first; child != &rd_nil_panel_node; child = child->next)
+    {
+      rect.p1.v[axis] += parent_rect_size.v[axis] * child->pct_of_parent;
+      if(child == panel)
+      {
+        break;
+      }
+      rect.p0.v[axis] = rect.p1.v[axis];
+    }
+  }
+  rect.x0 = round_f32(rect.x0);
+  rect.x1 = round_f32(rect.x1);
+  rect.y0 = round_f32(rect.y0);
+  rect.y1 = round_f32(rect.y1);
+  return rect;
+}
+
+internal Rng2F32
+rd_target_rect_from_panel_node(Rng2F32 root_rect, RD_PanelNode *root, RD_PanelNode *panel)
+{
+  Temp scratch = scratch_begin(0, 0);
+
+  // rjf: count ancestors
+  U64 ancestor_count = 0;
+  for(RD_PanelNode *p = panel->parent; p != &rd_nil_panel_node; p = p->parent)
+  {
+    ancestor_count += 1;
+  }
+
+  // rjf: gather ancestors
+  RD_PanelNode **ancestors = push_array(scratch.arena, RD_PanelNode *, ancestor_count);
+  {
+    U64 ancestor_idx = 0;
+    for(RD_PanelNode *p = panel->parent; p != &rd_nil_panel_node; p = p->parent)
+    {
+      ancestors[ancestor_idx] = p;
+      ancestor_idx += 1;
+    }
+  }
+
+  // rjf: go from highest ancestor => panel and calculate rect
+  Rng2F32 parent_rect = root_rect;
+  for(S64 ancestor_idx = (S64)ancestor_count-1;
+      0 <= ancestor_idx && ancestor_idx < ancestor_count;
+      ancestor_idx -= 1)
+  {
+    RD_PanelNode *ancestor = ancestors[ancestor_idx];
+    RD_PanelNode *parent = ancestor->parent;
+    if(parent != &rd_nil_panel_node)
+    {
+      parent_rect = rd_target_rect_from_panel_node_child(parent_rect, parent, ancestor);
+    }
+  }
+
+  // rjf: calculate final rect
+  Rng2F32 rect = rd_target_rect_from_panel_node_child(parent_rect, panel->parent, panel);
+
+  scratch_end(scratch);
+  return rect;
 }
 
 ////////////////////////////////
@@ -592,7 +709,7 @@ rd_arrangement_split_axis(RD_Arrangement *arrangement, RD_ArrangementPanel *pane
   return axis;
 }
 
-// As cfg_target_rect_from_panel_node_child.
+// As rd_target_rect_from_panel_node_child.
 internal Rng2F32
 rd_arrangement_child_rect(Rng2F32 parent_rect, Axis2 axis, RD_ArrangementPanel *parent, RD_ArrangementPanel *panel)
 {
@@ -615,7 +732,7 @@ rd_arrangement_child_rect(Rng2F32 parent_rect, Axis2 axis, RD_ArrangementPanel *
   return rect;
 }
 
-// As cfg_target_rect_from_panel_node: the root's children divide the area
+// As rd_target_rect_from_panel_node: the root's children divide the area
 // unrounded, and each level below divides its rounded parent.
 internal Rng2F32
 rd_arrangement_rect(RD_Arrangement *arrangement, Rng2F32 area, RD_ArrangementPanel *panel)

@@ -46,7 +46,7 @@ uishell_local_groups_render(CFG_Node *window, UIShell_ControlledSplit *split)
     if(views[i] == &cfg_nil_node) { continue; }
     String8 section = cfg_node_child_from_string(views[i], str8_lit("section"))->first->string;
     Rng2F32 rect = r2f32p(0, 300.f*i, uishell_local_groups_narrow ? uishell_local_groups_narrow : 320, 300.f*(i+1));
-    UIShell_RegsScope(.window = window->id, .view = views[i]->id, .panel = views[i]->parent->id)
+    UIShell_RegsScope(.window = window->id, .view = views[i]->id, .panel = rd_panel_from_cfg(views[i]))
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     {
       UI_Box *parent;
@@ -180,7 +180,7 @@ uishell_local_groups_drag(RD_WindowState *ws, CFG_Node *window, Arena *arena, St
                            .timestamp_us = uishell_local_groups_clock_us};
       events.first = events.last = &event; events.count = 1;
     }
-    if(frame == 5 && dock) { uishell_sidebar_drag_panel_drop(uishell_local_groups_view->parent->id, uishell_local_groups_dock_direction, uishell_local_groups_dock_previous); }
+    if(frame == 5 && dock) { uishell_sidebar_drag_panel_drop(rd_panel_from_cfg(uishell_local_groups_view), uishell_local_groups_dock_direction, uishell_local_groups_dock_previous); }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = at;
     uishell_local_groups_render(window, &split);
@@ -212,7 +212,7 @@ uishell_local_groups_drag(RD_WindowState *ws, CFG_Node *window, Arena *arena, St
 internal B32
 uishell_local_groups_drag_view(RD_WindowState *ws, CFG_Node *window, Arena *arena, CFG_Node *view, CFG_Node *panel, String8 to)
 {
-  UIShell_RegsScope(.window = window->id, .view = view->id, .panel = panel->id, .tab = view->id)
+  UIShell_RegsScope(.window = window->id, .view = view->id, .panel = rd_panel_from_cfg(panel), .tab = view->id)
   { rd_drag_begin(UIShell_ContextRegSlot_View); }
   B32 dragging = rd_drag_is_active();
   for(U64 frame = 0; frame < 3; frame++)
@@ -503,8 +503,8 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     uishell_local_groups_seed(window, alpha_id, str8_lit("groups-alpha"));
     uishell_local_groups_seed(window, beta_id, str8_lit("groups-beta"));
     uishell_local_groups_seed(window, gamma_id, str8_lit("groups-gamma"));
-    uishell_local_groups_view = uishell_sidebar_local_new_view(top, first);
-    uishell_local_groups_view2 = uishell_sidebar_local_new_view(bottom, second);
+    uishell_local_groups_view = uishell_sidebar_local_new_view(rd_panel_from_cfg(top), first);
+    uishell_local_groups_view2 = uishell_sidebar_local_new_view(rd_panel_from_cfg(bottom), second);
     uishell_local_groups_publish(state, window, arena);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
     //- Make footers (sidebar-headers.md): a group's opens when the pointer
@@ -737,7 +737,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
     String8 alpha_row = uishell_local_groups_row(arena, state, str8_lit("groups-alpha"));
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
-    UIShell_RegsScope(.window = window->id, .view = uishell_local_groups_view2->id, .panel = bottom->id, .tab = uishell_local_groups_view2->id)
+    UIShell_RegsScope(.window = window->id, .view = uishell_local_groups_view2->id, .panel = rd_panel_from_cfg(bottom), .tab = uishell_local_groups_view2->id)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
     B32 dragging = rd_drag_is_active();
     for(U64 frame = 0; frame < 3; frame++)
@@ -769,7 +769,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
       String8 epsilon_id = push_str8_copy(arena, uishell_sidebar_local_add_group(window, pair_id, str8_lit("Epsilon"))->id);
       uishell_local_groups_seed(window, delta_id, str8_lit("groups-delta"));
       uishell_local_groups_seed(window, epsilon_id, str8_lit("groups-epsilon"));
-      uishell_local_groups_view2 = uishell_sidebar_local_new_view(bottom, pair_id);
+      uishell_local_groups_view2 = uishell_sidebar_local_new_view(rd_panel_from_cfg(bottom), pair_id);
       uishell_local_groups_publish(state, window, arena);
       uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
       uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
@@ -789,8 +789,8 @@ uishell_local_groups_diagnostics(CFG_Node *window)
       String8 zeta_id = push_str8_copy(arena, uishell_local_groups_section_of(window, zeta_group));
       String8 eta_id = push_str8_copy(arena, uishell_local_groups_section_of(window, eta_group));
       CFG_Node *extra = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
-      uishell_local_groups_view2 = uishell_sidebar_local_new_view(bottom, zeta_id);
-      CFG_Node *eta_view = uishell_sidebar_local_new_view(extra, eta_id);
+      uishell_local_groups_view2 = uishell_sidebar_local_new_view(rd_panel_from_cfg(bottom), zeta_id);
+      CFG_Node *eta_view = uishell_sidebar_local_new_view(rd_panel_from_cfg(extra), eta_id);
       uishell_local_groups_publish(state, window, arena);
       uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
       uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
@@ -875,7 +875,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     for(U64 i = 0; i < ArrayCount(views); i++)
     {
       UIShell_LocalGroup *group = uishell_sidebar_local_new_group(window, str8_cstring(names[i]));
-      views[i] = uishell_sidebar_local_new_view(i < 3 ? panel : elsewhere, push_str8_copy(arena, group->section->id));
+      views[i] = uishell_sidebar_local_new_view(rd_panel_from_cfg(i < 3 ? panel : elsewhere), push_str8_copy(arena, group->section->id));
     }
     // South shows; North sits before it, West after.
     for(U64 i = 0; i < 3; i++) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(views[i], str8_lit("selected"))); }
@@ -925,7 +925,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     south_box = uishell_local_groups_box(push_str8f(arena, "###section_%S",
       cfg_node_child_from_string(views[1], str8_lit("section"))->first->string));
     // East, from another panel, dropped on the gap between North and South.
-    UIShell_RegsScope(.window = window->id, .panel = elsewhere->id, .view = views[3]->id, .tab = views[3]->id)
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(elsewhere), .view = views[3]->id, .tab = views[3]->id)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
     Vec2F32 gap = v2f32((north_box->rect.x1 + south_box->rect.x0)*0.5f, center_2f32(south_box->rect).y);
     before = rd_state->cmds[0].last;
@@ -937,7 +937,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
       ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       ui_state->mouse = gap;
       // The shell's tab drop site over the header row has the pointer.
-      ui_state->drop_hot_box_key = rd_panel_catchall_drop_site_key(panel);
+      ui_state->drop_hot_box_key = rd_panel_catchall_drop_site_key(rd_panel_from_cfg(panel));
       uishell_local_groups_render(window, &split);
       ui_end_build();
     }
@@ -946,12 +946,12 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     for(UIShell_CmdNode *c = before ? before->next : rd_state->cmds[0].first; c; c = c->next)
     {
       moved |= str8_match(c->cmd.name, str8_lit("move_view"), 0) && c->cmd.regs->view == views[3]->id &&
-        c->cmd.regs->dst_panel == panel->id && c->cmd.regs->prev_tab == views[0]->id;
+        rd_panel_address_match(c->cmd.regs->dst_panel, rd_panel_from_cfg(panel)) && c->cmd.regs->prev_tab == views[0]->id;
     }
     GroupsCheck(moved, "a View dropped on the header row goes in the gap under the pointer");
     // Narrow, West goes behind "+1".
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
-    String8 more = push_str8f(arena, "###header_more_%p", panel);
+    String8 more = push_str8f(arena, "###header_more_%I64u", rd_panel_from_cfg(panel).id);
     B32 roomy = ui_box_is_nil(uishell_local_groups_box(more));
     uishell_local_groups_narrow = 185.f;
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
@@ -981,13 +981,13 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     GroupsCheck(closes == 3, "the section's × closes every View in it");
     // The grip drags the whole section: dropped on East's header after East,
     // its three Views join as four, in order.
-    UIShell_RegsScope(.window = window->id, .panel = panel->id, .view = views[1]->id, .tab = views[1]->id)
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(panel), .view = views[1]->id, .tab = views[1]->id)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
     rd_state->drag_drop_commit = uishell_sidebar_section_drop_commit;
     GroupsCheck(str8_match(uishell_sidebar_section_drag_refusal(window), str8_lit("a section of several tabs can't join a list"), 0) &&
                 !uishell_sidebar_section_drag_section(window),
                 "a section of several tabs, dragged by its grip, can't join a list, and says why (#282)");
-    rd_panel_drag_drop(elsewhere->id, Dir2_Invalid, views[3]->id);
+    rd_panel_drag_drop(rd_panel_from_cfg(elsewhere), Dir2_Invalid, views[3]->id);
     rd_drag_kill();
     uishell_sidebar_section_drop_apply(ws);
     CFG_Node *order[4] = {0};
@@ -997,12 +997,12 @@ uishell_local_groups_diagnostics(CFG_Node *window)
                 "a whole section dropped on a header joins it in order at the gap: three Views and one make four");
     GroupsCheck(cfg_node_from_id(panel_id) == &cfg_nil_node, "the panel a whole section left is closed by the drop");
     // At an edge, they make the new panel there together.
-    UIShell_RegsScope(.window = window->id, .panel = elsewhere->id, .view = views[3]->id, .tab = views[3]->id)
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(elsewhere), .view = views[3]->id, .tab = views[3]->id)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
     rd_state->drag_drop_commit = uishell_sidebar_section_drop_commit;
     CFG_Node *third = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
     CFG_Node *held = rd_cfg_new_view_tab(third, str8_lit("sidebar_section"), str8_zero(), 1);
-    rd_panel_drag_drop(third->id, Dir2_Down, 0);
+    rd_panel_drag_drop(rd_panel_from_cfg(third), Dir2_Down, 0);
     rd_drag_kill();
     uishell_sidebar_section_drop_apply(ws);
     CFG_Node *moved_panel = views[3]->parent;
@@ -1011,7 +1011,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     GroupsCheck(together && cfg_node_from_id(elsewhere_id) == &cfg_nil_node,
                 "a whole section dropped at an edge makes the new panel there with all its Views, closing the one it left");
     // A section of data (not one of yours) can't join a list either.
-    UIShell_RegsScope(.window = window->id, .panel = third->id, .view = held->id, .tab = held->id)
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(third), .view = held->id, .tab = held->id)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
     GroupsCheck(str8_match(uishell_sidebar_section_drag_refusal(window), str8_lit("this section's rows stay in it"), 0),
                 "a section of data, dragged, can't join a list, and says why (#282)");
@@ -1019,10 +1019,10 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     // A source released before the drop is applied moves nothing.
     CFG_Node *brief = cfg_node_new(rd_state->cfg, sidebar_root, str8_lit("0.2"));
     CFG_Node *brief_view = rd_cfg_new_view_tab(brief, str8_lit("sidebar_section"), str8_zero(), 1);
-    UIShell_RegsScope(.window = window->id, .panel = brief->id, .view = brief_view->id, .tab = brief_view->id)
+    UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(brief), .view = brief_view->id, .tab = brief_view->id)
     { rd_drag_begin(UIShell_ContextRegSlot_View); }
     rd_state->drag_drop_commit = uishell_sidebar_section_drop_commit;
-    rd_panel_drag_drop(third->id, Dir2_Invalid, held->id);
+    rd_panel_drag_drop(rd_panel_from_cfg(third), Dir2_Invalid, held->id);
     rd_drag_kill();
     cfg_node_release(rd_state->cfg, brief);
     uishell_sidebar_section_drop_apply(ws);
@@ -1093,7 +1093,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
         uishell_sidebar_panel_collapsed(mount.panel_tree.root->first->next, header, &row_h);
         uishell_sidebar_panel_collapsed(mount.panel_tree.root->last, header, &last_h);
       }
-      CFG_PanelNode *a = mount.panel_tree.root->first, *r = a->next, *d = r->next;
+      RD_PanelNode *a = mount.panel_tree.root->first, *r = a->next, *d = r->next;
       F32 sum = a->pct_of_parent + r->pct_of_parent + d->pct_of_parent;
       if(pass == 0)
       {

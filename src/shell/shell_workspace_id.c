@@ -161,3 +161,54 @@ uishell_workspace_id_text_from_cfg(CFG_Node *workspace)
   uishell_workspace_id_from_cfg(workspace);
   return cfg_node_child_from_string(workspace, str8_lit("workspace_id"))->first->string;
 }
+
+//- Window IDs
+
+internal UIShell_WindowId
+uishell_window_id_from_cfg(CFG_Node *window)
+{
+  UIShell_WindowId id = {0};
+  if(window == &cfg_nil_node) { return id; }
+  CFG_Node *saved = cfg_node_child_from_string(window, str8_lit("window_id"));
+  if(!uishell_workspace_id_from_string(saved->first->string, &id) || uishell_workspace_id_is_zero(id))
+  {
+    // A window saved before Window IDs had an ID for its records directory
+    // alone (`andamento_records`), which becomes its Window ID so that the
+    // directory stays its own.
+    CFG_Node *records = cfg_node_child_from_string(window, str8_lit("andamento_records"));
+    if(!uishell_workspace_id_from_string(records->first->string, &id) || uishell_workspace_id_is_zero(id))
+    { id = uishell_workspace_id_make(); }
+    if(records != &cfg_nil_node) { cfg_node_release(rd_state->cfg, records); }
+    Temp scratch = scratch_begin(0, 0);
+    saved = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("window_id"));
+    cfg_node_new_replace(rd_state->cfg, saved, uishell_string_from_workspace_id(scratch.arena, id));
+    scratch_end(scratch);
+  }
+  return id;
+}
+
+internal String8
+uishell_window_id_text_from_cfg(CFG_Node *window)
+{
+  uishell_window_id_from_cfg(window);
+  return cfg_node_child_from_string(window, str8_lit("window_id"))->first->string;
+}
+
+internal CFG_Node *
+uishell_window_from_id(UIShell_WindowId id)
+{
+  CFG_Node *result = &cfg_nil_node;
+  if(uishell_workspace_id_is_zero(id)) { return result; }
+  for(CFG_Node *n = cfg_node_root()->first; n != &cfg_nil_node && result == &cfg_nil_node; n = n->next)
+  {
+    // Windows are in the root's top-level trees (cfg_window_from_cfg).
+    for(CFG_Node *window = n->first; window != &cfg_nil_node; window = window->next)
+    {
+      UIShell_WindowId saved = {0};
+      if(str8_match(window->string, str8_lit("window"), 0) &&
+         uishell_workspace_id_from_string(cfg_node_child_from_string(window, str8_lit("window_id"))->first->string, &saved) &&
+         uishell_workspace_id_match(saved, id)) { result = window; break; }
+    }
+  }
+  return result;
+}

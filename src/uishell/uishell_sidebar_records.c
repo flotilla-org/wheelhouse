@@ -11,7 +11,7 @@
 //   <Dashboard>/                     the first window's
 //     dashboard.record
 //     workspace-<Workspace ID>.record
-//   <Dashboard>/windows/<andamento_records id>/   any other window's
+//   <Dashboard>/windows/<Window ID>/   any other window's
 //
 // A record is written when its generation changes: a second after the first
 // change, through a temporary file renamed over the old one, and at once
@@ -84,21 +84,13 @@ uishell_sidebar_record_name(Arena *arena, String8 file)
   return str8_zero();
 }
 
-// The window's records directory, giving the window an id for it when it
-// has none; empty without a Dashboard.
+// The window's records directory, named by its Window ID; empty without a
+// Dashboard.
 internal String8
 uishell_sidebar_records_dir(Arena *arena, CFG_Node *window)
 {
   if(!uishell_dashboard.dir.size || window == &cfg_nil_node) { return str8_zero(); }
-  CFG_Node *id = cfg_node_child_from_string(window, str8_lit("andamento_records"));
-  if(id->first->string.size == 0)
-  {
-    Temp scratch = scratch_begin(&arena, 1);
-    id = cfg_node_child_from_string_or_alloc(rd_state->cfg, window, str8_lit("andamento_records"));
-    cfg_node_new_replace(rd_state->cfg, id, uishell_string_from_workspace_id(scratch.arena, uishell_workspace_id_make()));
-    scratch_end(scratch);
-  }
-  return uishell_dashboard_records_dir(arena, window, id->first->string);
+  return uishell_dashboard_records_dir(arena, window, uishell_window_id_text_from_cfg(window));
 }
 
 internal B32

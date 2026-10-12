@@ -2,7 +2,8 @@
 // once, when a workspace is first saved, and kept on its config node as
 // `workspace_id "<uuid>"`. Andamento knows workspaces only by these IDs.
 // Docking and rendering still key workspaces by CFG_ID (until state model
-// step 7), so an index maps between the two.
+// step 7), so an index maps between the two. Window IDs (CONTEXT.md, "Window
+// ID") are UUIDv7s too, kept on the window as `window_id "<uuid>"`.
 #ifndef SHELL_WORKSPACE_ID_H
 #define SHELL_WORKSPACE_ID_H
 
@@ -30,5 +31,13 @@ internal String8 uishell_workspace_id_text_from_cfg(CFG_Node *workspace);
 // The CFG_ID of the workspace with `id`, or 0 if no indexed node has it.
 internal CFG_ID uishell_workspace_cfg_id_from_id(UIShell_WorkspaceId id);
 internal void uishell_workspace_index_insert(UIShell_WorkspaceId id, CFG_ID cfg_id);
+
+typedef UIShell_WorkspaceId UIShell_WindowId;
+
+// A window's ID, assigning and saving one first if it has none.
+internal UIShell_WindowId uishell_window_id_from_cfg(CFG_Node *window);
+internal String8 uishell_window_id_text_from_cfg(CFG_Node *window);
+// The window with `id`, or nil.
+internal CFG_Node *uishell_window_from_id(UIShell_WindowId id);
 
 #endif // SHELL_WORKSPACE_ID_H

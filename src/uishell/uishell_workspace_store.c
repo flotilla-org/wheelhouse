@@ -1818,7 +1818,7 @@ internal void
 uishell_store_remove(CFG_Node *view)
 {
   if(view->parent == &cfg_nil_node) { return; }
-  UIShell_RegsScope(.window = rd_window_from_cfg(view)->id, .panel = view->parent->id, .view = view->id, .tab = view->id)
+  UIShell_RegsScope(.window = rd_window_from_cfg(view)->id, .panel = rd_panel_from_cfg(view), .view = view->id, .tab = view->id)
   { uishell_cmd("close_tab"); }
 }
 
