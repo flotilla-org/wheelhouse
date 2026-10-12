@@ -7,7 +7,8 @@
 //   window <n>
 //     workspaces          selector order; subject or local; kept; mood; what
 //                         its Workspace Overlay flags; the provider slots it
-//                         hides; arrangement, tabs with their slots' flags
+//                         hides; arrangement, tabs at their View Addresses
+//                         with their slots' flags
 //     sidebar             persisted display values; rows as Andamento presents
 //                         them; the sibling orders it keeps; local sections
 //                         and pins (a pin to a View that went away flagged)
@@ -83,6 +84,22 @@ uishell_logical_entity(Arena *arena, String8 kind, String8 id)
 
 //- Workspaces
 
+// " view=<owner kind>:<key>" (and " previous"): the View Address `view` is
+// at (shell_arrangement.h), without its owner's ID, which the tree it is in
+// says. One its address doesn't find again says so (" unaddressed").
+internal String8
+uishell_logical_address(Arena *arena, CFG_Node *view)
+{
+  RD_ViewAddress address = rd_view_address_from_cfg(view);
+  RD_ViewInstance instance = RD_ViewInstance_Current;
+  String8 key = rd_view_key_from_cfg(view, &instance);
+  // A section of Wheelhouse's own (".section:<id>") by its kind alone: its
+  // label stands in for the generated ID.
+  if(key.size && key.str[0] == '.') { key = str8_prefix(key, str8_find_needle(key, 0, str8_lit(":"), 0)); }
+  return push_str8f(arena, " view=%S:%S%s%s", rd_view_owner_kind_name(address.owner), uishell_logical_quote(arena, key),
+    instance == RD_ViewInstance_Previous ? " previous" : "", rd_cfg_from_view(address) != view ? " unaddressed" : "");
+}
+
 // A tab: its View kind, its Slot's key, then what defines its content. A
 // terminal is its command and launch directory (and daemon hosting), a
 // Jackstay View its source endpoints, a placeholder the content it can't
@@ -100,14 +117,14 @@ uishell_logical_tab(Arena *arena, CFG_Node *tab, B32 selected)
   str8_list_pushf(arena, &parts, "tab %S", tab->string);
   String8 label = rd_view_label_from_cfg(tab);
   if(label.size) { str8_list_pushf(arena, &parts, " %S", uishell_logical_quote(arena, label)); }
-  // Its Slot's key in Andamento (uishell_workspace_store.c); before it has
-  // one, the provider's slot it was made for. A Slot's previous instance
-  // names the Slot it was.
+  // Its View Address, whose key is a workspace View's Slot's key in
+  // Andamento (uishell_workspace_store.c); before it has one, the
+  // provider's slot it was made for. A Slot's previous instance has the
+  // Slot's key, at the previous instance.
+  str8_list_push(arena, &parts, uishell_logical_address(arena, tab));
   String8 slot = cfg_node_child_from_string(tab, str8_lit("slot"))->first->string;
-  String8 previous_of = cfg_node_child_from_string(tab, str8_lit("previous_of"))->first->string;
-  if(!slot.size && !previous_of.size) { slot = cfg_node_child_from_string(tab, str8_lit("resource_id"))->first->string; }
-  if(slot.size) { str8_list_pushf(arena, &parts, " slot=%S", uishell_logical_quote(arena, slot)); }
-  if(previous_of.size) { str8_list_pushf(arena, &parts, " previous_of=%S", uishell_logical_quote(arena, previous_of)); }
+  if(!slot.size && !cfg_node_child_from_string(tab, str8_lit("previous_of"))->first->string.size)
+  { slot = cfg_node_child_from_string(tab, str8_lit("resource_id"))->first->string; }
   String8 expr = rd_expr_from_cfg(tab);
   if(expr.size)
   {
@@ -146,8 +163,8 @@ uishell_logical_view(Arena *arena, CFG_Node *view, B32 selected)
   RD_WindowState *ws = rd_window_state_from_cfg__existing(rd_window_from_cfg(view));
   UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
   B32 gone = state && uishell_sidebar_section_gone(state, uishell_sidebar_section_key(view));
-  return push_str8f(arena, "section %S%s%s%s%s", uishell_logical_quote(arena, rd_label_from_cfg(view)),
-    selected ? " selected" : "", uishell_sidebar_section_collapsed(view) ? " collapsed" : "",
+  return push_str8f(arena, "section %S%S%s%s%s%s", uishell_logical_quote(arena, rd_label_from_cfg(view)),
+    uishell_logical_address(arena, view), selected ? " selected" : "", uishell_sidebar_section_collapsed(view) ? " collapsed" : "",
     uishell_sidebar_view_hidden(view) ? " hidden" : "", gone ? " flagged" : "");
 }
 

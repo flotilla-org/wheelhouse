@@ -1046,7 +1046,7 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
     StateCheck(uishell_sidebar_region_view(window, str8_lit("sessions")) == sessions && uishell_sidebar_section_gone(state, str8_lit("sessions")));
     String8 text = state_sidebar_text(scratch.arena);
-    StateCheck(str8_find_needle(text, 0, str8_lit("section \"Sessions\" selected flagged"), 0) < text.size);
+    StateCheck(str8_find_needle(text, 0, str8_lit("section \"Sessions\" view=dashboard:\"sessions\" selected flagged"), 0) < text.size);
     StateCheck(andamento_configure(state->core, uishell_sidebar_text(daily), 0));
     uishell_sidebar_refresh(state);
     state_frame(ws);
@@ -1078,7 +1078,7 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
     state_frame(ws);
     String8 text = state_workspaces_text(scratch.arena);
-    StateCheck(str8_find_needle(text, 0, str8_lit("tab placeholder slot=\"u:web\" content=\"https://example.com/board\""), 0) < text.size);
+    StateCheck(str8_find_needle(text, 0, str8_lit("tab placeholder view=workspace:\"u:web\" content=\"https://example.com/board\""), 0) < text.size);
     state_check_committed(ws);
     AndamentoSlots *slots = andamento_slots_get(state->core, id, 0);
     AndamentoSlot slot = {0};
@@ -1160,11 +1160,11 @@ entry_point(CmdLine *cmdline)
     String8 expected = str8_lit("workspace \"reviewer\" subject=role/p/reviewer\n"
                                 "      panel split=x\n"
                                 "        panel weight=1.00\n"
-                                "          tab terminal \"Terminal\" slot=\"primary\" command=\"exec /bin/sh\" selected\n"
-                                "          tab terminal slot=\"partner\" command=\"attach partner 1\"\n"
-                                "          tab terminal slot=\"watch\" command=\"attach watch 1\"\n"
+                                "          tab terminal \"Terminal\" view=workspace:\"primary\" command=\"exec /bin/sh\" selected\n"
+                                "          tab terminal view=workspace:\"partner\" command=\"attach partner 1\"\n"
+                                "          tab terminal view=workspace:\"watch\" command=\"attach watch 1\"\n"
                                 "        panel weight=1.00\n"
-                                "          tab terminal slot=\"log\" command=\"tail -f build.log\" selected");
+                                "          tab terminal view=workspace:\"log\" command=\"tail -f build.log\" selected");
     StateCheck(str8_find_needle(text, 0, expected, 0) < text.size);
     if(str8_find_needle(text, 0, expected, 0) == text.size) { fprintf(stderr, "workspaces:\n%.*s\n", str8_varg(text)); }
     CFG_Node *partner = state_slot_view(reviewer, str8_lit("partner"));
@@ -1543,7 +1543,7 @@ entry_point(CmdLine *cmdline)
     StateCheck(state_offers(log, UIShell_SlotAction_Reattach) && state_offers(log, UIShell_SlotAction_Remove));
     String8 text = state_workspaces_text(scratch.arena);
     StateCheck(str8_find_needle(text, 0, str8_lit("workspace \"reviewer\" subject=role/p/reviewer provider-changed\n"), 0) < text.size &&
-               str8_find_needle(text, 0, str8_lit("tab terminal slot=\"log\" command=\"tail -f test.log\" changed"), 0) < text.size);
+               str8_find_needle(text, 0, str8_lit("tab terminal view=workspace:\"log\" command=\"tail -f test.log\" changed"), 0) < text.size);
     if(str8_find_needle(text, 0, str8_lit(" provider-changed\n"), 0) == text.size) { fprintf(stderr, "before:\n%.*s\nafter:\n%.*s\n", str8_varg(before), str8_varg(text)); }
     // The workspace's notice is on its first panel's Views.
     CFG_Node *primary = state_slot_view(reviewer, str8_lit("primary"));
@@ -1590,7 +1590,7 @@ entry_point(CmdLine *cmdline)
     partner = state_slot_view(reviewer, str8_lit("partner"));
     StateCheck(str8_match(rd_expr_from_cfg(partner), str8_lit("htop"), 0) && state_offers(partner, UIShell_SlotAction_Reattach));
     String8 text = state_workspaces_text(scratch.arena);
-    StateCheck(str8_find_needle(text, 0, str8_lit("slot=\"partner\" command=\"htop\" daemon_name=\"D1\" detached"), 0) < text.size);
+    StateCheck(str8_find_needle(text, 0, str8_lit("view=workspace:\"partner\" command=\"htop\" daemon_name=\"D1\" detached"), 0) < text.size);
     uishell_store_act(partner, UIShell_SlotAction_Reattach);
     state_frame(ws);
     state_frame(ws);
