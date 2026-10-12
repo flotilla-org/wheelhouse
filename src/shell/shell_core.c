@@ -3418,12 +3418,13 @@ uishell_workspace_cfg_has_subject(CFG_Node *workspace)
 }
 
 // The provider of a subject workspace's entity: the Dashboard subscription
-// it came from, or "local" (not stored) for one-off scripts and fixtures.
+// it came from, or (not stored) the host's own, for one-off scripts and
+// fixtures.
 internal String8
 uishell_workspace_cfg_subject_provider(CFG_Node *workspace)
 {
   String8 provider = cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_provider"))->first->string;
-  return provider.size ? provider : str8_lit("local");
+  return provider.size ? provider : uishell_sidebar_host_provider;
 }
 
 internal UIShell_WorkspaceMount *
@@ -4935,6 +4936,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                   view_drop_site = ui_build_box_from_stringf(UI_BoxFlag_DropSite|UI_BoxFlag_Floating, "drop_site_%I64x", selected_tab->id);
               }
             }
+            
+            //- uishell: a Slot's notice, in a banner above its View
+            if(selected_tab != &cfg_nil_node) { content_rect = uishell_slot_banner(selected_tab, content_rect); }
             
             //- rjf: build view container
             UI_Box *view_container_box = &ui_nil_box;

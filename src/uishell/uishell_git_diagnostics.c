@@ -15,16 +15,16 @@ uishell_sidebar_git_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *spl
   {
     U64 end = start;
     while(end < patches.size && patches.str[end] != '\n') { end++; }
-    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(str8(patches.str+start, end-start)), 0) && ok;
+    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0) && ok;
     start = end+1;
   }
   uishell_sidebar_refresh(&fixture);
   U64 repos = 0, worktrees = 0;
   for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
   {
-    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &node);
-    repos += str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("repo"), 0);
-    if(str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("worktree"), 0))
+    AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+    repos += str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("repo"), 0);
+    if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("worktree"), 0))
     { worktrees++; ok = ok && node.state == ANDAMENTO_LATENT; }
   }
   ok = ok && repos == 2 && worktrees == 4 && andamento_snapshot_diagnostic_count(fixture.snapshot) == 0;
@@ -43,8 +43,8 @@ uishell_sidebar_git_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *spl
         uishell_sidebar_ui(r2f32p(0, 0, width, 900), split);
         for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
         {
-          AndamentoNode node = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &node);
-          if(!str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("worktree"), 0)) { continue; }
+          AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+          if(!str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("worktree"), 0)) { continue; }
           String8 text = uishell_sidebar_fields(scratch.arena, fixture.snapshot, node, width-66);
           ok = ok && str8_find_needle(text, 0, str8_lit("dirty:"), 0) < text.size;
           ok = ok && (str8_find_needle(text, 0, str8_lit("main"), 0) < text.size ||

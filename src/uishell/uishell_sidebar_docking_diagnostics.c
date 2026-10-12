@@ -249,6 +249,23 @@ uishell_sidebar_docking_drain(UIShell_CmdNode *before)
   }
 }
 
+// A boolean display variable's value as its first control shows it: 1 or 0,
+// or -1 when no control shows it.
+internal S32
+uishell_sidebar_docking_variable(AndamentoSnapshot *snapshot, String8 variable)
+{
+  for(U64 i = 0; snapshot && i < andamento_snapshot_node_count(snapshot); i++)
+  {
+    AndamentoNode node = {0}; andamento_snapshot_node(snapshot, i, &node);
+    for(U64 c = 0; c < node.control_count; c++)
+    {
+      AndamentoControl control = {0}; andamento_snapshot_control(snapshot, node.first_control+c, &control);
+      if(control.value_kind == ANDAMENTO_VALUE_BOOL && str8_match(uishell_sidebar_string(control.variable), variable, 0)) { return !!control.checked; }
+    }
+  }
+  return -1;
+}
+
 internal B32
 uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
 {
@@ -420,9 +437,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   // there holding its ghost (drag-model.md: "a docking site: a new pinned
   // area"), through the real docking sites.
   {
-    CFG_Node *local = uishell_sidebar_local_tree(window);
-    U64 sections_before = 0;
-    for(CFG_Node *n = local->first; n != &cfg_nil_node; n = n->next) { sections_before += str8_match(n->string, str8_lit("section"), 0); }
+    U64 sections_before = uishell_sidebar_window_locals(window)->section_count;
     UI_Key site_key = ui_key_from_stringf(ui_key_zero(), "drop_boundary_%p_%p", host, second_panel);
     UIShell_CmdNode *cmds_before = rd_state->cmds[0].last;
     Vec2F32 pointer = v2f32(-100, -100), start = pointer;
@@ -461,8 +476,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       uishell_sidebar_drag_finish(ws);
       if(frame == 5) { started = rd_drag_is_active(); }
     }
-    U64 sections_after = 0;
-    for(CFG_Node *n = local->first; n != &cfg_nil_node; n = n->next) { sections_after += str8_match(n->string, str8_lit("section"), 0); }
+    UIShell_Locals *locals = uishell_sidebar_window_locals(window);
+    U64 sections_after = locals->section_count;
     if(!started || !site_seen || sections_after != sections_before+1)
     {
       fprintf(stderr, "FAIL dock: a row dropped on the pill between sections makes a section there (started %d, site %d, sections %llu -> %llu)\n",
@@ -473,12 +488,14 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
     // The split it asked for puts the View in a panel of its own, above the
     // pill's lower section.
     uishell_sidebar_docking_drain(cmds_before);
-    CFG_Node *made = sections_after > sections_before ? local->last : &cfg_nil_node;
-    CFG_Node *made_view = uishell_sidebar_local_view(window, cfg_node_child_from_string(made, str8_lit("group")));
-    DockFailure(made != &cfg_nil_node && (made_view == &cfg_nil_node || made_view->parent->parent != host || made_view->parent->next != second_panel));
+    Temp made_scratch = scratch_begin(0, 0);
+    String8 made = sections_after > sections_before ? push_str8_copy(made_scratch.arena, locals->sections[sections_after-1].id) : str8_zero();
+    CFG_Node *made_view = made.size ? uishell_sidebar_local_view(window, made) : &cfg_nil_node;
+    DockFailure(made.size && (made_view == &cfg_nil_node || made_view->parent->parent != host || made_view->parent->next != second_panel));
     // Remove the section, its View and its panel.
     if(made_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made_view->parent); }
-    if(made != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made); }
+    if(made.size) { uishell_sidebar_local_forget_section(window, made); }
+    scratch_end(made_scratch);
   }
   // Merge through the production command, then split the merged panel in the
   // opposite direction. This exercises host-root retention on split/collapse.
@@ -558,7 +575,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   display.core = andamento_create(daily.str, daily.size, &error);
   DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
   uishell_sidebar_refresh(&display);
-  AndamentoNode section = {0}; uishell_sidebar_snapshot_node(display.snapshot, 0, &section);
+  AndamentoNode section = {0}; andamento_snapshot_node(display.snapshot, 0, &section);
   AndamentoControl control = {0};
   andamento_snapshot_control(display.snapshot, section.first_control, &control);
   B32 default_value = control.checked;
@@ -566,15 +583,15 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!andamento_dispatch(display.core, display.snapshot, control.action, &error));
   if(error) { andamento_string_free(error); }
   uishell_sidebar_refresh(&display);
-  String8 record = uishell_sidebar_record_export(scratch.arena, display.core, str8_lit("dashboard"));
+  String8 record = uishell_sidebar_record_get(scratch.arena, display.core, str8_lit("dashboard"));
   uishell_sidebar_release(&display); MemoryZeroStruct(&display);
   error = 0; display.core = andamento_create(daily.str, daily.size, &error);
   DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
   error = 0;
-  DockFailure(!uishell_sidebar_result(&display, andamento_record_import(display.core, uishell_sidebar_text(str8_lit("dashboard")),
+  DockFailure(!uishell_sidebar_result(&display, andamento_record_put(display.core, uishell_sidebar_text(str8_lit("dashboard")),
     uishell_sidebar_text(record), &error), error));
   uishell_sidebar_refresh(&display);
-  uishell_sidebar_snapshot_node(display.snapshot, 0, &section);
+  andamento_snapshot_node(display.snapshot, 0, &section);
   andamento_snapshot_control(display.snapshot, section.first_control, &control);
   DockFailure(!!control.checked == default_value);
   // Exercise real header buttons at both acceptance widths, including their
@@ -704,7 +721,9 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   }
   uishell_sidebar_section_set_collapsed(view, 0);
   ws->sidebar = state;
-  // Values of display variables that don't persist stay out of the record.
+  // Values of display variables that don't persist stay out of the record:
+  // restored where the variable persists, it has its default again, while
+  // one that persists keeps its value.
   String8 persisted = str8_lit("display-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role history\" icon=\"R\" persist=true");
   U64 declaration_at = str8_find_needle(daily, 0, persisted, 0);
   DockFailure(declaration_at == daily.size);
@@ -713,10 +732,23 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   error = 0;
   DockFailure(!andamento_configure(display.core, uishell_sidebar_text(ephemeral), &error));
   if(error) { andamento_string_free(error); }
+  error = 0;
+  DockFailure(!uishell_sidebar_result(&display, andamento_set_display_variable(display.core, uishell_sidebar_text(str8_lit("show-role-attempts")),
+                                                                                uishell_sidebar_text(str8_lit("true")), &error), error));
   uishell_sidebar_refresh(&display);
-  record = uishell_sidebar_record_export(scratch.arena, display.core, str8_lit("dashboard"));
-  DockFailure(str8_find_needle(record, 0, str8_lit("display \"show-issues\""), 0) == record.size);
-  DockFailure(str8_find_needle(record, 0, str8_lit("show-role-attempts"), 0) != record.size);
+  S32 issues = uishell_sidebar_docking_variable(display.snapshot, str8_lit("show-issues"));
+  DockFailure(issues < 0 || uishell_sidebar_docking_variable(display.snapshot, str8_lit("show-role-attempts")) != 1);
+  record = uishell_sidebar_record_get(scratch.arena, display.core, str8_lit("dashboard"));
+  UIShell_SidebarState reread = {.initialized = 1};
+  error = 0; reread.core = andamento_create(daily.str, daily.size, &error);
+  DockFailure(!uishell_sidebar_result(&reread, reread.core != 0, error));
+  error = 0;
+  DockFailure(!uishell_sidebar_result(&reread, andamento_record_put(reread.core, uishell_sidebar_text(str8_lit("dashboard")),
+    uishell_sidebar_text(record), &error), error));
+  uishell_sidebar_refresh(&reread);
+  DockFailure(uishell_sidebar_docking_variable(reread.snapshot, str8_lit("show-issues")) != issues);
+  DockFailure(uishell_sidebar_docking_variable(reread.snapshot, str8_lit("show-role-attempts")) != 0);
+  uishell_sidebar_release(&reread);
   uishell_sidebar_release(&display);
   ws->active_panel_id = saved_sidebar_focus;
   cfg_node_release(rd_state->cfg, workspace);
@@ -821,13 +853,13 @@ internal String8
 uishell_section_placement_restart(Arena *arena, UIShell_SectionPlacement *p, String8 config)
 {
   String8 text = uishell_workspace_store_window_text(arena, str8_zero(), p->window);
-  String8 record = uishell_sidebar_record_export(arena, p->sidebar.core, str8_lit("dashboard"));
+  String8 record = uishell_sidebar_record_get(arena, p->sidebar.core, str8_lit("dashboard"));
   CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(arena, rd_state->cfg, p->schemas, str8_zero(), text);
   CFG_Node *window = loaded.first ? loaded.first->v : &cfg_nil_node;
   cfg_node_insert_child(rd_state->cfg, p->user, p->user->last, window);
   cfg_node_release(rd_state->cfg, p->window);
   Andamento *core = andamento_create(config.str, config.size, 0);
-  if(core && record.size) { andamento_record_import(core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0); }
+  if(core && record.size) { andamento_record_put(core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0); }
   uishell_section_placement_use(p, window, core);
   uishell_sidebar_store_load(&p->sidebar, window);
   uishell_section_placement_frame(p);

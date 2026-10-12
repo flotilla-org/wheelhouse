@@ -45,6 +45,14 @@ struct UIShell_Subscriptions
 
 global UIShell_Subscriptions uishell_subscriptions;
 
+// The provider of what Wheelhouse publishes itself (its .workspace
+// entities, its workspaces' facts) and of what its local endpoint receives
+// (one-off scripts, the git watcher, fixtures). Each subscription is a
+// provider of its own; "local" is Andamento's, for its local sections,
+// groups and refs, and no host publishes as it.
+read_only global String8 uishell_sidebar_host_provider = str8_lit_comp("wheelhouse");
+read_only global String8 uishell_sidebar_local_provider = str8_lit_comp("local");
+
 internal void uishell_subscriptions_load(void);
 internal void uishell_subscriptions_go_live(String8 local_endpoint, String8 flotilla_bin, String8 log_dir);
 internal void uishell_subscriptions_close(void);

@@ -2,233 +2,24 @@
 // owns the sidebar's logical state: display values, row collapse, sibling
 // orders, and local sections, groups and pins (the `dashboard` record); and
 // each workspace it knows, with its subject and the rows on its path as last
-// seen (`workspace/<id>`). It exports them as records and imports them into
-// a fresh core before the first observe; Wheelhouse only stores them, in
-// the Dashboard directory (uishell_dashboard.c). Each window still has its
-// own core, so only the first window's are the Dashboard's own:
+// seen (`workspace/<id>`). It hands them out as records, bytes private to
+// it, and takes them back into a fresh core before the first observe;
+// Wheelhouse only stores them, in the Dashboard directory
+// (uishell_dashboard.c). Each window still has its own core, so only the
+// first window's are the Dashboard's own:
 //
 //   <Dashboard>/                     the first window's
-//     dashboard.kdl
-//     workspace-<Workspace ID>.kdl
+//     dashboard.record
+//     workspace-<Workspace ID>.record
 //   <Dashboard>/windows/<andamento_records id>/   any other window's
 //
 // A record is written when its generation changes: a second after the first
 // change, through a temporary file renamed over the old one, and at once
-// when the sidebar is released (its window closing, or quitting).
+// when the sidebar is released (its window closing, or quitting). Nothing
+// here reads one: what Wheelhouse needs of the Dashboard's comes from
+// andamento_dashboard_get, and of a workspace's from its own getters.
 
 enum { UIShell_RecordsDelayMs = 1000 };
-
-//- A reader for records' KDL (KDL 1.0, as Andamento writes it), for what
-// Andamento has no getter for yet: its local entities, read once to make
-// the editors' working copy, and which sibling runs it keeps an order for.
-// Type annotations and properties are skipped.
-
-struct UIShell_KdlNode
-{
-  UIShell_KdlNode *next, *first, *last;
-  String8 name;
-  // Arguments' text: strings unescaped, numbers and keywords as written.
-  String8 args[4];
-  U64 arg_count;
-};
-
-typedef struct UIShell_KdlReader UIShell_KdlReader;
-struct UIShell_KdlReader
-{
-  Arena *arena;
-  String8 text;
-  U64 at;
-  B32 failed;
-};
-
-internal B32
-uishell_kdl_starts(UIShell_KdlReader *r, String8 prefix)
-{
-  return str8_match(str8_prefix(str8_skip(r->text, r->at), prefix.size), prefix, 0);
-}
-
-internal B32
-uishell_kdl_ident_byte(U8 c)
-{
-  return c > 0x20 && c != '\\' && c != '/' && c != '(' && c != ')' && c != '{' && c != '}' && c != '<' &&
-    c != '>' && c != ';' && c != '[' && c != ']' && c != '=' && c != ',' && c != '"';
-}
-
-// Skips spaces and comments; with `lines`, newlines too. A line
-// continuation (`\` before a newline) is always skipped.
-internal void
-uishell_kdl_skip(UIShell_KdlReader *r, B32 lines)
-{
-  while(r->at < r->text.size && !r->failed)
-  {
-    U8 c = r->text.str[r->at];
-    if(c == ' ' || c == '\t' || (lines && (c == '\n' || c == '\r'))) { r->at++; }
-    else if(uishell_kdl_starts(r, str8_lit("\xEF\xBB\xBF"))) { r->at += 3; }
-    else if(c == '\\')
-    {
-      r->at++;
-      uishell_kdl_skip(r, 0);
-      if(uishell_kdl_starts(r, str8_lit("\r"))) { r->at++; }
-      if(uishell_kdl_starts(r, str8_lit("\n"))) { r->at++; }
-    }
-    else if(uishell_kdl_starts(r, str8_lit("//"))) { while(r->at < r->text.size && r->text.str[r->at] != '\n') { r->at++; } }
-    else if(uishell_kdl_starts(r, str8_lit("/*")))
-    {
-      U64 depth = 0;
-      do
-      {
-        if(uishell_kdl_starts(r, str8_lit("/*"))) { depth++; r->at += 2; }
-        else if(uishell_kdl_starts(r, str8_lit("*/"))) { depth--; r->at += 2; }
-        else { r->at++; }
-      } while(depth && r->at < r->text.size);
-      r->failed = depth != 0;
-    }
-    else { break; }
-  }
-}
-
-// A string, a raw string, or a bare word (identifier, number or keyword).
-internal String8
-uishell_kdl_word(UIShell_KdlReader *r)
-{
-  if(r->at >= r->text.size) { r->failed = 1; return str8_zero(); }
-  U8 c = r->text.str[r->at];
-  if(c == 'r' && (uishell_kdl_starts(r, str8_lit("r\"")) || uishell_kdl_starts(r, str8_lit("r#"))))
-  {
-    U64 hashes = 0, at = r->at+1;
-    while(at < r->text.size && r->text.str[at] == '#') { hashes++; at++; }
-    if(at >= r->text.size || r->text.str[at] != '"') { r->failed = 1; return str8_zero(); }
-    U64 start = ++at;
-    for(; at < r->text.size; at++)
-    {
-      if(r->text.str[at] != '"') { continue; }
-      U64 h = 0;
-      while(h < hashes && at+1+h < r->text.size && r->text.str[at+1+h] == '#') { h++; }
-      if(h == hashes) { r->at = at+1+hashes; return str8(r->text.str+start, at-start); }
-    }
-    r->failed = 1;
-    return str8_zero();
-  }
-  if(c == '"')
-  {
-    String8List parts = {0};
-    U64 run = ++r->at;
-    for(; r->at < r->text.size; r->at++)
-    {
-      U8 b = r->text.str[r->at];
-      if(b == '"')
-      {
-        str8_list_push(r->arena, &parts, str8(r->text.str+run, r->at-run));
-        r->at++;
-        return str8_list_join(r->arena, &parts, 0);
-      }
-      if(b != '\\') { continue; }
-      str8_list_push(r->arena, &parts, str8(r->text.str+run, r->at-run));
-      if(++r->at >= r->text.size) { break; }
-      U8 e = r->text.str[r->at];
-      char *simple = e == 'n' ? "\n" : e == 'r' ? "\r" : e == 't' ? "\t" : e == '\\' ? "\\" : e == '/' ? "/" :
-        e == '"' ? "\"" : e == 'b' ? "\b" : e == 'f' ? "\f" : 0;
-      if(simple) { str8_list_push(r->arena, &parts, str8_cstring(simple)); run = r->at+1; continue; }
-      U64 close = str8_find_needle(r->text, r->at, str8_lit("}"), 0);
-      U64 code = 0;
-      if(e != 'u' || !uishell_kdl_starts(r, str8_lit("u{")) || close >= r->text.size ||
-         !try_u64_from_str8_c_rules(push_str8f(r->arena, "0x%S", str8_substr(r->text, r1u64(r->at+2, close))), &code) ||
-         code > 0x10FFFF)
-      { break; }
-      U8 *utf8 = push_array(r->arena, U8, 4);
-      str8_list_push(r->arena, &parts, str8(utf8, utf8_encode(utf8, (U32)code)));
-      r->at = close; run = close+1;
-    }
-    r->failed = 1;
-    return str8_zero();
-  }
-  U64 start = r->at;
-  while(r->at < r->text.size && uishell_kdl_ident_byte(r->text.str[r->at])) { r->at++; }
-  if(r->at == start) { r->failed = 1; }
-  return str8(r->text.str+start, r->at-start);
-}
-
-// Skips a type annotation, "(type)", if there is one.
-internal void
-uishell_kdl_annotation(UIShell_KdlReader *r)
-{
-  if(!uishell_kdl_starts(r, str8_lit("("))) { return; }
-  U64 close = str8_find_needle(r->text, r->at, str8_lit(")"), 0);
-  r->failed |= close >= r->text.size;
-  r->at = close+1;
-}
-
-// Nodes until `}` (when `nested`) or the end, with their arguments and
-// children. A node, argument or block after `/-` is read and left out.
-internal UIShell_KdlNode *
-uishell_kdl_nodes(UIShell_KdlReader *r, B32 nested)
-{
-  UIShell_KdlNode *first = 0, *last = 0;
-  for(;;)
-  {
-    uishell_kdl_skip(r, 1);
-    while(uishell_kdl_starts(r, str8_lit(";"))) { r->at++; uishell_kdl_skip(r, 1); }
-    if(r->failed || r->at >= r->text.size) { r->failed |= nested; break; }
-    if(uishell_kdl_starts(r, str8_lit("}"))) { r->failed |= !nested; break; }
-    B32 dropped = uishell_kdl_starts(r, str8_lit("/-"));
-    if(dropped) { r->at += 2; uishell_kdl_skip(r, 1); }
-    UIShell_KdlNode *node = push_array(r->arena, UIShell_KdlNode, 1);
-    uishell_kdl_annotation(r);
-    node->name = uishell_kdl_word(r);
-    for(;;)
-    {
-      uishell_kdl_skip(r, 0);
-      if(r->failed || r->at >= r->text.size) { break; }
-      U8 c = r->text.str[r->at];
-      if(c == '\n' || c == '\r' || c == ';' || c == '}') { break; }
-      B32 slashdash = uishell_kdl_starts(r, str8_lit("/-"));
-      if(slashdash) { r->at += 2; uishell_kdl_skip(r, 0); }
-      if(uishell_kdl_starts(r, str8_lit("{")))
-      {
-        r->at++;
-        UIShell_KdlNode *children = uishell_kdl_nodes(r, 1);
-        if(r->failed) { break; }
-        r->at++;
-        if(!slashdash)
-        {
-          node->first = node->last = children;
-          while(node->last && node->last->next) { node->last = node->last->next; }
-        }
-        continue;
-      }
-      uishell_kdl_annotation(r);
-      String8 word = uishell_kdl_word(r);
-      // A property: its value is skipped.
-      if(!r->failed && uishell_kdl_starts(r, str8_lit("=")))
-      {
-        r->at++;
-        uishell_kdl_annotation(r);
-        uishell_kdl_word(r);
-        continue;
-      }
-      if(!r->failed && !slashdash && node->arg_count < ArrayCount(node->args)) { node->args[node->arg_count++] = word; }
-    }
-    if(r->failed) { break; }
-    if(!dropped) { SLLQueuePush(first, last, node); }
-  }
-  return first;
-}
-
-// The nodes of `text`, or 0 when it isn't KDL this reads.
-internal UIShell_KdlNode *
-uishell_kdl_parse(Arena *arena, String8 text)
-{
-  UIShell_KdlReader r = {arena, text};
-  UIShell_KdlNode *nodes = uishell_kdl_nodes(&r, 0);
-  return r.failed ? 0 : nodes;
-}
-
-internal UIShell_KdlNode *
-uishell_kdl_child(UIShell_KdlNode *node, String8 name)
-{
-  for(UIShell_KdlNode *c = node ? node->first : 0; c; c = c->next) { if(str8_match(c->name, name, 0)) { return c; } }
-  return 0;
-}
 
 //- Files
 
@@ -242,10 +33,10 @@ uishell_sidebar_bytes_copy(Arena *arena, AndamentoBytes bytes)
 }
 
 internal String8
-uishell_sidebar_record_export(Arena *arena, Andamento *core, String8 name)
+uishell_sidebar_record_get(Arena *arena, Andamento *core, String8 name)
 {
   AndamentoBytes bytes = {0};
-  if(!core || !andamento_record_export(core, uishell_sidebar_text(name), &bytes, 0)) { return str8_zero(); }
+  if(!core || !andamento_record_get(core, uishell_sidebar_text(name), &bytes, 0)) { return str8_zero(); }
   return uishell_sidebar_bytes_copy(arena, bytes);
 }
 
@@ -265,7 +56,7 @@ uishell_sidebar_record_generation(Andamento *core, String8 name)
   return andamento_record_generation(core, uishell_sidebar_text(name), 0);
 }
 
-// The file a record is stored in: `dashboard.kdl`, `workspace-<id>.kdl`.
+// The file a record is stored in: `dashboard.record`, `workspace-<id>.record`.
 // Bytes a file name can't hold become '_' (no record names have them yet).
 internal String8
 uishell_sidebar_record_file(Arena *arena, String8 dir, String8 name)
@@ -277,16 +68,16 @@ uishell_sidebar_record_file(Arena *arena, String8 dir, String8 name)
     if(c == '/') { file.str[i] = '-'; }
     else if(!char_is_alpha(c) && !char_is_digit(c, 10) && c != '-' && c != '.' && c != '_') { file.str[i] = '_'; }
   }
-  return push_str8f(arena, "%S/%S.kdl", dir, file);
+  return push_str8f(arena, "%S/%S.record", dir, file);
 }
 
 // The record a file in the directory holds; empty for any other file.
 internal String8
 uishell_sidebar_record_name(Arena *arena, String8 file)
 {
-  String8 workspace = str8_lit("workspace-"), kdl = str8_lit(".kdl");
-  if(!str8_match(str8_postfix(file, kdl.size), kdl, 0)) { return str8_zero(); }
-  String8 stem = str8_chop(file, kdl.size);
+  String8 workspace = str8_lit("workspace-"), extension = str8_lit(".record");
+  if(!str8_match(str8_postfix(file, extension.size), extension, 0)) { return str8_zero(); }
+  String8 stem = str8_chop(file, extension.size);
   if(str8_match(stem, str8_lit("dashboard"), 0)) { return push_str8_copy(arena, stem); }
   if(str8_match(str8_prefix(stem, workspace.size), workspace, 0) && stem.size > workspace.size)
   { return push_str8f(arena, "workspace/%S", str8_skip(stem, workspace.size)); }
@@ -348,9 +139,9 @@ uishell_sidebar_record_note(UIShell_SidebarState *state, String8 name, U64 gener
 
 // Writes the records whose generation moved since they were written, and
 // deletes those Andamento no longer has (a forgotten workspace's), once due:
-// a second after a change was first seen, or with `flush`, now. Reading a
-// generation encodes its record, so they are read only when one may have
-// moved: after a new snapshot, when the names changed, or while due.
+// a second after a change was first seen, or with `flush`, now. Generations
+// are read only when one may have moved: after a new snapshot, when the
+// names changed, or while due.
 internal void
 uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush)
 {
@@ -385,7 +176,7 @@ uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush)
     {
       UIShell_SidebarRecord *record = uishell_sidebar_record_written(state, n->string);
       if(record && record->generation == generations[index]) { continue; }
-      String8 text = uishell_sidebar_record_export(scratch.arena, state->core, n->string);
+      String8 text = uishell_sidebar_record_get(scratch.arena, state->core, n->string);
       if(text.size && uishell_sidebar_record_write(uishell_sidebar_record_file(scratch.arena, state->records_dir, n->string), text))
       { uishell_sidebar_record_note(state, n->string, generations[index]); }
     }
@@ -405,193 +196,34 @@ uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush)
   scratch_end(scratch);
 }
 
-//- Andamento's dashboard record, read
+//- The Dashboard's local entities and saved orders (andamento_dashboard_get)
 
-// The dashboard record's nodes, read again when its generation moves.
-internal UIShell_KdlNode *
+// Andamento's Dashboard, read again when the dashboard record's generation
+// moves. Its local sections, groups and pins are read through
+// uishell_sidebar_locals.
+internal AndamentoDashboard *
 uishell_sidebar_dashboard(UIShell_SidebarState *state)
 {
   if(!state->core) { return 0; }
   U64 generation = uishell_sidebar_record_generation(state->core, str8_lit("dashboard"));
-  if(generation && generation == state->dashboard_generation) { return state->dashboard; }
-  if(!state->dashboard_arena) { state->dashboard_arena = arena_alloc(); }
-  arena_clear(state->dashboard_arena);
-  String8 text = uishell_sidebar_record_export(state->dashboard_arena, state->core, str8_lit("dashboard"));
-  UIShell_KdlNode *envelope = uishell_kdl_parse(state->dashboard_arena, text);
-  state->dashboard = envelope ? envelope->first : 0;
-  state->dashboard_generation = generation;
+  if(state->dashboard && state->dashboard->generation == generation) { return state->dashboard; }
+  andamento_dashboard_free(state->dashboard);
+  state->dashboard = andamento_dashboard_get(state->core, 0);
   return state->dashboard;
 }
 
-// The entity an `order` node's run is under (the last of its parent key),
-// or an empty one for a run directly in a section.
-internal AndamentoEntity
-uishell_sidebar_order_parent(UIShell_KdlNode *order)
-{
-  UIShell_KdlNode *parent = uishell_kdl_child(order, str8_lit("parent"));
-  UIShell_KdlNode *at = parent ? parent->last : 0;
-  if(!at || at->arg_count < 3) { return (AndamentoEntity){0}; }
-  return (AndamentoEntity){uishell_sidebar_text(at->args[1]), uishell_sidebar_text(at->args[2])};
-}
-
-// A row in a saved order's run: one of the entities it names, under the
-// entity it is under. ANDAMENTO_NONE when none is shown.
-internal U64
-uishell_sidebar_order_row(UIShell_SidebarState *state, UIShell_KdlNode *order)
-{
-  AndamentoEntity parent = uishell_sidebar_order_parent(order);
-  U64 count = state->snapshot ? andamento_snapshot_node_count(state->snapshot) : 0;
-  for(U64 i = 0; i < count; i++)
-  {
-    AndamentoNode node = {0}, up = {0};
-    uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-    if(node.is_section || node.parent == ANDAMENTO_NONE) { continue; }
-    uishell_sidebar_snapshot_node(state->snapshot, node.parent, &up);
-    if(!str8_match(uishell_sidebar_string(up.entity_kind), uishell_sidebar_string(parent.kind), 0) ||
-       !str8_match(uishell_sidebar_string(up.entity_id), uishell_sidebar_string(parent.id), 0)) { continue; }
-    for(UIShell_KdlNode *e = order->first; e; e = e->next)
-    {
-      if(str8_match(e->name, str8_lit("entity"), 0) && e->arg_count >= 2 &&
-         str8_match(e->args[0], uishell_sidebar_string(node.entity_kind), 0) &&
-         str8_match(e->args[1], uishell_sidebar_string(node.entity_id), 0)) { return i; }
-    }
-  }
-  return ANDAMENTO_NONE;
-}
-
 // Whether Andamento keeps an order for the sibling run keyed `loop`, which
-// offers Reset order. Loop keys are opaque, so a saved order is matched to
-// the run by the entity it is under and the rows it names.
+// offers Reset order.
 internal B32
 uishell_sidebar_order_saved(UIShell_SidebarState *state, String8 loop)
 {
-  if(!loop.size || !state->snapshot) { return 0; }
-  for(UIShell_KdlNode *order = uishell_sidebar_dashboard(state); order; order = order->next)
-  {
-    if(!str8_match(order->name, str8_lit("order"), 0)) { continue; }
-    U64 row = uishell_sidebar_order_row(state, order);
-    if(row != ANDAMENTO_NONE && str8_match(uishell_sidebar_loop_key(state->snapshot, row), loop, 0)) { return 1; }
-  }
+  AndamentoDashboard *dashboard = loop.size ? uishell_sidebar_dashboard(state) : 0;
+  for(U64 i = 0; dashboard && i < dashboard->order_count; i++)
+  { if(str8_match(uishell_sidebar_string(dashboard->orders[i].loop_key), loop, 0)) { return 1; } }
   return 0;
 }
 
 //- Loading
-
-internal String8
-uishell_sidebar_local_fact(UIShell_KdlNode *local, String8 key)
-{
-  for(UIShell_KdlNode *f = local->first; f; f = f->next)
-  { if(str8_match(f->name, str8_lit("fact"), 0) && f->arg_count >= 2 && str8_match(f->args[0], key, 0)) { return f->args[1]; } }
-  return str8_zero();
-}
-
-// An entity-reference fact's first entity.
-internal AndamentoEntity
-uishell_sidebar_local_fact_entity(UIShell_KdlNode *local, String8 key)
-{
-  for(UIShell_KdlNode *f = local->first; f; f = f->next)
-  {
-    if(!str8_match(f->name, str8_lit("fact"), 0) || f->arg_count < 1 || !str8_match(f->args[0], key, 0)) { continue; }
-    UIShell_KdlNode *e = uishell_kdl_child(f, str8_lit("entity"));
-    if(e && e->arg_count >= 2) { return (AndamentoEntity){uishell_sidebar_text(e->args[0]), uishell_sidebar_text(e->args[1])}; }
-  }
-  return (AndamentoEntity){0};
-}
-
-internal U64
-uishell_sidebar_local_position(UIShell_KdlNode *local)
-{
-  U64 position = max_U64;
-  try_u64_from_str8_c_rules(uishell_sidebar_local_fact(local, str8_lit(".position")), &position);
-  return position;
-}
-
-// Adds to `parent`, in position order, a `name` node for each local entity
-// of `kind` whose `link` fact names `owner` (each one, without a link), as
-// uishell_sidebar_local_entities publishes them.
-internal void
-uishell_sidebar_local_seed(UIShell_KdlNode *nodes, CFG_Node *parent, String8 name, String8 kind, String8 link, String8 owner)
-{
-  Temp scratch = scratch_begin(0, 0);
-  U64 count = 0, found = 0;
-  for(UIShell_KdlNode *n = nodes; n; n = n->next) { count++; }
-  UIShell_KdlNode **matches = push_array(scratch.arena, UIShell_KdlNode *, count);
-  for(UIShell_KdlNode *n = nodes; n; n = n->next)
-  {
-    if(!str8_match(n->name, str8_lit("local"), 0) || n->arg_count < 2 || !str8_match(n->args[0], kind, 0)) { continue; }
-    if(link.size && !str8_match(uishell_sidebar_string(uishell_sidebar_local_fact_entity(n, link).id), owner, 0)) { continue; }
-    // Insertion keeps them in position order, ties in record order.
-    U64 at = found++;
-    for(; at > 0 && uishell_sidebar_local_position(matches[at-1]) > uishell_sidebar_local_position(n); at--) { matches[at] = matches[at-1]; }
-    matches[at] = n;
-  }
-  for(U64 i = 0; i < found; i++)
-  {
-    UIShell_KdlNode *local = matches[i];
-    CFG_Node *node = cfg_node_new(rd_state->cfg, parent, name);
-    String8 id = local->args[1];
-    if(str8_match(kind, str8_lit(".ref"), 0))
-    {
-      AndamentoEntity target = uishell_sidebar_local_fact_entity(local, str8_lit(".target"));
-      uishell_sidebar_local_set_field(node, str8_lit("ghost"), id);
-      uishell_sidebar_local_set_field(node, str8_lit("kind"), uishell_sidebar_string(target.kind));
-      uishell_sidebar_local_set_field(node, str8_lit("entity"), uishell_sidebar_string(target.id));
-      String8 fields[] = {str8_lit("label"), str8_lit("source")}, facts[] = {str8_lit(".label"), str8_lit(".source")};
-      for(U64 f = 0; f < ArrayCount(fields); f++)
-      {
-        String8 value = uishell_sidebar_local_fact(local, facts[f]);
-        if(value.size) { uishell_sidebar_local_set_field(node, fields[f], value); }
-      }
-      if(str8_match(uishell_sidebar_local_fact(local, str8_lit(".compact")), str8_lit("true"), 0))
-      { cfg_node_new(rd_state->cfg, node, str8_lit("compact")); }
-      continue;
-    }
-    uishell_sidebar_local_set_field(node, str8_lit("id"), id);
-    String8 label = uishell_sidebar_local_fact(local, str8_lit("display.label"));
-    if(str8_match(kind, str8_lit(".group"), 0))
-    {
-      uishell_sidebar_local_set_field(node, str8_lit("label"), label);
-      if(str8_match(uishell_sidebar_local_fact(local, str8_lit(".default")), str8_lit("true"), 0))
-      { cfg_node_new(rd_state->cfg, node, str8_lit("default")); }
-      uishell_sidebar_local_seed(nodes, node, str8_lit("card"), str8_lit(".ref"), str8_lit(".group"), id);
-      continue;
-    }
-    uishell_sidebar_local_seed(nodes, node, str8_lit("group"), str8_lit(".group"), str8_lit(".section"), id);
-    // A section is published under its title, a name of its own only when
-    // that differs from its groups' names.
-    if(label.size && !str8_match(label, uishell_sidebar_local_title(scratch.arena, node), 0))
-    { uishell_sidebar_local_set_field(node, str8_lit("label"), label); }
-  }
-  scratch_end(scratch);
-}
-
-// Makes the window's working copy of its local sections, groups and pins
-// from the dashboard record Andamento imported.
-internal void
-uishell_sidebar_local_load(UIShell_SidebarState *state, CFG_Node *window)
-{
-  cfg_node_release(rd_state->cfg, uishell_sidebar_local_tree(window));
-  UIShell_KdlNode *dashboard = uishell_sidebar_dashboard(state);
-  B32 any = 0;
-  for(UIShell_KdlNode *n = dashboard; n && !any; n = n->next) { any = str8_match(n->name, str8_lit("local"), 0); }
-  if(any)
-  {
-    uishell_sidebar_local_seed(dashboard, uishell_sidebar_local_tree_alloc(window), str8_lit("section"), str8_lit(".section"),
-                               str8_zero(), str8_zero());
-  }
-  // Andamento holds what was last published, so publishing removes any
-  // entity the copy left out (one whose section or group had gone).
-  uishell_sidebar_local_published_clear(state);
-  for(UIShell_KdlNode *n = dashboard; n; n = n->next)
-  {
-    if(str8_match(n->name, str8_lit("local"), 0) && n->arg_count >= 2)
-    {
-      Temp scratch = scratch_begin(0, 0);
-      uishell_sidebar_local_published_add(state, push_str8f(scratch.arena, "%S/%S", n->args[0], n->args[1]), 0);
-      scratch_end(scratch);
-    }
-  }
-}
 
 // Imports the window's records into its new core, before its first observe:
 // the dashboard first, then each workspace's (which registers it and binds
@@ -622,7 +254,7 @@ uishell_sidebar_records_load(UIShell_SidebarState *state, CFG_Node *window)
   {
     String8 text = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/%S", dir, file->string));
     char *error = 0;
-    if(andamento_record_import(state->core, uishell_sidebar_text(name->string), uishell_sidebar_text(text), &error))
+    if(andamento_record_put(state->core, uishell_sidebar_text(name->string), uishell_sidebar_text(text), &error))
     { uishell_sidebar_record_note(state, name->string, uishell_sidebar_record_generation(state->core, name->string)); }
     else
     {
@@ -652,6 +284,5 @@ uishell_sidebar_records_load(UIShell_SidebarState *state, CFG_Node *window)
     }
     if(!kept) { andamento_workspace_forget(state->core, uishell_sidebar_workspace(id), 0); }
   }
-  uishell_sidebar_local_load(state, window);
   scratch_end(scratch);
 }

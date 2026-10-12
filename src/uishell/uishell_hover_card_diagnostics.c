@@ -2,15 +2,17 @@ internal size_t
 action_node_copy(UIShell_SidebarState *state, U64 index)
 {
   AndamentoDetail detail = {0};
-  return uishell_sidebar_snapshot_detail(state->snapshot, index, &detail) ? detail.copy_url : ANDAMENTO_NONE;
+  return andamento_snapshot_detail(state->snapshot, index, &detail) ? detail.copy_url : ANDAMENTO_NONE;
 }
 
 // Commit through the same creation-drag routing and finish phases as a center
 // drop on the panel showing local group `area`'s section.
 internal void
-uishell_hover_card_test_center_drop(RD_WindowState *ws, UIShell_HoverCard *card, CFG_Node *area)
+uishell_hover_card_test_center_drop(RD_WindowState *ws, UIShell_HoverCard *card, String8 area)
 {
-  CFG_Node *view = uishell_sidebar_local_view(cfg_node_from_id(ws->cfg_id), area);
+  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  UIShell_LocalGroup *group = uishell_sidebar_local_group(window, area);
+  CFG_Node *view = group ? uishell_sidebar_local_view(window, group->section->id) : &cfg_nil_node;
   card->open = card->moving = card->drag_released = card->engaged = 1;
   ws->sidebar->drag_card = card;
   UIShell_RegsScope(.window = ws->cfg_id, .view = 0, .panel = 0)
@@ -99,38 +101,60 @@ uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
   return found;
 }
 
-// The window's pins as a restart reads them back: sent to `state`'s core,
-// exported in its dashboard record, imported into a new core, and made into
-// a working copy, under a transient node the caller releases.
-internal CFG_Node *
-uishell_hover_card_test_restart_pins(UIShell_SidebarState *state, CFG_Node *window)
+// The pin of `kind`/`id` as a restart reads it back: `state`'s dashboard
+// record imported into a new core, whose Dashboard has it; copied into
+// `arena`, or an empty one without it.
+internal UIShell_LocalPin
+uishell_hover_card_test_restart_pin(Arena *arena, UIShell_SidebarState *state, String8 kind, String8 id)
 {
-  Temp scratch = scratch_begin(0, 0);
-  uishell_sidebar_local_publish(state, window->id);
-  String8 record = uishell_sidebar_record_export(scratch.arena, state->core, str8_lit("dashboard"));
+  Temp scratch = scratch_begin(&arena, 1);
+  String8 record = uishell_sidebar_record_get(scratch.arena, state->core, str8_lit("dashboard"));
   String8 config = str8_cstring((char *)uishell_sidebar_local_config);
   UIShell_SidebarState fresh = {0};
   fresh.core = andamento_create(config.str, config.size, 0);
-  CFG_Node *copy = cfg_node_new(rd_state->cfg, cfg_node_child_from_string(cfg_node_root(), str8_lit("transient")), str8_lit("pins_after_restart"));
-  if(fresh.core && andamento_record_import(fresh.core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0))
-  { uishell_sidebar_local_seed(uishell_sidebar_dashboard(&fresh), copy, str8_lit("section"), str8_lit(".section"), str8_zero(), str8_zero()); }
+  UIShell_LocalPin result = {0};
+  if(fresh.core && andamento_record_put(fresh.core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0))
+  {
+    UIShell_Locals *locals = uishell_sidebar_locals(&fresh);
+    for(U64 s = 0; s < locals->section_count && !result.ghost.size; s++)
+    for(U64 g = 0; g < locals->sections[s].group_count && !result.ghost.size; g++)
+    for(U64 p = 0; p < locals->sections[s].groups[g].pin_count && !result.ghost.size; p++)
+    {
+      UIShell_LocalPin *pin = &locals->sections[s].groups[g].pins[p];
+      if(!str8_match(uishell_sidebar_string(pin->target.kind), kind, 0) || !str8_match(uishell_sidebar_string(pin->target.id), id, 0)) { continue; }
+      result.ghost = push_str8_copy(arena, pin->ghost);
+      result.label = push_str8_copy(arena, pin->label);
+      result.source = push_str8_copy(arena, pin->source);
+      result.target = uishell_sidebar_card_entity_copy(arena, pin->target);
+      result.compact = pin->compact;
+    }
+  }
   uishell_sidebar_release(&fresh);
   scratch_end(scratch);
-  return copy;
+  return result;
 }
 
-// The first pin of `kind`/`id` in a working copy, or nil.
-internal CFG_Node *
-uishell_hover_card_test_pin(CFG_Node *root, String8 kind, String8 id)
+// The window's pins, counted.
+internal U64
+uishell_hover_card_test_pin_count(CFG_Node *window)
 {
-  for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
-  for(CFG_Node *group = section->first; group != &cfg_nil_node; group = group->next)
-  for(CFG_Node *c = group->first; c != &cfg_nil_node; c = c->next)
-  {
-    if(str8_match(c->string, str8_lit("card"), 0) && str8_match(uishell_sidebar_local_field(c, str8_lit("kind")), kind, 0) &&
-       str8_match(uishell_sidebar_local_field(c, str8_lit("entity")), id, 0)) { return c; }
-  }
-  return &cfg_nil_node;
+  U64 count = 0;
+  UIShell_Locals *locals = uishell_sidebar_window_locals(window);
+  for(U64 s = 0; s < locals->section_count; s++)
+  for(U64 g = 0; g < locals->sections[s].group_count; g++) { count += locals->sections[s].groups[g].pin_count; }
+  return count;
+}
+
+// A pin of host entity `kind`/`id` (both may be empty) added last to local
+// group `group`, as a saved layout has one; its ghost id, in `arena`.
+internal String8
+uishell_hover_card_test_put_pin(Arena *arena, RD_WindowState *ws, String8 group, String8 kind, String8 id, String8 label)
+{
+  UIShell_LocalGroup *g = uishell_sidebar_local_group(cfg_node_from_id(ws->cfg_id), group);
+  UIShell_LocalPin pin = {.ghost = string_from_guid(arena, make_guid()), .label = label,
+    .target = uishell_sidebar_entity(uishell_sidebar_host_provider, kind, id)};
+  if(g) { uishell_sidebar_local_put_pin(ws->sidebar, &pin, group, g->pin_count); }
+  return pin.ghost;
 }
 
 // Deterministic time traces use the production transitions; UI and raw-WM
@@ -153,8 +177,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   ui_select_state(test);
   UI_Box source = {.key = ui_key_make(700), .rect = r2f32p(10, 100, 100, 130)};
   UI_Signal hover = {.box = &source, .f = UI_SignalFlag_Hovering};
-  AndamentoNode a = {.entity_kind = uishell_sidebar_text(str8_lit("issue")), .entity_id = uishell_sidebar_text(str8_lit("a"))};
-  AndamentoNode b = {.entity_kind = uishell_sidebar_text(str8_lit("issue")), .entity_id = uishell_sidebar_text(str8_lit("b"))};
+  AndamentoNode a = {.entity.kind = uishell_sidebar_text(str8_lit("issue")), .entity.id = uishell_sidebar_text(str8_lit("a"))};
+  AndamentoNode b = {.entity.kind = uishell_sidebar_text(str8_lit("issue")), .entity.id = uishell_sidebar_text(str8_lit("b"))};
   UIShell_HoverCard *card = &fixture.cards[0];
   test->mouse = v2f32(50, 115);
   uishell_sidebar_card_source_at(&fixture, a, hover, str8_zero(), 0, 1000000);
@@ -360,10 +384,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   // while snapshot-owned output and action currency remain core-owned.
   UIShell_SidebarState demand = {0};
   demand.core = andamento_create(0, 0, 0);
-  AndamentoEntity demand_entity = {uishell_sidebar_text(str8_lit("issue")), uishell_sidebar_text(str8_lit("demand-only"))};
+  AndamentoEntity demand_entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("issue"), str8_lit("demand-only"));
   AndamentoFact demand_fact = {.key = uishell_sidebar_text(str8_lit("display.label")), .kind = ANDAMENTO_FACT_TEXT,
                               .text = uishell_sidebar_text(str8_lit("Before"))};
-  CardCheck(andamento_apply_entity(demand.core, 0, demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
+  CardCheck(andamento_apply_entity(demand.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
             "demand-only target is published");
   uishell_sidebar_refresh(&demand);
   CardCheck(andamento_snapshot_detail_count(demand.snapshot) == 0, "plain revision starts without details");
@@ -376,7 +400,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   // fixes its core clock at acquisition, including subsequently demanded cards.
   uishell_sidebar_card_set(&demand.cards[0], demand_node, ui_key_zero(), str8_zero(), 0, now_time_us());
   demand_fact.text = uishell_sidebar_text(str8_lit("After"));
-  CardCheck(andamento_apply_entity(demand.core, 1, demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
+  CardCheck(andamento_apply_entity(demand.core, 1, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
             "held target label changes");
   CardCheck(str8_match(uishell_sidebar_string(demand_node.label), str8_lit("Before"), 0) &&
             !andamento_dispatch(demand.core, demand.snapshot, demand_node.activate, 0),
@@ -387,7 +411,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
             str8_match(uishell_sidebar_string(demand_node.label), str8_lit("After"), 0),
             "held exact identity demands current output after refresh");
   String8 demand_remove = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"issue\",\"id\":\"demand-only\"}},\"source_id\":\"demand\",\"unset\":[\"display.label\"]}");
-  CardCheck(andamento_apply_patch_json(demand.core, 2, uishell_sidebar_text(demand_remove), 0), "held target is removed");
+  CardCheck(andamento_apply_patch_json(demand.core, 2, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(demand_remove), 0), "held target is removed");
   uishell_sidebar_refresh(&demand);
   CardCheck(uishell_sidebar_card_find(&demand, demand.cards[0].path[0], 0) == ANDAMENTO_NONE &&
             andamento_snapshot_detail_count(demand.snapshot) == 0,
@@ -402,11 +426,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   CardCheck(missing.core != 0, "missing-target fixture initializes");
   if(missing.core)
   {
-    AndamentoEntity absent = {uishell_sidebar_text(str8_lit("issue")), uishell_sidebar_text(str8_lit("never-existing"))};
+    AndamentoEntity absent = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("issue"), str8_lit("never-existing"));
     for(U64 revision = 0; revision < 4; revision++)
     {
       demand_fact.text = uishell_sidebar_text(revision % 2 ? str8_lit("Odd") : str8_lit("Even"));
-      CardCheck(andamento_apply_entity(missing.core, revision, demand_entity.kind, demand_entity.id,
+      CardCheck(andamento_apply_entity(missing.core, revision, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id,
                                       uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
                 "card-free fixture advances revision");
       uishell_sidebar_refresh(&missing);
@@ -427,7 +451,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     for(U64 repeat = 0; repeat < 3; repeat++)
     {
       char *error = 0;
-      B32 accepted = andamento_apply_patch_json(missing.core, 4, uishell_sidebar_text(str8_lit("{")), &error);
+      B32 accepted = andamento_apply_patch_json(missing.core, 4, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("{")), &error);
       CardCheck(!accepted && error != 0, "malformed patch returns an owned ABI error");
       CardCheck(!uishell_sidebar_result(&missing, accepted, error), "host reports repeated ABI failure");
       CardCheck(missing.error[0] != 0, "ABI failure populates fixed status buffer");
@@ -455,7 +479,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     {
       U64 end = start;
       while(end < patches.size && patches.str[end] != '\n') { end++; }
-      CardCheck(andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(str8(patches.str+start, end-start)), 0), "render fixture patch applies");
+      CardCheck(andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0), "render fixture patch applies");
       start = end+1;
     }
     uishell_sidebar_refresh(&fixture);
@@ -465,8 +489,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     U64 index = ANDAMENTO_NONE; AndamentoNode live = {0};
     for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &node);
-      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("pr-281"), 0))
+      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("pr-281"), 0))
       { index = i; live = node; break; }
     }
     CardCheck(index != ANDAMENTO_NONE, "subject details exist");
@@ -478,7 +502,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(live), 0) == index &&
                 andamento_snapshot_detail_count(fixture.snapshot) == 1,
                 "repeated card lookup reuses snapshot-owned detail");
-      live.state = ANDAMENTO_LIVE; live.workspace_id = 123456;
+      // A workspace this test makes up, read back through the index as 123456.
+      UIShell_WorkspaceId previewed = uishell_workspace_id_make();
+      uishell_workspace_index_insert(previewed, 123456);
+      live.state = ANDAMENTO_LIVE; live.workspace_id = uishell_sidebar_workspace(previewed);
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, 4000000);
       for(U64 engaged = 0; engaged < 2; engaged++)
       {
@@ -488,12 +515,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1))
         {
-          UI_Key preview_key = ui_key_from_stringf(ui_active_seed_key(), "###hover_preview_%I64u_%I64u", (U64)0, live.workspace_id);
+          UI_Key preview_key = ui_key_from_stringf(ui_active_seed_key(), "###hover_preview_%I64u_%I64u", (U64)0, (U64)123456);
           uishell_sidebar_card_content(&fixture, ws, card, 0, live, index, 400, engaged);
           CardCheck(!ui_box_is_nil(ui_box_from_key(preview_key)), "both peek and engaged retain the preview box");
         }
         ui_end_build();
-        CardCheck(rd_workspace_preview_demand_width(ws, live.workspace_id) > 0, "both states request live workspace preview rendering");
+        CardCheck(rd_workspace_preview_demand_width(ws, 123456) > 0, "both states request live workspace preview rendering");
         B32 title = 0, actions = 0;
         for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
         {
@@ -542,15 +569,15 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_end_build();
         CardCheck(card->cap_below && card->cap.rect.y0 == 299, "a card at the top takes its cap on its bottom edge");
       }
-      AndamentoNode parent = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, live.parent, &parent);
+      AndamentoNode parent = {0}; andamento_snapshot_node(fixture.snapshot, live.parent, &parent);
       String8 parent_label = uishell_sidebar_string(parent.label);
       CardCheck(uishell_hover_card_test_click(ws, &fixture, card, parent_label, 0) && card->depth == 2,
                 "clicking a related widget navigates within the card");
       CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("← Back"), 0) && card->depth == 1 &&
-                str8_match(uishell_sidebar_string(card->path[0].id), uishell_sidebar_string(live.entity_id), 0), "Back widget restores the source target");
+                str8_match(uishell_sidebar_string(card->path[0].id), uishell_sidebar_string(live.entity.id), 0), "Back widget restores the source target");
       CardCheck(uishell_hover_card_test_click(ws, &fixture, card, parent_label, WM_Modifier_Ctrl) && card->depth == 1 &&
                 fixture.cards[1].open && fixture.cards[1].focused &&
-                str8_match(uishell_sidebar_string(fixture.cards[1].path[0].id), uishell_sidebar_string(parent.entity_id), 0),
+                str8_match(uishell_sidebar_string(fixture.cards[1].path[0].id), uishell_sidebar_string(parent.entity.id), 0),
                 "modifier-click opens a separate focused card without changing the original path");
       CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("×"), 0) && !card->open &&
                 fixture.cards[1].open && fixture.cards[1].focused, "closing the original leaves the separate card open and focused");
@@ -562,8 +589,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       B32 hidden_in_tree = 0;
       for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
       {
-        AndamentoNode row = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &row);
-        hidden_in_tree |= str8_match(uishell_sidebar_string(row.entity_id), str8_lit("hidden-detail"), 0);
+        AndamentoNode row = {0}; andamento_snapshot_node(fixture.snapshot, i, &row);
+        hidden_in_tree |= str8_match(uishell_sidebar_string(row.entity.id), str8_lit("hidden-detail"), 0);
       }
       CardCheck(!hidden_in_tree, "hidden relation target has no tree placement");
       CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Hidden related issue"), WM_Modifier_Ctrl) &&
@@ -604,8 +631,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           AndamentoNode next = {0};
           for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
           {
-            uishell_sidebar_snapshot_node(fixture.snapshot, i, &next);
-            if(str8_match(uishell_sidebar_string(next.entity_id), str8_lit("pr-1000"), 0)) { break; }
+            andamento_snapshot_node(fixture.snapshot, i, &next);
+            if(str8_match(uishell_sidebar_string(next.entity.id), str8_lit("pr-1000"), 0)) { break; }
           }
           uishell_sidebar_card_set(card, next, ui_key_zero(), str8_zero(), 0, now_time_us());
           uishell_sidebar_card_set(&fixture.cards[1], parent, ui_key_zero(), str8_zero(), 0, now_time_us());
@@ -784,7 +811,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_card_queue_action(&fixture, action_node, copy_action);
       AndamentoFact refreshed_title = {.key = uishell_sidebar_text(str8_lit("flotilla.change_request.title")),
                                        .kind = ANDAMENTO_FACT_TEXT, .text = uishell_sidebar_text(str8_lit("Refreshed title"))};
-      CardCheck(andamento_apply_entity(fixture.core, 0, uishell_sidebar_text(str8_lit("change_request")),
+      CardCheck(andamento_apply_entity(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("change_request")),
                 uishell_sidebar_text(str8_lit("pr-281")), uishell_sidebar_text(str8_lit("fixture")), &refreshed_title, 1, 0),
                 "refresh trace updates the selected entity");
       uishell_sidebar_refresh(&fixture);
@@ -798,7 +825,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                 "Open intent remains distinct from Copy URL intent");
       uishell_sidebar_card_queue_action(&fixture, action_node, copy_action);
       String8 remove_url = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"pr-281\"}},\"source_id\":\"fixture\",\"set\":{},\"unset\":[\"flotilla.forge\"]}");
-      CardCheck(andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(remove_url), 0), "refresh trace removes URL metadata");
+      CardCheck(andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(remove_url), 0), "refresh trace removes URL metadata");
       uishell_sidebar_refresh(&fixture);
       action_index = uishell_sidebar_card_find(&fixture, fixture.card_action_target, &action_node);
       CardCheck(action_index != ANDAMENTO_NONE && action_node_copy(&fixture, action_index) == ANDAMENTO_NONE,
@@ -819,7 +846,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     };
     for(U64 i = 0; i < ArrayCount(cards); i++)
     {
-      AndamentoEntity entity = {uishell_sidebar_text(str8_cstring(cards[i].kind)), uishell_sidebar_text(str8_cstring(cards[i].id))};
+      AndamentoEntity entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_cstring(cards[i].kind), str8_cstring(cards[i].id));
       AndamentoNode node = {0}; U64 index = uishell_sidebar_card_find(&fixture, entity, &node);
       CardCheck(index != ANDAMENTO_NONE, "all six shipped detail templates have a catalog target");
       uishell_sidebar_card_set(card, node, ui_key_zero(), str8_zero(), 0, now_time_us());
@@ -832,7 +859,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       { uishell_sidebar_card_content(&fixture, ws, card, 0, node, index, 400, 0); }
       ui_end_build();
       B32 title = 0, identity = 0, facts = 0, expected_facts = 0;
-      AndamentoDetail d = {0}; uishell_sidebar_snapshot_detail(fixture.snapshot, index, &d);
+      AndamentoDetail d = {0}; andamento_snapshot_detail(fixture.snapshot, index, &d);
       for(U64 f = 0; f < d.field_count; f++)
       {
         AndamentoDetailField field = {0}; andamento_snapshot_detail_field(fixture.snapshot, index, f, &field);
@@ -843,7 +870,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         String8 text = ui_box_display_string(box);
         title |= str8_match(text, str8_cstring(cards[i].title), 0);
         identity |= str8_match(text, str8_cstring(cards[i].id), 0);
-        AndamentoDetail d = {0}; uishell_sidebar_snapshot_detail(fixture.snapshot, index, &d);
+        AndamentoDetail d = {0}; andamento_snapshot_detail(fixture.snapshot, index, &d);
         for(U64 f = 0; f < d.field_count; f++)
         {
           AndamentoDetailField field = {0}; andamento_snapshot_detail_field(fixture.snapshot, index, f, &field);
@@ -852,6 +879,79 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         CardCheck(!str8_match(str8_prefix(text, 6), str8_lit("Title:"), 0), "typed headers do not display flat prefixes");
       }
       CardCheck(title && identity && facts == expected_facts, "each shipped template renders its header and facts");
+    }
+    fprintf(stderr, "Hover card diagnostics: subscription entities\n");
+    // An entity from a Dashboard subscription is keyed by the subscription's
+    // provider, and the host's fixture has the same kinds and IDs: hovering
+    // its row opens its own card, and its relations (stamped with its
+    // provider) navigate within the subscription.
+    {
+      UIShell_SidebarState subscribed = {.initialized = 1};
+      subscribed.core = andamento_create(config.str, config.size, 0);
+      CardCheck(subscribed.core != 0, "subscription fixture initializes");
+      String8 provider = str8_lit("01a12a71-c309-714c-bc8f-619c6d7fbb28");
+      String8 patches = str8_cstring((char *)uishell_sidebar_fixture_patches);
+      for(U64 start = 0; subscribed.core && start < patches.size;)
+      {
+        U64 end = start;
+        while(end < patches.size && patches.str[end] != '\n') { end++; }
+        andamento_apply_patch_json(subscribed.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0);
+        start = end+1;
+      }
+      String8 subscription_patches[] = {
+        str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"project\",\"id\":\"p\"}},\"source_id\":\"connector\",\"unset\":[],\"set\":{"
+                 "\"flotilla.project\":{\"value\":{\"type\":\"text\",\"value\":\"p\"}},\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"Subscribed project\"}},"
+                 "\"related.entities\":{\"value\":{\"type\":\"entity-refs\",\"value\":[{\"kind\":\"role\",\"id\":\"p/governor\"}]}}}}"),
+        str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"role\",\"id\":\"p/governor\"}},\"source_id\":\"connector\",\"unset\":[],\"set\":{"
+                 "\"flotilla.project\":{\"value\":{\"type\":\"text\",\"value\":\"p\"}},\"flotilla.role\":{\"value\":{\"type\":\"text\",\"value\":\"p/governor\"}},"
+                 "\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"Subscribed governor\"}}}}"),
+      };
+      for(U64 i = 0; subscribed.core && i < ArrayCount(subscription_patches); i++)
+      {
+        CardCheck(andamento_apply_patch_json(subscribed.core, 0, uishell_sidebar_text(provider), uishell_sidebar_text(subscription_patches[i]), 0),
+                  "subscription fixture patch applies");
+      }
+      if(subscribed.core) { uishell_sidebar_refresh(&subscribed); }
+      AndamentoEntity project = uishell_sidebar_entity(provider, str8_lit("project"), str8_lit("p"));
+      AndamentoNode row = {0}; B32 has_row = 0;
+      for(U64 i = 0; subscribed.snapshot && i < andamento_snapshot_node_count(subscribed.snapshot) && !has_row; i++)
+      {
+        andamento_snapshot_node(subscribed.snapshot, i, &row);
+        has_row = !row.is_section && uishell_sidebar_card_entity_match(row.entity, project);
+      }
+      CardCheck(has_row, "a subscription's project has its row, under its provider");
+      UIShell_HoverCard *sub_card = &subscribed.cards[0];
+      if(has_row)
+      {
+        test->mouse = v2f32(50, 115);
+        uishell_sidebar_card_source_at(&subscribed, row, hover, str8_zero(), 0, 1000000);
+        uishell_sidebar_card_source_at(&subscribed, row, hover, str8_zero(), 0, 1000000+UIShell_HoverCardOpenDelayUS);
+        CardCheck(sub_card->open && uishell_sidebar_card_entity_match(sub_card->path[0], project),
+                  "hovering a subscription entity's row opens its card, keyed by its provider");
+        AndamentoNode node = {0};
+        U64 index = uishell_sidebar_card_find(&subscribed, project, &node);
+        CardCheck(index != ANDAMENTO_NONE && str8_match(uishell_sidebar_string(node.label), str8_lit("Subscribed project"), 0),
+                  "a subscription entity's card finds its own details, not the host's same kind and ID");
+        B32 title = 0;
+        if(index != ANDAMENTO_NONE)
+        {
+          UI_EventList events = {0};
+          ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+          MemoryZeroArray(test->hover_card_keys);
+          UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+          UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_ChildLayoutAxis(Axis2_Y)
+          { uishell_sidebar_card_content(&subscribed, ws, sub_card, 0, node, index, 400, 0); }
+          ui_end_build();
+          for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+          { title |= str8_match(ui_box_display_string(box), str8_lit("Subscribed project"), 0); }
+        }
+        CardCheck(title, "a subscription entity's card renders its details");
+        CardCheck(uishell_hover_card_test_click(ws, &subscribed, sub_card, str8_lit("Subscribed governor"), 0) && sub_card->depth == 2 &&
+                  uishell_sidebar_card_entity_match(sub_card->path[1], uishell_sidebar_entity(provider, str8_lit("role"), str8_lit("p/governor"))),
+                  "a subscription entity's relation navigates to the subscription's entity");
+        uishell_sidebar_card_close(sub_card);
+      }
+      uishell_sidebar_release(&subscribed);
     }
     CardCheck(str8_match(uishell_sidebar_card_age(60000, 0), str8_lit("1m ago"), 0) &&
               str8_match(uishell_sidebar_card_age(3600000, 0), str8_lit("1h ago"), 0) &&
@@ -873,7 +973,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     UIShell_SidebarState freshness = {0};
     freshness.core = andamento_create(freshness_config.str, freshness_config.size, 0);
     CardCheck(freshness.core != 0, "freshness fixture initializes");
-    AndamentoEntity entity = {uishell_sidebar_text(str8_lit("worktree")), uishell_sidebar_text(str8_lit("stale-worktree"))};
+    AndamentoEntity entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("worktree"), str8_lit("stale-worktree"));
     AndamentoFact facts[] = {
       {.key = uishell_sidebar_text(str8_lit("display.label")), .kind = ANDAMENTO_FACT_TEXT,
        .text = uishell_sidebar_text(str8_lit("Worker")), .has_ttl = 1, .ttl_ms = 10},
@@ -886,7 +986,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       {.key = uishell_sidebar_text(str8_lit("action.primary.recipe")), .kind = ANDAMENTO_FACT_TEXT,
        .text = uishell_sidebar_text(str8_lit("exec sh")), .has_ttl = 1, .ttl_ms = 10},
     };
-    CardCheck(andamento_apply_entity(freshness.core, 1000, entity.kind, entity.id, uishell_sidebar_text(str8_lit("fixture")), facts, ArrayCount(facts), 0),
+    CardCheck(andamento_apply_entity(freshness.core, 1000, uishell_sidebar_text(uishell_sidebar_host_provider), entity.kind, entity.id, uishell_sidebar_text(str8_lit("fixture")), facts, ArrayCount(facts), 0),
               "retained observation fixture applies");
     uishell_sidebar_refresh(&freshness);
     AndamentoNode node = {0}; U64 index = uishell_sidebar_card_find(&freshness, entity, &node);
@@ -898,14 +998,14 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // A workspace this test makes up, read back through the index as 123456.
     UIShell_WorkspaceId worker = uishell_workspace_id_make();
     uishell_workspace_index_insert(worker, 123456);
-    CardCheck(andamento_complete3(freshness.core, effect.request_id, ANDAMENTO_COMPLETE_MATERIALIZE, uishell_sidebar_workspace(worker), uishell_sidebar_text(str8_zero()), 0),
+    CardCheck(andamento_complete(freshness.core, effect.request_id, ANDAMENTO_COMPLETE_MATERIALIZE, uishell_sidebar_workspace(worker), uishell_sidebar_text(str8_zero()), 0),
               "freshness fixture binds preview identity");
     andamento_effects_release(effects);
-    AndamentoWorkspace3 workspace = {.id = uishell_sidebar_workspace(worker), .name = uishell_sidebar_text(str8_lit("Worker")), .selected = 1};
-    CardCheck(andamento_observe3(freshness.core, &workspace, 1, 0, 0, 0) && andamento_tick(freshness.core, 61000, 0), "retained observation ages");
+    AndamentoWorkspace workspace = {.id = uishell_sidebar_workspace(worker), .name = uishell_sidebar_text(str8_lit("Worker")), .selected = 1};
+    CardCheck(andamento_observe(freshness.core, &workspace, 1, 0, 0, 0) && andamento_tick(freshness.core, 61000, 0), "retained observation ages");
     uishell_sidebar_refresh(&freshness);
     index = uishell_sidebar_card_find(&freshness, entity, &node);
-    CardCheck(node.state == ANDAMENTO_LIVE && node.workspace_id == 123456, "retained catalog preview identity survives expiry");
+    CardCheck(node.state == ANDAMENTO_LIVE && uishell_sidebar_node_cfg(&node) == 123456, "retained catalog preview identity survives expiry");
     UIShell_HoverCard *fresh_card = &freshness.cards[0];
     uishell_sidebar_card_set(fresh_card, node, ui_key_zero(), str8_zero(), 0, now_time_us());
     for(U64 enriched = 0; enriched < 2; enriched++)
@@ -940,12 +1040,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   {
     AndamentoNode entity = {0};
     for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
-    { uishell_sidebar_snapshot_node(fixture.snapshot, i, &entity); if(!entity.is_section && entity.entity_id.len) { break; } }
+    { andamento_snapshot_node(fixture.snapshot, i, &entity); if(!entity.is_section && entity.entity.id.len) { break; } }
     // Rendering sections publishes local sections, which replaces the
     // snapshot; keep the entity's text in storage the test owns.
     Arena *entity_arena = arena_alloc();
-    entity.entity_kind = uishell_sidebar_text(push_str8_copy(entity_arena, uishell_sidebar_string(entity.entity_kind)));
-    entity.entity_id = uishell_sidebar_text(push_str8_copy(entity_arena, uishell_sidebar_string(entity.entity_id)));
+    entity.entity = uishell_sidebar_card_entity_copy(entity_arena, entity.entity);
     entity.label = uishell_sidebar_text(push_str8_copy(entity_arena, uishell_sidebar_string(entity.label)));
     entity.key = uishell_sidebar_text(push_str8_copy(entity_arena, uishell_sidebar_string(entity.key)));
     UIShell_HoverCard *original = &fixture.cards[0];
@@ -982,11 +1081,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     floating->moving = floating->focused = 1; fixture.drag_card = floating;
     UIShell_RegsScope(.window = ws->cfg_id) { rd_drag_begin(UIShell_ContextRegSlot_View); }
     rd_state->drag_drop_creation_name = str8_lit("sidebar_section"); rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
-    CFG_ID placement_before = floating->saved;
+    U64 placement_before = floating->pin_size;
     WM_Event cancel_drag = {.kind = WM_EventKind_Press, .key = WM_Key_Esc};
     CardCheck(uishell_sidebar_card_wm_event(ws, &cancel_drag) && floating->open && !floating->moving &&
       !fixture.drag_card && !rd_drag_is_active() && !rd_state->drag_drop_commit && !rd_state->drag_drop_creation_name.size &&
-      floating->placement == UIShell_CardPlacement_Float && floating->saved == placement_before,
+      floating->placement == UIShell_CardPlacement_Float && floating->pin_size == placement_before,
       "Escape cancels the real card drag without pinning or closing the float");
     cancel_drag.kind = WM_EventKind_Release;
     CardCheck(uishell_sidebar_card_wm_event(ws, &cancel_drag), "drag cancel consumes its Escape release");
@@ -1043,90 +1142,80 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_card_request(floating, UIShell_CardPlacement_Pinned);
     uishell_sidebar_detached_finish(ws);
     CFG_Node *window = cfg_node_from_id(ws->cfg_id);
-    CFG_Node *saved = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0);
-    CardCheck(saved != &cfg_nil_node && !floating->open, "pin persists entity identity in the saved panel layout");
-    CFG_ID saved_id = saved->id;
+    UIShell_LocalPin *saved = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity));
+    CardCheck(saved && !floating->open, "pin persists entity identity in the saved panel layout");
+    // The pin, by its ghost id, and its group.
+    String8 saved_ghost = saved ? push_str8_copy(entity_arena, saved->ghost) : str8_lit("missing");
+    String8 center_area = saved ? push_str8_copy(entity_arena, saved->group->id) : str8_zero();
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
     // A transient card for an already pinned entity, dropped on that area's
     // center target, adds a second ghost and leaves the first reachable.
-    CFG_Node *center_area = saved->parent;
-    CFG_Node *saved_prev = saved->prev, *saved_next = saved->next;
-    CFG_Node *area_first = center_area->first, *area_last = center_area->last;
     uishell_hover_card_test_center_drop(ws, original, center_area);
-    U64 center_count = 0, entity_ghosts = 0;
+    U64 entity_ghosts = 0;
     B32 center_reachable = 0;
-    CFG_Node *dropped_ghost = &cfg_nil_node;
-    for(CFG_Node *n = center_area->first; n != &cfg_nil_node && center_count < 32; n = n->next, center_count++)
+    String8 dropped_ghost = str8_zero();
+    UIShell_LocalGroup *center_group = uishell_sidebar_local_group(window, center_area);
+    for(U64 p = 0; center_group && p < center_group->pin_count; p++)
     {
-      center_reachable |= n == saved;
-      if(str8_match(n->string, str8_lit("card"), 0) &&
-         str8_match(cfg_node_child_from_string(n, str8_lit("entity"))->first->string, uishell_sidebar_string(entity.entity_id), 0))
-      { entity_ghosts++; if(n != saved) { dropped_ghost = n; } }
+      UIShell_LocalPin *pin = &center_group->pins[p];
+      center_reachable |= str8_match(pin->ghost, saved_ghost, 0);
+      if(str8_match(uishell_sidebar_string(pin->target.id), uishell_sidebar_string(entity.entity.id), 0))
+      { entity_ghosts++; if(!str8_match(pin->ghost, saved_ghost, 0)) { dropped_ghost = push_str8_copy(entity_arena, pin->ghost); } }
     }
-    CardCheck(center_reachable && saved->id == saved_id && saved->parent == center_area &&
-      saved->prev != saved && saved->next != saved && !original->open,
-      "center drop of the same entity keeps the first ghost reachable");
-    CardCheck(entity_ghosts == 2 && dropped_ghost != &cfg_nil_node && uishell_sidebar_pin_ghost(dropped_ghost).size &&
-      !str8_match(uishell_sidebar_pin_ghost(dropped_ghost), uishell_sidebar_pin_ghost(saved), 0),
+    CardCheck(center_reachable && !original->open, "center drop of the same entity keeps the first ghost reachable");
+    CardCheck(entity_ghosts == 2 && dropped_ghost.size && !str8_match(dropped_ghost, saved_ghost, 0),
       "a drop is explicit placement: it adds a second ghost with its own id");
-    // Keep later diagnostics runnable even if this regression corrupts links.
-    if(!center_reachable || saved->prev == saved || saved->next == saved)
-    {
-      center_area->first = area_first; center_area->last = area_last;
-      saved->prev = saved_prev; saved->next = saved_next; saved->parent = center_area;
-      if(saved_prev != &cfg_nil_node) { saved_prev->next = saved; }
-      if(saved_next != &cfg_nil_node) { saved_next->prev = saved; }
-    }
-    CardCheck(uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == saved,
-      "same-entity center drop keeps the first ghost found by entity");
-    if(dropped_ghost != &cfg_nil_node)
-    { uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, dropped_ghost)); uishell_sidebar_detached_finish(ws); }
-    UIShell_HoverCard *center_pin = uishell_sidebar_saved_card(ws, saved);
+    saved = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity));
+    CardCheck(saved && str8_match(saved->ghost, saved_ghost, 0), "same-entity center drop keeps the first ghost found by entity");
+    if(dropped_ghost.size && uishell_sidebar_pin_by_ghost(window, dropped_ghost))
+    { uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, dropped_ghost))); uishell_sidebar_detached_finish(ws); }
+    UIShell_HoverCard *center_pin = uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, saved_ghost));
     uishell_hover_card_test_center_drop(ws, center_pin, center_area);
-    CardCheck(center_pin->open && !center_pin->moving && center_pin->saved == saved_id &&
-      uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == saved,
+    saved = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity));
+    CardCheck(center_pin->open && !center_pin->moving && str8_match(uishell_sidebar_card_pin_id(center_pin), saved_ghost, 0) &&
+      saved && str8_match(saved->ghost, saved_ghost, 0),
       "dropping the pinned card into its own area preserves its controller and saved identity");
     AndamentoNode other_entity = entity;
-    other_entity.entity_id = uishell_sidebar_text(str8_lit("center-drop-second"));
+    other_entity.entity.id = uishell_sidebar_text(str8_lit("center-drop-second"));
     uishell_sidebar_card_set(original, other_entity, ui_key_zero(), str8_zero(), 0, now_time_us());
     uishell_hover_card_test_center_drop(ws, original, center_area);
-    CFG_Node *second_pin = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(other_entity), 0);
-    CardCheck(second_pin != &cfg_nil_node && second_pin->parent == center_area &&
-      uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == saved && center_pin->open,
+    UIShell_LocalPin *second_pin = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(other_entity));
+    saved = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity));
+    CardCheck(second_pin && str8_match(second_pin->group->id, center_area, 0) &&
+      saved && str8_match(saved->ghost, saved_ghost, 0) && center_pin->open,
       "center drop of a different entity appends a second pin without removing the first");
-    uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, second_pin));
+    if(second_pin) { uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, second_pin)); }
     uishell_sidebar_detached_finish(ws);
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
     // A second ghost of the entity (a drop is explicit placement) is its own
     // object with its own card; Pin keeps revealing the first.
-    CFG_Node *another = uishell_sidebar_pin_add(&fixture, saved->parent, max_U64, uishell_sidebar_card_entity(entity),
+    UIShell_LocalPin *another = uishell_sidebar_pin_add(ws, center_area, max_U64, uishell_sidebar_card_entity(entity),
       uishell_sidebar_string(entity.label), uishell_sidebar_string(entity.key), 0);
-    CardCheck(another != &cfg_nil_node && another->id != saved_id &&
-      !str8_match(uishell_sidebar_pin_ghost(another), uishell_sidebar_pin_ghost(saved), 0) &&
-      uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == saved,
+    String8 another_ghost = another ? push_str8_copy(entity_arena, another->ghost) : str8_zero();
+    saved = uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity));
+    CardCheck(another && !str8_match(another_ghost, saved_ghost, 0) && saved && str8_match(saved->ghost, saved_ghost, 0),
       "a second ghost of the entity is its own object");
-    UIShell_HoverCard *another_card = uishell_sidebar_saved_card(ws, another);
-    UIShell_HoverCard *first_card = uishell_sidebar_saved_card(ws, saved);
-    CardCheck(another_card != first_card && another_card->saved == another->id && first_card->saved == saved_id,
+    UIShell_HoverCard *another_card = another ? uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, another_ghost)) : 0;
+    UIShell_HoverCard *first_card = uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, saved_ghost));
+    CardCheck(another_card && another_card != first_card && str8_match(uishell_sidebar_card_pin_id(another_card), another_ghost, 0) &&
+      str8_match(uishell_sidebar_card_pin_id(first_card), saved_ghost, 0),
       "each ghost has its own card");
-    uishell_sidebar_card_close(another_card); uishell_sidebar_detached_finish(ws);
-    CardCheck(cfg_node_from_id(saved_id) == saved, "closing one ghost leaves the other");
-    CFG_Node *again = uishell_sidebar_card_pin(ws, original, 0);
-    CardCheck(again->id == saved_id && fixture.pin_reveal == saved_id, "pinning twice reveals the same card");
-    CFG_Node *after_restart = uishell_hover_card_test_restart_pins(&fixture, window);
-    CFG_Node *restored = uishell_hover_card_test_pin(after_restart, uishell_sidebar_string(entity.entity_kind), uishell_sidebar_string(entity.entity_id));
-    CardCheck(restored != &cfg_nil_node && str8_match(uishell_sidebar_pin_ghost(restored), uishell_sidebar_pin_ghost(saved), 0) &&
-              str8_match(cfg_node_child_from_string(restored, str8_lit("label"))->first->string, uishell_sidebar_string(entity.label), 0),
+    if(another_card) { uishell_sidebar_card_close(another_card); }
+    uishell_sidebar_detached_finish(ws);
+    CardCheck(uishell_sidebar_pin_by_ghost(window, saved_ghost) && !uishell_sidebar_pin_by_ghost(window, another_ghost),
+      "closing one ghost leaves the other");
+    UIShell_LocalPin *again = uishell_sidebar_card_pin(ws, original, 0);
+    CardCheck(again && str8_match(again->ghost, saved_ghost, 0) && fixture.pin_reveal == u64_hash_from_str8(saved_ghost),
+      "pinning twice reveals the same card");
+    UIShell_LocalPin restored = uishell_hover_card_test_restart_pin(entity_arena, &fixture,
+      uishell_sidebar_string(entity.entity.kind), uishell_sidebar_string(entity.entity.id));
+    CardCheck(str8_match(restored.ghost, saved_ghost, 0) && str8_match(restored.label, uishell_sidebar_string(entity.label), 0),
               "Andamento's record keeps a pin's identity and label across a restart");
-    cfg_node_release(rd_state->cfg, after_restart);
     fprintf(stderr, "Hover card diagnostics: pinned rendering\n");
-    UIShell_HoverCard *pinned = uishell_sidebar_saved_card(ws, saved);
-    CFG_Node *layout_second = cfg_node_new(rd_state->cfg, saved->parent, str8_lit("card"));
-    uishell_sidebar_pin_new_ghost(layout_second);
-    uishell_sidebar_pin_set_field(layout_second, str8_lit("kind"), str8_lit("workspace"));
-    uishell_sidebar_pin_set_field(layout_second, str8_lit("entity"), str8_lit("layout-second"));
-    uishell_sidebar_pin_set_field(layout_second, str8_lit("label"), str8_lit("Second layout card"));
-    UIShell_HoverCard *second_layout_card = uishell_sidebar_saved_card(ws, layout_second);
+    UIShell_HoverCard *pinned = uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, saved_ghost));
+    String8 layout_second = uishell_hover_card_test_put_pin(entity_arena, ws, center_area, str8_lit("workspace"), str8_lit("layout-second"),
+                                                            str8_lit("Second layout card"));
+    UIShell_HoverCard *second_layout_card = uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, layout_second));
     F32 nil_scroll_before = ui_nil_box.view_off_target.y;
     F32 pinned_widths[] = {280, 160, 460};
     F32 previous_height = 0;
@@ -1137,7 +1226,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       test->mouse = v2f32(-100, -100); test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
       // Pins render in their local section's View, as tree rows and cards.
-      CFG_Node *pin_view = uishell_sidebar_local_view(window, saved->parent);
+      UIShell_LocalGroup *pin_group = uishell_sidebar_local_group(window, center_area);
+      CFG_Node *pin_view = uishell_sidebar_local_view(window, pin_group ? pin_group->section->id : str8_zero());
       UIShell_RegsScope(.window = window->id, .view = pin_view->id, .panel = pin_view->parent->id)
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
       {
@@ -1153,7 +1243,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(ui_nil_box.view_off_target.y == nil_scroll_before,
                 "first-frame pin reveal never writes the shared nil box");
       if(frame == 0)
-      { CardCheck(fixture.pin_reveal == saved_id && pinned->focused, "new pin keeps its reveal pending until measured"); }
+      { CardCheck(fixture.pin_reveal == u64_hash_from_str8(saved_ghost) && pinned->focused, "new pin keeps its reveal pending until measured"); }
       // Published on the first frame, drawn and measured on the second.
       if(frame == 2)
       { CardCheck(!fixture.pin_reveal, "measured new pin completes its reveal once drawn"); }
@@ -1182,12 +1272,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       { CardCheck(pinned->rect.x0 >= view_rect.x0 && pinned->rect.x1 <= view_rect.x1 && pinned->rect.y1 <= view_rect.y1,
                   "pinned WM hit geometry is clipped to the section viewport"); }
       uishell_sidebar_detached_finish(ws);
-      CFG_Node *label = cfg_node_child_from_string(saved, str8_lit("label"));
-      CardCheck(str8_match(label->first->string, pinned->retained_label, 0),
+      UIShell_LocalPin *labelled = uishell_sidebar_pin_by_ghost(window, saved_ghost);
+      CardCheck(labelled && str8_match(labelled->label, pinned->retained_label, 0),
                 "finish pass persists the live pinned label");
-      CFG_ID label_value = label->first->id;
+      U64 label_generation = uishell_sidebar_locals(&fixture)->generation;
       uishell_sidebar_detached_finish(ws);
-      CardCheck(label->first->id == label_value, "unchanged pinned label does not rewrite config on later finish passes");
+      CardCheck(uishell_sidebar_locals(&fixture)->generation == label_generation, "unchanged pinned label does not rewrite the pin on later finish passes");
     }
     uishell_sidebar_card_close(second_layout_card);
     uishell_sidebar_detached_finish(ws);
@@ -1204,37 +1294,36 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     UI_EventList absent_events = {0}; ui_begin_build(ws->os, &absent_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     MemoryZeroArray(test->hover_card_keys); test->hover_card_extra = 0;
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) UI_PrefWidth(ui_px(280, 1)) UI_PrefHeight(ui_em(1.6f, 1))
-    { uishell_sidebar_detached_content(&fixture, ws, pinned, saved->id, (AndamentoNode){0}, ANDAMENTO_NONE, 280, 1); }
+    { uishell_sidebar_detached_content(&fixture, ws, pinned, u64_hash_from_str8(saved_ghost), (AndamentoNode){0}, ANDAMENTO_NONE, 280, 1); }
     ui_end_build();
     B32 absent = 0;
     for(UI_Box *b = test->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->root).next)
     { absent |= str8_match(ui_box_display_string(b), str8_lit("No longer present"), 0); }
-    CardCheck(absent && pinned->open && cfg_node_from_id(saved_id) != &cfg_nil_node, "missing subject retains pinned card with an explicit marker");
+    CardCheck(absent && pinned->open && uishell_sidebar_pin_by_ghost(window, saved_ghost), "missing subject retains pinned card with an explicit marker");
     fixture.snapshot = snapshot;
-    CFG_Node *area = saved->parent;
+    String8 area = center_area;
     // Dragged through the shared finish to a docking site below its panel.
     // The site's split command and sizing are undone below for later checks.
     B32 sized_before_move = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
     UIShell_CmdNode *cmds_before_move = rd_state->cmds[0].last; U64 cmd_count_before_move = rd_state->cmds[0].count;
     fixture.drag_card = pinned; pinned->moving = pinned->drag_released = 1;
-    CFG_Node *area_view = uishell_sidebar_local_view(window, area);
+    UIShell_LocalGroup *area_group = uishell_sidebar_local_group(window, area);
+    CFG_Node *area_view = uishell_sidebar_local_view(window, area_group ? area_group->section->id : str8_zero());
     fixture.drop_panel = area_view->parent->id; fixture.drop_direction = Dir2_Down;
     uishell_sidebar_drag_finish(ws);
-    CFG_Node *moved = cfg_node_from_id(saved_id);
-    CardCheck(moved != &cfg_nil_node && moved->parent != area && str8_match(moved->parent->string, str8_lit("group"), 0) &&
-              pinned->open && !fixture.drag_card, "dragging a pinned card to a docking site moves its own ghost to the new area");
-    B32 has_card = 0;
-    for(CFG_Node *n = area->first; n != &cfg_nil_node; n = n->next)
-    { has_card |= str8_match(n->string, str8_lit("card"), 0); }
-    CardCheck(!has_card && cfg_node_from_id(area->id) == area && rd_dock_can_close(area_view),
+    UIShell_LocalPin *moved = uishell_sidebar_pin_by_ghost(window, saved_ghost);
+    CardCheck(moved && !str8_match(moved->group->id, area, 0) && pinned->open && !fixture.drag_card,
+              "dragging a pinned card to a docking site moves its own ghost to the new area");
+    area_group = uishell_sidebar_local_group(window, area);
+    CardCheck(area_group && area_group->pin_count == 0 && rd_dock_can_close(area_view),
               "moving the last pin preserves an empty group whose section can be closed");
-    if(moved != &cfg_nil_node && moved->parent != area)
+    if(moved && !str8_match(moved->group->id, area, 0))
     {
-      CFG_Node *new_area = moved->parent;
-      CFG_Node *new_view = uishell_sidebar_local_view(window, new_area);
-      cfg_node_insert_child(rd_state->cfg, area, area->last, moved);
+      String8 new_section = push_str8_copy(entity_arena, moved->group->section->id);
+      CFG_Node *new_view = uishell_sidebar_local_view(window, new_section);
+      uishell_sidebar_pin_place(window, saved_ghost, area, max_U64);
       if(new_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, new_view); }
-      cfg_node_release(rd_state->cfg, new_area->parent);
+      uishell_sidebar_local_forget_section(window, new_section);
     }
     if(cmds_before_move) { cmds_before_move->next = 0; } else { rd_state->cmds[0].first = 0; }
     rd_state->cmds[0].last = cmds_before_move; rd_state->cmds[0].count = cmd_count_before_move;
@@ -1248,7 +1337,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(arena_pos(pinned->arena) == label_pos && arena_pos(pinned->label_arena) < 4096,
               "live labels reuse separate bounded storage without growing the identity arena");
     uishell_sidebar_card_close(pinned); uishell_sidebar_detached_finish(ws);
-    CardCheck(uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == &cfg_nil_node,
+    CardCheck(!uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity)),
               "explicit Close removes a pinned card from persisted layout");
     // Float paint order follows the mask and raw-WM priority. A closed card
     // still linked this build cannot be recycled through its mask.next link.
@@ -1316,15 +1405,14 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // Clicking the row goes to its source; × removes the ghost, never the source.
     {
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
-      CFG_Node *ghost = uishell_sidebar_card_pin(ws, original, 0);
-      CFG_ID ghost_id = ghost->id;
-      UIShell_HoverCard *ghost_card = uishell_sidebar_saved_card(ws, ghost);
-      CardCheck(ghost != &cfg_nil_node && uishell_sidebar_pin_expanded(ghost), "pinning a card keeps it as a card");
-      uishell_sidebar_ghost_set_expanded(ghost, 0);
+      UIShell_LocalPin *ghost = uishell_sidebar_card_pin(ws, original, 0);
+      CardCheck(ghost && uishell_sidebar_pin_expanded(ghost), "pinning a card keeps it as a card");
       Temp ghost_scratch = scratch_begin(0, 0);
-      String8 ghost_guid = push_str8_copy(ghost_scratch.arena, uishell_sidebar_pin_ghost(ghost));
-      String8 card_suffix = push_str8f(ghost_scratch.arena, "###pinned_card_%I64u", ghost_id);
-      CFG_Node *ghost_view = uishell_sidebar_local_view(window, ghost->parent);
+      String8 ghost_guid = ghost ? push_str8_copy(ghost_scratch.arena, ghost->ghost) : str8_lit("missing");
+      CFG_Node *ghost_view = ghost ? uishell_sidebar_local_view(window, ghost->group->section->id) : &cfg_nil_node;
+      UIShell_HoverCard *ghost_card = ghost ? uishell_sidebar_saved_card(ws, ghost) : &fixture.cards[1];
+      uishell_sidebar_ghost_set_expanded(window, ghost_guid, 0);
+      String8 card_suffix = push_str8f(ghost_scratch.arena, "###pinned_card_%S", ghost_guid);
       Rng2F32 view_rect = r2f32p(0, 0, 320, 600);
       // Frames: 0 lays out; 1-2 click the disclosure; 3 checks the card;
       // 4-5 click its ⌄ to collapse it again; 6 settles; 7-8 click the row;
@@ -1364,8 +1452,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         String8 node_key = str8_zero();
         for(U64 i = 0; fixture.snapshot && i < andamento_snapshot_node_count(fixture.snapshot); i++)
         {
-          AndamentoNode n = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &n);
-          if(str8_match(uishell_sidebar_string(n.entity_id), ghost_guid, 0)) { node_key = push_str8_copy(ghost_scratch.arena, uishell_sidebar_string(n.key)); }
+          AndamentoNode n = {0}; andamento_snapshot_node(fixture.snapshot, i, &n);
+          if(str8_match(uishell_sidebar_string(n.entity.id), ghost_guid, 0)) { node_key = push_str8_copy(ghost_scratch.arena, uishell_sidebar_string(n.key)); }
         }
         // After × (frames 10-11), the ghost's row goes too, once republished.
         if(settled && frame == 13) { row_lingers = node_key.size != 0; }
@@ -1407,7 +1495,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(!row_lingers, "a removed ghost's row goes away");
       CardCheck(queued, "clicking a ghost row goes to its source");
       CardCheck(hover_offered, "hovering a ghost row offers its subject's hover card");
-      CardCheck(cfg_node_from_id(ghost_id) == &cfg_nil_node && !ghost_card->open, "× on a ghost row removes the ghost");
+      CardCheck(!uishell_sidebar_pin_by_ghost(window, ghost_guid) && !ghost_card->open, "× on a ghost row removes the ghost");
       CardCheck(uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(entity), 0) != ANDAMENTO_NONE, "removing a ghost leaves its source");
       fixture.card_has_action = 0;
       scratch_end(ghost_scratch);
@@ -1420,11 +1508,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     {
       U64 t0 = now_time_us();
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, t0);
-      CFG_Node *hold_pin = uishell_sidebar_card_pin(ws, original, 0);
+      UIShell_LocalPin *hold = uishell_sidebar_card_pin(ws, original, 0);
+      String8 hold_pin = hold ? push_str8_copy(entity_arena, hold->ghost) : str8_zero();
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, t0);
       original->source_rect = r2f32p(20, 20, 120, 50); original->engaged = original->focused = 1;
-      Temp ghosts_scratch = scratch_begin(0, 0);
-      CFG_NodePtrList before = {0}; uishell_sidebar_pin_cards(ghosts_scratch.arena, window, &before);
+      U64 before = uishell_hover_card_test_pin_count(window);
       Vec2F32 pin_at = {0};
       B32 menu_open = 0, show_tip = 0;
       for(U64 frame = 0; frame < 4; frame++)
@@ -1454,12 +1542,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         menu_open |= ui_any_ctx_menu_is_open();
       }
       uishell_sidebar_detached_finish(ws);
-      CFG_NodePtrList after = {0}; uishell_sidebar_pin_cards(ghosts_scratch.arena, window, &after);
+      U64 after = uishell_hover_card_test_pin_count(window);
       CardCheck(show_tip, "Pin on a subject pinned where Pin goes reads Show pin");
       CardCheck(!menu_open, "Pin opens no menu");
-      CardCheck(after.count == before.count, "Pin on a subject pinned where Pin goes adds no second ghost");
-      scratch_end(ghosts_scratch);
-      uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, hold_pin));
+      CardCheck(after == before, "Pin on a subject pinned where Pin goes adds no second ghost");
+      if(uishell_sidebar_pin_by_ghost(window, hold_pin)) { uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, hold_pin))); }
       uishell_sidebar_detached_finish(ws);
     }
     // Pin goes to the topmost local section that is showing; with none
@@ -1468,41 +1555,45 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CFG_Node *root = cfg_node_child_from_string(window, RD_DOCK_SIDEBAR_ROOT);
       CFG_Node *top_panel = cfg_node_new(rd_state->cfg, root, str8_lit("0.2"));
       cfg_node_insert_child(rd_state->cfg, root, &cfg_nil_node, top_panel);
-      CFG_Node *top_group = uishell_sidebar_local_new_group(window, str8_lit("Top"));
-      CFG_Node *top_view = uishell_sidebar_local_new_view(top_panel, top_group->parent);
-      CardCheck(uishell_sidebar_pin_target(window) == top_group, "Pin goes to the topmost showing local section");
+      UIShell_LocalGroup *top_group = uishell_sidebar_local_new_group(window, str8_lit("Top"));
+      String8 top_id = push_str8_copy(entity_arena, top_group->id), top_section = push_str8_copy(entity_arena, top_group->section->id);
+      CFG_Node *top_view = uishell_sidebar_local_new_view(top_panel, top_section);
+      UIShell_LocalGroup *target = uishell_sidebar_pin_target(window);
+      CardCheck(target && str8_match(target->id, top_id, 0), "Pin goes to the topmost showing local section");
       cfg_node_release(rd_state->cfg, cfg_node_child_from_string(top_view, str8_lit("selected")));
-      CardCheck(uishell_sidebar_pin_target(window) != top_group, "a section that isn't its panel's selected tab isn't where Pin goes");
+      target = uishell_sidebar_pin_target(window);
+      CardCheck(!target || !str8_match(target->id, top_id, 0), "a section that isn't its panel's selected tab isn't where Pin goes");
       cfg_node_release(rd_state->cfg, top_panel);
-      cfg_node_release(rd_state->cfg, top_group->parent);
+      uishell_sidebar_local_forget_section(window, top_section);
       // Hide every showing local section: Pin makes a new one at the top.
       CFG_NodePtrList hidden = {0};
       Temp hide_scratch = scratch_begin(0, 0);
-      for(CFG_Node *g = uishell_sidebar_pin_target(window); g != &cfg_nil_node; g = uishell_sidebar_pin_target(window))
+      for(UIShell_LocalGroup *g = uishell_sidebar_pin_target(window); g; g = uishell_sidebar_pin_target(window))
       {
-        CFG_Node *v = uishell_sidebar_local_view(window, g);
+        CFG_Node *v = uishell_sidebar_local_view(window, g->section->id);
         cfg_node_release(rd_state->cfg, cfg_node_child_from_string(v, str8_lit("selected")));
         cfg_node_ptr_list_push(hide_scratch.arena, &hidden, v);
       }
-      CFG_Node *made = uishell_sidebar_pin_area(ws, 0);
-      CFG_Node *made_view = uishell_sidebar_local_view(window, made);
-      CardCheck(made != &cfg_nil_node && made_view != &cfg_nil_node && root->first == made_view->parent,
+      UIShell_LocalGroup *made = uishell_sidebar_pin_area(ws, 0);
+      String8 made_section = made ? push_str8_copy(hide_scratch.arena, made->section->id) : str8_zero();
+      CFG_Node *made_view = made ? uishell_sidebar_local_view(window, made_section) : &cfg_nil_node;
+      CardCheck(made && made_view != &cfg_nil_node && root->first == made_view->parent,
                 "with no section showing, Pin makes one at the top of the sidebar");
       for(CFG_NodePtrNode *n = hidden.first; n; n = n->next) { cfg_node_child_from_string_or_alloc(rd_state->cfg, n->v, str8_lit("selected")); }
       if(made_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made_view->parent); }
-      if(made != &cfg_nil_node) { cfg_node_release(rd_state->cfg, made->parent); }
+      if(made) { uishell_sidebar_local_forget_section(window, made_section); }
       scratch_end(hide_scratch);
     }
 
     fprintf(stderr, "Hover card diagnostics: pinned drag with panel targets\n");
-    CFG_Node *drag_pin_entry = uishell_sidebar_card_pin(ws, original, 0);
+    UIShell_LocalPin *drag_pin_entry = uishell_sidebar_card_pin(ws, original, 0);
     UIShell_HoverCard *drag_pin = uishell_sidebar_saved_card(ws, drag_pin_entry);
     original->open = 0;
     // The grip starts a drag in the first View; a later leaf must build drop
     // sites in that same frame, before the next panel-area entry.
     CFG_Node *drag_root = cfg_node_new(rd_state->cfg, window, RD_DOCK_SIDEBAR_ROOT);
     // The pin's group shows in its section's View; publish it so it's placed.
-    CFG_Node *drag_view = uishell_sidebar_local_view(window, drag_pin_entry->parent);
+    CFG_Node *drag_view = uishell_sidebar_local_view(window, drag_pin_entry->group->section->id);
     cfg_node_child_from_string_or_alloc(rd_state->cfg, drag_view, str8_lit("selected"));
     CFG_Node *drag_panel = drag_view->parent;
     {
@@ -1632,7 +1723,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     }
     // Released below the panel area: over the pinned list it would reposition.
     CardCheck(drag_pin->open && drag_pin->placement == UIShell_CardPlacement_Float &&
-      uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity), 0) == &cfg_nil_node,
+      !uishell_sidebar_pin_find(window, uishell_sidebar_card_entity(entity)),
       "dragging an existing pin outside its section produces one float and removes the saved pin");
     // The title line drags a card too (drag-model.md, decision 4): the float
     // follows a title drag exactly as it follows the grip.
@@ -1843,61 +1934,31 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     removed->source_key = removed->source_row = str8_lit("removed-placement");
     uishell_sidebar_detached_finish(ws);
     CardCheck(!removed->open, "inline card closes when its source placement disappears");
-    // Duplicating a section must not duplicate the pinned entity.
-    CFG_Node *unique = uishell_sidebar_card_pin(ws, original, 0);
-    CFG_Node *copy = cfg_node_deep_copy(rd_state->cfg, unique);
-    cfg_node_insert_child(rd_state->cfg, unique->parent, unique->parent->last, copy);
-    CFG_ID copy_id = copy->id;
-    uishell_sidebar_pin_deduplicate(window);
-    CardCheck(cfg_node_from_id(copy_id) == &cfg_nil_node && cfg_node_from_id(unique->id) == unique,
+    // A pin is one per ghost id: set again under its id, it stays one pin.
+    UIShell_LocalPin *unique = uishell_sidebar_card_pin(ws, original, 0);
+    String8 unique_ghost = unique ? push_str8_copy(entity_arena, unique->ghost) : str8_lit("missing");
+    String8 tolerance_area = unique ? push_str8_copy(entity_arena, unique->group->id) : str8_zero();
+    U64 pins_before_copy = uishell_hover_card_test_pin_count(window);
+    if(unique) { UIShell_LocalPin copy = *unique; uishell_sidebar_local_put_pin(&fixture, &copy, tolerance_area, unique->group->pin_count); }
+    CardCheck(uishell_hover_card_test_pin_count(window) == pins_before_copy && uishell_sidebar_pin_by_ghost(window, unique_ghost),
               "layout copies reconcile to one card per ghost");
     // A second ghost of the same entity is deliberate and survives.
-    CFG_Node *second_ghost = cfg_node_deep_copy(rd_state->cfg, unique);
-    cfg_node_insert_child(rd_state->cfg, unique->parent, unique->parent->last, second_ghost);
-    uishell_sidebar_pin_new_ghost(second_ghost);
-    CFG_ID second_ghost_id = second_ghost->id;
-    uishell_sidebar_pin_deduplicate(window);
-    CardCheck(cfg_node_from_id(second_ghost_id) == second_ghost && cfg_node_from_id(unique->id) == unique,
+    String8 second_ghost = uishell_hover_card_test_put_pin(entity_arena, ws, tolerance_area, uishell_sidebar_string(entity.entity.kind),
+                                                           uishell_sidebar_string(entity.entity.id), str8_zero());
+    CardCheck(uishell_sidebar_pin_by_ghost(window, second_ghost) && uishell_sidebar_pin_by_ghost(window, unique_ghost),
               "distinct ghosts of one entity both survive reconciliation");
-    cfg_node_release(rd_state->cfg, second_ghost);
-    // Pins saved before ghost ids keep the first per entity, which gets an id.
-    CFG_Node *legacy = cfg_node_new(rd_state->cfg, unique->parent, str8_lit("card"));
-    uishell_sidebar_pin_set_field(legacy, str8_lit("kind"), str8_lit("workspace"));
-    uishell_sidebar_pin_set_field(legacy, str8_lit("entity"), str8_lit("legacy-pin"));
-    CFG_Node *legacy_copy = cfg_node_deep_copy(rd_state->cfg, legacy);
-    cfg_node_insert_child(rd_state->cfg, unique->parent, unique->parent->last, legacy_copy);
-    CFG_ID legacy_copy_id = legacy_copy->id;
-    uishell_sidebar_pin_deduplicate(window);
-    CardCheck(cfg_node_from_id(legacy_copy_id) == &cfg_nil_node && uishell_sidebar_pin_ghost(legacy).size,
-              "legacy pins keep one per entity and gain a ghost id");
-    CardCheck(uishell_sidebar_pin_expanded(legacy), "legacy pins keep their card form");
-    String8 legacy_ghost = push_str8_copy(test->arena, uishell_sidebar_pin_ghost(legacy));
-    uishell_sidebar_pin_deduplicate(window);
-    CardCheck(str8_match(uishell_sidebar_pin_ghost(legacy), legacy_ghost, 0), "a ghost id is stable once assigned");
-    cfg_node_release(rd_state->cfg, legacy);
-    // Unversioned saved layouts tolerate future kinds, missing identity
-    // fields and duplicate exact identities through reconciliation and render.
-    CFG_Node *tolerance_area = unique->parent;
-    CFG_Node *unknown = cfg_node_new(rd_state->cfg, tolerance_area, str8_lit("card"));
-    uishell_sidebar_pin_set_field(unknown, str8_lit("kind"), str8_lit("future_kind"));
-    uishell_sidebar_pin_set_field(unknown, str8_lit("entity"), str8_lit("orphan"));
-    uishell_sidebar_pin_set_field(unknown, str8_lit("label"), str8_lit("Future pin"));
-    uishell_sidebar_pin_set_field(unknown, str8_lit("future_field"), str8_lit("ignored"));
-    CFG_Node *unknown_copy = cfg_node_deep_copy(rd_state->cfg, unknown);
-    cfg_node_insert_child(rd_state->cfg, tolerance_area, tolerance_area->last, unknown_copy);
-    CFG_ID unknown_copy_id = unknown_copy->id;
-    CFG_Node *incomplete = cfg_node_new(rd_state->cfg, tolerance_area, str8_lit("card"));
-    uishell_sidebar_pin_set_field(incomplete, str8_lit("label"), str8_lit("Incomplete pin"));
-    uishell_sidebar_pin_deduplicate(window);
-    CardCheck(cfg_node_from_id(unknown_copy_id) == &cfg_nil_node && cfg_node_from_id(unknown->id) == unknown &&
-              cfg_node_from_id(incomplete->id) == incomplete && cfg_node_from_id(unique->id) == unique,
+    uishell_sidebar_pin_remove(window, second_ghost);
+    // Pins tolerate future kinds and missing identity fields through
+    // Andamento's record and render.
+    String8 unknown = uishell_hover_card_test_put_pin(entity_arena, ws, tolerance_area, str8_lit("future_kind"), str8_lit("orphan"),
+                                                      str8_lit("Future pin"));
+    String8 incomplete = uishell_hover_card_test_put_pin(entity_arena, ws, tolerance_area, str8_zero(), str8_zero(), str8_lit("Incomplete pin"));
+    CardCheck(uishell_sidebar_pin_by_ghost(window, unknown) && uishell_sidebar_pin_by_ghost(window, incomplete) &&
+              uishell_sidebar_pin_by_ghost(window, unique_ghost),
               "unknown kinds and incomplete entries tolerate reconciliation without losing valid pins");
-    CFG_Node *tolerance_restart = uishell_hover_card_test_restart_pins(&fixture, window);
-    CFG_Node *future_restored = uishell_hover_card_test_pin(tolerance_restart, str8_lit("future_kind"), str8_lit("orphan"));
-    CardCheck(future_restored != &cfg_nil_node &&
-              str8_match(cfg_node_child_from_string(future_restored, str8_lit("label"))->first->string, str8_lit("Future pin"), 0),
+    UIShell_LocalPin future_restored = uishell_hover_card_test_restart_pin(entity_arena, &fixture, str8_lit("future_kind"), str8_lit("orphan"));
+    CardCheck(future_restored.ghost.size && str8_match(future_restored.label, str8_lit("Future pin"), 0),
               "a restart through Andamento's record keeps unknown pin kinds and fallback labels");
-    cfg_node_release(rd_state->cfg, tolerance_restart);
     // Published and placed, they render in their section's View.
     {
       Temp publish_scratch = scratch_begin(0, 0);
@@ -1906,7 +1967,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_refresh(&fixture);
       scratch_end(publish_scratch);
     }
-    CFG_Node *tolerance_view = uishell_sidebar_local_view(window, tolerance_area);
+    UIShell_LocalGroup *tolerance_group = uishell_sidebar_local_group(window, tolerance_area);
+    CFG_Node *tolerance_view = uishell_sidebar_local_view(window, tolerance_group ? tolerance_group->section->id : str8_zero());
     UI_EventList tolerance_events = {0};
     ui_begin_build(ws->os, &tolerance_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
@@ -1917,10 +1979,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     U64 missing_markers = 0;
     for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
     { missing_markers += str8_match(ui_box_display_string(box), str8_lit("No longer present"), 0); }
-    CardCheck(missing_markers >= 2 && uishell_sidebar_saved_card(ws, unknown)->open && uishell_sidebar_saved_card(ws, incomplete)->open,
+    CardCheck(missing_markers >= 2 && uishell_sidebar_pin_by_ghost(window, unknown) && uishell_sidebar_pin_by_ghost(window, incomplete) &&
+              uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, unknown))->open &&
+              uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, incomplete))->open,
               "unknown and malformed saved pins render a missing marker and remain explicitly closable");
-    cfg_node_release(rd_state->cfg, unknown); cfg_node_release(rd_state->cfg, incomplete);
-    cfg_node_release(rd_state->cfg, unique);
+    uishell_sidebar_pin_remove(window, unknown); uishell_sidebar_pin_remove(window, incomplete);
+    uishell_sidebar_pin_remove(window, unique_ghost);
     // A wrong controlled-split owner rejects creation before any layout edit.
     for(U64 root_exists = 0; root_exists < 2; root_exists++)
     {
@@ -1934,10 +1998,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       String8 before_failure = cfg_string_from_tree(failed_scratch.arena, rd_state->cfg_schema_table, str8_zero(), invalid_owner);
       CFG_ID valid_window_id = ws->cfg_id;
       ws->cfg_id = invalid_owner->id;
-      CFG_Node *failed_pin = uishell_sidebar_card_pin(ws, original, 1);
+      UIShell_LocalPin *failed_pin = uishell_sidebar_card_pin(ws, original, 1);
       ws->cfg_id = valid_window_id;
       String8 after_failure = cfg_string_from_tree(failed_scratch.arena, rd_state->cfg_schema_table, str8_zero(), invalid_owner);
-      CardCheck(failed_pin == &cfg_nil_node && str8_match(before_failure, after_failure, 0),
+      CardCheck(!failed_pin && str8_match(before_failure, after_failure, 0),
                 "rejected creation removes tentative panels/root and preserves the existing tree");
       scratch_end(failed_scratch);
       cfg_node_release(rd_state->cfg, invalid_owner);
@@ -1950,7 +2014,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CFG_Node *existing_view = cfg_node_new(rd_state->cfg, merged_host, str8_lit("sidebar_section"));
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, existing_view, str8_lit("section")), str8_lit("projects"));
     unique = uishell_sidebar_card_pin(ws, original, 1);
-    CardCheck(unique != &cfg_nil_node && existing_view->parent != merged_host &&
+    CardCheck(unique && existing_view->parent != merged_host &&
               existing_view->parent->parent == merged_host, "new pinned area preserves tabs in a merged sidebar root");
     F32 sum = 0;
     for(CFG_Node *n = merged_host->first; n != &cfg_nil_node; n = n->next) { sum += (F32)f64_from_str8(n->string); }
@@ -1980,10 +2044,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         neighbour = cfg_node_new(rd_state->cfg, host, str8_lit("0.4"));
         cfg_node_new(rd_state->cfg, neighbour, str8_lit("sidebar_section"));
       }
-      U64 sections_before = 0;
-      for(CFG_Node *n = uishell_sidebar_local_root(window)->first; n != &cfg_nil_node; n = n->next) { sections_before++; }
-      CFG_Node *existing_group = uishell_sidebar_local_new_group(window, str8_lit("Pinned"));
-      CFG_Node *existing = uishell_sidebar_local_new_view(destination, existing_group->parent);
+      uishell_sidebar_local_ensure_default(&fixture);
+      U64 sections_before = uishell_sidebar_window_locals(window)->section_count;
+      UIShell_LocalGroup *existing_local = uishell_sidebar_local_new_group(window, str8_lit("Pinned"));
+      String8 existing_group = push_str8_copy(entity_arena, existing_local->id);
+      CFG_Node *existing = uishell_sidebar_local_new_view(destination, existing_local->section->id);
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
       original->engaged = original->focused = original->moving = original->drag_released = 1;
       fixture.drag_card = original;
@@ -2002,22 +2067,17 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       ui_end_build();
       // The ghost the drop made: in the existing group (centre), or in the
       // section the site made (an edge); earlier ghosts of the entity stay.
-      CFG_Node *entry = &cfg_nil_node;
+      UIShell_LocalPin *entry = 0;
       {
-        CFG_Node *local = uishell_sidebar_local_root(window);
-        U64 index = 0;
-        for(CFG_Node *n = local->first; n != &cfg_nil_node; n = n->next, index++)
+        UIShell_Locals *locals = uishell_sidebar_window_locals(window);
+        for(U64 n = sections_before; n < locals->section_count; n++)
+        for(U64 g = 0; g < locals->sections[n].group_count; g++)
         {
-          if(index < sections_before) { continue; }
-          for(CFG_Node *g = n->first; g != &cfg_nil_node; g = g->next)
-          {
-            if(!str8_match(g->string, str8_lit("group"), 0)) { continue; }
-            CFG_Node *c = cfg_node_child_from_string(g, str8_lit("card"));
-            if(c != &cfg_nil_node && (directions[d] == Dir2_Invalid) == (g == existing_group)) { entry = c; }
-          }
+          UIShell_LocalGroup *group = &locals->sections[n].groups[g];
+          if(group->pin_count && (directions[d] == Dir2_Invalid) == str8_match(group->id, existing_group, 0)) { entry = &group->pins[0]; }
         }
       }
-      CFG_Node *area = entry->parent;
+      UIShell_LocalGroup *area = entry ? entry->group : 0;
       for(UIShell_CmdNode *n = before_drop ? before_drop->next : rd_state->cmds[0].first; n; n = n->next)
       {
         if(str8_match(n->cmd.name, str8_lit("split_panel"), 0)) UIShell_RegsScope()
@@ -2027,7 +2087,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       Temp drop_scratch = scratch_begin(0, 0);
       UIShell_WorkspaceMount drop_mount = uishell_workspace_mount_from_owner_cfg(drop_scratch.arena, window, settled_host);
       CFG_PanelNode *drop_root = drop_mount.panel_tree.root;
-      CardCheck(entry != &cfg_nil_node && !original->open &&
+      CardCheck(entry && !original->open &&
         cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node,
         "accepted card drop pins once and opts into saved panel sizing");
       CFG_PanelNode *target_root = nested ? drop_root->first : drop_root;
@@ -2035,22 +2095,24 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       { CardCheck(drop_root->child_count == 2 && drop_root->last->cfg == neighbour &&
           abs_f32(drop_root->last->pct_of_parent-.4f) < .0001f, "nested drop preserves the other panel and outer allocation"); }
       if(directions[d] == Dir2_Invalid)
-      { CardCheck(area == existing_group && target_root->child_count == 0, "center drop joins the group of the exact existing section"); }
+      { CardCheck(area && str8_match(area->id, existing_group, 0) && target_root->child_count == 0, "center drop joins the group of the exact existing section"); }
       else
       {
         Side side = side_from_dir2(directions[d]);
         CFG_PanelNode *placed = side == Side_Min ? target_root->first : target_root->last;
         CardCheck(target_root->child_count == 2 && target_root->split_axis == axis2_from_dir2(directions[d]) &&
-          placed->cfg == uishell_sidebar_local_view(window, area)->parent && abs_f32(placed->pct_of_parent-.5f) < .0001f,
+          area && placed->cfg == uishell_sidebar_local_view(window, area->section->id)->parent && abs_f32(placed->pct_of_parent-.5f) < .0001f,
           "directional card drop matches the ordinary half-panel split and side");
       }
       scratch_end(drop_scratch);
       cfg_node_release(rd_state->cfg, settled_host);
       // The sections this case made go with their Views.
-      CFG_Node *local = uishell_sidebar_local_root(window);
-      U64 index = 0;
-      for(CFG_Node *n = local->first, *next; n != &cfg_nil_node; n = next, index++)
-      { next = n->next; if(index >= sections_before) { cfg_node_release(rd_state->cfg, n); } }
+      {
+        UIShell_Locals *locals = uishell_sidebar_window_locals(window);
+        String8List made = {0};
+        for(U64 n = sections_before; n < locals->section_count; n++) { str8_list_push(entity_arena, &made, push_str8_copy(entity_arena, locals->sections[n].id)); }
+        for(String8Node *n = made.first; n; n = n->next) { uishell_sidebar_local_forget_section(window, n->string); }
+      }
       rd_state->drag_drop_creation_name = str8_zero(); rd_state->drag_drop_commit = 0;
     }
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("control_views_split_x")));
@@ -2119,19 +2181,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // dragged there moves its own ghost.
     {
       Temp scratch = scratch_begin(0, 0);
-      CFG_Node *group = uishell_sidebar_local_new_group(window, str8_lit("Drops"));
-      String8 group_id = push_str8_copy(scratch.arena, uishell_sidebar_local_field(group, str8_lit("id")));
-      CFG_Node *pins[2];
+      UIShell_LocalGroup *made = uishell_sidebar_local_new_group(window, str8_lit("Drops"));
+      String8 group_id = push_str8_copy(scratch.arena, made->id), group_section = push_str8_copy(scratch.arena, made->section->id);
       String8 ghosts[3] = {0};
       char *ids[] = {"drop-first", "drop-second"};
       for(U64 i = 0; i < 2; i++)
-      {
-        pins[i] = cfg_node_new(rd_state->cfg, group, str8_lit("card"));
-        uishell_sidebar_pin_new_ghost(pins[i]);
-        uishell_sidebar_pin_set_field(pins[i], str8_lit("kind"), str8_lit("workspace"));
-        uishell_sidebar_pin_set_field(pins[i], str8_lit("entity"), str8_cstring(ids[i]));
-        ghosts[i] = push_str8_copy(scratch.arena, uishell_sidebar_pin_ghost(pins[i]));
-      }
+      { ghosts[i] = uishell_hover_card_test_put_pin(scratch.arena, ws, group_id, str8_lit("workspace"), str8_cstring(ids[i]), str8_zero()); }
       // Published and placed, the group's items form one run.
       UIShell_ControlledSplit drop_split = uishell_root_controlled_split_from_window(scratch.arena, window);
       uishell_sidebar_publish(&fixture, &drop_split);
@@ -2139,8 +2194,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       String8 loop = str8_zero();
       for(U64 i = 0; fixture.snapshot && i < andamento_snapshot_node_count(fixture.snapshot); i++)
       {
-        AndamentoNode n = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &n);
-        if(str8_match(uishell_sidebar_string(n.entity_id), ghosts[0], 0)) { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(fixture.snapshot, i)); }
+        AndamentoNode n = {0}; andamento_snapshot_node(fixture.snapshot, i, &n);
+        if(str8_match(uishell_sidebar_string(n.entity.id), ghosts[0], 0)) { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(fixture.snapshot, i)); }
       }
       CardCheck(loop.size != 0, "a local group's ghosts are placed as one run");
       if(!fixture.group_claim_arena) { fixture.group_claim_arena = arena_alloc(); }
@@ -2150,13 +2205,17 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       fixture.drag_card = original; original->moving = original->drag_released = 1;
       fixture.group_claim_index = 1; fixture.group_claim_build = test->build_index;
       uishell_sidebar_drag_finish(ws);
-      CFG_Node *added = group->last;
-      ghosts[2] = push_str8_copy(scratch.arena, uishell_sidebar_pin_ghost(added));
+      // The new pin: the group's one that isn't either of the two.
+      UIShell_LocalGroup *group = uishell_sidebar_local_group(window, group_id);
+      UIShell_LocalPin *added = 0;
+      for(U64 p = 0; group && p < group->pin_count; p++)
+      { if(!str8_match(group->pins[p].ghost, ghosts[0], 0) && !str8_match(group->pins[p].ghost, ghosts[1], 0)) { added = &group->pins[p]; } }
+      ghosts[2] = added ? push_str8_copy(scratch.arena, added->ghost) : str8_zero();
       B32 ordered = fixture.order_pending && fixture.order_count == 3 &&
         str8_match(uishell_sidebar_string(fixture.order[0].id), ghosts[0], 0) &&
         str8_match(uishell_sidebar_string(fixture.order[1].id), ghosts[2], 0) &&
         str8_match(uishell_sidebar_string(fixture.order[2].id), ghosts[1], 0);
-      CardCheck(added != pins[1] && str8_match(cfg_node_child_from_string(added, str8_lit("entity"))->first->string, uishell_sidebar_string(entity.entity_id), 0) &&
+      CardCheck(added && str8_match(uishell_sidebar_string(added->target.id), uishell_sidebar_string(entity.entity.id), 0) &&
         uishell_sidebar_pin_expanded(added) && !original->open && !fixture.drag_card && ordered,
         "a card released on a group's insertion point becomes a ghost there, as a card, at that index");
       fixture.order_pending = 0;
@@ -2165,11 +2224,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       // line does), so first lands between them.
       uishell_sidebar_publish(&fixture, &drop_split);
       uishell_sidebar_refresh(&fixture);
-      UIShell_HoverCard *first = uishell_sidebar_saved_card(ws, pins[0]);
+      UIShell_HoverCard *first = uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, ghosts[0]));
       fixture.drag_card = first; first->moving = first->drag_released = 1;
       fixture.group_claim_index = 2; fixture.group_claim_build = test->build_index;
       uishell_sidebar_drag_finish(ws);
-      CardCheck(fixture.order_pending && fixture.order_count == 3 && cfg_node_from_id(pins[0]->id)->parent == group && first->open &&
+      UIShell_LocalPin *first_pin = uishell_sidebar_pin_by_ghost(window, ghosts[0]);
+      CardCheck(fixture.order_pending && fixture.order_count == 3 && first_pin && str8_match(first_pin->group->id, group_id, 0) && first->open &&
         str8_match(uishell_sidebar_string(fixture.order[1].id), ghosts[0], 0),
         "a pinned card dragged down to a middle insertion point moves its own ghost there, not one past it");
       fixture.order_pending = 0;
@@ -2180,11 +2240,15 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       fixture.group_claim_build = test->build_index; fixture.group_claim_rect = r2f32p(-1e6, -1e6, -1e6+1, -1e6+1);
       CardCheck(!uishell_sidebar_group_claimed(&fixture), "an insertion point the pointer has left doesn't capture a release");
       fixture.group_claim_build = 0;
-      for(UIShell_HoverCard *c = fixture.detached; c; c = c->next) { if(c->saved && cfg_node_from_id(c->saved)->parent == group) { uishell_sidebar_card_close(c); } }
+      for(UIShell_HoverCard *c = fixture.detached; c; c = c->next)
+      {
+        UIShell_LocalPin *pin = uishell_sidebar_pin_by_ghost(window, uishell_sidebar_card_pin_id(c));
+        if(c->pin_size && pin && str8_match(pin->group->id, group_id, 0)) { uishell_sidebar_card_close(c); }
+      }
       uishell_sidebar_detached_finish(ws);
-      CFG_Node *drop_view = uishell_sidebar_local_view(window, group);
+      CFG_Node *drop_view = uishell_sidebar_local_view(window, group_section);
       if(drop_view != &cfg_nil_node) { cfg_node_release(rd_state->cfg, drop_view); }
-      cfg_node_release(rd_state->cfg, group->parent);
+      uishell_sidebar_local_forget_section(window, group_section);
       scratch_end(scratch);
     }
     arena_release(entity_arena);

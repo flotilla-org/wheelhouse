@@ -8,8 +8,8 @@ uishell_sidebar_coverage_diagnostics(UIShell_SidebarState *state, UIShell_Contro
     B32 found = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-      if(!node.is_section && node.state == ANDAMENTO_LIVE && node.workspace_id == w->id) { found = 1; break; }
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      if(!node.is_section && node.state == ANDAMENTO_LIVE && uishell_sidebar_node_cfg(&node) == w->id) { found = 1; break; }
     }
     if(!found) { fprintf(stderr, "Open workspace without sidebar entry: %llu (%.*s)\n", (unsigned long long)w->id, (int)w->display_name.size, w->display_name.str); ok = 0; }
   }
@@ -65,7 +65,7 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
       "\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}},"
       "\"flotilla.project\":{\"value\":{\"type\":\"text\",\"value\":\"selection-project\"}},"
       "\"flotilla.convoy\":{\"value\":{\"type\":\"text\",\"value\":\"selection-convoy\"}}},\"unset\":[]}", kinds[i], ids[i], ids[i]);
-    ok &= andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(patch), 0);
+    ok &= andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0);
   }
   // The split's inventory is the real process-boundary observation contract;
   // no terminal process is required to verify navigation presentation.
@@ -85,7 +85,7 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
       "\"entity.kind\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}},"
       "\"entity.id\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}}},\"unset\":[]}",
       uishell_string_from_workspace_id(scratch.arena, i == 1 ? convoy.workspace_id : vessel.workspace_id), kinds[i], ids[i]);
-    ok &= andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(patch), 0);
+    ok &= andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0);
   }
   UIShell_SidebarSection section = {.key = str8_lit("tree")};
   state.sections = &section;
@@ -118,8 +118,8 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
     {
       for(U64 index = 0; index < andamento_snapshot_node_count(state.snapshot); index++)
       {
-        AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state.snapshot, index, &node);
-        if(str8_match(uishell_sidebar_string(node.entity_id), str8_cstring(ids[kind]), 0) &&
+        AndamentoNode node = {0}; andamento_snapshot_node(state.snapshot, index, &node);
+        if(str8_match(uishell_sidebar_string(node.entity.id), str8_cstring(ids[kind]), 0) &&
            node.collapsed != (kind ? convoy_closed : project_closed))
         { uishell_sidebar_dispatch(&state, node.toggle, 0); uishell_sidebar_refresh(&state); break; }
       }

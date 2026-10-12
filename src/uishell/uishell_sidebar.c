@@ -43,6 +43,47 @@ struct UIShell_SidebarSection
   F32 footer_extra;
 };
 
+// The local sections, groups and pins Andamento keeps, as its Dashboard
+// says (uishell_sidebar_locals): sections in order, each with its groups in
+// order, each with its pins (`.ref`s, known by their ID, the ghost id).
+typedef struct UIShell_LocalSection UIShell_LocalSection;
+typedef struct UIShell_LocalGroup UIShell_LocalGroup;
+typedef struct UIShell_LocalPin UIShell_LocalPin;
+struct UIShell_LocalPin
+{
+  UIShell_LocalGroup *group;
+  String8 ghost;
+  AndamentoEntity target;       // empty when the pin names none
+  String8 label, source;
+  B32 compact;
+  U64 position;
+};
+struct UIShell_LocalGroup
+{
+  UIShell_LocalSection *section;
+  String8 id, label;
+  B32 is_default;
+  U64 position;
+  UIShell_LocalPin *pins;
+  U64 pin_count;
+};
+struct UIShell_LocalSection
+{
+  String8 id;
+  String8 label;                // its title, as Andamento shows it
+  B32 named;                    // a name of its own, not its groups' names
+  U64 position;
+  UIShell_LocalGroup *groups;
+  U64 group_count;
+};
+typedef struct UIShell_Locals UIShell_Locals;
+struct UIShell_Locals
+{
+  U64 generation;               // the dashboard record's, when read
+  UIShell_LocalSection *sections;
+  U64 section_count;
+};
+
 typedef enum UIShell_CardPlacement
 {
   UIShell_CardPlacement_Transient,
@@ -56,7 +97,9 @@ struct UIShell_HoverCard
 {
   UIShell_HoverCard *next;
   UI_HoverCardMask mask;
-  CFG_ID saved;
+  // A pinned card's pin, by its ghost id (uishell_sidebar_card_pin_id).
+  U8 pin[64];
+  U64 pin_size;
   UIShell_CardPlacement placement, requested;
   B32 move_requested, moving, drag_released;
   // The card's own context menu, which mustn't dismiss it like other menus.
@@ -103,7 +146,6 @@ struct UIShell_SidebarPublished
   String8 entry;
   U64 hash;
 };
-typedef struct UIShell_KdlNode UIShell_KdlNode;
 // A section the snapshot declares: its key, the title its Views take (KDL
 // owns them: its first field, else its label), and whether it stands aside
 // while empty (the leftover section, uishell_sidebar_leftover_hidden).
@@ -121,7 +163,8 @@ struct UIShell_SidebarState
   CFG_ID window;
   // Andamento's records (uishell_sidebar_records.c): the window's records
   // directory (empty: not saved), each record as last written, and when the
-  // changed ones are due. The dashboard record as read last, by generation.
+  // changed ones are due. The Dashboard as read last (its generation is
+  // the dashboard record's).
   Arena *records_arena;
   String8 records_dir;
   UIShell_SidebarRecord *records;
@@ -129,9 +172,15 @@ struct UIShell_SidebarState
   // Snapshots taken (uishell_sidebar_replace_snapshot), and how many had been
   // when records were last compared with Andamento's.
   U64 snapshot_count, records_snapshot_count;
-  Arena *dashboard_arena;
-  UIShell_KdlNode *dashboard;
-  U64 dashboard_generation;
+  AndamentoDashboard *dashboard;
+  // The Dashboard's local sections, groups and pins, made from `dashboard`
+  // (uishell_sidebar_locals). Each read leaves the ones before it valid
+  // until the next frame, so an edit can read, change and read again.
+  // Edits sent since the snapshot was last taken set `locals_sent`.
+  Arena *locals_arena;
+  UIShell_Locals *locals;
+  U64 locals_frame;
+  B32 locals_sent;
   Arena *labels_arena;
   UIShell_SidebarLabel *labels;
   U64 labels_capacity;
@@ -139,7 +188,8 @@ struct UIShell_SidebarState
   UIShell_SidebarSection *sections;
   UIShell_HoverCard cards[2];
   UIShell_HoverCard *detached;
-  CFG_ID pin_before, pin_reveal;
+  CFG_ID pin_before;
+  U64 pin_reveal;                 // the pin to reveal, by its ghost id's hash
   UIShell_HoverCard *drag_card;
   // One sidebar drag at a time, of a card (drag_card) or of a row: the row's
   // key, sibling run, entity, label and rect, copied when it starts.
@@ -191,15 +241,16 @@ struct UIShell_SidebarState
   String8 order_loop;
   AndamentoEntity *order;
   U64 order_count;
-  // Renaming a local section or group (uishell_local_groups.c): its node,
-  // the edit, and whether the field still needs focus. A delete awaiting
-  // confirmation, because workspaces would move.
-  CFG_ID rename_node;
+  // Renaming a local section or group (uishell_local_groups.c): which, by
+  // its handle (uishell_sidebar_local_handle), the edit, and whether the
+  // field still needs focus. A delete awaiting confirmation, because
+  // workspaces would move, by its handle too.
+  U64 rename_node;
   U8 rename_text[256];            // a longer name is cut to fit
   U64 rename_size;
   TxtPt rename_cursor, rename_mark;
   B32 rename_focus;
-  CFG_ID confirm_delete;
+  U64 confirm_delete;
   // The make footer being named (uishell_sidebar_make_footer), by its key's
   // hash (0: none), which of its actions, and the build it was last shown
   // in: one no longer shown stops naming.
@@ -216,7 +267,6 @@ struct UIShell_SidebarState
   B32 section_drop;
   CFG_ID section_drop_source, section_drop_panel, section_drop_prev, section_drop_selected;
   Dir2 section_drop_direction;
-  U64 pin_cfg_generation;
   Rng2F32 rect;
   B32 card_escape_down;
   AndamentoEntity card_action_target;
@@ -243,11 +293,6 @@ struct UIShell_SidebarState
   U8 *roles;
   String8 *role_keys;
   B32 roles_default_section;      // the default local section is placed
-  // Local sections, groups and pins as last sent to Andamento, and a hash
-  // of the working copy they were sent from (uishell_sidebar_local_publish).
-  Arena *local_arena;
-  UIShell_SidebarPublished *local_published;
-  U64 local_source_hash;
   // Local workspaces as last published as host entities (.workspace), and a
   // hash of what that read (uishell_sidebar_publish_workspaces).
   Arena *workspaces_arena;
@@ -267,14 +312,18 @@ struct UIShell_SidebarState
   U64 observed_count;
   // Workspace arrangements and Slots in Andamento (uishell_workspace_store.c):
   // each workspace's document as last committed or built; the config gen,
-  // content revision and snapshot count last synced; and the calls and
+  // workspaces' tree hash, content revision and snapshot count last synced;
+  // and the calls and
   // commits made, which the behaviour harness counts across a gesture.
   Arena *store_arena;
   UIShell_StoreEntry *store_entries;
   U64 store_entry_count, store_entry_capacity;
   B32 store_synced;
-  U64 store_cfg_gen, store_content_revision, store_snapshot_count;
+  U64 store_cfg_gen, store_tree_hash, store_content_revision, store_snapshot_count;
   U64 store_calls, store_commits;
+  // What Andamento last said of the Workspace Overlays (flags, tombstones;
+  // uishell_store_read_overlay).
+  Arena *store_overlay_arena;
   // The Dashboard's sidebar arrangement in Andamento (uishell_sidebar_store.c):
   // the document as last committed or built, and its generation; the
   // snapshot count last synced; what Andamento's notes say is
@@ -309,6 +358,13 @@ uishell_sidebar_string(AndamentoText s)
   return str8((U8 *)s.data, s.len);
 }
 
+internal AndamentoEntity
+uishell_sidebar_entity(String8 provider, String8 kind, String8 id)
+{
+  AndamentoEntity result = {uishell_sidebar_text(provider), uishell_sidebar_text(kind), uishell_sidebar_text(id)};
+  return result;
+}
+
 internal AndamentoWorkspaceId
 uishell_sidebar_workspace(UIShell_WorkspaceId id)
 {
@@ -325,29 +381,19 @@ uishell_workspace_id_from_andamento(AndamentoWorkspaceId id)
   return result;
 }
 
-// Andamento names a workspace by its Workspace ID (ABI 3), and ABI 2's
-// AndamentoNode/AndamentoDetail.workspace_id reads 0 for one. Docking and
-// rendering key workspaces by CFG_ID until state model step 7, so the host
-// reads nodes and details through these, which put the CFG_ID of the
-// workspace shown there (0: none, or one this process never indexed).
-internal uint32_t
-uishell_sidebar_snapshot_node(const AndamentoSnapshot *snapshot, size_t index, AndamentoNode *out)
+// The config node of the workspace with this Workspace ID, as docking and
+// rendering key workspaces: 0 for none, or one this process never indexed.
+internal CFG_ID
+uishell_sidebar_workspace_cfg(AndamentoWorkspaceId id)
 {
-  uint32_t ok = andamento_snapshot_node(snapshot, index, out);
-  AndamentoWorkspaceId id = {0};
-  out->workspace_id = ok && andamento_snapshot_node_workspace(snapshot, index, &id) ?
-    uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_andamento(id)) : 0;
-  return ok;
+  return uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_andamento(id));
 }
 
-internal uint32_t
-uishell_sidebar_snapshot_detail(const AndamentoSnapshot *snapshot, size_t index, AndamentoDetail *out)
+// The workspace a LIVE node shows, by its config node (0: none).
+internal CFG_ID
+uishell_sidebar_node_cfg(AndamentoNode *node)
 {
-  uint32_t ok = andamento_snapshot_detail(snapshot, index, out);
-  AndamentoWorkspaceId id = {0};
-  out->workspace_id = ok && andamento_snapshot_detail_workspace(snapshot, index, &id) ?
-    uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_andamento(id)) : 0;
-  return ok;
+  return uishell_sidebar_workspace_cfg(node->workspace_id);
 }
 
 internal void
@@ -359,7 +405,7 @@ uishell_sidebar_subject_hit(AndamentoNode node, UI_Box *box, char *action, B32 m
   // it settles. The embedded subject IDs are fixed ASCII identifiers.
   str8_list_pushf(ui_build_arena(), &uishell_sidebar_subject_geometry,
     "{\"id\":\"%S\",\"chip\":%s,\"action\":\"%s\",\"menu\":%s,\"rect\":[%g,%g,%g,%g]}",
-    uishell_sidebar_string(node.entity_id),
+    uishell_sidebar_string(node.entity.id),
     str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0) ? "true" : "false", action, menu ? "true" : "false",
     box->rect.x0, box->rect.y0, box->rect.x1, box->rect.y1);
 }
@@ -418,7 +464,7 @@ uishell_sidebar_context_label(UIShell_SidebarState *state, AndamentoNode *nodes,
   {
     for(U64 i = 0; i < count; i++)
     {
-      if(!nodes[i].is_section && str8_match(identity, uishell_sidebar_string(nodes[i].entity_id), 0))
+      if(!nodes[i].is_section && str8_match(identity, uishell_sidebar_string(nodes[i].entity.id), 0))
       { return uishell_sidebar_string(nodes[i].label); }
     }
     return identity;
@@ -433,7 +479,7 @@ uishell_sidebar_context_label(UIShell_SidebarState *state, AndamentoNode *nodes,
     state->labels_capacity = capacity;
     for(U64 i = 0; i < count; i++)
     {
-      String8 key = uishell_sidebar_string(nodes[i].entity_id);
+      String8 key = uishell_sidebar_string(nodes[i].entity.id);
       if(nodes[i].is_section || !key.size) { continue; }
       U64 slot = u64_hash_from_str8(key)&(capacity-1);
       while(state->labels[slot].identity.size && !str8_match(state->labels[slot].identity, key, 0))
@@ -452,14 +498,12 @@ uishell_sidebar_context_label(UIShell_SidebarState *state, AndamentoNode *nodes,
   return identity;
 }
 
-internal void uishell_sidebar_local_publish(UIShell_SidebarState *state, CFG_ID window);
 internal void uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush);
 internal void uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 force);
 internal void uishell_workspace_store_release(UIShell_SidebarState *state);
 internal void uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 force);
 internal void uishell_sidebar_store_settle(UIShell_SidebarState *state, CFG_Node *window);
 internal void uishell_sidebar_store_presentation(CFG_State *copy_state, CFG_Node *window, CFG_Node *copy);
-internal CFG_Node *uishell_sidebar_local_tree_from_id(CFG_ID window);
 
 // Open while panel trees built from the config are drawn (rd_window_frame,
 // and the sidebar's own in uishell_control_surface_ui): the arrangement
@@ -489,17 +533,14 @@ uishell_sidebar_release(UIShell_SidebarState *state)
 {
   if(state != 0)
   {
-    // What the window's sidebar holds is saved before its core goes, local
-    // sections edited since the last publish included.
+    // What the window's sidebar holds is saved before its core goes.
     if(state->window && state->core)
     {
-      uishell_sidebar_local_publish(state, state->window);
       uishell_workspace_store_sync(state, cfg_node_from_id(state->window), 1);
       uishell_sidebar_store_sync(state, cfg_node_from_id(state->window), 1);
       uishell_sidebar_records_save(state, 0, 1);
     }
     uishell_workspace_store_release(state);
-    if(state->window) { cfg_node_release(rd_state->cfg, uishell_sidebar_local_tree_from_id(state->window)); }
     state->window = 0;
     for(U64 i = 0; i < ArrayCount(state->cards); i++)
     {
@@ -509,12 +550,12 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     }
     if(state->records_arena) { arena_release(state->records_arena); state->records_arena = 0; }
     state->records_dir = str8_zero(); state->records = 0; state->records_due = 0;
-    if(state->dashboard_arena) { arena_release(state->dashboard_arena); state->dashboard_arena = 0; }
-    state->dashboard = 0; state->dashboard_generation = 0;
+    andamento_dashboard_free(state->dashboard);
+    state->dashboard = 0;
+    if(state->locals_arena) { arena_release(state->locals_arena); state->locals_arena = 0; }
+    state->locals = 0;
     if(state->row_drag_arena) { arena_release(state->row_drag_arena); state->row_drag_arena = 0; }
     if(state->reorder_arena) { arena_release(state->reorder_arena); state->reorder_arena = 0; }
-    if(state->local_arena) { arena_release(state->local_arena); state->local_arena = 0; }
-    state->local_published = 0; state->local_source_hash = 0;
     if(state->workspaces_arena) { arena_release(state->workspaces_arena); state->workspaces_arena = 0; }
     state->workspaces_published = 0; state->workspaces_source_hash = 0;
     if(state->observed_arena) { arena_release(state->observed_arena); state->observed_arena = 0; }
@@ -565,12 +606,12 @@ uishell_sidebar_labels_diagnostics(void)
     if((u64_hash_from_str8(candidate)&15) == (u64_hash_from_str8(first)&15)) { collision = candidate; }
   }
   if(!collision.size) { scratch_end(scratch); uishell_sidebar_benchmark_uncached = saved_uncached; return 0; }
-  nodes[0] = (AndamentoNode){.is_section = 1, .entity_id = uishell_sidebar_text(first), .label = uishell_sidebar_text(str8_lit("section"))};
-  nodes[1] = (AndamentoNode){.entity_id = uishell_sidebar_text(first), .label = uishell_sidebar_text(str8_lit("first"))};
-  nodes[2] = (AndamentoNode){.entity_id = uishell_sidebar_text(collision), .label = uishell_sidebar_text(str8_lit("collision"))};
-  nodes[3] = (AndamentoNode){.entity_id = uishell_sidebar_text(first), .label = uishell_sidebar_text(str8_lit("later"))};
-  nodes[4] = (AndamentoNode){.entity_id = uishell_sidebar_text(str8_lit("empty-label"))};
-  nodes[5] = (AndamentoNode){.entity_id = uishell_sidebar_text(str8_lit("empty-label")), .label = uishell_sidebar_text(str8_lit("later"))};
+  nodes[0] = (AndamentoNode){.is_section = 1, .entity.id = uishell_sidebar_text(first), .label = uishell_sidebar_text(str8_lit("section"))};
+  nodes[1] = (AndamentoNode){.entity.id = uishell_sidebar_text(first), .label = uishell_sidebar_text(str8_lit("first"))};
+  nodes[2] = (AndamentoNode){.entity.id = uishell_sidebar_text(collision), .label = uishell_sidebar_text(str8_lit("collision"))};
+  nodes[3] = (AndamentoNode){.entity.id = uishell_sidebar_text(first), .label = uishell_sidebar_text(str8_lit("later"))};
+  nodes[4] = (AndamentoNode){.entity.id = uishell_sidebar_text(str8_lit("empty-label"))};
+  nodes[5] = (AndamentoNode){.entity.id = uishell_sidebar_text(str8_lit("empty-label")), .label = uishell_sidebar_text(str8_lit("later"))};
   // First non-section match wins, including an empty label; collisions and
   // unknown identities must behave exactly like the original linear scan.
   String8 identities[] = {first, collision, str8_lit("empty-label"), str8_lit("missing"), str8_zero()};
@@ -667,14 +708,13 @@ uishell_sidebar_next_persistent_control(UIShell_DisplayControlIterator *it,
   for(; it->node < count; it->node++, it->control = 0)
   {
     AndamentoNode node = {0};
-    uishell_sidebar_snapshot_node(it->snapshot, it->node, &node);
+    andamento_snapshot_node(it->snapshot, it->node, &node);
     for(; it->control < node.control_count;)
     {
       U64 index = node.first_control + it->control++;
-      U32 persist = 0;
-      if(andamento_snapshot_control(it->snapshot, index, control) && control->value_kind == 1 &&
-         andamento_snapshot_control_variable(it->snapshot, index, name, &persist) && persist)
-      { return 1; }
+      if(andamento_snapshot_control(it->snapshot, index, control) && control->value_kind == ANDAMENTO_VALUE_BOOL &&
+         control->variable.len && control->persist)
+      { *name = control->variable; return 1; }
     }
   }
   return 0;
@@ -687,9 +727,9 @@ uishell_sidebar_next_persistent_control(UIShell_DisplayControlIterator *it,
 internal String8
 uishell_sidebar_loop_key(AndamentoSnapshot *snapshot, U64 index)
 {
-  AndamentoText loop = {0};
-  if(!snapshot || !andamento_snapshot_node_loop_key(snapshot, index, &loop)) { return str8_zero(); }
-  return uishell_sidebar_string(loop);
+  AndamentoNode node = {0};
+  if(!snapshot || !andamento_snapshot_node(snapshot, index, &node)) { return str8_zero(); }
+  return uishell_sidebar_string(node.loop_key);
 }
 
 // Siblings in displayed order, which is snapshot order for one loop key.
@@ -703,8 +743,8 @@ uishell_sidebar_siblings(Arena *arena, AndamentoSnapshot *snapshot, String8 loop
   for(U64 i = 0, n = 0; n < count && i < total; i++)
   {
     if(!str8_match(uishell_sidebar_loop_key(snapshot, i), loop, 0)) { continue; }
-    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(snapshot, i, &node);
-    (*out)[n++] = (AndamentoEntity){node.entity_kind, node.entity_id};
+    AndamentoNode node = {0}; andamento_snapshot_node(snapshot, i, &node);
+    (*out)[n++] = node.entity;
   }
   return count;
 }
@@ -770,6 +810,14 @@ uishell_sidebar_local_home(CFG_Node *workspace)
   return cfg_node_child_from_string(workspace, str8_lit("lives_with"))->first->string;
 }
 
+// The local group a local workspace lives in, saved on the workspace; empty
+// when it lives in the default group or with a project.
+internal String8
+uishell_sidebar_local_lives_in(CFG_Node *workspace)
+{
+  return cfg_node_child_from_string(workspace, str8_lit("lives_in"))->first->string;
+}
+
 // How the sidebar reads a snapshot node. A `layout="section"` node (a
 // section someone made) is a section of its own, as a region is, keyed
 // `.section:<id>`; the region holding them is a container that isn't shown;
@@ -817,10 +865,10 @@ uishell_sidebar_roles(UIShell_SidebarState *state)
   U64 *groups = push_array(state->roles_arena, U64, count);
   for(U64 i = 0; i < count; i++)
   {
-    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
     if(!str8_match(uishell_sidebar_string(node.layout), str8_lit("section"), 0)) { continue; }
     state->roles[i] = UIShell_SidebarRole_LocalSection;
-    state->role_keys[i] = uishell_sidebar_local_key(state->roles_arena, uishell_sidebar_string(node.entity_id));
+    state->role_keys[i] = uishell_sidebar_local_key(state->roles_arena, uishell_sidebar_string(node.entity.id));
     state->roles_default_section |= str8_match(state->role_keys[i], uishell_sidebar_default_section_key, 0);
     // The section loop's parent is the container. Sections don't nest: one
     // placed inside another would make that one a container instead.
@@ -829,14 +877,14 @@ uishell_sidebar_roles(UIShell_SidebarState *state)
   // A section's only group passes through; only `.group` children count.
   for(U64 i = 0; i < count; i++)
   {
-    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-    B32 group = str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".group"), 0);
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    B32 group = str8_match(uishell_sidebar_string(node.entity.kind), str8_lit(".group"), 0);
     if(group && node.parent != ANDAMENTO_NONE && state->roles[node.parent] == UIShell_SidebarRole_LocalSection) { groups[node.parent]++; }
   }
   for(U64 i = 0; i < count; i++)
   {
-    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-    B32 group = str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".group"), 0);
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    B32 group = str8_match(uishell_sidebar_string(node.entity.kind), str8_lit(".group"), 0);
     if(group && node.parent != ANDAMENTO_NONE && state->roles[node.parent] == UIShell_SidebarRole_LocalSection && groups[node.parent] == 1)
     { state->roles[i] = UIShell_SidebarRole_PassThrough; }
   }
@@ -847,7 +895,7 @@ internal B32
 uishell_sidebar_has_children(UIShell_SidebarState *state, U64 i)
 {
   if(i+1 >= andamento_snapshot_node_count(state->snapshot)) { return 0; }
-  AndamentoNode next = {0}; uishell_sidebar_snapshot_node(state->snapshot, i+1, &next);
+  AndamentoNode next = {0}; andamento_snapshot_node(state->snapshot, i+1, &next);
   return next.parent == i;
 }
 
@@ -866,7 +914,7 @@ uishell_sidebar_leftover_hidden(UIShell_SidebarState *state, U64 i, AndamentoNod
 internal UIShell_SidebarRole
 uishell_sidebar_node_at(UIShell_SidebarState *state, U64 i, AndamentoNode *out)
 {
-  uishell_sidebar_snapshot_node(state->snapshot, i, out);
+  andamento_snapshot_node(state->snapshot, i, out);
   uishell_sidebar_roles(state);
   UIShell_SidebarRole role = (UIShell_SidebarRole)state->roles[i];
   if(role == UIShell_SidebarRole_LocalSection) { out->is_section = 1; out->key = uishell_sidebar_text(state->role_keys[i]); }
@@ -874,26 +922,27 @@ uishell_sidebar_node_at(UIShell_SidebarState *state, U64 i, AndamentoNode *out)
 }
 
 //- Sections and groups people make (drag-model.md, "Sections and groups as
-// data"). Andamento owns them, as local `.section`, `.group` and `.ref`
-// entities that the shipped KDL places (each section is then a sidebar
-// section of its own), and keeps them in its dashboard record. It has no
-// getter for them yet, so the editors here read and change a working copy:
+// data"). Andamento owns them, as local entities that the shipped KDL
+// places (each section is then a sidebar section of its own), and keeps
+// them in its dashboard record:
 //
-//   section  (id, label)
-//     group  (id, label, default)
-//       card (ghost, kind, entity, label, source, compact): a pin
+//   .section  display.label (its title), .position
+//   .group    display.label, .position, .section, .default
+//   .ref      a pin (ghost): .position (after the group's workspaces),
+//             .group, .target, and the pin's own: .label (shown when its
+//             target is gone), .source, .compact (shown as a row)
 //
-// made from the record when the sidebar starts (uishell_sidebar_local_load),
-// and sent back when it changes (uishell_sidebar_local_publish). It is
-// transient config, one tree per window, never saved to the user file.
+// Edits set and remove them at once (andamento_local_set/remove), and
+// everything else reads them from Andamento's Dashboard
+// (uishell_sidebar_locals). A pin is known by its ref's ID, its ghost id.
 // A local workspace lives in a group (`lives_in`) or with a project
-// (`lives_with`); with neither it lives in the default group.
+// (`lives_with`), saved on the workspace; with neither it lives in the
+// default group.
 
 read_only global String8 uishell_sidebar_default_local_id = str8_lit_comp("workspaces");
 
 internal void uishell_sidebar_pin_migrate(CFG_Node *window);
-internal String8 uishell_sidebar_local_title(Arena *arena, CFG_Node *section);
-internal void uishell_sidebar_local_borrow_titles(CFG_Node *root);
+internal AndamentoDashboard *uishell_sidebar_dashboard(UIShell_SidebarState *state);
 
 // An owner's sidebar and its Floating Panels as the sidebar's edits outside
 // docking see them (the pinned_cards migration, closing a local section's
@@ -914,94 +963,433 @@ internal UIShell_SidebarDocks uishell_sidebar_docks(Arena *arena, CFG_Node *owne
 internal void uishell_sidebar_docks_remove(UIShell_SidebarDocks *docks, RD_DockSavedView *view);
 internal void uishell_sidebar_docks_save(UIShell_SidebarDocks *docks);
 
-// The working copy of the window with this config ID, or nil.
-internal CFG_Node *
-uishell_sidebar_local_tree_from_id(CFG_ID window)
-{
-  if(!window) { return &cfg_nil_node; }
-  CFG_Node *trees = cfg_node_child_from_string(cfg_node_child_from_string(cfg_node_root(), str8_lit("transient")), str8_lit("sidebar_local"));
-  Temp scratch = scratch_begin(0, 0);
-  CFG_Node *tree = cfg_node_child_from_string(trees, push_str8f(scratch.arena, "%I64x", window));
-  scratch_end(scratch);
-  return tree;
-}
+//- Reading them
 
-// The window's working copy, or nil when it has none.
-internal CFG_Node *
-uishell_sidebar_local_tree(CFG_Node *window)
+internal AndamentoLocalFact *
+uishell_sidebar_dashboard_fact(AndamentoLocalEntity *local, String8 key)
 {
-  return uishell_sidebar_local_tree_from_id(window->id);
-}
-
-internal CFG_Node *
-uishell_sidebar_local_tree_alloc(CFG_Node *window)
-{
-  CFG_Node *tree = uishell_sidebar_local_tree(window);
-  if(tree == &cfg_nil_node && window != &cfg_nil_node)
-  {
-    CFG_Node *transient = cfg_node_child_from_string_or_alloc(rd_state->cfg, cfg_node_root(), str8_lit("transient"));
-    CFG_Node *trees = cfg_node_child_from_string_or_alloc(rd_state->cfg, transient, str8_lit("sidebar_local"));
-    Temp scratch = scratch_begin(0, 0);
-    tree = cfg_node_new(rd_state->cfg, trees, push_str8f(scratch.arena, "%I64x", window->id));
-    scratch_end(scratch);
-  }
-  return tree;
+  for(U64 i = 0; i < local->fact_count; i++)
+  { if(str8_match(uishell_sidebar_string(local->facts[i].key), key, 0)) { return (AndamentoLocalFact *)&local->facts[i]; } }
+  return 0;
 }
 
 internal String8
-uishell_sidebar_local_field(CFG_Node *node, String8 name)
+uishell_sidebar_dashboard_text(AndamentoLocalEntity *local, String8 key)
 {
-  return cfg_node_child_from_string(node, name)->first->string;
+  AndamentoLocalFact *fact = uishell_sidebar_dashboard_fact(local, key);
+  return fact && fact->kind == ANDAMENTO_FACT_TEXT ? uishell_sidebar_string(fact->text) : str8_zero();
+}
+
+internal B32
+uishell_sidebar_dashboard_true(AndamentoLocalEntity *local, String8 key)
+{
+  AndamentoLocalFact *fact = uishell_sidebar_dashboard_fact(local, key);
+  return fact && fact->kind == ANDAMENTO_FACT_BOOL && fact->integer != 0;
+}
+
+// An entity-reference fact's entity; an empty one without it.
+internal AndamentoEntity
+uishell_sidebar_dashboard_entity(AndamentoLocalEntity *local, String8 key)
+{
+  AndamentoLocalFact *fact = uishell_sidebar_dashboard_fact(local, key);
+  return fact && fact->kind == ANDAMENTO_FACT_ENTITY ? fact->entity : (AndamentoEntity){0};
+}
+
+internal U64
+uishell_sidebar_dashboard_position(AndamentoLocalEntity *local)
+{
+  U64 position = max_U64;
+  try_u64_from_str8_c_rules(uishell_sidebar_dashboard_text(local, str8_lit(".position")), &position);
+  return position;
+}
+
+internal AndamentoEntity uishell_sidebar_card_entity_copy(Arena *arena, AndamentoEntity entity);
+
+// A section's title made of its groups' names, joined; "Section" without any.
+internal String8
+uishell_sidebar_local_group_names(Arena *arena, UIShell_LocalSection *section)
+{
+  String8List names = {0};
+  for(U64 i = 0; i < section->group_count; i++) { str8_list_push(arena, &names, section->groups[i].label); }
+  StringJoin join = {.sep = str8_lit(", ")};
+  return names.node_count ? str8_list_join(arena, &names, &join) : str8_lit("Section");
+}
+
+// The Dashboard's local sections, groups and pins, made again when the
+// dashboard record's generation moves: each run in position order (ties in
+// Andamento's key order), entities whose section or group is gone left out.
+// A section's title is a name of its own when it isn't its groups' names.
+internal UIShell_Locals *
+uishell_sidebar_locals(UIShell_SidebarState *state)
+{
+  local_persist UIShell_Locals nil_locals = {0};
+  // Without a core (one being set aside), the last read stands.
+  if(state && !state->core && state->locals) { return state->locals; }
+  AndamentoDashboard *dashboard = state && state->core ? uishell_sidebar_dashboard(state) : 0;
+  if(!dashboard) { return &nil_locals; }
+  if(state->locals && state->locals->generation == dashboard->generation) { return state->locals; }
+  if(!state->locals_arena) { state->locals_arena = arena_alloc(); }
+  if(state->locals_frame != rd_state->frame_index) { arena_clear(state->locals_arena); state->locals_frame = rd_state->frame_index; }
+  Arena *arena = state->locals_arena;
+  Temp scratch = scratch_begin(&arena, 1);
+  UIShell_Locals *locals = push_array(arena, UIShell_Locals, 1);
+  locals->generation = dashboard->generation;
+  // Each kind's entities, sorted by position; insertion keeps ties in order.
+  String8 kinds[] = {str8_lit(".section"), str8_lit(".group"), str8_lit(".ref")};
+  AndamentoLocalEntity **sorted[3] = {0};
+  U64 counts[3] = {0};
+  for(U64 k = 0; k < 3; k++)
+  {
+    sorted[k] = push_array(scratch.arena, AndamentoLocalEntity *, dashboard->local_count+1);
+    for(U64 i = 0; i < dashboard->local_count; i++)
+    {
+      AndamentoLocalEntity *e = (AndamentoLocalEntity *)&dashboard->locals[i];
+      if(!str8_match(uishell_sidebar_string(e->entity.kind), kinds[k], 0)) { continue; }
+      U64 at = counts[k]++;
+      for(; at > 0 && uishell_sidebar_dashboard_position(sorted[k][at-1]) > uishell_sidebar_dashboard_position(e); at--) { sorted[k][at] = sorted[k][at-1]; }
+      sorted[k][at] = e;
+    }
+  }
+  // Sections.
+  locals->sections = push_array(arena, UIShell_LocalSection, counts[0]);
+  for(U64 i = 0; i < counts[0]; i++)
+  {
+    UIShell_LocalSection *s = &locals->sections[locals->section_count++];
+    s->id = push_str8_copy(arena, uishell_sidebar_string(sorted[0][i]->entity.id));
+    s->label = push_str8_copy(arena, uishell_sidebar_dashboard_text(sorted[0][i], str8_lit("display.label")));
+    s->position = uishell_sidebar_dashboard_position(sorted[0][i]);
+  }
+  // Groups, under their sections.
+  UIShell_LocalSection **group_section = push_array(scratch.arena, UIShell_LocalSection *, counts[1]+1);
+  for(U64 i = 0; i < counts[1]; i++)
+  {
+    String8 owner = uishell_sidebar_string(uishell_sidebar_dashboard_entity(sorted[1][i], str8_lit(".section")).id);
+    for(U64 s = 0; s < locals->section_count && !group_section[i]; s++)
+    { if(str8_match(locals->sections[s].id, owner, 0)) { group_section[i] = &locals->sections[s]; } }
+    if(group_section[i]) { group_section[i]->group_count++; }
+  }
+  for(U64 s = 0; s < locals->section_count; s++)
+  {
+    locals->sections[s].groups = push_array(arena, UIShell_LocalGroup, locals->sections[s].group_count);
+    locals->sections[s].group_count = 0;
+  }
+  for(U64 i = 0; i < counts[1]; i++)
+  {
+    UIShell_LocalSection *s = group_section[i];
+    if(!s) { continue; }
+    UIShell_LocalGroup *g = &s->groups[s->group_count++];
+    g->section = s;
+    g->id = push_str8_copy(arena, uishell_sidebar_string(sorted[1][i]->entity.id));
+    g->label = push_str8_copy(arena, uishell_sidebar_dashboard_text(sorted[1][i], str8_lit("display.label")));
+    g->is_default = uishell_sidebar_dashboard_true(sorted[1][i], str8_lit(".default"));
+    g->position = uishell_sidebar_dashboard_position(sorted[1][i]);
+  }
+  // Pins, under their groups.
+  UIShell_LocalGroup **pin_group = push_array(scratch.arena, UIShell_LocalGroup *, counts[2]+1);
+  for(U64 i = 0; i < counts[2]; i++)
+  {
+    String8 owner = uishell_sidebar_string(uishell_sidebar_dashboard_entity(sorted[2][i], str8_lit(".group")).id);
+    for(U64 s = 0; s < locals->section_count && !pin_group[i]; s++)
+    for(U64 g = 0; g < locals->sections[s].group_count && !pin_group[i]; g++)
+    { if(str8_match(locals->sections[s].groups[g].id, owner, 0)) { pin_group[i] = &locals->sections[s].groups[g]; } }
+    if(pin_group[i]) { pin_group[i]->pin_count++; }
+  }
+  for(U64 s = 0; s < locals->section_count; s++)
+  for(U64 g = 0; g < locals->sections[s].group_count; g++)
+  {
+    UIShell_LocalGroup *group = &locals->sections[s].groups[g];
+    group->pins = push_array(arena, UIShell_LocalPin, group->pin_count);
+    group->pin_count = 0;
+  }
+  for(U64 i = 0; i < counts[2]; i++)
+  {
+    UIShell_LocalGroup *g = pin_group[i];
+    if(!g) { continue; }
+    UIShell_LocalPin *p = &g->pins[g->pin_count++];
+    p->group = g;
+    p->ghost = push_str8_copy(arena, uishell_sidebar_string(sorted[2][i]->entity.id));
+    p->target = uishell_sidebar_card_entity_copy(arena, uishell_sidebar_dashboard_entity(sorted[2][i], str8_lit(".target")));
+    p->label = push_str8_copy(arena, uishell_sidebar_dashboard_text(sorted[2][i], str8_lit(".label")));
+    p->source = push_str8_copy(arena, uishell_sidebar_dashboard_text(sorted[2][i], str8_lit(".source")));
+    p->compact = uishell_sidebar_dashboard_true(sorted[2][i], str8_lit(".compact"));
+    p->position = uishell_sidebar_dashboard_position(sorted[2][i]);
+  }
+  for(U64 s = 0; s < locals->section_count; s++)
+  {
+    UIShell_LocalSection *section = &locals->sections[s];
+    section->named = !str8_match(section->label, uishell_sidebar_local_group_names(scratch.arena, section), 0);
+  }
+  state->locals = locals;
+  scratch_end(scratch);
+  return locals;
+}
+
+// The window's sidebar, if it has one.
+internal UIShell_SidebarState *
+uishell_sidebar_window_state(CFG_Node *window)
+{
+  RD_WindowState *ws = window != &cfg_nil_node ? rd_window_state_from_cfg__existing(window) : &rd_nil_window_state;
+  return ws != &rd_nil_window_state ? ws->sidebar : 0;
+}
+
+internal UIShell_Locals *
+uishell_sidebar_window_locals(CFG_Node *window)
+{
+  return uishell_sidebar_locals(uishell_sidebar_window_state(window));
+}
+
+// A section's title: the name you gave it; else its groups' names, joined.
+// One group's name is the title then, and renaming the section renames it.
+internal String8
+uishell_sidebar_local_title(Arena *arena, UIShell_LocalSection *section)
+{
+  return section->named ? section->label : uishell_sidebar_local_group_names(arena, section);
+}
+
+// The local section with this id, or 0.
+internal UIShell_LocalSection *
+uishell_sidebar_local_section(CFG_Node *window, String8 id)
+{
+  UIShell_Locals *locals = uishell_sidebar_window_locals(window);
+  for(U64 s = 0; id.size && s < locals->section_count; s++) { if(str8_match(locals->sections[s].id, id, 0)) { return &locals->sections[s]; } }
+  return 0;
+}
+
+// The local group with this id, or 0.
+internal UIShell_LocalGroup *
+uishell_sidebar_local_group(CFG_Node *window, String8 id)
+{
+  UIShell_Locals *locals = uishell_sidebar_window_locals(window);
+  for(U64 s = 0; id.size && s < locals->section_count; s++)
+  for(U64 g = 0; g < locals->sections[s].group_count; g++)
+  { if(str8_match(locals->sections[s].groups[g].id, id, 0)) { return &locals->sections[s].groups[g]; } }
+  return 0;
+}
+
+// The pin with this ghost id, or 0.
+internal UIShell_LocalPin *
+uishell_sidebar_pin_by_ghost(CFG_Node *window, String8 ghost)
+{
+  UIShell_Locals *locals = uishell_sidebar_window_locals(window);
+  for(U64 s = 0; ghost.size && s < locals->section_count; s++)
+  for(U64 g = 0; g < locals->sections[s].group_count; g++)
+  for(U64 p = 0; p < locals->sections[s].groups[g].pin_count; p++)
+  { if(str8_match(locals->sections[s].groups[g].pins[p].ghost, ghost, 0)) { return &locals->sections[s].groups[g].pins[p]; } }
+  return 0;
+}
+
+// A pin's target; a pin naming no provider is to one of the host's own
+// entities.
+internal AndamentoEntity
+uishell_sidebar_pin_entity(UIShell_LocalPin *pin)
+{
+  String8 provider = uishell_sidebar_string(pin->target.provider);
+  return uishell_sidebar_entity(provider.size ? provider : uishell_sidebar_host_provider,
+                                uishell_sidebar_string(pin->target.kind), uishell_sidebar_string(pin->target.id));
+}
+
+// A section or group as something held across frames (a rename, a delete
+// awaiting confirmation): a hash of its kind and id.
+internal U64
+uishell_sidebar_local_handle(String8 kind, String8 id)
+{
+  U64 hash = 5381;
+  for(U64 i = 0; i < kind.size; i++) { hash = hash*33 + kind.str[i]; }
+  hash = hash*33 + '/';
+  for(U64 i = 0; i < id.size; i++) { hash = hash*33 + id.str[i]; }
+  return hash;
+}
+
+internal U64
+uishell_sidebar_section_handle(UIShell_LocalSection *section)
+{ return section ? uishell_sidebar_local_handle(str8_lit(".section"), section->id) : 0; }
+
+internal U64
+uishell_sidebar_group_handle(UIShell_LocalGroup *group)
+{ return group ? uishell_sidebar_local_handle(str8_lit(".group"), group->id) : 0; }
+
+//- Changing them. Each change is sent at once, and what reads them next
+// reads Andamento's Dashboard again. The snapshot is taken again once the
+// rows built from the current one are done (uishell_sidebar_publish).
+
+typedef struct UIShell_LocalFacts UIShell_LocalFacts;
+struct UIShell_LocalFacts
+{
+  AndamentoLocalFact v[8];
+  U64 count;
+};
+
+internal void
+uishell_sidebar_local_fact_text(UIShell_LocalFacts *facts, String8 key, String8 value)
+{
+  AndamentoLocalFact *f = &facts->v[facts->count++];
+  f->key = uishell_sidebar_text(key); f->kind = ANDAMENTO_FACT_TEXT; f->text = uishell_sidebar_text(value);
 }
 
 internal void
-uishell_sidebar_local_set_field(CFG_Node *node, String8 name, String8 value)
+uishell_sidebar_local_fact_bool(UIShell_LocalFacts *facts, String8 key, B32 value)
 {
-  CFG_Node *field = cfg_node_child_from_string_or_alloc(rd_state->cfg, node, name);
-  cfg_node_new_replace(rd_state->cfg, field, value);
+  AndamentoLocalFact *f = &facts->v[facts->count++];
+  f->key = uishell_sidebar_text(key); f->kind = ANDAMENTO_FACT_BOOL; f->integer = !!value;
 }
 
-// The window's local sections, with the default Workspaces section and group
-// made when missing; they can be renamed and moved but not deleted.
-internal CFG_Node *
-uishell_sidebar_local_root(CFG_Node *window)
+internal void
+uishell_sidebar_local_fact_ref(UIShell_LocalFacts *facts, String8 key, AndamentoEntity entity)
 {
-  CFG_Node *root = uishell_sidebar_local_tree(window);
-  B32 has_default = 0;
-  for(CFG_Node *section = root->first; section != &cfg_nil_node && !has_default; section = section->next)
-  {
-    for(CFG_Node *group = section->first; group != &cfg_nil_node && !has_default; group = group->next)
-    { has_default = str8_match(group->string, str8_lit("group"), 0) && cfg_node_child_from_string(group, str8_lit("default")) != &cfg_nil_node; }
-  }
-  if(!has_default)
-  {
-    root = uishell_sidebar_local_tree_alloc(window);
-    CFG_Node *section = cfg_node_new(rd_state->cfg, root, str8_lit("section"));
-    uishell_sidebar_local_set_field(section, str8_lit("id"), uishell_sidebar_default_local_id);
-    uishell_sidebar_local_set_field(section, str8_lit("label"), str8_lit("Workspaces"));
-    CFG_Node *group = cfg_node_new(rd_state->cfg, section, str8_lit("group"));
-    uishell_sidebar_local_set_field(group, str8_lit("id"), uishell_sidebar_default_local_id);
-    uishell_sidebar_local_set_field(group, str8_lit("label"), str8_lit("Workspaces"));
-    cfg_node_new(rd_state->cfg, group, str8_lit("default"));
-  }
-  uishell_sidebar_local_borrow_titles(root);
-  return root;
+  AndamentoLocalFact *f = &facts->v[facts->count++];
+  f->key = uishell_sidebar_text(key); f->kind = ANDAMENTO_FACT_ENTITY; f->entity = entity;
 }
 
-// The local group with this id, or nil.
-internal CFG_Node *
-uishell_sidebar_local_group(CFG_Node *window, String8 id)
+internal B32
+uishell_sidebar_local_set(UIShell_SidebarState *state, String8 kind, String8 id, UIShell_LocalFacts *facts)
 {
-  CFG_Node *root = uishell_sidebar_local_tree(window);
-  for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
+  if(!state || !state->core || !id.size) { return 0; }
+  char *error = 0;
+  B32 ok = uishell_sidebar_result(state, andamento_local_set(state->core, uishell_sidebar_text(kind), uishell_sidebar_text(id),
+    facts->v, facts->count, &error), error);
+  state->locals_sent = 1;
+  rd_request_frame();
+  return ok;
+}
+
+internal B32
+uishell_sidebar_local_remove(UIShell_SidebarState *state, String8 kind, String8 id)
+{
+  if(!state || !state->core) { return 0; }
+  char *error = 0;
+  B32 ok = uishell_sidebar_result(state, andamento_local_remove(state->core, uishell_sidebar_text(kind), uishell_sidebar_text(id), &error), error);
+  state->locals_sent = 1;
+  rd_request_frame();
+  return ok;
+}
+
+internal void
+uishell_sidebar_local_put_section(UIShell_SidebarState *state, String8 id, String8 title, U64 position)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_LocalFacts facts = {0};
+  uishell_sidebar_local_fact_text(&facts, str8_lit("display.label"), title);
+  uishell_sidebar_local_fact_text(&facts, str8_lit(".position"), push_str8f(scratch.arena, "%I64u", position));
+  uishell_sidebar_local_set(state, str8_lit(".section"), id, &facts);
+  scratch_end(scratch);
+}
+
+internal void
+uishell_sidebar_local_put_group(UIShell_SidebarState *state, String8 id, String8 label, U64 position, String8 section, B32 is_default)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_LocalFacts facts = {0};
+  uishell_sidebar_local_fact_text(&facts, str8_lit("display.label"), label);
+  uishell_sidebar_local_fact_text(&facts, str8_lit(".position"), push_str8f(scratch.arena, "%I64u", position));
+  uishell_sidebar_local_fact_ref(&facts, str8_lit(".section"), uishell_sidebar_entity(uishell_sidebar_local_provider, str8_lit(".section"), section));
+  uishell_sidebar_local_fact_bool(&facts, str8_lit(".default"), is_default);
+  uishell_sidebar_local_set(state, str8_lit(".group"), id, &facts);
+  scratch_end(scratch);
+}
+
+// A group's pins come after its workspaces, from this position on.
+read_only global U64 uishell_sidebar_pin_position_base = 1000000;
+
+// Sets the pin `pin` describes (its group is ignored) in `group`, at `index`
+// among its pins. A pin missing its target still shows, as no longer present.
+internal void
+uishell_sidebar_local_put_pin(UIShell_SidebarState *state, UIShell_LocalPin *pin, String8 group, U64 index)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_LocalFacts facts = {0};
+  uishell_sidebar_local_fact_text(&facts, str8_lit(".position"), push_str8f(scratch.arena, "%I64u", uishell_sidebar_pin_position_base+index));
+  uishell_sidebar_local_fact_ref(&facts, str8_lit(".group"), uishell_sidebar_entity(uishell_sidebar_local_provider, str8_lit(".group"), group));
+  if(pin->target.kind.len && pin->target.id.len) { uishell_sidebar_local_fact_ref(&facts, str8_lit(".target"), pin->target); }
+  if(pin->label.size) { uishell_sidebar_local_fact_text(&facts, str8_lit(".label"), pin->label); }
+  if(pin->source.size) { uishell_sidebar_local_fact_text(&facts, str8_lit(".source"), pin->source); }
+  if(pin->compact) { uishell_sidebar_local_fact_bool(&facts, str8_lit(".compact"), 1); }
+  uishell_sidebar_local_set(state, str8_lit(".ref"), pin->ghost, &facts);
+  scratch_end(scratch);
+}
+
+// Puts the groups `ids` names, in that order, in `section`, each moved
+// there as need be; the section's other groups are left where they are.
+internal void
+uishell_sidebar_local_order_groups(UIShell_SidebarState *state, String8 section, String8 *ids, U64 count)
+{
+  UIShell_Locals *locals = uishell_sidebar_locals(state);
+  for(U64 i = 0; i < count; i++)
   {
-    for(CFG_Node *group = section->first; group != &cfg_nil_node; group = group->next)
+    for(U64 s = 0; s < locals->section_count; s++)
+    for(U64 g = 0; g < locals->sections[s].group_count; g++)
     {
-      if(str8_match(group->string, str8_lit("group"), 0) && str8_match(uishell_sidebar_local_field(group, str8_lit("id")), id, 0))
-      { return group; }
+      UIShell_LocalGroup *group = &locals->sections[s].groups[g];
+      if(!str8_match(group->id, ids[i], 0)) { continue; }
+      if(group->position != i || !str8_match(group->section->id, section, 0))
+      { uishell_sidebar_local_put_group(state, group->id, group->label, i, section, group->is_default); }
     }
   }
-  return &cfg_nil_node;
+}
+
+// The same for pins: the pins `ghosts` names, in that order, in `group`.
+internal void
+uishell_sidebar_local_order_pins(UIShell_SidebarState *state, String8 group_id, String8 *ghosts, U64 count)
+{
+  UIShell_Locals *locals = uishell_sidebar_locals(state);
+  for(U64 i = 0; i < count; i++)
+  {
+    for(U64 s = 0; s < locals->section_count; s++)
+    for(U64 g = 0; g < locals->sections[s].group_count; g++)
+    for(U64 p = 0; p < locals->sections[s].groups[g].pin_count; p++)
+    {
+      UIShell_LocalPin *pin = &locals->sections[s].groups[g].pins[p];
+      if(!str8_match(pin->ghost, ghosts[i], 0)) { continue; }
+      if(pin->position != uishell_sidebar_pin_position_base+i || !str8_match(pin->group->id, group_id, 0))
+      { uishell_sidebar_local_put_pin(state, pin, group_id, i); }
+    }
+  }
+}
+
+// After an edit, every run is numbered from 0 again (pins from their base),
+// and a section that showed its groups' names (in `before`, the Dashboard as
+// the edit began; a section new since does) shows their names now. Only what
+// differs is set.
+internal void
+uishell_sidebar_local_settle(UIShell_SidebarState *state, UIShell_Locals *before)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_Locals *locals = uishell_sidebar_locals(state);
+  for(U64 s = 0; s < locals->section_count; s++)
+  {
+    UIShell_LocalSection *section = &locals->sections[s];
+    B32 named = 0;
+    for(U64 b = 0; b < before->section_count; b++)
+    { if(str8_match(before->sections[b].id, section->id, 0)) { named = before->sections[b].named; } }
+    String8 title = named ? section->label : uishell_sidebar_local_group_names(scratch.arena, section);
+    if(section->position != s || !str8_match(title, section->label, 0))
+    { uishell_sidebar_local_put_section(state, section->id, title, s); }
+    for(U64 g = 0; g < section->group_count; g++)
+    {
+      UIShell_LocalGroup *group = &section->groups[g];
+      if(group->position != g) { uishell_sidebar_local_put_group(state, group->id, group->label, g, section->id, group->is_default); }
+      for(U64 p = 0; p < group->pin_count; p++)
+      {
+        if(group->pins[p].position != uishell_sidebar_pin_position_base+p)
+        { uishell_sidebar_local_put_pin(state, &group->pins[p], group->id, p); }
+      }
+    }
+  }
+  scratch_end(scratch);
+}
+
+// Makes the default Workspaces section and group when no group is the
+// default; they can be renamed and moved but not deleted.
+internal void
+uishell_sidebar_local_ensure_default(UIShell_SidebarState *state)
+{
+  UIShell_Locals *locals = uishell_sidebar_locals(state);
+  if(!state || !state->core) { return; }
+  for(U64 s = 0; s < locals->section_count; s++)
+  for(U64 g = 0; g < locals->sections[s].group_count; g++)
+  { if(locals->sections[s].groups[g].is_default) { return; } }
+  U64 position = locals->section_count ? locals->sections[locals->section_count-1].position+1 : 0;
+  uishell_sidebar_local_put_section(state, uishell_sidebar_default_local_id, str8_lit("Workspaces"), position);
+  uishell_sidebar_local_put_group(state, uishell_sidebar_default_local_id, str8_lit("Workspaces"), 0, uishell_sidebar_default_local_id, 1);
 }
 
 // JSON string contents: runs of plain bytes are kept as they are, with only
@@ -1045,6 +1433,15 @@ uishell_sidebar_json_fact_ref(Arena *arena, String8 key, String8 kind, String8 i
 {
   return push_str8f(arena, "\"%S\":{\"value\":{\"type\":\"entity-refs\",\"value\":[{\"kind\":\"%S\",\"id\":\"%S\"}]}}",
     key, uishell_sidebar_json_text(arena, kind), uishell_sidebar_json_text(arena, id));
+}
+
+// A reference to one of Andamento's own local entities (a group), which
+// names their provider.
+internal String8
+uishell_sidebar_json_fact_local_ref(Arena *arena, String8 key, String8 kind, String8 id)
+{
+  return push_str8f(arena, "\"%S\":{\"value\":{\"type\":\"entity-refs\",\"value\":[{\"provider\":\"%S\",\"kind\":\"%S\",\"id\":\"%S\"}]}}",
+    key, uishell_sidebar_local_provider, uishell_sidebar_json_text(arena, kind), uishell_sidebar_json_text(arena, id));
 }
 
 // One patch setting `set` (comma-joined facts) and unsetting `unset` (quoted,
@@ -1118,186 +1515,21 @@ uishell_sidebar_published_find(UIShell_SidebarPublished *list, String8 entry)
   return 0;
 }
 
-internal void
-uishell_sidebar_local_published_clear(UIShell_SidebarState *state)
-{
-  uishell_sidebar_published_clear(&state->local_arena, &state->local_published);
-  state->local_source_hash = 0;
-}
-
-internal void
-uishell_sidebar_local_published_add(UIShell_SidebarState *state, String8 entry, U64 hash)
-{
-  if(!state->local_arena) { state->local_arena = arena_alloc(); }
-  uishell_sidebar_published_add(state->local_arena, &state->local_published, entry, hash);
-}
-
-//- Local sections, groups and pins, as Andamento owns them: entities whose
-// facts Wheelhouse sets and removes (andamento_local_set/remove).
-//
-//   .section  display.label (its title), .position
-//   .group    display.label, .position, .section, .default
-//   .ref      .position (after the group's workspaces), .group, .target,
-//             and the pin's own: .label (shown when its target is gone),
-//             .source, .compact (shown as a row)
-
-typedef struct UIShell_LocalEntity UIShell_LocalEntity;
-struct UIShell_LocalEntity
-{
-  UIShell_LocalEntity *next;
-  String8 kind, id, entry;
-  AndamentoLocalFact facts[8];
-  U64 count;
-  U64 hash;
-};
-
-internal void
-uishell_sidebar_local_fact_text(UIShell_LocalEntity *e, String8 key, String8 value)
-{
-  AndamentoLocalFact *f = &e->facts[e->count++];
-  f->key = uishell_sidebar_text(key); f->kind = ANDAMENTO_FACT_TEXT; f->text = uishell_sidebar_text(value);
-  e->hash = uishell_sidebar_hash_text(uishell_sidebar_hash_text(e->hash, key), value);
-}
-
-internal void
-uishell_sidebar_local_fact_bool(UIShell_LocalEntity *e, String8 key, B32 value)
-{
-  AndamentoLocalFact *f = &e->facts[e->count++];
-  f->key = uishell_sidebar_text(key); f->kind = ANDAMENTO_FACT_BOOL; f->integer = !!value;
-  e->hash = uishell_sidebar_hash_text(e->hash, key)*33 + 'b' + !!value;
-}
-
-internal void
-uishell_sidebar_local_fact_ref(UIShell_LocalEntity *e, String8 key, String8 kind, String8 id)
-{
-  AndamentoLocalFact *f = &e->facts[e->count++];
-  f->key = uishell_sidebar_text(key); f->kind = ANDAMENTO_FACT_ENTITY;
-  f->entity = (AndamentoEntity){uishell_sidebar_text(kind), uishell_sidebar_text(id)};
-  e->hash = uishell_sidebar_hash_text(uishell_sidebar_hash_text(uishell_sidebar_hash_text(e->hash, key), kind), id);
-}
-
-internal UIShell_LocalEntity *
-uishell_sidebar_local_entity_push(Arena *arena, UIShell_LocalEntity **first, UIShell_LocalEntity **last,
-                                  String8List *ids, String8 kind, String8 id)
-{
-  String8 entry = push_str8f(arena, "%S/%S", kind, id);
-  if(!id.size || uishell_sidebar_local_seen(ids, entry)) { return 0; }
-  str8_list_push(arena, ids, entry);
-  UIShell_LocalEntity *e = push_array(arena, UIShell_LocalEntity, 1);
-  e->kind = kind; e->id = id; e->entry = entry; e->hash = 5381;
-  SLLQueuePush(*first, *last, e);
-  return e;
-}
-
-// The local entities the window's working copy describes, in order.
-internal UIShell_LocalEntity *
-uishell_sidebar_local_entities(Arena *arena, CFG_Node *root)
-{
-  UIShell_LocalEntity *first = 0, *last = 0;
-  String8List ids = {0};
-  String8 section_kind = str8_lit(".section"), group_kind = str8_lit(".group");
-  U64 section_position = 0;
-  for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
-  {
-    if(!str8_match(section->string, str8_lit("section"), 0)) { continue; }
-    String8 section_id = uishell_sidebar_local_field(section, str8_lit("id"));
-    UIShell_LocalEntity *s = uishell_sidebar_local_entity_push(arena, &first, &last, &ids, section_kind, section_id);
-    if(!s) { continue; }
-    uishell_sidebar_local_fact_text(s, str8_lit("display.label"), uishell_sidebar_local_title(arena, section));
-    uishell_sidebar_local_fact_text(s, str8_lit(".position"), push_str8f(arena, "%I64u", section_position++));
-    U64 group_position = 0;
-    for(CFG_Node *group = section->first; group != &cfg_nil_node; group = group->next)
-    {
-      if(!str8_match(group->string, str8_lit("group"), 0)) { continue; }
-      String8 group_id = uishell_sidebar_local_field(group, str8_lit("id"));
-      UIShell_LocalEntity *g = uishell_sidebar_local_entity_push(arena, &first, &last, &ids, group_kind, group_id);
-      if(!g) { continue; }
-      uishell_sidebar_local_fact_text(g, str8_lit("display.label"), uishell_sidebar_local_field(group, str8_lit("label")));
-      uishell_sidebar_local_fact_text(g, str8_lit(".position"), push_str8f(arena, "%I64u", group_position++));
-      uishell_sidebar_local_fact_ref(g, str8_lit(".section"), section_kind, section_id);
-      uishell_sidebar_local_fact_bool(g, str8_lit(".default"), cfg_node_child_from_string(group, str8_lit("default")) != &cfg_nil_node);
-      // Its ghosts (pins), as `.ref`s presenting their targets, after its
-      // workspaces in data order.
-      U64 ref_position = 1000000;
-      for(CFG_Node *card = group->first; card != &cfg_nil_node; card = card->next)
-      {
-        if(!str8_match(card->string, str8_lit("card"), 0)) { continue; }
-        UIShell_LocalEntity *r = uishell_sidebar_local_entity_push(arena, &first, &last, &ids, str8_lit(".ref"),
-          uishell_sidebar_local_field(card, str8_lit("ghost")));
-        if(!r) { continue; }
-        uishell_sidebar_local_fact_text(r, str8_lit(".position"), push_str8f(arena, "%I64u", ref_position++));
-        uishell_sidebar_local_fact_ref(r, str8_lit(".group"), group_kind, group_id);
-        // A pin missing its target still shows, as no longer present.
-        String8 target_kind = uishell_sidebar_local_field(card, str8_lit("kind")), target_id = uishell_sidebar_local_field(card, str8_lit("entity"));
-        if(target_kind.size && target_id.size) { uishell_sidebar_local_fact_ref(r, str8_lit(".target"), target_kind, target_id); }
-        String8 label = uishell_sidebar_local_field(card, str8_lit("label")), source = uishell_sidebar_local_field(card, str8_lit("source"));
-        if(label.size) { uishell_sidebar_local_fact_text(r, str8_lit(".label"), label); }
-        if(source.size) { uishell_sidebar_local_fact_text(r, str8_lit(".source"), source); }
-        if(cfg_node_child_from_string(card, str8_lit("compact")) != &cfg_nil_node) { uishell_sidebar_local_fact_bool(r, str8_lit(".compact"), 1); }
-      }
-    }
-  }
-  return first;
-}
-
-// Sends Andamento the local entities that changed in the window's working
-// copy, and removes those that went (a deleted group, a removed pin).
-// Nothing is built while the copy is unchanged.
-internal void
-uishell_sidebar_local_publish(UIShell_SidebarState *state, CFG_ID window)
-{
-  if(!state->core) { return; }
-  CFG_Node *root = uishell_sidebar_local_tree_from_id(window);
-  U64 source = uishell_sidebar_hash_node(5381, root);
-  if(state->local_source_hash && state->local_source_hash == source) { return; }
-  Temp scratch = scratch_begin(0, 0);
-  UIShell_LocalEntity *entities = uishell_sidebar_local_entities(scratch.arena, root);
-  B32 ok = 1, changed = 0;
-  for(UIShell_LocalEntity *e = entities; e && ok; e = e->next)
-  {
-    UIShell_SidebarPublished *sent = uishell_sidebar_published_find(state->local_published, e->entry);
-    if(sent && sent->hash == e->hash) { continue; }
-    char *error = 0;
-    ok = uishell_sidebar_result(state, andamento_local_set(state->core, uishell_sidebar_text(e->kind), uishell_sidebar_text(e->id),
-      e->facts, e->count, &error), error);
-    changed = 1;
-  }
-  for(UIShell_SidebarPublished *p = state->local_published; p && ok; p = p->next)
-  {
-    B32 kept = 0;
-    for(UIShell_LocalEntity *e = entities; e && !kept; e = e->next) { kept = str8_match(e->entry, p->entry, 0); }
-    if(kept) { continue; }
-    // "kind/id"; kinds have no '/'.
-    U64 slash = str8_find_needle(p->entry, 0, str8_lit("/"), 0);
-    char *error = 0;
-    ok = uishell_sidebar_result(state, andamento_local_remove(state->core, uishell_sidebar_text(str8_prefix(p->entry, slash)),
-      uishell_sidebar_text(str8_skip(p->entry, slash+1)), &error), error);
-    changed = 1;
-  }
-  if(ok)
-  {
-    uishell_sidebar_local_published_clear(state);
-    for(UIShell_LocalEntity *e = entities; e; e = e->next) { uishell_sidebar_local_published_add(state, e->entry, e->hash); }
-    state->local_source_hash = source;
-  }
-  if(changed) { uishell_sidebar_refresh(state); rd_request_frame(); }
-  scratch_end(scratch);
-}
-
 // Everything publishing workspaces reads, hashed without allocating: the
-// window's local groups, and each open workspace's id, name and home. A
-// config generation can't stand in, as moving a node keeps it.
+// Dashboard's local groups (by its generation), and each open workspace's
+// id, name and home. A config generation can't stand in, as moving a node
+// keeps it.
 internal U64
-uishell_sidebar_workspaces_source_hash(UIShell_ControlledSplit *split)
+uishell_sidebar_workspaces_source_hash(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
-  U64 hash = uishell_sidebar_hash_node(5381, uishell_sidebar_local_tree(split->owner_cfg));
+  U64 hash = 5381*33 + uishell_sidebar_locals(state)->generation;
   for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
   {
     hash = hash*33 + w->id;
     for(U64 i = 0; i < sizeof(w->workspace_id.v); i++) { hash = hash*33 + w->workspace_id.v[i]; }
     hash = uishell_sidebar_hash_text(hash, w->display_name);
     hash = uishell_sidebar_hash_text(hash, uishell_sidebar_local_home(w->mount.owner_cfg));
-    hash = uishell_sidebar_hash_text(hash, uishell_sidebar_local_field(w->mount.owner_cfg, str8_lit("lives_in")));
+    hash = uishell_sidebar_hash_text(hash, uishell_sidebar_local_lives_in(w->mount.owner_cfg));
     hash = uishell_sidebar_hash_text(hash, uishell_workspace_cfg_has_subject(w->mount.owner_cfg) ? str8_lit("subject") : str8_lit("local"));
   }
   return hash;
@@ -1311,24 +1543,19 @@ uishell_sidebar_workspaces_source_hash(UIShell_ControlledSplit *split)
 internal void
 uishell_sidebar_publish_workspaces(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
-  U64 source = uishell_sidebar_workspaces_source_hash(split);
+  U64 source = uishell_sidebar_workspaces_source_hash(state, split);
   if(state->workspaces_source_hash && state->workspaces_source_hash == source) { return; }
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
   CFG_Node *window = split->owner_cfg;
-  CFG_Node *root = uishell_sidebar_local_tree(window);
+  UIShell_Locals *locals = uishell_sidebar_locals(state);
   String8 group_kind = str8_lit(".group"), workspace_kind = str8_lit(".workspace");
   // A workspace whose group is gone lives in the default group, whatever its
-  // id (local_root makes one only when no group is marked default).
+  // id (ensure_default makes one only when no group is marked default).
   String8 default_group_id = uishell_sidebar_default_local_id;
-  for(CFG_Node *section = root->first; section != &cfg_nil_node; section = section->next)
-  {
-    for(CFG_Node *g = section->first; g != &cfg_nil_node; g = g->next)
-    {
-      if(str8_match(g->string, str8_lit("group"), 0) && cfg_node_child_from_string(g, str8_lit("default")) != &cfg_nil_node)
-      { default_group_id = uishell_sidebar_local_field(g, str8_lit("id")); }
-    }
-  }
+  for(U64 s = 0; s < locals->section_count; s++)
+  for(U64 g = 0; g < locals->sections[s].group_count; g++)
+  { if(locals->sections[s].groups[g].is_default) { default_group_id = locals->sections[s].groups[g].id; } }
   U64 now = wheelhouse_ingress_now_ms(), w_position = 0;
   B32 ok = 1, changed = 0;
   String8List ids = {0};
@@ -1340,12 +1567,12 @@ uishell_sidebar_publish_workspaces(UIShell_SidebarState *state, UIShell_Controll
     String8 id = uishell_string_from_workspace_id(arena, w->workspace_id);
     // One home: a project, else its group, else the default group.
     String8 project = uishell_sidebar_local_home(workspace);
-    String8 group = uishell_sidebar_local_field(workspace, str8_lit("lives_in"));
-    if(uishell_sidebar_local_group(window, group) == &cfg_nil_node) { group = default_group_id; }
+    String8 group = uishell_sidebar_local_lives_in(workspace);
+    if(!uishell_sidebar_local_group(window, group)) { group = default_group_id; }
     // Workspaces keep their tab order within their home.
     String8 label = uishell_sidebar_json_label(arena, w->display_name, w_position++);
     String8 set = project.size ? push_str8f(arena, "%S,%S", label, uishell_sidebar_json_fact_text(arena, str8_lit("flotilla.project"), project)) :
-      push_str8f(arena, "%S,%S", label, uishell_sidebar_json_fact_ref(arena, str8_lit(".group"), group_kind, group));
+      push_str8f(arena, "%S,%S", label, uishell_sidebar_json_fact_local_ref(arena, str8_lit(".group"), group_kind, group));
     String8 patch = uishell_sidebar_json_entity_patch(arena, workspace_kind, id, set,
       project.size ? str8_lit("\".group\"") : str8_lit("\"flotilla.project\""));
     String8 entry = push_str8f(arena, "%S/%S", workspace_kind, id);
@@ -1355,7 +1582,7 @@ uishell_sidebar_publish_workspaces(UIShell_SidebarState *state, UIShell_Controll
     UIShell_SidebarPublished *sent = uishell_sidebar_published_find(state->workspaces_published, entry);
     if(sent && sent->hash == hash) { continue; }
     char *error = 0;
-    ok = uishell_sidebar_result(state, andamento_apply_patch_json(state->core, now, uishell_sidebar_text(patch), &error), error);
+    ok = uishell_sidebar_result(state, andamento_apply_patch_json(state->core, now, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error), error);
     // Its tab names its host entity, whose id is its Workspace ID.
     AndamentoFact facts[2] = {0};
     facts[0].key = uishell_sidebar_text(str8_lit(".host.kind"));
@@ -1365,7 +1592,7 @@ uishell_sidebar_publish_workspaces(UIShell_SidebarState *state, UIShell_Controll
     facts[1].kind = ANDAMENTO_FACT_TEXT;
     facts[1].text = uishell_sidebar_text(id);
     error = 0;
-    ok = ok && uishell_sidebar_result(state, andamento_apply_workspace(state->core, now, uishell_sidebar_workspace(w->workspace_id),
+    ok = ok && uishell_sidebar_result(state, andamento_apply_workspace(state->core, now, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_workspace(w->workspace_id),
       uishell_sidebar_text(str8_lit("wheelhouse.local")), facts, ArrayCount(facts), &error), error);
     changed = 1;
   }
@@ -1375,7 +1602,7 @@ uishell_sidebar_publish_workspaces(UIShell_SidebarState *state, UIShell_Controll
     if(uishell_sidebar_local_seen(&ids, p->entry)) { continue; }
     String8 id = str8_skip(p->entry, workspace_kind.size+1);
     char *error = 0;
-    ok = uishell_sidebar_result(state, andamento_apply_patch_json(state->core, now,
+    ok = uishell_sidebar_result(state, andamento_apply_patch_json(state->core, now, uishell_sidebar_text(uishell_sidebar_host_provider),
       uishell_sidebar_text(uishell_sidebar_json_entity_patch(arena, workspace_kind, id, str8_zero(), uishell_sidebar_workspace_keys)), &error), error);
     changed = 1;
   }
@@ -1390,15 +1617,15 @@ uishell_sidebar_publish_workspaces(UIShell_SidebarState *state, UIShell_Controll
   scratch_end(scratch);
 }
 
-// Publishes the window's local sections, groups and pins, then its local
-// workspaces, which live in its groups.
+// Publishes the window's local workspaces, which live in its groups (the
+// default one made first), and takes the snapshot again after edits of the
+// local sections, groups and pins.
 internal void
 uishell_sidebar_publish(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
-  // The default section and group are made first, so they are published.
-  uishell_sidebar_local_root(split->owner_cfg);
-  uishell_sidebar_local_publish(state, split->owner_cfg->id);
+  uishell_sidebar_local_ensure_default(state);
   uishell_sidebar_publish_workspaces(state, split);
+  if(state->locals_sent) { state->locals_sent = 0; uishell_sidebar_refresh(state); rd_request_frame(); }
 }
 
 // Andamento keeps the workspaces the host made itself: local ones are
@@ -1440,23 +1667,23 @@ internal void
 uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
   Temp scratch = scratch_begin(0, 0);
-  AndamentoWorkspace3 *items = push_array(scratch.arena, AndamentoWorkspace3, split->inventory.count);
+  AndamentoWorkspace *items = push_array(scratch.arena, AndamentoWorkspace, split->inventory.count);
   U64 hash = 5381, count = 0;
   for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
   {
-    items[count] = (AndamentoWorkspace3){uishell_sidebar_workspace(w->workspace_id), count, uishell_sidebar_text(w->display_name), w == split->inventory.selected};
+    items[count] = (AndamentoWorkspace){uishell_sidebar_workspace(w->workspace_id), count, uishell_sidebar_text(w->display_name), w == split->inventory.selected};
     for(U64 i = 0; i < sizeof(w->workspace_id.v); i++) { hash = hash*33 + w->workspace_id.v[i]; }
     hash = hash*33 + items[count].selected;
     for(U64 i = 0; i < w->display_name.size; i++) { hash = hash*33 + w->display_name.str[i]; }
     count++;
   }
   UIShell_Workdirs dirs = uishell_sidebar_workdirs(scratch.arena, split);
-  AndamentoWorkdir3 *observed = push_array(scratch.arena, AndamentoWorkdir3, dirs.count);
+  AndamentoWorkdir *observed = push_array(scratch.arena, AndamentoWorkdir, dirs.count);
   U64 index = 0, dirs_hash = 5381;
   for(UIShell_Workdir *dir = dirs.first; dir; dir = dir->next)
   {
     WheelhouseIngressText cwd = dir->value.live_cwd.len ? dir->value.live_cwd : dir->value.cwd;
-    observed[index++] = (AndamentoWorkdir3){uishell_sidebar_workspace(dir->workspace), {cwd.data, cwd.len}};
+    observed[index++] = (AndamentoWorkdir){uishell_sidebar_workspace(dir->workspace), {cwd.data, cwd.len}};
     for(U64 i = 0; i < sizeof(dir->workspace.v); i++) { dirs_hash = dirs_hash*33 + dir->workspace.v[i]; }
     dirs_hash = dirs_hash*33 + dir->value.view_id;
     dirs_hash = dirs_hash*33 + cwd.len;
@@ -1468,7 +1695,7 @@ uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
   if(hash != state->topology_hash)
   {
     char *error = 0;
-    topology_ready = andamento_observe3(state->core, items, count, 0, 0, &error);
+    topology_ready = andamento_observe(state->core, items, count, 0, 0, &error);
     if(uishell_sidebar_result(state, topology_ready, error))
     { state->topology_hash = hash; changed = 1; uishell_sidebar_register(state, split); }
   }
@@ -1476,7 +1703,7 @@ uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
   if(topology_ready && dirs_hash != state->workdirs_hash && now >= state->workdirs_retry_at)
   {
     char *error = 0;
-    B32 ok = andamento_observe_workdirs3(state->core, observed, dirs.count, &error);
+    B32 ok = andamento_observe_workdirs(state->core, observed, dirs.count, &error);
     if(uishell_sidebar_result(state, ok, error))
     { state->workdirs_hash = dirs_hash; state->workdirs_retry_at = 0; changed = 1; }
     else { state->workdirs_retry_at = now+1000; }
@@ -1517,12 +1744,11 @@ uishell_sidebar_init(RD_WindowState *ws)
   {
     state->initialized = 1;
     char *error = 0;
-    // ABI 3 adds Workspace IDs to ABI 2, and this host names workspaces only
-    // by them.
-    if(andamento_abi_version() != 3)
+    // A host requires exactly the ABI it was built against.
+    if(andamento_abi_version() != 4)
     {
       Temp scratch = scratch_begin(0, 0);
-      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Andamento ABI 3 is required; this library has ABI %u",
+      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Andamento ABI 4 is required; this library has ABI %u",
         (U32)andamento_abi_version()));
       scratch_end(scratch);
       return state;
@@ -1542,7 +1768,8 @@ uishell_sidebar_init(RD_WindowState *ws)
         if(end > start)
         {
           error = 0;
-          B32 ok = andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(str8(patches.str+start, end-start)), &error);
+          B32 ok = andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider),
+                                              uishell_sidebar_text(str8(patches.str+start, end-start)), &error);
           if(!uishell_sidebar_result(state, ok, error)) { break; }
         }
         start = end+1;
@@ -1555,7 +1782,7 @@ uishell_sidebar_init(RD_WindowState *ws)
       recipe.kind = ANDAMENTO_FACT_TEXT;
       recipe.text = uishell_sidebar_text(str8_lit("cmd.exe /K echo Wheelhouse sidebar fixture"));
       error = 0;
-      B32 ok = andamento_apply_entity(state->core, 0, uishell_sidebar_text(str8_lit("vessel")), uishell_sidebar_text(str8_lit("v")), uishell_sidebar_text(str8_lit("fixture")), &recipe, 1, &error);
+      B32 ok = andamento_apply_entity(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("vessel")), uishell_sidebar_text(str8_lit("v")), uishell_sidebar_text(str8_lit("fixture")), &recipe, 1, &error);
       uishell_sidebar_result(state, ok, error);
       }
 #endif
@@ -1653,16 +1880,15 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     if(effect.kind == ANDAMENTO_EFFECT_MATERIALIZE)
     {
       // The same kind and id from two subscriptions are two subjects.
-      AndamentoText provider_text = {0};
-      String8 provider = andamento_effects_provider(effects, i, &provider_text) ? uishell_sidebar_string(provider_text) : str8_lit("local");
+      String8 provider = uishell_sidebar_string(effect.entity.provider);
       // Reuse a previously created fixture workspace after switching modes or
       // restarting the app; its persisted identity is independent of its label.
       // A detached workspace reattaches with the layout it was detached with.
       for(CFG_Node *c = split->owner_cfg->first; c != &cfg_nil_node; c = c->next)
       {
         if((str8_match(c->string, str8_lit("workspace"), 0) || str8_match(c->string, str8_lit("detached_workspace"), 0)) &&
-           str8_match(cfg_node_child_from_string(c, str8_lit("sidebar_entity_kind"))->first->string, uishell_sidebar_string(effect.entity_kind), 0) &&
-           str8_match(cfg_node_child_from_string(c, str8_lit("sidebar_entity_id"))->first->string, uishell_sidebar_string(effect.entity_id), 0) &&
+           str8_match(cfg_node_child_from_string(c, str8_lit("sidebar_entity_kind"))->first->string, uishell_sidebar_string(effect.entity.kind), 0) &&
+           str8_match(cfg_node_child_from_string(c, str8_lit("sidebar_entity_id"))->first->string, uishell_sidebar_string(effect.entity.id), 0) &&
            str8_match(uishell_workspace_cfg_subject_provider(c), provider, 0))
         { workspace = c; break; }
       }
@@ -1672,17 +1898,19 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
       {
         workspace = cfg_node_new(rd_state->cfg, split->owner_cfg, str8_lit("workspace"));
         uishell_workspace_id_from_cfg(workspace);
+        // Its subject's Suggested Layout may arrange it (uishell_workspace_store.c).
+        cfg_node_new(rd_state->cfg, workspace, str8_lit("arrangement_fresh"));
         CFG_Node *label = cfg_node_new(rd_state->cfg, workspace, str8_lit("label"));
         cfg_node_new(rd_state->cfg, label, uishell_sidebar_string(effect.name));
         CFG_Node *kind = cfg_node_new(rd_state->cfg, workspace, str8_lit("sidebar_entity_kind"));
-        cfg_node_new(rd_state->cfg, kind, uishell_sidebar_string(effect.entity_kind));
+        cfg_node_new(rd_state->cfg, kind, uishell_sidebar_string(effect.entity.kind));
         CFG_Node *id = cfg_node_new(rd_state->cfg, workspace, str8_lit("sidebar_entity_id"));
-        cfg_node_new(rd_state->cfg, id, uishell_sidebar_string(effect.entity_id));
-        if(!str8_match(provider, str8_lit("local"), 0))
+        cfg_node_new(rd_state->cfg, id, uishell_sidebar_string(effect.entity.id));
+        if(!str8_match(provider, uishell_sidebar_host_provider, 0))
         { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("sidebar_entity_provider")), provider); }
         String8 cwd = effect.has_cwd ? uishell_sidebar_string(effect.cwd) : str8_zero();
-        if(uishell_sidebar_fixture && !uishell_sidebar_live && str8_match(uishell_sidebar_string(effect.entity_kind), str8_lit("vessel"), 0) &&
-           str8_match(uishell_sidebar_string(effect.entity_id), str8_lit("multi"), 0))
+        if(uishell_sidebar_fixture && !uishell_sidebar_live && str8_match(uishell_sidebar_string(effect.entity.kind), str8_lit("vessel"), 0) &&
+           str8_match(uishell_sidebar_string(effect.entity.id), str8_lit("multi"), 0))
         {
           uishell_sidebar_populate(workspace, uishell_sidebar_fixture_resources,
                                    ArrayCount(uishell_sidebar_fixture_resources), cwd);
@@ -1697,9 +1925,8 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
           CFG_Node *tab = uishell_sidebar_populate(workspace, &resource, 1, cwd);
           // Content opened from the current managed resolution is already
           // current; recording its target stops the first plan restarting it.
-          AndamentoText managed_target = {0};
-          if(andamento_effects_primary_target(effects, i, &managed_target))
-          { uishell_managed_set(tab, str8_lit("managed_target"), uishell_sidebar_string(managed_target)); }
+          if(effect.has_primary_target)
+          { uishell_managed_set(tab, str8_lit("managed_target"), uishell_sidebar_string(effect.primary_target)); }
           scratch_end(scratch);
         }
       }
@@ -1708,23 +1935,20 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     }
     else if(effect.kind == ANDAMENTO_EFFECT_FOCUS)
     {
-      AndamentoWorkspaceId focus = {0};
-      andamento_effects_workspace(effects, i, &focus);
       for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
-      { if(uishell_workspace_id_match(w->workspace_id, uishell_workspace_id_from_andamento(focus))) { workspace = w->mount.owner_cfg; break; } }
+      { if(uishell_workspace_id_match(w->workspace_id, uishell_workspace_id_from_andamento(effect.workspace_id))) { workspace = w->mount.owner_cfg; break; } }
       if(workspace != &cfg_nil_node)
       {
         outcome = ANDAMENTO_COMPLETE_FOCUS;
-        char *retry_error = 0;
-        andamento_content_retry3(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)), &retry_error);
+        // Its Views' failed updates are retried (uishell_workspace_store.c, "Slot plans").
+        uishell_store_retry(state, workspace);
         state->managed_dirty = 1;
-        andamento_string_free(retry_error);
       }
     }
     else if(effect.kind == ANDAMENTO_EFFECT_INSPECT)
     {
       Temp scratch = scratch_begin(0, 0);
-      String8 message = push_str8f(scratch.arena, "%S: %S", uishell_sidebar_string(effect.entity_kind), uishell_sidebar_string(effect.entity_id));
+      String8 message = push_str8f(scratch.arena, "%S: %S", uishell_sidebar_string(effect.entity.kind), uishell_sidebar_string(effect.entity.id));
       U64 size = Min(message.size, sizeof(state->inspection)-1);
       MemoryCopy(state->inspection, message.str, size);
       state->inspection[size] = 0;
@@ -1741,7 +1965,7 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     error = 0;
     // A subject's workspace keeps its Workspace ID when it is found again.
     UIShell_WorkspaceId completed = workspace == &cfg_nil_node ? (UIShell_WorkspaceId){0} : uishell_workspace_id_from_cfg(workspace);
-    B32 ok = andamento_complete3(state->core, effect.request_id, outcome, uishell_sidebar_workspace(completed), uishell_sidebar_text(failure), &error);
+    B32 ok = andamento_complete(state->core, effect.request_id, outcome, uishell_sidebar_workspace(completed), uishell_sidebar_text(failure), &error);
     uishell_sidebar_result(state, ok, error);
   }
   andamento_effects_release(effects);
@@ -1757,12 +1981,12 @@ uishell_sidebar_reveal_target(UIShell_SidebarState *state, U64 workspace_id)
   U64 count = andamento_snapshot_node_count(state->snapshot);
   for(U64 i = 0; i < count; i++)
   {
-    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-    if(node.is_section || node.state != ANDAMENTO_LIVE || node.workspace_id != workspace_id) { continue; }
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    if(node.is_section || node.state != ANDAMENTO_LIVE || uishell_sidebar_node_cfg(&node) != workspace_id) { continue; }
     U64 depth = 0;
     for(U64 parent = node.parent; parent != ANDAMENTO_NONE; depth++)
     {
-      AndamentoNode ancestor = {0}; uishell_sidebar_snapshot_node(state->snapshot, parent, &ancestor);
+      AndamentoNode ancestor = {0}; andamento_snapshot_node(state->snapshot, parent, &ancestor);
       parent = ancestor.parent;
     }
     if(result == ANDAMENTO_NONE || depth > best_depth) { result = i; best_depth = depth; }
@@ -1796,7 +2020,7 @@ uishell_sidebar_workspace_path(Arena *arena, UIShell_SidebarState *state,
   for(U64 i = length; i > 0; i--)
   {
     AndamentoNode node = {0};
-    uishell_sidebar_snapshot_node(state->snapshot, path[i-1], &node);
+    andamento_snapshot_node(state->snapshot, path[i-1], &node);
     String8 label = uishell_sidebar_string(node.label);
     if(i == 1 && label.size && leaf_out) { *leaf_out = label; }
     if(label.size) { result = result.size ? push_str8f(arena, "%S  ›  %S", result, label) : push_str8_copy(arena, label); }
@@ -1814,11 +2038,11 @@ uishell_sidebar_expand_reveal(UIShell_SidebarState *state)
   {
     U64 target = uishell_sidebar_reveal_target(state, state->reveal_workspace_id);
     if(target == ANDAMENTO_NONE) { state->reveal_workspace_id = 0; break; }
-    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, target, &node);
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, target, &node);
     size_t toggle = ANDAMENTO_NONE;
     for(U64 parent = node.parent; parent != ANDAMENTO_NONE;)
     {
-      AndamentoNode ancestor = {0}; uishell_sidebar_snapshot_node(state->snapshot, parent, &ancestor);
+      AndamentoNode ancestor = {0}; andamento_snapshot_node(state->snapshot, parent, &ancestor);
       if(!ancestor.is_section && ancestor.collapsed) { toggle = ancestor.toggle; break; }
       parent = ancestor.parent;
     }
@@ -1946,9 +2170,9 @@ uishell_sidebar_project_accent(String8 identity)
 internal Vec4F32
 uishell_sidebar_card_accent(AndamentoNode node)
 {
-  if(str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".group"), 0))
+  if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit(".group"), 0))
   { Vec4F32 text = ui_color_from_name(str8_lit("text")); text.w = 0.35f; return text; }
-  return uishell_sidebar_project_accent(uishell_sidebar_string(node.entity_id));
+  return uishell_sidebar_project_accent(uishell_sidebar_string(node.entity.id));
 }
 
 // Press and hold: true on the frame a press on `sig` reaches the hold time,
@@ -2021,14 +2245,12 @@ uishell_sidebar_menu_open_at_pointer(UI_Key menu, UI_Box *anchor)
 internal void uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r);
 internal void uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r);
 
-internal CFG_Node *uishell_sidebar_local_section(CFG_Node *window, String8 id);
-
 // A section's menu, by its key: its header builds it, or one of its panel's
 // other titles while it switches to it.
 internal UI_Key
 uishell_sidebar_section_menu_key(String8 section_key)
 { return ui_key_from_stringf(ui_key_zero(), "section_menu_%S", section_key); }
-internal void uishell_sidebar_local_section_menu(UIShell_SidebarState *state, CFG_Node *window, CFG_Node *section, CFG_Node *view,
+internal void uishell_sidebar_local_section_menu(UIShell_SidebarState *state, CFG_Node *window, UIShell_LocalSection *section, CFG_Node *view,
                                                  String8 loop, UI_Key menu);
 
 //~ A sidebar section, its panel, collapses as a whole (sidebar-headers.md):
@@ -2260,8 +2482,8 @@ uishell_sidebar_header_tabs_ui(UIShell_HeaderTabs *tabs, U64 from, U64 to)
     // A right click shows the View and opens its section's menu, as the
     // selected title's does; its header builds the menu from next frame.
     String8 section_key = cfg_node_child_from_string(tab, str8_lit("section"))->first->string;
-    CFG_Node *local = tabs->window ? uishell_sidebar_local_section(tabs->window, uishell_sidebar_local_key_id(section_key)) : &cfg_nil_node;
-    if(local != &cfg_nil_node && tabs->anchor)
+    UIShell_LocalSection *local = tabs->window ? uishell_sidebar_local_section(tabs->window, uishell_sidebar_local_key_id(section_key)) : 0;
+    if(local && tabs->anchor)
     {
       UI_Key menu = uishell_sidebar_section_menu_key(section_key);
       if(ui_right_clicked(sig))
@@ -2376,9 +2598,9 @@ UIShell_SidebarCloseKind;
 internal UIShell_SidebarCloseKind
 uishell_sidebar_close_kind(AndamentoNode node, String8 status)
 {
-  if(str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".ref"), 0)) { return UIShell_SidebarCloseKind_RemovePin; }
-  if(node.is_section || node.state != ANDAMENTO_LIVE || node.workspace_id == 0) { return UIShell_SidebarCloseKind_None; }
-  CFG_Node *workspace = cfg_node_from_id(node.workspace_id);
+  if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit(".ref"), 0)) { return UIShell_SidebarCloseKind_RemovePin; }
+  if(node.is_section || node.state != ANDAMENTO_LIVE || uishell_sidebar_node_cfg(&node) == 0) { return UIShell_SidebarCloseKind_None; }
+  CFG_Node *workspace = cfg_node_from_id(uishell_sidebar_node_cfg(&node));
   if(workspace == &cfg_nil_node) { return UIShell_SidebarCloseKind_None; }
   if(str8_match(status, str8_lit("ended"), 0) || !uishell_workspace_cfg_has_subject(workspace))
   { return UIShell_SidebarCloseKind_Destroy; }
@@ -2393,8 +2615,8 @@ uishell_sidebar_workspace_subject_ended(RD_WindowState *ws, CFG_ID workspace_id)
   UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
   for(U64 i = 0; state && state->snapshot && i < andamento_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-    if(!node.is_section && node.state == ANDAMENTO_LIVE && node.workspace_id == workspace_id &&
+    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    if(!node.is_section && node.state == ANDAMENTO_LIVE && uishell_sidebar_node_cfg(&node) == workspace_id &&
        str8_match(uishell_sidebar_node_status(state, node), str8_lit("ended"), 0))
     { return 1; }
   }
@@ -2434,12 +2656,12 @@ internal void
 uishell_sidebar_close_workspace(RD_WindowState *ws, AndamentoNode node, UIShell_SidebarCloseKind kind)
 {
   // uishell_cmd takes a string literal: str8_lit of a ternary is a pointer's size.
-  if(kind == UIShell_SidebarCloseKind_Detach) { uishell_cmd("detach_workspace", .window = ws->cfg_id, .cfg = node.workspace_id); }
-  if(kind == UIShell_SidebarCloseKind_Destroy) { uishell_cmd("close_workspace", .window = ws->cfg_id, .cfg = node.workspace_id); }
+  if(kind == UIShell_SidebarCloseKind_Detach) { uishell_cmd("detach_workspace", .window = ws->cfg_id, .cfg = uishell_sidebar_node_cfg(&node)); }
+  if(kind == UIShell_SidebarCloseKind_Destroy) { uishell_cmd("close_workspace", .window = ws->cfg_id, .cfg = uishell_sidebar_node_cfg(&node)); }
   if(kind == UIShell_SidebarCloseKind_RemovePin)
   {
-    CFG_Node *saved = uishell_sidebar_pin_by_ghost(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity_id));
-    if(saved != &cfg_nil_node) { cfg_node_release(rd_state->cfg, saved); rd_request_frame(); }
+    uishell_sidebar_pin_remove(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity.id));
+    rd_request_frame();
   }
 }
 
@@ -2480,7 +2702,7 @@ uishell_sidebar_margin_close(UIShell_SidebarState *state, RD_WindowState *ws, An
   {
     ui_state->tooltip_anchor_key = sig.box->key;
     ui_label(uishell_sidebar_close_label(close));
-    B32 unplaced = str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".workspace"), 0);
+    B32 unplaced = str8_match(uishell_sidebar_string(node.entity.kind), str8_lit(".workspace"), 0);
     UI_TagF("weak")
     {
       ui_label(close == UIShell_SidebarCloseKind_RemovePin ? str8_lit("Its source is untouched.") :
@@ -2526,9 +2748,9 @@ uishell_sidebar_row_drag_from(UIShell_SidebarState *state, RD_WindowState *ws,
       state->row_drag_key = push_str8_copy(state->row_drag_arena, key);
       state->row_drag_loop = push_str8_copy(state->row_drag_arena, loop);
       state->row_drag_label = push_str8_copy(state->row_drag_arena, uishell_sidebar_string(node.label));
-      state->row_drag_entity = uishell_sidebar_card_entity_copy(state->row_drag_arena, (AndamentoEntity){node.entity_kind, node.entity_id});
+      state->row_drag_entity = uishell_sidebar_card_entity_copy(state->row_drag_arena, node.entity);
       state->row_drag_rect = state->building_row ? state->building_row->rect : sig.box->rect;
-      state->row_drag_workspace = node.state == ANDAMENTO_LIVE ? node.workspace_id : 0;
+      state->row_drag_workspace = node.state == ANDAMENTO_LIVE ? uishell_sidebar_node_cfg(&node) : 0;
       state->row_drag_released = 0;
       uishell_sidebar_drag_begin(ws);
       UIShell_HoverCard *card = &state->cards[0];
@@ -2562,9 +2784,9 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   size_t action = ANDAMENTO_NONE;
   F32 em = ui_top_font_size();
   String8 full_label = uishell_sidebar_string(node.label);
-  String8 kind = uishell_sidebar_string(node.entity_kind);
+  String8 kind = uishell_sidebar_string(node.entity.kind);
   B32 subject = str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0);
-  size_t copy_url = subject ? andamento_snapshot_copy_url_action(state->snapshot, node_index) : ANDAMENTO_NONE;
+  size_t copy_url = subject ? node.copy_url : ANDAMENTO_NONE;
   B32 ended = str8_match(uishell_sidebar_node_status(state, node), str8_lit("ended"), 0);
   UIShell_SidebarCloseKind close_kind = uishell_sidebar_close_kind(node, uishell_sidebar_node_status(state, node));
   B32 can_activate = node.activate != ANDAMENTO_NONE && (node.openable || node.state == ANDAMENTO_LIVE || copy_url != ANDAMENTO_NONE);
@@ -2600,17 +2822,17 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
       rd_request_frame();
     }
   }
-  if(!menu && str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".group"), 0))
+  if(!menu && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit(".group"), 0))
   {
     // A local group's header: its menu (uishell_local_groups.c), with its
     // items' loop for Reset order.
     CFG_Node *window = cfg_node_from_id(ws->cfg_id);
     String8 items_loop = str8_zero();
     AndamentoNode first = {0};
-    if(uishell_sidebar_snapshot_node(state->snapshot, node_index+1, &first) && first.parent == node_index)
+    if(andamento_snapshot_node(state->snapshot, node_index+1, &first) && first.parent == node_index)
     { items_loop = uishell_sidebar_loop_key(state->snapshot, node_index+1); }
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "group_menu");
-    CFG_Node *group = uishell_sidebar_local_group(window, uishell_sidebar_string(node.entity_id));
+    UIShell_LocalGroup *group = uishell_sidebar_local_group(window, uishell_sidebar_string(node.entity.id));
     uishell_sidebar_local_group_menu(state, window, group, items_loop, menu_key);
     if(ui_right_clicked(sig)) { state->confirm_delete = 0; uishell_sidebar_menu_open_at_pointer(menu_key, sig.box); }
     if(header && state->header_more_open)
@@ -2620,9 +2842,9 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     }
     // Double-clicking it renames it in place. The double click's first click
     // collapsed it, so it opens again, and its closing release is no click.
-    if(ui_double_clicked(sig) && group != &cfg_nil_node)
+    if(ui_double_clicked(sig) && group)
     {
-      uishell_sidebar_local_begin_rename(state, group, uishell_sidebar_local_field(group, str8_lit("label")));
+      uishell_sidebar_local_begin_rename(state, uishell_sidebar_group_handle(group), group->label);
       if(header) { action = node.toggle; state->header_click_swallow = sig.box->key; }
     }
   }
@@ -2633,7 +2855,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "project_menu");
     String8 items_loop = str8_zero();
     AndamentoNode first = {0};
-    if(uishell_sidebar_snapshot_node(state->snapshot, node_index+1, &first) && first.parent == node_index)
+    if(andamento_snapshot_node(state->snapshot, node_index+1, &first) && first.parent == node_index)
     { items_loop = uishell_sidebar_loop_key(state->snapshot, node_index+1); }
     String8 labels[] = {str8_lit("New workspace here"), str8_lit("Reset order")};
     UIShell_SidebarMenu(menu_key, uishell_sidebar_menu_width(labels, ArrayCount(labels)))
@@ -2641,7 +2863,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
       if(ui_clicked(ui_button(str8_lit("New workspace here"))))
       {
         uishell_sidebar_make(cfg_node_from_id(ws->cfg_id),
-          (UIShell_MakeAction){UIShell_Make_ProjectWorkspace, str8_lit("New workspace"), 0, uishell_sidebar_string(node.entity_id)}, str8_zero());
+          (UIShell_MakeAction){UIShell_Make_ProjectWorkspace, str8_lit("New workspace"), str8_zero(), uishell_sidebar_string(node.entity.id)}, str8_zero());
         ui_ctx_menu_close();
       }
       if(items_loop.size && uishell_sidebar_order_saved(state, items_loop)) { uishell_sidebar_order_reset_button(state, items_loop); }
@@ -2676,15 +2898,15 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   else if(close_kind == UIShell_SidebarCloseKind_RemovePin)
   {
     // A ghost: go to what it refers to, change its form, or remove it.
-    CFG_Node *saved = uishell_sidebar_pin_by_ghost(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity_id));
-    B32 expanded = saved != &cfg_nil_node && uishell_sidebar_pin_expanded(saved);
+    UIShell_LocalPin *saved = uishell_sidebar_pin_by_ghost(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity.id));
+    B32 expanded = saved && uishell_sidebar_pin_expanded(saved);
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "workspace_menu");
     UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width(node, close_kind))
     {
       if(node.activate != ANDAMENTO_NONE && ui_clicked(ui_button(str8_lit("Go to source"))))
       { action = node.activate; ui_ctx_menu_close(); }
-      if(saved != &cfg_nil_node && ui_clicked(ui_button(expanded ? str8_lit("Show as row") : str8_lit("Show as card"))))
-      { uishell_sidebar_ghost_set_expanded(saved, !expanded); ui_ctx_menu_close(); }
+      if(saved && ui_clicked(ui_button(expanded ? str8_lit("Show as row") : str8_lit("Show as card"))))
+      { uishell_sidebar_ghost_set_expanded(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity.id), !expanded); ui_ctx_menu_close(); }
       if(ui_clicked(ui_button(str8_lit("Remove pin"))))
       { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
       if(ordered) { uishell_sidebar_order_reset_button(state, loop); }
@@ -2717,11 +2939,10 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   AndamentoNode hover_node = node;
   if(close_kind == UIShell_SidebarCloseKind_RemovePin)
   {
-    CFG_Node *saved = uishell_sidebar_pin_by_ghost(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity_id));
-    if(saved != &cfg_nil_node)
+    UIShell_LocalPin *saved = uishell_sidebar_pin_by_ghost(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity.id));
+    if(saved)
     {
-      hover_node.entity_kind = uishell_sidebar_text(push_str8_copy(scratch.arena, cfg_node_child_from_string(saved, str8_lit("kind"))->first->string));
-      hover_node.entity_id = uishell_sidebar_text(push_str8_copy(scratch.arena, cfg_node_child_from_string(saved, str8_lit("entity"))->first->string));
+      hover_node.entity = uishell_sidebar_card_entity_copy(scratch.arena, uishell_sidebar_pin_entity(saved));
     }
   }
   uishell_sidebar_card_source(state, hover_node, sig, context, contains_current);
@@ -2780,7 +3001,7 @@ uishell_sidebar_status_mark(AndamentoNode node, String8 status)
 internal U64
 uishell_sidebar_chip_fields_start(UIShell_SidebarState *state, AndamentoNode node)
 {
-  String8 kind = uishell_sidebar_string(node.entity_kind);
+  String8 kind = uishell_sidebar_string(node.entity.kind);
   U64 start = str8_match(kind, str8_lit("project"), 0) ? 1 :
     str8_match(kind, str8_lit("role"), 0) ? 4 : 3;
   AndamentoField marker = {0};
@@ -2829,7 +3050,7 @@ uishell_sidebar_chip_status(UIShell_SidebarState *state, AndamentoNode node)
 internal B32
 uishell_sidebar_is_subject(AndamentoNode node)
 {
-  String8 kind = uishell_sidebar_string(node.entity_kind);
+  String8 kind = uishell_sidebar_string(node.entity.kind);
   return str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0);
 }
 
@@ -2867,7 +3088,7 @@ uishell_sidebar_node_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *
   {
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode n = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &n);
+      AndamentoNode n = {0}; andamento_snapshot_node(state->snapshot, i, &n);
       if(!n.is_section && n.field_count && uishell_sidebar_card_entity_match(uishell_sidebar_card_entity(n), uishell_sidebar_card_entity(node)))
       { node = n; break; }
     }
@@ -2886,7 +3107,7 @@ uishell_sidebar_node_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *
   for(U64 i = 0; i < ArrayCount(icons); i++)
   { if(str8_match(icon, str8_cstring(icons[i].name), 0)) { return rd_icon_kind_text_table[icons[i].kind]; } }
   if(icon.size) { *icon_font = 0; return icon; }
-  String8 kind = uishell_sidebar_string(node.entity_kind);
+  String8 kind = uishell_sidebar_string(node.entity.kind);
   RD_IconKind fallback = str8_match(kind, str8_lit("project"), 0) ? RD_IconKind_FolderClosedOutline :
     str8_match(kind, str8_lit("convoy"), 0) || str8_match(kind, str8_lit("role"), 0) ? RD_IconKind_Threads : RD_IconKind_Machine;
   return rd_icon_kind_text_table[fallback];
@@ -2898,7 +3119,7 @@ internal String8
 uishell_sidebar_chip_icon(UIShell_SidebarState *state, AndamentoNode node, B32 *icon_font)
 {
   String8 icon = uishell_sidebar_node_icon(state, node, icon_font);
-  if(str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("project"), 0) &&
+  if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("project"), 0) &&
      str8_match(icon, rd_icon_kind_text_table[RD_IconKind_FolderClosedOutline], 0))
   { icon = rd_icon_kind_text_table[RD_IconKind_Thumbnails]; }
   return icon;
@@ -3164,7 +3385,7 @@ uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   // Reserve the same trailing slot at every level. Project-wide status
   // belongs here once supplied; workspace state stays on the overview action
   // rather than being duplicated in this slot.
-  B32 change_request = str8_match(uishell_sidebar_string(r->node.entity_kind), str8_lit("change_request"), 0);
+  B32 change_request = str8_match(uishell_sidebar_string(r->node.entity.kind), str8_lit("change_request"), 0);
   UI_PrefWidth(ui_em(change_request && r->present ? 10.f : 1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
   {
     String8 status = r->status;
@@ -3297,12 +3518,11 @@ uishell_sidebar_group_claim(UIShell_SidebarState *state, UI_Box *body, Andamento
   if(state->row_drag_key.size && loop.size && str8_match(loop, state->row_drag_loop, 0)) { return; }
   if(state->row_drag_key.size && str8_match(uishell_sidebar_loop_key(state->snapshot, group), state->row_drag_loop, 0)) { return; }
   // Workspaces holds only local workspaces: no ghosts (drag-model.md, drop table).
-  CFG_Node *target_cfg = uishell_sidebar_local_group(cfg_node_from_id(uishell_regs()->window), uishell_sidebar_string(nodes[group].entity_id));
-  if(uishell_sidebar_local_is_default(target_cfg) && (state->drag_card || uishell_sidebar_drag_local(state) == &cfg_nil_node))
+  UIShell_LocalGroup *target_group = uishell_sidebar_local_group(cfg_node_from_id(uishell_regs()->window), uishell_sidebar_string(nodes[group].entity.id));
+  if(target_group && target_group->is_default && (state->drag_card || uishell_sidebar_drag_local(state) == &cfg_nil_node))
   { uishell_sidebar_refuse(body, area, str8_lit("only workspaces go in Workspaces")); return; }
-  CFG_Node *section_group = uishell_sidebar_section_drag_group(cfg_node_from_id(uishell_regs()->window));
-  if(section_group != &cfg_nil_node &&
-     str8_match(uishell_sidebar_local_field(section_group, str8_lit("id")), uishell_sidebar_string(nodes[group].entity_id), 0)) { return; }
+  UIShell_LocalGroup *section_group = uishell_sidebar_section_drag_group(cfg_node_from_id(uishell_regs()->window));
+  if(section_group && str8_match(section_group->id, uishell_sidebar_string(nodes[group].entity.id), 0)) { return; }
   F32 y = area.y0+row_height*0.5f;
   if(first < item_count)
   {
@@ -3316,7 +3536,7 @@ uishell_sidebar_group_claim(UIShell_SidebarState *state, UI_Box *body, Andamento
   }
   if(!state->group_claim_arena) { state->group_claim_arena = arena_alloc(); }
   arena_clear(state->group_claim_arena);
-  state->group_claim_id = push_str8_copy(state->group_claim_arena, uishell_sidebar_string(nodes[group].entity_id));
+  state->group_claim_id = push_str8_copy(state->group_claim_arena, uishell_sidebar_string(nodes[group].entity.id));
   state->group_claim_loop = push_str8_copy(state->group_claim_arena, loop);
   state->group_claim_index = index;
   state->group_claim_build = ui_state->build_index;
@@ -3332,28 +3552,28 @@ internal String8
 uishell_sidebar_section_drag_refusal(CFG_Node *window)
 {
   if(!rd_drag_is_active() || rd_state->drag_drop_regs_slot != UIShell_ContextRegSlot_View ||
-     rd_state->drag_drop_regs->window != window->id || uishell_sidebar_section_drag_section(window) != &cfg_nil_node) { return str8_zero(); }
+     rd_state->drag_drop_regs->window != window->id || uishell_sidebar_section_drag_section(window)) { return str8_zero(); }
   CFG_Node *view = cfg_node_from_id(rd_state->drag_drop_regs->view);
   if(!str8_match(view->string, str8_lit("sidebar_section"), 0)) { return str8_zero(); }
   if(rd_state->drag_drop_commit == uishell_sidebar_section_drop_commit) { return str8_lit("a section of several tabs can't join a list"); }
-  if(uishell_sidebar_local_view_group(window, view) == &cfg_nil_node) { return str8_lit("this section's rows stay in it"); }
+  if(!uishell_sidebar_local_view_group(window, view)) { return str8_lit("this section's rows stay in it"); }
   return str8_lit("Workspaces stays in its own section");
 }
 
 // Whether a sidebar drag carries local groups (#282): a local section's View
 // (all its groups, `*section`), or a local group's header (`*group`).
 internal B32
-uishell_sidebar_drag_carries_groups(UIShell_SidebarState *state, CFG_Node *window, CFG_Node **section, CFG_Node **group)
+uishell_sidebar_drag_carries_groups(UIShell_SidebarState *state, CFG_Node *window, UIShell_LocalSection **section, UIShell_LocalGroup **group)
 {
   *section = uishell_sidebar_section_drag_section(window);
-  *group = &cfg_nil_node;
-  if(*section == &cfg_nil_node && state->row_drag_key.size &&
+  *group = 0;
+  if(!*section && state->row_drag_key.size &&
      str8_match(uishell_sidebar_string(state->row_drag_entity.kind), str8_lit(".group"), 0))
   {
     *group = uishell_sidebar_local_group(window, uishell_sidebar_string(state->row_drag_entity.id));
-    if(uishell_sidebar_local_is_default(*group)) { *group = &cfg_nil_node; }
+    if(*group && (*group)->is_default) { *group = 0; }
   }
-  return *section != &cfg_nil_node || *group != &cfg_nil_node;
+  return *section || *group;
 }
 
 // A drag carrying groups, over another local section, claims the gap between
@@ -3366,20 +3586,20 @@ uishell_sidebar_groups_claim(UIShell_SidebarState *state, UI_Box *body, CFG_Node
                              U64 section, U64 first, U64 end, B32 *passed, Rng2F32 *group_rects,
                              UIShell_RowDragSibling *items, U64 item_count, Rng2F32 viewport)
 {
-  CFG_Node *dragged_section, *dragged_group;
+  UIShell_LocalSection *dragged_section; UIShell_LocalGroup *dragged_group;
   Vec2F32 mouse = ui_mouse();
   if(!contains_2f32(viewport, mouse) || !uishell_sidebar_drop_claimable(cfg_node_from_id(uishell_regs()->panel)) ||
      !uishell_sidebar_drag_carries_groups(state, window, &dragged_section, &dragged_group)) { return; }
   Temp scratch = scratch_begin(0, 0);
-  CFG_Node **groups = push_array(scratch.arena, CFG_Node *, end-first);
+  UIShell_LocalGroup **groups = push_array(scratch.arena, UIShell_LocalGroup *, end-first);
   Rng2F32 *rects = push_array(scratch.arena, Rng2F32, end-first);
   U64 count = 0;
   for(U64 g = first; g < end; g++)
   {
-    if(nodes[g].parent != section || !str8_match(uishell_sidebar_string(nodes[g].entity_kind), str8_lit(".group"), 0)) { continue; }
-    CFG_Node *cfg = uishell_sidebar_local_group(window, uishell_sidebar_string(nodes[g].entity_id));
-    if(cfg == &cfg_nil_node) { continue; }
-    groups[count] = cfg;
+    if(nodes[g].parent != section || !str8_match(uishell_sidebar_string(nodes[g].entity.kind), str8_lit(".group"), 0)) { continue; }
+    UIShell_LocalGroup *local = uishell_sidebar_local_group(window, uishell_sidebar_string(nodes[g].entity.id));
+    if(!local) { continue; }
+    groups[count] = local;
     rects[count] = group_rects[g];
     // A section's only group has no card: it is the section's rows, and
     // splits above or below at their middle, not the viewport's.
@@ -3398,10 +3618,11 @@ uishell_sidebar_groups_claim(UIShell_SidebarState *state, UI_Box *body, CFG_Node
   }
   // Not a local section; or the dragged groups' own, where a group header
   // reorders instead (uishell_sidebar_row_drop) and a section is already there.
-  CFG_Node *target = count ? groups[0]->parent : &cfg_nil_node;
-  if(target == &cfg_nil_node)
+  UIShell_LocalSection *target = count ? groups[0]->section : 0;
+  if(!target)
   { uishell_sidebar_refuse(body, viewport, str8_lit("groups only go into your own sections")); scratch_end(scratch); return; }
-  if(target == dragged_section || (dragged_group != &cfg_nil_node && target == dragged_group->parent))
+  if((dragged_section && str8_match(target->id, dragged_section->id, 0)) ||
+     (dragged_group && str8_match(target->id, dragged_group->section->id, 0)))
   { scratch_end(scratch); return; }
   U64 index = 0;
   // Over a group's middle counts as after it, as a drop onto it reads.
@@ -3410,8 +3631,8 @@ uishell_sidebar_groups_claim(UIShell_SidebarState *state, UI_Box *body, CFG_Node
   y = Clamp(viewport.y0+2.f, y, viewport.y1-2.f);
   if(!state->groups_claim_arena) { state->groups_claim_arena = arena_alloc(); }
   arena_clear(state->groups_claim_arena);
-  state->groups_claim_section = push_str8_copy(state->groups_claim_arena, uishell_sidebar_local_field(target, str8_lit("id")));
-  state->groups_claim_after = index ? push_str8_copy(state->groups_claim_arena, uishell_sidebar_local_field(groups[index-1], str8_lit("id"))) : str8_zero();
+  state->groups_claim_section = push_str8_copy(state->groups_claim_arena, target->id);
+  state->groups_claim_after = index ? push_str8_copy(state->groups_claim_arena, groups[index-1]->id) : str8_zero();
   state->groups_claim_build = ui_state->build_index;
   state->groups_claim_rect = viewport;
   uishell_sidebar_drop_line(body, r2f32p(viewport.x0+6.f, y-1.5f, viewport.x1-6.f, y+1.5f),
@@ -3443,7 +3664,7 @@ uishell_sidebar_row_drop(UIShell_SidebarState *state, UI_Box *body, AndamentoNod
   AndamentoNode anchor = nodes[siblings[target < count ? target : count-1].index];
   if(!state->reorder_arena) { state->reorder_arena = arena_alloc(); }
   arena_clear(state->reorder_arena);
-  state->reorder_anchor = uishell_sidebar_card_entity_copy(state->reorder_arena, (AndamentoEntity){anchor.entity_kind, anchor.entity_id});
+  state->reorder_anchor = uishell_sidebar_card_entity_copy(state->reorder_arena, anchor.entity);
   state->reorder_after = target == count;
   state->reorder_build = ui_state->build_index;
   F32 y = target == 0 ? siblings[0].extent.y0-1.f :
@@ -3469,7 +3690,7 @@ uishell_sidebar_row_lift(UIShell_SidebarState *state)
   lift = r2f32(add_2f32(lift.p0, ui_drag_delta()), add_2f32(lift.p1, ui_drag_delta()));
   AndamentoNode node = {0};
   B32 present = uishell_sidebar_card_find(state, state->row_drag_entity, &node) != ANDAMENTO_NONE;
-  if(!present) { node.entity_kind = state->row_drag_entity.kind; }
+  if(!present) { node.entity.kind = state->row_drag_entity.kind; }
   UI_Box *box;
   UI_Parent(ui_state->root) UI_Rect(lift) UI_CornerRadius(3.f) UI_Transparency(0.25f)
   UI_BackgroundColor(uishell_sidebar_selection_fill(0)) UI_ChildLayoutAxis(Axis2_Y)
@@ -3490,12 +3711,12 @@ uishell_sidebar_row_lift(UIShell_SidebarState *state)
   rd_drag_refusal_badge_ui(lift);
 }
 
-// The saved ghost a tree row presents (a `.ref`), or nil.
-internal CFG_Node *
+// The pin a tree row presents (a `.ref`), or 0.
+internal UIShell_LocalPin *
 uishell_sidebar_tree_ghost(CFG_Node *window, AndamentoNode node)
 {
-  if(!str8_match(uishell_sidebar_string(node.entity_kind), str8_lit(".ref"), 0)) { return &cfg_nil_node; }
-  return uishell_sidebar_pin_by_ghost(window, uishell_sidebar_string(node.entity_id));
+  if(!str8_match(uishell_sidebar_string(node.entity.kind), str8_lit(".ref"), 0)) { return 0; }
+  return uishell_sidebar_pin_by_ghost(window, uishell_sidebar_string(node.entity.id));
 }
 
 // The Workspaces group's first row creates a workspace, which appears in it.
@@ -3632,7 +3853,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   // Local groups' items as built this frame (last frame's rects), and their
   // cards' rects, for the insertion point a sidebar drag claims.
   // A one-group section dragged by its title is its group's drag too.
-  CFG_Node *carried_section, *carried_group;
+  UIShell_LocalSection *carried_section; UIShell_LocalGroup *carried_group;
   B32 groups_dragging = uishell_sidebar_drag_carries_groups(state, split->owner_cfg, &carried_section, &carried_group);
   String8 section_refusal = uishell_sidebar_section_drag_refusal(split->owner_cfg);
   // The dragged row, so a project it isn't in can refuse it.
@@ -3668,8 +3889,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     }
     // Project groups, and the groups of a section holding several, are cards.
     if(!nodes[i].is_section && !passed[i] && depth[i] == 0 &&
-       (str8_match(uishell_sidebar_string(nodes[i].entity_kind), str8_lit("project"), 0) ||
-        str8_match(uishell_sidebar_string(nodes[i].entity_kind), str8_lit(".group"), 0)))
+       (str8_match(uishell_sidebar_string(nodes[i].entity.kind), str8_lit("project"), 0) ||
+        str8_match(uishell_sidebar_string(nodes[i].entity.kind), str8_lit(".group"), 0)))
     {
       project_owner[i] = i;
       F32 target = nodes[i].collapsed ? 0.f : 1.f;
@@ -3763,9 +3984,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       U64 node_rows = !nodes[i].is_section;
       if(project_owner[i] == i) { content_heights[n] += project_gap+2*project_padding; }
       // An expanded ghost is its card's height instead of a row's.
-      CFG_Node *ghost = uishell_sidebar_tree_ghost(split->owner_cfg, nodes[i]);
+      UIShell_LocalPin *ghost = uishell_sidebar_tree_ghost(split->owner_cfg, nodes[i]);
       F32 card_height = 0;
-      if(ghost != &cfg_nil_node && uishell_sidebar_pin_expanded(ghost))
+      if(ghost && uishell_sidebar_pin_expanded(ghost))
       { card_height = uishell_sidebar_ghost_extent(uishell_sidebar_saved_card(ws, ghost), ghost, em); node_rows = 0; rows[n]++; }
       for(U64 c = 0; !nodes[i].is_section && c < nodes[i].control_count; c++)
       {
@@ -3789,7 +4010,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     // drop into.
     for(U64 i = sections[n]+1; sidebar_dragging && !rows[n] && i < end; i++)
     {
-      if(nodes[i].parent == sections[n] && str8_match(uishell_sidebar_string(nodes[i].entity_kind), str8_lit(".group"), 0))
+      if(nodes[i].parent == sections[n] && str8_match(uishell_sidebar_string(nodes[i].entity.kind), str8_lit(".group"), 0))
       { rows[n] = 1; content_heights[n] += row_height; }
     }
     if(rows[n]) { content_heights[n] += body_top_padding; }
@@ -3840,8 +4061,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       // The local workspace list is Wheelhouse's Workspaces group (drag-model.md);
       // Andamento's fallback name describes it relative to projects. A section
       // you made, the default one included, is titled by its data instead.
-      CFG_Node *local_section = uishell_sidebar_local_section(split->owner_cfg, uishell_sidebar_local_key_id(key));
-      if(uishell_sidebar_section_hosts_chrome(key) && local_section == &cfg_nil_node) { title = str8_lit("Workspaces"); }
+      UIShell_LocalSection *local_section = uishell_sidebar_local_section(split->owner_cfg, uishell_sidebar_local_key_id(key));
+      if(uishell_sidebar_section_hosts_chrome(key) && !local_section) { title = str8_lit("Workspaces"); }
       UI_Box *header;
       if(states[n]->collapsed && contains_selected[sections[n]])
       { ui_set_next_border_color(uishell_sidebar_selection_fill(1)); }
@@ -3855,7 +4076,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       // group, its items' loop gives the menu Reset order.
       UI_Key section_menu = uishell_sidebar_section_menu_key(key);
       String8 section_loop = str8_zero();
-      for(U64 i = sections[n]+1; local_section != &cfg_nil_node && i < count && !section_loop.size; i++)
+      for(U64 i = sections[n]+1; local_section && i < count && !section_loop.size; i++)
       {
         if(nodes[i].parent == ANDAMENTO_NONE || !passed[nodes[i].parent] || nodes[nodes[i].parent].parent != sections[n]) { continue; }
         section_loop = uishell_sidebar_loop_key(state->snapshot, i);
@@ -3903,7 +4124,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         // as a tab's does.
         uishell_sidebar_header_separator(&tabs);
         UI_Box *title_box = &ui_nil_box;
-        if(uishell_sidebar_local_renaming(state, local_section)) UI_PrefWidth(ui_pct(1, 0)) UI_TagF("")
+        if(uishell_sidebar_local_renaming(state, uishell_sidebar_section_handle(local_section))) UI_PrefWidth(ui_pct(1, 0)) UI_TagF("")
         { title_box = uishell_sidebar_local_rename_field(state, str8_lit("###section_rename")).box; }
         else UI_PrefWidth(ui_text_dim(4.f, 1)) UI_TagF(tabs.count > 1 ? "" : "weak")
         {
@@ -3921,14 +4142,14 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           toggle |= ui_clicked(title_sig) && !rd_drag_is_active();
           CFG_Node *own_view = cfg_node_from_id(uishell_regs()->view);
           if(section_panel && ui_middle_clicked(title_sig) && rd_dock_can_close(own_view)) { uishell_cmd("close_tab"); }
-          if(local_section != &cfg_nil_node && ui_right_clicked(title_sig))
+          if(local_section && ui_right_clicked(title_sig))
           { state->confirm_delete = 0; uishell_sidebar_menu_open_at_pointer(section_menu, title_sig.box); }
           // Double-clicking a section you made renames it in place; the
           // double click's first click collapsed it, so it opens again.
-          if(local_section != &cfg_nil_node && ui_double_clicked(title_sig))
+          if(local_section && ui_double_clicked(title_sig))
           {
             Temp title_scratch = scratch_begin(0, 0);
-            uishell_sidebar_local_begin_rename(state, local_section, uishell_sidebar_local_title(title_scratch.arena, local_section));
+            uishell_sidebar_local_begin_rename(state, uishell_sidebar_section_handle(local_section), uishell_sidebar_local_title(title_scratch.arena, local_section));
             scratch_end(title_scratch);
             toggle = !toggle;
           }
@@ -3986,12 +4207,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           // A section you made: holding × opens its menu (Delete lives there).
           // × closes the whole section: every View it holds.
           UI_Signal close = uishell_sidebar_header_button(str8_lit("×"), str8_lit("section_close"), 0, engaged,
-            str8_lit("Close section"), local_section != &cfg_nil_node ? str8_lit("Restore it from Sections… · hold for more") :
+            str8_lit("Close section"), local_section ? str8_lit("Restore it from Sections… · hold for more") :
             str8_lit("Restore it from Sections…"));
-          if(local_section != &cfg_nil_node && uishell_sidebar_held(state, close))
+          if(local_section && uishell_sidebar_held(state, close))
           {
             state->confirm_delete = 0;
-            F32 width = uishell_sidebar_local_menu_width(state, split->owner_cfg, local_section);
+            F32 width = uishell_sidebar_local_menu_width(state, split->owner_cfg, local_section, 0);
             ui_ctx_menu_open(section_menu, close.box->key, v2f32(dim_2f32(close.box->rect).x-width, dim_2f32(close.box->rect).y));
           }
           else if(ui_clicked(close))
@@ -4003,7 +4224,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             }
           }
         }
-        if(local_section != &cfg_nil_node)
+        if(local_section)
         {
           uishell_sidebar_local_section_menu(state, split->owner_cfg, local_section,
             section_panel ? cfg_node_from_id(uishell_regs()->view) : &cfg_nil_node, section_loop, section_menu);
@@ -4077,11 +4298,11 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         // Make footers (sidebar-headers.md): a group's opens when the pointer
         // reaches its last row. In a section you made, the last group card's
         // also offers New group, below the card.
-        CFG_Node *make_section = uishell_sidebar_local_section(split->owner_cfg, uishell_sidebar_local_key_id(key));
+        UIShell_LocalSection *make_section = uishell_sidebar_local_section(split->owner_cfg, uishell_sidebar_local_key_id(key));
         U64 last_group = ANDAMENTO_NONE;
-        for(U64 g = sections[n]+1; make_section != &cfg_nil_node && g < end; g++)
+        for(U64 g = sections[n]+1; make_section && g < end; g++)
         {
-          if(nodes[g].parent == sections[n] && !passed[g] && str8_match(uishell_sidebar_string(nodes[g].entity_kind), str8_lit(".group"), 0))
+          if(nodes[g].parent == sections[n] && !passed[g] && str8_match(uishell_sidebar_string(nodes[g].entity.kind), str8_lit(".group"), 0))
           { last_group = g; }
         }
         Rng2F32 card_last_row = {0}, body_last_row = {0};
@@ -4093,7 +4314,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           // Chrome resolution reads this next frame (ADR-0006).
           ws->chrome_section_header_frame = rd_state->frame_index+1;
           // A section you made (Workspaces) offers it in its footer instead.
-          if(make_section == &cfg_nil_node)
+          if(!make_section)
           {
             uishell_sidebar_new_workspace_entry(split, row_height, side_margin);
             row_y += row_height;
@@ -4109,8 +4330,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             F32 card_footer = 0, outer_footer = 0;
             {
               AndamentoNode owner_node = nodes[project_index];
-              B32 is_project = str8_match(uishell_sidebar_string(owner_node.entity_kind), str8_lit("project"), 0);
-              CFG_Node *group_cfg = is_project ? &cfg_nil_node : uishell_sidebar_local_group(split->owner_cfg, uishell_sidebar_string(owner_node.entity_id));
+              B32 is_project = str8_match(uishell_sidebar_string(owner_node.entity.kind), str8_lit("project"), 0);
+              UIShell_LocalGroup *local_group = is_project ? 0 : uishell_sidebar_local_group(split->owner_cfg, uishell_sidebar_string(owner_node.entity.id));
               B32 outer = project_index == last_group;
               String8 outer_key = push_str8f(scratch.arena, "group_%S", key);
               UI_Box *outer_box = ui_box_from_key(ui_key_from_stringf(body->key, "###make_%S", outer_key));
@@ -4121,11 +4342,11 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               B32 outer_engaged = outer && make_engagable && (engaged || contains_2f32(outer_box->rect, mouse) ||
                 (contains_2f32(section_body_rect, mouse) && mouse.y >= project_box->rect.y1));
               F32 header_inset = em*(0.3f+0.4f*(depth[project_index]+1)+uishell_sidebar_group_row_inset);
-              if(!owner_node.collapsed && (is_project || group_cfg != &cfg_nil_node))
+              if(!owner_node.collapsed && (is_project || local_group))
               {
                 UIShell_MakeAction make = is_project ?
-                  (UIShell_MakeAction){UIShell_Make_ProjectWorkspace, str8_lit("New workspace"), 0, uishell_sidebar_string(owner_node.entity_id)} :
-                  (UIShell_MakeAction){UIShell_Make_Workspace, str8_lit("New workspace"), group_cfg->id};
+                  (UIShell_MakeAction){UIShell_Make_ProjectWorkspace, str8_lit("New workspace"), str8_zero(), uishell_sidebar_string(owner_node.entity.id)} :
+                  (UIShell_MakeAction){UIShell_Make_Workspace, str8_lit("New workspace"), local_group->id};
                 card_footer = uishell_sidebar_make_footer(state, split->owner_cfg, push_str8f(scratch.arena, "workspace_%S", uishell_sidebar_string(owner_node.key)),
                   &make, 1, engaged, row_height, 4.f+header_inset);
               }
@@ -4156,7 +4377,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           if(!drag_sibling && depth[i] <= drag_depth) { drag_subtree = 0; }
           String8 full_label = uishell_sidebar_string(node.label);
           String8 label = full_label;
-          String8 kind = uishell_sidebar_string(node.entity_kind);
+          String8 kind = uishell_sidebar_string(node.entity.kind);
           String8 status = uishell_sidebar_chip_status(state, node);
           String8 context = str8_zero();
           for(U64 f = 0; f < node.field_count; f++)
@@ -4248,8 +4469,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               project_box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground, "###project_%S", node_key);
             }
             if(sidebar_dragging) { group_rects[i] = project_box->rect; }
-            B32 is_project = str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("project"), 0);
-            if(row_dragging && is_project) { uishell_sidebar_home_claim(state, project_box->rect, uishell_sidebar_string(node.entity_id), 0); }
+            B32 is_project = str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("project"), 0);
+            if(row_dragging && is_project) { uishell_sidebar_home_claim(state, project_box->rect, uishell_sidebar_string(node.entity.id), 0); }
             // A data row stays in its project: another project refuses it.
             if(row_dragging && is_project && !groups_dragging && uishell_sidebar_drag_local(state) == &cfg_nil_node)
             {
@@ -4275,10 +4496,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               rd_request_frame();
             }
             // An expanded ghost draws its card in its row's place.
-            CFG_Node *ghost = uishell_sidebar_tree_ghost(split->owner_cfg, node);
+            UIShell_LocalPin *ghost = uishell_sidebar_tree_ghost(split->owner_cfg, node);
             // A revealed pin scrolls into view; an expanded one takes focus,
             // and the reveal completes once its card has been measured.
-            if(ghost != &cfg_nil_node && ghost->id == state->pin_reveal)
+            if(ghost && state->pin_reveal && u64_hash_from_str8(ghost->ghost) == state->pin_reveal)
             {
               body->view_off_target.y = Clamp(0.f, row_y, (F32)axes[Axis2_Y].range.max);
               B32 expanded = uishell_sidebar_pin_expanded(ghost);
@@ -4287,7 +4508,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               if(!expanded || card->content_height > 0) { state->pin_reveal = 0; }
               rd_request_frame();
             }
-            if(ghost != &cfg_nil_node && uishell_sidebar_pin_expanded(ghost))
+            if(ghost && uishell_sidebar_pin_expanded(ghost))
             {
               UIShell_HoverCard *card = uishell_sidebar_saved_card(ws, ghost);
               F32 extent = uishell_sidebar_ghost_extent(card, ghost, em);
@@ -4329,12 +4550,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               .clickable = project, .count = header_count,
               .title_max = project ? Max(em*2.f, available_width-(chip_count ? chip_layout.chip_width+chip_clearance : 0.f)) : 0,
               // A compact ghost's disclosure expands it into its card.
-              .contains_current = contains_current, .disclosure = (children && node.toggle != ANDAMENTO_NONE) || ghost != &cfg_nil_node,
-              .expanded = ghost == &cfg_nil_node && !node.collapsed, .entry = 1, .icon_entry = icon_entry,
+              .contains_current = contains_current, .disclosure = (children && node.toggle != ANDAMENTO_NONE) || ghost,
+              .expanded = !ghost && !node.collapsed, .entry = 1, .icon_entry = icon_entry,
               // A ghost is a reference: it lives elsewhere.
-              .reference = ghost != &cfg_nil_node,
+              .reference = ghost != 0,
               .renaming = str8_match(kind, str8_lit(".group"), 0) &&
-                uishell_sidebar_local_renaming(state, uishell_sidebar_local_group(split->owner_cfg, uishell_sidebar_string(node.entity_id)))};
+                uishell_sidebar_local_renaming(state, uishell_sidebar_local_handle(str8_lit(".group"), uishell_sidebar_string(node.entity.id)))};
             // Persistent workspace selection remains visible while the terminal
             // has focus, without borrowing the keyboard-focus border.
             // Insets keep row selection and action borders inside the container.
@@ -4345,7 +4566,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             if(project_box && owner == project_index) { card_last_row = slot->rect; }
             else { body_last_row = slot->rect; }
             if(sidebar_dragging && node.parent != ANDAMENTO_NONE &&
-               str8_match(uishell_sidebar_string(nodes[node.parent].entity_kind), str8_lit(".group"), 0))
+               str8_match(uishell_sidebar_string(nodes[node.parent].entity.kind), str8_lit(".group"), 0))
             { group_items[group_item_count++] = (UIShell_RowDragSibling){i, slot->rect, slot->rect}; }
             if(drag_sibling)
             {
@@ -4437,7 +4658,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             uishell_sidebar_row_end(state, &r);
             if(ui_clicked(r.toggle))
             {
-              if(ghost != &cfg_nil_node) { uishell_sidebar_ghost_set_expanded(ghost, 1); rd_request_frame(); }
+              if(ghost) { uishell_sidebar_ghost_set_expanded(split->owner_cfg, ghost->ghost, 1); rd_request_frame(); }
               else { action = node.toggle; }
             }
             if(project)
@@ -4501,8 +4722,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         }
         // A section without group cards (one group, or Workspaces): its
         // footer follows its rows, with New workspace and New group side by side.
-        CFG_Node *only_group = make_section != &cfg_nil_node && last_group == ANDAMENTO_NONE ? uishell_sidebar_local_only_group(make_section) : &cfg_nil_node;
-        if(only_group != &cfg_nil_node)
+        UIShell_LocalGroup *only_group = make_section && last_group == ANDAMENTO_NONE ? uishell_sidebar_local_only_group(make_section) : 0;
+        if(only_group)
         {
           String8 make_key = push_str8f(scratch.arena, "section_%S", key);
           Rng2F32 viewport = section_body_rect;
@@ -4531,7 +4752,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       { uishell_sidebar_refuse(drop_layer, body->parent->rect, section_refusal); }
       for(U64 g = sections[n]; sidebar_dragging && !groups_dragging && g < end_of_section; g++)
       {
-        if(!str8_match(uishell_sidebar_string(nodes[g].entity_kind), str8_lit(".group"), 0) || nodes[g].parent != sections[n]) { continue; }
+        if(!str8_match(uishell_sidebar_string(nodes[g].entity.kind), str8_lit(".group"), 0) || nodes[g].parent != sections[n]) { continue; }
         Rng2F32 area = passed[g] ? body->parent->rect : group_rects[g];
         uishell_sidebar_group_claim(state, drop_layer, nodes, g, group_items, group_item_count, area, row_height);
       }
@@ -4818,11 +5039,6 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
   uishell_sidebar_store_labels(state, split->owner_cfg);
   // Pins are independent Views and survive a section's removal.
   uishell_sidebar_pin_migrate(split->owner_cfg);
-  if(state->pin_cfg_generation != cfg_change_gen())
-  {
-    uishell_sidebar_pin_deduplicate(split->owner_cfg);
-    state->pin_cfg_generation = cfg_change_gen();
-  }
   return cfg_node_child_from_string(split->owner_cfg, RD_DOCK_SIDEBAR_ROOT);
 }
 
@@ -4864,12 +5080,13 @@ uishell_sidebar_new_section(UIShell_SidebarState *state, CFG_Node *window)
   RD_Arrangement *sidebar = rd_arrangement_from_owner(scratch.arena, window, RD_DOCK_SIDEBAR_ROOT);
   if(sidebar->root == &rd_nil_arrangement_panel) { scratch_end(scratch); return &cfg_nil_node; }
   RD_PanelID panel = sidebar->root->first != &rd_nil_arrangement_panel ? rd_arrangement_add(sidebar, sidebar->root->id, 0.25f) : sidebar->root->id;
-  CFG_Node *group = uishell_sidebar_local_new_group(window, str8_lit("New section"));
-  String8 title = uishell_sidebar_local_title(scratch.arena, group->parent);
-  String8 key = uishell_sidebar_local_key(scratch.arena, uishell_sidebar_local_field(group->parent, str8_lit("id")));
+  UIShell_LocalGroup *group = uishell_sidebar_local_new_group(window, str8_lit("New section"));
+  if(!group) { scratch_end(scratch); return &cfg_nil_node; }
+  String8 title = uishell_sidebar_local_title(scratch.arena, group->section);
+  String8 key = uishell_sidebar_local_key(scratch.arena, group->section->id);
   CFG_Node *view = uishell_sidebar_section_view_new(sidebar, panel, uishell_sidebar_last_tab(sidebar, panel), key, title);
   rd_arrangement_save(rd_state->cfg, sidebar);
-  uishell_sidebar_local_begin_rename(state, group->parent, title);
+  uishell_sidebar_local_begin_rename(state, uishell_sidebar_section_handle(group->section), title);
   scratch_end(scratch);
   return view;
 }
@@ -5243,8 +5460,8 @@ uishell_sidebar_motion_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
   if(!uishell_sidebar_result(state, configured, config_error)) { scratch_end(scratch); return 0; }
   uishell_sidebar_refresh(state);
   AndamentoNode project = {0}, section = {0};
-  uishell_sidebar_snapshot_node(state->snapshot, project_index, &project);
-  uishell_sidebar_snapshot_node(state->snapshot, project.parent, &section);
+  andamento_snapshot_node(state->snapshot, project_index, &project);
+  andamento_snapshot_node(state->snapshot, project.parent, &section);
   String8 project_key = push_str8_copy(scratch.arena, uishell_sidebar_string(project.key));
   String8 section_key = push_str8_copy(scratch.arena, uishell_sidebar_string(section.key));
   UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc();
@@ -5257,7 +5474,7 @@ uishell_sidebar_motion_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
     // Start open, close for two frames, reverse, Reveal, then check no-animation.
     if(frame == 1 || frame == 3 || frame == 6 || frame == 7)
     {
-      uishell_sidebar_snapshot_node(state->snapshot, project_index, &project);
+      andamento_snapshot_node(state->snapshot, project_index, &project);
       char *error = 0;
       B32 dispatched = uishell_sidebar_dispatch(state, project.toggle, &error);
       ok &= uishell_sidebar_result(state, dispatched, error);
@@ -5426,8 +5643,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
   for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
   {
     AndamentoNode node = {0};
-    if(uishell_sidebar_snapshot_node(state->snapshot, i, &node) &&
-       str8_match(uishell_sidebar_string(node.entity_id), str8_lit("multi"), 0))
+    if(andamento_snapshot_node(state->snapshot, i, &node) &&
+       str8_match(uishell_sidebar_string(node.entity.id), str8_lit("multi"), 0))
     { activate = node.activate; break; }
   }
   char *error = 0;
@@ -5470,8 +5687,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     B32 live = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-      if(node.workspace_id == created && node.state == ANDAMENTO_LIVE)
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      if(uishell_sidebar_node_cfg(&node) == created && node.state == ANDAMENTO_LIVE)
       { live = 1; activate = node.activate; }
     }
     ok = ok && live;
@@ -5490,9 +5707,9 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     U64 reveal_target = uishell_sidebar_reveal_target(state, created);
     AndamentoNode reveal_node = {0}, reveal_parent = {0};
     ok = ok && reveal_target != ANDAMENTO_NONE &&
-      uishell_sidebar_snapshot_node(state->snapshot, reveal_target, &reveal_node) &&
-      uishell_sidebar_snapshot_node(state->snapshot, reveal_node.parent, &reveal_parent) &&
-      str8_match(uishell_sidebar_string(reveal_parent.entity_kind), str8_lit("project"), 0);
+      andamento_snapshot_node(state->snapshot, reveal_target, &reveal_node) &&
+      andamento_snapshot_node(state->snapshot, reveal_node.parent, &reveal_parent) &&
+      str8_match(uishell_sidebar_string(reveal_parent.entity.kind), str8_lit("project"), 0);
     String8 leaf = str8_zero();
     String8 path = uishell_sidebar_workspace_path(scratch.arena, state, created, str8_lit("Local fallback"), &leaf);
     ok = ok && str8_match(path, str8_lit("Example project  ›  Example workspace"), 0) &&
@@ -5511,8 +5728,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     state->reveal_workspace_id = created;
     uishell_sidebar_expand_reveal(state);
     reveal_target = uishell_sidebar_reveal_target(state, created);
-    ok = ok && uishell_sidebar_snapshot_node(state->snapshot, reveal_target, &reveal_node) &&
-      uishell_sidebar_snapshot_node(state->snapshot, reveal_node.parent, &reveal_parent) && !reveal_parent.collapsed;
+    ok = ok && andamento_snapshot_node(state->snapshot, reveal_target, &reveal_node) &&
+      andamento_snapshot_node(state->snapshot, reveal_node.parent, &reveal_parent) && !reveal_parent.collapsed;
     AndamentoEffects *reveal_effects = andamento_effects_take(state->core, 0);
     ok = ok && reveal_effects && andamento_effects_count(reveal_effects) == 0;
     andamento_effects_release(reveal_effects);
@@ -5522,9 +5739,9 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     // aggregate renderer's transient section state.
     reveal_target = uishell_sidebar_reveal_target(state, created);
     AndamentoNode reveal_section_node = {0};
-    uishell_sidebar_snapshot_node(state->snapshot, reveal_target, &reveal_section_node);
+    andamento_snapshot_node(state->snapshot, reveal_target, &reveal_section_node);
     while(!reveal_section_node.is_section && reveal_section_node.parent != ANDAMENTO_NONE)
-    { uishell_sidebar_snapshot_node(state->snapshot, reveal_section_node.parent, &reveal_section_node); }
+    { andamento_snapshot_node(state->snapshot, reveal_section_node.parent, &reveal_section_node); }
     String8 reveal_key = uishell_sidebar_string(reveal_section_node.key);
     CFG_Node *reveal_view = uishell_sidebar_find_view(uishell_sidebar_dock_layout(&split), reveal_key);
     ok = ok && reveal_view != &cfg_nil_node;
@@ -5556,8 +5773,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     // A pending focus whose target disappears must be completed as a failure.
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-      if(node.workspace_id == created && node.state == ANDAMENTO_LIVE) { activate = node.activate; }
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      if(uishell_sidebar_node_cfg(&node) == created && node.state == ANDAMENTO_LIVE) { activate = node.activate; }
     }
     error = 0;
     ok = ok && uishell_sidebar_dispatch(state, activate, &error);
@@ -5572,8 +5789,8 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     B32 latent = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("multi"), 0) && node.state == ANDAMENTO_LATENT)
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("multi"), 0) && node.state == ANDAMENTO_LATENT)
       { latent = 1; activate = node.activate; }
     }
     ok = ok && latent && split.inventory.count == before;
@@ -5604,7 +5821,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     B32 restored_live = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
       restored_live |= node.state == ANDAMENTO_LIVE;
     }
     tree = rd_panel_tree_from_cfg(scratch.arena, panels);
@@ -5622,16 +5839,16 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     end_fact.kind = ANDAMENTO_FACT_TEXT;
     end_fact.text = uishell_sidebar_text(str8_lit("landed"));
     error = 0;
-    retained_call_ok = andamento_apply_entity(state->core, 0, uishell_sidebar_text(str8_lit("vessel")),
+    retained_call_ok = andamento_apply_entity(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("vessel")),
       uishell_sidebar_text(str8_lit("multi")), uishell_sidebar_text(str8_lit("fixture")), &end_fact, 1, &error);
     ok = uishell_sidebar_result(state, retained_call_ok, error) && ok;
     uishell_sidebar_refresh(state);
     B32 retained_live = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-      if(node.workspace_id == workspace->id && node.state == ANDAMENTO_LIVE &&
-         str8_match(uishell_sidebar_string(node.entity_id), str8_lit("multi"), 0))
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      if(uishell_sidebar_node_cfg(&node) == workspace->id && node.state == ANDAMENTO_LIVE &&
+         str8_match(uishell_sidebar_string(node.entity.id), str8_lit("multi"), 0))
       {
         retained_live = str8_match(uishell_sidebar_string(node.label), str8_lit("Example workspace"), 0);
         activate = node.activate;
@@ -5662,7 +5879,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     for(U64 cycle = 0; cycle < 3; cycle++)
     {
       error = 0;
-      B32 accepted = andamento_apply_patch_json(state->core, cycle, uishell_sidebar_text(unavailable_patch), &error);
+      B32 accepted = andamento_apply_patch_json(state->core, cycle, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(unavailable_patch), &error);
       restore_ok = uishell_sidebar_result(state, accepted, error) && restore_ok;
       uishell_sidebar_observe(state, &split);
       uishell_sidebar_refresh(state);
@@ -5674,7 +5891,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     recipe.kind = ANDAMENTO_FACT_TEXT;
     recipe.text = uishell_sidebar_text(str8_lit("restore-existing-only"));
     error = 0;
-    B32 accepted = andamento_apply_entity(state->core, 4, uishell_sidebar_text(str8_lit("vessel")),
+    B32 accepted = andamento_apply_entity(state->core, 4, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("vessel")),
       uishell_sidebar_text(str8_lit("multi")), uishell_sidebar_text(str8_lit("fixture")), &recipe, 1, &error);
     restore_ok = uishell_sidebar_result(state, accepted, error) && restore_ok;
     uishell_sidebar_observe(state, &split);
@@ -5682,9 +5899,9 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     B32 recipe_restored = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(state->snapshot, i, &node);
-      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("multi"), 0))
-      { recipe_restored |= node.state == ANDAMENTO_LIVE && node.workspace_id == workspace->id; }
+      AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("multi"), 0))
+      { recipe_restored |= node.state == ANDAMENTO_LIVE && uishell_sidebar_node_cfg(&node) == workspace->id; }
     }
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     tree = rd_panel_tree_from_cfg(scratch.arena, panels);
@@ -5702,8 +5919,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
 
 // Called between frames only: snapshots used by clicks have finished dispatch.
 // A subscription's endpoint (`context`) stamps its patches with that
-// subscription as their provider; the local endpoint's are "local", the
-// default provider. A stale subscription is fresh again once it publishes.
+// subscription as their provider; the local endpoint's are the host's own. A stale subscription is fresh again once it publishes.
 internal U32
 uishell_sidebar_apply_live(void *context, const U8 *data, size_t size)
 {
@@ -5715,9 +5931,8 @@ uishell_sidebar_apply_live(void *context, const U8 *data, size_t size)
     if(state->core == 0) { unavailable = 1; continue; }
     char *error = 0;
     U64 now = wheelhouse_ingress_now_ms();
-    B32 accepted = subscription ?
-      andamento_apply_patch_json_from(state->core, now, uishell_sidebar_text(subscription->id), (AndamentoText){data, size}, &error) :
-      andamento_apply_patch_json(state->core, now, (AndamentoText){data, size}, &error);
+    String8 provider = subscription ? subscription->id : uishell_sidebar_host_provider;
+    B32 accepted = andamento_apply_patch_json(state->core, now, uishell_sidebar_text(provider), (AndamentoText){data, size}, &error);
     if(!uishell_sidebar_result(state, accepted, error)) { rejected = 1; }
     if(accepted) { state->error[0] = 0; applied = 1; }
   }

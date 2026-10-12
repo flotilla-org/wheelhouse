@@ -112,7 +112,7 @@ lib.wheelhouse_ingress_stop.argtypes = [C.c_void_p]
 core.andamento_create.argtypes = [C.c_char_p, C.c_size_t, C.c_void_p]
 core.andamento_create.restype = C.c_void_p
 core.andamento_destroy.argtypes = [C.c_void_p]
-core.andamento_apply_patch_json.argtypes = [C.c_void_p, C.c_uint64, Text, C.c_void_p]
+core.andamento_apply_patch_json.argtypes = [C.c_void_p, C.c_uint64, Text, Text, C.c_void_p]
 core.andamento_apply_patch_json.restype = C.c_uint32
 core.andamento_tick.argtypes = [C.c_void_p, C.c_uint64, C.c_void_p]
 core.andamento_snapshot_acquire.argtypes = [C.c_void_p, C.c_void_p]
@@ -120,6 +120,12 @@ core.andamento_snapshot_acquire.restype = C.c_void_p
 core.andamento_snapshot_node_count.argtypes = [C.c_void_p]
 core.andamento_snapshot_node_count.restype = C.c_size_t
 core.andamento_snapshot_release.argtypes = [C.c_void_p]
+
+# Patches the local endpoint receives are the host's own provider's.
+PROVIDER_NAME = b'wheelhouse'
+PROVIDER = Text(C.cast(C.c_char_p(PROVIDER_NAME), C.c_void_p), len(PROVIDER_NAME))
+core.andamento_abi_version.restype = C.c_uint32
+assert core.andamento_abi_version() == 4
 
 lib.wheelhouse_ingress_start_recorded.argtypes = [C.c_char_p, C.c_size_t, WAKE,
     C.c_char_p, C.c_size_t, C.c_uint64, C.c_size_t, C.c_void_p, C.c_size_t]
@@ -136,7 +142,7 @@ class IngressTests(unittest.TestCase):
         self.received = []
         def apply(_, data, size):
             self.received.append(C.string_at(data, size))
-            return core.andamento_apply_patch_json(self.core, 0, Text(data, size), None)
+            return core.andamento_apply_patch_json(self.core, 0, PROVIDER, Text(data, size), None)
         self.apply = APPLY(apply)
         self.workdirs = []
         self.observed = 0

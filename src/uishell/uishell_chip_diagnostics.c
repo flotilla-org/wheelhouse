@@ -20,7 +20,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   {
     U64 end = start;
     while(end < patches.size && patches.str[end] != '\n') { end++; }
-    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(str8(patches.str+start, end-start)), 0) && ok;
+    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0) && ok;
     start = end+1;
   }
   uishell_sidebar_refresh(&fixture);
@@ -33,7 +33,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   // Producer suggestion, local template override, then kind fallback. Labels
   // must never participate in icon resolution.
   B32 icon_font = 0;
-  AndamentoNode default_role = {.entity_kind = uishell_sidebar_text(str8_lit("role")),
+  AndamentoNode default_role = {.entity.kind = uishell_sidebar_text(str8_lit("role")),
     .label = uishell_sidebar_text(str8_lit("terminal overview governor"))};
   ok = str8_match(uishell_sidebar_chip_icon(&fixture, default_role, &icon_font),
     rd_icon_kind_text_table[RD_IconKind_Threads], 0) && icon_font && ok;
@@ -47,14 +47,14 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   {
     for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &node);
-      if(str8_match(uishell_sidebar_string(node.entity_kind), str8_lit("role"), 0) &&
+      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0) &&
          str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0))
       { ok = str8_match(uishell_sidebar_chip_icon(&fixture, node, &icon_font),
           rd_icon_kind_text_table[phase ? RD_IconKind_Glasses : RD_IconKind_Gear], 0) && icon_font && ok; }
     }
     String8 patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"role\",\"id\":\"p/governor\"}},\"source_id\":\"fixture\",\"set\":{},\"unset\":[\"presentation.icon\"]}");
-    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(patch), 0) && ok;
+    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0) && ok;
     uishell_sidebar_refresh(&fixture);
   }
   ok = andamento_configure(fixture.core, uishell_sidebar_text(config), 0) && ok;
@@ -62,14 +62,14 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   // Producer labels that resemble directives remain ordinary labels. The
   // first width also exercises a wide-glyph compact subject reference.
   String8 unicode_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"convoy\",\"id\":\"build\"}},\"source_id\":\"fixture\",\"set\":{\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"chip-icon:列車の作業\"}},\"display.label.medium\":{\"value\":{\"type\":\"text\",\"value\":\"chip-status:列車\"}},\"display.label.short\":{\"value\":{\"type\":\"text\",\"value\":\"列車\"}}},\"unset\":[]}");
-  ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(unicode_patch), 0) && ok;
+  ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(unicode_patch), 0) && ok;
   unicode_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"pr-281\"}},\"source_id\":\"fixture\",\"set\":{\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"漢!281\"}}},\"unset\":[]}");
-  ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(unicode_patch), 0) && ok;
+  ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(unicode_patch), 0) && ok;
   uishell_sidebar_refresh(&fixture);
   for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
   {
-    AndamentoNode node = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &node);
-    if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("build"), 0))
+    AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+    if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("build"), 0))
     {
       ok = !uishell_sidebar_chip_fact(&fixture, node, str8_lit("chip-icon:")).size &&
         !uishell_sidebar_chip_field(&fixture, node, 0, str8_lit("chip-icon:列車の作業")) &&
@@ -90,8 +90,8 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
       {
         for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
         {
-          AndamentoNode node = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &node);
-          if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("chip-v"), 0))
+          AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+          if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0))
           { ok = andamento_dispatch(fixture.core, fixture.snapshot, node.activate, 0) && ok; break; }
         }
         uishell_sidebar_refresh(&fixture);
@@ -104,15 +104,15 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
           String8 patch = push_str8f(scratch.arena,
             "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"%s\",\"id\":\"%s\"}},\"source_id\":\"fixture\",\"set\":{},\"unset\":[\"flotilla.subject_of\"]}",
             i == 3 ? "issue" : "change_request", ids[i]);
-          ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(patch), 0) && ok;
+          ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0) && ok;
         }
         uishell_sidebar_refresh(&fixture);
       }
       AndamentoNode convoy = {0};
       for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
       {
-        AndamentoNode node = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &node);
-        if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("build"), 0)) { convoy = node; break; }
+        AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+        if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("build"), 0)) { convoy = node; break; }
       }
       String8 convoy_key = push_str8_copy(scratch.arena, uishell_sidebar_string(convoy.key));
       UI_Box *row = &ui_nil_box;
@@ -260,7 +260,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     for(U64 start = 0; start < patches.size;)
     {
       U64 end = start; while(end < patches.size && patches.str[end] != '\n') { end++; }
-      ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(str8(patches.str+start, end-start)), 0) && ok;
+      ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0) && ok;
       start = end+1;
     }
     uishell_sidebar_refresh(&fixture);
@@ -277,8 +277,8 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     uishell_sidebar_refresh(&fixture);
     for(U64 i = 0; fixture.snapshot && i < andamento_snapshot_node_count(fixture.snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &node);
-      if(str8_match(uishell_sidebar_string(node.entity_id), str8_lit("chip-v"), 0))
+      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0))
       { ok = andamento_dispatch(fixture.core, fixture.snapshot, node.activate, 0) && ok; break; }
     }
     AndamentoEffects *effects = andamento_effects_take(fixture.core, 0);
@@ -288,17 +288,17 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     // A workspace this test makes up, read back through the index as 4242.
     UIShell_WorkspaceId retained_id = uishell_workspace_id_make();
     uishell_workspace_index_insert(retained_id, 4242);
-    if(materialized) { ok = andamento_complete3(fixture.core, effect.request_id, 1, uishell_sidebar_workspace(retained_id), uishell_sidebar_text(str8_zero()), 0) && ok; }
+    if(materialized) { ok = andamento_complete(fixture.core, effect.request_id, 1, uishell_sidebar_workspace(retained_id), uishell_sidebar_text(str8_zero()), 0) && ok; }
     if(effects) { andamento_effects_release(effects); }
-    AndamentoWorkspace3 retained = {uishell_sidebar_workspace(retained_id), 0, uishell_sidebar_text(str8_lit("chip-v")), 1};
-    ok = andamento_observe3(fixture.core, &retained, 1, 0, 0, 0) && ok;
+    AndamentoWorkspace retained = {uishell_sidebar_workspace(retained_id), 0, uishell_sidebar_text(str8_lit("chip-v")), 1};
+    ok = andamento_observe(fixture.core, &retained, 1, 0, 0, 0) && ok;
     String8 terminal_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"chip-v\"}},\"source_id\":\"fixture\",\"set\":{\"flotilla.convoy.phase\":{\"value\":{\"type\":\"text\",\"value\":\"landed\"}}},\"unset\":[]}");
-    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(terminal_patch), 0) && ok;
+    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(terminal_patch), 0) && ok;
     uishell_sidebar_refresh(&fixture);
     B32 toggled = 0;
     for(U64 i = 0; !toggled && i < andamento_snapshot_node_count(fixture.snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &node);
+      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
       for(U64 c = 0; c < node.control_count; c++)
       {
         AndamentoControl control = {0}; andamento_snapshot_control(fixture.snapshot, node.first_control+c, &control);
@@ -310,8 +310,8 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     B32 ended_chip = 0;
     for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
     {
-      AndamentoNode node = {0}; uishell_sidebar_snapshot_node(fixture.snapshot, i, &node);
-      if(node.workspace_id == 4242 && str8_match(uishell_sidebar_string(node.entity_id), str8_lit("chip-v"), 0))
+      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      if(uishell_sidebar_node_cfg(&node) == 4242 && str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0))
       {
         node.state = ANDAMENTO_OPENING;
         ended_chip = str8_match(uishell_sidebar_chip_fact(&fixture, node, str8_lit("chip-status:")), str8_lit("active"), 0) &&
