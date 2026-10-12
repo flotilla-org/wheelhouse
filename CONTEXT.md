@@ -11,9 +11,21 @@ work. The product and build target are Wheelhouse; current work order is in the
 A tabbed container that hosts one or more **Views**.
 _Avoid_: Sidebar, workspace, region
 
+**Panel ID**:
+A **Panel**'s stable identity within its arrangement: a **Workspace**'s, the **Dashboard**'s sidebar, or a **Floating Panel**'s. It is unique only within that arrangement, so a **Panel** is addressed by its arrangement's owner and its Panel ID.
+_Avoid_: Panel node, panel config
+
+**Floating Panel**:
+A **Panel** outside its host's panel tree, positioned in absolute coordinates. Its host is a **Workspace** or a window. It is **Presentation State**.
+_Avoid_: Popup, overlay
+
 **View**:
 A renderable content surface hosted by a **Panel** or future layout host.
 _Avoid_: Widget, pane, control
+
+**View Address**:
+Which **View** this is, on this device: an owner (a **Workspace**, the **Dashboard**, a window, or a transient host), a key, and an instance (current, or the previous one a keep-previous rebind kept). A workspace View's key is its **Slot** key. **Presentation State** and view state are keyed by it.
+_Avoid_: View ID, Slot (a Slot is logical and can show as two Views)
 
 **Active Panel**:
 The **Panel** that is the current keyboard-input target within a **Workspace** — input reaches its **Selected View**. Exactly one per panel tree. Orthogonal to which **View** any panel shows; "active" is about input, not presentation.
@@ -170,6 +182,10 @@ _Avoid_: Workspace name, global ID
 **Workspace ID**:
 A stable identifier for a **Workspace**, assigned once when the Workspace is first saved and unique across Dashboards and devices. Its **Workspace Subject** is an attribute, not its identity. A Dashboard has at most one Workspace per subject at a time, but a subject can have successive Workspaces over time, such as one closed and later recreated. A **Kept Workspace** keeps its ID.
 _Avoid_: Workspace address, layout position, display name
+
+**Window ID**:
+A window's stable identity in its **Dashboard**'s **Presentation State**.
+_Avoid_: Window config, andamento_records
 
 **Kept Workspace**:
 A **Workspace** the user closed but chose to keep. It keeps its **Workspace ID** and **Workspace Overlay**, and activating its subject again reopens it rather than creating a new Workspace.
