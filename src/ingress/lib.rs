@@ -99,6 +99,22 @@ mod transport {
         catalog(state, headers, body, true).await
     }
 
+    // A replacing snapshot carries the provider's whole catalog. Select its
+    // larger bound before recording so capture and delivery enforce the same
+    // limit; ordinary patches and the other routes retain their 1 MiB bound.
+    async fn limit_body(
+        mut request: axum::extract::Request,
+        next: axum::middleware::Next,
+    ) -> Response {
+        let limit = if request.uri().path() == "/v1/metadata/snapshot" {
+            16 * 1024 * 1024
+        } else {
+            1024 * 1024
+        };
+        DefaultBodyLimit::max(limit).apply(&mut request);
+        next.run(request).await
+    }
+
     // A metadata patch, or an array of them applied together. A snapshot is
     // an array that replaces everything the endpoint's provider published.
     async fn catalog(state: Shared, headers: HeaderMap, body: Bytes, replace: bool) -> StatusCode {
@@ -279,7 +295,7 @@ mod transport {
                                 crate::recording::capture,
                             ));
                         }
-                        let app = app.layer(DefaultBodyLimit::max(1024 * 1024));
+                        let app = app.layer(axum::middleware::from_fn(limit_body));
                         let server = axum::serve(listener, app);
                         let ticks = async {
                             loop {

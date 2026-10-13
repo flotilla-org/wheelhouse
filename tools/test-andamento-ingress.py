@@ -446,6 +446,30 @@ class IngressTests(unittest.TestCase):
         self.retract = RETRACT()  # NULL
         self.assertEqual(self.request(b'[]', path='/v1/metadata/snapshot'), 404)
 
+    def test_large_snapshot_with_recording_on_and_off(self):
+        # A full Flotilla catalog can exceed the patch endpoint's 1 MiB limit.
+        message = patch('project', 'large-catalog', {
+            'display.label': 'Large catalog', 'flotilla.project': 'large-catalog',
+            'summary.text': 'x' * (1024 * 1024),
+        })
+        body = json.dumps([message]).encode()
+        oversized = body + b' ' * (16 * 1024 * 1024 + 1 - len(body))
+        for enabled in (False, True):
+            if enabled:
+                self.enable_recording(Path(self.dir.name) / 'ingress.jsonl', size=8*1024*1024)
+            before = self.retracts
+            self.assertEqual(self.request(body, chunked=enabled, path='/v1/metadata/snapshot'), 204)
+            self.assertEqual(self.retracts, before + 1)
+            self.assertEqual(json.loads(self.received[-1]), message)
+            self.assertEqual(self.request(oversized, chunked=enabled, path='/v1/metadata/snapshot'), 413)
+            self.assertEqual(self.retracts, before + 1)
+            self.assertEqual(self.request(b'[]', path='/v1/metadata/snapshot'), 204)
+        entries = [r for r in self.capture() if r['path'] == '/v1/metadata/snapshot']
+        self.assertEqual([r['status'] for r in entries], [204, 413, 204])
+        self.assertEqual(entries[0]['body'], [message])
+        self.assertEqual(entries[0]['body_utf8'].encode(), body)
+        self.assertIsNone(entries[1]['body'])
+
     def test_http_and_schema_errors(self):
         self.assertEqual(self.request(b'not json'), 400)
         self.assertEqual(self.request(b'{}'), 400)

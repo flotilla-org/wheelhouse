@@ -64,6 +64,10 @@ connection liveness) sends one snapshot when it starts, then only changes,
 with no TTLs and no periodic reassertion. The `--andamento_socket` endpoint
 carries several producers under the `local` provider, so it takes no snapshots
 and answers 404; a producer that receives 404 keeps reasserting with TTLs.
+Snapshots have a maximum decoded body size of 16 MiB to accommodate a full
+provider catalog. The patch endpoint retains its 1 MiB limit. These bounds
+apply with recording enabled or disabled; larger requests return 413 before
+retracting or applying facts.
 
 ## Delivery and lifetime
 
