@@ -59,6 +59,22 @@ mod transport {
     struct Shared {
         queue: mpsc::SyncSender<Pending>,
         wake: Wake,
+        ttl_floor_ms: u64,
+    }
+
+    // An opt-in operational grace for sources whose serial catalog refresh
+    // takes longer than their leases. Unsets and permanent/zero-TTL facts keep
+    // their semantics; the normal delivery path keeps the original bytes.
+    fn extend_leases(value: &mut serde_json::Value, floor: u64) {
+        if let Some(facts) = value.get_mut("set").and_then(|v| v.as_object_mut()) {
+            for fact in facts.values_mut() {
+                if let Some(ttl) = fact.get_mut("ttl_ms") {
+                    if ttl.as_u64().is_some_and(|ms| ms > 0 && ms < floor) {
+                        *ttl = floor.into();
+                    }
+                }
+            }
+        }
     }
 
     async fn patch(State(state): State<Shared>, headers: HeaderMap, body: Bytes) -> StatusCode {
@@ -71,12 +87,18 @@ mod transport {
         {
             return StatusCode::UNSUPPORTED_MEDIA_TYPE;
         }
-        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&body) else {
+        let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&body) else {
             return StatusCode::BAD_REQUEST;
         };
         if value.get("type").and_then(|v| v.as_str()) != Some("metadata-patch") {
             return StatusCode::BAD_REQUEST;
         }
+        let body = if state.ttl_floor_ms > 0 {
+            extend_leases(&mut value, state.ttl_floor_ms);
+            Bytes::from(serde_json::to_vec(&value).expect("JSON value serializes"))
+        } else {
+            body
+        };
         let (reply, response) = oneshot::channel();
         if state
             .queue
@@ -181,6 +203,10 @@ mod transport {
             // preserves request ordering and bounds total pending UI work.
             let (queue, receiver) = mpsc::sync_channel(64);
             let (shutdown, stop) = oneshot::channel();
+            let ttl_floor_ms = std::env::var("WHEELHOUSE_METADATA_TTL_FLOOR_MS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
             let thread = thread::Builder::new()
                 .name("wheelhouse-ingress".into())
                 .spawn(move || {
@@ -194,7 +220,11 @@ mod transport {
                             .route("/v1/health", get(|| async { StatusCode::NO_CONTENT }))
                             .route("/v1/metadata/patch", post(patch))
                             .route("/v1/observed/workdirs", get(workdirs))
-                            .with_state(Shared { queue, wake });
+                            .with_state(Shared {
+                                queue,
+                                wake,
+                                ttl_floor_ms,
+                            });
                         if let Some((path, bytes, files)) = recording {
                             let recorder = crate::recording::Recorder::start(path, bytes, files);
                             app = app.layer(axum::middleware::from_fn_with_state(
@@ -234,6 +264,63 @@ mod transport {
     #[cfg(test)]
     mod tests {
         use super::*;
+        #[tokio::test]
+        async fn grace_reaches_the_host_before_http_acknowledgement() {
+            extern "C" fn wake() {}
+            let request: &'static [u8] = br#"{ "type":"metadata-patch", "source_id":"provider", "target":{"kind":"entity","value":{"kind":"vessel","id":"a"}}, "set":{"label":{"ttl_ms":30000,"value":{"type":"text","value":"A"}}}, "unset":["removed"] }"#;
+            for ttl_floor_ms in [0, 120000] {
+                let (queue, receiver) = mpsc::sync_channel(1);
+                let host = thread::spawn(move || {
+                    let Pending::Patch { body, reply } = receiver.recv().unwrap() else {
+                        panic!("expected patch")
+                    };
+                    if ttl_floor_ms == 0 {
+                        assert_eq!(body.as_ref(), request);
+                    }
+                    let patch: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(patch["set"]["label"]["ttl_ms"], 30000.max(ttl_floor_ms));
+                    assert_eq!(patch["unset"], serde_json::json!(["removed"]));
+                    assert_eq!(patch["target"]["value"]["id"], "a");
+                    reply.send(1).unwrap();
+                });
+                let mut headers = HeaderMap::new();
+                headers.insert("content-type", "application/json".parse().unwrap());
+                let response = patch(
+                    State(Shared {
+                        queue,
+                        wake,
+                        ttl_floor_ms,
+                    }),
+                    headers,
+                    Bytes::from_static(request),
+                )
+                .await;
+                assert_eq!(response, StatusCode::NO_CONTENT);
+                host.join().unwrap();
+            }
+        }
+
+        #[test]
+        fn lease_grace_preserves_removals_permanent_facts_and_longer_leases() {
+            let mut patch = serde_json::json!({
+                "type": "metadata-patch", "source_id": "provider",
+                "target": {"kind": "entity", "value": {"kind": "vessel", "id": "a"}},
+                "set": {
+                    "short": {"ttl_ms": 30000, "value": {"type": "text", "value": "a"}},
+                    "long": {"ttl_ms": 300000}, "zero": {"ttl_ms": 0},
+                    "permanent": {"ttl_ms": null}, "absent": {},
+                    "invalid": {"ttl_ms": "invalid"}
+                },
+                "unset": ["removed"]
+            });
+            let original = patch.clone();
+            extend_leases(&mut patch, 0);
+            assert_eq!(patch, original);
+            extend_leases(&mut patch, 120000);
+            let mut expected = original;
+            expected["set"]["short"]["ttl_ms"] = 120000.into();
+            assert_eq!(patch, expected);
+        }
         #[derive(Default)]
         struct Host {
             reads: u32,
