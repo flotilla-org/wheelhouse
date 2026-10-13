@@ -467,19 +467,14 @@ mod tests {
         wait_for("the first run", || {
             connector.starts() == 1 && connector.running()
         });
-        let asked = Instant::now();
         connector.restart();
         wait_for("the next run", || {
             connector.starts() == 2 && connector.running()
         });
-        // No restart backoff (1s): only the old run's stop.
-        assert!(
-            asked.elapsed() < Duration::from_millis(900),
-            "{:?}",
-            asked.elapsed()
-        );
         let text = std::fs::read_to_string(&log).unwrap();
         assert!(text.contains("Connector restarted on request"), "{text}");
+        // Started again at once, not after an exit's backoff.
+        assert!(!text.contains("restarting in"), "{text}");
         assert_eq!(text.matches("started\n").count(), 2, "{text}");
         drop(connector);
         let _ = std::fs::remove_dir_all(&dir);

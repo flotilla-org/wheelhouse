@@ -19,9 +19,10 @@ extern WheelhouseIngress *wheelhouse_ingress_start_recorded(const uint8_t *, siz
 // request's patches (POST /v1/metadata/patch with an array) are applied in one
 // poll, so no frame shows part of them. retract drops every fact the
 // endpoint's provider published, before a snapshot (POST
-// /v1/metadata/snapshot) replaces them in the same poll. It returns 1, or 0
-// for an endpoint without a provider of its own; then, as with a NULL
-// retract, the snapshot is refused (404).
+// /v1/metadata/snapshot) replaces them in the same poll. It returns 1; 2 when
+// some window kept its facts (the patches still apply, and the request is
+// unavailable); or 0 for an endpoint without a provider of its own; then, as
+// with a NULL retract, the snapshot is refused (404).
 extern void wheelhouse_ingress_poll(WheelhouseIngress *, uint32_t (*)(void *, const uint8_t *, size_t),
   uint32_t (*)(void *), void *);
 typedef struct { const uint8_t *data; size_t len; } WheelhouseIngressText;

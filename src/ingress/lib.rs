@@ -27,8 +27,9 @@ pub type Emit = unsafe extern "C" fn(*mut c_void, *const Workdir);
 pub type Observe = unsafe extern "C" fn(*mut c_void, Emit, *mut c_void) -> u32;
 pub type Apply = unsafe extern "C" fn(*mut c_void, *const u8, usize) -> u32;
 /// Drop every fact the endpoint's provider published, before a snapshot
-/// replaces them: 1 when done, 0 when the endpoint has no provider of its own
-/// (a snapshot there is refused).
+/// replaces them: 1 when done, 2 when some window kept its facts (the request
+/// is unavailable), 0 when the endpoint has no provider of its own (a snapshot
+/// there is refused).
 pub type Retract = unsafe extern "C" fn(*mut c_void) -> u32;
 
 #[cfg(any(unix, windows))]
@@ -489,6 +490,13 @@ mod transport {
                     0,
                     UNSUPPORTED,
                     &["retract"][..],
+                ),
+                (
+                    true,
+                    Some(record_retract as Retract),
+                    UNAVAILABLE,
+                    UNAVAILABLE,
+                    &["retract", "apply", "apply"][..],
                 ),
                 (true, None, 1, UNSUPPORTED, &[][..]),
             ] {
@@ -1032,10 +1040,16 @@ unsafe fn apply_request(
     replace: bool,
 ) -> u32 {
     use transport::{APPLIED, REJECTED, UNAVAILABLE, UNSUPPORTED};
-    if replace && !retract.is_some_and(|retract| retract(context) == 1) {
-        return UNSUPPORTED;
-    }
+    // A retract some window couldn't take still lets the patches reach the
+    // others; the request is unavailable, so the producer resends it.
     let mut outcome = APPLIED;
+    if replace {
+        match retract.map(|retract| retract(context)) {
+            Some(APPLIED) => {}
+            Some(UNAVAILABLE) => outcome = UNAVAILABLE,
+            _ => return UNSUPPORTED,
+        }
+    }
     for body in bodies {
         match apply(context, body.as_ptr(), body.len()) {
             REJECTED => outcome = REJECTED,

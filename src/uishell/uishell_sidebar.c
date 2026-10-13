@@ -5952,16 +5952,20 @@ uishell_sidebar_retract_live(void *context)
 {
   UIShell_Subscription *subscription = (UIShell_Subscription *)context;
   if(!subscription) { return 0; }
+  B32 failed = 0;
   for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
   {
     UIShell_SidebarState *state = uishell_sidebar_init(ws);
     if(state->core == 0) { continue; }
     char *error = 0;
-    uishell_sidebar_result(state, andamento_provider_retract(state->core, uishell_sidebar_text(subscription->id), &error), error);
+    if(!uishell_sidebar_result(state, andamento_provider_retract(state->core, uishell_sidebar_text(subscription->id), &error), error))
+    { failed = 1; }
   }
   // Publishing again: the subscription is live, even if its catalog is empty.
   if(subscription->stale) { uishell_subscription_set_stale(subscription, 0); }
-  return 1;
+  // A window that kept its old facts must not answer 204: the producer
+  // resends the snapshot.
+  return failed ? 2 : 1;
 }
 
 // The same UI-owned inventory feeds producer discovery and core association.

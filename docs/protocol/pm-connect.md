@@ -91,7 +91,9 @@ broadcasts to existing windows without sharing their selection, collapse, or
 scroll state. A 204 means all existing windows accepted the patch.
 Broadcast application is not transactional: a 422 (a core rejected the patch)
 or 503 (a core was unavailable) can follow application to other windows.
-A rejection takes precedence over unavailability when both occur.
+A rejection takes precedence over unavailability when both occur. A snapshot's
+422 or 503 can follow its retraction, leaving the provider partly filled until
+the producer resends the snapshot.
 
 The HTTP listener only queues bytes. The UI thread applies patches, advances
 expiry during quiet periods with a 250ms wake tick while ingress is enabled, and refreshes snapshots between frames. An HTTP
