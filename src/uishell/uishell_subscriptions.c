@@ -48,12 +48,22 @@ uishell_subscription_set_stale(UIShell_Subscription *s, B32 stale)
   rd_request_frame();
 }
 
-// A new core: a subscription that is stale now is stale there too.
+// A new core: a subscription that is stale now is stale there too. A
+// connector sends its catalog once, as a snapshot when it starts, then only
+// changes, so a window opened after another gets its facts by restarting the
+// connectors: their snapshots replace each provider's facts in every window.
+// (Until one core serves every window.)
 internal void
 uishell_subscriptions_prepare_core(Andamento *core)
 {
+  B32 others = 0;
+  for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
+  { if(ws->sidebar && ws->sidebar->core && ws->sidebar->core != core) { others = 1; } }
   for(UIShell_Subscription *s = uishell_subscriptions.first; s; s = s->next)
-  { if(s->stale) { andamento_provider_set_stale(core, uishell_sidebar_text(s->id), 1, 0); } }
+  {
+    if(s->stale) { andamento_provider_set_stale(core, uishell_sidebar_text(s->id), 1, 0); }
+    if(others) { wheelhouse_connector_restart(s->connector); }
+  }
 }
 
 // Its endpoint and connector, when live and of a kind Wheelhouse connects.
@@ -284,7 +294,7 @@ uishell_subscriptions_poll(void)
       s->running = running;
       s->starts = starts;
     }
-    if(s->ingress) { wheelhouse_ingress_poll_observed(s->ingress, uishell_sidebar_apply_live, uishell_sidebar_observed_workdirs, s); }
+    if(s->ingress) { wheelhouse_ingress_poll_observed(s->ingress, uishell_sidebar_apply_live, uishell_sidebar_retract_live, uishell_sidebar_observed_workdirs, s); }
   }
 }
 

@@ -2280,6 +2280,24 @@ entry_point(CmdLine *cmdline)
       if(pinned) { uishell_sidebar_card_close(pinned); }
       state_frame(ws);
     }
+
+    //- A window opened while another is open restarts each connector, so
+    // its snapshot (a connector publishes one when it starts, then only
+    // changes) reaches the new window's core. The first window's doesn't.
+    {
+      UIShell_Subscription *beta = uishell_subscriptions.first;
+      U64 before = 0, after = 0;
+      wheelhouse_connector_running(beta->connector, &before);
+      char *error = 0;
+      Andamento *core = andamento_create(uishell_sidebar_live_config.str, uishell_sidebar_live_config.size, &error);
+      andamento_string_free(error);
+      StateCheck(core != 0);
+      if(core) { uishell_subscriptions_prepare_core(core); }
+      for(U32 i = 0; i < 400 && after <= before; i++) { usleep(10000); wheelhouse_connector_running(beta->connector, &after); }
+      StateCheck(after == before+1);
+      if(core) { andamento_destroy(core); }
+      StateWaitFor(ws, state_count_from(ws->sidebar, project, fleet, beta_id, 0) == 1);
+    }
     uishell_subscriptions_close();
   }
 

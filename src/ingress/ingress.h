@@ -15,7 +15,16 @@ extern WheelhouseIngress *wheelhouse_ingress_start(const uint8_t *, size_t, void
 // Optional recorder; NULL recording path disables it. Limits include the active file.
 extern WheelhouseIngress *wheelhouse_ingress_start_recorded(const uint8_t *, size_t, void (*)(void),
   const uint8_t *, size_t, uint64_t, size_t, uint8_t *, size_t);
-extern void wheelhouse_ingress_poll(WheelhouseIngress *, uint32_t (*)(void *, const uint8_t *, size_t), void *);
+// apply takes one metadata patch: 1 applied, 0 rejected, 2 not taken yet. A
+// request's patches (POST /v1/metadata/patch with an array) are applied in one
+// poll, so no frame shows part of them. retract drops every fact the
+// endpoint's provider published, before a snapshot (POST
+// /v1/metadata/snapshot) replaces them in the same poll. It returns 1; 2 when
+// some window kept its facts (the patches still apply, and the request is
+// unavailable); or 0 for an endpoint without a provider of its own; then, as
+// with a NULL retract, the snapshot is refused (404).
+extern void wheelhouse_ingress_poll(WheelhouseIngress *, uint32_t (*)(void *, const uint8_t *, size_t),
+  uint32_t (*)(void *), void *);
 typedef struct { const uint8_t *data; size_t len; } WheelhouseIngressText;
 typedef struct {
   uint64_t workspace_id, view_id;
@@ -29,7 +38,7 @@ typedef void (*WheelhouseWorkdirEmit)(void *, const WheelhouseWorkdir *);
 // reads in a drain share one snapshot; intervening patches invalidate it.
 // No host pointers cross to the worker.
 extern void wheelhouse_ingress_poll_observed(WheelhouseIngress *,
-  uint32_t (*)(void *, const uint8_t *, size_t),
+  uint32_t (*)(void *, const uint8_t *, size_t), uint32_t (*)(void *),
   uint32_t (*)(void *, WheelhouseWorkdirEmit, void *), void *);
 extern void wheelhouse_ingress_stop(WheelhouseIngress *);
 extern uint64_t wheelhouse_ingress_now_ms(void);
@@ -51,6 +60,8 @@ typedef struct WheelhouseConnector WheelhouseConnector;
 extern WheelhouseConnector *wheelhouse_connector_start(const WheelhouseIngressText *argv, size_t argc,
   const WheelhouseIngressText *env, size_t env_count, WheelhouseIngressText log, void (*)(void), uint8_t *, size_t);
 extern uint32_t wheelhouse_connector_running(const WheelhouseConnector *, uint64_t *starts);
+// Ends the current run and starts the next at once, without waiting.
+extern void wheelhouse_connector_restart(const WheelhouseConnector *);
 extern void wheelhouse_connector_stop_begin(WheelhouseConnector *);
 extern void wheelhouse_connector_stop(WheelhouseConnector *);
 
