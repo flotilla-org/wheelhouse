@@ -1696,7 +1696,9 @@ read_only global String8 uishell_store_owner_runtime_keys[] = {str8_lit_comp("na
 
 // Sends a label or theme the user changed as the workspace's name or mood,
 // or takes Andamento's when only Andamento's changed (another host's edit,
-// or a restart, which reads them from the workspace record).
+// or a restart, which reads them from the workspace record). A workspace
+// without the user's name is named by its subject, and follows it: its
+// label isn't the user's until the user changes it.
 internal void
 uishell_store_sync_name(UIShell_SidebarState *state, CFG_Node *owner)
 {
@@ -1710,6 +1712,11 @@ uishell_store_sync_name(UIShell_SidebarState *state, CFG_Node *owner)
     String8 settings[2] = {str8_lit("label"), str8_lit("theme")};
     B32 has_remote[2] = {overlay->has_name != 0, overlay->has_mood != 0};
     String8 remote[2] = {uishell_sidebar_string(overlay->name), uishell_sidebar_string(overlay->mood)};
+    if(!has_remote[0] && overlay->has_subject_name)
+    {
+      has_remote[0] = 1;
+      remote[0] = uishell_sidebar_string(overlay->subject_name);
+    }
     for(U64 i = 0; i < 2; i++)
     {
       String8 mark_key = uishell_store_owner_runtime_keys[i];
@@ -1717,7 +1724,9 @@ uishell_store_sync_name(UIShell_SidebarState *state, CFG_Node *owner)
       B32 has_mark = mark != &cfg_nil_node;
       String8 marked = push_str8_copy(scratch.arena, mark->first->string);
       String8 local = push_str8_copy(scratch.arena, uishell_store_setting(owner, settings[i]));
-      B32 edited = has_mark ? !str8_match(local, marked, 0) : local.size != 0;
+      // Never taken from Andamento: the user's, unless it is what Andamento
+      // has (a subject workspace opens with its subject's name).
+      B32 edited = has_mark ? !str8_match(local, marked, 0) : local.size != 0 && !(has_remote[i] && str8_match(local, remote[i], 0));
       B32 moved = has_remote[i] != has_mark || !str8_match(remote[i], marked, 0);
       if(!edited && moved && has_remote[i])
       {

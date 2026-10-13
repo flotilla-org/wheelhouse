@@ -40,6 +40,8 @@ global U32 state_reviewer_partner, state_reviewer_watch;
 // `log`; 3 gives `log` other content and its panel twice the room; 4 drops
 // `watch`.
 global U32 state_reviewer_version = 1;
+// The reviewer role's display label, which its provider may change.
+global char *state_reviewer_label = "reviewer";
 
 internal String8
 state_json_list(Arena *arena, String8 key, char **values, U64 count)
@@ -89,7 +91,7 @@ state_producer(UIShell_SidebarState *state)
     String8 facts[] =
     {
       uishell_sidebar_json_fact_text(arena, str8_lit("flotilla.project"), str8_lit("p")),
-      uishell_sidebar_json_fact_text(arena, str8_lit("display.label"), str8_lit("reviewer")),
+      uishell_sidebar_json_fact_text(arena, str8_lit("display.label"), str8_cstring(state_reviewer_label)),
       uishell_sidebar_json_fact_text(arena, str8_lit("flotilla.role"), str8_lit("p/reviewer")),
       uishell_sidebar_json_fact_text(arena, str8_lit("flotilla.role.name"), str8_lit("reviewer")),
       uishell_sidebar_json_fact_text(arena, str8_lit("status.state"), str8_lit("running")),
@@ -1833,6 +1835,25 @@ entry_point(CmdLine *cmdline)
     state_check_committed(ws);
   }
 
+  //- A subject workspace's name is its subject's until the user renames it:
+  // opening it sets no name of the user's, and it follows the provider's.
+  {
+    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    AndamentoOverlay *overlay = andamento_overlay_get(state->core, id, 0);
+    StateCheck(overlay && !overlay->has_name);
+    andamento_overlay_free(overlay);
+    state_reviewer_label = "reviewer (renamed)";
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(str8_match(uishell_store_setting(reviewer, str8_lit("label")), str8_lit("reviewer (renamed)"), 0));
+    state_reviewer_label = "reviewer";
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(str8_match(uishell_store_setting(reviewer, str8_lit("label")), str8_lit("reviewer"), 0));
+  }
+
   //- Renaming a workspace and giving it a mood are overlay edits: they are
   // in its record, not this device's file, and survive a restart.
   {
@@ -1858,6 +1879,16 @@ entry_point(CmdLine *cmdline)
     String8 after = state_workspaces_text(scratch.arena);
     StateCheck(str8_match(before, after, 0));
     if(!str8_match(before, after, 0)) { fprintf(stderr, "before:\n%.*s\nafter:\n%.*s\n", str8_varg(before), str8_varg(after)); }
+    // Another frontend drops the user's name: the subject's comes back, and
+    // this one doesn't send its label again.
+    id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    StateCheck(andamento_workspace_set_name(state->core, id, 0, uishell_sidebar_text(str8_zero()), 0));
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(str8_match(uishell_store_setting(reviewer, str8_lit("label")), str8_lit("reviewer"), 0));
+    overlay = andamento_overlay_get(state->core, id, 0);
+    StateCheck(overlay && !overlay->has_name);
+    andamento_overlay_free(overlay);
     uishell_cmd("select_workspace", .window = window->id, .cfg = state_workspace_labelled(window, str8_lit("Workspace 1"))->id);
     state_frame(ws);
   }
