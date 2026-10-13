@@ -161,7 +161,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
             UI_Key root = ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", str8_lit("tree"));
             UI_Box *body = ui_box_from_key(ui_key_from_stringf(root, "section_body_%S", str8_lit("tree")));
             event.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(body->rect),
-                                .delta_2f32 = {0, .25f}, .scroll_is_precise = 1};
+                                .delta_2f32 = v2f32(0, .25f), .scroll_is_precise = 1};
             events.first = events.last = &event; events.count = 1;
           }
           uishell_sidebar_analysis_us = uishell_sidebar_context_us = 0;

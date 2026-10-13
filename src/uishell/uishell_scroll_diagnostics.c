@@ -56,7 +56,7 @@ uishell_scroll_preview_diagnostics(RD_WindowState *ws)
     if(frame == 6)
     {
       press.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = mouse,
-                           .delta_2f32 = {0, 0.25f}, .scroll_is_precise = 1};
+                           .delta_2f32 = v2f32(0, 0.25f), .scroll_is_precise = 1};
       events.first = events.last = &press; events.count = 1;
     }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
@@ -132,7 +132,7 @@ uishell_precise_list_diagnostics(RD_WindowState *ws)
          (frame >= 40 && frame < 44) || frame == 49)
       {
         WM_Event event = {.kind = WM_EventKind_Scroll, .window = ws->os,
-                         .pos = {50, 50}, .delta = {0, 0.25f}, .scroll_is_precise = 1};
+                         .pos = v2f32(50, 50), .delta = v2f32(0, 0.25f), .scroll_is_precise = 1};
         if(frame >= 20 && frame < 28) { event.delta.y = -0.25f; }
         if(frame == 31) { event.delta.y = 0.25f; event.scroll_is_precise = 0; }
         if(frame >= 40 && frame < 44) { event.delta.y = row_height*0.25f; }
@@ -141,13 +141,13 @@ uishell_precise_list_diagnostics(RD_WindowState *ws)
       }
       if(frame == 52)
       {
-        UI_Event navigate = {.kind = UI_EventKind_Navigate, .delta_unit = UI_EventDeltaUnit_Whole, .delta_2s32 = {0, 1}};
+        UI_Event navigate = {.kind = UI_EventKind_Navigate, .delta_unit = UI_EventDeltaUnit_Whole, .delta_2s32 = v2s32(0, 1)};
         ui_event_list_push(ui_build_arena(), &ws->ui_events, &navigate);
       }
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(16) UI_Focus(UI_FocusKind_On)
       {
         ui_top_parent()->flags |= UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise;
-        UI_ScrollListParams params = {.dim_px = {200, 150}, .row_height_px = row_height, .item_range = {0, 100}};
+        UI_ScrollListParams params = {.dim_px = v2f32(200, 150), .row_height_px = row_height, .item_range = r1s64(0, 100)};
         params.flags = UI_ScrollListFlag_Nav|UI_ScrollListFlag_Snap;
         params.cursor_range = r2s64p(0, 1, 0, 100);
         params.snap_scroll = frame >= 40 && frame < 44;
@@ -195,7 +195,7 @@ uishell_scroll_controls_diagnostics(RD_WindowState *ws)
   {
     UI_State *test = ui_state_alloc();
     ui_select_state(test);
-    UI_ScrollRegionParams params = {.rect = {100, 100, 500, 400}, .style = style,
+    UI_ScrollRegionParams params = {.rect = r2f32p(100, 100, 500, 400), .style = style,
       .axis = {UI_ScrollAxisPolicy_Always, UI_ScrollAxisPolicy_Always},
       .gutter_px = 24, .overlay_rest_px = 7, .overlay_hover_px = 14, .overlay_inset_px = 3,
       // Reserved, so an overlay bar is shown whatever the pointer does.
@@ -322,8 +322,8 @@ uishell_positioned_list_diagnostics(RD_WindowState *ws)
     UI_AnimationInfo animation = {0};
     animation.scroll_animation_rate = animation.hot_animation_rate = 1;
     UI_EventList events = {0};
-    UI_EventNode wheel = {.v = {.kind = UI_EventKind_Scroll, .pos = {350, 250},
-                               .delta_2f32 = {0, 5}, .scroll_is_precise = 1}};
+    UI_EventNode wheel = {.v = {.kind = UI_EventKind_Scroll, .pos = v2f32(350, 250),
+                               .delta_2f32 = v2f32(0, 5), .scroll_is_precise = 1}};
     if(frame == 10) { events.first = events.last = &wheel; events.count = 1; }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = v2f32(350, 250);
@@ -345,7 +345,7 @@ uishell_positioned_list_diagnostics(RD_WindowState *ws)
         {
           ui_set_next_fixed_x(150);
           ui_set_next_fixed_y(50);
-          UI_ScrollListParams list = {.dim_px = {200, 100}, .row_height_px = 20, .item_range = {0, 100}};
+          UI_ScrollListParams list = {.dim_px = v2f32(200, 100), .row_height_px = 20, .item_range = r1s64(0, 100)};
           Rng1S64 rows = {0};
           UI_ScrollList(&list, &pt, 0, 0, &rows, 0)
           {
@@ -395,7 +395,7 @@ uishell_scroll_activity_diagnostics(RD_WindowState *ws)
   ui_select_state(test);
   U32 failures = 0;
 #define ActivityCheck(c, n) do { if(!(c)) { fprintf(stderr, "FAIL: scroll activity: %s\n", n); failures++; } } while(0)
-  UI_ScrollRegionParams params = {.rect = {100, 100, 400, 300}, .style = UI_ScrollBarStyle_Overlay,
+  UI_ScrollRegionParams params = {.rect = r2f32p(100, 100, 400, 300), .style = UI_ScrollBarStyle_Overlay,
     .axis = {UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always},
     .gutter_px = 24, .overlay_rest_px = 7, .overlay_hover_px = 14, .overlay_inset_px = 3};
   UI_ScrollRegion region = ui_scroll_region_layout(params);
@@ -618,7 +618,7 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
                 "two-axis corner cannot steal a scrollbar drag");
     UI_Event corner_release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = corner};
     uishell_scroll_test_frame(ws, &region, axes, corner, corner_release, &content);
-    UI_Event wheel = {.kind = UI_EventKind_Scroll, .pos = mouse, .delta_2f32 = {0, 30}};
+    UI_Event wheel = {.kind = UI_EventKind_Scroll, .pos = mouse, .delta_2f32 = v2f32(0, 30)};
     uishell_scroll_test_frame(ws, &region, axes, mouse, wheel, &content);
     ScrollCheck(content.scroll.y == 1 && content.scroll.x == 0, "content receives wheel exactly once");
     wheel.modifiers = WM_Modifier_Shift;

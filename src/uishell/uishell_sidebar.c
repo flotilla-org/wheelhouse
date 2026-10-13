@@ -2191,9 +2191,9 @@ internal Vec4F32
 uishell_sidebar_project_accent(String8 identity)
 {
   Vec4F32 colors[] = {
-    {0.40f, 0.66f, 0.83f, 1.f}, {0.66f, 0.55f, 0.79f, 1.f},
-    {0.74f, 0.64f, 0.40f, 1.f}, {0.43f, 0.72f, 0.61f, 1.f},
-    {0.78f, 0.53f, 0.49f, 1.f}, {0.46f, 0.69f, 0.72f, 1.f},
+    v4f32(0.40f, 0.66f, 0.83f, 1.f), v4f32(0.66f, 0.55f, 0.79f, 1.f),
+    v4f32(0.74f, 0.64f, 0.40f, 1.f), v4f32(0.43f, 0.72f, 0.61f, 1.f),
+    v4f32(0.78f, 0.53f, 0.49f, 1.f), v4f32(0.46f, 0.69f, 0.72f, 1.f),
   };
   return colors[u64_hash_from_str8(identity)%ArrayCount(colors)];
 }
@@ -5583,7 +5583,7 @@ uishell_sidebar_scroll_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
       UI_Box *body = ui_box_from_key(keys[section]);
       F32 delta = frame < 12 ? 0.25f : -0.125f;
       node.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(body->rect),
-                         .delta_2f32 = {0, delta}, .scroll_is_precise = 1};
+                         .delta_2f32 = v2f32(0, delta), .scroll_is_precise = 1};
       events.first = events.last = &node; events.count = 1;
       expected[section] += delta;
     }

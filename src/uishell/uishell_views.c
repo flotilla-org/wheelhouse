@@ -3260,8 +3260,8 @@ uishell_text_slice(UIShell_TextSliceParams *params, TxtPt *cursor, TxtPt *mark, 
               Rng1U64 match_range = r1u64(needle_pos, needle_pos+params->search_query.size);
               Rng1F32 match_px_rng =
               {
-                fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, match_range.min)).x,
-                fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, match_range.max)).x,
+                .min = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, match_range.min)).x,
+                .max = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, match_range.max)).x,
               };
               Vec4F32 color = ui_color_from_name(str8_lit("background"));
               color.w *= 0.25f;
@@ -3285,13 +3285,13 @@ uishell_text_slice(UIShell_TextSliceParams *params, TxtPt *cursor, TxtPt *mark, 
             S64 visual_col_min = (S64)(visual_line->range.min-source_line_range.min)+1;
             Rng1S64 selection_col_rng =
             {
-              Clamp(visual_col_min, selection_in_line.min.column, (S64)(visual_col_min+line_string.size)),
-              Clamp(visual_col_min, selection_in_line.max.column, (S64)(visual_col_min+line_string.size)),
+              .min = Clamp(visual_col_min, selection_in_line.min.column, (S64)(visual_col_min+line_string.size)),
+              .max = Clamp(visual_col_min, selection_in_line.max.column, (S64)(visual_col_min+line_string.size)),
             };
             Rng1F32 selection_px_rng =
             {
-              fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, selection_col_rng.min-visual_col_min)).x,
-              fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, selection_col_rng.max-visual_col_min)).x,
+              .min = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, selection_col_rng.min-visual_col_min)).x,
+              .max = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, selection_col_rng.max-visual_col_min)).x,
             };
             dr_rect(r2f32p(ui_box_text_position(line_box).x+selection_px_rng.min-2.f,
                            floor_f32(line_box->rect.y0)-1.f,
@@ -5407,8 +5407,8 @@ uishell_bitmap_screen_from_canvas_pos(Vec2F32 view_center_pos, F32 zoom, Rng2F32
 {
   Vec2F32 scr =
   {
-    (rect.x0+rect.x1)/2 + (cvs.x - view_center_pos.x) * zoom,
-    (rect.y0+rect.y1)/2 + (cvs.y - view_center_pos.y) * zoom,
+    .x = (rect.x0+rect.x1)/2 + (cvs.x - view_center_pos.x) * zoom,
+    .y = (rect.y0+rect.y1)/2 + (cvs.y - view_center_pos.y) * zoom,
   };
   return scr;
 }
@@ -5426,8 +5426,8 @@ uishell_bitmap_canvas_from_screen_pos(Vec2F32 view_center_pos, F32 zoom, Rng2F32
 {
   Vec2F32 cvs =
   {
-    (scr.x - (rect.x0+rect.x1)/2) / zoom + view_center_pos.x,
-    (scr.y - (rect.y0+rect.y1)/2) / zoom + view_center_pos.y,
+    .x = (scr.x - (rect.x0+rect.x1)/2) / zoom + view_center_pos.x,
+    .y = (scr.y - (rect.y0+rect.y1)/2) / zoom + view_center_pos.y,
   };
   return cvs;
 }
@@ -5505,8 +5505,8 @@ WH_VIEW_UI_FUNCTION_DEF(bitmap)
   F32 zoom = rd_view_setting_value_from_name(str8_lit("zoom")).f32;
   Vec2F32 view_center_pos =
   {
-    rd_view_setting_value_from_name(str8_lit("x")).f32,
-    rd_view_setting_value_from_name(str8_lit("y")).f32,
+    .x = rd_view_setting_value_from_name(str8_lit("x")).f32,
+    .y = rd_view_setting_value_from_name(str8_lit("y")).f32,
   };
   if(zoom == 0)
   {
@@ -5605,7 +5605,7 @@ WH_VIEW_UI_FUNCTION_DEF(bitmap)
   Rng2F32 img_rect_cvs = r2f32p(-topology.dim.x/2, -topology.dim.y/2, +topology.dim.x/2, +topology.dim.y/2);
   Rng2F32 img_rect_scr = uishell_bitmap_screen_from_canvas_rect(view_center_pos, zoom, canvas_rect, img_rect_cvs);
   
-  Vec2S32 mouse_bmp = {-1, -1};
+  Vec2S32 mouse_bmp = v2s32(-1, -1);
   if(ui_hovering(canvas_sig) && !ui_dragging(canvas_sig))
   {
     Vec2F32 mouse_scr = sub_2f32(ui_mouse(), rect.p0);

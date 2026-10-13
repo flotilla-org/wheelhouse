@@ -84,6 +84,16 @@
 #include "font_cache/font_cache.c"
 #include "draw/draw.c"
 #include "ui/ui_inc.c"
+// From here on (shell, uishell, and the harnesses appended after this file's
+// includes), brace elision is an error: a scalar given to a struct-typed field,
+// such as `.panel = cfg_id` for an RD_PanelAddress, otherwise compiles into the
+// struct's first member (#368, #369). The layers above keep RAD's `{x, y}`
+// initialisers for the Vec/Rng unions, which the build flags let through.
+// Spell those as v2f32()/r2f32p() or designators (.x0 = ...) here. MSVC has no
+// equivalent warning; the clang builds (Linux, macOS CI) enforce it.
+#if defined(__clang__)
+# pragma clang diagnostic error "-Wmissing-braces"
+#endif
 #include "uishell/uishell_eval.c"
 // stb_image is needed by the terminal glyph layer (Kitty PNG images). Pull the
 // implementation in here, before that layer; shell_core.c's identical guarded

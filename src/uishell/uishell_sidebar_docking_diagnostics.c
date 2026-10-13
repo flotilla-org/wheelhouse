@@ -201,7 +201,7 @@ uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
       if(frame == 4)
       {
         event.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(bar->rect),
-          .delta_2f32 = {10000, 0}, .scroll_is_precise = 1};
+          .delta_2f32 = v2f32(10000, 0), .scroll_is_precise = 1};
         events.first = events.last = &event; events.count = 1;
       }
       UI_IconInfo icons = ws->ui->icon_info;
@@ -518,7 +518,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       F32 delta = frame < 12 ? .25f : -.125f;
       // Near the body's left edge: a row's chips scroll sideways and take the wheel.
       node.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = v2f32(body->rect.x0+6.f, center_2f32(body->rect).y),
-                         .delta_2f32 = {0, delta}, .scroll_is_precise = 1};
+                         .delta_2f32 = v2f32(0, delta), .scroll_is_precise = 1};
       events.first = events.last = &node; events.count = 1; expected[which] += delta;
     }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);

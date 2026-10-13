@@ -1556,15 +1556,15 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
               Rng1U64 match_range = r1u64(needle_pos, needle_pos+params->search_query.size);
               Rng1F32 match_column_pixel_off_range =
               {
-                fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, match_range.min)).x,
-                fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, match_range.max)).x,
+                .min = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, match_range.min)).x,
+                .max = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, match_range.max)).x,
               };
               Rng2F32 match_rect =
               {
-                line_box->rect.x0+line_num_padding_px+match_column_pixel_off_range.min,
-                line_box->rect.y0,
-                line_box->rect.x0+line_num_padding_px+match_column_pixel_off_range.max+2.f,
-                line_box->rect.y1,
+                .x0 = line_box->rect.x0+line_num_padding_px+match_column_pixel_off_range.min,
+                .y0 = line_box->rect.y0,
+                .x1 = line_box->rect.x0+line_num_padding_px+match_column_pixel_off_range.max+2.f,
+                .y1 = line_box->rect.y1,
               };
               Vec4F32 color = pop_color;
               if(!is_focused)
@@ -1600,20 +1600,20 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
                                     txt_pt_less_than(select_range_in_next_line.min, select_range_in_next_line.max));
               Rng1S64 select_column_range_in_line =
               {
-                (select_range.min.line == line_num) ? select_range.min.column : 1,
-                (select_range.max.line == line_num) ? select_range.max.column : (S64)(line_string.size+1),
+                .min = (select_range.min.line == line_num) ? select_range.min.column : 1,
+                .max = (select_range.max.line == line_num) ? select_range.max.column : (S64)(line_string.size+1),
               };
               Rng1F32 select_column_pixel_off_range =
               {
-                fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, select_column_range_in_line.min-1)).x,
-                fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, select_column_range_in_line.max-1)).x,
+                .min = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, select_column_range_in_line.min-1)).x,
+                .max = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, select_column_range_in_line.max-1)).x,
               };
               Rng2F32 select_rect =
               {
-                line_box->rect.x0+line_num_padding_px+select_column_pixel_off_range.min-2.f,
-                floor_f32(line_box->rect.y0) - 1.f,
-                line_box->rect.x0+line_num_padding_px+select_column_pixel_off_range.max+2.f,
-                ceil_f32(line_box->rect.y1) + 1.f,
+                .x0 = line_box->rect.x0+line_num_padding_px+select_column_pixel_off_range.min-2.f,
+                .y0 = floor_f32(line_box->rect.y0) - 1.f,
+                .x1 = line_box->rect.x0+line_num_padding_px+select_column_pixel_off_range.max+2.f,
+                .y1 = ceil_f32(line_box->rect.y1) + 1.f,
               };
               Vec4F32 color = n->color;
               if(!is_focused)
@@ -1642,18 +1642,18 @@ rd_code_slice(RD_CodeSliceParams *params, TxtPt *cursor, TxtPt *mark, S64 *prefe
           F32 cursor_thickness = ClampBot(1.f, floor_f32(line_box->font_size/10.f));
           Rng2F32 cursor_rect =
           {
-            ui_box_text_position(line_box).x+cursor_off_pixels,
-            line_box->rect.y0-params->font_size*0.125f,
-            ui_box_text_position(line_box).x+cursor_off_pixels+cursor_thickness,
-            line_box->rect.y1+params->font_size*0.125f,
+            .x0 = ui_box_text_position(line_box).x+cursor_off_pixels,
+            .y0 = line_box->rect.y0-params->font_size*0.125f,
+            .x1 = ui_box_text_position(line_box).x+cursor_off_pixels+cursor_thickness,
+            .y1 = line_box->rect.y1+params->font_size*0.125f,
           };
           Rng1F32 trail_off_span = r1f32(cursor_off_pixels__animated, cursor_off_pixels);
           Rng2F32 trail_rect =
           {
-            ui_box_text_position(line_box).x+trail_off_span.min,
-            line_box->rect.y0-params->font_size*0.125f,
-            ui_box_text_position(line_box).x+trail_off_span.max,
-            line_box->rect.y1+params->font_size*0.125f,
+            .x0 = ui_box_text_position(line_box).x+trail_off_span.min,
+            .y0 = line_box->rect.y0-params->font_size*0.125f,
+            .x1 = ui_box_text_position(line_box).x+trail_off_span.max,
+            .y1 = line_box->rect.y1+params->font_size*0.125f,
           };
           Vec4F32 cursor_color = ui_color_from_name(s("cursor"));
           Vec4F32 trail_color = cursor_color;

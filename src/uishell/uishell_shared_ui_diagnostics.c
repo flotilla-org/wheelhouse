@@ -265,7 +265,7 @@ uishell_check_text_decorations(U32 *failures)
   node.v.run.descent = 8;
   node.v.color = v4f32(1, 1, 1, 1);
   node.v.underline_thickness = node.v.strikethrough_thickness = 1;
-  DR_FRunList list = {.first = &node, .last = &node, .node_count = 1, .dim = {40, 28}};
+  DR_FRunList list = {.first = &node, .last = &node, .node_count = 1, .dim = v2f32(40, 28)};
   DR_Bucket *bucket = dr_bucket_make();
   DR_BucketScope(bucket)
   {
