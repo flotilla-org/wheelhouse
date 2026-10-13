@@ -857,6 +857,21 @@ pub unsafe extern "C" fn wheelhouse_connector_stop(connector: *mut Connector) {
     }
 }
 
+/// End the connector's current run and start the next at once, without
+/// waiting.
+///
+/// # Safety
+/// `connector` must be NULL or a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_connector_restart(connector: *const Connector) {
+    #[cfg(any(unix, windows))]
+    if let Some(connector) = connector.as_ref() {
+        connector.restart();
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = connector;
+}
+
 /// Ask the connector to stop without waiting, so that several stop at once;
 /// stop then waits for it and releases the handle.
 ///

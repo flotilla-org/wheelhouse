@@ -63,8 +63,19 @@ pub struct Spec {
 pub struct Connector {
     running: Arc<AtomicBool>,
     starts: Arc<AtomicU64>,
-    stop: Option<mpsc::Sender<()>>,
+    /// Dropped to stop; a restart is sent.
+    stop: Option<mpsc::Sender<Restart>>,
     thread: Option<thread::JoinHandle<()>>,
+}
+
+/// Ends the current run and starts the next at once.
+struct Restart;
+
+/// How a wait between polls or restarts ended.
+enum Wait {
+    Elapsed,
+    Restart,
+    Stop,
 }
 
 /// A started child and what owns its descendants: on Unix the guardian
@@ -236,18 +247,17 @@ impl Connector {
             .map_err(|e| e.to_string())?;
         let running = Arc::new(AtomicBool::new(false));
         let starts = Arc::new(AtomicU64::new(0));
-        let (stop, stopped) = mpsc::channel::<()>();
+        let (stop, stopped) = mpsc::channel::<Restart>();
         let (running_, starts_) = (running.clone(), starts.clone());
         let thread = thread::Builder::new()
             .name("wheelhouse-connector".into())
             .spawn(move || {
                 let mut backoff = Duration::from_secs(1);
-                // Waits `delay`; true when asked to stop first.
-                let stopping = |delay| {
-                    !matches!(
-                        stopped.recv_timeout(delay),
-                        Err(mpsc::RecvTimeoutError::Timeout)
-                    )
+                // Waits `delay`, unless asked to stop or restart first.
+                let wait = |delay| match stopped.recv_timeout(delay) {
+                    Err(mpsc::RecvTimeoutError::Timeout) => Wait::Elapsed,
+                    Ok(Restart) => Wait::Restart,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => Wait::Stop,
                 };
                 loop {
                     let from = log.seek(SeekFrom::End(0)).unwrap_or(0);
@@ -259,10 +269,11 @@ impl Connector {
                                 backoff.as_secs()
                             );
                             note(&mut log, &message);
-                            if stopping(backoff) {
-                                return;
+                            match wait(backoff) {
+                                Wait::Stop => return,
+                                Wait::Restart => backoff = Duration::from_secs(1),
+                                Wait::Elapsed => backoff = (backoff * 2).min(MAX_BACKOFF),
                             }
-                            backoff = (backoff * 2).min(MAX_BACKOFF);
                             continue;
                         }
                     };
@@ -270,11 +281,19 @@ impl Connector {
                     running_.store(true, Ordering::SeqCst);
                     starts_.fetch_add(1, Ordering::SeqCst);
                     wake();
+                    let mut restart = false;
                     let status = loop {
-                        if stopping(POLL) {
-                            run.stop();
-                            running_.store(false, Ordering::SeqCst);
-                            return;
+                        match wait(POLL) {
+                            Wait::Stop => {
+                                run.stop();
+                                running_.store(false, Ordering::SeqCst);
+                                return;
+                            }
+                            Wait::Restart => {
+                                restart = true;
+                                break String::new();
+                            }
+                            Wait::Elapsed => {}
                         }
                         match run.child.try_wait() {
                             Ok(Some(status)) => break status.to_string(),
@@ -286,6 +305,11 @@ impl Connector {
                     run.stop();
                     running_.store(false, Ordering::SeqCst);
                     wake();
+                    if restart {
+                        note(&mut log, "Connector restarted on request");
+                        backoff = Duration::from_secs(1);
+                        continue;
+                    }
                     if started.elapsed() >= STABLE {
                         backoff = Duration::from_secs(1);
                     }
@@ -297,10 +321,11 @@ impl Connector {
                         backoff.as_secs()
                     );
                     note(&mut log, &message);
-                    if stopping(backoff) {
-                        return;
+                    match wait(backoff) {
+                        Wait::Stop => return,
+                        Wait::Restart => backoff = Duration::from_secs(1),
+                        Wait::Elapsed => backoff = (backoff * 2).min(MAX_BACKOFF),
                     }
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
             })
             .map_err(|e| e.to_string())?;
@@ -318,6 +343,14 @@ impl Connector {
 
     pub fn starts(&self) -> u64 {
         self.starts.load(Ordering::SeqCst)
+    }
+
+    /// Ends the current run and starts the next at once, without waiting:
+    /// a connector that publishes a snapshot when it starts sends it again.
+    pub fn restart(&self) {
+        if let Some(stop) = &self.stop {
+            let _ = stop.send(Restart);
+        }
     }
 
     /// Asks the connector to stop without waiting for it, so several can
@@ -411,6 +444,45 @@ mod tests {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
             thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    #[test]
+    fn a_restart_ends_the_run_and_starts_the_next_at_once() {
+        let dir = std::env::temp_dir().join(format!("wh-connector-restart-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("connector.log");
+        let connector = Connector::start(
+            Spec {
+                argv: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "echo started; exec sleep 60".into(),
+                ],
+                env: vec![],
+                log: log.clone(),
+            },
+            wake,
+        )
+        .unwrap();
+        wait_for("the first run", || {
+            connector.starts() == 1 && connector.running()
+        });
+        let asked = Instant::now();
+        connector.restart();
+        wait_for("the next run", || {
+            connector.starts() == 2 && connector.running()
+        });
+        // No restart backoff (1s): only the old run's stop.
+        assert!(
+            asked.elapsed() < Duration::from_millis(900),
+            "{:?}",
+            asked.elapsed()
+        );
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(text.contains("Connector restarted on request"), "{text}");
+        assert_eq!(text.matches("started\n").count(), 2, "{text}");
+        drop(connector);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

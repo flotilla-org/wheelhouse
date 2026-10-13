@@ -59,6 +59,8 @@ typedef struct WheelhouseConnector WheelhouseConnector;
 extern WheelhouseConnector *wheelhouse_connector_start(const WheelhouseIngressText *argv, size_t argc,
   const WheelhouseIngressText *env, size_t env_count, WheelhouseIngressText log, void (*)(void), uint8_t *, size_t);
 extern uint32_t wheelhouse_connector_running(const WheelhouseConnector *, uint64_t *starts);
+// Ends the current run and starts the next at once, without waiting.
+extern void wheelhouse_connector_restart(const WheelhouseConnector *);
 extern void wheelhouse_connector_stop_begin(WheelhouseConnector *);
 extern void wheelhouse_connector_stop(WheelhouseConnector *);
 

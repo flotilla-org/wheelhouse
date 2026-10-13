@@ -83,8 +83,10 @@ safe, and refreshes TTL from the receiver's monotonic application time.
 Producers without a snapshot serialize their patches and periodically
 reassert current facts, including after reconnect, because ingress is not
 durable storage. Unsets are also safe to repeat. A new native window receives
-the next reassertion; one opened after a snapshot receives only later changes
-(seeding it with the subscription's current facts is #378). The endpoint
+the next reassertion. Opening a window restarts each subscription's
+connector, so one that publishes snapshots sends a fresh one, which every
+window, the new one included, applies; its provider is stale for that moment.
+The endpoint
 broadcasts to existing windows without sharing their selection, collapse, or
 scroll state. A 204 means all existing windows accepted the patch.
 Broadcast application is not transactional: a 422 (a core rejected the patch)
