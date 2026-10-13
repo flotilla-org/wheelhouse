@@ -110,14 +110,17 @@ class Workdir(C.Structure):
         (key, Text) for key in ['entity_kind', 'entity_id', 'cwd', 'live_cwd']]
 EMIT = C.CFUNCTYPE(None, C.c_void_p, C.POINTER(Workdir))
 OBSERVE = C.CFUNCTYPE(C.c_uint32, C.c_void_p, EMIT, C.c_void_p)
-lib.wheelhouse_ingress_poll_observed.argtypes = [C.c_void_p, APPLY, OBSERVE, C.c_void_p]
+RETRACT = C.CFUNCTYPE(C.c_uint32, C.c_void_p)
+lib.wheelhouse_ingress_poll_observed.argtypes = [C.c_void_p, APPLY, RETRACT, OBSERVE, C.c_void_p]
 lib.wheelhouse_ingress_start.argtypes = [C.c_char_p, C.c_size_t, WAKE, C.c_void_p, C.c_size_t]
 lib.wheelhouse_ingress_start.restype = C.c_void_p
-lib.wheelhouse_ingress_poll.argtypes = [C.c_void_p, APPLY, C.c_void_p]
+lib.wheelhouse_ingress_poll.argtypes = [C.c_void_p, APPLY, RETRACT, C.c_void_p]
 lib.wheelhouse_ingress_stop.argtypes = [C.c_void_p]
 core.andamento_create.argtypes = [C.c_char_p, C.c_size_t, C.c_void_p]
 core.andamento_create.restype = C.c_void_p
 core.andamento_destroy.argtypes = [C.c_void_p]
+core.andamento_provider_retract.argtypes = [C.c_void_p, Text, C.c_void_p]
+core.andamento_provider_retract.restype = C.c_uint32
 core.andamento_apply_patch_json.argtypes = [C.c_void_p, C.c_uint64, Text, Text, C.c_void_p]
 core.andamento_apply_patch_json.restype = C.c_uint32
 core.andamento_tick.argtypes = [C.c_void_p, C.c_uint64, C.c_void_p]
@@ -150,6 +153,11 @@ class IngressTests(unittest.TestCase):
             self.received.append(C.string_at(data, size))
             return core.andamento_apply_patch_json(self.core, 0, PROVIDER, Text(data, size), None)
         self.apply = APPLY(apply)
+        self.retracts = 0
+        def retract(_):
+            self.retracts += 1
+            return core.andamento_provider_retract(self.core, PROVIDER, None)
+        self.retract = RETRACT(retract)
         self.workdirs = []
         self.observed = 0
         self.available = True
@@ -177,12 +185,12 @@ class IngressTests(unittest.TestCase):
         core.andamento_destroy(self.core)
         self.dir.cleanup()
 
-    def request(self, body=b'', content_type='application/json', chunked=False, poll=True, read=False):
+    def request(self, body=b'', content_type='application/json', chunked=False, poll=True, read=False, path='/v1/metadata/patch'):
         def send():
             connection = UnixHTTPConnection(self.path)
             try:
                 payload = iter([body[:5], body[5:]]) if chunked else body
-                connection.request('GET' if read else 'POST', '/v1/observed/workdirs' if read else '/v1/metadata/patch', payload, {'Content-Type': content_type}, encode_chunked=chunked)
+                connection.request('GET' if read else 'POST', '/v1/observed/workdirs' if read else path, payload, {'Content-Type': content_type}, encode_chunked=chunked)
                 response = connection.getresponse()
                 data = response.read()
                 return (response.status, data, response.getheader("Content-Type")) if read else response.status
@@ -192,7 +200,7 @@ class IngressTests(unittest.TestCase):
         deadline = time.monotonic() + 8
         while not future.done() and time.monotonic() < deadline:
             if poll:
-                lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
+                lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.retract, self.observe, None)
             time.sleep(.005)
         return future.result(timeout=1)
 
@@ -245,7 +253,7 @@ class IngressTests(unittest.TestCase):
                 '--socket', self.path, '--roots', str(ROOT), '--once'], capture_output=True, timeout=20)
             deadline = time.monotonic() + 20
             while not future.done() and time.monotonic() < deadline:
-                lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
+                lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.retract, self.observe, None)
                 time.sleep(.005)
             completed = future.result(timeout=1)
             self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -382,14 +390,14 @@ class IngressTests(unittest.TestCase):
         requests = [self.pool.submit(read) for _ in range(8)]
         deadline = time.monotonic() + 5
         while not all(future.done() for future in requests) and time.monotonic() < deadline:
-            lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
+            lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.retract, self.observe, None)
             time.sleep(.005)
         for future in requests:
             self.assertEqual(future.result(timeout=1), (200, {'workdirs': []}))
 
     def test_read_timeout_cancellation_and_unavailability(self):
         self.assertEqual(self.request(read=True, poll=False)[0], 503)
-        lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
+        lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.retract, self.observe, None)
         self.assertEqual(self.observed, 0)
         self.available = False
         self.assertEqual(self.request(read=True)[0], 503)
@@ -413,6 +421,31 @@ class IngressTests(unittest.TestCase):
         self.assertEqual(core.andamento_tick(self.core, 6001, None), 1)
         self.assertEqual(self.count(), before)
 
+    def test_an_array_is_applied_in_one_drain(self):
+        # flotilla pm connect posts each publication's patches as one array (#378).
+        before = self.count()
+        items = [patch('project', name, {'display.label': name, 'flotilla.project': name}) for name in ('p', 'q')]
+        self.assertEqual(self.request(json.dumps(items).encode()), 204)
+        self.assertEqual([json.loads(body)['target']['value']['id'] for body in self.received], ['p', 'q'])
+        self.assertGreater(self.count(), before)
+        self.assertEqual(self.request(json.dumps([items[0], {'type': 'other'}]).encode()), 400)
+
+    def test_a_snapshot_replaces_the_providers_facts(self):
+        before = self.count()
+        project = lambda name: patch('project', name, {'display.label': name, 'flotilla.project': name})
+        self.assertEqual(self.request(json.dumps(project('old')).encode()), 204)
+        with_old = self.count()
+        self.assertGreater(with_old, before)
+        self.assertEqual(self.request(json.dumps([project('new')]).encode(), path='/v1/metadata/snapshot'), 204)
+        self.assertEqual(self.retracts, 1)
+        self.assertEqual(self.count(), with_old)
+        self.assertEqual(self.request(b'[]', path='/v1/metadata/snapshot'), 204)
+        self.assertEqual(self.count(), before)
+        # A snapshot is an array, and an endpoint without a retract refuses it.
+        self.assertEqual(self.request(json.dumps(project('new')).encode(), path='/v1/metadata/snapshot'), 400)
+        self.retract = RETRACT()  # NULL
+        self.assertEqual(self.request(b'[]', path='/v1/metadata/snapshot'), 404)
+
     def test_http_and_schema_errors(self):
         self.assertEqual(self.request(b'not json'), 400)
         self.assertEqual(self.request(b'{}'), 400)
@@ -423,7 +456,7 @@ class IngressTests(unittest.TestCase):
     def test_ack_waits_for_application_and_cancelled_request_is_skipped(self):
         body = json.dumps(patch('project', 'p', {'display.label': 'late'})).encode()
         self.assertEqual(self.request(body, poll=False), 503)
-        lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.observe, None)
+        lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.retract, self.observe, None)
         self.assertEqual(self.received, [])
 
     @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')

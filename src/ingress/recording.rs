@@ -270,7 +270,7 @@ pub async fn capture(
     let path = request.uri().path().to_owned();
     let method = request.method().to_string();
     let (parts, body) = request.into_parts();
-    if method != "POST" || path != "/v1/metadata/patch" {
+    if method != "POST" || (path != "/v1/metadata/patch" && path != "/v1/metadata/snapshot") {
         let (received_ms, timestamp_ms) = received_time();
         let sequence = recorder.sequence.fetch_add(1, Ordering::Relaxed);
         let response = next

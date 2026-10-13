@@ -20,16 +20,18 @@ process's owner before sending requests. No implicit endpoint stealing or fixed
 global name is used.
 
 Send `POST /v1/metadata/patch` using HTTP/1.1, `Content-Type: application/json`,
-and one UTF-8 JSON object. The body is the byte-identical metadata-patch message
-used by the Zellij Andamento pipe (including `type: "metadata-patch"`). No
-additional envelope or newline framing is introduced. Standard HTTP framing,
+and one UTF-8 JSON object, or a JSON array of them. Each is the byte-identical
+metadata-patch message used by the Zellij Andamento pipe (including
+`type: "metadata-patch"`). An array's patches are applied together, between two
+frames, so no frame shows part of them; every element must be a metadata-patch.
+No additional envelope or newline framing is introduced. Standard HTTP framing,
 including chunked requests, applies. Maximum decoded body size is 1 MiB.
 
 | Status | Meaning |
 | --- | --- |
 | 204 | Patch applied to the receiving native sidebar cores |
 | 400 | Invalid JSON/message envelope |
-| 404 / 405 | Unknown path / unsupported method |
+| 404 / 405 | Unknown path / unsupported method; a snapshot on an endpoint that takes none |
 | 413 | Body too large |
 | 415 | Content type is not application/json |
 | 422 | Andamento rejected the patch |
@@ -50,7 +52,18 @@ with the subscription ID as its provider, whatever the patch says; patches on
 the `--andamento_socket` endpoint itself belong to the `local` provider, as do
 one-off scripts and the git watcher that use it. While the connector is down,
 its provider's facts are kept and marked stale instead of expiring; they are
-fresh again once a patch arrives. Removing the subscription retracts them.
+fresh again once a patch or snapshot arrives. Removing the subscription
+retracts them.
+
+A subscription endpoint also takes `POST /v1/metadata/snapshot`: a JSON array
+of metadata-patch messages that replaces everything the subscription published.
+The retraction and the patches are applied together, between two frames, so no
+frame shows the provider empty or partly filled; an empty array retracts
+everything. A connector that publishes this way (`flotilla pm connect` with
+connection liveness) sends one snapshot when it starts, then only changes,
+with no TTLs and no periodic reassertion. The `--andamento_socket` endpoint
+carries several producers under the `local` provider, so it takes no snapshots
+and answers 404; a producer that receives 404 keeps reasserting with TTLs.
 
 ## Delivery and lifetime
 
@@ -67,11 +80,13 @@ Delivery is at least once. Retry transport failures and 5xx responses with a
 bounded delay; do not retry invalid 4xx requests. A lost response may mean the
 patch was already applied. Reapplying the same target/source/key values is
 safe, and refreshes TTL from the receiver's monotonic application time.
-Producers serialize their patches and periodically reassert current facts,
-including after reconnect, because ingress is not durable storage. Unsets are
-also safe to repeat. A new native window receives the next reassertion; the
-endpoint broadcasts to existing windows without sharing their selection,
-collapse, or scroll state. A 204 means all existing windows accepted the patch.
+Producers without a snapshot serialize their patches and periodically
+reassert current facts, including after reconnect, because ingress is not
+durable storage. Unsets are also safe to repeat. A new native window receives
+the next reassertion; one opened after a snapshot receives only later changes
+(seeding it with the subscription's current facts is #378). The endpoint
+broadcasts to existing windows without sharing their selection, collapse, or
+scroll state. A 204 means all existing windows accepted the patch.
 Broadcast application is not transactional: a 422 (a core rejected the patch)
 or 503 (a core was unavailable) can follow application to other windows.
 A rejection takes precedence over unavailability when both occur.

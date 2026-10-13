@@ -284,7 +284,7 @@ uishell_subscriptions_poll(void)
       s->running = running;
       s->starts = starts;
     }
-    if(s->ingress) { wheelhouse_ingress_poll_observed(s->ingress, uishell_sidebar_apply_live, uishell_sidebar_observed_workdirs, s); }
+    if(s->ingress) { wheelhouse_ingress_poll_observed(s->ingress, uishell_sidebar_apply_live, uishell_sidebar_retract_live, uishell_sidebar_observed_workdirs, s); }
   }
 }
 

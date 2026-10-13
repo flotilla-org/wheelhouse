@@ -26,6 +26,10 @@ pub struct Workdir {
 pub type Emit = unsafe extern "C" fn(*mut c_void, *const Workdir);
 pub type Observe = unsafe extern "C" fn(*mut c_void, Emit, *mut c_void) -> u32;
 pub type Apply = unsafe extern "C" fn(*mut c_void, *const u8, usize) -> u32;
+/// Drop every fact the endpoint's provider published, before a snapshot
+/// replaces them: 1 when done, 0 when the endpoint has no provider of its own
+/// (a snapshot there is refused).
+pub type Retract = unsafe extern "C" fn(*mut c_void) -> u32;
 
 #[cfg(any(unix, windows))]
 mod transport {
@@ -42,8 +46,11 @@ mod transport {
     use tokio::sync::oneshot;
 
     pub enum Pending {
+        /// One request's patches, applied in one drain so no frame shows part
+        /// of them; `replace` retracts the provider's facts first.
         Patch {
-            body: Bytes,
+            bodies: Vec<Bytes>,
+            replace: bool,
             reply: oneshot::Sender<u32>,
         },
         Workdirs {
@@ -77,7 +84,23 @@ mod transport {
         }
     }
 
+    // Request outcomes from the UI thread's drain.
+    pub const APPLIED: u32 = 1;
+    pub const REJECTED: u32 = 0;
+    pub const UNAVAILABLE: u32 = 2;
+    pub const UNSUPPORTED: u32 = 3;
+
     async fn patch(State(state): State<Shared>, headers: HeaderMap, body: Bytes) -> StatusCode {
+        catalog(state, headers, body, false).await
+    }
+
+    async fn snapshot(State(state): State<Shared>, headers: HeaderMap, body: Bytes) -> StatusCode {
+        catalog(state, headers, body, true).await
+    }
+
+    // A metadata patch, or an array of them applied together. A snapshot is
+    // an array that replaces everything the endpoint's provider published.
+    async fn catalog(state: Shared, headers: HeaderMap, body: Bytes, replace: bool) -> StatusCode {
         if headers
             .get("content-type")
             .and_then(|v| v.to_str().ok())
@@ -87,30 +110,52 @@ mod transport {
         {
             return StatusCode::UNSUPPORTED_MEDIA_TYPE;
         }
-        let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&body) else {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&body) else {
             return StatusCode::BAD_REQUEST;
         };
-        if value.get("type").and_then(|v| v.as_str()) != Some("metadata-patch") {
-            return StatusCode::BAD_REQUEST;
-        }
-        let body = if state.ttl_floor_ms > 0 {
-            extend_leases(&mut value, state.ttl_floor_ms);
-            Bytes::from(serde_json::to_vec(&value).expect("JSON value serializes"))
+        let is_patch = |v: &serde_json::Value| {
+            v.get("type").and_then(|t| t.as_str()) == Some("metadata-patch")
+        };
+        let mut patches = match value {
+            serde_json::Value::Array(items) if items.iter().all(is_patch) => items,
+            single if !replace && is_patch(&single) => vec![single],
+            _ => return StatusCode::BAD_REQUEST,
+        };
+        // A single patch keeps its original bytes unless a lease floor applies.
+        let bodies = if patches.len() == 1
+            && !replace
+            && state.ttl_floor_ms == 0
+            && body.first() == Some(&b'{')
+        {
+            vec![body]
         } else {
-            body
+            patches
+                .iter_mut()
+                .map(|patch| {
+                    if state.ttl_floor_ms > 0 {
+                        extend_leases(patch, state.ttl_floor_ms);
+                    }
+                    Bytes::from(serde_json::to_vec(patch).expect("JSON value serializes"))
+                })
+                .collect()
         };
         let (reply, response) = oneshot::channel();
         if state
             .queue
-            .try_send(Pending::Patch { body, reply })
+            .try_send(Pending::Patch {
+                bodies,
+                replace,
+                reply,
+            })
             .is_err()
         {
             return StatusCode::SERVICE_UNAVAILABLE;
         }
         (state.wake)();
         match tokio::time::timeout(Duration::from_secs(5), response).await {
-            Ok(Ok(1)) => StatusCode::NO_CONTENT,
-            Ok(Ok(0)) => StatusCode::UNPROCESSABLE_ENTITY,
+            Ok(Ok(APPLIED)) => StatusCode::NO_CONTENT,
+            Ok(Ok(REJECTED)) => StatusCode::UNPROCESSABLE_ENTITY,
+            Ok(Ok(UNSUPPORTED)) => StatusCode::NOT_FOUND,
             _ => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
@@ -219,6 +264,7 @@ mod transport {
                         let mut app = Router::new()
                             .route("/v1/health", get(|| async { StatusCode::NO_CONTENT }))
                             .route("/v1/metadata/patch", post(patch))
+                            .route("/v1/metadata/snapshot", post(snapshot))
                             .route("/v1/observed/workdirs", get(workdirs))
                             .with_state(Shared {
                                 queue,
@@ -271,9 +317,18 @@ mod transport {
             for ttl_floor_ms in [0, 120000] {
                 let (queue, receiver) = mpsc::sync_channel(1);
                 let host = thread::spawn(move || {
-                    let Pending::Patch { body, reply } = receiver.recv().unwrap() else {
+                    let Pending::Patch {
+                        bodies,
+                        replace,
+                        reply,
+                    } = receiver.recv().unwrap()
+                    else {
                         panic!("expected patch")
                     };
+                    let [body] = &bodies[..] else {
+                        panic!("expected one patch")
+                    };
+                    assert!(!replace);
                     if ttl_floor_ms == 0 {
                         assert_eq!(body.as_ref(), request);
                     }
@@ -320,6 +375,150 @@ mod transport {
             let mut expected = original;
             expected["set"]["short"]["ttl_ms"] = 120000.into();
             assert_eq!(patch, expected);
+        }
+        // What a request's handler queues, with its HTTP status once the
+        // host replies `outcome`.
+        async fn queued(
+            body: &'static [u8],
+            replace: bool,
+            outcome: u32,
+        ) -> (Option<(Vec<Bytes>, bool)>, StatusCode) {
+            extern "C" fn wake() {}
+            let (queue, receiver) = mpsc::sync_channel(1);
+            let host = thread::spawn(move || {
+                let Ok(Pending::Patch {
+                    bodies,
+                    replace,
+                    reply,
+                }) = receiver.recv()
+                else {
+                    return None;
+                };
+                reply.send(outcome).unwrap();
+                Some((bodies, replace))
+            });
+            let mut headers = HeaderMap::new();
+            headers.insert("content-type", "application/json".parse().unwrap());
+            let status = catalog(
+                Shared {
+                    queue,
+                    wake,
+                    ttl_floor_ms: 0,
+                },
+                headers,
+                Bytes::from_static(body),
+                replace,
+            )
+            .await;
+            (host.join().unwrap(), status)
+        }
+        #[tokio::test]
+        async fn an_array_is_one_request_and_a_snapshot_must_be_one() {
+            let a = r#"{"type":"metadata-patch","target":{"kind":"entity","value":{"kind":"vessel","id":"a"}},"set":{},"unset":[]}"#;
+            let array = format!("[{a},{a}]");
+            let array: &'static [u8] = Box::leak(array.into_bytes().into_boxed_slice());
+            let (request, status) = queued(array, false, APPLIED).await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+            let (bodies, replace) = request.unwrap();
+            assert_eq!((bodies.len(), replace), (2, false));
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&bodies[1]).unwrap()["target"]["value"]
+                    ["id"],
+                "a"
+            );
+            let (request, status) = queued(array, true, APPLIED).await;
+            assert_eq!(
+                (status, request.map(|(b, r)| (b.len(), r))),
+                (StatusCode::NO_CONTENT, Some((2, true)))
+            );
+            // A snapshot of nothing retracts everything.
+            let (request, status) = queued(b"[]", true, APPLIED).await;
+            assert_eq!(
+                (status, request.map(|(b, _)| b.len())),
+                (StatusCode::NO_CONTENT, Some(0))
+            );
+            assert_eq!(
+                queued(array, true, UNSUPPORTED).await.1,
+                StatusCode::NOT_FOUND
+            );
+            assert_eq!(
+                queued(array, false, REJECTED).await.1,
+                StatusCode::UNPROCESSABLE_ENTITY
+            );
+            // Every element must be a patch, and a snapshot must be an array.
+            let mixed: &'static [u8] = Box::leak(
+                format!("[{a},{{\"type\":\"other\"}}]")
+                    .into_bytes()
+                    .into_boxed_slice(),
+            );
+            assert_eq!(
+                queued(mixed, false, APPLIED).await,
+                (None, StatusCode::BAD_REQUEST)
+            );
+            let single: &'static [u8] = Box::leak(a.as_bytes().to_vec().into_boxed_slice());
+            assert_eq!(
+                queued(single, true, APPLIED).await,
+                (None, StatusCode::BAD_REQUEST)
+            );
+        }
+        #[test]
+        fn a_request_applies_in_one_drain_and_a_snapshot_retracts_first() {
+            #[derive(Default)]
+            struct Calls(Vec<&'static str>, u32);
+            unsafe extern "C" fn record_apply(context: *mut c_void, _: *const u8, _: usize) -> u32 {
+                (*(context as *mut Calls)).0.push("apply");
+                APPLIED
+            }
+            unsafe extern "C" fn record_retract(context: *mut c_void) -> u32 {
+                let calls = &mut *(context as *mut Calls);
+                calls.0.push("retract");
+                calls.1
+            }
+            for (replace, retract, retracted, outcome, calls) in [
+                (false, None, 0, APPLIED, &["apply", "apply"][..]),
+                (
+                    true,
+                    Some(record_retract as Retract),
+                    1,
+                    APPLIED,
+                    &["retract", "apply", "apply"][..],
+                ),
+                (
+                    true,
+                    Some(record_retract as Retract),
+                    0,
+                    UNSUPPORTED,
+                    &["retract"][..],
+                ),
+                (true, None, 1, UNSUPPORTED, &[][..]),
+            ] {
+                let (queue, receiver) = mpsc::sync_channel(4);
+                let mut server = Ingress {
+                    queue: receiver,
+                    shutdown: None,
+                    thread: None,
+                };
+                let (reply, ack) = oneshot::channel();
+                queue
+                    .send(Pending::Patch {
+                        bodies: vec![Bytes::new(), Bytes::new()],
+                        replace,
+                        reply,
+                    })
+                    .unwrap();
+                let mut host = Calls(Vec::new(), retracted);
+                unsafe {
+                    wheelhouse_ingress_poll_observed(
+                        &mut server,
+                        record_apply,
+                        retract,
+                        None,
+                        &mut host as *mut _ as *mut c_void,
+                    )
+                };
+                assert_eq!(ack.blocking_recv().unwrap(), outcome);
+                assert_eq!(host.0, calls);
+            }
         }
         #[derive(Default)]
         struct Host {
@@ -381,6 +580,7 @@ mod transport {
                 wheelhouse_ingress_poll_observed(
                     &mut server,
                     apply,
+                    None,
                     Some(observe),
                     &mut host as *mut _ as *mut c_void,
                 );
@@ -395,6 +595,7 @@ mod transport {
                 wheelhouse_ingress_poll_observed(
                     &mut server,
                     apply,
+                    None,
                     Some(observe),
                     &mut host as *mut _ as *mut c_void,
                 );
@@ -419,7 +620,8 @@ mod transport {
             let (reply, ack) = oneshot::channel();
             assert!(queue
                 .send(Pending::Patch {
-                    body: Bytes::new(),
+                    bodies: vec![Bytes::new()],
+                    replace: false,
                     reply
                 })
                 .is_ok());
@@ -430,6 +632,7 @@ mod transport {
                 wheelhouse_ingress_poll_observed(
                     &mut server,
                     apply,
+                    None,
                     Some(observe),
                     &mut host as *mut _ as *mut c_void,
                 );
@@ -448,6 +651,7 @@ mod transport {
                 wheelhouse_ingress_poll_observed(
                     &mut server,
                     apply,
+                    None,
                     Some(observe),
                     &mut host as *mut _ as *mut c_void,
                 );
@@ -702,9 +906,10 @@ pub extern "C" fn wheelhouse_quit_signalled() -> u32 {
 pub unsafe extern "C" fn wheelhouse_ingress_poll(
     server: *mut Ingress,
     apply: Apply,
+    retract: Option<Retract>,
     context: *mut c_void,
 ) {
-    wheelhouse_ingress_poll_observed(server, apply, None, context);
+    wheelhouse_ingress_poll_observed(server, apply, retract, None, context);
 }
 
 /// Drain patch and read requests on the UI thread. Each emitted record is
@@ -717,6 +922,7 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll(
 pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
     server: *mut Ingress,
     apply: Apply,
+    retract: Option<Retract>,
     observe: Option<Observe>,
     context: *mut c_void,
 ) {
@@ -761,11 +967,15 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
                 break;
             };
             match pending {
-                transport::Pending::Patch { body, reply } => {
+                transport::Pending::Patch {
+                    bodies,
+                    replace,
+                    reply,
+                } => {
                     if !reply.is_closed() {
                         cached = None;
-                        let outcome = apply(context, body.as_ptr(), body.len());
-                        let _ = reply.send(outcome);
+                        let _ =
+                            reply.send(apply_request(context, apply, retract, &bodies, replace));
                     }
                 }
                 transport::Pending::Workdirs { reply } => {
@@ -791,7 +1001,35 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
         }
     }
     #[cfg(not(any(unix, windows)))]
-    let _ = (server, apply, observe, context);
+    let _ = (server, apply, retract, observe, context);
+}
+
+/// One request's patches, between frames: a snapshot retracts the provider's
+/// facts first (refused without a retract), then every patch is applied. Any
+/// rejected patch rejects the request; one the host couldn't take yet makes
+/// it unavailable.
+#[cfg(any(unix, windows))]
+unsafe fn apply_request(
+    context: *mut c_void,
+    apply: Apply,
+    retract: Option<Retract>,
+    bodies: &[axum::body::Bytes],
+    replace: bool,
+) -> u32 {
+    use transport::{APPLIED, REJECTED, UNAVAILABLE, UNSUPPORTED};
+    if replace && !retract.is_some_and(|retract| retract(context) == 1) {
+        return UNSUPPORTED;
+    }
+    let mut outcome = APPLIED;
+    for body in bodies {
+        match apply(context, body.as_ptr(), body.len()) {
+            REJECTED => outcome = REJECTED,
+            APPLIED => {}
+            _ if outcome == APPLIED => outcome = UNAVAILABLE,
+            _ => {}
+        }
+    }
+    outcome
 }
 
 /// Stop the worker and release the listener.

@@ -331,7 +331,9 @@ Or use a Flotilla build with the HTTP sink: `flotilla pm connect --wheelhouse-so
 [docs/protocol/pm-connect.md](docs/protocol/pm-connect.md). Clicking an entry runs its
 supplied recipe in an ordinary Terminal View; Flotilla's recipes use `flotilla attach`
 or `flotilla view`. Resource enumeration and dynamic overflow tabs remain follow-up
-work. A new window receives facts on the producer's next periodic reassertion.
+work. A new window receives facts on the producer's next periodic reassertion;
+with a subscription connector that sends one snapshot and then only changes, it
+receives only later changes for now (#378).
 
 #### Dashboard subscriptions
 

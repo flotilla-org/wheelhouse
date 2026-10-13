@@ -5943,6 +5943,27 @@ uishell_sidebar_apply_live(void *context, const U8 *data, size_t size)
   return rejected ? 0 : (unavailable || !applied) ? 2 : 1;
 }
 
+// A snapshot from a subscription's endpoint (`context`) replaces everything
+// that subscription published, in every window, in the same poll as its
+// patches. The local endpoint has several producers under the host's
+// provider, so it takes no snapshots.
+internal U32
+uishell_sidebar_retract_live(void *context)
+{
+  UIShell_Subscription *subscription = (UIShell_Subscription *)context;
+  if(!subscription) { return 0; }
+  for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
+  {
+    UIShell_SidebarState *state = uishell_sidebar_init(ws);
+    if(state->core == 0) { continue; }
+    char *error = 0;
+    uishell_sidebar_result(state, andamento_provider_retract(state->core, uishell_sidebar_text(subscription->id), &error), error);
+  }
+  // Publishing again: the subscription is live, even if its catalog is empty.
+  if(subscription->stale) { uishell_subscription_set_stale(subscription, 0); }
+  return 1;
+}
+
 // The same UI-owned inventory feeds producer discovery and core association.
 internal U32
 uishell_sidebar_observed_workdirs(void *unused, WheelhouseWorkdirEmit emit, void *context)
@@ -5967,7 +5988,7 @@ uishell_sidebar_poll_live(void)
   if(uishell_ingress != 0 || uishell_subscriptions.first != 0)
   {
     if(uishell_ingress != 0)
-    { wheelhouse_ingress_poll_observed(uishell_ingress, uishell_sidebar_apply_live, uishell_sidebar_observed_workdirs, 0); }
+    { wheelhouse_ingress_poll_observed(uishell_ingress, uishell_sidebar_apply_live, uishell_sidebar_retract_live, uishell_sidebar_observed_workdirs, 0); }
     if(now - uishell_sidebar_last_tick >= 250)
     {
       uishell_sidebar_last_tick = now;
