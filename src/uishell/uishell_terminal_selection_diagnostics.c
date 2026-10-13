@@ -782,7 +782,7 @@ uishell_terminal_override_appkit_diagnostics(void)
     UIShell_SelectionFixture f; uishell_selection_fixture_init(&f);
     f.viewport_top = 20; f.viewport_max = 40;
     UI_Event ui = {.kind = UI_EventKind_Scroll, .modifiers = wm.modifiers,
-      .pos = {25, 15}, .delta_2f32 = wm.delta, .scroll_is_precise = wm.scroll_is_precise};
+      .pos = v2f32(25, 15), .delta_2f32 = wm.delta, .scroll_is_precise = wm.scroll_is_precise};
     U32 events = 0;
     while(events < 1024 && !(shift ? f.viewport_count : f.sent_count))
     { uishell_terminal_wheel_event(&f.tv, &ui, r2f32p(0, 0, 60, 30)); events++; }
