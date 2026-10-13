@@ -1,0 +1,13 @@
+# Use the dated apt snapshot inherited from the base; no independent downloads.
+FROM ${BASE}
+ARG DEBIAN_FRONTEND=noninteractive
+RUN set -eu; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        clang \
+        libegl-dev \
+        libfreetype-dev \
+        libgl-dev \
+        libx11-dev \
+        libxext-dev; \
+    rm -rf /var/lib/apt/lists/*
