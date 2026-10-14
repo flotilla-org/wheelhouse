@@ -22,10 +22,12 @@ env:
   # before setup (0.11, jackstay#48, which Porthole capture sessions need).
   # Pinned to jackstay#48's branch commit until it merges; then its squash commit.
   JACKSTAY_REV: 91156bfac2bc2f6df168c928b445c98e002f4950
-  # Andamento main: ABI 5. An entity's facts are one record and ignore TTLs
-  # (andamento#173); a stale commit names everything placed since the last
-  # commit (andamento#169).
-  ANDAMENTO_REV: 2e576f159a6c799014d9ad241d12707e65b88489
+  # Andamento ABI 6: an entity's facts are one record and ignore TTLs
+  # (andamento#173), so detail fields have no lease (andamento#175); a stale
+  # commit names everything placed since the last commit (andamento#169).
+  # Pinned to andamento#175's branch commit until it merges; then its squash
+  # commit.
+  ANDAMENTO_REV: 573f0a2a05d70b1610c1b29a57a08404b5fcfbf4
 
 jobs:
   daily-driver:
