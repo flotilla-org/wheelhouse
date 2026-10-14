@@ -185,12 +185,25 @@ class IngressTests(unittest.TestCase):
         core.andamento_destroy(self.core)
         self.dir.cleanup()
 
-    def request(self, body=b'', content_type='application/json', chunked=False, poll=True, read=False, path='/v1/metadata/patch'):
+    def request(self, body=b'', content_type='application/json', chunked=False, poll=True, read=False, path='/v1/metadata/patch', refused=False):
         def send():
             connection = UnixHTTPConnection(self.path)
             try:
                 payload = iter([body[:5], body[5:]]) if chunked else body
-                connection.request('GET' if read else 'POST', '/v1/observed/workdirs' if read else path, payload, {'Content-Type': content_type}, encode_chunked=chunked)
+                try:
+                    connection.request('GET' if read else 'POST', '/v1/observed/workdirs' if read else path, payload, {'Content-Type': content_type}, encode_chunked=chunked)
+                except (BrokenPipeError, ConnectionResetError):
+                    # A server refusing a body may answer and close before
+                    # reading it all. Its answer can still be on the socket,
+                    # or the reset can have discarded it.
+                    if not refused:
+                        raise
+                    try:
+                        response = http.client.HTTPResponse(connection.sock)
+                        response.begin()
+                        return response.status
+                    except (OSError, http.client.HTTPException):
+                        return 'closed'
                 response = connection.getresponse()
                 data = response.read()
                 return (response.status, data, response.getheader("Content-Type")) if read else response.status
@@ -465,7 +478,7 @@ class IngressTests(unittest.TestCase):
             self.assertEqual(self.request(body, chunked=enabled, path='/v1/metadata/snapshot'), 204)
             self.assertEqual(self.retracts, before + 1)
             self.assertEqual(json.loads(self.received[-1]), message)
-            self.assertEqual(self.request(oversized, chunked=enabled, path='/v1/metadata/snapshot'), 413)
+            self.assertIn(self.request(oversized, chunked=enabled, path='/v1/metadata/snapshot', refused=True), (413, 'closed'))
             self.assertEqual(self.retracts, before + 1)
             self.assertEqual(self.request(b'[]', path='/v1/metadata/snapshot'), 204)
         entries = [r for r in self.capture() if r['path'] == '/v1/metadata/snapshot']
