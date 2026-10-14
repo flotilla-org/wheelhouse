@@ -825,10 +825,10 @@ int main(void) {
         _, nodes = self.snapshot()
         self.assertEqual([(n.workspace_id, n.label.string()) for n in nodes if not n.is_section], [(70, 'Renamed')])
 
-    def test_coverage_after_expiry_restart_and_unplaced_kind(self):
+    def test_coverage_after_withdrawal_restart_and_unplaced_kind(self):
         # Unobserved subjects and unplaced kinds retain exact inventory IDs in
         # Other workspaces, including after a fresh core simulates daemon restart.
-        for scenario in ('expired', 'restart', 'unplaced-kind'):
+        for scenario in ('withdrawn', 'restart', 'unplaced-kind'):
             with self.subTest(scenario=scenario):
                 if scenario == 'restart':
                     lib.andamento_destroy(self.core)
@@ -837,11 +837,11 @@ int main(void) {
                 kind = 'unplaced' if scenario == 'unplaced-kind' else 'vessel'
                 identity = 'missing'
                 update = patch(kind, identity, **{'flotilla.project': 'p', 'action.primary.recipe': 'exec sh'})
-                if scenario == 'expired':
-                    for entry in update['set'].values():
-                        entry['ttl_ms'] = 1
+                if scenario == 'withdrawn':
+                    # Entity facts don't expire: the producer unsets them.
                     self.assertTrue(lib.andamento_apply_patch_json(self.core, 10, Text.of(json.dumps(update)), None))
-                    self.assertTrue(lib.andamento_tick(self.core, 12, None))
+                    withdrawal = dict(update, set={}, unset=list(update['set']))
+                    self.assertTrue(lib.andamento_apply_patch_json(self.core, 12, Text.of(json.dumps(withdrawal)), None))
                 elif scenario == 'unplaced-kind':
                     self.assertTrue(lib.andamento_apply_patch_json(self.core, 12, Text.of(json.dumps(update)), None))
                 binding = patch(kind, identity)

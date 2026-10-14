@@ -86,7 +86,7 @@ def alive(pid):
 def patch(kind, identity, facts):
     return {'type': 'metadata-patch', 'target': {'kind': 'entity', 'value': {'kind': kind, 'id': identity}},
             'source_id': 'ingress.test', 'set': {
-                key: {'value': {'type': 'text', 'value': value}, 'ttl_ms': 6000}
+                key: {'value': {'type': 'text', 'value': value}}
                 for key, value in {'entity.kind': kind, 'entity.id': identity, **facts}.items()}, 'unset': []}
 
 
@@ -409,7 +409,7 @@ class IngressTests(unittest.TestCase):
         core.andamento_snapshot_release(snapshot)
         return count
 
-    def test_patch_duplicate_expiry_and_chunked_http(self):
+    def test_patch_duplicate_withdrawal_and_chunked_http(self):
         before = self.count()
         body = json.dumps(patch('project', 'p', {'display.label': 'Live project', 'flotilla.project': 'p'})).encode()
         self.assertEqual(self.request(body), 204)
@@ -418,7 +418,11 @@ class IngressTests(unittest.TestCase):
         self.assertEqual(self.request(body, chunked=True), 204)
         self.assertEqual(self.count(), after)
         self.assertEqual(self.received, [body, body])
-        self.assertEqual(core.andamento_tick(self.core, 6001, None), 1)
+        # An entity's facts don't expire; its producer withdraws them.
+        self.assertEqual(core.andamento_tick(self.core, 600_000, None), 1)
+        self.assertEqual(self.count(), after)
+        withdrawal = dict(json.loads(body), set={}, unset=['display.label', 'flotilla.project', 'entity.kind', 'entity.id'])
+        self.assertEqual(self.request(json.dumps(withdrawal).encode()), 204)
         self.assertEqual(self.count(), before)
 
     def test_an_array_is_applied_in_one_drain(self):

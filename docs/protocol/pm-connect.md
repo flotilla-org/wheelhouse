@@ -63,7 +63,10 @@ everything. A connector that publishes this way (`flotilla pm connect` with
 connection liveness) sends one snapshot when it starts, then only changes,
 with no TTLs and no periodic reassertion. The `--andamento_socket` endpoint
 carries several producers under the `local` provider, so it takes no snapshots
-and answers 404; a producer that receives 404 keeps reasserting with TTLs.
+and answers 404. An entity's facts there don't expire either (Andamento ignores
+an entity fact's TTL): a producer unsets what it no longer has, as the git
+watcher does for worktrees that go, and what a producer leaves when it exits
+stays until Wheelhouse restarts.
 Snapshots have a maximum decoded body size of 16 MiB to accommodate a full
 provider catalog. The patch endpoint retains its 1 MiB limit. These bounds
 apply with recording enabled or disabled; larger requests return 413 before
@@ -74,7 +77,8 @@ retracting or applying facts.
 For a temporary grace during slow catalog refreshes, set
 `WHEELHOUSE_METADATA_TTL_FLOOR_MS` before launching Wheelhouse. A value of
 `120000` extends positive leases shorter than two minutes on every ingress
-endpoint. Unsets still remove facts immediately; permanent facts, zero-length
+endpoint. Only workspace and pane facts have leases: an entity's TTL is
+ignored, so the floor doesn't affect a catalog. Unsets still remove facts immediately; permanent facts, zero-length
 leases and longer leases keep their lifetime. The default is zero, which
 preserves producer leases. This delays expiry when a source stops sending;
 it does not change source health or fix slow delivery. Recordings keep the
@@ -83,7 +87,8 @@ producer's original request, before this adjustment.
 Delivery is at least once. Retry transport failures and 5xx responses with a
 bounded delay; do not retry invalid 4xx requests. A lost response may mean the
 patch was already applied. Reapplying the same target/source/key values is
-safe, and refreshes TTL from the receiver's monotonic application time.
+safe; for a leased workspace or pane fact it refreshes the TTL from the
+receiver's monotonic application time.
 Producers without a snapshot serialize their patches and periodically
 reassert current facts, including after reconnect, because ingress is not
 durable storage. Unsets are also safe to repeat. A new native window receives
