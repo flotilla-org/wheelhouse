@@ -959,9 +959,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
               str8_match(uishell_sidebar_card_age(0, 100), str8_lit("0s ago"), 0),
               "relative ages use the controller clock and saturate future observations");
 
-    fprintf(stderr, "Hover card diagnostics: retained expiry\n");
-    // Exercise retained expiry in an isolated controller with the same native
-    // card renderer. The fixture's display filtering cannot affect this path.
+    fprintf(stderr, "Hover card diagnostics: stale provider\n");
+    // Exercise a stale provider's retained facts in an isolated controller
+    // with the same native card renderer. The fixture's display filtering
+    // cannot affect this path.
     String8 freshness_config = str8_lit(
       "region \"tree\" root-template=\"title\" placement=\"tree\"\n"
       "template \"title\" { field \"label\" literal=\"Tree\"; }\n"
@@ -976,15 +977,15 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     AndamentoEntity entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("worktree"), str8_lit("stale-worktree"));
     AndamentoFact facts[] = {
       {.key = uishell_sidebar_text(str8_lit("display.label")), .kind = ANDAMENTO_FACT_TEXT,
-       .text = uishell_sidebar_text(str8_lit("Worker")), .has_ttl = 1, .ttl_ms = 10},
+       .text = uishell_sidebar_text(str8_lit("Worker"))},
       {.key = uishell_sidebar_text(str8_lit("git.branch")), .kind = ANDAMENTO_FACT_TEXT,
-       .text = uishell_sidebar_text(str8_lit("retained-branch")), .has_ttl = 1, .ttl_ms = 10},
+       .text = uishell_sidebar_text(str8_lit("retained-branch"))},
       {.key = uishell_sidebar_text(str8_lit("git.upstream")), .kind = ANDAMENTO_FACT_TEXT,
-       .text = uishell_sidebar_text(str8_zero()), .has_ttl = 1, .ttl_ms = 10},
+       .text = uishell_sidebar_text(str8_zero())},
       {.key = uishell_sidebar_text(str8_lit("action.primary.target")), .kind = ANDAMENTO_FACT_TEXT,
-       .text = uishell_sidebar_text(str8_lit("worktree:stale-worktree")), .has_ttl = 1, .ttl_ms = 10},
+       .text = uishell_sidebar_text(str8_lit("worktree:stale-worktree"))},
       {.key = uishell_sidebar_text(str8_lit("action.primary.recipe")), .kind = ANDAMENTO_FACT_TEXT,
-       .text = uishell_sidebar_text(str8_lit("exec sh")), .has_ttl = 1, .ttl_ms = 10},
+       .text = uishell_sidebar_text(str8_lit("exec sh"))},
     };
     CardCheck(andamento_apply_entity(freshness.core, 1000, uishell_sidebar_text(uishell_sidebar_host_provider), entity.kind, entity.id, uishell_sidebar_text(str8_lit("fixture")), facts, ArrayCount(facts), 0),
               "retained observation fixture applies");
@@ -1002,10 +1003,13 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
               "freshness fixture binds preview identity");
     andamento_effects_release(effects);
     AndamentoWorkspace workspace = {.id = uishell_sidebar_workspace(worker), .name = uishell_sidebar_text(str8_lit("Worker")), .selected = 1};
-    CardCheck(andamento_observe(freshness.core, &workspace, 1, 0, 0, 0) && andamento_tick(freshness.core, 61000, 0), "retained observation ages");
+    // Entity facts don't expire: their provider's connection drops instead.
+    CardCheck(andamento_observe(freshness.core, &workspace, 1, 0, 0, 0) && andamento_tick(freshness.core, 61000, 0) &&
+              andamento_provider_set_stale(freshness.core, uishell_sidebar_text(uishell_sidebar_host_provider), 1, 0),
+              "retained observation ages and its provider goes stale");
     uishell_sidebar_refresh(&freshness);
     index = uishell_sidebar_card_find(&freshness, entity, &node);
-    CardCheck(node.state == ANDAMENTO_LIVE && uishell_sidebar_node_cfg(&node) == 123456, "retained catalog preview identity survives expiry");
+    CardCheck(node.state == ANDAMENTO_LIVE && uishell_sidebar_node_cfg(&node) == 123456, "retained catalog preview identity survives staleness");
     UIShell_HoverCard *fresh_card = &freshness.cards[0];
     uishell_sidebar_card_set(fresh_card, node, ui_key_zero(), str8_zero(), 0, now_time_us());
     for(U64 enriched = 0; enriched < 2; enriched++)

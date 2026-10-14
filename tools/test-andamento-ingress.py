@@ -86,7 +86,7 @@ def alive(pid):
 def patch(kind, identity, facts):
     return {'type': 'metadata-patch', 'target': {'kind': 'entity', 'value': {'kind': kind, 'id': identity}},
             'source_id': 'ingress.test', 'set': {
-                key: {'value': {'type': 'text', 'value': value}, 'ttl_ms': 6000}
+                key: {'value': {'type': 'text', 'value': value}}
                 for key, value in {'entity.kind': kind, 'entity.id': identity, **facts}.items()}, 'unset': []}
 
 
@@ -134,7 +134,7 @@ core.andamento_snapshot_release.argtypes = [C.c_void_p]
 PROVIDER_NAME = b'wheelhouse'
 PROVIDER = Text(C.cast(C.c_char_p(PROVIDER_NAME), C.c_void_p), len(PROVIDER_NAME))
 core.andamento_abi_version.restype = C.c_uint32
-assert core.andamento_abi_version() == 5
+assert core.andamento_abi_version() == 6
 
 lib.wheelhouse_ingress_start_recorded.argtypes = [C.c_char_p, C.c_size_t, WAKE,
     C.c_char_p, C.c_size_t, C.c_uint64, C.c_size_t, C.c_void_p, C.c_size_t]
@@ -185,12 +185,25 @@ class IngressTests(unittest.TestCase):
         core.andamento_destroy(self.core)
         self.dir.cleanup()
 
-    def request(self, body=b'', content_type='application/json', chunked=False, poll=True, read=False, path='/v1/metadata/patch'):
+    def request(self, body=b'', content_type='application/json', chunked=False, poll=True, read=False, path='/v1/metadata/patch', refused=False):
         def send():
             connection = UnixHTTPConnection(self.path)
             try:
                 payload = iter([body[:5], body[5:]]) if chunked else body
-                connection.request('GET' if read else 'POST', '/v1/observed/workdirs' if read else path, payload, {'Content-Type': content_type}, encode_chunked=chunked)
+                try:
+                    connection.request('GET' if read else 'POST', '/v1/observed/workdirs' if read else path, payload, {'Content-Type': content_type}, encode_chunked=chunked)
+                except (BrokenPipeError, ConnectionResetError):
+                    # A server refusing a body may answer and close before
+                    # reading it all. Its answer can still be on the socket,
+                    # or the reset can have discarded it.
+                    if not refused:
+                        raise
+                    try:
+                        response = http.client.HTTPResponse(connection.sock)
+                        response.begin()
+                        return response.status
+                    except (OSError, http.client.HTTPException):
+                        return 'closed'
                 response = connection.getresponse()
                 data = response.read()
                 return (response.status, data, response.getheader("Content-Type")) if read else response.status
@@ -409,7 +422,7 @@ class IngressTests(unittest.TestCase):
         core.andamento_snapshot_release(snapshot)
         return count
 
-    def test_patch_duplicate_expiry_and_chunked_http(self):
+    def test_patch_duplicate_withdrawal_and_chunked_http(self):
         before = self.count()
         body = json.dumps(patch('project', 'p', {'display.label': 'Live project', 'flotilla.project': 'p'})).encode()
         self.assertEqual(self.request(body), 204)
@@ -418,7 +431,11 @@ class IngressTests(unittest.TestCase):
         self.assertEqual(self.request(body, chunked=True), 204)
         self.assertEqual(self.count(), after)
         self.assertEqual(self.received, [body, body])
-        self.assertEqual(core.andamento_tick(self.core, 6001, None), 1)
+        # An entity's facts don't expire; its producer withdraws them.
+        self.assertEqual(core.andamento_tick(self.core, 600_000, None), 1)
+        self.assertEqual(self.count(), after)
+        withdrawal = dict(json.loads(body), set={}, unset=['display.label', 'flotilla.project', 'entity.kind', 'entity.id'])
+        self.assertEqual(self.request(json.dumps(withdrawal).encode()), 204)
         self.assertEqual(self.count(), before)
 
     def test_an_array_is_applied_in_one_drain(self):
@@ -461,7 +478,7 @@ class IngressTests(unittest.TestCase):
             self.assertEqual(self.request(body, chunked=enabled, path='/v1/metadata/snapshot'), 204)
             self.assertEqual(self.retracts, before + 1)
             self.assertEqual(json.loads(self.received[-1]), message)
-            self.assertEqual(self.request(oversized, chunked=enabled, path='/v1/metadata/snapshot'), 413)
+            self.assertIn(self.request(oversized, chunked=enabled, path='/v1/metadata/snapshot', refused=True), (413, 'closed'))
             self.assertEqual(self.retracts, before + 1)
             self.assertEqual(self.request(b'[]', path='/v1/metadata/snapshot'), 204)
         entries = [r for r in self.capture() if r['path'] == '/v1/metadata/snapshot']
