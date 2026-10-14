@@ -304,15 +304,19 @@ An explicit operation that proposes a **Workspace Overlay**, or **Dashboard** ch
 _Avoid_: Autosave, replication
 
 **Automation Endpoint**:
-The routes on a **Local Endpoint** that let local clients — agents, test harnesses, scripts — observe the shell's **Semantic Tree** and invoke named commands. Observation and invocation are separately gated.
+The routes on a **Local Endpoint** that let local clients — agents, test harnesses, scripts — observe the shell's **Semantic Tree** and **Placement Tree** and invoke named commands. Observation and invocation are separately gated.
 _Avoid_: Agent API (not agent-specific), control socket (collides with **Control Surface**)
 
 **Semantic Tree**:
-The model-level description of the shell served to automation clients: windows, **Workspaces**, **Panels**, **Views** and the **Control Surface**, each with an **Automation ID**, role, state and bounds. Derived from the shell's model, not from drawn UI boxes.
-_Avoid_: UI dump, box tree, accessibility tree
+The logical description of the shell served to automation clients: **Workspaces**, their panel trees and **Views**, and later the **Dashboard**'s sections and rows. Each node has an **Automation ID**, kind and state, and no geometry. Any frontend could serve the same tree.
+_Avoid_: UI dump, box tree, accessibility tree, visual tree
+
+**Placement Tree**:
+What the shell has drawn where, per window: placed regions, **Panels**, **Views**, floating panels and overlays, with their bounds. It shares **Automation IDs** with the **Semantic Tree**, and it is what interpreting a screenshot needs.
+_Avoid_: Visual tree, layout dump, accessibility tree
 
 **Accessibility Tree**:
-The per-element tree published to the platform's assistive-technology APIs (UIA, AX, AT-SPI) for screen readers and other assistive tools. Finer-grained than the **Semantic Tree**, and shares its **Automation IDs** where nodes correspond.
+The per-element tree published to the platform's assistive-technology APIs (UIA, AX, AT-SPI) for screen readers and other assistive tools. Finer-grained than the **Placement Tree**, and shares **Automation IDs** with it where nodes correspond.
 _Avoid_: Semantic tree, a11y dump
 
 **Automation ID**:
