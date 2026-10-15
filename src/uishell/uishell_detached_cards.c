@@ -2,10 +2,12 @@ internal void uishell_sidebar_manual_sizing(CFG_Node *window, B32 manual);
 // Detached presentation belongs to the card controller. Pinned areas are
 // ordinary registered Views in the RAD-derived panel tree, never KDL edits.
 internal B32
-uishell_sidebar_card_target_valid(RD_WindowState *ws, UIShell_CardPlacement placement, F32 width)
+uishell_sidebar_card_target_valid(RD_WindowState *ws, F32 width)
 {
+  // A card shows a sidebar section wherever it is: floating or pinned, it
+  // takes what the sidebar takes.
   RD_DockProposal p = {0};
-  p.host.kind = placement == UIShell_CardPlacement_Float ? RD_DockHostKind_FloatingPanel : RD_DockHostKind_Sidebar;
+  p.host.kind = RD_DockHostKind_Sidebar;
   p.host.level = p.host.controlled_split = ws->cfg_id;
   p.host.available_width = width;
   p.view_level = ws->cfg_id;
@@ -194,7 +196,7 @@ internal UIShell_LocalGroup *uishell_sidebar_local_view_group(CFG_Node *window, 
 internal UIShell_LocalGroup *
 uishell_sidebar_pin_target(CFG_Node *window)
 {
-  RD_Arrangement *sidebar = rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
+  RD_Arrangement *sidebar = rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
   UIShell_LocalGroup *result = 0;
   for(RD_ArrangementPanel *p = sidebar->root; p != &rd_nil_arrangement_panel && !result; p = rd_arrangement_next(sidebar->root, p))
   {
@@ -533,7 +535,7 @@ uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area)
   if(!area)
   {
     // Validate a tentative destination before lifting tabs or changing ratios.
-    RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+    RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
     if(!rd_dock_can_create(str8_lit("sidebar_section"), rd_dock_host_from_owner(sidebar_owner, RD_DOCK_UNMEASURED_WIDTH))) { return 0; }
     // An equal share of the sidebar (a sidebar merged into one panel keeps
     // its tabs in a panel of their own), before a requested panel, else at
@@ -606,7 +608,7 @@ uishell_sidebar_detached_apply(RD_WindowState *ws, UIShell_HoverCard *card)
   if(drag) { placement = uishell_sidebar_card_drag_target(ws, card, ui_mouse()); }
   card->moving = 0;
   F32 width = placement == UIShell_CardPlacement_Float ? dim_2f32(card->rect).x : dim_2f32(ws->sidebar->rect).x;
-  if(!uishell_sidebar_card_target_valid(ws, placement, width)) { return; }
+  if(!uishell_sidebar_card_target_valid(ws, width)) { return; }
   if(placement == UIShell_CardPlacement_Inline && !card->source_key.size) { return; }
   if(placement == UIShell_CardPlacement_Pinned)
   {

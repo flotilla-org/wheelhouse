@@ -67,19 +67,6 @@ integration_view(RD_PanelAddress panel, char *kind)
   return rd_fixture_view(panel, str8_cstring(kind), str8_zero(), 0);
 }
 
-// The `n`th Floating Panel `host` (a window or a workspace) has, made of one
-// empty panel.
-internal RD_PanelAddress
-integration_floating(CFG_Node *host, U64 n)
-{
-  Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *arrangement = rd_arrangement_alloc(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, host, n));
-  RD_PanelID root = rd_arrangement_clear(arrangement);
-  rd_arrangement_set(arrangement);
-  scratch_end(scratch);
-  return rd_panel_address(arrangement->owner, root);
-}
-
 internal RD_ViewAddress
 integration_tab(RD_PanelAddress panel, U64 index)
 {
@@ -633,101 +620,9 @@ entry_point(CmdLine *cmdline)
   IntegrationCheck(integration_in(unconstrained, unopened_panel) && accepted_log.strings[LogMsgKind_UserError].size == 0);
   cfg_node_release(rd_state->cfg, unopened);
   rd_arrangements_release_unowned();
-  // Unrendered floating hosts retain the declared checker: zero-minimum
-  // ordinary Views fit; the 128px fixture refuses measured-zero placement.
-  RD_PanelAddress floating = integration_floating(window, rd_floating_count(window)+1);
-  integration_view(floating, "terminal");
-  // Current mount builders select rendered panels/sidebar roots. Exercise a
-  // future floating mount explicitly to cover the defensive no-render branch.
-  UIShell_WorkspaceMount floating_mount = {.window_cfg = window, .owner_cfg = window,
-    .arrangement = rd_arrangement_from_panel_owner(scratch.arena, floating.owner), .owner = floating.owner};
-  floating_mount.panel_tree = rd_panel_tree_from_arrangement(scratch.arena, floating_mount.owner, floating_mount.arrangement);
-  RD_DockGeometry floating_geometry = rd_dock_geometry_from_mount(&floating_mount);
-  F32 floating_width = rd_dock_width_from_geometry(&floating_geometry, floating_mount.panel_tree.root->address, Dir2_Invalid);
-  IntegrationCheck(floating_width == 0);
-  // The window's own Floating Panels are its sidebar's level; these Views'
-  // level is its own panels', which the host is taken at here.
-  RD_DockHost floating_host = rd_dock_host_from_panel(floating, floating_width);
-  floating_host.level = rd_dock_view_from_address(rd_view_address_from_cfg(source)).level;
-  IntegrationCheck(floating_host.kind == RD_DockHostKind_FloatingPanel);
-  IntegrationCheck(rd_dock_placement(rd_dock_view_from_address(rd_view_address_from_cfg(source)), floating_host) == RD_DockRule_MinimumWidth);
-  IntegrationCheck(rd_dock_placement(rd_dock_view_from_address(rd_view_address_from_cfg(ordinary)), floating_host) == RD_DockRule_Valid);
-  {
-    RD_Arrangement *gone = rd_arrangement_from_panel_owner(scratch.arena, floating.owner);
-    rd_arrangement_discard(gone);
-    rd_arrangement_set(gone);
-  }
   // Restore retains its structural policy even when geometry is too narrow.
   rd_dock_restore_window(window);
   IntegrationCheck(integration_in(source, origin));
-
-  // Each Floating Panel is its own arrangement, and the tab and drop
-  // commands edit it through the module like any other: one Selected View,
-  // and no split.
-  {
-    CFG_Node *other = cfg_node_new(rd_state->cfg, user, str8_lit("window"));
-    CFG_Node *workspace = cfg_node_new(rd_state->cfg, other, str8_lit("workspace"));
-    RD_PanelAddress workspace_root = integration_reset_panels(workspace, Axis2_Y);
-    RD_PanelAddress left = integration_panel(workspace_root, 0.5f);
-    RD_PanelAddress right = integration_panel(workspace_root, 0.5f);
-    CFG_Node *lone = integration_view(left, "terminal");
-    integration_view(right, "terminal");
-    RD_PanelAddress first = integration_floating(workspace, 1);
-    RD_PanelAddress second = integration_floating(workspace, 2);
-    CFG_Node *a = integration_view(first, "text");
-    CFG_Node *b = integration_view(first, "terminal");
-    CFG_Node *c = integration_view(second, "terminal");
-    rd_fixture_select(a, 1);
-    rd_fixture_select(c, 1);
-    // A workspace panel emptied into its workspace's Floating Panel closes,
-    // in the same command; the View lands selected, the only one selected.
-    UIShell_CmdNode *before_cmd = integration_move(other, lone, second, Dir2_Invalid);
-    IntegrationCheck(integration_in(lone, second) && rd_view_address_match(integration_tab(second, 0), rd_view_address_from_cfg(lone)) && !integration_close_queued(before_cmd));
-    IntegrationCheck(!rd_panel_exists(left) && rd_arrangement_live(workspace_root.owner)->root->id == right.id);
-    IntegrationCheck(rd_view_is_selected(rd_view_address_from_cfg(lone)) && !rd_view_is_selected(rd_view_address_from_cfg(c)));
-    IntegrationCheck(rd_arrangement_live(second.owner)->root->first == &rd_nil_arrangement_panel);
-    // Selecting a tab selects it.
-    UIShell_RegsScope(.window = other->id, .tab = rd_view_address_from_cfg(b)) { uishell_dispatch_tab_command(str8_lit("focus_tab")); }
-    IntegrationCheck(rd_view_is_selected(rd_view_address_from_cfg(b)) && !rd_view_is_selected(rd_view_address_from_cfg(a)));
-    // Reordering a tab moves it within its Floating Panel.
-    UIShell_RegsScope(.window = other->id, .tab = rd_view_address_from_cfg(a)) { uishell_dispatch_tab_command(str8_lit("move_tab_right")); }
-    UIShell_Cmd *reorder = &rd_state->cmds[0].last->cmd;
-    IntegrationCheck(str8_match(reorder->name, str8_lit("move_view"), 0) && rd_panel_address_match(reorder->regs->dst_panel, first) && rd_view_address_match(reorder->regs->prev_tab, rd_view_address_from_cfg(b)));
-    UIShell_RegsScope(.window = other->id, .view = rd_view_address_from_cfg(a), .dst_panel = first, .prev_tab = rd_view_address_from_cfg(b))
-    { uishell_dispatch_tab_command(str8_lit("move_view")); }
-    IntegrationCheck(integration_in(a, first) && rd_view_address_match(integration_tab(first, 1), rd_view_address_from_cfg(a)));
-    // Another Floating Panel's source is reselected; emptied, it stays.
-    integration_move(other, b, second, Dir2_Invalid);
-    IntegrationCheck(integration_in(b, second) && rd_view_address_match(integration_tab(second, 0), rd_view_address_from_cfg(b)) && rd_view_is_selected(rd_view_address_from_cfg(a)));
-    integration_move(other, a, second, Dir2_Invalid);
-    IntegrationCheck(integration_in(a, second) && rd_panel_exists(first) && rd_floating_count(workspace) == 2 && rd_view_address_is_nil(integration_tab(first, 0)));
-    // Duplicating places the copy after its source; closing releases it.
-    UIShell_RegsScope(.window = other->id, .tab = rd_view_address_from_cfg(c)) { uishell_dispatch_tab_command(str8_lit("duplicate_tab")); }
-    RD_ViewAddress copy = rd_nil_view_address;
-    for(U64 i = 0; !rd_view_address_is_nil(integration_tab(second, i)); i++)
-    { if(rd_view_address_match(integration_tab(second, i), rd_view_address_from_cfg(c))) { copy = integration_tab(second, i+1); } }
-    IntegrationCheck(rd_panel_address_match(rd_panel_from_view(copy), second) && str8_match(rd_cfg_from_view(copy)->string, str8_lit("terminal"), 0));
-    IntegrationCheck(rd_view_is_selected(copy));
-    UIShell_RegsScope(.window = other->id, .tab = copy) { uishell_dispatch_tab_command(str8_lit("close_tab")); }
-    IntegrationCheck(rd_cfg_from_view(copy) == &cfg_nil_node);
-    // A new tab goes after the last tab.
-    UIShell_RegsScope(.window = other->id, .panel = second, .string = str8_lit("text"), .expr = str8_zero())
-    { uishell_dispatch_tab_command(str8_lit("build_tab")); }
-    RD_ArrangementPanel *second_panel = rd_arrangement_panel_from_id(rd_arrangement_live(second.owner), second.id);
-    IntegrationCheck(str8_match(rd_cfg_from_view(second_panel->last_tab->view)->string, str8_lit("text"), 0) &&
-                     rd_view_address_match(second_panel->last_tab->prev->view, rd_view_address_from_cfg(c)));
-    // A Floating Panel holds tabs, never splits.
-    U64 split_gen = integration_gen();
-    integration_move(other, b, second, Dir2_Right);
-    UIShell_RegsScope(.window = other->id, .panel = second) { uishell_dispatch_panel_command(str8_lit("new_panel_right")); }
-    IntegrationCheck(integration_gen() == split_gen && integration_in(b, second) && rd_arrangement_live(second.owner)->root->id == second.id);
-    // A move out into the workspace reselects the Floating Panel it left.
-    UIShell_RegsScope(.window = other->id, .tab = rd_view_address_from_cfg(c)) { uishell_dispatch_tab_command(str8_lit("focus_tab")); }
-    integration_move(other, c, right, Dir2_Invalid);
-    IntegrationCheck(integration_in(c, right) && rd_view_address_match(integration_tab(second, 0), rd_view_address_from_cfg(a)) && rd_view_is_selected(rd_view_address_from_cfg(a)));
-    cfg_node_release(rd_state->cfg, other);
-    rd_arrangements_release_unowned();
-  }
 
   // A boundary drag lays out its resized copy of the arrangement every frame
   // and leaves the arrangement alone until the mouse is released, then sets
@@ -810,7 +705,7 @@ entry_point(CmdLine *cmdline)
   IntegrationCheck(wh_visualizer_from_name(str8_lit("text")) == &wh_nil_renderer);
 
   //- A View in a workspace's arrangement is a Slot, with its spec and
-  // resolution; a Floating Panel's View of the window's is not.
+  // resolution.
   {
     CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
     String8 id_text = str8_lit("0192f0c4-1c2d-7a3b-8c4d-5e6f70819203");
@@ -826,15 +721,8 @@ entry_point(CmdLine *cmdline)
     IntegrationCheck(ctx.spec && ctx.spec->content == ANDAMENTO_SLOT_COMMAND && str8_match(ctx.spec->command, str8_lit("make test"), 0));
     IntegrationCheck(str8_match(ctx.resolution.session, str8_lit("s-1"), 0) && ctx.rect.x1 == 64);
     IntegrationCheck(wh_view_state(&ctx, UIShell_TerminalViewState) == vs->user_data);
-    RD_PanelAddress floating_panel = integration_floating(window, rd_floating_count(window)+1);
-    CFG_Node *floating_view = integration_view(floating_panel, "text");
-    WH_ViewContext floating_ctx = wh_view_context_from_view(scratch.arena, rd_view_address_from_cfg(floating_view), wh_renderer_from_name(str8_lit("text")), 0, r2f32p(0, 0, 1, 1));
-    IntegrationCheck(floating_ctx.status == 0 && floating_ctx.slot.key.size == 0 && floating_ctx.spec == 0);
     cfg_node_release(rd_state->cfg, workspace);
     rd_arrangements_release_unowned();
-    RD_Arrangement *gone = rd_arrangement_from_panel_owner(scratch.arena, floating_panel.owner);
-    rd_arrangement_discard(gone);
-    rd_arrangement_set(gone);
   }
 
   //- Panels' Presentation State follows their arrangement as it is set
@@ -862,19 +750,13 @@ entry_point(CmdLine *cmdline)
     IntegrationCheck(rd_arrangement_remove(a, added.id));
     rd_arrangement_set(a);
     IntegrationCheck(rd_panel_presentation_from_panel(added) == &cfg_nil_node && rd_panel_flag(lifted, flag));
-    // The Floating Panels after one that goes move up, and their records
-    // with them.
-    RD_PanelAddress first = integration_floating(workspace, 1);
-    RD_PanelAddress second = integration_floating(workspace, 2);
-    rd_panel_flag_set(first, flag, 1);
-    rd_panel_flag_set(second, str8_lit("focused"), 1);
-    RD_Arrangement *gone = rd_arrangement_from_panel_owner(scratch.arena, first.owner);
-    rd_arrangement_discard(gone);
-    rd_arrangement_set(gone);
-    RD_PanelAddress moved = rd_panel_address(rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, workspace, 1), second.id);
-    IntegrationCheck(rd_floating_count(workspace) == 1 && rd_panel_flag(moved, str8_lit("focused")) && !rd_panel_flag(moved, flag));
-    // The sweep: a panel's or a View's record with nothing goes; a live
-    // panel's, Floating Panel's and View's stay.
+    // The sweep: a panel's or a View's record with nothing goes, as does a
+    // Floating Panel's saved before they were removed; a live panel's and
+    // View's stay.
+    CFG_Node *panels_root = cfg_node_child_from_string_or_alloc(rd_state->cfg, workspace, RD_PANEL_PRESENTATION_ROOT);
+    CFG_Node *old_floating = cfg_node_new(rd_state->cfg, panels_root, str8_lit("floating"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, old_floating, str8_lit("floating")), str8_lit("1"));
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, old_floating, str8_lit("panel")), str8_lit("1"));
     RD_ViewAddress live_view = rd_view_address_from_cfg(view);
     rd_view_setting_set(live_view, str8_lit("font_size"), str8_lit("10"));
     RD_PanelAddress orphan_panel = rd_panel_address(owner, 99);
@@ -885,7 +767,11 @@ entry_point(CmdLine *cmdline)
     cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, orphan_view, str8_lit("font_size")), str8_lit("20"));
     rd_presentation_sweep(workspace);
     IntegrationCheck(rd_panel_presentation_from_panel(orphan_panel) == &cfg_nil_node);
-    IntegrationCheck(rd_panel_flag(lifted, flag) && rd_panel_flag(moved, str8_lit("focused")));
+    IntegrationCheck(rd_panel_flag(lifted, flag));
+    B32 floating_records = 0;
+    for(CFG_Node *c = cfg_node_child_from_string(workspace, RD_PANEL_PRESENTATION_ROOT)->first; c != &cfg_nil_node; c = c->next)
+    { floating_records |= str8_match(c->string, str8_lit("floating"), 0); }
+    IntegrationCheck(!floating_records);
     IntegrationCheck(str8_match(rd_view_setting_from_view(live_view, str8_lit("font_size")), str8_lit("10"), 0));
     U64 view_records = 0;
     for(CFG_Node *c = views->first; c != &cfg_nil_node; c = c->next) { view_records += 1; }
@@ -903,9 +789,6 @@ entry_point(CmdLine *cmdline)
     rd_presentation_sweep(kept);
     IntegrationCheck(rd_panel_flag(kept_panel, flag) && kept_views->first == kept_view);
     cfg_node_release(rd_state->cfg, kept);
-    gone = rd_arrangement_from_panel_owner(scratch.arena, moved.owner);
-    rd_arrangement_discard(gone);
-    rd_arrangement_set(gone);
     cfg_node_release(rd_state->cfg, workspace);
     rd_arrangements_release_unowned();
   }

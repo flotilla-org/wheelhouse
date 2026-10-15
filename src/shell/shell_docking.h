@@ -9,7 +9,6 @@ typedef enum RD_DockHostKind
 {
   RD_DockHostKind_Sidebar,
   RD_DockHostKind_WorkspaceRegion,
-  RD_DockHostKind_FloatingPanel,
   RD_DockHostKind_COUNT,
 } RD_DockHostKind;
 
@@ -30,7 +29,6 @@ enum
   RD_ViewTrait_SelectsWorkspaces = 1<<2,
   RD_ViewTrait_Singleton = 1<<3,
   RD_ViewTrait_NeedsWorkspaceSubject = 1<<4,
-  RD_ViewTrait_NeedsHost = 1<<5,
   // Content supplied by the root Controlled Split, not a child workspace.
   RD_ViewTrait_ControlSplitScope = 1<<6,
   // Laying it out again at another size is harmless, so its drag floater
@@ -164,10 +162,6 @@ struct RD_DockDocument
   RD_DockDocument *next;
   RD_Arrangement *arrangement;
   RD_DockHost host;
-  // Where a View refused here goes when its default host is a Workspace
-  // Region: the arrangement of the workspace this one belongs to, or 0 for
-  // the window's first.
-  RD_DockDocument *workspace;
   B32 dirty;
 };
 

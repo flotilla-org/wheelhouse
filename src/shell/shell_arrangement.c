@@ -185,7 +185,7 @@ rd_arrangement_match(RD_Arrangement *a, RD_Arrangement *b)
 internal B32
 rd_panel_owner_match(RD_PanelOwner a, RD_PanelOwner b)
 {
-  return a.kind == b.kind && a.floating == b.floating && MemoryMatch(a.id.v, b.id.v, sizeof(a.id.v));
+  return a.kind == b.kind && MemoryMatch(a.id.v, b.id.v, sizeof(a.id.v));
 }
 
 internal B32
@@ -209,7 +209,6 @@ rd_panel_owner_kind_name(RD_PanelOwnerKind kind)
     default:{}break;
     case RD_PanelOwnerKind_Workspace:{return str8_lit("workspace");}break;
     case RD_PanelOwnerKind_Sidebar:{return str8_lit("sidebar");}break;
-    case RD_PanelOwnerKind_Floating:{return str8_lit("floating");}break;
   }
   return str8_zero();
 }

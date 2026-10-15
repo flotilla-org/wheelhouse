@@ -345,7 +345,7 @@ uishell_default_workspace_panels(CFG_Node *window, CFG_Node *panels_owner)
 {
   // A text panel beside a narrower output panel, replacing what was there.
   Temp scratch = scratch_begin(0, 0);
-  RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, panels_owner, 0);
+  RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, panels_owner);
   RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, owner);
   RD_PanelID main_panel = rd_arrangement_clear(arrangement);
   RD_PanelID side_panel = rd_arrangement_split(arrangement, main_panel, Dir2_Right);

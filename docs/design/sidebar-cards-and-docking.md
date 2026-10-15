@@ -145,9 +145,9 @@ What may dock where is declared, never decided in gesture code:
 
 - Views declare traits, for example *selects workspaces*, *singleton*, *needs
   a workspace subject*, *minimum width*, *stacks as a section*.
-- Hosts declare what they accept: the sidebar takes section-style views, a
-  Workspace Region takes content views, a floating panel takes anything that
-  does not need a host.
+- Hosts declare what they accept: the sidebar takes section-style views, and
+  a Workspace Region takes content views. (Floating panels, planned here,
+  were removed in #380: nothing drew one.)
 - Structural invariants come from `CONTEXT.md`. A Controlled Split has exactly
   one Control Surface. A Workspace Region cannot contain the Control Surface
   that selects it. The workspace-selecting view can be moved but not closed.

@@ -1463,10 +1463,9 @@ internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);
 internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);
 
 //- Panel addresses (shell_arrangement.h)
-// The owner of `host`'s arrangement of `kind`: a window or a workspace hosts
-// its sidebar and Floating Panels (the `floating`th, from 1); a workspace's
-// panels, or a window's own, are a Workspace's.
-internal RD_PanelOwner rd_panel_owner_from_host(RD_PanelOwnerKind kind, CFG_Node *host, U64 floating);
+// The owner of `host`'s arrangement of `kind`: a window hosts its sidebar; a
+// workspace's panels, or a window's own, are a Workspace's.
+internal RD_PanelOwner rd_panel_owner_from_host(RD_PanelOwnerKind kind, CFG_Node *host);
 // The owner's host: a window or a workspace node.
 internal CFG_Node *rd_cfg_from_panel_owner(RD_PanelOwner owner);
 // Whether `panel` is a panel of its owner's live arrangement.
@@ -1481,8 +1480,6 @@ internal RD_Arrangement *rd_arrangement_from_panel_owner(Arena *arena, RD_PanelO
 internal RD_Arrangement *rd_arrangement_live(RD_PanelOwner owner);
 // The version `owner`'s live arrangement was last set at; 0 for none.
 internal U64 rd_arrangement_version(RD_PanelOwner owner);
-// How many Floating Panels `host` (a window or a workspace) has.
-internal U64 rd_floating_count(CFG_Node *host);
 // Makes `arrangement` its owner's live arrangement. A View one of its tabs
 // brings from another owner moves into this owner's namespace, keeping
 // what is keyed by its address under the address the move gives it (and a
@@ -1543,10 +1540,6 @@ internal U32 rd_dock_instances(CFG_ID controlled_split, RD_ViewRegistration *reg
 internal CFG_Node *rd_panel_presentation_from_panel(RD_PanelAddress panel);
 internal B32 rd_panel_flag(RD_PanelAddress panel, String8 name);
 internal void rd_panel_flag_set(RD_PanelAddress panel, String8 name, B32 on);
-// A value of `panel`'s Presentation State, such as where a Floating Panel
-// floats among its host's (`share`); empty for none.
-internal String8 rd_panel_setting(RD_PanelAddress panel, String8 name);
-internal void rd_panel_setting_set(RD_PanelAddress panel, String8 name, String8 value);
 internal void rd_panel_focus_mark(RD_PanelAddress panel);
 internal RD_PanelPresentation rd_panel_presentation(RD_PanelAddress panel);
 // The panel that has View `cfg`, or `view`, as a tab.

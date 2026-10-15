@@ -27,21 +27,14 @@ typedef enum RD_PanelOwnerKind
   RD_PanelOwnerKind_Workspace,
   // The sidebar's dock: the Dashboard's arrangement, as one host shows it.
   RD_PanelOwnerKind_Sidebar,
-  // A Floating Panel's arrangement.
-  RD_PanelOwnerKind_Floating,
 } RD_PanelOwnerKind;
 
 typedef struct RD_PanelOwner RD_PanelOwner;
 struct RD_PanelOwner
 {
   RD_PanelOwnerKind kind;
-  // A Workspace's Workspace ID. For the sidebar and Floating Panels, their
-  // host's: its window's Window ID, or the Workspace ID of a workspace that
-  // hosts them.
+  // A Workspace's Workspace ID. For the sidebar, its window's Window ID.
   UIShell_WorkspaceId id;
-  // A Floating Panel's place among its host's, from 1, as the sidebar's
-  // document names them (uishell_sidebar_store.c); 0 for other owners.
-  U64 floating;
 };
 
 typedef struct RD_PanelAddress RD_PanelAddress;

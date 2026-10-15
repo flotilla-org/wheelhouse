@@ -1,17 +1,16 @@
 //- The Dashboard's sidebar arrangement in Andamento (ADR 0012; andamento.h,
 // "the Dashboard's sidebar arrangement"; Andamento's
 // docs/sidebar-design/sidebar-arrangement.md). Which sections are docked
-// where, which float, and which are closed is Dashboard state: Andamento
+// where, and which are closed, is Dashboard state: Andamento
 // keeps it as one document in the dashboard record, and places, restores and
 // flags sections against what the template and the local sections declare.
-// Wheelhouse's live copy is the window's sidebar arrangement (the dock) and
-// each of its Floating Panels' (shell_core.c, "Live arrangements"), which
-// docking edits. A tab's key is a sidebar_section View's `section`; any
+// Wheelhouse's live copy is the window's sidebar arrangement (the dock;
+// shell_core.c, "Live arrangements"), which docking edits. A tab's key is a sidebar_section View's `section`; any
 // other View is one of this host's own, keyed by its `slot` ("u:<n>"),
 // which Andamento stores but never places.
 //
 //   load    A window saved since has no sidebar in the presentation file,
-//           only `sidebar_presentation`: the dock and Floating Panels follow
+//           only `sidebar_presentation`: the dock follows
 //           andamento_sidebar_arrangement_get, with this device's settings
 //           merged back in. A new Dashboard's take Andamento's placement
 //           (uishell_sidebar_store_load).
@@ -54,20 +53,17 @@
 //   sidebar_presentation: {
 //     section: {key: "attention" weight: 0.25}   the size content gave a section
 //     view: {terminal: {slot: "u:1" ...}}        a View of this host's own, whole
-//     panel: {id: "f1.1" share: 0.5}             where a Floating Panel floats
 //   }
 //
 // Each View's Presentation State is the window's `view_presentation`, by View
 // Address (shell_core.c, "View Presentation State"), and each panel's its
 // `panel_presentation`, by panel address ("Panel Presentation State"), both
-// saved with the window. Where a Floating Panel floats among the others is
-// its root panel's (`share`), which follows it by document ID.
+// saved with the window. A `panel` entry, which said where a Floating Panel
+// floated before they were removed, goes with the rest on the next follow.
 //
 // A docked section the sidebar sizes from its content (no
 // `sidebar_layout_sized`) is committed with weight 1: its size is this
-// device's, kept by section key. Sizes set by dragging are the document's. A
-// Floating Panel's panel IDs are its own arrangement's, so the document names
-// them "f<n>.<id>", n counting Floating Panels from 1.
+// device's, kept by section key. Sizes set by dragging are the document's.
 
 internal String8 uishell_sidebar_section_key(CFG_Node *view);
 internal UIShell_SectionTitle *uishell_sidebar_section_title(UIShell_SidebarState *state, String8 key);
@@ -77,11 +73,9 @@ internal B32 uishell_sidebar_section_container(UIShell_SidebarState *state, Stri
 typedef struct UIShell_SidebarDoc UIShell_SidebarDoc;
 struct UIShell_SidebarDoc
 {
-  // The dock's panels, then the Floating Panels', each in preorder and
-  // naming its parent by index in its own document (the dock's, or the
-  // Floating Panels').
+  // The dock's panels, in preorder, each naming its parent by index.
   AndamentoDocPanel *panels;
-  U64 panel_count, floating_first;
+  U64 panel_count;
   // Each tab panel's keys, adjacent in tree order.
   AndamentoText *tabs;
   String8 *keys;
@@ -118,49 +112,26 @@ uishell_sidebar_store_manual(CFG_Node *window)
   return cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
 }
 
-// The window's sidebar arrangements, copied: the dock first, then each
-// Floating Panel in its host's order. *count_out of them.
-internal RD_Arrangement **
-uishell_sidebar_store_arrangements(Arena *arena, CFG_Node *window, U64 *count_out)
+// The window's dock, copied.
+internal RD_Arrangement *
+uishell_sidebar_store_dock(Arena *arena, CFG_Node *window)
 {
-  U64 count = 1+rd_floating_count(window);
-  RD_Arrangement **result = push_array(arena, RD_Arrangement *, count);
-  result[0] = rd_arrangement_from_panel_owner(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
-  for(U64 n = 1; n < count; n++) { result[n] = rd_arrangement_from_panel_owner(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, window, n)); }
-  *count_out = count;
-  return result;
+  return rd_arrangement_from_panel_owner(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
 }
 
-// What the sidebar has to commit has changed when one of its arrangements
-// was set, a Floating Panel went, or its sections stopped (or started)
-// sizing from content: a token of each.
+// What the sidebar has to commit has changed when the dock was set, or its
+// sections stopped (or started) sizing from content: a token of each.
 internal U64
 uishell_sidebar_store_version(CFG_Node *window)
 {
-  U64 count = rd_floating_count(window);
-  U64 version = rd_arrangement_version(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
-  for(U64 n = 1; n <= count; n++) { version = Max(version, rd_arrangement_version(rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, window, n))); }
-  return (version*64 + count)*2 + uishell_sidebar_store_manual(window);
+  U64 version = rd_arrangement_version(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
+  return version*2 + uishell_sidebar_store_manual(window);
 }
 
-// A panel's ID in the document: the dock's as they are, Floating Panel n's
-// as "f<n>.<id>".
-internal String8
-uishell_sidebar_store_panel_id(Arena *arena, U64 arrangement, RD_PanelID id)
-{
-  return arrangement ? push_str8f(arena, "f%I64u.%I64u", arrangement, id) : push_str8f(arena, "%I64u", id);
-}
-
-// The arrangement's own ID in a document ID ("3", or "f1.3"); 0 for one
-// Wheelhouse didn't make.
+// The dock's panel ID in a document ID; 0 for one Wheelhouse didn't make.
 internal RD_PanelID
 uishell_sidebar_store_local_id(String8 id)
 {
-  if(id.size && id.str[0] == 'f')
-  {
-    U64 dot = str8_find_needle(id, 0, str8_lit("."), 0);
-    id = dot < id.size ? str8_skip(id, dot+1) : str8_zero();
-  }
   return id.size && id.size < 18 && str8_is_integer(id, 10) ? u64_from_str8(id, 10) : 0;
 }
 
@@ -170,23 +141,17 @@ internal UIShell_SidebarDocks
 uishell_sidebar_docks(Arena *arena, CFG_Node *owner)
 {
   UIShell_SidebarDocks docks = {owner, arena};
-  docks.arrangements = uishell_sidebar_store_arrangements(arena, owner, &docks.count);
-  docks.dirty = push_array(arena, B32, docks.count);
-  for(U64 i = 0; i < docks.count; i++)
+  RD_Arrangement *a = docks.dock = uishell_sidebar_store_dock(arena, owner);
+  for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
   {
-    RD_Arrangement *a = docks.arrangements[i];
-    for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+    for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
     {
-      for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
-      {
-        UIShell_SidebarDockView *v = push_array(arena, UIShell_SidebarDockView, 1);
-        v->view = t->view;
-        v->node = rd_cfg_from_view(t->view);
-        v->arrangement = a;
-        v->index = i;
-        v->panel = p->id;
-        SLLQueuePush(docks.first, docks.last, v);
-      }
+      UIShell_SidebarDockView *v = push_array(arena, UIShell_SidebarDockView, 1);
+      v->view = t->view;
+      v->node = rd_cfg_from_view(t->view);
+      v->arrangement = a;
+      v->panel = p->id;
+      SLLQueuePush(docks.first, docks.last, v);
     }
   }
   return docks;
@@ -197,14 +162,14 @@ uishell_sidebar_docks(Arena *arena, CFG_Node *owner)
 internal void
 uishell_sidebar_docks_remove(UIShell_SidebarDocks *docks, UIShell_SidebarDockView *view)
 {
-  if(rd_arrangement_remove_tab(view->arrangement, view->view)) { docks->dirty[view->index] = 1; }
+  if(rd_arrangement_remove_tab(view->arrangement, view->view)) { docks->dirty = 1; }
   view->node = &cfg_nil_node;
 }
 
 internal void
 uishell_sidebar_docks_set(UIShell_SidebarDocks *docks)
 {
-  for(U64 i = 0; i < docks->count; i++) { if(docks->dirty[i]) { rd_arrangement_set(docks->arrangements[i]); docks->dirty[i] = 0; } }
+  if(docks->dirty) { rd_arrangement_set(docks->dock); docks->dirty = 0; }
 }
 
 // Gives each View of this host's own (anything but a section) a "u:<n>" key
@@ -234,7 +199,7 @@ uishell_sidebar_store_assign_keys(CFG_Node *window)
       RD_ViewAddress now = rd_view_address_from_cfg(v->node);
       rd_view_readdress(v->view, now);
       rd_arrangement_readdress(v->arrangement, v->view, now);
-      docks.dirty[v->index] = changed = 1;
+      docks.dirty = changed = 1;
       v->view = now;
       key = uishell_sidebar_store_key(v->node);
     }
@@ -253,109 +218,89 @@ internal B32
 uishell_sidebar_store_select_shown(CFG_Node *window)
 {
   Temp scratch = scratch_begin(0, 0);
-  U64 count = 0;
-  RD_Arrangement **arrangements = uishell_sidebar_store_arrangements(scratch.arena, window, &count);
+  RD_Arrangement *a = uishell_sidebar_store_dock(scratch.arena, window);
   B32 changed = 0;
-  for(U64 i = 0; i < count; i++)
+  for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
   {
-    RD_Arrangement *a = arrangements[i];
-    B32 selected = 0;
-    for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
-    {
-      if(p->first_tab == 0 || (rd_arrangement_tab_from_view(p, p->selected) != 0 && rd_cfg_from_view(p->selected) != &cfg_nil_node)) { continue; }
-      // Its first tab whose View is there; setting drops those that aren't.
-      RD_ArrangementTab *shown = p->first_tab;
-      while(shown && rd_cfg_from_view(shown->view) == &cfg_nil_node) { shown = shown->next; }
-      selected |= rd_arrangement_select(a, p->id, shown ? shown->view : rd_nil_view_address);
-    }
-    if(selected) { rd_arrangement_set(a); }
-    changed |= selected;
+    if(p->first_tab == 0 || (rd_arrangement_tab_from_view(p, p->selected) != 0 && rd_cfg_from_view(p->selected) != &cfg_nil_node)) { continue; }
+    // Its first tab whose View is there; setting drops those that aren't.
+    RD_ArrangementTab *shown = p->first_tab;
+    while(shown && rd_cfg_from_view(shown->view) == &cfg_nil_node) { shown = shown->next; }
+    changed |= rd_arrangement_select(a, p->id, shown ? shown->view : rd_nil_view_address);
   }
+  if(changed) { rd_arrangement_set(a); }
   scratch_end(scratch);
   return changed;
 }
 
 //- Documents
 
-// The window's sidebar as a document: the dock's panels, then each Floating
-// Panel's, in preorder.
+// The window's sidebar as a document: the dock's panels, in preorder.
 internal UIShell_SidebarDoc
 uishell_sidebar_store_doc(Arena *arena, UIShell_SidebarState *state, CFG_Node *window)
 {
   UIShell_SidebarDoc doc = {0};
-  U64 count = 0;
-  RD_Arrangement **arrangements = uishell_sidebar_store_arrangements(arena, window, &count);
+  RD_Arrangement *a = uishell_sidebar_store_dock(arena, window);
   U64 panels = 0, tabs = 0;
-  for(U64 i = 0; i < count; i++)
-  {
-    RD_Arrangement *a = arrangements[i];
-    for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
-    { panels += 1; tabs += p->tab_count; }
-  }
+  for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+  { panels += 1; tabs += p->tab_count; }
   doc.panels = push_array(arena, AndamentoDocPanel, panels);
   doc.tabs = push_array(arena, AndamentoText, tabs);
   doc.keys = push_array(arena, String8, tabs);
   doc.pending = push_array(arena, String8, tabs);
   RD_ArrangementPanel **order = push_array(arena, RD_ArrangementPanel *, panels);
   B32 manual = uishell_sidebar_store_manual(window);
-  for(U64 i = 0; i < count; i++)
+  for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
   {
-    RD_Arrangement *a = arrangements[i];
-    // Parents are indices in the dock's document, or the Floating Panels'.
-    U64 base = i ? doc.floating_first : 0, first = doc.panel_count;
-    for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+    // A panel a safety restore emptied goes with the section it lost,
+    // unless its split would be left with none.
+    if(p->first == &rd_nil_arrangement_panel && p != a->root && p->parent->child_count > 1 && p->restore_emptied)
     {
-      // A panel a safety restore emptied goes with the section it lost,
-      // unless its split would be left with none.
-      if(p->first == &rd_nil_arrangement_panel && p != a->root && p->parent->child_count > 1 && p->restore_emptied)
+      B32 keeps = 0;
+      for(RD_ArrangementTab *t = p->first_tab; t && !keeps; t = t->next)
+      { keeps = cfg_node_child_from_string(rd_cfg_from_view(t->view), str8_lit("section_hint_pending")) == &cfg_nil_node; }
+      if(!keeps)
       {
-        B32 keeps = 0;
-        for(RD_ArrangementTab *t = p->first_tab; t && !keeps; t = t->next)
-        { keeps = cfg_node_child_from_string(rd_cfg_from_view(t->view), str8_lit("section_hint_pending")) == &cfg_nil_node; }
-        if(!keeps)
-        {
-          for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
-          { doc.pending[doc.pending_count++] = uishell_sidebar_store_key(rd_cfg_from_view(t->view)); }
-          continue;
-        }
-      }
-      U64 index = doc.panel_count++;
-      order[index] = p;
-      AndamentoDocPanel *out = &doc.panels[index];
-      out->parent = ANDAMENTO_NONE;
-      for(U64 j = index; j > first && out->parent == ANDAMENTO_NONE; j--) { if(order[j-1] == p->parent) { out->parent = j-1-base; } }
-      out->id = uishell_sidebar_text(uishell_sidebar_store_panel_id(arena, i, p->id));
-      // A root's weight means nothing to Andamento, and the size the sidebar
-      // gives a docked section from its content is this device's.
-      F32 weight = p->weight;
-      if(p == a->root || (i == 0 && !manual && uishell_sidebar_store_content_sized(a, p))) { weight = 1.f; }
-      out->weight = (weight > 0 && weight < 1e30f) ? f64_from_str8(rd_arrangement_weight_string(arena, weight)) : 0.01;
-      out->selected = ANDAMENTO_NONE;
-      if(p->first != &rd_nil_arrangement_panel)
-      {
-        out->kind = ANDAMENTO_PANEL_SPLIT;
-        out->axis = rd_arrangement_split_axis(a, p) == Axis2_X ? ANDAMENTO_AXIS_ROW : ANDAMENTO_AXIS_COLUMN;
+        for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
+        { doc.pending[doc.pending_count++] = uishell_sidebar_store_key(rd_cfg_from_view(t->view)); }
         continue;
       }
-      out->kind = ANDAMENTO_PANEL_TABS;
-      out->tabs = doc.tabs+doc.tab_count;
-      for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
-      {
-        CFG_Node *view = rd_cfg_from_view(t->view);
-        String8 key = uishell_sidebar_store_key(view);
-        // A View with no key is corrupt saved state, shown as unavailable
-        // and never committed.
-        if(!key.size) { continue; }
-        if(cfg_node_child_from_string(view, str8_lit("section_hint_pending")) != &cfg_nil_node)
-        { doc.pending[doc.pending_count++] = key; continue; }
-        if(rd_view_address_match(t->view, p->selected)) { out->selected = out->tab_count; }
-        doc.keys[doc.tab_count] = key;
-        doc.tabs[doc.tab_count] = uishell_sidebar_text(key);
-        doc.tab_count += 1;
-        out->tab_count += 1;
-      }
     }
-    if(i == 0) { doc.floating_first = doc.panel_count; }
+    U64 index = doc.panel_count++;
+    order[index] = p;
+    AndamentoDocPanel *out = &doc.panels[index];
+    out->parent = ANDAMENTO_NONE;
+    for(U64 j = index; j > 0 && out->parent == ANDAMENTO_NONE; j--) { if(order[j-1] == p->parent) { out->parent = j-1; } }
+    out->id = uishell_sidebar_text(push_str8f(arena, "%I64u", p->id));
+    // A root's weight means nothing to Andamento, and the size the sidebar
+    // gives a docked section from its content is this device's.
+    F32 weight = p->weight;
+    if(p == a->root || (!manual && uishell_sidebar_store_content_sized(a, p))) { weight = 1.f; }
+    out->weight = (weight > 0 && weight < 1e30f) ? f64_from_str8(rd_arrangement_weight_string(arena, weight)) : 0.01;
+    out->selected = ANDAMENTO_NONE;
+    if(p->first != &rd_nil_arrangement_panel)
+    {
+      out->kind = ANDAMENTO_PANEL_SPLIT;
+      out->axis = rd_arrangement_split_axis(a, p) == Axis2_X ? ANDAMENTO_AXIS_ROW : ANDAMENTO_AXIS_COLUMN;
+      continue;
+    }
+    out->kind = ANDAMENTO_PANEL_TABS;
+    out->tabs = doc.tabs+doc.tab_count;
+    for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
+    {
+      CFG_Node *view = rd_cfg_from_view(t->view);
+      String8 key = uishell_sidebar_store_key(view);
+      // A View with no key is corrupt saved state, shown as unavailable
+      // and never committed.
+      if(!key.size) { continue; }
+      if(cfg_node_child_from_string(view, str8_lit("section_hint_pending")) != &cfg_nil_node)
+      { doc.pending[doc.pending_count++] = key; continue; }
+      if(rd_view_address_match(t->view, p->selected)) { out->selected = out->tab_count; }
+      doc.keys[doc.tab_count] = key;
+      doc.tabs[doc.tab_count] = uishell_sidebar_text(key);
+      doc.tab_count += 1;
+      out->tab_count += 1;
+    }
   }
   return doc;
 }
@@ -364,8 +309,7 @@ uishell_sidebar_store_doc(Arena *arena, UIShell_SidebarState *state, CFG_Node *w
 internal AndamentoSidebarDoc
 uishell_sidebar_store_andamento_doc(UIShell_SidebarDoc *doc)
 {
-  AndamentoSidebarDoc result = {{doc->panels, doc->floating_first},
-                                {doc->panels+doc->floating_first, doc->panel_count-doc->floating_first}};
+  AndamentoSidebarDoc result = {{doc->panels, doc->panel_count}};
   return result;
 }
 
@@ -374,17 +318,14 @@ uishell_sidebar_store_andamento_doc(UIShell_SidebarDoc *doc)
 internal B32
 uishell_sidebar_store_same(AndamentoSidebarDoc *after, AndamentoSidebarDoc *sent)
 {
-  AndamentoArrangementDoc *a[] = {&after->dock, &after->floating}, *b[] = {&sent->dock, &sent->floating};
-  for(U64 k = 0; k < ArrayCount(a); k++)
+  AndamentoArrangementDoc *a = &after->dock, *b = &sent->dock;
+  if(a->panel_count != b->panel_count) { return 0; }
+  for(U64 i = 0; i < a->panel_count; i++)
   {
-    if(a[k]->panel_count != b[k]->panel_count) { return 0; }
-    for(U64 i = 0; i < a[k]->panel_count; i++)
-    {
-      AndamentoDocPanel const *p = &a[k]->panels[i], *q = &b[k]->panels[i];
-      if(!str8_match(uishell_sidebar_string(p->id), uishell_sidebar_string(q->id), 0) || p->parent != q->parent || p->weight != q->weight ||
-         p->kind != q->kind || (p->kind == ANDAMENTO_PANEL_SPLIT && p->axis != q->axis) || p->tab_count != q->tab_count || p->selected != q->selected) { return 0; }
-      for(U64 t = 0; t < p->tab_count; t++) { if(!str8_match(uishell_sidebar_string(p->tabs[t]), uishell_sidebar_string(q->tabs[t]), 0)) { return 0; } }
-    }
+    AndamentoDocPanel const *p = &a->panels[i], *q = &b->panels[i];
+    if(!str8_match(uishell_sidebar_string(p->id), uishell_sidebar_string(q->id), 0) || p->parent != q->parent || p->weight != q->weight ||
+       p->kind != q->kind || (p->kind == ANDAMENTO_PANEL_SPLIT && p->axis != q->axis) || p->tab_count != q->tab_count || p->selected != q->selected) { return 0; }
+    for(U64 t = 0; t < p->tab_count; t++) { if(!str8_match(uishell_sidebar_string(p->tabs[t]), uishell_sidebar_string(q->tabs[t]), 0)) { return 0; } }
   }
   return 1;
 }
@@ -399,21 +340,18 @@ uishell_sidebar_store_saw(UIShell_SidebarState *state, AndamentoSidebarDoc *doc)
   arena_clear(state->sidebar_seen_arena);
   Arena *arena = state->sidebar_seen_arena;
   AndamentoSidebarDoc result = {0};
-  AndamentoArrangementDoc *from[] = {&doc->dock, &doc->floating}, *to[] = {&result.dock, &result.floating};
-  for(U64 k = 0; k < ArrayCount(from); k++)
+  AndamentoArrangementDoc *from = &doc->dock;
+  AndamentoDocPanel *panels = push_array(arena, AndamentoDocPanel, from->panel_count);
+  for(U64 i = 0; i < from->panel_count; i++)
   {
-    AndamentoDocPanel *panels = push_array(arena, AndamentoDocPanel, from[k]->panel_count);
-    for(U64 i = 0; i < from[k]->panel_count; i++)
-    {
-      panels[i] = from[k]->panels[i];
-      panels[i].id = uishell_sidebar_text(push_str8_copy(arena, uishell_sidebar_string(from[k]->panels[i].id)));
-      AndamentoText *tabs = push_array(arena, AndamentoText, panels[i].tab_count);
-      for(U64 t = 0; t < panels[i].tab_count; t++) { tabs[t] = uishell_sidebar_text(push_str8_copy(arena, uishell_sidebar_string(from[k]->panels[i].tabs[t]))); }
-      panels[i].tabs = tabs;
-    }
-    to[k]->panels = panels;
-    to[k]->panel_count = from[k]->panel_count;
+    panels[i] = from->panels[i];
+    panels[i].id = uishell_sidebar_text(push_str8_copy(arena, uishell_sidebar_string(from->panels[i].id)));
+    AndamentoText *tabs = push_array(arena, AndamentoText, panels[i].tab_count);
+    for(U64 t = 0; t < panels[i].tab_count; t++) { tabs[t] = uishell_sidebar_text(push_str8_copy(arena, uishell_sidebar_string(from->panels[i].tabs[t]))); }
+    panels[i].tabs = tabs;
   }
+  result.dock.panels = panels;
+  result.dock.panel_count = from->panel_count;
   state->sidebar_seen = result;
   state->sidebar_seen_valid = 1;
 }
@@ -613,37 +551,27 @@ uishell_sidebar_store_follow(UIShell_SidebarState *state, CFG_Node *window)
     return 0;
   }
   uishell_sidebar_store_notes(state, stored);
-  AndamentoArrangementDoc *docs[2] = {&stored->doc.dock, &stored->doc.floating};
-  UIShell_DocShape shapes[2] = {uishell_store_doc_shape(arena, docs[0]), uishell_store_doc_shape(arena, docs[1])};
+  AndamentoArrangementDoc *doc = &stored->doc.dock;
+  UIShell_DocShape shape = uishell_store_doc_shape(arena, doc);
   CFG_Node *device = cfg_node_child_from_string(window, str8_lit("sidebar_presentation"));
   UIShell_SidebarFollow f = {arena};
   f.manual = uishell_sidebar_store_manual(window);
-  // Every tab, in order: the dock's, then the Floating Panels'.
-  U64 *first_tab[2] = {push_array(arena, U64, docs[0]->panel_count+1), push_array(arena, U64, docs[1]->panel_count+1)};
-  U64 floating_tab = 0;
-  for(U64 k = 0; k < 2; k++)
-  {
-    if(k == 1) { floating_tab = f.tab_count; }
-    for(U64 i = 0; i < docs[k]->panel_count; i++) { first_tab[k][i] = f.tab_count; f.tab_count += docs[k]->panels[i].tab_count; }
-  }
+  // Every tab, in order.
+  U64 *first_tab = push_array(arena, U64, doc->panel_count+1);
+  for(U64 i = 0; i < doc->panel_count; i++) { first_tab[i] = f.tab_count; f.tab_count += doc->panels[i].tab_count; }
   f.tabs = push_array(arena, AndamentoText, f.tab_count+1);
   f.views = push_array(arena, RD_ViewAddress, f.tab_count+1);
-  for(U64 k = 0; k < 2; k++)
+  for(U64 i = 0; i < doc->panel_count; i++)
   {
-    for(U64 i = 0; i < docs[k]->panel_count; i++)
-    {
-      AndamentoDocPanel *p = &docs[k]->panels[i];
-      for(U64 t = 0; t < p->tab_count; t++) { f.tabs[first_tab[k][i]+t] = p->tabs[t]; }
-    }
+    AndamentoDocPanel *p = &doc->panels[i];
+    for(U64 t = 0; t < p->tab_count; t++) { f.tabs[first_tab[i]+t] = p->tabs[t]; }
   }
-  U64 floating_count = 0;
-  for(U64 i = 0; i < docs[1]->panel_count; i++) { floating_count += docs[1]->panels[i].parent == ANDAMENTO_NONE; }
 
-  // What the window has now: its dock and Floating Panels, every View in
-  // them, and the sizes content gave its docked sections, as the dock has
-  // them, else as this device saved them.
+  // What the window has now: its dock, every View in it, and the sizes
+  // content gave its docked sections, as the dock has them, else as this
+  // device saved them.
   UIShell_SidebarDocks docks = uishell_sidebar_docks(arena, window);
-  RD_Arrangement *dock = docks.arrangements[0];
+  RD_Arrangement *dock = docks.dock;
   U64 old_count = 0;
   for(RD_ArrangementPanel *p = dock->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(dock->root, p)) { old_count++; }
   RD_PanelID *old_ids = push_array(arena, RD_PanelID, old_count+1);
@@ -679,16 +607,6 @@ uishell_sidebar_store_follow(UIShell_SidebarState *state, CFG_Node *window)
     f.size_keys[f.size_count] = section ? uishell_store_setting(c, str8_lit("key")) : uishell_store_setting(uishell_sidebar_store_entry_view(c), str8_lit("slot"));
     f.sizes[f.size_count++] = value;
   }
-  // Where the Floating Panels float now, by document ID.
-  U64 current_count = docks.count;
-  String8 *current_ids = push_array(arena, String8, current_count);
-  String8 *current_shares = push_array(arena, String8, current_count);
-  for(U64 k = 1; k < current_count; k++)
-  {
-    RD_PanelAddress root = rd_panel_address(docks.arrangements[k]->owner, docks.arrangements[k]->root->id);
-    current_ids[k] = uishell_sidebar_store_panel_id(arena, k, root.id);
-    current_shares[k] = push_str8_copy(arena, rd_panel_setting(root, str8_lit("share")));
-  }
 
   // Each tab's View: the one showing its key, else a new one.
   CFG_Node *home = rd_view_namespace(window, RD_ViewOwnerKind_Window);
@@ -709,20 +627,13 @@ uishell_sidebar_store_follow(UIShell_SidebarState *state, CFG_Node *window)
     if(str8_match(str8_prefix(key, 2), str8_lit("u:"), 0))
     {
       // A View of this host's own: as this device saved it. Another
-      // device's shows a placeholder in a Floating Panel; the dock takes
-      // only sections, so there it isn't shown.
+      // device's isn't shown: the dock takes only sections.
       CFG_Node *saved = uishell_sidebar_store_device_view(device, key);
       CFG_Node *view = &cfg_nil_node;
       if(saved != &cfg_nil_node)
       {
         view = cfg_node_deep_copy(rd_state->cfg, saved);
         cfg_node_insert_child(rd_state->cfg, home, home->last, view);
-      }
-      else if(t >= floating_tab)
-      {
-        view = rd_cfg_new_view_tab(home, str8_lit("placeholder"), str8_zero(), 0);
-        uishell_store_set_setting(view, str8_lit("slot"), key);
-        uishell_store_set_setting(view, str8_lit("content"), str8_lit("a View another device keeps"));
       }
       f.views[t] = rd_view_address_from_cfg(view);
       continue;
@@ -741,49 +652,14 @@ uishell_sidebar_store_follow(UIShell_SidebarState *state, CFG_Node *window)
     f.views[t] = rd_view_address_from_cfg(view);
   }
 
-  // Floating Panels: each new, in the document's order, numbered after the
-  // ones the window has, which go once these have taken their Views.
-  RD_Arrangement **made = push_array(arena, RD_Arrangement *, floating_count+1);
-  String8 *shares = push_array(arena, String8, floating_count+1);
-  {
-    U64 n = 0;
-    for(U64 i = 0; i < docs[1]->panel_count; i++)
-    {
-      if(docs[1]->panels[i].parent != ANDAMENTO_NONE) { continue; }
-      String8 id = uishell_sidebar_string(docs[1]->panels[i].id);
-      String8 share = uishell_store_setting(uishell_sidebar_store_device(device, str8_lit("panel"), str8_lit("id"), id), str8_lit("share"));
-      for(U64 k = 1; k < current_count && !share.size; k++) { if(str8_match(current_ids[k], id, 0)) { share = current_shares[k]; } }
-      shares[n] = share;
-      made[n] = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, window, current_count+n));
-      rd_arrangement_clear(made[n]);
-      uishell_sidebar_store_fill(&f, made[n], docs[1], &shapes[1], first_tab[1], i, 0, 0, 0);
-      n++;
-    }
-  }
   // The dock.
-  if(docs[0]->panel_count == 0) { rd_arrangement_discard(dock); }
+  if(doc->panel_count == 0) { rd_arrangement_discard(dock); }
   else
   {
     rd_arrangement_clear(dock);
-    uishell_sidebar_store_fill(&f, dock, docs[0], &shapes[0], first_tab[0], 0, 1, old_ids, old_count);
+    uishell_sidebar_store_fill(&f, dock, doc, &shape, first_tab, 0, 1, old_ids, old_count);
   }
-  for(U64 i = 0; i < floating_count; i++) { rd_arrangement_set(made[i]); }
   rd_arrangement_set(dock);
-  // The old Floating Panels go, last first, with what nothing took; the new
-  // ones move up into their places.
-  for(U64 k = current_count-1; k >= 1; k--)
-  {
-    RD_Arrangement *old = rd_arrangement_from_panel_owner(arena, docks.arrangements[k]->owner);
-    rd_arrangement_discard(old);
-    rd_arrangement_set(old);
-  }
-  for(U64 i = 0; i < floating_count; i++)
-  {
-    RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, window, i+1);
-    F32 value = (F32)f64_from_str8(shares[i]);
-    RD_PanelAddress root = rd_panel_address(owner, rd_arrangement_live(owner)->root->id);
-    rd_panel_setting_set(root, str8_lit("share"), value > 0 && value < 1e30f ? shares[i] : str8_lit("1"));
-  }
 
   // A safety restore's marks are done with.
   for(U64 t = 0; t < f.tab_count; t++)
@@ -822,29 +698,24 @@ uishell_sidebar_store_drop_containers(UIShell_SidebarState *state, CFG_Node *win
     String8 key = state->sidebar_gone[i];
     if(!uishell_sidebar_section_container(state, key)) { continue; }
     Temp scratch = scratch_begin(0, 0);
-    U64 count = 0;
-    RD_Arrangement **arrangements = uishell_sidebar_store_arrangements(scratch.arena, window, &count);
-    for(U64 k = 0; k < count; k++)
+    RD_Arrangement *a = uishell_sidebar_store_dock(scratch.arena, window);
+    RD_PanelID *emptied = push_array(scratch.arena, RD_PanelID, 1);
+    U64 emptied_count = 0;
+    B32 changed = 0;
+    for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
     {
-      RD_Arrangement *a = arrangements[k];
-      RD_PanelID *emptied = push_array(scratch.arena, RD_PanelID, 1);
-      U64 emptied_count = 0;
-      B32 changed = 0;
-      for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+      B32 lost = 0;
+      for(RD_ArrangementTab *t = p->first_tab, *t_next = 0; t; t = t_next)
       {
-        B32 lost = 0;
-        for(RD_ArrangementTab *t = p->first_tab, *t_next = 0; t; t = t_next)
-        {
-          t_next = t->next;
-          if(!str8_match(uishell_sidebar_store_key(rd_cfg_from_view(t->view)), key, 0)) { continue; }
-          rd_arrangement_remove_tab(a, t->view);
-          lost = changed = 1;
-        }
-        if(lost && p->tab_count == 0 && p != a->root && !emptied_count) { emptied[emptied_count++] = p->id; }
+        t_next = t->next;
+        if(!str8_match(uishell_sidebar_store_key(rd_cfg_from_view(t->view)), key, 0)) { continue; }
+        rd_arrangement_remove_tab(a, t->view);
+        lost = changed = 1;
       }
-      for(U64 e = 0; e < emptied_count; e++) { rd_arrangement_remove(a, emptied[e]); }
-      if(changed) { rd_arrangement_set(a); }
+      if(lost && p->tab_count == 0 && p != a->root && !emptied_count) { emptied[emptied_count++] = p->id; }
     }
+    for(U64 e = 0; e < emptied_count; e++) { rd_arrangement_remove(a, emptied[e]); }
+    if(changed) { rd_arrangement_set(a); }
     scratch_end(scratch);
   }
 }
@@ -1080,49 +951,37 @@ uishell_sidebar_store_presentation(CFG_State *copy_state, CFG_Node *window, CFG_
   Arena *arena = scratch.arena;
   CFG_Node *device = cfg_node_new(copy_state, copy, str8_lit("sidebar_presentation"));
   B32 manual = uishell_sidebar_store_manual(window);
-  U64 count = 0;
-  RD_Arrangement **arrangements = uishell_sidebar_store_arrangements(arena, window, &count);
-  for(U64 i = 0; i < count; i++)
+  RD_Arrangement *a = uishell_sidebar_store_dock(arena, window);
+  for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
   {
-    RD_Arrangement *a = arrangements[i];
-    for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+    B32 sized = !manual && uishell_sidebar_store_content_sized(a, p);
+    for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
     {
-      B32 sized = i == 0 && !manual && uishell_sidebar_store_content_sized(a, p);
-      for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
+      CFG_Node *view = rd_cfg_from_view(t->view);
+      String8 key = uishell_sidebar_store_key(view);
+      if(!key.size) { continue; }
+      if(!str8_match(view->string, str8_lit("sidebar_section"), 0))
       {
-        CFG_Node *view = rd_cfg_from_view(t->view);
-        String8 key = uishell_sidebar_store_key(view);
-        if(!key.size) { continue; }
-        if(!str8_match(view->string, str8_lit("sidebar_section"), 0))
-        {
-          CFG_Node *saved = cfg_node_new(copy_state, device, str8_lit("view"));
-          if(sized) { cfg_node_new(copy_state, cfg_node_new(copy_state, saved, str8_lit("weight")), rd_arrangement_weight_string(arena, p->weight)); }
-          cfg_node_insert_child(copy_state, saved, saved->last, cfg_node_deep_copy(copy_state, view));
-          continue;
-        }
-        CFG_Node *section = &cfg_nil_node;
-        for(CFG_Node *c = view->first; c != &cfg_nil_node; c = c->next)
-        {
-          String8 skip[] = {str8_lit("section"), str8_lit("label"), str8_lit("section_hint_pending")};
-          B32 skipped = 0;
-          for(U64 k = 0; k < ArrayCount(skip) && !skipped; k++) { skipped = str8_match(c->string, skip[k], 0); }
-          if(skipped) { continue; }
-          uishell_sidebar_store_entry(copy_state, device, &section, str8_lit("section"), str8_lit("key"), key);
-          cfg_node_insert_child(copy_state, section, section->last, cfg_node_deep_copy(copy_state, c));
-        }
-        if(sized)
-        {
-          uishell_sidebar_store_entry(copy_state, device, &section, str8_lit("section"), str8_lit("key"), key);
-          cfg_node_new(copy_state, cfg_node_new(copy_state, section, str8_lit("weight")), rd_arrangement_weight_string(arena, p->weight));
-        }
+        CFG_Node *saved = cfg_node_new(copy_state, device, str8_lit("view"));
+        if(sized) { cfg_node_new(copy_state, cfg_node_new(copy_state, saved, str8_lit("weight")), rd_arrangement_weight_string(arena, p->weight)); }
+        cfg_node_insert_child(copy_state, saved, saved->last, cfg_node_deep_copy(copy_state, view));
+        continue;
       }
-    }
-    String8 share = i == 0 ? str8_zero() : rd_panel_setting(rd_panel_address(a->owner, a->root->id), str8_lit("share"));
-    if(share.size)
-    {
-      CFG_Node *entry = cfg_node_new(copy_state, device, str8_lit("panel"));
-      cfg_node_new(copy_state, cfg_node_new(copy_state, entry, str8_lit("id")), uishell_sidebar_store_panel_id(arena, i, a->root->id));
-      cfg_node_new(copy_state, cfg_node_new(copy_state, entry, str8_lit("share")), share);
+      CFG_Node *section = &cfg_nil_node;
+      for(CFG_Node *c = view->first; c != &cfg_nil_node; c = c->next)
+      {
+        String8 skip[] = {str8_lit("section"), str8_lit("label"), str8_lit("section_hint_pending")};
+        B32 skipped = 0;
+        for(U64 k = 0; k < ArrayCount(skip) && !skipped; k++) { skipped = str8_match(c->string, skip[k], 0); }
+        if(skipped) { continue; }
+        uishell_sidebar_store_entry(copy_state, device, &section, str8_lit("section"), str8_lit("key"), key);
+        cfg_node_insert_child(copy_state, section, section->last, cfg_node_deep_copy(copy_state, c));
+      }
+      if(sized)
+      {
+        uishell_sidebar_store_entry(copy_state, device, &section, str8_lit("section"), str8_lit("key"), key);
+        cfg_node_new(copy_state, cfg_node_new(copy_state, section, str8_lit("weight")), rd_arrangement_weight_string(arena, p->weight));
+      }
     }
   }
   scratch_end(scratch);

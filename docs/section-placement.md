@@ -3,15 +3,15 @@
 Andamento declares region identity and content. `default-host="sidebar"`,
 `order=10` and `pinned` supply initial placement hints. Where sections
 actually are is the Dashboard's sidebar arrangement (ADR 0012): one document in
-Andamento's `dashboard` record, holding the dock's panel tree, the Floating
-Panels and the sections closed on purpose. Andamento reconciles it with what
+Andamento's `dashboard` record, holding the dock's panel tree and the
+sections closed on purpose. Andamento reconciles it with what
 the template and the local sections declare; its rules are in Andamento's
 `docs/sidebar-design/sidebar-arrangement.md`. A region's name is its section
 key, a local section's is `.section:<id>`, and `.unplaced` is the workspace
 fallback.
 
-Wheelhouse's live copy is the window's typed arrangements: the dock's and each
-Floating Panel's (`src/shell/shell_core.c`, "Live arrangements";
+Wheelhouse's live copy is the window's dock arrangement
+(`src/shell/shell_core.c`, "Live arrangements";
 `src/uishell/uishell_sidebar_store.c`). Docking edits it as before, through
 the shared docking checker; at the end of a gesture the whole document is
 committed (`andamento_sidebar_arrangement_commit`). Closing a section is
@@ -27,8 +27,8 @@ The rules Andamento applies, as Wheelhouse's C reconciliation did before:
   unhinted `.unplaced` goes last;
 - a new section goes before the subtree of its next hinted neighbour in the
   same host, keeping saved nested splits, selection and weights;
-- duplicate tabs: the first in the dock, then the Floating Panels, wins, and a
-  panel the removal empties goes; unrelated empty panels stay;
+- duplicate tabs: the first in the dock wins, and a panel the removal empties
+  goes; unrelated empty panels stay;
 - the first commit of a sidebar saved before Andamento kept it adopts it,
   closing the declared sections it lacks;
 - Restore gives an equal share of the dock, the others scaled to make room;
@@ -43,6 +43,9 @@ Rules that changed when Andamento took this over:
 - Pinned regions sort before unpinned ones.
 - `.unplaced` is always declared and placed. The sidebar hides it (no height)
   while it stands aside for the Workspaces section, instead of leaving it out.
+- Floating Panels are gone (#380). Every section docks, whatever its
+  `default-host`. A saved document's floating panels are dropped on import,
+  and the sections only they held are docked by their hints.
 
 What stays with Wheelhouse needs pixels or its own config: the docking checker
 (a section never docks inside a child Workspace level); a section the startup

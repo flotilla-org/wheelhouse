@@ -960,23 +960,20 @@ struct UIShell_SidebarDockView
   RD_ViewAddress view;
   CFG_Node *node;
   RD_Arrangement *arrangement;
-  U64 index;
   RD_PanelID panel;
 };
 
-// An owner's sidebar and its Floating Panels as the sidebar's edits outside
-// docking see them (the pinned_cards migration, closing a local section's
-// Views, following Andamento's document): each copied once, edited and set
-// together. `arrangements` are the dock, then each Floating Panel; `first`
-// is every tab of them, in that order.
+// An owner's sidebar dock as the sidebar's edits outside docking see it (the
+// pinned_cards migration, closing a local section's Views, following
+// Andamento's document): copied once, edited and set. `first` is every tab
+// of it, in preorder.
 typedef struct UIShell_SidebarDocks UIShell_SidebarDocks;
 struct UIShell_SidebarDocks
 {
   CFG_Node *owner;
   Arena *arena;
-  RD_Arrangement **arrangements;
-  B32 *dirty;
-  U64 count;
+  RD_Arrangement *dock;
+  B32 dirty;
   UIShell_SidebarDockView *first;
   UIShell_SidebarDockView *last;
 };
@@ -1768,10 +1765,10 @@ uishell_sidebar_init(RD_WindowState *ws)
     state->initialized = 1;
     char *error = 0;
     // A host requires exactly the ABI it was built against.
-    if(andamento_abi_version() != 6)
+    if(andamento_abi_version() != 7)
     {
       Temp scratch = scratch_begin(0, 0);
-      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Andamento ABI 6 is required; this library has ABI %u",
+      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Andamento ABI 7 is required; this library has ABI %u",
         (U32)andamento_abi_version()));
       scratch_end(scratch);
       return state;
@@ -1822,7 +1819,7 @@ uishell_sidebar_init(RD_WindowState *ws)
       // Workspaces saved without their panel trees get them from Andamento,
       // and the window's focus is read again from them.
       uishell_workspace_store_load(state, window);
-      // The sidebar's dock and Floating Panels too.
+      // The sidebar's dock too.
       uishell_sidebar_store_load(state, window);
       rd_window_restore_presentation(ws);
       uishell_sidebar_refresh(state);
@@ -1842,7 +1839,7 @@ uishell_sidebar_populate(CFG_Node *workspace, const UIShell_SidebarResource *res
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *primary_tab = &cfg_nil_node, *overflow_tab = &cfg_nil_node;
   CFG_Node **tabs = push_array(scratch.arena, CFG_Node *, count);
-  RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, workspace, 0);
+  RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, workspace);
   RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, owner);
   RD_PanelID primary = rd_arrangement_clear(arrangement), overflow = primary;
   if(count > 1)
@@ -4990,7 +4987,7 @@ uishell_sidebar_close_empty_panels(CFG_Node *window)
 {
   if(uishell_store_gesture_in_flight()) { return; }
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *sidebar = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
+  RD_Arrangement *sidebar = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
   B32 changed = 0;
   for(B32 again = 1; again;)
   {
@@ -5057,7 +5054,7 @@ internal CFG_Node *
 uishell_sidebar_new_section(UIShell_SidebarState *state, CFG_Node *window)
 {
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *sidebar = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
+  RD_Arrangement *sidebar = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
   if(sidebar->root == &rd_nil_arrangement_panel) { scratch_end(scratch); return &cfg_nil_node; }
   RD_PanelID panel = sidebar->root->first != &rd_nil_arrangement_panel ? rd_arrangement_add(sidebar, sidebar->root->id, 0.25f) : sidebar->root->id;
   UIShell_LocalGroup *group = uishell_sidebar_local_new_group(window, str8_lit("New section"));

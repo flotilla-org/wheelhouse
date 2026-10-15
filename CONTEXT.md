@@ -12,12 +12,12 @@ A tabbed container that hosts one or more **Views**.
 _Avoid_: Sidebar, workspace, region
 
 **Panel ID**:
-A **Panel**'s stable identity within its arrangement: a **Workspace**'s, the **Dashboard**'s sidebar, or a **Floating Panel**'s. It is unique only within that arrangement, so a **Panel** is addressed by its arrangement's owner and its Panel ID.
+A **Panel**'s stable identity within its arrangement: a **Workspace**'s, or the **Dashboard**'s sidebar. It is unique only within that arrangement, so a **Panel** is addressed by its arrangement's owner and its Panel ID.
 _Avoid_: Panel node, panel config
 
-**Floating Panel**:
-A **Panel** outside its host's panel tree, positioned in absolute coordinates. Its host is a **Workspace** or a window. It is **Presentation State**.
-_Avoid_: Popup, overlay
+**Detached Card**:
+An entity's card that outlives the hover that opened it: floating free of the sidebar where it was dragged, expanded under its row, or pinned into a pinned area. It is **Presentation State**, not a **Panel**.
+_Avoid_: Floating Panel (there are none), popup
 
 **View**:
 A renderable content surface hosted by a **Panel** or future layout host.
@@ -296,7 +296,7 @@ A user's choice of which **Content Providers** to subscribe to, together with th
 _Avoid_: Project, RAD project, sidebar config
 
 **Presentation State**:
-State that belongs to one frontend on one device: absolute geometry (window size and position, pixel sizes), floating panels, the **Visible Workspace** and **Workspace Focus** of each window, section collapse, fonts, keybindings and chrome. It is keyed by stable IDs from the **Dashboard** and **Workspaces**, and is never shared between frontends. A workspace's panel tree, including relative split weights, is not Presentation State: it is part of the **Workspace**, and each frontend adapts it to its own space.
+State that belongs to one frontend on one device: absolute geometry (window size and position, pixel sizes), **Detached Cards**, the **Visible Workspace** and **Workspace Focus** of each window, section collapse, fonts, keybindings and chrome. It is keyed by stable IDs from the **Dashboard** and **Workspaces**, and is never shared between frontends. A workspace's panel tree, including relative split weights, is not Presentation State: it is part of the **Workspace**, and each frontend adapts it to its own space.
 _Avoid_: Workspace, layout (ambiguous), project
 
 **View Spec**:
@@ -332,7 +332,7 @@ The logical description of the shell served to automation clients: **Workspaces*
 _Avoid_: UI dump, box tree, accessibility tree, visual tree
 
 **Placement Tree**:
-What the shell has drawn where, per window: placed regions, **Panels**, **Views**, floating panels and overlays, with their bounds. It shares **Automation IDs** with the **Semantic Tree**, and it is what interpreting a screenshot needs.
+What the shell has drawn where, per window: placed regions, **Panels**, **Views**, **Detached Cards** and overlays, with their bounds. It shares **Automation IDs** with the **Semantic Tree**, and it is what interpreting a screenshot needs.
 _Avoid_: Visual tree, layout dump, accessibility tree
 
 **Accessibility Tree**:

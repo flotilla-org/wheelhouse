@@ -80,7 +80,7 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   // A workspace of one panel, its terminal selected beside another, and a
   // second workspace showing a terminal.
   CFG_Node *workspace = cfg_node_new(cfg, window, str8_lit("workspace"));
-  RD_Arrangement *panels = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, workspace, 0));
+  RD_Arrangement *panels = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, workspace));
   RD_PanelAddress panel = rd_panel_address(panels->owner, rd_arrangement_clear(panels));
   RD_ViewAddress view_address = rd_new_view_tab(panels, panel.id, str8_lit("terminal"), str8_zero());
   RD_ViewAddress watcher_address = rd_new_view_tab(panels, panel.id, str8_lit("terminal"), str8_zero());
@@ -88,7 +88,7 @@ uishell_terminal_clipboard_host_checks(Arena *arena, CFG_State *cfg)
   rd_arrangement_set(panels);
   CFG_Node *view = rd_cfg_from_view(view_address);
   CFG_Node *other_workspace = cfg_node_new(cfg, window, str8_lit("workspace"));
-  RD_Arrangement *other_panels = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, other_workspace, 0));
+  RD_Arrangement *other_panels = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, other_workspace));
   RD_PanelID other_panel = rd_arrangement_clear(other_panels);
   rd_new_view_tab(other_panels, other_panel, str8_lit("terminal"), str8_zero());
   rd_arrangement_set(other_panels);

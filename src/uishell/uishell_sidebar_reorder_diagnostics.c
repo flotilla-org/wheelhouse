@@ -426,37 +426,35 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     uishell_sidebar_publish(&state, &split);
   }
 
-  // A saved pinned area migrates in place, even in a floating panel: its
-  // View becomes its section's View, keeping its label, selection and
-  // collapse, and its pins move into the section's one group.
+  // A saved pinned area migrates in place, in a panel of its own in the
+  // dock: its View becomes its section's View, keeping its label, selection
+  // and collapse, and its pins move into the section's one group.
   {
-    RD_Arrangement *floating = rd_arrangement_alloc(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, window, rd_floating_count(window)+1));
-    RD_PanelID panel = rd_arrangement_clear(floating);
-    CFG_Node *old_area = rd_cfg_from_view(rd_new_view_tab(floating, panel, str8_lit("pinned_cards"), str8_zero()));
-    rd_arrangement_set(floating);
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, old_area, str8_lit("label")), str8_lit("Floating pins"));
+    RD_Arrangement *dock = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
+    RD_PanelID panel = rd_arrangement_add(dock, dock->root->id, 0.125f);
+    CFG_Node *old_area = rd_cfg_from_view(rd_new_view_tab(dock, panel, str8_lit("pinned_cards"), str8_zero()));
+    rd_arrangement_set(dock);
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, old_area, str8_lit("label")), str8_lit("Docked pins"));
     cfg_node_new(rd_state->cfg, old_area, str8_lit("section_collapsed"));
     CFG_Node *card = cfg_node_new(rd_state->cfg, old_area, str8_lit("card"));
-    char *fields[][2] = {{"ghost", "floating-pin"}, {"kind", "convoy"}, {"entity", "c1"}};
+    char *fields[][2] = {{"ghost", "docked-pin"}, {"kind", "convoy"}, {"entity", "c1"}};
     for(U64 f = 0; f < ArrayCount(fields); f++)
     { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, card, str8_cstring(fields[f][0])), str8_cstring(fields[f][1])); }
     cfg_node_new(rd_state->cfg, card, str8_lit("compact"));
     uishell_sidebar_pin_migrate(window);
-    RD_ArrangementPanel *migrated_panel = rd_arrangement_panel_from_id(rd_arrangement_live(floating->owner), panel);
+    RD_ArrangementPanel *migrated_panel = rd_arrangement_panel_from_id(rd_arrangement_live(dock->owner), panel);
     CFG_Node *migrated = migrated_panel->tab_count == 1 ? rd_cfg_from_view(migrated_panel->first_tab->view) : &cfg_nil_node;
     UIShell_LocalGroup *group = uishell_sidebar_local_view_group(window, migrated);
     UIShell_LocalPin *pin = group && group->pin_count == 1 ? &group->pins[0] : 0;
     ReorderCheck(str8_match(migrated->string, str8_lit("sidebar_section"), 0) &&
                  rd_view_address_match(migrated_panel->selected, rd_view_address_from_cfg(migrated)) &&
                  uishell_sidebar_section_collapsed(migrated) &&
-                 group && str8_match(uishell_sidebar_local_title(scratch.arena, group->section), str8_lit("Floating pins"), 0) &&
-                 pin && str8_match(pin->ghost, str8_lit("floating-pin"), 0) && str8_match(uishell_sidebar_string(pin->target.id), str8_lit("c1"), 0) &&
+                 group && str8_match(uishell_sidebar_local_title(scratch.arena, group->section), str8_lit("Docked pins"), 0) &&
+                 pin && str8_match(pin->ghost, str8_lit("docked-pin"), 0) && str8_match(uishell_sidebar_string(pin->target.id), str8_lit("c1"), 0) &&
                  !uishell_sidebar_pin_expanded(pin),
-                 "a floating pinned area migrates in place into a section and group, keeping its pins and state");
+                 "a docked pinned area migrates in place into a section and group, keeping its pins and state");
     if(group) { uishell_sidebar_local_forget_section(window, push_str8_copy(scratch.arena, group->section->id)); }
-    RD_Arrangement *gone = rd_arrangement_from_panel_owner(scratch.arena, floating->owner);
-    rd_arrangement_discard(gone);
-    rd_arrangement_set(gone);
+    rd_fixture_remove_panel(rd_panel_address(dock->owner, panel));
   }
 
   // A reordered run's row offers Reset order, which returns it to data order.

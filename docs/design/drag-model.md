@@ -213,7 +213,6 @@ Floating and pinned cards already exist (`uishell_detached_cards.c`, `docs/detac
 - Every target goes through `rd_dock_check` and `rd_dock_can_create`. A centre drop joins or creates an area, and a directional drop splits the panel.
 - An emptied group remains; its section's Close control hides it.
 - Floats survive mouse-out and the loss of their source. Inline cards close with their source row. Neither is persisted.
-- `floating_panels` is a placement fallback for sections, not a rendered host. A group in a floating panel would therefore be a new surface, not something being preserved.
 
 Where the model and today's behaviour differed, the operator agreed the following on 2026-10-07:
 

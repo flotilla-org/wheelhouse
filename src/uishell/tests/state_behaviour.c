@@ -553,7 +553,7 @@ state_check_sidebar_committed(RD_WindowState *ws)
   UIShell_SidebarDoc doc = uishell_sidebar_store_doc(scratch.arena, state, window);
   AndamentoSidebarArrangement *stored = andamento_sidebar_arrangement_get(state->core, 0);
   AndamentoSidebarDoc ours = uishell_sidebar_store_andamento_doc(&doc);
-  B32 same = stored && stored->owned && state_same_doc(&stored->doc.dock, &ours.dock) && state_same_doc(&stored->doc.floating, &ours.floating) &&
+  B32 same = stored && stored->owned && state_same_doc(&stored->doc.dock, &ours.dock) &&
     str8_match(uishell_store_setting(window, str8_lit("sidebar_generation")), push_str8f(scratch.arena, "%I64u", stored->generation), 0);
   if(!same) { fprintf(stderr, "The sidebar is not the arrangement Andamento keeps\n"); state_failures++; }
   andamento_sidebar_arrangement_free(stored);
@@ -564,7 +564,7 @@ state_check_sidebar_committed(RD_WindowState *ws)
 internal B32
 state_sidebar_has_empty_leaf(CFG_Node *window)
 {
-  RD_Arrangement *sidebar = rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
+  RD_Arrangement *sidebar = rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
   B32 empty = 0;
   for(RD_ArrangementPanel *p = sidebar->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(sidebar->root, p))
   { empty |= p != sidebar->root && p->first == &rd_nil_arrangement_panel && p->tab_count == 0; }
@@ -704,9 +704,9 @@ state_open_v(RD_WindowState *ws)
 
 //- View Presentation State across a fresh-process restart
 //
-// --state_phase:views_save gives three Views Presentation State through the
-// View font size commands: a workspace's View, a terminal in that
-// workspace's Floating Panel, and a keep-previous Slot's previous instance.
+// --state_phase:views_save gives two Views Presentation State through the
+// View font size commands: a workspace's View and a keep-previous Slot's
+// previous instance.
 // It writes each View's address with what it set (views.txt) and quits.
 // --state_phase:views_restart is the next launch, a fresh process: each
 // address finds a View of the same kind again, where it was, with what was
@@ -730,12 +730,10 @@ state_view_from_hex(String8 hex)
   return view;
 }
 
-// Where `view` is: "workspace", "floating" (a workspace's Floating Panel)
-// or "previous" (a Slot's previous instance).
+// Where `view` is: "workspace" or "previous" (a Slot's previous instance).
 internal String8
 state_view_place(CFG_Node *view)
 {
-  if(rd_panel_from_cfg(view).owner.kind == RD_PanelOwnerKind_Floating) { return str8_lit("floating"); }
   if(uishell_store_previous_of(view).size) { return str8_lit("previous"); }
   return str8_lit("workspace");
 }
@@ -775,7 +773,7 @@ state_views_phase(String8 dir, String8 phase, UI_Theme *theme)
       { fprintf(stderr, "View %.*s %.*s: %s, font_size \"%.*s\" for \"%.*s\"\n", str8_varg(kind), str8_varg(place), found ? "found" : "not found", str8_varg(got), str8_varg(size)); }
       count++;
     }
-    StateCheck(count == 3);
+    StateCheck(count == 2);
     state_quit(ws);
     scratch_end(scratch);
     fprintf(stderr, "State behaviour (View Presentation State, fresh-process restart): %u failures\n", state_failures);
@@ -788,21 +786,10 @@ state_views_phase(String8 dir, String8 phase, UI_Theme *theme)
   uishell_cmd("new_workspace", .window = window->id);
   state_frame(ws);
   CFG_Node *work = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
-  CFG_Node *views[3] = {&cfg_nil_node, &cfg_nil_node, &cfg_nil_node};
+  CFG_Node *views[2] = {&cfg_nil_node, &cfg_nil_node};
   RD_PanelNode *leaf = state_panels(scratch.arena, work).root;
   for(; leaf->first != &rd_nil_panel_node; leaf = leaf->first) {}
   views[0] = rd_cfg_from_view(leaf->tabs.first->v);
-  // A terminal in the workspace's Floating Panel. No command floats a
-  // workspace's tab; its arrangement is set directly, its View in the
-  // workspace's namespace.
-  {
-    RD_Arrangement *floating = rd_arrangement_alloc(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, work, rd_floating_count(work)+1));
-    CFG_Node *terminal = rd_view_alloc(floating->owner, str8_lit("terminal"), str8_lit("make watch"));
-    rd_arrangement_insert_tab(floating, rd_view_address_from_cfg(terminal), rd_arrangement_clear(floating), rd_nil_view_address, 1);
-    rd_arrangement_set(floating);
-    state_frame(ws);
-    views[1] = terminal;
-  }
   // The reviewer's partner Slot, rebound once.
   {
     state_reviewer_partner = 1;
@@ -816,12 +803,12 @@ state_views_phase(String8 dir, String8 phase, UI_Theme *theme)
     state_producer(state);
     state_frame(ws);
     state_frame(ws);
-    views[2] = state_previous_view(reviewer, str8_lit("partner"));
+    views[1] = state_previous_view(reviewer, str8_lit("partner"));
   }
-  // A View's font size command, once for the first, twice smaller for the
-  // second, and twice larger for the third.
-  char *commands[] = {"inc_view_font_size", "dec_view_font_size", "inc_view_font_size"};
-  U64 times[] = {1, 2, 2};
+  // A View's font size command, once for the first and twice larger for the
+  // second.
+  char *commands[] = {"inc_view_font_size", "inc_view_font_size"};
+  U64 times[] = {1, 2};
   String8List lines = {0};
   for(U64 i = 0; i < ArrayCount(views); i++)
   {
@@ -839,7 +826,7 @@ state_views_phase(String8 dir, String8 phase, UI_Theme *theme)
     StateCheck(size.size != 0 && cfg_node_child_from_string(views[i], str8_lit("font_size")) == &cfg_nil_node);
     str8_list_pushf(scratch.arena, &lines, "%S %S %S %S\n", state_view_hex(scratch.arena, view), views[i]->string, state_view_place(views[i]), size);
   }
-  StateCheck(str8_match(state_view_place(views[1]), str8_lit("floating"), 0) && str8_match(state_view_place(views[2]), str8_lit("previous"), 0));
+  StateCheck(str8_match(state_view_place(views[1]), str8_lit("previous"), 0));
   StateCheck(write_data_to_file_path(path, str8_list_join(scratch.arena, &lines, 0)));
   state_quit(ws);
   scratch_end(scratch);
@@ -1033,7 +1020,7 @@ entry_point(CmdLine *cmdline)
     // and the commit after drops it too. No command makes one; the
     // arrangement is set directly.
     {
-      RD_Arrangement *dock = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
+      RD_Arrangement *dock = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
       rd_arrangement_add(dock, dock->root->id, 0.1f);
       rd_arrangement_set(dock);
       StateCheck(state_sidebar_has_empty_leaf(window));
@@ -1143,7 +1130,7 @@ entry_point(CmdLine *cmdline)
   {
     window = cfg_node_from_id(ws->cfg_id);
     UIShell_SidebarState *state = ws->sidebar;
-    RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+    RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
     state_frame(ws);
     U64 commits = state->sidebar_commits;
     RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, owner);
@@ -2303,8 +2290,8 @@ entry_point(CmdLine *cmdline)
 
   //- A View's state lives as long as its Slot does in a materialized
   // workspace, whether or not it is drawn: a terminal in a tab that isn't
-  // selected, one filtered out by project, one in a Floating Panel, all in
-  // a workspace that isn't visible, keep their runtimes however many frames
+  // selected and one filtered out by project, all in a workspace that isn't
+  // visible, keep their runtimes however many frames
   // pass. Keeping the workspace releases them; reopening it starts them
   // again, the one with a session re-attaching to it.
   {
@@ -2315,7 +2302,7 @@ entry_point(CmdLine *cmdline)
     while(leaf->first != &rd_nil_panel_node) { leaf = leaf->first; }
     RD_PanelAddress panel = leaf->address;
     char *commands[] = {"make watch", "tail -f build.log", "htop"};
-    CFG_Node *terminals[4] = {0};
+    CFG_Node *terminals[3] = {0};
     for(U64 i = 0; i < ArrayCount(commands); i++)
     {
       uishell_cmd("build_tab", .window = window->id, .panel = panel, .string = str8_lit("terminal"), .expr = str8_cstring(commands[i]));
@@ -2333,23 +2320,12 @@ entry_point(CmdLine *cmdline)
     StateCheck(rd_cfg_is_project_filtered(filtered));
     tree = state_panels(scratch.arena, workspace);
     StateCheck(rd_view_address_match(rd_panel_node_from_id(tree.root, panel.id)->selected_tab, rd_view_address_from_cfg(terminals[2])));
-    // No command puts a terminal in a Floating Panel; a detached card is
-    // the only thing that makes one.
-    {
-      RD_Arrangement *floating = rd_arrangement_alloc(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, workspace, rd_floating_count(workspace)+1));
-      RD_PanelID root = rd_arrangement_clear(floating);
-      CFG_Node *text = rd_view_alloc(floating->owner, str8_lit("text"), str8_zero());
-      terminals[3] = rd_view_alloc(floating->owner, str8_lit("terminal"), str8_zero());
-      rd_arrangement_insert_tab(floating, rd_view_address_from_cfg(text), root, rd_nil_view_address, 1);
-      rd_arrangement_insert_tab(floating, rd_view_address_from_cfg(terminals[3]), root, rd_view_address_from_cfg(text), 0);
-      rd_arrangement_set(floating);
-    }
     state_frame(ws);
 
     // Each builds once while it is the selected tab; then another
     // workspace becomes visible.
     state_attached = str8_zero();
-    UIShell_TerminalViewState *tvs[4] = {0};
+    UIShell_TerminalViewState *tvs[3] = {0};
     for(U64 i = 0; i < ArrayCount(terminals); i++) { tvs[i] = state_terminal(terminals[i]); }
     StateCheck(str8_match(state_attached, str8_lit("s-kept"), 0) && tvs[0]->session == 0);
     for(U64 i = 1; i < ArrayCount(tvs); i++) { StateCheck(state_terminal_running(tvs[i])); }
@@ -2368,18 +2344,18 @@ entry_point(CmdLine *cmdline)
     for(U64 i = 0; i < ArrayCount(terminals); i++) { StateCheck(rd_view_state_from_view(rd_view_address_from_cfg(terminals[i]), 0)->user_data == tvs[i]); }
     for(U64 i = 1; i < ArrayCount(tvs); i++) { StateCheck(state_terminal_running(tvs[i])); }
 
-    // Closing it and keeping it releases all four runtimes.
+    // Closing it and keeping it releases all three runtimes.
     uishell_cmd("detach_workspace", .window = window->id, .cfg = workspace->id);
     state_frame(ws);
     StateCheck(str8_match(workspace->string, str8_lit("detached_workspace"), 0));
-    StateCheck(state_runtimes_released == released+4);
+    StateCheck(state_runtimes_released == released+3);
     for(U64 i = 0; i < ArrayCount(terminals); i++) { StateCheck(!state_has_view_state(rd_view_address_from_cfg(terminals[i]))); }
     for(U32 frame = 0; frame < 3; frame++)
     {
       rd_state->frame_index += 1;
       state_frame(ws);
     }
-    StateCheck(state_runtimes_released == released+4);
+    StateCheck(state_runtimes_released == released+3);
 
     // Reopening it starts them again: the same Views, the one with a
     // session re-attached to it, the others launched afresh.
@@ -2397,11 +2373,11 @@ entry_point(CmdLine *cmdline)
     RD_ViewAddress filtered_address = rd_view_address_from_cfg(filtered);
     uishell_cmd("close_tab", .window = window->id, .panel = rd_panel_from_view(filtered_address), .tab = filtered_address);
     state_frame(ws);
-    StateCheck(state_runtimes_released == released+5 && !state_has_view_state(filtered_address));
-    StateCheck(state_terminal_running(tvs[2]) && state_terminal_running(tvs[3]));
+    StateCheck(state_runtimes_released == released+4 && !state_has_view_state(filtered_address));
+    StateCheck(state_terminal_running(tvs[2]));
     uishell_cmd("close_workspace", .window = window->id, .cfg = workspace->id);
     state_frame(ws);
-    StateCheck(state_runtimes_released == released+8);
+    StateCheck(state_runtimes_released == released+6);
   }
 
   scratch_end(scratch);
