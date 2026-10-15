@@ -1,13 +1,14 @@
 //- The Dashboard's sidebar arrangement in Andamento (ADR 0012; andamento.h,
 // "the Dashboard's sidebar arrangement"; Andamento's
 // docs/sidebar-design/sidebar-arrangement.md). Which sections are docked
-// where, and which are closed, is Dashboard state: Andamento
-// keeps it as one document in the dashboard record, and places, restores and
-// flags sections against what the template and the local sections declare.
-// Wheelhouse's live copy is the window's sidebar arrangement (the dock;
-// shell_core.c, "Live arrangements"), which docking edits. A tab's key is a sidebar_section View's `section`; any
-// other View is one of this host's own, keyed by its `slot` ("u:<n>"),
-// which Andamento stores but never places.
+// where, and which are closed, is Dashboard state: Andamento keeps it as one
+// document in the dashboard record, and places, restores and flags sections
+// against what the template and the local sections declare. Wheelhouse's
+// live copy is the window's sidebar arrangement (the dock; shell_core.c,
+// "Live arrangements"), which docking edits. A tab's key is a
+// sidebar_section View's `section`; any other View is one of this host's
+// own, keyed by its `slot` ("u:<n>"), which Andamento stores but never
+// places.
 //
 //   load    A window saved since has no sidebar in the presentation file,
 //           only `sidebar_presentation`: the dock follows
