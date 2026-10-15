@@ -87,7 +87,7 @@ assert os.environ['WHEELHOUSE_SOCKET'] == endpoint
 host = os.environ.get('FLOTILLA_DAEMON', 'default').split('://')[-1]
 stop = os.path.join(os.environ['STATE_BEHAVIOUR_DIR'], 'stop-' + host)
 def facts(**values):
-    return {key: {'value': {'type': 'text', 'value': value}, 'ttl_ms': 2000} for key, value in values.items()}
+    return {key: {'value': {'type': 'text', 'value': value}} for key, value in values.items()}
 patches = [
     {'type': 'metadata-patch', 'target': {'kind': 'entity', 'value': {'kind': 'project', 'id': 'fleet'}},
      'source_id': 'fake-connector', 'unset': [],
@@ -96,7 +96,7 @@ patches = [
      'source_id': 'fake-connector', 'unset': [],
      'set': {**facts(**{'flotilla.project': 'fleet', 'flotilla.vessel': 'fleet-v', 'display.label': 'Fleet vessel via ' + host,
                         'status.state': 'waiting', 'action.primary.recipe': "printf 'Fleet vessel\\n'; exec /bin/sh"}),
-             'status.attention': {'value': {'type': 'bool', 'value': True}, 'ttl_ms': 2000}}},
+             'status.attention': {'value': {'type': 'bool', 'value': True}}}},
 ]
 while not os.path.exists(stop):
     for patch in patches:
