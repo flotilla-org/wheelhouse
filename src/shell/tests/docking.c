@@ -23,8 +23,8 @@ global U32 failures;
 
 read_only global RD_PanelOwner test_owner = {RD_PanelOwnerKind_Workspace};
 
-// The window's sidebar, its own panels (a level apart), a child workspace's
-// panels, and Floating Panels of each. `width` wide.
+// The window's sidebar, its own panels (a level apart), and a child
+// workspace's panels. `width` wide.
 internal RD_DockHost
 host(RD_DockHostKind kind, CFG_ID level, B32 subject, F32 width)
 {
@@ -175,7 +175,7 @@ entry_point(CmdLine *cmdline)
     }
   }
   RD_ViewRegistration *selector = rd_dock_view_from_name(str8_lit("workspace_selector"));
-  RD_ViewRegistration custom = {str8_lit_comp("subject_section"), RD_ViewTrait_Section|RD_ViewTrait_NeedsWorkspaceSubject|RD_ViewTrait_NeedsHost|RD_ViewTrait_Singleton, 100, RD_DockHostKind_Sidebar};
+  RD_ViewRegistration custom = {str8_lit_comp("subject_section"), RD_ViewTrait_Section|RD_ViewTrait_NeedsWorkspaceSubject|RD_ViewTrait_Singleton, 100, RD_DockHostKind_Sidebar};
   RD_DockProposal p = {{RD_DockHostKind_Sidebar, 7, 0, 1, 100}, 7, 1, 1, 0};
   // Width is inclusive at the boundary. Missing subjects, duplicate singleton
   // instances, and zero/two Control Surfaces are invalid proposed layouts.
@@ -185,7 +185,7 @@ entry_point(CmdLine *cmdline)
   p.host.available_width = 100;
   p.host.has_workspace_subject = 0; Check(rd_dock_check(&custom, p) == RD_DockRule_WorkspaceSubject);
   p.host.has_workspace_subject = 1;
-  p.host.kind = RD_DockHostKind_FloatingPanel; Check(rd_dock_check(&custom, p) == RD_DockRule_HostAcceptance);
+  p.host.kind = RD_DockHostKind_WorkspaceRegion; Check(rd_dock_check(&custom, p) == RD_DockRule_HostAcceptance);
   p.host.kind = RD_DockHostKind_Sidebar;
   p.instances_after = 0; Check(rd_dock_check(&custom, p) == RD_DockRule_Singleton);
   p.instances_after = 2; Check(rd_dock_check(&custom, p) == RD_DockRule_Singleton);
@@ -211,9 +211,7 @@ entry_point(CmdLine *cmdline)
   Check(rd_dock_presentation(RD_DockHostKind_Sidebar, 1) == RD_DockPresentation_SectionHeader);
   Check(rd_dock_presentation(RD_DockHostKind_Sidebar, 2) == RD_DockPresentation_SectionHeader);
   Check(rd_dock_presentation(RD_DockHostKind_WorkspaceRegion, 1) == RD_DockPresentation_Tabs);
-  Check(rd_dock_presentation(RD_DockHostKind_FloatingPanel, 1) == RD_DockPresentation_Tabs);
   Check(rd_dock_host_kind_from_panel_owner((RD_PanelOwner){RD_PanelOwnerKind_Sidebar}) == RD_DockHostKind_Sidebar);
-  Check(rd_dock_host_kind_from_panel_owner((RD_PanelOwner){RD_PanelOwnerKind_Floating}) == RD_DockHostKind_FloatingPanel);
   Check(rd_dock_host_kind_from_panel_owner(test_owner) == RD_DockHostKind_WorkspaceRegion);
 
   // These are the very queries made by split, boundary and catch-all drop
@@ -246,8 +244,6 @@ entry_point(CmdLine *cmdline)
   Check(!rd_dock_drag_target(section, WORKSPACE(640)));
   Check(!rd_dock_can_create(str8_lit("sidebar_section"), WORKSPACE(RD_DOCK_UNMEASURED_WIDTH)));
   Check(!rd_dock_drag_target(section, OWN(640)));
-  Check(rd_dock_drag_target(section, host(RD_DockHostKind_FloatingPanel, 7, 0, 640)));
-  Check(!rd_dock_drag_target(section, host(RD_DockHostKind_FloatingPanel, 20, 0, 640)));
   Check(!rd_dock_drag_target(terminal, host(RD_DockHostKind_WorkspaceRegion, 30, 0, 640)));
   RD_DockHost other_sidebar = SIDEBAR(640);
   other_sidebar.controlled_split = other_sidebar.level = 9;
@@ -259,16 +255,6 @@ entry_point(CmdLine *cmdline)
   test_instances = 2;
   Check(!rd_dock_drag_target(dock_view("workspace_selector", SIDEBAR(640)), SIDEBAR(640)));
   test_instances = 1;
-  // A subject-dependent section can use its Workspace context while floating
-  // if it does not require a host. Missing context is rejected by the checker.
-  RD_DockHost floating_host = host(RD_DockHostKind_FloatingPanel, 20, 1, 100);
-  Check(rd_dock_drag_target(dock_view("text", floating_host), floating_host));
-  RD_ViewRegistration subject_view = {str8_lit_comp("subject"), RD_ViewTrait_Section|RD_ViewTrait_NeedsWorkspaceSubject, 0, RD_DockHostKind_WorkspaceRegion};
-  RD_DockProposal subject_proposal = {floating_host, 0, 1, 1, 0};
-  subject_proposal.view_level = floating_host.level;
-  Check(rd_dock_check(&subject_view, subject_proposal) == RD_DockRule_Valid);
-  subject_proposal.host.has_workspace_subject = 0;
-  Check(rd_dock_check(&subject_view, subject_proposal) == RD_DockRule_WorkspaceSubject);
   // The registered scroll-region diagnostic fixture requires 128px. These
   // boundary widths exercise the production drag query and registry lookup,
   // so bypassing width checks in the drag adapter cannot survive.
@@ -293,7 +279,7 @@ entry_point(CmdLine *cmdline)
   cfg = cfg_state_alloc();
   cfg_ctx_select(cfg_state_ctx(cfg));
   // A window's arrangements as restore reads them: its sidebar, its own
-  // panels and a child workspace's, with Floating Panels of each.
+  // panels and a child workspace's.
 #define RESTORE_SETUP(sidebar_text, workspace_text) \
   RD_DockDocuments docs = {arena}; \
   RD_Arrangement *sidebar = build(arena, sidebar_text), *workspace = build(arena, workspace_text); \
@@ -362,16 +348,6 @@ entry_point(CmdLine *cmdline)
     rd_dock_restore(&docs, test_registration);
     Check(sidebar->root != &rd_nil_arrangement_panel && rd_view_address_match(sidebar->root->first_tab->view, first));
     Check(count(workspace, "workspace_selector") == 0 && count(sidebar, "workspace_selector") == 1);
-  }
-  // Floating Panels are hosts too, including beneath a Workspace with a
-  // subject: restore retains their valid Views.
-  {
-    RESTORE_SETUP("panels:{sidebar_section}", "panels:{terminal}");
-    RD_Arrangement *floating = build(arena, "panels:{text}");
-    RD_DockDocument *floating_doc = rd_dock_documents_add(&docs, floating, host(RD_DockHostKind_FloatingPanel, 20, 1, RD_DOCK_UNMEASURED_WIDTH));
-    floating_doc->workspace = docs.workspace;
-    rd_dock_restore(&docs, test_registration);
-    Check(count(floating, "text") == 1 && !floating_doc->dirty && !DIRTY());
   }
   // A View restore moves between two arrangements leaves the one it was in
   // with its panel and other Views, and removes nothing.

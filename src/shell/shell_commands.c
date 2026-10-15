@@ -711,10 +711,8 @@ rd_dock_move_allowed(Arena *arena, char *operation, RD_ViewAddress view, RD_Pane
 // `dir` makes, after `prev` (nil: first), and sets `arrangement`, which is
 // `destination`'s. When the panel the View left is in it, the same edit
 // settles that panel (rd_arrangement_drop), closing it if the drop emptied
-// it. A panel in another arrangement (the sidebar's or a Floating Panel's)
-// is settled in that one: reselected, and closed when the drop left it no
-// tabs (#358) or when it is a workspace panel emptied into one of its own
-// workspace's Floating Panels. Returns the drop and, in *moved_out, the
+// it. A panel in another arrangement (the sidebar's) is settled in that one:
+// reselected, and closed when the drop left it no tabs (#358). Returns the drop and, in *moved_out, the
 // View's address after it: a move into another owner can change it.
 internal RD_ArrangementDrop
 uishell_drop_view(RD_Arrangement *arrangement, RD_ViewAddress view, RD_PanelAddress destination, Dir2 dir, RD_ViewAddress prev, RD_ViewAddress *moved_out)
@@ -733,9 +731,7 @@ uishell_drop_view(RD_Arrangement *arrangement, RD_ViewAddress view, RD_PanelAddr
   {
     RD_ArrangementPanel *left_panel = rd_arrangement_panel_from_id(left, source.id);
     rd_arrangement_detach_tab(left, view);
-    B32 may_close = left_panel->tab_count == 0 || (destination.owner.kind == RD_PanelOwnerKind_Floating &&
-      source.owner.kind == RD_PanelOwnerKind_Workspace && rd_cfg_from_panel_owner(source.owner) == rd_cfg_from_panel_owner(destination.owner));
-    rd_arrangement_settle(left, left_panel->id, dir, rd_tab_is_shown, may_close);
+    rd_arrangement_settle(left, left_panel->id, dir, rd_tab_is_shown, left_panel->tab_count == 0);
     rd_arrangement_set(left);
   }
   scratch_end(scratch);
@@ -1074,8 +1070,6 @@ uishell_dispatch_panel_command(String8 name)
       RD_ViewAddress moving_view = uishell_regs()->view;
       if(do_dragdrop_split && !rd_dock_move_allowed(scratch.arena, "split with", moving_view, split_panel, split_dir))
       { scratch_end(scratch); return 1; }
-      // A Floating Panel holds tabs, never splits.
-      if(split_panel.owner.kind == RD_PanelOwnerKind_Floating) { scratch_end(scratch); return 1; }
       // rd_dock_moving_width runs the same drop on a copy to measure the
       // result; preserve agreement with the command/render differential scenarios.
       UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_panel_owner(scratch.arena, split_panel.owner);
@@ -1472,7 +1466,7 @@ uishell_dispatch_window_command(String8 name)
     for EachElement(i, owned) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(new_window, owned[i])); }
     // One empty panel, which has focus (its Presentation State).
     Temp scratch = scratch_begin(0, 0);
-    RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, new_window, 0);
+    RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, new_window);
     RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, owner);
     RD_PanelID panel = rd_arrangement_clear(arrangement);
     rd_arrangement_set(arrangement);
@@ -1549,7 +1543,7 @@ uishell_dispatch_window_command(String8 name)
           // Closing it removes that payload; window-level metadata such as
           // `label` intentionally remains attached to the window node.
           Temp scratch = scratch_begin(0, 0);
-          RD_Arrangement *own = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, window, 0));
+          RD_Arrangement *own = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, window));
           rd_arrangement_discard(own);
           rd_arrangement_set(own);
           scratch_end(scratch);

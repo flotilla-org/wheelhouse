@@ -237,7 +237,7 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
 {
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *owner = split->owner_cfg;
-  RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, owner, 0);
+  RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, owner);
   RD_FixtureSaved saved_layout = rd_fixture_isolate(scratch.arena, sidebar_owner);
   CFG_Node *saved_inventory = cfg_node_child_from_string(owner, str8_lit("sidebar_generation"));
   CFG_Node *saved_sizing = cfg_node_child_from_string(owner, str8_lit("sidebar_layout_sized"));
@@ -342,7 +342,7 @@ uishell_sidebar_close_middle_diagnostics(RD_WindowState *ws, UIShell_ControlledS
 #define CloseFailure(expr) do { if(expr) { failures++; fprintf(stderr, "FAIL sidebar close line %u: %s\n", __LINE__, #expr); } } while(0)
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *window = split->owner_cfg;
-  RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+  RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
   RD_FixtureSaved saved_layout = rd_fixture_isolate(scratch.arena, owner);
   CFG_Node *saved_inventory = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
   CFG_Node *saved_sizing = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized"));
@@ -460,7 +460,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   // The sidebar follows Andamento's placement afresh, its Views kept by key,
   // and is put back as it was after.
-  RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+  RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
   RD_Arrangement *saved_layout = rd_arrangement_from_panel_owner(scratch.arena, sidebar_owner);
   CFG_Node *saved_positions = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
   if(saved_positions != &cfg_nil_node) { cfg_node_unhook(rd_state->cfg, window, saved_positions); }
@@ -949,7 +949,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
 internal RD_Arrangement *
 uishell_section_placement_dock(CFG_Node *window)
 {
-  return rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
+  return rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
 }
 
 internal RD_PanelID
@@ -1125,7 +1125,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   PlacementCheck(core != 0);
   uishell_section_placement_use(&p, window, core);
   uishell_section_placement_frame(&p);
-  RD_PanelOwner dock_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+  RD_PanelOwner dock_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
   CFG_Node *a = uishell_sidebar_region_view(window, str8_lit("a"));
   CFG_Node *b = uishell_sidebar_region_view(window, str8_lit("b"));
   // Defaults are stable by hint, regardless of declaration order.
@@ -1161,8 +1161,8 @@ uishell_section_placement_diagnostics(String8 source_path)
   commits = p.sidebar.sidebar_commits;
   uishell_section_placement_frame(&p);
   PlacementCheck(!rd_panel_exists(rd_panel_address(dock_owner, empty_id)) && p.sidebar.sidebar_commits == commits+1);
-  // A View of the window's own in the dock, and a Floating Panel's, keep
-  // their places, Views and shares across a restart.
+  // A View of the window's own in the dock keeps its place, View and share
+  // across a restart.
   CFG_Node *unrelated = &cfg_nil_node;
   {
     RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(window));
@@ -1171,12 +1171,6 @@ uishell_section_placement_diagnostics(String8 source_path)
     cfg_node_new(state.cfg, cfg_node_new(state.cfg, unrelated, str8_lit("label")), str8_lit("unrelated"));
     rd_arrangement_move_tab(dock, rd_view_address_from_cfg(unrelated), unrelated_panel, rd_nil_view_address);
     rd_arrangement_set(dock);
-    RD_Arrangement *floating = rd_arrangement_alloc(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, window, rd_floating_count(window)+1));
-    RD_PanelID floating_panel = rd_arrangement_clear(floating);
-    CFG_Node *floating_view = rd_view_alloc(floating->owner, str8_lit("text"), str8_zero());
-    rd_arrangement_move_tab(floating, rd_view_address_from_cfg(floating_view), floating_panel, rd_nil_view_address);
-    rd_arrangement_set(floating);
-    rd_panel_setting_set(rd_panel_address(floating->owner, floating_panel), str8_lit("share"), str8_lit("0.5"));
   }
   uishell_section_placement_frame(&p);
   // The restart reads it back from the presentation file and the record.
@@ -1199,21 +1193,11 @@ uishell_section_placement_diagnostics(String8 source_path)
   // Its share is this device's, as content sizes it, kept by key.
   PlacementCheck(restored_unrelated_panel.id != 0 && abs_f32(uishell_sidebar_docking_weight(restored_unrelated_panel)-.125f) < .00001f);
   PlacementCheck(str8_match(cfg_node_child_from_string(unrelated, str8_lit("label"))->first->string, str8_lit("unrelated"), 0));
-  RD_PanelOwner restored_floating = rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, restored, 1);
-  PlacementCheck(rd_floating_count(restored) == 1);
-  PlacementCheck(rd_fixture_count(restored_floating, str8_lit("sidebar_section")) == 0);
-  PlacementCheck(rd_fixture_count(restored_floating, str8_lit("text")) == 1);
-  PlacementCheck(str8_match(rd_panel_setting(rd_panel_address(restored_floating, rd_arrangement_live(restored_floating)->root->id), str8_lit("share")), str8_lit("0.5"), 0));
   generation = uishell_sidebar_docking_gen();
   uishell_section_placement_frame(&p);
   PlacementCheck(uishell_sidebar_docking_gen() == generation);
-  // Remove the floating and unrelated fixtures.
-  {
-    RD_Arrangement *floating = rd_arrangement_from_panel_owner(scratch.arena, restored_floating);
-    rd_arrangement_discard(floating);
-    rd_arrangement_set(floating);
-    if(restored_unrelated_panel.id != 0) { rd_fixture_remove_panel(restored_unrelated_panel); }
-  }
+  // Remove the unrelated fixture.
+  if(restored_unrelated_panel.id != 0) { rd_fixture_remove_panel(restored_unrelated_panel); }
   uishell_section_placement_frame(&p);
   // Adding a hinted region places it before its next hinted neighbour,
   // without changing the saved pair's order.
@@ -1365,8 +1349,9 @@ uishell_section_placement_diagnostics(String8 source_path)
   PlacementCheck(uishell_section_placement_configure(&p, post_upgrade));
   PlacementCheck(!uishell_sidebar_section_gone(&p.sidebar, str8_lit("a")) && uishell_sidebar_region_view(restored, str8_lit("d")) == &cfg_nil_node);
   // Generated host/order cases cover absent hints, equal hints, negative order,
-  // opaque unknown hosts and the supported floating host. Every placement
-  // passes the same validity checker used by drag and restore.
+  // and hosts other than the sidebar: an unknown one, and "floating" from
+  // before Floating Panels were removed. Every section docks, and every
+  // placement passes the same validity checker used by drag and restore.
   for(U64 variant = 0; variant < 4; variant++)
   {
     char *attributes[] = {"", "default-host=\"unknown\" order=-10", "default-host=\"floating\" order=0", "order=0"};
@@ -1383,19 +1368,17 @@ uishell_section_placement_diagnostics(String8 source_path)
     PlacementCheck(x->id == existing_x && uishell_sidebar_docking_gen() == existing_generation);
     PlacementCheck(x != &cfg_nil_node && y != &cfg_nil_node);
     {
-      // Next in the dock, or in the next Floating Panel.
+      // Next in the dock.
       RD_PanelAddress x_panel = rd_panel_from_cfg(x), y_panel = rd_panel_from_cfg(y);
-      B32 floating = x_panel.owner.kind == RD_PanelOwnerKind_Floating;
-      PlacementCheck(floating ? y_panel.owner.kind == RD_PanelOwnerKind_Floating && y_panel.owner.floating == x_panel.owner.floating+1 :
-                     rd_panel_owner_match(x_panel.owner, y_panel.owner) &&
+      PlacementCheck(rd_panel_owner_match(x_panel.owner, y_panel.owner) &&
                      rd_arrangement_panel_from_id(rd_arrangement_live(x_panel.owner), x_panel.id)->next->id == y_panel.id);
     }
     PlacementCheck(uishell_sidebar_docking_valid(x) && uishell_sidebar_docking_valid(y));
-    PlacementCheck(uishell_sidebar_docking_host_kind(x) == (variant == 2 ? RD_DockHostKind_FloatingPanel : RD_DockHostKind_Sidebar));
+    PlacementCheck(uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_Sidebar);
     if(variant == 2)
     {
-      // Startup first applies generic safety restore. A floating region hint
-      // must still win when the sidebar commits that recovered View.
+      // Startup first applies generic safety restore. The sidebar commit
+      // puts the recovered View back by its hints, in the dock.
       CFG_Node *bad_workspace = cfg_node_new(state.cfg, restored, str8_lit("workspace"));
       RD_PanelOwner bad_owner = rd_fixture_owner(bad_workspace);
       CFG_ID x_id = x->id;
@@ -1404,14 +1387,14 @@ uishell_section_placement_diagnostics(String8 source_path)
       PlacementCheck(cfg_node_child_from_string(x, str8_lit("section_hint_pending")) != &cfg_nil_node);
       uishell_section_placement_frame(&p);
       PlacementCheck(x->id == x_id && uishell_sidebar_docking_valid(x));
-      PlacementCheck(uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_FloatingPanel);
+      PlacementCheck(uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_Sidebar);
       PlacementCheck(rd_fixture_count(bad_owner, str8_lit("sidebar_section")) == 0);
       PlacementCheck(cfg_node_child_from_string(x, str8_lit("section_hint_pending")) == &cfg_nil_node);
       uishell_section_placement_release_window(bad_workspace);
       // A changed host hint moves nothing already placed.
       String8 changed_host = str8_lit("region \"x\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\"\nregion \"y\" root-template=\"flotilla/region/tree\"\n");
       PlacementCheck(uishell_section_placement_configure(&p, changed_host));
-      PlacementCheck(x->id == x_id && uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_FloatingPanel);
+      PlacementCheck(x->id == x_id && uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_Sidebar);
     }
   }
   // Unusual numeric and reserved-looking keys survive the record and the

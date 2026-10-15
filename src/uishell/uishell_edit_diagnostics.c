@@ -155,7 +155,7 @@ uishell_edit_command_diagnostics(B32 native)
     windows[w].hash_next = w ? 0 : &windows[1];
     // Each window's own panels hold its two terminals, each View with an
     // address of its own.
-    RD_Arrangement *panels = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, window, 0));
+    RD_Arrangement *panels = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, window));
     RD_PanelID panel_ids[2] = {rd_arrangement_clear(panels)};
     panel_ids[1] = rd_arrangement_split(panels, panel_ids[0], Dir2_Right);
     for(U64 p = 0; p < 2; p++) { views[w][p] = rd_cfg_from_view(rd_new_view_tab(panels, panel_ids[p], str8_lit("terminal"), str8_zero())); }
@@ -827,7 +827,7 @@ uishell_edit_menu_ui_diagnostics(RD_WindowState *ws)
   // A terminal of a host of its own beside the window's, so it has an
   // address of its own.
   CFG_Node *host = cfg_node_new(rd_state->cfg, cfg_node_from_id(ws->cfg_id), str8_lit("edit_menu_diagnostic"));
-  CFG_Node *view = rd_view_alloc(rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, host, 0), str8_lit("terminal"), str8_zero());
+  CFG_Node *view = rd_view_alloc(rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, host), str8_lit("terminal"), str8_zero());
   UIShell_SelectionFixture fixture; uishell_selection_fixture_init(&fixture);
   UIShell_EditClipboard clip = {0};
   wm_clipboard_io = (WM_ClipboardIO){&clip, uishell_edit_clip_write, uishell_edit_clip_read};

@@ -23,7 +23,6 @@ read_only global RD_DockAcceptance rd_dock_acceptance[RD_DockHostKind_COUNT] =
 {
   {RD_ViewTrait_Section, 0},
   {RD_ViewTrait_Content, 0},
-  {0, RD_ViewTrait_NeedsHost},
 };
 
 internal RD_DockRule
@@ -52,7 +51,6 @@ internal RD_DockHostKind
 rd_dock_host_kind_from_panel_owner(RD_PanelOwner owner)
 {
   if(owner.kind == RD_PanelOwnerKind_Sidebar) { return RD_DockHostKind_Sidebar; }
-  if(owner.kind == RD_PanelOwnerKind_Floating) { return RD_DockHostKind_FloatingPanel; }
   return RD_DockHostKind_WorkspaceRegion;
 }
 
@@ -250,8 +248,7 @@ rd_dock_restore(RD_DockDocuments *documents, RD_DockRegistration *registration)
   {
     // Content that isn't a registered View has no default host: it stays.
     if(v->gone || !v->registration || rd_dock_restore_valid(v)) { continue; }
-    RD_DockDocument *destination = v->registration->default_host == RD_DockHostKind_Sidebar ? documents->sidebar :
-      v->document->workspace ? v->document->workspace : documents->workspace;
+    RD_DockDocument *destination = v->registration->default_host == RD_DockHostKind_Sidebar ? documents->sidebar : documents->workspace;
     if(destination == 0) { continue; }
     if(str8_match(v->registration->name, str8_lit("sidebar_section"), 0))
     {

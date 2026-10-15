@@ -215,7 +215,7 @@ internal RD_PanelAddress
 uishell_local_groups_add_panel(CFG_Node *window)
 {
   Temp scratch = scratch_begin(0, 0);
-  RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
+  RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
   RD_PanelAddress panel = rd_panel_address(a->owner, rd_arrangement_add(a, a->root->id, 0.2f));
   rd_arrangement_set(a);
   scratch_end(scratch);
@@ -1098,7 +1098,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     cfg_node_new(cfg, owner, str8_lit("sidebar_layout_sized"));
     // Saved shares needn't sum to one (these sum to two); sizes still fill
     // exactly the space there is: a leaf, a row of two, a leaf.
-    RD_Arrangement *sidebar = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, owner, 0));
+    RD_Arrangement *sidebar = rd_arrangement_alloc(arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, owner));
     RD_PanelID leaves[4] = {0};
     leaves[0] = rd_arrangement_add(sidebar, 0, 0.5f);
     RD_PanelID row = rd_arrangement_add(sidebar, sidebar->root->id, 0.5f);

@@ -13,8 +13,8 @@ Surface counts. A move retains its instance; creation or closure changes the
 count. The selected Workspace Region is an identity, not the Visible
 Workspace, so switching workspaces cannot make an invalid placement valid.
 
-The sidebar accepts section Views, a Workspace Region accepts content Views,
-and a floating Panel accepts Views that do not need a host. `sessions` can
+The sidebar accepts section Views, and a Workspace Region accepts content
+Views. `sessions` can
 stack as a section; other current content Views remain content-only. Their
 existing self-contained targets need no Workspace Subject. User content Views
 impose no additional minimum width; the scroll-region diagnostic fixture
@@ -24,8 +24,7 @@ declarations do not move sidebar content.
 Host style and owning level are separate checks. A View's level must match the
 destination layout's level. The current adapter identifies the root Control
 Region by its window owner, each child workspace by its workspace identity,
-and the legacy window workspace by its panels-root identity. Floating layouts
-inherit their owner's level. Thus a section can move within its level without
+and the legacy window workspace by its panels-root identity. Thus a section can move within its level without
 being tied to a physical side of the window; it cannot become child-workspace
 content merely because it declares the Content trait.
 
@@ -53,9 +52,7 @@ only Control Surface and add a second to the other. Nested Controlled Splits
 will supply their own binding identities in #164.
 
 Restore checks a window's typed arrangements (`rd_dock_restore`): its
-sidebar's, its root-level Floating Panels', its own panels', and each
-Workspace's with its Floating Panels'. The sidebar and root-level Floating
-Panels are placement declarations, not newly rendered docking hosts. At frame
+sidebar's, its own panels', and each Workspace's. At frame
 boundaries and immediately after loading, a change to any arrangement triggers
 repair of the window's layouts; mount getters never mutate or set arrangements.
 Invalid placements return to their registered default: the sidebar or the
@@ -127,8 +124,7 @@ The human review clarified the level boundary: a View may dock only on its
 owning Controlled Split level. Fleet sections use the root split's Andamento
 state. They may rearrange within that level but cannot enter a selected child
 workspace, including the legacy window workspace. Host presentation does not
-grant permission to cross levels. Root-level floating placements remain valid;
-floating placements inside a child workspace do not. This corrects #163's
+grant permission to cross levels. This corrects #163's
 original instruction to allow sections into workspace content. Nested split
 providers and their bindings remain #164's work.
 

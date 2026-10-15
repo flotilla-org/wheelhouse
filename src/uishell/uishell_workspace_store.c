@@ -61,8 +61,6 @@
 //       view: {slot: "u:3" daemon}               a View's logical settings its spec doesn't hold
 //       resolution: {slot: "u:3" session: ..}    a daemon session Andamento hasn't saved
 //       previous: {terminal: {previous_of: ..}}  a Slot's previous instance, whole
-//       floating: {selected: "u:5" tab: "u:4"}   a Floating Panel the workspace hosts,
-//       kept: {terminal: {slot: "u:4" ..}}       and its Views, whole
 //     }
 //     view_presentation: {                       each View's Presentation State, by View
 //       workspace: {key: "u:3" label: "Shell"}   Address (shell_core.c, "View Presentation
@@ -74,8 +72,8 @@
 // A View whose slot follows its provider (`follows_provider`) keeps all of
 // its logical settings here: what it runs is the provider's content as this
 // device last resolved it, and its next plan applies the provider's again.
-// Floating Panels are Presentation State, and their Views are not Slots: the
-// presentation file keeps them whole.
+// `floating` and `kept` entries, saved before Floating Panels were removed,
+// go with the rest of `arrangement_presentation` when it is followed.
 //
 // Target Resolutions (CONTEXT.md): which are portable is Wheelhouse's call.
 // A terminal's Cleat daemon session is: its `session` and `daemon_name`,
@@ -369,7 +367,7 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
 
 // The workspace whose arrangement has `view` as a tab: a workspace node, or
 // a window whose own panels are its workspace. Nil for a View outside one (a
-// control view, a Floating Panel's, an immediate tree's).
+// control view, an immediate tree's).
 internal CFG_Node *
 uishell_store_view_owner(CFG_Node *view)
 {
@@ -382,7 +380,7 @@ uishell_store_view_owner(CFG_Node *view)
 internal RD_PanelOwner
 uishell_store_owner(CFG_Node *owner)
 {
-  return rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, owner, 0);
+  return rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, owner);
 }
 
 internal void
@@ -848,8 +846,8 @@ internal B32
 uishell_store_assign_keys(Arena *arena, CFG_Node *owner, UIShell_StoreDoc *doc, AndamentoSlots *slots)
 {
   B32 changed = 0;
-  // Past every key of the workspace's namespace (its Floating Panels' Views
-  // and the Presentation State it keeps included), so no View takes another's.
+  // Past every key of the workspace's namespace (the Presentation State it
+  // keeps included), so no View takes another's.
   U64 next = rd_view_user_number_max(owner, RD_ViewOwnerKind_Workspace)+1;
   for(U64 i = 0; i < doc->tab_count; i++) { next = Max(next, uishell_store_user_number(doc->keys[i])+1); }
   for(U64 i = 0; slots && i < slots->slot_count; i++) { next = Max(next, uishell_store_user_number(uishell_sidebar_string(slots->slots[i].key))+1); }
@@ -1049,42 +1047,6 @@ uishell_store_noted(AndamentoWorkspaceArrangement *a, U32 kind, String8 key)
   return 0;
 }
 
-// A workspace's Floating Panels, as this device keeps them in
-// `arrangement_presentation`: each a panel of tabs, its Views kept whole
-// (`kept`). Where each floats is its root panel's Presentation State.
-internal void
-uishell_store_restore_floating(CFG_Node *owner, CFG_Node *device)
-{
-  Temp scratch = scratch_begin(0, 0);
-  CFG_Node *home = &cfg_nil_node;
-  for(CFG_Node *c = device->first; c != &cfg_nil_node; c = c->next)
-  {
-    if(!str8_match(c->string, str8_lit("kept"), 0) || c->first == &cfg_nil_node) { continue; }
-    if(home == &cfg_nil_node) { home = rd_view_namespace(owner, RD_ViewOwnerKind_Workspace); }
-    CFG_Node *view = cfg_node_deep_copy(rd_state->cfg, c->first);
-    cfg_node_insert_child(rd_state->cfg, home, home->last, view);
-  }
-  U64 n = rd_floating_count(owner);
-  for(CFG_Node *c = device->first; c != &cfg_nil_node; c = c->next)
-  {
-    if(!str8_match(c->string, str8_lit("floating"), 0)) { continue; }
-    RD_Arrangement *a = rd_arrangement_alloc(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, owner, ++n));
-    RD_PanelID panel = rd_arrangement_clear(a);
-    String8 selected = uishell_store_setting(c, str8_lit("selected"));
-    RD_ViewAddress prev = rd_nil_view_address;
-    for(CFG_Node *t = c->first; t != &cfg_nil_node; t = t->next)
-    {
-      if(!str8_match(t->string, str8_lit("tab"), 0)) { continue; }
-      RD_ViewAddress view = rd_view_address_make(RD_ViewOwnerKind_Workspace, uishell_workspace_id_from_cfg(owner), t->first->string, RD_ViewInstance_Current);
-      if(rd_cfg_from_view(view) == &cfg_nil_node) { continue; }
-      rd_arrangement_insert_tab(a, view, panel, prev, str8_match(t->first->string, selected, 0));
-      prev = view;
-    }
-    if(a->root->tab_count) { rd_arrangement_set(a); } else { n--; }
-  }
-  scratch_end(scratch);
-}
-
 // `owner`'s arrangement follows Andamento's document: the View of every
 // slot it still tabs stays, as does every panel whose ID it keeps; a View
 // made for a slot new here takes its settings, and Slots their previous
@@ -1253,7 +1215,6 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
     {
       if(rd_panel_from_cfg(p->v).id == 0) { cfg_node_release(rd_state->cfg, p->v); }
     }
-    uishell_store_restore_floating(owner, device);
     if(device != &cfg_nil_node) { cfg_node_release(rd_state->cfg, device); }
     uishell_store_set_setting(owner, str8_lit("arrangement_generation"), push_str8f(arena, "%I64u", stored->generation));
   }
@@ -2529,26 +2490,6 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
             cfg_node_new(copy_state, cfg_node_new(copy_state, groups[g], str8_lit("slot")), key);
           }
           cfg_node_insert_child(copy_state, groups[g], groups[g]->last, cfg_node_deep_copy(copy_state, c));
-        }
-      }
-    }
-    // Its Floating Panels, which are this device's: each a panel of tabs,
-    // and their Views whole.
-    for(U64 f = 1; f <= rd_floating_count(owner); f++)
-    {
-      RD_Arrangement *floating = rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, owner, f));
-      CFG_Node *entry = cfg_node_new(copy_state, device, str8_lit("floating"));
-      for(RD_ArrangementPanel *p = floating->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(floating->root, p))
-      {
-        for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
-        {
-          CFG_Node *view = rd_cfg_from_view(t->view);
-          String8 key = uishell_store_setting(view, str8_lit("slot"));
-          if(view == &cfg_nil_node || !key.size) { continue; }
-          cfg_node_new(copy_state, cfg_node_new(copy_state, entry, str8_lit("tab")), key);
-          if(rd_view_address_match(t->view, p->selected)) { cfg_node_new(copy_state, cfg_node_new(copy_state, entry, str8_lit("selected")), key); }
-          CFG_Node *kept = cfg_node_new(copy_state, device, str8_lit("kept"));
-          cfg_node_insert_child(copy_state, kept, kept->last, cfg_node_deep_copy(copy_state, view));
         }
       }
     }

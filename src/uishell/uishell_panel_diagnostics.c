@@ -263,7 +263,7 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   UIShell_RegsScope(.tab = rd_view_address_from_cfg(cfg_node_from_id(created_id)))
   { uishell_dispatch_tab_command(str8_lit("close_tab")); }
   failures += cfg_node_from_id(created_id) != &cfg_nil_node;
-  RD_PanelOwner control = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+  RD_PanelOwner control = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
   CFG_Node *selector = rd_fixture_view(rd_fixture_leaf(control), str8_lit("workspace_selector"), str8_zero(), 0);
   CFG_ID selector_id = selector->id;
   log_scope_begin();

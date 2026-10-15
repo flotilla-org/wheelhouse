@@ -1055,10 +1055,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
     original->rect = r2f32p(400, 100, 800, 400); original->engaged = original->focused = 1;
     fixture.rect = r2f32p(0, 0, 320, 700);
-    CardCheck(uishell_sidebar_card_target_valid(ws, UIShell_CardPlacement_Float, 0) &&
-              uishell_sidebar_card_target_valid(ws, UIShell_CardPlacement_Inline, 0) &&
-              uishell_sidebar_card_target_valid(ws, UIShell_CardPlacement_Pinned, 0),
-              "all detached targets use the shared checker with zero minimum width");
+    CardCheck(uishell_sidebar_card_target_valid(ws, 0),
+              "detached targets use the shared checker with zero minimum width");
     // Dragging floats a card; it has no Float control (#269).
     CardCheck(!uishell_hover_card_test_click(ws, &fixture, original, rd_icon_kind_text_table[RD_IconKind_Window], 0) && !original->move_requested,
               "a card has no Float control");
@@ -1556,7 +1554,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       if(uishell_sidebar_pin_by_ghost(window, hold_pin)) { uishell_sidebar_card_close(uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, hold_pin))); }
       uishell_sidebar_detached_finish(ws);
     }
-    RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0);
+    RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
     // Pin goes to the topmost local section that is showing; with none
     // showing, it makes one at the top of the sidebar.
     {

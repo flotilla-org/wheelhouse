@@ -412,28 +412,16 @@ uishell_logical_local(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
   }
 }
 
-// Where sections are docked, in the sidebar or floating, and which the
-// person closed.
+// Where sections are docked, and which the person closed.
 internal void
 uishell_logical_sidebar_arrangement(UIShell_LogicalText *t, U64 depth, CFG_Node *window, UIShell_SidebarState *state)
 {
   uishell_logical_linef(t, depth, "sidebar arrangement");
-  RD_Arrangement *sidebar = rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window, 0));
+  RD_Arrangement *sidebar = rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
   if(sidebar->root != &rd_nil_arrangement_panel)
   {
     uishell_logical_linef(t, depth+1, "docked");
     uishell_logical_panels(t, depth+2, sidebar->root, sidebar->root_axis, 1);
-  }
-  U64 floating = rd_floating_count(window);
-  if(floating != 0)
-  {
-    uishell_logical_linef(t, depth+1, "floating");
-    // Each Floating Panel is its own arrangement.
-    for(U64 n = 1; n <= floating; n++)
-    {
-      RD_Arrangement *arrangement = rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Floating, window, n));
-      uishell_logical_panels(t, depth+2, arrangement->root, arrangement->root_axis, 1);
-    }
   }
   // Andamento's notes: the sections closed on purpose.
   for(U64 i = 0; state && i < state->sidebar_closed_count; i++)
@@ -506,7 +494,7 @@ uishell_logical_presentation(UIShell_LogicalText *t, U64 depth, CFG_Node *window
   if(rd_panel_exists(ws->active_panel))
   {
     RD_PanelOwnerKind kind = ws->active_panel.owner.kind;
-    input = kind == RD_PanelOwnerKind_Sidebar || kind == RD_PanelOwnerKind_Floating ? "sidebar" : "workspace";
+    input = kind == RD_PanelOwnerKind_Sidebar ? "sidebar" : "workspace";
   }
   uishell_logical_linef(t, depth+1, "input %s", input);
 }
