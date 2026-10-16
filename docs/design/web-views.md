@@ -105,6 +105,10 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
 - **Links:** where terminal and Andamento links open (Wheelhouse or the system
   browser) as a setting, and setting `BROWSER` in launched environments so
   programs open pages in Wheelhouse.
+- **Audio.** Jackstay v3 carries playback tracks (Katzensteg already publishes
+  app audio as one), but Wheelhouse has no audio output: that is a base-layer
+  piece to add, with mixing and per-View mute and volume. The Jackstay client
+  selects no playback tracks until then.
 - **Hidden web Views** could be suspended if keeping their processes running
   costs too much.
 - **A Linux renderer for Luchs** is Luchs work, outside this design.
