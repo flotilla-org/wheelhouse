@@ -1,7 +1,7 @@
 // Low-contrast frame-coherence fixture. Every frame must be uniformly grey;
 // mixed rows/blocks are a presentation or ownership error, not source content.
 #include <assert.h>
-#include <jackstay_bootstrap.h>
+#include <jackstay_handshake.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,9 +38,18 @@ int main(int argc, char **argv) {
   fflush(stdout);
   int fd = accept(listener, 0, 0);
   assert(fd >= 0);
-  assert(ft_source_bootstrap_accept(&fd, 0, &input) == FT_STATUS_OK);
-  assert(!input);
-  assert(ft_cpu_producer_serve(producer, &fd, &server) == FT_STATUS_OK);
+  // The v3 track handshake: video only.
+  ft_local_connection *connection = 0;
+  ft_track_offer video = {1, FT_TRACK_KIND_VIDEO, "default", 0, 0, FT_TRACK_FROM_SOURCE, 0, {{0}, 0, 0}};
+  ft_track_admission admission;
+  size_t admitted = 0;
+  ft_affordances_producer *affordances = 0;
+  assert(ft_local_connection_adopt(&fd, &connection) == FT_STATUS_OK);
+  assert(ft_handshake_accept_local(&connection, "frame-coherence fixture", FT_CLOCK_DOMAIN_UNKNOWN,
+                                   &video, 1, 0, 0, 0, &admission, &admitted, &input,
+                                   &affordances, 0) == FT_STATUS_OK);
+  assert(!input && !affordances);
+  assert(ft_cpu_producer_serve_local(producer, &connection, &server) == FT_STATUS_OK);
   close(listener);
   unlink(argv[1]);
   uint8_t *pixels = malloc(SIZE);

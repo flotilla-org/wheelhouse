@@ -1,7 +1,7 @@
 // Independent instrumented source for native view input tests. The first byte
 // on stdin releases admission; later bytes request an execution-state report.
 #include <assert.h>
-#include <jackstay_bootstrap.h>
+#include <jackstay_handshake.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -50,8 +50,18 @@ int main(int argc, char **argv)
   assert(fd >= 0);
   puts("accepted");
   assert(getchar() != EOF);
-  ok(ft_source_bootstrap_accept(&fd, target, &input));
-  ok(ft_cpu_producer_serve(producer, &fd, &media));
+  // The v3 track handshake: video, and input this source authorizes.
+  ft_local_connection *connection = NULL;
+  ft_track_offer tracks[2] = {
+      {1, FT_TRACK_KIND_VIDEO, "default", NULL, 0, FT_TRACK_FROM_SOURCE, 0, {{0}, 0, 0}},
+      {2, FT_TRACK_KIND_INPUT, "default", NULL, 0, FT_TRACK_TO_SOURCE, 0, {{0}, 0, 0}}};
+  ft_track_admission admissions[2];
+  size_t admitted = 0;
+  ft_affordances_producer *affordances = NULL;
+  ok(ft_local_connection_adopt(&fd, &connection));
+  ok(ft_handshake_accept_local(&connection, "native input fixture", FT_CLOCK_DOMAIN_UNKNOWN, tracks, 2,
+                               NULL, 0, target, admissions, &admitted, &input, &affordances, NULL));
+  ok(ft_cpu_producer_serve_local(producer, &connection, &media));
   close(listener);
   unlink(argv[1]);
   puts("connected");

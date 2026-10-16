@@ -11,7 +11,10 @@ presentation, input focus and the association between a view and its endpoints.
 Use **Open Jackstay Source** in the command menu. The mode button cycles
 through four forms; enter the addresses and connect:
 
-- **Combined source endpoint**: ABI 0.8 shared bootstrap with optional input.
+- **Combined source endpoint**: Jackstay's track handshake (ABI 0.17). The
+  view selects the video track, an input track when control is wanted, and an
+  affordances track when the producer offers one. See
+  [Affordances](#affordances).
 - **Separate media/input endpoints**: existing CPU republications, including
   Porthole's.
 - **D3D11 source endpoint** (Windows): a Jackstay D3D11 publication, such as
@@ -80,12 +83,37 @@ click/retry. A busy or unavailable controller is not retried in the background.
 The last frame remains visible with a disconnected status. The status row has a
 fixed height. Disconnect returns to the connection form after workers retire.
 
+## Affordances
+
+A combined source may offer an affordances track. The media worker polls it
+alongside frames, and the view reads what it reports:
+
+- **Window**: the producer's title.
+- **Navigation**: URL, page title, loading, back/forward availability and the
+  verbs it accepts (back, forward, reload, stop, load).
+
+The view's label is the page title, else the window title, unless the user
+named the view. The live title is never saved. When the producer reports
+navigation, a row above the image shows back, forward and reload buttons
+(disabled for verbs the producer lacks or cannot take now), the URL, and a
+loading marker. A verb is sent once; a newer request replaces an unsent one.
+
+The view publishes its presentation: the canvas size in logical pixels, the
+display scale and whether it has focus. It republishes only on change. A view
+that stops being built in a frame publishes a zero size, meaning hidden. The
+producer decides what to do with a presentation; Luchs resizes its page.
+`requested_size` is ignored.
+
+A closed or failed affordances track clears what the view reported and leaves
+video running. Producers on older Jackstay protocols cannot connect to the
+combined form.
+
 ## Lifetime and rendering
 
 `src/jackstay/wheelhouse_jackstay.*` is independent of shell configuration and
 GPU objects. It is built on RAD's base layer: its separate media and input
 workers are `base_threads` threads synchronised with a base mutex, on every
-platform. CPU setup can be cancelled; bootstrap and input admission retain
+platform. CPU setup can be cancelled; the handshake and input admission retain
 Jackstay's bounded blocking setup contract. No connection setup runs on the GUI
 thread. Jackstay connects Local Endpoints itself (`ft_local_connect` and the
 `_local` setup calls); only the POSIX path form opens a socket in Wheelhouse. The
@@ -119,7 +147,8 @@ uncertain execution and rejected releases end control rather than dropping
 transitions or replaying actions. Target geometry updates preserve keyboard
 bindings and invalidate old pointer work. Displayed image coordinates are mapped
 through the aspect-fit rectangle into the advertised logical input extent.
-Resizing a panel does not request a source-window resize.
+Resizing a panel requests a source resize only through the presentation
+affordance below; separate endpoints and Porthole sources never resize.
 
 ## D3D11 frames (Windows)
 

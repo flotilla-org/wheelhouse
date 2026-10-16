@@ -39,13 +39,19 @@ struct WH_Jackstay {
   char *media_address, *input_address, *session_id, *token;
   WH_JS_Media kind;
   WH_JS_Gpu gpu;
-  bool bootstrap, stop, media_done, input_done, connect, want_input, focus,
+  bool handshake, stop, media_done, input_done, connect, want_input, focus,
       reset;
   bool input_close, peer_closed, import_refused;
   unsigned request;
   ft_cpu_acquisition_connection *connection;
   void *d3d11; // ft_d3d11_acquisition_connection (Windows)
   ft_input_client *input;
+  // The presentation to send, and a navigation request waiting to be sent
+  // (verb 0: none). The media worker sends them on its affordances track.
+  ft_aff_presentation presentation;
+  bool presented, presentation_dirty;
+  uint32_t navigate_verb;
+  char *navigate_url;
   WH_JS_State state;
   uint8_t *pixels;
   // Import path: the newest frame the GUI has not taken yet.
@@ -151,22 +157,60 @@ static void wh_js_link_close(WH_JS_Link *link) {
 #endif
   link->fd = -1;
 }
-// Each setup call consumes the link on failure and on success, except
-// bootstrap, which hands it back for CPU setup.
-static ft_status wh_js_link_bootstrap(WH_JS_Link *link, bool input,
+// Each setup call consumes the link on failure and on success, except the
+// handshake, which hands back the media connection for CPU setup.
+//
+// The v3 track handshake: the producer offers its tracks, and this selects
+// its video (required), its input when control is wanted, and its affordances
+// (both optional). Playback tracks wait for an audio output
+// (docs/design/web-views.md).
+static ft_status wh_js_link_handshake(WH_JS_Link *link, bool input,
                                       ft_input_client **offered,
-                                      ft_status *input_status) {
-  uint32_t request = input ? FT_BOOTSTRAP_INPUT_OPTIONAL : FT_BOOTSTRAP_INPUT_NONE;
-  uint32_t mode = input ? FT_INPUT_MODE_COOPERATIVE : 0;
-  if (link->local)
-    return ft_source_bootstrap_connect_local(&link->local, request, mode,
-                                             offered, input_status);
+                                      ft_status *input_status,
+                                      ft_affordances_host **affordances) {
+  *input_status = FT_STATUS_EMPTY;
 #if OS_LINUX || OS_MAC
-  return ft_source_bootstrap_connect(&link->fd, request, mode, offered,
-                                     input_status);
-#else
-  return FT_STATUS_INVALID_ARGUMENT;
+  if (!link->local) {
+    ft_status adopted = ft_local_connection_adopt(&link->fd, &link->local);
+    if (adopted != FT_STATUS_OK)
+      return adopted;
+  }
 #endif
+  ft_handshake_offer *offer = 0;
+  const char *label = 0;
+  uint32_t clock = 0;
+  const ft_track_offer *tracks = 0;
+  size_t count = 0;
+  ft_status result = ft_handshake_connect_local(&link->local, &offer);
+  if (result == FT_STATUS_OK)
+    result = ft_handshake_offer_describe(offer, &label, &clock, &tracks, &count);
+  ft_track_selection selections[3];
+  size_t selected = 0;
+  bool video = false, input_track = false, affordance_track = false;
+  for (size_t i = 0; result == FT_STATUS_OK && i < count; ++i) {
+    const char *kind = tracks[i].kind;
+    if (!video && !strcmp(kind, FT_TRACK_KIND_VIDEO)) {
+      video = true;
+      selections[selected++] = (ft_track_selection){tracks[i].id, 1, 0};
+    } else if (input && !input_track && !strcmp(kind, FT_TRACK_KIND_INPUT)) {
+      input_track = true;
+      selections[selected++] = (ft_track_selection){tracks[i].id, 0, 1};
+    } else if (!affordance_track && !strcmp(kind, FT_TRACK_KIND_AFFORDANCES)) {
+      affordance_track = true;
+      selections[selected++] = (ft_track_selection){tracks[i].id, 0, 0};
+    }
+  }
+  if (result == FT_STATUS_OK && !video)
+    result = FT_STATUS_UNSUPPORTED;
+  if (result != FT_STATUS_OK) {
+    ft_handshake_offer_destroy(&offer);
+    return result;
+  }
+  ft_track_admission admissions[3];
+  return ft_handshake_select(&offer, selections, selected,
+                             input_track ? FT_INPUT_MODE_COOPERATIVE : 0,
+                             admissions, &link->local, offered, input_status,
+                             affordances, 0, 0, 0);
 }
 static ft_status wh_js_link_media(WH_JS_Link *link,
                                   ft_cpu_acquisition_connection **out) {
@@ -367,15 +411,122 @@ static void wh_js_close_input(ft_input_client **input, bool *confirmed) {
   }
   ft_input_client_destroy(input);
 }
+// Affordance event kinds (jackstay_affordances.h names them without macros).
+enum { WH_JS_AFF_SNAPSHOT = 1, WH_JS_AFF_CLOSED = 3 };
+
+// Copy reported text, cut at a UTF-8 boundary to fit.
+static void wh_js_aff_text(char *out, size_t size, ft_aff_optional_string text) {
+  size_t length = text.present ? text.value.len : 0;
+  if (length > size - 1) {
+    length = size - 1;
+    while (length && (text.value.data[length] & 0xC0) == 0x80)
+      --length;
+  }
+  if (length)
+    memcpy(out, text.value.data, length);
+  out[length] = 0;
+}
+// Forget what the producer reported. Mutex held.
+static void wh_js_aff_forget(WH_Jackstay *s) {
+  WH_JS_State *state = &s->state;
+  state->affordances = state->ready = state->loading = false;
+  state->can_go_back = state->can_go_forward = false;
+  state->navigation_capabilities = 0;
+  state->window_title[0] = state->page_title[0] = state->url[0] = 0;
+  state->affordance_version++;
+}
+// One producer snapshot; a withdrawn domain reads as absent. Mutex held.
+static void wh_js_aff_snapshot(WH_Jackstay *s, const ft_aff_snapshot *snapshot) {
+  WH_JS_State *state = &s->state;
+  bool present = !snapshot->withdrawn;
+  if (snapshot->domain == FT_AFF_DOMAIN_WINDOW) {
+    const ft_aff_window *w = &snapshot->window;
+    wh_js_aff_text(state->window_title, sizeof(state->window_title),
+                   present ? w->title : (ft_aff_optional_string){0});
+    state->ready = present && w->ready;
+  } else if (snapshot->domain == FT_AFF_DOMAIN_NAVIGATION) {
+    const ft_aff_navigation *n = &snapshot->navigation;
+    wh_js_aff_text(state->page_title, sizeof(state->page_title),
+                   present ? n->title : (ft_aff_optional_string){0});
+    wh_js_aff_text(state->url, sizeof(state->url),
+                   present ? n->url : (ft_aff_optional_string){0});
+    state->can_go_back = present && n->can_go_back;
+    state->can_go_forward = present && n->can_go_forward;
+    state->loading = present && n->loading;
+    state->navigation_capabilities = present ? n->capabilities : 0;
+  } else
+    return;
+  state->affordance_version++;
+}
+// Read what the producer reported, then send the View's presentation when it
+// changed and any navigation waiting. A failed or closed track ends: media
+// carries on without it.
+static void wh_js_aff_pump(WH_Jackstay *s, ft_affordances_host **host) {
+  if (!*host)
+    return;
+  ft_affordances_event *event = 0;
+  ft_status result;
+  bool closed = false;
+  while (!closed &&
+         (result = ft_affordances_host_poll(*host, &event)) == FT_STATUS_OK) {
+    ft_aff_event_view view = {0};
+    if (ft_affordances_event_view(event, &view) == FT_STATUS_OK) {
+      closed = view.kind == WH_JS_AFF_CLOSED;
+      mutex_take(s->mutex);
+      if (view.kind == WH_JS_AFF_SNAPSHOT)
+        wh_js_aff_snapshot(s, &view.snapshot);
+      mutex_drop(s->mutex);
+      wh_js_wake(s);
+    }
+    ft_affordances_event_destroy(&event);
+  }
+  if (!closed && result != FT_STATUS_EMPTY)
+    closed = true;
+  ft_aff_snapshot presentation = {.domain = FT_AFF_DOMAIN_PRESENTATION};
+  ft_aff_verb verb = {.domain = FT_AFF_DOMAIN_NAVIGATION};
+  char *url = 0;
+  mutex_take(s->mutex);
+  bool present = !closed && s->presentation_dirty;
+  if (present) {
+    presentation.presentation = s->presentation;
+    s->presentation_dirty = false;
+  }
+  if (!closed && s->navigate_verb) {
+    verb.verb = s->navigate_verb;
+    url = s->navigate_url;
+    s->navigate_verb = 0;
+    s->navigate_url = 0;
+  }
+  mutex_drop(s->mutex);
+  if (present && ft_affordances_host_publish(*host, &presentation) != FT_STATUS_OK)
+    closed = true;
+  if (!closed && verb.verb) {
+    verb.url = (ft_aff_string){(const uint8_t *)(url ? url : ""), url ? strlen(url) : 0};
+    if (ft_affordances_host_send(*host, &verb) != FT_STATUS_OK)
+      closed = true;
+  }
+  free(url);
+  if (closed) {
+    ft_affordances_host_close(*host);
+    ft_affordances_host_destroy(host);
+    mutex_take(s->mutex);
+    wh_js_aff_forget(s);
+    mutex_drop(s->mutex);
+    wh_js_wake(s);
+  }
+}
+
 // One CPU incarnation on an open link: attach, then copy leases into the
 // latest-frame mailbox until the producer goes or the request changes.
 static ft_status wh_js_cpu_run(WH_Jackstay *s, WH_JS_Link *link, bool input,
                                unsigned request) {
   ft_input_client *offered = 0;
+  ft_affordances_host *affordances = 0;
   ft_status input_status = FT_STATUS_EMPTY;
   ft_status result = FT_STATUS_OK;
-  if (s->bootstrap)
-    result = wh_js_link_bootstrap(link, input, &offered, &input_status);
+  if (s->handshake)
+    result = wh_js_link_handshake(link, input, &offered, &input_status,
+                                  &affordances);
   ft_cpu_acquisition_connection *connection = 0;
   ft_acquisition_consumer *consumer = 0;
   if (result == FT_STATUS_OK)
@@ -398,6 +549,10 @@ static ft_status wh_js_cpu_run(WH_Jackstay *s, WH_JS_Link *link, bool input,
     s->state.path = WH_JS_PATH_CPU;
     snprintf(s->state.path_status, sizeof(s->state.path_status),
              "CPU frames");
+    // A new incarnation hears the View's presentation again.
+    s->state.affordances = affordances != 0;
+    s->state.affordance_version++;
+    s->presentation_dirty = affordances != 0 && s->presented;
   }
   if (offered && !s->input && !s->stop && result == FT_STATUS_OK) {
     s->input = offered;
@@ -409,7 +564,7 @@ static ft_status wh_js_cpu_run(WH_Jackstay *s, WH_JS_Link *link, bool input,
     s->state.input_epoch++;
     s->state.cleanup_confirmed = false;
     snprintf(s->state.input_status, 128, "Control ready");
-  } else if (input && s->bootstrap && !s->input) {
+  } else if (input && s->handshake && !s->input) {
     snprintf(s->state.input_status, 128,
              "Control unavailable (%d); retry explicitly", input_status);
   }
@@ -424,6 +579,7 @@ static ft_status wh_js_cpu_run(WH_Jackstay *s, WH_JS_Link *link, bool input,
     mutex_drop(s->mutex);
     if (stop)
       break;
+    wh_js_aff_pump(s, &affordances);
     // A vanished producer closes setup; Jackstay reports that without
     // consuming setup bytes, grants or frame storage.
     if (ft_acquisition_cpu_connection_alive(connection) != FT_STATUS_OK) {
@@ -471,7 +627,12 @@ static ft_status wh_js_cpu_run(WH_Jackstay *s, WH_JS_Link *link, bool input,
   }
   mutex_take(s->mutex);
   s->connection = 0;
+  wh_js_aff_forget(s);
   mutex_drop(s->mutex);
+  if (affordances) {
+    ft_affordances_host_close(affordances);
+    ft_affordances_host_destroy(&affordances);
+  }
   ft_acquisition_consumer_destroy(&consumer);
   ft_acquisition_cpu_connection_destroy(&connection);
   return result;
@@ -548,7 +709,7 @@ static void wh_js_input_worker(void *arg) {
   size_t outstanding = 0;
   for (;;) {
     mutex_take(s->mutex);
-    if (!s->bootstrap && s->want_input && !s->input && !s->stop &&
+    if (!s->handshake && s->want_input && !s->input && !s->stop &&
         s->input_address[0]) {
       s->want_input = false;
       mutex_drop(s->mutex);
@@ -708,6 +869,7 @@ static void wh_js_free(WH_Jackstay *s) {
     free(t);
   }
   free(s->pixels);
+  free(s->navigate_url);
   free(s->media_address);
   free(s->input_address);
   free(s->session_id);
@@ -736,7 +898,7 @@ WH_Jackstay *wh_js_create(WH_JS_Endpoint endpoint, WH_JS_Gpu gpu,
     return 0;
   }
   s->kind = endpoint.kind;
-  s->bootstrap = endpoint.bootstrap && endpoint.kind == WH_JS_MEDIA_CPU;
+  s->handshake = endpoint.handshake && endpoint.kind == WH_JS_MEDIA_CPU;
   s->gpu = gpu;
   s->wake = wake;
   s->wake_context = context;
@@ -761,7 +923,7 @@ WH_Jackstay *wh_js_create(WH_JS_Endpoint endpoint, WH_JS_Gpu gpu,
 void wh_js_connect(WH_Jackstay *s, bool control) {
   mutex_take(s->mutex);
   s->want_input = control;
-  if (!s->state.connected || (s->bootstrap && control && !s->input)) {
+  if (!s->state.connected || (s->handshake && control && !s->input)) {
     s->request++;
     s->connect = true;
     if (s->connection)
@@ -780,6 +942,47 @@ void wh_js_focus(WH_Jackstay *s, bool focus) {
   }
   s->focus = focus;
   mutex_drop(s->mutex);
+}
+void wh_js_present(WH_Jackstay *s, uint32_t width, uint32_t height,
+                   double scale, bool visible, bool focused) {
+  ft_aff_presentation next = {
+      .visible = visible,
+      .preferred_size = {width && height, width, height},
+      .scale = scale > 0 ? scale : 1,
+      .focused = focused,
+  };
+  mutex_take(s->mutex);
+  ft_aff_presentation *p = &s->presentation;
+  bool changed = !s->presented || p->visible != next.visible ||
+                 p->focused != next.focused || p->scale != next.scale ||
+                 p->preferred_size.present != next.preferred_size.present ||
+                 p->preferred_size.width != next.preferred_size.width ||
+                 p->preferred_size.height != next.preferred_size.height;
+  s->presentation = next;
+  s->presented = true;
+  if (changed && s->state.affordances)
+    s->presentation_dirty = true;
+  mutex_drop(s->mutex);
+}
+bool wh_js_navigate(WH_Jackstay *s, uint32_t verb, const char *url) {
+  if (verb < FT_AFF_NAVIGATION_BACK || verb > FT_AFF_NAVIGATION_LOAD ||
+      (verb == FT_AFF_NAVIGATION_LOAD && (!url || !url[0])))
+    return false;
+  char *copy = verb == FT_AFF_NAVIGATION_LOAD ? wh_js_copy_string(url) : 0;
+  if (verb == FT_AFF_NAVIGATION_LOAD && !copy)
+    return false;
+  mutex_take(s->mutex);
+  bool ok = s->state.affordances &&
+            (s->state.navigation_capabilities & (1u << (verb - 1)));
+  if (ok) {
+    free(s->navigate_url);
+    s->navigate_verb = verb;
+    s->navigate_url = copy;
+    copy = 0;
+  }
+  mutex_drop(s->mutex);
+  free(copy);
+  return ok;
 }
 bool wh_js_send(WH_Jackstay *s, const ft_input_event *event) {
   mutex_take(s->mutex);
