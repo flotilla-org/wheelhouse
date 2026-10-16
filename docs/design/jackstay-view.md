@@ -96,12 +96,14 @@ The view's label is the page title, else the window title, unless the user
 named the view. The live title is never saved. When the producer reports
 navigation, a row above the image shows back, forward and reload buttons
 (disabled for verbs the producer lacks or cannot take now), the URL, and a
-loading marker. A verb is sent once; a newer request replaces an unsent one.
+loading marker. A verb is sent once; a newer request replaces an unsent one,
+and an unsent one is dropped if the affordances track closes.
 
 The view publishes its presentation: the canvas size in logical pixels, the
 display scale and whether it has focus. It republishes only on change. A view
-that stops being built in a frame publishes a zero size, meaning hidden. The
-producer decides what to do with a presentation; Luchs resizes its page.
+that stops being built in a frame publishes `visible = false` and keeps its last
+size, so showing it again needs no reflow. The producer decides what to do with
+a presentation; Luchs resizes its page, and stops capturing while hidden.
 `requested_size` is ignored.
 
 A closed or failed affordances track clears what the view reported and leaves

@@ -426,9 +426,13 @@ static void wh_js_aff_text(char *out, size_t size, ft_aff_optional_string text) 
     memcpy(out, text.value.data, length);
   out[length] = 0;
 }
-// Forget what the producer reported. Mutex held.
+// Forget what the producer reported, and any navigation not yet sent: it was
+// meant for that page. Mutex held.
 static void wh_js_aff_forget(WH_Jackstay *s) {
   WH_JS_State *state = &s->state;
+  free(s->navigate_url);
+  s->navigate_url = 0;
+  s->navigate_verb = 0;
   state->affordances = state->ready = state->loading = false;
   state->can_go_back = state->can_go_forward = false;
   state->navigation_capabilities = 0;
@@ -964,9 +968,12 @@ void wh_js_present(WH_Jackstay *s, uint32_t width, uint32_t height,
     s->presentation_dirty = true;
   mutex_drop(s->mutex);
 }
+// A LOAD url's bound, well past any address a person types or pastes.
+#define WH_JS_URL_MAX 65536
 bool wh_js_navigate(WH_Jackstay *s, uint32_t verb, const char *url) {
   if (verb < FT_AFF_NAVIGATION_BACK || verb > FT_AFF_NAVIGATION_LOAD ||
-      (verb == FT_AFF_NAVIGATION_LOAD && (!url || !url[0])))
+      (verb == FT_AFF_NAVIGATION_LOAD &&
+       (!url || !url[0] || strnlen(url, WH_JS_URL_MAX) == WH_JS_URL_MAX)))
     return false;
   char *copy = verb == FT_AFF_NAVIGATION_LOAD ? wh_js_copy_string(url) : 0;
   if (verb == FT_AFF_NAVIGATION_LOAD && !copy)

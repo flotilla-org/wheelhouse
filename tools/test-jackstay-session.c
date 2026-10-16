@@ -296,6 +296,9 @@ static int session_main(int argc, char **argv) {
     AWAIT(!state.can_go_back && state.can_go_forward);
     assert(!wh_js_navigate(session, FT_AFF_NAVIGATION_LOAD, ""));
     assert(!wh_js_navigate(session, 99, 0));
+    static char long_url[70000];
+    memset(long_url, 'a', sizeof long_url - 1);
+    assert(!wh_js_navigate(session, FT_AFF_NAVIGATION_LOAD, long_url));
 #undef AWAIT
     wh_js_stop(session);
     wait_state(session, 2);
