@@ -80,13 +80,14 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
    shows the producer's window title and navigation URL, sends size, scale and
    focus, offers back, forward and reload when the producer advertises them,
    and connects by itself when its View asks. This bumps `JACKSTAY_REV` to
-   Jackstay `main` (ABI 0.17), and checks that **Open Jackstay Source** still
-   works. It is tested against Jackstay's own v3 example producers.
-2. **The `web` View.** The Handler table with its Luchs entry, a View-owned
+   Jackstay `main` (ABI 0.17), and makes **Open Jackstay Source** work
+   (the command had no dispatch arm). It is tested against Jackstay's own v3 example producers.
+2. **Luchs on v3**, then any other Luchs changes as they turn up, in Luchs.
+   It comes before the `web` View, whose tests launch Luchs.
+3. **The `web` View.** The Handler table with its Luchs entry, a View-owned
    supervisor generalised from the connector, launch and readiness, the
    `web-location` resolution, the bundled start page, and the opening commands.
    Tests on Linux use Luchs's `--helper` test renderer; a real page needs macOS.
-3. **Luchs on v3**, then any other Luchs changes as they turn up, in Luchs.
 
 ## Later
 
