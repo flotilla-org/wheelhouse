@@ -3871,8 +3871,12 @@ rd_view_setting_from_view(RD_ViewAddress view, String8 name)
 internal String8
 rd_view_label_from_cfg(CFG_Node *view)
 {
-  CFG_Node *label = cfg_node_child_from_string(rd_view_presentation_from_view(rd_view_address_from_cfg(view)), str8_lit("label"));
-  return label != &cfg_nil_node ? label->first->string : rd_label_from_cfg(view);
+  RD_ViewAddress address = rd_view_address_from_cfg(view);
+  CFG_Node *label = cfg_node_child_from_string(rd_view_presentation_from_view(address), str8_lit("label"));
+  if(label != &cfg_nil_node) { return label->first->string; }
+  // Else the title its producer reports, live and never saved.
+  String8 live = uishell_jackstay_title(address);
+  return live.size ? live : rd_label_from_cfg(view);
 }
 
 internal void

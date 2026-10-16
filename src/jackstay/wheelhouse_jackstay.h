@@ -1,6 +1,6 @@
 #ifndef WHEELHOUSE_JACKSTAY_H
 #define WHEELHOUSE_JACKSTAY_H
-#include <jackstay_bootstrap.h>
+#include <jackstay_handshake.h>
 #include <stdbool.h>
 /* Thread-safe session owner. No shell configuration lives here, and the only
    GPU objects are the ones a D3D11 source needs (Windows).
@@ -23,7 +23,7 @@ typedef enum {
    publications. session/token identify a Porthole capture session. */
 typedef struct {
   const char *media, *input;
-  bool bootstrap;
+  bool handshake; /* a combined source endpoint: the v3 track handshake */
   WH_JS_Media kind;
   const char *session, *token;
 } WH_JS_Endpoint;
@@ -54,6 +54,13 @@ typedef struct {
   uint64_t producer_adapter;
   uint64_t frame_version, input_epoch, pointer_epoch;
   uint32_t width, height;
+  /* What the producer reports through its affordances track, when it offers
+     one (combined endpoints only). Text is copied, cut at a UTF-8 boundary to
+     fit. affordance_version changes whenever any of it does. */
+  bool affordances, ready, loading, can_go_back, can_go_forward;
+  uint32_t navigation_capabilities; /* bits 1u << (FT_AFF_NAVIGATION_* - 1) */
+  char window_title[256], page_title[256], url[2048];
+  uint64_t affordance_version;
 } WH_JS_State;
 typedef struct {
   /* CPU frames: packed RGBA, caller-owned. */
@@ -74,6 +81,15 @@ WH_Jackstay *wh_js_create(WH_JS_Endpoint endpoint, WH_JS_Gpu gpu,
                           void (*wake)(void *), void *context);
 void wh_js_connect(WH_Jackstay *session, bool request_control);
 void wh_js_focus(WH_Jackstay *session, bool focused);
+/* How the View shows the producer: its size in logical units, the display's
+   pixels per unit, whether it is shown, and whether it has focus. Sent to a
+   producer that takes affordances when it changes, and after reconnecting. */
+void wh_js_present(WH_Jackstay *session, uint32_t width, uint32_t height,
+                   double scale, bool visible, bool focused);
+/* Ask the producer to navigate: FT_AFF_NAVIGATION_BACK, _FORWARD, _RELOAD,
+   _STOP, or _LOAD with url. False when it doesn't advertise that verb. The
+   latest request wins if one is still waiting to be sent. */
+bool wh_js_navigate(WH_Jackstay *session, uint32_t verb, const char *url);
 bool wh_js_send(WH_Jackstay *session, const ft_input_event *event);
 void wh_js_snapshot(WH_Jackstay *session, WH_JS_State *state,
                     WH_JS_Frame *frame, uint64_t after);

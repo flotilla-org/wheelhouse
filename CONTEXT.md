@@ -307,6 +307,10 @@ _Avoid_: View kind, view settings, tab
 A frontend's way of drawing one or more kinds of **View Spec** content, such as Wheelhouse's terminal view or a Cleat pane in the TUI. Each frontend has one list of its Renderers; control views such as sidebar sections are Renderers too.
 _Avoid_: View kind, view rule, widget
 
+**Handler**:
+A frontend's rule for showing a kind of **View Spec** content: which **Renderer** shows it and, when another program produces it, how to launch that program and connect to what it publishes. A web page's Handler launches Luchs and connects to its Jackstay endpoint. Each frontend has its own Handlers, as it has its own Renderers.
+_Avoid_: Plugin, opener, launcher (a Jackstay "launcher" in a **View Spec** is the setting that names an endpoint)
+
 **Slot**:
 A **View**'s place in a **Workspace**. It is identified by a slot key: the provider's key for a View from a **Suggested Layout**, or a short generated key, in a separate namespace, for a View the user adds. It carries the View's **View Spec** and the progress of resolving it.
 _Avoid_: Tab, pane, panel
@@ -316,7 +320,7 @@ A **Slot** whose content the user has overridden in a **Workspace Overlay**, so 
 _Avoid_: Detached workspace, orphaned view
 
 **Target Resolution**:
-The cached result of resolving a **Target Reference** into a way of connecting, such as a Cleat session on a host or a Jackstay endpoint. It is always disposable: when it no longer works, the **Target Reference** is resolved again. A portable resolution (a remote session or endpoint) is kept with the **Workspace**; a machine-local one (a local socket or attach token) is kept per device.
+The cached result of resolving a **Target Reference** into a way of connecting, such as a Cleat session on a host, a Jackstay endpoint, or the page a web **View** had reached. It is always disposable: when it no longer works, the **Target Reference** is resolved again. A portable resolution (a remote session or endpoint) is kept with the **Workspace**; a machine-local one (a local socket or attach token) is kept per device.
 _Avoid_: Runtime instance (the live attachment), binding, target reference
 
 **Overlay Sync**:
