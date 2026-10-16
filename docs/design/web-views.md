@@ -45,6 +45,7 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
 | Size, scale, focus | The pane's pixel size goes out as `presentation.preferred_size`, `scale` from the display, and focus as `presentation.focused`. The producer's `window.requested_size` is ignored: the pane decides |
 | Default page | A start page bundled with Wheelhouse |
 | Failure | A launch or first load that fails shows the placeholder with the error, Retry and Open in browser |
+| Jackstay protocol | The v3 track handshake (Jackstay #119, ABI 0.17), which replaced bootstraps v1 and v2: the source offers tracks (video, input, affordances, playback), the consumer selects them. Wheelhouse and Luchs both move to it. Katzensteg already has (its #174); Porthole has not, so its sources need v3 before Wheelhouse can show them again |
 
 ## What exists, and what each side lacks
 
@@ -75,16 +76,17 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
 
 ## First slices
 
-1. **The Jackstay view speaks bootstrap v2 with affordances.** It shows the
-   producer's window title and navigation URL, sends size, scale and focus,
-   offers back, forward and reload when the producer advertises them, and
-   connects by itself when its View asks. This bumps `JACKSTAY_REV` to an ABI
-   with affordances, and checks that **Open Jackstay Source** still works.
+1. **The Jackstay view speaks the v3 track handshake, with affordances.** It
+   shows the producer's window title and navigation URL, sends size, scale and
+   focus, offers back, forward and reload when the producer advertises them,
+   and connects by itself when its View asks. This bumps `JACKSTAY_REV` to
+   Jackstay `main` (ABI 0.17), and checks that **Open Jackstay Source** still
+   works. It is tested against Jackstay's own v3 example producers.
 2. **The `web` View.** The Handler table with its Luchs entry, a View-owned
    supervisor generalised from the connector, launch and readiness, the
    `web-location` resolution, the bundled start page, and the opening commands.
    Tests on Linux use Luchs's `--helper` test renderer; a real page needs macOS.
-3. **Luchs changes** as they turn up, in Luchs.
+3. **Luchs on v3**, then any other Luchs changes as they turn up, in Luchs.
 
 ## Later
 
@@ -92,7 +94,8 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
   may become a general plugin View, whose Handler names the producer.
 - **Handler discovery:** manifests or a catalog of launchable producers, and how
   they are trusted. This is where Jackstay's latent sources and activation
-  policy would meet Wheelhouse.
+  policy would meet Wheelhouse, and where #93 (Jackstay source discovery that
+  keeps explicit endpoints) belongs.
 - **Other back ends behind a Handler:** remote Jackstay sources, and wasm.
 - **Delegation without navigation.** The `pending` file view, which already
   sniffs a file's type, could hand a file Luchs can render to it, read-only and
