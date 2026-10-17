@@ -741,7 +741,7 @@ WH_VIEW_UI_FUNCTION_DEF(jackstay)
     uishell_jackstay_forget_setting(str8_lit("connect"));
     if(connect && v->sizes[0])uishell_jackstay_open(v,0);
   }
-  UI_Parent(uishell_jackstay_view_root(v,rect)) UI_Focus(UI_FocusKind_On) UI_PrefWidth(ui_pct(1,0))
+  UI_Parent(uishell_jackstay_view_root(v,rect)) UI_Focus(UI_FocusKind_Null) UI_PrefWidth(ui_pct(1,0))
   {
     if(!v->session)
     {
@@ -791,7 +791,7 @@ WH_VIEW_UI_FUNCTION_DEF(web)
     uishell_web_launch(v,url,viewport.width,viewport.height);
   }
   uishell_web_poll(v);
-  UI_Parent(uishell_jackstay_view_root(v,rect)) UI_Focus(UI_FocusKind_On) UI_PrefWidth(ui_pct(1,0))
+  UI_Parent(uishell_jackstay_view_root(v,rect)) UI_Focus(UI_FocusKind_Null) UI_PrefWidth(ui_pct(1,0))
   {
     if(v->session)uishell_jackstay_session_ui(v,rect);
     else

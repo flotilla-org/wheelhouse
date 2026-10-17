@@ -207,7 +207,17 @@ jobs:
         run: python tools/test-windows-terminal-input.py
       - name: Jackstay media and input acceptance
         # Local Endpoints: named pipes on Windows, Unix sockets elsewhere.
-        run: python tools/test-jackstay.py
+        shell: bash
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a python3 tools/test-jackstay.py --ui-binary build/wheelhouse
+          elif [ "$RUNNER_OS" = Windows ]; then
+            python tools/test-jackstay.py --ui-binary build/wheelhouse.exe
+          else
+            python3 tools/test-jackstay.py --ui-binary build/wheelhouse
+          fi
       - name: HTTP ingress and native producer checks
         shell: bash
         env:
