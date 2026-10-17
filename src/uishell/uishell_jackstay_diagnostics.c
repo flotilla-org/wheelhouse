@@ -30,6 +30,55 @@ uishell_jackstay_pixel_diagnostics(void)
     ok=valid && ok;
     r_tex2d_release(first);r_tex2d_release(second);
   }
+  // Import actual IOSurfaces through Metal and sample with the renderer. The
+  // texture must retain the surface after our original reference is dropped.
+  for(U32 bgra=0;bgra<2;bgra++)
+  {
+    NSDictionary *properties=@{(id)kIOSurfaceWidth:@2,(id)kIOSurfaceHeight:@1,
+      (id)kIOSurfaceBytesPerElement:@4,(id)kIOSurfacePixelFormat:@(bgra?'BGRA':'RGBA')};
+    IOSurfaceRef surface=IOSurfaceCreate((CFDictionaryRef)properties);
+    R_Handle texture={0};
+    if(surface && IOSurfaceLock(surface,0,0)==kIOReturnSuccess)
+    {
+      U8 pixels[8]={255,0,0,255,0,0,255,255};
+      if(bgra){pixels[0]=0;pixels[2]=255;pixels[4]=255;pixels[6]=0;}
+      MemoryCopy(IOSurfaceGetBaseAddress(surface),pixels,sizeof(pixels));
+      IOSurfaceUnlock(surface,0,0);
+      texture=r_tex2d_open_shared(surface);
+    }
+    if(surface)CFRelease(surface);
+    DR_Bucket *bucket=dr_bucket_make();
+    DR_BucketScope(bucket)
+      dr_img(r2f32p(0,0,32,16),r2f32p(0,0,2,1),texture,v4f32(1,1,1,1),0,0,0);
+    R_Readback image=r_pass_list_readback(scratch.arena,v2s32(32,16),&bucket->passes);
+    B32 valid=texture.u64[0] && image.format==R_Tex2DFormat_BGRA8 && image.data.size>=32*16*4;
+    if(valid)
+    {
+      U8 *left=image.data.str+(8*32+8)*4,*right=image.data.str+(8*32+24)*4;
+      valid=left[2]>250 && left[0]<5 && right[0]>250 && right[2]<5;
+    }
+    if(!valid)fprintf(stderr,"FAIL Jackstay %s IOSurface import/readback\n",bgra?"BGRA":"RGBA");
+    ok=valid && ok;
+    r_tex2d_release(texture);
+  }
+  // A foreign producer event gates renderer work; export the renderer's
+  // completion event back to a separate Metal device and observe its signal.
+  id<MTLDevice> external=MTLCreateSystemDefaultDevice();
+  id<MTLSharedEvent> ready=[external newSharedEvent];
+  MTLSharedEventHandle *ready_handle=[ready newSharedEventHandle];
+  R_Handle imported=r_timeline_open_shared(ready_handle);
+  R_Handle released=r_timeline_alloc_shared();
+  id<MTLSharedEvent> completion=[external newSharedEventWithHandle:r_native_timeline(released)];
+  ready.signaledValue=7;
+  B32 timelines=imported.u64[0] && released.u64[0] && completion &&
+    r_queue_wait(imported,7) && r_queue_signal(released,9);
+  U64 deadline=now_time_us()+1000000;
+  while(timelines && completion.signaledValue<9 && now_time_us()<deadline)sleep_ms(1);
+  timelines=timelines && completion.signaledValue>=9;
+  if(!timelines)fprintf(stderr,"FAIL Jackstay Metal readiness/completion timelines\n");
+  ok=timelines && ok;
+  [completion release];[ready_handle release];[ready release];[external release];
+  r_timeline_release(imported);r_timeline_release(released);
   scratch_end(scratch);
 #endif
   fprintf(stderr,"Jackstay pixel diagnostics: %s\n",ok?"passed":"FAILED");

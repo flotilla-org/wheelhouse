@@ -13,6 +13,7 @@ typedef struct WH_Jackstay WH_Jackstay;
 typedef enum {
   WH_JS_MEDIA_CPU,      /* Jackstay CPU setup (combined or separate endpoints) */
   WH_JS_MEDIA_D3D11,    /* Jackstay D3D11 setup (Windows) */
+  WH_JS_MEDIA_MACOS,    /* experimental macOS native acquisition Mach service */
   WH_JS_MEDIA_PORTHOLE, /* a Porthole native capture session: attach token,
                            then the D3D11 or CPU setup the reply names */
 } WH_JS_Media;

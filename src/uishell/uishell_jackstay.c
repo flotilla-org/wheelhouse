@@ -57,6 +57,7 @@ struct UIShell_JackstayView
   // (live, never saved), and the last presentation sent, which goes hidden
   // once the View stops being built.
   char title[256];
+  char macos_service[256]; // explicit experimental native acquisition endpoint
   B32 built;
   U32 present_width, present_height;
   F32 present_scale;
@@ -497,6 +498,7 @@ internal void uishell_jackstay_open(UIShell_JackstayView *v,B32 control)
   if(v->mode==UISHELL_JACKSTAY_MODE_D3D11){endpoint.kind=WH_JS_MEDIA_D3D11;endpoint.input="";}
   if(v->mode==UISHELL_JACKSTAY_MODE_PORTHOLE)
   {endpoint.kind=WH_JS_MEDIA_PORTHOLE;endpoint.input="";endpoint.session=(char *)v->paths[1];endpoint.token=(char *)v->paths[2];}
+  if(v->macos_service[0]){endpoint.kind=WH_JS_MEDIA_MACOS;endpoint.media=v->macos_service;endpoint.input=(char *)v->paths[0];endpoint.handshake=true;}
   v->session=wh_js_create(endpoint,uishell_jackstay_gpu(v),uishell_jackstay_wake,0);
   // The attach token lives only in the running session.
   MemoryZeroArray(v->paths[2]);v->sizes[2]=0;
@@ -732,6 +734,8 @@ WH_VIEW_UI_FUNCTION_DEF(jackstay)
   if(!v->initialized)
   {
     v->initialized=1;
+    String8 macos_service=wh_view_setting(ctx,str8_lit("macos_service"));
+    snprintf(v->macos_service,sizeof(v->macos_service),"%.*s",(int)Min(macos_service.size,sizeof(v->macos_service)-1),macos_service.str);
     // Local Endpoint names are saved as *_endpoint; POSIX socket paths keep
     // their original *_socket keys.
     String8 paths[3]={uishell_jackstay_address(str8_lit("source")),uishell_jackstay_address(str8_lit("input")),str8_zero()};
