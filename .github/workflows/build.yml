@@ -128,6 +128,8 @@ jobs:
           codesign --verify --deep --strict build/Wheelhouse.app
       - name: Verify generated sources
         run: python tools/check-generated.py
+      - name: Headless Jackstay viewport geometry
+        run: python -c "import subprocess; subprocess.run(['./build/wheelhouse', '--jackstay_geometry_diagnostics'], check=True)"
       - name: Headless terminal clipboard effects
         if: runner.os != 'Windows'
         run: ./build/wheelhouse --terminal_clipboard_diagnostics

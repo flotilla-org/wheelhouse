@@ -106,6 +106,16 @@ size, so showing it again needs no reflow. The producer decides what to do with
 a presentation; Luchs resizes its page, and stops capturing while hidden.
 `requested_size` is ignored.
 
+Canvas dimensions are in the toolkit's layout coordinates, which are points
+on macOS and DPI-scaled coordinates on Windows. Divide by the window's layout
+scale to request a logical viewport, and publish layout scale times backing
+scale as the producer's pixel scale. An 800x600-point Retina canvas requests
+800x600 at scale 2; the returned 1600x1200-pixel texture is sampled into the
+800x600 layout rectangle. The backing scale changes raster resolution, not
+the logical page size. Web Views use the same conversion for their initial
+launch size. Input continues to map the fitted image rectangle to the
+producer's advertised input extent, independently of texture resolution.
+
 A closed or failed affordances track clears what the view reported and leaves
 video running. Producers on older Jackstay protocols cannot connect to the
 combined form.

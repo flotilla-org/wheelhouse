@@ -107,6 +107,7 @@
 #include "uishell/uishell_terminal_glyph.c"
 #include "uishell/uishell_views.c"
 #include "uishell/uishell_jackstay.c"
+#include "uishell/uishell_jackstay_diagnostics.c"
 #include "shell/shell_inc.c"
 #include "uishell/uishell_dashboard.c"
 #include "uishell/uishell_subscriptions.c"
@@ -183,6 +184,10 @@ entry_point(CmdLine *cmd_line)
   if(!uishell_prepare_terminal_environment()) { abort_self(1); }
   // Headless diagnostics read panels' focus before rd_init.
   rd_panel_presentation_hook = rd_panel_presentation;
+#if defined(WHEELHOUSE_JACKSTAY)
+  if(cmd_line_has_flag(cmd_line, str8_lit("jackstay_geometry_diagnostics")))
+  { abort_self(uishell_jackstay_geometry_diagnostics() ? 0 : 1); }
+#endif
   if(cmd_line_has_flag(cmd_line, str8_lit("terminal_clipboard_diagnostics")))
   { abort_self(uishell_terminal_clipboard_diagnostics() ? 0 : 1); }
   // Pure terminal model checks also run in headless build environments.
@@ -415,6 +420,7 @@ entry_point(CmdLine *cmd_line)
                                     "--managed_content_diagnostics\nRun managed terminal reconciliation checks and exit (Unix).\n\n"
                                     "--shared_ui_diagnostics --shared_ui_fixture_dir:DIR\nRun config, file-picker and Metal blur regressions using an empty temporary directory.\n\n"
                                     "--panel_diagnostics\nRun panel drop and layout checks and exit.\n\n"
+                                    "--jackstay_geometry_diagnostics\nCheck logical viewport and backing-pixel sizes and exit.\n\n"
                                     "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
                                     "--preview_diagnostics\nCheck workspace preview isolation and dimming and exit.\n\n"
                                     "--overview_benchmark:DIR --overview_benchmark_count:1|16|48\nRun isolated macOS overview replay (use tools/benchmark-overview.py).\n\n"
