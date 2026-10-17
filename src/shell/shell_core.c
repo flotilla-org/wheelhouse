@@ -68,6 +68,48 @@ wh_renderer_from_content(WH_ContentKinds content)
   return &wh_nil_renderer;
 }
 
+#define WH_HANDLER_DECLARE(name, content, schemes, renderer, program, args) \
+  {str8_lit_comp(#name), content, str8_lit_comp(schemes), str8_lit_comp(#renderer), \
+   str8_lit_comp(program), str8_lit_comp(args)},
+read_only global WH_Handler wh_handlers[] =
+{
+  WH_HANDLERS(WH_HANDLER_DECLARE)
+};
+#undef WH_HANDLER_DECLARE
+read_only global WH_Handler wh_nil_handler = {0};
+
+// The Handler for a URL: the first that takes its scheme, or nil.
+internal WH_Handler *
+wh_handler_from_url(String8 url)
+{
+  U64 colon = str8_find_needle(url, 0, str8_lit(":"), 0);
+  if(colon == 0 || colon >= url.size) { return &wh_nil_handler; }
+  String8 scheme = str8_prefix(url, colon);
+  for EachElement(idx, wh_handlers)
+  {
+    if(!(wh_handlers[idx].content & WH_Content_Url)) { continue; }
+    String8 schemes = wh_handlers[idx].schemes;
+    for(U64 start = 0; start < schemes.size;)
+    {
+      U64 end = str8_find_needle(schemes, start, str8_lit(" "), 0);
+      if(str8_match(str8_substr(schemes, r1u64(start, end)), scheme, StringMatchFlag_CaseInsensitive)) { return &wh_handlers[idx]; }
+      start = end + 1;
+    }
+  }
+  return &wh_nil_handler;
+}
+
+// An address as typed, made a URL: one without a scheme is https.
+internal String8
+wh_url_from_address(Arena *arena, String8 address)
+{
+  address = str8_skip_chop_whitespace(address);
+  if(!address.size || str8_find_needle(address, 0, str8_lit("://"), 0) < address.size ||
+     str8_match(str8_prefix(address, 5), str8_lit("file:"), StringMatchFlag_CaseInsensitive) ||
+     str8_match(str8_prefix(address, 6), str8_lit("about:"), StringMatchFlag_CaseInsensitive)) { return address; }
+  return push_str8f(arena, "https://%S", address);
+}
+
 internal WH_Renderer *
 wh_renderer_from_index(U64 idx)
 {
@@ -3740,8 +3782,8 @@ read_only global String8 rd_view_logical_settings[] =
   str8_lit_comp("expression"), str8_lit_comp("cwd"), str8_lit_comp("content"), str8_lit_comp("url"),
   str8_lit_comp("source_endpoint"), str8_lit_comp("source_socket"), str8_lit_comp("input_endpoint"), str8_lit_comp("input_socket"),
   str8_lit_comp("media_endpoint"), str8_lit_comp("media_socket"), str8_lit_comp("d3d11_endpoint"), str8_lit_comp("porthole_endpoint"),
-  // The portable Target Resolution, and the daemon hosting a terminal.
-  str8_lit_comp("session"), str8_lit_comp("daemon_name"), str8_lit_comp("daemon"),
+  // The portable Target Resolutions, and the daemon hosting a terminal.
+  str8_lit_comp("session"), str8_lit_comp("daemon_name"), str8_lit_comp("daemon"), str8_lit_comp("web_url"),
   // The Slot's plan progress (uishell_workspace_store.c, "Slot plans").
   str8_lit_comp("follows_provider"), str8_lit_comp("applied"), str8_lit_comp("asks"), str8_lit_comp("declined"),
   str8_lit_comp("update_failed"), str8_lit_comp("portable"), str8_lit_comp("applied_spec"),

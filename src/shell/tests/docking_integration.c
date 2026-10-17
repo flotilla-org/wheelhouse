@@ -699,7 +699,24 @@ entry_point(CmdLine *cmdline)
   IntegrationCheck(str8_match(wh_renderer_from_content(WH_Content_File)->name, str8_lit("text"), 0));
   IntegrationCheck(str8_match(wh_renderer_from_content(WH_Content_Jackstay)->name, str8_lit("jackstay"), 0));
   IntegrationCheck(str8_match(wh_renderer_from_content(WH_Content_Unshown)->name, str8_lit("placeholder"), 0));
-  IntegrationCheck(wh_renderer_from_content(WH_Content_Url) == &wh_nil_renderer);
+  IntegrationCheck(str8_match(wh_renderer_from_content(WH_Content_Url)->name, str8_lit("web"), 0));
+  // Each Handler's Renderer exists and takes its content.
+  for EachElement(i, wh_handlers)
+  { IntegrationCheck(wh_renderer_from_name(wh_handlers[i].renderer)->content & wh_handlers[i].content); }
+  IntegrationCheck(str8_match(wh_handler_from_url(str8_lit("https://example.com/a"))->name, str8_lit("luchs"), 0));
+  IntegrationCheck(str8_match(wh_handler_from_url(str8_lit("HTTP://example.com"))->name, str8_lit("luchs"), 0));
+  IntegrationCheck(str8_match(wh_handler_from_url(str8_lit("file:///tmp/page.html"))->renderer, str8_lit("web"), 0));
+  IntegrationCheck(wh_handler_from_url(str8_lit("wheelhouse:text")) == &wh_nil_handler);
+  IntegrationCheck(wh_handler_from_url(str8_lit("mailto:someone@example.com")) == &wh_nil_handler);
+  IntegrationCheck(wh_handler_from_url(str8_lit("no scheme")) == &wh_nil_handler);
+  {
+    Temp scratch = scratch_begin(0, 0);
+    IntegrationCheck(str8_match(wh_url_from_address(scratch.arena, str8_lit(" example.com/x ")), str8_lit("https://example.com/x"), 0));
+    IntegrationCheck(str8_match(wh_url_from_address(scratch.arena, str8_lit("http://a.test")), str8_lit("http://a.test"), 0));
+    IntegrationCheck(str8_match(wh_url_from_address(scratch.arena, str8_lit("file:///tmp/p.html")), str8_lit("file:///tmp/p.html"), 0));
+    IntegrationCheck(wh_url_from_address(scratch.arena, str8_lit("  ")).size == 0);
+    scratch_end(scratch);
+  }
   // Headless, no Visualizer draws (as before the registry, when none was
   // registered outside a frame).
   IntegrationCheck(wh_visualizer_from_name(str8_lit("text")) == &wh_nil_renderer);

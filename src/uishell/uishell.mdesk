@@ -42,6 +42,7 @@ UIShell_VocabTable:
   {offset              _                      "Offset"                           _                         Null}
   {text                ""                     "Text"                             ""                        FileOutline}
   {jackstay            ""                     "Jackstay Source"                  ""                        Machine}
+  {web                 ""                     "Web Page"                         ""                        Window}
   {terminal            ""                     "Terminal"                         ""                        Machine}
   {terminal_fixture    ""                     "Terminal Fixture"                 ""                        Machine}
   {sessions            ""                     "Sessions"                         ""                        List}
