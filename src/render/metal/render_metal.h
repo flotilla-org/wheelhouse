@@ -13,6 +13,7 @@
 #import <AppKit/NSView.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <QuartzCore/CAMetalDisplayLink.h>
 #undef FileInfo
 #pragma pop_macro("FileInfo")
 #pragma pop_macro("global")
@@ -24,10 +25,23 @@
 #include "render/metal/generated/render_metal.meta.h"
 
 typedef struct R_MTL_Window R_MTL_Window;
+@interface R_MTL_DisplayDelegate : NSObject<CAMetalDisplayLinkDelegate>
+{
+@public
+  R_MTL_Window *window;
+}
+@end
+
 struct R_MTL_Window
 {
   R_MTL_Window *next;
   CAMetalLayer *layer;
+  CAMetalDisplayLink *display_link;
+  R_MTL_DisplayDelegate *display_delegate;
+  id<CAMetalDrawable> ready_drawable; // one retained opportunity, main thread only
+  CFTimeInterval target_presentation_time;
+  B32 frame_requested;
+  S32 display_hz;
   id<MTLTexture> stage_color;
   id<MTLTexture> stage_scratch_color;
   id<MTLTexture> geo3d_color;
@@ -140,6 +154,9 @@ typedef struct R_MTL_State R_MTL_State;
 struct R_MTL_State
 {
   Arena *arena;
+  B32 legacy_pacing;
+  int presentation_log_fd; // opt-in, process lifetime; bounded to 600 submissions
+  U64 presentation_log_serial;
   RWMutex device_rw_mutex;
   id<MTLDevice> device;
   id<MTLCommandQueue> command_queue;

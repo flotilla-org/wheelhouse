@@ -35,6 +35,18 @@
     wm_send_wakeup_event();
   }
 }
+- (void)windowDidMiniaturize:(NSNotification *)notification
+{
+  if(window != 0) { wm_send_wakeup_event(); }
+}
+- (void)windowDidDeminiaturize:(NSNotification *)notification
+{
+  if(window != 0) { wm_send_wakeup_event(); }
+}
+- (void)windowDidChangeScreen:(NSNotification *)notification
+{
+  if(window != 0) { wm_send_wakeup_event(); }
+}
 - (void)windowDidEndLiveResize:(NSNotification *)notification
 {
   [self macLiveResizeStopDisplayLink];
@@ -1331,6 +1343,19 @@ wm_dpi_from_monitor(WM_Monitor monitor)
 ////////////////////////////////
 //~ @os_hooks Events (Implemented Per-OS)
 
+// Separate presentation wakes from content/input wakes. Otherwise windows on
+// different display clocks continually dirty one another, even while idle.
+#define MAC_WM_FRAME_READY_SUBTYPE 1
+internal void
+mac_wm_send_frame_ready_event(void)
+{
+  NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                    location:NSZeroPoint modifierFlags:0 timestamp:0
+                                windowNumber:0 context:0 subtype:MAC_WM_FRAME_READY_SUBTYPE
+                                       data1:0 data2:0];
+  [NSApp postEvent:event atStart:NO];
+}
+
 internal void
 wm_send_wakeup_event(void)
 {
@@ -1448,7 +1473,8 @@ wm_get_events(Arena *arena, B32 wait)
       default:{}break;
       case NSEventTypeApplicationDefined:
       {
-        mac_wm_push_event(arena, &result, WM_EventKind_Wakeup, window);
+        if([event subtype] == MAC_WM_FRAME_READY_SUBTYPE) { result.frame_ready = 1; }
+        else { mac_wm_push_event(arena, &result, WM_EventKind_Wakeup, window); }
       }break;
       case NSEventTypeKeyDown:
       case NSEventTypeKeyUp:
