@@ -16,7 +16,9 @@ The shell requests opportunities before pumping events. When no window is ready,
 the same native pump waits for input, content changes, or presentation readiness.
 Input can build and update UI while a window is waiting. Jackstay then reads
 state and routes input, leaving the latest image in its mailbox until the host
-window has an opportunity. Only ready windows submit their rebuilt draw buckets.
+window has an opportunity. Only ready windows submit their rebuilt draw buckets. Offscreen builds without a
+host window retain immediate image acquisition; looking up admission never
+creates a window.
 
 A pending window keeps its own request until submission, even when another
 window consumes the last globally requested animation tick. Presentation wakes

@@ -39,7 +39,6 @@ struct R_MTL_Window
   CAMetalDisplayLink *display_link;
   R_MTL_DisplayDelegate *display_delegate;
   id<CAMetalDrawable> ready_drawable; // one retained opportunity, main thread only
-  CFTimeInterval target_presentation_time;
   B32 frame_requested;
   S32 display_hz;
   id<MTLTexture> stage_color;
