@@ -11,7 +11,6 @@
     B32 wake = window->ready_drawable == 0;
     [window->ready_drawable release];
     window->ready_drawable = [update.drawable retain];
-    window->target_presentation_time = update.targetPresentationTimestamp;
     if(wake) { mac_wm_send_frame_ready_event(); }
   }
 }
