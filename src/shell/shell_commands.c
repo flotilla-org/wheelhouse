@@ -868,7 +868,9 @@ uishell_dispatch_tab_command(String8 name)
               rd_dock_creation(uishell_regs()->string, rd_dock_host_from_panel(panel, RD_DOCK_UNMEASURED_WIDTH))))
     {
       CFG_Node *tab = rd_view_alloc(panel.owner, uishell_regs()->string, str8_zero());
-      CFG_Node *expr = cfg_node_new(rd_state->cfg, tab, str8_lit("expression"));
+      // A web tab opens the page it's given (open_url), not an expression.
+      B32 web = str8_match(uishell_regs()->string, str8_lit("web"), 0);
+      CFG_Node *expr = cfg_node_new(rd_state->cfg, tab, web ? str8_lit("url") : str8_lit("expression"));
       cfg_node_new(rd_state->cfg, expr, uishell_regs()->expr);
       if(expr_file_path.size != 0)
       {

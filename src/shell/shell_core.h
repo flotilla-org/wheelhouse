@@ -50,8 +50,9 @@ enum
 
 // How this device last reached the Slot's content (CONTEXT.md, "Target
 // Resolution"): disposable, and never part of its View Spec. A Cleat daemon
-// session (`session`, `daemon_name`) is portable and saved with the Slot in
-// Andamento; the rest are machine-local (uishell_workspace_store.c).
+// session (`session`, `daemon_name`) and the page a web View reached
+// (`web_url`) are portable and saved with the Slot in Andamento; the rest are
+// machine-local (uishell_workspace_store.c).
 typedef struct WH_TargetResolution WH_TargetResolution;
 struct WH_TargetResolution
 {
@@ -60,6 +61,7 @@ struct WH_TargetResolution
   String8 attach_token;
   String8 managed_target;
   String8 porthole_session;
+  String8 web_url;
 };
 
 // A View's presentation settings, read through wh_view_setting*: its own,
@@ -109,6 +111,18 @@ struct WH_Renderer
   EV_ExpandRuleInfoHookFunctionType *expand;
   String8 settings;
   RD_ViewRegistration *registration;
+};
+
+// One Handler (WH_HANDLERS): the program behind some content's Views.
+typedef struct WH_Handler WH_Handler;
+struct WH_Handler
+{
+  String8 name;
+  WH_ContentKinds content;
+  String8 schemes;
+  String8 renderer;
+  String8 program;
+  String8 args;
 };
 
 ////////////////////////////////
@@ -1200,6 +1214,10 @@ internal void rd_dock_restore_layouts(void);
 internal WH_Renderer *wh_renderer_from_name(String8 name);
 // The first Renderer showing any of `content`, or &wh_nil_renderer.
 internal WH_Renderer *wh_renderer_from_content(WH_ContentKinds content);
+internal WH_Handler *wh_handler_from_url(String8 url);
+internal String8 wh_url_from_address(Arena *arena, String8 address);
+internal String8 wh_path_from_file_url(Arena *arena, String8 url);
+internal String8List wh_handler_arguments(Arena *arena, WH_Handler *handler, String8 (*values)[2], U64 count);
 internal WH_Renderer *wh_renderer_from_index(U64 idx);
 // The Visualizer for `name` (a Lens or expand rule's name), or
 // &wh_nil_renderer; always nil in headless tests.

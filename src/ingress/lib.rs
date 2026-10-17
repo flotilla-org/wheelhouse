@@ -702,7 +702,7 @@ pub struct Connector;
 /// Start supervising a connector: `argv` (program first), in Wheelhouse's
 /// environment changed by `env` entries ("NAME=value" sets NAME, "NAME"
 /// removes it), its output appended to `log`. It restarts when it exits; see
-/// connector.rs.
+/// connector.rs. `flags` is [`CONNECTOR_READY_LINE`] or 0.
 ///
 /// # Safety
 /// Text pointers must be valid UTF-8 for their lengths (NULL only for length
@@ -715,6 +715,7 @@ pub unsafe extern "C" fn wheelhouse_connector_start(
     env: *const Text,
     env_count: usize,
     log: Text,
+    flags: u32,
     wake: Wake,
     error: *mut u8,
     capacity: usize,
@@ -760,13 +761,14 @@ pub unsafe extern "C" fn wheelhouse_connector_start(
                 argv,
                 env,
                 log: log.into(),
+                ready_line: flags & CONNECTOR_READY_LINE != 0,
             },
             wake,
         )
     })();
     #[cfg(not(any(unix, windows)))]
     let result: Result<Connector, String> = {
-        let _ = (argv, argc, env, env_count, log, wake, text, list);
+        let _ = (argv, argc, env, env_count, log, flags, wake, text, list);
         Err("Connectors are supported on Unix and Windows hosts".into())
     };
     boxed_or_error(result, error, capacity)
@@ -795,6 +797,50 @@ pub unsafe extern "C" fn wheelhouse_connector_running(
         *starts = 0;
     }
     0
+}
+
+/// The first stdout line is the ready line; see connector.rs.
+pub const CONNECTOR_READY_LINE: u32 = 1;
+
+/// Where the connector is: 0 waiting (starting, or to restart), 1 running,
+/// 2 ready, 3 failed. For ready its ready line, and for failed why, is copied
+/// to `text` (NUL-terminated, cut at a character boundary to fit `capacity`)
+/// and its full length stored in `len`; otherwise `len` is 0.
+///
+/// # Safety
+/// `connector` must be NULL or a live handle; `text` writable for `capacity`
+/// bytes (or NULL with 0); `len` NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_connector_state(
+    connector: *const Connector,
+    text: *mut u8,
+    capacity: usize,
+    len: *mut usize,
+) -> u32 {
+    #[cfg(any(unix, windows))]
+    let (code, detail) = match connector.as_ref().map(Connector::state) {
+        None | Some(connector::State::Waiting) => (0, String::new()),
+        Some(connector::State::Running) => (1, String::new()),
+        Some(connector::State::Ready(line)) => (2, line),
+        Some(connector::State::Failed(why)) => (3, why),
+    };
+    #[cfg(not(any(unix, windows)))]
+    let (code, detail) = {
+        let _ = connector;
+        (0, String::new())
+    };
+    if !len.is_null() {
+        *len = detail.len();
+    }
+    if !text.is_null() && capacity > 0 {
+        let mut end = detail.len().min(capacity - 1);
+        while !detail.is_char_boundary(end) {
+            end -= 1;
+        }
+        std::ptr::copy_nonoverlapping(detail.as_ptr(), text, end);
+        *text.add(end) = 0;
+    }
+    code
 }
 
 /// Stop the connector and whatever it started, and release the handle.

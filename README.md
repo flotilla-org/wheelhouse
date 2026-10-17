@@ -77,6 +77,16 @@ a named pipe on Windows, a Unix socket elsewhere. Builds require `../jackstay`, 
 `jackstay.dll` next to the executable. See [Jackstay views](docs/design/jackstay-view.md)
 for endpoint configuration, focus behaviour and acceptance checks.
 
+## Web views
+
+**Web** in a panel's "+" menu opens a web page tab on a start page; **Open URL**
+opens one at an address, and a workspace Slot showing an http(s) URL opens as
+one too. Wheelhouse runs [Luchs](https://github.com/flotilla-org/luchs) for each
+(`luchs` on `PATH`, or `WHEELHOUSE_LUCHS`), shows what it publishes, and keeps
+the page each tab reached. Luchs renders pages on macOS only; elsewhere a tab
+says why it couldn't show the page, with Open in browser. See
+[Web views](docs/design/web-views.md).
+
 ## Workspace previews
 
 Overview bounds background terminal starts, snapshot fetches and surface redraws,

@@ -487,6 +487,19 @@ uishell_dispatch_viewer_command(String8 name)
       uishell_push_cmd_current(str8_lit("build_tab"));
     }
   }
+  // A web tab's expression is the page it opens (build_tab): none for the
+  // start page, or the address typed, made a URL.
+  else if(str8_match(name, str8_lit("web"), 0) || str8_match(name, str8_lit("open_url"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    String8 url = str8_zero();
+    if(str8_match(name, str8_lit("open_url"), 0)) { url = wh_url_from_address(scratch.arena, uishell_regs()->string); }
+    UIShell_RegsScope(.string = str8_lit("web"), .expr = url)
+    {
+      uishell_push_cmd_current(str8_lit("build_tab"));
+    }
+    scratch_end(scratch);
+  }
   else if(str8_match(name, str8_lit("scroll_region_fixture"), 0))
   {
     UIShell_RegsScope(.string = str8_lit("scroll_region_fixture"), .expr = str8_zero())

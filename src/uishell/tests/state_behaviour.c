@@ -1269,9 +1269,10 @@ entry_point(CmdLine *cmdline)
     state_check_sidebar_committed(ws);
   }
 
-  //- A slot whose content Wheelhouse can't show (a web page another
-  // frontend added, which Andamento places at the next commit) gets a
-  // placeholder naming it, and keeps its View Spec.
+  //- A slot showing a web page another frontend added (which Andamento
+  // places at the next commit) gets its Handler's web View, at that page; one
+  // whose content Wheelhouse can't show (a mail address) gets a placeholder
+  // naming it. Both keep their View Specs.
   {
     state = ws->sidebar;
     window = cfg_node_from_id(ws->cfg_id);
@@ -1283,6 +1284,10 @@ entry_point(CmdLine *cmdline)
     web.has_presentation = 1;
     web.presentation = uishell_sidebar_text(str8_lit("web"));
     StateCheck(andamento_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:web")), &web, ANDAMENTO_REBIND_REPLACE, 0));
+    AndamentoViewSpec mail = {0};
+    mail.content = ANDAMENTO_SLOT_URL;
+    mail.url = uishell_sidebar_text(str8_lit("mailto:team@example.com"));
+    StateCheck(andamento_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:mail")), &mail, ANDAMENTO_REBIND_REPLACE, 0));
     // Any edit commits: the terminal tab selected.
     RD_PanelTree panels = state_panels(scratch.arena, workspace);
     CFG_Node *make = &cfg_nil_node;
@@ -1293,12 +1298,15 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
     state_frame(ws);
     String8 text = state_workspaces_text(scratch.arena);
-    StateCheck(str8_find_needle(text, 0, str8_lit("tab placeholder view=workspace:\"u:web\" content=\"https://example.com/board\""), 0) < text.size);
+    StateCheck(str8_find_needle(text, 0, str8_lit("tab web view=workspace:\"u:web\" url=\"https://example.com/board\""), 0) < text.size);
+    StateCheck(str8_find_needle(text, 0, str8_lit("tab placeholder view=workspace:\"u:mail\" content=\"mailto:team@example.com\""), 0) < text.size);
     state_check_committed(ws);
     AndamentoSlots *slots = andamento_slots_get(state->core, id, 0);
     AndamentoSlot slot = {0};
     StateCheck(uishell_store_slot_find(slots, str8_lit("u:web"), &slot) && slot.spec.content == ANDAMENTO_SLOT_URL &&
                str8_match(uishell_sidebar_string(slot.spec.url), str8_lit("https://example.com/board"), 0));
+    StateCheck(uishell_store_slot_find(slots, str8_lit("u:mail"), &slot) && slot.spec.content == ANDAMENTO_SLOT_URL &&
+               str8_match(uishell_sidebar_string(slot.spec.url), str8_lit("mailto:team@example.com"), 0));
     andamento_slots_free(slots);
   }
 

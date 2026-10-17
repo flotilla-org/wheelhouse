@@ -101,7 +101,7 @@ uishell_subscription_connect(UIShell_Subscription *s)
   U64 env_count = 0;
   for(U64 i = 0; i < ArrayCount(env); i++) { envs[env_count++] = (WheelhouseIngressText){env[i].str, env[i].size}; }
   String8 log = push_str8f(scratch.arena, "%S/flotilla-%S.log", subs->log_dir, s->id);
-  s->connector = wheelhouse_connector_start(argv, ArrayCount(argv), envs, env_count, (WheelhouseIngressText){log.str, log.size},
+  s->connector = wheelhouse_connector_start(argv, ArrayCount(argv), envs, env_count, (WheelhouseIngressText){log.str, log.size}, 0,
     wm_send_wakeup_event, error, sizeof(error));
   if(!s->connector)
   {
