@@ -93,6 +93,8 @@ Overview bounds background terminal starts, snapshot fetches and surface redraws
 retaining completed previews while newer work waits. Small text previews refresh
 less frequently and use textures sized to their displayed demand. Selected and
 expanding workspaces remain immediate; preview scaling preserves terminal dimensions.
+Jackstay previews sample the latest frame at 5 Hz for the smallest cards and
+10 Hz otherwise, preserving the producer's logical viewport.
 
 These policies are enabled by default. For diagnostics and comparisons, disable
 them individually with `--no_preview_render_budget`, `--no_preview_surface_budget`

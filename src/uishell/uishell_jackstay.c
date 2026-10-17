@@ -38,6 +38,7 @@ struct UIShell_JackstayView
   R_Handle texture; // shown: an owned upload, or an entry of imports
   B32 texture_owned;
   U64 upload_frame, version, epoch, pointer_epoch, press_serial;
+  U64 preview_frame_time_us;
   U64 keys[WM_Key_COUNT][2];
   U32 width, height;
   B32 focus_requested, focused, content_focus, closing, disconnecting, initialized;
@@ -588,9 +589,25 @@ internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
   // Offscreen builds have no display opportunity to wait for. A real host
   // keeps its newest image in the mailbox until that window is admitted.
   B32 admitted = host == &rd_nil_window_state || host->render_ready;
-  B32 take_frame = admitted && v->upload_frame != rd_state->frame_index;
+  RD_WorkspaceSurfaceEntry *surface=host!=&rd_nil_window_state?host->active_workspace_surface_entry:0;
+  U64 interval_us=rd_workspace_preview_refresh_interval(host,surface);
+  // Streaming previews use at most 10 Hz (5 Hz for the smallest cards).
+  // Leave intermediate frames in the latest-frame mailbox, where replacement
+  // already releases unsampled imports. Never retire the displayed GPU frame
+  // just because a preview skips an update.
+  if(rd_state->preview_refresh_budget && surface && !surface->composite && !surface->full_res)
+    interval_us=Max(interval_us,100000);
+  U64 now_us=rd_state->frame_last_time_us;
+  U64 phase_us=interval_us?rd_view_ui_key(v->view).u64[0]%interval_us:0;
+  U64 deadline_us=interval_us?v->preview_frame_time_us+interval_us-(v->preview_frame_time_us+phase_us)%interval_us:0;
+  B32 due=!interval_us || !v->version || now_us>=deadline_us;
+  B32 take_frame = admitted && due && v->upload_frame != rd_state->frame_index;
   wh_js_snapshot(v->session,&state,take_frame?&frame:0,v->version);
   if(take_frame) { v->upload_frame=rd_state->frame_index; }
+  if(frame.native || frame.pixels)v->preview_frame_time_us=now_us;
+  // A final producer wake may precede this deadline. Keep requesting frames
+  // until its newest image is sampled, even if publication then goes quiet.
+  if(admitted && !due && state.frame_version!=v->version)rd_request_frame();
   if(frame.native)uishell_jackstay_take_import(v,&frame);
   else if(frame.pixels)
   {

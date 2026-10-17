@@ -176,6 +176,103 @@ uishell_jackstay_input_test_focus_root(UI_Box *box)
   return &ui_nil_box;
 }
 
+// Publish through the real latest-frame mailbox and build a demanded preview
+// before an ordinary terminal. No producer process or OS input is needed.
+internal B32
+uishell_jackstay_preview_diagnostics(RD_WindowState *ws)
+{
+  Temp scratch=scratch_begin(0,0);
+  UI_State *saved_ui=ui_state,*test=ui_state_alloc();
+  UIShell_JackstayView *saved_views=uishell_jackstay_views;
+  RD_WorkspaceSurfaceEntry *saved_surface=ws->active_workspace_surface_entry;
+  RD_WorkspacePreviewDemand *saved_demands=ws->first_workspace_preview_demand;
+  U64 saved_frame=rd_state->frame_index,saved_time=rd_state->frame_last_time_us,saved_requests=rd_state->num_frames_requested;
+  B32 saved_ready=ws->render_ready,saved_budget=rd_state->preview_refresh_budget;
+  CFG_Node *window=cfg_node_from_id(ws->cfg_id);
+  CFG_Node *owners[2];
+  UIShell_WorkspaceMount mounts[2];
+  CFG_Node *preview_cfg=0;
+  for(U32 i=0;i<2;i++)
+  {
+    owners[i]=cfg_node_new(rd_state->cfg,window,str8_lit("workspace"));
+    RD_PanelAddress panel=rd_fixture_leaf(rd_fixture_owner(owners[i]));
+    CFG_Node *view=rd_fixture_view(panel,i?str8_lit("terminal_fixture"):str8_lit("jackstay"),str8_zero(),1);
+    if(!i)preview_cfg=view;
+    rd_panel_focus_mark(panel);
+    mounts[i]=uishell_workspace_mount_from_owner_cfg(scratch.arena,window,owners[i]);
+  }
+  WH_Jackstay session={.mutex=mutex_alloc()};
+  UIShell_JackstayView v={.view=rd_view_address_from_cfg(preview_cfg),.session=&session,.initialized=1};
+  uishell_jackstay_views=&v;
+  ui_select_state(test);
+  ws->render_ready=1;rd_state->preview_refresh_budget=1;
+  B32 ok=1;
+  U32 uptakes[2]={0};
+#define JSPreviewCheck(x) do{if(!(x)){fprintf(stderr,"FAIL Jackstay preview line %d: %s\n",__LINE__,#x);ok=0;}}while(0)
+  UIShell_RegsScope(.window=ws->cfg_id)
+  for(U32 frame=0;frame<77;frame++)
+  {
+    rd_state->frame_index=saved_frame+frame+1;
+    rd_state->frame_last_time_us=1000000+frame*16667;
+    rd_workspace_preview_demand_push(ws,owners[0]->id,frame<30?128.f:512.f);
+    // The last publication must eventually appear even after its wake.
+    if(frame<60 || frame>=72)
+    {
+      U8 pixel[4]={(U8)frame,0,0,255};
+      JSPreviewCheck(wh_js_post_pixels(&session,1,1,pixel,4,FT_PIXEL_FORMAT_RGBA8_UNORM,0,0));
+    }
+    U64 previous=v.version;
+    rd_state->num_frames_requested=0;
+    ws->render_ready=frame!=75;
+    rd_state->preview_refresh_budget=frame!=74;
+    UI_IconInfo icons=ws->ui->icon_info;
+    UI_AnimationInfo animation={0};
+    UI_EventNode event={.v={.kind=UI_EventKind_Text,.string=str8_lit("x")}};
+    UI_EventList events={.first=&event,.last=&event,.count=1};
+    ui_begin_build(ws->os,&events,&icons,ws->theme,&animation,1.f/60,1.f/60);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+    for(U32 i=0;i<2;i++)
+    {
+      ui_set_next_rect(r2f32p(0,0,640,480));
+      UI_Box *wrapper=ui_build_box_from_key(i?0:UI_BoxFlag_IgnoreInteraction,ui_key_make(8120+i));
+      // Return to foreground while still inside the last preview interval.
+      RD_WorkspaceSurfaceEntry surface={.workspace_id=owners[i]->id,.composite=i || frame==72 || frame>=75,.full_res=frame==73};
+      ws->active_workspace_surface_entry=&surface;
+      UI_Parent(wrapper) UI_Focus(i?UI_FocusKind_On:UI_FocusKind_Off)
+      {rd_panel_area_ui(scratch,r2f32p(0,0,640,480),r2f32p(0,0,640,480),ws,&mounts[i],i!=0,0,0,0,0);}
+      if(!i)
+      {
+        JSPreviewCheck(events.count==1);
+        if(ws->render_ready && v.version!=session.state.frame_version)
+        {JSPreviewCheck(rd_state->num_frames_requested!=0);}
+      }
+    }
+    ws->active_workspace_surface_entry=0;
+    ui_end_build();
+    if(v.version!=previous && frame<60)uptakes[frame/30]++;
+    if(frame==71)JSPreviewCheck(v.version==60);
+    if(frame>=72 && frame!=75)JSPreviewCheck(v.version==frame-11);
+    if(frame==75)JSPreviewCheck(v.version==previous);
+  }
+  fprintf(stderr,"Jackstay preview: %u small-card + %u large-card uptakes for 60 publications\n",uptakes[0],uptakes[1]);
+  JSPreviewCheck(uptakes[0]>0 && uptakes[0]<=4);
+  JSPreviewCheck(uptakes[1]>0 && uptakes[1]<=7);
+  // Sampling a stream in a preview must not resize its logical viewport.
+  JSPreviewCheck(v.present_width>256 && v.present_height>128);
+#undef JSPreviewCheck
+  uishell_jackstay_drop_frames(&v);
+  free(session.pixels);mutex_release(session.mutex);
+  ws->active_workspace_surface_entry=saved_surface;ws->render_ready=saved_ready;
+  ws->first_workspace_preview_demand=saved_demands;
+  rd_state->frame_index=saved_frame;rd_state->frame_last_time_us=saved_time;rd_state->num_frames_requested=saved_requests;rd_state->preview_refresh_budget=saved_budget;
+  uishell_jackstay_views=saved_views;
+  ui_select_state(saved_ui);ui_state_release(test);
+  for(U32 i=0;i<2;i++)cfg_node_release(rd_state->cfg,owners[i]);
+  rd_arrangements_release_unowned();scratch_end(scratch);
+  fprintf(stderr,"Jackstay preview diagnostics: %s\n",ok?"passed":"FAILED");
+  return ok;
+}
+
 internal B32
 uishell_jackstay_input_diagnostics(RD_WindowState *ws)
 {

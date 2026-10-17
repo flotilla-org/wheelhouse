@@ -1482,6 +1482,7 @@ internal void rd_workspace_preview_demand_push(RD_WindowState *ws, U64 workspace
 internal void rd_workspace_surface_contribute_version(U64 version);
 internal void rd_workspace_surface_mark_unversioned_view(void);
 internal F32 rd_workspace_preview_demand_width(RD_WindowState *ws, U64 workspace_id);
+internal U64 rd_workspace_preview_refresh_interval(RD_WindowState *ws, RD_WorkspaceSurfaceEntry *surface);
 internal void rd_window_surface_cache_evict(RD_WindowState *ws);
 internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);
 internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);
