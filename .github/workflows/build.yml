@@ -98,6 +98,13 @@ jobs:
           sudo apt-get install -y clang pkg-config libx11-dev libxext-dev libgl1-mesa-dev libegl1-mesa-dev libfreetype6-dev xvfb xauth
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
+      - name: Pin the MSVC linker for Cargo launched from Bash
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $taskMsvcCompiler = (Get-Command cl.exe -ErrorAction Stop).Source
+          $taskMsvcLinker = Join-Path (Split-Path $taskMsvcCompiler) 'link.exe'
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$taskMsvcLinker" >> $env:GITHUB_ENV
       - uses: mlugg/setup-zig@v2
         if: matrix.vt == 'ghostty-vt'
         with:
