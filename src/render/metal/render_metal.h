@@ -35,6 +35,7 @@ typedef struct R_MTL_Window R_MTL_Window;
 struct R_MTL_Window
 {
   R_MTL_Window *next;
+  WM_Window os_window;
   CAMetalLayer *layer;
   CAMetalDisplayLink *display_link;
   R_MTL_DisplayDelegate *display_delegate;
