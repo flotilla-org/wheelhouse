@@ -78,6 +78,50 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   }
   ws->sidebar = &fixture;
   ui_select_state(test);
+  // A convoy switches between a compact row of workspace actions and child
+  // rows. Exercise the actual collapse action and renderer in both directions.
+  for(U32 phase = 0; phase < 3; phase++)
+  {
+    AndamentoNode convoy = {0};
+    String8 vessel_key = str8_zero();
+    for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("build"), 0)) { convoy = node; }
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0) &&
+         str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0))
+      { vessel_key = push_str8_copy(scratch.arena, uishell_sidebar_string(node.key)); }
+    }
+    if(phase)
+    {
+      ok = andamento_dispatch(fixture.core, fixture.snapshot, convoy.toggle, 0) && ok;
+      uishell_sidebar_refresh(&fixture);
+    }
+    for(U32 frame = 0; frame < 2; frame++)
+    {
+      UI_IconInfo icons = ws->ui->icon_info;
+      UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = v2f32(-100, -100);
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_sidebar_ui(r2f32p(0, 0, 600, 900), split); }
+      ui_end_build();
+    }
+    B32 row_seen = 0, chip_seen = 0;
+    for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+    {
+      UI_Box *keyed = box->parent;
+      while(!ui_box_is_nil(keyed) && ui_key_match(keyed->key, ui_key_zero())) { keyed = keyed->parent; }
+      if(ui_box_is_nil(keyed)) { continue; }
+      row_seen |= ui_key_match(box->key, ui_key_from_stringf(keyed->key, "###sidebar_row_%S", vessel_key));
+      chip_seen |= ui_key_match(box->key, ui_key_from_stringf(keyed->key, "###action_%S", vessel_key));
+    }
+    if(!vessel_key.size || row_seen != (phase != 1) || chip_seen != (phase == 1))
+    {
+      fprintf(stderr, "FAIL convoy expansion: phase %u vessel row=%u chip=%u\n", phase, row_seen, chip_seen);
+      ok = 0;
+    }
+  }
   F32 widths[] = {90, 140, 240, 320, 600};
   for(U64 w = 0; w < ArrayCount(widths); w++)
   {
@@ -335,6 +379,6 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   ui_select_state(saved_ui); ui_state_release(test);
   uishell_sidebar_release(&fixture);
   scratch_end(scratch);
-  fprintf(stderr, "Chip sidebar diagnostics: %s (90/140/240/320/600px, Tab reveal, precise horizontal scroll, latent/pending/removed, fixed status, ended precedence)\n", ok ? "passed" : "FAILED");
+  fprintf(stderr, "Chip sidebar diagnostics: %s (convoy expansion, 90/140/240/320/600px, Tab reveal, precise horizontal scroll, latent/pending/removed, fixed status, ended precedence)\n", ok ? "passed" : "FAILED");
   return ok;
 }
