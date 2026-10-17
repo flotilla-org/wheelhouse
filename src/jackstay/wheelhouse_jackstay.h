@@ -63,10 +63,12 @@ typedef struct {
   uint64_t affordance_version;
 } WH_JS_State;
 typedef struct {
-  /* CPU frames: packed RGBA, caller-owned. */
+  /* CPU frames: packed pixels in pixel_format, caller-owned (free pixels). */
   uint8_t *pixels;
   uint32_t width, height;
   uint64_t version;
+  /* Producer host clock and publication cursor, preserved across CPU copies. */
+  uint64_t timestamp_ns, cursor;
   /* Import frames (pixels == 0): an owned frame whose texture and readiness
      fence handles are borrowed until wh_js_frame_release. Import them, check
      wh_js_readiness_alive, queue a GPU wait for fence_value, sample, then
@@ -91,6 +93,8 @@ void wh_js_present(WH_Jackstay *session, uint32_t width, uint32_t height,
    latest request wins if one is still waiting to be sent. */
 bool wh_js_navigate(WH_Jackstay *session, uint32_t verb, const char *url);
 bool wh_js_send(WH_Jackstay *session, const ft_input_event *event);
+/* Take the latest pending frame once. Passing frame == 0 only reads state.
+   Ownership transfers without a second CPU image copy. */
 void wh_js_snapshot(WH_Jackstay *session, WH_JS_State *state,
                     WH_JS_Frame *frame, uint64_t after);
 /* Return an import frame. release_value names the caller's release fence
