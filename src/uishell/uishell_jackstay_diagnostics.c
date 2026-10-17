@@ -200,14 +200,24 @@ uishell_jackstay_input_diagnostics(RD_WindowState *ws)
   rd_state->key_map=cfg_key_map_from_cfg(scratch.arena);
   CFG_Node *owner=cfg_node_new(rd_state->cfg,cfg_node_from_id(ws->cfg_id),str8_lit("workspace"));
   RD_PanelAddress panel=rd_fixture_leaf(rd_fixture_owner(owner));
-  CFG_Node *cfg=rd_fixture_view(panel,str8_lit("web"),str8_zero(),1);
+  B32 generic=getenv("WHEELHOUSE_INPUT_TEST_GENERIC")!=0;
+  CFG_Node *cfg=rd_fixture_view(panel,generic?str8_lit("jackstay"):str8_lit("web"),str8_zero(),1);
   rd_panel_focus_mark(panel);
   char *producer=getenv("WHEELHOUSE_INPUT_TEST_ENDPOINT");
   WH_JS_Endpoint endpoint={producer?producer:"wheelhouse-input-diagnostic","",1,WH_JS_MEDIA_CPU,0,0};
-  UIShell_JackstayView v={.view=rd_view_address_from_cfg(cfg),.web=1,.initialized=1,.content_focus=1,.focused=1};
+  UIShell_JackstayView v={.view=rd_view_address_from_cfg(cfg),.web=!generic,.initialized=1,.content_focus=1,.focused=1};
   v.session=wh_js_create(endpoint,(WH_JS_Gpu){0},0,0);
   if(!v.session) {ws->sidebar=saved_sidebar;rd_state->key_map=saved_keys;cfg_node_release(rd_state->cfg,bindings);cfg_node_release(rd_state->cfg,owner);ui_state_release(test);scratch_end(scratch);return 0;}
   snprintf(v.page,sizeof(v.page),"https://example.invalid/");
+  if(!producer)
+  {
+    mutex_take(v.session->mutex);
+    v.session->state.affordances=true;
+    v.session->state.ready=true;
+    v.session->state.navigation_capabilities=1u<<(FT_AFF_NAVIGATION_LOAD-1);
+    snprintf(v.session->state.url,sizeof(v.session->state.url),"%s",v.page);
+    mutex_drop(v.session->mutex);
+  }
   uishell_jackstay_views=&v;
   ws->ui=test;ui_select_state(test);
   B32 ok=uishell_jackstay_pixel_diagnostics();
@@ -274,6 +284,13 @@ uishell_jackstay_input_diagnostics(RD_WindowState *ws)
       for(U32 i=0;i<400;i++)
       {wh_js_snapshot(v.session,&state,0,0);if(!strcmp(state.url,"https://x"))break;sleep_ms(5);}
       JSInputCheck(!strcmp(state.url,"https://x"));
+    }
+    else
+    {
+      mutex_take(v.session->mutex);
+      JSInputCheck(v.session->navigate_verb==FT_AFF_NAVIGATION_LOAD);
+      JSInputCheck(v.session->navigate_url && !strcmp(v.session->navigate_url,"https://x"));
+      mutex_drop(v.session->mutex);
     }
     // Explicitly clicking content transfers ownership back without waiting for
     // the text-field marker to expire on a later frame.

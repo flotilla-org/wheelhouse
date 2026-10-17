@@ -11,6 +11,10 @@ control still requires an explicit request. The producer must run in a launchd
 job declaring its Mach service. These settings are intended for a private test
 profile, not a default browser handler configuration.
 
+A producer advertising `navigation.load` gets the same editable address field as
+a web View, including click focus and Return navigation. This works for generic
+Jackstay Views independently of their engine or frame transport.
+
 The worker attaches the native consumer, registers the renderer's shared
 completion event, and hands acquired frame leases to the existing GUI mailbox.
 Only completed producer copies enter that mailbox: a bounded, cancellable worker

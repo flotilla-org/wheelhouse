@@ -504,7 +504,7 @@ internal void uishell_jackstay_open(UIShell_JackstayView *v,B32 control)
   MemoryZeroArray(v->paths[2]);v->sizes[2]=0;
   if(v->session)wh_js_connect(v->session,control);
 }
-// A web View's address bar: the page it shows (once it reports one, the page
+// An editable navigation address: the page it shows (once it reports one, the page
 // it reached), which typing a new address and Return opens in place, or
 // relaunches with when it failed.
 internal void uishell_web_address_bar(UIShell_JackstayView *v,char *reached)
@@ -620,7 +620,7 @@ internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
       if(caps&(1u<<(FT_AFF_NAVIGATION_RELOAD-1)))
       if(ui_clicked(rd_icon_button(RD_IconKind_Refresh,0,str8_lit("###reload"))))wh_js_navigate(v->session,FT_AFF_NAVIGATION_RELOAD,0);
     }
-    if(v->web)
+    if(v->web || (caps&(1u<<(FT_AFF_NAVIGATION_LOAD-1))))
     {
       UI_PrefWidth(ui_pct(1,0)) uishell_web_address_bar(v,state.url[0]?state.url:v->page);
       if(state.loading || !state.ready)UI_PrefWidth(ui_em(6,1)) ui_label(str8_lit("Loading…"));

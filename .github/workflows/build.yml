@@ -173,6 +173,7 @@ jobs:
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/jackstay-user" --project:"$task_dir/jackstay-project" --jackstay_input_diagnostics
+          WHEELHOUSE_INPUT_TEST_GENERIC=1 timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/jackstay-generic-user" --project:"$task_dir/jackstay-generic-project" --jackstay_input_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/preview-control-user" --project:"$task_dir/preview-control-project" --preview_diagnostics --no_preview_refresh_budget --no_preview_surface_budget --no_preview_render_budget
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
@@ -202,6 +203,7 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
           ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
           ./build/wheelhouse --user:"$task_dir/jackstay-user" --project:"$task_dir/jackstay-project" --jackstay_input_diagnostics
+          WHEELHOUSE_INPUT_TEST_GENERIC=1 ./build/wheelhouse --user:"$task_dir/jackstay-generic-user" --project:"$task_dir/jackstay-generic-project" --jackstay_input_diagnostics
           ./build/wheelhouse --user:"$task_dir/preview-control-user" --project:"$task_dir/preview-control-project" --preview_diagnostics --no_preview_refresh_budget --no_preview_surface_budget --no_preview_render_budget
           ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
