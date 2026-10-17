@@ -133,7 +133,7 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
     ui_end_build();
     U64 selected = 0, outlined = 0;
     uishell_sidebar_selection_boxes(test_ui->root->first, &selected, &outlined);
-    B32 hidden = section_closed || project_closed || (!selection && convoy_closed);
+    B32 hidden = section_closed || project_closed || (!selection && convoy_closed && !inline_layout);
     B32 pass = selected == !hidden && outlined == hidden;
     if(!pass) { fprintf(stderr, "FAIL selection width=%llu convoy-selected=%llu project-closed=%llu convoy-closed=%llu: selected=%llu outlined=%llu\n", (unsigned long long)width, (unsigned long long)selection, (unsigned long long)project_closed, (unsigned long long)convoy_closed, (unsigned long long)selected, (unsigned long long)outlined); }
     ok &= pass;

@@ -14,10 +14,10 @@ preset "Groups redesign"; the operator's knob values are at the end.
   accent: a project's colour, a neutral one for a local group. The horizontal
   rule under the title goes.
 - **The header** has no icon. Its title is semibold and starts just after
-  the accent; the rows' icons line up with it, their own expand/collapse
-  moved to the end of the row (to be polished with the card work). The collapse indicator follows
-  the title and shows only on hover. A collapsed group shows its count,
-  dimmed, after the title; a project keeps its chips.
+  the accent; the rows' icons line up with it. Collapse indicators follow the
+  title at every level, before inline actions. A group's indicator shows on
+  hover. A collapsed group shows its count, dimmed, after the status slot;
+  changing the count does not move the indicator. A project keeps its chips.
 - **Three levels:** section (small uppercase), group (semibold), row
   (regular, with an icon). A UI font chosen in Settings has no semibold
   of its own, so its group titles are slightly larger instead.
@@ -28,6 +28,14 @@ preset "Groups redesign"; the operator's knob values are at the end.
   group's opening recipe.
 - **Actions** appear on hover after the title: `⋯` opens the same menu as a
   right-click.
+
+## Expanding rows
+
+A collapsed convoy keeps its workspace actions as chips. Expanding it presents
+its vessels as child rows, where their workspace actions are available in the
+margin. PR and issue references stay inline in both states. References alone
+do not need a collapse indicator. Project and group headers keep their inline
+summary actions while their child rows collapse.
 
 ## Making workspaces and groups
 
@@ -96,9 +104,10 @@ collapsed. A size the operator set by hand is kept.
 
 The overlay scrollbar shows while scrolling, while it is dragged, and while
 the pointer is on its own strip at the outermost edge, then fades after about
-a second. A faded thumb takes no clicks, and controls in a row's margin stop
-short of its strip. This is a change to the shared scroll region, so every
-scrolled area gets it.
+a second. A faded thumb takes no clicks. A row reserves the widest scrollbar
+strip separately from its margin control, so its close glyph fits without
+truncating or triggering a truncated-label tooltip. This is a change to the
+shared scroll region, so every scrolled area gets it.
 
 On macOS it follows "Show scroll bars": when that is "Always", the bar keeps
 the subtle style but its width is reserved.
