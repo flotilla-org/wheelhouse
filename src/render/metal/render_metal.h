@@ -12,6 +12,7 @@
 #define FileInfo MACOS_SDK_FileInfo
 #import <AppKit/NSView.h>
 #import <Metal/Metal.h>
+#import <IOSurface/IOSurface.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CAMetalDisplayLink.h>
 #undef FileInfo

@@ -386,14 +386,15 @@ r_hook R_Readback        r_pass_list_readback(Arena *arena, Vec2S32 size, R_Pass
 //- adapter identity and frames shared by other processes
 // The adapter is chosen once, at r_init (D3D11: --render_adapter:<LUID hex>,
 // warp or default). Shared textures and timelines are NT handles on D3D11;
-// backends without them return zero handles and zeroed info.
+// Metal uses IOSurfaceRef textures and MTLSharedEventHandle timelines.
+// Backends without sharing return zero handles and zeroed info.
 r_hook R_AdapterInfo     r_adapter_info(void);
-r_hook void *            r_native_device(void);                      // borrowed (ID3D11Device*)
+r_hook void *            r_native_device(void);                      // borrowed (ID3D11Device* / id<MTLDevice>)
 r_hook R_Handle          r_tex2d_open_shared(void *os_handle);       // release with r_tex2d_release
 r_hook R_Handle          r_timeline_alloc_shared(void);
 r_hook R_Handle          r_timeline_open_shared(void *os_handle);
 r_hook void              r_timeline_release(R_Handle timeline);
-r_hook void *            r_native_timeline(R_Handle timeline);       // borrowed (ID3D11Fence*)
+r_hook void *            r_native_timeline(R_Handle timeline);       // borrowed (ID3D11Fence* / MTLSharedEventHandle*)
 // Queue-ordered: GPU work submitted after a wait starts once the timeline
 // reaches value; a signal completes once work submitted before it has.
 r_hook B32               r_queue_wait(R_Handle timeline, U64 value);
