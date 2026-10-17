@@ -1694,62 +1694,136 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
   return result;
 }
 
-//- adapter identity and frames shared by other processes
-// Not implemented for Metal yet: frames take the CPU path.
+//- Adapter identity and resources shared by other processes.
+typedef struct R_MTL_Timeline R_MTL_Timeline;
+struct R_MTL_Timeline
+{
+  id<MTLSharedEvent> event;
+  MTLSharedEventHandle *handle;
+};
 
 r_hook R_AdapterInfo
 r_adapter_info(void)
 {
   R_AdapterInfo info = {0};
+  if(r_mtl_state->device)
+  {
+    info.id = r_mtl_state->device.registryID;
+    info.shared_timelines = 1;
+    snprintf((char *)info.description, sizeof(info.description), "%s", r_mtl_state->device.name.UTF8String);
+  }
   return info;
 }
 
 r_hook void *
 r_native_device(void)
 {
-  return 0;
+  return r_mtl_state->device;
 }
 
 r_hook R_Handle
 r_tex2d_open_shared(void *os_handle)
 {
-  R_Handle handle = {0};
-  return handle;
+  R_Handle result = {0};
+  IOSurfaceRef surface = (IOSurfaceRef)os_handle;
+  if(!surface) { return result; }
+  OSType fourcc = IOSurfaceGetPixelFormat(surface);
+  R_Tex2DFormat format;
+  MTLPixelFormat mtl_format;
+  if(fourcc == 'BGRA') { format = R_Tex2DFormat_BGRA8; mtl_format = MTLPixelFormatBGRA8Unorm; }
+  else if(fourcc == 'RGBA') { format = R_Tex2DFormat_RGBA8; mtl_format = MTLPixelFormatRGBA8Unorm; }
+  else { return result; }
+  size_t width = IOSurfaceGetWidth(surface), height = IOSurfaceGetHeight(surface);
+  if(!width || !height || width > 16384 || height > 16384 ||
+     IOSurfaceGetPlaneCount(surface) || IOSurfaceGetBytesPerElement(surface) != 4 ||
+     IOSurfaceGetBytesPerRow(surface) < width*4) { return result; }
+  MutexScopeW(r_mtl_state->device_rw_mutex)
+  {
+    MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:mtl_format width:width height:height mipmapped:NO];
+    desc.storageMode = MTLStorageModeShared;
+    desc.usage = MTLTextureUsageShaderRead;
+    id<MTLTexture> imported = [r_mtl_state->device newTextureWithDescriptor:desc iosurface:surface plane:0];
+    if(imported)
+    {
+      R_MTL_Tex2D *texture = r_mtl_state->free_tex2d;
+      if(texture) { SLLStackPop(r_mtl_state->free_tex2d); }
+      else { texture = push_array_no_zero(r_mtl_state->arena, R_MTL_Tex2D, 1); }
+      MemoryZeroStruct(texture);
+      texture->texture = imported;
+      texture->kind = R_ResourceKind_Dynamic;
+      texture->format = format;
+      texture->size = v2s32((S32)width, (S32)height);
+      result = r_mtl_handle_from_tex2d(texture);
+    }
+  }
+  return result;
+}
+
+internal R_Handle
+r_mtl_timeline(id<MTLSharedEvent> event)
+{
+  R_Handle result = {0};
+  if(event)
+  {
+    R_MTL_Timeline *timeline = calloc(1, sizeof(*timeline));
+    MTLSharedEventHandle *handle = [event newSharedEventHandle];
+    if(timeline && handle)
+    {
+      timeline->event = event;
+      timeline->handle = handle;
+      result.u64[0] = (U64)timeline;
+    }
+    else { [handle release]; [event release]; free(timeline); }
+  }
+  return result;
 }
 
 r_hook R_Handle
 r_timeline_alloc_shared(void)
 {
-  R_Handle handle = {0};
-  return handle;
+  return r_mtl_timeline([r_mtl_state->device newSharedEvent]);
 }
 
 r_hook R_Handle
 r_timeline_open_shared(void *os_handle)
 {
-  R_Handle handle = {0};
-  return handle;
+  return r_mtl_timeline(os_handle ? [r_mtl_state->device newSharedEventWithHandle:(MTLSharedEventHandle *)os_handle] : 0);
 }
 
 r_hook void
-r_timeline_release(R_Handle timeline)
+r_timeline_release(R_Handle handle)
 {
+  R_MTL_Timeline *timeline = (R_MTL_Timeline *)handle.u64[0];
+  if(timeline) { [timeline->handle release]; [timeline->event release]; free(timeline); }
 }
 
 r_hook void *
-r_native_timeline(R_Handle timeline)
+r_native_timeline(R_Handle handle)
 {
-  return 0;
+  R_MTL_Timeline *timeline = (R_MTL_Timeline *)handle.u64[0];
+  return timeline ? timeline->handle : 0;
 }
 
 r_hook B32
-r_queue_wait(R_Handle timeline, U64 value)
+r_queue_wait(R_Handle handle, U64 value)
 {
-  return 0;
+  R_MTL_Timeline *timeline = (R_MTL_Timeline *)handle.u64[0];
+  if(!timeline) { return 0; }
+  id<MTLCommandBuffer> buffer = [r_mtl_state->command_queue commandBuffer];
+  if(!buffer) { return 0; }
+  [buffer encodeWaitForEvent:timeline->event value:value];
+  [buffer commit];
+  return 1;
 }
 
 r_hook B32
-r_queue_signal(R_Handle timeline, U64 value)
+r_queue_signal(R_Handle handle, U64 value)
 {
-  return 0;
+  R_MTL_Timeline *timeline = (R_MTL_Timeline *)handle.u64[0];
+  if(!timeline) { return 0; }
+  id<MTLCommandBuffer> buffer = [r_mtl_state->command_queue commandBuffer];
+  if(!buffer) { return 0; }
+  [buffer encodeSignalEvent:timeline->event value:value];
+  [buffer commit];
+  return 1;
 }

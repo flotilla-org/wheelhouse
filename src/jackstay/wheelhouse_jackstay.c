@@ -166,7 +166,7 @@ static void wh_js_link_close(WH_JS_Link *link) {
 // its video (required), its input when control is wanted, and its affordances
 // (both optional). Playback tracks wait for an audio output
 // (docs/design/web-views.md).
-static ft_status wh_js_link_handshake(WH_JS_Link *link, bool input,
+static ft_status wh_js_link_tracks(WH_JS_Link *link, bool media, bool input,
                                       ft_input_client **offered,
                                       ft_status *input_status,
                                       ft_affordances_host **affordances) {
@@ -191,7 +191,7 @@ static ft_status wh_js_link_handshake(WH_JS_Link *link, bool input,
   bool video = false, input_track = false, affordance_track = false;
   for (size_t i = 0; result == FT_STATUS_OK && i < count; ++i) {
     const char *kind = tracks[i].kind;
-    if (!video && !strcmp(kind, FT_TRACK_KIND_VIDEO)) {
+    if (media && !video && !strcmp(kind, FT_TRACK_KIND_VIDEO)) {
       video = true;
       selections[selected++] = (ft_track_selection){tracks[i].id, 1, 0};
     } else if (input && !input_track && !strcmp(kind, FT_TRACK_KIND_INPUT)) {
@@ -202,7 +202,7 @@ static ft_status wh_js_link_handshake(WH_JS_Link *link, bool input,
       selections[selected++] = (ft_track_selection){tracks[i].id, 0, 0};
     }
   }
-  if (result == FT_STATUS_OK && !video)
+  if (result == FT_STATUS_OK && media && !video)
     result = FT_STATUS_UNSUPPORTED;
   if (result != FT_STATUS_OK) {
     ft_handshake_offer_destroy(&offer);
@@ -214,6 +214,8 @@ static ft_status wh_js_link_handshake(WH_JS_Link *link, bool input,
                              admissions, &link->local, offered, input_status,
                              affordances, 0, 0, 0);
 }
+static ft_status wh_js_link_handshake(WH_JS_Link *link,bool input,ft_input_client **offered,ft_status *input_status,ft_affordances_host **affordances){return wh_js_link_tracks(link,true,input,offered,input_status,affordances);}
+
 static ft_status wh_js_link_media(WH_JS_Link *link,
                                   ft_cpu_acquisition_connection **out) {
   if (link->local)
@@ -372,6 +374,40 @@ static void wh_js_prune_timelines(WH_Jackstay *s) {
     } else
       link = &t->next;
   }
+}
+
+// Hand a held frame to the GUI, replacing one it has not taken. That one was
+// never sampled, so it is released at once.
+static void wh_js_post_import(WH_Jackstay *s, ft_acquired_frame **frame,
+                              const ft_acquired_frame_descriptor *d,
+                              void *texture, void *readiness,
+                              uint64_t incarnation) {
+  mutex_take(s->mutex);
+  ft_acquired_frame *superseded = s->mailbox.native;
+  WH_JS_Frame *m = &s->mailbox;
+  memset(m, 0, sizeof(*m));
+  m->native = *frame;
+  *frame = 0;
+  m->texture = texture;
+  m->readiness = readiness;
+  m->incarnation = incarnation;
+  m->pool_id = d->pool_id;
+  m->slot_id = d->slot_id;
+  m->fence_id = d->fence_id;
+  m->fence_value = d->fence_value;
+  m->pixel_format = d->pixel_format;
+  m->timestamp_ns = d->timestamp_ns;
+  m->cursor = d->cursor;
+  m->width = d->width;
+  m->height = d->height;
+  free(s->pixels);
+  s->pixels = 0;
+  s->state.width = d->width;
+  s->state.height = d->height;
+  m->version = ++s->state.frame_version;
+  mutex_drop(s->mutex);
+  ft_acquired_frame_release(&superseded);
+  wh_js_wake(s);
 }
 
 // D3D11 publications exist only on Windows, where Jackstay declares them.
@@ -642,6 +678,11 @@ static ft_status wh_js_cpu_run(WH_Jackstay *s, WH_JS_Link *link, bool input,
   ft_acquisition_cpu_connection_destroy(&connection);
   return result;
 }
+#if OS_MAC && defined(__OBJC__)
+#include "wheelhouse_jackstay_macos.c"
+#else
+static ft_status wh_js_macos_run(WH_Jackstay *s,bool input,unsigned request){(void)s;(void)input;(void)request;return FT_STATUS_UNSUPPORTED;}
+#endif
 static void wh_js_media_worker(void *arg) {
   WH_Jackstay *s = arg;
   for (;;) {
@@ -663,6 +704,7 @@ static void wh_js_media_worker(void *arg) {
     wh_js_wake(s);
     WH_JS_Link link;
     WH_JS_Media publication = s->kind;
+    if(publication==WH_JS_MEDIA_MACOS){wh_js_macos_run(s,input,request);goto media_finished;}
     ft_status result = wh_js_link_open(
         s->media_address, s->kind == WH_JS_MEDIA_PORTHOLE, &link);
     if (result == FT_STATUS_OK && s->kind == WH_JS_MEDIA_PORTHOLE)
@@ -678,6 +720,7 @@ static void wh_js_media_worker(void *arg) {
     } else {
       wh_js_cpu_run(s, &link, input, request);
     }
+media_finished:
     mutex_take(s->mutex);
     s->state.connecting = false;
     s->state.connected = false;
