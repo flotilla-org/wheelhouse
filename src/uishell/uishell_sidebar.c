@@ -2238,7 +2238,7 @@ struct UIShell_SidebarRow
   B32 project, selected, contains_current;
   B32 disclosure, expanded;       // a disclosure follows the label
   B32 entry, icon_entry;          // the label, and the icon, are the row's buttons
-  B32 clickable;                  // the whole row takes clicks (ghost rows)
+  B32 clickable;                  // the row's remaining area takes pointer input
   B32 reference;                  // ↗: a reference to a row that lives elsewhere
   B32 renaming;                   // the label is a field renaming the row (a local group)
   U64 count;                      // a group header's items, shown while collapsed
@@ -3331,7 +3331,8 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   // A group header (r->project) takes clicks and drags across its width
   // without lighting up as a row does.
   UI_BoxFlags flags = (r->selected ? UI_BoxFlag_DrawBackground : 0)|(r->contains_current ? UI_BoxFlag_DrawBorder : 0)|
-    (r->clickable ? UI_BoxFlag_Clickable|(r->project ? 0 : UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects) : 0);
+    (r->clickable ? (r->project ? UI_BoxFlag_Clickable : UI_BoxFlag_MouseClickable)|
+      (r->project ? 0 : UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects) : 0);
   UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(r->height-4.f, 1)) UI_CornerRadius(3.f) UI_ChildLayoutAxis(Axis2_X)
   {
     // A group header's row is its entry (what its label button was before).
@@ -4600,7 +4601,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             for(U64 c = i+1; project && node.collapsed && c < end && depth[c] > depth[i]; c++) { header_count += nodes[c].parent == i; }
             UIShell_SidebarRow r = {.node = node, .present = 1, .key = node_key, .text = display, .status = status,
               .height = row_height, .indent = project ? 0.3f+0.4f*(depth[i]+1) : indent, .project = project, .selected = node.selected,
-              .clickable = project, .count = header_count,
+              .clickable = 1, .count = header_count,
               .title_max = Max(project ? em*2.f : 1.f, available_width-(chip_count ? chip_layout.chip_width+chip_clearance : 0.f)),
               // A compact ghost's disclosure expands it into its card.
               .contains_current = contains_current, .disclosure = (children && node.toggle != ANDAMENTO_NONE) || ghost,
@@ -4714,11 +4715,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               if(ghost) { uishell_sidebar_ghost_set_expanded(split->owner_cfg, ghost->ghost, 1); rd_request_frame(); }
               else { action = node.toggle; }
             }
-            if(project)
+            // The label and chips take their own input; the row takes the
+            // remaining space, including the gap after a label's disclosure.
             {
               UI_Signal sig = r.row_sig;
               entry_key = sig.box->key;
-              size_t requested = r.renaming ? ANDAMENTO_NONE : uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0, 1);
+              size_t requested = r.renaming ? ANDAMENTO_NONE : uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0, project);
               if(requested != ANDAMENTO_NONE) { action = requested; }
             }
             // Project cards already stop short of the margin.
