@@ -93,3 +93,19 @@ established. No zero-time callbacks are treated as displayed frames.
 Raw fixtures, scripts, rejected runs, CSVs and temporary instrumentation patches
 are in the local diagnostic directory `local/diagnostics/web-performance/display-pacing`.
 Temporary measurement instrumentation is not part of the source change.
+
+
+For a passive native trace, run:
+
+```sh
+./build/wheelhouse --metal_presentation_log:local/presentations.csv
+./build/wheelhouse --legacy_presentation --metal_presentation_log:local/legacy-presentations.csv
+```
+
+The opt-in Metal trace records at most 600 submissions across the process's
+windows: window number, serial, submit uptime, display-link target time, actual
+presentation time and whether acquisition used the display link. Zero presentation
+times mean skipped/unpresented frames and must be excluded from cadence/latency
+calculations. This observes presentation without debugger pauses; it does not
+measure the source page's paint time. Each callback writes a single short record
+on its callback thread. No callback retains renderer state or a window pointer.
