@@ -11,6 +11,7 @@
     B32 wake = window->ready_drawable == 0;
     [window->ready_drawable release];
     window->ready_drawable = [update.drawable retain];
+    window->target_presentation_time = update.targetPresentationTimestamp;
     if(wake) { mac_wm_send_frame_ready_event(); }
   }
 }
@@ -454,6 +455,20 @@ r_init(CmdLine *cmdln)
   r_mtl_state = push_array(arena, R_MTL_State, 1);
   r_mtl_state->arena = arena;
   r_mtl_state->legacy_pacing = cmd_line_has_flag(cmdln, str8_lit("legacy_presentation"));
+  r_mtl_state->presentation_log_fd = -1;
+  String8 presentation_log = cmd_line_string(cmdln, str8_lit("metal_presentation_log"));
+  if(presentation_log.size != 0)
+  {
+    char *path = (char *)push_str8f(arena, "%S", presentation_log).str;
+    int fd = open(path, O_WRONLY|O_CREAT|O_TRUNC|O_APPEND|O_CLOEXEC, 0600);
+    r_mtl_state->presentation_log_fd = fd;
+    if(fd >= 0)
+    {
+      char header[] = "window,serial,submit_seconds,target_seconds,presented_seconds,display_driven\n";
+      (void)write(fd, header, sizeof(header)-1);
+    }
+    else { fprintf(stderr, "Metal presentation trace could not open %s\n", path); }
+  }
   r_mtl_state->device_rw_mutex = rw_mutex_alloc();
   r_mtl_state->device = MTLCreateSystemDefaultDevice();
   if(r_mtl_state->device != 0)
@@ -1478,6 +1493,24 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
         [encoder endEncoding];
       }
         [command_buffer addCompletedHandler:r_mtl_state->command_buffer_completion_handler];
+        // A bounded opt-in trace observes actual presentation without stopping
+        // the UI thread. Capture values, never renderer/window state, in the
+        // asynchronous callback. The descriptor stays open until process exit.
+        int trace_fd = r_mtl_state->presentation_log_fd;
+        if(trace_fd >= 0 && r_mtl_state->presentation_log_serial < 600)
+        {
+          U64 serial = ++r_mtl_state->presentation_log_serial;
+          S64 number = [mac_wm_window_from_handle(window)->ns_window windowNumber];
+          double submitted = CACurrentMediaTime();
+          double target = display_driven ? mtl_window->target_presentation_time : 0;
+          [drawable addPresentedHandler:^(id<MTLDrawable> shown)
+          {
+            char line[192];
+            int count = snprintf(line, sizeof(line), "%lld,%llu,%.9f,%.9f,%.9f,%u\n",
+                                 number, serial, submitted, target, shown.presentedTime, display_driven);
+            if(count > 0) { (void)write(trace_fd, line, Min((U64)count, sizeof(line)-1)); }
+          }];
+        }
         [command_buffer presentDrawable:drawable];
         [command_buffer commit];
         if(display_driven)

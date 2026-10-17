@@ -39,6 +39,7 @@ struct R_MTL_Window
   CAMetalDisplayLink *display_link;
   R_MTL_DisplayDelegate *display_delegate;
   id<CAMetalDrawable> ready_drawable; // one retained opportunity, main thread only
+  CFTimeInterval target_presentation_time;
   B32 frame_requested;
   S32 display_hz;
   id<MTLTexture> stage_color;
@@ -154,6 +155,8 @@ struct R_MTL_State
 {
   Arena *arena;
   B32 legacy_pacing;
+  int presentation_log_fd; // opt-in, process lifetime; bounded to 600 submissions
+  U64 presentation_log_serial;
   RWMutex device_rw_mutex;
   id<MTLDevice> device;
   id<MTLCommandQueue> command_queue;
