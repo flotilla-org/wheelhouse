@@ -564,6 +564,18 @@ internal void uishell_web_note_reached(UIShell_JackstayView *v,WH_JS_State *stat
 
 // A connected View: the producer's frames, its navigation, and input. A web
 // View's navigation row is its address bar, and it has no connection row.
+internal R_Handle uishell_jackstay_cpu_texture(WH_JS_Frame *frame)
+{
+  R_ResourceKind kind=R_ResourceKind_Static;
+#if OS_MAC
+  // The existing shared Metal texture path copies directly into texture
+  // storage, avoiding a staging blit and GUI-thread GPU wait. Each image
+  // still gets a fresh texture, immutable until normal GPU retirement.
+  kind=R_ResourceKind_Dynamic;
+#endif
+  R_Tex2DFormat format=frame->pixel_format==FT_PIXEL_FORMAT_BGRA8_UNORM?R_Tex2DFormat_BGRA8:R_Tex2DFormat_RGBA8;
+  return r_tex2d_alloc(kind,v2s32(frame->width,frame->height),format,frame->pixels);
+}
 internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
 {
   WH_JS_State state;WH_JS_Frame frame={0};
@@ -575,7 +587,7 @@ internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
   if(frame.native)uishell_jackstay_take_import(v,&frame);
   else if(frame.pixels)
   {
-    R_Handle texture=r_tex2d_alloc(R_ResourceKind_Static,v2s32(frame.width,frame.height),R_Tex2DFormat_RGBA8,frame.pixels);
+    R_Handle texture=uishell_jackstay_cpu_texture(&frame);
     if(!r_handle_match(texture,r_handle_zero())) {
       // A CPU frame replaces any shown import.
       uishell_jackstay_retire(v);

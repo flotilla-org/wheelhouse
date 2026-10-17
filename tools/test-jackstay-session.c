@@ -233,9 +233,46 @@ static int d3d11_main(const char *address, const char *mode) {
   return 0;
 }
 #endif
+// Exercise the actual worker/GUI mailbox seam without a renderer or source.
+static void cpu_mailbox(void) {
+  WH_Jackstay s = {0};
+  s.mutex = mutex_alloc();
+  uint8_t padded[] = {1, 2, 3, 255, 0, 0, 0, 0,
+                      4, 5, 6, 255, 0, 0, 0, 0};
+  assert(wh_js_post_pixels(&s, 1, 2, padded, 8, FT_PIXEL_FORMAT_BGRA8_UNORM, 123, 7));
+  uint8_t *owned = s.pixels;
+  WH_JS_State state;
+  WH_JS_Frame first = {0}, second = {0}, empty = {0};
+  wh_js_snapshot(&s, &state, &first, 0);
+  assert(first.pixel_format == FT_PIXEL_FORMAT_BGRA8_UNORM);
+  assert(first.timestamp_ns == 123 && first.cursor == 7);
+  assert(first.pixels == owned); // transfer, not another whole-image copy
+  assert(first.width == 1 && first.height == 2 && first.version == 1);
+  assert(!memcmp(first.pixels, padded, 4));
+  assert(!memcmp(first.pixels + 4, padded + 8, 4));
+  wh_js_snapshot(&s, &state, &empty, 0);
+  assert(!empty.pixels); // cannot take the same allocation twice
+  padded[0] = 9;
+  assert(wh_js_post_pixels(&s, 1, 2, padded, 8, FT_PIXEL_FORMAT_RGBA8_UNORM, 456, 8));
+  wh_js_snapshot(&s, &state, &empty, 2);
+  assert(!empty.pixels); // filtering must leave the pending image owned
+  wh_js_snapshot(&s, &state, &second, 1);
+  assert(second.version == 2 && second.pixel_format == FT_PIXEL_FORMAT_RGBA8_UNORM);
+  assert(first.pixels[0] == 1 && second.pixels[0] == 9);
+  assert(second.timestamp_ns == 456 && second.cursor == 8);
+  free(first.pixels);
+  free(second.pixels);
+  free(s.pixels);
+  mutex_release(s.mutex);
+}
 static int session_main(int argc, char **argv) {
   assert(argc >= 2);
   const char *mode = argc > 2 ? argv[2] : "input";
+  cpu_mailbox();
+  if (!strcmp(mode, "mailbox")) {
+    puts("CPU mailbox: native format, stride, ownership and version filtering passed");
+    return 0;
+  }
 #if OS_WINDOWS
   if (!strncmp(mode, "d3d11", 5))
     return d3d11_main(argv[1], mode);
