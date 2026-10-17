@@ -1,6 +1,22 @@
 // Copyright (c) Epic Games Tools
 // Licensed under the MIT license (https://opensource.org/license/mit/)
 
+@implementation R_MTL_DisplayDelegate
+- (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update
+{
+  // The link and teardown both run on the main run loop. Never build UI from
+  // this callback: AppKit can deliver it during a nested event/tracking loop.
+  if(window != 0 && window->frame_requested && update.drawable != 0)
+  {
+    B32 wake = window->ready_drawable == 0;
+    [window->ready_drawable release];
+    window->ready_drawable = [update.drawable retain];
+    window->target_presentation_time = update.targetPresentationTimestamp;
+    if(wake) { mac_wm_send_frame_ready_event(); }
+  }
+}
+@end
+
 internal R_Handle
 r_mtl_handle_from_window(R_MTL_Window *window)
 {
@@ -438,6 +454,7 @@ r_init(CmdLine *cmdln)
   Arena *arena = arena_alloc();
   r_mtl_state = push_array(arena, R_MTL_State, 1);
   r_mtl_state->arena = arena;
+  r_mtl_state->legacy_pacing = cmd_line_has_flag(cmdln, str8_lit("legacy_presentation"));
   r_mtl_state->device_rw_mutex = rw_mutex_alloc();
   r_mtl_state->device = MTLCreateSystemDefaultDevice();
   if(r_mtl_state->device != 0)
@@ -532,6 +549,19 @@ r_window_equip(WM_Window window)
       r_mtl_window_resize_targets(result);
       [content_view setWantsLayer:YES];
       [content_view setLayer:result->layer];
+      if(@available(macOS 14.0, *))
+      {
+        if(!r_mtl_state->legacy_pacing)
+        {
+          result->display_delegate = [R_MTL_DisplayDelegate new];
+          result->display_delegate->window = result;
+          result->display_link = [[CAMetalDisplayLink alloc] initWithMetalLayer:result->layer];
+          result->display_link.delegate = result->display_delegate;
+          result->display_link.preferredFrameLatency = 1.f;
+          result->display_link.paused = YES;
+          [result->display_link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+        }
+      }
     }
   }
   return r_mtl_handle_from_window(result);
@@ -545,6 +575,14 @@ r_window_unequip(WM_Window window, R_Handle window_equip)
     R_MTL_Window *mtl_window = r_mtl_window_from_handle(window_equip);
     if(mtl_window != 0)
     {
+      [mtl_window->display_link invalidate];
+      [mtl_window->display_link release];
+      if(mtl_window->display_delegate != 0) { mtl_window->display_delegate->window = 0; }
+      [mtl_window->display_delegate release];
+      [mtl_window->ready_drawable release];
+      mtl_window->display_link = 0;
+      mtl_window->display_delegate = 0;
+      mtl_window->ready_drawable = 0;
       MAC_WM_Window *mac_window = mac_wm_window_from_handle(window);
       NSView *content_view = [mac_window->ns_window contentView];
       if([content_view layer] == mtl_window->layer)
@@ -877,6 +915,58 @@ r_buffer_release(R_Handle handle)
   }
 }
 
+// Once a display link is attached, every drawable must come from it, including
+// the first frame. The shell shows new windows while that first frame is pending.
+internal B32
+r_mtl_window_uses_display_link(WM_Window window, R_MTL_Window *mtl_window)
+{
+  return mtl_window != 0 && mtl_window->display_link != 0;
+}
+
+r_hook void
+r_window_request_frame(WM_Window window, R_Handle window_equip, B32 requested)
+{
+  R_MTL_Window *mtl_window = r_mtl_window_from_handle(window_equip);
+  if(mtl_window != 0 && mtl_window->display_link != 0)
+  {
+    MAC_WM_Window *native = mac_wm_window_from_handle(window);
+    // Apply geometry before acquiring the next drawable. Input/resize can have
+    // arrived after an earlier opportunity; discard that obsolete drawable.
+    F32 scale = r_mtl_contents_scale_from_window(window);
+    Vec2S32 size = r_mtl_drawable_size_from_window(window);
+    if(scale != mtl_window->contents_scale || size.x != mtl_window->drawable_size.x || size.y != mtl_window->drawable_size.y)
+    {
+      [mtl_window->ready_drawable release];
+      mtl_window->ready_drawable = 0;
+      r_window_begin_frame(window, window_equip);
+    }
+    S32 hz = (S32)[[native->ns_window screen] maximumFramesPerSecond];
+    if(hz > 0 && hz != mtl_window->display_hz)
+    {
+      mtl_window->display_hz = hz;
+      mtl_window->display_link.preferredFrameRateRange = CAFrameRateRangeMake(hz, hz, hz);
+    }
+    mtl_window->frame_requested = requested;
+    mtl_window->display_link.paused = !requested ||
+                                     ![native->ns_window isVisible] || [native->ns_window isMiniaturized];
+    if(mtl_window->display_link.paused)
+    {
+      [mtl_window->ready_drawable release];
+      mtl_window->ready_drawable = 0;
+    }
+  }
+}
+
+r_hook B32
+r_window_frame_ready(WM_Window window, R_Handle window_equip)
+{
+  R_MTL_Window *mtl_window = r_mtl_window_from_handle(window_equip);
+  MAC_WM_Window *native = mac_wm_window_from_handle(window);
+  if(mtl_window != 0 && mtl_window->display_link != 0 &&
+     (![native->ns_window isVisible] || [native->ns_window isMiniaturized])) { return 0; }
+  return !r_mtl_window_uses_display_link(window, mtl_window) || mtl_window->ready_drawable != 0;
+}
+
 r_hook void
 r_begin_frame(void)
 {
@@ -932,7 +1022,8 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
     R_MTL_Window *mtl_window = r_mtl_window_from_handle(window_equip);
     if(mtl_window != 0 && r_mtl_state->command_queue != 0 && mtl_window->stage_color != 0)
     {
-      id<CAMetalDrawable> drawable = [mtl_window->layer nextDrawable];
+      B32 display_driven = r_mtl_window_uses_display_link(window, mtl_window);
+      id<CAMetalDrawable> drawable = display_driven ? mtl_window->ready_drawable : [mtl_window->layer nextDrawable];
       if(drawable != 0)
       {
         id<MTLCommandBuffer> command_buffer = [r_mtl_state->command_queue commandBuffer];
@@ -1390,6 +1481,11 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
         [command_buffer addCompletedHandler:r_mtl_state->command_buffer_completion_handler];
         [command_buffer presentDrawable:drawable];
         [command_buffer commit];
+        if(display_driven)
+        {
+          [mtl_window->ready_drawable release];
+          mtl_window->ready_drawable = 0;
+        }
         U64 upload_slot_idx = r_mtl_state->upload_buffer_idx % ArrayCount(r_mtl_state->upload_buffer_command_buffers);
         id<MTLCommandBuffer> old_command_buffer = r_mtl_state->upload_buffer_command_buffers[upload_slot_idx];
         if(old_command_buffer != 0)
