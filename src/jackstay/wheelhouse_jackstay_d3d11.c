@@ -208,7 +208,8 @@ static ft_status wh_js_reader_read(WH_Jackstay *s, WH_JS_Reader *r,
                                mapped.RowPitch,
                                source.Format == DXGI_FORMAT_R8G8B8A8_UNORM
                                    ? FT_PIXEL_FORMAT_RGBA8_UNORM
-                                   : FT_PIXEL_FORMAT_BGRA8_UNORM)
+                                   : FT_PIXEL_FORMAT_BGRA8_UNORM,
+                               d->timestamp_ns, d->cursor)
                  ? FT_STATUS_OK
                  : FT_STATUS_ERROR;
   r->context->lpVtbl->Unmap(r->context, (ID3D11Resource *)r->staging, 0);
@@ -235,6 +236,8 @@ static void wh_js_post_import(WH_Jackstay *s, ft_acquired_frame **frame,
   m->fence_id = d->fence_id;
   m->fence_value = d->fence_value;
   m->pixel_format = d->pixel_format;
+  m->timestamp_ns = d->timestamp_ns;
+  m->cursor = d->cursor;
   m->width = d->width;
   m->height = d->height;
   free(s->pixels);

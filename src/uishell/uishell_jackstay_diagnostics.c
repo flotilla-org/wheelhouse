@@ -1,5 +1,41 @@
 #if defined(WHEELHOUSE_JACKSTAY)
 internal B32
+uishell_jackstay_pixel_diagnostics(void)
+{
+  B32 ok=1;
+#if OS_MAC
+  Temp scratch=scratch_begin(0,0);
+  // Exercise the View's real upload and renderer: channel order, owned
+  // texture bytes, and an older image surviving a newer publication.
+  for(U32 bgra=0;bgra<2;bgra++)
+  {
+    U8 pixels[8]={255,0,0,255,0,0,255,255};
+    if(bgra){pixels[0]=0;pixels[2]=255;pixels[4]=255;pixels[6]=0;}
+    WH_JS_Frame frame={.pixels=pixels,.width=2,.height=1,
+      .pixel_format=bgra?FT_PIXEL_FORMAT_BGRA8_UNORM:FT_PIXEL_FORMAT_RGBA8_UNORM};
+    R_Handle first=uishell_jackstay_cpu_texture(&frame);
+    MemorySet(pixels,0,sizeof(pixels));
+    R_Handle second=uishell_jackstay_cpu_texture(&frame);
+    DR_Bucket *bucket=dr_bucket_make();
+    DR_BucketScope(bucket)
+      dr_img(r2f32p(0,0,32,16),r2f32p(0,0,2,1),first,v4f32(1,1,1,1),0,0,0);
+    R_Readback image=r_pass_list_readback(scratch.arena,v2s32(32,16),&bucket->passes);
+    B32 valid=image.format==R_Tex2DFormat_BGRA8 && image.data.size>=32*16*4;
+    if(valid)
+    {
+      U8 *left=image.data.str+(8*32+8)*4,*right=image.data.str+(8*32+24)*4;
+      valid=left[2]>250 && left[0]<5 && right[0]>250 && right[2]<5;
+    }
+    if(!valid)fprintf(stderr,"FAIL Jackstay %s texture upload/readback\n",bgra?"BGRA":"RGBA");
+    ok=valid && ok;
+    r_tex2d_release(first);r_tex2d_release(second);
+  }
+  scratch_end(scratch);
+#endif
+  fprintf(stderr,"Jackstay pixel diagnostics: %s\n",ok?"passed":"FAILED");
+  return ok;
+}
+internal B32
 uishell_jackstay_geometry_diagnostics(void)
 {
   // The same logical page must keep its size across display conventions.
@@ -125,7 +161,7 @@ uishell_jackstay_input_diagnostics(RD_WindowState *ws)
   snprintf(v.page,sizeof(v.page),"https://example.invalid/");
   uishell_jackstay_views=&v;
   ws->ui=test;ui_select_state(test);
-  B32 ok=1;
+  B32 ok=uishell_jackstay_pixel_diagnostics();
   if(producer)
   {
     wh_js_connect(v.session,true);
