@@ -33,6 +33,14 @@ struct UIShell_JackstayView
   U64 readiness_incarnation, readiness_id;
   R_Handle readiness, release;
   U64 release_value;
+  // What the producer reports through affordances: its title for the tab
+  // (live, never saved), and the last presentation sent, which goes hidden
+  // once the View stops being built.
+  char title[256];
+  B32 built;
+  U32 present_width, present_height;
+  F32 present_scale;
+  B32 presented, present_focused;
 };
 global UIShell_JackstayView *uishell_jackstay_views;
 internal void uishell_jackstay_wake(void *unused) { (void)unused; wm_send_wakeup_event(); }
@@ -46,6 +54,13 @@ internal void uishell_jackstay_rekey(RD_ViewAddress from,RD_ViewAddress to)
 {
   UIShell_JackstayView *v=uishell_jackstay_find(from);
   if(v && !uishell_jackstay_find(to))v->view=to;
+}
+// The title a View's producer reports, its page's or else its window's, for
+// its tab (rd_view_label_from_cfg): live, never saved. Empty when none.
+internal String8 uishell_jackstay_title(RD_ViewAddress view)
+{
+  UIShell_JackstayView *v=uishell_jackstay_find(view);
+  return v?str8_cstring(v->title):str8_zero();
 }
 internal void uishell_jackstay_unfocus(UIShell_JackstayView *v)
 {
@@ -238,8 +253,11 @@ internal void uishell_jackstay_tick(B32 before,B32 quit)
   for(UIShell_JackstayView **link=&uishell_jackstay_views;*link;)
   {
     UIShell_JackstayView *v=*link;
-    if(before){v->focus_requested=0;}
+    if(before){v->focus_requested=0;v->built=0;}
     else if(!v->focus_requested)uishell_jackstay_unfocus(v);
+    // A View this frame didn't build is no longer shown.
+    if(!before && v->session && v->presented && !v->built)
+    {wh_js_present(v->session,v->present_width,v->present_height,v->present_scale,0,0);v->presented=0;}
     CFG_Node *cfg=rd_cfg_from_view(v->view);
     if(quit || cfg==&cfg_nil_node || !str8_match(cfg->string,str8_lit("jackstay"),0))
     {
@@ -383,6 +401,24 @@ WH_VIEW_UI_FUNCTION_DEF(jackstay)
         }
         free(frame.pixels);
       }
+      // The producer's title for the tab, and its navigation when it has any.
+      char *title=state.page_title[0]?state.page_title:state.window_title;
+      MemoryCopy(v->title,title,sizeof(v->title));
+      B32 navigation=state.affordances && (state.url[0] || state.navigation_capabilities);
+      if(navigation) UI_PrefHeight(ui_em(1.8f,1)) UI_Row
+      {
+        U32 caps=state.navigation_capabilities;
+        UI_PrefWidth(ui_em(2.2f,1))
+        {
+          if(caps&(1u<<(FT_AFF_NAVIGATION_BACK-1))) UI_Flags(state.can_go_back?0:UI_BoxFlag_Disabled)
+          if(ui_clicked(rd_icon_button(RD_IconKind_LeftArrow,0,str8_lit("###back"))))wh_js_navigate(v->session,FT_AFF_NAVIGATION_BACK,0);
+          if(caps&(1u<<(FT_AFF_NAVIGATION_FORWARD-1))) UI_Flags(state.can_go_forward?0:UI_BoxFlag_Disabled)
+          if(ui_clicked(rd_icon_button(RD_IconKind_RightArrow,0,str8_lit("###forward"))))wh_js_navigate(v->session,FT_AFF_NAVIGATION_FORWARD,0);
+          if(caps&(1u<<(FT_AFF_NAVIGATION_RELOAD-1)))
+          if(ui_clicked(rd_icon_button(RD_IconKind_Refresh,0,str8_lit("###reload"))))wh_js_navigate(v->session,FT_AFF_NAVIGATION_RELOAD,0);
+        }
+        UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s%s",state.url,state.loading?"  (loading)":"");
+      }
       UI_PrefHeight(ui_em(1.8f,1)) UI_Row
       {
         if(state.path_status[0] && state.width)UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s | %s | %ux%u %s",state.media_status,state.input_status,state.width,state.height,state.path_status);
@@ -394,7 +430,7 @@ WH_VIEW_UI_FUNCTION_DEF(jackstay)
           if(ui_clicked(ui_button(str8_lit("Disconnect###disconnect")))){uishell_jackstay_drop_frames(v);wh_js_stop(v->session);v->disconnecting=1;}
         }
       }
-      ui_set_next_pref_height(ui_px(Max(0,dim_2f32(rect).y-ui_top_font_size()*1.8f),1));
+      ui_set_next_pref_height(ui_px(Max(0,dim_2f32(rect).y-ui_top_font_size()*1.8f*(navigation?2:1)),1));
       UI_Key canvas_key=ui_key_from_string(ui_active_seed_key(),str8_lit("jackstay_canvas"));
       // Query panel eligibility without marking every control as focused.
       B32 panel_active=0;
@@ -418,6 +454,20 @@ WH_VIEW_UI_FUNCTION_DEF(jackstay)
       image.x1=image.x0+v->width*scale;image.y1=image.y0+v->height*scale;
       if(focused && v->buttons && !MemoryMatch(&image,&v->image_rect,sizeof(image))) {wh_js_focus(v->session,false);wh_js_focus(v->session,focused);v->buttons=0;}
       if(focused)v->image_rect=image;
+      // How the View shows the producer, which a producer that takes
+      // affordances sizes itself to: the canvas in logical units at the
+      // display's scale. Unchanged values are not sent again.
+      {
+        F32 display=wm_dpi_from_window(window->os)/96.f;
+        if(display<=0)display=1;
+        U32 width=(U32)(dim.x/display),height=(U32)(dim.y/display);
+        if(!v->presented || width!=v->present_width || height!=v->present_height || display!=v->present_scale || focused!=v->present_focused)
+        {
+          wh_js_present(v->session,width,height,display,1,focused);
+          v->present_width=width;v->present_height=height;v->present_scale=display;v->present_focused=focused;v->presented=1;
+        }
+        v->built=1;
+      }
       DR_Bucket *bucket=dr_bucket_make();bucket->content_version=v->version;
       rd_workspace_surface_contribute_version(v->version);
       DR_BucketScope(bucket)
@@ -465,6 +515,7 @@ WH_VIEW_UI_FUNCTION_DEF(jackstay)
 internal B32 uishell_jackstay_pending(void){return 0;}
 internal B32 uishell_jackstay_event(RD_ViewAddress view,WM_Event *event){(void)view;(void)event;return 0;}
 internal void uishell_jackstay_rekey(RD_ViewAddress from,RD_ViewAddress to){(void)from;(void)to;}
+internal String8 uishell_jackstay_title(RD_ViewAddress view){(void)view;return str8_zero();}
 internal void uishell_jackstay_tick(B32 before,B32 quit){(void)before;(void)quit;}
 WH_VIEW_UI_FUNCTION_DEF(jackstay){(void)ctx;ui_label(str8_lit("This build does not include Jackstay."));}
 #endif

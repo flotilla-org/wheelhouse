@@ -18,10 +18,9 @@ env:
   # This also carries #298/#299/#303. Protocol-11 daemons are rejected:
   # coordinate the Cleat fleet and Wheelhouse daily-driver rollout (#97).
   CLEAT_REV: 00c072b207dc943f6c93fe3b6b09abaa257695a6
-  # D3D11 frames in the C ABI (0.10, jackstay#46) and a host's own exchange
-  # before setup (0.11, jackstay#48, which Porthole capture sessions need).
-  # Pinned to jackstay#48's branch commit until it merges; then its squash commit.
-  JACKSTAY_REV: 91156bfac2bc2f6df168c928b445c98e002f4950
+  # Jackstay main: ABI 0.17, the v3 track handshake (jackstay#119) with
+  # affordances as a track.
+  JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
   # Reconcile saved ended flags with fresh lifecycle evidence (wheelhouse#213).
   # Pinned to the Andamento fix branch until its merge. ABI remains 7.
   ANDAMENTO_REV: fa4eb15996c45f1127b3ebd3087bea39fcb03ba1

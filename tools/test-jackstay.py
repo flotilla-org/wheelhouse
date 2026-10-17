@@ -171,6 +171,40 @@ def run(consumer, source, mode, address):
                 process.wait()
 
 
+def build_navigation_producer():
+    """Jackstay's navigation example, which reports and takes affordances."""
+    subprocess.run(
+        ["cargo", "build", "--manifest-path", str(JACKSTAY / "Cargo.toml"),
+         "-p", "jackstay-producer", "--example", "navigation", "--locked",
+         "--target-dir", str(LIB.parent)],
+        check=True,
+    )
+    return LIB / "examples" / ("navigation.exe" if WINDOWS else "navigation")
+
+
+def run_affordances(consumer, producer_path):
+    """Title, URL and history read; navigation and presentation sent."""
+    producer = subprocess.Popen([str(producer_path)], stderr=subprocess.PIPE, text=True)
+    client = None
+    try:
+        # The consumer retries until the example has bound its endpoint.
+        client = subprocess.Popen(
+            [str(consumer), "navigation-producer", "affordances"],
+            stdout=subprocess.PIPE, text=True,
+        )
+        output, _ = client.communicate(timeout=30)
+        print(output, end="")
+        assert client.returncode == 0, ("affordances", client.returncode)
+        _, report = producer.communicate(timeout=15)
+        assert "navigation verb=load url=https://example.test/next" in report, report
+        assert "presentation frame=400x300 scale=2" in report, report
+    finally:
+        for process in (client, producer):
+            if process and process.poll() is None:
+                process.kill()
+                process.wait()
+
+
 def build_d3d11_source():
     """Jackstay's D3D11 reference source, from the library's own build."""
     subprocess.run(
@@ -232,6 +266,7 @@ with tempfile.TemporaryDirectory(prefix="wh-js-", dir=None if WINDOWS else "/tmp
     consumer, source = build(work)
     for mode in ("input", "observe", "refused", "recovery", "missing"):
         run(consumer, source, mode, f"wh-js-{os.getpid()}-{mode}")
+    run_affordances(consumer, build_navigation_producer())
     if not WINDOWS:
         for mode in ("input", "recovery"):
             run(consumer, source, mode, work / mode)

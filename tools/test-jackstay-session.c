@@ -270,6 +270,39 @@ static int session_main(int argc, char **argv) {
     puts("Observation passed");
     return 0;
   }
+  if (!strcmp(mode, "affordances")) {
+    // Jackstay's navigation example reports a window title, a URL and two
+    // history entries, takes navigation verbs, and sizes its frames to the
+    // presentation.
+    wh_js_connect(session, false);
+#define AWAIT(condition)                                                       \
+  for (int i = 0; i < 1500; ++i) {                                             \
+    wh_js_snapshot(session, &state, 0, 0);                                     \
+    if (condition)                                                             \
+      break;                                                                   \
+    sleep_ms(5);                                                               \
+  }                                                                            \
+  assert(condition)
+    AWAIT(state.affordances && state.url[0] && state.window_title[0]);
+    assert(state.ready && !strcmp(state.window_title, "Navigation producer"));
+    assert(!strcmp(state.url, "https://example.test/current"));
+    assert(state.can_go_back && !state.can_go_forward);
+    assert(state.navigation_capabilities & (1u << (FT_AFF_NAVIGATION_LOAD - 1)));
+    wh_js_present(session, 200, 150, 2.0, true, false);
+    AWAIT(state.width == 400 && state.height == 300);
+    assert(wh_js_navigate(session, FT_AFF_NAVIGATION_LOAD, "https://example.test/next"));
+    AWAIT(!strcmp(state.url, "https://example.test/next"));
+    assert(wh_js_navigate(session, FT_AFF_NAVIGATION_BACK, 0));
+    AWAIT(!state.can_go_back && state.can_go_forward);
+    assert(!wh_js_navigate(session, FT_AFF_NAVIGATION_LOAD, ""));
+    assert(!wh_js_navigate(session, 99, 0));
+#undef AWAIT
+    wh_js_stop(session);
+    wait_state(session, 2);
+    assert(wh_js_destroy(&session));
+    puts("Affordances passed");
+    return 0;
+  }
   wh_js_connect(session, true);
   state = wait_state(session, 0);
   assert(state.input.geometry.width > 0);
