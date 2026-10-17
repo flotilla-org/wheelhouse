@@ -46,6 +46,8 @@ struct UIShell_JackstayView
   // page last written as where it got to (`web_url`).
   B32 web;
   WheelhouseConnector *process;
+  B32 retrying; // until the process leaves its failure
+  char log[1024];
   char page[2048];
   char failure[2048];
   U8 address[2048]; U64 address_size; TxtPt address_cursor, address_mark;
@@ -98,37 +100,8 @@ internal String8 uishell_web_start_path(Arena *arena)
 internal String8 uishell_web_page_argument(Arena *arena, String8 url)
 {
   if(!url.size) { return uishell_web_start_path(arena); }
-  String8 scheme = str8_lit("file://");
-  if(!str8_match(str8_prefix(url, scheme.size), scheme, StringMatchFlag_CaseInsensitive)) { return url; }
-  String8 path = str8_skip(url, scheme.size);
-  U8 *out = push_array(arena, U8, path.size);
-  U64 size = 0;
-  for(U64 i = 0; i < path.size; i++)
-  {
-    U8 c = path.str[i];
-    if(c == '%' && i + 2 < path.size && char_is_digit(path.str[i+1], 16) && char_is_digit(path.str[i+2], 16))
-    { c = (U8)u64_from_str8(str8(path.str + i + 1, 2), 16); i += 2; }
-    out[size++] = c;
-  }
-  return str8(out, size);
-}
-
-// `arg` with each `{name}` in `values` (pairs of name and value) replaced.
-internal String8 uishell_web_substitute(Arena *arena, String8 arg, String8 (*values)[2], U64 count)
-{
-  String8List parts = {0};
-  for(U64 i = 0; i < arg.size;)
-  {
-    B32 replaced = 0;
-    for(U64 v = 0; v < count && !replaced; v++)
-    {
-      String8 name = values[v][0];
-      if(str8_match(str8_substr(arg, r1u64(i, i + name.size)), name, 0))
-      { str8_list_push(arena, &parts, values[v][1]); i += name.size; replaced = 1; }
-    }
-    if(!replaced) { str8_list_push(arena, &parts, str8_substr(arg, r1u64(i, i + 1))); i += 1; }
-  }
-  return str8_list_join(arena, &parts, 0);
+  String8 path = wh_path_from_file_url(arena, url);
+  return path.size ? path : url;
 }
 
 internal void uishell_web_fail(UIShell_JackstayView *v, String8 why)
@@ -171,16 +144,10 @@ internal void uishell_web_launch(UIShell_JackstayView *v, String8 url, U32 width
   WheelhouseIngressText argv[32];
   U64 argc = 0;
   argv[argc++] = (WheelhouseIngressText){program.str, program.size};
-  String8 args = handler->args;
-  for(U64 start = 0; start < args.size && argc < ArrayCount(argv);)
-  {
-    U64 end = str8_find_needle(args, start, str8_lit(" "), 0);
-    String8 arg = str8_substr(args, r1u64(start, end));
-    arg = uishell_web_substitute(scratch.arena, arg, values, ArrayCount(values));
-    argv[argc++] = (WheelhouseIngressText){arg.str, arg.size};
-    start = end + 1;
-  }
+  String8List args = wh_handler_arguments(scratch.arena, handler, values, ArrayCount(values));
+  for(String8Node *n = args.first; n && argc < ArrayCount(argv); n = n->next) { argv[argc++] = (WheelhouseIngressText){n->string.str, n->string.size}; }
   String8 log = push_str8f(scratch.arena, "%S/%S.log", str8_chop_last_slash(rd_state->log_path), endpoint);
+  snprintf(v->log, sizeof(v->log), "%.*s", (int)log.size, (char *)log.str);
   U8 error[512] = {0};
   v->process = wheelhouse_connector_start(argv, argc, 0, 0, (WheelhouseIngressText){log.str, log.size},
                                           WHEELHOUSE_CONNECTOR_READY_LINE, wm_send_wakeup_event, error, sizeof(error));
@@ -381,6 +348,17 @@ internal void uishell_web_poll(UIShell_JackstayView *v)
   char text[2048];
   size_t length = 0;
   U32 state = wheelhouse_connector_state(v->process, (uint8_t *)text, sizeof(text), &length);
+  // A retry's restart lands on the supervisor's thread a moment later.
+  if(v->retrying)
+  {
+    if(state == WheelhouseConnectorState_Failed) { return; }
+    v->retrying = 0;
+  }
+  if(state == WheelhouseConnectorState_Ready && length >= sizeof(v->paths[0]))
+  {
+    uishell_web_fail(v, str8_lit("Its endpoint is longer than Wheelhouse takes."));
+    return;
+  }
   if(state == WheelhouseConnectorState_Ready && !v->session && !v->disconnecting)
   {
     // Its first stdout line is the endpoint: a socket path, or a name.
@@ -422,8 +400,9 @@ internal void uishell_jackstay_tick(B32 before,B32 quit)
     }
     // Stopping it ends its run (and what it started) on the supervisor's
     // thread; once nothing runs, releasing it doesn't wait.
+    // Its log goes with it.
     if(v->closing && v->process && !wheelhouse_connector_running(v->process,0))
-    {wheelhouse_connector_stop(v->process);v->process=0;}
+    {wheelhouse_connector_stop(v->process);v->process=0;if(v->log[0])delete_file_at_path(str8_cstring(v->log));}
     if(v->closing && !v->process && (!v->session || wh_js_destroy(&v->session)))
     {
       // Jackstay holds its own reference to the release fence for releases
@@ -501,7 +480,7 @@ internal void uishell_web_address_bar(UIShell_JackstayView *v,char *reached)
   else if(url.size && v->failure[0])
   {
     // Started afresh on the new page.
-    if(v->process){wheelhouse_connector_stop(v->process);v->process=0;}
+    if(v->process){wheelhouse_connector_stop(v->process);v->process=0;if(v->log[0])delete_file_at_path(str8_cstring(v->log));}
     uishell_web_launch(v,url,v->present_width,v->present_height);
   }
   scratch_end(scratch);
@@ -776,7 +755,7 @@ WH_VIEW_UI_FUNCTION_DEF(web)
             if(ui_clicked(ui_button(str8_lit("Retry###web_retry"))))
             {
               v->failure[0]=0;
-              if(v->process)wheelhouse_connector_restart(v->process);
+              if(v->process){wheelhouse_connector_restart(v->process);v->retrying=1;}
               else uishell_web_launch(v,page,v->present_width,v->present_height);
             }
             if(uishell_web_browsable(page) && ui_clicked(ui_button(str8_lit("Open in browser###web_open"))))wm_open_in_browser(page);

@@ -39,6 +39,9 @@ pub const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(100);
 /// How much of a failed run's output its failure keeps.
 const FAILURE_TAIL: usize = 2048;
+/// How long an exit waits for the stdout reader to finish what the run
+/// wrote: its ready line, and the rest for the log.
+const READER_GRACE: Duration = Duration::from_secs(1);
 /// How long a stopped connector has after SIGTERM before SIGKILL. The
 /// guardian waits as long (`GUARDIAN`, 20 × 0.1s).
 #[cfg(unix)]
@@ -263,13 +266,17 @@ fn written_since(log: &mut File, from: u64) -> String {
     String::from_utf8_lossy(&output).into_owned()
 }
 
-/// The last `limit` bytes of `text`, from a character boundary.
+/// The last `limit` bytes of `text`, from the start of a line.
 fn tail(text: &str, limit: usize) -> &str {
-    let mut start = text.len().saturating_sub(limit);
+    if text.len() <= limit {
+        return text;
+    }
+    let mut start = text.len() - limit;
     while !text.is_char_boundary(start) {
         start += 1;
     }
-    &text[start..]
+    let rest = &text[start..];
+    rest.find('\n').map_or(rest, |line| &rest[line + 1..])
 }
 
 /// Reads run `run`'s stdout: its first line makes it ready, unless a later
@@ -365,11 +372,20 @@ impl Connector {
                     set(State::Running);
                     running_.store(true, Ordering::SeqCst);
                     let this = starts_.fetch_add(1, Ordering::SeqCst) + 1;
+                    // Ends (and its sender drops) once the reader has read all.
+                    let mut reader: Option<mpsc::Receiver<()>> = None;
                     if let (Some(stdout), Ok(log)) = (run.stdout.take(), log.try_clone()) {
                         let (starts, state) = (starts_.clone(), state_t.clone());
-                        let _ = thread::Builder::new()
+                        let (done, finished) = mpsc::channel::<()>();
+                        let spawned = thread::Builder::new()
                             .name("wheelhouse-connector-stdout".into())
-                            .spawn(move || read_ready(stdout, log, this, starts, state, wake));
+                            .spawn(move || {
+                                read_ready(stdout, log, this, starts, state, wake);
+                                drop(done);
+                            });
+                        if spawned.is_ok() {
+                            reader = Some(finished);
+                        }
                     }
                     wake();
                     let mut restart = false;
@@ -396,6 +412,12 @@ impl Connector {
                     // Whatever it started goes with it.
                     run.stop();
                     running_.store(false, Ordering::SeqCst);
+                    // A run that wrote its ready line and exited at once was
+                    // ready, and what it wrote belongs in its failure: let the
+                    // reader finish (at EOF, now the group has gone).
+                    if let Some(finished) = reader.take() {
+                        let _ = finished.recv_timeout(READER_GRACE);
+                    }
                     let ready = matches!(*state_t.lock().unwrap(), State::Ready(_));
                     if restart {
                         set(State::Waiting);
@@ -802,6 +824,40 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&runs).unwrap(), "run\nrun\n");
         drop(connector);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_ready_line_written_just_before_exiting_counts() {
+        let dir = std::env::temp_dir().join(format!("wh-connector-quick-{}", std::process::id()));
+        let once = dir.join("once");
+        // The first run prints its endpoint and exits at once; the next stays.
+        let spec = ready_spec(
+            &dir,
+            format!(
+                "if [ -e {o} ]; then echo second; exec sleep 60; else touch {o}; echo first; echo trailing; exit 1; fi",
+                o = once.display()
+            ),
+        );
+        let log = spec.log.clone();
+        let connector = Connector::start(spec, wake).unwrap();
+        wait_for("the second run to be ready", || {
+            connector.state() == State::Ready("second".into())
+        });
+        // Restarted (it had been ready), with what followed its ready line logged.
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            text.contains("trailing") && text.contains("restarting in 1s"),
+            "{text}"
+        );
+        drop(connector);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failure_tail_starts_at_a_line() {
+        assert_eq!(tail("short", 10), "short");
+        assert_eq!(tail("one\ntwo\nthree", 8), "three");
+        assert_eq!(tail("é\nab", 3), "ab");
     }
 
     #[test]

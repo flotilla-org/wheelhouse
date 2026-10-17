@@ -1216,6 +1216,8 @@ internal WH_Renderer *wh_renderer_from_name(String8 name);
 internal WH_Renderer *wh_renderer_from_content(WH_ContentKinds content);
 internal WH_Handler *wh_handler_from_url(String8 url);
 internal String8 wh_url_from_address(Arena *arena, String8 address);
+internal String8 wh_path_from_file_url(Arena *arena, String8 url);
+internal String8List wh_handler_arguments(Arena *arena, WH_Handler *handler, String8 (*values)[2], U64 count);
 internal WH_Renderer *wh_renderer_from_index(U64 idx);
 // The Visualizer for `name` (a Lens or expand rule's name), or
 // &wh_nil_renderer; always nil in headless tests.
