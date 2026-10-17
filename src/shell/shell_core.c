@@ -13092,7 +13092,9 @@ rd_frame(void)
     {
       CFG_Node *window = n->v;
       RD_WindowState *w = rd_window_state_from_cfg(window);
-      if(rd_state->num_frames_requested != 0 || DEV_always_refresh || events.count != 0 || w->frames_alive == 0)
+      Rng2F32 client_rect = wm_client_rect_from_window(w->os);
+      B32 geometry_changed = client_rect.x1 != w->last_window_rect.x1 || client_rect.y1 != w->last_window_rect.y1;
+      if(rd_state->num_frames_requested != 0 || DEV_always_refresh || events.count != 0 || w->frames_alive == 0 || geometry_changed)
       { w->render_pending = 1; }
       r_window_request_frame(w->os, w->r, w->render_pending);
       w->render_ready = w->render_pending && r_window_frame_ready(w->os, w->r);

@@ -29,6 +29,50 @@ uishell_presentation_submit(WM_Window window, R_Handle renderer)
 }
 #endif
 
+// Exercise the nested tracking-loop path without synthesizing OS input. The
+// real AppKit window changes continuously, and the real resize/display clocks
+// must present before the tracking scope ends, not only after mouse release.
+internal B32
+uishell_live_resize_diagnostics(void)
+{
+#if OS_MAC
+  RD_WindowState *ws=rd_state->first_window_state;
+  if(ws == &rd_nil_window_state) { return 0; }
+  MAC_WM_Window *window=mac_wm_window_from_handle(ws->os);
+  R_MTL_Window *renderer=r_mtl_window_from_handle(ws->r);
+  if(!renderer->display_link) { return 0; }
+  if(r_mtl_state->presentation_log_fd<0)
+  { r_mtl_state->presentation_log_fd = open("/dev/null", O_WRONLY); }
+  U64 first=r_mtl_state->presentation_log_serial;
+  U64 depth=rd_state->frame_depth;
+  // AppKit normally enters tracking from inside wm_get_events in rd_frame.
+  rd_state->frame_depth=1;
+  rd_request_frame();
+  ws->render_pending = 1;
+  NSSize original=window->ns_window.contentView.frame.size;
+  __block U32 step=0;
+  NSTimer *timer=[NSTimer timerWithTimeInterval:.001 repeats:YES block:^(NSTimer *t) {
+    step++;
+    [window->ns_window setContentSize:NSMakeSize(700+step%180,500+step%100)];
+  }];
+  [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+  [window->delegate windowWillStartLiveResize:0];
+  U64 end=now_time_us()+750000;
+  while(now_time_us()<end)
+    [[NSRunLoop mainRunLoop] runMode:NSEventTrackingRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+  U64 during=r_mtl_state->presentation_log_serial-first;
+  [timer invalidate];
+  [window->delegate macLiveResizeStopDisplayLink];
+  rd_state->frame_depth=depth;
+  [window->ns_window setContentSize:original];
+  fprintf(stderr,"live resize: %llu submissions during %u geometry changes: %s\n",during,step,during>=3?"passed":"FAILED");
+  return during>=3;
+#else
+  return 0;
+#endif
+}
+
+
 internal B32
 uishell_presentation_diagnostics(void)
 {

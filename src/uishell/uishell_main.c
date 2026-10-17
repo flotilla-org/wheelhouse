@@ -326,6 +326,8 @@ entry_point(CmdLine *cmd_line)
       for(B32 quit = 0; !quit;)
       {
         quit = update();
+        if(cmd_line_has_flag(cmd_line, str8_lit("live_resize_diagnostics")))
+        { abort_self(uishell_live_resize_diagnostics() ? 0 : 1); }
         if(cmd_line_has_flag(cmd_line, str8_lit("presentation_diagnostics")))
         { abort_self(uishell_presentation_diagnostics() ? 0 : 1); }
         if(run_scroll_diagnostics)
@@ -428,6 +430,7 @@ entry_point(CmdLine *cmd_line)
                                     "--shared_ui_diagnostics --shared_ui_fixture_dir:DIR\nRun config, file-picker and Metal blur regressions using an empty temporary directory.\n\n"
                                     "--panel_diagnostics\nRun panel drop and layout checks and exit.\n\n"
                                     "--jackstay_geometry_diagnostics\nCheck logical viewport and backing-pixel sizes and exit.\n\n"
+                                    "--live_resize_diagnostics\nCheck Metal presentation during the native resize tracking loop and exit.\n\n"
                                     "--jackstay_input_diagnostics\nCheck web address focus and global shortcut routing and exit.\n\n"
                                     "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
                                     "--preview_diagnostics\nCheck workspace preview isolation and dimming and exit.\n\n"

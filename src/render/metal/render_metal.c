@@ -4,15 +4,16 @@
 @implementation R_MTL_DisplayDelegate
 - (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update
 {
-  // The link and teardown both run on the main run loop. Never build UI from
-  // this callback: AppKit can deliver it during a nested event/tracking loop.
+  // The link and teardown both run on the main run loop. During AppKit's
+  // resize tracking loop, deliver through the guarded native resize hook;
+  // posting only an outer-loop event leaves the drawable idle until mouse-up.
   if(window != 0 && window->frame_requested && update.drawable != 0)
   {
     B32 wake = window->ready_drawable == 0;
     [window->ready_drawable release];
     window->ready_drawable = [update.drawable retain];
     window->target_presentation_time = update.targetPresentationTimestamp;
-    if(wake) { mac_wm_send_frame_ready_event(); }
+    if(wake) { mac_wm_send_frame_ready_event(window->os_window); }
   }
 }
 @end
@@ -543,6 +544,7 @@ r_window_equip(WM_Window window)
         result = push_array_no_zero(r_mtl_state->arena, R_MTL_Window, 1);
       }
       MemoryZeroStruct(result);
+      result->os_window = window;
 
       MAC_WM_Window *mac_window = mac_wm_window_from_handle(window);
       NSView *content_view = [mac_window->ns_window contentView];
