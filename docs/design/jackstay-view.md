@@ -88,6 +88,9 @@ content focus. The canvas follows the toolkit's active focus key rather than
 reclaiming it every frame. A pointer press outside the image also relinquishes
 content immediately, so later keys in the same event batch reach the shell.
 An address being edited is preserved when the producer reports a new URL.
+Each Jackstay/web View supplies its own keyed default-focus-navigation scope;
+the panel mount does not provide one. Input diagnostics build the real panel
+and View renderer so they also exercise that scope and subsequent focus retention.
 There is no clipboard synchronisation.
 
 Media reconnects after failure; input is only reacquired through an explicit

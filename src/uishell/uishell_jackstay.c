@@ -81,6 +81,19 @@ internal UIShell_JackstayView *uishell_jackstay_find(RD_ViewAddress view)
   for(UIShell_JackstayView *v=uishell_jackstay_views;v;v=v->next) if(rd_view_address_match(v->view,view))return v;
   return 0;
 }
+// A mounted panel does not supply default focus navigation. Each View owns
+// the active key shared by its native controls and embedded content.
+internal UI_Box *uishell_jackstay_view_root(UIShell_JackstayView *v,Rng2F32 rect)
+{
+  ui_set_next_pref_width(ui_px(dim_2f32(rect).x,1));
+  ui_set_next_pref_height(ui_px(dim_2f32(rect).y,1));
+  ui_set_next_child_layout_axis(Axis2_Y);
+  UI_Box *root;
+  UI_Focus(UI_FocusKind_On)
+  {root=ui_build_box_from_key(UI_BoxFlag_DefaultFocusNav|UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder,
+    ui_key_from_stringf(ui_active_seed_key(),"###jackstay_focus_%I64u",rd_view_ui_key(v->view).u64[0]));}
+  return root;
+}
 // A move that changes the View's address keeps its session.
 internal void uishell_jackstay_rekey(RD_ViewAddress from,RD_ViewAddress to)
 {
@@ -728,9 +741,7 @@ WH_VIEW_UI_FUNCTION_DEF(jackstay)
     uishell_jackstay_forget_setting(str8_lit("connect"));
     if(connect && v->sizes[0])uishell_jackstay_open(v,0);
   }
-  ui_set_next_pref_width(ui_px(dim_2f32(rect).x,1));
-  ui_set_next_pref_height(ui_px(dim_2f32(rect).y,1));
-  UI_Column UI_PrefWidth(ui_pct(1,0))
+  UI_Parent(uishell_jackstay_view_root(v,rect)) UI_Focus(UI_FocusKind_On) UI_PrefWidth(ui_pct(1,0))
   {
     if(!v->session)
     {
@@ -780,9 +791,7 @@ WH_VIEW_UI_FUNCTION_DEF(web)
     uishell_web_launch(v,url,viewport.width,viewport.height);
   }
   uishell_web_poll(v);
-  ui_set_next_pref_width(ui_px(dim_2f32(rect).x,1));
-  ui_set_next_pref_height(ui_px(dim_2f32(rect).y,1));
-  UI_Column UI_PrefWidth(ui_pct(1,0))
+  UI_Parent(uishell_jackstay_view_root(v,rect)) UI_Focus(UI_FocusKind_On) UI_PrefWidth(ui_pct(1,0))
   {
     if(v->session)uishell_jackstay_session_ui(v,rect);
     else

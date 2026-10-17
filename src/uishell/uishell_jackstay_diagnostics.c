@@ -52,10 +52,15 @@ uishell_jackstay_input_test_events(RD_WindowState *ws, UIShell_JackstayView *v, 
   ui_set_next_child_layout_axis(Axis2_Y);
   UI_Focus(UI_FocusKind_Root) UI_Focus(UI_FocusKind_On)
   {
-    UI_Box *root=ui_build_box_from_key(UI_BoxFlag_DefaultFocusNav,ui_key_make(7142));
+    UI_Box *root=ui_build_box_from_key(0,ui_key_make(7142));
     UI_Parent(root) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-    UI_PrefWidth(ui_pct(1,0))
-    {uishell_jackstay_session_ui(v,r2f32p(0,0,640,480));}
+    {
+      Temp scratch=scratch_begin(0,0);
+      CFG_Node *owner=rd_cfg_from_panel_owner(uishell_regs()->panel.owner);
+      UIShell_WorkspaceMount mount=uishell_workspace_mount_from_owner_cfg(scratch.arena,cfg_node_from_id(ws->cfg_id),owner);
+      rd_panel_area_ui(scratch,r2f32p(0,0,640,480),r2f32p(0,0,640,480),ws,&mount,1,0,0,0,0);
+      scratch_end(scratch);
+    }
   }
   ui_end_build();
 }
@@ -64,6 +69,24 @@ internal void
 uishell_jackstay_input_test_frame(RD_WindowState *ws, UIShell_JackstayView *v, UI_Event event)
 {
   uishell_jackstay_input_test_events(ws,v,event,(UI_Event){0});
+}
+
+// Resolve controls through their actual keyed ancestors, including View
+// surfaces. The fixture supplies no focus-navigation scope of its own.
+internal UI_Box *
+uishell_jackstay_input_test_box(String8 name)
+{
+  for(UI_Box *box=ui_state->root;!ui_box_is_nil(box);box=ui_box_rec_df_pre(box,ui_state->root).next)
+  for(UI_Box *p=box->parent;!ui_box_is_nil(p);p=p->parent)
+  {if(ui_key_match(box->key,ui_key_from_string(p->key,name)))return box;}
+  return &ui_nil_box;
+}
+internal UI_Box *
+uishell_jackstay_input_test_focus_root(UI_Box *box)
+{
+  for(UI_Box *p=box->parent;!ui_box_is_nil(p);p=p->parent)
+  {if(p->flags & UI_BoxFlag_DefaultFocusNav)return p;}
+  return &ui_nil_box;
 }
 
 internal B32
@@ -86,8 +109,9 @@ uishell_jackstay_input_diagnostics(RD_WindowState *ws)
   CFG_Node *owner=cfg_node_new(rd_state->cfg,cfg_node_from_id(ws->cfg_id),str8_lit("workspace"));
   RD_PanelAddress panel=rd_fixture_leaf(rd_fixture_owner(owner));
   CFG_Node *cfg=rd_fixture_view(panel,str8_lit("web"),str8_zero(),1);
+  rd_panel_focus_mark(panel);
   WH_JS_Endpoint endpoint={"wheelhouse-input-diagnostic","",1,WH_JS_MEDIA_CPU,0,0};
-  UIShell_JackstayView v={.view=rd_view_address_from_cfg(cfg),.web=1,.content_focus=1,.focused=1};
+  UIShell_JackstayView v={.view=rd_view_address_from_cfg(cfg),.web=1,.initialized=1,.content_focus=1,.focused=1};
   v.session=wh_js_create(endpoint,(WH_JS_Gpu){0},0,0);
   if(!v.session) {ui_state_release(test);scratch_end(scratch);return 0;}
   snprintf(v.page,sizeof(v.page),"https://example.invalid/");
@@ -98,15 +122,15 @@ uishell_jackstay_input_diagnostics(RD_WindowState *ws)
   UIShell_RegsScope(.window=ws->cfg_id,.panel=panel,.view=v.view,.tab=v.view)
   {
     for(U32 frame=0;frame<3;frame++)uishell_jackstay_input_test_frame(ws,&v,(UI_Event){0});
-    UI_Key root_key=ui_key_make(7142);
-    UI_Key address_key=ui_key_from_string(root_key,str8_lit("###address"));
-    UI_Box *address=ui_box_from_key(address_key);
+    UI_Box *address=uishell_jackstay_input_test_box(str8_lit("###address"));
+    UI_Key address_key=address->key;
     JSInputCheck(!ui_box_is_nil(address));
     Vec2F32 point=center_2f32(address->rect);
     uishell_jackstay_input_test_frame(ws,&v,(UI_Event){.kind=UI_EventKind_Press,.key=WM_Key_LeftMouseButton,.pos=point});
     uishell_jackstay_input_test_frame(ws,&v,(UI_Event){.kind=UI_EventKind_Release,.key=WM_Key_LeftMouseButton,.pos=point});
     JSInputCheck(!v.content_focus);
-    UI_Box *root=ui_box_from_key(root_key);
+    UI_Box *root=uishell_jackstay_input_test_focus_root(address);
+    JSInputCheck(!ui_box_is_nil(root));
     JSInputCheck(ui_key_match(root->default_nav_focus_active_key,address_key));
     // Ordinary typing must reach the real text-edit consumer after page focus.
     WM_Event text={.kind=WM_EventKind_Text,.window=ws->os,.character='x',.source_key=WM_Key_X};
@@ -118,14 +142,18 @@ uishell_jackstay_input_diagnostics(RD_WindowState *ws)
     JSInputCheck(v.address_size==1 && v.address[0]=='x');
     // Explicitly clicking content transfers ownership back without waiting for
     // the text-field marker to expire on a later frame.
-    UI_Key canvas_key=ui_key_from_string(root_key,str8_lit("jackstay_canvas"));
-    UI_Box *canvas=ui_box_from_key(canvas_key);
+    UI_Box *canvas=uishell_jackstay_input_test_box(str8_lit("jackstay_canvas"));
+    UI_Key canvas_key=canvas->key;
     Vec2F32 content_point=center_2f32(canvas->rect);
     uishell_jackstay_input_test_frame(ws,&v,(UI_Event){.kind=UI_EventKind_Press,.key=WM_Key_LeftMouseButton,.pos=content_point});
     uishell_jackstay_input_test_frame(ws,&v,(UI_Event){.kind=UI_EventKind_Release,.key=WM_Key_LeftMouseButton,.pos=content_point});
-    root=ui_box_from_key(root_key);
+    root=uishell_jackstay_input_test_focus_root(ui_box_from_key(canvas_key));
     JSInputCheck(v.content_focus && !ui_text_field_focus_in(test));
     JSInputCheck(ui_key_match(root->default_nav_focus_active_key,canvas_key));
+    canvas=ui_box_from_key(canvas_key);
+    JSInputCheck((canvas->flags & UI_BoxFlag_FocusActive) && !(canvas->flags & UI_BoxFlag_FocusActiveDisabled));
+    uishell_jackstay_input_test_frame(ws,&v,(UI_Event){0});
+    JSInputCheck(v.focused==wm_window_is_focused(ws->os));
     // A click and typing can arrive together, before a field has a build in
     // which it is already active. That first character must not disappear.
     uishell_jackstay_input_test_events(ws,&v,
@@ -192,7 +220,7 @@ uishell_jackstay_input_diagnostics(RD_WindowState *ws)
     JSInputCheck(!v.focused && !v.content_focus && rd_state->cmds[0].count==before);
     // A click outside the image relinquishes content before later typing in
     // the same WM event batch, before a UI build can update focus.
-    v.focused=v.content_focus=1;v.image_rect=r2f32p(0,40,640,480);
+    v.focused=v.content_focus=1;v.image_rect=ui_box_from_key(canvas_key)->rect;
     WM_Event outside={.kind=WM_EventKind_Press,.window=ws->os,.key=WM_Key_LeftMouseButton,.pos=point};
     JSInputCheck(!uishell_route_content_activation(ws,&outside,0));
     JSInputCheck(!v.focused && !v.content_focus);
