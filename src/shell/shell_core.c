@@ -11873,14 +11873,16 @@ uishell_route_edit_activation(Arena *arena, RD_WindowState *ws, WM_Event *event,
   {
     if(event->kind == WM_EventKind_Release)
     {
-      B32 edit_release = (ws->edit_chord_held[event->key] == UIShell_ConsumedChord_Edit);
+      B32 consume_release = (ws->edit_chord_held[event->key] == UIShell_ConsumedChord_Edit ||
+                          ws->edit_chord_held[event->key] == UIShell_ConsumedChord_GlobalCommand);
       ws->edit_chord_held[event->key] = UIShell_ConsumedChord_None;
-      // Shell-command key-up still belongs to downstream consumers (including
+      // Ordinary command key-up still belongs to downstream consumers (including
       // terminal paging ownership and menu-bar modifiers), as before extraction.
-      if(edit_release) { return 1; }
+      if(consume_release) { return 1; }
     }
     // Ordinary shell shortcuts retain their previous autorepeat policy.
-    if(ws->edit_chord_held[event->key] == UIShell_ConsumedChord_Edit) { return 1; }
+    if(ws->edit_chord_held[event->key] == UIShell_ConsumedChord_Edit ||
+       ws->edit_chord_held[event->key] == UIShell_ConsumedChord_GlobalCommand) { return 1; }
   }
   if(event->kind == WM_EventKind_Text && event->source_key > WM_Key_Null &&
      event->source_key < WM_Key_COUNT && ws->edit_chord_held[event->source_key]) { return 1; }
@@ -11952,6 +11954,34 @@ uishell_route_command_activation(Arena *arena, RD_WindowState *ws, WM_Event *eve
     rd_request_frame();
   }
   return take;
+}
+
+// Content routing is shared by the event loop and input diagnostics.
+internal B32
+uishell_route_content_activation(RD_WindowState *ws, WM_Event *event, B32 allow_text)
+{
+  if(!ws || ws == &rd_nil_window_state ||
+     (!wm_window_match(event->window, wm_window_zero()) && !wm_window_match(event->window, ws->os)) ||
+     rd_state->popup_active || ws->query_is_active || ws->menu_bar_focused || ws->ui->hover_card_focus) { return 0; }
+  if(uishell_jackstay_release_event(uishell_regs()->view,event)) { return 1; }
+  if(event->kind == WM_EventKind_Press && event->key > WM_Key_Null && event->key < WM_Key_COUNT)
+  {
+    Temp scratch = scratch_begin(0,0);
+    String8 command = cfg_command_from_menu_or_binding(scratch.arena,rd_state->key_map,event);
+    UIShell_AppCmdInfo info = uishell_app_cmd_info_from_string(command);
+    B32 take = (info.flags & UIShell_CmdFlag_GlobalShortcut) &&
+      uishell_route_command_activation(scratch.arena,ws,event,0,allow_text);
+    scratch_end(scratch);
+    if(take)
+    {
+      // This whole gesture belongs to the shell, even if focus changes before
+      // key-up or the platform emits associated text later in the batch.
+      ws->edit_chord_held[event->key] = UIShell_ConsumedChord_GlobalCommand;
+      return 1;
+    }
+  }
+  if(ui_text_field_focus_in(ws->ui)) { return 0; }
+  return uishell_jackstay_event(uishell_regs()->view,event);
 }
 
 // Closes a window state whose config is gone or untouched, with its sidebar
@@ -12364,6 +12394,8 @@ rd_frame(void)
                                              event->kind == WM_EventKind_Release ||
                                              event->kind == WM_EventKind_Text));
       B32 take = card_took_event;
+      // Capture release is reserved ahead of configurable editing bindings.
+      if(!take) { take = uishell_jackstay_release_event(uishell_regs()->view,event); }
       B32 terminal_edit_owner = terminal_input_is_focused ||
         (ws && ws != &rd_nil_window_state && ws->ui && ws->ui->edit_owner_terminal &&
          !rd_state->popup_active && !ws->query_is_active);
@@ -12372,9 +12404,7 @@ rd_frame(void)
       if(!take) { take = uishell_terminal_page_binding_event(ws, event,
         terminal_input_is_focused ? uishell_regs()->view : rd_nil_view_address, &repeat_page_command); }
       if(repeat_page_command.size) { uishell_cmd("run_command", .cmd_name = repeat_page_command); }
-      if(!take && ws != 0 && ws != &rd_nil_window_state &&
-         !rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused && !ws->ui->hover_card_focus)
-        take = uishell_jackstay_event(uishell_regs()->view, event);
+      if(!take) { take = uishell_route_content_activation(ws, event, allow_text_hotkeys); }
       
       //- rjf: try drag/drop drop-kickoff
       if(rd_drag_is_active() && event->kind == WM_EventKind_Release && event->key == WM_Key_LeftMouseButton)

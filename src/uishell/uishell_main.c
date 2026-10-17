@@ -107,8 +107,8 @@
 #include "uishell/uishell_terminal_glyph.c"
 #include "uishell/uishell_views.c"
 #include "uishell/uishell_jackstay.c"
-#include "uishell/uishell_jackstay_diagnostics.c"
 #include "shell/shell_inc.c"
+#include "uishell/uishell_jackstay_diagnostics.c"
 #include "uishell/uishell_dashboard.c"
 #include "uishell/uishell_subscriptions.c"
 #include "uishell/uishell_logical_state.c"
@@ -299,6 +299,10 @@ entry_point(CmdLine *cmd_line)
       }
       if(cmd_line_has_flag(cmd_line, str8_lit("hosting_diagnostics")))
       { rd_state->frame_diagnostic = uishell_hosting_diagnostics; }
+#if defined(WHEELHOUSE_JACKSTAY)
+      if(cmd_line_has_flag(cmd_line, str8_lit("jackstay_input_diagnostics")))
+      { rd_state->frame_diagnostic = uishell_jackstay_input_diagnostics; }
+#endif
       if(cmd_line_has_flag(cmd_line, str8_lit("panel_diagnostics")))
       { rd_state->frame_diagnostic = uishell_panel_diagnostics; }
       if(cmd_line_has_flag(cmd_line, str8_lit("preview_diagnostics")))
@@ -421,6 +425,7 @@ entry_point(CmdLine *cmd_line)
                                     "--shared_ui_diagnostics --shared_ui_fixture_dir:DIR\nRun config, file-picker and Metal blur regressions using an empty temporary directory.\n\n"
                                     "--panel_diagnostics\nRun panel drop and layout checks and exit.\n\n"
                                     "--jackstay_geometry_diagnostics\nCheck logical viewport and backing-pixel sizes and exit.\n\n"
+                                    "--jackstay_input_diagnostics\nCheck web address focus and global shortcut routing and exit.\n\n"
                                     "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
                                     "--preview_diagnostics\nCheck workspace preview isolation and dimming and exit.\n\n"
                                     "--overview_benchmark:DIR --overview_benchmark_count:1|16|48\nRun isolated macOS overview replay (use tools/benchmark-overview.py).\n\n"

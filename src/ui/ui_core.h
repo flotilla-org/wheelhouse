@@ -913,6 +913,7 @@ internal B32 ui_key_release(WM_Modifiers mods, WM_Key key);
 internal B32 ui_text(U32 character);
 internal B32 ui_slot_press(UI_EventActionSlot slot);
 internal void ui_take_text_field_focus(void);
+internal void ui_release_text_field_focus(void);
 internal B32 ui_text_field_focus(void);
 internal B32 ui_text_field_focus_in(UI_State *state);
 

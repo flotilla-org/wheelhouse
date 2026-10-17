@@ -35,4 +35,179 @@ uishell_jackstay_geometry_diagnostics(void)
   fprintf(stderr,"Jackstay geometry diagnostics: %s\n",ok?"passed":"FAILED");
   return ok;
 }
+// Build the actual address bar and canvas with toolkit events, without sending
+// OS input or starting a web process. Only the external producer is absent.
+internal void
+uishell_jackstay_input_test_events(RD_WindowState *ws, UIShell_JackstayView *v, UI_Event event, UI_Event trailing)
+{
+  UI_IconInfo icons=ws->ui->icon_info;
+  UI_AnimationInfo animation={0};
+  UI_EventNode node={.v=event},tail={.v=trailing};
+  UI_EventList events={0};
+  if(event.kind) {events.first=events.last=&node;events.count=1;}
+  if(trailing.kind) {node.next=&tail;tail.prev=&node;events.last=&tail;events.count++;}
+  ui_begin_build(ws->os,&events,&icons,ws->theme,&animation,1.f/60,1.f/60);
+  ui_state->mouse=event.kind?event.pos:v2f32(-100,-100);
+  ui_set_next_rect(r2f32p(0,0,640,480));
+  ui_set_next_child_layout_axis(Axis2_Y);
+  UI_Focus(UI_FocusKind_Root) UI_Focus(UI_FocusKind_On)
+  {
+    UI_Box *root=ui_build_box_from_key(UI_BoxFlag_DefaultFocusNav,ui_key_make(7142));
+    UI_Parent(root) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+    UI_PrefWidth(ui_pct(1,0))
+    {uishell_jackstay_session_ui(v,r2f32p(0,0,640,480));}
+  }
+  ui_end_build();
+}
+
+internal void
+uishell_jackstay_input_test_frame(RD_WindowState *ws, UIShell_JackstayView *v, UI_Event event)
+{
+  uishell_jackstay_input_test_events(ws,v,event,(UI_Event){0});
+}
+
+internal B32
+uishell_jackstay_input_diagnostics(RD_WindowState *ws)
+{
+  Temp scratch=scratch_begin(0,0);
+  UI_State *saved_ui=ui_state,*saved_window_ui=ws->ui,*test=ui_state_alloc();
+  UIShell_JackstayView *saved_views=uishell_jackstay_views;
+  UIShell_CmdList saved_cmds=rd_state->cmds[0];
+  CFG_KeyMap *saved_keys=rd_state->key_map;
+  // An empty-profile first frame precedes the default-bindings command.
+  // Use explicit records through the production config/key-map reader.
+  CFG_Node *bindings=cfg_node_new(rd_state->cfg,cfg_node_child_from_string(cfg_node_root(),str8_lit("user")),str8_lit("keybindings"));
+  CFG_Node *palette_binding=cfg_node_new(rd_state->cfg,bindings,str8_zero());
+  cfg_node_new(rd_state->cfg,palette_binding,str8_lit("open_palette"));
+  CFG_Node *palette_key=cfg_node_new(rd_state->cfg,palette_binding,str8_lit("p"));
+  cfg_node_new(rd_state->cfg,palette_binding,str8_lit("accel"));
+  cfg_node_new(rd_state->cfg,palette_binding,str8_lit("shift"));
+  rd_state->key_map=cfg_key_map_from_cfg(scratch.arena);
+  CFG_Node *owner=cfg_node_new(rd_state->cfg,cfg_node_from_id(ws->cfg_id),str8_lit("workspace"));
+  RD_PanelAddress panel=rd_fixture_leaf(rd_fixture_owner(owner));
+  CFG_Node *cfg=rd_fixture_view(panel,str8_lit("web"),str8_zero(),1);
+  WH_JS_Endpoint endpoint={"wheelhouse-input-diagnostic","",1,WH_JS_MEDIA_CPU,0,0};
+  UIShell_JackstayView v={.view=rd_view_address_from_cfg(cfg),.web=1,.content_focus=1,.focused=1};
+  v.session=wh_js_create(endpoint,(WH_JS_Gpu){0},0,0);
+  if(!v.session) {ui_state_release(test);scratch_end(scratch);return 0;}
+  snprintf(v.page,sizeof(v.page),"https://example.invalid/");
+  uishell_jackstay_views=&v;
+  ws->ui=test;ui_select_state(test);
+  B32 ok=1;
+#define JSInputCheck(x) do{if(!(x)){fprintf(stderr,"FAIL Jackstay input line %d: %s\n",__LINE__,#x);ok=0;}}while(0)
+  UIShell_RegsScope(.window=ws->cfg_id,.panel=panel,.view=v.view,.tab=v.view)
+  {
+    for(U32 frame=0;frame<3;frame++)uishell_jackstay_input_test_frame(ws,&v,(UI_Event){0});
+    UI_Key root_key=ui_key_make(7142);
+    UI_Key address_key=ui_key_from_string(root_key,str8_lit("###address"));
+    UI_Box *address=ui_box_from_key(address_key);
+    JSInputCheck(!ui_box_is_nil(address));
+    Vec2F32 point=center_2f32(address->rect);
+    uishell_jackstay_input_test_frame(ws,&v,(UI_Event){.kind=UI_EventKind_Press,.key=WM_Key_LeftMouseButton,.pos=point});
+    uishell_jackstay_input_test_frame(ws,&v,(UI_Event){.kind=UI_EventKind_Release,.key=WM_Key_LeftMouseButton,.pos=point});
+    JSInputCheck(!v.content_focus);
+    UI_Box *root=ui_box_from_key(root_key);
+    JSInputCheck(ui_key_match(root->default_nav_focus_active_key,address_key));
+    // Ordinary typing must reach the real text-edit consumer after page focus.
+    WM_Event text={.kind=WM_EventKind_Text,.window=ws->os,.character='x',.source_key=WM_Key_X};
+    JSInputCheck(!uishell_route_content_activation(ws,&text,0));
+    uishell_jackstay_input_test_frame(ws,&v,(UI_Event){.kind=UI_EventKind_Text,.string=str8_lit("x")});
+    JSInputCheck(v.address_size==1 && v.address[0]=='x');
+    snprintf(v.page,sizeof(v.page),"https://example.invalid/new");
+    uishell_jackstay_input_test_frame(ws,&v,(UI_Event){0});
+    JSInputCheck(v.address_size==1 && v.address[0]=='x');
+    // Explicitly clicking content transfers ownership back without waiting for
+    // the text-field marker to expire on a later frame.
+    UI_Key canvas_key=ui_key_from_string(root_key,str8_lit("jackstay_canvas"));
+    UI_Box *canvas=ui_box_from_key(canvas_key);
+    Vec2F32 content_point=center_2f32(canvas->rect);
+    uishell_jackstay_input_test_frame(ws,&v,(UI_Event){.kind=UI_EventKind_Press,.key=WM_Key_LeftMouseButton,.pos=content_point});
+    uishell_jackstay_input_test_frame(ws,&v,(UI_Event){.kind=UI_EventKind_Release,.key=WM_Key_LeftMouseButton,.pos=content_point});
+    root=ui_box_from_key(root_key);
+    JSInputCheck(v.content_focus && !ui_text_field_focus_in(test));
+    JSInputCheck(ui_key_match(root->default_nav_focus_active_key,canvas_key));
+    // A click and typing can arrive together, before a field has a build in
+    // which it is already active. That first character must not disappear.
+    uishell_jackstay_input_test_events(ws,&v,
+      (UI_Event){.kind=UI_EventKind_Press,.key=WM_Key_LeftMouseButton,.pos=point},
+      (UI_Event){.kind=UI_EventKind_Text,.string=str8_lit("y")});
+    JSInputCheck(v.address_size==1 && v.address[0]=='y');
+    uishell_jackstay_input_test_frame(ws,&v,(UI_Event){.kind=UI_EventKind_Release,.key=WM_Key_LeftMouseButton,.pos=point});
+    ui_release_text_field_focus();
+    // The palette must win before raw embedded input, using the real key map.
+    v.focused=v.content_focus=1;
+    WM_Event palette={.kind=WM_EventKind_Press,.window=ws->os,.key=WM_Key_P,.modifiers=WM_Modifier_Accel|WM_Modifier_Shift};
+    String8 binding=cfg_command_from_menu_or_binding(scratch.arena,rd_state->key_map,&palette);
+    JSInputCheck(str8_match(binding,str8_lit("open_palette"),0));
+    JSInputCheck(uishell_app_cmd_info_from_string(binding).flags & UIShell_CmdFlag_GlobalShortcut);
+    JSInputCheck(!rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused && !test->hover_card_focus);
+    U64 before=rd_state->cmds[0].count;
+    JSInputCheck(uishell_route_content_activation(ws,&palette,0));
+    JSInputCheck(rd_state->cmds[0].count==before+1);
+    JSInputCheck(rd_state->cmds[0].last && str8_match(rd_state->cmds[0].last->cmd.regs->cmd_name,str8_lit("open_palette"),0));
+    // Repeats, physical text, and release belong to that activation even if
+    // focus has changed since key-down. Unrelated text remains available.
+    WM_Event correlated={.kind=WM_EventKind_Text,.window=ws->os,.character='P',.source_key=WM_Key_P};
+    JSInputCheck(uishell_route_edit_activation(scratch.arena,ws,&correlated,0));
+    JSInputCheck(uishell_route_edit_activation(scratch.arena,ws,&palette,0));
+    WM_Event release={.kind=WM_EventKind_Release,.window=ws->os,.key=WM_Key_P};
+    JSInputCheck(uishell_route_edit_activation(scratch.arena,ws,&release,0));
+    JSInputCheck(!uishell_route_edit_activation(scratch.arena,ws,&text,0));
+    // A rebound palette shortcut has the same ownership; ordinary content
+    // keys and non-global bindings are still left to the producer.
+    cfg_node_release(rd_state->cfg,palette_key);
+    palette_key=cfg_node_new(rd_state->cfg,palette_binding,str8_lit("k"));
+    rd_state->key_map=cfg_key_map_from_cfg(scratch.arena);
+    WM_Event rebound=palette;rebound.key=WM_Key_K;
+    before=rd_state->cmds[0].count;
+    JSInputCheck(uishell_route_content_activation(ws,&rebound,0));
+    JSInputCheck(rd_state->cmds[0].count==before+1);
+    WM_Event lost={.kind=WM_EventKind_WindowLoseFocus,.window=ws->os};
+    uishell_route_edit_activation(scratch.arena,ws,&lost,0);
+    JSInputCheck(!ws->edit_chord_held[WM_Key_K]);
+    WM_Event ordinary={.kind=WM_EventKind_Press,.window=ws->os,.key=WM_Key_A};
+    before=rd_state->cmds[0].count;
+    JSInputCheck(uishell_route_content_activation(ws,&ordinary,0));
+    JSInputCheck(rd_state->cmds[0].count==before);
+    CFG_Node *local_binding=cfg_node_new(rd_state->cfg,bindings,str8_zero());
+    cfg_node_new(rd_state->cfg,local_binding,str8_lit("open_url"));
+    cfg_node_new(rd_state->cfg,local_binding,str8_lit("r"));
+    cfg_node_new(rd_state->cfg,local_binding,str8_lit("accel"));
+    rd_state->key_map=cfg_key_map_from_cfg(scratch.arena);
+    WM_Event local=ordinary;local.key=WM_Key_R;local.modifiers=WM_Modifier_Accel;
+    JSInputCheck(uishell_route_content_activation(ws,&local,0));
+    JSInputCheck(rd_state->cmds[0].count==before);
+    WM_Event other_window=palette;other_window.window=(WM_Window){~0ull};
+    JSInputCheck(!uishell_route_content_activation(ws,&other_window,0));
+    // Release capture stays available even if a global command is rebound
+    // onto the reserved chord.
+    cfg_node_release(rd_state->cfg,palette_key);
+    cfg_node_new(rd_state->cfg,palette_binding,wm_key_cfg_name_table[WM_Key_Esc]);
+    cfg_node_new(rd_state->cfg,palette_binding,str8_lit("ctrl"));
+    WM_Event escape={.kind=WM_EventKind_Press,.window=ws->os,.key=WM_Key_Esc,
+      .modifiers=WM_Modifier_Ctrl|WM_Modifier_Shift|WM_Modifier_Accel};
+    rd_state->key_map=cfg_key_map_from_cfg(scratch.arena);
+    JSInputCheck(str8_match(cfg_command_from_menu_or_binding(scratch.arena,rd_state->key_map,&escape),str8_lit("open_palette"),0));
+    JSInputCheck(uishell_route_content_activation(ws,&escape,0));
+    JSInputCheck(!v.focused && !v.content_focus && rd_state->cmds[0].count==before);
+    // A click outside the image relinquishes content before later typing in
+    // the same WM event batch, before a UI build can update focus.
+    v.focused=v.content_focus=1;v.image_rect=r2f32p(0,40,640,480);
+    WM_Event outside={.kind=WM_EventKind_Press,.window=ws->os,.key=WM_Key_LeftMouseButton,.pos=point};
+    JSInputCheck(!uishell_route_content_activation(ws,&outside,0));
+    JSInputCheck(!v.focused && !v.content_focus);
+    JSInputCheck(!uishell_route_content_activation(ws,&text,0));
+  }
+#undef JSInputCheck
+  wh_js_stop(v.session);
+  for(U32 i=0;i<400;i++)
+  {WH_JS_State state;wh_js_snapshot(v.session,&state,0,0);if(state.stopped)break;sleep_ms(5);}
+  wh_js_destroy(&v.session);
+  uishell_jackstay_views=saved_views;ws->ui=saved_window_ui;ui_select_state(saved_ui);
+  rd_state->cmds[0]=saved_cmds;
+  rd_state->key_map=saved_keys;cfg_node_release(rd_state->cfg,bindings);
+  cfg_node_release(rd_state->cfg,owner);ui_state_release(test);scratch_end(scratch);
+  fprintf(stderr,"Jackstay input diagnostics: %s\n",ok?"passed":"FAILED");
+  return ok;
+}
 #endif

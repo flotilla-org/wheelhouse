@@ -208,16 +208,26 @@ internal U32 uishell_jackstay_modifiers(WM_Modifiers flags)
   return ((flags&WM_Modifier_Ctrl)?FT_INPUT_CONTROL:0)|((flags&WM_Modifier_Shift)?FT_INPUT_SHIFT:0)|
          ((flags&WM_Modifier_Alt)?FT_INPUT_ALT:0)|((flags&WM_Modifier_Super)?FT_INPUT_SUPER:0);
 }
+internal B32 uishell_jackstay_release_event(RD_ViewAddress view,WM_Event *event)
+{
+  UIShell_JackstayView *v=uishell_jackstay_find(view);
+  if(!v || !v->session || !v->focused)return 0;
+  if(event->kind==WM_EventKind_Press && event->key==WM_Key_Esc &&
+     (event->modifiers&(WM_Modifier_Ctrl|WM_Modifier_Shift))==(WM_Modifier_Ctrl|WM_Modifier_Shift))
+  { v->content_focus=0;uishell_jackstay_unfocus(v);return 1; }
+  return 0;
+}
 internal B32 uishell_jackstay_event(RD_ViewAddress view,WM_Event *event)
 {
   UIShell_JackstayView *v=uishell_jackstay_find(view);
   if(!v || !v->session || !v->focused)return 0;
   if(event->kind==WM_EventKind_WindowLoseFocus) {uishell_jackstay_unfocus(v);return 0;}
-  if(event->kind==WM_EventKind_Press && event->key==WM_Key_Esc &&
-     (event->modifiers&(WM_Modifier_Ctrl|WM_Modifier_Shift))==(WM_Modifier_Ctrl|WM_Modifier_Shift))
-  { v->content_focus=0;uishell_jackstay_unfocus(v);return 1; }
+  if(uishell_jackstay_release_event(view,event))return 1;
+  B32 mouse=event->key==WM_Key_LeftMouseButton || event->key==WM_Key_RightMouseButton || event->key==WM_Key_MiddleMouseButton;
+  if(event->kind==WM_EventKind_Press && mouse && !contains_2f32(v->image_rect,event->pos))
+  { v->content_focus=0;uishell_jackstay_unfocus(v);return 0; }
   if(event->kind!=WM_EventKind_Press && event->kind!=WM_EventKind_Release && event->kind!=WM_EventKind_Text)return 0;
-  if(event->key==WM_Key_LeftMouseButton || event->key==WM_Key_RightMouseButton || event->key==WM_Key_MiddleMouseButton)return 0;
+  if(mouse)return 0;
   WH_JS_State state;wh_js_snapshot(v->session,&state,0,0);
   if(v->epoch!=state.input_epoch) {MemoryZeroArray(v->keys);v->buttons=0;v->epoch=state.input_epoch;}
   ft_input_event input={.modifiers=uishell_jackstay_modifiers(event->modifiers)};
@@ -484,7 +494,9 @@ internal void uishell_jackstay_open(UIShell_JackstayView *v,B32 control)
 // relaunches with when it failed.
 internal void uishell_web_address_bar(UIShell_JackstayView *v,char *reached)
 {
-  if(strcmp(v->address_url,reached))
+  UI_Key key=ui_key_from_string(ui_active_seed_key(),str8_lit("###address"));
+  B32 active=ui_is_key_auto_focus_active(key);
+  if(!active && strcmp(v->address_url,reached))
   {
     snprintf(v->address_url,sizeof(v->address_url),"%s",reached);
     v->address_size=Min(strlen(reached),sizeof(v->address)-1);
@@ -493,6 +505,23 @@ internal void uishell_web_address_bar(UIShell_JackstayView *v,char *reached)
   }
   UI_Signal signal=ui_line_edit(&v->address_cursor,&v->address_mark,v->address,sizeof(v->address)-1,&v->address_size,
                                 str8(v->address,v->address_size),str8_lit("###address"));
+  if(ui_pressed(signal))
+  {
+    v->content_focus=0;uishell_jackstay_unfocus(v);
+    uishell_cmd("focus_panel");
+    // Address fields begin editing on one click; preserve selection gestures
+    // once editing has started.
+    if(!active)
+    {
+      ui_set_auto_focus_active_key(key);ui_kill_action();
+      v->address_cursor=txt_pt(1,1+v->address_size);v->address_mark=txt_pt(1,1);
+      // The click and initial typing may share this build. The generic field
+      // was not active when it built, so consume that queued text now.
+      ui_consume_text_edit_events(key,v->address,sizeof(v->address)-1,&v->address_size,
+        &v->address_cursor,&v->address_mark,0);
+    }
+  }
+  if(active || ui_pressed(signal))ui_take_text_field_focus();
   if(!ui_committed(signal))return;
   Temp scratch=scratch_begin(0,0);
   String8 url=wh_url_from_address(scratch.arena,str8(v->address,v->address_size));
@@ -582,12 +611,16 @@ internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
   // Query panel eligibility without marking every control as focused.
   B32 panel_active=0;
   UI_Focus(UI_FocusKind_On){panel_active=ui_is_focus_active();}
-  if(v->content_focus && panel_active)ui_set_auto_focus_active_key(canvas_key);
   UI_Box *canvas=ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground|UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder,str8_lit("jackstay_canvas"));
   UI_Signal signal=ui_signal_from_box(canvas);
   B32 clicked=!!(signal.f&UI_SignalFlag_LeftPressed);
-  if(clicked){v->content_focus=1;uishell_cmd("focus_panel");}
-  B32 focused=v->content_focus && (panel_active || clicked);
+  if(clicked)
+  {
+    v->content_focus=1;ui_release_text_field_focus();ui_clear_edit_owner(ui_state);
+    ui_set_auto_focus_active_key(canvas_key);uishell_cmd("focus_panel");
+  }
+  B32 focused=v->content_focus && (clicked ||
+    (panel_active && !ui_text_field_focus() && ui_is_key_auto_focus_active(canvas_key)));
   RD_WindowState *window=rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
   focused=focused && wm_window_is_focused(window->os);
   if(focused){v->focus_requested=1;v->focused=1;wh_js_focus(v->session,true);}
@@ -788,6 +821,7 @@ WH_VIEW_UI_FUNCTION_DEF(web)
 }
 #else
 internal B32 uishell_jackstay_pending(void){return 0;}
+internal B32 uishell_jackstay_release_event(RD_ViewAddress view,WM_Event *event){(void)view;(void)event;return 0;}
 internal B32 uishell_jackstay_event(RD_ViewAddress view,WM_Event *event){(void)view;(void)event;return 0;}
 internal void uishell_jackstay_rekey(RD_ViewAddress from,RD_ViewAddress to){(void)from;(void)to;}
 internal String8 uishell_jackstay_title(RD_ViewAddress view){(void)view;return str8_zero();}

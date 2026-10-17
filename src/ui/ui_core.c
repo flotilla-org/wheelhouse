@@ -742,6 +742,12 @@ ui_text_field_focus_in(UI_State *state)
   return state->text_field_focus_build_index != 0 && state->text_field_focus_build_index+1 >= state->build_index;
 }
 
+internal void
+ui_release_text_field_focus(void)
+{
+  ui_state->text_field_focus_build_index = 0;
+}
+
 internal B32
 ui_text_field_focus(void)
 {

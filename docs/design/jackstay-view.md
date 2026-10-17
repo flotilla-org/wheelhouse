@@ -75,7 +75,19 @@ is already ready. A click made during connection is never replayed. Control
 assignment lasts until disconnect/close; losing focus resets held input while
 retaining assignment. Ctrl+Shift+Escape returns keyboard ownership to the shell.
 Input focus does not tint or outline the video canvas.
-Broader Cmd shortcut policy is deferred until the RAD input changes are adopted.
+The palette and panel/workspace navigation commands are marked
+`GlobalShortcut` in shell command metadata. Their configured bindings run
+before embedded content, including terminals, and their repeats, correlated
+text and key-up stay with the shell. Other Jackstay keys reach the focused
+producer; an asynchronous producer reply never decides shortcut precedence.
+Ctrl+Shift+Escape remains reserved to release capture even if rebound.
+
+A web address bar starts editing on a single click, selects its address on
+entry and releases producer focus and held input. Clicking the canvas restores
+content focus. The canvas follows the toolkit's active focus key rather than
+reclaiming it every frame. A pointer press outside the image also relinquishes
+content immediately, so later keys in the same event batch reach the shell.
+An address being edited is preserved when the producer reports a new URL.
 There is no clipboard synchronisation.
 
 Media reconnects after failure; input is only reacquired through an explicit
