@@ -165,6 +165,7 @@ jobs:
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
+          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/jackstay-user" --project:"$task_dir/jackstay-project" --jackstay_input_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/preview-control-user" --project:"$task_dir/preview-control-project" --preview_diagnostics --no_preview_refresh_budget --no_preview_surface_budget --no_preview_render_budget
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
@@ -191,6 +192,7 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
           ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
+          ./build/wheelhouse --user:"$task_dir/jackstay-user" --project:"$task_dir/jackstay-project" --jackstay_input_diagnostics
           ./build/wheelhouse --user:"$task_dir/preview-control-user" --project:"$task_dir/preview-control-project" --preview_diagnostics --no_preview_refresh_budget --no_preview_surface_budget --no_preview_render_budget
           ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
@@ -205,7 +207,17 @@ jobs:
         run: python tools/test-windows-terminal-input.py
       - name: Jackstay media and input acceptance
         # Local Endpoints: named pipes on Windows, Unix sockets elsewhere.
-        run: python tools/test-jackstay.py
+        shell: bash
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a python3 tools/test-jackstay.py --ui-binary build/wheelhouse
+          elif [ "$RUNNER_OS" = Windows ]; then
+            python tools/test-jackstay.py --ui-binary build/wheelhouse.exe
+          else
+            python3 tools/test-jackstay.py --ui-binary build/wheelhouse
+          fi
       - name: HTTP ingress and native producer checks
         shell: bash
         env:

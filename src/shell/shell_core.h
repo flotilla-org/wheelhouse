@@ -159,6 +159,7 @@ enum
   UIShell_CmdFlag_ListInTab     = (1<<2),
   UIShell_CmdFlag_ListInTextPt  = (1<<3),
   UIShell_CmdFlag_ListInTextRng = (1<<4),
+  UIShell_CmdFlag_GlobalShortcut = (1<<5), // Binding precedes embedded content.
 };
 
 typedef enum UIShell_AppRegSlot
@@ -634,11 +635,13 @@ struct RD_SurfaceCacheNode
 
 // Per-window #152 latch distinguishes edit chords (one action per press)
 // from shell commands (autorepeat still dispatches); both suppress source text.
+// Global commands also own repeats and key-up across content focus changes.
 typedef enum UIShell_ConsumedChord
 {
   UIShell_ConsumedChord_None,
   UIShell_ConsumedChord_Edit,
   UIShell_ConsumedChord_Command,
+  UIShell_ConsumedChord_GlobalCommand,
 } UIShell_ConsumedChord;
 
 typedef struct RD_WindowState RD_WindowState;

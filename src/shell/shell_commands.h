@@ -24,8 +24,8 @@ read_only global UIShell_AppCmdInfo uishell_shell_app_cmd_info_table[] =
 
 read_only global UIShell_AppCmdInfo uishell_shell_query_cmd_info_table[] =
 {
-  UISHELL_SHELL_CMD("open_palette", "Open Palette", List, "Opens the palette.", "help,cmd,lister", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
-  UISHELL_SHELL_CMD("run_command", "Run Command", Null, "Runs a command from the command palette.", "help,cmd", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_COMMANDS),
+  UISHELL_SHELL_CMD("open_palette", "Open Palette", List, "Opens the palette.", "help,cmd,lister", UISHELL_SHELL_CMD_FLAG_UI|UIShell_CmdFlag_GlobalShortcut, UISHELL_SHELL_Q_NONE),
+  UISHELL_SHELL_CMD("run_command", "Run Command", Null, "Runs a command from the command palette.", "help,cmd", UISHELL_SHELL_CMD_FLAG_UI|UIShell_CmdFlag_GlobalShortcut, UISHELL_SHELL_Q_COMMANDS),
   UISHELL_SHELL_CMD("open_tab", "Open New Tab", Null, "Opens a new tab.", "tab,view", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_TABS),
 };
 
@@ -41,7 +41,7 @@ read_only global UIShell_AppCmdInfo uishell_shell_window_cmd_info_table[] =
 {
   UISHELL_SHELL_CMD("open_window", "Open New Window", Window, "Opens a new window.", "", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("new_workspace", "New Workspace", Add, "Creates a new workspace in the current window.", "workspace", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
-  UISHELL_SHELL_CMD("select_workspace", "Select Workspace", Null, "Selects a workspace in the current window.", "workspace", 0, UISHELL_SHELL_Q_NONE),
+  UISHELL_SHELL_CMD("select_workspace", "Select Workspace", Null, "Selects a workspace in the current window.", "workspace", UIShell_CmdFlag_GlobalShortcut, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("close_workspace", "Close Workspace", X, "Closes and discards a workspace in the current window.", "workspace", 0, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("detach_workspace", "Detach Workspace", X, "Closes a workspace, keeping its layout to reopen from its sidebar entry.", "workspace", 0, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("workspace_settings", "Workspace Settings", Gear, "Edits the current workspace's properties.", "workspace,rename", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
@@ -64,13 +64,13 @@ read_only global UIShell_AppCmdInfo uishell_shell_panel_cmd_info_table[] =
   UISHELL_SHELL_CMD("new_panel_down", "Split Panel Down", YSplit, "Creates a new panel below.", "panel", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("split_panel", "Split Panel", Null, "Splits the current panel.", "panel", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("rotate_panel_columns", "Rotate Panel Columns", Null, "Rotates panel columns.", "panel", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
-  UISHELL_SHELL_CMD("next_panel", "Focus Next Panel", RightArrow, "Focuses the next panel.", "panel", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
-  UISHELL_SHELL_CMD("prev_panel", "Focus Previous Panel", LeftArrow, "Focuses the previous panel.", "panel", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
+  UISHELL_SHELL_CMD("next_panel", "Focus Next Panel", RightArrow, "Focuses the next panel.", "panel", UISHELL_SHELL_CMD_FLAG_UI|UIShell_CmdFlag_GlobalShortcut, UISHELL_SHELL_Q_NONE),
+  UISHELL_SHELL_CMD("prev_panel", "Focus Previous Panel", LeftArrow, "Focuses the previous panel.", "panel", UISHELL_SHELL_CMD_FLAG_UI|UIShell_CmdFlag_GlobalShortcut, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("focus_panel", "Focus Panel", Null, "Focuses a panel.", "panel", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
-  UISHELL_SHELL_CMD("focus_panel_right", "Focus Panel Right", RightArrow, "Focuses the panel to the right.", "panel", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
-  UISHELL_SHELL_CMD("focus_panel_left", "Focus Panel Left", LeftArrow, "Focuses the panel to the left.", "panel", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
-  UISHELL_SHELL_CMD("focus_panel_up", "Focus Panel Up", UpArrow, "Focuses the panel above.", "panel", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
-  UISHELL_SHELL_CMD("focus_panel_down", "Focus Panel Down", DownArrow, "Focuses the panel below.", "panel", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
+  UISHELL_SHELL_CMD("focus_panel_right", "Focus Panel Right", RightArrow, "Focuses the panel to the right.", "panel", UISHELL_SHELL_CMD_FLAG_UI|UIShell_CmdFlag_GlobalShortcut, UISHELL_SHELL_Q_NONE),
+  UISHELL_SHELL_CMD("focus_panel_left", "Focus Panel Left", LeftArrow, "Focuses the panel to the left.", "panel", UISHELL_SHELL_CMD_FLAG_UI|UIShell_CmdFlag_GlobalShortcut, UISHELL_SHELL_Q_NONE),
+  UISHELL_SHELL_CMD("focus_panel_up", "Focus Panel Up", UpArrow, "Focuses the panel above.", "panel", UISHELL_SHELL_CMD_FLAG_UI|UIShell_CmdFlag_GlobalShortcut, UISHELL_SHELL_Q_NONE),
+  UISHELL_SHELL_CMD("focus_panel_down", "Focus Panel Down", DownArrow, "Focuses the panel below.", "panel", UISHELL_SHELL_CMD_FLAG_UI|UIShell_CmdFlag_GlobalShortcut, UISHELL_SHELL_Q_NONE),
   UISHELL_SHELL_CMD("close_panel", "Close Panel", ClosePanel, "Closes the current panel.", "panel", UISHELL_SHELL_CMD_FLAG_UI, UISHELL_SHELL_Q_NONE),
 };
 

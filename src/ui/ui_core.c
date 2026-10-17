@@ -742,6 +742,12 @@ ui_text_field_focus_in(UI_State *state)
   return state->text_field_focus_build_index != 0 && state->text_field_focus_build_index+1 >= state->build_index;
 }
 
+internal void
+ui_release_text_field_focus(void)
+{
+  ui_state->text_field_focus_build_index = 0;
+}
+
 internal B32
 ui_text_field_focus(void)
 {
@@ -3170,8 +3176,16 @@ ui_signal_from_box(UI_Box *box)
       taken = 1;
     }
     
+    // A text field owns Accept while editing, even if another navigation
+    // scope retains a hot button. Otherwise build order can submit that
+    // button before the field sees Enter. Open menus keep their own routing.
+    B32 text_field_owns_accept = ui_text_field_focus() &&
+      !ui_state->ctx_menu_open && !ui_state->edit_owner_terminal &&
+      ui_state->edit_owner_build+1 >= ui_state->build_index &&
+      !ui_key_match(ui_state->edit_owner_key,ui_key_zero());
     //- rjf: focus is hot & keyboard click -> mark signal
     if(box->flags & UI_BoxFlag_KeyboardClickable &&
+       (!text_field_owns_accept || ui_key_match(box->key,ui_state->edit_owner_key)) &&
        is_focus_hot &&
        evt->kind == UI_EventKind_Press &&
        evt->slot == UI_EventActionSlot_Accept)
