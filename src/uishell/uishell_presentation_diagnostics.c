@@ -9,6 +9,7 @@ uishell_presentation_wait(WM_Window window, R_Handle renderer)
   while(!r_window_frame_ready(window, renderer) && now_time_us() < end)
   {
     wm_get_events(scratch.arena, 0);
+    r_window_request_frame(window, renderer, 1);
     sleep_ms(1);
   }
   B32 ready = r_window_frame_ready(window, renderer);
