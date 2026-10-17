@@ -3418,7 +3418,7 @@ uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   // belongs here once supplied; workspace state stays on the overview action
   // rather than being duplicated in this slot.
   B32 change_request = str8_match(uishell_sidebar_string(r->node.entity.kind), str8_lit("change_request"), 0);
-  UI_PrefWidth(ui_em(change_request && r->present ? 10.f : 1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+  UI_PrefWidth(ui_px(floor_f32(ui_top_font_size()*(change_request && r->present ? 10.f : 1.2f)), 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
   {
     String8 status = r->status;
     if(!r->present) { ui_label(str8_lit("?")); }
