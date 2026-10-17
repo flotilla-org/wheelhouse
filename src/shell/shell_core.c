@@ -13108,7 +13108,7 @@ rd_frame(void)
       rd_window_frame();
       if(rd_state->frame_metrics != 0)
       { rd_state->frame_metrics->window_us += now_time_us()-window_begin_us; }
-      if(rd_state->frame_diagnostic != 0 && w->render_ready)
+      if(rd_state->frame_diagnostic != 0)
       { abort_self(rd_state->frame_diagnostic(w) ? 0 : 1); }
       MemoryZeroStruct(&w->ui_events);
       UIShell_Regs *window_regs = uishell_pop_regs();
