@@ -182,6 +182,7 @@ struct WM_EventList
   WM_Event *first;
   WM_Event *last;
   U64 wait_time_us; // blocking native event wait, where measured (currently macOS)
+  B32 frame_ready; // presentation wake only; does not dirty other windows
 };
 
 ////////////////////////////////

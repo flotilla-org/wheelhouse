@@ -109,6 +109,7 @@
 #include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
 #include "uishell/uishell_jackstay_diagnostics.c"
+#include "uishell/uishell_presentation_diagnostics.c"
 #include "uishell/uishell_dashboard.c"
 #include "uishell/uishell_subscriptions.c"
 #include "uishell/uishell_logical_state.c"
@@ -325,6 +326,8 @@ entry_point(CmdLine *cmd_line)
       for(B32 quit = 0; !quit;)
       {
         quit = update();
+        if(cmd_line_has_flag(cmd_line, str8_lit("presentation_diagnostics")))
+        { abort_self(uishell_presentation_diagnostics() ? 0 : 1); }
         if(run_scroll_diagnostics)
         {
           RD_WindowState *ws = rd_state->first_window_state;

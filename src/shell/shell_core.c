@@ -12203,9 +12203,22 @@ rd_frame(void)
   //- rjf: get events from the OS
   //
   WM_EventList events = {0};
+  B32 frame_was_idle = 1;
   if(rd_state->frame_depth == 1)
   {
-    events = wm_get_events(scratch.arena, rd_state->num_frames_requested == 0 && !DEV_always_refresh);
+    B32 any_window = 0, any_ready = 0;
+    for(RD_WindowState *w = rd_state->first_window_state; w != &rd_nil_window_state; w = w->order_next)
+    {
+      B32 requested = rd_state->num_frames_requested != 0 || DEV_always_refresh || w->render_pending;
+      r_window_request_frame(w->os, w->r, requested);
+      frame_was_idle &= !requested;
+      any_window = 1;
+      any_ready |= requested && r_window_frame_ready(w->os, w->r);
+    }
+    // Presentation callbacks wake the same pump as input. An input event can
+    // therefore be handled immediately, without waiting for another display.
+    B32 wait = (rd_state->num_frames_requested == 0 && !DEV_always_refresh) || (any_window && !any_ready);
+    events = wm_get_events(scratch.arena, wait);
     if(rd_state->frame_metrics != 0) { rd_state->frame_metrics->event_wait_us += events.wait_time_us; }
   }
   
@@ -12281,7 +12294,10 @@ rd_frame(void)
   //////////////////////////////
   //- rjf: target Hz -> delta time
   //
-  rd_state->frame_dt = rd_state->frame_replay.fixed_dt > 0 ? rd_state->frame_replay.fixed_dt : 1.f/target_hz;
+  U64 frame_now_us = now_time_us();
+  F32 elapsed_dt = !frame_was_idle && rd_state->frame_last_time_us ? (F32)(frame_now_us-rd_state->frame_last_time_us)/1000000.f : 1.f/target_hz;
+  rd_state->frame_last_time_us = frame_now_us;
+  rd_state->frame_dt = rd_state->frame_replay.fixed_dt > 0 ? rd_state->frame_replay.fixed_dt : Clamp(0.f, elapsed_dt, 0.1f);
   
   //////////////////////////////
   //- rjf: begin measuring actual per-frame work
@@ -13076,6 +13092,10 @@ rd_frame(void)
     {
       CFG_Node *window = n->v;
       RD_WindowState *w = rd_window_state_from_cfg(window);
+      if(rd_state->num_frames_requested != 0 || DEV_always_refresh || events.count != 0 || w->frames_alive == 0)
+      { w->render_pending = 1; }
+      r_window_request_frame(w->os, w->r, w->render_pending);
+      w->render_ready = w->render_pending && r_window_frame_ready(w->os, w->r);
       B32 window_is_focused = wm_window_is_focused(w->os);
       if(window_is_focused)
       {
@@ -13088,7 +13108,7 @@ rd_frame(void)
       rd_window_frame();
       if(rd_state->frame_metrics != 0)
       { rd_state->frame_metrics->window_us += now_time_us()-window_begin_us; }
-      if(rd_state->frame_diagnostic != 0)
+      if(rd_state->frame_diagnostic != 0 && w->render_ready)
       { abort_self(rd_state->frame_diagnostic(w) ? 0 : 1); }
       MemoryZeroStruct(&w->ui_events);
       UIShell_Regs *window_regs = uishell_pop_regs();
@@ -13136,7 +13156,10 @@ rd_frame(void)
   //////////////////////////////
   //- rjf: clear frame request state
   //
-  if(rd_state->num_frames_requested > 0)
+  B32 any_render_ready = 0;
+  for(RD_WindowState *w = rd_state->first_window_state; w != &rd_nil_window_state; w = w->order_next)
+  { any_render_ready |= w->render_ready; }
+  if(rd_state->num_frames_requested > 0 && any_render_ready)
   {
     rd_state->num_frames_requested -= 1;
   }
@@ -13161,9 +13184,13 @@ rd_frame(void)
     r_begin_frame();
     for(RD_WindowState *w = rd_state->first_window_state; w != &rd_nil_window_state; w = w->order_next)
     {
-      r_window_begin_frame(w->os, w->r);
-      dr_submit_bucket(w->os, w->r, w->draw_bucket);
-      r_window_end_frame(w->os, w->r);
+      if(w->render_ready)
+      {
+        r_window_begin_frame(w->os, w->r);
+        dr_submit_bucket(w->os, w->r, w->draw_bucket);
+        r_window_end_frame(w->os, w->r);
+        w->render_pending = 0;
+      }
     }
     r_end_frame();
   }

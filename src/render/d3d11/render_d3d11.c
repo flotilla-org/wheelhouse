@@ -1044,6 +1044,17 @@ r_buffer_release(R_Handle handle)
 //- rjf: frame markers
 
 r_hook void
+r_window_request_frame(WM_Window window, R_Handle window_equip, B32 requested)
+{
+}
+
+r_hook B32
+r_window_frame_ready(WM_Window window, R_Handle window_equip)
+{
+  return 1;
+}
+
+r_hook void
 r_begin_frame(void)
 {
   MutexScopeW(r_d3d11_state->device_rw_mutex)

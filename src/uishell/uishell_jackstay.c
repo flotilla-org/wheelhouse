@@ -582,8 +582,10 @@ internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
   // A view may be built for both a preview and its main panel. Take at
   // most one frame per shell frame: an upload is an immutable texture, and
   // an import frame is released only after the GPU is done with it.
-  wh_js_snapshot(v->session,&state,v->upload_frame!=rd_state->frame_index?&frame:0,v->version);
-  v->upload_frame=rd_state->frame_index;
+  RD_WindowState *host = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
+  B32 take_frame = host->render_ready && v->upload_frame != rd_state->frame_index;
+  wh_js_snapshot(v->session,&state,take_frame?&frame:0,v->version);
+  if(take_frame) { v->upload_frame=rd_state->frame_index; }
   if(frame.native)uishell_jackstay_take_import(v,&frame);
   else if(frame.pixels)
   {
