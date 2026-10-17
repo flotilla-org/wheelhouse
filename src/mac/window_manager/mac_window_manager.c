@@ -1347,8 +1347,14 @@ wm_dpi_from_monitor(WM_Monitor monitor)
 // different display clocks continually dirty one another, even while idle.
 #define MAC_WM_FRAME_READY_SUBTYPE 1
 internal void
-mac_wm_send_frame_ready_event(void)
+mac_wm_send_frame_ready_event(WM_Window handle)
 {
+  MAC_WM_Window *window = mac_wm_window_from_handle(handle);
+  if(window != 0 && window->delegate->live_resize_display_link != 0)
+  {
+    [window->delegate macLiveResizeTick:0];
+    return;
+  }
   NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
                                     location:NSZeroPoint modifierFlags:0 timestamp:0
                                 windowNumber:0 context:0 subtype:MAC_WM_FRAME_READY_SUBTYPE
