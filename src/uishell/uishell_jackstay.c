@@ -1,6 +1,26 @@
 // Jackstay presentation: shell-owned focus/texture, independently owned workers.
 #if defined(WHEELHOUSE_JACKSTAY)
 #include "jackstay/wheelhouse_jackstay.c"
+typedef struct UIShell_JackstayViewport UIShell_JackstayViewport;
+struct UIShell_JackstayViewport
+{
+  U32 width, height;
+  F32 scale;
+};
+
+internal UIShell_JackstayViewport
+uishell_jackstay_viewport(Vec2F32 dim, F32 layout_scale, F32 backing_scale)
+{
+  // Layout coordinates already include DPI scaling on Windows, but are
+  // points on macOS. Remove only layout scaling to request a logical page;
+  // the producer rasterizes it at the combined logical-to-backing scale.
+  if(layout_scale <= 0)layout_scale=1;
+  if(backing_scale <= 0)backing_scale=1;
+  F32 display=layout_scale*backing_scale;
+  UIShell_JackstayViewport result={(U32)(Max(0,dim.x)/layout_scale),(U32)(Max(0,dim.y)/layout_scale),display};
+  return result;
+}
+
 typedef struct UIShell_JackstayView UIShell_JackstayView;
 // A D3D11 pool texture imported on the renderer's device.
 typedef struct UIShell_JackstayImport UIShell_JackstayImport;
@@ -585,9 +605,10 @@ internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
   // affordances sizes itself to: the canvas in logical units at the
   // display's scale. Unchanged values are not sent again.
   {
-    F32 display=wm_dpi_from_window(window->os)/96.f;
-    if(display<=0)display=1;
-    U32 width=(U32)(dim.x/display),height=(U32)(dim.y/display);
+    UIShell_JackstayViewport viewport=uishell_jackstay_viewport(dim,
+      wm_layout_scale_from_window(window->os),wm_backing_scale_from_window(window->os));
+    F32 display=viewport.scale;
+    U32 width=viewport.width,height=viewport.height;
     if(!v->presented || width!=v->present_width || height!=v->present_height || display!=v->present_scale || focused!=v->present_focused)
     {
       wh_js_present(v->session,width,height,display,1,focused);
@@ -720,10 +741,10 @@ WH_VIEW_UI_FUNCTION_DEF(web)
     String8 url=ctx->resolution.web_url.size?ctx->resolution.web_url:wh_view_setting(ctx,str8_lit("url"));
     snprintf(v->reached,sizeof(v->reached),"%.*s",(int)url.size,(char *)url.str);
     RD_WindowState *window=rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
-    F32 display=wm_dpi_from_window(window->os)/96.f;
-    if(display<=0)display=1;
     Vec2F32 dim=dim_2f32(rect);
-    uishell_web_launch(v,url,(U32)(dim.x/display),(U32)(dim.y/display));
+    UIShell_JackstayViewport viewport=uishell_jackstay_viewport(dim,
+      wm_layout_scale_from_window(window->os),wm_backing_scale_from_window(window->os));
+    uishell_web_launch(v,url,viewport.width,viewport.height);
   }
   uishell_web_poll(v);
   ui_set_next_pref_width(ui_px(dim_2f32(rect).x,1));
