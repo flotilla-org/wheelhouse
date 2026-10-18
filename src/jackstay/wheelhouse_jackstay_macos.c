@@ -1,5 +1,39 @@
 // Experimental native macOS consumer. Reuses the common mailbox and deferred
 // release path. The Mach service is explicitly supplied by the launch profile.
+#pragma push_macro("internal")
+#pragma push_macro("global")
+#pragma push_macro("FileInfo")
+#undef internal
+#undef global
+#define FileInfo MACOS_SDK_FileInfo
+#import <Metal/Metal.h>
+#undef FileInfo
+#pragma pop_macro("FileInfo")
+#pragma pop_macro("global")
+#pragma pop_macro("internal")
+#if defined(nil)
+#undef nil
+#endif
+
+static ft_status wh_js_macos_wait_ready(WH_Jackstay *s,
+                                        id<MTLSharedEvent> event,
+                                        uint64_t value, unsigned request,
+                                        uint64_t timeout_us) {
+  uint64_t deadline = now_time_us() + timeout_us;
+  for (;;) {
+    mutex_take(s->mutex);
+    bool stop = s->stop || s->request != request || s->import_refused;
+    mutex_drop(s->mutex);
+    if (stop)
+      return FT_STATUS_CLOSED;
+    if (event.signaledValue >= value)
+      return FT_STATUS_OK;
+    if (now_time_us() >= deadline)
+      return FT_STATUS_TIMEOUT;
+    sleep_ms(1);
+  }
+}
+
 static ft_status wh_js_macos_run(WH_Jackstay *s, bool input, unsigned request) {
   ft_macos_acquisition_connection *connection = 0;
   ft_acquisition_consumer *consumer = 0;
@@ -8,17 +42,17 @@ static ft_status wh_js_macos_run(WH_Jackstay *s, bool input, unsigned request) {
   ft_affordances_host *affordances = 0;
   ft_input_client *offered = 0;
   ft_status input_status = FT_STATUS_EMPTY;
-  ft_status result = FT_STATUS_OK;
+  ft_status result = s->gpu.device && s->gpu.release_fence
+                         ? FT_STATUS_OK
+                         : FT_STATUS_UNSUPPORTED;
   WH_JS_Link control = {0, -1};
-  if (s->input_address && s->input_address[0]) {
+  if (result == FT_STATUS_OK && s->input_address && s->input_address[0]) {
     result = wh_js_link_open(s->input_address, false, &control);
     if (result == FT_STATUS_OK)
       result = wh_js_link_tracks(&control, false, input, &offered,
                                  &input_status, &affordances);
     wh_js_link_close(&control);
   }
-  if (result == FT_STATUS_OK && (!s->gpu.device || !s->gpu.release_fence))
-    result = FT_STATUS_UNSUPPORTED;
   if (result == FT_STATUS_OK)
     result = ft_acquisition_macos_connect(
         s->media_address, s->token && s->token[0] ? s->token : 0, 3,
@@ -108,17 +142,18 @@ static ft_status wh_js_macos_run(WH_Jackstay *s, bool input, unsigned request) {
       // signalling. Admit only completed copies; the UI still encodes the
       // descriptor's GPU wait before sampling. Bounded/cancellable on this
       // worker.
-      uint64_t deadline = now_time_us() + 1000000;
-      while (result == FT_STATUS_OK &&
-             readiness_event.signaledValue < d.fence_value) {
-        mutex_take(s->mutex);
-        stop = s->stop || s->request != request;
-        mutex_drop(s->mutex);
-        if (stop || now_time_us() > deadline) {
-          result = FT_STATUS_TIMEOUT;
-          break;
+      if (result == FT_STATUS_OK) {
+        ft_status ready = wh_js_macos_wait_ready(
+            s, readiness_event, d.fence_value, request, 1000000);
+        if (ready == FT_STATUS_TIMEOUT) {
+          // This lease was never submitted to the GPU. Skip just this frame,
+          // advancing the cursor so a slow copy cannot force reconnection or
+          // repeatedly block input/affordances on the same publication.
+          cursor = d.cursor;
+          ft_acquired_frame_release(&frame);
+          continue;
         }
-        sleep_ms(1);
+        result = ready;
       }
       if (result == FT_STATUS_OK) {
         cursor = d.cursor;

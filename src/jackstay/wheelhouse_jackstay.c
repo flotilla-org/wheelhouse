@@ -167,9 +167,9 @@ static void wh_js_link_close(WH_JS_Link *link) {
 // (both optional). Playback tracks wait for an audio output
 // (docs/design/web-views.md).
 static ft_status wh_js_link_tracks(WH_JS_Link *link, bool media, bool input,
-                                      ft_input_client **offered,
-                                      ft_status *input_status,
-                                      ft_affordances_host **affordances) {
+                                   ft_input_client **offered,
+                                   ft_status *input_status,
+                                   ft_affordances_host **affordances) {
   *input_status = FT_STATUS_EMPTY;
 #if OS_LINUX || OS_MAC
   if (!link->local) {
@@ -185,7 +185,8 @@ static ft_status wh_js_link_tracks(WH_JS_Link *link, bool media, bool input,
   size_t count = 0;
   ft_status result = ft_handshake_connect_local(&link->local, &offer);
   if (result == FT_STATUS_OK)
-    result = ft_handshake_offer_describe(offer, &label, &clock, &tracks, &count);
+    result =
+        ft_handshake_offer_describe(offer, &label, &clock, &tracks, &count);
   ft_track_selection selections[3];
   size_t selected = 0;
   bool video = false, input_track = false, affordance_track = false;
@@ -209,12 +210,17 @@ static ft_status wh_js_link_tracks(WH_JS_Link *link, bool media, bool input,
     return result;
   }
   ft_track_admission admissions[3];
-  return ft_handshake_select(&offer, selections, selected,
-                             input_track ? FT_INPUT_MODE_COOPERATIVE : 0,
-                             admissions, &link->local, offered, input_status,
-                             affordances, 0, 0, 0);
+  return ft_handshake_select(
+      &offer, selections, selected, input_track ? FT_INPUT_MODE_COOPERATIVE : 0,
+      admissions, &link->local, offered, input_status, affordances, 0, 0, 0);
 }
-static ft_status wh_js_link_handshake(WH_JS_Link *link,bool input,ft_input_client **offered,ft_status *input_status,ft_affordances_host **affordances){return wh_js_link_tracks(link,true,input,offered,input_status,affordances);}
+static ft_status wh_js_link_handshake(WH_JS_Link *link, bool input,
+                                      ft_input_client **offered,
+                                      ft_status *input_status,
+                                      ft_affordances_host **affordances) {
+  return wh_js_link_tracks(link, true, input, offered, input_status,
+                           affordances);
+}
 
 static ft_status wh_js_link_media(WH_JS_Link *link,
                                   ft_cpu_acquisition_connection **out) {
@@ -681,7 +687,12 @@ static ft_status wh_js_cpu_run(WH_Jackstay *s, WH_JS_Link *link, bool input,
 #if OS_MAC && defined(__OBJC__)
 #include "wheelhouse_jackstay_macos.c"
 #else
-static ft_status wh_js_macos_run(WH_Jackstay *s,bool input,unsigned request){(void)s;(void)input;(void)request;return FT_STATUS_UNSUPPORTED;}
+static ft_status wh_js_macos_run(WH_Jackstay *s, bool input, unsigned request) {
+  (void)s;
+  (void)input;
+  (void)request;
+  return FT_STATUS_UNSUPPORTED;
+}
 #endif
 static void wh_js_media_worker(void *arg) {
   WH_Jackstay *s = arg;
@@ -702,30 +713,34 @@ static void wh_js_media_worker(void *arg) {
       continue;
     }
     wh_js_wake(s);
-    WH_JS_Link link;
-    WH_JS_Media publication = s->kind;
-    if(publication==WH_JS_MEDIA_MACOS){wh_js_macos_run(s,input,request);goto media_finished;}
-    ft_status result = wh_js_link_open(
-        s->media_address, s->kind == WH_JS_MEDIA_PORTHOLE, &link);
-    if (result == FT_STATUS_OK && s->kind == WH_JS_MEDIA_PORTHOLE)
-      result = wh_js_porthole_open(s, &link, &publication);
-    if (result != FT_STATUS_OK) {
-      wh_js_link_close(&link);
-      mutex_take(s->mutex);
-      s->state.connecting = false;
-      snprintf(s->state.media_status, 128, "Disconnected (setup %d)", result);
-      mutex_drop(s->mutex);
-    } else if (publication == WH_JS_MEDIA_D3D11) {
-      wh_js_d3d11_run(s, &link, request);
+    ft_status result;
+    if (s->kind == WH_JS_MEDIA_MACOS) {
+      result = wh_js_macos_run(s, input, request);
     } else {
-      wh_js_cpu_run(s, &link, input, request);
+      WH_JS_Link link = {0};
+      WH_JS_Media publication = s->kind;
+      result = wh_js_link_open(s->media_address,
+                               s->kind == WH_JS_MEDIA_PORTHOLE, &link);
+      if (result == FT_STATUS_OK && s->kind == WH_JS_MEDIA_PORTHOLE)
+        result = wh_js_porthole_open(s, &link, &publication);
+      if (result != FT_STATUS_OK) {
+        wh_js_link_close(&link);
+      } else if (publication == WH_JS_MEDIA_D3D11) {
+        result = wh_js_d3d11_run(s, &link, request);
+      } else {
+        result = wh_js_cpu_run(s, &link, input, request);
+      }
     }
-media_finished:
     mutex_take(s->mutex);
     s->state.connecting = false;
     s->state.connected = false;
     if (!s->stop) {
-      snprintf(s->state.media_status, 128, "Disconnected; reconnecting video");
+      if (result != FT_STATUS_OK && result != FT_STATUS_CLOSED)
+        snprintf(s->state.media_status, 128,
+                 "Disconnected (video %d); reconnecting", result);
+      else
+        snprintf(s->state.media_status, 128,
+                 "Disconnected; reconnecting video");
       if (s->input)
         s->input_close = true;
       /* Recovery never reacquires control without a new explicit request. */

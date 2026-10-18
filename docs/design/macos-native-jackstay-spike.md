@@ -24,6 +24,12 @@ and releases replaced leases against queue-ordered completion values. Texture
 and timeline resources use normal renderer retirement. A new configuration is
 installed without reconnecting or silently taking control.
 
+A copy that misses the one-second readiness deadline is released unsampled and
+skipped, without dropping the connection or input control. Setup and stream
+failures retain their status code in the reconnect message, including unsupported
+native builds. The standalone session acceptance checks setup errors and the
+readiness helper's completed, timed-out and cancelled outcomes.
+
 The Metal pixel diagnostic covers RGBA/BGRA IOSurface import, surface lifetime,
 and shared readiness/completion events using a second Metal device. Native
 producer/consumer acceptance still needs the external Mach service; a CEF SDK is

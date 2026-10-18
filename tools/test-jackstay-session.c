@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 // Checks run in every build and fail without a debugger or crash dialog.
+#undef assert
 #define assert(x)                                                              \
   do {                                                                         \
     if (!(x)) {                                                                \
@@ -265,11 +266,53 @@ static void cpu_mailbox(void) {
   free(s.pixels);
   mutex_release(s.mutex);
 }
+static void native_failure_handling(void) {
+  // An unsupported native setup must survive the common recovery epilogue
+  // as an observable error, including builds that use the non-ObjC stub.
+  WH_Jackstay *s = wh_js_create(
+      (WH_JS_Endpoint){.media = "unused-native-service", .kind = WH_JS_MEDIA_MACOS},
+      (WH_JS_Gpu){0}, 0, 0);
+  assert(s);
+  wh_js_connect(s, false);
+  WH_JS_State state = {0};
+  char expected[64];
+  snprintf(expected, sizeof(expected), "video %d", FT_STATUS_UNSUPPORTED);
+  for (unsigned i = 0; i < 1000; ++i) {
+    wh_js_snapshot(s, &state, 0, 0);
+    if (strstr(state.media_status, expected))
+      break;
+    sleep_ms(5);
+  }
+  assert(!state.connected && strstr(state.media_status, expected));
+  wh_js_stop(s);
+  wait_state(s, 2);
+  for (unsigned i = 0; i < 1000 && !wh_js_destroy(&s); ++i)
+    sleep_ms(5);
+  assert(!s);
+#if OS_MAC && defined(__OBJC__)
+  // The real readiness helper must distinguish a completed copy, a skipped
+  // stalled copy, and cancellation without submitting a GPU wait.
+  WH_Jackstay waiting = {.mutex = mutex_alloc()};
+  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+  id<MTLSharedEvent> event = [device newSharedEvent];
+  assert(event);
+  event.signaledValue = 7;
+  assert(wh_js_macos_wait_ready(&waiting, event, 7, 0, 0) == FT_STATUS_OK);
+  assert(wh_js_macos_wait_ready(&waiting, event, 8, 0, 0) == FT_STATUS_TIMEOUT);
+  waiting.request = 1;
+  assert(wh_js_macos_wait_ready(&waiting, event, 8, 0, 0) == FT_STATUS_CLOSED);
+  [event release];
+  [device release];
+  mutex_release(waiting.mutex);
+#endif
+}
+
 static int session_main(int argc, char **argv) {
   assert(argc >= 2);
   const char *mode = argc > 2 ? argv[2] : "input";
   cpu_mailbox();
   if (!strcmp(mode, "mailbox")) {
+    native_failure_handling();
     puts("CPU mailbox: native format, stride, ownership and version filtering passed");
     return 0;
   }

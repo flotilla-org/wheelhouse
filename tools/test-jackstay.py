@@ -64,6 +64,7 @@ def build(work):
             "-I" + str(ROOT / "src"), "-I" + str(INCLUDE)]
     if sys.platform == "darwin":
         base += ["-x", "objective-c"]
+        link += ["-framework", "Foundation", "-framework", "Metal"]
     else:
         link += ["-lrt", "-ldl"]
     subprocess.run(base + [str(SESSION_C), "-x", "none"] + link + ["-o", str(consumer)],
@@ -294,6 +295,7 @@ args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="wh-js-", dir=None if WINDOWS else "/tmp") as temporary:
     work = Path(temporary)
     consumer, source = build(work)
+    subprocess.run([str(consumer), "unused", "mailbox"], check=True, timeout=15)
     for mode in ("input", "observe", "refused", "recovery", "missing"):
         run(consumer, source, mode, f"wh-js-{os.getpid()}-{mode}")
     navigation = build_navigation_producer()
