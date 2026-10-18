@@ -1350,7 +1350,7 @@ internal void
 mac_wm_send_frame_ready_event(WM_Window handle)
 {
   MAC_WM_Window *window = mac_wm_window_from_handle(handle);
-  if(window != 0 && window->delegate->live_resize_display_link != 0)
+  if(window != 0 && window->delegate != 0 && window->delegate->live_resize_display_link != 0)
   {
     [window->delegate macLiveResizeTick:0];
     return;
