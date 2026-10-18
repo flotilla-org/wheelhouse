@@ -38,6 +38,7 @@ struct UIShell_JackstayView
   R_Handle texture; // shown: an owned upload, or an entry of imports
   B32 texture_owned;
   U64 upload_frame, version, epoch, pointer_epoch, press_serial;
+  U64 preview_frame_time_us;
   U64 keys[WM_Key_COUNT][2];
   U32 width, height;
   B32 focus_requested, focused, content_focus, closing, disconnecting, initialized;
@@ -57,6 +58,7 @@ struct UIShell_JackstayView
   // (live, never saved), and the last presentation sent, which goes hidden
   // once the View stops being built.
   char title[256];
+  char macos_service[256]; // explicit experimental native acquisition endpoint
   B32 built;
   U32 present_width, present_height;
   F32 present_scale;
@@ -497,12 +499,13 @@ internal void uishell_jackstay_open(UIShell_JackstayView *v,B32 control)
   if(v->mode==UISHELL_JACKSTAY_MODE_D3D11){endpoint.kind=WH_JS_MEDIA_D3D11;endpoint.input="";}
   if(v->mode==UISHELL_JACKSTAY_MODE_PORTHOLE)
   {endpoint.kind=WH_JS_MEDIA_PORTHOLE;endpoint.input="";endpoint.session=(char *)v->paths[1];endpoint.token=(char *)v->paths[2];}
+  if(v->macos_service[0]){endpoint.kind=WH_JS_MEDIA_MACOS;endpoint.media=v->macos_service;endpoint.input=(char *)v->paths[0];endpoint.handshake=true;}
   v->session=wh_js_create(endpoint,uishell_jackstay_gpu(v),uishell_jackstay_wake,0);
   // The attach token lives only in the running session.
   MemoryZeroArray(v->paths[2]);v->sizes[2]=0;
   if(v->session)wh_js_connect(v->session,control);
 }
-// A web View's address bar: the page it shows (once it reports one, the page
+// An editable navigation address: the page it shows (once it reports one, the page
 // it reached), which typing a new address and Return opens in place, or
 // relaunches with when it failed.
 internal void uishell_web_address_bar(UIShell_JackstayView *v,char *reached)
@@ -586,9 +589,25 @@ internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
   // Offscreen builds have no display opportunity to wait for. A real host
   // keeps its newest image in the mailbox until that window is admitted.
   B32 admitted = host == &rd_nil_window_state || host->render_ready;
-  B32 take_frame = admitted && v->upload_frame != rd_state->frame_index;
+  RD_WorkspaceSurfaceEntry *surface=host!=&rd_nil_window_state?host->active_workspace_surface_entry:0;
+  U64 interval_us=rd_workspace_preview_refresh_interval(host,surface);
+  // Streaming previews use at most 10 Hz (5 Hz for the smallest cards).
+  // Leave intermediate frames in the latest-frame mailbox, where replacement
+  // already releases unsampled imports. Never retire the displayed GPU frame
+  // just because a preview skips an update.
+  if(rd_state->preview_refresh_budget && surface && !surface->composite && !surface->full_res)
+    interval_us=Max(interval_us,100000);
+  U64 now_us=rd_state->frame_last_time_us;
+  U64 phase_us=interval_us?rd_view_ui_key(v->view).u64[0]%interval_us:0;
+  U64 deadline_us=interval_us?v->preview_frame_time_us+interval_us-(v->preview_frame_time_us+phase_us)%interval_us:0;
+  B32 due=!interval_us || !v->version || now_us>=deadline_us;
+  B32 take_frame = admitted && due && v->upload_frame != rd_state->frame_index;
   wh_js_snapshot(v->session,&state,take_frame?&frame:0,v->version);
   if(take_frame) { v->upload_frame=rd_state->frame_index; }
+  if(frame.native || frame.pixels)v->preview_frame_time_us=now_us;
+  // A final producer wake may precede this deadline. Keep requesting frames
+  // until its newest image is sampled, even if publication then goes quiet.
+  if(admitted && !due && state.frame_version!=v->version)rd_request_frame();
   if(frame.native)uishell_jackstay_take_import(v,&frame);
   else if(frame.pixels)
   {
@@ -618,7 +637,7 @@ internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
       if(caps&(1u<<(FT_AFF_NAVIGATION_RELOAD-1)))
       if(ui_clicked(rd_icon_button(RD_IconKind_Refresh,0,str8_lit("###reload"))))wh_js_navigate(v->session,FT_AFF_NAVIGATION_RELOAD,0);
     }
-    if(v->web)
+    if(v->web || (caps&(1u<<(FT_AFF_NAVIGATION_LOAD-1))))
     {
       UI_PrefWidth(ui_pct(1,0)) uishell_web_address_bar(v,state.url[0]?state.url:v->page);
       if(state.loading || !state.ready)UI_PrefWidth(ui_em(6,1)) ui_label(str8_lit("Loading…"));
@@ -732,6 +751,8 @@ WH_VIEW_UI_FUNCTION_DEF(jackstay)
   if(!v->initialized)
   {
     v->initialized=1;
+    String8 macos_service=wh_view_setting(ctx,str8_lit("macos_service"));
+    snprintf(v->macos_service,sizeof(v->macos_service),"%.*s",(int)Min(macos_service.size,sizeof(v->macos_service)-1),macos_service.str);
     // Local Endpoint names are saved as *_endpoint; POSIX socket paths keep
     // their original *_socket keys.
     String8 paths[3]={uishell_jackstay_address(str8_lit("source")),uishell_jackstay_address(str8_lit("input")),str8_zero()};

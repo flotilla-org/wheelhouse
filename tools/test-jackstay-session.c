@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 // Checks run in every build and fail without a debugger or crash dialog.
+#undef assert
 #define assert(x)                                                              \
   do {                                                                         \
     if (!(x)) {                                                                \
@@ -265,14 +266,92 @@ static void cpu_mailbox(void) {
   free(s.pixels);
   mutex_release(s.mutex);
 }
+static uint64_t readiness_value(void *value) { return *(uint64_t *)value; }
+static void native_failure_handling(void) {
+  // An unsupported native setup must survive the common recovery epilogue
+  // as an observable error, including builds that use the non-ObjC stub.
+  WH_Jackstay *s = wh_js_create(
+      (WH_JS_Endpoint){.media = "unused-native-service", .kind = WH_JS_MEDIA_MACOS},
+      (WH_JS_Gpu){0}, 0, 0);
+  assert(s);
+  wh_js_connect(s, false);
+  WH_JS_State state = {0};
+  char expected[64];
+  snprintf(expected, sizeof(expected), "setup %d", FT_STATUS_UNSUPPORTED);
+  for (unsigned i = 0; i < 1000; ++i) {
+    wh_js_snapshot(s, &state, 0, 0);
+    if (strstr(state.media_status, expected))
+      break;
+    sleep_ms(5);
+  }
+  assert(!state.connected && strstr(state.media_status, expected));
+  wh_js_stop(s);
+  wait_state(s, 2);
+  for (unsigned i = 0; i < 1000 && !wh_js_destroy(&s); ++i)
+    sleep_ms(5);
+  assert(!s);
+  // The real readiness helper must distinguish a completed copy, a skipped
+  // stalled copy, and cancellation. Its backend value is injected so this
+  // logic runs on headless hosts too; the GUI tests retain real Metal coverage.
+  WH_Jackstay waiting = {.mutex = mutex_alloc()};
+  uint64_t value = 7;
+  assert(wh_js_wait_ready(&waiting, readiness_value, &value, 7, 0, 0) == FT_STATUS_OK);
+  assert(wh_js_wait_ready(&waiting, readiness_value, &value, 8, 0, 0) == FT_STATUS_TIMEOUT);
+  waiting.request = 1;
+  assert(wh_js_wait_ready(&waiting, readiness_value, &value, 8, 0, 0) == FT_STATUS_CLOSED);
+  mutex_release(waiting.mutex);
+}
+
+#if OS_MAC && defined(__OBJC__)
+static int macos_media_only(const char *service) {
+  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+  id<MTLSharedEvent> released = [device newSharedEvent];
+  MTLSharedEventHandle *handle = [released newSharedEventHandle];
+  assert(device && handle);
+  WH_Jackstay *s = wh_js_create(
+      (WH_JS_Endpoint){.media = service, .input = "missing-control-link",
+                       .kind = WH_JS_MEDIA_MACOS},
+      (WH_JS_Gpu){.device = device, .release_fence = handle}, 0, 0);
+  assert(s);
+  wh_js_connect(s, true);
+  WH_JS_State state = {0};
+  WH_JS_Frame frame = {0};
+  for (unsigned i = 0; i < 1000; ++i) {
+    wh_js_snapshot(s, &state, &frame, 0);
+    if (state.connected && frame.native)
+      break;
+    sleep_ms(5);
+  }
+  if (!frame.native)
+    fprintf(stderr, "native media failed: %s / %s\n", state.media_status, state.input_status);
+  assert(state.connected && frame.native && !state.control);
+  wh_js_frame_release(s, &frame, 0); // never sampled by the GPU
+  wh_js_stop(s);
+  wait_state(s, 2);
+  for (unsigned i = 0; i < 1000 && !wh_js_destroy(&s); ++i)
+    sleep_ms(5);
+  assert(!s);
+  [handle release];
+  [released release];
+  [device release];
+  puts("Native media survives an unavailable optional control link");
+  return 0;
+}
+#endif
+
 static int session_main(int argc, char **argv) {
   assert(argc >= 2);
   const char *mode = argc > 2 ? argv[2] : "input";
   cpu_mailbox();
   if (!strcmp(mode, "mailbox")) {
+    native_failure_handling();
     puts("CPU mailbox: native format, stride, ownership and version filtering passed");
     return 0;
   }
+#if OS_MAC && defined(__OBJC__)
+  if (!strcmp(mode, "macos-media-only"))
+    return macos_media_only(argv[1]);
+#endif
 #if OS_WINDOWS
   if (!strncmp(mode, "d3d11", 5))
     return d3d11_main(argv[1], mode);

@@ -2685,6 +2685,16 @@ rd_workspace_preview_demand_width(RD_WindowState *ws, U64 workspace_id)
   return width_pt;
 }
 
+// Temporal detail shared by preview consumers. Large previews have no added
+// delay here; a streaming View can impose a further ceiling on frame uptake.
+internal U64
+rd_workspace_preview_refresh_interval(RD_WindowState *ws, RD_WorkspaceSurfaceEntry *surface)
+{
+  if(!rd_state->preview_refresh_budget || surface==0 || surface->composite || surface->full_res)return 0;
+  F32 width=rd_workspace_preview_demand_width(ws,surface->workspace_id);
+  return width<=128.f?200000:width<=256.f?100000:0;
+}
+
 internal Vec2S32
 rd_workspace_surface_size(RD_WindowState *ws, RD_WorkspaceSurfaceEntry *ws_entry, Rng2F32 surface_rect)
 {

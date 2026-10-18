@@ -4614,12 +4614,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
         U64 style_key = u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1;
         RD_WindowState *window_state = rd_window_state_from_cfg__existing(cfg_node_from_id(uishell_regs()->window));
         RD_WorkspaceSurfaceEntry *surface = window_state != &rd_nil_window_state ? window_state->active_workspace_surface_entry : 0;
-        U64 interval_us = 0;
-        if(rd_state->preview_refresh_budget && surface != 0 && !surface->composite && !surface->full_res)
-        {
-          F32 width = rd_workspace_preview_demand_width(window_state, surface->workspace_id);
-          interval_us = width <= 128.f ? 200000 : width <= 256.f ? 100000 : 0;
-        }
+        U64 interval_us = rd_workspace_preview_refresh_interval(window_state, surface);
         U64 now_us = (benchmark_mode && !uishell_overview_benchmark.interactive) ? ((U64)uishell_overview_benchmark.frame*1000000/60) : now_time_us();
         // Give each workspace a stable phase so busy previews do not all
         // rebuild together every 100/200 ms. A deadline is at most one interval

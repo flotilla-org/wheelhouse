@@ -54,7 +54,9 @@ jackstay_link=''
 if [ -n "${wheelhouse+x}" ]; then
   jackstay_dir="${WHEELHOUSE_JACKSTAY_DIR:-$repo_root/../jackstay}"
   jackstay_target_dir="${WHEELHOUSE_JACKSTAY_TARGET_DIR:-$jackstay_dir/target}"
-  cargo build --manifest-path "$jackstay_dir/Cargo.toml" -p jackstay --locked --target-dir "$jackstay_target_dir" $cargo_profile_flags
+  jackstay_native_flags=()
+  if [ "$(uname -s)" = Darwin ]; then jackstay_native_flags=(--features backend-macos); fi
+  cargo build --manifest-path "$jackstay_dir/Cargo.toml" -p jackstay --locked --target-dir "$jackstay_target_dir" $cargo_profile_flags "${jackstay_native_flags[@]}"
   auto_compile_flags="$auto_compile_flags -DWHEELHOUSE_JACKSTAY=1 -I$jackstay_dir/crates/jackstay/include"
   jackstay_link="-L$jackstay_target_dir/$cargo_profile -ljackstay -Wl,-rpath,$jackstay_target_dir/$cargo_profile"
 fi
@@ -107,7 +109,7 @@ link_font_provider="-lfreetype"
 
 if [ "$host_os" = "Darwin" ]; then
   link_os_gfx="-framework Cocoa -framework Security"
-  link_render="-framework Metal -framework QuartzCore"
+  link_render="-framework Metal -framework QuartzCore -framework IOSurface"
   link_font_provider="-framework CoreText -framework CoreGraphics -framework CoreFoundation"
 fi
 

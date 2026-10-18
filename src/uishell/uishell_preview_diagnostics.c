@@ -166,6 +166,9 @@ uishell_preview_diagnostics(RD_WindowState *ws)
   rd_arrangements_release_unowned();
   scratch_end(scratch);
   failures += !uishell_scroll_preview_diagnostics(ws);
+#if defined(WHEELHOUSE_JACKSTAY)
+  failures += !uishell_jackstay_preview_diagnostics(ws);
+#endif
   fprintf(stderr, "Preview diagnostics: %u failures\n", failures);
 #undef PreviewCheck
   return failures == 0;

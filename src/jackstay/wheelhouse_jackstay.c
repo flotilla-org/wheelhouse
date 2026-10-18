@@ -166,10 +166,10 @@ static void wh_js_link_close(WH_JS_Link *link) {
 // its video (required), its input when control is wanted, and its affordances
 // (both optional). Playback tracks wait for an audio output
 // (docs/design/web-views.md).
-static ft_status wh_js_link_handshake(WH_JS_Link *link, bool input,
-                                      ft_input_client **offered,
-                                      ft_status *input_status,
-                                      ft_affordances_host **affordances) {
+static ft_status wh_js_link_tracks(WH_JS_Link *link, bool media, bool input,
+                                   ft_input_client **offered,
+                                   ft_status *input_status,
+                                   ft_affordances_host **affordances) {
   *input_status = FT_STATUS_EMPTY;
 #if OS_LINUX || OS_MAC
   if (!link->local) {
@@ -185,13 +185,14 @@ static ft_status wh_js_link_handshake(WH_JS_Link *link, bool input,
   size_t count = 0;
   ft_status result = ft_handshake_connect_local(&link->local, &offer);
   if (result == FT_STATUS_OK)
-    result = ft_handshake_offer_describe(offer, &label, &clock, &tracks, &count);
+    result =
+        ft_handshake_offer_describe(offer, &label, &clock, &tracks, &count);
   ft_track_selection selections[3];
   size_t selected = 0;
   bool video = false, input_track = false, affordance_track = false;
   for (size_t i = 0; result == FT_STATUS_OK && i < count; ++i) {
     const char *kind = tracks[i].kind;
-    if (!video && !strcmp(kind, FT_TRACK_KIND_VIDEO)) {
+    if (media && !video && !strcmp(kind, FT_TRACK_KIND_VIDEO)) {
       video = true;
       selections[selected++] = (ft_track_selection){tracks[i].id, 1, 0};
     } else if (input && !input_track && !strcmp(kind, FT_TRACK_KIND_INPUT)) {
@@ -202,18 +203,31 @@ static ft_status wh_js_link_handshake(WH_JS_Link *link, bool input,
       selections[selected++] = (ft_track_selection){tracks[i].id, 0, 0};
     }
   }
-  if (result == FT_STATUS_OK && !video)
+  if (result == FT_STATUS_OK && media && !video)
     result = FT_STATUS_UNSUPPORTED;
   if (result != FT_STATUS_OK) {
     ft_handshake_offer_destroy(&offer);
     return result;
   }
+  // A media-only native connection may find no optional tracks here. Decline
+  // the offer instead of selecting an empty set and retaining an unused link.
+  if (selected == 0) {
+    ft_handshake_offer_destroy(&offer);
+    return FT_STATUS_OK;
+  }
   ft_track_admission admissions[3];
-  return ft_handshake_select(&offer, selections, selected,
-                             input_track ? FT_INPUT_MODE_COOPERATIVE : 0,
-                             admissions, &link->local, offered, input_status,
-                             affordances, 0, 0, 0);
+  return ft_handshake_select(
+      &offer, selections, selected, input_track ? FT_INPUT_MODE_COOPERATIVE : 0,
+      admissions, &link->local, offered, input_status, affordances, 0, 0, 0);
 }
+static ft_status wh_js_link_handshake(WH_JS_Link *link, bool input,
+                                      ft_input_client **offered,
+                                      ft_status *input_status,
+                                      ft_affordances_host **affordances) {
+  return wh_js_link_tracks(link, true, input, offered, input_status,
+                           affordances);
+}
+
 static ft_status wh_js_link_media(WH_JS_Link *link,
                                   ft_cpu_acquisition_connection **out) {
   if (link->local)
@@ -372,6 +386,40 @@ static void wh_js_prune_timelines(WH_Jackstay *s) {
     } else
       link = &t->next;
   }
+}
+
+// Hand a held frame to the GUI, replacing one it has not taken. That one was
+// never sampled, so it is released at once.
+static void wh_js_post_import(WH_Jackstay *s, ft_acquired_frame **frame,
+                              const ft_acquired_frame_descriptor *d,
+                              void *texture, void *readiness,
+                              uint64_t incarnation) {
+  mutex_take(s->mutex);
+  ft_acquired_frame *superseded = s->mailbox.native;
+  WH_JS_Frame *m = &s->mailbox;
+  memset(m, 0, sizeof(*m));
+  m->native = *frame;
+  *frame = 0;
+  m->texture = texture;
+  m->readiness = readiness;
+  m->incarnation = incarnation;
+  m->pool_id = d->pool_id;
+  m->slot_id = d->slot_id;
+  m->fence_id = d->fence_id;
+  m->fence_value = d->fence_value;
+  m->pixel_format = d->pixel_format;
+  m->timestamp_ns = d->timestamp_ns;
+  m->cursor = d->cursor;
+  m->width = d->width;
+  m->height = d->height;
+  free(s->pixels);
+  s->pixels = 0;
+  s->state.width = d->width;
+  s->state.height = d->height;
+  m->version = ++s->state.frame_version;
+  mutex_drop(s->mutex);
+  ft_acquired_frame_release(&superseded);
+  wh_js_wake(s);
 }
 
 // D3D11 publications exist only on Windows, where Jackstay declares them.
@@ -642,6 +690,35 @@ static ft_status wh_js_cpu_run(WH_Jackstay *s, WH_JS_Link *link, bool input,
   ft_acquisition_cpu_connection_destroy(&connection);
   return result;
 }
+// Backend readiness is the only external dependency of bounded admission.
+// Keep timeout/cancellation testable without a GPU or a window-server session.
+static ft_status wh_js_wait_ready(WH_Jackstay *s, uint64_t (*read_ready)(void *),
+                                  void *context, uint64_t value,
+                                  unsigned request, uint64_t timeout_us) {
+  uint64_t deadline = now_time_us() + timeout_us;
+  for (;;) {
+    mutex_take(s->mutex);
+    bool stop = s->stop || s->request != request || s->import_refused;
+    mutex_drop(s->mutex);
+    if (stop)
+      return FT_STATUS_CLOSED;
+    if (read_ready(context) >= value)
+      return FT_STATUS_OK;
+    if (now_time_us() >= deadline)
+      return FT_STATUS_TIMEOUT;
+    sleep_ms(1);
+  }
+}
+#if OS_MAC && defined(__OBJC__)
+#include "wheelhouse_jackstay_macos.c"
+#else
+static ft_status wh_js_macos_run(WH_Jackstay *s, bool input, unsigned request) {
+  (void)s;
+  (void)input;
+  (void)request;
+  return FT_STATUS_UNSUPPORTED;
+}
+#endif
 static void wh_js_media_worker(void *arg) {
   WH_Jackstay *s = arg;
   for (;;) {
@@ -661,28 +738,36 @@ static void wh_js_media_worker(void *arg) {
       continue;
     }
     wh_js_wake(s);
-    WH_JS_Link link;
-    WH_JS_Media publication = s->kind;
-    ft_status result = wh_js_link_open(
-        s->media_address, s->kind == WH_JS_MEDIA_PORTHOLE, &link);
-    if (result == FT_STATUS_OK && s->kind == WH_JS_MEDIA_PORTHOLE)
-      result = wh_js_porthole_open(s, &link, &publication);
-    if (result != FT_STATUS_OK) {
-      wh_js_link_close(&link);
-      mutex_take(s->mutex);
-      s->state.connecting = false;
-      snprintf(s->state.media_status, 128, "Disconnected (setup %d)", result);
-      mutex_drop(s->mutex);
-    } else if (publication == WH_JS_MEDIA_D3D11) {
-      wh_js_d3d11_run(s, &link, request);
+    ft_status result;
+    if (s->kind == WH_JS_MEDIA_MACOS) {
+      result = wh_js_macos_run(s, input, request);
     } else {
-      wh_js_cpu_run(s, &link, input, request);
+      WH_JS_Link link = {0};
+      WH_JS_Media publication = s->kind;
+      result = wh_js_link_open(s->media_address,
+                               s->kind == WH_JS_MEDIA_PORTHOLE, &link);
+      if (result == FT_STATUS_OK && s->kind == WH_JS_MEDIA_PORTHOLE)
+        result = wh_js_porthole_open(s, &link, &publication);
+      if (result != FT_STATUS_OK) {
+        wh_js_link_close(&link);
+      } else if (publication == WH_JS_MEDIA_D3D11) {
+        result = wh_js_d3d11_run(s, &link, request);
+      } else {
+        result = wh_js_cpu_run(s, &link, input, request);
+      }
     }
     mutex_take(s->mutex);
+    bool setup_failed = !s->state.connected;
     s->state.connecting = false;
     s->state.connected = false;
     if (!s->stop) {
-      snprintf(s->state.media_status, 128, "Disconnected; reconnecting video");
+      if (result != FT_STATUS_OK && result != FT_STATUS_CLOSED)
+        snprintf(s->state.media_status, 128,
+                 setup_failed ? "Disconnected (setup %d); reconnecting"
+                              : "Disconnected (video %d); reconnecting", result);
+      else
+        snprintf(s->state.media_status, 128,
+                 "Disconnected; reconnecting video");
       if (s->input)
         s->input_close = true;
       /* Recovery never reacquires control without a new explicit request. */

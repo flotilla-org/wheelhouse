@@ -216,40 +216,6 @@ static ft_status wh_js_reader_read(WH_Jackstay *s, WH_JS_Reader *r,
   return result;
 }
 
-// Hand a held frame to the GUI, replacing one it has not taken. That one was
-// never sampled, so it is released at once.
-static void wh_js_post_import(WH_Jackstay *s, ft_acquired_frame **frame,
-                              const ft_acquired_frame_descriptor *d,
-                              void *texture, void *readiness,
-                              uint64_t incarnation) {
-  mutex_take(s->mutex);
-  ft_acquired_frame *superseded = s->mailbox.native;
-  WH_JS_Frame *m = &s->mailbox;
-  memset(m, 0, sizeof(*m));
-  m->native = *frame;
-  *frame = 0;
-  m->texture = texture;
-  m->readiness = readiness;
-  m->incarnation = incarnation;
-  m->pool_id = d->pool_id;
-  m->slot_id = d->slot_id;
-  m->fence_id = d->fence_id;
-  m->fence_value = d->fence_value;
-  m->pixel_format = d->pixel_format;
-  m->timestamp_ns = d->timestamp_ns;
-  m->cursor = d->cursor;
-  m->width = d->width;
-  m->height = d->height;
-  free(s->pixels);
-  s->pixels = 0;
-  s->state.width = d->width;
-  s->state.height = d->height;
-  m->version = ++s->state.frame_version;
-  mutex_drop(s->mutex);
-  ft_acquired_frame_release(&superseded);
-  wh_js_wake(s);
-}
-
 // One D3D11 incarnation on an open link (consumed): describe, attach on the
 // chosen path, then acquire until the producer goes or the request changes.
 // A device-loss epoch closes setup; the caller reconnects and re-imports.
