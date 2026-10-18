@@ -92,6 +92,12 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
          str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0))
       { vessel_key = push_str8_copy(scratch.arena, uishell_sidebar_string(node.key)); }
     }
+    if(!uishell_sidebar_string(convoy.key).size)
+    {
+      fprintf(stderr, "FAIL chip fixture: build convoy is missing\n");
+      ok = 0;
+      break;
+    }
     if(phase)
     {
       ok = andamento_dispatch(fixture.core, fixture.snapshot, convoy.toggle, 0) && ok;
