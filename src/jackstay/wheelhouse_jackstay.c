@@ -690,6 +690,25 @@ static ft_status wh_js_cpu_run(WH_Jackstay *s, WH_JS_Link *link, bool input,
   ft_acquisition_cpu_connection_destroy(&connection);
   return result;
 }
+// Backend readiness is the only external dependency of bounded admission.
+// Keep timeout/cancellation testable without a GPU or a window-server session.
+static ft_status wh_js_wait_ready(WH_Jackstay *s, uint64_t (*read_ready)(void *),
+                                  void *context, uint64_t value,
+                                  unsigned request, uint64_t timeout_us) {
+  uint64_t deadline = now_time_us() + timeout_us;
+  for (;;) {
+    mutex_take(s->mutex);
+    bool stop = s->stop || s->request != request || s->import_refused;
+    mutex_drop(s->mutex);
+    if (stop)
+      return FT_STATUS_CLOSED;
+    if (read_ready(context) >= value)
+      return FT_STATUS_OK;
+    if (now_time_us() >= deadline)
+      return FT_STATUS_TIMEOUT;
+    sleep_ms(1);
+  }
+}
 #if OS_MAC && defined(__OBJC__)
 #include "wheelhouse_jackstay_macos.c"
 #else

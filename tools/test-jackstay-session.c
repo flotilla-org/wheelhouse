@@ -266,6 +266,7 @@ static void cpu_mailbox(void) {
   free(s.pixels);
   mutex_release(s.mutex);
 }
+static uint64_t readiness_value(void *value) { return *(uint64_t *)value; }
 static void native_failure_handling(void) {
   // An unsupported native setup must survive the common recovery epilogue
   // as an observable error, including builds that use the non-ObjC stub.
@@ -289,22 +290,16 @@ static void native_failure_handling(void) {
   for (unsigned i = 0; i < 1000 && !wh_js_destroy(&s); ++i)
     sleep_ms(5);
   assert(!s);
-#if OS_MAC && defined(__OBJC__)
   // The real readiness helper must distinguish a completed copy, a skipped
-  // stalled copy, and cancellation without submitting a GPU wait.
+  // stalled copy, and cancellation. Its backend value is injected so this
+  // logic runs on headless hosts too; the GUI tests retain real Metal coverage.
   WH_Jackstay waiting = {.mutex = mutex_alloc()};
-  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-  id<MTLSharedEvent> event = [device newSharedEvent];
-  assert(event);
-  event.signaledValue = 7;
-  assert(wh_js_macos_wait_ready(&waiting, event, 7, 0, 0) == FT_STATUS_OK);
-  assert(wh_js_macos_wait_ready(&waiting, event, 8, 0, 0) == FT_STATUS_TIMEOUT);
+  uint64_t value = 7;
+  assert(wh_js_wait_ready(&waiting, readiness_value, &value, 7, 0, 0) == FT_STATUS_OK);
+  assert(wh_js_wait_ready(&waiting, readiness_value, &value, 8, 0, 0) == FT_STATUS_TIMEOUT);
   waiting.request = 1;
-  assert(wh_js_macos_wait_ready(&waiting, event, 8, 0, 0) == FT_STATUS_CLOSED);
-  [event release];
-  [device release];
+  assert(wh_js_wait_ready(&waiting, readiness_value, &value, 8, 0, 0) == FT_STATUS_CLOSED);
   mutex_release(waiting.mutex);
-#endif
 }
 
 #if OS_MAC && defined(__OBJC__)

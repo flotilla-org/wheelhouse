@@ -15,23 +15,8 @@
 #undef nil
 #endif
 
-static ft_status wh_js_macos_wait_ready(WH_Jackstay *s,
-                                        id<MTLSharedEvent> event,
-                                        uint64_t value, unsigned request,
-                                        uint64_t timeout_us) {
-  uint64_t deadline = now_time_us() + timeout_us;
-  for (;;) {
-    mutex_take(s->mutex);
-    bool stop = s->stop || s->request != request || s->import_refused;
-    mutex_drop(s->mutex);
-    if (stop)
-      return FT_STATUS_CLOSED;
-    if (event.signaledValue >= value)
-      return FT_STATUS_OK;
-    if (now_time_us() >= deadline)
-      return FT_STATUS_TIMEOUT;
-    sleep_ms(1);
-  }
+static uint64_t wh_js_macos_readiness(void *event) {
+  return ((id<MTLSharedEvent>)event).signaledValue;
 }
 
 static ft_status wh_js_macos_run(WH_Jackstay *s, bool input, unsigned request) {
@@ -152,8 +137,9 @@ static ft_status wh_js_macos_run(WH_Jackstay *s, bool input, unsigned request) {
       // descriptor's GPU wait before sampling. Bounded/cancellable on this
       // worker.
       if (result == FT_STATUS_OK) {
-        ft_status ready = wh_js_macos_wait_ready(
-            s, readiness_event, d.fence_value, request, 1000000);
+        ft_status ready =
+            wh_js_wait_ready(s, wh_js_macos_readiness, readiness_event,
+                             d.fence_value, request, 1000000);
         if (ready == FT_STATUS_TIMEOUT) {
           // This lease was never submitted to the GPU. Skip just this frame,
           // advancing the cursor so a slow copy cannot force reconnection or
