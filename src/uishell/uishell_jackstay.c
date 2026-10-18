@@ -41,6 +41,18 @@ struct UIShell_JackstayView
   U32 present_width, present_height;
   F32 present_scale;
   B32 presented, present_focused;
+  // A web View: the program its Handler runs (its process, supervised), the
+  // page it was started on, why it failed, the address bar's text, and the
+  // page last written as where it got to (`web_url`).
+  B32 web;
+  WheelhouseConnector *process;
+  B32 retrying; // until the process leaves its failure
+  char log[1024];
+  char page[2048];
+  char failure[2048];
+  U8 address[2048]; U64 address_size; TxtPt address_cursor, address_mark;
+  char address_url[2048];
+  char reached[2048];
 };
 global UIShell_JackstayView *uishell_jackstay_views;
 internal void uishell_jackstay_wake(void *unused) { (void)unused; wm_send_wakeup_event(); }
@@ -62,6 +74,87 @@ internal String8 uishell_jackstay_title(RD_ViewAddress view)
   UIShell_JackstayView *v=uishell_jackstay_find(view);
   return v?str8_cstring(v->title):str8_zero();
 }
+//- Web Views (WH_HANDLERS): a Handler's program, launched and supervised
+// like a subscription's connector (connector.rs), whose endpoint the View
+// shows. The process is the View's: it starts on the View's first build and
+// stops when the View closes or its workspace is kept (uishell_jackstay_tick).
+
+// The page a web View opens on without an address, bundled with Wheelhouse.
+read_only global String8 uishell_web_start_html = str8_lit_comp(
+  "<!doctype html><html><head><meta charset=\"utf-8\"><title>New page</title><style>"
+  "body{font:16px system-ui,sans-serif;margin:0;height:100vh;display:flex;align-items:center;justify-content:center;"
+  "background:#1e1f22;color:#ddd}form{display:flex;gap:8px;width:min(560px,90vw)}"
+  "input{flex:1;font:inherit;padding:8px 10px;border-radius:6px;border:1px solid #555;background:#2b2d31;color:inherit}"
+  "button{font:inherit;padding:8px 14px;border-radius:6px;border:0;background:#4a6cf7;color:#fff}</style></head><body>"
+  "<form onsubmit=\"var u=this.u.value.trim();if(u)location.href=/^[a-z][a-z0-9+.-]*:\\/\\//i.test(u)?u:'https://'+u;return false\">"
+  "<input name=\"u\" placeholder=\"Enter an address\" autofocus><button>Go</button></form></body></html>");
+
+// Where the start page is written for the program to open, beside the logs.
+internal String8 uishell_web_start_path(Arena *arena)
+{
+  return push_str8f(arena, "%S/web-start.html", str8_chop_last_slash(rd_state->log_path));
+}
+
+// What the program is given to open: an http(s) URL, or a file's path (the
+// start page's when there is no URL).
+internal String8 uishell_web_page_argument(Arena *arena, String8 url)
+{
+  if(!url.size) { return uishell_web_start_path(arena); }
+  String8 path = wh_path_from_file_url(arena, url);
+  return path.size ? path : url;
+}
+
+internal void uishell_web_fail(UIShell_JackstayView *v, String8 why)
+{
+  U64 size = Min(why.size, sizeof(v->failure) - 1);
+  MemoryCopy(v->failure, why.str, size);
+  v->failure[size] = 0;
+}
+
+// Starts the Handler's program for `url` (empty: the start page) at the
+// View's logical size, or records why it couldn't.
+internal void uishell_web_launch(UIShell_JackstayView *v, String8 url, U32 width, U32 height)
+{
+  Temp scratch = scratch_begin(0, 0);
+  local_persist U32 launches = 0;
+  v->failure[0] = 0;
+  U64 page_size = Min(url.size, sizeof(v->page) - 1);
+  MemoryCopy(v->page, url.str, page_size);
+  v->page[page_size] = 0;
+  WH_Handler *handler = wh_handler_from_url(url.size ? url : str8_lit("file:"));
+  if(!handler->name.size)
+  {
+    uishell_web_fail(v, push_str8f(scratch.arena, "Wheelhouse has nothing that shows %S.", url));
+    scratch_end(scratch);
+    return;
+  }
+  if(!url.size) { write_data_to_file_path(uishell_web_start_path(scratch.arena), uishell_web_start_html); }
+  // WHEELHOUSE_<NAME> names another program to run.
+  String8 variable = push_str8f(scratch.arena, "WHEELHOUSE_%S", upper_from_str8(scratch.arena, handler->name));
+  char *named = getenv((char *)variable.str);
+  String8 program = named && named[0] ? str8_cstring(named) : handler->program;
+  String8 endpoint = push_str8f(scratch.arena, "wh-%u-%u", get_process_info()->pid, ++launches);
+  String8 values[][2] =
+  {
+    {str8_lit("{endpoint}"), endpoint},
+    {str8_lit("{width}"), push_str8f(scratch.arena, "%u", width ? width : 800)},
+    {str8_lit("{height}"), push_str8f(scratch.arena, "%u", height ? height : 600)},
+    {str8_lit("{page}"), uishell_web_page_argument(scratch.arena, url)},
+  };
+  WheelhouseIngressText argv[32];
+  U64 argc = 0;
+  argv[argc++] = (WheelhouseIngressText){program.str, program.size};
+  String8List args = wh_handler_arguments(scratch.arena, handler, values, ArrayCount(values));
+  for(String8Node *n = args.first; n && argc < ArrayCount(argv); n = n->next) { argv[argc++] = (WheelhouseIngressText){n->string.str, n->string.size}; }
+  String8 log = push_str8f(scratch.arena, "%S/%S.log", str8_chop_last_slash(rd_state->log_path), endpoint);
+  snprintf(v->log, sizeof(v->log), "%.*s", (int)log.size, (char *)log.str);
+  U8 error[512] = {0};
+  v->process = wheelhouse_connector_start(argv, argc, 0, 0, (WheelhouseIngressText){log.str, log.size},
+                                          WHEELHOUSE_CONNECTOR_READY_LINE, wm_send_wakeup_event, error, sizeof(error));
+  if(!v->process) { uishell_web_fail(v, push_str8f(scratch.arena, "Couldn't start %S: %s", program, error)); }
+  scratch_end(scratch);
+}
+
 internal void uishell_jackstay_unfocus(UIShell_JackstayView *v)
 {
   if(v->session)wh_js_focus(v->session,false);
@@ -248,6 +341,44 @@ internal void uishell_jackstay_drop_frames(UIShell_JackstayView *v)
   uishell_jackstay_forget_imports(v,1);
   uishell_jackstay_show_texture(v,r_handle_zero(),0,0,0,0);
 }
+// Connects once the program says where it publishes, and notes a failure.
+internal void uishell_web_poll(UIShell_JackstayView *v)
+{
+  if(!v->process) { return; }
+  char text[2048];
+  size_t length = 0;
+  U32 state = wheelhouse_connector_state(v->process, (uint8_t *)text, sizeof(text), &length);
+  // A retry's restart lands on the supervisor's thread a moment later.
+  if(v->retrying)
+  {
+    if(state == WheelhouseConnectorState_Failed) { return; }
+    v->retrying = 0;
+  }
+  if(state == WheelhouseConnectorState_Ready && length >= sizeof(v->paths[0]))
+  {
+    uishell_web_fail(v, str8_lit("Its endpoint is longer than Wheelhouse takes."));
+    return;
+  }
+  if(state == WheelhouseConnectorState_Ready && !v->session && !v->disconnecting)
+  {
+    // Its first stdout line is the endpoint: a socket path, or a name.
+    U64 size = Min(length, sizeof(v->paths[0]) - 1);
+    MemoryCopy(v->paths[0], text, size);
+    v->paths[0][size] = 0;
+    v->sizes[0] = size;
+    WH_JS_Endpoint endpoint = {(char *)v->paths[0], "", 1, WH_JS_MEDIA_CPU, 0, 0};
+    v->session = wh_js_create(endpoint, uishell_jackstay_gpu(v), uishell_jackstay_wake, 0);
+    // Its own page: control from the start, as a terminal's input is.
+    if(v->session) { wh_js_connect(v->session, true); }
+    v->failure[0] = 0;
+  }
+  if(state == WheelhouseConnectorState_Failed)
+  {
+    uishell_web_fail(v, str8_cstring(text));
+    if(v->session && !v->disconnecting) { uishell_jackstay_drop_frames(v); wh_js_stop(v->session); v->disconnecting = 1; }
+  }
+}
+
 internal void uishell_jackstay_tick(B32 before,B32 quit)
 {
   for(UIShell_JackstayView **link=&uishell_jackstay_views;*link;)
@@ -259,12 +390,20 @@ internal void uishell_jackstay_tick(B32 before,B32 quit)
     if(!before && v->session && v->presented && !v->built)
     {wh_js_present(v->session,v->present_width,v->present_height,v->present_scale,0,0);v->presented=0;}
     CFG_Node *cfg=rd_cfg_from_view(v->view);
-    if(quit || cfg==&cfg_nil_node || !str8_match(cfg->string,str8_lit("jackstay"),0))
+    // A web View's process stops with it, and when its workspace is kept.
+    String8 kind=v->web?str8_lit("web"):str8_lit("jackstay");
+    if(quit || cfg==&cfg_nil_node || !str8_match(cfg->string,kind,0) || (v->web && !rd_view_node_is_live(cfg)))
     {
       if(!v->closing)uishell_jackstay_drop_frames(v);
       v->closing=1;if(v->session)wh_js_stop(v->session);
+      if(v->process)wheelhouse_connector_stop_begin(v->process);
     }
-    if(v->closing && (!v->session || wh_js_destroy(&v->session)))
+    // Stopping it ends its run (and what it started) on the supervisor's
+    // thread; once nothing runs, releasing it doesn't wait.
+    // Its log goes with it.
+    if(v->closing && v->process && !wheelhouse_connector_running(v->process,0))
+    {wheelhouse_connector_stop(v->process);v->process=0;if(v->log[0])delete_file_at_path(str8_cstring(v->log));}
+    if(v->closing && !v->process && (!v->session || wh_js_destroy(&v->session)))
     {
       // Jackstay holds its own reference to the release fence for releases
       // still pending on the GPU.
@@ -319,6 +458,183 @@ internal void uishell_jackstay_open(UIShell_JackstayView *v,B32 control)
   // The attach token lives only in the running session.
   MemoryZeroArray(v->paths[2]);v->sizes[2]=0;
   if(v->session)wh_js_connect(v->session,control);
+}
+// A web View's address bar: the page it shows (once it reports one, the page
+// it reached), which typing a new address and Return opens in place, or
+// relaunches with when it failed.
+internal void uishell_web_address_bar(UIShell_JackstayView *v,char *reached)
+{
+  if(strcmp(v->address_url,reached))
+  {
+    snprintf(v->address_url,sizeof(v->address_url),"%s",reached);
+    v->address_size=Min(strlen(reached),sizeof(v->address)-1);
+    MemoryCopy(v->address,reached,v->address_size);
+    v->address_cursor=v->address_mark=txt_pt(1,1+v->address_size);
+  }
+  UI_Signal signal=ui_line_edit(&v->address_cursor,&v->address_mark,v->address,sizeof(v->address)-1,&v->address_size,
+                                str8(v->address,v->address_size),str8_lit("###address"));
+  if(!ui_committed(signal))return;
+  Temp scratch=scratch_begin(0,0);
+  String8 url=wh_url_from_address(scratch.arena,str8(v->address,v->address_size));
+  if(url.size && v->session)wh_js_navigate(v->session,FT_AFF_NAVIGATION_LOAD,(char *)push_str8_copy(scratch.arena,url).str);
+  else if(url.size && v->failure[0])
+  {
+    // Started afresh on the new page.
+    if(v->process){wheelhouse_connector_stop(v->process);v->process=0;if(v->log[0])delete_file_at_path(str8_cstring(v->log));}
+    uishell_web_launch(v,url,v->present_width,v->present_height);
+  }
+  scratch_end(scratch);
+}
+
+// Where a web View got to, once a navigation settles: its `web_url`, saved
+// with its Slot (uishell_store_save_resolution). The start page is no page.
+internal void uishell_web_note_reached(UIShell_JackstayView *v,WH_JS_State *state)
+{
+  if(!state->affordances || !state->url[0] || state->loading || !strcmp(v->reached,state->url))return;
+  snprintf(v->reached,sizeof(v->reached),"%s",state->url);
+  Temp scratch=scratch_begin(0,0);
+  String8 url=str8_cstring(state->url);
+  B32 start=str8_match(uishell_web_page_argument(scratch.arena,url),uishell_web_start_path(scratch.arena),0);
+  if(start)rd_view_setting_clear(uishell_regs()->view,str8_lit("web_url"));
+  else rd_store_view_param(str8_lit("web_url"),url);
+  scratch_end(scratch);
+}
+
+// A connected View: the producer's frames, its navigation, and input. A web
+// View's navigation row is its address bar, and it has no connection row.
+internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
+{
+  WH_JS_State state;WH_JS_Frame frame={0};
+  // A view may be built for both a preview and its main panel. Take at
+  // most one frame per shell frame: an upload is an immutable texture, and
+  // an import frame is released only after the GPU is done with it.
+  wh_js_snapshot(v->session,&state,v->upload_frame!=rd_state->frame_index?&frame:0,v->version);
+  v->upload_frame=rd_state->frame_index;
+  if(frame.native)uishell_jackstay_take_import(v,&frame);
+  else if(frame.pixels)
+  {
+    R_Handle texture=r_tex2d_alloc(R_ResourceKind_Static,v2s32(frame.width,frame.height),R_Tex2DFormat_RGBA8,frame.pixels);
+    if(!r_handle_match(texture,r_handle_zero())) {
+      // A CPU frame replaces any shown import.
+      uishell_jackstay_retire(v);
+      uishell_jackstay_forget_imports(v,1);
+      uishell_jackstay_show_texture(v,texture,1,frame.width,frame.height,frame.version);
+    }
+    free(frame.pixels);
+  }
+  // The producer's title for the tab, and its navigation when it has any.
+  char *title=state.page_title[0]?state.page_title:state.window_title;
+  MemoryCopy(v->title,title,sizeof(v->title));
+  B32 navigation=v->web || (state.affordances && (state.url[0] || state.navigation_capabilities));
+  if(v->web)uishell_web_note_reached(v,&state);
+  if(navigation) UI_PrefHeight(ui_em(1.8f,1)) UI_Row
+  {
+    U32 caps=state.navigation_capabilities;
+    UI_PrefWidth(ui_em(2.2f,1))
+    {
+      if(caps&(1u<<(FT_AFF_NAVIGATION_BACK-1))) UI_Flags(state.can_go_back?0:UI_BoxFlag_Disabled)
+      if(ui_clicked(rd_icon_button(RD_IconKind_LeftArrow,0,str8_lit("###back"))))wh_js_navigate(v->session,FT_AFF_NAVIGATION_BACK,0);
+      if(caps&(1u<<(FT_AFF_NAVIGATION_FORWARD-1))) UI_Flags(state.can_go_forward?0:UI_BoxFlag_Disabled)
+      if(ui_clicked(rd_icon_button(RD_IconKind_RightArrow,0,str8_lit("###forward"))))wh_js_navigate(v->session,FT_AFF_NAVIGATION_FORWARD,0);
+      if(caps&(1u<<(FT_AFF_NAVIGATION_RELOAD-1)))
+      if(ui_clicked(rd_icon_button(RD_IconKind_Refresh,0,str8_lit("###reload"))))wh_js_navigate(v->session,FT_AFF_NAVIGATION_RELOAD,0);
+    }
+    if(v->web)
+    {
+      UI_PrefWidth(ui_pct(1,0)) uishell_web_address_bar(v,state.url[0]?state.url:v->page);
+      if(state.loading || !state.ready)UI_PrefWidth(ui_em(6,1)) ui_label(str8_lit("Loading…"));
+    }
+    else UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s%s",state.url,state.loading?"  (loading)":"");
+  }
+  if(!v->web) UI_PrefHeight(ui_em(1.8f,1)) UI_Row
+  {
+    if(state.path_status[0] && state.width)UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s | %s | %ux%u %s",state.media_status,state.input_status,state.width,state.height,state.path_status);
+    else if(state.path_status[0])UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s | %s | %s",state.media_status,state.input_status,state.path_status);
+    else UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s | %s",state.media_status,state.input_status);
+    UI_PrefWidth(ui_em(8,1))
+    {
+      if(ui_clicked(ui_button(str8_lit("Retry control###retry"))) && !v->disconnecting)wh_js_connect(v->session,true);
+      if(ui_clicked(ui_button(str8_lit("Disconnect###disconnect")))){uishell_jackstay_drop_frames(v);wh_js_stop(v->session);v->disconnecting=1;}
+    }
+  }
+  ui_set_next_pref_height(ui_px(Max(0,dim_2f32(rect).y-ui_top_font_size()*1.8f*((navigation?1:0)+(v->web?0:1))),1));
+  UI_Key canvas_key=ui_key_from_string(ui_active_seed_key(),str8_lit("jackstay_canvas"));
+  // Query panel eligibility without marking every control as focused.
+  B32 panel_active=0;
+  UI_Focus(UI_FocusKind_On){panel_active=ui_is_focus_active();}
+  if(v->content_focus && panel_active)ui_set_auto_focus_active_key(canvas_key);
+  UI_Box *canvas=ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground|UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder,str8_lit("jackstay_canvas"));
+  UI_Signal signal=ui_signal_from_box(canvas);
+  B32 clicked=!!(signal.f&UI_SignalFlag_LeftPressed);
+  if(clicked){v->content_focus=1;uishell_cmd("focus_panel");}
+  B32 focused=v->content_focus && (panel_active || clicked);
+  RD_WindowState *window=rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
+  focused=focused && wm_window_is_focused(window->os);
+  if(focused){v->focus_requested=1;v->focused=1;wh_js_focus(v->session,true);}
+  if(clicked && !state.control && !state.connecting)wh_js_connect(v->session,true);
+  if(v->epoch!=state.input_epoch){MemoryZeroArray(v->keys);v->buttons=0;v->epoch=state.input_epoch;}
+  if(v->pointer_epoch!=state.pointer_epoch){v->buttons=0;v->pointer_epoch=state.pointer_epoch;}
+  Vec2F32 dim=dim_2f32(canvas->rect);
+  F32 scale=v->width && v->height?Min(dim.x/v->width,dim.y/v->height):0;
+  Rng2F32 image=canvas->rect;
+  image.x0+=(dim.x-v->width*scale)/2;image.y0+=(dim.y-v->height*scale)/2;
+  image.x1=image.x0+v->width*scale;image.y1=image.y0+v->height*scale;
+  if(focused && v->buttons && !MemoryMatch(&image,&v->image_rect,sizeof(image))) {wh_js_focus(v->session,false);wh_js_focus(v->session,focused);v->buttons=0;}
+  if(focused)v->image_rect=image;
+  // How the View shows the producer, which a producer that takes
+  // affordances sizes itself to: the canvas in logical units at the
+  // display's scale. Unchanged values are not sent again.
+  {
+    F32 display=wm_dpi_from_window(window->os)/96.f;
+    if(display<=0)display=1;
+    U32 width=(U32)(dim.x/display),height=(U32)(dim.y/display);
+    if(!v->presented || width!=v->present_width || height!=v->present_height || display!=v->present_scale || focused!=v->present_focused)
+    {
+      wh_js_present(v->session,width,height,display,1,focused);
+      v->present_width=width;v->present_height=height;v->present_scale=display;v->present_focused=focused;v->presented=1;
+    }
+    v->built=1;
+  }
+  DR_Bucket *bucket=dr_bucket_make();bucket->content_version=v->version;
+  rd_workspace_surface_contribute_version(v->version);
+  DR_BucketScope(bucket)
+  {if(v->width && v->height)dr_img(image,r2f32p(0,0,v->width,v->height),v->texture,state.connected?v4f32(1,1,1,1):v4f32(.45f,.45f,.45f,1),0,0,0);}
+  ui_box_equip_draw_bucket(canvas,bucket);
+  Vec2F32 mouse=ui_mouse();
+  B32 inside=mouse.x>=image.x0 && mouse.x<image.x1 && mouse.y>=image.y0 && mouse.y<image.y1;
+  if(focused && state.control && !state.resetting && scale>0)
+  {
+    ft_input_event input={.geometry_revision=state.input.geometry.revision,.modifiers=uishell_jackstay_modifiers(signal.event_flags)};
+    input.x=Clamp(0,(mouse.x-image.x0)/(image.x1-image.x0),1)*state.input.geometry.width;
+    input.y=Clamp(0,(mouse.y-image.y0)/(image.y1-image.y0),1)*state.input.geometry.height;
+    if((inside || v->buttons) && (mouse.x!=v->mouse.x || mouse.y!=v->mouse.y)) {input.kind=FT_INPUT_MOTION;wh_js_send(v->session,&input);}
+    struct {U32 down,up,button;} buttons[]={
+      {UI_SignalFlag_LeftPressed,UI_SignalFlag_LeftReleased,1},
+      {UI_SignalFlag_MiddlePressed,UI_SignalFlag_MiddleReleased,2},
+      {UI_SignalFlag_RightPressed,UI_SignalFlag_RightReleased,3}};
+    for(U64 i=0;i<ArrayCount(buttons);++i) {
+      U32 bit=1u<<i;
+      input.kind=FT_INPUT_BUTTON;input.button=buttons[i].button;
+      // A quick click can deliver both transitions in one shell frame.
+      if(inside && (signal.f&buttons[i].down)) {
+        input.action=FT_INPUT_DOWN;
+        if(wh_js_send(v->session,&input))v->buttons|=bit;
+      }
+      if((v->buttons&bit) && (signal.f&buttons[i].up)) {
+        input.action=FT_INPUT_UP;
+        if(wh_js_send(v->session,&input))v->buttons&=~bit;
+      }
+    }
+    for(UI_Event *event=0;ui_next_event(&event);) {
+      if(event->kind==UI_EventKind_Scroll && inside) {
+        ft_input_event scroll={.kind=FT_INPUT_SCROLL,.geometry_revision=state.input.geometry.revision,
+          .pointer_x=input.x,.pointer_y=input.y,.x=event->delta_2f32.x/30.0,.y=event->delta_2f32.y/30.0,
+          .scroll_unit=FT_INPUT_SCROLL_LINE,.modifiers=uishell_jackstay_modifiers(event->modifiers)};
+        wh_js_send(v->session,&scroll);ui_eat_event(event);
+      }
+    }
+  }
+  if(focused)v->mouse=mouse;
 }
 WH_VIEW_UI_FUNCTION_DEF(jackstay)
 {
@@ -381,133 +697,71 @@ WH_VIEW_UI_FUNCTION_DEF(jackstay)
         if(ui_clicked(ui_button(str8_lit("Connect###connect"))) && ready)uishell_jackstay_open(v,1);
       }
     }
+    else uishell_jackstay_session_ui(v,rect);
+  }
+}
+// Whether the system browser can open `url` (Open in browser).
+internal B32 uishell_web_browsable(String8 url)
+{
+  return str8_match(str8_prefix(url,7),str8_lit("http://"),StringMatchFlag_CaseInsensitive) ||
+         str8_match(str8_prefix(url,8),str8_lit("https://"),StringMatchFlag_CaseInsensitive);
+}
+WH_VIEW_UI_FUNCTION_DEF(web)
+{
+  Rng2F32 rect=ctx->rect;
+  RD_ViewAddress view=ctx->settings.view;
+  UIShell_JackstayView *v=uishell_jackstay_find(view);
+  if(!v){v=calloc(1,sizeof(*v));v->view=view;v->web=1;v->next=uishell_jackstay_views;uishell_jackstay_views=v;}
+  if(v->disconnecting && wh_js_destroy(&v->session)){v->disconnecting=0;v->content_focus=0;uishell_jackstay_unfocus(v);}
+  if(!v->initialized)
+  {
+    v->initialized=1;
+    // Where it got to, else the page it opens on; neither is the start page.
+    String8 url=ctx->resolution.web_url.size?ctx->resolution.web_url:wh_view_setting(ctx,str8_lit("url"));
+    snprintf(v->reached,sizeof(v->reached),"%.*s",(int)url.size,(char *)url.str);
+    RD_WindowState *window=rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
+    F32 display=wm_dpi_from_window(window->os)/96.f;
+    if(display<=0)display=1;
+    Vec2F32 dim=dim_2f32(rect);
+    uishell_web_launch(v,url,(U32)(dim.x/display),(U32)(dim.y/display));
+  }
+  uishell_web_poll(v);
+  ui_set_next_pref_width(ui_px(dim_2f32(rect).x,1));
+  ui_set_next_pref_height(ui_px(dim_2f32(rect).y,1));
+  UI_Column UI_PrefWidth(ui_pct(1,0))
+  {
+    if(v->session)uishell_jackstay_session_ui(v,rect);
     else
     {
-      WH_JS_State state;WH_JS_Frame frame={0};
-      // A view may be built for both a preview and its main panel. Take at
-      // most one frame per shell frame: an upload is an immutable texture, and
-      // an import frame is released only after the GPU is done with it.
-      wh_js_snapshot(v->session,&state,v->upload_frame!=rd_state->frame_index?&frame:0,v->version);
-      v->upload_frame=rd_state->frame_index;
-      if(frame.native)uishell_jackstay_take_import(v,&frame);
-      else if(frame.pixels)
+      String8 page=str8_cstring(v->page);
+      UI_PrefHeight(ui_em(1.8f,1)) UI_Row UI_PrefWidth(ui_pct(1,0)) uishell_web_address_bar(v,v->page);
+      UI_PrefHeight(ui_em(1.8f,1))
       {
-        R_Handle texture=r_tex2d_alloc(R_ResourceKind_Static,v2s32(frame.width,frame.height),R_Tex2DFormat_RGBA8,frame.pixels);
-        if(!r_handle_match(texture,r_handle_zero())) {
-          // A CPU frame replaces any shown import.
-          uishell_jackstay_retire(v);
-          uishell_jackstay_forget_imports(v,1);
-          uishell_jackstay_show_texture(v,texture,1,frame.width,frame.height,frame.version);
-        }
-        free(frame.pixels);
-      }
-      // The producer's title for the tab, and its navigation when it has any.
-      char *title=state.page_title[0]?state.page_title:state.window_title;
-      MemoryCopy(v->title,title,sizeof(v->title));
-      B32 navigation=state.affordances && (state.url[0] || state.navigation_capabilities);
-      if(navigation) UI_PrefHeight(ui_em(1.8f,1)) UI_Row
-      {
-        U32 caps=state.navigation_capabilities;
-        UI_PrefWidth(ui_em(2.2f,1))
+        if(!v->failure[0])ui_label(str8_lit("Starting…"));
+        else
         {
-          if(caps&(1u<<(FT_AFF_NAVIGATION_BACK-1))) UI_Flags(state.can_go_back?0:UI_BoxFlag_Disabled)
-          if(ui_clicked(rd_icon_button(RD_IconKind_LeftArrow,0,str8_lit("###back"))))wh_js_navigate(v->session,FT_AFF_NAVIGATION_BACK,0);
-          if(caps&(1u<<(FT_AFF_NAVIGATION_FORWARD-1))) UI_Flags(state.can_go_forward?0:UI_BoxFlag_Disabled)
-          if(ui_clicked(rd_icon_button(RD_IconKind_RightArrow,0,str8_lit("###forward"))))wh_js_navigate(v->session,FT_AFF_NAVIGATION_FORWARD,0);
-          if(caps&(1u<<(FT_AFF_NAVIGATION_RELOAD-1)))
-          if(ui_clicked(rd_icon_button(RD_IconKind_Refresh,0,str8_lit("###reload"))))wh_js_navigate(v->session,FT_AFF_NAVIGATION_RELOAD,0);
-        }
-        UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s%s",state.url,state.loading?"  (loading)":"");
-      }
-      UI_PrefHeight(ui_em(1.8f,1)) UI_Row
-      {
-        if(state.path_status[0] && state.width)UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s | %s | %ux%u %s",state.media_status,state.input_status,state.width,state.height,state.path_status);
-        else if(state.path_status[0])UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s | %s | %s",state.media_status,state.input_status,state.path_status);
-        else UI_PrefWidth(ui_pct(1,0)) ui_labelf("%s | %s",state.media_status,state.input_status);
-        UI_PrefWidth(ui_em(8,1))
-        {
-          if(ui_clicked(ui_button(str8_lit("Retry control###retry"))) && !v->disconnecting)wh_js_connect(v->session,true);
-          if(ui_clicked(ui_button(str8_lit("Disconnect###disconnect")))){uishell_jackstay_drop_frames(v);wh_js_stop(v->session);v->disconnecting=1;}
-        }
-      }
-      ui_set_next_pref_height(ui_px(Max(0,dim_2f32(rect).y-ui_top_font_size()*1.8f*(navigation?2:1)),1));
-      UI_Key canvas_key=ui_key_from_string(ui_active_seed_key(),str8_lit("jackstay_canvas"));
-      // Query panel eligibility without marking every control as focused.
-      B32 panel_active=0;
-      UI_Focus(UI_FocusKind_On){panel_active=ui_is_focus_active();}
-      if(v->content_focus && panel_active)ui_set_auto_focus_active_key(canvas_key);
-      UI_Box *canvas=ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground|UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder,str8_lit("jackstay_canvas"));
-      UI_Signal signal=ui_signal_from_box(canvas);
-      B32 clicked=!!(signal.f&UI_SignalFlag_LeftPressed);
-      if(clicked){v->content_focus=1;uishell_cmd("focus_panel");}
-      B32 focused=v->content_focus && (panel_active || clicked);
-      RD_WindowState *window=rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
-      focused=focused && wm_window_is_focused(window->os);
-      if(focused){v->focus_requested=1;v->focused=1;wh_js_focus(v->session,true);}
-      if(clicked && !state.control && !state.connecting)wh_js_connect(v->session,true);
-      if(v->epoch!=state.input_epoch){MemoryZeroArray(v->keys);v->buttons=0;v->epoch=state.input_epoch;}
-      if(v->pointer_epoch!=state.pointer_epoch){v->buttons=0;v->pointer_epoch=state.pointer_epoch;}
-      Vec2F32 dim=dim_2f32(canvas->rect);
-      F32 scale=v->width && v->height?Min(dim.x/v->width,dim.y/v->height):0;
-      Rng2F32 image=canvas->rect;
-      image.x0+=(dim.x-v->width*scale)/2;image.y0+=(dim.y-v->height*scale)/2;
-      image.x1=image.x0+v->width*scale;image.y1=image.y0+v->height*scale;
-      if(focused && v->buttons && !MemoryMatch(&image,&v->image_rect,sizeof(image))) {wh_js_focus(v->session,false);wh_js_focus(v->session,focused);v->buttons=0;}
-      if(focused)v->image_rect=image;
-      // How the View shows the producer, which a producer that takes
-      // affordances sizes itself to: the canvas in logical units at the
-      // display's scale. Unchanged values are not sent again.
-      {
-        F32 display=wm_dpi_from_window(window->os)/96.f;
-        if(display<=0)display=1;
-        U32 width=(U32)(dim.x/display),height=(U32)(dim.y/display);
-        if(!v->presented || width!=v->present_width || height!=v->present_height || display!=v->present_scale || focused!=v->present_focused)
-        {
-          wh_js_present(v->session,width,height,display,1,focused);
-          v->present_width=width;v->present_height=height;v->present_scale=display;v->present_focused=focused;v->presented=1;
-        }
-        v->built=1;
-      }
-      DR_Bucket *bucket=dr_bucket_make();bucket->content_version=v->version;
-      rd_workspace_surface_contribute_version(v->version);
-      DR_BucketScope(bucket)
-      {if(v->width && v->height)dr_img(image,r2f32p(0,0,v->width,v->height),v->texture,state.connected?v4f32(1,1,1,1):v4f32(.45f,.45f,.45f,1),0,0,0);}
-      ui_box_equip_draw_bucket(canvas,bucket);
-      Vec2F32 mouse=ui_mouse();
-      B32 inside=mouse.x>=image.x0 && mouse.x<image.x1 && mouse.y>=image.y0 && mouse.y<image.y1;
-      if(focused && state.control && !state.resetting && scale>0)
-      {
-        ft_input_event input={.geometry_revision=state.input.geometry.revision,.modifiers=uishell_jackstay_modifiers(signal.event_flags)};
-        input.x=Clamp(0,(mouse.x-image.x0)/(image.x1-image.x0),1)*state.input.geometry.width;
-        input.y=Clamp(0,(mouse.y-image.y0)/(image.y1-image.y0),1)*state.input.geometry.height;
-        if((inside || v->buttons) && (mouse.x!=v->mouse.x || mouse.y!=v->mouse.y)) {input.kind=FT_INPUT_MOTION;wh_js_send(v->session,&input);}
-        struct {U32 down,up,button;} buttons[]={
-          {UI_SignalFlag_LeftPressed,UI_SignalFlag_LeftReleased,1},
-          {UI_SignalFlag_MiddlePressed,UI_SignalFlag_MiddleReleased,2},
-          {UI_SignalFlag_RightPressed,UI_SignalFlag_RightReleased,3}};
-        for(U64 i=0;i<ArrayCount(buttons);++i) {
-          U32 bit=1u<<i;
-          input.kind=FT_INPUT_BUTTON;input.button=buttons[i].button;
-          // A quick click can deliver both transitions in one shell frame.
-          if(inside && (signal.f&buttons[i].down)) {
-            input.action=FT_INPUT_DOWN;
-            if(wh_js_send(v->session,&input))v->buttons|=bit;
+          // Why: the program's exit and the end of what it wrote.
+          ui_labelf("Wheelhouse couldn't show %S.",page.size?page:str8_lit("the start page"));
+          String8 failure=str8_cstring(v->failure);
+          U64 shown=0;
+          for(U64 start=0;start<failure.size && shown<12;shown++)
+          {
+            U64 end=str8_find_needle(failure,start,str8_lit("\n"),0);
+            ui_label(str8_substr(failure,r1u64(start,end)));
+            start=end+1;
           }
-          if((v->buttons&bit) && (signal.f&buttons[i].up)) {
-            input.action=FT_INPUT_UP;
-            if(wh_js_send(v->session,&input))v->buttons&=~bit;
-          }
-        }
-        for(UI_Event *event=0;ui_next_event(&event);) {
-          if(event->kind==UI_EventKind_Scroll && inside) {
-            ft_input_event scroll={.kind=FT_INPUT_SCROLL,.geometry_revision=state.input.geometry.revision,
-              .pointer_x=input.x,.pointer_y=input.y,.x=event->delta_2f32.x/30.0,.y=event->delta_2f32.y/30.0,
-              .scroll_unit=FT_INPUT_SCROLL_LINE,.modifiers=uishell_jackstay_modifiers(event->modifiers)};
-            wh_js_send(v->session,&scroll);ui_eat_event(event);
+          UI_Row UI_PrefWidth(ui_em(10,1))
+          {
+            if(ui_clicked(ui_button(str8_lit("Retry###web_retry"))))
+            {
+              v->failure[0]=0;
+              if(v->process){wheelhouse_connector_restart(v->process);v->retrying=1;}
+              else uishell_web_launch(v,page,v->present_width,v->present_height);
+            }
+            if(uishell_web_browsable(page) && ui_clicked(ui_button(str8_lit("Open in browser###web_open"))))wm_open_in_browser(page);
           }
         }
       }
-      if(focused)v->mouse=mouse;
     }
   }
 }
@@ -518,4 +772,10 @@ internal void uishell_jackstay_rekey(RD_ViewAddress from,RD_ViewAddress to){(voi
 internal String8 uishell_jackstay_title(RD_ViewAddress view){(void)view;return str8_zero();}
 internal void uishell_jackstay_tick(B32 before,B32 quit){(void)before;(void)quit;}
 WH_VIEW_UI_FUNCTION_DEF(jackstay){(void)ctx;ui_label(str8_lit("This build does not include Jackstay."));}
+WH_VIEW_UI_FUNCTION_DEF(web)
+{
+  String8 url=wh_view_setting(ctx,str8_lit("url"));
+  ui_label(str8_lit("This build does not include web Views."));
+  if(url.size && ui_clicked(ui_buttonf("Open in browser###web_open")))wm_open_in_browser(url);
+}
 #endif

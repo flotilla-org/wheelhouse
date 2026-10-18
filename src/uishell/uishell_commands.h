@@ -92,6 +92,8 @@ read_only global UIShell_CmdInfo uishell_app_viewer_cmd_info_table[] =
   UISHELL_CMD("text", "Text", FileOutline, "Opens a Text tab.", "tab,file", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("jackstay", "Open Jackstay Source", Machine, "Opens a Jackstay source connection view.", "tab,jackstay,stream", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("terminal", "Terminal", Machine, "Opens a Terminal tab.", "tab,terminal,shell", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
+  UISHELL_CMD("web", "Web", Window, "Opens a web page tab, on the start page.", "tab,web,browser,page", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
+  UISHELL_CMD("open_url", "Open URL", Window, "Opens a web page tab at an address.", "web,browser,page,url,open", UISHELL_CMD_FLAG_UI, UISHELL_Q_STRING),
   UISHELL_CMD("terminal_scroll_page_up", "Scroll Terminal View Up", Machine, "Scrolls the outer terminal document up one visible page without child input.", "terminal,scroll,page", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("terminal_scroll_page_down", "Scroll Terminal View Down", Machine, "Scrolls the outer terminal document down one visible page without child input.", "terminal,scroll,page", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("terminal_transfer", "Hand Terminal to Daemon", Machine, "Moves this live terminal to its configured daemon (default if unset).", "terminal,transfer,daemon", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),

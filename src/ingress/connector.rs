@@ -1,10 +1,16 @@
-//! Supervised connector processes: one per Dashboard subscription. Each runs
-//! its command on a thread of its own, restarts it when it exits, and stops
-//! it (with whatever it started) when the subscription goes.
+//! Supervised processes: a Dashboard subscription's connector, or the
+//! program behind a web View. Each runs its command on a thread of its own,
+//! restarts it when it exits, and stops it (with whatever it started) when
+//! its owner goes.
 //!
 //! Restarts wait 1s, doubling to 30s; a run that lasted 30s resets the wait,
 //! as `tools/daily-driver.py` did when it supervised `flotilla pm connect`.
 //! The child's output appends to one log, where each exit is noted too.
+//!
+//! With [`Spec::ready_line`], the first line the command writes to stdout
+//! says it is ready (a web View's producer prints its endpoint), and the rest
+//! of stdout goes to the log. A run that exits before it is ready has failed:
+//! it is not restarted until asked, and its exit and output are kept to show.
 //!
 //! A connector never outlives Wheelhouse. Stopping ends what it started
 //! (on Unix, TERM, then KILL after `GRACE`), and Wheelhouse stops every connector
@@ -17,12 +23,12 @@
 //! object kills everything in it when its last handle, Wheelhouse's, closes.
 use std::{
     fs::{File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::PathBuf,
-    process::{Child, Command},
+    process::{Child, ChildStdout, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -31,6 +37,11 @@ use std::{
 pub const STABLE: Duration = Duration::from_secs(30);
 pub const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(100);
+/// How much of a failed run's output its failure keeps.
+const FAILURE_TAIL: usize = 2048;
+/// How long an exit waits for the stdout reader to finish what the run
+/// wrote: its ready line, and the rest for the log.
+const READER_GRACE: Duration = Duration::from_secs(1);
 /// How long a stopped connector has after SIGTERM before SIGKILL. The
 /// guardian waits as long (`GUARDIAN`, 20 × 0.1s).
 #[cfg(unix)]
@@ -58,11 +69,27 @@ pub struct Spec {
     /// Variables set (`Some`) or removed (`None`) in the inherited environment.
     pub env: Vec<(String, Option<String>)>,
     pub log: PathBuf,
+    /// The first stdout line means ready; see the module docs.
+    pub ready_line: bool,
+}
+
+/// Where a supervised command is, as [`Connector::state`] reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum State {
+    /// Not running: starting, or waiting to restart.
+    Waiting,
+    /// Running, and not (yet) ready.
+    Running,
+    /// Running, having written this ready line.
+    Ready(String),
+    /// Exited before it was ready: why, and the end of what it wrote.
+    Failed(String),
 }
 
 pub struct Connector {
     running: Arc<AtomicBool>,
     starts: Arc<AtomicU64>,
+    state: Arc<Mutex<State>>,
     /// Dropped to stop; a restart is sent.
     stop: Option<mpsc::Sender<Restart>>,
     thread: Option<thread::JoinHandle<()>>,
@@ -83,6 +110,7 @@ enum Wait {
 /// on Windows, a job object.
 struct Run {
     child: Child,
+    stdout: Option<ChildStdout>,
     #[cfg(unix)]
     lifeline: Option<std::io::PipeWriter>,
     #[cfg(windows)]
@@ -116,7 +144,12 @@ impl Run {
                 None => command.env_remove(name),
             };
         }
-        command.stdout(log.try_clone()?).stderr(log.try_clone()?);
+        if spec.ready_line {
+            command.stdout(Stdio::piped());
+        } else {
+            command.stdout(log.try_clone()?);
+        }
+        command.stderr(log.try_clone()?);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -139,7 +172,8 @@ impl Run {
         }
         #[cfg(windows)]
         let job = windows::Job::new()?;
-        let child = command.spawn()?;
+        let mut child = command.spawn()?;
+        let stdout = child.stdout.take();
         #[cfg(windows)]
         {
             use std::os::windows::io::AsRawHandle;
@@ -155,6 +189,7 @@ impl Run {
         }
         Ok(Self {
             child,
+            stdout,
             #[cfg(unix)]
             lifeline: Some(lifeline),
             #[cfg(windows)]
@@ -231,6 +266,43 @@ fn written_since(log: &mut File, from: u64) -> String {
     String::from_utf8_lossy(&output).into_owned()
 }
 
+/// The last `limit` bytes of `text`, from the start of a line.
+fn tail(text: &str, limit: usize) -> &str {
+    if text.len() <= limit {
+        return text;
+    }
+    let mut start = text.len() - limit;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let rest = &text[start..];
+    rest.find('\n').map_or(rest, |line| &rest[line + 1..])
+}
+
+/// Reads run `run`'s stdout: its first line makes it ready, unless a later
+/// run has started; the rest goes to the log.
+fn read_ready(
+    stdout: ChildStdout,
+    mut log: File,
+    run: u64,
+    starts: Arc<AtomicU64>,
+    state: Arc<Mutex<State>>,
+    wake: super::Wake,
+) {
+    let mut lines = BufReader::new(stdout).lines();
+    if let Some(Ok(line)) = lines.next() {
+        let mut state = state.lock().unwrap();
+        if starts.load(Ordering::SeqCst) == run && *state == State::Running {
+            *state = State::Ready(line.trim_end().to_owned());
+            drop(state);
+            wake();
+        }
+    }
+    for line in lines.map_while(Result::ok) {
+        let _ = writeln!(log, "{line}");
+    }
+}
+
 impl Connector {
     pub fn start(spec: Spec, wake: super::Wake) -> Result<Self, String> {
         if spec.argv.is_empty() {
@@ -247,8 +319,11 @@ impl Connector {
             .map_err(|e| e.to_string())?;
         let running = Arc::new(AtomicBool::new(false));
         let starts = Arc::new(AtomicU64::new(0));
+        let state = Arc::new(Mutex::new(State::Waiting));
         let (stop, stopped) = mpsc::channel::<Restart>();
-        let (running_, starts_) = (running.clone(), starts.clone());
+        let (running_, starts_, state_) = (running.clone(), starts.clone(), state.clone());
+        let set = move |next: State| *state_.lock().unwrap() = next;
+        let state_t = state.clone();
         let thread = thread::Builder::new()
             .name("wheelhouse-connector".into())
             .spawn(move || {
@@ -263,6 +338,22 @@ impl Connector {
                     let from = log.seek(SeekFrom::End(0)).unwrap_or(0);
                     let mut run = match Run::spawn(&spec, &log) {
                         Ok(run) => run,
+                        // It never got as far as being ready.
+                        Err(error) if spec.ready_line => {
+                            note(&mut log, &format!("Could not start: {error}"));
+                            set(State::Failed(format!(
+                                "Couldn't start {}: {error}",
+                                spec.argv[0]
+                            )));
+                            wake();
+                            match stopped.recv() {
+                                Ok(Restart) => {
+                                    set(State::Waiting);
+                                    continue;
+                                }
+                                Err(_) => return,
+                            }
+                        }
                         Err(error) => {
                             let message = format!(
                                 "Connector could not start: {error}; retrying in {}s",
@@ -278,8 +369,24 @@ impl Connector {
                         }
                     };
                     let started = Instant::now();
+                    set(State::Running);
                     running_.store(true, Ordering::SeqCst);
-                    starts_.fetch_add(1, Ordering::SeqCst);
+                    let this = starts_.fetch_add(1, Ordering::SeqCst) + 1;
+                    // Ends (and its sender drops) once the reader has read all.
+                    let mut reader: Option<mpsc::Receiver<()>> = None;
+                    if let (Some(stdout), Ok(log)) = (run.stdout.take(), log.try_clone()) {
+                        let (starts, state) = (starts_.clone(), state_t.clone());
+                        let (done, finished) = mpsc::channel::<()>();
+                        let spawned = thread::Builder::new()
+                            .name("wheelhouse-connector-stdout".into())
+                            .spawn(move || {
+                                read_ready(stdout, log, this, starts, state, wake);
+                                drop(done);
+                            });
+                        if spawned.is_ok() {
+                            reader = Some(finished);
+                        }
+                    }
                     wake();
                     let mut restart = false;
                     let status = loop {
@@ -287,6 +394,7 @@ impl Connector {
                             Wait::Stop => {
                                 run.stop();
                                 running_.store(false, Ordering::SeqCst);
+                                set(State::Waiting);
                                 return;
                             }
                             Wait::Restart => {
@@ -304,12 +412,45 @@ impl Connector {
                     // Whatever it started goes with it.
                     run.stop();
                     running_.store(false, Ordering::SeqCst);
-                    wake();
+                    // A run that wrote its ready line and exited at once was
+                    // ready, and what it wrote belongs in its failure: let the
+                    // reader finish (at EOF, now the group has gone).
+                    if let Some(finished) = reader.take() {
+                        let _ = finished.recv_timeout(READER_GRACE);
+                    }
+                    let ready = matches!(*state_t.lock().unwrap(), State::Ready(_));
                     if restart {
+                        set(State::Waiting);
+                        wake();
                         note(&mut log, "Connector restarted on request");
                         backoff = Duration::from_secs(1);
                         continue;
                     }
+                    if spec.ready_line && !ready {
+                        let output = written_since(&mut log, from);
+                        let output = tail(output.trim_end(), FAILURE_TAIL);
+                        note(
+                            &mut log,
+                            &format!("Exited before it was ready, with {status}"),
+                        );
+                        let failure = match output {
+                            "" => format!("Exited with {status}"),
+                            output => format!("Exited with {status}:\n{output}"),
+                        };
+                        set(State::Failed(failure));
+                        wake();
+                        // Not restarted until asked.
+                        match stopped.recv() {
+                            Ok(Restart) => {
+                                backoff = Duration::from_secs(1);
+                                set(State::Waiting);
+                                continue;
+                            }
+                            Err(_) => return,
+                        }
+                    }
+                    set(State::Waiting);
+                    wake();
                     if started.elapsed() >= STABLE {
                         backoff = Duration::from_secs(1);
                     }
@@ -332,6 +473,7 @@ impl Connector {
         Ok(Self {
             running,
             starts,
+            state,
             stop: Some(stop),
             thread: Some(thread),
         })
@@ -343,6 +485,10 @@ impl Connector {
 
     pub fn starts(&self) -> u64 {
         self.starts.load(Ordering::SeqCst)
+    }
+
+    pub fn state(&self) -> State {
+        self.state.lock().unwrap().clone()
     }
 
     /// Ends the current run and starts the next at once, without waiting:
@@ -460,6 +606,7 @@ mod tests {
                 ],
                 env: vec![],
                 log: log.clone(),
+                ready_line: false,
             },
             wake,
         )
@@ -500,6 +647,7 @@ mod tests {
                     ("HOME".into(), None),
                 ],
                 log: log.clone(),
+                ready_line: false,
             },
             wake,
         )
@@ -543,6 +691,7 @@ mod tests {
             argv: vec!["/bin/sh".into(), "-c".into(), script],
             env: Vec::new(),
             log: dir.join("connector.log"),
+            ready_line: false,
         };
         (spec, marker)
     }
@@ -605,6 +754,152 @@ mod tests {
         // The guardian went with them.
         let status = run.child.wait().unwrap();
         assert!(!status.success(), "{status}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn ready_spec(dir: &std::path::Path, script: String) -> Spec {
+        std::fs::create_dir_all(dir).unwrap();
+        Spec {
+            argv: vec!["/bin/sh".into(), "-c".into(), script],
+            env: Vec::new(),
+            log: dir.join("connector.log"),
+            ready_line: true,
+        }
+    }
+
+    #[test]
+    fn the_first_stdout_line_is_the_ready_line_and_the_rest_is_logged() {
+        let dir = std::env::temp_dir().join(format!("wh-connector-ready-{}", std::process::id()));
+        let spec = ready_spec(
+            &dir,
+            "echo booting >&2; sleep 0.2; echo /run/endpoint.sock; echo afterwards; exec sleep 60"
+                .into(),
+        );
+        let log = spec.log.clone();
+        let connector = Connector::start(spec, wake).unwrap();
+        wait_for("the ready line", || {
+            connector.state() == State::Ready("/run/endpoint.sock".into())
+        });
+        wait_for("the rest in the log", || {
+            std::fs::read_to_string(&log).is_ok_and(|t| t.contains("afterwards"))
+        });
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            text.contains("booting") && !text.contains("endpoint.sock"),
+            "{text}"
+        );
+        drop(connector);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exiting_before_ready_fails_and_waits_for_a_restart() {
+        let dir = std::env::temp_dir().join(format!("wh-connector-fail-{}", std::process::id()));
+        let runs = dir.join("runs");
+        let spec = ready_spec(
+            &dir,
+            format!(
+                "echo run >> {}; echo 'page did not load' >&2; exit 3",
+                runs.display()
+            ),
+        );
+        let connector = Connector::start(spec, wake).unwrap();
+        wait_for("the failure", || {
+            matches!(connector.state(), State::Failed(_))
+        });
+        let State::Failed(why) = connector.state() else {
+            unreachable!()
+        };
+        assert!(why.starts_with("Exited with exit status: 3"), "{why}");
+        assert!(why.contains("page did not load"), "{why}");
+        // Not restarted on its own: past the first backoff, one run.
+        thread::sleep(Duration::from_millis(1500));
+        assert_eq!(connector.starts(), 1);
+        assert!(matches!(connector.state(), State::Failed(_)));
+        connector.restart();
+        wait_for("the retry", || connector.starts() == 2);
+        wait_for("it to fail again", || {
+            matches!(connector.state(), State::Failed(_))
+        });
+        assert_eq!(std::fs::read_to_string(&runs).unwrap(), "run\nrun\n");
+        drop(connector);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_ready_line_written_just_before_exiting_counts() {
+        let dir = std::env::temp_dir().join(format!("wh-connector-quick-{}", std::process::id()));
+        let once = dir.join("once");
+        // The first run prints its endpoint and exits at once; the next stays.
+        let spec = ready_spec(
+            &dir,
+            format!(
+                "if [ -e {o} ]; then echo second; exec sleep 60; else touch {o}; echo first; echo trailing; exit 1; fi",
+                o = once.display()
+            ),
+        );
+        let log = spec.log.clone();
+        let connector = Connector::start(spec, wake).unwrap();
+        wait_for("the second run to be ready", || {
+            connector.state() == State::Ready("second".into())
+        });
+        // Restarted (it had been ready), with what followed its ready line logged.
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            text.contains("trailing") && text.contains("restarting in 1s"),
+            "{text}"
+        );
+        drop(connector);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failure_tail_starts_at_a_line() {
+        assert_eq!(tail("short", 10), "short");
+        assert_eq!(tail("one\ntwo\nthree", 8), "three");
+        assert_eq!(tail("é\nab", 3), "ab");
+    }
+
+    #[test]
+    fn a_program_that_cannot_start_fails() {
+        let dir = std::env::temp_dir().join(format!("wh-connector-missing-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let spec = Spec {
+            argv: vec![dir.join("no-such-program").display().to_string()],
+            env: Vec::new(),
+            log: dir.join("connector.log"),
+            ready_line: true,
+        };
+        let connector = Connector::start(spec, wake).unwrap();
+        wait_for("the failure", || {
+            matches!(connector.state(), State::Failed(_))
+        });
+        let State::Failed(why) = connector.state() else {
+            unreachable!()
+        };
+        assert!(why.contains("no-such-program"), "{why}");
+        drop(connector);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_ready_run_that_exits_restarts_and_is_ready_again() {
+        let dir =
+            std::env::temp_dir().join(format!("wh-connector-ready-again-{}", std::process::id()));
+        let once = dir.join("once");
+        let spec = ready_spec(
+            &dir,
+            format!(
+                "if [ -e {o} ]; then echo second; exec sleep 60; else touch {o}; echo first; sleep 0.2; exit 1; fi",
+                o = once.display()
+            ),
+        );
+        let connector = Connector::start(spec, wake).unwrap();
+        wait_for("the second run to be ready", || {
+            connector.state() == State::Ready("second".into())
+        });
+        assert_eq!(connector.starts(), 2);
+        drop(connector);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

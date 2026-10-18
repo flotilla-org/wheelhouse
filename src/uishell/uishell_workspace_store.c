@@ -85,7 +85,8 @@
 // one only. The rest are machine-local, the View's Presentation State:
 // `attach_token` and `porthole_session` (a capture session on this machine)
 // and `managed_target` (the target this device last applied). A Jackstay
-// endpoint is part of its View Spec, so Andamento has it already.
+// endpoint is part of its View Spec, so Andamento has it already. So is a web
+// View's page; where it got to (`web_url`) is portable too.
 
 StaticAssert(WH_Content_Command == 1<<ANDAMENTO_SLOT_COMMAND && WH_Content_File == 1<<ANDAMENTO_SLOT_FILE &&
              WH_Content_Url == 1<<ANDAMENTO_SLOT_URL && WH_Content_Jackstay == 1<<ANDAMENTO_SLOT_JACKSTAY &&
@@ -144,10 +145,10 @@ read_only global String8 uishell_store_jackstay_keys[] =
 read_only global String8 uishell_store_resolution_keys[] =
 {
   str8_lit_comp("session"), str8_lit_comp("daemon_name"), str8_lit_comp("attach_token"),
-  str8_lit_comp("managed_target"), str8_lit_comp("porthole_session"),
+  str8_lit_comp("managed_target"), str8_lit_comp("porthole_session"), str8_lit_comp("web_url"),
 };
 // In WH_TargetResolution's order (uishell_store_view_slot).
-StaticAssert(ArrayCount(uishell_store_resolution_keys) == 5, uishell_store_resolution_fields);
+StaticAssert(ArrayCount(uishell_store_resolution_keys) == 6, uishell_store_resolution_fields);
 
 // Runtime-only View settings: this process's progress through its Slot's
 // plan, never saved (uishell_workspace_store_window_text drops them), so a
@@ -338,6 +339,14 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
     }
     return 1;
   }
+  if(str8_match(kind, str8_lit("web"), 0))
+  {
+    // The page it opens: its URL, or the start page.
+    String8 url = uishell_store_setting(view, str8_lit("url"));
+    taken[(*taken_count)++] = str8_lit("url");
+    spec->url = url.size ? url : uishell_store_page_url(arena, kind, 0, 0, 0);
+    return 1;
+  }
   if(str8_match(kind, str8_lit("jackstay"), 0))
   {
     for(U64 i = 0; i < ArrayCount(uishell_store_jackstay_keys); i++)
@@ -388,7 +397,7 @@ uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UISh
                         WH_SlotStatus *status, WH_TargetResolution *resolution)
 {
   String8 *resolved[] = {&resolution->session, &resolution->daemon_name, &resolution->attach_token,
-                         &resolution->managed_target, &resolution->porthole_session};
+                         &resolution->managed_target, &resolution->porthole_session, &resolution->web_url};
   // A machine-local one is the View's Presentation State.
   for(U64 i = 0; i < ArrayCount(resolved); i++) { *resolved[i] = rd_cfg_setting_child(view, uishell_store_resolution_keys[i])->first->string; }
   if(str8_match(view->string, str8_lit("placeholder"), 0)) { *status |= WH_SlotStatus_Placeholder; }
@@ -613,6 +622,8 @@ uishell_store_unshown(Arena *arena, String8 key, UIShell_ViewSpec *spec)
     {
       String8 kind = uishell_store_page_kind(spec->url);
       if(kind.size && (wh_renderer_from_name(kind)->content & WH_Content_Page)) { return str8_zero(); }
+      // Another URL, when a Handler takes its scheme.
+      if(!kind.size && wh_handler_from_url(spec->url)->name.size) { return str8_zero(); }
       return push_str8_copy(arena, spec->url);
     }
     case ANDAMENTO_SLOT_FACET:
@@ -634,7 +645,7 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
 {
   Temp scratch = scratch_begin(0, 0);
   String8 unshown = spec ? uishell_store_unshown(scratch.arena, key, spec) : str8_lit("a slot that has gone");
-  String8 kind = wh_renderer_from_content(WH_Content_Unshown)->name, expr = str8_zero(), cwd = str8_zero();
+  String8 kind = wh_renderer_from_content(WH_Content_Unshown)->name, expr = str8_zero(), cwd = str8_zero(), url = str8_zero();
   B32 has_cwd = 0;
   if(!unshown.size)
   {
@@ -647,6 +658,8 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
       case ANDAMENTO_SLOT_URL:
       {
         kind = uishell_store_page_kind(spec->url);
+        // Another URL: its Handler's Renderer shows it, there.
+        if(!kind.size) { kind = wh_handler_from_url(spec->url)->renderer; url = spec->url; }
         expr = uishell_store_page_param(scratch.arena, spec->url, str8_lit("expression"));
         cwd = uishell_store_page_param(scratch.arena, spec->url, str8_lit("cwd"));
         has_cwd = cwd.size != 0;
@@ -656,6 +669,7 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
   CFG_Node *view = rd_cfg_new_view_tab(rd_view_namespace(owner, RD_ViewOwnerKind_Workspace), kind, expr, 0);
   uishell_store_set_setting(view, str8_lit("slot"), key);
   if(has_cwd) { uishell_store_set_setting(view, str8_lit("cwd"), cwd); }
+  if(url.size) { uishell_store_set_setting(view, str8_lit("url"), url); }
   if(!unshown.size && spec->content == ANDAMENTO_SLOT_JACKSTAY) { uishell_store_set_setting(view, spec->launcher, spec->endpoint); }
   if(spec && spec->content == ANDAMENTO_SLOT_FACET)
   {
@@ -888,6 +902,8 @@ uishell_store_assign_keys(Arena *arena, CFG_Node *owner, UIShell_StoreDoc *doc, 
 // daemon_name; none for the default daemon), made for the resolution the View
 // applied. A View marks what Andamento has (`portable`), so the presentation
 // file leaves those settings out (uishell_workspace_store_window_text).
+// The page a web View reached is saved as kind "web-location", field `url`
+// (its `web_url`): any machine can open it.
 
 // This machine's name, which a saved Cleat session names its daemon's host by.
 internal String8
@@ -919,11 +935,35 @@ uishell_store_portable_text(Arena *arena, String8 session, String8 daemon)
   return push_str8f(arena, "%S|%S", session, daemon);
 }
 
+// What a View marks as saved with its Slot (`portable`): a terminal's session
+// and daemon, or the page a web View reached.
+internal String8
+uishell_store_view_portable_text(Arena *arena, CFG_Node *view)
+{
+  if(str8_match(view->string, str8_lit("web"), 0)) { return uishell_store_setting(view, str8_lit("web_url")); }
+  return uishell_store_portable_text(arena, uishell_store_setting(view, str8_lit("session")),
+                                     uishell_store_setting(view, str8_lit("daemon_name")));
+}
+
+// Gives web `view`, which hasn't reached a page, the page `r` saved.
+internal B32
+uishell_store_restore_web_location(CFG_Node *view, AndamentoResolution *r)
+{
+  String8 url = uishell_store_resolution_field(r, str8_lit("url"));
+  if(!str8_match(uishell_sidebar_string(r->kind), str8_lit("web-location"), 0) || !url.size ||
+     uishell_store_setting(view, str8_lit("web_url")).size) { return 0; }
+  uishell_store_set_setting(view, str8_lit("web_url"), url);
+  uishell_store_set_setting(view, str8_lit("portable"), url);
+  return 1;
+}
+
 // Gives terminal `view`, which hasn't a session, the saved session `r` when
-// this machine can attach to it. Returns whether it did.
+// this machine can attach to it, or web `view` the page it reached. Returns
+// whether it did.
 internal B32
 uishell_store_restore_resolution(CFG_Node *view, AndamentoResolution *r)
 {
+  if(str8_match(view->string, str8_lit("web"), 0)) { return uishell_store_restore_web_location(view, r); }
   String8 session = uishell_store_resolution_field(r, str8_lit("session"));
   if(!str8_match(view->string, str8_lit("terminal"), 0) || !uishell_store_resolution_ours(r) || !session.size ||
      uishell_store_setting(view, str8_lit("session")).size) { return 0; }
@@ -937,6 +977,40 @@ uishell_store_restore_resolution(CFG_Node *view, AndamentoResolution *r)
   return 1;
 }
 
+// Saves web `view`'s page with Slot `key`, as for a terminal's session below,
+// except that any machine's is replaced.
+internal void
+uishell_store_save_web_location(UIShell_SidebarState *state, AndamentoWorkspaceId workspace, String8 key, CFG_Node *view,
+                                String8 applied, AndamentoResolution *saved)
+{
+  String8 url = uishell_store_setting(view, str8_lit("web_url"));
+  B32 same = saved && str8_match(uishell_sidebar_string(saved->kind), str8_lit("web-location"), 0) &&
+             str8_match(uishell_store_resolution_field(saved, str8_lit("url")), url, 0);
+  char *error = 0;
+  if(same) {}
+  else if(!url.size)
+  {
+    if(saved)
+    {
+      uint32_t result = UIShell_StoreCall(state, andamento_slot_resolution_clear(state->core, workspace, uishell_sidebar_text(key),
+                                                                                saved->generation, 0, &error));
+      uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
+    }
+  }
+  else
+  {
+    AndamentoResolutionField field = {uishell_sidebar_text(str8_lit("url")), uishell_sidebar_text(url)};
+    uint32_t result = UIShell_StoreCall(state, andamento_slot_resolution_set(state->core, workspace, uishell_sidebar_text(key),
+      uishell_sidebar_text(str8_lit("web-location")), &field, 1, uishell_sidebar_text(applied),
+      saved ? saved->generation : 0, 0, &error));
+    // Stale: another save came first; the next plan carries it.
+    same = result == ANDAMENTO_COMMITTED;
+    uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
+  }
+  if(same) { uishell_store_set_setting(view, str8_lit("portable"), url); }
+  else { uishell_store_drop_setting(view, str8_lit("portable")); }
+}
+
 // Saves terminal `view`'s daemon session with Slot `key`, for the resolution
 // it applied (`applied`, which its plan reports current), when Andamento
 // has none or this machine's older one (`saved`, from the plan; 0 for none);
@@ -946,7 +1020,9 @@ internal void
 uishell_store_save_resolution(UIShell_SidebarState *state, AndamentoWorkspaceId workspace, String8 key, CFG_Node *view,
                               String8 applied, AndamentoResolution *saved)
 {
-  if(!str8_match(view->string, str8_lit("terminal"), 0) || !applied.size) { return; }
+  if(!applied.size) { return; }
+  if(str8_match(view->string, str8_lit("web"), 0)) { uishell_store_save_web_location(state, workspace, key, view, applied, saved); return; }
+  if(!str8_match(view->string, str8_lit("terminal"), 0)) { return; }
   Temp scratch = scratch_begin(0, 0);
   String8 session = uishell_store_setting(view, str8_lit("session"));
   String8 daemon = uishell_store_setting(view, str8_lit("daemon_name"));
@@ -2472,17 +2548,17 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
         U64 taken_count = 0;
         uishell_store_spec_from_view(scratch.arena, view, &spec, taken, &taken_count);
         if(cfg_node_child_from_string(view, str8_lit("follows_provider")) != &cfg_nil_node) { taken_count = 0; }
-        // A daemon session Andamento has saved is its.
+        // A daemon session or page Andamento has saved is its.
         String8 portable = uishell_store_setting(view, str8_lit("portable"));
-        B32 saved = portable.size && str8_match(portable, uishell_store_portable_text(scratch.arena, uishell_store_setting(view, str8_lit("session")),
-                                                                                     uishell_store_setting(view, str8_lit("daemon_name"))), 0);
+        B32 saved = portable.size && str8_match(portable, uishell_store_view_portable_text(scratch.arena, view), 0);
         CFG_Node *groups[2] = {&cfg_nil_node, &cfg_nil_node};
         for(CFG_Node *c = view->first; c != &cfg_nil_node; c = c->next)
         {
           if(str8_match(c->string, str8_lit("slot"), 0) ||
              uishell_store_key_in(c->string, taken, taken_count) ||
              uishell_store_key_in(c->string, uishell_store_runtime_keys, ArrayCount(uishell_store_runtime_keys)) ||
-             (saved && (str8_match(c->string, str8_lit("session"), 0) || str8_match(c->string, str8_lit("daemon_name"), 0)))) { continue; }
+             (saved && (str8_match(c->string, str8_lit("session"), 0) || str8_match(c->string, str8_lit("daemon_name"), 0) ||
+                        str8_match(c->string, str8_lit("web_url"), 0)))) { continue; }
           U64 g = uishell_store_key_in(c->string, uishell_store_resolution_keys, ArrayCount(uishell_store_resolution_keys)) ? 1 : 0;
           if(groups[g] == &cfg_nil_node)
           {

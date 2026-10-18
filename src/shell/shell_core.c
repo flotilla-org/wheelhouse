@@ -68,6 +68,104 @@ wh_renderer_from_content(WH_ContentKinds content)
   return &wh_nil_renderer;
 }
 
+#define WH_HANDLER_DECLARE(name, content, schemes, renderer, program, args) \
+  {str8_lit_comp(#name), content, str8_lit_comp(schemes), str8_lit_comp(#renderer), \
+   str8_lit_comp(program), str8_lit_comp(args)},
+read_only global WH_Handler wh_handlers[] =
+{
+  WH_HANDLERS(WH_HANDLER_DECLARE)
+};
+#undef WH_HANDLER_DECLARE
+read_only global WH_Handler wh_nil_handler = {0};
+
+// The Handler for a URL: the first that takes its scheme, or nil.
+internal WH_Handler *
+wh_handler_from_url(String8 url)
+{
+  U64 colon = str8_find_needle(url, 0, str8_lit(":"), 0);
+  if(colon == 0 || colon >= url.size) { return &wh_nil_handler; }
+  String8 scheme = str8_prefix(url, colon);
+  for EachElement(idx, wh_handlers)
+  {
+    if(!(wh_handlers[idx].content & WH_Content_Url)) { continue; }
+    String8 schemes = wh_handlers[idx].schemes;
+    for(U64 start = 0; start < schemes.size;)
+    {
+      U64 end = str8_find_needle(schemes, start, str8_lit(" "), 0);
+      if(str8_match(str8_substr(schemes, r1u64(start, end)), scheme, StringMatchFlag_CaseInsensitive)) { return &wh_handlers[idx]; }
+      start = end + 1;
+    }
+  }
+  return &wh_nil_handler;
+}
+
+// An address as typed, made a URL: one without a scheme is https.
+internal String8
+wh_url_from_address(Arena *arena, String8 address)
+{
+  address = str8_skip_chop_whitespace(address);
+  if(!address.size || str8_find_needle(address, 0, str8_lit("://"), 0) < address.size ||
+     str8_match(str8_prefix(address, 5), str8_lit("file:"), StringMatchFlag_CaseInsensitive) ||
+     str8_match(str8_prefix(address, 6), str8_lit("about:"), StringMatchFlag_CaseInsensitive)) { return address; }
+  return push_str8f(arena, "https://%S", address);
+}
+
+// A file: URL's path, percent-decoded: its host empty or localhost. Empty for
+// another URL, another host, or a %00 (a path has no NUL).
+internal String8
+wh_path_from_file_url(Arena *arena, String8 url)
+{
+  String8 scheme = str8_lit("file://"), localhost = str8_lit("localhost");
+  if(!str8_match(str8_prefix(url, scheme.size), scheme, StringMatchFlag_CaseInsensitive)) { return str8_zero(); }
+  String8 path = str8_skip(url, scheme.size);
+  if(str8_match(str8_prefix(path, localhost.size), localhost, StringMatchFlag_CaseInsensitive)) { path = str8_skip(path, localhost.size); }
+  if(!path.size || path.str[0] != '/') { return str8_zero(); }
+  U8 *out = push_array(arena, U8, path.size);
+  U64 size = 0;
+  for(U64 i = 0; i < path.size; i++)
+  {
+    U8 c = path.str[i];
+    if(c == '%' && i + 2 < path.size && char_is_digit(path.str[i+1], 16) && char_is_digit(path.str[i+2], 16))
+    {
+      c = (U8)u64_from_str8(str8(path.str + i + 1, 2), 16);
+      if(c == 0) { return str8_zero(); }
+      i += 2;
+    }
+    out[size++] = c;
+  }
+  return str8(out, size);
+}
+
+// A Handler's arguments: its template split at spaces (runs of them make no
+// empty argument), with each `{name}` of `values` (name, value pairs) replaced.
+internal String8List
+wh_handler_arguments(Arena *arena, WH_Handler *handler, String8 (*values)[2], U64 count)
+{
+  String8List args = {0};
+  String8 text = handler->args;
+  for(U64 start = 0; start < text.size;)
+  {
+    U64 end = str8_find_needle(text, start, str8_lit(" "), 0);
+    String8 arg = str8_substr(text, r1u64(start, end));
+    start = end + 1;
+    if(!arg.size) { continue; }
+    String8List parts = {0};
+    for(U64 i = 0; i < arg.size;)
+    {
+      B32 replaced = 0;
+      for(U64 v = 0; v < count && !replaced; v++)
+      {
+        String8 name = values[v][0];
+        if(str8_match(str8_substr(arg, r1u64(i, i + name.size)), name, 0))
+        { str8_list_push(arena, &parts, values[v][1]); i += name.size; replaced = 1; }
+      }
+      if(!replaced) { str8_list_push(arena, &parts, str8_substr(arg, r1u64(i, i + 1))); i += 1; }
+    }
+    str8_list_push(arena, &args, str8_list_join(arena, &parts, 0));
+  }
+  return args;
+}
+
 internal WH_Renderer *
 wh_renderer_from_index(U64 idx)
 {
@@ -3740,8 +3838,8 @@ read_only global String8 rd_view_logical_settings[] =
   str8_lit_comp("expression"), str8_lit_comp("cwd"), str8_lit_comp("content"), str8_lit_comp("url"),
   str8_lit_comp("source_endpoint"), str8_lit_comp("source_socket"), str8_lit_comp("input_endpoint"), str8_lit_comp("input_socket"),
   str8_lit_comp("media_endpoint"), str8_lit_comp("media_socket"), str8_lit_comp("d3d11_endpoint"), str8_lit_comp("porthole_endpoint"),
-  // The portable Target Resolution, and the daemon hosting a terminal.
-  str8_lit_comp("session"), str8_lit_comp("daemon_name"), str8_lit_comp("daemon"),
+  // The portable Target Resolutions, and the daemon hosting a terminal.
+  str8_lit_comp("session"), str8_lit_comp("daemon_name"), str8_lit_comp("daemon"), str8_lit_comp("web_url"),
   // The Slot's plan progress (uishell_workspace_store.c, "Slot plans").
   str8_lit_comp("follows_provider"), str8_lit_comp("applied"), str8_lit_comp("asks"), str8_lit_comp("declined"),
   str8_lit_comp("update_failed"), str8_lit_comp("portable"), str8_lit_comp("applied_spec"),

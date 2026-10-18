@@ -74,9 +74,10 @@ enum
 //   expand         its expand rule for evaluated values, or WH_NO_EXPAND
 //   settings       its presentation-settings schema, or UISHELL_NO_SETTINGS
 //
-// The first five keep the view lister's order. Jackstay keeps its sessions in
-// its own map (uishell_jackstay.c), because closing one finishes after its
-// View has gone. The terminal fixture is the terminal with fixture input.
+// The first five keep the view lister's order. Jackstay and web Views keep
+// their sessions in their own map (uishell_jackstay.c), because closing one
+// finishes after its View has gone. The terminal fixture is the terminal with
+// fixture input. A web View shows a page a Handler's program renders.
 #define WH_RENDERERS(X) \
   X(text, shell_text, WH_STATE(UIShell_TextViewState), WH_Content_File|WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview|RD_ViewTrait_Visualizer|RD_ViewTrait_LegacyEval|RD_ViewTrait_VersionedSurface|RD_ViewTrait_Listed, \
@@ -94,6 +95,9 @@ enum
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_Listed, \
     128, WorkspaceRegion, WH_NO_EXPAND, UISHELL_SCROLL_REGION_FIXTURE_SETTINGS) \
   X(jackstay, jackstay, WH_NO_STATE, WH_Content_Jackstay|WH_Content_Page, \
+    RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop, \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
+  X(web, web, WH_NO_STATE, WH_Content_Url|WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop, \
     0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
   X(sessions, sessions, WH_NO_STATE, WH_Content_Page, \
@@ -129,6 +133,27 @@ enum
   X(workspace_selector, null, WH_NO_STATE, WH_Content_Dashboard, \
     RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_SelectsWorkspaces|RD_ViewTrait_Singleton|RD_ViewTrait_ControlSplitScope|RD_ViewTrait_Control, \
     0, Sidebar, WH_NO_EXPAND, UISHELL_NO_SETTINGS)
+
+// Wheelhouse's Handlers (CONTEXT.md, "Handler"): content another program
+// produces, and the Renderer that shows what it publishes. One entry each,
+// compiled in; its columns are a future manifest's.
+//
+// X(name, content, schemes, renderer, program, args)
+//   name      the Handler; WHEELHOUSE_<NAME> (upper case) names another program
+//   content   the View Spec content it takes (WH_Content_*)
+//   schemes   the URL schemes it takes, space-separated
+//   renderer  the Renderer whose Views run it
+//   program   the program it runs, found on PATH
+//   args      its arguments, space-separated, with {endpoint} (the Local
+//             Endpoint Wheelhouse names), {width} and {height} (the View's
+//             logical size) and {page} (the URL, or a file's path)
+//
+// The program is ready when it writes its endpoint as its first stdout line
+// (connector.rs, "ready line"). Luchs latches window.ready after its first
+// load, and exits if that load fails.
+#define WH_HANDLERS(X) \
+  X(luchs, WH_Content_Url, "http https file", web, "luchs", \
+    "--endpoint {endpoint} --size {width}x{height} {page}")
 
 // Each Renderer's place in the list.
 typedef enum WH_RendererIndex

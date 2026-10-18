@@ -1,6 +1,7 @@
 # Web views: content that Wheelhouse launches a program to show
 
-Status: design, agreed 2026-10-16. The first slices below are not built yet.
+Status: agreed 2026-10-16. The three first slices are built: Jackstay v3 in
+Wheelhouse (wheelhouse#392), Luchs on v3 (luchs#31), and the `web` View.
 
 Today a View can show a Jackstay stream only if something else already
 started it: the Jackstay view connects to an endpoint someone typed in. A View
@@ -47,32 +48,36 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
 | Failure | A launch or first load that fails shows the placeholder with the error, Retry and Open in browser |
 | Jackstay protocol | The v3 track handshake (Jackstay #119, ABI 0.17), which replaced bootstraps v1 and v2: the source offers tracks (video, input, affordances, playback), the consumer selects them. Wheelhouse and Luchs both move to it. Katzensteg already has (its #174); Porthole has not, so its sources need v3 before Wheelhouse can show them again |
 
-## What exists, and what each side lacks
+## How it is built
 
-- **Andamento** already models it: `ANDAMENTO_SLOT_URL` content with an open
-  `presentation` vocabulary, and its Suggested Layout docs name "a Luchs page".
-- **Wheelhouse:**
-  - No Renderer takes URL content. A URL that isn't a `wheelhouse:` page
-    becomes a placeholder with Open in browser. A Renderer is the first whose
-    content mask matches, and `presentation` is ignored.
-  - The Jackstay view uses Jackstay's v1 bootstrap, which Luchs refuses; it
-    reads no affordances, and it connects only when someone presses Connect.
-  - In the View Spec, a Jackstay "launcher" is the setting that names the
-    endpoint (`source_endpoint`, …), not something launched.
-  - The subscription connector's supervisor (`src/ingress/connector.rs`) has
-    argv, env, a log, restart with backoff, a process group and a lifeline,
-    but it is owned by a subscription and logs stdout.
-- **Luchs** (`luchs --endpoint NAME --size WxH <url|file>`) prints its socket
-  path on stdout, latches `window.ready` after the first load, reports
-  `navigation {url, title, can_go_back, …}`, and takes `navigation.load`,
-  `back`, `forward` and `reload`, and `presentation` resizes. It renders only on
-  macOS. It has no lifeline (the supervisor's process group covers that), needs
-  a page argument, and exits if the first load fails.
-- **Jackstay** has the affordance vocabulary and nothing for launching: no
-  endpoint handoff convention, no readiness signal to a parent, no lifeline.
-  Its publication-registry note (latent sources, a "dormant-source catalog with
-  per-entry activation policy") is discussion only, and leaves process
-  ownership open.
+- **Handlers** are an X-macro beside the Renderer registry
+  (`WH_HANDLERS`, `src/uishell/uishell_renderers.h`): name, content, URL
+  schemes, Renderer, program and argument template. Luchs takes `http`,
+  `https` and `file` URLs for the `web` Renderer. `WHEELHOUSE_LUCHS` names
+  another program, as a test renderer does.
+- **Opening.** A View Spec's URL that isn't a `wheelhouse:` page goes to the
+  Handler that takes its scheme, else to a placeholder as before
+  (`uishell_store_view_from_spec`). `wheelhouse:web` is the start page. **Web**
+  ("+") opens it; **Open URL** prompts for an address (one without a scheme is
+  https).
+- **The process** is supervised by the connector (`src/ingress/connector.rs`)
+  with a *ready line*: the first stdout line is the endpoint, a run that exits
+  before it is a failure that waits for Retry, and one that exits after it
+  restarts with backoff. The View owns it with its Jackstay session
+  (`uishell_jackstay.c`): it starts on first build at the pane's logical size,
+  stops when the View closes or its workspace is kept, and on quit. Its log is
+  `wh-<pid>-<n>.log` beside Wheelhouse's, and the start page is written there as
+  `web-start.html`.
+- **The View** is the Jackstay view's session display with an address bar in
+  place of its URL label and no connection row, connecting with control from
+  the start. Its tab is the page's title.
+- **Where it got to**: once navigation settles the View writes `web_url`, saved
+  with its Slot as the `web-location` resolution `{url}`
+  (`uishell_store_save_web_location`); the start page clears it. A View
+  starting afresh opens there.
+
+Not checked here: a real WebKit page (macOS), and whether Luchs's helper lets
+the start page, a `file:` page, navigate to the address typed into its form.
 
 ## First slices
 

@@ -57,9 +57,25 @@ extern uint64_t wheelhouse_ingress_now_ms(void);
 // can stop at once before each is stopped. Should Wheelhouse end without
 // stopping it, it ends too (connector.rs).
 typedef struct WheelhouseConnector WheelhouseConnector;
+// With WHEELHOUSE_CONNECTOR_READY_LINE in flags, the command's first stdout
+// line says it is ready and the rest goes to the log; a run that exits before
+// it is ready has failed and waits for restart. state reports where it is
+// (WheelhouseConnectorState) and, for ready or failed, copies the ready line
+// or why it failed into text (NUL-terminated, cut to fit), storing the full
+// length in len.
+#define WHEELHOUSE_CONNECTOR_READY_LINE 1u
+typedef enum WheelhouseConnectorState
+{
+  WheelhouseConnectorState_Waiting = 0,
+  WheelhouseConnectorState_Running = 1,
+  WheelhouseConnectorState_Ready = 2,
+  WheelhouseConnectorState_Failed = 3,
+} WheelhouseConnectorState;
 extern WheelhouseConnector *wheelhouse_connector_start(const WheelhouseIngressText *argv, size_t argc,
-  const WheelhouseIngressText *env, size_t env_count, WheelhouseIngressText log, void (*)(void), uint8_t *, size_t);
+  const WheelhouseIngressText *env, size_t env_count, WheelhouseIngressText log, uint32_t flags,
+  void (*)(void), uint8_t *, size_t);
 extern uint32_t wheelhouse_connector_running(const WheelhouseConnector *, uint64_t *starts);
+extern uint32_t wheelhouse_connector_state(const WheelhouseConnector *, uint8_t *text, size_t capacity, size_t *len);
 // Ends the current run and starts the next at once, without waiting.
 extern void wheelhouse_connector_restart(const WheelhouseConnector *);
 extern void wheelhouse_connector_stop_begin(WheelhouseConnector *);

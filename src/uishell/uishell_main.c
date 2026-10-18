@@ -157,6 +157,8 @@ frame(void)
   {
     quit_signalled = 1;
     uishell_cmd("exit");
+    // An idle Wheelhouse waits for an event: the frame that runs it is one.
+    rd_request_frame();
   }
   if(!rd_state->quit)
   {
