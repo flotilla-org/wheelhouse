@@ -54,6 +54,8 @@ struct WH_Jackstay {
   char *navigate_url;
   WH_JS_State state;
   uint8_t *pixels;
+  uint32_t pixel_format;
+  uint64_t timestamp_ns, cursor;
   // Import path: the newest frame the GUI has not taken yet.
   WH_JS_Frame mailbox;
   uint64_t incarnation;
@@ -328,10 +330,11 @@ static ft_status wh_js_porthole_open(WH_Jackstay *s, WH_JS_Link *link,
   return FT_STATUS_UNTRUSTED_PEER;
 }
 
-// Copy one frame into the GUI's latest-frame mailbox as packed RGBA.
+// Copy into an owned latest-frame mailbox, preserving the native pixel format.
 static bool wh_js_post_pixels(WH_Jackstay *s, uint32_t width, uint32_t height,
                               const uint8_t *bytes, size_t stride,
-                              uint32_t pixel_format) {
+                              uint32_t pixel_format, uint64_t timestamp_ns,
+                              uint64_t cursor) {
   size_t row = (size_t)width * 4, size = row * height;
   bool valid = bytes && width && height && width <= 16384 &&
                height <= 16384 && size <= WH_JS_MAX_FRAME && stride >= row &&
@@ -340,22 +343,19 @@ static bool wh_js_post_pixels(WH_Jackstay *s, uint32_t width, uint32_t height,
   uint8_t *copy = valid ? malloc(size) : 0;
   if (!copy)
     return false;
-  for (uint32_t y = 0; y < height; ++y) {
+  for (uint32_t y = 0; y < height; ++y)
     memcpy(copy + y * row, bytes + (size_t)y * stride, row);
-    if (pixel_format == FT_PIXEL_FORMAT_BGRA8_UNORM)
-      for (size_t x = 0; x < row; x += 4) {
-        uint8_t r = copy[y * row + x];
-        copy[y * row + x] = copy[y * row + x + 2];
-        copy[y * row + x + 2] = r;
-      }
-  }
   mutex_take(s->mutex);
-  free(s->pixels);
+  uint8_t *superseded = s->pixels;
   s->pixels = copy;
+  s->pixel_format = pixel_format;
+  s->timestamp_ns = timestamp_ns;
+  s->cursor = cursor;
   s->state.width = width;
   s->state.height = height;
   s->state.frame_version++;
   mutex_drop(s->mutex);
+  free(superseded);
   wh_js_wake(s);
   return true;
 }
@@ -621,7 +621,8 @@ static ft_status wh_js_cpu_run(WH_Jackstay *s, WH_JS_Link *link, bool input,
                          (uint64_t)desc.width * 4 <=
                      length;
     bool posted = valid && wh_js_post_pixels(s, desc.width, desc.height, bytes,
-                                             desc.stride, desc.pixel_format);
+                                             desc.stride, desc.pixel_format,
+                                             desc.timestamp_ns, desc.cursor);
     cursor = desc.cursor;
     ft_acquired_frame_release(&frame);
     if (!posted) {
@@ -1034,14 +1035,14 @@ void wh_js_snapshot(WH_Jackstay *s, WH_JS_State *state, WH_JS_Frame *frame,
         if (t->incarnation == frame->incarnation)
           t->outstanding++;
     } else if (s->pixels && s->state.frame_version != after) {
-      size_t size = (size_t)s->state.width * s->state.height * 4;
-      frame->pixels = malloc(size);
-      if (frame->pixels) {
-        memcpy(frame->pixels, s->pixels, size);
-        frame->width = s->state.width;
-        frame->height = s->state.height;
-        frame->version = s->state.frame_version;
-      }
+      frame->pixels = s->pixels;
+      s->pixels = 0;
+      frame->width = s->state.width;
+      frame->height = s->state.height;
+      frame->version = s->state.frame_version;
+      frame->pixel_format = s->pixel_format;
+      frame->timestamp_ns = s->timestamp_ns;
+      frame->cursor = s->cursor;
     }
   }
   mutex_drop(s->mutex);
