@@ -735,6 +735,8 @@ struct RD_WindowState
   F32 last_backing_scale;
   B32 window_temporarily_focused_ipc;
   B32 window_layout_reset;
+  B32 render_pending;
+  B32 render_ready;
   Rng2F32 last_window_rect;
 
   // rjf: theme (recomputed each frame)
@@ -1001,6 +1003,7 @@ struct RD_State
 
   // rjf: frame parameters
   F32 frame_dt;
+  U64 frame_last_time_us;
   Access *frame_access;
   String8 last_window_title;
 

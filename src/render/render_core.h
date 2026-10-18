@@ -365,6 +365,14 @@ r_hook void              r_fill_tex2d_region(R_Handle texture, Rng2S32 subrect, 
 r_hook R_Handle          r_buffer_alloc(R_ResourceKind kind, U64 size, void *data);
 r_hook void              r_buffer_release(R_Handle buffer);
 
+// Presentation admission, on the UI thread. Request before pumping OS events;
+// readiness wakes that pump without being an input/content-change event. Build
+// with the newest external images only when ready, then submit/end that window.
+// Cancelling pauses native callbacks and releases an unused opportunity.
+// Backends without asynchronous admission are immediately ready.
+r_hook void              r_window_request_frame(WM_Window window, R_Handle window_equip, B32 requested);
+r_hook B32               r_window_frame_ready(WM_Window window, R_Handle window_equip);
+
 //- rjf: frame markers
 r_hook void              r_begin_frame(void);
 r_hook void              r_end_frame(void);
