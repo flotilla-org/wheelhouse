@@ -21,9 +21,9 @@ env:
   # Jackstay main: ABI 0.17, the v3 track handshake (jackstay#119) with
   # affordances as a track.
   JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
-  # Andamento main: ABI 7, no floating panels in the sidebar document
-  # (andamento#176).
-  ANDAMENTO_REV: 5aaa13df19670df7c54649841b0b3f68eabc8cea
+  # Reconcile saved ended flags with fresh lifecycle evidence (wheelhouse#213).
+  # Pinned to the Andamento fix branch until its merge. ABI remains 7.
+  ANDAMENTO_REV: 087b41405a6124e2f3b2ea381608fc6a5cafc5cb
 
 jobs:
   daily-driver:
