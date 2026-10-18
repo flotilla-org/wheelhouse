@@ -2236,9 +2236,9 @@ struct UIShell_SidebarRow
   String8 status;
   F32 height, width, indent;      // width 0 fills; indent in em
   B32 project, selected, contains_current;
-  B32 disclosure, expanded;       // a disclosure leads the row, else a spacer
+  B32 disclosure, expanded;       // a disclosure follows the label
   B32 entry, icon_entry;          // the label, and the icon, are the row's buttons
-  B32 clickable;                  // the whole row takes clicks (ghost rows)
+  B32 clickable;                  // the row's remaining area takes pointer input
   B32 reference;                  // ↗: a reference to a row that lives elsewhere
   B32 renaming;                   // the label is a field renaming the row (a local group)
   U64 count;                      // a group header's items, shown while collapsed
@@ -2714,6 +2714,7 @@ uishell_sidebar_margin_button(AndamentoNode node, UIShell_SidebarCloseKind close
   {
     sig = uishell_sidebar_button(push_str8f(scratch.arena, "%S###close_%S",
       close == UIShell_SidebarCloseKind_Detach ? str8_zero() : str8_lit("×"), uishell_sidebar_string(node.key)));
+    sig.box->flags |= UI_BoxFlag_DisableTextTrunc|UI_BoxFlag_DisableTruncatedHover;
   }
   if(close == UIShell_SidebarCloseKind_Detach) { ui_box_equip_custom_draw(sig.box, rd_workspace_detach_icon_draw, 0); }
   scratch_end(scratch);
@@ -3330,7 +3331,8 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   // A group header (r->project) takes clicks and drags across its width
   // without lighting up as a row does.
   UI_BoxFlags flags = (r->selected ? UI_BoxFlag_DrawBackground : 0)|(r->contains_current ? UI_BoxFlag_DrawBorder : 0)|
-    (r->clickable ? UI_BoxFlag_Clickable|(r->project ? 0 : UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects) : 0);
+    (r->clickable ? (r->project ? UI_BoxFlag_Clickable : UI_BoxFlag_MouseClickable)|
+      (r->project ? 0 : UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects) : 0);
   UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(r->height-4.f, 1)) UI_CornerRadius(3.f) UI_ChildLayoutAxis(Axis2_X)
   {
     // A group header's row is its entry (what its label button was before).
@@ -3349,9 +3351,9 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   {
     // A group's header (docs/design/sidebar-headers.md): no icon; the title
     // starts where its rows' icons do (r->indent is theirs), just after the
-    // accent, and is semibold (or larger, for a Settings font); a collapsed
-    // group's count follows it, then the collapse indicator, shown while the
-    // header is hovered. The row itself takes clicks.
+    // accent, and is semibold (or larger, for a Settings font). The collapse
+    // indicator follows the title, shown while hovered. Counts trail status
+    // so collapsing a group cannot move its indicator. The row takes clicks.
     ui_spacer(ui_px(uishell_sidebar_group_title_lead(r->indent), 1));
     UI_Font(uishell_sidebar_group_title_font()) UI_FontSize(uishell_sidebar_group_title_size())
     {
@@ -3366,16 +3368,14 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
         UI_PrefWidth(ui_px(width, 1)) { ui_label(r->text); }
       }
     }
-    if(!r->expanded && r->count) UI_PrefWidth(ui_text_dim(4.f, 1)) UI_TextColor(uishell_sidebar_ended_color())
-    { ui_label(push_str8f(arena, "%I64u", r->count)); }
     B32 hovered = contains_2f32(r->row->rect, ui_mouse());
     if(r->disclosure) UI_Transparency(hovered || r->renaming ? 0.f : 1.f) UI_PrefWidth(ui_em(1.2f, 1))
     { r->toggle = uishell_sidebar_disclosure(r->expanded, push_str8f(arena, "###toggle_%S", r->key)); }
     ui_spacer(ui_pct(1, 0));
     return;
   }
-  // A row's disclosure trails it (uishell_sidebar_row_end), so its icon
-  // lines up with its group's title.
+  // The icon lines up with its group's title; the disclosure follows the
+  // label at every level, before any inline actions.
   ui_spacer(ui_em(r->indent, 1));
   // The entity's icon, as its chip shows it, never truncated to nothing.
   B32 icon_font = 1;
@@ -3393,27 +3393,32 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
     }
     if(r->icon_entry) { r->icon_sig.box->flags |= UI_BoxFlag_DisableTextTrunc|UI_BoxFlag_DisableTruncatedHover; }
   }
-  UI_PrefWidth(ui_pct(1, 0))
+  F32 label_width = r->icon_entry ? 0 : fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, r->text).x + 2*ui_top_text_padding();
+  if(r->title_max > 0) { label_width = Min(label_width, r->title_max); }
+  UI_PrefWidth(r->disclosure ? ui_px(label_width, 1) : ui_pct(1, 0))
   {
     if(!r->present || str8_match(r->status, str8_lit("ended"), 0)) { ui_set_next_text_color(uishell_sidebar_ended_color()); }
     if(r->renaming) { r->entry_sig = uishell_sidebar_local_rename_field(state, push_str8f(arena, "###rename_%S", r->key)); }
     else if(r->entry) { r->entry_sig = uishell_sidebar_button(push_str8f(arena, "%S###entry_%S", r->text, r->key)); }
     else { ui_label(r->text); }
   }
+  if(r->disclosure)
+  {
+    r->toggle = uishell_sidebar_disclosure(r->expanded, push_str8f(arena, "###toggle_%S", r->key));
+    ui_spacer(ui_pct(1, 0));
+  }
 }
 
 internal void
 uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r)
 {
-  if(r->disclosure && !r->project)
-  { r->toggle = uishell_sidebar_disclosure(r->expanded, push_str8f(ui_build_arena(), "###toggle_%S", r->key)); }
   if(r->reference) UI_PrefWidth(ui_em(1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
   { ui_label(str8_lit("↗")); }
   // Reserve the same trailing slot at every level. Project-wide status
   // belongs here once supplied; workspace state stays on the overview action
   // rather than being duplicated in this slot.
   B32 change_request = str8_match(uishell_sidebar_string(r->node.entity.kind), str8_lit("change_request"), 0);
-  UI_PrefWidth(ui_em(change_request && r->present ? 10.f : 1.2f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
+  UI_PrefWidth(ui_px(floor_f32(ui_top_font_size()*(change_request && r->present ? 10.f : 1.2f)), 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
   {
     String8 status = r->status;
     if(!r->present) { ui_label(str8_lit("?")); }
@@ -3433,6 +3438,8 @@ uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r)
     else if(r->project) { ui_spacer(ui_em(1.2f, 1)); }
     else { ui_label(uishell_sidebar_status_mark(r->node, status)); }
   }
+  if(!r->expanded && r->count) UI_PrefWidth(ui_text_dim(4.f, 1)) UI_TextColor(uishell_sidebar_ended_color())
+  { ui_label(push_str8f(ui_build_arena(), "%I64u", r->count)); }
   ui_pop_pref_height();
   ui_pop_parent(); // row
   state->building_row = 0;
@@ -3937,16 +3944,21 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   {
     U64 parent = nodes[i].parent;
     B32 leaf = i+1 == count || nodes[i+1].parent != i;
-    // Unsupported nested/control-bearing inline content stays in the tree,
-    // ensuring it remains reachable rather than silently losing descendants.
+    // References stay inline. A container keeps its summary actions; an
+    // ordinary row presents workspace children inline while collapsed and as
+    // child rows while expanded. Nested/control-bearing content stays a row.
+    B32 container = parent != ANDAMENTO_NONE && project_owner[parent] == parent;
+    B32 reference = uishell_sidebar_is_subject(nodes[i]);
     if(parent != ANDAMENTO_NONE && !nodes[parent].is_section && leaf &&
-       !nodes[i].control_count && str8_match(uishell_sidebar_string(nodes[i].layout), str8_lit("inline"), 0))
+       !nodes[i].control_count && str8_match(uishell_sidebar_string(nodes[i].layout), str8_lit("inline"), 0) &&
+       (container || reference || nodes[parent].collapsed))
     {
       inlined[i] = 1;
       if(inline_last[parent] != ANDAMENTO_NONE) { inline_next[inline_last[parent]] = i; }
       else { inline_first[parent] = i; }
       inline_last[parent] = i;
       inline_count[parent]++;
+      if(!container && !reference) { row_children[parent] = 1; }
     }
     else if(parent != ANDAMENTO_NONE) { row_children[parent] = 1; }
   }
@@ -4299,6 +4311,11 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       F32 scroll_content = content_heights[n]+states[n]->footer_extra;
       params.content_dim_px = v2f32(0, scroll_content);
       UI_ScrollRegion region = ui_scroll_region_layout(params);
+      // Reserve the scrollbar's widest strip separately from the button's
+      // hit area. Shrinking the button to avoid the bar truncated its ×.
+      F32 bar_lane = region.params.style == UI_ScrollBarStyle_Overlay && !region.params.overlay_reserve ?
+        Max(region.params.overlay_rest_px, region.params.overlay_hover_px)+region.params.overlay_inset_px : 0.f;
+      F32 side_margin = floor_f32(em*1.5f)+bar_lane;
       F32 card_inset = dim_2f32(region.viewport).x >= em*16.f ? side_margin : 0.f;
       UI_Key content_key = ui_key_from_stringf(root->key, "section_body_%S", key);
       UI_Box *previous = ui_box_from_key(content_key);
@@ -4402,7 +4419,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           if(hidden[i] || inlined[i] || passed[i] ||
              (owner != ANDAMENTO_NONE && owner != i && project_open[owner] == 0.f)) { continue; }
           AndamentoNode node = nodes[i];
-          B32 children = row_children[i] || inline_count[i];
+          B32 children = row_children[i] || (project_owner[i] == i && inline_count[i]);
           String8 node_key = uishell_sidebar_string(node.key);
           B32 drag_sibling = row_dragging && !node.is_section &&
             str8_match(uishell_sidebar_loop_key(state->snapshot, i), state->row_drag_loop, 0);
@@ -4440,12 +4457,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           // also shows itself (its overview) as its first chip.
           B32 project = project_owner[i] == i;
           B32 project_chip = project && str8_match(kind, str8_lit("project"), 0);
-          U64 chip_count = (node.collapsed ? 0 : inline_count[i])+project_chip;
+          U64 chip_count = inline_count[i]+project_chip;
           U64 *members = push_array(scratch.arena, U64, chip_count);
           UIShell_ChipMeasure *chip_measures = push_array(scratch.arena, UIShell_ChipMeasure, chip_count);
           U64 member_count = 0;
           if(project_chip) { members[member_count++] = i; }
-          for(U64 j = node.collapsed ? ANDAMENTO_NONE : inline_first[i]; j != ANDAMENTO_NONE; j = inline_next[j]) { members[member_count++] = j; }
+          for(U64 j = inline_first[i]; j != ANDAMENTO_NONE; j = inline_next[j]) { members[member_count++] = j; }
           for(U64 c = 0; c < chip_count; c++)
           {
             chip_measures[c].width = uishell_sidebar_chip_width(state, nodes[members[c]]);
@@ -4466,10 +4483,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           if(owner != ANDAMENTO_NONE && owner != i) { indent += uishell_sidebar_group_row_inset; }
           F32 status_width = em*(str8_match(kind, str8_lit("change_request"), 0) ? 10.f : 1.2f);
           F32 row_width = Max(0.f, dim_2f32(region.viewport).x-8.f-side_margin-(owner != ANDAMENTO_NONE ? 4.f+card_inset : 0.f));
-          // A group header leads with its title inset (to its rows' icons),
-          // then a collapsed count and the 1.2em collapse indicator
-          // (uishell_sidebar_row_begin); other rows with indent, disclosure
-          // and icon.
+          // Indentation yields before fixed controls at very narrow widths.
+          // Keep the status and disclosure inside the row, with room to scroll
+          // inline actions even when the label has to give way to its icon.
+          if(!project) { indent = Min(indent, Max(0.f, row_width-status_width-em*2.7f-8.f)/em); }
+          // Reserve the icon/title lead, disclosure, status, and any trailing
+          // collapsed count before measuring the label and its chips.
           F32 lead = em*(indent+1.5f+1.2f);
           if(project)
           {
@@ -4518,6 +4537,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             row_y += project_padding;
           }
           B32 contains_current = node.collapsed && contains_selected[i] && !node.selected;
+          for(U64 c = 0; contains_current && c < chip_count; c++)
+          { if(nodes[members[c]].selected && !chip_measures[c].folded) { contains_current = 0; } }
           UI_Key entry_key = ui_key_zero();
           if(!node.is_section)
           {
@@ -4580,8 +4601,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             for(U64 c = i+1; project && node.collapsed && c < end && depth[c] > depth[i]; c++) { header_count += nodes[c].parent == i; }
             UIShell_SidebarRow r = {.node = node, .present = 1, .key = node_key, .text = display, .status = status,
               .height = row_height, .indent = project ? 0.3f+0.4f*(depth[i]+1) : indent, .project = project, .selected = node.selected,
-              .clickable = project, .count = header_count,
-              .title_max = project ? Max(em*2.f, available_width-(chip_count ? chip_layout.chip_width+chip_clearance : 0.f)) : 0,
+              .clickable = 1, .count = header_count,
+              .title_max = Max(project ? em*2.f : 1.f, available_width-(chip_count ? chip_layout.chip_width+chip_clearance : 0.f)),
               // A compact ghost's disclosure expands it into its card.
               .contains_current = contains_current, .disclosure = (children && node.toggle != ANDAMENTO_NONE) || ghost,
               .expanded = !ghost && !node.collapsed, .entry = 1, .icon_entry = icon_entry,
@@ -4694,11 +4715,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               if(ghost) { uishell_sidebar_ghost_set_expanded(split->owner_cfg, ghost->ghost, 1); rd_request_frame(); }
               else { action = node.toggle; }
             }
-            if(project)
+            // The label and chips take their own input; the row takes the
+            // remaining space, including the gap after a label's disclosure.
             {
               UI_Signal sig = r.row_sig;
               entry_key = sig.box->key;
-              size_t requested = r.renaming ? ANDAMENTO_NONE : uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0, 1);
+              size_t requested = r.renaming ? ANDAMENTO_NONE : uishell_sidebar_entry_signal(state, ws, node, i, sig, context, contains_current, 0, project);
               if(requested != ANDAMENTO_NONE) { action = requested; }
             }
             // Project cards already stop short of the margin.
@@ -4715,8 +4737,6 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               UI_Signal sig = {0};
               // The control stops short of an overlay scroll bar's strip at
               // the edge, so the bar never sits over it (ui_scroll_region).
-              F32 bar_lane = region.params.style == UI_ScrollBarStyle_Overlay && !region.params.overlay_reserve ?
-                region.params.overlay_rest_px+region.params.overlay_inset_px : 0.f;
               UI_Parent(body) UI_FixedX(dim_2f32(region.viewport).x-side_margin) UI_FixedY(slot_y+2.f)
               UI_PrefWidth(ui_px(Max(4.f, side_margin-2.f-bar_lane), 1)) UI_PrefHeight(ui_px(row_height-4.f, 1))
               { sig = uishell_sidebar_margin_button(node, close); }
@@ -5442,6 +5462,50 @@ uishell_sidebar_disclosure_diagnostics(RD_WindowState *ws)
     if(text_width <= 0 || text_width > available) { fprintf(stderr, "FAIL disclosure %llu: text=%g available=%g\n", i, text_width, available); }
     ok = ok && text_width > 0 && text_width <= available;
   }
+  // Exercise the same row builder for groups and ordinary rows. Counts and
+  // inline workspace actions must not move the title's disclosure.
+  F32 group_disclosure_x = 0;
+  for(U32 scenario = 0; scenario < 4; scenario++)
+  {
+    UIShell_SidebarState state = {0};
+    UIShell_SidebarRow row = {.present = 1, .key = str8_lit("controls_fixture"), .text = str8_lit("Example"),
+      .height = 24, .width = 320, .project = scenario < 3, .disclosure = 1, .expanded = scenario == 0,
+      .count = scenario == 1 ? 1 : scenario == 2 ? 10000 : 0};
+    row.node.entity.kind = uishell_sidebar_text(scenario < 3 ? str8_lit("project") : str8_lit("convoy"));
+    UI_Box *chip = &ui_nil_box;
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    {
+      uishell_sidebar_row_begin(&state, &row);
+      UI_PrefWidth(ui_px(45, 1)) { chip = ui_build_box_from_string(UI_BoxFlag_DrawText, str8_lit("work")); }
+      uishell_sidebar_row_end(&state, &row);
+      ui_pop_parent();
+    }
+    ui_end_build();
+    if(scenario == 0) { group_disclosure_x = row.toggle.box->rect.x0; }
+    if(scenario < 3 && abs_f32(row.toggle.box->rect.x0-group_disclosure_x) > 0.1f)
+    { fprintf(stderr, "FAIL group count moves disclosure: scenario %u x=%g expected=%g\n", scenario, row.toggle.box->rect.x0, group_disclosure_x); ok = 0; }
+    if(row.toggle.box->rect.x1 > chip->rect.x0+0.1f)
+    { fprintf(stderr, "FAIL row disclosure follows its inline workspace: scenario %u\n", scenario); ok = 0; }
+    for(UI_Box *b = row.row->first; !ui_box_is_nil(b); b = b->next)
+    {
+      if(row.count && str8_match(ui_box_display_string(b), scenario == 1 ? str8_lit("1") : str8_lit("10000"), 0) && b->rect.x0 < chip->rect.x1)
+      { fprintf(stderr, "FAIL collapsed group count precedes inline actions\n"); ok = 0; }
+    }
+  }
+  // A narrow margin must never enroll its close glyph in the generic
+  // truncated-label hover, which otherwise replaces the button with a tooltip.
+  for(U32 frame = 0; frame < 2; frame++)
+  {
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = v2f32(22, 60);
+    AndamentoNode node = {.key = uishell_sidebar_text(str8_lit("narrow_close"))};
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_Rect(r2f32p(20, 50, 24, 70))
+    { uishell_sidebar_margin_button(node, UIShell_SidebarCloseKind_Destroy); }
+    ui_end_build();
+    if(test_ui->string_hover_string.size)
+    { fprintf(stderr, "FAIL margin close creates a truncated-text tooltip\n"); ok = 0; }
+  }
   ui_select_state(saved);
   ui_state_release(test_ui);
   return ok;
@@ -5631,7 +5695,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
   if(!uishell_sidebar_labels_diagnostics()) { return 0; }
   Temp scratch = scratch_begin(0, 0);
   RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
-  if(!uishell_sidebar_disclosure_diagnostics(ws)) { scratch_end(scratch); return 0; }
+  B32 disclosure_ok = uishell_sidebar_disclosure_diagnostics(ws);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
   if(state->core == 0 || state->snapshot == 0)
   {
@@ -5910,7 +5974,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = restore_ok && ok;
   }
   ok = markers_ok && ok;
-  ok = ok && selection_ok && reorder_ok && coverage_ok;
+  ok = ok && selection_ok && reorder_ok && coverage_ok && disclosure_ok;
   fprintf(stderr, "Sidebar host diagnostics: %s (split layout, overflow selection, project motion, reveal, focus, close, failure, retry, restore, ended retention, status glyphs)\n", ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

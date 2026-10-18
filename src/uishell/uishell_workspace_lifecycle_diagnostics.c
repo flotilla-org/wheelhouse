@@ -332,6 +332,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
             close_seen[hover] = 1;
             detach_drawn[hover] = box->custom_draw == rd_workspace_detach_icon_draw && ui_box_display_string(box).size == 0;
             x_drawn[hover] = box->custom_draw == 0 && str8_match(ui_box_display_string(box), str8_lit("×"), 0);
+            LifecycleCheck(box->display_fruns.dim.x <= dim_2f32(box->rect).x, "margin control's glyph fits its hit area");
             if(r == 0) { subjectless_close = box->rect; }
           }
         }
