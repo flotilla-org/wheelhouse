@@ -31,7 +31,10 @@ typedef struct {
 /* The renderer that samples frames. D3D11 frames are imported on the GUI
    thread only when the producer's adapter is this adapter and the renderer
    has a shared release fence; otherwise the worker reads them back on the
-   producer's adapter and they take the CPU path. Zeroed: CPU path only. */
+   producer's adapter and they take the CPU path. On macOS these are an
+   MTLDevice and MTLSharedEventHandle. Immutable after session creation; the
+   caller retains the borrowed objects until the session is destroyed.
+   Zeroed: CPU path only. */
 typedef struct {
   uint64_t adapter;    /* LUID, (HighPart << 32) | LowPart */
   void *device;        /* borrowed ID3D11Device* */

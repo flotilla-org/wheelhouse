@@ -209,6 +209,12 @@ static ft_status wh_js_link_tracks(WH_JS_Link *link, bool media, bool input,
     ft_handshake_offer_destroy(&offer);
     return result;
   }
+  // A media-only native connection may find no optional tracks here. Decline
+  // the offer instead of selecting an empty set and retaining an unused link.
+  if (selected == 0) {
+    ft_handshake_offer_destroy(&offer);
+    return FT_STATUS_OK;
+  }
   ft_track_admission admissions[3];
   return ft_handshake_select(
       &offer, selections, selected, input_track ? FT_INPUT_MODE_COOPERATIVE : 0,
@@ -732,12 +738,14 @@ static void wh_js_media_worker(void *arg) {
       }
     }
     mutex_take(s->mutex);
+    bool setup_failed = !s->state.connected;
     s->state.connecting = false;
     s->state.connected = false;
     if (!s->stop) {
       if (result != FT_STATUS_OK && result != FT_STATUS_CLOSED)
         snprintf(s->state.media_status, 128,
-                 "Disconnected (video %d); reconnecting", result);
+                 setup_failed ? "Disconnected (setup %d); reconnecting"
+                              : "Disconnected (video %d); reconnecting", result);
       else
         snprintf(s->state.media_status, 128,
                  "Disconnected; reconnecting video");

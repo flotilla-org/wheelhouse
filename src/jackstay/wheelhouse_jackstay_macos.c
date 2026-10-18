@@ -46,11 +46,20 @@ static ft_status wh_js_macos_run(WH_Jackstay *s, bool input, unsigned request) {
                          ? FT_STATUS_OK
                          : FT_STATUS_UNSUPPORTED;
   WH_JS_Link control = {0, -1};
+  // Control/affordance tracks are optional. Their endpoint can fail while the
+  // independent native acquisition service remains healthy.
   if (result == FT_STATUS_OK && s->input_address && s->input_address[0]) {
-    result = wh_js_link_open(s->input_address, false, &control);
-    if (result == FT_STATUS_OK)
-      result = wh_js_link_tracks(&control, false, input, &offered,
-                                 &input_status, &affordances);
+    ft_status control_result =
+        wh_js_link_open(s->input_address, false, &control);
+    if (control_result == FT_STATUS_OK)
+      control_result = wh_js_link_tracks(&control, false, input, &offered,
+                                         &input_status, &affordances);
+    if (control_result != FT_STATUS_OK) {
+      mutex_take(s->mutex);
+      snprintf(s->state.input_status, sizeof(s->state.input_status),
+               "Control unavailable (setup %d)", control_result);
+      mutex_drop(s->mutex);
+    }
     wh_js_link_close(&control);
   }
   if (result == FT_STATUS_OK)

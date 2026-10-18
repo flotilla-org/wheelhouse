@@ -9,6 +9,13 @@ producer rendering, transport acquisition, CPU mailbox copies or producer wakes.
 It does not establish the cause of the reported slow keyboard input with a
 pinned CEF card.
 
+A pending final frame currently calls `rd_request_frame` until its 100–200 ms
+preview deadline. This preserves convergence but does not lower the shell's UI
+frame rate during that interval, especially with continuous producer wakes.
+There is no shared timed-wake interface yet. Wheelhouse #406 tracks scheduling
+preview deadlines without full-rate shell frame requests; uptake counts alone
+do not establish input latency or idle-power improvement.
+
 The next step spans Jackstay and its producers. A consumer should be able to
 report its presentation role, displayed pixel demand and useful refresh rate.
 These are advisory hints: hosts must retain their own admission policies when a

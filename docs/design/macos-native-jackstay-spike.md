@@ -30,6 +30,12 @@ failures retain their status code in the reconnect message, including unsupporte
 native builds. The standalone session acceptance checks setup errors and the
 readiness helper's completed, timed-out and cancelled outcomes.
 
+Video acquisition is independent of the optional input/affordance endpoint. A
+control setup failure leaves native video connected; an offer without usable
+optional tracks is declined. To check this with a running native producer, build
+Jackstay with `backend-macos` and run `tools/test-jackstay.py --macos-service NAME`.
+It uses a real Metal consumer with a deliberately unavailable control endpoint.
+
 The Metal pixel diagnostic covers RGBA/BGRA IOSurface import, surface lifetime,
 and shared readiness/completion events using a second Metal device. Native
 producer/consumer acceptance still needs the external Mach service; a CEF SDK is

@@ -290,12 +290,17 @@ def run_d3d11(consumer, source, mode, name):
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--ui-binary", type=Path, help="also verify mounted address submission (requires a display)")
+parser.add_argument("--macos-service", help="also test native media with an unavailable optional control link")
 args = parser.parse_args()
+if args.macos_service and sys.platform != "darwin":
+    parser.error("--macos-service requires macOS and a backend-macos Jackstay build")
 
 with tempfile.TemporaryDirectory(prefix="wh-js-", dir=None if WINDOWS else "/tmp") as temporary:
     work = Path(temporary)
     consumer, source = build(work)
     subprocess.run([str(consumer), "unused", "mailbox"], check=True, timeout=15)
+    if args.macos_service:
+        subprocess.run([str(consumer), args.macos_service, "macos-media-only"], check=True, timeout=15)
     for mode in ("input", "observe", "refused", "recovery", "missing"):
         run(consumer, source, mode, f"wh-js-{os.getpid()}-{mode}")
     navigation = build_navigation_producer()

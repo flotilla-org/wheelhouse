@@ -276,7 +276,7 @@ static void native_failure_handling(void) {
   wh_js_connect(s, false);
   WH_JS_State state = {0};
   char expected[64];
-  snprintf(expected, sizeof(expected), "video %d", FT_STATUS_UNSUPPORTED);
+  snprintf(expected, sizeof(expected), "setup %d", FT_STATUS_UNSUPPORTED);
   for (unsigned i = 0; i < 1000; ++i) {
     wh_js_snapshot(s, &state, 0, 0);
     if (strstr(state.media_status, expected))
@@ -307,6 +307,43 @@ static void native_failure_handling(void) {
 #endif
 }
 
+#if OS_MAC && defined(__OBJC__)
+static int macos_media_only(const char *service) {
+  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+  id<MTLSharedEvent> released = [device newSharedEvent];
+  MTLSharedEventHandle *handle = [released newSharedEventHandle];
+  assert(device && handle);
+  WH_Jackstay *s = wh_js_create(
+      (WH_JS_Endpoint){.media = service, .input = "missing-control-link",
+                       .kind = WH_JS_MEDIA_MACOS},
+      (WH_JS_Gpu){.device = device, .release_fence = handle}, 0, 0);
+  assert(s);
+  wh_js_connect(s, true);
+  WH_JS_State state = {0};
+  WH_JS_Frame frame = {0};
+  for (unsigned i = 0; i < 1000; ++i) {
+    wh_js_snapshot(s, &state, &frame, 0);
+    if (state.connected && frame.native)
+      break;
+    sleep_ms(5);
+  }
+  if (!frame.native)
+    fprintf(stderr, "native media failed: %s / %s\n", state.media_status, state.input_status);
+  assert(state.connected && frame.native && !state.control);
+  wh_js_frame_release(s, &frame, 0); // never sampled by the GPU
+  wh_js_stop(s);
+  wait_state(s, 2);
+  for (unsigned i = 0; i < 1000 && !wh_js_destroy(&s); ++i)
+    sleep_ms(5);
+  assert(!s);
+  [handle release];
+  [released release];
+  [device release];
+  puts("Native media survives an unavailable optional control link");
+  return 0;
+}
+#endif
+
 static int session_main(int argc, char **argv) {
   assert(argc >= 2);
   const char *mode = argc > 2 ? argv[2] : "input";
@@ -316,6 +353,10 @@ static int session_main(int argc, char **argv) {
     puts("CPU mailbox: native format, stride, ownership and version filtering passed");
     return 0;
   }
+#if OS_MAC && defined(__OBJC__)
+  if (!strcmp(mode, "macos-media-only"))
+    return macos_media_only(argv[1]);
+#endif
 #if OS_WINDOWS
   if (!strncmp(mode, "d3d11", 5))
     return d3d11_main(argv[1], mode);
