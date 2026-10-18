@@ -9,6 +9,7 @@ On Windows it also runs Jackstay's d3d11_source against the D3D11 paths
 On Windows run this from a Visual Studio developer prompt (cl on PATH).
 """
 
+import argparse
 import os
 from pathlib import Path
 import queue
@@ -205,6 +206,31 @@ def run_affordances(consumer, producer_path):
                 process.wait()
 
 
+def run_ui_navigation(binary, producer_path):
+    """Click/type/Return in a mounted web View, with the real sidebar footer."""
+    producer = subprocess.Popen([str(producer_path)], stderr=subprocess.PIPE, text=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix="wh-js-ui-") as temporary:
+            work = Path(temporary)
+            result = subprocess.run(
+                [str(binary), "--jackstay_input_diagnostics",
+                 f"--user:{work / 'user'}", f"--project:{work / 'project'}",
+                 f"--dashboard:{work / 'dashboard'}"],
+                env=dict(os.environ, WHEELHOUSE_INPUT_TEST_ENDPOINT="navigation-producer"),
+                capture_output=True, text=True, timeout=30,
+            )
+            print(result.stdout + result.stderr, end="")
+            assert result.returncode == 0, ("UI navigation", result.returncode)
+        _, report = producer.communicate(timeout=15)
+        assert producer.returncode == 0, report
+        assert "navigation verb=load url=https://x" in report, report
+        print("Mounted address submission reached the producer")
+    finally:
+        if producer.poll() is None:
+            producer.kill()
+            producer.wait()
+
+
 def build_d3d11_source():
     """Jackstay's D3D11 reference source, from the library's own build."""
     subprocess.run(
@@ -261,12 +287,19 @@ def run_d3d11(consumer, source, mode, name):
                 process.wait()
 
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--ui-binary", type=Path, help="also verify mounted address submission (requires a display)")
+args = parser.parse_args()
+
 with tempfile.TemporaryDirectory(prefix="wh-js-", dir=None if WINDOWS else "/tmp") as temporary:
     work = Path(temporary)
     consumer, source = build(work)
     for mode in ("input", "observe", "refused", "recovery", "missing"):
         run(consumer, source, mode, f"wh-js-{os.getpid()}-{mode}")
-    run_affordances(consumer, build_navigation_producer())
+    navigation = build_navigation_producer()
+    run_affordances(consumer, navigation)
+    if args.ui_binary:
+        run_ui_navigation(args.ui_binary.resolve(), navigation)
     if not WINDOWS:
         for mode in ("input", "recovery"):
             run(consumer, source, mode, work / mode)
