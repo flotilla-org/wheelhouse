@@ -100,6 +100,7 @@ def load(path):
         'snapshot_is_current': (U32, [Ptr, Ptr, Ptr]),
         'snapshot_field': (U32, [Ptr, Size, C.POINTER(Field)]),
         'apply_patch_json': (U32, [Ptr, U64, Text, Text, Ptr]),
+        'provider_set_stale': (U32, [Ptr, Text, U32, Ptr]),
         'snapshot_acquire': (Ptr, [Ptr, Ptr]), 'snapshot_release': (None, [Ptr]),
         'snapshot_node_count': (Size, [Ptr]), 'snapshot_node': (U32, [Ptr, Size, C.POINTER(Node)]),
         'snapshot_control': (U32, [Ptr, Size, C.POINTER(Control)]),
@@ -876,11 +877,13 @@ int main(void) {
         _, nodes = self.snapshot()
         self.assertEqual([n.workspace_id for n in nodes if n.entity_kind.string() == '.workspace'], [70])
 
-    # Terminal subject phases retain the workspace in place. A later stale
-    # active publication cannot undo an authoritative end for the same identity.
+    # Terminal phases retain open workspaces. Stale facts preserve that history;
+    # fresh lifecycle evidence reconciles it when the provider reconnects.
     def test_finished_open_workspace_stays_visible_with_show_finished_off(self):
         self.open_workspace('v', 42)
         for phase in ('landed', 'active'):
+            if phase == 'active':
+                self.assertTrue(lib.andamento_provider_set_stale(self.core, PROVIDER, 1, None))
             for kind, identity in [('convoy', 'c'), ('vessel', 'v')]:
                 update = patch(kind, identity, **{'flotilla.convoy.phase': phase})
                 self.assertTrue(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None))
@@ -890,6 +893,12 @@ int main(void) {
         snapshot, nodes = self.snapshot()
         live = next(n for n in nodes if n.entity_id.string() == 'v' and n.workspace_id == 42)
         self.assertEqual(self.values(snapshot, live)[2], 'ended')
+        self.assertTrue(live.stale)
+        self.assertTrue(lib.andamento_provider_set_stale(self.core, PROVIDER, 0, None))
+        snapshot, nodes = self.snapshot()
+        live = next(n for n in nodes if n.entity_id.string() == 'v' and n.workspace_id == 42)
+        self.assertNotEqual(self.values(snapshot, live)[2], 'ended')
+        self.assertFalse(live.stale)
         kind, request, identity, _ = self.dispatch(snapshot, live.activate)
         self.assertEqual((kind, identity), (0, 42))
         self.assertTrue(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None))
