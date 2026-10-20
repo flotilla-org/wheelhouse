@@ -83,14 +83,18 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   for(U32 phase = 0; phase < 3; phase++)
   {
     AndamentoNode convoy = {0};
-    String8 vessel_key = str8_zero();
+    String8 vessel_key = str8_zero(), owner_key = str8_zero();
     for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
     {
       AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("build"), 0)) { convoy = node; }
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0) &&
          str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0))
-      { vessel_key = push_str8_copy(scratch.arena, uishell_sidebar_string(node.key)); }
+      {
+        vessel_key = push_str8_copy(scratch.arena, uishell_sidebar_string(node.key));
+        AndamentoNode owner = {0}; andamento_snapshot_node(fixture.snapshot, node.parent, &owner);
+        owner_key = push_str8_copy(scratch.arena, uishell_sidebar_string(owner.key));
+      }
     }
     if(!uishell_sidebar_string(convoy.key).size)
     {
@@ -114,6 +118,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
       ui_end_build();
     }
     B32 row_seen = 0, chip_seen = 0;
+    F32 convoy_x = 0, vessel_x = 0;
     for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
     {
       UI_Box *keyed = box->parent;
@@ -121,10 +126,18 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
       if(ui_box_is_nil(keyed)) { continue; }
       row_seen |= ui_key_match(box->key, ui_key_from_stringf(keyed->key, "###sidebar_row_%S", vessel_key));
       chip_seen |= ui_key_match(box->key, ui_key_from_stringf(keyed->key, "###action_%S", vessel_key));
+      if(ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###entry_%S", owner_key))) { convoy_x = box->rect.x0; }
+      if(ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###entry_%S", vessel_key))) { vessel_x = box->rect.x0; }
     }
     if(!vessel_key.size || row_seen != (phase != 1) || chip_seen != (phase == 1))
     {
       fprintf(stderr, "FAIL convoy expansion: phase %u vessel row=%u chip=%u\n", phase, row_seen, chip_seen);
+      ok = 0;
+    }
+    // A vessel's row sits under its convoy's, indented one level further.
+    if(row_seen && !(convoy_x > 0 && vessel_x > convoy_x+1.f))
+    {
+      fprintf(stderr, "FAIL convoy expansion: phase %u vessel label x=%g not indented past convoy x=%g\n", phase, vessel_x, convoy_x);
       ok = 0;
     }
   }

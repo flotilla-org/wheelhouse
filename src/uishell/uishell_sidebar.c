@@ -4478,7 +4478,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           F32 name_widths[3];
           for(U64 c = 0; chip_count && c < 3; c++)
           { name_widths[c] = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, names[c]).x+em; }
-          F32 indent = 0.3f+Min(depth[i], (str8_match(kind, str8_lit("role"), 0) || str8_match(kind, str8_lit("convoy"), 0) || uishell_sidebar_is_subject(node)) ? 3 : 1)*0.4f;
+          // Every kind steps in a level, to three: an expanded convoy shows its
+          // vessels as rows under it.
+          F32 indent = 0.3f+Min(depth[i], 3)*0.4f;
           // A group's rows sit half an icon in from its title.
           if(owner != ANDAMENTO_NONE && owner != i) { indent += uishell_sidebar_group_row_inset; }
           F32 status_width = em*(str8_match(kind, str8_lit("change_request"), 0) ? 10.f : 1.2f);
