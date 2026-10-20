@@ -79,7 +79,8 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   ws->sidebar = &fixture;
   ui_select_state(test);
   // A convoy switches between a compact row of workspace actions and child
-  // rows. Exercise the actual collapse action and renderer in both directions.
+  // rows. It starts collapsed; exercise the actual collapse action and
+  // renderer in both directions.
   for(U32 phase = 0; phase < 3; phase++)
   {
     AndamentoNode convoy = {0};
@@ -129,7 +130,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
       if(ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###entry_%S", owner_key))) { convoy_x = box->rect.x0; }
       if(ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###entry_%S", vessel_key))) { vessel_x = box->rect.x0; }
     }
-    if(!vessel_key.size || row_seen != (phase != 1) || chip_seen != (phase == 1))
+    if(!vessel_key.size || row_seen != (phase == 1) || chip_seen != (phase != 1))
     {
       fprintf(stderr, "FAIL convoy expansion: phase %u vessel row=%u chip=%u\n", phase, row_seen, chip_seen);
       ok = 0;
