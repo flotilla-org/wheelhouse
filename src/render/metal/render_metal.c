@@ -987,8 +987,13 @@ r_hook B32
 r_window_frame_pending(WM_Window window, R_Handle window_equip)
 {
   R_MTL_Window *mtl_window = r_mtl_window_from_handle(window_equip);
-  return r_mtl_window_uses_display_link(window, mtl_window) && mtl_window->frame_requested &&
-         !mtl_window->display_link.paused && mtl_window->ready_drawable == 0;
+  if(!r_mtl_window_uses_display_link(window, mtl_window)) { return 0; }
+  // AppKit may stop display callbacks for a window with no visible part
+  // (covered, or its display asleep). Nothing it builds can be seen, so
+  // waiting for that window would only stall input and content.
+  NSWindow *ns_window = mac_wm_window_from_handle(window)->ns_window;
+  return mtl_window->frame_requested && !mtl_window->display_link.paused && mtl_window->ready_drawable == 0 &&
+         ([ns_window occlusionState] & NSWindowOcclusionStateVisible);
 }
 
 r_hook void

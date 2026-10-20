@@ -2646,6 +2646,7 @@ rd_window_surface_drawn_marks_restore(RD_WindowState *ws, RD_SurfaceDrawnMarks m
     else
     {
       // Allocated or resized by this build: its texture holds nothing yet.
+      // (A node the build freed is no longer in the list, so it is skipped.)
       n->rendered_hash = 0;
       n->last_was_preserved = 0;
       n->workspace_content_version = 0;

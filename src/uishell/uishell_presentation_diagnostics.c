@@ -149,6 +149,32 @@ uishell_skipped_frame_diagnostics(void)
   fprintf(stderr, "skipped frames: %llu of %llu builds under 1 kHz wakes had no drawable: %s\n",
           uishell_skipped_frame_unpresented, steps, uishell_skipped_frame_unpresented == 0 ? "passed" : "FAILED");
   ok = ok && uishell_skipped_frame_unpresented == 0 && steps > 0;
+
+  // A covered window may get no display callbacks; its frames must not wait.
+  MAC_WM_Window *native = mac_wm_window_from_handle(ws->os);
+  NSWindow *cover = [[NSWindow alloc] initWithContentRect:[native->ns_window frame] styleMask:NSWindowStyleMaskBorderless
+                                                  backing:NSBackingStoreBuffered defer:NO];
+  [cover setReleasedWhenClosed:NO];
+  [cover setOpaque:YES];
+  [cover setBackgroundColor:[NSColor blackColor]];
+  [cover setLevel:NSFloatingWindowLevel];
+  [cover orderFrontRegardless];
+  U64 occlusion_deadline = now_time_us()+3000000;
+  while(([native->ns_window occlusionState] & NSWindowOcclusionStateVisible) && now_time_us() < occlusion_deadline)
+  { [[NSRunLoop mainRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]]; }
+  if([native->ns_window occlusionState] & NSWindowOcclusionStateVisible)
+  { fprintf(stderr, "skipped frames: occlusion not reported here; covered-window check skipped\n"); }
+  else
+  {
+    U64 begin = now_time_us();
+    for(U64 i = 0; i < 20; i += 1) { update(); }
+    U64 elapsed = now_time_us()-begin;
+    B32 prompt = elapsed < 2000000;
+    fprintf(stderr, "skipped frames: 20 builds of a covered window took %llu ms: %s\n", elapsed/1000, prompt ? "passed" : "FAILED");
+    ok = ok && prompt;
+  }
+  [cover close];
+  [cover release];
   rd_state->frame_replay.prepare_window = 0;
   scratch_end(scratch);
   return ok;
