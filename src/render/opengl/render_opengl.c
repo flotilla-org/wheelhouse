@@ -460,6 +460,12 @@ r_window_frame_ready(WM_Window window, R_Handle window_equip)
   return 1;
 }
 
+r_hook B32
+r_window_frame_pending(WM_Window window, R_Handle window_equip)
+{
+  return 0;
+}
+
 r_hook void
 r_begin_frame(void)
 {

@@ -330,6 +330,8 @@ entry_point(CmdLine *cmd_line)
         { abort_self(uishell_live_resize_diagnostics() ? 0 : 1); }
         if(cmd_line_has_flag(cmd_line, str8_lit("presentation_diagnostics")))
         { abort_self(uishell_presentation_diagnostics() ? 0 : 1); }
+        if(cmd_line_has_flag(cmd_line, str8_lit("skipped_frame_diagnostics")))
+        { abort_self(uishell_skipped_frame_diagnostics() ? 0 : 1); }
         if(run_scroll_diagnostics)
         {
           RD_WindowState *ws = rd_state->first_window_state;
@@ -431,6 +433,7 @@ entry_point(CmdLine *cmd_line)
                                     "--panel_diagnostics\nRun panel drop and layout checks and exit.\n\n"
                                     "--jackstay_geometry_diagnostics\nCheck logical viewport and backing-pixel sizes and exit.\n\n"
                                     "--live_resize_diagnostics\nCheck Metal presentation during the native resize tracking loop and exit.\n\n"
+                                    "--skipped_frame_diagnostics\nCheck that every built frame is presented, or leaves no surface marked drawn, and exit (macOS).\n\n"
                                     "--jackstay_input_diagnostics\nCheck web address focus and global shortcut routing and exit.\n\n"
                                     "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
                                     "--preview_diagnostics\nCheck workspace preview isolation and dimming and exit.\n\n"

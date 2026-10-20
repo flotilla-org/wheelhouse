@@ -372,6 +372,10 @@ r_hook void              r_buffer_release(R_Handle buffer);
 // Backends without asynchronous admission are immediately ready.
 r_hook void              r_window_request_frame(WM_Window window, R_Handle window_equip, B32 requested);
 r_hook B32               r_window_frame_ready(WM_Window window, R_Handle window_equip);
+// A requested frame that is not ready yet, but will be: the display will offer
+// it. Wait for it rather than build a frame that cannot be presented. A hidden
+// or minimized window's frame is never pending.
+r_hook B32               r_window_frame_pending(WM_Window window, R_Handle window_equip);
 
 //- rjf: frame markers
 r_hook void              r_begin_frame(void);

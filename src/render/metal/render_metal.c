@@ -983,6 +983,14 @@ r_window_frame_ready(WM_Window window, R_Handle window_equip)
   return !r_mtl_window_uses_display_link(window, mtl_window) || mtl_window->ready_drawable != 0;
 }
 
+r_hook B32
+r_window_frame_pending(WM_Window window, R_Handle window_equip)
+{
+  R_MTL_Window *mtl_window = r_mtl_window_from_handle(window_equip);
+  return r_mtl_window_uses_display_link(window, mtl_window) && mtl_window->frame_requested &&
+         !mtl_window->display_link.paused && mtl_window->ready_drawable == 0;
+}
+
 r_hook void
 r_begin_frame(void)
 {

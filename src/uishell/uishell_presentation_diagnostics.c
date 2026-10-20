@@ -73,6 +73,91 @@ uishell_live_resize_diagnostics(void)
 }
 
 
+// A built frame is presented, or it leaves no trace. Drive the real loop with
+// the display link: a hover-like preview demand switches the visible workspace
+// to a new full-window surface, whose first build must not be marked drawn
+// unless it reached the screen.
+internal B32 update(void);
+internal R_Readback uishell_overview_benchmark_readback(Arena *arena, RD_WindowState *ws);
+global U64 uishell_skipped_frame_step;
+global U64 uishell_skipped_frame_demand_from;
+global U64 uishell_skipped_frame_forced;
+global U64 uishell_skipped_frame_unpresented;
+
+internal void
+uishell_skipped_frame_prepare(RD_WindowState *ws)
+{
+  uishell_skipped_frame_step += 1;
+  rd_request_frame();
+  if(uishell_skipped_frame_demand_from && uishell_skipped_frame_step >= uishell_skipped_frame_demand_from)
+  {
+    // Any recent demand makes every workspace build through a surface.
+    rd_workspace_preview_demand_push(ws, max_U64, 240.f);
+    // Input that arrived between display callbacks, before this fix.
+    if(uishell_skipped_frame_step == uishell_skipped_frame_demand_from && uishell_skipped_frame_forced)
+    { ws->render_ready = 0; }
+  }
+  if(!ws->render_ready) { uishell_skipped_frame_unpresented += 1; }
+}
+
+// Pixels brighter than the stage's clear colour.
+internal U64
+uishell_skipped_frame_lit_pixels(R_Readback image)
+{
+  U64 lit = 0;
+  for(U64 i = 0; i+3 < image.data.size; i += 4)
+  {
+    U8 *p = image.data.str+i;
+    if(p[0] > 8 || p[1] > 8 || p[2] > 8) { lit += 1; }
+  }
+  return lit;
+}
+
+internal B32
+uishell_skipped_frame_diagnostics(void)
+{
+#if OS_MAC
+  RD_WindowState *ws = rd_state->first_window_state;
+  if(ws == &rd_nil_window_state) { return 0; }
+  if(!r_mtl_window_from_handle(ws->r)->display_link)
+  { fprintf(stderr, "skipped frames: FAIL no display link\n"); return 0; }
+  Temp scratch = scratch_begin(0, 0);
+  B32 ok = 1;
+  rd_state->frame_replay.prepare_window = uishell_skipped_frame_prepare;
+  for(U64 i = 0; i < 30; i += 1) { update(); }
+  U64 baseline = uishell_skipped_frame_lit_pixels(uishell_overview_benchmark_readback(scratch.arena, ws));
+
+  // An unpresented build where the demand starts, then presented frames.
+  uishell_skipped_frame_forced = 1;
+  uishell_skipped_frame_demand_from = uishell_skipped_frame_step+1;
+  for(U64 i = 0; i < 10; i += 1) { update(); }
+  U64 after = uishell_skipped_frame_lit_pixels(uishell_overview_benchmark_readback(scratch.arena, ws));
+  B32 kept = baseline > 0 && after*10 >= baseline*9;
+  fprintf(stderr, "skipped frames: stage lit pixels %llu before demand, %llu after an unpresented first surface frame: %s\n",
+          baseline, after, kept ? "passed" : "FAILED");
+  ok = ok && kept;
+
+  // Wakes far faster than the display: every build must have a drawable.
+  uishell_skipped_frame_forced = 0;
+  uishell_skipped_frame_unpresented = 0;
+  NSTimer *timer = [NSTimer timerWithTimeInterval:.001 repeats:YES block:^(NSTimer *t) { wm_send_wakeup_event(); }];
+  [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+  U64 steps = uishell_skipped_frame_step, end = now_time_us()+500000;
+  while(now_time_us() < end) { update(); }
+  [timer invalidate];
+  steps = uishell_skipped_frame_step-steps;
+  fprintf(stderr, "skipped frames: %llu of %llu builds under 1 kHz wakes had no drawable: %s\n",
+          uishell_skipped_frame_unpresented, steps, uishell_skipped_frame_unpresented == 0 ? "passed" : "FAILED");
+  ok = ok && uishell_skipped_frame_unpresented == 0 && steps > 0;
+  rd_state->frame_replay.prepare_window = 0;
+  scratch_end(scratch);
+  return ok;
+#else
+  fprintf(stderr, "skipped frame diagnostics require macOS\n");
+  return 0;
+#endif
+}
+
 internal B32
 uishell_presentation_diagnostics(void)
 {
