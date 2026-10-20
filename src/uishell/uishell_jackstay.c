@@ -38,7 +38,7 @@ struct UIShell_JackstayView
   R_Handle texture; // shown: an owned upload, or an entry of imports
   B32 texture_owned;
   U64 upload_frame, version, epoch, pointer_epoch, press_serial;
-  U64 preview_frame_time_us;
+  U64 image_frame; // the shell frame that took the shown image
   U64 keys[WM_Key_COUNT][2];
   U32 width, height;
   B32 focus_requested, focused, content_focus, closing, disconnecting, initialized;
@@ -590,23 +590,20 @@ internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
   // keeps its newest image in the mailbox until that window is admitted.
   B32 admitted = host == &rd_nil_window_state || host->render_ready;
   RD_WorkspaceSurfaceEntry *surface=host!=&rd_nil_window_state?host->active_workspace_surface_entry:0;
-  U64 interval_us=rd_workspace_preview_refresh_interval(host,surface);
-  // Streaming previews use at most 10 Hz (5 Hz for the smallest cards).
-  // Leave intermediate frames in the latest-frame mailbox, where replacement
-  // already releases unsampled imports. Never retire the displayed GPU frame
-  // just because a preview skips an update.
-  if(rd_state->preview_refresh_budget && surface && !surface->composite && !surface->full_res)
-    interval_us=Max(interval_us,100000);
-  U64 now_us=rd_state->frame_last_time_us;
-  U64 phase_us=interval_us?rd_view_ui_key(v->view).u64[0]%interval_us:0;
-  U64 deadline_us=interval_us?v->preview_frame_time_us+interval_us-(v->preview_frame_time_us+phase_us)%interval_us:0;
-  B32 due=!interval_us || !v->version || now_us>=deadline_us;
+  // A preview takes a new image once its surface has drawn the last one, so
+  // the previews' render admission (rd_workspace_surface_schedule) is its
+  // budget. Intermediate frames stay in the latest-frame mailbox, where
+  // replacement already releases unsampled imports. Never retire the
+  // displayed GPU frame just because a preview skips an update.
+  B32 preview=surface && !surface->composite && !surface->full_res;
+  RD_SurfaceCacheNode *drawn=preview?rd_window_surface_node_lookup(host,surface->box_key):0;
+  B32 due=!preview || !v->version || !drawn || drawn->last_render_frame_index>=v->image_frame;
   B32 take_frame = admitted && due && v->upload_frame != rd_state->frame_index;
   wh_js_snapshot(v->session,&state,take_frame?&frame:0,v->version);
   if(take_frame) { v->upload_frame=rd_state->frame_index; }
-  if(frame.native || frame.pixels)v->preview_frame_time_us=now_us;
-  // A final producer wake may precede this deadline. Keep requesting frames
-  // until its newest image is sampled, even if publication then goes quiet.
+  if(frame.native || frame.pixels)v->image_frame=rd_state->frame_index;
+  // The surface may draw this frame, after this build. Its newest image
+  // must still be taken next frame, even if publication then goes quiet.
   if(admitted && !due && state.frame_version!=v->version)rd_request_frame();
   if(frame.native)uishell_jackstay_take_import(v,&frame);
   else if(frame.pixels)
@@ -700,6 +697,18 @@ internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
   }
   DR_Bucket *bucket=dr_bucket_make();bucket->content_version=v->version;
   rd_workspace_surface_contribute_version(v->version);
+  // The chrome above the image is versioned too, so a preview waits for
+  // render admission (RD_ViewTrait_VersionedSurface) as a terminal's does.
+  {
+    bool flags[]={state.connected,state.connecting,state.control,state.resetting,state.stopped};
+    U64 chrome=u64_hash_from_seed_str8(state.affordance_version,str8_struct(&flags));
+    chrome=u64_hash_from_seed_str8(chrome,str8_cstring(state.media_status));
+    chrome=u64_hash_from_seed_str8(chrome,str8_cstring(state.input_status));
+    chrome=u64_hash_from_seed_str8(chrome,str8_cstring(state.path_status));
+    chrome=u64_hash_from_seed_str8(chrome,str8_cstring(v->page));
+    chrome=u64_hash_from_seed_str8(chrome,str8((U8 *)v->address,v->address_size));
+    rd_workspace_surface_contribute_version(chrome^((U64)state.width<<32|state.height));
+  }
   DR_BucketScope(bucket)
   {if(v->width && v->height)dr_img(image,r2f32p(0,0,v->width,v->height),v->texture,state.connected?v4f32(1,1,1,1):v4f32(.45f,.45f,.45f,1),0,0,0);}
   ui_box_equip_draw_bucket(canvas,bucket);
@@ -783,6 +792,8 @@ WH_VIEW_UI_FUNCTION_DEF(jackstay)
   {
     if(!v->session)
     {
+      // Only the session's chrome is versioned (uishell_jackstay_session_ui).
+      rd_workspace_surface_mark_unversioned_view();
       UI_PrefHeight(ui_em(1.8f,1))
       {
         ui_label(str8_lit(UISHELL_JACKSTAY_ADDRESS_LABEL));
@@ -834,6 +845,7 @@ WH_VIEW_UI_FUNCTION_DEF(web)
     if(v->session)uishell_jackstay_session_ui(v,rect);
     else
     {
+      rd_workspace_surface_mark_unversioned_view();
       String8 page=str8_cstring(v->page);
       UI_PrefHeight(ui_em(1.8f,1)) UI_Row UI_PrefWidth(ui_pct(1,0)) uishell_web_address_bar(v,v->page);
       UI_PrefHeight(ui_em(1.8f,1))

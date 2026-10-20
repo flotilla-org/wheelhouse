@@ -2,19 +2,18 @@
 
 Status: follow-up design; no protocol extension implemented.
 
-Wheelhouse now limits Jackstay preview frame uptake independently of foreground
-views. The existing mailbox keeps the latest pending frame, replacing and
-releasing unsampled frames. This bounds GUI uploads/imports but does not reduce
-producer rendering, transport acquisition, CPU mailbox copies or producer wakes.
-It does not establish the cause of the reported slow keyboard input with a
-pinned CEF card.
+Wheelhouse limits Jackstay preview frame uptake independently of foreground
+views: a preview takes a frame only after its surface has drawn the last one,
+so preview render admission is its budget. The existing mailbox keeps the
+latest pending frame, replacing and releasing unsampled frames. This bounds GUI
+uploads/imports but does not reduce producer rendering, transport acquisition,
+CPU mailbox copies or producer wakes. It does not establish the cause of the
+reported slow keyboard input with a pinned CEF card.
 
-A pending final frame currently calls `rd_request_frame` until its 100–200 ms
-preview deadline. This preserves convergence but does not lower the shell's UI
-frame rate during that interval, especially with continuous producer wakes.
-There is no shared timed-wake interface yet. Wheelhouse #406 tracks scheduling
-preview deadlines without full-rate shell frame requests; uptake counts alone
-do not establish input latency or idle-power improvement.
+A preview waiting for admission requests shell frames until it is drawn, as
+any deferred preview surface does. Shell frames are paced by display
+opportunities, so this costs at most one build per display frame. Uptake
+counts alone do not establish input latency or idle-power improvement.
 
 The next step spans Jackstay and its producers. A consumer should be able to
 report its presentation role, displayed pixel demand and useful refresh rate.

@@ -95,10 +95,10 @@ enum
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_Listed, \
     128, WorkspaceRegion, WH_NO_EXPAND, UISHELL_SCROLL_REGION_FIXTURE_SETTINGS) \
   X(jackstay, jackstay, WH_NO_STATE, WH_Content_Jackstay|WH_Content_Page, \
-    RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop, \
+    RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_VersionedSurface, \
     0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
   X(web, web, WH_NO_STATE, WH_Content_Url|WH_Content_Page, \
-    RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop, \
+    RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_VersionedSurface, \
     0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
   X(sessions, sessions, WH_NO_STATE, WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop, \

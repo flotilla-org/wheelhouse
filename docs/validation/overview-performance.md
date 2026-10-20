@@ -15,7 +15,7 @@ see the results below. This is not a guarantee of 60 Hz.
 | Background workspace surface rendering | Four pending surfaces per window per frame, oldest rendered first. |
 | Preview surface size | Quantized displayed-size demand; selected workspaces retain full resolution. |
 | Small terminal glyph buckets | Refresh every 200 ms up to 128 points wide, 100 ms up to 256; larger previews have no added delay. |
-| Jackstay preview frame uptake | At most 5 Hz up to 128 points wide, 10 Hz for larger previews; foreground and full-resolution transitions bypass this limit. |
+| Jackstay preview frame uptake | A new frame once the preview's surface has drawn the last, so surface admission sets the rate; foreground and full-resolution transitions bypass this limit. |
 
 Selected, expanding and directly composited workspaces bypass background rendering
 limits. Provider queues bypass foreground requests, expire undemanded heads and
@@ -29,24 +29,26 @@ Missing previews retain their labels while waiting for their first image.
 
 Surface admission includes producer versions, workspace geometry and animation.
 Unversioned views retain byte-hash rendering after surface initialization; their
-ongoing changes are not bounded by the version-based queue. Jackstay currently
-falls into this category despite contributing a frame version. Its frame uptake
-precedes surface admission, but now uses the displayed-size preview cadence before
-taking a mailbox frame or uploading/importing it. Terminal glyphs and streaming
-Views share the size tiers; streams also cap larger previews at 10 Hz.
+ongoing changes are not bounded by the version-based queue. Jackstay and web
+Views version their image and the chrome drawn from producer state; before a
+session exists they remain unversioned. A preview takes a mailbox frame, and
+uploads or imports it, only after its surface has drawn the previous one. Its
+rate is therefore the rate at which admission draws it, with no fixed cadence.
+Terminal glyphs keep the size tiers above.
 
 Intermediate frames replace each other in the existing latest-frame mailbox.
 Unsampled native frames retain that mailbox's immediate-release behavior. The
 displayed native frame stays leased until replacement, with the normal GPU
 completion fence. Preview sampling does not alter the producer's logical viewport.
-A pending final image requests further shell frames until its deadline, so a
+A pending final image requests further shell frames until it is taken, so a
 producer that then goes quiet cannot leave its preview stale indefinitely.
 
 `--preview_diagnostics` publishes 60 changing CPU images through the real mailbox
 and builds the Jackstay preview before a terminal fixture using the production
-panel builder. A controlled frame clock checks the 5/10 Hz tiers, preserved text
-events, final-image convergence, foreground/full-resolution bypass, the disabled
-budget control and display admission. This is a work-admission regression, not a
+panel builder. It stands in for render admission and checks that a queued
+preview takes nothing until drawn, then the newest image; preserved text events,
+final-image convergence after the producer goes quiet, foreground bypass and
+display admission. This is a work-admission regression, not a
 measurement of physical keyboard latency or a native producer integration test.
 Producer-side cadence, resolution and consumer-demand aggregation remain a
 [cross-stack follow-up](../design/jackstay-presentation-demand.md).
