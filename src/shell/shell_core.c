@@ -2587,6 +2587,74 @@ rd_window_surface_node_lookup(RD_WindowState *ws, U64 key)
   return node;
 }
 
+// What a window's surface cache believes is drawn. A build whose frame is not
+// presented draws nothing, so it must not change that belief: a texture first
+// filled by such a build would otherwise be composited empty, until its content
+// changed again.
+typedef struct RD_SurfaceDrawnMark RD_SurfaceDrawnMark;
+struct RD_SurfaceDrawnMark
+{
+  RD_SurfaceCacheNode *node;
+  U64 key;
+  R_Handle texture;
+  U64 rendered_hash;
+  B32 last_was_preserved;
+  U64 workspace_content_version;
+  U64 last_render_frame_index;
+};
+
+typedef struct RD_SurfaceDrawnMarks RD_SurfaceDrawnMarks;
+struct RD_SurfaceDrawnMarks
+{
+  RD_SurfaceDrawnMark *v;
+  U64 count;
+};
+
+internal RD_SurfaceDrawnMarks
+rd_window_surface_drawn_marks(Arena *arena, RD_WindowState *ws)
+{
+  RD_SurfaceDrawnMarks marks = {0};
+  for(RD_SurfaceCacheNode *n = ws->first_surface_cache_node; n != 0; n = n->next) { marks.count += 1; }
+  marks.v = push_array(arena, RD_SurfaceDrawnMark, marks.count);
+  U64 idx = 0;
+  for(RD_SurfaceCacheNode *n = ws->first_surface_cache_node; n != 0; n = n->next, idx += 1)
+  {
+    marks.v[idx] = (RD_SurfaceDrawnMark){n, n->key, n->texture, n->rendered_hash,
+      n->last_was_preserved, n->workspace_content_version, n->last_render_frame_index};
+  }
+  return marks;
+}
+
+internal void
+rd_window_surface_drawn_marks_restore(RD_WindowState *ws, RD_SurfaceDrawnMarks marks)
+{
+  for(RD_SurfaceCacheNode *n = ws->first_surface_cache_node; n != 0; n = n->next)
+  {
+    RD_SurfaceDrawnMark *mark = 0;
+    for(U64 idx = 0; idx < marks.count && mark == 0; idx += 1)
+    {
+      if(marks.v[idx].node == n && marks.v[idx].key == n->key && r_handle_match(marks.v[idx].texture, n->texture))
+      { mark = &marks.v[idx]; }
+    }
+    if(mark != 0)
+    {
+      n->rendered_hash = mark->rendered_hash;
+      n->last_was_preserved = mark->last_was_preserved;
+      n->workspace_content_version = mark->workspace_content_version;
+      n->last_render_frame_index = mark->last_render_frame_index;
+    }
+    else
+    {
+      // Allocated or resized by this build: its texture holds nothing yet.
+      // (A node the build freed is no longer in the list, so it is skipped.)
+      n->rendered_hash = 0;
+      n->last_was_preserved = 0;
+      n->workspace_content_version = 0;
+      n->last_render_frame_index = 0;
+    }
+  }
+}
+
 internal RD_WorkspaceSurfaceEntry *
 rd_workspace_surface_entry_from_box_key(RD_WindowState *ws, U64 box_key)
 {
@@ -12216,19 +12284,27 @@ rd_frame(void)
   B32 frame_was_idle = 1;
   if(rd_state->frame_depth == 1)
   {
-    B32 any_window = 0, any_ready = 0;
-    for(RD_WindowState *w = rd_state->first_window_state; w != &rd_nil_window_state; w = w->order_next)
+    // One build per presented frame. Input that arrives between display
+    // opportunities waits, with whatever follows it, for the next one: a
+    // build that is never presented still advances caches as if it had drawn.
+    for(B32 pumped = 0;; pumped = 1)
     {
-      B32 requested = rd_state->num_frames_requested != 0 || DEV_always_refresh || w->render_pending;
-      r_window_request_frame(w->os, w->r, requested);
-      frame_was_idle &= !requested;
-      any_window = 1;
-      any_ready |= requested && r_window_frame_ready(w->os, w->r);
+      B32 any_ready = 0, any_pending = 0;
+      for(RD_WindowState *w = rd_state->first_window_state; w != &rd_nil_window_state; w = w->order_next)
+      {
+        B32 requested = rd_state->num_frames_requested != 0 || DEV_always_refresh || w->render_pending || events.count != 0;
+        r_window_request_frame(w->os, w->r, requested);
+        if(!pumped) { frame_was_idle &= !requested; }
+        any_ready |= requested && r_window_frame_ready(w->os, w->r);
+        any_pending |= r_window_frame_pending(w->os, w->r);
+      }
+      if(pumped && (any_ready || !any_pending)) { break; }
+      // Presentation callbacks wake the same pump as input.
+      B32 wait = pumped || (rd_state->num_frames_requested == 0 && !DEV_always_refresh) || (any_pending && !any_ready);
+      WM_EventList batch = wm_get_events(scratch.arena, wait);
+      events.frame_ready |= batch.frame_ready;
+      wm_event_list_concat_in_place(&events, &batch);
     }
-    // Presentation callbacks wake the same pump as input. An input event can
-    // therefore be handled immediately, without waiting for another display.
-    B32 wait = (rd_state->num_frames_requested == 0 && !DEV_always_refresh) || (any_window && !any_ready);
-    events = wm_get_events(scratch.arena, wait);
     if(rd_state->frame_metrics != 0) { rd_state->frame_metrics->event_wait_us += events.wait_time_us; }
   }
   
@@ -13117,7 +13193,11 @@ rd_frame(void)
       uishell_regs()->window = w->cfg_id;
       if(rd_state->frame_replay.prepare_window) { rd_state->frame_replay.prepare_window(w); }
       U64 window_begin_us = rd_state->frame_metrics != 0 ? now_time_us() : 0;
+      // Another window, or a new one not yet shown, can still build unpresented.
+      B32 presented = w->render_ready;
+      RD_SurfaceDrawnMarks drawn = presented ? (RD_SurfaceDrawnMarks){0} : rd_window_surface_drawn_marks(scratch.arena, w);
       rd_window_frame();
+      if(!presented) { rd_window_surface_drawn_marks_restore(w, drawn); }
       if(rd_state->frame_metrics != 0)
       { rd_state->frame_metrics->window_us += now_time_us()-window_begin_us; }
       if(rd_state->frame_diagnostic != 0)

@@ -931,6 +931,19 @@ r_buffer_release(R_Handle handle)
   }
 }
 
+// One wake is outstanding at a time. It wakes the shell's event pump once the
+// latest pending wait has run out, and follows that deadline as it moves.
+internal void
+r_mtl_display_wait_wake_after(U64 delay_us)
+{
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (S64)delay_us*1000), dispatch_get_main_queue(), ^{
+    U64 now = now_time_us();
+    if(now < r_mtl_state->display_wait_deadline_us) { r_mtl_display_wait_wake_after(r_mtl_state->display_wait_deadline_us-now); return; }
+    r_mtl_state->display_wait_wake_armed = 0;
+    wm_send_wakeup_event();
+  });
+}
+
 // Once a display link is attached, every drawable must come from it, including
 // the first frame. The shell shows new windows while that first frame is pending.
 internal B32
@@ -970,6 +983,23 @@ r_window_request_frame(WM_Window window, R_Handle window_equip, B32 requested)
       [mtl_window->ready_drawable release];
       mtl_window->ready_drawable = 0;
     }
+    if(!requested || mtl_window->display_link.paused || mtl_window->ready_drawable != 0)
+    {
+      mtl_window->pending_since_us = 0;
+    }
+    else if(mtl_window->pending_since_us == 0)
+    {
+      mtl_window->pending_since_us = now_time_us();
+      // The shell waits only for frames r_window_frame_pending reports, and a
+      // display link that stops firing for a visible window would otherwise
+      // stall it until input arrives. Wake the pump when the wait runs out.
+      r_mtl_state->display_wait_deadline_us = mtl_window->pending_since_us + R_MTL_DISPLAY_WAIT_LIMIT_US;
+      if(!r_mtl_state->display_wait_wake_armed)
+      {
+        r_mtl_state->display_wait_wake_armed = 1;
+        r_mtl_display_wait_wake_after(R_MTL_DISPLAY_WAIT_LIMIT_US);
+      }
+    }
   }
 }
 
@@ -981,6 +1011,29 @@ r_window_frame_ready(WM_Window window, R_Handle window_equip)
   if(mtl_window != 0 && mtl_window->display_link != 0 &&
      (![native->ns_window isVisible] || [native->ns_window isMiniaturized])) { return 0; }
   return !r_mtl_window_uses_display_link(window, mtl_window) || mtl_window->ready_drawable != 0;
+}
+
+r_hook B32
+r_window_frame_pending(WM_Window window, R_Handle window_equip)
+{
+  R_MTL_Window *mtl_window = r_mtl_window_from_handle(window_equip);
+  if(!r_mtl_window_uses_display_link(window, mtl_window)) { return 0; }
+  // AppKit may stop display callbacks for a window with no visible part
+  // (covered, or its display asleep). Nothing it builds can be seen, so
+  // waiting for that window would only stall input and content.
+  NSWindow *ns_window = mac_wm_window_from_handle(window)->ns_window;
+  B32 pending = mtl_window->frame_requested && !mtl_window->display_link.paused && mtl_window->ready_drawable == 0 &&
+                ([ns_window occlusionState] & NSWindowOcclusionStateVisible) && mtl_window->pending_since_us != 0;
+  // A display link can also stop firing for a window AppKit still reports
+  // visible. Past the limit this wait ends: the frame builds without a
+  // drawable, and the next one's wait starts when it is requested, so builds
+  // are paced by the limit rather than spinning.
+  if(pending && now_time_us() - mtl_window->pending_since_us >= R_MTL_DISPLAY_WAIT_LIMIT_US)
+  {
+    mtl_window->pending_since_us = 0;
+    pending = 0;
+  }
+  return pending;
 }
 
 r_hook void

@@ -177,7 +177,9 @@ uishell_jackstay_input_test_focus_root(UI_Box *box)
 }
 
 // Publish through the real latest-frame mailbox and build a demanded preview
-// before an ordinary terminal. No producer process or OS input is needed.
+// before an ordinary terminal. No producer process or OS input is needed. A
+// preview takes an image once its surface has drawn the last one; this test
+// stands in for render admission by marking the surface drawn.
 internal B32
 uishell_jackstay_preview_diagnostics(RD_WindowState *ws)
 {
@@ -186,8 +188,9 @@ uishell_jackstay_preview_diagnostics(RD_WindowState *ws)
   UIShell_JackstayView *saved_views=uishell_jackstay_views;
   RD_WorkspaceSurfaceEntry *saved_surface=ws->active_workspace_surface_entry;
   RD_WorkspacePreviewDemand *saved_demands=ws->first_workspace_preview_demand;
-  U64 saved_frame=rd_state->frame_index,saved_time=rd_state->frame_last_time_us,saved_requests=rd_state->num_frames_requested;
-  B32 saved_ready=ws->render_ready,saved_budget=rd_state->preview_refresh_budget;
+  RD_SurfaceCacheNode *saved_nodes=ws->first_surface_cache_node;
+  U64 saved_frame=rd_state->frame_index,saved_requests=rd_state->num_frames_requested;
+  B32 saved_ready=ws->render_ready;
   CFG_Node *window=cfg_node_from_id(ws->cfg_id);
   CFG_Node *owners[2];
   UIShell_WorkspaceMount mounts[2];
@@ -204,27 +207,31 @@ uishell_jackstay_preview_diagnostics(RD_WindowState *ws)
   WH_Jackstay session={.mutex=mutex_alloc()};
   UIShell_JackstayView v={.view=rd_view_address_from_cfg(preview_cfg),.session=&session,.initialized=1};
   uishell_jackstay_views=&v;
+  U64 preview_key=ui_key_make(8120).u64[0];
+  RD_SurfaceCacheNode *drawn=rd_window_surface_node_from_key(ws,preview_key,v2s32(64,48));
   ui_select_state(test);
-  ws->render_ready=1;rd_state->preview_refresh_budget=1;
   B32 ok=1;
-  U32 uptakes[2]={0};
-#define JSPreviewCheck(x) do{if(!(x)){fprintf(stderr,"FAIL Jackstay preview line %d: %s\n",__LINE__,#x);ok=0;}}while(0)
+  U64 taken[64]={0};
+#define JSPreviewCheck(x) do{if(!(x)){fprintf(stderr,"FAIL Jackstay preview frame %u: %s\n",frame,#x);ok=0;}}while(0)
   UIShell_RegsScope(.window=ws->cfg_id)
-  for(U32 frame=0;frame<77;frame++)
+  for(U32 frame=0;frame<60;frame++)
   {
+    // 10-18, 40, 53-57: queued behind other previews. 30: not presented.
+    // 32-39: in the foreground. 50-52 publish nothing; 54 is the last image.
+    // A draw happens after the build, so uptake resumes the frame after it.
+    B32 queued=(frame>=10 && frame<19) || frame==40 || (frame>=53 && frame<58);
+    B32 foreground=frame>=32 && frame<40, presented=frame!=30;
+    B32 publish=frame<50 || frame==53 || frame==54;
     rd_state->frame_index=saved_frame+frame+1;
-    rd_state->frame_last_time_us=1000000+frame*16667;
-    rd_workspace_preview_demand_push(ws,owners[0]->id,frame<30?128.f:512.f);
-    // The last publication must eventually appear even after its wake.
-    if(frame<60 || frame>=72)
+    rd_workspace_preview_demand_push(ws,owners[0]->id,240.f);
+    if(publish)
     {
       U8 pixel[4]={(U8)frame,0,0,255};
       JSPreviewCheck(wh_js_post_pixels(&session,1,1,pixel,4,FT_PIXEL_FORMAT_RGBA8_UNORM,0,0));
     }
     U64 previous=v.version;
     rd_state->num_frames_requested=0;
-    ws->render_ready=frame!=75;
-    rd_state->preview_refresh_budget=frame!=74;
+    ws->render_ready=presented;
     UI_IconInfo icons=ws->ui->icon_info;
     UI_AnimationInfo animation={0};
     UI_EventNode event={.v={.kind=UI_EventKind_Text,.string=str8_lit("x")}};
@@ -235,36 +242,43 @@ uishell_jackstay_preview_diagnostics(RD_WindowState *ws)
     {
       ui_set_next_rect(r2f32p(0,0,640,480));
       UI_Box *wrapper=ui_build_box_from_key(i?0:UI_BoxFlag_IgnoreInteraction,ui_key_make(8120+i));
-      // Return to foreground while still inside the last preview interval.
-      RD_WorkspaceSurfaceEntry surface={.workspace_id=owners[i]->id,.composite=i || frame==72 || frame>=75,.full_res=frame==73};
+      RD_WorkspaceSurfaceEntry surface={.box_key=i?0:preview_key,.workspace_id=owners[i]->id,.composite=i || foreground};
       ws->active_workspace_surface_entry=&surface;
       UI_Parent(wrapper) UI_Focus(i?UI_FocusKind_On:UI_FocusKind_Off)
       {rd_panel_area_ui(scratch,r2f32p(0,0,640,480),r2f32p(0,0,640,480),ws,&mounts[i],i!=0,0,0,0,0);}
-      if(!i)
-      {
-        JSPreviewCheck(events.count==1);
-        if(ws->render_ready && v.version!=session.state.frame_version)
-        {JSPreviewCheck(rd_state->num_frames_requested!=0);}
-      }
+      if(!i)JSPreviewCheck(events.count==1);
     }
     ws->active_workspace_surface_entry=0;
     ui_end_build();
-    if(v.version!=previous && frame<60)uptakes[frame/30]++;
-    if(frame==71)JSPreviewCheck(v.version==60);
-    if(frame>=72 && frame!=75)JSPreviewCheck(v.version==frame-11);
-    if(frame==75)JSPreviewCheck(v.version==previous);
+    // Render admission, after the build: a presented, unqueued preview draws.
+    if(presented && !queued && !foreground)drawn->last_render_frame_index=rd_state->frame_index;
+    taken[frame]=v.version;
+    U64 newest=session.state.frame_version;
+    if(frame<11 || (frame>=20 && frame<30) || frame==31 || foreground || (frame>=42 && frame<50) || frame==53 || frame==59)
+      JSPreviewCheck(v.version==newest);
+    if(frame>10 && frame<20)JSPreviewCheck(v.version==taken[10]);
+    // Intermediate publications were replaced in the mailbox, never taken.
+    if(frame==20)JSPreviewCheck(newest>taken[10]+1);
+    if(frame==30 || frame==40 || frame==41)JSPreviewCheck(v.version==previous);
+    if(frame>=54 && frame<59)
+    {
+      JSPreviewCheck(v.version==taken[53]);
+      // The last image waits for admission, not for another publication.
+      JSPreviewCheck(rd_state->num_frames_requested!=0);
+    }
   }
-  fprintf(stderr,"Jackstay preview: %u small-card + %u large-card uptakes for 60 publications\n",uptakes[0],uptakes[1]);
-  JSPreviewCheck(uptakes[0]>0 && uptakes[0]<=4);
-  JSPreviewCheck(uptakes[1]>0 && uptakes[1]<=7);
+  fprintf(stderr,"Jackstay preview: final image %llu of %llu publications\n",
+          (unsigned long long)taken[59],(unsigned long long)session.state.frame_version);
   // Sampling a stream in a preview must not resize its logical viewport.
-  JSPreviewCheck(v.present_width>256 && v.present_height>128);
+  { U32 frame=60; JSPreviewCheck(v.present_width>256 && v.present_height>128); }
 #undef JSPreviewCheck
   uishell_jackstay_drop_frames(&v);
   free(session.pixels);mutex_release(session.mutex);
+  r_tex2d_release(drawn->texture);
+  ws->first_surface_cache_node=saved_nodes;
   ws->active_workspace_surface_entry=saved_surface;ws->render_ready=saved_ready;
   ws->first_workspace_preview_demand=saved_demands;
-  rd_state->frame_index=saved_frame;rd_state->frame_last_time_us=saved_time;rd_state->num_frames_requested=saved_requests;rd_state->preview_refresh_budget=saved_budget;
+  rd_state->frame_index=saved_frame;rd_state->num_frames_requested=saved_requests;
   uishell_jackstay_views=saved_views;
   ui_select_state(saved_ui);ui_state_release(test);
   for(U32 i=0;i<2;i++)cfg_node_release(rd_state->cfg,owners[i]);

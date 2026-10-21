@@ -198,6 +198,7 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/shared-user" --project:"$task_dir/shared-project" --shared_ui_diagnostics --shared_ui_fixture_dir:"$task_dir"
           ./build/wheelhouse --user:"$task_dir/selection-user" --project:"$task_dir/selection-project" --terminal_selection_diagnostics
           ./build/wheelhouse --user:"$task_dir/presentation-user" --project:"$task_dir/presentation-project" --presentation_diagnostics
+          ./build/wheelhouse --user:"$task_dir/skipped-frame-user" --project:"$task_dir/skipped-frame-project" --skipped_frame_diagnostics
           ./build/wheelhouse --user:"$task_dir/resize-user" --project:"$task_dir/resize-project" --dashboard:"$task_dir/resize-dashboard" --live_resize_diagnostics
           ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
           ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
