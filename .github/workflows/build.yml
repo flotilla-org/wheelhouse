@@ -23,7 +23,7 @@ env:
   JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
   # Reconcile saved ended flags with fresh lifecycle evidence (wheelhouse#213).
   # Pinned to the Andamento fix branch until its merge. ABI remains 7.
-  ANDAMENTO_REV: 8354fb8497cddd653dfcb31d01524e7835939552
+  ANDAMENTO_REV: ff1b9742db83d2ec5efcd6c52dce5f5d78a89a2b
 
 jobs:
   daily-driver:
