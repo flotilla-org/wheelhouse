@@ -50,7 +50,7 @@ window 1
       region "Projects"
         row project/p "Example project" openable collapsed
           row role/p/governor "governor" layout=inline openable status="running"
-          row convoy/build "Ship sidebar subjects" status="active"
+          row convoy/build "Ship sidebar subjects" status="active" collapsed
             row change_request/pr-281 "!281" layout=inline openable status="ready_to_merge"
             row change_request/pr-1000 "c!1000" layout=inline openable status="ci_failing"
             row change_request/no-forge "!2508" layout=inline status="awaiting_review_response"
