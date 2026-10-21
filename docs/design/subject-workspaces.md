@@ -160,7 +160,14 @@ Workspace Region. From the start, sections are separated by clear dividers:
    runs the item's default action, such as opening the PR in a Luchs Slot.
    Hovering or right-clicking opens a small palette of its other actions.
 
-The first cut has the subject, related workspaces, views and linked items. Layouts appear once a subject has more than one.
+Each section has a fixed area, which you resize by dragging the divider after
+it, so items don't jump around as views open and close or when you switch
+workspaces. A section stays in place even when it is empty. A section with more
+items than fit scrolls; later it could collapse its overflow into a "more"
+item.
+
+The first cut has the subject, related workspaces, views and linked items. The
+layouts area fills in once a subject has more than one layout.
 
 The strip is designed to be orientation independent, so it can later go on any
 edge of its section of the Controlled Split. Once it works well, the tab strip's
@@ -185,6 +192,15 @@ order. By default it should follow the same hierarchy as the sidebar, with
 each workspace showing a sensible amount of information about its subject:
 the card profiles in #270. Once the overview has that layout, the zoom out
 and in can pass through each workspace's real position in it.
+
+## Cases to work out
+
+Plenty of fiddly cases will turn up in use. Known so far:
+
+- **A Luchs view navigated away from its linked item** (a PR page, say) stops
+  being that item's view: it becomes unlinked, a Detached Slot, and the linked
+  item's next click opens a fresh view rather than showing the one now
+  elsewhere.
 
 ## Developing against the dummy fleet
 

@@ -57,18 +57,21 @@ svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-widt
 #app[data-edge="bottom"] #wsregion{flex-direction:column-reverse}
 
 /* tool strip */
-#strip{flex:none;display:flex;background:var(--side);gap:2px;padding:4px;overflow:auto}
+#strip{flex:none;display:flex;background:var(--side);padding:4px;overflow:hidden}
 #app[data-edge="left"] #strip,#app[data-edge="right"] #strip{flex-direction:column;width:42px}
 #app[data-edge="left"] #strip{border-right:1px solid var(--line)}
 #app[data-edge="right"] #strip{border-left:1px solid var(--line)}
 #app[data-edge="top"] #strip,#app[data-edge="bottom"] #strip{flex-direction:row;height:42px}
 #app[data-edge="top"] #strip{border-bottom:1px solid var(--line)}
 #app[data-edge="bottom"] #strip{border-top:1px solid var(--line)}
-.sec{display:flex;gap:2px;align-items:center}
+.sec{display:flex;gap:2px;align-items:center;min-width:0;min-height:0;overflow:auto;scrollbar-width:none}
+.sec::-webkit-scrollbar{display:none}
 #app[data-edge="left"] .sec,#app[data-edge="right"] .sec{flex-direction:column}
-.divider{flex:none;background:var(--line)}
-#app[data-edge="left"] .divider,#app[data-edge="right"] .divider{height:1px;width:24px;margin:5px auto}
-#app[data-edge="top"] .divider,#app[data-edge="bottom"] .divider{width:1px;height:24px;margin:auto 5px}
+.divider{flex:none;display:block}
+.divider.fixed{pointer-events:none}
+#app[data-edge="left"] .divider,#app[data-edge="right"] .divider{height:9px;width:100%;cursor:row-resize;background:linear-gradient(to bottom,transparent 4px,var(--line) 4px,var(--line) 5px,transparent 5px) no-repeat center/24px 100%}
+#app[data-edge="top"] .divider,#app[data-edge="bottom"] .divider{width:9px;height:100%;cursor:col-resize;background:linear-gradient(to right,transparent 4px,var(--line) 4px,var(--line) 5px,transparent 5px) no-repeat center/100% 24px}
+.divider:not(.fixed):hover,.divider:focus-visible,.divider.dragging{background-color:#e0b34a33;outline:none}
 .si{position:relative;width:32px;height:32px;flex:none;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:5px;background:none;color:var(--text);cursor:pointer;padding:0}
 .si:hover{background:#ffffff12}
 .si:focus-visible{outline:1px solid var(--accent);outline-offset:-1px}
@@ -302,6 +305,10 @@ function arrange(k, L){
 }
 
 // ---- tool strip ------------------------------------------------------------
+// Fixed areas, in items, so things don't jump; the last takes what's left.
+const ITEM = 34;
+const SECTIONS = [{name:'subject', label:'Subject', fixed:1},{name:'layouts', label:'Layouts'},{name:'views', label:'Views'},{name:'related', label:'Related workspaces'},{name:'linked', label:'Linked items', rest:true}];
+const AREA = {layouts:3, views:4, related:4};
 function thumb(node){
   const rects = [];
   (function walk(n, x, y, w, h){
@@ -329,12 +336,10 @@ function renderStrip(){
   const visible = new Set(Object.values(A.map).flat().map(s => s.key));
   const unplaced = s => (L.liveOnly && slotState(s) === 'gone') || !A.panels.some(p => p.kinds.includes(s.kind));
   const why = s => L.liveOnly && slotState(s) === 'gone' ? 'Ended. This layout shows live agents only.' : 'Not placed by this layout.';
-  const parts = [];
-  parts.push(`<div class="sec"><button type="button" class="si subject" id="s-subject" aria-label="${esc(S.title)}">${ic(S.kind)}</button></div>`);
-  if(LAYOUTS[subject].length > 1){
-    parts.push(`<div class="sec" role="group" aria-label="Layouts">${LAYOUTS[subject].map(l =>
-      `<button type="button" class="si${l.id===L.id?' cur':''}" data-layout="${l.id}" title="Layout: ${esc(l.name)}" aria-pressed="${l.id===L.id}">${thumb(l.tree)}</button>`).join('')}</div>`);
-  }
+  const parts = {};
+  parts.subject = `<button type="button" class="si subject" id="s-subject" aria-label="${esc(S.title)}">${ic(S.kind)}</button>`;
+  parts.layouts = LAYOUTS[subject].map(l =>
+    `<button type="button" class="si${l.id===L.id?' cur':''}" data-layout="${l.id}" title="Layout: ${esc(l.name)}" aria-pressed="${l.id===L.id}">${thumb(l.tree)}</button>`).join('');
   // Views stay in the strip once open; open ones are toggled on.
   const views = [
     ...S.slots().filter(s => !W[subject].closed.has(s.key) && unplaced(s)).map(s => { const on = visible.has(s.key);
@@ -342,12 +347,19 @@ function renderStrip(){
     ...S.add.map(a => { const s = addedSlot(a.key), on = !!s && visible.has(s.key);
       return `<button type="button" class="si${on?' on':''}" draggable="true" data-add="${a.key}" aria-pressed="${on}" title="${esc(a.title)}${a.note?' ('+esc(a.note)+')':''}: ${on?'open. Click to show it.':'Click to place, or drag to a panel.'}${a.multi?' Double-click or drag for another one.':''}">${ic(a.icon||a.kind)}</button>`; })
   ];
-  if(views.length) parts.push(`<div class="sec" role="group" aria-label="Views">${views.join('')}</div>`);
-  parts.push(`<div class="sec" role="group" aria-label="Related workspaces">${S.related.map(r => { const i = relatedInfo(r);
-    return `<button type="button" class="si" data-related="${i.key}" aria-label="${esc(i.title)}">${ic(i.icon)}${i.icon==='vessel'?`<span class="dot ${i.state}"></span>`:''}${i.isNew?'<span class="new"></span>':''}</button>`; }).join('')}</div>`);
-  parts.push(`<div class="sec" role="group" aria-label="Linked items">${S.linked.map(l =>
-    `<button type="button" class="si" data-linked="${l.key}" aria-label="${esc(l.title)}">${ic(l.icon)}</button>`).join('')}</div>`);
-  document.getElementById('strip').innerHTML = parts.join('<i class="divider" aria-hidden="true"></i>');
+  parts.views = views.join('');
+  parts.related = S.related.map(r => { const i = relatedInfo(r);
+    return `<button type="button" class="si" data-related="${i.key}" aria-label="${esc(i.title)}">${ic(i.icon)}${i.icon==='vessel'?`<span class="dot ${i.state}"></span>`:''}${i.isNew?'<span class="new"></span>':''}</button>`; }).join('');
+  parts.linked = S.linked.map(l =>
+    `<button type="button" class="si" data-linked="${l.key}" aria-label="${esc(l.title)}">${ic(l.icon)}</button>`).join('');
+  const vertical = ['left','right'].includes(document.getElementById('app').dataset.edge);
+  document.getElementById('strip').innerHTML = SECTIONS.map((sec, i) => {
+    const size = sec.rest ? 'flex:1 1 0' : `flex:0 0 ${(sec.fixed || AREA[sec.name]) * ITEM}px`;
+    const divider = i === 0 ? '' : SECTIONS[i-1].fixed
+      ? '<i class="divider fixed" aria-hidden="true"></i>'
+      : `<i class="divider" data-resize="${SECTIONS[i-1].name}" role="separator" tabindex="0" aria-orientation="${vertical?'horizontal':'vertical'}" aria-label="Resize ${SECTIONS[i-1].label}" aria-valuenow="${AREA[SECTIONS[i-1].name]}"></i>`;
+    return `${divider}<div class="sec" data-sec="${sec.name}" role="group" aria-label="${sec.label}" style="${size}">${parts[sec.name]}</div>`;
+  }).join('');
 }
 
 // ---- workspace -------------------------------------------------------------
@@ -566,6 +578,31 @@ strip.addEventListener('dblclick', e => {
   const spec = SUBJECTS[subject].add.find(a => a.key === b.dataset.add);
   if(spec.multi){ clearTimeout(clickTimer); addSlot(spec); }
 });
+// Dragging a divider resizes the area before it, in whole items.
+let resizing = null;
+strip.addEventListener('pointerdown', e => {
+  const d = e.target.closest('[data-resize]'); if(!d) return;
+  e.preventDefault(); d.setPointerCapture(e.pointerId); d.classList.add('dragging'); pop.hidden = true;
+  const vertical = ['left','right'].includes(document.getElementById('app').dataset.edge);
+  resizing = {d, name:d.dataset.resize, vertical, start:vertical ? e.clientY : e.clientX, size:AREA[d.dataset.resize]};
+});
+strip.addEventListener('pointermove', e => {
+  if(!resizing) return;
+  const delta = (resizing.vertical ? e.clientY : e.clientX) - resizing.start;
+  setArea(resizing.name, resizing.size + Math.round(delta / ITEM));
+});
+strip.addEventListener('pointerup', () => { if(resizing){ resizing.d.classList.remove('dragging'); resizing = null; } });
+strip.addEventListener('keydown', e => {
+  const d = e.target.closest('[data-resize]'); if(!d) return;
+  const step = {ArrowDown:1, ArrowRight:1, ArrowUp:-1, ArrowLeft:-1}[e.key]; if(!step) return;
+  e.preventDefault(); setArea(d.dataset.resize, AREA[d.dataset.resize] + step);
+});
+function setArea(name, n){
+  n = Math.max(1, Math.min(8, n)); if(n === AREA[name]) return;
+  AREA[name] = n;
+  strip.querySelector(`[data-sec="${name}"]`).style.flex = `0 0 ${n * ITEM}px`;
+  const d = strip.querySelector(`[data-resize="${name}"]`); if(d) d.setAttribute('aria-valuenow', n);
+}
 strip.addEventListener('dragstart', e => {
   const b = e.target.closest('[data-add],[data-view]'); if(!b) return;
   const spec = b.dataset.add && SUBJECTS[subject].add.find(a => a.key === b.dataset.add);
