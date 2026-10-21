@@ -4478,9 +4478,12 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           F32 name_widths[3];
           for(U64 c = 0; chip_count && c < 3; c++)
           { name_widths[c] = fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, names[c]).x+em; }
-          // Every kind steps in a level, to three: an expanded convoy shows its
-          // vessels as rows under it.
-          F32 indent = 0.3f+Min(depth[i], 3)*0.4f;
+          // A group's own rows line up with its title. Each level below steps
+          // in an icon's width, to three, so a child's icon sits under its
+          // parent's label: an expanded convoy shows its vessels as rows under it.
+          B32 grouped = owner != ANDAMENTO_NONE && owner != i;
+          U64 level = Min(depth[i]-(grouped && depth[i] > 0), 3);
+          F32 indent = (grouped ? 0.3f+0.4f : 0.3f)+level*1.2f;
           // A group's rows sit half an icon in from its title.
           if(owner != ANDAMENTO_NONE && owner != i) { indent += uishell_sidebar_group_row_inset; }
           F32 status_width = em*(str8_match(kind, str8_lit("change_request"), 0) ? 10.f : 1.2f);
