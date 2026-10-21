@@ -12289,19 +12289,18 @@ rd_frame(void)
     // build that is never presented still advances caches as if it had drawn.
     for(B32 pumped = 0;; pumped = 1)
     {
-      B32 any_window = 0, any_ready = 0, any_pending = 0;
+      B32 any_ready = 0, any_pending = 0;
       for(RD_WindowState *w = rd_state->first_window_state; w != &rd_nil_window_state; w = w->order_next)
       {
         B32 requested = rd_state->num_frames_requested != 0 || DEV_always_refresh || w->render_pending || events.count != 0;
         r_window_request_frame(w->os, w->r, requested);
         if(!pumped) { frame_was_idle &= !requested; }
-        any_window = 1;
         any_ready |= requested && r_window_frame_ready(w->os, w->r);
         any_pending |= r_window_frame_pending(w->os, w->r);
       }
       if(pumped && (any_ready || !any_pending)) { break; }
       // Presentation callbacks wake the same pump as input.
-      B32 wait = pumped || (rd_state->num_frames_requested == 0 && !DEV_always_refresh) || (any_window && !any_ready);
+      B32 wait = pumped || (rd_state->num_frames_requested == 0 && !DEV_always_refresh) || (any_pending && !any_ready);
       WM_EventList batch = wm_get_events(scratch.arena, wait);
       events.frame_ready |= batch.frame_ready;
       wm_event_list_concat_in_place(&events, &batch);
