@@ -78,7 +78,7 @@ Slots. A subject can have several, and the tool strip switches between them.
   layouts moves the existing Views, so live terminals, scroll positions and
   Cleat attachments carry over.
 - A layout may leave some Slots out. They aren't destroyed: they wait in the
-  tool strip's views-to-add section and reappear when a layout includes them.
+  tool strip's views section and reappear when a layout includes them.
 - The Workspace Overlay keeps Slot edits once and arrangement edits per layout:
   rearranging one layout leaves the others alone.
 - Which layout a workspace starts with is picked by simple rules for now:
@@ -146,22 +146,45 @@ Workspace Region. From the start, sections are separated by clear dividers:
 1. **Subject**: its icon and status. Hovering shows its hover card; its own
    commands are in its palette (below).
 2. **Layouts**: the layouts for this subject, the current one marked.
-3. **Views to add**: the subject's view-opening controls and the Slots the
-   current layout leaves out. A click places one in its default position; a
-   drag places it where it is dropped.
+3. **Views**: the subject's view-opening controls, and the Slots the current
+   layout doesn't place by itself. They stay in the strip once open, drawn
+   as toggled on (the look needs refining). A click on a closed view places it
+   in its default position; a drag places it where it is dropped. A click on
+   an open view makes it visible, for example by selecting its tab; later it
+   can also highlight it. Some views can be open more than once, such as a
+   terminal: for those, a drag or a double-click always opens another one.
 4. **Related workspaces**: parent and children (project, convoys, vessels,
-   the governor), each with its status. A click opens or switches to it.
+   the governor), each with its status. Hovering shows the workspace's hover
+   card; a click opens or switches to it.
 5. **Linked items**: the PR, issues, artifacts and, later, promises. A click
    runs the item's default action, such as opening the PR in a Luchs Slot.
    Hovering or right-clicking opens a small palette of its other actions.
 
-The first cut has the subject, related workspaces, views to add and linked
-items. Layouts appear once a subject has more than one.
+The first cut has the subject, related workspaces, views and linked items. Layouts appear once a subject has more than one.
 
 The strip is designed to be orientation independent, so it can later go on any
 edge of its section of the Controlled Split. Once it works well, the tab strip's
 `+` retires; the tab strip itself is due some work anyway (easy to hide,
 especially with one View).
+
+## Switching workspaces
+
+Switching straight from one workspace to another is disorienting, so a switch
+gets a short transition, built on the overview's existing workspace zoom:
+
+- **To a child** (project to convoy, convoy to vessel): zoom into where the
+  child sits, with the current workspace fading underneath.
+- **To a parent**: zoom out, the reverse.
+- **To a sibling or anything further away**: a quick zoom out of the current
+  workspace, then into the new one.
+
+Transitions are optional, and off under reduced motion.
+
+This ties into the overview (#190). Today it lays workspaces out in creation
+order. By default it should follow the same hierarchy as the sidebar, with
+each workspace showing a sensible amount of information about its subject:
+the card profiles in #270. Once the overview has that layout, the zoom out
+and in can pass through each workspace's real position in it.
 
 ## Developing against the dummy fleet
 

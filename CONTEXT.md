@@ -324,7 +324,7 @@ A named, task-focused arrangement of a **Workspace**'s **Slots**, defined as a t
 _Avoid_: Suggested Layout (the provider's baseline), arrangement, preset
 
 **Tool Strip**:
-The thin strip at an edge of the **Workspace Region** that shows a **Workspace Subject**, its **Workspace Layouts**, views to add, related workspaces and linked items.
+The thin strip at an edge of the **Workspace Region** that shows a **Workspace Subject**, its **Workspace Layouts**, its views, related workspaces and linked items.
 _Avoid_: Toolbar, workspace controls, tab strip
 
 **Detached Slot**:

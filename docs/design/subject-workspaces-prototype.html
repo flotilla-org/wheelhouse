@@ -6,7 +6,7 @@
   docs/design/subject-workspaces.md read well (sections, dividers, any edge),
   does switching task-focused layouts over one set of Slots feel right, and
   what do the Slot Host's placeholders look like (unavailable, unverified,
-  gone)? Subjects, agents and convoys are made up. The light bar at the top is
+  gone), and do workspace switches read better with a zoom transition? Subjects, agents and convoys are made up. The light bar at the top is
   prototype chrome, deliberately not Wheelhouse-styled.
   Run: open docs/design/subject-workspaces-prototype.html
 -->
@@ -75,6 +75,8 @@ svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .si.cur{border-color:var(--accent);background:#e0b34a1a}
 .si.subject{color:var(--accent)}
 .si.left-out{color:var(--dim)}
+.si.on{background:#ffffff14}
+.si.on::after{content:"";position:absolute;left:9px;right:9px;bottom:2px;height:2px;border-radius:1px;background:var(--text)}
 .si .dot{position:absolute;right:3px;bottom:3px}
 .si .new{position:absolute;right:2px;top:2px;width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--side)}
 .si svg.thumb{width:20px;height:20px}
@@ -169,6 +171,7 @@ table.ov td .dot{display:inline-block;margin-right:6px;vertical-align:0}
     </div>
     <div class="grp"><label for="p-edge" class="lbl">Strip edge</label>
       <select id="p-edge"><option value="left">left</option><option value="top">top</option><option value="right">right</option><option value="bottom">bottom</option></select>
+      <label for="p-anim"><input type="checkbox" id="p-anim" checked> transitions</label>
     </div>
     <div class="grp"><span class="lbl">Scenario</span>
       <label for="p-flap"><input type="checkbox" id="p-flap"> builder's attach check flaps</label>
@@ -234,7 +237,7 @@ const agentSlot = id => ({key:'agent-'+id, kind:'agent', agent:id, title:F.agent
 const SUBJECTS = {
   project:{kind:'project', title:'flotilla/wheelhouse', sub:'Project. 1 convoy running, 1 standing.',
     slots:() => [agentSlot('governor'), {key:'tui', kind:'tui', title:'Flotilla'}, {key:'files', kind:'files', title:'Files'}, {key:'term', kind:'terminal', title:'Terminal'}],
-    add:[{key:'dag', kind:'page', icon:'dag', title:'Mission DAG', note:'codebase-insights, through Luchs'},{key:'queue', kind:'page', icon:'queue', title:'Dispatch queue', note:'codebase-insights, through Luchs'},{key:'term2', kind:'terminal', title:'Terminal in checkout'}],
+    add:[{key:'dag', kind:'page', icon:'dag', title:'Mission DAG', note:'codebase-insights, through Luchs'},{key:'queue', kind:'page', icon:'queue', title:'Dispatch queue', note:'codebase-insights, through Luchs'},{key:'term2', kind:'terminal', title:'Terminal in checkout', multi:true}],
     related:['convoy'],
     linked:[{key:'issues', icon:'issue', title:'Open issues (41)', url:'github.com/flotilla-org/wheelhouse/issues'},{key:'prs', icon:'pr', title:'Open PRs (3)', url:'github.com/flotilla-org/wheelhouse/pulls'}],
     facts:[['repo','flotilla-org/wheelhouse'],['checkout','~/dev/wheelhouse'],['convoys','1 running, 1 standing']]},
@@ -246,7 +249,7 @@ const SUBJECTS = {
     facts:[['workflow','coder, reviewer, builder'],['vessels',()=>Object.keys(F.vessels).length],['plan','2 of 4 promises kept']]},
   vessel:{kind:'vessel', title:'drydock-vessel-agent-51', sub:'Vessel on feta, in Ship sidebar subjects.',
     slots:() => [...F.vessels.v51.agents.map(agentSlot), {key:'files', kind:'files', title:'Files'}],
-    add:[{key:'shell', kind:'terminal', title:'Terminal in vessel'},{key:'diff', kind:'diff', title:'Changes'}],
+    add:[{key:'shell', kind:'terminal', title:'Terminal in vessel', multi:true},{key:'diff', kind:'diff', title:'Changes'}],
     related:['convoy','project'],
     linked:[{key:'pr411', icon:'pr', title:'PR #411 Step sidebar levels in', url:'github.com/flotilla-org/wheelhouse/pull/411'}],
     facts:[['host','feta'],['provider','drydock'],['size','8 vCPU, 16 GB'],['load','23%']]}
@@ -322,21 +325,26 @@ function relatedInfo(r){
   return {key:r, title:v.name+' on '+v.host, icon:'vessel', subject:r === 'v51' ? 'vessel' : null, state, isNew:v.isNew};
 }
 function renderStrip(){
-  const S = SUBJECTS[subject], L = layoutOf(subject), {left} = arrange(subject, L);
-  const added = new Set(W[subject].added.map(s => s.addKey));
+  const S = SUBJECTS[subject], L = layoutOf(subject), A = arrange(subject, L);
+  const visible = new Set(Object.values(A.map).flat().map(s => s.key));
+  const unplaced = s => (L.liveOnly && slotState(s) === 'gone') || !A.panels.some(p => p.kinds.includes(s.kind));
+  const why = s => L.liveOnly && slotState(s) === 'gone' ? 'Ended. This layout shows live agents only.' : 'Not placed by this layout.';
   const parts = [];
   parts.push(`<div class="sec"><button type="button" class="si subject" id="s-subject" aria-label="${esc(S.title)}">${ic(S.kind)}</button></div>`);
   if(LAYOUTS[subject].length > 1){
     parts.push(`<div class="sec" role="group" aria-label="Layouts">${LAYOUTS[subject].map(l =>
       `<button type="button" class="si${l.id===L.id?' cur':''}" data-layout="${l.id}" title="Layout: ${esc(l.name)}" aria-pressed="${l.id===L.id}">${thumb(l.tree)}</button>`).join('')}</div>`);
   }
-  const adds = [
-    ...left.map(({s, why}) => `<button type="button" class="si left-out" draggable="true" data-place="${s.key}" title="${esc(s.title)}: ${esc(why)} Click to place, or drag to a panel.">${ic(s.icon||s.kind)}${s.kind==='agent'?`<span class="dot ${slotState(s)}"></span>`:''}</button>`),
-    ...S.add.filter(a => !added.has(a.key)).map(a => `<button type="button" class="si" draggable="true" data-add="${a.key}" title="Add ${esc(a.title)}${a.note?' ('+esc(a.note)+')':''}. Click to place, or drag to a panel.">${ic(a.icon||a.kind)}</button>`)
+  // Views stay in the strip once open; open ones are toggled on.
+  const views = [
+    ...S.slots().filter(s => !W[subject].closed.has(s.key) && unplaced(s)).map(s => { const on = visible.has(s.key);
+      return `<button type="button" class="si${on?' on':' left-out'}" draggable="true" data-view="${s.key}" aria-pressed="${on}" title="${esc(s.title)}: ${on?'open. Click to show it.':esc(why(s))+' Click to place, or drag to a panel.'}">${ic(s.icon||s.kind)}${s.kind==='agent'?`<span class="dot ${slotState(s)}"></span>`:''}</button>`; }),
+    ...S.add.map(a => { const s = addedSlot(a.key), on = !!s && visible.has(s.key);
+      return `<button type="button" class="si${on?' on':''}" draggable="true" data-add="${a.key}" aria-pressed="${on}" title="${esc(a.title)}${a.note?' ('+esc(a.note)+')':''}: ${on?'open. Click to show it.':'Click to place, or drag to a panel.'}${a.multi?' Double-click or drag for another one.':''}">${ic(a.icon||a.kind)}</button>`; })
   ];
-  if(adds.length) parts.push(`<div class="sec" role="group" aria-label="Views to add">${adds.join('')}</div>`);
+  if(views.length) parts.push(`<div class="sec" role="group" aria-label="Views">${views.join('')}</div>`);
   parts.push(`<div class="sec" role="group" aria-label="Related workspaces">${S.related.map(r => { const i = relatedInfo(r);
-    return `<button type="button" class="si" data-related="${i.key}" title="${esc(i.title)}${i.subject?'':' (not in this mockup)'}">${ic(i.icon)}${i.icon==='vessel'?`<span class="dot ${i.state}"></span>`:''}${i.isNew?'<span class="new"></span>':''}</button>`; }).join('')}</div>`);
+    return `<button type="button" class="si" data-related="${i.key}" aria-label="${esc(i.title)}">${ic(i.icon)}${i.icon==='vessel'?`<span class="dot ${i.state}"></span>`:''}${i.isNew?'<span class="new"></span>':''}</button>`; }).join('')}</div>`);
   parts.push(`<div class="sec" role="group" aria-label="Linked items">${S.linked.map(l =>
     `<button type="button" class="si" data-linked="${l.key}" aria-label="${esc(l.title)}">${ic(l.icon)}</button>`).join('')}</div>`);
   document.getElementById('strip').innerHTML = parts.join('<i class="divider" aria-hidden="true"></i>');
@@ -431,7 +439,8 @@ function pin(key, panel){ const L = layoutOf(subject); (W[subject].place[L.id] |
 function select(key, panel){ const L = layoutOf(subject); (W[subject].sel[L.id] ||= {})[panel] = key; }
 function defaultPanel(s){ const P = panelsOf(layoutOf(subject).tree); return (P.find(p => p.kinds.includes(s.kind)) || P[0]).id; }
 function addSlot(spec, panel){
-  const s = {...spec, addKey:spec.key, key:'u-'+spec.key};
+  const n = W[subject].added.filter(x => x.addKey === spec.key).length + 1;
+  const s = {...spec, addKey:spec.key, key:'u-'+spec.key+'-'+n, title:n > 1 ? spec.title+' '+n : spec.title};
   if(s.kind === 'page'){ s.loading = true; setTimeout(() => { s.loading = false; renderWs(); }, 1300); }
   W[subject].added.push(s);
   pin(s.key, panel || defaultPanel(s));
@@ -442,6 +451,47 @@ function placeLeftOut(key, panel){
   if(!s) return;
   pin(key, panel || panelsOf(layoutOf(subject).tree)[0].id);
   render();
+}
+const addedSlot = key => W[subject].added.filter(s => s.addKey === key && !W[subject].closed.has(s.key)).pop();
+function panelHolding(key){ const A = arrange(subject, layoutOf(subject)); return Object.keys(A.map).find(p => A.map[p].some(s => s.key === key)); }
+// A click on a view: show it if it's open, otherwise place it.
+function showOrPlace(key, spec){
+  if(!key){ addSlot(spec); return; }
+  const pid = panelHolding(key);
+  if(pid){ select(key, pid); renderWs(); } else placeLeftOut(key);
+}
+
+// Switching workspaces: zoom in to a child, out to a parent, out-then-in across.
+const DEPTH = {project:0, convoy:1, vessel:2};
+function go(k, origin){
+  if(k === subject){ pop.hidden = true; return; }
+  pop.hidden = true;
+  const wsEl = document.getElementById('ws');
+  const motion = document.getElementById('p-anim').checked && !matchMedia('(prefers-reduced-motion: reduce)').matches && wsEl.animate;
+  const kind = DEPTH[k] > DEPTH[subject] ? 'in' : DEPTH[k] < DEPTH[subject] ? 'out' : 'across';
+  if(!motion){ subject = k; render(); return; }
+  const r = wsEl.getBoundingClientRect();
+  let ox = 50, oy = 50;
+  if(origin && kind === 'in'){ const o = origin.getBoundingClientRect();
+    ox = Math.max(0, Math.min(100, (o.left + o.width/2 - r.left) / r.width * 100));
+    oy = Math.max(0, Math.min(100, (o.top + o.height/2 - r.top) / r.height * 100)); }
+  const ghost = wsEl.cloneNode(true);
+  ghost.removeAttribute('id'); ghost.setAttribute('aria-hidden', 'true');
+  ghost.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;pointer-events:none;z-index:5;transform-origin:${ox}% ${oy}%`;
+  document.body.appendChild(ghost);
+  subject = k; render();
+  wsEl.style.position = 'relative'; wsEl.style.zIndex = kind === 'in' ? 6 : 1; wsEl.style.transformOrigin = `${ox}% ${oy}%`;
+  const done = () => { ghost.remove(); wsEl.style.position = wsEl.style.zIndex = wsEl.style.transformOrigin = ''; };
+  if(kind === 'in'){
+    ghost.animate([{opacity:1},{opacity:0}], {duration:320, easing:'ease-out', fill:'forwards'});
+    wsEl.animate([{transform:'scale(.15)', opacity:0},{transform:'scale(1)', opacity:1}], {duration:300, easing:'cubic-bezier(.2,.7,.3,1)'}).onfinish = done;
+  } else if(kind === 'out'){
+    wsEl.animate([{opacity:0},{opacity:1}], {duration:300, easing:'ease-out'});
+    ghost.animate([{transform:'scale(1)', opacity:1},{transform:'scale(.15)', opacity:0}], {duration:300, easing:'cubic-bezier(.5,0,.8,.5)', fill:'forwards'}).onfinish = done;
+  } else {
+    ghost.animate([{transform:'scale(1)', opacity:1},{transform:'scale(.8)', opacity:0}], {duration:170, easing:'ease-in', fill:'forwards'});
+    wsEl.animate([{transform:'scale(.8)', opacity:0},{transform:'scale(1)', opacity:1}], {duration:220, delay:130, easing:'ease-out', fill:'backwards'}).onfinish = done;
+  }
 }
 function openLinked(l){
   const existing = W[subject].added.find(s => s.addKey === l.key);
@@ -462,11 +512,17 @@ function showPop(anchor, html){
   pop.style.left = x+'px'; pop.style.top = y+'px';
 }
 function hidePopSoon(){ clearTimeout(popTimer); popTimer = setTimeout(() => { pop.hidden = true; popFor = null; }, 250); }
+const factsHtml = facts => `<div class="facts">${facts.map(([k,v]) => `<span class="k">${esc(k)}</span><span>${esc(typeof v === 'function' ? v() : v)}</span>`).join('')}</div>`;
 function subjectCard(){
   const S = SUBJECTS[subject];
-  return `<div class="ch">${esc(S.title)}</div><div class="cs">${esc(S.sub)}</div>
-    <div class="facts">${S.facts.map(([k,v]) => `<span class="k">${esc(k)}</span><span>${esc(typeof v === 'function' ? v() : v)}</span>`).join('')}</div>
+  return `<div class="ch">${esc(S.title)}</div><div class="cs">${esc(S.sub)}</div>${factsHtml(S.facts)}
     <div class="menu"><div class="hd">Actions</div><button type="button" data-toast="Would open the subject's commands.">Commands for this ${S.kind}</button></div>`;
+}
+function relatedCard(key){
+  if(SUBJECTS[key]){ const S = SUBJECTS[key]; return `<div class="ch">${esc(S.title)}</div><div class="cs">${esc(S.sub)} Click to switch to it.</div>${factsHtml(S.facts)}`; }
+  const v = F.vessels[key];
+  return `<div class="ch">${esc(v.name)}</div><div class="cs">Vessel on ${esc(v.host)}.${key === 'v51' ? ' Click to switch to it.' : ' Its workspace isn’t in this mockup.'}</div>
+    ${factsHtml(v.agents.map(a => [F.agents[a].seat, {current:'attached', unavailable:'waiting', gone:'ended'}[F.agents[a].state]]))}`;
 }
 function linkedPalette(l){
   return `<div class="ch">${esc(l.title)}</div><div class="menu">
@@ -476,12 +532,13 @@ function linkedPalette(l){
 }
 const strip = document.getElementById('strip');
 strip.addEventListener('mouseover', e => {
-  const b = e.target.closest('#s-subject,[data-linked]'); if(!b || b === popFor) { clearTimeout(popTimer); return; }
+  const b = e.target.closest('#s-subject,[data-linked],[data-related]'); if(!b || b === popFor) { clearTimeout(popTimer); return; }
   clearTimeout(popTimer);
   popTimer = setTimeout(() => {
     if(b.id === 's-subject') showPop(b, subjectCard());
+    else if(b.dataset.related) showPop(b, relatedCard(b.dataset.related));
     else showPop(b, linkedPalette(SUBJECTS[subject].linked.find(l => l.key === b.dataset.linked)));
-  }, b.id === 's-subject' ? 200 : 450);
+  }, b.dataset.linked ? 450 : 200);
 });
 strip.addEventListener('mouseout', e => { if(!pop.contains(e.relatedTarget)) hidePopSoon(); });
 pop.addEventListener('mouseover', () => clearTimeout(popTimer));
@@ -494,14 +551,26 @@ strip.addEventListener('click', e => {
   const b = e.target.closest('button'); if(!b) return;
   if(b.id === 's-subject'){ showPop(b, subjectCard()); return; }
   if(b.dataset.layout){ W[subject].layout = b.dataset.layout; pop.hidden = true; render(); return; }
-  if(b.dataset.add){ addSlot(SUBJECTS[subject].add.find(a => a.key === b.dataset.add)); return; }
-  if(b.dataset.place){ placeLeftOut(b.dataset.place); return; }
-  if(b.dataset.related){ const i = relatedInfo(b.dataset.related); if(i.subject){ subject = i.subject; pop.hidden = true; render(); } else toast(i.title+' has its own workspace; this mockup only has drydock-vessel-agent-51.'); return; }
+  if(b.dataset.add){
+    const spec = SUBJECTS[subject].add.find(a => a.key === b.dataset.add);
+    const act = () => { const s = addedSlot(spec.key); showOrPlace(s && s.key, spec); };
+    if(spec.multi){ if(e.detail > 1) return; clearTimeout(clickTimer); clickTimer = setTimeout(act, 260); } else act();
+    return; }
+  if(b.dataset.view){ showOrPlace(b.dataset.view); return; }
+  if(b.dataset.related){ const i = relatedInfo(b.dataset.related); if(i.subject) go(i.subject, b); else toast(i.title+' has its own workspace; this mockup only has drydock-vessel-agent-51.'); return; }
   if(b.dataset.linked){ pop.hidden = true; openLinked(SUBJECTS[subject].linked.find(l => l.key === b.dataset.linked)); }
 });
+let clickTimer;
+strip.addEventListener('dblclick', e => {
+  const b = e.target.closest('[data-add]'); if(!b) return;
+  const spec = SUBJECTS[subject].add.find(a => a.key === b.dataset.add);
+  if(spec.multi){ clearTimeout(clickTimer); addSlot(spec); }
+});
 strip.addEventListener('dragstart', e => {
-  const b = e.target.closest('[data-add],[data-place]'); if(!b) return;
-  e.dataTransfer.setData('text/plain', b.dataset.add ? 'add:'+b.dataset.add : 'place:'+b.dataset.place);
+  const b = e.target.closest('[data-add],[data-view]'); if(!b) return;
+  const spec = b.dataset.add && SUBJECTS[subject].add.find(a => a.key === b.dataset.add);
+  const s = spec && !spec.multi && addedSlot(spec.key);
+  e.dataTransfer.setData('text/plain', b.dataset.view ? 'place:'+b.dataset.view : s ? 'place:'+s.key : 'add:'+b.dataset.add);
   e.dataTransfer.effectAllowed = 'copy'; pop.hidden = true;
 });
 const wsEl = document.getElementById('ws');
@@ -519,11 +588,11 @@ document.addEventListener('click', e => {
   if(t.dataset.tab){ select(t.dataset.tab, t.dataset.in); renderWs(); }
   else if(t.dataset.close){ W[subject].closed.add(t.dataset.close); render(); }
   else if(t.dataset.openLinked){ pop.hidden = true; openLinked(SUBJECTS[subject].linked.find(l => l.key === t.dataset.openLinked)); }
-  else if(t.dataset.go){ subject = t.dataset.go; pop.hidden = true; render(); }
+  else if(t.dataset.go){ go(t.dataset.go, t); }
   else if(t.dataset.toast){ toast(t.dataset.toast); }
 });
-document.getElementById('tree').addEventListener('keydown', e => { const r = e.target.closest('[data-go]'); if(r && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); subject = r.dataset.go; render(); } });
-for(const b of document.querySelectorAll('#proto [data-subject]')) b.addEventListener('click', () => { subject = b.dataset.subject; pop.hidden = true; render(); });
+document.getElementById('tree').addEventListener('keydown', e => { const r = e.target.closest('[data-go]'); if(r && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); go(r.dataset.go, r); } });
+for(const b of document.querySelectorAll('#proto [data-subject]')) b.addEventListener('click', () => go(b.dataset.subject));
 document.getElementById('p-edge').addEventListener('change', () => { pop.hidden = true; render(); });
 
 // ---- scenario --------------------------------------------------------------
