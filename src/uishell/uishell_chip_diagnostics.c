@@ -135,8 +135,10 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
       fprintf(stderr, "FAIL convoy expansion: phase %u vessel row=%u chip=%u\n", phase, row_seen, chip_seen);
       ok = 0;
     }
-    // A vessel's row sits under its convoy's, indented one level further.
-    if(row_seen && !(convoy_x > 0 && vessel_x > convoy_x+1.f))
+    // A vessel's row sits under its convoy's, a visible level further in: an
+    // icon's width (1.2 em, over 10 px at any sidebar font size), not a few
+    // pixels that a narrow icon glyph hides.
+    if(row_seen && !(convoy_x > 0 && vessel_x >= convoy_x+10.f))
     {
       fprintf(stderr, "FAIL convoy expansion: phase %u vessel label x=%g not indented past convoy x=%g\n", phase, vessel_x, convoy_x);
       ok = 0;
