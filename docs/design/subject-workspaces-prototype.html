@@ -1,0 +1,553 @@
+<title>Subject Workspaces Mockup</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta charset="utf-8">
+<!--
+  PROTOTYPE - throwaway. Answers: does the tool strip in
+  docs/design/subject-workspaces.md read well (sections, dividers, any edge),
+  does switching task-focused layouts over one set of Slots feel right, and
+  what do the Slot Host's placeholders look like (unavailable, unverified,
+  gone)? Subjects, agents and convoys are made up. The light bar at the top is
+  prototype chrome, deliberately not Wheelhouse-styled.
+  Run: open docs/design/subject-workspaces-prototype.html
+-->
+<style>
+/* One app window under a prototype bar: control stub | tool strip | workspace. */
+:root{
+  color-scheme:dark;
+  --bg:#1e1e1e; --side:#232323; --panel:#262626; --line:#3a3a3a; --text:#d8d8d8; --dim:#8c8c8c; --faint:#5f5f5f;
+  --accent:#e0b34a; --sel:#3b4048; --good:#8fdc9f; --bad:#f28b82; --warn:#e6c07b; --issue:#9ab8e8;
+  --card:#2b2b2b; --card-line:#4a4a4a;
+  --proto-bg:#f4f1e8; --proto-fg:#222; --proto-dim:#555; --proto-line:#d6d0c2;
+  --ui:"Segoe UI",system-ui,-apple-system,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:13px var(--ui)}
+#frame{height:100%;display:flex;flex-direction:column;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:10px;gap:10px}
+svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+
+/* prototype chrome */
+#proto{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;background:var(--proto-bg);color:var(--proto-fg);border-radius:8px;padding:7px 10px;font:12px system-ui,sans-serif}
+#proto b{font-size:12.5px}
+#proto .grp{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+#proto .lbl{color:var(--proto-dim)}
+#proto button,#proto select{font:12px system-ui,sans-serif;border:1px solid var(--proto-line);background:#fff;color:var(--proto-fg);border-radius:5px;padding:2px 8px;cursor:pointer}
+#proto button[aria-pressed="true"]{background:var(--proto-fg);color:var(--proto-bg);border-color:var(--proto-fg)}
+#proto button:focus-visible,#proto select:focus-visible,#proto input:focus-visible{outline:2px solid #2a6df4;outline-offset:1px}
+#proto label{display:flex;align-items:center;gap:4px;cursor:pointer}
+
+/* app window */
+#app{flex:1;min-height:0;display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+#control{flex:none;width:210px;background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+#control .h{height:26px;display:flex;align-items:center;padding:0 10px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);flex:none}
+#control .rows{overflow:auto;padding:0 4px 6px}
+.srow{display:flex;align-items:center;gap:6px;height:24px;padding:0 6px;border-radius:3px;cursor:pointer;white-space:nowrap;color:var(--text)}
+.srow:hover{background:#ffffff0c}
+.srow.sel{background:var(--sel)}
+.srow .nm{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.srow .ic{color:var(--dim);display:flex}
+.srow .st{margin-left:auto;display:flex}
+.srow.static{cursor:default;color:var(--dim)}
+.srow.static:hover{background:none}
+
+#wsregion{flex:1;min-width:0;min-height:0;display:flex}
+#app[data-edge="left"] #wsregion{flex-direction:row}
+#app[data-edge="right"] #wsregion{flex-direction:row-reverse}
+#app[data-edge="top"] #wsregion{flex-direction:column}
+#app[data-edge="bottom"] #wsregion{flex-direction:column-reverse}
+
+/* tool strip */
+#strip{flex:none;display:flex;background:var(--side);gap:2px;padding:4px;overflow:auto}
+#app[data-edge="left"] #strip,#app[data-edge="right"] #strip{flex-direction:column;width:42px}
+#app[data-edge="left"] #strip{border-right:1px solid var(--line)}
+#app[data-edge="right"] #strip{border-left:1px solid var(--line)}
+#app[data-edge="top"] #strip,#app[data-edge="bottom"] #strip{flex-direction:row;height:42px}
+#app[data-edge="top"] #strip{border-bottom:1px solid var(--line)}
+#app[data-edge="bottom"] #strip{border-top:1px solid var(--line)}
+.sec{display:flex;gap:2px;align-items:center}
+#app[data-edge="left"] .sec,#app[data-edge="right"] .sec{flex-direction:column}
+.divider{flex:none;background:var(--line)}
+#app[data-edge="left"] .divider,#app[data-edge="right"] .divider{height:1px;width:24px;margin:5px auto}
+#app[data-edge="top"] .divider,#app[data-edge="bottom"] .divider{width:1px;height:24px;margin:auto 5px}
+.si{position:relative;width:32px;height:32px;flex:none;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:5px;background:none;color:var(--text);cursor:pointer;padding:0}
+.si:hover{background:#ffffff12}
+.si:focus-visible{outline:1px solid var(--accent);outline-offset:-1px}
+.si.cur{border-color:var(--accent);background:#e0b34a1a}
+.si.subject{color:var(--accent)}
+.si.left-out{color:var(--dim)}
+.si .dot{position:absolute;right:3px;bottom:3px}
+.si .new{position:absolute;right:2px;top:2px;width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--side)}
+.si svg.thumb{width:20px;height:20px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:none}
+.dot.current{background:var(--good)} .dot.unavailable{background:var(--warn)} .dot.gone{background:none;box-shadow:inset 0 0 0 1.5px var(--faint)}
+.sp{flex:1}
+
+/* workspace */
+#ws{flex:1;min-width:0;min-height:0;display:flex;padding:3px;gap:3px;background:#171717}
+.split{flex:1;min-width:0;min-height:0;display:flex;gap:3px}
+.split.row{flex-direction:row} .split.col{flex-direction:column}
+.panel{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.panel.drop{outline:1px dashed var(--accent);outline-offset:-2px}
+.tabs{display:flex;flex:none;height:28px;background:var(--side);border-bottom:1px solid var(--line);overflow-x:auto;overflow-y:hidden}
+.tab{display:flex;align-items:center;gap:6px;padding:0 10px;border:none;border-right:1px solid var(--line);background:none;color:var(--dim);font:12.5px var(--ui);cursor:pointer;white-space:nowrap}
+.tab.on{background:var(--bg);color:var(--text)}
+.tab:focus-visible{outline:1px solid var(--accent);outline-offset:-2px}
+.tab .new{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.body{flex:1;min-height:0;overflow:auto;position:relative}
+.empty{padding:16px;color:var(--faint);font-size:12px}
+.grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));grid-auto-rows:minmax(150px,1fr);gap:3px}
+.cell{display:flex;flex-direction:column;min-height:0;background:var(--bg);border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.cell .cap{flex:none;height:24px;display:flex;align-items:center;gap:6px;padding:0 8px;background:var(--side);border-bottom:1px solid var(--line);font-size:12px;color:var(--dim)}
+
+/* slot content */
+.term{font:12px/1.45 var(--mono);color:#cfcfcf;padding:8px 10px;white-space:pre-wrap;margin:0}
+.term .p{color:var(--good)} .term .d{color:var(--dim)} .term .a{color:var(--accent)}
+.agent{display:flex;flex-direction:column;height:100%}
+.agent .ah{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid #ffffff10;font-size:12px}
+.agent .ah .who{font-weight:600}
+.agent .ah .where{color:var(--dim)}
+.prom{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 7px;border:1px solid var(--card-line);border-radius:9px;font-size:11.5px;color:var(--dim)}
+.prom.kept{color:var(--good);border-color:#8fdc9f66}
+.agent .term{flex:1;min-height:0;overflow:auto}
+.files{font:12px/1.6 var(--mono);padding:6px 10px;margin:0;color:var(--text)}
+.files .dir{color:var(--issue)} .files .mod{color:var(--warn)}
+.diff{font:12px/1.5 var(--mono);padding:6px 10px;margin:0;white-space:pre}
+.diff .add{color:var(--good)} .diff .del{color:var(--bad)} .diff .hunk{color:var(--issue)}
+table.ov{border-collapse:collapse;width:100%;font-size:12.5px}
+.ov-wrap{overflow-x:auto;padding:8px 10px}
+.ov-wrap h4{margin:0 0 6px;font-size:12px;color:var(--dim);font-weight:600;letter-spacing:.03em;text-transform:uppercase}
+table.ov th{text-align:left;color:var(--dim);font-weight:normal;padding:4px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.ov td{padding:5px 8px;border-bottom:1px solid #ffffff0a;white-space:nowrap}
+table.ov td .dot{display:inline-block;margin-right:6px;vertical-align:0}
+.page{display:flex;flex-direction:column;height:100%}
+.page .url{flex:none;display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;background:var(--side);border-bottom:1px solid var(--line);font:11.5px var(--mono);color:var(--dim)}
+.page .doc{flex:1;background:#f6f6f4;color:#222;padding:14px 16px;font:13px/1.5 system-ui,sans-serif;overflow:auto}
+.page .doc h3{margin:0 0 6px;font-size:15px}
+.page .doc .meta{color:#666;font-size:12px;margin-bottom:10px}
+.page .doc .bar{height:8px;border-radius:4px;background:#e2e0da;margin:4px 0 10px;overflow:hidden}
+.page .doc .bar i{display:block;height:100%;background:#4a8a5a}
+
+/* slot host */
+.ph{height:100%;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:8px;padding:20px 24px;max-width:46ch}
+.ph .t{font-size:13.5px;color:var(--text)}
+.ph .r{font-size:12.5px;color:var(--dim);line-height:1.45}
+.ph .acts{display:flex;gap:6px;flex-wrap:wrap}
+.ph.waiting .t::before{content:"";display:inline-block;width:9px;height:9px;margin-right:8px;border-radius:50%;border:1.5px solid var(--warn);border-right-color:transparent;animation:spin 1s linear infinite;vertical-align:-1px}
+.ph.gone .t{color:var(--dim)}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.ph.waiting .t::before{animation:none}}
+.btn{display:inline-flex;align-items:center;gap:4px;background:#ffffff0d;border:1px solid var(--line);color:var(--text);border-radius:4px;padding:3px 9px;font:12px var(--ui);cursor:pointer}
+.btn:hover{background:#ffffff1c}
+.btn:focus-visible{outline:1px solid var(--accent)}
+.band{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;padding:4px 10px;background:#3a3222;border-bottom:1px solid #5a5040;color:var(--warn);font-size:12px}
+.stale{opacity:.7}
+
+/* popovers */
+#pop{position:fixed;z-index:50;background:var(--card);border:1px solid var(--card-line);border-radius:6px;box-shadow:0 8px 24px #0009;font-size:12.5px;min-width:200px;max-width:300px}
+#pop .ch{padding:8px 10px 2px;font-weight:600}
+#pop .cs{padding:0 10px 8px;color:var(--dim)}
+#pop .facts{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;padding:6px 10px 8px;border-top:1px solid #ffffff10}
+#pop .facts .k{color:var(--dim)}
+#pop .menu{display:flex;flex-direction:column;padding:4px}
+#pop .menu button{display:flex;align-items:center;gap:8px;text-align:left;background:none;border:none;color:var(--text);font:12.5px var(--ui);padding:5px 8px;border-radius:4px;cursor:pointer}
+#pop .menu button:hover,#pop .menu button:focus-visible{background:#ffffff14;outline:none}
+#pop .menu .def{margin-left:auto;color:var(--faint);font-size:11px}
+#pop .menu .hd{padding:6px 8px 2px;color:var(--dim);font-size:11px;letter-spacing:.04em;text-transform:uppercase}
+#toast{position:fixed;left:50%;bottom:max(18px,env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--card);border:1px solid var(--card-line);border-radius:6px;padding:6px 12px;font-size:12.5px;z-index:60;box-shadow:0 4px 16px #0008}
+
+@media (max-width:760px){#control{display:none}}
+@media (max-width:640px){.split.row,.split.col{flex-direction:column}#frame{padding-block:8px}}
+</style>
+
+<div id="frame">
+  <header id="proto">
+    <b>Subject workspaces mockup</b>
+    <div class="grp"><span class="lbl">Subject</span>
+      <button type="button" id="p-project" data-subject="project">Project</button>
+      <button type="button" id="p-convoy" data-subject="convoy">Convoy</button>
+      <button type="button" id="p-vessel" data-subject="vessel">Vessel</button>
+    </div>
+    <div class="grp"><label for="p-edge" class="lbl">Strip edge</label>
+      <select id="p-edge"><option value="left">left</option><option value="top">top</option><option value="right">right</option><option value="bottom">bottom</option></select>
+    </div>
+    <div class="grp"><span class="lbl">Scenario</span>
+      <label for="p-flap"><input type="checkbox" id="p-flap"> builder's attach check flaps</label>
+      <button type="button" id="p-join">A vessel joins</button>
+      <button type="button" id="p-end">coder ends</button>
+      <button type="button" id="p-reset">Reset</button>
+    </div>
+  </header>
+  <div id="app" data-edge="left">
+    <aside id="control" aria-label="Sidebar"><div class="h">Tree</div><div class="rows" id="tree"></div></aside>
+    <div id="wsregion">
+      <nav id="strip" aria-label="Tool strip"></nav>
+      <main id="ws"></main>
+    </div>
+  </div>
+</div>
+<div id="pop" hidden></div>
+<div id="toast" hidden></div>
+
+<script>
+const ICONS = {
+  project:'<path d="M2 4h4.5l1.5 1.5H14V13H2z"/>',
+  convoy:'<circle cx="3.5" cy="8" r="1.6"/><circle cx="8" cy="8" r="1.6"/><circle cx="12.5" cy="8" r="1.6"/><path d="M5.1 8h1.3M9.6 8h1.3"/>',
+  vessel:'<path d="M2 9.5h12l-2 3.5H4z"/><path d="M8 3v6.5M8 3l4 4H8"/>',
+  agent:'<circle cx="8" cy="5.5" r="2.5"/><path d="M3 14c.5-3 2.5-4.5 5-4.5s4.5 1.5 5 4.5"/>',
+  files:'<path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/>',
+  diff:'<path d="M5 3v6M2 6h6M9 12h5"/>',
+  terminal:'<rect x="2" y="3" width="12" height="10" rx="1"/><path d="M4.5 6.5l2 1.5-2 1.5M8 10h3"/>',
+  tui:'<rect x="2" y="3" width="12" height="10" rx="1"/><path d="M2 6h12M6 6v7"/>',
+  overview:'<rect x="2" y="3" width="12" height="10" rx="1"/><path d="M2 6.5h12M2 9.5h12M6 3v10"/>',
+  page:'<circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2.2 2.2 2.2 9.8 0 12M8 2c-2.2 2.2-2.2 9.8 0 12"/>',
+  pr:'<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="12.5" r="1.5"/><path d="M4.5 5v6M11.5 11V6.5C11.5 5 10.5 4 9 4H7.5M9 2.5L7.5 4 9 5.5"/>',
+  issue:'<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.2"/>',
+  dag:'<circle cx="3.5" cy="4" r="1.5"/><circle cx="3.5" cy="12" r="1.5"/><circle cx="12.5" cy="8" r="1.5"/><path d="M5 4.5l6 3M5 11.5l6-3"/>',
+  queue:'<path d="M3 4h10M3 8h10M3 12h6"/>'
+};
+const ic = name => `<svg class="i" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]||ICONS.page}</svg>`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ---- made-up fleet -------------------------------------------------------
+function freshFleet(){
+  return {
+    agents:{
+      governor:{seat:'governor', vessel:null, host:'kiwi', state:'current', live:true, promises:[['Answer review handoffs','open']]},
+      coder:{seat:'coder', vessel:'v51', host:'feta', state:'current', live:true, promises:[['PR: step sidebar levels in','kept'],['Screenshot of the indent','open']]},
+      reviewer:{seat:'reviewer', vessel:'v51', host:'feta', state:'unavailable', live:false, reason:'The crew is still starting.', promises:[['Review the indent PR','open']]},
+      builder:{seat:'builder', vessel:'v52', host:'kiwi', state:'current', live:true, promises:[['PR: present-paced frames','open']]},
+      exp3:{seat:'experimenter-3', vessel:'v53', host:'feta', state:'gone', live:false, ended:'14:02', promises:[['Try a 0.4 em step','transferred']]}
+    },
+    vessels:{
+      v51:{name:'drydock-vessel-agent-51', host:'feta', agents:['coder','reviewer']},
+      v52:{name:'drydock-vessel-agent-52', host:'kiwi', agents:['builder']},
+      v53:{name:'drydock-vessel-agent-53', host:'feta', agents:['exp3']}
+    },
+    joined:0
+  };
+}
+let F = freshFleet();
+const fresh = {};   // slot keys marked new for a moment
+
+// ---- subjects: what Flotilla publishes (Slots, links, relations) -----------
+const agentSlot = id => ({key:'agent-'+id, kind:'agent', agent:id, title:F.agents[id].seat});
+const SUBJECTS = {
+  project:{kind:'project', title:'flotilla/wheelhouse', sub:'Project. 1 convoy running, 1 standing.',
+    slots:() => [agentSlot('governor'), {key:'tui', kind:'tui', title:'Flotilla'}, {key:'files', kind:'files', title:'Files'}, {key:'term', kind:'terminal', title:'Terminal'}],
+    add:[{key:'dag', kind:'page', icon:'dag', title:'Mission DAG', note:'codebase-insights, through Luchs'},{key:'queue', kind:'page', icon:'queue', title:'Dispatch queue', note:'codebase-insights, through Luchs'},{key:'term2', kind:'terminal', title:'Terminal in checkout'}],
+    related:['convoy'],
+    linked:[{key:'issues', icon:'issue', title:'Open issues (41)', url:'github.com/flotilla-org/wheelhouse/issues'},{key:'prs', icon:'pr', title:'Open PRs (3)', url:'github.com/flotilla-org/wheelhouse/pulls'}],
+    facts:[['repo','flotilla-org/wheelhouse'],['checkout','~/dev/wheelhouse'],['convoys','1 running, 1 standing']]},
+  convoy:{kind:'convoy', title:'Ship sidebar subjects', sub:'Convoy in flotilla/wheelhouse.',
+    slots:() => [...Object.values(F.vessels).flatMap(v => v.agents.map(agentSlot)), {key:'overview', kind:'overview', title:'Overview'}],
+    add:[{key:'cfiles', kind:'files', title:'Files for the selected vessel'}],
+    related:['project', ...Object.keys(F.vessels)],
+    linked:[{key:'pr411', icon:'pr', title:'PR #411 Step sidebar levels in', url:'github.com/flotilla-org/wheelhouse/pull/411'},{key:'iss401', icon:'issue', title:'Issue #401 Subject workspaces', url:'github.com/flotilla-org/wheelhouse/issues/401'}],
+    facts:[['workflow','coder, reviewer, builder'],['vessels',()=>Object.keys(F.vessels).length],['plan','2 of 4 promises kept']]},
+  vessel:{kind:'vessel', title:'drydock-vessel-agent-51', sub:'Vessel on feta, in Ship sidebar subjects.',
+    slots:() => [...F.vessels.v51.agents.map(agentSlot), {key:'files', kind:'files', title:'Files'}],
+    add:[{key:'shell', kind:'terminal', title:'Terminal in vessel'},{key:'diff', kind:'diff', title:'Changes'}],
+    related:['convoy','project'],
+    linked:[{key:'pr411', icon:'pr', title:'PR #411 Step sidebar levels in', url:'github.com/flotilla-org/wheelhouse/pull/411'}],
+    facts:[['host','feta'],['provider','drydock'],['size','8 vCPU, 16 GB'],['load','23%']]}
+};
+
+// ---- Workspace Layouts: Andamento templates keyed by subject kind ---------
+const LAYOUTS = {
+  vessel:[
+    {id:'work', name:'Work', tree:{split:'row', w:[3,2], c:[{panel:'agents', kinds:['agent']},{panel:'side', kinds:['files','diff','terminal','page']}]}},
+    {id:'focus', name:'Focus', tree:{panel:'agents', kinds:['agent','page']}}
+  ],
+  convoy:[
+    {id:'agents', name:'Agents', tree:{split:'row', w:[3,2], c:[{panel:'agents', kinds:['agent']},{panel:'side', kinds:['overview','page','files']}]}},
+    {id:'grid', name:'Grid, live agents only', liveOnly:true, tree:{grid:'agents', kinds:['agent']}},
+    {id:'overview', name:'Overview', tree:{split:'col', w:[3,2], c:[{panel:'side', kinds:['overview','page','files']},{panel:'agents', kinds:['agent']}]}}
+  ],
+  project:[
+    {id:'main', name:'Main', tree:{split:'row', w:[2,4,2], c:[{panel:'agents', kinds:['agent']},{panel:'main', kinds:['tui']},{panel:'side', kinds:['files','terminal','page']}]}},
+    {id:'triage', name:'Triage', tree:{split:'row', w:[1,1], c:[{panel:'main', kinds:['tui']},{panel:'side', kinds:['page']}]}}
+  ]
+};
+
+// ---- per-workspace overlay: added slots once, arrangement per layout ------
+let W;
+function freshOverlay(){
+  W = {};
+  for(const k of Object.keys(SUBJECTS)) W[k] = {layout:LAYOUTS[k][0].id, added:[], closed:new Set(), place:{}, sel:{}};
+}
+freshOverlay();
+let subject = 'convoy';
+
+const slotState = s => s.kind === 'agent' ? F.agents[s.agent].state : (s.loading ? 'unavailable' : 'current');
+const slotsOf = k => [...SUBJECTS[k].slots(), ...W[k].added].filter(s => !W[k].closed.has(s.key));
+const layoutOf = k => LAYOUTS[k].find(l => l.id === W[k].layout);
+function panelsOf(node, out=[]){
+  if(node.split){ node.c.forEach(c => panelsOf(c, out)); }
+  else out.push({id:node.panel||node.grid, kinds:node.kinds});
+  return out;
+}
+function arrange(k, L){
+  const panels = panelsOf(L.tree), map = {}, left = [];
+  panels.forEach(p => map[p.id] = []);
+  const pins = W[k].place[L.id] || {};
+  for(const s of slotsOf(k)){
+    if(L.liveOnly && slotState(s) === 'gone'){ left.push({s, why:'Ended. This layout shows live agents only.'}); continue; }
+    const pid = map[pins[s.key]] ? pins[s.key] : (panels.find(p => p.kinds.includes(s.kind)) || {}).id;
+    if(pid) map[pid].push(s); else left.push({s, why:'Not in this layout.'});
+  }
+  return {map, left, panels};
+}
+
+// ---- tool strip ------------------------------------------------------------
+function thumb(node){
+  const rects = [];
+  (function walk(n, x, y, w, h){
+    if(n.split){
+      const total = n.w.reduce((a,b)=>a+b, 0); let o = 0;
+      n.c.forEach((c,i) => { const f = n.w[i]/total;
+        if(n.split === 'row') walk(c, x+o*w, y, w*f, h); else walk(c, x, y+o*h, w, h*f);
+        o += f; });
+    } else if(n.grid){
+      rects.push([x,y,w/2,h/2],[x+w/2,y,w/2,h/2],[x,y+h/2,w/2,h/2],[x+w/2,y+h/2,w/2,h/2]);
+    } else rects.push([x,y,w,h]);
+  })(node, 1, 1, 18, 18);
+  return `<svg class="thumb" viewBox="0 0 20 20" aria-hidden="true">${rects.map(([x,y,w,h]) =>
+    `<rect x="${(x+.6).toFixed(1)}" y="${(y+.6).toFixed(1)}" width="${Math.max(w-1.2,1).toFixed(1)}" height="${Math.max(h-1.2,1).toFixed(1)}" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/>`).join('')}</svg>`;
+}
+function relatedInfo(r){
+  if(SUBJECTS[r]) return {key:r, title:SUBJECTS[r].title, icon:SUBJECTS[r].kind, subject:r, state:'current'};
+  const v = F.vessels[r];
+  const states = v.agents.map(a => F.agents[a].state);
+  const state = states.includes('current') ? 'current' : states.includes('unavailable') ? 'unavailable' : 'gone';
+  return {key:r, title:v.name+' on '+v.host, icon:'vessel', subject:r === 'v51' ? 'vessel' : null, state, isNew:v.isNew};
+}
+function renderStrip(){
+  const S = SUBJECTS[subject], L = layoutOf(subject), {left} = arrange(subject, L);
+  const added = new Set(W[subject].added.map(s => s.addKey));
+  const parts = [];
+  parts.push(`<div class="sec"><button type="button" class="si subject" id="s-subject" aria-label="${esc(S.title)}">${ic(S.kind)}</button></div>`);
+  if(LAYOUTS[subject].length > 1){
+    parts.push(`<div class="sec" role="group" aria-label="Layouts">${LAYOUTS[subject].map(l =>
+      `<button type="button" class="si${l.id===L.id?' cur':''}" data-layout="${l.id}" title="Layout: ${esc(l.name)}" aria-pressed="${l.id===L.id}">${thumb(l.tree)}</button>`).join('')}</div>`);
+  }
+  const adds = [
+    ...left.map(({s, why}) => `<button type="button" class="si left-out" draggable="true" data-place="${s.key}" title="${esc(s.title)}: ${esc(why)} Click to place, or drag to a panel.">${ic(s.icon||s.kind)}${s.kind==='agent'?`<span class="dot ${slotState(s)}"></span>`:''}</button>`),
+    ...S.add.filter(a => !added.has(a.key)).map(a => `<button type="button" class="si" draggable="true" data-add="${a.key}" title="Add ${esc(a.title)}${a.note?' ('+esc(a.note)+')':''}. Click to place, or drag to a panel.">${ic(a.icon||a.kind)}</button>`)
+  ];
+  if(adds.length) parts.push(`<div class="sec" role="group" aria-label="Views to add">${adds.join('')}</div>`);
+  parts.push(`<div class="sec" role="group" aria-label="Related workspaces">${S.related.map(r => { const i = relatedInfo(r);
+    return `<button type="button" class="si" data-related="${i.key}" title="${esc(i.title)}${i.subject?'':' (not in this mockup)'}">${ic(i.icon)}${i.icon==='vessel'?`<span class="dot ${i.state}"></span>`:''}${i.isNew?'<span class="new"></span>':''}</button>`; }).join('')}</div>`);
+  parts.push(`<div class="sec" role="group" aria-label="Linked items">${S.linked.map(l =>
+    `<button type="button" class="si" data-linked="${l.key}" aria-label="${esc(l.title)}">${ic(l.icon)}</button>`).join('')}</div>`);
+  document.getElementById('strip').innerHTML = parts.join('<i class="divider" aria-hidden="true"></i>');
+}
+
+// ---- workspace -------------------------------------------------------------
+function placeholder(s){
+  if(s.kind === 'agent'){
+    const a = F.agents[s.agent];
+    if(a.state === 'gone') return `<div class="ph gone"><div class="t">${esc(a.seat)} ended at ${a.ended}.</div>
+      <div class="r">Its promises: ${a.promises.map(p => esc(p[0])+' ('+p[1]+')').join(', ')}. What it did will show here later.</div>
+      <div class="acts"><button type="button" class="btn" data-close="${s.key}">Close</button><button type="button" class="btn" data-toast="Would start a new ${esc(a.seat)} crew.">Start a new crew</button></div></div>`;
+    return `<div class="ph waiting"><div class="t">Can't attach to ${esc(a.seat)} on ${esc(a.host)} yet.</div>
+      <div class="r">${esc(a.reason||'Flotilla is checking the session.')} The terminal connects by itself when the session is ready.</div>
+      <div class="acts"><button type="button" class="btn" data-toast="Would ask Flotilla to check the session again.">Check again</button></div></div>`;
+  }
+  if(s.kind === 'page') return `<div class="ph waiting"><div class="t">Starting ${esc(s.title)} in Luchs.</div><div class="r">${esc(s.url||'')}</div></div>`;
+  return `<div class="ph waiting"><div class="t">Waiting for ${esc(s.title)}.</div></div>`;
+}
+function content(s){
+  switch(s.kind){
+  case 'agent': {
+    const a = F.agents[s.agent], v = a.vessel ? F.vessels[a.vessel] : null;
+    const lines = {
+      governor:'<span class="d">governor · standing</span>\n<span class="p">›</span> waiting for review handoffs\n<span class="d">  last: answered builder about frame pacing (13:40)</span>',
+      coder:'<span class="p">›</span> bash build.sh wheelhouse\n<span class="d">[release mode] [clang compile]</span>\n<span class="p">›</span> ./build/wheelhouse --chip_diagnostics\n  vessel_x 64 &gt;= convoy_x+10 <span class="a">ok</span>\n<span class="p">›</span> git push origin fix/vessel-indent-step',
+      reviewer:'<span class="p">›</span> reading PR #411\n  1 finding: the 1 px threshold was too weak',
+      builder:'<span class="p">›</span> cargo test -p luchs --release\n<span class="d">   Compiling luchs v0.9.2</span>\n  test display_rate::follows_consumer ... <span class="a">ok</span>',
+      tester:'<span class="p">›</span> cloning flotilla-org/wheelhouse\n<span class="d">  just joined the convoy</span>'
+    }[s.agent] || '';
+    return `<div class="agent"><div class="ah"><span class="who">${esc(a.seat)}</span><span class="where">${v?esc(v.name)+' on '+esc(v.host):'on '+esc(a.host)}</span>${a.promises.map(p => `<span class="prom ${p[1]==='kept'?'kept':''}">${esc(p[0])}</span>`).join('')}</div><pre class="term">${lines}</pre></div>`; }
+  case 'files': return `<pre class="files"><span class="dir">src/</span>\n  <span class="dir">uishell/</span>\n    <span class="mod">uishell_sidebar.c  M</span>\n    <span class="mod">uishell_chip_diagnostics.c  M</span>\n    uishell_views.c\n  <span class="dir">shell/</span>\n<span class="dir">docs/</span>\nCONTEXT.md</pre>`;
+  case 'diff': return `<pre class="diff"><span class="hunk">@@ uishell_sidebar.c:812 @@</span>\n<span class="del">-F32 indent = 0.3f+depth[i]*0.4f;</span>\n<span class="add">+U64 level = Min(depth[i]-(grouped &amp;&amp; depth[i] &gt; 0), 3);</span>\n<span class="add">+F32 indent = (grouped ? 0.7f : 0.3f)+level*1.2f;</span></pre>`;
+  case 'terminal': return `<pre class="term"><span class="p">~/dev/wheelhouse ›</span> git status --short\n<span class="d">?? .DS_Store</span>\n<span class="p">~/dev/wheelhouse ›</span> </pre>`;
+  case 'tui': return `<pre class="term"><span class="a">flotilla</span> <span class="d">· flotilla/wheelhouse</span>\n\n CONVOY                    STATE     VESSELS  PROMISES\n Ship sidebar subjects     <span class="p">running</span>   ${String(Object.keys(F.vessels).length).padEnd(8)} 2/4 kept\n governor                  <span class="p">standing</span>  1        -\n\n ISSUES  41 open   PRS  3 open\n\n<span class="d"> enter open · d dispatch · g grill · / filter</span></pre>`;
+  case 'overview': {
+    const rows = Object.values(F.vessels).flatMap(v => v.agents.map(id => { const a = F.agents[id];
+      return `<tr><td><span class="dot ${a.state}"></span>${esc(a.seat)}</td><td>${esc(v.name)}</td><td>${esc(v.host)}</td><td>${a.promises.map(p => esc(p[0])+' <span style="color:var(--dim)">('+p[1]+')</span>').join('<br>')}</td></tr>`; })).join('');
+    return `<div class="ov-wrap"><h4>Ship sidebar subjects</h4><table class="ov"><thead><tr><th>Seat</th><th>Vessel</th><th>Host</th><th>Promises</th></tr></thead><tbody>${rows}</tbody></table></div>`; }
+  case 'page': return `<div class="page"><div class="url">${ic('page')} ${esc(s.url||'')} <span style="margin-left:auto">Luchs</span></div><div class="doc"><h3>${esc(s.title)}</h3><div class="meta">Example page, as Luchs would stream it</div>${s.icon==='dag'?'<p>Mission #401: 2 of 5 decisions reached.</p><div class="bar"><i style="width:40%"></i></div><p>Next: slot host, then layout templates.</p>':'<p>Rendered through Jackstay.</p>'}</div></div>`;
+  }
+  return '';
+}
+function host(s){
+  const st = slotState(s);
+  if(st === 'current') return content(s);
+  if(st === 'unavailable' && s.kind === 'agent' && F.agents[s.agent].live)
+    return `<div class="band">Unverified: Flotilla is checking the session again. This is still the live terminal.</div><div class="stale">${content(s)}</div>`;
+  return placeholder(s);
+}
+function tabLabel(s){
+  const st = slotState(s);
+  return `${ic(s.icon||s.kind)}<span>${esc(s.title)}</span>${s.kind==='agent'?`<span class="dot ${st}"></span>`:''}${fresh[s.key]?'<span class="new"></span>':''}`;
+}
+function renderNode(n, A, L){
+  if(n.split){
+    const total = n.w.reduce((a,b)=>a+b, 0);
+    return `<div class="split ${n.split}">${n.c.map((c,i) => `<div style="flex:${n.w[i]/total} 1 0;display:flex;min-width:0;min-height:0">${renderNode(c, A, L)}</div>`).join('')}</div>`;
+  }
+  const id = n.panel || n.grid, slots = A.map[id];
+  if(n.grid){
+    return `<div class="grid panel-drop" data-panel="${id}">${slots.length ? slots.map(s => `<div class="cell"><div class="cap">${tabLabel(s)}</div><div class="body">${host(s)}</div></div>`).join('') : '<div class="empty">No live agents.</div>'}</div>`;
+  }
+  const sel = (W[subject].sel[L.id] || {})[id];
+  const cur = slots.find(s => s.key === sel) || slots[0];
+  return `<section class="panel panel-drop" data-panel="${id}" style="flex:1">
+    <div class="tabs" role="tablist">${slots.map(s => `<button type="button" role="tab" class="tab${s===cur?' on':''}" aria-selected="${s===cur}" data-tab="${s.key}" data-in="${id}">${tabLabel(s)}</button>`).join('')}</div>
+    <div class="body">${cur ? host(cur) : '<div class="empty">Nothing here in this layout. Drag a view from the strip.</div>'}</div></section>`;
+}
+function renderWs(){
+  const L = layoutOf(subject), A = arrange(subject, L);
+  const ws = document.getElementById('ws');
+  const keep = [...ws.querySelectorAll('.body')].map(b => b.scrollTop);
+  ws.innerHTML = renderNode(L.tree, A, L);
+  [...ws.querySelectorAll('.body')].forEach((b,i) => { if(keep[i]) b.scrollTop = keep[i]; });
+}
+function renderTree(){
+  const row = (k, label, icon, depth, state, cls='') => `<div class="srow${cls}${k===subject?' sel':''}" ${k?`data-go="${k}" role="button" tabindex="0"`:''} style="padding-left:${6+depth*14}px"><span class="ic">${ic(icon)}</span><span class="nm">${esc(label)}</span>${state?`<span class="st"><span class="dot ${state}"></span></span>`:''}</div>`;
+  const vs = Object.entries(F.vessels).map(([key, v]) => row(key==='v51'?'vessel':null, v.name, 'vessel', 2, relatedInfo(key).state, key==='v51'?'':' static')).join('');
+  document.getElementById('tree').innerHTML = row('project', 'flotilla/wheelhouse', 'project', 0) + row(null, 'governor', 'convoy', 1, F.agents.governor.state, ' static') + row('convoy', 'Ship sidebar subjects', 'convoy', 1) + vs;
+}
+function render(){
+  document.getElementById('app').dataset.edge = document.getElementById('p-edge').value;
+  for(const b of document.querySelectorAll('#proto [data-subject]')) b.setAttribute('aria-pressed', b.dataset.subject === subject);
+  renderTree(); renderStrip(); renderWs();
+}
+
+// ---- actions ----------------------------------------------------------------
+let toastTimer;
+function toast(msg){ const t = document.getElementById('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2200); }
+function pin(key, panel){ const L = layoutOf(subject); (W[subject].place[L.id] ||= {})[key] = panel; select(key, panel); }
+function select(key, panel){ const L = layoutOf(subject); (W[subject].sel[L.id] ||= {})[panel] = key; }
+function defaultPanel(s){ const P = panelsOf(layoutOf(subject).tree); return (P.find(p => p.kinds.includes(s.kind)) || P[0]).id; }
+function addSlot(spec, panel){
+  const s = {...spec, addKey:spec.key, key:'u-'+spec.key};
+  if(s.kind === 'page'){ s.loading = true; setTimeout(() => { s.loading = false; renderWs(); }, 1300); }
+  W[subject].added.push(s);
+  pin(s.key, panel || defaultPanel(s));
+  render();
+}
+function placeLeftOut(key, panel){
+  const s = slotsOf(subject).find(x => x.key === key);
+  if(!s) return;
+  pin(key, panel || panelsOf(layoutOf(subject).tree)[0].id);
+  render();
+}
+function openLinked(l){
+  const existing = W[subject].added.find(s => s.addKey === l.key);
+  if(existing){ const A = arrange(subject, layoutOf(subject)); const pid = Object.keys(A.map).find(p => A.map[p].includes(existing)); if(pid){ select(existing.key, pid); renderWs(); return; } }
+  addSlot({key:l.key, kind:'page', icon:l.icon==='pr'?'pr':'issue', title:l.title.replace(/ \(\d+\)$/, ''), url:l.url});
+}
+
+// popovers: hover card for the subject, action palette for linked items
+const pop = document.getElementById('pop');
+let popFor = null, popTimer;
+function showPop(anchor, html){
+  pop.innerHTML = html; pop.hidden = false; popFor = anchor;
+  const r = anchor.getBoundingClientRect(), edge = document.getElementById('app').dataset.edge;
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let x = edge === 'right' ? r.left - pw - 6 : edge === 'left' ? r.right + 6 : r.left;
+  let y = edge === 'bottom' ? r.top - ph - 6 : edge === 'top' ? r.bottom + 6 : r.top;
+  x = Math.max(8, Math.min(x, innerWidth - pw - 8)); y = Math.max(8, Math.min(y, innerHeight - ph - 8));
+  pop.style.left = x+'px'; pop.style.top = y+'px';
+}
+function hidePopSoon(){ clearTimeout(popTimer); popTimer = setTimeout(() => { pop.hidden = true; popFor = null; }, 250); }
+function subjectCard(){
+  const S = SUBJECTS[subject];
+  return `<div class="ch">${esc(S.title)}</div><div class="cs">${esc(S.sub)}</div>
+    <div class="facts">${S.facts.map(([k,v]) => `<span class="k">${esc(k)}</span><span>${esc(typeof v === 'function' ? v() : v)}</span>`).join('')}</div>
+    <div class="menu"><div class="hd">Actions</div><button type="button" data-toast="Would open the subject's commands.">Commands for this ${S.kind}</button></div>`;
+}
+function linkedPalette(l){
+  return `<div class="ch">${esc(l.title)}</div><div class="menu">
+    <button type="button" data-open-linked="${l.key}">Open here, in Luchs <span class="def">click</span></button>
+    <button type="button" data-toast="Would open ${esc(l.url)} in the browser.">Open in browser</button>
+    <button type="button" data-toast="Would copy https://${esc(l.url)}.">Copy link</button></div>`;
+}
+const strip = document.getElementById('strip');
+strip.addEventListener('mouseover', e => {
+  const b = e.target.closest('#s-subject,[data-linked]'); if(!b || b === popFor) { clearTimeout(popTimer); return; }
+  clearTimeout(popTimer);
+  popTimer = setTimeout(() => {
+    if(b.id === 's-subject') showPop(b, subjectCard());
+    else showPop(b, linkedPalette(SUBJECTS[subject].linked.find(l => l.key === b.dataset.linked)));
+  }, b.id === 's-subject' ? 200 : 450);
+});
+strip.addEventListener('mouseout', e => { if(!pop.contains(e.relatedTarget)) hidePopSoon(); });
+pop.addEventListener('mouseover', () => clearTimeout(popTimer));
+pop.addEventListener('mouseout', e => { if(!pop.contains(e.relatedTarget) && !(popFor && popFor.contains(e.relatedTarget))) hidePopSoon(); });
+strip.addEventListener('contextmenu', e => {
+  const b = e.target.closest('[data-linked]'); if(!b) return;
+  e.preventDefault(); clearTimeout(popTimer); showPop(b, linkedPalette(SUBJECTS[subject].linked.find(l => l.key === b.dataset.linked)));
+});
+strip.addEventListener('click', e => {
+  const b = e.target.closest('button'); if(!b) return;
+  if(b.id === 's-subject'){ showPop(b, subjectCard()); return; }
+  if(b.dataset.layout){ W[subject].layout = b.dataset.layout; pop.hidden = true; render(); return; }
+  if(b.dataset.add){ addSlot(SUBJECTS[subject].add.find(a => a.key === b.dataset.add)); return; }
+  if(b.dataset.place){ placeLeftOut(b.dataset.place); return; }
+  if(b.dataset.related){ const i = relatedInfo(b.dataset.related); if(i.subject){ subject = i.subject; pop.hidden = true; render(); } else toast(i.title+' has its own workspace; this mockup only has drydock-vessel-agent-51.'); return; }
+  if(b.dataset.linked){ pop.hidden = true; openLinked(SUBJECTS[subject].linked.find(l => l.key === b.dataset.linked)); }
+});
+strip.addEventListener('dragstart', e => {
+  const b = e.target.closest('[data-add],[data-place]'); if(!b) return;
+  e.dataTransfer.setData('text/plain', b.dataset.add ? 'add:'+b.dataset.add : 'place:'+b.dataset.place);
+  e.dataTransfer.effectAllowed = 'copy'; pop.hidden = true;
+});
+const wsEl = document.getElementById('ws');
+wsEl.addEventListener('dragover', e => { const p = e.target.closest('.panel-drop'); if(!p) return; e.preventDefault(); document.querySelectorAll('.drop').forEach(x => x !== p && x.classList.remove('drop')); p.classList.add('drop'); });
+wsEl.addEventListener('dragleave', e => { const p = e.target.closest('.panel-drop'); if(p && !p.contains(e.relatedTarget)) p.classList.remove('drop'); });
+wsEl.addEventListener('drop', e => {
+  const p = e.target.closest('.panel-drop'); if(!p) return; e.preventDefault();
+  const [what, key] = e.dataTransfer.getData('text/plain').split(':');
+  if(what === 'add') addSlot(SUBJECTS[subject].add.find(a => a.key === key), p.dataset.panel);
+  else if(what === 'place') placeLeftOut(key, p.dataset.panel);
+});
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-tab],[data-close],[data-toast],[data-open-linked],[data-go]');
+  if(!t){ if(!pop.contains(e.target) && !strip.contains(e.target)) pop.hidden = true; return; }
+  if(t.dataset.tab){ select(t.dataset.tab, t.dataset.in); renderWs(); }
+  else if(t.dataset.close){ W[subject].closed.add(t.dataset.close); render(); }
+  else if(t.dataset.openLinked){ pop.hidden = true; openLinked(SUBJECTS[subject].linked.find(l => l.key === t.dataset.openLinked)); }
+  else if(t.dataset.go){ subject = t.dataset.go; pop.hidden = true; render(); }
+  else if(t.dataset.toast){ toast(t.dataset.toast); }
+});
+document.getElementById('tree').addEventListener('keydown', e => { const r = e.target.closest('[data-go]'); if(r && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); subject = r.dataset.go; render(); } });
+for(const b of document.querySelectorAll('#proto [data-subject]')) b.addEventListener('click', () => { subject = b.dataset.subject; pop.hidden = true; render(); });
+document.getElementById('p-edge').addEventListener('change', () => { pop.hidden = true; render(); });
+
+// ---- scenario --------------------------------------------------------------
+let flapTimer = null, reviewerTimer = null;
+function startReviewer(){ clearTimeout(reviewerTimer); reviewerTimer = setTimeout(() => { const r = F.agents.reviewer; if(r.state === 'unavailable'){ r.state = 'current'; r.live = true; render(); } }, 6000); }
+document.getElementById('p-flap').addEventListener('change', e => {
+  clearInterval(flapTimer);
+  if(e.target.checked) flapTimer = setInterval(() => { const b = F.agents.builder; if(b.state === 'gone') return; b.state = b.state === 'current' ? 'unavailable' : 'current'; b.reason = 'Flotilla is checking the session.'; render(); }, 1600);
+  else { if(F.agents.builder.state !== 'gone') F.agents.builder.state = 'current'; render(); }
+});
+document.getElementById('p-join').addEventListener('click', () => {
+  F.joined += 1;
+  const id = 'tester'+(F.joined > 1 ? '-'+F.joined : ''), vk = 'v'+(53+F.joined);
+  F.agents[id] = {seat:id, vessel:vk, host:'kiwi', state:'unavailable', live:false, reason:'The vessel is still being provisioned.', promises:[['Check the indent on Windows','open']]};
+  F.vessels[vk] = {name:'drydock-vessel-agent-'+(53+F.joined), host:'kiwi', agents:[id], isNew:true};
+  fresh['agent-'+id] = true;
+  setTimeout(() => { delete fresh['agent-'+id]; F.vessels[vk].isNew = false; F.agents[id].state = 'current'; F.agents[id].live = true; render(); }, 4000);
+  render(); toast(id+' joined. Its tab is added without taking focus.');
+});
+document.getElementById('p-end').addEventListener('click', () => { const c = F.agents.coder; if(c.state === 'gone') return; c.state = 'gone'; c.ended = new Date().toTimeString().slice(0,5); render(); });
+document.getElementById('p-reset').addEventListener('click', () => {
+  clearInterval(flapTimer); document.getElementById('p-flap').checked = false;
+  F = freshFleet(); for(const k in fresh) delete fresh[k]; freshOverlay(); subject = 'convoy'; pop.hidden = true; render(); startReviewer();
+});
+
+render(); startReviewer();
+</script>
