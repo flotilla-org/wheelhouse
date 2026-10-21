@@ -697,6 +697,10 @@ int main(void) {
         ids = {n.entity_id.string() for n in nodes}
         for shown in ('g', 'g-v', 'q', 'q-v', 'task', 'p/governor'):
             self.assertIn(shown, ids)
+        # Role attempts and project convoys both start closed.
+        convoys = [n for n in nodes if n.entity_kind.string() == 'convoy' and not n.is_section]
+        self.assertEqual({n.entity_id.string() for n in convoys}, {'c', 'c2', 'g', 'q', 'task'})
+        self.assertTrue(all(n.collapsed for n in convoys))
 
     def test_opening_a_role_records_its_current_managed_target(self):
         self.publish_role('governor', attempt='g-v')
@@ -950,8 +954,7 @@ int main(void) {
         self.assertEqual({n.entity_id.string() for n in children}, {'v', 'review'})
         self.assertTrue(all(n.layout.string() == 'inline' for n in children))
         original_keys = {n.entity_id.string(): n.key.string() for n in children}
-        self.assertEqual(lib.andamento_dispatch(self.core, snapshot, convoy.toggle, None), 1)
-        snapshot, nodes = self.snapshot()
+        self.assertTrue(convoy.collapsed)  # convoys start closed
         review = next(n for n in nodes if n.entity_id.string() == 'review')
         kind, request, _, recipe = self.dispatch(snapshot, review.activate)
         self.assertEqual((kind, recipe), (1, 'exec review'))
@@ -1021,7 +1024,10 @@ int main(void) {
             self.assertNotEqual(node.toggle, Size(-1).value)
             self.assertEqual(lib.andamento_dispatch(self.core, snapshot, node.toggle, None), 1)
 
-        toggle('c')
+        # Convoys start closed; c2 is opened away from that default.
+        _, before = self.snapshot()
+        self.assertTrue(all(n.collapsed for n in before if n.entity_id.string() in ('c', 'c2')))
+        toggle('c2')
         toggle('p')
         _, before = self.snapshot()
         keys = [(n.key.string(), n.parent) for n in before]

@@ -99,7 +99,7 @@ template "project/native" {
     order "display.label"
     apply-template "wheelhouse/entry"
   }
-  for "convoy" kind="convoy" visibility="wheelhouse/activity" {
+  for "convoy" kind="convoy" visibility="wheelhouse/activity" default-collapsed=true {
     match "flotilla.project" of="project"
     order "display.label"
     apply-template "convoy/native"
@@ -116,7 +116,7 @@ template "role/native" {
   field "status" key="status.state"
   field "phase" key="flotilla.convoy.phase" prefix="Phase: "
   use "wheelhouse/chip-presentation"
-  for "attempt" kind="convoy" in="flotilla.role.attempts" of="role" visibility="wheelhouse/role-attempt" {
+  for "attempt" kind="convoy" in="flotilla.role.attempts" of="role" visibility="wheelhouse/role-attempt" default-collapsed=true {
     apply-template "convoy/native"
   }
 }
