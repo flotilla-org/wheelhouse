@@ -33,6 +33,10 @@ typedef struct R_MTL_Window R_MTL_Window;
 }
 @end
 
+// How long the shell waits for a visible window's display link before it
+// builds without a drawable: a few display frames at any rate.
+#define R_MTL_DISPLAY_WAIT_LIMIT_US 100000
+
 struct R_MTL_Window
 {
   R_MTL_Window *next;
@@ -43,6 +47,7 @@ struct R_MTL_Window
   id<CAMetalDrawable> ready_drawable; // one retained opportunity, main thread only
   CFTimeInterval target_presentation_time;
   B32 frame_requested;
+  U64 pending_since_us; // when the requested frame began waiting for a drawable; 0 if it isn't
   S32 display_hz;
   id<MTLTexture> stage_color;
   id<MTLTexture> stage_scratch_color;
@@ -157,6 +162,8 @@ struct R_MTL_State
 {
   Arena *arena;
   B32 legacy_pacing;
+  U64 display_wait_deadline_us; // the latest a pending window waits for its drawable; main thread only
+  B32 display_wait_wake_armed;
   int presentation_log_fd; // opt-in, process lifetime; bounded to 600 submissions
   U64 presentation_log_serial;
   RWMutex device_rw_mutex;

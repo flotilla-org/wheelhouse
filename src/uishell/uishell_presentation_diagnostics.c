@@ -175,6 +175,23 @@ uishell_skipped_frame_diagnostics(void)
   }
   [cover close];
   [cover release];
+
+  // A display link that stops firing for a visible window: builds wait for
+  // it only up to the limit, so they neither stall nor spin.
+  R_MTL_Window *mtl_window = r_mtl_window_from_handle(ws->r);
+  U64 visible_deadline = now_time_us()+3000000;
+  while(!([native->ns_window occlusionState] & NSWindowOcclusionStateVisible) && now_time_us() < visible_deadline)
+  { [[NSRunLoop mainRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]]; }
+  mtl_window->display_delegate->window = 0;
+  {
+    U64 begin = now_time_us();
+    for(U64 i = 0; i < 20; i += 1) { update(); }
+    U64 elapsed = now_time_us()-begin;
+    B32 paced = elapsed >= 1000000 && elapsed < 4000000;
+    fprintf(stderr, "skipped frames: 20 builds of a window whose display link stopped took %llu ms: %s\n", elapsed/1000, paced ? "passed" : "FAILED");
+    ok = ok && paced;
+  }
+  mtl_window->display_delegate->window = mtl_window;
   rd_state->frame_replay.prepare_window = 0;
   scratch_end(scratch);
   return ok;

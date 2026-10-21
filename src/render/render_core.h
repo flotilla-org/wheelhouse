@@ -375,7 +375,8 @@ r_hook B32               r_window_frame_ready(WM_Window window, R_Handle window_
 // A requested frame that is not ready yet, but will be: the display will offer
 // it. Wait for it rather than build a frame that cannot be presented. A hidden
 // or minimized window's frame is never pending. Backends that are always
-// ready return 0: build now.
+// ready return 0: build now. A pending frame stops being pending after a few
+// display frames, and the backend wakes the event pump when it does.
 r_hook B32               r_window_frame_pending(WM_Window window, R_Handle window_equip);
 
 //- rjf: frame markers
