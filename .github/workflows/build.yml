@@ -22,9 +22,8 @@ env:
   # affordances as a track.
   JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
   # Workspace subjects open without an opening recipe (andamento#180, for
-  # #415). Pinned to its branch until it merges; then to its merge commit.
-  # ABI remains 7.
-  ANDAMENTO_REV: 054ee33e216347bc01585ab9d4e2d210abe93185
+  # #415), pinned to its merge commit. ABI remains 7.
+  ANDAMENTO_REV: 7fe869c3e1a6041a4d7be66ba15cf8cac800b001
 
 jobs:
   daily-driver:
