@@ -5991,6 +5991,35 @@ internal UI_BOX_CUSTOM_DRAW(uishell_geo3d_box_draw)
   dr_mesh(draw_data->vertex_buffer, draw_data->index_buffer, R_GeoTopologyKind_Triangles, R_GeoVertexFlag_TexCoord|R_GeoVertexFlag_Normals|R_GeoVertexFlag_RGB, r_handle_zero(), 0, mat_4x4f32(1.f));
 }
 
+// A waiting terminal Slot's words (shell_core.c, "Slot Host"): what it will
+// attach to, when its provider has named it.
+WH_SLOT_PLACEHOLDER_FUNCTION_DEF(terminal)
+{
+  String8 target = ctx->resolution.managed_target;
+  switch(ctx->wait)
+  {
+    default:
+    case WH_SlotWait_Unavailable:
+    {
+      out->title = str8_lit("This terminal can't attach yet");
+      out->detail = target.size ? push_str8f(arena, "%S isn't ready to attach. It connects on its own once it is.", target) :
+                                  str8_lit("Its provider hasn't said how to attach yet. It connects on its own once it does.");
+    } break;
+    case WH_SlotWait_Held:
+    {
+      out->title = str8_lit("This terminal is held");
+      out->detail = target.size ? push_str8f(arena, "Its provider is holding %S. It connects once it is released.", target) :
+                                  str8_lit("Its provider is holding it. It connects once it is released.");
+    } break;
+    case WH_SlotWait_Failed:
+    {
+      out->title = str8_lit("This terminal couldn't start");
+      out->detail = target.size ? push_str8f(arena, "Starting %S failed. Retry to start it again.", target) :
+                                  str8_lit("Starting it failed. Retry to start it again.");
+    } break;
+  }
+}
+
 // A Slot whose content this Wheelhouse can't show (uishell_workspace_store.c):
 // what it is, and a way to open it when it is a web page. The slot keeps its
 // View Spec; closing the tab is what removes it.

@@ -61,8 +61,10 @@ enum
 #define WH_NO_STATE 0
 #define WH_EXPAND(name) EV_EXPAND_RULE_INFO_FUNCTION_NAME(name)
 #define WH_NO_EXPAND 0
+#define WH_PLACEHOLDER(name) WH_SLOT_PLACEHOLDER_FUNCTION_NAME(name)
+#define WH_NO_PLACEHOLDER 0
 
-// X(name, ui, state, content, traits, minimum_width, default_host, expand, settings)
+// X(name, ui, state, content, traits, minimum_width, default_host, expand, settings, placeholder)
 //   name           the View kind, as config and View Specs spell it
 //   ui             its UI function, WH_VIEW_UI_FUNCTION_DEF(ui)
 //   state          its per-view state type, WH_STATE(T), or WH_NO_STATE; the
@@ -73,6 +75,9 @@ enum
 //   default_host   RD_DockHostKind_<default_host>
 //   expand         its expand rule for evaluated values, or WH_NO_EXPAND
 //   settings       its presentation-settings schema, or UISHELL_NO_SETTINGS
+//   placeholder    what its Slot says while it waits for content,
+//                  WH_PLACEHOLDER(name) for a WH_SLOT_PLACEHOLDER_FUNCTION_DEF,
+//                  or WH_NO_PLACEHOLDER for the Slot Host's generic words
 //
 // The first five keep the view lister's order. Jackstay and web Views keep
 // their sessions in their own map (uishell_jackstay.c), because closing one
@@ -81,58 +86,58 @@ enum
 #define WH_RENDERERS(X) \
   X(text, shell_text, WH_STATE(UIShell_TextViewState), WH_Content_File|WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview|RD_ViewTrait_Visualizer|RD_ViewTrait_LegacyEval|RD_ViewTrait_VersionedSurface|RD_ViewTrait_Listed, \
-    0, WorkspaceRegion, WH_EXPAND(shell_text), UISHELL_TEXT_SETTINGS) \
+    0, WorkspaceRegion, WH_EXPAND(shell_text), UISHELL_TEXT_SETTINGS, WH_NO_PLACEHOLDER) \
   X(binary, binary, WH_STATE(UIShell_BinaryViewState), WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_LegacyEval|RD_ViewTrait_Listed, \
-    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_BINARY_SETTINGS) \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_BINARY_SETTINGS, WH_NO_PLACEHOLDER) \
   X(terminal, terminal, WH_STATE(UIShell_TerminalViewState), WH_Content_Command|WH_Content_Facet|WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_VersionedSurface|RD_ViewTrait_Listed, \
-    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_TERMINAL_SETTINGS) \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_TERMINAL_SETTINGS, WH_PLACEHOLDER(terminal)) \
   X(terminal_fixture, terminal, WH_STATE(UIShell_TerminalViewState), WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_VersionedSurface|RD_ViewTrait_Listed, \
-    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_TERMINAL_FIXTURE_SETTINGS) \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_TERMINAL_FIXTURE_SETTINGS, WH_NO_PLACEHOLDER) \
   X(scroll_region_fixture, scroll_region_fixture, WH_STATE(UIShell_ScrollRegionFixtureState), WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_Listed, \
-    128, WorkspaceRegion, WH_NO_EXPAND, UISHELL_SCROLL_REGION_FIXTURE_SETTINGS) \
+    128, WorkspaceRegion, WH_NO_EXPAND, UISHELL_SCROLL_REGION_FIXTURE_SETTINGS, WH_NO_PLACEHOLDER) \
   X(jackstay, jackstay, WH_NO_STATE, WH_Content_Jackstay|WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_VersionedSurface, \
-    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(web, web, WH_NO_STATE, WH_Content_Url|WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_VersionedSurface, \
-    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(sessions, sessions, WH_NO_STATE, WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop, \
-    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(bitmap, bitmap, WH_NO_STATE, WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_LegacyEval, \
-    0, WorkspaceRegion, WH_EXPAND(bitmap), UISHELL_NO_SETTINGS) \
+    0, WorkspaceRegion, WH_EXPAND(bitmap), UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(color, color, WH_STATE(UIShell_ColorViewState), WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_LegacyEval, \
-    0, WorkspaceRegion, WH_EXPAND(color), UISHELL_NO_SETTINGS) \
+    0, WorkspaceRegion, WH_EXPAND(color), UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(geo3d, geo3d, WH_STATE(UIShell_Geo3DViewState), WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_LegacyEval, \
-    0, WorkspaceRegion, WH_EXPAND(geo3d), UISHELL_NO_SETTINGS) \
+    0, WorkspaceRegion, WH_EXPAND(geo3d), UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(placeholder, placeholder, WH_NO_STATE, WH_Content_Page|WH_Content_Unshown, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop, \
-    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(getting_started, getting_started, WH_NO_STATE, WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_QueryFocus, \
-    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(pending, pending, WH_STATE(UIShell_PendingViewState), WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_QueryFocus|RD_ViewTrait_LegacyEval, \
-    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(watch, watch, WH_STATE(UIShell_WatchViewState), WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_QueryFocus, \
-    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(sidebar_section, sidebar_section, WH_NO_STATE, WH_Content_Dashboard, \
     RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_ControlSplitScope|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_Control, \
-    0, Sidebar, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
+    0, Sidebar, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(pinned_cards, pinned_cards, WH_NO_STATE, WH_Content_Dashboard, \
     RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_ControlSplitScope|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_Control, \
-    0, Sidebar, WH_NO_EXPAND, UISHELL_NO_SETTINGS) \
+    0, Sidebar, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
   X(workspace_selector, null, WH_NO_STATE, WH_Content_Dashboard, \
     RD_ViewTrait_Content|RD_ViewTrait_Section|RD_ViewTrait_SelectsWorkspaces|RD_ViewTrait_Singleton|RD_ViewTrait_ControlSplitScope|RD_ViewTrait_Control, \
-    0, Sidebar, WH_NO_EXPAND, UISHELL_NO_SETTINGS)
+    0, Sidebar, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER)
 
 // Wheelhouse's Handlers (CONTEXT.md, "Handler"): content another program
 // produces, and the Renderer that shows what it publishes. One entry each,
@@ -158,7 +163,7 @@ enum
 // Each Renderer's place in the list.
 typedef enum WH_RendererIndex
 {
-#define WH_RENDERER_INDEX(name, ui, state, content, traits, width, host, expand, settings) WH_RendererIndex_##name,
+#define WH_RENDERER_INDEX(name, ui, state, content, traits, width, host, expand, settings, placeholder) WH_RendererIndex_##name,
   WH_RENDERERS(WH_RENDERER_INDEX)
 #undef WH_RENDERER_INDEX
   WH_RendererIndex_COUNT,

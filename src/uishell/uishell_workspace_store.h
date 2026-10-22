@@ -26,10 +26,11 @@ struct UIShell_ViewSpec
 
 // What a Renderer is told about `view`'s Slot: its address, its View Spec
 // (zero for a placeholder, whose Slot keeps the spec it was made from),
-// status and Target Resolution. A View outside a workspace's arrangement is
-// not a Slot, and gets only its resolution.
+// status, why its content isn't resolved (with WH_SlotStatus_Waiting or
+// _Unverified) and Target Resolution. A View outside a workspace's
+// arrangement is not a Slot, and gets only its resolution.
 internal void uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UIShell_ViewSpec const **spec,
-                                      WH_SlotStatus *status, WH_TargetResolution *resolution);
+                                      WH_SlotStatus *status, WH_SlotWait *wait, WH_TargetResolution *resolution);
 
 // What a View tells the user about its Slot (uishell_workspace_store.c,
 // "Notices"): an update waiting for an answer, a previous instance kept, an

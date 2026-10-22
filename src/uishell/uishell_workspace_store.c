@@ -168,6 +168,10 @@ read_only global String8 uishell_store_runtime_keys[] =
   // A hash of the content it showed once it applied that resolution: a View
   // following its provider whose content differs since, the user edited.
   str8_lit_comp("applied_spec"),
+  // Why its Slot's content isn't resolved, as its last plan said
+  // ("unavailable", "held" or "failed"); absent while it resolves. The Slot
+  // Host reads it (uishell_store_view_slot).
+  str8_lit_comp("content_state"),
 };
 
 internal U64 uishell_store_view_spec_hash(CFG_Node *view);
@@ -392,9 +396,29 @@ uishell_store_owner(CFG_Node *owner)
   return rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, owner);
 }
 
+// Whether `view` has nothing of its own to show: made for a facet its
+// provider hasn't resolved (uishell_store_view_from_spec), it follows its
+// provider and has no command, file or page yet.
+internal B32
+uishell_store_view_unfilled(CFG_Node *view)
+{
+  return cfg_node_child_from_string(view, str8_lit("follows_provider")) != &cfg_nil_node &&
+         rd_expr_from_cfg(view).size == 0 && uishell_store_setting(view, str8_lit("url")).size == 0;
+}
+
+// The wait a View's `content_state` names.
+internal WH_SlotWait
+uishell_store_slot_wait(String8 content_state)
+{
+  if(str8_match(content_state, str8_lit("unavailable"), 0)) { return WH_SlotWait_Unavailable; }
+  if(str8_match(content_state, str8_lit("held"), 0)) { return WH_SlotWait_Held; }
+  if(str8_match(content_state, str8_lit("failed"), 0)) { return WH_SlotWait_Failed; }
+  return WH_SlotWait_None;
+}
+
 internal void
 uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UIShell_ViewSpec const **spec,
-                        WH_SlotStatus *status, WH_TargetResolution *resolution)
+                        WH_SlotStatus *status, WH_SlotWait *wait_out, WH_TargetResolution *resolution)
 {
   String8 *resolved[] = {&resolution->session, &resolution->daemon_name, &resolution->attach_token,
                          &resolution->managed_target, &resolution->porthole_session, &resolution->web_url};
@@ -409,6 +433,14 @@ uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UISh
   uishell_workspace_id_from_string(uishell_store_setting(owner, str8_lit("workspace_id")), &slot->workspace);
   slot->key = key;
   *status |= WH_SlotStatus_Slot;
+  // A Slot with nothing to show waits; one with a live instance whose content
+  // stops resolving keeps it, unverified. A View that has content of its own
+  // (opened from a recipe, or restored) shows it, as it always has: held
+  // content stays as it is.
+  WH_SlotWait wait = uishell_store_slot_wait(uishell_store_setting(view, str8_lit("content_state")));
+  B32 has_instance = uishell_store_setting(view, str8_lit("applied")).size != 0 || resolution->session.size != 0;
+  if(wait != WH_SlotWait_None && !has_instance && uishell_store_view_unfilled(view)) { *status |= WH_SlotStatus_Waiting; *wait_out = wait; }
+  else if(wait == WH_SlotWait_Unavailable && has_instance) { *status |= WH_SlotStatus_Unverified; *wait_out = wait; }
   // A Slot following its provider has the provider's spec, which Andamento
   // keeps; this device holds only what it last resolved it to.
   if(cfg_node_child_from_string(view, str8_lit("follows_provider")) != &cfg_nil_node)
@@ -675,6 +707,9 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
   {
     uishell_store_set_setting(view, str8_lit("resource_id"), key);
     uishell_store_mark_follows(view, 1);
+    // A facet has nothing to show until its plan resolves it, so its Slot
+    // Host waits rather than start a terminal with no command (a shell).
+    uishell_store_set_setting(view, str8_lit("content_state"), str8_lit("unavailable"));
   }
   if(unshown.size)
   {
@@ -1321,7 +1356,11 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
 //     ask         nothing until the user answers the View's prompt (`asks`);
 //                 declining fails the update until the resolution changes
 //   HELD, UNAVAILABLE, FAILED   the View keeps what it shows; focusing the
-//                 workspace retries a failed update (uishell_store_retry)
+//                 workspace retries a failed update (uishell_store_retry).
+//                 The state is kept on the View (`content_state`) for its
+//                 Slot Host: a View with nothing to show yet shows a
+//                 placeholder, and a live one whose content is unavailable
+//                 is marked unverified (shell_core.c, "Slot Host")
 //
 // A Cleat daemon's session is never replaced in place: whatever the policy,
 // it stays as the previous instance.
@@ -1556,6 +1595,10 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
     AndamentoSlotContent content = *plan;
     AndamentoResolution *saved = plan->has_saved ? &plan->saved : 0;
     String8 asks = str8_zero();
+    // What the Slot Host is told: why the content isn't resolved, if it isn't.
+    String8 content_state = content.state == ANDAMENTO_CONTENT_UNAVAILABLE ? str8_lit("unavailable") :
+                            content.state == ANDAMENTO_CONTENT_HELD ? str8_lit("held") :
+                            content.state == ANDAMENTO_CONTENT_FAILED ? str8_lit("failed") : str8_zero();
     if(content.state == ANDAMENTO_CONTENT_UPDATING)
     {
       // A rebind's policy is about the instance it replaces: a View that
@@ -1569,14 +1612,22 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
         // Only a View starting without an instance tries a saved resolution.
         uishell_store_complete(state, owner, key, view, shown, &content, applied.size ? 0 : saved);
         if(shown != &cfg_nil_node) { view = shown; }
+        else { content_state = str8_lit("failed"); }
       }
     }
     else if(content.state == ANDAMENTO_CONTENT_CURRENT)
     {
       uishell_store_save_resolution(state, workspace, key, view, applied, saved);
     }
-    if(asks.size) { uishell_store_set_setting(view, str8_lit("asks"), asks); }
-    else { uishell_store_drop_setting(view, str8_lit("asks")); }
+    // A View released while it was applied keeps no settings; its previous
+    // instance is still released below.
+    if(cfg_node_from_id(view->id) == view)
+    {
+      if(asks.size) { uishell_store_set_setting(view, str8_lit("asks"), asks); }
+      else { uishell_store_drop_setting(view, str8_lit("asks")); }
+      if(content_state.size) { uishell_store_set_setting(view, str8_lit("content_state"), content_state); }
+      else { uishell_store_drop_setting(view, str8_lit("content_state")); }
+    }
     // A previous instance the user closed, or none kept (content that
     // couldn't keep one), is released.
     if(content.has_previous && !uishell_store_key_in(key, previous, previous_count))
@@ -2045,6 +2096,15 @@ uishell_store_notices(Arena *arena, CFG_Node *view, UIShell_SlotNotice *out, U64
   {
     UIShell_SlotNoticePush(.badge = str8_lit("removed"), .text = str8_lit("Its provider removed this View; it stays until you close it."),
                            .actions = {UIShell_SlotAction_Remove});
+  }
+  // A live instance whose content its provider no longer resolves stays as
+  // it is, marked unverified (shell_core.c, "Slot Host").
+  if(key.size && uishell_store_slot_wait(uishell_store_setting(view, str8_lit("content_state"))) == WH_SlotWait_Unavailable &&
+     (uishell_store_setting(view, str8_lit("applied")).size || uishell_store_setting(view, str8_lit("session")).size))
+  {
+    // A badge, without a banner: a banner would resize the content each time
+    // the resolution comes and goes.
+    UIShell_SlotNoticePush(.badge = str8_lit("unverified"));
   }
   U32 arrangement = uishell_store_arrangement_flags(state, owner);
   if((arrangement & (ANDAMENTO_ARRANGEMENT_FLAG_PROVIDER_CHANGED|ANDAMENTO_ARRANGEMENT_FLAG_UNRESOLVED)) && uishell_store_view_leads(owner, view))
