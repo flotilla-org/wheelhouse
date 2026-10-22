@@ -106,7 +106,7 @@ struct RD_DockProposal
 
 // Docking's part of each Renderer in the registry, in its order.
 #include "uishell/uishell_renderers.h"
-#define RD_DOCK_DECLARE(name, ui, state, content, traits, width, host, expand, settings) \
+#define RD_DOCK_DECLARE(name, ui, state, content, traits, width, host, expand, settings, placeholder) \
   {str8_lit_comp(#name), traits, width, RD_DockHostKind_##host},
 read_only global RD_ViewRegistration rd_view_registrations[] =
 {

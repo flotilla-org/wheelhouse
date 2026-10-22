@@ -39,8 +39,8 @@ uishell_cmd_list_push_new(Arena *arena, UIShell_CmdList *cmds, String8 name, UIS
 ////////////////////////////////
 //~ Renderer Registry (uishell/uishell_renderers.h)
 
-#define WH_RENDERER_DECLARE(name, ui, state, content, traits, width, host, expand, settings) \
-  {str8_lit_comp(#name), WH_VIEW_UI_FUNCTION_NAME(ui), state, content, expand, str8_lit_comp(settings), &rd_view_registrations[WH_RendererIndex_##name]},
+#define WH_RENDERER_DECLARE(name, ui, state, content, traits, width, host, expand, settings, placeholder) \
+  {str8_lit_comp(#name), WH_VIEW_UI_FUNCTION_NAME(ui), state, content, expand, str8_lit_comp(settings), placeholder, &rd_view_registrations[WH_RendererIndex_##name]},
 read_only global WH_Renderer wh_renderers[] =
 {
   WH_RENDERERS(WH_RENDERER_DECLARE)
@@ -1599,6 +1599,7 @@ rd_view_state_release(RD_ViewState *vs)
 {
   if(vs->release_user_data) { vs->release_user_data(vs->user_data); }
   ev_view_release(vs->ev_view);
+  if(vs->held_cmd_arena) { arena_release(vs->held_cmd_arena); }
   for(RD_ArenaExt *ext = vs->first_arena_ext; ext != 0; ext = ext->next)
   {
     arena_release(ext->arena);
@@ -1685,7 +1686,7 @@ internal WH_ViewContext
 wh_view_context_from_view(Arena *arena, RD_ViewAddress view, WH_Renderer *renderer, void *state, Rng2F32 rect)
 {
   WH_ViewContext ctx = {0};
-  uishell_store_view_slot(arena, rd_cfg_from_view(view), &ctx.slot, &ctx.spec, &ctx.status, &ctx.resolution);
+  uishell_store_view_slot(arena, rd_cfg_from_view(view), &ctx.slot, &ctx.spec, &ctx.status, &ctx.wait, &ctx.resolution);
   if(view.owner == RD_ViewOwnerKind_Transient) { ctx.status |= WH_SlotStatus_Floating; }
   ctx.state = state;
   ctx.state_size = state ? renderer->state_size : 0;
@@ -1698,9 +1699,135 @@ internal void
 wh_view_ui_direct(WH_Renderer *renderer, RD_ViewAddress view, Rng2F32 rect)
 {
   Temp scratch = scratch_begin(0, 0);
-  WH_ViewContext ctx = wh_view_context_from_view(scratch.arena, view, renderer, rd_view_user_data(rd_view_state_from_view(view, 0), renderer->state_size), rect);
-  renderer->ui(&ctx);
+  RD_ViewState *vs = rd_view_state_from_view(view, 0);
+  WH_ViewContext ctx = wh_view_context_from_view(scratch.arena, view, renderer, rd_view_user_data(vs, renderer->state_size), rect);
+  wh_slot_host_ui(renderer, &ctx, vs);
   scratch_end(scratch);
+}
+
+//- Slot Host
+//
+// Every Slot's View is drawn through its Slot Host (docs/design/
+// subject-workspaces.md, "Slot Host"). A Slot that shows its content gets its
+// Renderer with nothing around it. A Slot still waiting for content, with
+// nothing of its own to show yet, gets a placeholder its Renderer words (its
+// placeholder hook) instead of the Renderer, so nothing starts from a View
+// Spec that isn't resolved; commands sent to it are held and replayed to the
+// Renderer once it
+// shows. A live instance whose content stops resolving keeps running, marked
+// unverified by a line over its top edge and its tab's badge
+// (uishell_store_notices).
+
+// The most commands a waiting Slot holds; later ones are dropped.
+#define WH_SLOT_HOST_HELD_CMD_CAP 64
+
+internal void
+wh_slot_host_hold_cmds(RD_ViewState *vs)
+{
+  for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
+  {
+    if(vs->held_cmd_arena == 0)
+    {
+      vs->held_cmd_arena = arena_alloc();
+      vs->held_cmds = push_array(vs->held_cmd_arena, UIShell_CmdList, 1);
+    }
+    if(vs->held_cmds->count < WH_SLOT_HOST_HELD_CMD_CAP)
+    {
+      uishell_cmd_list_push_new(vs->held_cmd_arena, vs->held_cmds, cmd->name, cmd->regs);
+    }
+  }
+}
+
+// Sends the commands a waiting Slot held, in order, to its View's Renderer;
+// it gets them with the commands of the next frame.
+internal void
+wh_slot_host_replay_cmds(RD_ViewState *vs)
+{
+  if(vs->held_cmd_arena == 0) { return; }
+  for(UIShell_CmdNode *n = vs->held_cmds->first; n; n = n->next) { uishell_push_stored_cmd(n->cmd.name, n->cmd.regs); }
+  arena_release(vs->held_cmd_arena);
+  vs->held_cmd_arena = 0;
+  vs->held_cmds = 0;
+}
+
+// What a waiting Slot's placeholder says: its Renderer's words, with the
+// Slot Host's generic ones for any it leaves empty.
+internal WH_SlotPlaceholder
+wh_slot_placeholder_from_ctx(Arena *arena, WH_Renderer *renderer, WH_ViewContext *ctx)
+{
+  WH_SlotPlaceholder p = {0};
+  if(renderer->placeholder) { renderer->placeholder(arena, ctx, &p); }
+  switch(ctx->wait)
+  {
+    default:
+    case WH_SlotWait_Unavailable:
+    {
+      if(!p.title.size) { p.title = str8_lit("Waiting for this View's content"); }
+      if(!p.detail.size) { p.detail = str8_lit("Its provider hasn't said what to show here yet. It fills in on its own once it does."); }
+    } break;
+    case WH_SlotWait_Held:
+    {
+      if(!p.title.size) { p.title = str8_lit("This View's content is held"); }
+      if(!p.detail.size) { p.detail = str8_lit("Its provider is holding it. It fills in once the provider lets it go."); }
+    } break;
+    case WH_SlotWait_Failed:
+    {
+      if(!p.title.size) { p.title = str8_lit("This View's content couldn't be shown"); }
+      if(!p.detail.size) { p.detail = str8_lit("Updating it failed."); }
+    } break;
+  }
+  return p;
+}
+
+internal void
+wh_slot_host_placeholder_ui(Arena *arena, WH_Renderer *renderer, WH_ViewContext *ctx)
+{
+  WH_SlotPlaceholder p = wh_slot_placeholder_from_ctx(arena, renderer, ctx);
+  CFG_Node *view = rd_cfg_from_view(ctx->settings.view);
+  Rng2F32 rect = ctx->rect;
+  ui_set_next_pref_width(ui_px(dim_2f32(rect).x, 1));
+  ui_set_next_pref_height(ui_px(dim_2f32(rect).y, 1));
+  UI_Column UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_em(1.8f, 1)) UI_TextAlignment(UI_TextAlign_Center)
+  {
+    ui_spacer(ui_pct(1, 0));
+    ui_label(p.title);
+    UI_TagF("weak") { ui_label(p.detail); }
+    if(ctx->wait == WH_SlotWait_Failed) UI_PrefWidth(ui_text_dim(8, 1))
+    {
+      UI_Row
+      {
+        ui_spacer(ui_pct(1, 0));
+        if(ui_clicked(ui_buttonf("Retry###slot_host_retry"))) { uishell_store_act(view, UIShell_SlotAction_Retry); }
+        ui_spacer(ui_pct(1, 0));
+      }
+    }
+    ui_spacer(ui_pct(1, 0));
+  }
+}
+
+internal void
+wh_slot_host_ui(WH_Renderer *renderer, WH_ViewContext *ctx, RD_ViewState *vs)
+{
+  if(ctx->status & WH_SlotStatus_Waiting)
+  {
+    wh_slot_host_hold_cmds(vs);
+    Temp scratch = scratch_begin(0, 0);
+    wh_slot_host_placeholder_ui(scratch.arena, renderer, ctx);
+    scratch_end(scratch);
+    return;
+  }
+  wh_slot_host_replay_cmds(vs);
+  renderer->ui(ctx);
+  // An unverified instance gets a thin line over its top edge, drawn over
+  // the content rather than beside it: its provider's resolution can come
+  // and go often, and the content shouldn't resize each time. Its tab's
+  // badge says what it means.
+  if(ctx->status & WH_SlotStatus_Unverified)
+  {
+    F32 thickness = Max(2.f, floor_f32(ui_top_font_size()*0.15f));
+    UI_TagF("bad_pop") UI_Rect(r2f32p(0, 0, dim_2f32(ctx->rect).x, thickness))
+    { ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawBackground, "###slot_host_unverified"); }
+  }
 }
 
 internal void *
@@ -2165,7 +2292,7 @@ rd_view_ui(Rng2F32 rect)
       {
         E_ParentKey(ctx.legacy_eval.key)
         {
-          renderer->ui(&ctx);
+          wh_slot_host_ui(renderer, &ctx, vs);
         }
       }
     }

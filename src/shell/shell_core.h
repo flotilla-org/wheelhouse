@@ -46,7 +46,27 @@ enum
   WH_SlotStatus_Placeholder = 1<<2,
   // Built for an immediate tree: the palette, a query or a hover evaluation.
   WH_SlotStatus_Floating = 1<<3,
+  // The Slot has no instance yet and its content isn't resolved, so the Slot
+  // Host draws a placeholder instead of the Renderer (wh_slot_host_ui).
+  WH_SlotStatus_Waiting = 1<<4,
+  // The Slot shows a live instance its provider no longer resolves: it stays
+  // as it is, marked unverified, until the content resolves again.
+  WH_SlotStatus_Unverified = 1<<5,
 };
+
+// Why a Slot's content isn't resolved: its plan's state as this View last
+// saw it (uishell_workspace_store.c, "content_state").
+typedef enum WH_SlotWait
+{
+  WH_SlotWait_None,
+  // Its provider hasn't said what it is, or how to reach it, yet.
+  WH_SlotWait_Unavailable,
+  // Its provider is holding it.
+  WH_SlotWait_Held,
+  // Updating to it failed; it waits for the user to retry.
+  WH_SlotWait_Failed,
+}
+WH_SlotWait;
 
 // How this device last reached the Slot's content (CONTEXT.md, "Target
 // Resolution"): disposable, and never part of its View Spec. A Cleat daemon
@@ -83,6 +103,8 @@ struct WH_ViewContext
   // Read-only; zero for a View that isn't a Slot or is a placeholder.
   UIShell_ViewSpec const *spec;
   WH_SlotStatus status;
+  // Set with WH_SlotStatus_Waiting or _Unverified.
+  WH_SlotWait wait;
   WH_TargetResolution resolution;
   // The Renderer's state for this View, of its registered size; read it
   // with wh_view_state. Zero for a Renderer without state.
@@ -100,6 +122,23 @@ struct WH_ViewContext
 #define WH_VIEW_UI_FUNCTION_DEF(name) internal WH_VIEW_UI_FUNCTION_SIG(WH_VIEW_UI_FUNCTION_NAME(name))
 typedef WH_VIEW_UI_FUNCTION_SIG(WH_ViewUIFunctionType);
 
+// What a waiting Slot's placeholder says (wh_slot_host_ui): a line saying
+// what it waits for, and a line more about it (either may be empty: the
+// Slot Host's generic words stand in).
+typedef struct WH_SlotPlaceholder WH_SlotPlaceholder;
+struct WH_SlotPlaceholder
+{
+  String8 title;
+  String8 detail;
+};
+
+// A Renderer's placeholder hook: what its waiting Slot says, from what the
+// Slot Host knows (ctx->wait, ctx->spec, ctx->resolution). It draws nothing.
+#define WH_SLOT_PLACEHOLDER_FUNCTION_SIG(name) void name(Arena *arena, WH_ViewContext *ctx, WH_SlotPlaceholder *out)
+#define WH_SLOT_PLACEHOLDER_FUNCTION_NAME(name) wh_slot_placeholder__##name
+#define WH_SLOT_PLACEHOLDER_FUNCTION_DEF(name) internal WH_SLOT_PLACEHOLDER_FUNCTION_SIG(WH_SLOT_PLACEHOLDER_FUNCTION_NAME(name))
+typedef WH_SLOT_PLACEHOLDER_FUNCTION_SIG(WH_SlotPlaceholderFunctionType);
+
 // One registry entry (WH_RENDERERS), with docking's part of it.
 typedef struct WH_Renderer WH_Renderer;
 struct WH_Renderer
@@ -110,6 +149,8 @@ struct WH_Renderer
   WH_ContentKinds content;
   EV_ExpandRuleInfoHookFunctionType *expand;
   String8 settings;
+  // Zero: the Slot Host's generic placeholder.
+  WH_SlotPlaceholderFunctionType *placeholder;
   RD_ViewRegistration *registration;
 };
 
@@ -406,6 +447,11 @@ struct RD_ViewState
   void *user_data;
   U64 user_data_size;
   void (*release_user_data)(void *);
+
+  // Commands sent to the View while its Slot waits for content, held by the
+  // Slot Host until it shows the Renderer (wh_slot_host_ui).
+  Arena *held_cmd_arena;
+  struct UIShell_CmdList *held_cmds;
 
   // rjf: query state
   B32 query_is_open;
@@ -1133,7 +1179,7 @@ read_only global WH_Renderer wh_nil_renderer =
 {
   {0},
   WH_VIEW_UI_FUNCTION_NAME(null),
-  0, 0, 0, {0},
+  0, 0, 0, {0}, 0,
   &rd_nil_view_registration,
 };
 
@@ -1233,9 +1279,12 @@ internal B32 wh_renderer_has_trait(WH_Renderer *renderer, RD_ViewTraits traits);
 // The context for building `view` in `rect` this frame, with `state` its
 // Renderer's state (sized by the caller from the registry).
 internal WH_ViewContext wh_view_context_from_view(Arena *arena, RD_ViewAddress view, WH_Renderer *renderer, void *state, Rng2F32 rect);
-// Builds `view` with `renderer` alone, without rd_view_ui's container and
-// query bar: for diagnostics that drive one Renderer.
+// Builds `view` with `renderer` through its Slot Host, without rd_view_ui's
+// container and query bar: for diagnostics that drive one Renderer.
 internal void wh_view_ui_direct(WH_Renderer *renderer, RD_ViewAddress view, Rng2F32 rect);
+// Draws a View through its Slot Host: its Renderer, or the placeholder of a
+// Slot still waiting for content (shell_core.c, "Slot Host").
+internal void wh_slot_host_ui(WH_Renderer *renderer, WH_ViewContext *ctx, RD_ViewState *vs);
 // The ctx's state, checked to be a `size`-byte state: wh_view_state(ctx, T).
 internal void *wh_view_state_checked(WH_ViewContext *ctx, U64 size);
 #define wh_view_state(ctx, T) ((T *)wh_view_state_checked((ctx), sizeof(T)))

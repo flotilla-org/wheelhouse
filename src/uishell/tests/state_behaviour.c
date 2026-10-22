@@ -36,6 +36,11 @@ global B32 state_multi_ended, state_chip_gone;
 // arranges side by side. Each facet's target is "<slot>#<n>", running
 // "attach <slot> <n>"; 0 publishes nothing.
 global U32 state_reviewer_partner, state_reviewer_watch;
+// The partner slot's resolution state; and a third agent, `pair`, at target
+// `state_reviewer_pair` (0: not in the layout), with its own.
+global char *state_reviewer_partner_state = "ready";
+global U32 state_reviewer_pair;
+global char *state_reviewer_pair_state = "ready";
 // The reviewer's Suggested Layout version: 2 adds slot `notes` beside
 // `log`; 3 gives `log` other content and its panel twice the room; 4 drops
 // `watch`.
@@ -62,7 +67,9 @@ state_reviewer_facet(Arena *arena, char *slot, char *rebind, U32 n)
     uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Sfacet", prefix), str8_lit("terminal")),
     uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Spresentation", prefix), str8_lit("terminal")),
     uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Srebind", prefix), str8_cstring(rebind)),
-    uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Sstate", prefix), str8_lit("ready")),
+    uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Sstate", prefix),
+                                   str8_cstring(strcmp(slot, "partner") == 0 ? state_reviewer_partner_state :
+                                                strcmp(slot, "pair") == 0 ? state_reviewer_pair_state : "ready")),
     uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Starget", prefix), push_str8f(arena, "%s#%u", slot, n)),
     uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Skind", prefix), str8_lit("command")),
     uishell_sidebar_json_fact_text(arena, push_str8f(arena, "%Scommand", prefix), push_str8f(arena, "attach %s %u", slot, n)),
@@ -81,11 +88,12 @@ state_producer(UIShell_SidebarState *state)
     Temp scratch = scratch_begin(0, 0);
     Arena *arena = scratch.arena;
     B32 watch = state_reviewer_version < 4;
-    char *slots[5] = {0}, *children[] = {"agents", "side"}, *agents[] = {"primary", "partner", "watch"}, *side[] = {"log", "notes"};
-    U64 slot_count = 0, side_count = state_reviewer_version >= 2 ? 2 : 1;
+    char *slots[6] = {0}, *children[] = {"agents", "side"}, *agents[4] = {"primary", "partner"}, *side[] = {"log", "notes"};
+    U64 slot_count = 0, agent_count = 2, side_count = state_reviewer_version >= 2 ? 2 : 1;
     slots[slot_count++] = "primary";
     slots[slot_count++] = "partner";
-    if(watch) { slots[slot_count++] = "watch"; }
+    if(watch) { slots[slot_count++] = agents[agent_count++] = "watch"; }
+    if(state_reviewer_pair) { slots[slot_count++] = agents[agent_count++] = "pair"; }
     slots[slot_count++] = "log";
     if(state_reviewer_version >= 2) { slots[slot_count++] = "notes"; }
     String8 facts[] =
@@ -99,10 +107,11 @@ state_producer(UIShell_SidebarState *state)
       uishell_sidebar_json_fact_text(arena, str8_lit("workspace.primary.state"), str8_lit("ready")),
       uishell_sidebar_json_fact_text(arena, str8_lit("workspace.primary.target"), str8_lit("vessel:reviewer-v")),
       uishell_sidebar_json_fact_text(arena, str8_lit("action.primary.recipe"), str8_lit("exec /bin/sh")),
-      uishell_sidebar_json_fact_text(arena, str8_lit("layout.version"), push_str8f(arena, "%u", state_reviewer_version)),
+      uishell_sidebar_json_fact_text(arena, str8_lit("layout.version"), push_str8f(arena, "%u%s", state_reviewer_version, state_reviewer_pair ? "+pair" : "")),
       state_json_list(arena, str8_lit("layout.slots"), slots, slot_count),
       state_reviewer_facet(arena, "partner", "keep-previous", state_reviewer_partner),
       watch ? state_reviewer_facet(arena, "watch", "ask", state_reviewer_watch) : str8_zero(),
+      state_reviewer_pair ? state_reviewer_facet(arena, "pair", "replace", state_reviewer_pair) : str8_zero(),
       uishell_sidebar_json_fact_text(arena, str8_lit("layout.slot.log.kind"), str8_lit("command")),
       uishell_sidebar_json_fact_text(arena, str8_lit("layout.slot.log.command"),
                                      state_reviewer_version >= 3 ? str8_lit("tail -f test.log") : str8_lit("tail -f build.log")),
@@ -113,19 +122,24 @@ state_producer(UIShell_SidebarState *state)
       uishell_sidebar_json_fact_text(arena, str8_lit("layout.root"), str8_lit("main")),
       uishell_sidebar_json_fact_text(arena, str8_lit("layout.panel.main.axis"), str8_lit("row")),
       state_json_list(arena, str8_lit("layout.panel.main.children"), children, ArrayCount(children)),
-      state_json_list(arena, str8_lit("layout.panel.agents.slots"), agents, watch ? 3 : 2),
+      state_json_list(arena, str8_lit("layout.panel.agents.slots"), agents, agent_count),
       uishell_sidebar_json_fact_text(arena, str8_lit("layout.panel.agents.selected"), str8_lit("primary")),
       state_json_list(arena, str8_lit("layout.panel.side.slots"), side, side_count),
     };
     StringJoin join = {.sep = str8_lit(",")};
     String8List list = {0};
     for(U64 i = 0; i < ArrayCount(facts); i++) { if(facts[i].size) { str8_list_push(arena, &list, facts[i]); } }
+    // A slot dropped from the layout goes with its facts.
+    String8List unset = {0};
+    char *fields[] = {"entity", "facet", "presentation", "rebind", "state", "target", "kind", "command"};
+    for(U64 i = 0; i < ArrayCount(fields); i++)
+    {
+      if(!watch) { str8_list_pushf(arena, &unset, "\"layout.slot.watch.%s\"", fields[i]); }
+      if(!state_reviewer_pair) { str8_list_pushf(arena, &unset, "\"layout.slot.pair.%s\"", fields[i]); }
+    }
     String8 patch = push_str8f(arena, "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"role\",\"id\":\"p/reviewer\"}},"
-                                      "\"source_id\":\"fixture\",\"set\":{%S},\"unset\":[%s]}", str8_list_join(arena, &list, &join),
-                               // A slot dropped from the layout goes with its facts.
-                               watch ? "" : "\"layout.slot.watch.entity\",\"layout.slot.watch.facet\",\"layout.slot.watch.presentation\","
-                                            "\"layout.slot.watch.rebind\",\"layout.slot.watch.state\",\"layout.slot.watch.target\","
-                                            "\"layout.slot.watch.kind\",\"layout.slot.watch.command\"");
+                                      "\"source_id\":\"fixture\",\"set\":{%S},\"unset\":[%S]}", str8_list_join(arena, &list, &join),
+                               str8_list_join(arena, &unset, &join));
     char *error = 0;
     StateCheck(uishell_sidebar_result(state, andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error), error));
     scratch_end(scratch);
@@ -1437,6 +1451,89 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
     StateCheck(state_previous_view(reviewer, str8_lit("partner")) == &cfg_nil_node);
     StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, &has_previous) == ANDAMENTO_CONTENT_CURRENT && !has_previous);
+  }
+
+  //- The Slot Host (docs/design/subject-workspaces.md): a live instance
+  // whose content stops resolving keeps running, marked unverified, and is
+  // current again once it resolves; a Slot with no instance yet waits, its
+  // placeholder drawn instead of its Renderer, and fills in on its own once
+  // its content resolves.
+  {
+    CFG_Node *partner = state_slot_view(reviewer, str8_lit("partner"));
+    String8 attached = push_str8_copy(scratch.arena, rd_expr_from_cfg(partner));
+    state_reviewer_partner_state = "pending";
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    partner = state_slot_view(reviewer, str8_lit("partner"));
+    WH_ViewContext ctx = wh_view_context_from_view(scratch.arena, rd_view_address_from_cfg(partner), wh_renderer_from_name(partner->string), 0, r2f32p(0, 0, 640, 384));
+    StateCheck(str8_match(rd_expr_from_cfg(partner), attached, 0) && state_previous_view(reviewer, str8_lit("partner")) == &cfg_nil_node);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == ANDAMENTO_CONTENT_UNAVAILABLE);
+    StateCheck((ctx.status & WH_SlotStatus_Unverified) && !(ctx.status & WH_SlotStatus_Waiting) && ctx.wait == WH_SlotWait_Unavailable);
+    StateCheck(str8_match(uishell_slot_badge(scratch.arena, partner), str8_lit("unverified"), 0));
+    state_reviewer_partner_state = "ready";
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    partner = state_slot_view(reviewer, str8_lit("partner"));
+    ctx = wh_view_context_from_view(scratch.arena, rd_view_address_from_cfg(partner), wh_renderer_from_name(partner->string), 0, r2f32p(0, 0, 640, 384));
+    StateCheck(str8_match(rd_expr_from_cfg(partner), attached, 0) && !(ctx.status & (WH_SlotStatus_Unverified|WH_SlotStatus_Waiting)));
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == ANDAMENTO_CONTENT_CURRENT);
+    StateCheck(!str8_match(uishell_slot_badge(scratch.arena, partner), str8_lit("unverified"), 0));
+
+    // A Slot whose View has nothing to show yet, a facet its provider hasn't
+    // resolved, waits: its placeholder is drawn instead of a terminal.
+    state_reviewer_pair = 1;
+    state_reviewer_pair_state = "pending";
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    CFG_Node *pair = state_slot_view(reviewer, str8_lit("pair"));
+    RD_ViewAddress pair_address = rd_view_address_from_cfg(pair);
+    WH_Renderer *pair_renderer = wh_renderer_from_name(pair->string);
+    StateCheck(pair != &cfg_nil_node && str8_match(pair->string, str8_lit("terminal"), 0) && rd_expr_from_cfg(pair).size == 0);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("pair"), pair, 0) == ANDAMENTO_CONTENT_UNAVAILABLE);
+    ctx = wh_view_context_from_view(scratch.arena, pair_address, pair_renderer, 0, r2f32p(0, 0, 640, 384));
+    StateCheck((ctx.status & WH_SlotStatus_Waiting) && ctx.wait == WH_SlotWait_Unavailable);
+    WH_SlotPlaceholder words = wh_slot_placeholder_from_ctx(scratch.arena, pair_renderer, &ctx);
+    StateCheck(str8_match(words.title, str8_lit("This terminal can't attach yet"), 0));
+    // Commands sent to it are held, and replayed once it shows.
+    RD_ViewState *vs = rd_view_state_from_view(pair_address, 0);
+    UIShell_CmdList *frame_cmds = &rd_state->cmds[rd_state->cmds_gen%ArrayCount(rd_state->cmds)];
+    UIShell_CmdList frame_saved = *frame_cmds;
+    MemoryZeroStruct(frame_cmds);
+    UIShell_RegsScope(.view = pair_address)
+    {
+      uishell_cmd_list_push_new(scratch.arena, frame_cmds, str8_lit("page_down"), uishell_regs());
+      wh_slot_host_hold_cmds(vs);
+    }
+    *frame_cmds = frame_saved;
+    StateCheck(vs->held_cmds && vs->held_cmds->count == 1);
+    // Once its content resolves it fills in, in place, on its own.
+    state_reviewer_pair_state = "ready";
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    pair = state_slot_view(reviewer, str8_lit("pair"));
+    ctx = wh_view_context_from_view(scratch.arena, pair_address, pair_renderer, 0, r2f32p(0, 0, 640, 384));
+    StateCheck(rd_cfg_from_view(pair_address) == pair && str8_match(rd_expr_from_cfg(pair), str8_lit("attach pair 1"), 0));
+    StateCheck(!(ctx.status & (WH_SlotStatus_Waiting|WH_SlotStatus_Unverified)));
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("pair"), pair, 0) == ANDAMENTO_CONTENT_CURRENT);
+    U64 queued = rd_state->cmds[0].count;
+    wh_slot_host_replay_cmds(vs);
+    StateCheck(vs->held_cmds == 0 && rd_state->cmds[0].count == queued+1 &&
+               str8_match(rd_state->cmds[0].last->cmd.name, str8_lit("page_down"), 0) &&
+               rd_view_address_match(rd_state->cmds[0].last->cmd.regs->view, pair_address));
+    // Content of a View's own (a terminal opened from a recipe, as `log`)
+    // shows whatever its plan says, as it always has.
+    CFG_Node *log = state_slot_view(reviewer, str8_lit("log"));
+    StateCheck(!uishell_store_view_unfilled(log));
+    state_reviewer_pair = 0;
+    state_producer(state);
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(state_slot_view(reviewer, str8_lit("pair")) == &cfg_nil_node);
+    state_check_committed(ws);
   }
 
   //- An ask slot waits for the user: the View says what it would show, and
