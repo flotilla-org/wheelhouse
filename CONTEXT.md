@@ -136,7 +136,7 @@ An external or in-process service that resolves a **Target Reference** into cont
 _Avoid_: Workspace, runtime instance
 
 **Suggested Layout**:
-A provider-supplied baseline layout for a target.
+The baseline for a target: the **Slots** its provider publishes, arranged by the **Workspace Layout** in use. A provider may also hint at an arrangement, used when no Workspace Layout matches. The Suggested Layout is what the provider offers; the Workspace Layout is how the user sees it arranged.
 _Avoid_: Workspace, user layout
 
 **Workspace Overlay**:
@@ -315,6 +315,18 @@ _Avoid_: Plugin, opener, launcher (a Jackstay "launcher" in a **View Spec** is t
 A **View**'s place in a **Workspace**. It is identified by a slot key: the provider's key for a View from a **Suggested Layout**, or a short generated key, in a separate namespace, for a View the user adds. It carries the View's **View Spec** and the progress of resolving it.
 _Avoid_: Tab, pane, panel
 
+**Slot Host**:
+The wrapper every **Slot**'s **View** is drawn in for the Slot's whole life. It draws the **Renderer** when the Slot is current and a placeholder for that kind of content otherwise, and keeps a live instance showing when its resolution is lost.
+_Avoid_: Pending view, placeholder view
+
+**Workspace Layout**:
+A named, task-focused arrangement of a **Workspace**'s **Slots**, defined as a template keyed by subject kind and hints. A Workspace has one set of Slots; switching layouts rearranges them and never creates or destroys them. Slots a layout leaves out wait in the **Tool Strip**.
+_Avoid_: Suggested Layout (the provider's baseline), arrangement, preset
+
+**Tool Strip**:
+The thin strip at an edge of the **Workspace Region** that shows a **Workspace Subject**, its **Workspace Layouts**, its views, related workspaces and linked items.
+_Avoid_: Toolbar, workspace controls, tab strip
+
 **Detached Slot**:
 A **Slot** whose content the user has overridden in a **Workspace Overlay**, so it no longer follows the provider's **Suggested Layout**. Reattaching drops the override. Being detached is independent of whether the Slot's content is currently resolved.
 _Avoid_: Detached workspace, orphaned view
@@ -417,6 +429,7 @@ _Avoid_: Self, current view, environment view ID
 - A **Workspace Overlay** records which version of its **Suggested Layout** it was made against, so it can be reapplied when the provider's baseline changes. If reapplying conflicts, the conflict is flagged, not dropped.
 - A **Workspace Overlay** is a set of edits keyed by **Slot** and panel, together with the version of the **Suggested Layout** it was made against. Once the user makes a structural change (split, move, close, reorder), the Overlay owns the Workspace's arrangement; Slots the provider adds later are placed by a default rule. Split weights and the selected tab are per-key overrides that never take ownership.
 - A **Dashboard** relates to its template the way a **Workspace Overlay** relates to a **Suggested Layout**.
+- A **Workspace Overlay** keeps **Slot** edits once and arrangement edits per **Workspace Layout**, so rearranging one layout leaves the others alone.
 - **Overlay Sync** moves user changes towards the canonical source; reapplying an overlay moves provider changes towards the user. Both are explicit.
 - A Wheelhouse process opens one **Dashboard**. How its windows relate to that Dashboard is still open.
 - A **Target Reference** may have a **Target Resolution**; a **Runtime Instance** is attached by using that resolution.
