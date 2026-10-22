@@ -2951,6 +2951,8 @@ rd_workspace_surface_schedule(RD_WindowState *ws)
     for(U64 k = 0; k < ws->workspace_surface_admit_count; k += 1)
     {
       RD_WorkspaceSurfaceEntry *entry = rd_workspace_surface_entry_from_box_key(ws, ws->workspace_surface_admit_keys[k]);
+      // A promised preview that no longer needs drawing gives its slot to the
+      // queue below; nothing is lost.
       if(entry == 0 || !entry->defer_render) { continue; }
       entry->defer_render = 0;
       admitted += 1;
