@@ -434,6 +434,8 @@ uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UISh
   B32 has_instance = uishell_store_setting(view, str8_lit("applied")).size != 0 || resolution->session.size != 0;
   if(wait != WH_SlotWait_None && !has_instance && uishell_store_view_unfilled(view)) { *status |= WH_SlotStatus_Waiting; *wait_out = wait; }
   else if(wait == WH_SlotWait_Unavailable && has_instance) { *status |= WH_SlotStatus_Unverified; *wait_out = wait; }
+  // (The wait above is read first, so a View the store hasn't keyed yet
+  // still waits.)
   CFG_Node *owner = uishell_store_view_owner(view);
   String8 key = uishell_store_setting(view, str8_lit("slot"));
   if(owner == &cfg_nil_node || key.size == 0) { return; }

@@ -47,9 +47,16 @@ global char *state_reviewer_pair_state = "ready";
 global U32 state_reviewer_version = 1;
 // The reviewer role's display label, which its provider may change.
 global char *state_reviewer_label = "reviewer";
-// Vessel `bare` in convoy build: 1 publishes it with no opening recipe, 2
-// with the recipe "attach bare", and 3 retracts it.
-global U32 state_bare;
+// Vessel `bare` in convoy build, as the producer publishes it.
+typedef enum StateBare
+{
+  StateBare_None,
+  StateBare_NoRecipe,  // with no opening recipe
+  StateBare_Recipe,    // with the recipe "attach bare"
+  StateBare_Retracted, // its facts retracted, then None
+}
+StateBare;
+global StateBare state_bare;
 
 internal String8
 state_json_list(Arena *arena, String8 key, char **values, U64 count)
@@ -156,14 +163,14 @@ state_producer(UIShell_SidebarState *state)
       uishell_sidebar_json_fact_text(scratch.arena, str8_lit("flotilla.project"), str8_lit("p")),
       uishell_sidebar_json_fact_text(scratch.arena, str8_lit("flotilla.convoy"), str8_lit("build")),
       uishell_sidebar_json_fact_text(scratch.arena, str8_lit("display.label"), str8_lit("Bare vessel")),
-      state_bare == 2 ? "," : "", state_bare == 2 ? recipe : str8_zero());
-    String8 unset = state_bare == 3 ? str8_lit("\"flotilla.project\",\"flotilla.convoy\",\"display.label\",\"status.attention\",\"action.primary.recipe\"") :
-                    state_bare == 1 ? str8_lit("\"action.primary.recipe\"") : str8_zero();
+      state_bare == StateBare_Recipe ? "," : "", state_bare == StateBare_Recipe ? recipe : str8_zero());
+    String8 unset = state_bare == StateBare_Retracted ? str8_lit("\"flotilla.project\",\"flotilla.convoy\",\"display.label\",\"status.attention\",\"action.primary.recipe\"") :
+                    state_bare == StateBare_NoRecipe ? str8_lit("\"action.primary.recipe\"") : str8_zero();
     String8 patch = push_str8f(scratch.arena, "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"bare\"}},"
-                                              "\"source_id\":\"fixture\",\"set\":{%S},\"unset\":[%S]}", state_bare == 3 ? str8_zero() : set, unset);
+                                              "\"source_id\":\"fixture\",\"set\":{%S},\"unset\":[%S]}", state_bare == StateBare_Retracted ? str8_zero() : set, unset);
     char *error = 0;
     StateCheck(uishell_sidebar_result(state, andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error), error));
-    if(state_bare == 3) { state_bare = 0; }
+    if(state_bare == StateBare_Retracted) { state_bare = StateBare_None; }
     scratch_end(scratch);
   }
   if(state_multi_ended)
@@ -1569,9 +1576,10 @@ entry_point(CmdLine *cmdline)
   // recipe opens on its primary Slot, which waits rather than start a shell,
   // fills in once the recipe arrives, and stays, unverified, when it goes.
   {
-    state_bare = 1;
+    state_bare = StateBare_NoRecipe;
     state_producer(state);
     state_frame(ws);
+    Rng2F32 rect = r2f32p(0, 0, 640, 384);
     CFG_Node *previous = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     // It waits from the frame it opens in, before the store keys its View.
     AndamentoNode row = {0};
@@ -1583,7 +1591,7 @@ entry_point(CmdLine *cmdline)
     CFG_Node *primary = rd_cfg_from_view(state_panels(scratch.arena, bare).root->tabs.first->v);
     RD_ViewAddress address = rd_view_address_from_cfg(primary);
     WH_Renderer *renderer = wh_renderer_from_name(primary->string);
-    WH_ViewContext ctx = wh_view_context_from_view(scratch.arena, address, renderer, 0, r2f32p(0, 0, 640, 384));
+    WH_ViewContext ctx = wh_view_context_from_view(scratch.arena, address, renderer, 0, rect);
     StateCheck(uishell_store_setting(primary, str8_lit("slot")).size == 0 && (ctx.status & WH_SlotStatus_Waiting));
     state_frame(ws);
     state_frame(ws);
@@ -1591,28 +1599,28 @@ entry_point(CmdLine *cmdline)
     address = rd_view_address_from_cfg(primary);
     StateCheck(primary != &cfg_nil_node && rd_expr_from_cfg(primary).size == 0 && uishell_store_view_unfilled(primary));
     StateCheck(state_slot_plan(state, bare, str8_lit("primary"), primary, 0) == ANDAMENTO_CONTENT_UNAVAILABLE);
-    ctx = wh_view_context_from_view(scratch.arena, address, renderer, 0, r2f32p(0, 0, 640, 384));
+    ctx = wh_view_context_from_view(scratch.arena, address, renderer, 0, rect);
     StateCheck((ctx.status & WH_SlotStatus_Waiting) && ctx.wait == WH_SlotWait_Unavailable);
     StateCheck(str8_match(wh_slot_placeholder_from_ctx(scratch.arena, renderer, &ctx).title, str8_lit("This terminal can't attach yet"), 0));
-    state_bare = 2;
+    state_bare = StateBare_Recipe;
     state_producer(state);
     state_frame(ws);
     state_frame(ws);
     primary = state_slot_view(bare, str8_lit("primary"));
-    ctx = wh_view_context_from_view(scratch.arena, address, renderer, 0, r2f32p(0, 0, 640, 384));
+    ctx = wh_view_context_from_view(scratch.arena, address, renderer, 0, rect);
     StateCheck(rd_cfg_from_view(address) == primary && str8_match(rd_expr_from_cfg(primary), str8_lit("attach bare"), 0));
     StateCheck(!(ctx.status & (WH_SlotStatus_Waiting|WH_SlotStatus_Unverified)));
     StateCheck(state_slot_plan(state, bare, str8_lit("primary"), primary, 0) == ANDAMENTO_CONTENT_CURRENT);
-    state_bare = 1;
+    state_bare = StateBare_NoRecipe;
     state_producer(state);
     state_frame(ws);
     state_frame(ws);
     primary = state_slot_view(bare, str8_lit("primary"));
-    ctx = wh_view_context_from_view(scratch.arena, address, renderer, 0, r2f32p(0, 0, 640, 384));
+    ctx = wh_view_context_from_view(scratch.arena, address, renderer, 0, rect);
     StateCheck(str8_match(rd_expr_from_cfg(primary), str8_lit("attach bare"), 0) && (ctx.status & WH_SlotStatus_Unverified));
     uishell_cmd("close_workspace", .window = window->id, .cfg = bare->id);
     state_frame(ws);
-    state_bare = 3;
+    state_bare = StateBare_Retracted;
     state_producer(state);
     state_frame(ws);
     ws->root_controlled_split_selected_workspace_id = previous->id;
