@@ -1619,11 +1619,15 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
     {
       uishell_store_save_resolution(state, workspace, key, view, applied, saved);
     }
-    if(cfg_node_from_id(view->id) != view) { andamento_slot_plan_free(plan); continue; }
-    if(asks.size) { uishell_store_set_setting(view, str8_lit("asks"), asks); }
-    else { uishell_store_drop_setting(view, str8_lit("asks")); }
-    if(content_state.size) { uishell_store_set_setting(view, str8_lit("content_state"), content_state); }
-    else { uishell_store_drop_setting(view, str8_lit("content_state")); }
+    // A View released while it was applied keeps no settings; its previous
+    // instance is still released below.
+    if(cfg_node_from_id(view->id) == view)
+    {
+      if(asks.size) { uishell_store_set_setting(view, str8_lit("asks"), asks); }
+      else { uishell_store_drop_setting(view, str8_lit("asks")); }
+      if(content_state.size) { uishell_store_set_setting(view, str8_lit("content_state"), content_state); }
+      else { uishell_store_drop_setting(view, str8_lit("content_state")); }
+    }
     // A previous instance the user closed, or none kept (content that
     // couldn't keep one), is released.
     if(content.has_previous && !uishell_store_key_in(key, previous, previous_count))

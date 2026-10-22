@@ -1713,12 +1713,13 @@ wh_view_ui_direct(WH_Renderer *renderer, RD_ViewAddress view, Rng2F32 rect)
 // nothing of its own to show yet, gets a placeholder its Renderer words (its
 // placeholder hook) instead of the Renderer, so nothing starts from a View
 // Spec that isn't resolved; commands sent to it are held and replayed to the
-// Renderer once it
-// shows. A live instance whose content stops resolving keeps running, marked
+// Renderer once it shows, unfiltered and in order, as the file view's
+// `pending` replays them. A live instance whose content stops resolving keeps running, marked
 // unverified by a line over its top edge and its tab's badge
 // (uishell_store_notices).
 
-// The most commands a waiting Slot holds; later ones are dropped.
+// The most commands a waiting Slot holds; later ones are dropped, as input
+// sent to content that never showed.
 #define WH_SLOT_HOST_HELD_CMD_CAP 64
 
 internal void

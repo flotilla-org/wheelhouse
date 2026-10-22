@@ -1497,6 +1497,13 @@ entry_point(CmdLine *cmdline)
     StateCheck((ctx.status & WH_SlotStatus_Waiting) && ctx.wait == WH_SlotWait_Unavailable);
     WH_SlotPlaceholder words = wh_slot_placeholder_from_ctx(scratch.arena, pair_renderer, &ctx);
     StateCheck(str8_match(words.title, str8_lit("This terminal can't attach yet"), 0));
+    // Each wait has its own words; a failed one says how to recover.
+    WH_ViewContext waited = ctx;
+    waited.wait = WH_SlotWait_Held;
+    StateCheck(str8_match(wh_slot_placeholder_from_ctx(scratch.arena, pair_renderer, &waited).title, str8_lit("This terminal is held"), 0));
+    waited.wait = WH_SlotWait_Failed;
+    words = wh_slot_placeholder_from_ctx(scratch.arena, pair_renderer, &waited);
+    StateCheck(str8_match(words.title, str8_lit("This terminal couldn't start"), 0) && str8_find_needle(words.detail, 0, str8_lit("Retry"), 0) < words.detail.size);
     // Commands sent to it are held, and replayed once it shows.
     RD_ViewState *vs = rd_view_state_from_view(pair_address, 0);
     UIShell_CmdList *frame_cmds = &rd_state->cmds[rd_state->cmds_gen%ArrayCount(rd_state->cmds)];

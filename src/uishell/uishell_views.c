@@ -6014,6 +6014,8 @@ WH_SLOT_PLACEHOLDER_FUNCTION_DEF(terminal)
     case WH_SlotWait_Failed:
     {
       out->title = str8_lit("This terminal couldn't start");
+      out->detail = target.size ? push_str8f(arena, "Starting %S failed. Retry to start it again.", target) :
+                                  str8_lit("Starting it failed. Retry to start it again.");
     } break;
   }
 }
