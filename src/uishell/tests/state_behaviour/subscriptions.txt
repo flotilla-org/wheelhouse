@@ -5,8 +5,8 @@ subscriptions
   subscription 1 flotilla daemon="ssh://alpha"
   subscription 2 flotilla daemon="ssh://beta"
     workspace "Fleet vessel via alpha" subject=vessel/fleet-v provider=1
-        row project/fleet "Fleet via alpha" provider=1
-        row project/fleet "Fleet via beta" provider=2
+        row project/fleet "Fleet via alpha" openable provider=1
+        row project/fleet "Fleet via beta" openable provider=2
         row vessel/fleet-v "Fleet vessel via alpha" live status="waiting" provider=1
         row vessel/fleet-v "Fleet vessel via beta" openable status="waiting" provider=2
 ## beta's connector down: its rows kept, stale
@@ -14,8 +14,8 @@ subscriptions
   subscription 1 flotilla daemon="ssh://alpha"
   subscription 2 flotilla daemon="ssh://beta" stale
     workspace "Fleet vessel via alpha" subject=vessel/fleet-v provider=1
-        row project/fleet "Fleet via alpha" provider=1
-        row project/fleet "Fleet via beta" provider=2 stale
+        row project/fleet "Fleet via alpha" openable provider=1
+        row project/fleet "Fleet via beta" openable provider=2 stale
         row vessel/fleet-v "Fleet vessel via alpha" live status="waiting" provider=1
         row vessel/fleet-v "Fleet vessel via beta" openable status="waiting" provider=2 stale
 ## beta's connector back and publishing
@@ -23,15 +23,15 @@ subscriptions
   subscription 1 flotilla daemon="ssh://alpha"
   subscription 2 flotilla daemon="ssh://beta"
     workspace "Fleet vessel via alpha" subject=vessel/fleet-v provider=1
-        row project/fleet "Fleet via alpha" provider=1
-        row project/fleet "Fleet via beta" provider=2
+        row project/fleet "Fleet via alpha" openable provider=1
+        row project/fleet "Fleet via beta" openable provider=2
         row vessel/fleet-v "Fleet vessel via alpha" live status="waiting" provider=1
         row vessel/fleet-v "Fleet vessel via beta" openable status="waiting" provider=2
 ## alpha removed: its facts retracted, its open workspace kept
 subscriptions
   subscription 1 flotilla daemon="ssh://beta"
     workspace "Fleet vessel via alpha" subject=vessel/fleet-v provider=removed
-        row project/fleet "Fleet via beta" provider=1
+        row project/fleet "Fleet via beta" openable provider=1
         row vessel/fleet-v "Fleet vessel via alpha" live status="waiting" provider=removed
         row vessel/fleet-v "Fleet vessel via beta" openable status="waiting" provider=1
           pin project/fleet "Fleet via beta" card provider=1
@@ -39,7 +39,7 @@ subscriptions
 subscriptions
   subscription 1 flotilla daemon="ssh://beta"
     workspace "Fleet vessel via alpha" subject=vessel/fleet-v provider=removed
-        row project/fleet "Fleet via beta" provider=1
+        row project/fleet "Fleet via beta" openable provider=1
         row vessel/fleet-v "Fleet vessel via alpha" live provider=removed
         row vessel/fleet-v "Fleet vessel via beta" openable status="waiting" provider=1
           pin project/fleet "Fleet via beta" card provider=1

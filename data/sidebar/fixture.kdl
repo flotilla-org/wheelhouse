@@ -2,6 +2,8 @@ variable "density" default="roomy" {
   value "roomy"
   value "compact"
 }
+workspace kind="vessel"
+
 display-variable "show-issues" type="bool" default=true label="Issues" icon="I"
 
 region "tree" root-template="tree/title" form="compact" placement="tree"

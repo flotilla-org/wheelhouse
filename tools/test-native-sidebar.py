@@ -719,7 +719,9 @@ int main(void) {
         self.publish_role('governor', ready=False)
         _, nodes = self.snapshot()
         held = next(n for n in nodes if n.entity_id.string() == 'p/governor')
-        self.assertFalse(held.openable)  # visible and inspectable, never a stale attachment
+        # A workspace subject opens while held; its primary Slot waits, never a
+        # stale attachment.
+        self.assertTrue(held.openable)
         self.publish_role('governor', attempt='g-v')
         self.open_workspace('p/governor', 44)
         _, nodes = self.snapshot()
@@ -932,7 +934,7 @@ int main(void) {
         self.assertIn('Convoys: 3', fields(project.first_detail, project.detail_count))
 
     def test_hierarchy_and_truthful_openability(self):
-        _, nodes = self.snapshot()
+        snapshot, nodes = self.snapshot()
         find = lambda identity: next(n for n in nodes if n.entity_id.string() == identity)
         self.assertEqual(nodes[find('checkout').parent].entity_id.string(), 'p')
         self.assertEqual(nodes[find('c').parent].entity_id.string(), 'p')
@@ -940,8 +942,12 @@ int main(void) {
         self.assertTrue(find('checkout').openable)
         self.assertTrue(find('v').openable)  # one-vessel convoy must not hide its activation
         self.assertTrue(find('session').openable)
-        self.assertFalse(find('unavailable').openable)
         self.assertFalse(find('issue').openable)
+        # A vessel is a workspace subject: it opens without an opening recipe,
+        # its primary Slot unfilled until one arrives.
+        self.assertTrue(find('unavailable').openable)
+        kind, _, _, recipe = self.dispatch(snapshot, find('unavailable').activate)
+        self.assertEqual((kind, recipe), (1, ''))
 
     def test_inline_siblings_keep_independent_bindings_when_parent_collapses(self):
         update = patch('vessel', 'review', **{'flotilla.convoy': 'c',
