@@ -200,7 +200,8 @@ Plenty of fiddly cases will turn up in use. Known so far:
 - **A Luchs view navigated away from its linked item** (a PR page, say) stops
   being that item's view: it becomes unlinked, a Detached Slot, and the linked
   item's next click opens a fresh view rather than showing the one now
-  elsewhere.
+  elsewhere. The fresh view binds the item's Slot again; the unlinked one stays
+  open as its own Detached Slot until closed.
 
 ## Developing against the dummy fleet
 

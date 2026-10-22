@@ -136,7 +136,7 @@ An external or in-process service that resolves a **Target Reference** into cont
 _Avoid_: Workspace, runtime instance
 
 **Suggested Layout**:
-The baseline for a target: the **Slots** its provider publishes, arranged by the **Workspace Layout** in use. A provider may also hint at an arrangement, used when no Workspace Layout matches.
+The baseline for a target: the **Slots** its provider publishes, arranged by the **Workspace Layout** in use. A provider may also hint at an arrangement, used when no Workspace Layout matches. The Suggested Layout is what the provider offers; the Workspace Layout is how the user sees it arranged.
 _Avoid_: Workspace, user layout
 
 **Workspace Overlay**:

@@ -2,7 +2,7 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta charset="utf-8">
 <!--
-  PROTOTYPE - throwaway. Answers: does the tool strip in
+  PROTOTYPE - throwaway, non-normative and not part of the build. Answers: does the tool strip in
   docs/design/subject-workspaces.md read well (sections, dividers, any edge),
   does switching task-focused layouts over one set of Slots feel right, and
   what do the Slot Host's placeholders look like (unavailable, unverified,
@@ -487,8 +487,10 @@ function go(k, origin){
   if(origin && kind === 'in'){ const o = origin.getBoundingClientRect();
     ox = Math.max(0, Math.min(100, (o.left + o.width/2 - r.left) / r.width * 100));
     oy = Math.max(0, Math.min(100, (o.top + o.height/2 - r.top) / r.height * 100)); }
+  document.querySelectorAll('.ws-ghost').forEach(g => g.remove());
+  wsEl.getAnimations().forEach(a => a.cancel());
   const ghost = wsEl.cloneNode(true);
-  ghost.removeAttribute('id'); ghost.setAttribute('aria-hidden', 'true');
+  ghost.classList.add('ws-ghost'); ghost.removeAttribute('id'); ghost.setAttribute('aria-hidden', 'true');
   ghost.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;pointer-events:none;z-index:5;transform-origin:${ox}% ${oy}%`;
   document.body.appendChild(ghost);
   subject = k; render();
