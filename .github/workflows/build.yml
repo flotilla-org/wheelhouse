@@ -21,9 +21,9 @@ env:
   # Jackstay main: ABI 0.17, the v3 track handshake (jackstay#119) with
   # affordances as a track.
   JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
-  # Workspace subjects open without an opening recipe (andamento#180, for
-  # #415), pinned to its merge commit. ABI remains 7.
-  ANDAMENTO_REV: 7fe869c3e1a6041a4d7be66ba15cf8cac800b001
+  # Workspace Layouts (andamento#182, for #416), pinned to its merge commit.
+  # ABI 8.
+  ANDAMENTO_REV: 806eb5c10201044f964d09c0831f273346c98a71
 
 jobs:
   daily-driver:

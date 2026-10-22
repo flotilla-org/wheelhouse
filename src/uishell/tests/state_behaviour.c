@@ -992,7 +992,56 @@ entry_point(CmdLine *cmdline)
   uishell_cmd("detach_workspace", .window = window->id, .cfg = kept->id);
   state_frame(ws);
   StateCheck(str8_match(kept->string, str8_lit("detached_workspace"), 0));
-  state_open_subject(ws, str8_lit("vessel"), str8_lit("chip-v"));
+  CFG_Node *chip = state_open_subject(ws, str8_lit("vessel"), str8_lit("chip-v"));
+  state_frame(ws);
+
+  //- Workspace Layouts (daily-driver.kdl): a vessel's agent on the left, its
+  // shell left out until + shows it; closing the shell's tab leaves it out
+  // again, its slot kept. A convoy has two layouts to choose between.
+  {
+    AndamentoWorkspaceId chip_id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(chip));
+    AndamentoWorkspaceArrangement *arranged = andamento_arrangement_get(state->core, chip_id, 0);
+    StateCheck(arranged && arranged->has_layout && str8_match(uishell_sidebar_string(arranged->layout), str8_lit("agent-and-files"), 0));
+    andamento_arrangement_free(arranged);
+    StateCheck(uishell_store_layouts(scratch.arena, chip).count == 1);
+    String8Array unplaced = uishell_store_unplaced(scratch.arena, chip);
+    StateCheck(unplaced.count == 1 && str8_match(unplaced.v[0], str8_lit("t:shell"), 0));
+    StateCheck(str8_match(uishell_store_slot_title(unplaced.v[0]), str8_lit("shell"), 0));
+    uishell_store_show_slot(chip, 0, str8_lit("t:shell"));
+    state_frame(ws);
+    CFG_Node *shell = state_slot_view(chip, str8_lit("t:shell"));
+    StateCheck(shell != &cfg_nil_node);
+    StateCheck(uishell_store_unplaced(scratch.arena, chip).count == 0);
+    state_check_committed(ws);
+    uishell_store_remove(shell);
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(state_slot_view(chip, str8_lit("t:shell")) == &cfg_nil_node);
+    StateCheck(uishell_store_unplaced(scratch.arena, chip).count == 1);
+    AndamentoSlots *chip_slots = andamento_slots_get(state->core, chip_id, 0);
+    StateCheck(uishell_store_slot_find(chip_slots, str8_lit("t:shell"), 0));
+    andamento_slots_free(chip_slots);
+    state_check_committed(ws);
+
+    CFG_Node *convoy = state_open_subject(ws, str8_lit("convoy"), str8_lit("build"));
+    state_frame(ws);
+    UIShell_WorkspaceLayouts layouts = uishell_store_layouts(scratch.arena, convoy);
+    StateCheck(layouts.count == 2 && layouts.current == 0 && layouts.fallback == 0 && !layouts.owned);
+    StateCheck(layouts.count == 2 && str8_match(layouts.names[1], str8_lit("live-only"), 0));
+    uishell_cmd("next_workspace_layout", .window = window->id, .cfg = convoy->id);
+    state_frame(ws);
+    state_frame(ws);
+    layouts = uishell_store_layouts(scratch.arena, convoy);
+    StateCheck(layouts.current == 1);
+    state_check_committed(ws);
+    uishell_cmd("default_workspace_layout", .window = window->id, .cfg = convoy->id);
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(uishell_store_layouts(scratch.arena, convoy).current == 0);
+    state_check_committed(ws);
+    uishell_cmd("close_workspace", .window = window->id, .cfg = convoy->id);
+    state_frame(ws);
+  }
   state_multi_ended = state_chip_gone = 1;
   state_producer(state);
   state_frame(ws);
