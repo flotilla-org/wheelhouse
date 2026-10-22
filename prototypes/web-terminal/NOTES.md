@@ -76,4 +76,4 @@ There were no late animation frames with either renderer.
 
 ## Verdict
 
-_Pending with Robert:_ WebGL2, with one shared context per page and a canvas 2D fallback?
+**WebGL2 with one shared context per page, and canvas 2D as a fallback** (Robert, 23 October 2026). Optimisations come later.
