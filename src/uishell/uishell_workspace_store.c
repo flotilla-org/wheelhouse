@@ -425,6 +425,15 @@ uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UISh
   // A machine-local one is the View's Presentation State.
   for(U64 i = 0; i < ArrayCount(resolved); i++) { *resolved[i] = rd_cfg_setting_child(view, uishell_store_resolution_keys[i])->first->string; }
   if(str8_match(view->string, str8_lit("placeholder"), 0)) { *status |= WH_SlotStatus_Placeholder; }
+  // A Slot with nothing to show waits; one with a live instance whose content
+  // stops resolving keeps it, unverified. A View that has content of its own
+  // (opened from a recipe, or restored) shows it, as it always has: held
+  // content stays as it is. A primary opened without a recipe waits before
+  // the store has keyed it.
+  WH_SlotWait wait = uishell_store_slot_wait(uishell_store_setting(view, str8_lit("content_state")));
+  B32 has_instance = uishell_store_setting(view, str8_lit("applied")).size != 0 || resolution->session.size != 0;
+  if(wait != WH_SlotWait_None && !has_instance && uishell_store_view_unfilled(view)) { *status |= WH_SlotStatus_Waiting; *wait_out = wait; }
+  else if(wait == WH_SlotWait_Unavailable && has_instance) { *status |= WH_SlotStatus_Unverified; *wait_out = wait; }
   CFG_Node *owner = uishell_store_view_owner(view);
   String8 key = uishell_store_setting(view, str8_lit("slot"));
   if(owner == &cfg_nil_node || key.size == 0) { return; }
@@ -433,14 +442,6 @@ uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UISh
   uishell_workspace_id_from_string(uishell_store_setting(owner, str8_lit("workspace_id")), &slot->workspace);
   slot->key = key;
   *status |= WH_SlotStatus_Slot;
-  // A Slot with nothing to show waits; one with a live instance whose content
-  // stops resolving keeps it, unverified. A View that has content of its own
-  // (opened from a recipe, or restored) shows it, as it always has: held
-  // content stays as it is.
-  WH_SlotWait wait = uishell_store_slot_wait(uishell_store_setting(view, str8_lit("content_state")));
-  B32 has_instance = uishell_store_setting(view, str8_lit("applied")).size != 0 || resolution->session.size != 0;
-  if(wait != WH_SlotWait_None && !has_instance && uishell_store_view_unfilled(view)) { *status |= WH_SlotStatus_Waiting; *wait_out = wait; }
-  else if(wait == WH_SlotWait_Unavailable && has_instance) { *status |= WH_SlotStatus_Unverified; *wait_out = wait; }
   // A Slot following its provider has the provider's spec, which Andamento
   // keeps; this device holds only what it last resolved it to.
   if(cfg_node_child_from_string(view, str8_lit("follows_provider")) != &cfg_nil_node)
@@ -2312,12 +2313,17 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   }
   // A workspace just opened on its subject (`arrangement_fresh`) takes the
   // arrangement its Suggested Layout suggests, keeping the View it opened
-  // with; one with no suggestion keeps the arrangement it opened with.
+  // with; one with no suggestion keeps the arrangement it opened with. A
+  // baseline of the primary alone (every workspace subject has one) suggests
+  // nothing.
   CFG_Node *fresh = cfg_node_child_from_string(owner, str8_lit("arrangement_fresh"));
   if(fresh != &cfg_nil_node)
   {
     cfg_node_release(rd_state->cfg, fresh);
-    if(stored->doc.panel_count)
+    AndamentoOverlay *overlay = UIShell_StoreCall(state, andamento_overlay_get(state->core, workspace, 0));
+    B32 suggests = overlay && overlay->has_baseline && !overlay->primary_only;
+    andamento_overlay_free(overlay);
+    if(stored->doc.panel_count && suggests)
     {
       if(uishell_store_assign_keys(arena, owner, &doc, slots)) { rd_arrangement_set(a); }
       andamento_arrangement_free(stored);

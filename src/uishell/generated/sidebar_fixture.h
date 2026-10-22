@@ -4,6 +4,8 @@ static const char uishell_sidebar_fixture_config[] =
 "  value \"roomy\"\n"
 "  value \"compact\"\n"
 "}\n"
+"workspace kind=\"vessel\"\n"
+"\n"
 "display-variable \"show-issues\" type=\"bool\" default=true label=\"Issues\" icon=\"I\"\n"
 "\n"
 "region \"tree\" root-template=\"tree/title\" form=\"compact\" placement=\"tree\"\n"
@@ -156,6 +158,14 @@ static const char uishell_sidebar_local_config[] =
 "}\n";
 static const char uishell_sidebar_daily_config[] =
 "version 1\n"
+"\n"
+"// Workspace subjects: each opens a workspace whether or not its provider has\n"
+"// published how to fill it yet; its Slots show what can't connect as\n"
+"// unavailable and fill in as it does (docs/design/subject-workspaces.md).\n"
+"workspace kind=\"project\"\n"
+"workspace kind=\"role\"\n"
+"workspace kind=\"convoy\"\n"
+"workspace kind=\"vessel\"\n"
 "\n"
 "display-variable \"show-issues\" type=\"bool\" default=true label=\"Issues\" icon=\"I\" persist=true\n"
 "\n"

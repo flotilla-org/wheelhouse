@@ -1923,7 +1923,9 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
       }
       if(str8_match(workspace->string, str8_lit("detached_workspace"), 0))
       { cfg_node_equip_string(rd_state->cfg, workspace, str8_lit("workspace")); }
-      if(workspace == &cfg_nil_node && effect.recipe.len != 0)
+      // A subject's workspace always opens: without a recipe, its primary
+      // Slot waits for one (docs/design/subject-workspaces.md).
+      if(workspace == &cfg_nil_node)
       {
         workspace = cfg_node_new(rd_state->cfg, split->owner_cfg, str8_lit("workspace"));
         uishell_workspace_id_from_cfg(workspace);
@@ -1956,10 +1958,18 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
           // current; recording its target stops the first plan restarting it.
           if(effect.has_primary_target)
           { rd_view_setting_set(rd_view_address_from_cfg(tab), str8_lit("managed_target"), uishell_sidebar_string(effect.primary_target)); }
+          // With no recipe the primary is the provider's facet, unresolved:
+          // its Slot Host waits from the first frame rather than start a
+          // terminal with no command (a shell), and it fills in once the
+          // provider publishes one.
+          if(command.size == 0)
+          {
+            uishell_store_mark_follows(tab, 1);
+            uishell_store_set_setting(tab, str8_lit("content_state"), str8_lit("unavailable"));
+          }
           scratch_end(scratch);
         }
       }
-      failure = str8_lit("No terminal command is available for this entry");
       if(workspace != &cfg_nil_node) { outcome = ANDAMENTO_COMPLETE_MATERIALIZE; }
     }
     else if(effect.kind == ANDAMENTO_EFFECT_FOCUS)
