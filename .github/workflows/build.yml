@@ -24,7 +24,7 @@ env:
   # Workspace subjects open without an opening recipe (andamento#180, for
   # #415). Pinned to its branch until it merges; then to its merge commit.
   # ABI remains 7.
-  ANDAMENTO_REV: 837bbf255822f38bfca3d483095b89cea429d91f
+  ANDAMENTO_REV: 054ee33e216347bc01585ab9d4e2d210abe93185
 
 jobs:
   daily-driver:
