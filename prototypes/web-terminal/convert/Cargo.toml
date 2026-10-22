@@ -1,0 +1,15 @@
+# PROTOTYPE - throwaway (wheelhouse#431). Plays an asciicast recording
+# through Cleat's Ghostty VT engine and writes the screen-state frames a
+# browser renderer consumes, in the CBOR shape from wheelhouse#430.
+[package]
+name = "cast-to-screen"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+cleat = { path = "../../../../../cleat-worktrees/wheelhouse-osc52-169/crates/cleat" }
+ciborium = "0.2"
+postcard = { version = "1", features = ["alloc"] }
+
+[workspace]

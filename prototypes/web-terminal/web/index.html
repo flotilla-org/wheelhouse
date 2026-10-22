@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- PROTOTYPE - throwaway (wheelhouse#431). Run: pnpm install && pnpm dev; ?r=canvas|webgl -->
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Web terminal renderer prototype</title>
+<style>
+html,body{margin:0;background:#141414;color:#ccc;font:13px system-ui,sans-serif}
+#bar{display:flex;gap:10px;align-items:center;padding:8px 12px;border-bottom:1px solid #333;flex-wrap:wrap}
+#bar button{background:#2b2b2b;color:#ddd;border:1px solid #444;border-radius:3px;padding:3px 10px;cursor:pointer}
+#bar button.on{border-color:#e0b34a;color:#e0b34a}
+#wrap{padding:12px;overflow:auto}
+#term{position:relative;display:inline-block;background:#000;line-height:0}
+#cursor{position:absolute;background:#e0e0e0cc;mix-blend-mode:difference;pointer-events:none}
+#m{font:12px ui-monospace,monospace;white-space:pre;padding:0 12px;color:#9a9a9a}
+</style></head>
+<body>
+<div id="bar">
+  <b>Renderer</b><button data-r="canvas">Canvas 2D</button><button data-r="webgl">WebGL2</button>
+  <b>Play</b><button id="real">Real time</button><button id="max">As fast as possible</button>
+  <span id="pos"></span>
+</div>
+<div id="m"></div>
+<div id="wrap"><div id="term"><div id="cursor"></div></div></div>
+<script type="module" src="/src/main.ts"></script>
+</body></html>

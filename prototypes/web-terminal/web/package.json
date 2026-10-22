@@ -1,0 +1,8 @@
+{
+  "name": "web-terminal-prototype",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "vite", "build": "vite build" },
+  "dependencies": { "cbor-x": "1.6.6" },
+  "devDependencies": { "typescript": "5.9.3", "vite": "7.1.12" }
+}
