@@ -69,4 +69,28 @@ internal String8 uishell_slot_badge(Arena *arena, CFG_Node *view);
 // and returns what is left of `rect` for the View.
 internal Rng2F32 uishell_slot_banner(CFG_Node *view, Rng2F32 rect);
 
+// A workspace's Workspace Layouts (uishell_workspace_store.c, "Workspace
+// Layouts"), in its template's order: none when its subject's kind has no
+// template. `current` and `fallback` (the default) index `names`, or are
+// `count` for none.
+typedef struct UIShell_WorkspaceLayouts UIShell_WorkspaceLayouts;
+struct UIShell_WorkspaceLayouts
+{
+  String8 *names;
+  U64 count;
+  U64 current;
+  U64 fallback;
+  // The user has rearranged the current layout: resetting it does something.
+  B32 owned;
+};
+
+internal UIShell_WorkspaceLayouts uishell_store_layouts(Arena *arena, CFG_Node *owner);
+// Shows layout `name`, or (empty) the default.
+internal void uishell_store_choose_layout(CFG_Node *owner, String8 name);
+internal void uishell_store_reset_layout(CFG_Node *owner);
+// The slots the layout leaves out, and showing one in `panel`.
+internal String8Array uishell_store_unplaced(Arena *arena, CFG_Node *owner);
+internal String8 uishell_store_slot_title(String8 key);
+internal void uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key);
+
 #endif // UISHELL_WORKSPACE_STORE_H

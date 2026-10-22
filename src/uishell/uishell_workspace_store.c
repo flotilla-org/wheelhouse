@@ -739,11 +739,13 @@ uishell_store_user_key_valid(String8 key)
   return 1;
 }
 
-// A provider's key (no ':'), or one of the user's.
+// A provider's key (no ':'), a workspace template's ("t:" and a provider
+// key), or one of the user's.
 internal B32
 uishell_store_key_valid(String8 key)
 {
   if(uishell_store_user_key_valid(key)) { return 1; }
+  if(str8_match(str8_prefix(key, 2), str8_lit("t:"), 0)) { key = str8_skip(key, 2); }
   if(!key.size || key.size > 64) { return 0; }
   for(U64 i = 0; i < key.size; i++)
   {
@@ -1948,6 +1950,174 @@ uishell_store_resolve_arrangement(CFG_Node *view, U32 choice)
   andamento_arrangement_free(stored);
 }
 
+//- Workspace Layouts
+//
+// A subject whose kind has a template has layouts to choose between
+// (docs/sidebar-design/workspace-layouts.md in Andamento). Choosing one, or
+// resetting it, moves the arrangement's generation, which the next sync
+// follows; slots the layout leaves out are unplaced, and "Show …" places one.
+
+internal void uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revision_moved);
+internal void uishell_store_saw_live(UIShell_SidebarState *state, UIShell_StoreEntry *entry, CFG_Node *owner);
+
+internal UIShell_SidebarState *
+uishell_store_state_from_owner(CFG_Node *owner)
+{
+  if(owner == &cfg_nil_node) { return 0; }
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(rd_window_from_cfg(owner));
+  return ws != &rd_nil_window_state && ws->sidebar && ws->sidebar->core ? ws->sidebar : 0;
+}
+
+internal UIShell_WorkspaceLayouts
+uishell_store_layouts(Arena *arena, CFG_Node *owner)
+{
+  UIShell_WorkspaceLayouts result = {0};
+  UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
+  if(!state) { return result; }
+  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+  AndamentoLayoutList *list = UIShell_StoreCall(state, andamento_layouts_get(state->core, workspace, 0));
+  if(list && list->count)
+  {
+    result.names = push_array(arena, String8, list->count);
+    result.count = list->count;
+    result.current = result.fallback = list->count;
+    for(U64 i = 0; i < list->count; i++)
+    {
+      result.names[i] = push_str8_copy(arena, uishell_sidebar_string(list->layouts[i].name));
+      if(list->layouts[i].flags & ANDAMENTO_LAYOUT_CURRENT) { result.current = i; }
+      if(list->layouts[i].flags & ANDAMENTO_LAYOUT_DEFAULT) { result.fallback = i; }
+    }
+  }
+  andamento_layouts_free(list);
+  AndamentoWorkspaceArrangement *stored = result.count ? UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0)) : 0;
+  result.owned = stored && stored->owned;
+  andamento_arrangement_free(stored);
+  return result;
+}
+
+// Shows layout `name` in `owner`, or (empty) its default. What this device
+// hasn't committed goes first, so the layout it leaves keeps it.
+internal void
+uishell_store_choose_layout(CFG_Node *owner, String8 name)
+{
+  UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
+  if(!state) { return; }
+  uishell_store_sync_owner(state, owner, 0);
+  char *error = 0;
+  B32 ok = UIShell_StoreCall(state, andamento_layout_choose(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)),
+                                                             name.size != 0, uishell_sidebar_text(name), &error));
+  uishell_sidebar_result(state, ok, error);
+  rd_request_frame();
+}
+
+// Drops the current layout's arrangement edits: it follows its template again.
+internal void
+uishell_store_reset_layout(CFG_Node *owner)
+{
+  UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
+  if(!state) { return; }
+  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+  AndamentoWorkspaceArrangement *stored = UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0));
+  if(stored)
+  {
+    char *error = 0;
+    uint32_t result = UIShell_StoreCall(state, andamento_arrangement_resolve(state->core, workspace, ANDAMENTO_ARRANGEMENT_FOLLOW, stored->generation, 0, &error));
+    uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
+  }
+  andamento_arrangement_free(stored);
+  rd_request_frame();
+}
+
+// The slots `owner`'s layout leaves out, in slot order.
+internal String8Array
+uishell_store_unplaced(Arena *arena, CFG_Node *owner)
+{
+  String8List keys = {0};
+  UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
+  AndamentoWorkspaceArrangement *stored = state ? UIShell_StoreCall(state, andamento_arrangement_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0)) : 0;
+  for(U64 i = 0; stored && stored->has_layout && i < stored->note_count; i++)
+  {
+    if(stored->notes[i].kind == ANDAMENTO_NOTE_UNPLACED)
+    { str8_list_push(arena, &keys, push_str8_copy(arena, uishell_sidebar_string(stored->notes[i].key))); }
+  }
+  andamento_arrangement_free(stored);
+  return str8_array_from_list(arena, &keys);
+}
+
+// What "Show …" calls an unplaced slot: a template slot by its name.
+internal String8
+uishell_store_slot_title(String8 key)
+{
+  return str8_match(str8_prefix(key, 2), str8_lit("t:"), 0) ? str8_skip(key, 2) : key;
+}
+
+// Places unplaced slot `key` of `owner` as the selected tab of `panel`, or
+// of its first tab panel: a commit that gives it a tab, then a follow,
+// which builds its View.
+internal void
+uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key)
+{
+  UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
+  if(!state || !key.size) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  Arena *arena = scratch.arena;
+  key = push_str8_copy(arena, key);
+  uishell_store_sync_owner(state, owner, 0);
+  UIShell_WorkspaceId id = uishell_workspace_id_from_cfg(owner);
+  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(id);
+  RD_Arrangement *a = rd_arrangement_live(uishell_store_owner(owner));
+  UIShell_StoreDoc doc = uishell_store_doc(arena, a);
+  AndamentoWorkspaceArrangement *stored = UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0));
+  // The target: `panel` if it holds tabs, else the first that does.
+  U64 target = doc.panel_count, index = 0;
+  for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p), index++)
+  {
+    if(doc.panels[index].kind != ANDAMENTO_PANEL_TABS) { continue; }
+    if(target == doc.panel_count || p->id == panel) { target = index; }
+    if(p->id == panel) { break; }
+  }
+  if(stored && target < doc.panel_count && !uishell_store_key_in(key, doc.keys, doc.tab_count))
+  {
+    AndamentoDocPanel *out = &doc.panels[target];
+    AndamentoText *tabs = push_array(arena, AndamentoText, out->tab_count+1);
+    MemoryCopy(tabs, out->tabs, sizeof(*tabs)*out->tab_count);
+    tabs[out->tab_count] = uishell_sidebar_text(key);
+    out->tabs = tabs;
+    out->selected = out->tab_count;
+    out->tab_count += 1;
+    UIShell_StoreEntry *entry = uishell_store_entry(state, id);
+    B32 marked = cfg_node_child_from_string(owner, str8_lit("arrangement_generation")) != &cfg_nil_node;
+    U64 expected = marked && entry->generation ? entry->generation : stored->generation;
+    AndamentoArrangementDoc commit = {doc.panels, doc.panel_count};
+    char *error = 0;
+    AndamentoWorkspaceArrangement *after = 0;
+    // Stale, as in uishell_store_sync_owner: committing at the new
+    // generation reconciles Andamento's change again, keeping both.
+    for(U32 attempt = 0; attempt < 2; attempt++)
+    {
+      andamento_arrangement_free(after);
+      after = UIShell_StoreCall(state, andamento_arrangement_commit(state->core, workspace, &commit, expected, &error));
+      state->store_commits += 1;
+      if(!after || after->status != ANDAMENTO_STALE) { break; }
+      expected = after->generation;
+    }
+    if(after && after->status == ANDAMENTO_COMMITTED)
+    {
+      entry->generation = after->generation;
+      uishell_store_set_setting(owner, str8_lit("arrangement_generation"), push_str8f(arena, "%I64u", after->generation));
+      uishell_store_follow(state, owner, id, &entry->generation);
+      uishell_store_saw_live(state, entry, owner);
+    }
+    else
+    { uishell_sidebar_set_error(state, error ? str8_cstring(error) : str8_lit("The workspace's arrangement changed; try again")); }
+    andamento_string_free(error);
+    andamento_arrangement_free(after);
+  }
+  andamento_arrangement_free(stored);
+  scratch_end(scratch);
+  rd_request_frame();
+}
+
 // Drops the user's edit of `view`'s Slot: the provider's content, or the
 // key it reused, is the Slot's again.
 internal void
@@ -2317,13 +2487,14 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   // arrangement its Suggested Layout suggests, keeping the View it opened
   // with; one with no suggestion keeps the arrangement it opened with. A
   // baseline of the primary alone (every workspace subject has one) suggests
-  // nothing.
+  // nothing, but a Workspace Layout arranges even that, unless the workspace
+  // opened with more than its primary.
   CFG_Node *fresh = cfg_node_child_from_string(owner, str8_lit("arrangement_fresh"));
   if(fresh != &cfg_nil_node)
   {
     cfg_node_release(rd_state->cfg, fresh);
     AndamentoOverlay *overlay = UIShell_StoreCall(state, andamento_overlay_get(state->core, workspace, 0));
-    B32 suggests = overlay && overlay->has_baseline && !overlay->primary_only;
+    B32 suggests = (overlay && overlay->has_baseline && !overlay->primary_only) || (stored->has_layout && doc.tab_count <= 1);
     andamento_overlay_free(overlay);
     if(stored->doc.panel_count && suggests)
     {
@@ -2386,9 +2557,11 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   // names them: the user's own are removed, and a provider's is tombstoned,
   // hidden, while its provider keeps it (ADR 0013). They must go before the
   // commit, or its reconcile would place them again. A slot the stored
-  // document tabs that this device never saw (placed since) stays.
+  // document tabs that this device never saw (placed since) stays. In a
+  // Workspace Layout closing a tab only unplaces its slot: the commit
+  // without the tab says so, and "Show …" places it again.
   String8List stored_keys = {0};
-  for(U64 i = 0; i < stored->doc.panel_count; i++)
+  for(U64 i = 0; i < stored->doc.panel_count && !stored->has_layout; i++)
   {
     AndamentoDocPanel *p = &stored->doc.panels[i];
     for(U64 t = 0; t < p->tab_count; t++) { str8_list_push(arena, &stored_keys, push_str8_copy(arena, uishell_sidebar_string(p->tabs[t]))); }

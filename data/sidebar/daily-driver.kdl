@@ -3,10 +3,47 @@ version 1
 // Workspace subjects: each opens a workspace whether or not its provider has
 // published how to fill it yet; its Slots show what can't connect as
 // unavailable and fill in as it does (docs/design/subject-workspaces.md).
-workspace kind="project"
+//
+// A kind with a template arranges its workspaces by Workspace Layout
+// (Andamento's docs/sidebar-design/workspace-layouts.md): matchers place
+// Slots by role, and what no matcher takes is unplaced, offered as "Show …"
+// in the tab strip's + menu. A block that closes a block needs a `;`.
+workspace kind="project" {
+  slot "shell" role="shell" kind="command" command="exec \"$SHELL\" -l" cwd="{checkout.path}"
+  layout "tui-and-shell" {
+    split axis="row" {
+      tabs id="main" weight=3 { slots role="tui"; slots role="agent"; };
+      tabs id="side" weight=2 { slots role="files"; slots role="shell"; slots rest=true; };
+    };
+  }
+}
 workspace kind="role"
-workspace kind="convoy"
-workspace kind="vessel"
+workspace kind="convoy" {
+  layout "agents-and-overview" {
+    split axis="row" {
+      tabs id="agents" weight=3 { slots role="agent"; };
+      tabs id="overview" weight=2 { slots role="overview"; slots rest=true; };
+    };
+  }
+  layout "live-only" {
+    hide { slots role="agent" { match "status.state" value="ended"; }; };
+    split axis="row" {
+      tabs id="agents" weight=3 { slots role="agent"; };
+      tabs id="overview" weight=2 { slots role="overview"; slots rest=true; };
+    };
+  }
+}
+workspace kind="vessel" {
+  // A shell in the vessel's checkout, unplaced until shown.
+  slot "shell" role="shell" kind="command" command="exec \"$SHELL\" -l" cwd="{checkout.path}"
+  layout "agent-and-files" {
+    hide { slots role="shell"; };
+    split axis="row" {
+      tabs id="agents" weight=3 { slots role="agent"; };
+      tabs id="files" weight=2 { slots role="files"; slots rest=true; };
+    };
+  }
+}
 
 display-variable "show-issues" type="bool" default=true label="Issues" icon="I" persist=true
 

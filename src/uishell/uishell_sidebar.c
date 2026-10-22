@@ -1765,10 +1765,10 @@ uishell_sidebar_init(RD_WindowState *ws)
     state->initialized = 1;
     char *error = 0;
     // A host requires exactly the ABI it was built against.
-    if(andamento_abi_version() != 7)
+    if(andamento_abi_version() != 8)
     {
       Temp scratch = scratch_begin(0, 0);
-      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Andamento ABI 7 is required; this library has ABI %u",
+      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Andamento ABI 8 is required; this library has ABI %u",
         (U32)andamento_abi_version()));
       scratch_end(scratch);
       return state;
@@ -2669,13 +2669,62 @@ uishell_sidebar_close_label(UIShell_SidebarCloseKind kind)
 
 internal B32 uishell_sidebar_is_subject(AndamentoNode node);
 
+// The open workspace a row stands for, whose layouts its menu offers.
+internal CFG_Node *
+uishell_sidebar_node_workspace(AndamentoNode node)
+{
+  if(node.is_section || node.state != ANDAMENTO_LIVE || uishell_sidebar_node_cfg(&node) == 0) { return &cfg_nil_node; }
+  CFG_Node *workspace = cfg_node_from_id(uishell_sidebar_node_cfg(&node));
+  return str8_match(workspace->string, str8_lit("workspace"), 0) ? workspace : &cfg_nil_node;
+}
+
+// A workspace's layout items: the other layouts, when it has more than one
+// (the current one named, but not offered), the default once another is
+// shown, and Reset once the user has rearranged it. Returns their count.
+internal U64
+uishell_sidebar_layout_labels(Arena *arena, CFG_Node *workspace, String8 *labels, String8 *names, U64 cap)
+{
+  if(workspace == &cfg_nil_node) { return 0; }
+  UIShell_WorkspaceLayouts layouts = uishell_store_layouts(arena, workspace);
+  U64 count = 0;
+#define UIShell_LayoutItem(label, name) do { if(count < cap) { labels[count] = (label); names[count] = (name); count++; } } while(0)
+  for(U64 i = 0; layouts.count > 1 && i < layouts.count; i++)
+  {
+    UIShell_LayoutItem(push_str8f(arena, i == layouts.current ? "Layout: %S (shown)" : "Layout: %S", layouts.names[i]),
+                       i == layouts.current ? str8_zero() : layouts.names[i]);
+  }
+  if(layouts.count > 1 && layouts.current != layouts.fallback) { UIShell_LayoutItem(str8_lit("Use default layout"), str8_lit(".default")); }
+  if(layouts.owned) { UIShell_LayoutItem(str8_lit("Reset layout"), str8_lit(".reset")); }
+#undef UIShell_LayoutItem
+  return count;
+}
+
+internal void
+uishell_sidebar_layout_buttons(AndamentoNode node)
+{
+  CFG_Node *workspace = uishell_sidebar_node_workspace(node);
+  String8 labels[16], names[16];
+  U64 count = uishell_sidebar_layout_labels(ui_build_arena(), workspace, labels, names, ArrayCount(labels));
+  for(U64 i = 0; i < count; i++)
+  {
+    if(!names[i].size) { UI_TagF("weak") ui_label(labels[i]); continue; }
+    if(!ui_clicked(ui_buttonf("%S###layout_%I64u", labels[i], i))) { continue; }
+    if(str8_match(names[i], str8_lit(".reset"), 0)) { uishell_store_reset_layout(workspace); }
+    else if(str8_match(names[i], str8_lit(".default"), 0)) { uishell_store_choose_layout(workspace, str8_zero()); }
+    else { uishell_store_choose_layout(workspace, names[i]); }
+    ui_ctx_menu_close();
+  }
+}
+
 // A row menu's width, from the items that row's menu shows
 // (uishell_sidebar_entry_signal).
 internal F32
 uishell_sidebar_row_menu_width(AndamentoNode node, UIShell_SidebarCloseKind close)
 {
-  String8 labels[6] = {str8_lit("Reset order")};
+  String8 labels[24] = {str8_lit("Reset order")};
   U64 count = 1;
+  String8 names[16];
+  count += uishell_sidebar_layout_labels(ui_build_arena(), uishell_sidebar_node_workspace(node), labels+count, names, ArrayCount(names));
   if(close == UIShell_SidebarCloseKind_RemovePin)
   {
     labels[count++] = str8_lit("Go to source"); labels[count++] = str8_lit("Show as card"); labels[count++] = str8_lit("Remove pin");
@@ -2895,9 +2944,14 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     AndamentoNode first = {0};
     if(andamento_snapshot_node(state->snapshot, node_index+1, &first) && first.parent == node_index)
     { items_loop = uishell_sidebar_loop_key(state->snapshot, node_index+1); }
-    String8 labels[] = {str8_lit("New workspace here"), str8_lit("Reset order")};
-    UIShell_SidebarMenu(menu_key, uishell_sidebar_menu_width(labels, ArrayCount(labels)))
+    String8 labels[20] = {str8_lit("New workspace here"), str8_lit("Reset order")};
+    String8 names[16];
+    U64 label_count = 2;
+    if(ui_ctx_menu_is_open(menu_key))
+    { label_count += uishell_sidebar_layout_labels(ui_build_arena(), uishell_sidebar_node_workspace(node), labels+label_count, names, ArrayCount(names)); }
+    UIShell_SidebarMenu(menu_key, uishell_sidebar_menu_width(labels, label_count))
     {
+      uishell_sidebar_layout_buttons(node);
       if(ui_clicked(ui_button(str8_lit("New workspace here"))))
       {
         uishell_sidebar_make(cfg_node_from_id(ws->cfg_id),
@@ -2926,6 +2980,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
         else { wm_set_clipboard_text(full_label); }
         ui_ctx_menu_close();
       }
+      uishell_sidebar_layout_buttons(node);
       if(close_kind != UIShell_SidebarCloseKind_None && ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
       { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
       uishell_sidebar_discard_button(ws, node, close_kind);
@@ -2957,6 +3012,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "workspace_menu");
     UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width(node, close_kind))
     {
+      uishell_sidebar_layout_buttons(node);
       if(ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
       { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
       uishell_sidebar_discard_button(ws, node, close_kind);

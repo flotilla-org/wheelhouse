@@ -6559,6 +6559,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //
           UI_Box *tab_bar_box = &ui_nil_box;
           UI_Box *tab_strip_add_button_box = &ui_nil_box;
+          UI_Key add_menu_key = ui_key_from_stringf(rd_panel_ui_key(panel->address), "add_new_tab_menu");
+          CFG_Node *add_menu_host = panel->address.owner.kind == RD_PanelOwnerKind_Workspace ? rd_cfg_from_panel_owner(panel->address.owner) : &cfg_nil_node;
           if(build_panel && chrome_plan->presentation != RD_DockPresentation_SectionHeader) UI_CornerRadius(0) UI_Rect(tab_bar_rect)
           {
             tab_bar_box = ui_build_box_from_key(UI_BoxFlag_Clip|
@@ -6919,10 +6921,19 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                   if(ui_pressed(sig))
                   {
                     uishell_cmd("focus_panel", .panel = panel->address);
+                    // A Workspace Layout's unplaced slots: a menu offers them
+                    // beside a new tab.
+                    Temp scratch = scratch_begin(0, 0);
+                    String8Array unplaced = add_menu_host != &cfg_nil_node ? uishell_store_unplaced(scratch.arena, add_menu_host) : (String8Array){0};
+                    scratch_end(scratch);
                     if(ws->query_is_active &&
                        ui_key_match(add_new_box->key, ws->query_regs->ui_key))
                     {
                       uishell_cmd("cancel_query");
+                    }
+                    else if(unplaced.count)
+                    {
+                      ui_ctx_menu_open(add_menu_key, add_new_box->key, v2f32(0, dim_2f32(add_new_box->rect).y));
                     }
                     else
                     {
@@ -6938,6 +6949,32 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
               }
             }
             
+            // The add button's menu, when the layout leaves slots out.
+            UI_CtxMenu(add_menu_key) UI_TagF("implicit") UI_PrefWidth(ui_em(18.f, 1)) UI_PrefHeight(ui_em(1.8f, 1))
+            {
+              if(ui_clicked(ui_buttonf("New tab…###add_tab_query")))
+              {
+                uishell_cmd("push_query",
+                       .expr = str8_lit("query:tab_commands"),
+                       .panel = panel->address,
+                       .do_implicit_root = 1,
+                       .do_lister = 1,
+                       .ui_key = ui_key_from_stringf(rd_panel_ui_key(panel->address), "add_new_tab_button"));
+                ui_ctx_menu_close();
+              }
+              Temp scratch = scratch_begin(0, 0);
+              String8Array unplaced = uishell_store_unplaced(scratch.arena, add_menu_host);
+              for(U64 i = 0; i < unplaced.count; i++)
+              {
+                if(ui_clicked(ui_buttonf("Show %S###show_slot_%S", uishell_store_slot_title(unplaced.v[i]), unplaced.v[i])))
+                {
+                  uishell_store_show_slot(add_menu_host, panel->address.id, unplaced.v[i]);
+                  ui_ctx_menu_close();
+                }
+              }
+              scratch_end(scratch);
+            }
+
             // rjf: interact with tab bar
             ui_signal_from_box(tab_bar_box);
 

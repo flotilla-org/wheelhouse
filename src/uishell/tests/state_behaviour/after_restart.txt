@@ -31,11 +31,15 @@ window 1
           tab terminal "Shell" view=workspace:"u:shell" command="printf 'Wheelhouse Shell terminal\\n'; exec /bin/sh"
           tab terminal "Tools" view=workspace:"u:tools" command="printf 'Wheelhouse Tools terminal\\n'; exec /bin/sh" selected
     workspace "Example terminal" subject=vessel/v kept
-      panel
-        tab terminal "Terminal" view=workspace:"primary" command="printf 'Wheelhouse sidebar fixture\\n'; exec /bin/sh" selected
+      panel split=x
+        panel weight=3.00
+          tab terminal "Terminal" view=workspace:"primary" command="printf 'Wheelhouse sidebar fixture\\n'; exec /bin/sh" selected
+        panel weight=2.00
     workspace "Subject workspace" subject=vessel/chip-v
-      panel
-        tab terminal "Terminal" view=workspace:"primary" command="printf 'Subject workspace fixture\\n'; exec /bin/sh" selected
+      panel split=x
+        panel weight=3.00
+          tab terminal "Terminal" view=workspace:"primary" command="printf 'Subject workspace fixture\\n'; exec /bin/sh" selected
+        panel weight=2.00
     workspace "Build logs" local group="Builds"
       panel split=x
         panel weight=0.72

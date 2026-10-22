@@ -1582,6 +1582,32 @@ uishell_dispatch_window_command(String8 name)
     }
     scratch_end(scratch);
   }
+  else if(str8_match(name, str8_lit("next_workspace_layout"), 0) ||
+          str8_match(name, str8_lit("default_workspace_layout"), 0) ||
+          str8_match(name, str8_lit("reset_workspace_layout"), 0))
+  {
+    // The given workspace, or from the palette the Visible Workspace.
+    Temp scratch = scratch_begin(0, 0);
+    CFG_Node *workspace = cfg_node_from_id(uishell_regs()->cfg);
+    CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+    if(workspace == &cfg_nil_node && window != &cfg_nil_node)
+    {
+      UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+      if(split.inventory.selected != 0) { workspace = cfg_node_from_id(split.inventory.selected->id); }
+    }
+    if(workspace != &cfg_nil_node)
+    {
+      if(str8_match(name, str8_lit("reset_workspace_layout"), 0)) { uishell_store_reset_layout(workspace); }
+      else if(str8_match(name, str8_lit("default_workspace_layout"), 0)) { uishell_store_choose_layout(workspace, str8_zero()); }
+      else
+      {
+        UIShell_WorkspaceLayouts layouts = uishell_store_layouts(scratch.arena, workspace);
+        if(layouts.count > 1)
+        { uishell_store_choose_layout(workspace, layouts.names[layouts.current < layouts.count ? (layouts.current+1)%layouts.count : 0]); }
+      }
+    }
+    scratch_end(scratch);
+  }
   else if(str8_match(name, str8_lit("workspace_settings"), 0))
   {
     Temp scratch = scratch_begin(0, 0);
