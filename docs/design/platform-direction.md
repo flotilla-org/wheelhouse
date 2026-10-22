@@ -1,9 +1,10 @@
 # Platform direction: one repo, three frontends
 
-Status: direction, recorded 2026-10-21 from the operator's notes. Nothing here
-is scheduled. After the current stability fixes it becomes a wayfinder map:
-each open question below becomes a decision ticket under the map, and this
-document then points to the map instead of holding the decisions itself.
+Status: direction, recorded 2026-10-21 from the operator's notes. The open
+questions it listed are now decision tickets under
+[Map: the way to building the web frontend is clear](https://github.com/flotilla-org/wheelhouse/issues/421),
+charted on 2026-10-22. That map holds the decisions from here on; this
+document keeps the direction and the decisions made before it.
 
 ## Destination
 
@@ -49,84 +50,14 @@ is small when it comes.
 5. **Tables come from binnacle**, which Flotilla will support natively, so
    table views are not limited to the TUI.
 
-## Open questions
+## Open questions and order
 
-Each heading is a likely decision ticket.
-
-### Repo merge
-
-- **History:** keep Andamento's history (subtree or filter-repo merge), or
-  import a snapshot and link the old repo.
-- **Layout:** a Cargo workspace beside `src/`, or `crates/` at the root, and
-  how `build.sh`/`build.bat` find it instead of `WHEELHOUSE_ANDAMENTO_DIR`.
-- **What retires:** `ANDAMENTO_REV`, the cross-repo pin steps in CI, and the
-  merge-order rule between paired PRs.
-- **Other consumers:** what else builds from Andamento's repo (the daily
-  driver's `andamento-git-watcher`, at least), and what it pins to afterwards.
-- **When:** after the stability fixes, before web work starts, and while few
-  Andamento PRs are open, because open PRs are what make the move costly.
-
-### Core boundary and naming
-
-- What moves from Wheelhouse's C into the shared core. Rule of thumb:
-  anything a second frontend would otherwise reimplement. Candidates are
-  workspace and View state, arrangement and layout rules, and settings.
-- Whether the core is then renamed (for example `wheelhouse-core`) and the
-  Andamento name retired. Settle the boundary first; the name follows.
-- How the core is exposed to each frontend: the C ABI for native, Rust
-  directly for the TUI, wasm for the web.
-
-### Web
-
-- **Prerequisite: remote Cleat that actually works.** A browser can't reach a
-  local socket, so the web depends on remote terminal sessions (#104) and on a
-  server to reach them through.
-- **Server infrastructure:** what runs where, how a browser authenticates, and
-  how it reaches Cleat, Jackstay and the Flotilla daemon. We have none of this
-  yet; the first step is to define it.
-- **Terminal rendering:** our own renderer over Cleat's screen state (canvas
-  2D, WebGL or WebGPU), rather than Ghostty's wasm build. Open: which API, and
-  how much renderer to share with native.
-- **UI framework:** SolidJS is the candidate, as an alternative to React.
-  Most components will be our own anyway, so fine-grained reactivity and a
-  small runtime matter more than an ecosystem.
-- **Web pages:** much easier than native, since the browser embeds pages
-  itself. Decide when an embedded page is enough and when Luchs still has a
-  role (pages that need a separate profile, or headless capture).
-- **Jackstay on the web** (not urgent): decode and draw frames ourselves, or
-  stream into a video element (WebRTC, or WebCodecs with media source).
-- **Starting points:** the sidebar prototypes in this directory
-  (`sidebar-cards-prototype.html`, `card-features-prototype.html`,
-  `sidebar-header-controls-prototype.html`, `drop-targets-prototype.html`,
-  `sections-groups-examples.html`) and `andamento-html`.
-
-### TUI
-
-- How much of katzensteg-wm to take: code, structure, or only ideas.
-- How `andamento-tui` and `andamento-terminal` relate to it, and whether the
-  TUI is a new binary or grows from one of them.
-
-### Views and formats
-
-- **The component set:** table (binnacle), graph, markdown, log, plus the
-  terminal, Jackstay and web views that exist.
-- **Formats:** where an existing format fits, use it (CommonMark for
-  markdown, for example); where none does, define ours once and use it in
-  every frontend. Open: what tables and graphs take.
-- **How a View declares what it consumes**, so content finds its component
-  through a Handler the way [web-views.md](web-views.md) describes for pages.
-- **Where Flotilla-specific views are still needed**, and keeping them thin.
-- Related: #125 (a generic table view fed by a column-definition output mode).
-
-## Order
-
-1. Stability fixes in progress, including the vessel opening action that
-   comes and goes (Flotilla withdraws it while re-checking attach capability).
-2. Turn this document into a wayfinder map with its decision tickets.
-3. Repo merge.
-4. Core boundary decisions, then the web's prerequisites: remote Cleat and
-   the server infrastructure.
-5. Web frontend, then the TUI.
+These are on [the map](https://github.com/flotilla-org/wheelhouse/issues/421):
+the repo merge, the core's boundary and name, the browser's saved state, the
+relay (local first, then remote and cloud), the screen-state format and the
+web terminal renderer, the web UI framework, binnacle and the first shared
+View formats, and how each frontend resolves a View. The TUI is outside that
+map and gets its own later.
 
 Project and convoy workspaces (#401, #391) continue meanwhile in the native
 app; their custom views are the first users of the shared view components.
