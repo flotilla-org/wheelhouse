@@ -440,7 +440,7 @@ entry_point(CmdLine *cmd_line)
                                     "--overview_benchmark:DIR --overview_benchmark_count:1|16|48\nRun isolated macOS overview replay (use tools/benchmark-overview.py).\n\n"
                                     "--no_preview_render_budget\nDisable background provider and workspace render admission limits.\n\n"
                                     "--no_preview_surface_budget\nDisable demand-sized workspace preview surfaces.\n\n"
-                                    "--no_preview_refresh_budget\nDisable reduced refresh cadence for small terminal previews.\n\n"
+                                    "--no_preview_refresh_budget\nRebuild terminal previews on every content change, not at render admission's rate.\n\n"
                                     "--tooltip_diagnostics\nCheck tooltip sizing and window-edge placement and exit.\n\n"
                                     "--sidebar_subject_fixture\nOpen the subject/role fixture with daily-driver templates.\n\n"
                                     "--sidebar_fixture\nOpen the example project catalog instead of the local workspace sidebar.\n\n"

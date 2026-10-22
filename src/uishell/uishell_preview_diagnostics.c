@@ -89,6 +89,60 @@ uishell_preview_diagnostics(RD_WindowState *ws)
     rd_state->frame_index = saved_frame;
     rd_state->preview_render_budget = saved_budget;
   }
+  // Surface admission: four previews per frame, oldest first, and the next
+  // frame's four chosen now so their views can build what will be drawn.
+  {
+    RD_WorkspaceSurfaceEntry *saved_entries = ws->workspace_surface_entries;
+    U64 saved_count = ws->workspace_surface_entry_count;
+    RD_SurfaceCacheNode *saved_nodes = ws->first_surface_cache_node;
+    U64 saved_frame = rd_state->frame_index;
+    B32 saved_budget = rd_state->preview_render_budget;
+    U64 saved_admit_frame = ws->workspace_surface_admit_frame, saved_admit_count = ws->workspace_surface_admit_count;
+    RD_FrameMetrics *saved_metrics = rd_state->frame_metrics;
+    RD_WorkspaceSurfaceEntry entries[10] = {0};
+    RD_SurfaceCacheNode nodes[10] = {0};
+    for(U32 i = 0; i < 10; i += 1)
+    {
+      entries[i] = (RD_WorkspaceSurfaceEntry){.box_key = 7001+i, .workspace_id = 7001+i};
+      nodes[i] = (RD_SurfaceCacheNode){.next = i < 9 ? &nodes[i+1] : 0, .key = 7001+i, .last_render_frame_index = 10+i};
+    }
+    ws->workspace_surface_entries = entries;
+    ws->workspace_surface_entry_count = 10;
+    ws->first_surface_cache_node = &nodes[0];
+    rd_state->preview_render_budget = 1;
+    rd_state->frame_metrics = 0;
+    rd_state->frame_index = 300;
+    PreviewCheck(!rd_workspace_surface_admitted(ws, &entries[0]), "a queued preview is not promised before scheduling");
+    rd_workspace_surface_schedule(ws);
+    for(U32 i = 0; i < 10; i += 1)
+    { PreviewCheck(entries[i].defer_render == (i >= 4), "the four oldest previews are admitted"); }
+    PreviewCheck(ws->workspace_surface_admit_count == 4, "four previews are chosen for the next frame");
+    PreviewCheck(!rd_workspace_surface_admitted(ws, &entries[4]), "a choice applies to the next frame only");
+    rd_state->frame_index = 301;
+    for(U32 i = 0; i < 10; i += 1)
+    { PreviewCheck(rd_workspace_surface_admitted(ws, &entries[i]) == (i >= 4 && i < 8), "the next four oldest are promised"); }
+    // The drawn four become newest; the last becomes oldest of all, but the
+    // promised four still go first.
+    for(U32 i = 0; i < 4; i += 1) { nodes[i].last_render_frame_index = 300; }
+    nodes[9].last_render_frame_index = 0;
+    rd_workspace_surface_schedule(ws);
+    for(U32 i = 0; i < 10; i += 1)
+    { PreviewCheck(entries[i].defer_render == !(i >= 4 && i < 8), "promised previews are admitted first"); }
+    U64 expected[4] = {7010, 7009, 7001, 7002};
+    PreviewCheck(ws->workspace_surface_admit_count == 4, "four previews are chosen again");
+    for(U32 k = 0; k < 4 && k < ws->workspace_surface_admit_count; k += 1)
+    { PreviewCheck(ws->workspace_surface_admit_keys[k] == expected[k], "the next choice is oldest first"); }
+    RD_WorkspaceSurfaceEntry composite = {.box_key = 7001, .composite = 1};
+    PreviewCheck(rd_workspace_surface_admitted(ws, &composite), "a composited surface is always drawn");
+    ws->workspace_surface_entries = saved_entries;
+    ws->workspace_surface_entry_count = saved_count;
+    ws->first_surface_cache_node = saved_nodes;
+    rd_state->frame_index = saved_frame;
+    rd_state->preview_render_budget = saved_budget;
+    ws->workspace_surface_admit_frame = saved_admit_frame;
+    ws->workspace_surface_admit_count = saved_admit_count;
+    rd_state->frame_metrics = saved_metrics;
+  }
   ui_select_state(test_ui);
   UIShell_RegsScope(.window = ws->cfg_id)
   {

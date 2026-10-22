@@ -14,7 +14,7 @@ see the results below. This is not a guarantee of 60 Hz.
 | Background terminal snapshots | Four per frame, separate process-wide FIFO. |
 | Background workspace surface rendering | Four pending surfaces per window per frame, oldest rendered first. |
 | Preview surface size | Quantized displayed-size demand; selected workspaces retain full resolution. |
-| Small terminal glyph buckets | Refresh every 200 ms up to 128 points wide, 100 ms up to 256; larger previews have no added delay. |
+| Terminal preview glyph buckets | Rebuilt once the preview's surface has drawn the last build, so surface admission sets the rate; foreground and full-resolution workspaces bypass this. |
 | Jackstay preview frame uptake | A new frame once the preview's surface has drawn the last, so surface admission sets the rate; foreground and full-resolution transitions bypass this limit. |
 
 Selected, expanding and directly composited workspaces bypass background rendering
@@ -34,7 +34,9 @@ Views version their image and the chrome drawn from producer state; before a
 session exists they remain unversioned. A preview takes a mailbox frame, and
 uploads or imports it, only after its surface has drawn the previous one. Its
 rate is therefore the rate at which admission draws it, with no fixed cadence.
-Terminal glyphs keep the size tiers above.
+Terminal previews follow the same rule for their glyph buckets: a content
+change is built once the surface has drawn the previous build, and the preview
+keeps requesting frames until it has been. Preview size sets no rate.
 
 Intermediate frames replace each other in the existing latest-frame mailbox.
 Unsampled native frames retain that mailbox's immediate-release behavior. The

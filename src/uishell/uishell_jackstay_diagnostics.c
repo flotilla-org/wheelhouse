@@ -190,7 +190,9 @@ uishell_jackstay_preview_diagnostics(RD_WindowState *ws)
   RD_WorkspacePreviewDemand *saved_demands=ws->first_workspace_preview_demand;
   RD_SurfaceCacheNode *saved_nodes=ws->first_surface_cache_node;
   U64 saved_frame=rd_state->frame_index,saved_requests=rd_state->num_frames_requested;
-  B32 saved_ready=ws->render_ready;
+  B32 saved_ready=ws->render_ready,saved_budget=rd_state->preview_render_budget;
+  U64 saved_admit_frame=ws->workspace_surface_admit_frame,saved_admit_count=ws->workspace_surface_admit_count;
+  rd_state->preview_render_budget=1;
   CFG_Node *window=cfg_node_from_id(ws->cfg_id);
   CFG_Node *owners[2];
   UIShell_WorkspaceMount mounts[2];
@@ -216,13 +218,18 @@ uishell_jackstay_preview_diagnostics(RD_WindowState *ws)
   UIShell_RegsScope(.window=ws->cfg_id)
   for(U32 frame=0;frame<60;frame++)
   {
-    // 10-18, 40, 53-57: queued behind other previews. 30: not presented.
+    // 10-18, 40, 53-57: queued behind other previews, except that last
+    // frame's schedule chose 15 to go first. 30: not presented.
     // 32-39: in the foreground. 50-52 publish nothing; 54 is the last image.
     // A draw happens after the build, so uptake resumes the frame after it.
     B32 queued=(frame>=10 && frame<19) || frame==40 || (frame>=53 && frame<58);
     B32 foreground=frame>=32 && frame<40, presented=frame!=30;
     B32 publish=frame<50 || frame==53 || frame==54;
     rd_state->frame_index=saved_frame+frame+1;
+    B32 chosen=frame==15;
+    ws->workspace_surface_admit_keys[0]=preview_key;
+    ws->workspace_surface_admit_count=chosen;
+    ws->workspace_surface_admit_frame=rd_state->frame_index;
     rd_workspace_preview_demand_push(ws,owners[0]->id,240.f);
     if(publish)
     {
@@ -251,14 +258,18 @@ uishell_jackstay_preview_diagnostics(RD_WindowState *ws)
     ws->active_workspace_surface_entry=0;
     ui_end_build();
     // Render admission, after the build: a presented, unqueued preview draws.
-    if(presented && !queued && !foreground)drawn->last_render_frame_index=rd_state->frame_index;
+    if(presented && (!queued || chosen) && !foreground)drawn->last_render_frame_index=rd_state->frame_index;
     taken[frame]=v.version;
     U64 newest=session.state.frame_version;
-    if(frame<11 || (frame>=20 && frame<30) || frame==31 || foreground || (frame>=42 && frame<50) || frame==53 || frame==59)
+    if(frame<11 || chosen || frame==16 || (frame>=20 && frame<30) || frame==31 || foreground || (frame>=42 && frame<50) || frame==53 || frame==59)
       JSPreviewCheck(v.version==newest);
-    if(frame>10 && frame<20)JSPreviewCheck(v.version==taken[10]);
+    if(frame>10 && frame<15)JSPreviewCheck(v.version==taken[10]);
+    // A chosen preview takes the newest image although its last was undrawn,
+    // and is drawn, so it takes one more before waiting again.
+    if(frame==15)JSPreviewCheck(v.version>taken[10]);
+    if(frame>16 && frame<20)JSPreviewCheck(v.version==taken[16]);
     // Intermediate publications were replaced in the mailbox, never taken.
-    if(frame==20)JSPreviewCheck(newest>taken[10]+1);
+    if(frame==20)JSPreviewCheck(newest>taken[16]+1);
     if(frame==30 || frame==40 || frame==41)JSPreviewCheck(v.version==previous);
     if(frame>=54 && frame<59)
     {
@@ -277,6 +288,8 @@ uishell_jackstay_preview_diagnostics(RD_WindowState *ws)
   r_tex2d_release(drawn->texture);
   ws->first_surface_cache_node=saved_nodes;
   ws->active_workspace_surface_entry=saved_surface;ws->render_ready=saved_ready;
+  ws->workspace_surface_admit_frame=saved_admit_frame;ws->workspace_surface_admit_count=saved_admit_count;
+  rd_state->preview_render_budget=saved_budget;
   ws->first_workspace_preview_demand=saved_demands;
   rd_state->frame_index=saved_frame;rd_state->num_frames_requested=saved_requests;
   uishell_jackstay_views=saved_views;

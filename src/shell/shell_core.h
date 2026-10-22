@@ -639,6 +639,9 @@ struct RD_DropCompletionTask
   String8List paths;
 };
 
+// background workspace surfaces rendered per window per frame
+#define RD_WORKSPACE_SURFACE_ADMISSIONS 4
+
 typedef struct RD_WorkspaceSurfaceEntry RD_WorkspaceSurfaceEntry;
 struct RD_WorkspaceSurfaceEntry
 {
@@ -870,6 +873,11 @@ struct RD_WindowState
   RD_WorkspaceSurfaceEntry *workspace_surface_entries;
   U64 workspace_surface_entry_count;
   RD_WorkspaceSurfaceEntry *active_workspace_surface_entry; // entry being built right now; views declare versions into it
+  // previews the scheduler admits first next frame, chosen when it admits this
+  // frame's, so their views can build what will be drawn (rd_workspace_surface_admitted)
+  U64 workspace_surface_admit_keys[RD_WORKSPACE_SURFACE_ADMISSIONS];
+  U64 workspace_surface_admit_count;
+  U64 workspace_surface_admit_frame;
 
   // workspace zoom view: the controlled split presenting all children as tiles.
   // zoom_t animates open/close; the selected child's composite interpolates
@@ -984,7 +992,7 @@ struct RD_State
   RD_FrameReplay frame_replay;
   B32 preview_render_budget;
   B32 preview_surface_budget;
-  B32 preview_refresh_budget; // temporal detail for small terminal previews
+  B32 preview_refresh_budget; // terminal previews rebuild at render admission's rate
   B32 terminal_glyph_trace_enabled;
   B32 terminal_glyph_trace_all_rows;
   U64 terminal_glyph_trace_row;
@@ -1527,11 +1535,11 @@ internal RD_SurfaceCacheNode *rd_window_surface_node_from_key(RD_WindowState *ws
 internal RD_SurfaceCacheNode *rd_window_surface_node_lookup(RD_WindowState *ws, U64 key);
 internal U64 rd_workspace_preview_surface_key(U64 workspace_id);
 internal RD_WorkspaceSurfaceEntry *rd_workspace_surface_entry_from_box_key(RD_WindowState *ws, U64 box_key);
+internal B32 rd_workspace_surface_admitted(RD_WindowState *ws, RD_WorkspaceSurfaceEntry *entry);
 internal void rd_workspace_preview_demand_push(RD_WindowState *ws, U64 workspace_id, F32 width_pt);
 internal void rd_workspace_surface_contribute_version(U64 version);
 internal void rd_workspace_surface_mark_unversioned_view(void);
 internal F32 rd_workspace_preview_demand_width(RD_WindowState *ws, U64 workspace_id);
-internal U64 rd_workspace_preview_refresh_interval(RD_WindowState *ws, RD_WorkspaceSurfaceEntry *surface);
 internal void rd_window_surface_cache_evict(RD_WindowState *ws);
 internal RD_WindowState *rd_window_state_from_os_handle(WM_Window os);
 internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);
