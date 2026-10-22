@@ -2881,16 +2881,6 @@ rd_workspace_preview_demand_width(RD_WindowState *ws, U64 workspace_id)
   return width_pt;
 }
 
-// Temporal detail shared by preview consumers. Large previews have no added
-// delay here; a streaming View can impose a further ceiling on frame uptake.
-internal U64
-rd_workspace_preview_refresh_interval(RD_WindowState *ws, RD_WorkspaceSurfaceEntry *surface)
-{
-  if(!rd_state->preview_refresh_budget || surface==0 || surface->composite || surface->full_res)return 0;
-  F32 width=rd_workspace_preview_demand_width(ws,surface->workspace_id);
-  return width<=128.f?200000:width<=256.f?100000:0;
-}
-
 internal Vec2S32
 rd_workspace_surface_size(RD_WindowState *ws, RD_WorkspaceSurfaceEntry *ws_entry, Rng2F32 surface_rect)
 {
@@ -2937,6 +2927,8 @@ rd_workspace_surface_layout_version(UI_Box *root, U64 version)
 
 // Admit the oldest pending previews first. UI/provider work is independent of
 // this decision; only conversion of a workspace subtree into pixels is queued.
+// The previews chosen last frame for this one go first: their views built new
+// content this frame on that promise (rd_workspace_surface_admitted).
 internal void
 rd_workspace_surface_schedule(RD_WindowState *ws)
 {
@@ -2953,7 +2945,23 @@ rd_workspace_surface_schedule(RD_WindowState *ws)
                           node->size.x != size.x || node->size.y != size.y ||
                           (!entry->has_unversioned_views && node->workspace_content_version != entry->content_version_accum);
   }
-  for(U64 slot = 0; slot < 4; slot += 1)
+  U64 admitted = 0;
+  if(ws->workspace_surface_admit_frame == rd_state->frame_index)
+  {
+    for(U64 k = 0; k < ws->workspace_surface_admit_count; k += 1)
+    {
+      RD_WorkspaceSurfaceEntry *entry = rd_workspace_surface_entry_from_box_key(ws, ws->workspace_surface_admit_keys[k]);
+      if(entry == 0 || !entry->defer_render) { continue; }
+      entry->defer_render = 0;
+      admitted += 1;
+      if(rd_state->frame_metrics != 0) { rd_state->frame_metrics->surface_admissions++; }
+    }
+  }
+  // Fill this frame's remaining slots, then choose next frame's first ones
+  // from what still waits.
+  ws->workspace_surface_admit_count = 0;
+  ws->workspace_surface_admit_frame = rd_state->frame_index + 1;
+  for(U64 slot = admitted; slot < 2*RD_WORKSPACE_SURFACE_ADMISSIONS; slot += 1)
   {
     RD_WorkspaceSurfaceEntry *oldest = 0;
     U64 oldest_frame = max_U64;
@@ -2961,6 +2969,12 @@ rd_workspace_surface_schedule(RD_WindowState *ws)
     {
       RD_WorkspaceSurfaceEntry *entry = &ws->workspace_surface_entries[i];
       if(!entry->defer_render) { continue; }
+      B32 chosen = 0;
+      for(U64 k = 0; k < ws->workspace_surface_admit_count; k += 1)
+      {
+        if(ws->workspace_surface_admit_keys[k] == entry->box_key) { chosen = 1; break; }
+      }
+      if(chosen) { continue; }
       RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, entry->box_key);
       U64 frame = node != 0 ? node->last_render_frame_index : 0;
       if(oldest == 0 || frame < oldest_frame)
@@ -2970,9 +2984,30 @@ rd_workspace_surface_schedule(RD_WindowState *ws)
       }
     }
     if(oldest == 0) { break; }
-    oldest->defer_render = 0;
-    if(rd_state->frame_metrics != 0) { rd_state->frame_metrics->surface_admissions++; }
+    if(slot < RD_WORKSPACE_SURFACE_ADMISSIONS)
+    {
+      oldest->defer_render = 0;
+      if(rd_state->frame_metrics != 0) { rd_state->frame_metrics->surface_admissions++; }
+    }
+    else
+    {
+      ws->workspace_surface_admit_keys[ws->workspace_surface_admit_count++] = oldest->box_key;
+    }
   }
+}
+
+// Whether the surface being built is certain to be drawn this frame: it isn't
+// a queued preview, or last frame's schedule chose it to go first.
+internal B32
+rd_workspace_surface_admitted(RD_WindowState *ws, RD_WorkspaceSurfaceEntry *entry)
+{
+  if(entry == 0 || entry->composite || entry->full_res || !rd_state->preview_render_budget) { return 1; }
+  if(ws->workspace_surface_admit_frame != rd_state->frame_index) { return 0; }
+  for(U64 k = 0; k < ws->workspace_surface_admit_count; k += 1)
+  {
+    if(ws->workspace_surface_admit_keys[k] == entry->box_key) { return 1; }
+  }
+  return 0;
 }
 
 internal U64

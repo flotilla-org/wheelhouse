@@ -590,12 +590,13 @@ internal void uishell_jackstay_session_ui(UIShell_JackstayView *v,Rng2F32 rect)
   // keeps its newest image in the mailbox until that window is admitted.
   B32 admitted = host == &rd_nil_window_state || host->render_ready;
   RD_WorkspaceSurfaceEntry *surface=host!=&rd_nil_window_state?host->active_workspace_surface_entry:0;
-  // A preview takes a new image once its surface has drawn the last one, so
-  // the previews' render admission (rd_workspace_surface_schedule) is its
-  // budget. Intermediate frames stay in the latest-frame mailbox, where
-  // replacement already releases unsampled imports. Never retire the
-  // displayed GPU frame just because a preview skips an update.
-  B32 preview=surface && !surface->composite && !surface->full_res;
+  // A preview takes a new image once its surface has drawn the last one, or
+  // when its surface is drawn this frame, so the previews' render admission
+  // (rd_workspace_surface_schedule) is its budget. Intermediate frames stay in
+  // the latest-frame mailbox, where replacement already releases unsampled
+  // imports. Never retire the displayed GPU frame just because a preview
+  // skips an update.
+  B32 preview=surface && !rd_workspace_surface_admitted(host,surface);
   RD_SurfaceCacheNode *drawn=preview?rd_window_surface_node_lookup(host,surface->box_key):0;
   B32 due=!preview || !v->version || !drawn || drawn->last_render_frame_index>=v->image_frame;
   B32 take_frame = admitted && due && v->upload_frame != rd_state->frame_index;

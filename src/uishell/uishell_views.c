@@ -63,7 +63,7 @@ struct UIShell_TerminalViewState
   U64 retained_bucket_key;
   U64 retained_bucket_style_key;
   B32 retained_bucket_has_images;
-  U64 retained_bucket_time_us;
+  U64 retained_bucket_frame; // the shell frame that built retained_bucket
   U16 cols;
   U16 rows;
   F32 cell_width_px;
@@ -4614,22 +4614,19 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
         U64 style_key = u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1;
         RD_WindowState *window_state = rd_window_state_from_cfg__existing(cfg_node_from_id(uishell_regs()->window));
         RD_WorkspaceSurfaceEntry *surface = window_state != &rd_nil_window_state ? window_state->active_workspace_surface_entry : 0;
-        U64 interval_us = rd_workspace_preview_refresh_interval(window_state, surface);
-        U64 now_us = (benchmark_mode && !uishell_overview_benchmark.interactive) ? ((U64)uishell_overview_benchmark.frame*1000000/60) : now_time_us();
-        // Give each workspace a stable phase so busy previews do not all
-        // rebuild together every 100/200 ms. A deadline is at most one interval
-        // after the previous build, even if no new producer wake arrives.
-        U64 phase_us = interval_us ? (surface->workspace_id*2654435761ull)%interval_us : 0;
-        U64 deadline_us = interval_us ? tv->retained_bucket_time_us + interval_us -
-          (tv->retained_bucket_time_us + phase_us)%interval_us : 0;
-        B32 defer_content = interval_us != 0 && tv->retained_bucket != 0 &&
-                            tv->retained_bucket_style_key == style_key && !trace_this_draw &&
-                            tv->image_cache.placement_count == 0 && !tv->retained_bucket_has_images &&
-                            now_us < deadline_us;
+        // A preview rebuilds its glyphs once its surface has drawn the last
+        // build, or when its surface is drawn this frame, so the previews'
+        // render admission (rd_workspace_surface_schedule) is its budget and
+        // what is drawn is the newest content. Size sets no rate.
+        B32 preview = rd_state->preview_refresh_budget && !rd_workspace_surface_admitted(window_state, surface);
+        RD_SurfaceCacheNode *drawn = preview ? rd_window_surface_node_lookup(window_state, surface->box_key) : 0;
+        B32 defer_content = drawn != 0 && drawn->last_render_frame_index < tv->retained_bucket_frame &&
+                            tv->retained_bucket != 0 && tv->retained_bucket_style_key == style_key && !trace_this_draw &&
+                            tv->image_cache.placement_count == 0 && !tv->retained_bucket_has_images;
         if(defer_content && tv->retained_bucket_key != bucket_key)
         {
           // An observed producer update may be its last wake. Keep requesting
-          // frames until this bounded refresh deadline so it cannot stay stale.
+          // frames until the surface draws and this build can be taken.
           rd_request_frame();
           if(metrics != 0) { metrics->deferred++; }
         }
@@ -4689,7 +4686,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
           tv->retained_bucket_key = (trace_this_draw ? 0 : bucket_key);
           tv->retained_bucket_style_key = style_key;
           tv->retained_bucket_has_images = tv->image_cache.placement_count != 0;
-          tv->retained_bucket_time_us = now_us;
+          tv->retained_bucket_frame = rd_state->frame_index;
           if(metrics != 0)
           { metrics->glyph_us += now_time_us()-glyph_begin_us; }
         }
