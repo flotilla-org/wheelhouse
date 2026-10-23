@@ -227,7 +227,8 @@ especially with one View).
 ## Switching workspaces
 
 Switching straight from one workspace to another is disorienting, so a switch
-gets a short transition, built on the overview's existing workspace zoom:
+gets a short transition (#450), built on the overview's existing workspace
+zoom:
 
 - **To a child** (project to convoy, convoy to vessel): zoom into where the
   child sits, with the current workspace fading underneath.
@@ -323,6 +324,9 @@ It is for prototyping, not yet decided.
    publishing content and hints (flotilla#3012 reworked).
 4. **Tool strip, first cut** (#122 reworked), then layout switching.
 5. **One Cleat client per session**, with remote Cleat (#104).
+6. **Switching transitions** (#450), on the overview's current layout, then
+   through each workspace's real position once the overview follows the
+   sidebar's hierarchy (#190).
 
 The lifecycle cleanup in #391 (#229, #389, #390, #69) continues alongside; #69
 overlaps the Slot Host's placeholders.
