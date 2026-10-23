@@ -53,7 +53,7 @@ command = compiler + [
     '-DWM_STUB=1', '-DR_BACKEND=0', '-DFP_BACKEND=0', '-ffunction-sections', '-fdata-sections',
     '-Wno-initializer-overrides', '-Wno-unused-value',
     '-Wno-incompatible-pointer-types-discards-qualifiers',
-    '-I'+str(ROOT/'native/src'), '-I'+str(args.core_include.resolve()),
+    '-I'+str(ROOT/'native/src'), '-I'+str(args.core_include.resolve()), '-I'+str(ROOT/'crates/wheelhouse-ingress/include'),
     '-I'+str(args.cleat_include.resolve()), str(source), str(shell_embed_object(compiler)),
     '-L'+str(andamento), '-lwheelhouse_ffi', '-lwheelhouse_ingress', '-Wl,-rpath,'+str(andamento),
     '-L'+str(cleat), '-lcleat', '-Wl,-rpath,'+str(cleat), '-lpthread', '-lm', '-ldl',
