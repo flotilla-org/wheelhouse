@@ -5196,6 +5196,18 @@ uishell_sidebar_panel_empty(RD_PanelNode *panel)
   return panel->first == &rd_nil_panel_node && panel->tabs.count == 0;
 }
 
+// A leaf the sidebar doesn't show: empty, or showing only hidden views (the
+// leftover section while it stands aside). It takes no share when sizing;
+// otherwise its share, collapsed away, would pad the section next to it.
+internal B32
+uishell_sidebar_panel_absent(RD_PanelNode *panel)
+{
+  if(panel->first != &rd_nil_panel_node) { return 0; }
+  B32 hidden = 1;
+  for(RD_ViewAddressNode *n = panel->tabs.first; n && hidden; n = n->next) { hidden = uishell_sidebar_view_hidden(rd_cfg_from_view(n->v)); }
+  return hidden;
+}
+
 internal B32
 uishell_sidebar_panel_collapsed(RD_PanelNode *panel, F32 header, F32 *height)
 {
@@ -5301,18 +5313,18 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
   B32 manual = mount->resizing || cfg_node_child_from_string(split->owner_cfg, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
   RD_PanelNode *root = mount->panel_tree.root;
   if(root->split_axis != Axis2_Y || root->child_count == 0) { return; }
-  // An empty leaf is absent: it takes no share, and the others are sized
-  // without it (#358). The next frame's layout closes it.
+  // An absent leaf takes no share, and the others are sized without it
+  // (#358). The next frame's layout closes an empty one.
   U64 count = 0;
   for(RD_PanelNode *panel = root->first; panel != &rd_nil_panel_node; panel = panel->next)
   {
-    if(uishell_sidebar_panel_empty(panel)) { continue; }
+    if(uishell_sidebar_panel_absent(panel)) { continue; }
     if(panel->first != &rd_nil_panel_node || panel->tabs.count != 1) { return; }
     count += 1;
   }
   for(RD_PanelNode *panel = root->first; panel != &rd_nil_panel_node; panel = panel->next)
   {
-    if(uishell_sidebar_panel_empty(panel)) { panel->pct_of_parent = 0; }
+    if(uishell_sidebar_panel_absent(panel)) { panel->pct_of_parent = 0; }
   }
   if(count == 0) { return; }
   Temp scratch = scratch_begin(0, 0);
@@ -5326,7 +5338,7 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
     F32 total = 0; B32 repair = 0;
     for(RD_PanelNode *panel = root->first; panel != &rd_nil_panel_node; panel = panel->next)
     {
-      if(uishell_sidebar_panel_empty(panel)) { continue; }
+      if(uishell_sidebar_panel_absent(panel)) { continue; }
       total += Max(0.f, panel->pct_of_parent);
       // Config shares are serialized with six decimals. Ignore sub-pixel
       // roundtrip differences so repaired layouts stay idle on later frames.
@@ -5345,7 +5357,7 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
       F32 equal = remaining/Max(1, unfixed);
       for(RD_PanelNode *panel = root->first; panel != &rd_nil_panel_node; panel = panel->next)
       {
-        if(uishell_sidebar_panel_empty(panel)) { continue; }
+        if(uishell_sidebar_panel_absent(panel)) { continue; }
         F32 share = weight > 0 ? Max(0.f, panel->pct_of_parent)*scale : equal;
         if(!fixed[i] && share < minimum)
         { fixed[i] = 1; remaining -= minimum; weight -= Max(0.f, panel->pct_of_parent); unfixed--; changed = 1; }
@@ -5357,7 +5369,7 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
     RD_Arrangement *repaired = rd_arrangement_from_panel_owner(scratch.arena, mount->owner);
     for(RD_PanelNode *panel = root->first; panel != &rd_nil_panel_node; panel = panel->next)
     {
-      if(uishell_sidebar_panel_empty(panel)) { continue; }
+      if(uishell_sidebar_panel_absent(panel)) { continue; }
       F32 share = fixed[i++] ? minimum : weight > 0 ? Max(0.f, panel->pct_of_parent)*remaining/weight : remaining/Max(1, unfixed);
       panel->pct_of_parent = share;
       rd_arrangement_panel_from_id(repaired, panel->address.id)->weight = (F32)f64_from_str8(push_str8f(scratch.arena, "%f", share));
@@ -5373,7 +5385,7 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
   F32 available = dim_2f32(rect).y;
   for(RD_PanelNode *panel = root->first; panel != &rd_nil_panel_node; panel = panel->next)
   {
-    if(uishell_sidebar_panel_empty(panel)) { continue; }
+    if(uishell_sidebar_panel_absent(panel)) { continue; }
     CFG_Node *view = rd_cfg_from_view(panel->tabs.first->v);
     String8 key = cfg_node_child_from_string(view, str8_lit("section"))->first->string;
     collapsed[n] = uishell_sidebar_section_collapsed(view);
@@ -5402,7 +5414,7 @@ uishell_sidebar_size_panels_saved(UIShell_ControlledSplit *split, UIShell_Worksp
   n = 0;
   for(RD_PanelNode *panel = root->first; panel != &rd_nil_panel_node; panel = panel->next)
   {
-    if(uishell_sidebar_panel_empty(panel)) { continue; }
+    if(uishell_sidebar_panel_absent(panel)) { continue; }
     panel->pct_of_parent = (headers[n]+heights[n])/Max(1.f, dim_2f32(rect).y);
     n++;
     F32 saved = rd_arrangement_panel_from_id(rd_arrangement_live(mount->owner), panel->address.id)->weight;
