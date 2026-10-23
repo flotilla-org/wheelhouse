@@ -1,2 +1,4 @@
 # Formatting-only: adopt flotilla's stable rustfmt settings (flotilla-org/andamento#163)
 76f627b2d058da3350e04023a180ee564bdd3bae
+# Format the ingress under the workspace rustfmt settings (#440)
+dcad0ebf8c0d025c64b93292146f026caf15fdb1
