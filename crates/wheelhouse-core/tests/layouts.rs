@@ -1,4 +1,4 @@
-//! Workspace Layouts (docs/sidebar-design/workspace-layouts.md): a subject
+//! Workspace Layouts (docs/core/sidebar-design/workspace-layouts.md): a subject
 //! kind's template arranges its workspace's Slots by matchers, the default
 //! layout follows the subject's facts until the user chooses one, and each
 //! layout keeps the user's edits of its arrangement.

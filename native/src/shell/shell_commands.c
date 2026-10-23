@@ -1464,7 +1464,7 @@ uishell_dispatch_window_command(String8 name)
       }
     }
     // Its own Views and Presentation State are none of the old window's: its
-    // sidebar is Andamento's to place.
+    // sidebar is the core's to place.
     String8 owned[] = {RD_PANEL_PRESENTATION_ROOT, RD_VIEW_PRESENTATION_ROOT};
     for EachElement(i, owned) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(new_window, owned[i])); }
     // One empty panel, which has focus (its Presentation State).

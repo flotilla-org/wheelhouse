@@ -2,7 +2,7 @@
 """Check restart behaviour against golden logical-state snapshots.
 
 Compiles native/src/uishell/tests/state_behaviour.c into the production amalgamation
-(entry point replaced, headless WM/renderer/fonts, real Andamento and Cleat),
+(entry point replaced, headless WM/renderer/fonts, real core and Cleat),
 runs its scenario, and compares the logical state before and after an
 in-process restart with the goldens in native/src/uishell/tests/state_behaviour/.
 It runs the scenario again as two processes, the second a fresh launch

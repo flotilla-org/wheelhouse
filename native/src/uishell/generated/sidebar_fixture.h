@@ -109,7 +109,7 @@ static const char uishell_sidebar_fixture_patches[] =
 "{\"target\": {\"kind\": \"entity\", \"value\": {\"kind\": \"convoy\", \"id\": \"abandoned-1\"}}, \"source_id\": \"fixture\", \"set\": {\"flotilla.project\": {\"value\": {\"type\": \"text\", \"value\": \"p\"}}, \"flotilla.convoy\": {\"value\": {\"type\": \"text\", \"value\": \"governor\"}}, \"display.label\": {\"value\": {\"type\": \"text\", \"value\": \"governor\"}}, \"flotilla.role\": {\"value\": {\"type\": \"text\", \"value\": \"p/governor\"}}, \"flotilla.convoy.phase\": {\"value\": {\"type\": \"text\", \"value\": \"abandoned\"}}, \"status.state\": {\"value\": {\"type\": \"text\", \"value\": \"ended\"}}}, \"unset\": []}\n"
 "{\"target\": {\"kind\": \"entity\", \"value\": {\"kind\": \"convoy\", \"id\": \"abandoned-2\"}}, \"source_id\": \"fixture\", \"set\": {\"flotilla.project\": {\"value\": {\"type\": \"text\", \"value\": \"p\"}}, \"flotilla.convoy\": {\"value\": {\"type\": \"text\", \"value\": \"governor\"}}, \"display.label\": {\"value\": {\"type\": \"text\", \"value\": \"governor\"}}, \"flotilla.role\": {\"value\": {\"type\": \"text\", \"value\": \"p/governor\"}}, \"flotilla.convoy.phase\": {\"value\": {\"type\": \"text\", \"value\": \"abandoned\"}}, \"status.state\": {\"value\": {\"type\": \"text\", \"value\": \"ended\"}}}, \"unset\": []}\n";
 static const char uishell_sidebar_local_config[] =
-"// No producer catalog: Andamento supplies coverage for observed local workspaces.\n"
+"// No producer catalog: the core supplies coverage for observed local workspaces.\n"
 "region \"tree\" root-template=\"tree/title\" form=\"compact\" placement=\"tree\"\n"
 "template \"tree/title\" slot=\"compact\" node-kind=\"entity\" {\n"
 "  field \"label\" source=\"literal\" value=\"Projects\"\n"
@@ -164,12 +164,12 @@ static const char uishell_sidebar_daily_config[] =
 "// unavailable and fill in as it does (docs/design/subject-workspaces.md).\n"
 "//\n"
 "// A kind with a template arranges its workspaces by Workspace Layout\n"
-"// (Andamento's docs/sidebar-design/workspace-layouts.md): matchers place\n"
+"// (docs/core/sidebar-design/workspace-layouts.md): matchers place\n"
 "// Slots by role, and what no matcher takes is unplaced, offered as \"Show \u2026\"\n"
 "// in the tab strip's + menu. A block that closes a block needs a `;`.\n"
 "//\n"
 "// A kind's `strip` lists what its workspace's tool strip shows besides its\n"
-"// subject, layouts and Views (Andamento's docs/sidebar-design/tool-strip.md):\n"
+"// subject, layouts and Views (docs/core/sidebar-design/tool-strip.md):\n"
 "// the related workspaces and the linked items, each section a list of\n"
 "// placement loops with the subject bound by its kind's name. Flotilla's\n"
 "// hierarchy facts are text ids, which `in=` can't follow, so each loop\n"

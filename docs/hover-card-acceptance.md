@@ -117,7 +117,7 @@ absent from the tree. All path entities and duplicate targets are omitted.
 
 The existing live preview stays in both card states. Engaged cards grow a cap
 (#269, `detached-card-acceptance.md`) holding the semantic controls supplied by
-Andamento as glyphs, Details, Pin and Close; a footer holds Back, and the
+the core as glyphs, Details, Pin and Close; a footer holds Back, and the
 actions only when the cap is too narrow even for its ⋯ menu. Pending actions retain entity identity and semantic intent, and resolve
 against the snapshot current at sidebar dispatch. A disappearing or changed
 intent cancels the pending action. Near remains the default and Outside remains

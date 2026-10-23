@@ -23,7 +23,7 @@ pub fn entity(kind: &str, id: &str) -> EntityRef {
     EntityRef::new(PROVIDER, kind, id)
 }
 
-/// The `.workspace` entity Andamento presents for an unplaced workspace.
+/// The `.workspace` entity the core presents for an unplaced workspace.
 pub fn fallback(tab: u64) -> EntityRef {
     let id = tab_workspace_id(tab).to_string();
     EntityRef::local(".workspace", id)

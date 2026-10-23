@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compile real shell command/drag/restore code with an OS fault boundary.
 
-Pass the built Andamento and Cleat library directories; no display is required.
+Pass the built the core and Cleat library directories; no display is required.
 The interception boundary is the WM client rectangle. Review new production
 call sites at it; parser, settings, mounts, renderer, commands and checker
 remain real linked collaborators.

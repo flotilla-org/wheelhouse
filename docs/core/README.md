@@ -1,4 +1,6 @@
-# The core (Andamento)
+# wheelhouse-core
+
+This was Andamento; its older design docs and plans under `docs/core/` use that name.
 
 The shared core behind every Wheelhouse frontend:
 
@@ -12,8 +14,8 @@ The shared core behind every Wheelhouse frontend:
 None of them depends on a host. The core joined this repo from
 `flotilla-org/andamento` (#440). Its Zellij plugins (the controller, rail and
 config plugins and the original single-plugin sidebar) retired then; their
-history is still in the log. The crates keep their `andamento-*` names until
-the rename in #426.
+history is still in the log. The crates took their `wheelhouse-*` names in
+the rename decided in #426.
 
 ## Embedding
 

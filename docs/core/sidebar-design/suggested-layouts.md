@@ -3,7 +3,7 @@
 A provider can suggest more than one view for a workspace: an in-crew review
 wants the agents' terminals, the pull request and the review notes side by
 side. This document defines the flat facts an entity publishes to describe
-that **Suggested Layout**, and how Andamento reads them. It extends
+that **Suggested Layout**, and how the core reads them. It extends
 [managed primary content](managed-primary-content.md), whose facts remain valid
 as the single-slot special case.
 

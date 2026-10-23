@@ -1,6 +1,6 @@
 // Workspace IDs (CONTEXT.md, "Workspace ID"; ADR 0012): a UUIDv7 assigned
 // once, when a workspace is first saved, and kept on its config node as
-// `workspace_id "<uuid>"`. Andamento knows workspaces only by these IDs.
+// `workspace_id "<uuid>"`. The core knows workspaces only by these IDs.
 // Docking and rendering still key workspaces by CFG_ID (until state model
 // step 7), so an index maps between the two. Window IDs (CONTEXT.md, "Window
 // ID") are UUIDv7s too, kept on the window as `window_id "<uuid>"`.

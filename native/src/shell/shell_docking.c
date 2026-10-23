@@ -54,7 +54,7 @@ rd_dock_host_kind_from_panel_owner(RD_PanelOwner owner)
   return RD_DockHostKind_WorkspaceRegion;
 }
 
-// These declarations use the root split's Andamento state, not the subject
+// These declarations use the root split's core state, not the subject
 // of whichever child workspace happens to contain an old placement.
 internal CFG_ID
 rd_dock_view_level(RD_ViewRegistration *registration, RD_DockHost host)

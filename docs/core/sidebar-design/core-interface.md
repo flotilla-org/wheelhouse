@@ -127,7 +127,7 @@ frozen embedding contract.
 
 A Workspace ID is 16 opaque bytes (`WheelhouseWorkspaceId`, `WorkspaceId` in
 Rust). The host generates it, a UUIDv7 in practice, when it first saves a
-workspace. Andamento only compares, orders and prints IDs (as hyphenated
+workspace. The core only compares, orders and prints IDs (as hyphenated
 UUIDs, which is also their JSON form) and never generates one, so the core
 stays deterministic for replay. Hosts whose workspaces are numbered tabs (the
 Zellij and tmux hosts) use `tab_workspace_id(tab)`, which puts the tab number
@@ -148,7 +148,7 @@ Dashboard's **subscription ID** (wheelhouse ADR 0012), stable and owned by the
 Dashboard; the host supplies it per patch source. A producer never names it,
 and the identity a provider reports is an attribute of the subscription, not
 part of any key. The same kind and ID under two providers are two entities:
-two rows, two placement keys, two records, two activation targets. Andamento's
+two rows, two placement keys, two records, two activation targets. The core's
 own sections, groups and refs have the provider `local` (`LOCAL_PROVIDER`),
 which no host subscription may use.
 
@@ -192,11 +192,11 @@ segment's loop name, provider, kind and ID. The opaque node key
 
 ### Records
 
-Andamento owns the sidebar's logical state (wheelhouse ADR 0012) and hands it
+The core owns the sidebar's logical state (wheelhouse ADR 0012) and hands it
 to the host as **records**: opaque bytes (serde JSON today) that the host
 stores as they are and gives back on the next start. Their form is private to
-Andamento and is not versioned or migrated. The host decides where and when to
-store them; Andamento never touches a filesystem, so this works in Zellij's
+the core and is not versioned or migrated. The host decides where and when to
+store them; the core never touches a filesystem, so this works in Zellij's
 sandbox and under WASM too.
 
 | Record | Holds |
@@ -239,7 +239,7 @@ entity's facts in full; see Sections, groups and references.
 
 ### Update and ownership rules
 
-Create one opaque `Andamento` handle per presentation client. Serialize calls
+Create one opaque `WheelhouseCore` handle per presentation client. Serialize calls
 on that handle, usually by queueing transport events onto the UI thread.
 Input arrays and UTF-8 byte strings are borrowed only during each call; they
 need not be NUL-terminated. Every mutation returns success/failure and an
@@ -450,7 +450,7 @@ local workspaces, as `.workspace` entities.
 
 ### System names
 
-Names that start with `.` are Andamento's own system kinds and facts
+Names that start with `.` are the core's own system kinds and facts
 (`presentation::system`). Conventions that producers share, such as
 `display.label` and `flotilla.project`, keep their names.
 
@@ -468,7 +468,7 @@ entity coverage:
 ### Sections, groups and references
 
 People can make their own sections and groups, holding workspaces and references
-to other entities. They are Dashboard state, so Andamento owns them: the host
+to other entities. They are Dashboard state, so the core owns them: the host
 sets and removes them with `set_local`/`remove_local`
 (`wheelhouse_local_set`/`wheelhouse_local_remove`), and they are kept in the
 `dashboard` record. A host may still publish them as facts, as Wheelhouse does
@@ -478,7 +478,7 @@ host's open workspaces.
 
 - **`.section`**: a section someone made. A placement loop marked
   `layout="section"` makes each iteration its own section. Docking frontends
-  give each its own View; others show it as a headed section. Andamento passes
+  give each its own View; others show it as a headed section. The core passes
   `layout` through to frontends, so this needs no special support.
 - **`.group`**: a group, naming its section with an entity-reference fact,
   `.section`. A template matches it with `match ".section" of="section"`,

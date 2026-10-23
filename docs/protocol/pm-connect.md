@@ -1,7 +1,7 @@
 # Metadata ingress over local HTTP
 
 Wheelhouse owns this contract (issue #22). Any local producer may publish;
-Flotilla's `pm connect` is one producer. Andamento owns metadata semantics.
+Flotilla's `pm connect` is one producer. The core owns metadata semantics.
 
 ## Endpoint and payload
 
@@ -34,7 +34,7 @@ including chunked requests, applies. Maximum decoded body size is 1 MiB.
 | 404 / 405 | Unknown path / unsupported method; a snapshot on an endpoint that takes none |
 | 413 | Body too large |
 | 415 | Content type is not application/json |
-| 422 | Andamento rejected the patch |
+| 422 | the core rejected the patch |
 | 503 | Queue full, UI unavailable, or application deadline exceeded |
 
 `GET /v1/health` returns 204 while the listener is running. Health does not
@@ -47,7 +47,7 @@ Each of the Dashboard's subscriptions has an endpoint of its own, named after
 this one with `-<subscription ID>` appended (`facts.sock-<ID>` beside it, or
 `\\.\pipe\<name>-<ID>`), served the same way. Wheelhouse gives it to that
 subscription's connector (`flotilla pm connect --wheelhouse-socket <endpoint>`,
-with `WHEELHOUSE_SOCKET` set to it). Andamento stamps every patch arriving there
+with `WHEELHOUSE_SOCKET` set to it). The core stamps every patch arriving there
 with the subscription ID as its provider, whatever the patch says; patches on
 the `--andamento_socket` endpoint itself belong to the `local` provider, as do
 one-off scripts and the git watcher that use it. While the connector is down,
@@ -63,7 +63,7 @@ everything. A connector that publishes this way (`flotilla pm connect` with
 connection liveness) sends one snapshot when it starts, then only changes,
 with no TTLs and no periodic reassertion. The `--andamento_socket` endpoint
 carries several producers under the `local` provider, so it takes no snapshots
-and answers 404. An entity's facts there don't expire either (Andamento ignores
+and answers 404. An entity's facts there don't expire either (the core ignores
 an entity fact's TTL): a producer unsets what it no longer has, as the git
 watcher does for worktrees that go, and what a producer leaves when it exits
 stays until Wheelhouse restarts.
@@ -103,8 +103,8 @@ A timeout may race with application; the same duplicate-delivery rule applies.
 ## Scope and versioning
 
 The `/v1` path versions this delivery contract. Metadata keys and values remain
-Andamento's producer schema. The endpoint has no activate, focus, spawn, or
-other host-control verbs: selection dispatches local Andamento host effects.
+the core's producer schema. The endpoint has no activate, focus, spawn, or
+other host-control verbs: selection dispatches the core's local host effects.
 Recipes in facts are materialized only by explicit UI activation.
 
 This endpoint does not register a presentation manager. Future registration
@@ -150,7 +150,7 @@ warning; requests continue. Restart the listener to begin a new capture.
 This is a diagnostic capture, not a delivery journal: abrupt process termination
 can lose queued entries, and a disabled recorder leaves an incomplete capture.
 
-Replay accepted patches through the real Andamento C ABI and shipped template:
+Replay accepted patches through the real core C ABI and shipped template:
 
 ```sh
 python3 tools/replay-ingress.py /path/to/logs/ingress.jsonl* \

@@ -1,6 +1,6 @@
 # Native sidebar follow-up to the core extraction
 
-The next native renderer changes should consume Andamento's template semantics.
+The next native renderer changes should consume the core's template semantics.
 This checkout now restores the Issues display control and collects section controls
 in a fixed bottom row outside scrolling content. A real ABI regression checks filtering, the resolved
 checked value, and placement identity after hiding and restoring issues. Empty
@@ -86,7 +86,7 @@ including local/ad hoc workspaces, restored bindings, and workspaces whose provi
 has disconnected or removed their entity. Multiple placements may reference one
 workspace; fallback membership must use stable workspace identity, not labels.
 Collapsed ancestors need a discoverable route to the selected workspace. Coverage
-and placement decisions belong in shared Andamento; Wheelhouse supplies inventory
+and placement decisions belong in the shared core; Wheelhouse supplies inventory
 and executes host actions. Workspace creation and closing also need accessible
 controls before the old selector can go away.
 
@@ -109,7 +109,7 @@ horizontal slots and stable status geometry throughout.
 
 ### Workspace coverage implemented
 
-Andamento now appends “Other workspaces” for observed workspace IDs with no
+The core now appends “Other workspaces” for observed workspace IDs with no
 catalog placement after filtering. It removes that fallback when a normal
 placement returns, and keeps duplicate names distinct. Snapshot-owned activation
 focuses the exact workspace ID. The native renderer outlines collapsed ancestors
@@ -128,7 +128,7 @@ Native hover cards now consume the independent template detail fields, omit empt
 and duplicate lines, and wrap long values within a bounded width. The daily-driver
 templates select project counts and supplied status, phase, host, repository,
 branch and checkout-path facts. Compact placement templates preserve the separate
-detail template in Andamento.
+detail template in the core.
 
 A live row requests its bound workspace's existing preview surface. The card
 reserves a fixed preview area and fits the image without changing its aspect.
@@ -150,14 +150,14 @@ remains available; workspace creation/closing controls are still outstanding.
 ### Native project composition, 22 September 2026
 
 The accepted browser study combines subtle project containers with inline workspace
-controls. The first native implementation uses Andamento's existing `layout="inline"`
+controls. The first native implementation uses the core's existing `layout="inline"`
 loop declaration for vessel children. Each placement retains its own key, action,
 workspace binding, selection and hover details. Wheelhouse measures the action
 budget and puts excess actions in a `+N` menu; the menu indicates a selected member.
 An inline leaf stays on its parent's row even if that parent has retained collapse
 state. Nodes with children or controls retain ordinary tree rows so their content
 remains reachable. Placement membership, filtering and workspace coverage remain
-in Andamento; the native index only arranges the returned nodes for drawing.
+in the core; the native index only arranges the returned nodes for drawing.
 
 Top-level projects receive a subtle rounded container and an identity-derived
 accent. The palette is a local default, independent of sort order, labels and
@@ -206,7 +206,7 @@ its vessel presentation must be independent actions. Do not substitute a vessel
 binding for the convoy merely to simplify the native row.
 
 Collapsed projects may eventually show summaries of working/completed convoys
-when space permits. Andamento should provide the summary semantics and expansion
+when space permits. The core should provide the summary semantics and expansion
 state; Wheelhouse measures the available space. Such summaries must preserve
 primary controls and must not be inferred from currently visible or materialized
 workspaces. This change records that direction; it does not fabricate overview
@@ -216,7 +216,7 @@ When a selected vessel would fall into overflow, the native renderer promotes it
 into the last available inline slot. Slot count and widths do not change. Other
 visible actions retain catalog order; the displaced action returns to the menu,
 whose remaining items also retain catalog order. This is a width-dependent display
-choice, not a change to Andamento placement order or identity. If no inline slot
+choice, not a change to the core's placement order or identity. If no inline slot
 fits, the overflow control still carries selection. Its corner radius matches the
 other workspace actions.
 
@@ -261,7 +261,7 @@ Reveal remain in the titlebar when the sidebar is hidden.
 
 Close sends the existing `close_workspace` command for the selected workspace.
 Its tooltip names that workspace; the existing last-workspace guard remains in
-force. Reveal opens the Andamento sidebar, exits workspace overview, expands the
+force. Reveal opens the core sidebar, exits workspace overview, expands the
 selected occurrence's ancestors using snapshot-owned core actions, opens its
 section, and scrolls its row into view. For inline vessels it reveals the parent
 row, where selection promotion exposes the vessel action if a slot fits. It
@@ -298,7 +298,7 @@ workspace's sidebar row, and the affordance says what is lost:
 - A workspace whose config records a subject (`sidebar_entity_kind`/`id`)
   **detaches**. `detach_workspace` renames its config node to
   `detached_workspace`, so it leaves the inventory, its views are released and
-  Andamento sees the row go latent. Materializing that entity again finds the
+  the core sees the row go latent. Materializing that entity again finds the
   node and renames it back, restoring the layout the user left.
 - A subjectless workspace, or one whose subject has ended, is **closed**:
   `close_workspace` releases the node.
@@ -313,7 +313,7 @@ New-workspace is placed by the chrome placement system in a section-header
 niche on Other workspaces (`.unplaced`). The niche counts
 as available when the sidebar drew that header in the previous frame, so a
 closed section falls back to the sidebar action row. Creating a workspace no
-longer resets the window's sidebar regions. Andamento emits the section even
+longer resets the window's sidebar regions. The core emits the section even
 when empty (andamento#135). It carries no placement hints, so Wheelhouse places
 it after every declared region (see [section placement](../section-placement.md)).
 
@@ -335,7 +335,7 @@ animation. New projects start at their current collapse state.
 The section scroll extent uses the same animated child height as the layout.
 Closing children immediately ignore input. A reversal continues from the current
 height. Reveal settles project animations before calculating its scroll target.
-Semantic collapse remains in Andamento; Wheelhouse stores only transient motion.
+Semantic collapse remains in the core; Wheelhouse stores only transient motion.
 Native host diagnostics exercise the actual sidebar builder across opening,
 closing, reversal, Reveal, and disabled-animation frames, checking fixed row and
 header sizes, matching scroll extent, and inert closing controls.

@@ -227,7 +227,7 @@ struct WorkspaceEntry {
 }
 
 /// The kinds of local entities: sections, groups and refs people make, which
-/// Andamento owns and keeps in the dashboard record.
+/// the core owns and keeps in the dashboard record.
 pub const LOCAL_KINDS: [&str; 3] = [system::SECTION, system::GROUP, system::REF];
 const SOURCE_LOCAL: &str = "andamento-local";
 
@@ -406,7 +406,7 @@ impl Sidebar {
     fn retain_workspace_paths(&mut self, subjects: &BTreeMap<WorkspaceId, EntityRef>) -> bool {
         fn collect(nodes: &[Rc<PlacementNode>], ancestors: &mut Vec<EntityRef>, paths: &mut BTreeMap<WorkspaceId, BTreeSet<EntityRef>>) {
             for node in nodes {
-                // Andamento's own kinds (`.`-prefixed: workspaces, sections,
+                // The core's own kinds (`.`-prefixed: workspaces, sections,
                 // groups, refs) are never retained: the host retracts them, and
                 // a ghost must not outlive its removal because its target is
                 // open.
@@ -534,7 +534,7 @@ impl Sidebar {
     /// Declare a workspace the host created itself, such as one the user made,
     /// that never went through a materialize effect. A successful materialize
     /// completion registers its workspace too. The host supplies the ID;
-    /// Andamento never generates one. Registration is independent of topology:
+    /// The core never generates one. Registration is independent of topology:
     /// either may come first, and closing a workspace does not forget it.
     /// It does not change the snapshot or its revision. The workspace gets a
     /// record, `workspace/<id>`. Returns whether the ID was new.
@@ -594,7 +594,7 @@ impl Sidebar {
     }
 
     /// Set a local section, group or ref (see [`LOCAL_KINDS`]), replacing all
-    /// its facts. Andamento owns local entities and keeps them in the
+    /// its facts. The core owns local entities and keeps them in the
     /// dashboard record; their provider is [`LOCAL_PROVIDER`](crate::LOCAL_PROVIDER).
     /// Lists of text and group paths are not allowed; entity references name
     /// their providers.
@@ -741,7 +741,7 @@ impl Sidebar {
         }
     }
 
-    /// Names of the records Andamento holds: `dashboard`, and
+    /// Names of the records the core holds: `dashboard`, and
     /// `workspace/<id>` for each registered workspace.
     pub fn record_names(&self) -> Vec<String> {
         std::iter::once(RecordName::Dashboard)
@@ -751,7 +751,7 @@ impl Sidebar {
     }
 
     /// A record as text to store. Its format is private: only this
-    /// Andamento reads it.
+    /// the core reads it.
     pub fn export_record(&self, name: &str) -> Result<String, String> {
         match RecordName::parse(name)? {
             RecordName::Dashboard => Ok(DashboardRecord {
@@ -785,7 +785,7 @@ impl Sidebar {
         }
     }
 
-    /// Import a record exported by this Andamento. It may come before the
+    /// Import a record exported by this core. It may come before the
     /// first observation and needs no facts. A record that doesn't read, or
     /// names another record, is rejected without changing anything.
     /// Importing `workspace/<id>` registers the workspace and binds it to
@@ -1286,7 +1286,7 @@ impl Sidebar {
     }
 
     /// What the tool strip of `subject`'s workspace lists, in order
-    /// (docs/sidebar-design/tool-strip.md).
+    /// (docs/core/sidebar-design/tool-strip.md).
     pub fn strip(&self, subject: &EntityRef) -> Vec<crate::tool_strip::StripEntry> {
         self.state.strip_in(self.evaluation(), subject)
     }

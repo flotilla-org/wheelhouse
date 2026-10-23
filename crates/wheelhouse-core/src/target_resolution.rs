@@ -7,7 +7,7 @@
 //! `workspace/<id>` record; a machine-local one (a local socket, an attach
 //! token) stays with the device. The host decides which is which and
 //! supplies the portable ones as an opaque typed value: a kind and named
-//! text fields. Andamento never interprets them.
+//! text fields. The core never interprets them.
 //!
 //! A saved resolution is a cache. It records the identity of the slot
 //! resolution it was made for (`against`, a [`Resolved::id`]); once the

@@ -1,5 +1,5 @@
 /*
- * Andamento's C ABI. docs/sidebar-design/host-interface.md describes it as
+ * The core's C ABI. docs/core/sidebar-design/host-interface.md describes it as
  * a whole; each declaration's comment gives its contract.
  *
  * Calls on one sidebar are serialised by the host. Input pointers and
@@ -136,7 +136,7 @@
 // Children top to bottom.
 #define WHEELHOUSE_AXIS_COLUMN 1
 
-// A key Andamento placed since the host last committed.
+// A key the core placed since the host last committed.
 #define WHEELHOUSE_NOTE_PLACED 0
 
 // A workspace tab whose slot has gone. It stays until the host removes it.
@@ -305,7 +305,7 @@ typedef struct {
 } WheelhouseFact;
 
 // A Workspace ID: 16 bytes the host supplies (UUIDv7 in practice).
-// Andamento never generates one, and only compares and prints them.
+// The core never generates one, and only compares and prints them.
 typedef struct {
   uint8_t bytes[16];
 } WheelhouseWorkspaceId;
@@ -337,7 +337,7 @@ typedef struct {
 } WheelhouseWorkdir;
 
 // An entity: `{provider, kind, id}`. The provider is the Dashboard
-// subscription its facts come from ("local" for Andamento's own sections,
+// subscription its facts come from ("local" for the core's own sections,
 // groups and refs); the same kind and ID under two providers are two
 // entities. An entity a host passes names its provider.
 typedef struct {
@@ -608,7 +608,7 @@ typedef struct {
 // The Dashboard's sidebar arrangement: which sections are docked where.
 // Tabs hold section keys: a region's name, ".section:<id>" for a local
 // section, ".unplaced" for the workspace fallback, or "u:<id>" for a view
-// of the host's own, which Andamento stores but never places or flags.
+// of the host's own, which the core stores but never places or flags.
 typedef struct {
   // As for a workspace's arrangement.
   uint32_t status;
@@ -999,7 +999,7 @@ void wheelhouse_snapshot_release(WheelhouseSnapshot *s);
 
 void wheelhouse_effects_release(WheelhouseEffects *e);
 
-// The names of the records Andamento holds, one per line (no trailing
+// The names of the records the core holds, one per line (no trailing
 // newline): "dashboard", then "workspace/<id>" for each registered
 // workspace (<id> a hyphenated UUID).
 uint32_t wheelhouse_record_names(WheelhouseCore *h, WheelhouseBytes *out, char **error_out);
@@ -1009,7 +1009,7 @@ uint32_t wheelhouse_record_names(WheelhouseCore *h, WheelhouseBytes *out, char *
 // when its generation differs from the one last stored.
 uint64_t wheelhouse_record_generation(WheelhouseCore *h, WheelhouseText name, char **error_out);
 
-// A record to store as it is: its bytes are private to Andamento and may
+// A record to store as it is: its bytes are private to the core and may
 // change from one build to the next. Free them with wheelhouse_bytes_free.
 uint32_t wheelhouse_record_get(WheelhouseCore *h,
                                WheelhouseText name,
@@ -1044,7 +1044,7 @@ uint32_t wheelhouse_set_sibling_order(WheelhouseCore *h,
                                       char **error_out);
 
 // Set a local section (".section"), group (".group") or ref (".ref", a
-// pin), replacing all its facts. Andamento owns local entities (their
+// pin), replacing all its facts. The core owns local entities (their
 // provider is "local") and keeps them in the dashboard record; they are
 // placed exactly as the same entities published as facts.
 uint32_t wheelhouse_local_set(WheelhouseCore *h,
@@ -1117,7 +1117,7 @@ uint32_t wheelhouse_layout_choose(WheelhouseCore *h,
                                   char **error_out);
 
 // The sidebar arrangement. Free it with wheelhouse_sidebar_arrangement_free.
-// Andamento reconciles it when what is declared changes (on configure, and
+// The core reconciles it when what is declared changes (on configure, and
 // when local sections or groups change or are imported): a section with
 // neither a tab nor a closed record is placed in a new tab panel in the
 // dock, before the subtree holding the next section in default order

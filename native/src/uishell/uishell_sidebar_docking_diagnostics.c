@@ -251,7 +251,7 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   B32 ok = uishell_sidebar_result(&fixture, fixture.core != 0, error);
   uishell_sidebar_refresh(&fixture);
   ws->sidebar = &fixture;
-  // The fixture is the window's sidebar while it runs: Andamento's
+  // The fixture is the window's sidebar while it runs: the core's
   // arrangement is built for it.
   fixture.window = owner->id;
   uishell_sidebar_dock_layout(split);
@@ -458,7 +458,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
 {
   Temp scratch = scratch_begin(0, 0);
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
-  // The sidebar follows Andamento's placement afresh, its Views kept by key,
+  // The sidebar follows the core's placement afresh, its Views kept by key,
   // and is put back as it was after.
   RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
   RD_Arrangement *saved_layout = rd_arrangement_from_panel_owner(scratch.arena, sidebar_owner);
@@ -486,7 +486,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 1));
   DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 0));
   DockFailure(!uishell_sidebar_close_middle_diagnostics(ws, &split));
-  // Two adjacent scrolling sections: Andamento places pinned regions
+  // Two adjacent scrolling sections: the core places pinned regions
   // (controls) first, so they're found by key, not position.
   RD_PanelAddress first_panel = rd_panel_from_cfg(uishell_sidebar_region_view(window, str8_lit("tree")));
   RD_PanelAddress second_panel = rd_panel_address(sidebar_owner, rd_arrangement_panel_from_id(rd_arrangement_live(sidebar_owner), first_panel.id)->next->id);
@@ -748,7 +748,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   U64 recovered_gen = uishell_sidebar_docking_gen();
   rd_dock_restore_window(window);
   DockFailure(!rd_panel_address_match(rd_panel_from_cfg(view), recovered_panel) || uishell_sidebar_docking_gen() != recovered_gen);
-  // A display value crosses to a new core instance in Andamento's dashboard
+  // A display value crosses to a new core instance in the core's dashboard
   // record, imported before the first snapshot as at startup.
   UIShell_SidebarState display = {0};
   String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
@@ -1014,7 +1014,7 @@ uishell_section_placement_use(UIShell_SectionPlacement *p, CFG_Node *window, Whe
   uishell_sidebar_replace_snapshot(s, core ? wheelhouse_snapshot_acquire(core, 0) : 0);
 }
 
-// A frame: the sidebar commits what changed, or follows Andamento, then lays
+// A frame: the sidebar commits what changed, or follows the core, then lays
 // itself out.
 internal void
 uishell_section_placement_frame(UIShell_SectionPlacement *p)
@@ -1067,8 +1067,8 @@ uishell_section_placement_closed(UIShell_SectionPlacement *p, String8 key)
   return 0;
 }
 
-// Headless lifecycle scenarios with the real Andamento ABI, docking checker
-// and config codec. Andamento places, restores and flags sections
+// Headless lifecycle scenarios with the real core ABI, docking checker
+// and config codec. The core places, restores and flags sections
 // (uishell_sidebar_store.c); these check the sidebar Wheelhouse builds from
 // it, across restarts through the presentation file and the dashboard record.
 internal B32
@@ -1136,7 +1136,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   CFG_Node *b = uishell_sidebar_region_view(window, str8_lit("b"));
   // Defaults are stable by hint, regardless of declaration order.
   PlacementCheck(a != &cfg_nil_node && b != &cfg_nil_node);
-  // Andamento always declares the unhinted workspace fallback; it sorts last.
+  // The core always declares the unhinted workspace fallback; it sorts last.
   CFG_Node *fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
   PlacementCheck(fallback != &cfg_nil_node);
   PlacementCheck(uishell_section_placement_first_panel(window) == uishell_section_placement_panel(window, a) &&
@@ -1340,7 +1340,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   PlacementCheck(rd_fixture_count(invalid_owner, str8_lit("sidebar_section")) == 0);
   uishell_section_placement_release_window(invalid_workspace);
   // An empty declaration flags every section rather than clearing them
-  // (Andamento, "Template key drift"); a declaration that has them again
+  // (the core, "Template key drift"); a declaration that has them again
   // finds them where they were.
   rd_fixture_remove_panel(rd_panel_from_cfg(uishell_sidebar_region_view(restored, str8_lit("d"))));
   uishell_section_placement_frame(&p);

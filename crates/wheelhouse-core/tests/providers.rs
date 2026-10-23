@@ -126,7 +126,7 @@ fn a_patch_never_names_its_own_provider() {
 
 #[test]
 fn a_reference_to_a_local_entity_stays_local() {
-    // A producer may file its entity under one of Andamento's own groups;
+    // A producer may file its entity under one of the core's own groups;
     // stamping its provider must not claim the group.
     let mut sidebar = Sidebar::new(CONFIG).unwrap();
     let mut patches = fleet("one");

@@ -1283,7 +1283,7 @@ fn vessel_ids(sidebar: &Sidebar) -> Vec<String> {
 #[test]
 fn host_sibling_order_reorders_a_run_and_merges_changes_by_data_order() {
     // Two sidebars with the same data: `data` never has a host order, so it
-    // shows Andamento's own order for comparison.
+    // shows the core's own order for comparison.
     let mut ordered = sidebar();
     let mut data = sidebar();
     for s in [&mut ordered, &mut data] {

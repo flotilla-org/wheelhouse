@@ -31,7 +31,7 @@ pub struct SurfaceSnapshot {
 pub struct Section {
     pub name: String,
     /// The host's docking hint (`WheelhouseSectionNode.default_host`).
-    /// Andamento doesn't place by it: every section docks.
+    /// The core doesn't place by it: every section docks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_host: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -41,10 +41,10 @@ pub struct Section {
     pub nodes: Vec<Rc<PlacementNode>>,
 }
 
-/// Andamento's own system kinds and facts start with `.`; conventions that
+/// The core's own system kinds and facts start with `.`; conventions that
 /// producers share (`display.label`, `flotilla.project`) keep their names.
 pub mod system {
-    /// Whether a kind or fact name is one of Andamento's own.
+    /// Whether a kind or fact name is one of the core's own.
     pub fn is_system(name: &str) -> bool {
         name.starts_with('.')
     }

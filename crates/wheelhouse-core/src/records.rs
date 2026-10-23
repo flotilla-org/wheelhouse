@@ -1,8 +1,8 @@
-//! Named records: the logical sidebar state Andamento owns, as bytes the host
+//! Named records: the logical sidebar state the core owns, as bytes the host
 //! stores without reading: `dashboard` ([`DashboardRecord`]) and
 //! `workspace/<id>` ([`WorkspaceRecord`](crate::workspace::WorkspaceRecord)). The host decides where each record is stored and
-//! when it is written; Andamento never touches the filesystem. A record is
-//! its struct serialised as JSON: private to this Andamento, unversioned, and
+//! when it is written; the core never touches the filesystem. A record is
+//! its struct serialised as JSON: private to this core, unversioned, and
 //! free to change from one build to the next.
 use std::{
     collections::{BTreeMap, BTreeSet},

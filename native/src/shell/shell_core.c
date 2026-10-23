@@ -3445,7 +3445,7 @@ rd_panel_exists(RD_PanelAddress panel)
 //~ Live arrangements (ADR 0012)
 //
 // Each owner's arrangement is kept here whole, typed (shell_arrangement.h):
-// what the renderer lays out and what the stores commit to Andamento
+// what the renderer lays out and what the stores commit to the core
 // (uishell_workspace_store.c, uishell_sidebar_store.c). A command edits a
 // copy and sets it. Each set has a version, by which the stores and repair
 // know what changed; setting an arrangement the owner has already changes
@@ -3713,7 +3713,7 @@ rd_view_key_from_cfg(CFG_Node *view, RD_ViewInstance *instance_out)
       if(key.size) { instance = RD_ViewInstance_Previous; }
     }
     // A workspace View made for a provider's slot, until the workspace store
-    // keys it (which knows whether Andamento has that slot): that slot's key.
+    // keys it (which knows whether the core has that slot): that slot's key.
     if(!key.size) { key = cfg_node_child_from_string(view, str8_lit("resource_id"))->first->string; }
   }
   if(instance_out) { *instance_out = instance; }
@@ -4055,7 +4055,7 @@ rd_dock_restore_window(CFG_Node *window)
 //- View Presentation State (CONTEXT.md, "Presentation State")
 //
 // A View's settings are logical, or this device's. Its logical settings are
-// its node's, as Andamento has them: its key, its View Spec, its portable
+// its node's, as the core has them: its key, its View Spec, its portable
 // Target Resolution, its Slot's plan progress, and what docking and queries
 // keep on it (rd_view_logical_settings). Every other setting (a label, a
 // font size, a cursor or scroll position, a machine-local Target Resolution
@@ -4724,7 +4724,7 @@ uishell_root_controlled_split_from_window(Arena *arena, CFG_Node *window)
   
   UIShell_MaterializedWorkspaceInventory inventory = {0};
   // A window shows panels of its own beside its workspaces when it has an
-  // arrangement of its own, or Andamento keeps one for it, which a window
+  // arrangement of its own, or the core keeps one for it, which a window
   // saved since has none of until its records are read
   // (uishell_workspace_store.c).
   B32 own_panels = cfg_node_child_from_string(window, str8_lit("workspace_id")) != &cfg_nil_node &&
@@ -12299,7 +12299,7 @@ uishell_route_content_activation(RD_WindowState *ws, WM_Event *event, B32 allow_
 }
 
 // Closes a window state whose config is gone or untouched, with its sidebar
-// (Andamento core) and native window.
+// (the core) and native window.
 internal void
 rd_window_state_release(RD_WindowState *ws)
 {

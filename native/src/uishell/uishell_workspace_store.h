@@ -1,9 +1,9 @@
-// Workspace arrangements and Slots, kept by Andamento (uishell_workspace_store.c).
+// Workspace arrangements and Slots, kept by the core (uishell_workspace_store.c).
 #ifndef UISHELL_WORKSPACE_STORE_H
 #define UISHELL_WORKSPACE_STORE_H
 
 // `window` as this device saves it in the Dashboard's presentation file: each
-// workspace whose arrangement Andamento keeps loses its panel tree and keeps
+// workspace whose arrangement the core keeps loses its panel tree and keeps
 // only what is this device's (uishell_workspace_store.c, "Device-local"),
 // and its sidebar arrangement likewise (uishell_sidebar_store.c).
 internal String8 uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *window);
@@ -14,7 +14,7 @@ struct UIShell_ViewSpec
 {
   U32 content;
   String8 provider, kind, id, facet;
-  // The command line a terminal runs. A spec Andamento holds as argv keeps
+  // The command line a terminal runs. A spec the core holds as argv keeps
   // it, and command is its line for this host's shell
   // (uishell_store_command_line); a View holds only the line.
   String8 command;
@@ -121,8 +121,8 @@ struct UIShell_StripViews
 internal UIShell_StripViews uishell_store_strip_views(Arena *arena, CFG_Node *owner);
 
 // The tool strip's related workspaces and linked items: what the subject
-// kind's `strip` lists, in order (docs/sidebar-design/tool-strip.md in
-// Andamento). Entities are copied into `arena`.
+// kind's `strip` lists, in order (docs/core/sidebar-design/tool-strip.md).
+// Entities are copied into `arena`.
 typedef struct UIShell_StripEntry UIShell_StripEntry;
 struct UIShell_StripEntry
 {

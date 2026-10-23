@@ -116,12 +116,12 @@ pub struct ExternalTemplateConfig {
 pub struct WorkspaceDefinition {
     pub kind: String,
     /// The kind's template slots and layouts
-    /// (docs/sidebar-design/workspace-layouts.md).
+    /// (docs/core/sidebar-design/workspace-layouts.md).
     #[serde(default)]
     pub slots: Vec<TemplateSlot>,
     #[serde(default)]
     pub layouts: Vec<LayoutDefinition>,
-    /// What its tool strip lists (docs/sidebar-design/tool-strip.md).
+    /// What its tool strip lists (docs/core/sidebar-design/tool-strip.md).
     #[serde(default)]
     pub strip: crate::tool_strip::StripDefinition,
 }

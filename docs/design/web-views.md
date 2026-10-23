@@ -42,7 +42,7 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
 | Endpoint | Wheelhouse chooses the name (`wh-<view>`) and passes it in; readiness comes from the producer's stdout line, then its `window.ready` affordance |
 | View kind | A `web` Renderer: the page's title on the tab, an address bar with back, forward and reload, and a Jackstay client inside. The `jackstay` view stays for raw endpoints |
 | Handler table | Compiled in, beside the Renderer registry. Each entry has `matches` (kind, schemes, presentation), an argv template and a readiness rule; Luchs is the only entry. Its fields are shaped like a future manifest |
-| Opening | **Web** in the "+" menu opens a bundled start page; the address bar navigates in place; an `open_url` command prompts for a URL. Terminal links and Andamento's `OPEN_URL` still go to the system browser |
+| Opening | **Web** in the "+" menu opens a bundled start page; the address bar navigates in place; an `open_url` command prompts for a URL. Terminal links and the core's `OPEN_URL` still go to the system browser |
 | Size, scale, focus | The pane's pixel size goes out as `presentation.preferred_size`, `scale` from the display, and focus as `presentation.focused`. The producer's `window.requested_size` is ignored: the pane decides |
 | Default page | A start page bundled with Wheelhouse |
 | Failure | A launch or first load that fails shows the placeholder with the error, Retry and Open in browser |
@@ -108,7 +108,7 @@ the start page, a `file:` page, navigate to the address typed into its form.
   without an address bar, so it looks like any other opened file. Transforms
   belong here too: Markdown or Mermaid rendered to a page. Specific Renderers for
   some of these may still come later.
-- **Links:** where terminal and Andamento links open (Wheelhouse or the system
+- **Links:** where terminal and sidebar links open (Wheelhouse or the system
   browser) as a setting, and setting `BROWSER` in launched environments so
   programs open pages in Wheelhouse.
 - **Audio.** Jackstay v3 carries playback tracks (Katzensteg already publishes

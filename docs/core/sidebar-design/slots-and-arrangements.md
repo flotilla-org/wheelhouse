@@ -1,6 +1,6 @@
 # Slots and arrangements
 
-A workspace shows several Views, and Andamento owns what they are and how they
+A workspace shows several Views, and the core owns what they are and how they
 are arranged (Wheelhouse ADR 0012). This document describes a workspace's
 **Slots**, how each slot's content is planned, and the **arrangement
 document** a host commits whole at the end of a docking gesture. It
@@ -24,7 +24,7 @@ content. Slots belong to registered workspaces.
 
 A workspace's slots come from two places:
 
-- **The baseline**: the slots of its subject's Suggested Layout. Andamento
+- **The baseline**: the slots of its subject's Suggested Layout. The core
   keeps a cached copy of the last valid layout, with its version and
   arrangement hint, in the workspace record. A malformed layout, or one whose
   facts expired, keeps the cached baseline: expiry is silence, not removal. A
@@ -32,7 +32,7 @@ A workspace's slots come from two places:
   `workspace.primary.*` has a one-slot baseline, `primary`.
 - **The host**: the user's own slots, with keys in their own namespace,
   `u:<id>` (`<id>` is 1 to 64 of `[a-z0-9_-]`). Provider keys never contain
-  `:`, so the two never collide. The host chooses the ID; Andamento never
+  `:`, so the two never collide. The host chooses the ID; the core never
   generates one.
 
 Setting a baseline slot's key with other content **overrides** it: the slot
@@ -53,7 +53,7 @@ added.
 ## Resolving a slot
 
 Every slot follows managed primary content's protocol. The host plans a slot
-with the identity of the resolution it applied (empty for none); Andamento
+with the identity of the resolution it applied (empty for none); the core
 returns Unavailable, Held, Current, Updating or Failed, and, while Updating, a
 token and the resolution to apply. The host prepares the new runtime instance
 without touching the current one, validates the token immediately before
@@ -99,10 +99,10 @@ Resolving a slot's content yields a **Target Resolution**, a way of
 connecting such as a Cleat session on a host or a Jackstay endpoint
 (Wheelhouse `CONTEXT.md`; decisions wheelhouse#294 and #297). A
 **portable** resolution works from any device that can reach it (a remote
-session and its host, a remote endpoint), so Andamento saves it per slot in
+session and its host, a remote endpoint), so the core saves it per slot in
 the workspace record. A **machine-local** one (a local socket, an attach
 token) stays with the device, in the host's Presentation State. The host
-decides which is which; Andamento never interprets either.
+decides which is which; the core never interprets either.
 
 A saved resolution is an opaque typed value: a **kind** and named text
 **fields**, for example kind `cleat-session` with `host=feta session=S
@@ -130,7 +130,7 @@ resolves (what the host applied, as it passes it to plan), and a
   saves the new one: it is always disposable.
 
 **Invalidation: cleared, not marked stale.** A saved resolution is only
-useful for the slot resolution it was made for, so Andamento clears it as
+useful for the slot resolution it was made for, so the core clears it as
 soon as the slot resolves to something else:
 
 - the slot's resolution is known (Ready: not Unavailable or Held) and its
@@ -184,10 +184,10 @@ sizes need pixels. When a gesture ends it commits the whole document with
    own it ([Workspace Overlay](workspace-overlay.md)).
 
 Reading the arrangement returns the document, its generation, whether the
-host owns it, and two tab flags: **placed** (Andamento placed it since the
+host owns it, and two tab flags: **placed** (the core placed it since the
 host last committed) and **gone** (its slot has gone).
 
-Andamento changes the document itself only when the slot set changes from the
+The core changes the document itself only when the slot set changes from the
 provider's side:
 
 - Until the overlay owns it, the document is the baseline's arrangement hint

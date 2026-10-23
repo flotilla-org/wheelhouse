@@ -79,7 +79,7 @@ fact, identical topology, selection changes and recipe-only stale actions.
 
 ## Remaining work
 
-Derived structures and change tracking stay in Andamento. This implementation
+Derived structures and change tracking stay in the core. This implementation
 retains snapshots but does not yet retain and incrementally update individual
 catalog entries. Some hierarchy operations still scan entities, and diagnostics
 resolve metadata separately. It does not claim all snapshot work is linear for

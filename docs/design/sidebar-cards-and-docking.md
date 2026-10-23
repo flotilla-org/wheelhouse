@@ -50,7 +50,7 @@ A card has a fixed structure instead of a list of `Prefix: value` lines:
 - **Preview:** the live workspace preview, when the entity has a workspace, as
   today's hover card draws it. The restructure keeps it; #89 decides when a
   preview may attach.
-- **Actions:** icon buttons from the same Andamento controls as the workspace
+- **Actions:** icon buttons from the same core controls as the workspace
   controls (#122): open in browser, attach, copy URL.
 
 Card content stays template-defined (`<kind>/detail`, slot `detail`), but
@@ -78,7 +78,7 @@ This applies to every card at rest, wherever it is:
 | Pinned card, or one expanded under its row | Peek | Once the pointer enters its title line, until it leaves the card and cap |
 | Floating card | — | Always |
 
-The cap holds the entity's actions from Andamento as glyphs with their labels
+The cap holds the entity's actions from the core as glyphs with their labels
 as tooltips (a narrow cap folds them into ⋯, and with no room even for that
 they fall back to a footer), ⓘ for details until profiles absorb it, Pin on
 hover and floating cards, ⤡ back to the row on an expanded card, and × on the
@@ -161,7 +161,7 @@ The foundation is described in [Declared docking validity](docking-validity.md).
 
 ### KDL owns what, layout owns where
 
-- An Andamento `region` declares a section's identity and content plus a
+- A core `region` declares a section's identity and content plus a
   default placement hint, such as `default-host="sidebar" order=10`.
 - Wheelhouse's RAD-derived layout state stores the actual arrangement, keyed by
   region id.
@@ -179,7 +179,7 @@ A convoy or project workspace may hold a second layer that selects a sub-item,
 for example which vessel of a convoy to look at. This is a Controlled Split
 inside a Workspace Region:
 
-- The inner Control Surface is an Andamento region rooted at the Workspace
+- The inner Control Surface is a core region rooted at the Workspace
   Subject (#122): a convoy's vessels, or a project's convoys and standing
   roles. It may be a list, a strip, or later something richer, such as a graph
   of a large convoy's agents and their interactions.

@@ -23,7 +23,7 @@ impl Shape {
 }
 
 /// One resolved fact: its winning entry, and the source it came from (none
-/// for a fact Andamento made itself).
+/// for a fact the core made itself).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fact {
     /// Shared with the store when it is a producer's entry as held.

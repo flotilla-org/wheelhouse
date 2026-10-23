@@ -258,7 +258,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("c1"), 0))
     { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(state.snapshot, i)); }
   }
-  // Andamento keeps the run's full order in its dashboard record.
+  // The core keeps the run's full order in its dashboard record.
   String8List leaves = {0};
   WheelhouseDashboard *dashboard = uishell_sidebar_dashboard(&state);
   for(U64 o = 0; dashboard && o < dashboard->order_count; o++)
@@ -405,7 +405,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     uishell_sidebar_manual_sizing(window, 0);
   }
 
-  // Labels reach Andamento intact, quotes, backslashes and all.
+  // Labels reach the core intact, quotes, backslashes and all.
   {
     UIShell_LocalGroup *quoted = uishell_sidebar_local_new_group(window, str8_lit("Say \"hi\" \\ there"));
     String8 id = push_str8_copy(scratch.arena, quoted->section->id);
@@ -421,7 +421,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
       label = push_str8_copy(scratch.arena, uishell_sidebar_string(n.label));
     }
     ReorderCheck(published == 1 && str8_match(label, str8_lit("Say \"hi\" \\ there"), 0),
-                 "a label with quotes and a backslash reaches Andamento intact");
+                 "a label with quotes and a backslash reaches the core intact");
     uishell_sidebar_local_forget_section(window, id);
     uishell_sidebar_publish(&state, &split);
   }

@@ -1,6 +1,6 @@
 # Structured details
 
-This is the Andamento contract for Wheelhouse #177, part of ABI 4 ([The host
+This is the core's contract for Wheelhouse #177, part of ABI 4 ([The host
 interface](sidebar-design/host-interface.md)). The authoritative C layouts and
 pointer lifetimes are in `crates/wheelhouse-ffi/include/wheelhouse.h`. Every
 identity here is an `WheelhouseEntity`, `{provider, kind, id}`; kind and ID

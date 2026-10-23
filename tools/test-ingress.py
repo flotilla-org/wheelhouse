@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise real HTTP/UDS ingress and the real Andamento C decoder."""
+"""Exercise real HTTP/UDS ingress and the real core C decoder."""
 import concurrent.futures
 import ctypes as C
 import faulthandler

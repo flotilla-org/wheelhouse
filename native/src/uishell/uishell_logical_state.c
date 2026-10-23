@@ -1,5 +1,5 @@
 // The logical state as text (uishell_logical_state.h). It reads the config
-// tree, each window's current Andamento snapshot and dashboard record, and
+// tree, each window's current core snapshot and dashboard record, and
 // what its workspace store last read of each Workspace Overlay, and changes
 // none of them, so it can run between any two commands.
 //
@@ -9,7 +9,7 @@
 //                         its Workspace Overlay flags; the provider slots it
 //                         hides; arrangement, tabs at their View Addresses
 //                         with their slots' flags
-//     sidebar             persisted display values; rows as Andamento presents
+//     sidebar             persisted display values; rows as the core presents
 //                         them; the sibling orders it keeps; local sections
 //                         and pins (a pin to a View that went away flagged)
 //     sidebar arrangement where sections are docked, and which are closed
@@ -120,7 +120,7 @@ uishell_logical_tab(Arena *arena, CFG_Node *tab, B32 selected)
   String8 label = rd_view_label_from_cfg(tab);
   if(label.size) { str8_list_pushf(arena, &parts, " %S", uishell_logical_quote(arena, label)); }
   // Its View Address, whose key is a workspace View's Slot's key in
-  // Andamento (uishell_workspace_store.c); before it has one, the
+  // the core (uishell_workspace_store.c); before it has one, the
   // provider's slot it was made for. A Slot's previous instance has the
   // Slot's key, at the previous instance.
   str8_list_push(arena, &parts, uishell_logical_address(arena, tab));
@@ -360,7 +360,7 @@ uishell_logical_order_entity(Arena *arena, UIShell_SidebarState *state, Wheelhou
   return push_str8f(arena, "%S (absent)", name);
 }
 
-// Each sibling order Andamento keeps, named by the row (or region) its run
+// Each sibling order the core keeps, named by the row (or region) its run
 // is under.
 internal void
 uishell_logical_orders(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *state)
@@ -387,7 +387,7 @@ uishell_logical_orders(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *
 }
 
 // Sections and groups people made, and the pins in each group, as
-// Andamento's Dashboard has them.
+// the core's Dashboard has them.
 internal void
 uishell_logical_local(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
 {
@@ -425,7 +425,7 @@ uishell_logical_sidebar_arrangement(UIShell_LogicalText *t, U64 depth, CFG_Node 
     uishell_logical_linef(t, depth+1, "docked");
     uishell_logical_panels(t, depth+2, sidebar->root, sidebar->root_axis, 1);
   }
-  // Andamento's notes: the sections closed on purpose.
+  // The core's notes: the sections closed on purpose.
   for(U64 i = 0; state && i < state->sidebar_closed_count; i++)
   {
     String8 key = state->sidebar_closed[i];

@@ -80,7 +80,7 @@ make that output suitable for native layout.
 Wheelhouse already has workspace selection, panels, views, and previews. Its
 `sessions` view currently projects cleat tags into groups itself, defaulting
 to `vessel`. Reuse its hosting machinery and replace the proof projection;
-do not grow a second implementation of Andamento's metadata/template logic.
+do not grow a second implementation of the core's metadata/template logic.
 
 ## Proposed module shape
 
@@ -244,7 +244,7 @@ guide further projection fields. See [The host interface](host-interface.md) for
 ## Region placement hints
 
 `region` accepts optional `default-host="sidebar"` and `order=10` attributes.
-The frontend interprets `default-host` as a preferred host name. Andamento
+The frontend interprets `default-host` as a preferred host name. The core
 treats it as opaque and requires at least one non-whitespace character. It
 preserves the supplied string verbatim, including surrounding whitespace;
 hosts match the names they recognise exactly. This hint is independent of
@@ -257,8 +257,8 @@ hosts can share this policy through
 `template_config::region_placement_sort_key`. For example, regions declared
 as `a order=10`, `b` (no order), and `c order=0` have keys `(10, 0)`,
 `(1, 1)`, and `(0, 2)`, so the default order is `c, b, a`. A saved user
-arrangement takes precedence over all three hints. Andamento keeps the
-declared region sequence; Zellij may ignore these hints. Andamento itself
+arrangement takes precedence over all three hints. The core keeps the
+declared region sequence; Zellij may ignore these hints. The core itself
 places sections by these hints in the Dashboard's sidebar arrangement, which
 also puts pinned regions first: see [The sidebar
 arrangement](sidebar-arrangement.md).

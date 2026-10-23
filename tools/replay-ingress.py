@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay accepted metadata into the real Andamento ABI, or redact a capture."""
+"""Replay accepted metadata into the real core ABI, or redact a capture."""
 import argparse
 import ctypes as C
 import hashlib
@@ -182,7 +182,7 @@ def replay(records, library, template=ROOT / 'data/sidebar/daily-driver.kdl'):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('recordings', nargs='+', type=Path)
-    parser.add_argument('--library', type=Path, help='Andamento shared library (required for replay)')
+    parser.add_argument('--library', type=Path, help='the core shared library (required for replay)')
     parser.add_argument('--template', type=Path, default=ROOT / 'data/sidebar/daily-driver.kdl')
     parser.add_argument('--redact', action='store_true', help='write redacted JSONL to stdout; no ABI needed')
     args = parser.parse_args()

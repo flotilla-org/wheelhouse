@@ -1,5 +1,5 @@
 //! Typed reading of a provider's Suggested Layout from an entity's flat facts.
-//! The schema is docs/sidebar-design/suggested-layouts.md. Parsing has no
+//! The schema is docs/core/sidebar-design/suggested-layouts.md. Parsing has no
 //! effect on managed content, placement or snapshots yet.
 //!
 //! Two kinds of problem are distinguished. A malformed *spec* (slot list,
@@ -76,7 +76,7 @@ pub struct ViewSpec {
 }
 
 /// The primary slot's role when the provider names none, by its subject
-/// kind (docs/sidebar-design/workspace-layouts.md#roles).
+/// kind (docs/core/sidebar-design/workspace-layouts.md#roles).
 pub fn default_primary_role(kind: &str) -> Option<&'static str> {
     match kind {
         "vessel" | "convoy" => Some("agent"),

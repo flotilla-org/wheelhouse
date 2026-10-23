@@ -1,5 +1,5 @@
-//- Workspace arrangements and Slots in Andamento (ADR 0012; wheelhouse.h,
-// "Slots and arrangement documents"). Andamento keeps each workspace's Slots,
+//- Workspace arrangements and Slots in the core (ADR 0012; wheelhouse.h,
+// "Slots and arrangement documents"). The core keeps each workspace's Slots,
 // with their View Specs, and its arrangement document; this device keeps the
 // rest. Wheelhouse's live copy is the workspace's typed arrangement
 // (shell_core.c, "Live arrangements"), whose tabs name its Views by View
@@ -10,7 +10,7 @@
 //
 //   load    A workspace saved since has no Views in the presentation file,
 //           only `arrangement_presentation`. Once the window's core has
-//           imported its records, its arrangement follows Andamento's
+//           imported its records, its arrangement follows the core's
 //           document and slots (the getters), with this device's settings
 //           merged back in (uishell_workspace_store_load).
 //   commit  Once its arrangement was set, or its Views' specs changed, and no
@@ -20,16 +20,16 @@
 //           no longer tabs are removed. A gesture edits a copy (a boundary
 //           drag's rd_boundary_resize, a tab drag's drop) and sets nothing
 //           until it ends, so a drag commits once, at its end.
-//   follow  When Andamento changed the document itself (it placed a slot the
+//   follow  When the core changed the document itself (it placed a slot the
 //           document had no tab for, or the provider's baseline changed), the
 //           arrangement follows it (uishell_store_follow).
 //   plan    Then every Slot is planned (wheelhouse_slot_plan), and an update
-//           Andamento has for it is applied to its View ("Slot plans"
+//           the core has for it is applied to its View ("Slot plans"
 //           below): a spec another host changed, or a provider's new target,
 //           reaches a View that is already open.
 //
 // A stale commit (the generation moved since it was read) is committed again
-// at the new generation. Only Andamento's own reconciliation moves it, when
+// at the new generation. Only the core's own reconciliation moves it, when
 // the slot set changed from the provider's side, and recommitting runs that
 // reconciliation again: new slots are placed and gone ones reported, so
 // neither the user's edit nor the provider's change is lost. Dropping the
@@ -62,7 +62,7 @@
 //     arrangement_presentation: {
 //       panel: {id: 2 doc_id: "main"}            the number a provider's panel has here
 //       view: {slot: "u:3" daemon}               a View's logical settings its spec doesn't hold
-//       resolution: {slot: "u:3" session: ..}    a daemon session Andamento hasn't saved
+//       resolution: {slot: "u:3" session: ..}    a daemon session the core hasn't saved
 //       previous: {terminal: {previous_of: ..}}  a Slot's previous instance, whole
 //     }
 //     view_presentation: {                       each View's Presentation State, by View
@@ -80,7 +80,7 @@
 //
 // Target Resolutions (CONTEXT.md): which are portable is Wheelhouse's call.
 // A terminal's Cleat daemon session is: its `session` and `daemon_name`,
-// with this machine's name, are saved with the Slot in Andamento
+// with this machine's name, are saved with the Slot in the core
 // (wheelhouse_slot_resolution_set, kind "cleat-session"), and a View that
 // starts without an instance (a restart, another device) attaches through
 // it before starting afresh ("Portable Target Resolutions" below). A session
@@ -88,7 +88,7 @@
 // one only. The rest are machine-local, the View's Presentation State:
 // `attach_token` and `porthole_session` (a capture session on this machine)
 // and `managed_target` (the target this device last applied). A Jackstay
-// endpoint is part of its View Spec, so Andamento has it already. So is a web
+// endpoint is part of its View Spec, so the core has it already. So is a web
 // View's page; where it got to (`web_url`) is portable too.
 
 StaticAssert(WH_Content_Command == 1<<WHEELHOUSE_SLOT_COMMAND && WH_Content_File == 1<<WHEELHOUSE_SLOT_FILE &&
@@ -140,7 +140,7 @@ struct UIShell_StoreEntry
   U64 *seen;
   U64 seen_count;
   U64 seen_capacity;
-  // What Andamento says of its Workspace Overlay, as last read
+  // What the core says of its Workspace Overlay, as last read
   // (uishell_store_read_overlay): the flags of each flagged Slot, the keys
   // tombstones hide, and the arrangement's flags.
   UIShell_StoreFlag *flags;
@@ -177,7 +177,7 @@ StaticAssert(ArrayCount(uishell_store_resolution_keys) == 6, uishell_store_resol
 
 // Runtime-only View settings: this process's progress through its Slot's
 // plan, never saved (uishell_workspace_store_window_text drops them), so a
-// restart plans afresh from what Andamento keeps.
+// restart plans afresh from what the core keeps.
 read_only global String8 uishell_store_runtime_keys[] =
 {
   // The resolution identity the View applied, as wheelhouse_slot_plan takes it.
@@ -188,7 +188,7 @@ read_only global String8 uishell_store_runtime_keys[] =
   str8_lit_comp("declined"),
   // Applying an update failed; focusing the workspace retries it.
   str8_lit_comp("update_failed"),
-  // The session and daemon Andamento has saved for it ("session|daemon").
+  // The session and daemon the core has saved for it ("session|daemon").
   str8_lit_comp("portable"),
   // A hash of the content it showed once it applied that resolution: a View
   // following its provider whose content differs since, the user edited.
@@ -232,7 +232,7 @@ uishell_store_drop_setting(CFG_Node *node, String8 key)
 
 // Marks a View whose slot follows its provider (`follows_provider`): what it
 // runs is the provider's content as this device last resolved it, so all
-// of it is device-local, and Andamento's spec for it is the provider's facet.
+// of it is device-local, and the core's spec for it is the provider's facet.
 internal void
 uishell_store_mark_follows(CFG_Node *view, B32 follows)
 {
@@ -479,7 +479,7 @@ uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UISh
   uishell_workspace_id_from_string(uishell_store_setting(owner, str8_lit("workspace_id")), &slot->workspace);
   slot->key = key;
   *status |= WH_SlotStatus_Slot;
-  // A Slot following its provider has the provider's spec, which Andamento
+  // A Slot following its provider has the provider's spec, which the core
   // keeps; this device holds only what it last resolved it to.
   if(cfg_node_child_from_string(view, str8_lit("follows_provider")) != &cfg_nil_node)
   {
@@ -601,7 +601,7 @@ uishell_store_spec_from_core(Arena *arena, WheelhouseViewSpec *s)
   return spec;
 }
 
-// `spec` as Andamento takes it. A View holds only the command line it runs:
+// `spec` as the core takes it. A View holds only the command line it runs:
 // when that is still the line of `was`'s argv (the slot's spec, if any), the
 // slot keeps its argv rather than becoming this host's shell line.
 internal WheelhouseViewSpec
@@ -876,7 +876,7 @@ uishell_store_slot_view(CFG_Node *owner, String8 key, RD_ViewInstance instance)
   return rd_view_address_make(RD_ViewOwnerKind_Workspace, id, key, instance);
 }
 
-// `a`, an arrangement of a workspace's, as Andamento's document, its tabs
+// `a`, an arrangement of a workspace's, as the core's document, its tabs
 // named by their Views' slot keys.
 internal UIShell_StoreDoc
 uishell_store_doc(Arena *arena, RD_Arrangement *a)
@@ -901,7 +901,7 @@ uishell_store_doc(Arena *arena, RD_Arrangement *a)
     for(U64 j = index; j > 0 && out->parent == WHEELHOUSE_NONE; j--) { if(order[j-1] == p->parent) { out->parent = j-1; } }
     // A provider's panel keeps the ID its document gave it.
     out->id = uishell_sidebar_text(p->doc_id.size ? p->doc_id : push_str8f(arena, "%I64u", p->id));
-    // Andamento takes finite positive weights; the root's means nothing. A
+    // The core takes finite positive weights; the root's means nothing. A
     // weight is written as config writes it (0.7, not 0.699999988), which
     // reads back as the same F32.
     F32 weight = p == a->root ? 1.f : p->weight;
@@ -955,7 +955,7 @@ uishell_store_specs(UIShell_StoreDoc *doc)
 
 // Gives each tab a slot key no other tab of the workspace has: the one it
 // has, else the key of the provider's slot it was made for (its
-// resource_id) when Andamento has that slot, else "u:<resource_id>", else
+// resource_id) when the core has that slot, else "u:<resource_id>", else
 // the next "u:<n>". A View's key is saved on it, and its tab follows it to
 // its address. Returns whether any changed.
 internal B32
@@ -1002,7 +1002,7 @@ uishell_store_assign_keys(Arena *arena, CFG_Node *owner, UIShell_StoreDoc *doc, 
 // A Cleat daemon session is saved with its Slot as kind "cleat-session",
 // fields `host` (this machine's name), `session` and `daemon` (its
 // daemon_name; none for the default daemon), made for the resolution the View
-// applied. A View marks what Andamento has (`portable`), so the presentation
+// applied. A View marks what the core has (`portable`), so the presentation
 // file leaves those settings out (uishell_workspace_store_window_text).
 // The page a web View reached is saved as kind "web-location", field `url`
 // (its `web_url`): any machine can open it.
@@ -1114,7 +1114,7 @@ uishell_store_save_web_location(UIShell_SidebarState *state, WheelhouseWorkspace
 }
 
 // Saves terminal `view`'s daemon session with Slot `key`, for the resolution
-// it applied (`applied`, which its plan reports current), when Andamento
+// it applied (`applied`, which its plan reports current), when the core
 // has none or this machine's older one (`saved`, from the plan; 0 for none);
 // clears this machine's once the View has none. Another machine's is left
 // alone.
@@ -1167,7 +1167,7 @@ uishell_store_save_resolution(UIShell_SidebarState *state, WheelhouseWorkspaceId
   scratch_end(scratch);
 }
 
-//- Following Andamento's document
+//- Following the core's document
 //
 // Both arrangements cross as the same document (WheelhouseArrangementDoc):
 // panels in preorder, each naming its parent by index. A typed arrangement's
@@ -1216,7 +1216,7 @@ uishell_store_doc_shape(Arena *arena, WheelhouseArrangementDoc const *doc)
   return shape;
 }
 
-// Whether Andamento noted `key` as `kind` (WHEELHOUSE_NOTE_*).
+// Whether the core noted `key` as `kind` (WHEELHOUSE_NOTE_*).
 internal B32
 uishell_store_noted(WheelhouseWorkspaceArrangement *a, U32 kind, String8 key)
 {
@@ -1225,11 +1225,11 @@ uishell_store_noted(WheelhouseWorkspaceArrangement *a, U32 kind, String8 key)
   return 0;
 }
 
-// `owner`'s arrangement follows Andamento's document: the View of every
+// `owner`'s arrangement follows the core's document: the View of every
 // slot it still tabs stays, as does every panel whose ID it keeps; a View
 // made for a slot new here takes its settings, and Slots their previous
 // instances, from the device-local `arrangement_presentation`, which goes.
-// Returns whether Andamento had a document to follow.
+// Returns whether the core had a document to follow.
 internal B32
 uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_WorkspaceId id, U64 *generation_out)
 {
@@ -1288,7 +1288,7 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
       if(str8_is_integer(text, 10) && text.size < 18) { max_id = Max(max_id, u64_from_str8(text, 10)); }
     }
 
-    // Andamento's IDs are this device's numbers once it has committed; a
+    // The core's IDs are this device's numbers once it has committed; a
     // provider's hint names panels in words, which get numbers here, and
     // keep their words (`doc_id`) so a commit names them as the provider
     // does. The number a word had is this device's: its panel's, or this
@@ -1351,7 +1351,7 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
           if(known) { spec = uishell_store_spec_from_core(arena, &slot.spec); }
           view = uishell_store_view_from_spec(owner, key, known ? &spec : 0);
           // This device's part of its logical settings (a daemon session
-          // Andamento hasn't saved, the daemon hosting it). Its Presentation
+          // the core hasn't saved, the daemon hosting it). Its Presentation
           // State is its owner's (rd_view_presentation_from_view).
           for(CFG_Node *c = device->first; c != &cfg_nil_node; c = c->next)
           {
@@ -1364,7 +1364,7 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
               cfg_node_insert_child(rd_state->cfg, view, view->last, cfg_node_deep_copy(rd_state->cfg, setting));
             }
           }
-          // A portable resolution Andamento saved, tried before the View
+          // A portable resolution the core saved, tried before the View
           // starts anything of its own.
           if(known && slot.has_saved) { uishell_store_restore_resolution(view, &slot.saved); }
         }
@@ -1404,11 +1404,11 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
 
 //- Slot plans
 //
-// Every Slot follows Andamento's plan/token protocol (wheelhouse.h, "each
+// Every Slot follows the core's plan/token protocol (wheelhouse.h, "each
 // slot follows managed primary content's protocol"). After each sync, each
 // of a workspace's Views that is a Slot is planned with the resolution
 // identity it applied (`applied`: empty for none, as after a restart, so a
-// fresh process starts from what Andamento has saved), and:
+// fresh process starts from what the core has saved), and:
 //
 //   CURRENT       nothing changes; its daemon session is saved if it has one
 //   UPDATING      the recipe is applied to the View, which may show it
@@ -1628,7 +1628,7 @@ uishell_store_complete(UIShell_SidebarState *state, CFG_Node *owner, String8 key
   }
 }
 
-// Each of `owner`'s Views that is a Slot is planned, and what Andamento has
+// Each of `owner`'s Views that is a Slot is planned, and what the core has
 // for it applied.
 internal void
 uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
@@ -1846,10 +1846,10 @@ uishell_store_retry(UIShell_SidebarState *state, CFG_Node *owner)
 
 //- The Workspace Overlay (ADR 0013)
 //
-// The user's edits of a workspace are Andamento's edit set: its Slots
+// The user's edits of a workspace are the core's edit set: its Slots
 // (above), its arrangement (soft and structural commits), and its name and
 // mood, which are the workspace's label and theme here. A workspace marks
-// the name and mood Andamento has (`named`, `mooded`; runtime-only), so the
+// the name and mood the core has (`named`, `mooded`; runtime-only), so the
 // presentation file leaves them out. After each sync the overlay's flags are
 // read for the notices: each Slot's (DETACHED, CHANGED, REMOVED, REBIND),
 // the arrangement's (PROVIDER_CHANGED, SOFT, UNRESOLVED), and the slots
@@ -1858,7 +1858,7 @@ uishell_store_retry(UIShell_SidebarState *state, CFG_Node *owner)
 read_only global String8 uishell_store_owner_runtime_keys[] = {str8_lit_comp("named"), str8_lit_comp("mooded")};
 
 // Sends a label or theme the user changed as the workspace's name or mood,
-// or takes Andamento's when only Andamento's changed (another host's edit,
+// or takes the core's when only the core's changed (another host's edit,
 // or a restart, which reads them from the workspace record). A workspace
 // without the user's name is named by its subject, and follows it: its
 // label isn't the user's until the user changes it.
@@ -1887,13 +1887,13 @@ uishell_store_sync_name(UIShell_SidebarState *state, CFG_Node *owner)
       B32 has_mark = mark != &cfg_nil_node;
       String8 marked = push_str8_copy(scratch.arena, mark->first->string);
       String8 local = push_str8_copy(scratch.arena, uishell_store_setting(owner, settings[i]));
-      // Never taken from Andamento: the user's, unless it is what Andamento
+      // Never taken from the core: the user's, unless it is what the core
       // has (a subject workspace opens with its subject's name).
       B32 edited = has_mark ? !str8_match(local, marked, 0) : local.size != 0 && !(has_remote[i] && str8_match(local, remote[i], 0));
       B32 moved = has_remote[i] != has_mark || !str8_match(remote[i], marked, 0);
       if(!edited && moved && has_remote[i])
       {
-        // Andamento's changed: it is the workspace's now.
+        // The core's changed: it is the workspace's now.
         uishell_store_set_setting(owner, settings[i], remote[i]);
         uishell_store_set_setting(owner, mark_key, remote[i]);
       }
@@ -1926,7 +1926,7 @@ uishell_store_entry_find(UIShell_SidebarState *state, UIShell_WorkspaceId id)
 internal UIShell_StoreEntry *uishell_store_entry(UIShell_SidebarState *state, UIShell_WorkspaceId id);
 internal CFG_NodePtrList uishell_store_owners(Arena *arena, CFG_Node *window);
 
-// Reads what Andamento says of each workspace's overlay, for the notices.
+// Reads what the core says of each workspace's overlay, for the notices.
 internal void
 uishell_store_read_overlay(UIShell_SidebarState *state, CFG_Node *window)
 {
@@ -2023,7 +2023,7 @@ uishell_store_resolve_arrangement(CFG_Node *view, U32 choice)
 //- Workspace Layouts
 //
 // A subject whose kind has a template has layouts to choose between
-// (docs/sidebar-design/workspace-layouts.md in Andamento). Choosing one, or
+// (docs/core/sidebar-design/workspace-layouts.md). Choosing one, or
 // resetting it, moves the arrangement's generation, which the next sync
 // follows; slots the layout leaves out are unplaced, and "Show …" places one.
 
@@ -2125,7 +2125,7 @@ uishell_store_slot_title(String8 key)
 
 // Places unplaced slot `key` of `owner` as the selected tab of `panel`, or
 // of its first tab panel: a commit that gives it a tab, then a follow,
-// which builds its View. With `panel` 0 it goes to the panel Andamento
+// which builds its View. With `panel` 0 it goes to the panel the core
 // names for it, the one its layout's matchers would give it.
 internal void
 uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key)
@@ -2174,7 +2174,7 @@ uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key)
     char *error = 0;
     WheelhouseWorkspaceArrangement *after = 0;
     // Stale, as in uishell_store_sync_owner: committing at the new
-    // generation reconciles Andamento's change again, keeping both.
+    // generation reconciles the core's change again, keeping both.
     for(U32 attempt = 0; attempt < 2; attempt++)
     {
       wheelhouse_arrangement_free(after);
@@ -2591,7 +2591,7 @@ uishell_store_owners(Arena *arena, CFG_Node *window)
 }
 
 // A gesture is in flight: a tab or card drag, or a panel boundary drag.
-// Nothing reaches Andamento until it ends.
+// Nothing reaches the core until it ends.
 internal B32
 uishell_store_gesture_in_flight(void)
 {
@@ -2599,12 +2599,12 @@ uishell_store_gesture_in_flight(void)
 }
 
 // Commits `owner`'s arrangement if it was set, or its Views' specs changed,
-// since it was last committed or followed, then follows anything Andamento
-// placed; else, if Andamento moved the document itself, follows it.
+// since it was last committed or followed, then follows anything the core
+// placed; else, if the core moved the document itself, follows it.
 internal void
 uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revision_moved)
 {
-  // Not followed yet: committing would replace what Andamento keeps.
+  // Not followed yet: committing would replace what the core keeps.
   if(cfg_node_child_from_string(owner, str8_lit("arrangement_presentation")) != &cfg_nil_node) { return; }
   uishell_store_sync_name(state, owner);
   Temp scratch = scratch_begin(0, 0);
@@ -2624,7 +2624,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   if(!changed && !revision_moved) { scratch_end(scratch); return; }
   WheelhouseSlots *slots = UIShell_StoreCall(state, wheelhouse_slots_get(state->core, workspace, 0));
   WheelhouseWorkspaceArrangement *stored = slots ? UIShell_StoreCall(state, wheelhouse_arrangement_get(state->core, workspace, 0)) : 0;
-  // A workspace Andamento doesn't know yet (a subject's registers once it
+  // A workspace the core doesn't know yet (a subject's registers once it
   // has opened) is committed when it does.
   if(!stored)
   {
@@ -2658,7 +2658,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   }
   if(!changed)
   {
-    // Andamento moved the document itself.
+    // The core moved the document itself.
     if(entry->generation != stored->generation && marked)
     {
       uishell_store_follow(state, owner, id, &entry->generation);
@@ -2737,7 +2737,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     after = UIShell_StoreCall(state, wheelhouse_arrangement_commit(state->core, workspace, &out, expected, &error));
     state->store_commits += 1;
     if(!after || after->status != WHEELHOUSE_STALE) { break; }
-    // Stale: Andamento reconciled a provider's change since. Committing at
+    // Stale: the core reconciled a provider's change since. Committing at
     // the new generation reconciles it again, keeping both.
     expected = after->generation;
   }
@@ -2754,7 +2754,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     uishell_store_saw(state, entry, owner, &doc);
     entry->generation = after->generation;
     uishell_store_set_setting(owner, str8_lit("arrangement_generation"), push_str8f(arena, "%I64u", after->generation));
-    // Anything Andamento placed (slots the document had no tab for) joins
+    // Anything the core placed (slots the document had no tab for) joins
     // the arrangement.
     B32 placed = 0;
     for(U64 i = 0; i < after->note_count; i++) { placed |= after->notes[i].kind == WHEELHOUSE_NOTE_PLACED; }
@@ -2782,7 +2782,7 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
   U64 revision = UIShell_StoreCall(state, wheelhouse_workspace_content_revision(state->core, &error));
   wheelhouse_string_free(error);
   B32 revision_moved = state->store_synced && revision != state->store_content_revision;
-  // A new snapshot can mean a workspace Andamento didn't know has registered
+  // A new snapshot can mean a workspace the core didn't know has registered
   // (a subject's, once it opened), which then commits. An arrangement set,
   // or a View's config edited, can be a change to commit.
   if(state->store_synced && cfg_change_gen() == state->store_cfg_gen && state->snapshot_count == state->store_snapshot_count &&
@@ -2804,7 +2804,7 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
     UIShell_StoreDoc before = uishell_store_doc(scratch.arena, rd_arrangement_live(uishell_store_owner(owner)));
     U64 specs = uishell_store_specs(&before);
     uishell_store_plan_owner(state, owner);
-    // What an update changed is Andamento's already: no commit follows it.
+    // What an update changed is the core's already: no commit follows it.
     if(entry->version == version && entry->specs == specs) { uishell_store_saw_live(state, entry, owner); }
   }
   state->store_synced = 1;
@@ -2816,7 +2816,7 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
 }
 
 // Once the window's records are imported: each workspace saved with this
-// device's part of its arrangement follows Andamento's.
+// device's part of its arrangement follows the core's.
 internal void
 uishell_workspace_store_load(UIShell_SidebarState *state, CFG_Node *window)
 {
@@ -2832,7 +2832,7 @@ uishell_workspace_store_load(UIShell_SidebarState *state, CFG_Node *window)
     UIShell_StoreEntry *entry = uishell_store_entry(state, id);
     if(uishell_store_follow(state, owner, id, &entry->generation)) { uishell_store_saw_live(state, entry, owner); }
   }
-  // Names and moods too, which the presentation file leaves to Andamento.
+  // Names and moods too, which the presentation file leaves to the core.
   for(CFG_NodePtrNode *n = owners.first; n; n = n->next) { uishell_store_sync_name(state, n->v); }
   scratch_end(scratch);
 }
@@ -2851,7 +2851,7 @@ uishell_workspace_store_release(UIShell_SidebarState *state)
 //- Device-local
 
 // `window` as the presentation file holds it: a workspace's Views are left
-// out, and when Andamento keeps its arrangement, this device's part of it is
+// out, and when the core keeps its arrangement, this device's part of it is
 // `arrangement_presentation`.
 internal String8
 uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *window)
@@ -2886,7 +2886,7 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
   {
     CFG_Node *owner = n->v;
     CFG_Node *dst = copies[owner_index];
-    // A name or mood Andamento has is its (`named`, `mooded`).
+    // A name or mood the core has is its (`named`, `mooded`).
     {
       String8 settings[] = {str8_lit("label"), str8_lit("theme")};
       for(U64 i = 0; i < ArrayCount(settings) && owner != window; i++)
@@ -2899,8 +2899,8 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
         if(copied != &cfg_nil_node) { cfg_node_release(copy_state, copied); }
       }
     }
-    // One Andamento doesn't keep yet keeps what this device had of it, if it
-    // has not followed Andamento's since it was read.
+    // One the core doesn't keep yet keeps what this device had of it, if it
+    // has not followed the core's since it was read.
     if(cfg_node_child_from_string(owner, str8_lit("arrangement_generation")) == &cfg_nil_node) { continue; }
     cfg_node_release(copy_state, cfg_node_child_from_string(dst, str8_lit("arrangement_presentation")));
     CFG_Node *device = cfg_node_new(copy_state, dst, str8_lit("arrangement_presentation"));
@@ -2918,7 +2918,7 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
       {
         CFG_Node *view = rd_cfg_from_view(t->view);
         String8 key = uishell_store_setting(view, str8_lit("slot"));
-        // A Slot's previous instance isn't in Andamento's document: this
+        // A Slot's previous instance isn't in the core's document: this
         // device keeps it whole, without what is this run's.
         if(!key.size && uishell_store_previous_of(view).size)
         {
@@ -2938,7 +2938,7 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
         U64 taken_count = 0;
         uishell_store_spec_from_view(scratch.arena, view, &spec, taken, &taken_count);
         if(cfg_node_child_from_string(view, str8_lit("follows_provider")) != &cfg_nil_node) { taken_count = 0; }
-        // A daemon session or page Andamento has saved is its.
+        // A daemon session or page the core has saved is its.
         String8 portable = uishell_store_setting(view, str8_lit("portable"));
         B32 saved = portable.size && str8_match(portable, uishell_store_view_portable_text(scratch.arena, view), 0);
         CFG_Node *groups[2] = {&cfg_nil_node, &cfg_nil_node};

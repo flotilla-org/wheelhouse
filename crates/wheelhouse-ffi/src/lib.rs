@@ -1,7 +1,7 @@
-//! Andamento's C ABI: a typed, single-owner embedding interface.
+//! The core's C ABI: a typed, single-owner embedding interface.
 //! include/wheelhouse.h is generated from this crate by cbindgen
 //! (scripts/generate-header.sh); every doc comment here is the header's.
-//! docs/sidebar-design/host-interface.md describes the interface as a whole.
+//! docs/core/sidebar-design/host-interface.md describes the interface as a whole.
 #![allow(clippy::missing_safety_doc)] // The header specifies pointer safety for every call.
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -151,7 +151,7 @@ pub const WHEELHOUSE_COMMITTED: u32 = 1;
 pub const WHEELHOUSE_STALE: u32 = 2;
 
 /// A Workspace ID: 16 bytes the host supplies (UUIDv7 in practice).
-/// Andamento never generates one, and only compares and prints them.
+/// The core never generates one, and only compares and prints them.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WorkspaceIdView {
@@ -173,7 +173,7 @@ fn workspace_view(id: Option<WorkspaceId>) -> WorkspaceIdView {
 }
 
 /// An entity: `{provider, kind, id}`. The provider is the Dashboard
-/// subscription its facts come from ("local" for Andamento's own sections,
+/// subscription its facts come from ("local" for the core's own sections,
 /// groups and refs); the same kind and ID under two providers are two
 /// entities. An entity a host passes names its provider.
 #[repr(C)]

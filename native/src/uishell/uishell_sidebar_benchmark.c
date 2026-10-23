@@ -96,8 +96,8 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     uishell_sidebar_refresh(&state);
     ok &= uishell_sidebar_benchmark_label_lifecycle(&state);
     ws->sidebar = &state;
-    // Andamento keeps the sidebar's arrangement once this marks it. Isolate
-    // it with the layout and its Views so the fixture's follows Andamento's.
+    // The core keeps the sidebar's arrangement once this marks it. Isolate
+    // it with the layout and its Views so the fixture's follows the core's.
     RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
     RD_Arrangement *old_layout = rd_arrangement_from_panel_owner(scratch.arena, sidebar_owner);
     CFG_Node *old_views = cfg_node_child_from_string(window, str8_lit("window_views"));

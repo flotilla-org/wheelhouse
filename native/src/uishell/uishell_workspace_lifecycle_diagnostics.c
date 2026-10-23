@@ -633,7 +633,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
                  "closing the last, window-backed workspace leaves one fresh workspace");
 
   //- A workspace whose group is gone lives in the default group, whatever id
-  //  the default group has: as one of its items, not a leftover Andamento
+  //  the default group has: as one of its items, not a leftover the core
   //  covers there (its key shows which loop placed it).
   {
     split = uishell_root_controlled_split_from_window(scratch.arena, window);

@@ -292,7 +292,7 @@ pub struct MetadataStore {
 }
 
 /// An entity's facts as one record, which is also their resolution. A
-/// provider's entities are its own, and a local entity is Andamento's: each
+/// provider's entities are its own, and a local entity is the core's: each
 /// fact is whatever its last writer set, with no lease, precedence or
 /// ordinal. Liveness is the feed's: a provider whose connection drops is
 /// stale, and one removed is retracted.

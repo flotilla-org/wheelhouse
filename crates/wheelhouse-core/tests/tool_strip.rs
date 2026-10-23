@@ -1,4 +1,4 @@
-//! The tool strip (docs/sidebar-design/tool-strip.md): a subject kind's
+//! The tool strip (docs/core/sidebar-design/tool-strip.md): a subject kind's
 //! `strip` lists the subject's related workspaces and linked items by
 //! placement loops, with the subject bound by its kind's name.
 mod common;

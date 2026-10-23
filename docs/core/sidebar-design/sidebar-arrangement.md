@@ -1,7 +1,7 @@
 # The sidebar arrangement
 
 Which sidebar sections are docked where is Dashboard state: another frontend
-showing the same Dashboard needs it (Wheelhouse ADR 0012). Andamento stores it
+showing the same Dashboard needs it (Wheelhouse ADR 0012). The core stores it
 as one document in the `dashboard` record and reconciles it with what the
 template and the local sections declare, replacing the reconciliation
 Wheelhouse did in C against region hints (`uishell_sidebar_dock_layout`,
@@ -28,8 +28,8 @@ A tab holds a **section key**:
 |---|---|
 | a region's name | a template region |
 | `.section:<id>` | a local section (`.section` entity `<id>`), in the place of the region whose placement has a `layout="section"` loop |
-| `.unplaced` | the workspace fallback. Andamento always declares it; a host without workspace creation on its header hides it while it has no rows |
-| `u:<id>` | a View of the host's own (`<id>` is 1 to 64 of `[a-z0-9_-]`). Andamento stores it and never places or flags it |
+| `.unplaced` | the workspace fallback. The core always declares it; a host without workspace creation on its header hides it while it has no rows |
+| `u:<id>` | a View of the host's own (`<id>` is 1 to 64 of `[a-z0-9_-]`). The core stores it and never places or flags it |
 
 ## Why calls of its own
 
@@ -43,7 +43,7 @@ rather than a target parameter on a workspace's:
 - The rules differ. A workspace places a new slot in the first tab panel; the
   sidebar places a section by its region's hints. A workspace commit with a
   slot tabbed twice is invalid; a sidebar commit repairs it, because the
-  first commit adopts a layout the host saved before Andamento stored one,
+  first commit adopts a layout the host saved before the core stored one,
   and those can hold duplicates (#207). A slot the commit leaves out is
   placed; a section it leaves out is closed.
 
@@ -77,7 +77,7 @@ sections declared after that are new.
 
 ## Reconciling
 
-Andamento reconciles the stored document whenever what is declared may have
+The core reconciles the stored document whenever what is declared may have
 changed: on configure (a new template), when a local
 section or group is set or removed (refs don't matter), and when a dashboard
 record is imported. Reconciling never invalidates the sidebar's snapshot;
@@ -108,7 +108,7 @@ the sections, in **default order**:
 - Pinned regions sort before unpinned ones. This rule is new: Wheelhouse
   ignored `pinned`, which the terminal renderer reads as "always on top".
 - Every section docks. A region's `default-host` is the host's to read
-  (`WheelhouseSectionNode.default_host`); Andamento doesn't place by it.
+  (`WheelhouseSectionNode.default_host`); the core doesn't place by it.
 
 ### Placing
 
@@ -120,7 +120,7 @@ placed in a new tab panel in the dock, holding and selecting it:
   among the root's children before the whole subtree holding the next section
   in default order, else last. Saved nested splits keep their structure,
   selection and weights; a new section never goes inside one.
-- A placed section arrives with weight 1 (the host sizes sections). Andamento
+- A placed section arrives with weight 1 (the host sizes sections). The core
   marks it **placed** until the host's next commit.
 
 Placed sections keep their place when hints change: changing a region's
@@ -162,7 +162,7 @@ placed and unresolved keys, and the last reconciliation's report. Commit,
 restore and reset return the same `WheelhouseSidebarArrangement`, with their
 status. In C the dock is a flat panel array (`WheelhouseArrangementDoc`),
 each panel naming its parent by index. A tab is
-`placed` if Andamento placed it since the host's last commit, and `gone` if
+`placed` if the core placed it since the host's last commit, and `gone` if
 its key no longer resolves. The notes list every CLOSED section and
 UNRESOLVED key, every section PLACED since the host's last commit (so a stale
 commit still names what was placed meanwhile, and the host's retry keeps it),
@@ -188,14 +188,14 @@ document with duplicate tabs imports, and reconciling repairs it. A record
 from before floating panels were removed (ABI 7) imports without them: a
 section only they held has neither a tab nor a closed record, so reconciling
 docks it by its hints. A host view (`u:<id>`) only they held is dropped:
-Andamento never places host views, so the host adds it again if it wants it. Importing gives the arrangement a generation it never had, so a
+The core never places host views, so the host adds it again if it wants it. Importing gives the arrangement a generation it never had, so a
 commit the host prepared before the import is stale.
 
 ## Measured
 
 `crates/wheelhouse-ffi/examples/snapshot-profile.rs` (release build,
 Wheelhouse's `daily-driver.kdl` and sidebar fixture, a shared Linux host): 20
-commits of the seven-panel arrangement Andamento placed, dragging one weight,
+commits of the seven-panel arrangement the core placed, dragging one weight,
 each checking the rendered snapshot.
 
 | Entities | Commit median / max ms | Snapshot current |

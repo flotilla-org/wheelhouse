@@ -63,7 +63,7 @@ The executable is `build/wheelhouse` (`build/wheelhouse.exe` on Windows); the ma
 
 Internal source names and existing configuration storage still use `uishell`.
 
-The native-build CI workflow checks exact Cleat, Andamento and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. For terminal hosting changes, use a sibling Cleat checkout at the revision pinned by `CLEAT_REV` or a descendant. CI checks out the public Andamento repository without an App credential, including for fork PRs.
+The native-build CI workflow checks exact Cleat and Jackstay revisions, recorded in `.github/workflows/build.yml`. It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. For terminal hosting changes, use a sibling Cleat checkout at the revision pinned by `CLEAT_REV` or a descendant. CI checks out the public Andamento repository without an App credential, including for fork PRs.
 
 ## Terminal hyperlinks
 
@@ -108,7 +108,7 @@ for measurements, reproduction commands and limits.
 
 ## Sidebar
 
-The Andamento tree is the workspace sidebar. Without a producer, it lists local
+The core's tree is the workspace sidebar. Without a producer, it lists local
 workspaces under Workspaces, which opens with a New workspace row; live catalog
 entries appear when connected to `pm connect`. Hovering a row shows detach or
 close in the margin beside it; hold it for the row's menu. Workspace previews
@@ -133,7 +133,7 @@ uses a single terminal. Each entry creates or focuses its own workspace. Close i
 with the toolbar control to make the example available again. The facts and
 status in this fixture are examples, not live git or Flotilla information.
 
-The sidebar core (`crates/wheelhouse-core`), its C ABI (`crates/wheelhouse-ffi`, C ABI 10) and the ingress (`crates/wheelhouse-ingress`) are members of this repo's Cargo workspace, with the lockfile at the root. Their Cargo output goes to `target/` unless `CARGO_TARGET_DIR` (or `WHEELHOUSE_ANDAMENTO_TARGET_DIR`) says otherwise. The build explicitly selects the native Rust target rather than Andamento's WASM default. The multi-terminal resource list lives in `data/sidebar/resources.json`, with the primary first. This is host-side fixture data; dynamic terminal resource discovery and updates are not implemented yet. Fixture inputs live in `data/sidebar/`; the build embeds them into the executable.
+The sidebar core (`crates/wheelhouse-core`), its C ABI (`crates/wheelhouse-ffi`, C ABI 10) and the ingress (`crates/wheelhouse-ingress`) are members of this repo's Cargo workspace, with the lockfile at the root. Their Cargo output goes to `target/` unless `CARGO_TARGET_DIR` (or `WHEELHOUSE_ANDAMENTO_TARGET_DIR`) says otherwise. The build explicitly selects the native Rust target rather than the core's WASM default. The multi-terminal resource list lives in `data/sidebar/resources.json`, with the primary first. This is host-side fixture data; dynamic terminal resource discovery and updates are not implemented yet. Fixture inputs live in `data/sidebar/`; the build embeds them into the executable.
 
 On macOS (or Linux with a display), run the native workspace bridge checks with:
 
@@ -184,7 +184,7 @@ unread, for an older build. See `native/src/uishell/uishell_dashboard.c` for the
 scripts/run-daily-driver.sh
 ```
 
-This builds Wheelhouse and the native Andamento git watcher, launches its live Andamento
+This builds Wheelhouse and the native git watcher, launches its live
 sidebar, discovers git worktrees from configured roots and terminal directories, and
 subscribes its Dashboard to the local Flotilla daemon (see "Dashboard subscriptions"
 below), whose `flotilla pm connect` Wheelhouse runs. It uses Wheelhouse's native
@@ -322,10 +322,10 @@ Ctrl-C, abrupt termination and descendant cleanup. These contracts use controlle
 processes and a health-only named-pipe server, independently of a fleet or native
 Wheelhouse build. Real metadata ingress is covered by `tools/test-ingress.py`.
 
-### Live Andamento facts (Unix)
+### Live core facts (Unix)
 
-Launch a separate Wheelhouse instance with a socket in a private directory and an
-Andamento KDL template. The listener broadcasts facts to its windows; selection and
+Launch a separate Wheelhouse instance with a socket in a private directory and a
+sidebar KDL template. The listener broadcasts facts to its windows; selection and
 collapse remain local to each window. The tree starts without example facts and shows
 local workspaces until a producer publishes entries.
 
@@ -364,7 +364,7 @@ and Wheelhouse runs `flotilla pm connect --wheelhouse-socket <its endpoint>` for
 doubling to 30s, when it exits. While a connector is down its rows stay, marked
 stale, until it publishes again. The `--andamento_socket` endpoint itself, which
 the git watcher and one-off scripts use, is the host's own `wheelhouse` provider
-(`local` is Andamento's, for the sections, groups and pins it keeps).
+(`local` is the core's, for the sections, groups and pins it keeps).
 
 The command palette's **Add Flotilla Subscription** takes a daemon endpoint
 (`default` for Flotilla's own) and starts its connector; **Remove Subscription** takes
@@ -386,7 +386,7 @@ Reduced retention limits delete existing captures outside the new size/count
 bounds on startup; copy any captures you want to keep before reducing limits.
 Unix capture files use mode 0600, including retained archives.
 
-`python3 tools/replay-ingress.py <logs/ingress.jsonl...> --library <Andamento shared library>`
+`python3 tools/replay-ingress.py <logs/ingress.jsonl...> --library <core shared library>`
 replays patches through the shipped sidebar template and reports per-patch
 role/convoy fields. Before sharing, run
 `python3 tools/replay-ingress.py <logs/ingress.jsonl...> --redact > ingress-redacted.jsonl`
@@ -431,7 +431,7 @@ daily-driver validation with the paired watcher remains pending; automated diagn
 are isolated.
 
 The build now also produces `wheelhouse_ingress`, a Wheelhouse-owned Rust HTTP adapter
-with a small C boundary. Andamento's core remains transport-independent. Ingress is
+with a small C boundary. The core remains transport-independent. Ingress is
 opt-in; Windows builds retain the fixture sidebar but reject the Unix listener option.
 Clean application shutdown removes its socket. After a crash, remove the stale socket
 before restarting with the same path.

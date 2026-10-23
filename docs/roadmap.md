@@ -10,9 +10,9 @@ criteria. The design and validation notes below explain the current implementati
 Wheelhouse is a native workspace application built from tabbed panels and
 embedded views. Cleat supplies terminal sessions and rendering data. Jackstay
 supplies video and optional cooperative input to a panel. The workspace sidebar
-uses Andamento's shared core and templates. It can run with local workspaces or
+uses the shared core and templates. It can run with local workspaces or
 receive facts through HTTP over a Unix socket (a named pipe on Windows) from
-the native Andamento git watcher and `flotilla pm connect`. Flotilla is the first
+the native core git watcher and `flotilla pm connect`. Flotilla is the first
 live fleet producer, not a dependency of the sidebar core. Wheelhouse owns workspace activation and layout.
 
 The project tree is now the only workspace selector. It covers local and
@@ -41,12 +41,12 @@ Sidebar presentation, following the
   (#188, #189). Restoration no longer re-inspects unavailable saved workspaces
   on every patch (#204).
 - **Hover cards:** peek and engaged hover cards (#165), structured from
-  Andamento's typed detail roles (#177). Cards can be detached to float, docked
+  the core's typed detail roles (#177). Cards can be detached to float, docked
   under their source, or pinned (#166).
 - **Docked sections:** sidebar sections are docked Views with compact display
   toggles in their headers (#163, #80; the history toggle is **Role history**).
   Docking validity uses one checker (#161) against measured drop geometry
-  (#180). Andamento regions declare `default-host` and `order` hints, and
+  (#180). The core regions declare `default-host` and `order` hints, and
   Wheelhouse's saved layout stores where sections actually are (#162).
 - **Performance:** a capped native benchmark and a snapshot-scoped
   context-label lookup (#182, #29). A shared section-geometry cache was declined
@@ -118,7 +118,7 @@ Other open defects and CI work remain on the
 - [Cleat #242](https://github.com/flotilla-org/cleat/issues/242) is closed with
   the synchronized-output fix; Wheelhouse #75 is also closed.
 - [Flotilla #1961](https://github.com/flotilla-org/flotilla/issues/1961) owns
-  readiness/blocker publication; Wheelhouse #69 consumes it through Andamento.
+  readiness/blocker publication; Wheelhouse #69 consumes it through the core.
 - Flotilla [#1975](https://github.com/flotilla-org/flotilla/issues/1975) and
   [#1976](https://github.com/flotilla-org/flotilla/issues/1976), terminal identity
   and crew Ghostty terminfo, are closed. Deployment into an existing crew is
@@ -128,16 +128,16 @@ Other open defects and CI work remain on the
 
 Decided on [Map: a target state model for Wheelhouse](https://github.com/flotilla-org/wheelhouse/issues/290)
 (10 October 2026) and revised the same day after five adversarial reviews:
-Andamento owns logical state (the Dashboard, workspaces, slots, and
+The core owns logical state (the Dashboard, workspaces, slots, and
 arrangements committed as whole documents) and saves it as named KDL records
 in a Dashboard directory; RAD's config tree keeps only Presentation State. See
 ADRs [0012](adr/0012-andamento-owns-logical-state.md) and
 [0013](adr/0013-workspace-overlay-is-an-addressed-edit-set.md) and the glossary
 in `CONTEXT.md`. Each step keeps the daily driver usable; step 4 is the one
-planned fresh start. Andamento's ABI 3 is additive; Wheelhouse names
+planned fresh start. The core's ABI 3 is additive; Wheelhouse names
 workspaces only by Workspace ID from step 1, so it requires ABI 3.
 
-| Step | Wheelhouse | Andamento / Flotilla |
+| Step | Wheelhouse | Core / Flotilla |
 | --- | --- | --- |
 | 0. Behaviour harness with golden logical-state snapshots | [#314](https://github.com/flotilla-org/wheelhouse/issues/314) | |
 | 1. Host-supplied 128-bit Workspace IDs (ABI 3) | [#306](https://github.com/flotilla-org/wheelhouse/issues/306) | [andamento#141](https://github.com/flotilla-org/andamento/issues/141) |
@@ -151,7 +151,7 @@ workspaces only by Workspace ID from step 1, so it requires ABI 3.
 | 9. Renderer registry and `WH_ViewContext` | [#310](https://github.com/flotilla-org/wheelhouse/issues/310) | |
 | 10. Workspace Overlay | | [andamento#145](https://github.com/flotilla-org/andamento/issues/145) |
 
-Deferred: one Andamento core per process (with the window effort); typed
+Deferred: one core per process (with the window effort); typed
 Presentation State accessors and an explicit settings cascade ([#312](https://github.com/flotilla-org/wheelhouse/issues/312)); retiring
 the evaluator ([#313](https://github.com/flotilla-org/wheelhouse/issues/313)); the provider-agnostic facts stream ([flotilla#3011](https://github.com/flotilla-org/flotilla/issues/3011),
 [andamento#146](https://github.com/flotilla-org/andamento/issues/146)). Flotilla's provider identity is decided separately in
@@ -178,7 +178,7 @@ presentation change. The current Jackstay implementation and limits are recorded
 [Jackstay views](design/jackstay-view.md).
 
 The current sidebar reasoning and implementation history live in
-[Andamento native reconciliation](design/andamento-native-reconciliation.md).
+[Core native reconciliation](design/andamento-native-reconciliation.md).
 The [portfolio context](context/portfolio.md) is an August orientation snapshot;
 the [top-down cut plan](top-down-cut-plan.md) records the earlier RAD extraction.
 Neither is the current work queue. Cross-project portfolio history remains in

@@ -1,7 +1,7 @@
 //! Host-supplied Workspace identity.
 //!
 //! A Workspace ID is 16 opaque bytes. Hosts generate them (UUIDv7 in
-//! practice); Andamento only compares, orders and prints them, so the core
+//! practice); the core only compares, orders and prints them, so the core
 //! stays deterministic for replay.
 use std::{fmt, str::FromStr};
 

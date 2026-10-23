@@ -1,4 +1,4 @@
-//! Named records (#142): Andamento owns the sidebar's logical state and
+//! Named records (#142): the core owns the sidebar's logical state and
 //! exports it as opaque records, which a fresh sidebar imports before it has
 //! observed anything or received a fact.
 mod common;
@@ -452,7 +452,7 @@ fn importing_before_the_first_observation_restores_the_sidebar_without_facts() {
     assert_eq!(project_row.variables.as_ref().unwrap().values["density"].value, "compact", "placement variables are restored");
     assert!(!issues_checked(&sidebar), "display variables are restored");
 
-    // Local sections, groups and pins are back, owned by Andamento.
+    // Local sections, groups and pins are back, owned by the core.
     let snapshot = sidebar.snapshot();
     let all = nodes(&snapshot.surface);
     for local in [EntityRef::local(".section", "s1"), EntityRef::local(".group", "g1"), EntityRef::local(".ref", "r1")] {

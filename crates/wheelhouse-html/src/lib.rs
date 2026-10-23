@@ -68,9 +68,9 @@ fn node(node: &PlacementNode) -> String {
 
 pub fn render(snapshot: &Snapshot) -> String {
     let mut html = String::from(
-        r#"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Andamento semantic renderer proof</title><style>
+        r#"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>wheelhouse-core semantic renderer proof</title><style>
 body{font:16px system-ui;margin:2rem;max-width:72rem;color:#20242b;background:#f5f6f8}main{display:flex;gap:2rem;align-items:flex-start;flex-wrap:wrap}section{background:white;border:1px solid #ccd1d9;border-radius:.5rem;padding:1rem;min-width:16rem;flex:1}article{padding:.5rem}.children{margin-left:1rem}article[data-layout=inline]{display:inline-block;vertical-align:top;border:1px solid #ddd;border-radius:.4rem}button,select{font:inherit;padding:.35rem;margin:.2rem}button{background:#f5f7fa;border:1px solid #bcc5d1;border-radius:.3rem;cursor:pointer}button span+span{margin-left:.5em}small{display:block;color:#586575}label{display:inline-block;font-size:.8rem}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{cursor:pointer}footer{margin-top:2rem}
-</style><h1>Andamento</h1><p>Semantic snapshot with native HTML geometry. Controls emit actions; a host owns dispatch and supplies the next snapshot.</p><main>"#,
+</style><h1>wheelhouse-core</h1><p>Semantic snapshot with native HTML geometry. Controls emit actions; a host owns dispatch and supplies the next snapshot.</p><main>"#,
     );
     for section in snapshot.surface.visible_sections() {
         html.push_str(&format!("<section><h2>{}</h2>", content(&section.content, &section.name)));

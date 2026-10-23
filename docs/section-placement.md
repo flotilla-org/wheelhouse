@@ -1,12 +1,12 @@
 # Section placement
 
-Andamento declares region identity and content. `default-host="sidebar"`,
+The core declares region identity and content. `default-host="sidebar"`,
 `order=10` and `pinned` supply initial placement hints. Where sections
 actually are is the Dashboard's sidebar arrangement (ADR 0012): one document in
-Andamento's `dashboard` record, holding the dock's panel tree and the
-sections closed on purpose. Andamento reconciles it with what
-the template and the local sections declare; its rules are in Andamento's
-`docs/sidebar-design/sidebar-arrangement.md`. A region's name is its section
+the core's `dashboard` record, holding the dock's panel tree and the
+sections closed on purpose. The core reconciles it with what
+the template and the local sections declare; its rules are in the core's
+`docs/core/sidebar-design/sidebar-arrangement.md`. A region's name is its section
 key, a local section's is `.section:<id>`, and `.unplaced` is the workspace
 fallback.
 
@@ -15,12 +15,12 @@ Wheelhouse's live copy is the window's dock arrangement
 `native/src/uishell/uishell_sidebar_store.c`). Docking edits it as before, through
 the shared docking checker; at the end of a gesture the whole document is
 committed (`wheelhouse_sidebar_arrangement_commit`). Closing a section is
-committing without it. When Andamento changes the document itself (a newly
+committing without it. When the core changes the document itself (a newly
 declared section placed by its hints, a duplicate removed, another frontend's
 commit), the live copy follows it. The Sections menu's Restore and
-Reset To Default Panel Layout are Andamento's calls.
+Reset To Default Panel Layout are the core's calls.
 
-The rules Andamento applies, as Wheelhouse's C reconciliation did before:
+The rules the core applies, as Wheelhouse's C reconciliation did before:
 
 - hints regardless of declaration order: explicit orders sort lower first, an
   omitted order is the declaration index, ties keep declaration order, and an
@@ -29,12 +29,12 @@ The rules Andamento applies, as Wheelhouse's C reconciliation did before:
   same host, keeping saved nested splits, selection and weights;
 - duplicate tabs: the first in the dock wins, and a panel the removal empties
   goes; unrelated empty panels stay;
-- the first commit of a sidebar saved before Andamento kept it adopts it,
+- the first commit of a sidebar saved before the core kept it adopts it,
   closing the declared sections it lacks;
 - Restore gives an equal share of the dock, the others scaled to make room;
 - a changed host hint moves nothing already placed.
 
-Rules that changed when Andamento took this over:
+Rules that changed when the core took this over:
 
 - A region the template drops or renames keeps its tab, flagged (ADR 0013),
   instead of being removed with its closed record. Its View shows a
@@ -57,7 +57,7 @@ file's `sidebar_presentation`; sizes set by dragging are the document's.
 
 Run `python tools/test-section-placement.py` after building for the headless
 lifecycle scenarios and the KDL source-integrity check. They use the real
-Andamento ABI, docking checker and config codec, and restart through the
+the core ABI, docking checker and config codec, and restart through the
 presentation file and the dashboard record: hints, reorder, duplicates,
 add, close, restore, drift, reset, nested saved splits, invalid saved
 placement, adoption, host and order variants, unusual keys and a merged leaf.

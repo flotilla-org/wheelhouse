@@ -1,6 +1,6 @@
 # The host interface (ABI 10)
 
-What a host such as Wheelhouse uses to drive Andamento through its C ABI.
+What a host such as Wheelhouse uses to drive the core through its C ABI.
 `crates/wheelhouse-ffi/include/wheelhouse.h` is generated from the FFI crate
 by cbindgen (`scripts/generate-header.sh`; CI fails if it is stale), so each
 declaration's comment there is its contract. This page is the map. The model
@@ -37,11 +37,11 @@ it was built against.
 ## Identity
 
 - **Workspace IDs** are 16 bytes (`WheelhouseWorkspaceId`) the host supplies,
-  UUIDv7 in practice. Andamento only compares and prints them (as a
+  UUIDv7 in practice. The core only compares and prints them (as a
   hyphenated UUID, which is also their JSON form).
 - **Entities** are `WheelhouseEntity {provider, kind, id}`. The provider is
   the Dashboard subscription the facts came from; the same kind and ID under
-  two providers are two entities. `"local"` is Andamento's own provider
+  two providers are two entities. `"local"` is the core's own provider
   (local sections, groups and refs); a host's subscription is never called
   that. Every entity a host passes names its provider.
 
@@ -78,10 +78,10 @@ entity.
 
 ## Records
 
-Andamento owns the Dashboard's and each workspace's logical state, and hands
+The core owns the Dashboard's and each workspace's logical state, and hands
 it to the host as **records** to store as they are: their bytes (JSON, today)
-are private to Andamento and may change from one build to the next. The host
-decides where to keep them; Andamento never touches a filesystem.
+are private to the core and may change from one build to the next. The host
+decides where to keep them; the core never touches a filesystem.
 
 | Call | |
 |---|---|

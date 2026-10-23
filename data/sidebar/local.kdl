@@ -1,4 +1,4 @@
-// No producer catalog: Andamento supplies coverage for observed local workspaces.
+// No producer catalog: the core supplies coverage for observed local workspaces.
 region "tree" root-template="tree/title" form="compact" placement="tree"
 template "tree/title" slot="compact" node-kind="entity" {
   field "label" source="literal" value="Projects"

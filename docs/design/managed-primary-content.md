@@ -5,14 +5,14 @@ mechanism needed by standing project-role workspaces (Wheelhouse #48 and
 Flotilla #1908). Flotilla now publishes the roles, and the daily-driver template
 places them on project rows; see [Standing roles](#standing-roles).
 
-Andamento resolves optional workspace.primary.state (ready/held) and
+The core resolves optional workspace.primary.state (ready/held) and
 workspace.primary.target facts, action.primary.recipe and git.root (the
 working directory materialization also uses) into one desired terminal
 descriptor. Intent identity remains the workspace's
 sidebar_entity_kind/id; the resolved target identifies its changing backing
 instance. The primary resource_id remains stable as the user moves the view.
 
-Wheelhouse reads actual saved descriptors and applies typed Andamento plans.
+Wheelhouse reads actual saved descriptors and applies the core's typed plans.
 For an initialized in-process terminal it prepares another process, validates
 the plan token, releases the old runtime and installs the candidate. The same
 view, panel and workspace remain. For an uninitialized view it updates saved
@@ -67,7 +67,7 @@ main), which provides the managed-content and related-detail interfaces.
 ## Standing roles
 
 Flotilla #1908 publishes each declared standing role as a `role` entity; the
-fact contract is in Andamento's `docs/sidebar-design/managed-primary-content.md`.
+fact contract is in the core's `docs/core/sidebar-design/managed-primary-content.md`.
 `data/sidebar/daily-driver.kdl` places roles as inline actions on their project
 row, ordered by role name and selected by entity kind, never by name. A held
 role stays visible but has no recipe to open.
@@ -91,14 +91,14 @@ first plan is current. A live check needs a Flotilla release containing #1908.
 
 The same change folds in project repository membership (Flotilla #1897): the
 project hover card lists each `project_repository` relation through a loop in
-`project/detail`, which Andamento evaluates as related-entity detail rather than
+`project/detail`, which the core evaluates as related-entity detail rather than
 tree rows. `tools/test-native-sidebar.py` covers ordering, subpaths, exclusion of
 other projects' memberships, and that memberships are never placed.
 
 ## Observed worktree directories
 
 The host now supplies a full list of terminal launch directories through
-`wheelhouse_observe_workdirs`, after workspace topology. Andamento matches exact
+`wheelhouse_observe_workdirs`, after workspace topology. The core matches exact
 nonempty materialization roots without selecting an entity kind. An existing
 terminal at a producer's `git.root` makes its row live and activation focuses
 that workspace. Explicit materialization bindings take precedence; changing a

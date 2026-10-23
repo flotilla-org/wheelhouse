@@ -3,7 +3,7 @@
 A subject's workspace has one set of Slots and can show them in several ways:
 a convoy's agents as tabs beside an overview of its vessels, or only the agents
 still running. A **Workspace Layout** is one named arrangement of those Slots.
-This document describes how Andamento defines layouts as templates in the
+This document describes how the core defines layouts as templates in the
 sidebar configuration, chooses one for a workspace, and keeps the user's edits
 to each. It builds on [Slots and arrangements](slots-and-arrangements.md), the
 [Workspace Overlay](workspace-overlay.md) and the
@@ -20,7 +20,7 @@ after it: `hide { slots role="agent" { match "k" exists=true; }; }`.
 ## In short
 
 - **Flotilla publishes what exists**: Slots, each with a **role**, and hints.
-  **Andamento holds the layouts** as templates keyed by subject kind. Changing
+  **The core holds the layouts** as templates keyed by subject kind. Changing
   a layout needs no Flotilla release.
 - A workspace has **one set of Slots**. A layout only arranges them, so
   switching layouts moves the existing Views and live terminals carry over.

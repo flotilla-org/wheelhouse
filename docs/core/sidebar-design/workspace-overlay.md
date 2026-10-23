@@ -5,7 +5,7 @@ A provider suggests a workspace's Views and their arrangement (a
 **Workspace Overlay** holds the user's edits apart from the provider's
 baseline, so the provider's changes keep arriving, the user's edits survive
 them, and the edits could later be proposed back. This document describes how
-Andamento implements Wheelhouse ADR 0013 ("A Workspace Overlay is an addressed
+the core implements Wheelhouse ADR 0013 ("A Workspace Overlay is an addressed
 edit set against a cached baseline") on top of [Slots and
 arrangements](slots-and-arrangements.md). The vocabulary is Wheelhouse's
 `CONTEXT.md`.
@@ -83,7 +83,7 @@ edit set: the provider has accepted it.
 
 ## The arrangement: soft and structural edits
 
-`set_arrangement` stays a whole-document commit. Andamento tells soft edits
+`set_arrangement` stays a whole-document commit. The core tells soft edits
 from structural ones by diffing the committed document against the stored
 one, the document the host read at that generation:
 

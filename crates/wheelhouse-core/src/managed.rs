@@ -1,4 +1,4 @@
-//! Reconciliation of each Slot's content: Andamento plans changes with
+//! Reconciliation of each Slot's content: the core plans changes with
 //! tokens, and the host prepares the runtime instance, validates the token,
 //! commits and acknowledges. Bindings are keyed by workspace and slot key;
 //! managed primary content is the `primary` slot.

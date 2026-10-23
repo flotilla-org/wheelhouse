@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the shipped native template against Andamento's real typed C ABI."""
+"""Check the shipped native template against the core's real typed C ABI."""
 import ctypes as C
 import faulthandler
 import itertools

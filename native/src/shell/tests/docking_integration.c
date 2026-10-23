@@ -1,5 +1,5 @@
 // Compiled by tools/test-docking-integration.py from the production shell
-// amalgamation with its entry point replaced. Links real Andamento/Cleat native
+// amalgamation with its entry point replaced. Links real core/Cleat native
 // libraries and native ingress; headless WM/renderer/font backends avoid a display.
 // Tests use the real panel UI, live arrangements, commands, checker and
 // settings evaluator. OS window sizing is the fault boundary; arrangements,

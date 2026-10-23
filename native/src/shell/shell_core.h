@@ -39,7 +39,7 @@ enum
   // The address names a Slot.
   WH_SlotStatus_Slot = 1<<0,
   // The Slot is in its provider's baseline and not detached, so it follows
-  // the provider. Andamento's detached flag reaches Views only this way for
+  // the provider. The core's detached flag reaches Views only this way for
   // now (uishell_workspace_store.c, "follows_provider").
   WH_SlotStatus_FollowsProvider = 1<<1,
   // Content this Wheelhouse can't show; the Slot keeps its View Spec.
@@ -71,7 +71,7 @@ WH_SlotWait;
 // How this device last reached the Slot's content (CONTEXT.md, "Target
 // Resolution"): disposable, and never part of its View Spec. A Cleat daemon
 // session (`session`, `daemon_name`) and the page a web View reached
-// (`web_url`) are portable and saved with the Slot in Andamento; the rest are
+// (`web_url`) are portable and saved with the Slot in the core; the rest are
 // machine-local (uishell_workspace_store.c).
 typedef struct WH_TargetResolution WH_TargetResolution;
 struct WH_TargetResolution
@@ -1553,7 +1553,7 @@ internal CFG_Node *rd_cfg_from_panel_owner(RD_PanelOwner owner);
 // Whether `panel` is a panel of its owner's live arrangement.
 internal B32 rd_panel_exists(RD_PanelAddress panel);
 //- Live arrangements (shell_core.c): each owner's arrangement, as the
-// renderer shows it and Andamento is sent it.
+// renderer shows it and the core is sent it.
 // A copy of `owner`'s live arrangement, to edit and set; an empty one of its
 // own when it has none.
 internal RD_Arrangement *rd_arrangement_from_panel_owner(Arena *arena, RD_PanelOwner owner);

@@ -1,4 +1,4 @@
-// Native managed-content diagnostic using Andamento's slot plans.
+// Native managed-content diagnostic using the core's slot plans.
 // Uses isolated configuration, real terminal view rendering and in-process Cleat.
 #if OS_MAC || OS_LINUX
 #include <unistd.h>
@@ -82,7 +82,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   }
   ManagedCheck(activate != WHEELHOUSE_NONE && wheelhouse_dispatch(state.core, state.snapshot, activate, 0), "role entry dispatches its opening");
   // As a frame does, the window's workspaces are observed before anything
-  // plans them: a Slot is of a workspace Andamento knows.
+  // plans them: a Slot is of a workspace the core knows.
   {
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_effects(&state, &split);

@@ -52,7 +52,7 @@ uishell_sidebar_card_retain_label(UIShell_HoverCard *card, String8 label)
 // A detail target need not have any placement. Adapt the catalog's preview
 // identity to the existing preview drawing path without looking for a tree row.
 // UI-thread only: a request mutates the snapshot by appending details. Borrowed
-// heap-backed strings remain valid across appends (Andamento ABI guarantee),
+// heap-backed strings remain valid across appends (the core ABI guarantee),
 // until snapshot release. Missing targets return error-free NONE and append
 // nothing. Core revision caching bounds repeat-miss cost; see
 // docs/sidebar-snapshot-performance.md (Demand-driven catalog details) for
@@ -680,7 +680,7 @@ uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card
     card->previous = card->path[card->depth-1]; card->depth--;
     card->changed_at = now_time_us(); card->glide_from = card->rect.p0; card->scroll = 0; rd_request_frame();
   }
-  // Labels and enabled controls come from Andamento. The footer packs the
+  // Labels and enabled controls come from the core. The footer packs the
   // controls into one row; the text label remains the keyboard target.
   WheelhouseDetailAction controls[UIShell_HoverCardActionCount] = {0};
   U64 control_count = 0;
@@ -727,7 +727,7 @@ uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UI
 
 #include "uishell/uishell_detached_cards.c"
 
-// Andamento names an action's intent; the cap shows it as a header glyph, its
+// The core names an action's intent; the cap shows it as a header glyph, its
 // label the tooltip.
 internal String8
 uishell_sidebar_card_action_glyph(String8 intent)

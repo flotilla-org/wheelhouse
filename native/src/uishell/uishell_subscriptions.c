@@ -1,6 +1,6 @@
 //- The Dashboard's provider subscriptions (CONTEXT.md, Dashboard; ADR 0012).
 // Each names a Content Provider the Dashboard subscribes to: a subscription
-// ID (UUIDv7), made when it is added, which is the provider Andamento stamps
+// ID (UUIDv7), made when it is added, which is the provider the core stamps
 // on every fact it publishes; its kind (only "flotilla" so far); and how to
 // connect (the Flotilla daemon endpoint, empty for Flotilla's default, as
 // `--daemon` / FLOTILLA_DAEMON chose it for the daily driver).
@@ -16,7 +16,7 @@
 //       daemon: "ssh://host/path"
 //     }
 //
-// not in Andamento's dashboard record, which is Andamento's alone: each
+// not in the core's dashboard record, which is the core's alone: each
 // window still has a core (and records) of its own while subscriptions
 // belong to the process, and the subscription runner that will own them is
 // a host-side crate, not the core (wheelhouse#305).
@@ -299,7 +299,7 @@ uishell_subscriptions_poll(void)
 }
 
 // How the logical state names a provider: its subscription's position in
-// the Dashboard, "local" for Andamento's or the host's own, or "removed" for
+// the Dashboard, "local" for the core's or the host's own, or "removed" for
 // one it no longer has.
 internal String8
 uishell_subscription_label(Arena *arena, String8 provider)

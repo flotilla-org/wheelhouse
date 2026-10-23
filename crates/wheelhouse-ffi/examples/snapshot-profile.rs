@@ -180,7 +180,7 @@ fn main() {
                 commits[19],
                 serde_json::to_string(&phases).unwrap()
             );
-            // The sidebar arrangement: the document Andamento placed, with a
+            // The sidebar arrangement: the document the core placed, with a
             // dock weight dragged at each commit.
             let sidebar = wheelhouse_sidebar_arrangement_get(h, ptr::null_mut());
             assert!(!sidebar.is_null());

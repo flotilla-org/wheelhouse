@@ -12,7 +12,7 @@ Wheelhouse becomes a family of frontends over a shared core:
 
 - **native**, the macOS/Windows/Linux app that exists today;
 - **web**, the next frontend and the higher priority;
-- **TUI**, later, built on the parts the native app and Andamento already have.
+- **TUI**, later, built on the parts the native app and the core already have.
 
 They share what makes sense: the sidebar model and its templates, workspace
 and View state, and the formats views consume. Each frontend keeps its own
@@ -40,7 +40,7 @@ is small when it comes.
    work. Today that costs a pin bump and PR ordering across two repos for
    every sidebar change (#409 and andamento#178 are a recent example).
 2. **The web comes before the TUI.**
-3. **The TUI builds on what exists:** Andamento's core and its existing
+3. **The TUI builds on what exists:** the core and its existing
    terminal sidebar, plus code, ideas or structure from katzensteg-wm, which
    already has a Cleat client. That makes the TUI cheaper than the web, but
    it is still second.

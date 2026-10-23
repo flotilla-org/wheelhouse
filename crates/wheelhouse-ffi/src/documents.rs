@@ -2,7 +2,7 @@
 //!
 //! A document is an array of panels, each naming its parent by index: a
 //! host writes one by walking its tree in preorder, and reads one in a
-//! single pass, linking each panel to its parent. A document Andamento
+//! single pass, linking each panel to its parent. A document the core
 //! returns is one allocation the host frees with its `_free` call: every
 //! pointer in it, and all its text, stays valid until then. A document the
 //! host passes in is only read, during the call.
@@ -64,7 +64,7 @@ pub struct WheelhouseSidebarDoc {
     pub dock: WheelhouseArrangementDoc,
 }
 
-/// A key Andamento placed since the host last committed.
+/// A key the core placed since the host last committed.
 pub const WHEELHOUSE_NOTE_PLACED: u32 = 0;
 /// A workspace tab whose slot has gone. It stays until the host removes it.
 pub const WHEELHOUSE_NOTE_GONE: u32 = 1;
@@ -137,7 +137,7 @@ pub struct WheelhouseWorkspaceArrangement {
 /// The Dashboard's sidebar arrangement: which sections are docked where.
 /// Tabs hold section keys: a region's name, ".section:<id>" for a local
 /// section, ".unplaced" for the workspace fallback, or "u:<id>" for a view
-/// of the host's own, which Andamento stores but never places or flags.
+/// of the host's own, which the core stores but never places or flags.
 #[repr(C)]
 pub struct WheelhouseSidebarArrangement {
     /// As for a workspace's arrangement.
@@ -495,7 +495,7 @@ fn sidebar_after(h: &WheelhouseCore, result: Result<Report, CommitError>) -> Res
 }
 
 /// The sidebar arrangement. Free it with wheelhouse_sidebar_arrangement_free.
-/// Andamento reconciles it when what is declared changes (on configure, and
+/// The core reconciles it when what is declared changes (on configure, and
 /// when local sections or groups change or are imported): a section with
 /// neither a tab nor a closed record is placed in a new tab panel in the
 /// dock, before the subtree holding the next section in default order

@@ -1,10 +1,10 @@
 //! The Dashboard's sidebar arrangement (Wheelhouse ADR 0012 and 0013;
-//! docs/sidebar-design/sidebar-arrangement.md).
+//! docs/core/sidebar-design/sidebar-arrangement.md).
 //!
 //! Which sections are docked where is one document: the dock's panel tree,
 //! and the sections closed on purpose. The host owns the live copy and
 //! commits it whole at an expected generation, as it does a workspace's
-//! arrangement. Andamento reconciles it against what the template and the
+//! arrangement. The core reconciles it against what the template and the
 //! local sections declare: new sections are placed by their region's `order`
 //! hint, duplicate tabs are removed, and keys that no longer resolve are
 //! flagged rather than dropped. Pixel geometry and section collapse are the
@@ -17,7 +17,7 @@ use crate::suggested_layout::Axis;
 
 /// The key of a local section (`.section` entity `<id>`) among sections.
 pub const LOCAL_SECTION_PREFIX: &str = ".section:";
-/// The prefix of keys of the host's own views, which Andamento stores but
+/// The prefix of keys of the host's own views, which the core stores but
 /// never places or flags (`u:<id>`, as for a workspace's user slots).
 pub const HOST_VIEW_PREFIX: &str = slots::USER_PREFIX;
 
@@ -68,7 +68,7 @@ impl Declared {
     /// - A region is a section keyed by its name. The first region that
     ///   hosts local sections is, while any exists, replaced by them
     ///   (`.section:<id>`, by `.position` then ID), each with its hints.
-    /// - Andamento always emits the workspace fallback, `.unplaced`, after
+    /// - The core always emits the workspace fallback, `.unplaced`, after
     ///   the regions.
     /// - An explicit order sorts lower first; an omitted one is the
     ///   section's declaration index; ties keep declaration order. An
@@ -131,7 +131,7 @@ fn is_host_view(key: &str) -> bool {
 /// The sidebar's panels: the dock's tree. Tabs hold section keys (or the
 /// host's `u:<id>` views). A record from before floating panels went holds
 /// them too; decoding drops them, and reconciling docks their sections. A
-/// host view only they held is dropped with them: Andamento never places
+/// host view only they held is dropped with them: the core never places
 /// host views.
 ///
 /// It stays a struct around the dock, rather than the dock itself, so the
@@ -174,7 +174,7 @@ pub struct SidebarArrangement {
     /// Sections closed on purpose: declared, with no tab. A closed key that
     /// no longer resolves is kept, and flagged.
     pub closed: BTreeSet<String>,
-    /// Tabs Andamento placed since the host last committed.
+    /// Tabs the core placed since the host last committed.
     pub placed: BTreeSet<String>,
 }
 

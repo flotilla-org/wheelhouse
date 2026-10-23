@@ -3,8 +3,8 @@
 Status: design, grilled with Robert on 2026-10-21 and 2026-10-22 for #90 and
 the mission #401. It builds on the View Spec and Slot decisions (#297), the
 Workspace Overlay (#298), workspace controls (#122) and
-[suggested-layouts.md](https://github.com/flotilla-org/andamento/blob/main/docs/sidebar-design/suggested-layouts.md)
-in Andamento. The first stage is below; later stages are recorded so the first
+[suggested-layouts.md](../core/sidebar-design/suggested-layouts.md)
+in the core. The first stage is below; later stages are recorded so the first
 doesn't block them.
 
 A rough mockup of the tool strip and the layouts is in
@@ -19,7 +19,7 @@ sidebar says "no opening recipe". Flotilla withdraws that recipe whenever it
 re-checks whether a session can be attached, so vessels flip between openable
 and not (drydock-vessel-agent-51 did this hundreds of times in one capture).
 
-Andamento already reads Suggested Layouts and plans slots
+The core already reads Suggested Layouts and plans slots
 (`suggested_layout.rs`, `slots.rs`), and Wheelhouse stores a slot per View.
 Nothing publishes a layout of more than one slot yet (flotilla#3012).
 
@@ -90,7 +90,7 @@ Slots. A subject can have several, and the tool strip switches between them.
   terminals, vessels, files, promises, artifacts, linked issues and PRs), plus
   hints. Its internal presentation manager probably goes away, apart from
   exposing the PM connection's change stream.
-- **Andamento holds the layouts** as templates, like the sidebar templates,
+- **The core holds the layouts** as templates, like the sidebar templates,
   keyed by subject kind and hint. A template arranges Slots by their kind and
   role ("agents as tabs on the left, files on the right"), and the selection
   rules live with the templates. Every frontend shares them, and changing a
@@ -203,7 +203,7 @@ Settled for #122 on 2026-10-23 (`native/src/uishell/uishell_tool_strip.c`):
   the docking checker refuses today. Repeatable views will be **view
   factories**: a factory opens another View each time.
 - **Related workspaces and linked items** are what the subject kind's `strip`
-  lists (Andamento's `docs/sidebar-design/tool-strip.md`):
+  lists (the core's `docs/core/sidebar-design/tool-strip.md`):
   - vessel: its project, then its convoy;
   - convoy: its project, then its vessels in plan order;
   - project: its governors, then its convoys that haven't landed;
@@ -320,7 +320,7 @@ It is for prototyping, not yet decided.
 1. **Slot Host** with per-kind placeholders, and the vessel's opening action no
    longer gated on its recipe. This is also the fix for "no opening recipe".
 2. **Dummy-fleet scenarios** for the convoy shapes above (Flotilla).
-3. **Layout templates and selection rules** in Andamento, with Flotilla
+3. **Layout templates and selection rules** in the core, with Flotilla
    publishing content and hints (flotilla#3012 reworked).
 4. **Tool strip, first cut** (#122 reworked), then layout switching.
 5. **One Cleat client per session**, with remote Cleat (#104).

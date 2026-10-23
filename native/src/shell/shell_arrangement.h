@@ -8,7 +8,7 @@
 // renderer reads and commands replace with an edited copy
 // (rd_arrangement_set, shell_core.c "Live arrangements"); docking previews
 // edit a copy they discard. A workspace's and the sidebar's are committed to
-// Andamento whole, at the end of a gesture, and follow what Andamento makes
+// the core whole, at the end of a gesture, and follow what the core makes
 // of them (uishell_workspace_store.c, uishell_sidebar_store.c).
 #ifndef SHELL_ARRANGEMENT_H
 #define SHELL_ARRANGEMENT_H

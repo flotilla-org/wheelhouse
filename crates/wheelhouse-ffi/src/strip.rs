@@ -1,4 +1,4 @@
-//! A subject's tool strip (docs/sidebar-design/tool-strip.md): the related
+//! A subject's tool strip (docs/core/sidebar-design/tool-strip.md): the related
 //! workspaces and linked items its kind's `strip` lists. Each entry is an
 //! entity; its label, state, hover card and actions are its detail
 //! (wheelhouse_snapshot_detail_request).

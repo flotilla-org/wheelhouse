@@ -6,9 +6,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-/// Hash maps and sets of Andamento's own data, with a fast hasher rather
+/// Hash maps and sets of the core's own data, with a fast hasher rather
 /// than std's DoS-resistant one: their keys come from local producers and
-/// Andamento itself, and hashing is a measurable part of applying facts.
+/// the core itself, and hashing is a measurable part of applying facts.
 pub(crate) type FastHashMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
 pub(crate) type FastHashSet<T> = std::collections::HashSet<T, foldhash::fast::RandomState>;
 use std::time::Instant;
@@ -469,8 +469,8 @@ pub struct MetadataIdentity {
     pub value: MetadataValue,
 }
 
-/// The provider of Andamento's own entities: local sections, groups and refs,
-/// and the facts Andamento itself (or a Zellij controller patch) asserts. A
+/// The provider of the core's own entities: local sections, groups and refs,
+/// and the facts the core itself (or a Zellij controller patch) asserts. A
 /// host's subscription is never called this.
 pub const LOCAL_PROVIDER: &str = "local";
 
@@ -555,7 +555,7 @@ impl PlacementLoopKey {
     /// Stable text for hosts: each part length-prefixed (`len:text`), in the
     /// order region, then each parent segment's loop name, entity provider,
     /// kind and id, then the loop binding. Hosts treat it as opaque and
-    /// compare it for equality; only Andamento decodes it.
+    /// compare it for equality; only the core decodes it.
     pub fn encode(&self) -> String {
         std::iter::once(&self.region)
             .chain(self.parent.0.iter().flat_map(|s| [&s.loop_name, &s.entity.provider, &s.entity.kind, &s.entity.id]))
@@ -632,7 +632,7 @@ impl MetadataValue {
     fn set_providers(&mut self, provider: &str, stamp: bool) {
         if let MetadataValue::EntityRefs(refs) = self {
             for entity in refs {
-                // A reference to Andamento's own entities (a section, group
+                // A reference to the core's own entities (a section, group
                 // or ref) stays local: a producer can file its entity under
                 // a local group without claiming that group.
                 if stamp && entity.provider != LOCAL_PROVIDER {
@@ -668,7 +668,7 @@ impl MetadataPatch {
 
     /// Stamp `provider` over every entity the patch names: its target and
     /// any entity references among its values, except references to
-    /// Andamento's own (local) entities. A patch never names its own
+    /// the core's own (local) entities. A patch never names its own
     /// provider; the host supplies the subscription it came from.
     pub fn stamp_provider(&mut self, provider: &str) {
         self.set_providers(provider, true);

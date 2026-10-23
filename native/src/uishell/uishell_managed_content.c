@@ -1,5 +1,5 @@
-// Managed content: a terminal's runtime half of an update Andamento plans.
-// Reconciliation policy and tokens are owned by Andamento; this adapter owns
+// Managed content: a terminal's runtime half of an update the core plans.
+// Reconciliation policy and tokens are owned by the core; this adapter owns
 // configuration and terminal runtime operations.
 internal void
 uishell_managed_set(CFG_Node *node, String8 key, String8 value)

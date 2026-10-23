@@ -43,7 +43,7 @@ struct UIShell_SidebarSection
   F32 footer_extra;
 };
 
-// The local sections, groups and pins Andamento keeps, as its Dashboard
+// The local sections, groups and pins the core keeps, as its Dashboard
 // says (uishell_sidebar_locals): sections in order, each with its groups in
 // order, each with its pins (`.ref`s, known by their ID, the ghost id).
 typedef struct UIShell_LocalSection UIShell_LocalSection;
@@ -70,7 +70,7 @@ struct UIShell_LocalGroup
 struct UIShell_LocalSection
 {
   String8 id;
-  String8 label;                // its title, as Andamento shows it
+  String8 label;                // its title, as the core shows it
   B32 named;                    // a name of its own, not its groups' names
   U64 position;
   UIShell_LocalGroup *groups;
@@ -138,7 +138,7 @@ struct UIShell_SidebarRecord
   U64 generation;
 };
 
-// An entity as last sent to Andamento: "kind/id", and a hash of what was sent.
+// An entity as last sent to the core: "kind/id", and a hash of what was sent.
 typedef struct UIShell_SidebarPublished UIShell_SidebarPublished;
 struct UIShell_SidebarPublished
 {
@@ -161,7 +161,7 @@ struct UIShell_SidebarState
 {
   // The window it is the sidebar of (0 for a diagnostic fixture's).
   CFG_ID window;
-  // Andamento's records (uishell_sidebar_records.c): the window's records
+  // The core's records (uishell_sidebar_records.c): the window's records
   // directory (empty: not saved), each record as last written, and when the
   // changed ones are due. The Dashboard as read last (its generation is
   // the dashboard record's).
@@ -170,7 +170,7 @@ struct UIShell_SidebarState
   UIShell_SidebarRecord *records;
   U64 records_due;
   // Snapshots taken (uishell_sidebar_replace_snapshot), and how many had been
-  // when records were last compared with Andamento's.
+  // when records were last compared with the core's.
   U64 snapshot_count, records_snapshot_count;
   WheelhouseDashboard *dashboard;
   // The Dashboard's local sections, groups and pins, made from `dashboard`
@@ -315,7 +315,7 @@ struct UIShell_SidebarState
   Arena *observed_arena;
   UIShell_WorkspaceId *observed;
   U64 observed_count;
-  // Workspace arrangements and Slots in Andamento (uishell_workspace_store.c):
+  // Workspace arrangements and Slots in the core (uishell_workspace_store.c):
   // each workspace's arrangement as last committed or followed; the config
   // gen, arrangement version, content revision and snapshot count last
   // synced; and the calls and commits made, which the behaviour harness
@@ -326,13 +326,13 @@ struct UIShell_SidebarState
   B32 store_synced;
   U64 store_cfg_gen, store_arrangement_version, store_content_revision, store_snapshot_count;
   U64 store_calls, store_commits;
-  // What Andamento last said of the Workspace Overlays (flags, tombstones;
+  // What the core last said of the Workspace Overlays (flags, tombstones;
   // uishell_store_read_overlay).
   Arena *store_overlay_arena;
-  // The Dashboard's sidebar arrangement in Andamento (uishell_sidebar_store.c):
+  // The Dashboard's sidebar arrangement in the core (uishell_sidebar_store.c):
   // its arrangements' version as last committed or followed, the document
   // then, and its generation; the snapshot count last synced; what
-  // Andamento's notes say is closed and what no longer resolves (template
+  // the core's notes say is closed and what no longer resolves (template
   // drift); and the commits made, which the behaviour harness counts across
   // a gesture.
   U64 sidebar_version, sidebar_generation;
@@ -701,7 +701,7 @@ uishell_ingress_text(String8 text)
 }
 
 // The declared boolean display variables that persist, one control at a
-// time. Andamento keeps their values in its dashboard record.
+// time. The core keeps their values in its dashboard record.
 typedef struct UIShell_DisplayControlIterator UIShell_DisplayControlIterator;
 struct UIShell_DisplayControlIterator
 {
@@ -733,7 +733,7 @@ uishell_sidebar_next_persistent_control(UIShell_DisplayControlIterator *it,
 
 // Row reorder (drag-model.md, "Reorder"): rows move only among the siblings
 // of one loop invocation. A drop sets the run's full order, keyed by its
-// loop key, and Andamento keeps it in its dashboard record; it merges rows
+// loop key, and the core keeps it in its dashboard record; it merges rows
 // the list doesn't name.
 internal String8
 uishell_sidebar_loop_key(WheelhouseSnapshot *snapshot, U64 index)
@@ -933,7 +933,7 @@ uishell_sidebar_node_at(UIShell_SidebarState *state, U64 i, WheelhouseNode *out)
 }
 
 //- Sections and groups people make (drag-model.md, "Sections and groups as
-// data"). Andamento owns them, as local entities that the shipped KDL
+// data"). The core owns them, as local entities that the shipped KDL
 // places (each section is then a sidebar section of its own), and keeps
 // them in its dashboard record:
 //
@@ -944,7 +944,7 @@ uishell_sidebar_node_at(UIShell_SidebarState *state, U64 i, WheelhouseNode *out)
 //             target is gone), .source, .compact (shown as a row)
 //
 // Edits set and remove them at once (wheelhouse_local_set/remove), and
-// everything else reads them from Andamento's Dashboard
+// everything else reads them from the core's Dashboard
 // (uishell_sidebar_locals). A pin is known by its ref's ID, its ghost id.
 // A local workspace lives in a group (`lives_in`) or with a project
 // (`lives_with`), saved on the workspace; with neither it lives in the
@@ -969,7 +969,7 @@ struct UIShell_SidebarDockView
 
 // An owner's sidebar dock as the sidebar's edits outside docking see it (the
 // pinned_cards migration, closing a local section's Views, following
-// Andamento's document): copied once, edited and set. `first` is every tab
+// the core's document): copied once, edited and set. `first` is every tab
 // of it, in preorder.
 typedef struct UIShell_SidebarDocks UIShell_SidebarDocks;
 struct UIShell_SidebarDocks
@@ -1041,7 +1041,7 @@ uishell_sidebar_local_group_names(Arena *arena, UIShell_LocalSection *section)
 
 // The Dashboard's local sections, groups and pins, made again when the
 // dashboard record's generation moves: each run in position order (ties in
-// Andamento's key order), entities whose section or group is gone left out.
+// the core's key order), entities whose section or group is gone left out.
 // A section's title is a name of its own when it isn't its groups' names.
 internal UIShell_Locals *
 uishell_sidebar_locals(UIShell_SidebarState *state)
@@ -1233,7 +1233,7 @@ uishell_sidebar_group_handle(UIShell_LocalGroup *group)
 { return group ? uishell_sidebar_local_handle(str8_lit(".group"), group->id) : 0; }
 
 //- Changing them. Each change is sent at once, and what reads them next
-// reads Andamento's Dashboard again. The snapshot is taken again once the
+// reads the core's Dashboard again. The snapshot is taken again once the
 // rows built from the current one are done (uishell_sidebar_publish).
 
 typedef struct UIShell_LocalFacts UIShell_LocalFacts;
@@ -1459,7 +1459,7 @@ uishell_sidebar_json_fact_ref(Arena *arena, String8 key, String8 kind, String8 i
     key, uishell_sidebar_json_text(arena, kind), uishell_sidebar_json_text(arena, id));
 }
 
-// A reference to one of Andamento's own local entities (a group), which
+// A reference to one of the core's own local entities (a group), which
 // names their provider.
 internal String8
 uishell_sidebar_json_fact_local_ref(Arena *arena, String8 key, String8 kind, String8 id)
@@ -1511,7 +1511,7 @@ uishell_sidebar_hash_text(U64 hash, String8 text)
   return hash*33 + '|';
 }
 
-//- What was last sent to Andamento, one "kind/id" entry each with a hash of
+//- What was last sent to the core, one "kind/id" entry each with a hash of
 // what was sent, so only what changed is sent again and what went is removed.
 
 internal void
@@ -1561,7 +1561,7 @@ uishell_sidebar_workspaces_source_hash(UIShell_SidebarState *state, UIShell_Cont
 
 // Publishes each local workspace as a host entity (.workspace) with its home,
 // tagging its tab .host.* so its rows are live there; it follows the open
-// workspaces, so the host publishes it rather than Andamento keeping it. One
+// workspaces, so the host publishes it rather than the core keeping it. One
 // that closed is retracted. Nothing is built while what it reads is
 // unchanged, and only what changed is sent.
 internal void
@@ -1652,7 +1652,7 @@ uishell_sidebar_publish(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
   if(state->locals_sent) { state->locals_sent = 0; uishell_sidebar_refresh(state); rd_request_frame(); }
 }
 
-// Andamento keeps the workspaces the host made itself: local ones are
+// The core keeps the workspaces the host made itself: local ones are
 // registered here, while a subject's registers when its MATERIALIZE
 // completes. One that left the window without being kept is forgotten.
 internal void
@@ -1772,7 +1772,7 @@ uishell_sidebar_init(RD_WindowState *ws)
     if(wheelhouse_abi_version() != 10)
     {
       Temp scratch = scratch_begin(0, 0);
-      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Andamento ABI 10 is required; this library has ABI %u",
+      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 10 is required; this library has ABI %u",
         (U32)wheelhouse_abi_version()));
       scratch_end(scratch);
       return state;
@@ -1820,7 +1820,7 @@ uishell_sidebar_init(RD_WindowState *ws)
       }
       state->window = ws->cfg_id;
       uishell_sidebar_records_load(state, window);
-      // Workspaces saved without their panel trees get them from Andamento,
+      // Workspaces saved without their panel trees get them from the core,
       // and the window's focus is read again from them.
       uishell_workspace_store_load(state, window);
       // The sidebar's dock too.
@@ -1905,7 +1905,7 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
     if(effect.kind == WHEELHOUSE_EFFECT_OPEN_URL || effect.kind == WHEELHOUSE_EFFECT_COPY_URL)
     {
       String8 url = uishell_sidebar_string(effect.recipe);
-      // Andamento subject_url accepts only http:// or https:// before emitting this effect.
+      // The core subject_url accepts only http:// or https:// before emitting this effect.
       if(effect.kind == WHEELHOUSE_EFFECT_OPEN_URL) { wm_open_in_browser(url); }
       else { wm_set_clipboard_text(url); }
       continue; // URL actions own no workspace request and need no completion.
@@ -3373,7 +3373,7 @@ struct UIShell_SidebarRenderParams
 internal F32 uishell_sidebar_footer_height(RD_WindowState *ws);
 internal void uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split);
 
-// Andamento's fallback section holds subjectless workspaces. Its header hosts
+// The core's fallback section holds subjectless workspaces. Its header hosts
 // workspace creation, so it stays visible even with no rows or controls.
 internal B32
 uishell_sidebar_section_hosts_chrome(String8 key)
@@ -3896,7 +3896,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     // A footer being named that stopped being shown (its group collapsed or
     // went, its section closed) is done naming; it opens fresh next time.
     if(state->make_key && state->make_build+1 < ui_state->build_index) { state->make_key = 0; }
-    // Andamento plans only the Slots of workspaces it knows, so a workspace
+    // The core plans only the Slots of workspaces it knows, so a workspace
     // opened since the last observation (this window's first frame, or a
     // card's action) is observed before its Slots are planned (#360).
     if(state->core && (state->managed_dirty || state->managed_cfg_generation != cfg_change_gen()))
@@ -4175,7 +4175,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
         title = uishell_sidebar_string(field.text);
       }
       // The local workspace list is Wheelhouse's Workspaces group (drag-model.md);
-      // Andamento's fallback name describes it relative to projects. A section
+      // The core's fallback name describes it relative to projects. A section
       // you made, the default one included, is titled by its data instead.
       UIShell_LocalSection *local_section = uishell_sidebar_local_section(split->owner_cfg, uishell_sidebar_local_key_id(key));
       if(uishell_sidebar_section_hosts_chrome(key) && !local_section) { title = str8_lit("Workspaces"); }
@@ -4946,7 +4946,7 @@ WH_VIEW_UI_FUNCTION_DEF(sidebar_section)
   if(key.size && ws->sidebar && uishell_sidebar_section_gone(ws->sidebar, key))
   {
     // Template drift (ADR 0013): the section's key no longer resolves.
-    // Andamento keeps it where it was, flagged, in case it comes back; the
+    // The core keeps it where it was, flagged, in case it comes back; the
     // person decides whether it goes.
     UI_WidthFill UI_PrefHeight(ui_em(2.2f, 1)) UI_TagF("weak")
     { ui_label(push_str8f(ui_build_arena(), "%S is no longer in the sidebar's template", rd_label_from_cfg(view))); }
@@ -5034,7 +5034,7 @@ uishell_sidebar_section_container(UIShell_SidebarState *state, String8 key)
 }
 
 // Whether `view` shows a section that stands aside while it has no rows:
-// Andamento always declares the leftover section, and the sidebar hides it.
+// The core always declares the leftover section, and the sidebar hides it.
 internal B32
 uishell_sidebar_view_hidden(CFG_Node *view)
 {
@@ -5097,7 +5097,7 @@ uishell_sidebar_close_empty_panels(CFG_Node *window)
   scratch_end(scratch);
 }
 
-// The window's sidebar as the frame lays it out. Andamento keeps where its
+// The window's sidebar as the frame lays it out. The core keeps where its
 // sections are (uishell_sidebar_store.c), which the live copy is built from
 // once, and committed from as it changes. What stays here: KDL titles refresh
 // section Views' labels, and saved pinned areas become sections.
@@ -5114,7 +5114,7 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
   uishell_sidebar_pin_migrate(split->owner_cfg);
 }
 
-// The Sections menu's Restore: Andamento places the section by its hints,
+// The Sections menu's Restore: the core places the section by its hints,
 // with an equal share of the dock. A section that has a View is left where
 // it is, and an undeclared one, or one with no snapshot to name it, fails
 // without changing anything.
@@ -5480,7 +5480,7 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         if(ui_clicked(uishell_sidebar_button(str8_lit("New section###section_new"))))
         { uishell_sidebar_new_section(state, split->owner_cfg); ui_ctx_menu_close(); }
         B32 available = 0;
-        // The declared sections with no View: those Andamento records as
+        // The declared sections with no View: those the core records as
         // closed, and any closed since the last commit.
         uishell_sidebar_section_titles(state);
         for(U64 i = 0; state->snapshot && i < state->title_count; i++)

@@ -2,7 +2,7 @@
 
 A subject's workspace has a **tool strip**: a thin column at the edge of the
 workspace with the subject, its layouts, its views, the workspaces next to it
-and the items it links to. The host draws it; Andamento says what goes in the
+and the items it links to. The host draws it; the core says what goes in the
 two sections that come from the catalog rather than from the workspace
 itself. This document describes those sections and how a host reads them.
 The design was settled for wheelhouse#122; the strip as a whole is described

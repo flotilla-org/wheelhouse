@@ -36,7 +36,7 @@ pub struct Subject {
 }
 
 /// Which Workspace Layout a workspace shows, and the arrangements of those
-/// it isn't showing (docs/sidebar-design/workspace-layouts.md).
+/// it isn't showing (docs/core/sidebar-design/workspace-layouts.md).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct LayoutChoice {
     /// The layout the user chose; `None` follows the default. It is kept

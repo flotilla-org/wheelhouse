@@ -3,7 +3,7 @@
 use super::*;
 use wheelhouse_core::PlacementLoopKey;
 
-/// The names of the records Andamento holds, one per line (no trailing
+/// The names of the records the core holds, one per line (no trailing
 /// newline): "dashboard", then "workspace/<id>" for each registered
 /// workspace (<id> a hyphenated UUID).
 #[no_mangle]
@@ -17,7 +17,7 @@ pub unsafe extern "C" fn wheelhouse_record_names(h: *mut WheelhouseCore, out: *m
 pub unsafe extern "C" fn wheelhouse_record_generation(h: *mut WheelhouseCore, name: Text, error_out: *mut *mut c_char) -> u64 {
     run(h, error_out, |h| h.sidebar.record_generation(&name.read()?)).unwrap_or(0)
 }
-/// A record to store as it is: its bytes are private to Andamento and may
+/// A record to store as it is: its bytes are private to the core and may
 /// change from one build to the next. Free them with wheelhouse_bytes_free.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_record_get(h: *mut WheelhouseCore, name: Text, out: *mut Bytes, error_out: *mut *mut c_char) -> u32 {
@@ -97,7 +97,7 @@ pub struct LocalFact {
     pub entity: EntityView,
 }
 /// Set a local section (".section"), group (".group") or ref (".ref", a
-/// pin), replacing all its facts. Andamento owns local entities (their
+/// pin), replacing all its facts. The core owns local entities (their
 /// provider is "local") and keeps them in the dashboard record; they are
 /// placed exactly as the same entities published as facts.
 #[no_mangle]

@@ -1,32 +1,32 @@
-//- The Dashboard's sidebar arrangement in Andamento (ADR 0012; wheelhouse.h,
-// "the Dashboard's sidebar arrangement"; Andamento's
-// docs/sidebar-design/sidebar-arrangement.md). Which sections are docked
-// where, and which are closed, is Dashboard state: Andamento keeps it as one
+//- The Dashboard's sidebar arrangement in the core (ADR 0012; wheelhouse.h,
+// "the Dashboard's sidebar arrangement"; the core's
+// docs/core/sidebar-design/sidebar-arrangement.md). Which sections are docked
+// where, and which are closed, is Dashboard state: the core keeps it as one
 // document in the dashboard record, and places, restores and flags sections
 // against what the template and the local sections declare. Wheelhouse's
 // live copy is the window's sidebar arrangement (the dock; shell_core.c,
 // "Live arrangements"), which docking edits. A tab's key is a
 // sidebar_section View's `section`; any other View is one of this host's
-// own, keyed by its `slot` ("u:<n>"), which Andamento stores but never
+// own, keyed by its `slot` ("u:<n>"), which the core stores but never
 // places.
 //
 //   load    A window saved since has no sidebar in the presentation file,
 //           only `sidebar_presentation`: the dock follows
 //           wheelhouse_sidebar_arrangement_get, with this device's settings
-//           merged back in. A new Dashboard's take Andamento's placement
+//           merged back in. A new Dashboard's take the core's placement
 //           (uishell_sidebar_store_load).
 //   commit  Once no gesture is in flight, a sidebar whose arrangements were
 //           set since is committed whole at the generation last seen
 //           (wheelhouse_sidebar_arrangement_commit). Closing a section is
 //           committing without it. A stale commit is made again at the new
 //           generation, as a workspace's is (uishell_workspace_store.c): only
-//           Andamento's own reconciliation moves it. A section it placed
+//           the core's own reconciliation moves it. A section it placed
 //           meanwhile, which the edit can't have, the recommit closes, so it
 //           is restored: neither the edit nor what was declared is lost.
-//   follow  When Andamento changed the document itself (it placed a section
+//   follow  When the core changed the document itself (it placed a section
 //           newly declared, removed a duplicate, or another frontend
 //           committed), the live copy follows it. The container region of
-//           local sections, which Andamento places while there are none
+//           local sections, which the core places while there are none
 //           (before Wheelhouse first publishes them), is not shown once they
 //           exist: they are, in its place.
 //   restore, reset   The Sections menu's Restore and Reset To Default Panel
@@ -40,7 +40,7 @@
 // then restores by its hints; and the labels KDL titles give section Views
 // (uishell_sidebar_store_labels).
 //
-// Andamento's notes: a key that no longer resolves (template drift, ADR 0013)
+// The core's notes: a key that no longer resolves (template drift, ADR 0013)
 // keeps its tab, flagged, and its View shows a placeholder the person can
 // remove (sidebar_section's View UI); a closed one stays closed. The same
 // UNRESOLVED notes name saved Dashboard keys the template no longer has
@@ -273,7 +273,7 @@ uishell_sidebar_store_doc(Arena *arena, UIShell_SidebarState *state, CFG_Node *w
     out->parent = WHEELHOUSE_NONE;
     for(U64 j = index; j > 0 && out->parent == WHEELHOUSE_NONE; j--) { if(order[j-1] == p->parent) { out->parent = j-1; } }
     out->id = uishell_sidebar_text(push_str8f(arena, "%I64u", p->id));
-    // A root's weight means nothing to Andamento, and the size the sidebar
+    // A root's weight means nothing to the core, and the size the sidebar
     // gives a docked section from its content is this device's.
     F32 weight = p->weight;
     if(p == a->root || (!manual && uishell_sidebar_store_content_sized(a, p))) { weight = 1.f; }
@@ -306,7 +306,7 @@ uishell_sidebar_store_doc(Arena *arena, UIShell_SidebarState *state, CFG_Node *w
   return doc;
 }
 
-// The document as Andamento takes it.
+// The document as the core takes it.
 internal WheelhouseSidebarDoc
 uishell_sidebar_store_core_doc(UIShell_SidebarDoc *doc)
 {
@@ -314,7 +314,7 @@ uishell_sidebar_store_core_doc(UIShell_SidebarDoc *doc)
   return result;
 }
 
-// Whether Andamento made `after` of `sent` as it was: the same panels, with
+// Whether the core made `after` of `sent` as it was: the same panels, with
 // the same tabs.
 internal B32
 uishell_sidebar_store_same(WheelhouseSidebarDoc *after, WheelhouseSidebarDoc *sent)
@@ -374,7 +374,7 @@ uishell_sidebar_section_gone(UIShell_SidebarState *state, String8 key)
   return uishell_sidebar_store_listed(state->sidebar_gone, state->sidebar_gone_count, key);
 }
 
-// What Andamento's notes say is closed, and what no longer resolves.
+// What the core's notes say is closed, and what no longer resolves.
 internal void
 uishell_sidebar_store_notes(UIShell_SidebarState *state, WheelhouseSidebarArrangement *arrangement)
 {
@@ -394,7 +394,7 @@ uishell_sidebar_store_notes(UIShell_SidebarState *state, WheelhouseSidebarArrang
   }
 }
 
-// Reads Andamento's notes again: what resolves follows the snapshot, and the
+// Reads the core's notes again: what resolves follows the snapshot, and the
 // document's generation doesn't move when nothing in it did.
 internal void
 uishell_sidebar_store_read_notes(UIShell_SidebarState *state)
@@ -404,7 +404,7 @@ uishell_sidebar_store_read_notes(UIShell_SidebarState *state)
   wheelhouse_sidebar_arrangement_free(stored);
 }
 
-//- Following Andamento's document
+//- Following the core's document
 
 // The device-local entry of `kind` whose `name` setting is `value`, or nil.
 internal CFG_Node *
@@ -438,7 +438,7 @@ uishell_sidebar_store_device_view(CFG_Node *device, String8 key)
   return &cfg_nil_node;
 }
 
-// Whether Andamento noted `key` as `kind` (WHEELHOUSE_NOTE_*).
+// Whether the core noted `key` as `kind` (WHEELHOUSE_NOTE_*).
 internal B32
 uishell_sidebar_store_noted(WheelhouseSidebarArrangement *a, U32 kind, String8 key)
 {
@@ -507,7 +507,7 @@ uishell_sidebar_store_fill(UIShell_SidebarFollow *f, RD_Arrangement *a, Wheelhou
     }
     RD_PanelID panel_id = up != WHEELHOUSE_NONE ? rd_arrangement_add(a, made[up], weight) : a->root->id;
     RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(a, panel_id);
-    // A panel keeps its ID, and so its Presentation State. A leaf Andamento
+    // A panel keeps its ID, and so its Presentation State. A leaf the core
     // lifted out of the root keeps the root's ID, and its Presentation State.
     RD_PanelID wanted = uishell_sidebar_store_local_id(uishell_sidebar_string(src->id));
     for(U64 i = 0; i < ids_used && wanted; i++) { if(ids[i] == wanted) { wanted = 0; } }
@@ -526,7 +526,7 @@ uishell_sidebar_store_fill(UIShell_SidebarFollow *f, RD_Arrangement *a, Wheelhou
       if(rd_view_address_is_nil(first)) { first = view; }
       prev = view;
     }
-    // Andamento's document may select none of a panel's tabs; the sidebar
+    // The core's document may select none of a panel's tabs; the sidebar
     // shows its first (uishell_sidebar_store_select_shown).
     f->selected_first |= rd_view_address_is_nil(selected) && !rd_view_address_is_nil(first);
     rd_arrangement_select(a, wanted, rd_view_address_is_nil(selected) ? first : selected);
@@ -535,11 +535,11 @@ uishell_sidebar_store_fill(UIShell_SidebarFollow *f, RD_Arrangement *a, Wheelhou
   for(U64 i = 0; i < ids_used; i++) { a->next_id = Max(a->next_id, ids[i]+1); }
 }
 
-// The window's dock and Floating Panels follow Andamento's document. The View
+// The window's dock and Floating Panels follow the core's document. The View
 // of every key it still tabs stays (runtime state is keyed by its address),
 // and so do the dock's panels, by ID. New Views take their settings from the
-// device-local `sidebar_presentation`, which goes. Reads Andamento's notes
-// too. Returns whether Andamento had a document.
+// device-local `sidebar_presentation`, which goes. Reads the core's notes
+// too. Returns whether the core had a document.
 internal B32
 uishell_sidebar_store_follow(UIShell_SidebarState *state, CFG_Node *window)
 {
@@ -687,7 +687,7 @@ uishell_sidebar_store_follow(UIShell_SidebarState *state, CFG_Node *window)
   return 1;
 }
 
-// The container region of local sections, which Andamento places while
+// The container region of local sections, which the core places while
 // there are none (before Wheelhouse first publishes them), no longer
 // resolves once they exist: they are in its place. Its View goes, with its
 // panel when that has nothing else, and the next commit forgets it.
@@ -723,7 +723,7 @@ uishell_sidebar_store_drop_containers(UIShell_SidebarState *state, CFG_Node *win
 
 //- Sync
 
-// Follows Andamento when there is no live copy of this host's own yet: in a
+// Follows the core when there is no live copy of this host's own yet: in a
 // window saved since (its `sidebar_presentation`), or a new one.
 internal void
 uishell_sidebar_store_load(UIShell_SidebarState *state, CFG_Node *window)
@@ -735,7 +735,7 @@ uishell_sidebar_store_load(UIShell_SidebarState *state, CFG_Node *window)
 }
 
 // Commits `doc` at `expected`. A stale commit is made again at the
-// generation that moved it, and what Andamento placed meanwhile, which `doc`
+// generation that moved it, and what the core placed meanwhile, which `doc`
 // can't have, is added to *placed_out (from `arena`): committing without it
 // closed it, so the caller restores it. Returns the arrangement after
 // (COMMITTED, or STALE twice over), or 0 with the sidebar's error set.
@@ -753,7 +753,7 @@ uishell_sidebar_store_commit(Arena *arena, UIShell_SidebarState *state, UIShell_
     after = UIShell_StoreCall(state, wheelhouse_sidebar_arrangement_commit(state->core, &out, expected, &error));
     state->sidebar_commits += 1;
     if(!after || after->status != WHEELHOUSE_STALE) { break; }
-    // Stale: Andamento reconciled what was declared since, and this is its
+    // Stale: the core reconciled what was declared since, and this is its
     // document now. The edit is committed again at its generation, keeping
     // what it placed.
     for(U64 i = 0; i < after->note_count; i++)
@@ -770,10 +770,10 @@ uishell_sidebar_store_commit(Arena *arena, UIShell_SidebarState *state, UIShell_
   return after;
 }
 
-// Each frame the sidebar observes its window: follows a document Andamento
+// Each frame the sidebar observes its window: follows a document the core
 // changed, then commits a sidebar whose arrangements were set since, once
 // no gesture is in flight. `force` commits even then (the window is
-// closing, or a menu command needs Andamento's document current).
+// closing, or a menu command needs the core's document current).
 internal void
 uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 force)
 {
@@ -790,7 +790,7 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
     WheelhouseSidebarDoc unsent = uishell_sidebar_store_core_doc(&doc);
     if(doc.pending_count == 0 && uishell_sidebar_store_same(&state->sidebar_seen, &unsent)) { state->sidebar_version = uishell_sidebar_store_version(window); }
   }
-  // Andamento moved the document, and the live copy hasn't changed since:
+  // The core moved the document, and the live copy hasn't changed since:
   // it follows.
   char *error = 0;
   U64 generation = UIShell_StoreCall(state, wheelhouse_sidebar_arrangement_generation(state->core, &error));
@@ -811,7 +811,7 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
     {
       UIShell_SidebarDoc doc = uishell_sidebar_store_doc(scratch.arena, state, window);
       // At the generation last seen; not followed this session (generations
-      // aren't kept across sessions), at Andamento's own.
+      // aren't kept across sessions), at the core's own.
       U64 expected = state->sidebar_generation ? state->sidebar_generation :
         UIShell_StoreCall(state, wheelhouse_sidebar_arrangement_generation(state->core, 0));
       String8List restore = {0};
@@ -823,7 +823,7 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
         state->sidebar_generation = committed;
         uishell_store_set_setting(window, str8_lit("sidebar_generation"), push_str8f(scratch.arena, "%I64u", committed));
         // A section a safety restore moved goes where its hints say, as does
-        // one Andamento placed while this commit was stale.
+        // one the core placed while this commit was stale.
         for(U64 i = 0; i < doc.pending_count; i++) { str8_list_push(scratch.arena, &restore, doc.pending[i]); }
         for(String8Node *n = restore.first; n; n = n->next)
         {
@@ -839,7 +839,7 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
           }
           else { wheelhouse_sidebar_arrangement_free(restored); }
         }
-        // Whatever Andamento made of it (a section placed, a duplicate
+        // Whatever the core made of it (a section placed, a duplicate
         // removed) joins the live copy.
         WheelhouseSidebarDoc sent = uishell_sidebar_store_core_doc(&doc);
         if(!restore.node_count && uishell_sidebar_store_same(&after->doc, &sent)) { uishell_sidebar_store_notes(state, after); uishell_sidebar_store_saw(state, &sent); }
@@ -856,7 +856,7 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
 
 //- Menu commands
 
-// Brings Andamento's document up to date with the live copy, and returns
+// Brings the core's document up to date with the live copy, and returns
 // its generation.
 internal U64
 uishell_sidebar_store_current(UIShell_SidebarState *state, CFG_Node *window)
@@ -867,7 +867,7 @@ uishell_sidebar_store_current(UIShell_SidebarState *state, CFG_Node *window)
 }
 
 // Restores the declared section `key` by its hints, with an equal share of
-// the dock. Returns whether Andamento did.
+// the dock. Returns whether the core did.
 internal B32
 uishell_sidebar_store_restore(UIShell_SidebarState *state, CFG_Node *window, String8 key)
 {
@@ -884,7 +884,7 @@ uishell_sidebar_store_restore(UIShell_SidebarState *state, CFG_Node *window, Str
   return 1;
 }
 
-// Reset To Default Panel Layout: Andamento forgets the arrangement, its
+// Reset To Default Panel Layout: the core forgets the arrangement, its
 // closed sections and its flagged keys, and places every declared section
 // by its hints.
 internal void
@@ -940,7 +940,7 @@ uishell_sidebar_store_entry(CFG_State *copy_state, CFG_Node *device, CFG_Node **
 }
 
 // `window`'s copy as the presentation file holds it: its sidebar's Views are
-// left out, and once Andamento keeps the sidebar's arrangement, this
+// left out, and once the core keeps the sidebar's arrangement, this
 // device's part of them is `sidebar_presentation`.
 internal void
 uishell_sidebar_store_presentation(CFG_State *copy_state, CFG_Node *window, CFG_Node *copy)

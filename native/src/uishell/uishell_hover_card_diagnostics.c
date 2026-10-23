@@ -1215,7 +1215,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     UIShell_LocalPin restored = uishell_hover_card_test_restart_pin(entity_arena, &fixture,
       uishell_sidebar_string(entity.entity.kind), uishell_sidebar_string(entity.entity.id));
     CardCheck(str8_match(restored.ghost, saved_ghost, 0) && str8_match(restored.label, uishell_sidebar_string(entity.label), 0),
-              "Andamento's record keeps a pin's identity and label across a restart");
+              "the core's record keeps a pin's identity and label across a restart");
     fprintf(stderr, "Hover card diagnostics: pinned rendering\n");
     UIShell_HoverCard *pinned = uishell_sidebar_saved_card(ws, uishell_sidebar_pin_by_ghost(window, saved_ghost));
     String8 layout_second = uishell_hover_card_test_put_pin(entity_arena, ws, center_area, str8_lit("workspace"), str8_lit("layout-second"),
@@ -1959,7 +1959,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
               "distinct ghosts of one entity both survive reconciliation");
     uishell_sidebar_pin_remove(window, second_ghost);
     // Pins tolerate future kinds and missing identity fields through
-    // Andamento's record and render.
+    // the core's record and render.
     String8 unknown = uishell_hover_card_test_put_pin(entity_arena, ws, tolerance_area, str8_lit("future_kind"), str8_lit("orphan"),
                                                       str8_lit("Future pin"));
     String8 incomplete = uishell_hover_card_test_put_pin(entity_arena, ws, tolerance_area, str8_zero(), str8_zero(), str8_lit("Incomplete pin"));
@@ -1968,7 +1968,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
               "unknown kinds and incomplete entries tolerate reconciliation without losing valid pins");
     UIShell_LocalPin future_restored = uishell_hover_card_test_restart_pin(entity_arena, &fixture, str8_lit("future_kind"), str8_lit("orphan"));
     CardCheck(future_restored.ghost.size && str8_match(future_restored.label, str8_lit("Future pin"), 0),
-              "a restart through Andamento's record keeps unknown pin kinds and fallback labels");
+              "a restart through the core's record keeps unknown pin kinds and fallback labels");
     // Published and placed, they render in their section's View.
     {
       Temp publish_scratch = scratch_begin(0, 0);

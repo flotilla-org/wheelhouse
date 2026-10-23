@@ -13,7 +13,7 @@ pub struct PaneObservation {
 
 /// The Workspace ID the in-repo hosts (Zellij, tmux, and tests) give tab or
 /// window number `tab`: the number, big-endian, in the last eight bytes. It is
-/// a host's choice like any other; Andamento never interprets it.
+/// a host's choice like any other; the core never interprets it.
 pub const fn tab_workspace_id(tab: u64) -> WorkspaceId {
     WorkspaceId::from_bytes((tab as u128).to_be_bytes())
 }

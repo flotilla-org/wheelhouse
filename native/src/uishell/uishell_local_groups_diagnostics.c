@@ -430,7 +430,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     WheelhouseNode n = {0}; wheelhouse_snapshot_node(state->snapshot, i, &n);
     retracted &= !str8_match(uishell_sidebar_string(n.entity.id), tests_id, 0);
   }
-  GroupsCheck(retracted, "a deleted group's entity leaves Andamento's snapshot");
+  GroupsCheck(retracted, "a deleted group's entity leaves the core's snapshot");
   GroupsCheck(str8_match(uishell_local_groups_title(arena, window, section_id), str8_lit("CI"), 0), "a name you gave the section sticks with one group again");
   uishell_sidebar_local_rename_section(window, section_id, str8_zero());
   GroupsCheck(str8_match(uishell_local_groups_title(arena, window, section_id), str8_lit("Nightly"), 0), "clearing the section's name makes it show its group's again");
@@ -450,7 +450,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   {
     UI_State *saved_ui = ui_state, *test = ui_state_alloc();
     ui_select_state(test);
-    // Andamento docked the section's View once it was published; a second
+    // The core docked the section's View once it was published; a second
     // View of it would be a duplicate, which it drops.
     uishell_local_groups_publish(state, window, arena);
     String8 key = uishell_sidebar_local_key(arena, section_id);
@@ -861,7 +861,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
       GroupsCheck(uishell_local_groups_line_on_top, "a row over a group card shows its insertion line over the card, in the section's drop layer");
       uishell_local_groups_line_key = ui_key_zero();
       // A ghost row over Workspaces is refused there, with a reason (#282).
-      // Andamento docks Workspaces: its View.
+      // The core docks Workspaces: its View.
       CFG_Node *workspaces_view = uishell_sidebar_region_view(window, uishell_sidebar_local_key(arena, str8_lit("workspaces")));
       GroupsCheck(workspaces_view != &cfg_nil_node, "Workspaces is docked");
       CFG_Node *zeta_view = uishell_local_groups_view2;

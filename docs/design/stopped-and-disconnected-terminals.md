@@ -74,7 +74,7 @@ Disconnected content remains readable and visibly stale with connection status a
 | --- | --- |
 | Reconnect | Recover an attachment to the same process/document identity. A missing instance stays unavailable. Automatic transport reconnection is allowed; creating a replacement command is not. |
 | Run again | Explicitly launch a new instance from a captured command/cwd/environment recipe. Keep the prior stopped document separately subject to budget; do not mutate its result into "running". If the recipe is missing, require a launch choice rather than substituting a shell. |
-| Resolve current managed intent | Ask the existing Andamento/managed-content reconciliation path for the intent's current target. It can select a different instance or report held/unavailable. It is neither retrying the old command nor reconnecting its old identity. Ordinary changes of authoritative target may still drive existing managed reconciliation; mere exit is not a target change. |
+| Resolve current managed intent | Ask the core's existing managed-content reconciliation path for the intent's current target. It can select a different instance or report held/unavailable. It is neither retrying the old command nor reconnecting its old identity. Ordinary changes of authoritative target may still drive existing managed reconciliation; mere exit is not a target change. |
 | Close | Release the view/reference. Offer remote termination only as a separately named operation. |
 | Type, focus, preview, restore layout | Never launch or rerun a stopped command. Process-directed key/paste/mouse/focus events are rejected; document gestures still work. A missing restored document shows unavailable content and explicit actions. |
 

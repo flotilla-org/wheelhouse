@@ -1,5 +1,5 @@
 //! A workspace's Slots and its arrangement document (Wheelhouse ADR 0012 and
-//! 0013; docs/sidebar-design/slots-and-arrangements.md).
+//! 0013; docs/core/sidebar-design/slots-and-arrangements.md).
 //!
 //! A workspace's slots are the slots of its subject's Suggested Layout, kept
 //! as a cached baseline, plus the slots the host adds in the user namespace
@@ -624,7 +624,7 @@ pub struct Arrangement {
     /// baseline's hint, with the soft overrides applied.
     pub owned: bool,
     pub doc: ArrangementDoc,
-    /// Tabs Andamento placed since the host last committed.
+    /// Tabs the core placed since the host last committed.
     pub placed: BTreeSet<String>,
     /// Soft overrides by panel ID, while not owned.
     pub soft: BTreeMap<String, SoftOverride>,
@@ -655,7 +655,7 @@ pub struct ArrangementView {
     pub generation: u64,
     pub owned: bool,
     pub doc: ArrangementDoc,
-    /// Tabs Andamento placed since the host last committed.
+    /// Tabs the core placed since the host last committed.
     pub placed: BTreeSet<String>,
     /// Tabs whose slot has gone. They stay until the host removes them.
     pub gone: BTreeSet<String>,

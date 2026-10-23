@@ -1,5 +1,5 @@
 // Compiled by tools/test-state-behaviour.py from the production amalgamation
-// with its entry point replaced, linked against real Andamento and Cleat, with
+// with its entry point replaced, linked against real core and Cleat, with
 // the headless WM/renderer/font backends. It builds state through production
 // commands and sidebar actions, writes the logical state
 // (uishell_logical_state.c), restarts, and writes it again; the script
@@ -10,14 +10,14 @@
 //
 // A restart is the production one in-process: autosave writes the user file
 // and the Dashboard's presentation (rd_autosave), the window state and its
-// Andamento core are released as a frame does once their config is gone,
+// core are released as a frame does once their config is gone,
 // writing its records into the Dashboard directory, the Dashboard is opened
 // as --dashboard opens it (uishell_dashboard_open) when the restart names
 // one, the initial load reopens the files (UISHELL_APP_INITIAL_LOAD, which
 // repairs layouts), and a fresh core runs the sidebar's first-frame path. Config is edited directly only where no command
 // or sidebar action exists; each such place says so.
 //
-// The fixture's producer is Andamento's patch ABI: the sidebar fixture's facts
+// The fixture's producer is the core's patch ABI: the sidebar fixture's facts
 // (as --sidebar_subject_fixture), plus what the scenario's producer changes
 // later. A restarted producer reports its current state again.
 //
@@ -268,7 +268,7 @@ state_window_frame(RD_WindowState *ws)
   rd_dock_restore_layouts();
 }
 
-// A window's first frame: a new window state and Andamento core (fixture
+// A window's first frame: a new window state and the core (fixture
 // facts, and the window's records imported), what the producer reports now,
 // then the sidebar's first build: observe and reconcile docked sections.
 internal RD_WindowState *
@@ -305,7 +305,7 @@ state_open_window(UI_Theme *theme)
 
 // Quitting, as the exit command does: Presentation State saved and the
 // user and project files written; then the frame that sees the quit
-// releases the window state and its Andamento core, writing its records.
+// releases the window state and its core, writing its records.
 internal void
 state_quit(RD_WindowState *ws)
 {
@@ -316,7 +316,7 @@ state_quit(RD_WindowState *ws)
 }
 
 // The production restart: autosave writes the user file and presentation,
-// the window state and its Andamento core are released (writing its
+// the window state and its core are released (writing its
 // records), the process opens `dashboard` if given (a launch with
 // --dashboard:<dashboard>), else the same Dashboard, and the initial load
 // reopens the files for a new window state and core.
@@ -502,7 +502,7 @@ state_workspace_ids(Arena *arena)
   return result;
 }
 
-// Whether a saved file holds a workspace's panel tree: since #309 Andamento's
+// Whether a saved file holds a workspace's panel tree: since #309 the core's
 // workspace records hold arrangements, and the presentation file only this
 // device's part of them.
 internal B32
@@ -539,8 +539,8 @@ state_workspace_labelled(CFG_Node *window, String8 label)
 }
 
 // Every workspace of the window is committed, and its panel tree is the
-// document Andamento keeps: the same panels, weights, tabs by slot key and
-// Selected Views, at the generation the window last saw. Andamento owns it
+// document the core keeps: the same panels, weights, tabs by slot key and
+// Selected Views, at the generation the window last saw. The core owns it
 // once a commit changed its structure; one that changed only weights or
 // selections leaves it following the provider (ADR 0013).
 // Whether two documents are the same: the same panels, in order, with the
@@ -578,13 +578,13 @@ state_check_committed(RD_WindowState *ws)
     B32 same = stored && state_same_doc(&stored->doc, &ours) &&
       str8_match(uishell_store_setting(owner, str8_lit("arrangement_generation")), push_str8f(scratch.arena, "%I64u", stored->generation), 0);
     for(U64 i = 0; same && stored && i < stored->note_count; i++) { same = stored->notes[i].kind != WHEELHOUSE_NOTE_GONE; }
-    if(!same) { fprintf(stderr, "Workspace %.*s is not the arrangement Andamento keeps\n", str8_varg(rd_label_from_cfg(owner))); state_failures++; }
+    if(!same) { fprintf(stderr, "Workspace %.*s is not the arrangement the core keeps\n", str8_varg(rd_label_from_cfg(owner))); state_failures++; }
     wheelhouse_arrangement_free(stored);
   }
   scratch_end(scratch);
 }
 
-// The window's sidebar is committed, and is the document Andamento keeps:
+// The window's sidebar is committed, and is the document the core keeps:
 // the same panels, tabs by section key, Selected Views and weights, at the
 // generation the window last saw.
 internal void
@@ -598,7 +598,7 @@ state_check_sidebar_committed(RD_WindowState *ws)
   WheelhouseSidebarDoc ours = uishell_sidebar_store_core_doc(&doc);
   B32 same = stored && stored->owned && state_same_doc(&stored->doc.dock, &ours.dock) &&
     str8_match(uishell_store_setting(window, str8_lit("sidebar_generation")), push_str8f(scratch.arena, "%I64u", stored->generation), 0);
-  if(!same) { fprintf(stderr, "The sidebar is not the arrangement Andamento keeps\n"); state_failures++; }
+  if(!same) { fprintf(stderr, "The sidebar is not the arrangement the core keeps\n"); state_failures++; }
   wheelhouse_sidebar_arrangement_free(stored);
   scratch_end(scratch);
 }
@@ -1121,7 +1121,7 @@ entry_point(CmdLine *cmdline)
     uishell_cmd("close_tab", .window = window->id, .panel = rd_panel_from_cfg(view), .tab = rd_view_address_from_cfg(view));
     state_frame(ws);
     StateCheck(uishell_sidebar_region_view(window, git) == &cfg_nil_node);
-    // Its panel went with it, and Andamento keeps the sidebar without it
+    // Its panel went with it, and the core keeps the sidebar without it
     // (#358).
     StateCheck(!rd_panel_exists(git_panel) && !state_sidebar_has_empty_leaf(window));
     state_check_sidebar_committed(ws);
@@ -1189,10 +1189,10 @@ entry_point(CmdLine *cmdline)
   ws = state_restart(ws, &theme, str8_zero());
   state_write(dir, "after_restart.txt");
 
-  //- The restart read every arrangement from Andamento's workspace records:
+  //- The restart read every arrangement from the core's workspace records:
   // the presentation file it read holds no panel tree, only this device's
   // part of each (focus, labels, Target Resolutions), and each panel tree is
-  // the document Andamento keeps.
+  // the document the core keeps.
   {
     String8 presentation = data_from_file_path(scratch.arena, uishell_dashboard.presentation_path);
     StateCheck(!state_saves_panel_tree(presentation));
@@ -1203,7 +1203,7 @@ entry_point(CmdLine *cmdline)
   //- The sidebar's arrangement came back from the dashboard record: the
   // presentation file holds no dock and no closed sections, only this
   // device's part (collapse, sizes, focus), and the dock is the document
-  // Andamento keeps.
+  // the core keeps.
   {
     String8 presentation = data_from_file_path(scratch.arena, uishell_dashboard.presentation_path);
     StateCheck(str8_find_needle(presentation, 0, str8_lit("control_views"), 0) == presentation.size);
@@ -1234,7 +1234,7 @@ entry_point(CmdLine *cmdline)
   }
 
   //- A sidebar arrangement set and set back is no change: nothing is
-  // committed, and a document Andamento moved meanwhile is followed, not
+  // committed, and a document the core moved meanwhile is followed, not
   // committed over.
   {
     window = cfg_node_from_id(ws->cfg_id);
@@ -1254,7 +1254,7 @@ entry_point(CmdLine *cmdline)
       rd_arrangement_set(a);
       if(moved)
       {
-        // Andamento's document moves: the same sections, two swapped.
+        // The core's document moves: the same sections, two swapped.
         WheelhouseSidebarArrangement *stored = wheelhouse_sidebar_arrangement_get(state->core, 0);
         StateCheck(stored != 0);
         if(!stored) { break; }
@@ -1294,7 +1294,7 @@ entry_point(CmdLine *cmdline)
     { fprintf(stderr, "Workspace ID changed across restart: %.*s -> %.*s\n", str8_varg(a->string), str8_varg(b->string)); state_failures++; }
   }
 
-  //- A divider drag reaches Andamento once, when it ends: no call while it
+  //- A divider drag reaches the core once, when it ends: no call while it
   // is in flight, one commit after.
   {
     state = ws->sidebar;
@@ -1322,7 +1322,7 @@ entry_point(CmdLine *cmdline)
     state_check_committed(ws);
   }
 
-  //- A sidebar divider drag reaches Andamento once, when it ends, sizes
+  //- A sidebar divider drag reaches the core once, when it ends, sizes
   // and all: releasing it opts into sizes set by hand, as the boundary does.
   {
     state = ws->sidebar;
@@ -1378,7 +1378,7 @@ entry_point(CmdLine *cmdline)
     state_check_sidebar_committed(ws);
   }
 
-  //- A slot showing a web page another frontend added (which Andamento
+  //- A slot showing a web page another frontend added (which the core
   // places at the next commit) gets its Handler's web View, at that page; one
   // whose content Wheelhouse can't show (a mail address) gets a placeholder
   // naming it. Both keep their View Specs.
@@ -1478,7 +1478,7 @@ entry_point(CmdLine *cmdline)
 
   //- A subject whose Suggested Layout arranges its workspace: it opens as
   // the provider arranges it, and every slot, not just `primary`, goes
-  // through Andamento's plan: planned, applied, completed.
+  // through the core's plan: planned, applied, completed.
   CFG_Node *reviewer = &cfg_nil_node;
   {
     state_reviewer_partner = state_reviewer_watch = 1;
@@ -1841,7 +1841,7 @@ entry_point(CmdLine *cmdline)
   }
 
   //- A Cleat daemon session is a portable Target Resolution: saved with its
-  // Slot in Andamento rather than in this device's file, tried first after a
+  // Slot in the core rather than in this device's file, tried first after a
   // restart, and cleared when the provider names a new target.
   {
     CFG_Node *partner = state_slot_view(reviewer, str8_lit("partner"));
@@ -1896,7 +1896,7 @@ entry_point(CmdLine *cmdline)
     previous = state_previous_view(reviewer, str8_lit("partner"));
     StateCheck(previous != &cfg_nil_node && rd_panel_address_match(rd_panel_from_cfg(previous), rd_panel_from_cfg(partner)) &&
                str8_match(uishell_store_setting(previous, str8_lit("session")), str8_lit("S1"), 0));
-    // Andamento's binding keeps its previous instance in memory only: after
+    // The core's binding keeps its previous instance in memory only: after
     // the restart it is this device's alone.
     StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == WHEELHOUSE_CONTENT_CURRENT);
     StateCheck(state_offers(previous, UIShell_SlotAction_ReleasePrevious));
@@ -1970,7 +1970,7 @@ entry_point(CmdLine *cmdline)
 
   //- A slot that comes back in the frame the user closes a tab isn't what
   // the user closed: this device never showed it. Reattached elsewhere (as
-  // another frontend would), the provider's hint places it, which Andamento
+  // another frontend would), the provider's hint places it, which the core
   // doesn't note as placed.
   {
     WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
@@ -2191,7 +2191,7 @@ entry_point(CmdLine *cmdline)
     StateCheck(str8_match(data_from_file_path(scratch.arena, path), before, 0));
     uishell_sidebar_records_save(state, now+1000, 0);
     String8 after = data_from_file_path(scratch.arena, path);
-    // Its bytes are Andamento's; only that they changed is Wheelhouse's to see.
+    // Its bytes are the core's; only that they changed is Wheelhouse's to see.
     StateCheck(after.size && !str8_match(after, before, 0));
   }
 
@@ -2285,7 +2285,7 @@ entry_point(CmdLine *cmdline)
   }
 
   //- A new Dashboard's first frame draws its sidebar before anything else
-  // observes it. Andamento placed the container of local sections, as it
+  // observes it. The core placed the container of local sections, as it
   // does before any are published; with them published, it no longer
   // resolves. The first observation is a section View's render, in the
   // middle of drawing the sidebar's panel tree, and its sync drops the
@@ -2316,8 +2316,8 @@ entry_point(CmdLine *cmdline)
   // bar to choose another. The Selected View of a panel holding a second
   // section released with no settle (as a test's cleanup or a hand edit
   // does) leaves the other unselected: the next frame selects it, and
-  // Andamento's record keeps it selected. A record selecting none of a
-  // panel's tabs, which Andamento allows, restores with its first shown,
+  // the core's record keeps it selected. A record selecting none of a
+  // panel's tabs, which the core allows, restores with its first shown,
   // and the section draws its body.
   {
     window = cfg_node_from_id(ws->cfg_id);
@@ -2333,7 +2333,7 @@ entry_point(CmdLine *cmdline)
     StateCheck(str8_match(state_sidebar_text(scratch.arena), sidebar_before, 0));
     state_check_sidebar_committed(ws);
 
-    // Andamento's record, with that panel selecting none of its tabs. The
+    // The core's record, with that panel selecting none of its tabs. The
     // window, unchanged, has nothing to commit over it before the restart.
     UIShell_SidebarDoc doc = uishell_sidebar_store_doc(scratch.arena, ws->sidebar, window);
     StateCheck(uishell_sidebar_store_version(window) == ws->sidebar->sidebar_version);

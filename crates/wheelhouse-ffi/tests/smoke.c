@@ -77,7 +77,7 @@ static void check_sidebar(const char *config_path, const char *patches_path) {
     ok(wheelhouse_configure(h, text(config), &error));
     free(config);
     apply_lines(h, patches_path, 100);
-    /* Every entity names its provider; "local" is Andamento's own. */
+    /* Every entity names its provider; "local" is the core's own. */
     fails(wheelhouse_apply_patch_json(h, 100, T(""), T("{}"), &error));
     fails(wheelhouse_apply_patch_json(h, 100, T("local"), T("{\"target\":{\"kind\":\"root\"},\"source_id\":\"x\",\"set\":{}}"), &error));
     WheelhouseFact facts[] = {{.key = T("display.label"), .kind = WHEELHOUSE_FACT_TEXT, .text = T("Pee")},

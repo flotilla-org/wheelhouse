@@ -6,7 +6,7 @@
 //
 //   <shared>/dashboards/<name>/        the Dashboard directory
 //     id                               its Dashboard ID (UUIDv7), written on first save
-//     dashboard.record, workspace-<id>.record  Andamento's records (uishell_sidebar_records.c)
+//     dashboard.record, workspace-<id>.record  the core's records (uishell_sidebar_records.c)
 //     subscriptions.wheelhouse         its provider subscriptions (uishell_subscriptions.c)
 //     windows/<Window ID>/             records of the process's other windows
 //   <device>/
@@ -24,14 +24,14 @@
 // device's settings (fonts, keybindings, theme); windows are the Dashboard's
 // Presentation State and live in its presentation file, keyed by Dashboard
 // ID. Workspace nodes there are named by Workspace ID and keep only this
-// device's part of their arrangements: Andamento's workspace records keep
+// device's part of their arrangements: the core's workspace records keep
 // the arrangements and Slots (uishell_workspace_store.c). The dashboard
 // record keeps the sidebar's arrangement, and the window only this device's
 // part of it (uishell_sidebar_store.c). A file saved with panel trees (step
-// 4), or with a sidebar (before step 8), has them imported into Andamento on
+// 4), or with a sidebar (before step 8), has them imported into the core on
 // its first load.
 //
-// Each window still has its own Andamento core (one core per process is
+// Each window still has its own core (one core per process is
 // deferred), and only one core can own the Dashboard's records. The
 // presentation's first window owns them; any other window keeps its own
 // records under `windows/` in the Dashboard directory, as each window kept
@@ -204,7 +204,7 @@ uishell_dashboard_load_windows(CFG_Node *user, String8 user_path)
   scratch_end(scratch);
 }
 
-// A window's Andamento records directory: the Dashboard's own for the
+// A window's core records directory: the Dashboard's own for the
 // presentation's first window, one under `windows/` for any other.
 internal String8
 uishell_dashboard_records_dir(Arena *arena, CFG_Node *window, String8 window_id)

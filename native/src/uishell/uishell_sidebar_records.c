@@ -1,4 +1,4 @@
-//- Andamento's records (ADR 0012; wheelhouse.h, "named records"). Andamento
+//- The core's records (ADR 0012; wheelhouse.h, "named records"). The core
 // owns the sidebar's logical state: display values, row collapse, sibling
 // orders, and local sections, groups and pins (the `dashboard` record); and
 // each workspace it knows, with its subject and the rows on its path as last
@@ -23,7 +23,7 @@ enum { UIShell_RecordsDelayMs = 1000 };
 
 //- Files
 
-// Bytes Andamento returned, copied into `arena` and freed.
+// Bytes the core returned, copied into `arena` and freed.
 internal String8
 uishell_sidebar_bytes_copy(Arena *arena, WheelhouseBytes bytes)
 {
@@ -130,7 +130,7 @@ uishell_sidebar_record_note(UIShell_SidebarState *state, String8 name, U64 gener
 }
 
 // Writes the records whose generation moved since they were written, and
-// deletes those Andamento no longer has (a forgotten workspace's), once due:
+// deletes those the core no longer has (a forgotten workspace's), once due:
 // a second after a change was first seen, or with `flush`, now. Generations
 // are read only when one may have moved: after a new snapshot, when the
 // names changed, or while due.
@@ -190,7 +190,7 @@ uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush)
 
 //- The Dashboard's local entities and saved orders (wheelhouse_dashboard_get)
 
-// Andamento's Dashboard, read again when the dashboard record's generation
+// The core's Dashboard, read again when the dashboard record's generation
 // moves. Its local sections, groups and pins are read through
 // uishell_sidebar_locals.
 internal WheelhouseDashboard *
@@ -204,7 +204,7 @@ uishell_sidebar_dashboard(UIShell_SidebarState *state)
   return state->dashboard;
 }
 
-// Whether Andamento keeps an order for the sibling run keyed `loop`, which
+// Whether the core keeps an order for the sibling run keyed `loop`, which
 // offers Reset order.
 internal B32
 uishell_sidebar_order_saved(UIShell_SidebarState *state, String8 loop)

@@ -1,7 +1,7 @@
 //! A subject's tool strip, as its `workspace kind="…"` declaration's `strip`
 //! block declares it: the related workspaces and linked items a host lists
 //! beside the workspace's Slots and layouts
-//! (docs/sidebar-design/tool-strip.md).
+//! (docs/core/sidebar-design/tool-strip.md).
 //!
 //! Each section is a list of placement loops evaluated with the subject bound
 //! by its kind's name, so `for "vessel" kind="vessel" { match

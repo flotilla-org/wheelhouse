@@ -1,7 +1,7 @@
 //! Workspace Layouts as the sidebar configuration declares them: a subject
 //! kind's template slots and its named layouts, each a panel tree whose tab
 //! panels hold Slots by first-match matchers
-//! (docs/sidebar-design/workspace-layouts.md).
+//! (docs/core/sidebar-design/workspace-layouts.md).
 //!
 //! This module reads and validates the definitions, routes a workspace's
 //! Slots through a layout's matchers and evaluates the layout into an
