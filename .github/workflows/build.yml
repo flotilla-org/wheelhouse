@@ -23,8 +23,8 @@ env:
   # affordances as a track.
   JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
   # The tool strip (andamento#187, for #122), on #186's Cleat sessions: its
-  # PR's head until it merges, then its merge commit. ABI 10.
-  ANDAMENTO_REV: e9f863f5f559474125557373aea08b49f4655727
+  # merge commit. ABI 10.
+  ANDAMENTO_REV: 78bf15fdc4b36ea6fde896bd8fc6db9bd2e62032
 
 jobs:
   daily-driver:
