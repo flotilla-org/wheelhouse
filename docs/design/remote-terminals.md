@@ -26,10 +26,10 @@ A `local` endpoint attaches through the shared daemon provider for that runtime 
 Wheelhouse dials out. For an `ssh` endpoint the View opens its provider with `cleat_provider_open_transport` and a command transport:
 
 ```
-ssh -T -o BatchMode=yes -- <host> cleat proxy [--daemon <daemon>] [--runtime-root <root>]
+ssh -T -o BatchMode=yes -- <host> cleat proxy [--daemon=<daemon>] [--runtime-root=<root>]
 ```
 
-The command's stdio carries the packet stream. The remote words are quoted for the login shell that ssh hands them to. BatchMode makes ssh fail with a reason instead of prompting, because there is no terminal for it to prompt on. **The user's ssh configuration is the authentication.** Wheelhouse stores no credentials, and keys, agents, jump hosts and ControlMaster all work as they do for `ssh` at a prompt.
+The command's stdio carries the packet stream. The remote words are quoted for the login shell that ssh hands them to. Values follow `=`, so one starting with `-` is never read as a flag, and a leading `~/` in `cleat_command` stays unquoted so the remote shell expands it. BatchMode makes ssh fail with a reason instead of prompting, because there is no terminal for it to prompt on. **The user's ssh configuration is the authentication.** Wheelhouse stores no credentials, and keys, agents, jump hosts and ControlMaster all work as they do for `ssh` at a prompt.
 
 **Each remote View has its own bridge.** Local daemon views share one provider per daemon because a provider multiplexes every session over one connection. A remote bridge could be shared the same way, keyed by host, root and daemon. The cost is reconnect: Cleat doesn't respawn a command transport, so recovering means a new provider, and a shared one would make every View on it reconnect together. One bridge per View keeps reconnect local to the View that asked for it. ssh's ControlMaster removes most of the cost of the extra connections. Sharing remains an optimisation for later, without changing this seam.
 

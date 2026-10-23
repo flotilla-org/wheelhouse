@@ -3780,7 +3780,9 @@ uishell_cleat_daemon_provider_from_name(String8 daemon_name)
 // user's ssh configuration is the authentication, and Wheelhouse stores no
 // credentials. Each View has its own bridge (docs/design/remote-terminals.md).
 
-// `arg` as one word for the remote login shell ssh hands its command to.
+// `arg` as one word for the remote login shell ssh hands its command to. A
+// leading `~/` stays outside the quotes so the remote shell still expands it;
+// `=` is always quoted, so a first word is never read as an assignment.
 internal String8
 uishell_cleat_remote_shell_word(Arena *arena, String8 arg)
 {
@@ -3788,10 +3790,15 @@ uishell_cleat_remote_shell_word(Arena *arena, String8 arg)
   for(U64 i = 0; i < arg.size; i++)
   {
     U8 c = arg.str[i];
-    plain = plain && (char_is_alpha(c) || char_is_digit(c, 10) || c == '/' || c == '.' || c == '_' || c == '-' || c == ':' || c == '@' || c == '+' || c == '=' || c == '~');
+    plain = plain && (char_is_alpha(c) || char_is_digit(c, 10) || c == '/' || c == '.' || c == '_' || c == '-' || c == ':' || c == '@' || c == '+' || c == '~');
   }
   if(plain) { return arg; }
   String8List parts = {0};
+  if(str8_match(str8_prefix(arg, 2), str8_lit("~/"), 0) && arg.size > 2)
+  {
+    str8_list_push(arena, &parts, str8_lit("~/"));
+    arg = str8_skip(arg, 2);
+  }
   str8_list_push(arena, &parts, str8_lit("'"));
   U64 start = 0;
   for(U64 i = 0; i < arg.size; i++)
@@ -3814,8 +3821,9 @@ uishell_cleat_remote_argv(Arena *arena, String8 host, String8 cleat, String8 run
 {
   String8List remote = {0};
   str8_list_pushf(arena, &remote, "%S proxy", cleat.size != 0 ? uishell_cleat_remote_shell_word(arena, cleat) : str8_lit("cleat"));
-  if(daemon.size != 0) { str8_list_pushf(arena, &remote, "--daemon %S", uishell_cleat_remote_shell_word(arena, daemon)); }
-  if(runtime_root.size != 0) { str8_list_pushf(arena, &remote, "--runtime-root %S", uishell_cleat_remote_shell_word(arena, runtime_root)); }
+  // `--flag=value`, so a value starting with `-` is never read as a flag.
+  if(daemon.size != 0) { str8_list_pushf(arena, &remote, "--daemon=%S", uishell_cleat_remote_shell_word(arena, daemon)); }
+  if(runtime_root.size != 0) { str8_list_pushf(arena, &remote, "--runtime-root=%S", uishell_cleat_remote_shell_word(arena, runtime_root)); }
   StringJoin join = {.sep = str8_lit(" ")};
   String8 words[] = {str8_lit("ssh"), str8_lit("-T"), str8_lit("-o"), str8_lit("BatchMode=yes"), str8_lit("--"), host,
                      str8_list_join(arena, &remote, &join)};
@@ -3878,26 +3886,51 @@ uishell_cleat_json_string(Arena *arena, String8 json, String8 key)
     {
       str8_list_push(arena, &out, str8(json.str+start, i-start));
       U8 c = json.str[i+1];
-      str8_list_push(arena, &out, c == 'n' ? str8_lit(" ") : c == 't' ? str8_lit(" ") : push_str8_copy(arena, str8(json.str+i+1, 1)));
-      i++;
+      U64 hex = 0;
+      if(c == 'u' && i+6 <= json.size && str8_is_integer(str8(json.str+i+2, 4), 16))
+      {
+        // Control characters and surrogate halves read as a space.
+        U32 codepoint = (U32)u64_from_str8(str8(json.str+i+2, 4), 16);
+        str8_list_push(arena, &out, codepoint < 0x20 || (codepoint >= 0xD800 && codepoint < 0xE000) ? str8_lit(" ") : str8_from_32(arena, str32(&codepoint, 1)));
+        hex = 4;
+      }
+      else
+      {
+        str8_list_push(arena, &out, c == 'n' || c == 't' || c == 'r' ? str8_lit(" ") : push_str8_copy(arena, str8(json.str+i+1, 1)));
+      }
+      i += 1+hex;
       start = i+1;
     }
   }
   return str8_list_join(arena, &out, 0);
 }
 
+// Only an explicit `"retrying":true` keeps the pill waiting: a state that
+// can't be read reads as given up, with a reason, so the reconnect stays
+// reachable.
 internal UIShell_CleatTransportState
-uishell_cleat_transport_state(Arena *arena, cleat_provider *provider)
+uishell_cleat_transport_state_from_json(Arena *arena, String8 json)
 {
-  UIShell_CleatTransportState state = {1};
-  U8 buffer[8192];
-  size_t len = 0;
-  if(provider == 0 || !cleat_provider_transport_state_json(provider, buffer, sizeof(buffer), &len) || len > sizeof(buffer)) { return state; }
-  String8 json = str8(buffer, len);
-  state.retrying = str8_find_needle(json, 0, str8_lit("\"retrying\":false"), 0) >= json.size;
+  UIShell_CleatTransportState state = {0};
+  if(str8_find_needle(json, 0, str8_lit("\"retrying\":"), 0) >= json.size)
+  {
+    state.error = str8_lit("transport state unreadable");
+    return state;
+  }
+  state.retrying = str8_find_needle(json, 0, str8_lit("\"retrying\":true"), 0) < json.size;
   state.error = uishell_cleat_json_string(arena, json, str8_lit("error"));
   state.warning = uishell_cleat_json_string(arena, json, str8_lit("warning"));
   return state;
+}
+
+internal UIShell_CleatTransportState
+uishell_cleat_transport_state(Arena *arena, cleat_provider *provider)
+{
+  if(provider == 0) { return (UIShell_CleatTransportState){0}; }
+  U8 buffer[8192];
+  size_t len = 0;
+  B32 read = cleat_provider_transport_state_json(provider, buffer, sizeof(buffer), &len) && len <= sizeof(buffer);
+  return uishell_cleat_transport_state_from_json(arena, read ? str8(buffer, len) : str8_zero());
 }
 
 internal WM_Key uishell_terminal_key_from_ui_event(UI_Event *evt);
@@ -4469,8 +4502,13 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     U32 connection_state = remote_unstarted ? CLEAT_SESSION_DISCONNECTED : cleat_session_connection_state(tv->session);
     U32 role = remote_unstarted ? CLEAT_ROLE_WATCHER : cleat_session_role(tv->session);
     B32 watching = (connection_state == CLEAT_SESSION_STREAMING && role == CLEAT_ROLE_WATCHER);
+    // The transport state is read only while it can change what's shown or
+    // logged: until a connection's warning is logged, and while disconnected.
     UIShell_CleatTransportState transport = {1};
-    if(tv->remote_backend) { transport = uishell_cleat_transport_state(scratch.arena, tv->provider); }
+    if(tv->remote_backend && ((connection_state == CLEAT_SESSION_STREAMING && !tv->remote_warning_logged) || connection_state == CLEAT_SESSION_DISCONNECTED))
+    {
+      transport = uishell_cleat_transport_state(scratch.arena, tv->provider);
+    }
     if(tv->remote_backend && connection_state == CLEAT_SESSION_STREAMING && !tv->remote_warning_logged)
     {
       // The admission warning belongs in diagnostics, never in the content.

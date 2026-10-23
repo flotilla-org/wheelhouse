@@ -135,7 +135,9 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
                 "resize reaches the remote PTY");
 
     // A dead bridge: disconnected with a reconnect, the session still alive.
-    uishell_remote_diag_run(scratch.arena, "pkill -f 'proxy --runtime-root %S' ; pkill -f 'BatchMode=yes -- %S' ; true", root, host);
+    // Both patterns name this run's runtime root, so no other ssh session to
+    // the host is touched.
+    uishell_remote_diag_run(scratch.arena, "pkill -f 'proxy --runtime-root=%S' ; pkill -f 'BatchMode=yes -- %S .*--runtime-root=%S' ; true", root, host, root);
     U64 killed = now_time_us();
     deadline = killed+10*Million(1);
     for(;;)
