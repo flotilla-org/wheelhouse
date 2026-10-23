@@ -67,7 +67,7 @@ The remote output-admission warning ("cycle protection does not cover remote rel
   - a killed bridge showing the reconnect within 3 s, with the session still running and nothing reconnecting by itself;
   - reconnect reaching the same live session.
 - `--managed_content_diagnostics` covers opening a subject with a direct endpoint: its primary waits, then becomes the endpoint's terminal, and the next plan finds it current.
-- By default the script runs through a PATH `ssh` shim, so it needs no sshd, and CI runs it on macOS and Linux. Setting `WH_REMOTE_HOST=localhost` runs it over real ssh.
+- By default the script runs through a PATH `ssh` shim, so it needs no sshd. CI runs it on macOS; the Linux job builds Cleat without a VT engine, which `cleat launch` refuses. Setting `WH_REMOTE_HOST=localhost` runs it over real ssh.
 
 ## Not covered
 

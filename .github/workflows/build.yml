@@ -159,7 +159,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tools/check-windows-conpty.ps1 -Expect inbox
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      # --managed_content_diagnostics stays macOS-only: it runs real terminal
+      # --managed_content_diagnostics and tools/test-remote-terminal.sh stay
+      # macOS-only: they run real terminal
       # sessions, which ask Cleat for its Ghostty VT engine, and this job builds
       # Cleat without one (vt: none). Running it here needs a ghostty-vt build.
       - name: Linux UI diagnostics
@@ -181,7 +182,6 @@ jobs:
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/hosting-user" --project:"$task_dir/hosting-project" --hosting_diagnostics
-          timeout 120s bash tools/test-remote-terminal.sh ./build/wheelhouse ../cleat/target/debug/cleat -- xvfb-run -a
       - name: Terminal launch environment
         shell: bash
         run: python tools/test-terminal-environment.py
