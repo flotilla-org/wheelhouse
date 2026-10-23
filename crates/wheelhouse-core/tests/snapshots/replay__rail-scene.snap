@@ -1,5 +1,5 @@
 ---
-source: crates/andamento-core/tests/replay.rs
+source: crates/wheelhouse-core/tests/replay.rs
 expression: "sidebar.snapshot().surface.sections.iter().map(|s|\ncatalog(&s.nodes)).collect::<Vec<_>>()"
 ---
 [

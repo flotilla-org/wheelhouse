@@ -83,17 +83,16 @@ With a native `andamento-replay` binary, the standalone exact-symptom check is:
 
 ```sh
 host=$(rustc -vV | sed -n 's/^host: //p')
-python3 scripts/check-standing-role.py fixtures/scripted-gap.jsonl --binary "target/independent/$host/debug/andamento-replay"
-python3 scripts/check-standing-role.py fixtures/scripted-restart.jsonl --binary "target/independent/$host/debug/andamento-replay"
+python3 scripts/check-standing-role.py fixtures/scripted-gap.jsonl --binary "target/$host/debug/wheelhouse-replay"
+python3 scripts/check-standing-role.py fixtures/scripted-restart.jsonl --binary "target/$host/debug/wheelhouse-replay"
 ```
 
 Both currently exit nonzero with `role dissociated or duplicated at 1000 ms`.
 `fixtures/standing-role.kdl` is shared by that checker and the core tests. Build
-the binary with `cargo build -p andamento-core --bin andamento-replay --target
-"$host"`, or use a standalone core workspace when the sibling
-Zellij SDK is unavailable. `scripts/check-independent-core.py` runs the core
-integration tests without Zellij; the projection generator is a separate test
-workspace so core does not gain a Flotilla dependency.
+the binary with `cargo build -p wheelhouse-core --bin wheelhouse-replay --target
+"$host"`. `scripts/check-independent-core.py` checks the workspace has no Zellij
+or Flotilla crates; the projection generator is a separate test workspace
+(`tools/scenario`) so the core does not gain a Flotilla dependency.
 
 Keep the standalone checker and Rust `assert_standing_role_placement` assertions
 in sync: both require one role on the correct project row and a stable entity

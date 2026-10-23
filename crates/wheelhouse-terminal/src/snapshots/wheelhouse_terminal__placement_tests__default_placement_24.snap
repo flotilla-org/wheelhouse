@@ -1,5 +1,5 @@
 ---
-source: crates/andamento-terminal/src/placement_tests.rs
+source: crates/wheelhouse-terminal/src/placement_tests.rs
 expression: snapshot(&frame)
 ---
 |⚠ Attention             |
