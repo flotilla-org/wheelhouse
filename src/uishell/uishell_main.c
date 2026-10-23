@@ -128,6 +128,7 @@
 #include "uishell/uishell_border_diagnostics.c"
 #include "uishell/uishell_panel_diagnostics.c"
 #include "uishell/uishell_hosting_diagnostics.c"
+#include "uishell/uishell_remote_terminal_diagnostics.c"
 #include "uishell/uishell_shared_ui_diagnostics.c"
 #include "uishell/uishell_managed_content_diagnostics.c"
 #include "uishell/uishell_workspace_lifecycle_diagnostics.c"
@@ -300,6 +301,8 @@ entry_point(CmdLine *cmd_line)
       }
       if(cmd_line_has_flag(cmd_line, str8_lit("hosting_diagnostics")))
       { rd_state->frame_diagnostic = uishell_hosting_diagnostics; }
+      if(cmd_line_has_flag(cmd_line, str8_lit("remote_terminal_diagnostics")))
+      { rd_state->frame_diagnostic = uishell_remote_terminal_diagnostics; }
 #if defined(WHEELHOUSE_JACKSTAY)
       if(cmd_line_has_flag(cmd_line, str8_lit("jackstay_input_diagnostics")))
       { rd_state->frame_diagnostic = uishell_jackstay_input_diagnostics; }

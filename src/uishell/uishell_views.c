@@ -54,6 +54,14 @@ struct UIShell_TerminalViewState
   // daemon-backed session: provider is shared per-daemon (never closed by the
   // view) and the session survives uishell; connection state is surfaced
   B32 daemon_backend;
+  // A remote Cleat endpoint (cleat_transport "ssh"): the session is the
+  // remote daemon's, but the provider and its ssh bridge are this View's
+  // own, closed with it. A bridge that gives up stays down until the user
+  // reconnects (remote_reconnect), which reopens both on the next frame.
+  B32 remote_backend;
+  B32 remote_reconnect;
+  // The bridge's admission warning went to the log for this connection.
+  B32 remote_warning_logged;
   cleat_session_colors session_colors;
 
   // retained terminal draw bucket: the cell feed's draw output, rebuilt only
@@ -461,10 +469,11 @@ uishell_terminal_runtime_release(void *data)
   }
   uishell_terminal_preview_dequeue(&uishell_terminal_preview_starts, &tv->preview_start);
   uishell_terminal_preview_dequeue(&uishell_terminal_preview_updates, &tv->preview_update);
-  if(tv->provider && !tv->daemon_backend) { cleat_provider_set_wake_callback(tv->provider, 0, 0); }
+  B32 owns_provider = !tv->daemon_backend || tv->remote_backend;
+  if(tv->provider && owns_provider) { cleat_provider_set_wake_callback(tv->provider, 0, 0); }
   uishell_terminal_cancel_buttons(tv);
   if(tv->session) { cleat_session_destroy(tv->session); }
-  if(tv->provider && !tv->daemon_backend) { cleat_provider_close(tv->provider); }
+  if(tv->provider && owns_provider) { cleat_provider_close(tv->provider); }
   for(UIShell_TerminalImageResource *r = tv->image_cache.first_resource; r; r = r->next)
   { if(r->valid) { r_tex2d_release(r->texture); } }
   Arena *arenas[] = {tv->retained_bucket_arena, tv->glyph_cache.arena, tv->cell_cache.arena,
@@ -3692,15 +3701,17 @@ uishell_terminal_provider_wake(void *user_data)
 ////////////////////////////////
 //~ uishell: shared cleat daemon providers
 //
-// One provider per named daemon, shared by every daemon-backed Terminal View
-// and by Control Surfaces reading the directory subscription. The provider
-// owns one multiplexed packet connection (channel 0 directory + per-session
+// One provider per named daemon (and runtime root, empty for the one Cleat
+// discovers), shared by every daemon-backed Terminal View and by Control
+// Surfaces reading the directory subscription. The provider owns one
+// multiplexed packet connection (channel 0 directory + per-session
 // channels), so per-view providers would mean per-view connections.
 
 typedef struct UIShell_CleatDaemonProviderNode UIShell_CleatDaemonProviderNode;
 struct UIShell_CleatDaemonProviderNode
 {
   UIShell_CleatDaemonProviderNode *next;
+  String8 runtime_root;
   String8 daemon_name;
   cleat_provider *provider;
 };
@@ -3709,12 +3720,12 @@ global Arena *uishell_cleat_daemon_provider_arena = 0;
 global UIShell_CleatDaemonProviderNode *uishell_cleat_daemon_provider_list = 0;
 
 internal cleat_provider *
-uishell_cleat_daemon_provider_from_name(String8 daemon_name)
+uishell_cleat_daemon_provider_from_root_name(String8 runtime_root, String8 daemon_name)
 {
   cleat_provider *result = 0;
   for(UIShell_CleatDaemonProviderNode *n = uishell_cleat_daemon_provider_list; n != 0; n = n->next)
   {
-    if(str8_match(n->daemon_name, daemon_name, 0))
+    if(str8_match(n->runtime_root, runtime_root, 0) && str8_match(n->daemon_name, daemon_name, 0))
     {
       result = n->provider;
       break;
@@ -3727,6 +3738,8 @@ uishell_cleat_daemon_provider_from_name(String8 daemon_name)
       .abi_version = CLEAT_PROVIDER_ABI_VERSION,
       .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE,
       .backend = CLEAT_PROVIDER_BACKEND_DAEMON,
+      .runtime_root = (runtime_root.size != 0 ? runtime_root.str : 0),
+      .runtime_root_len = runtime_root.size,
       .daemon_name = (daemon_name.size != 0 ? daemon_name.str : 0),
       .daemon_name_len = daemon_name.size,
     };
@@ -3739,6 +3752,7 @@ uishell_cleat_daemon_provider_from_name(String8 daemon_name)
         uishell_cleat_daemon_provider_arena = arena_alloc();
       }
       UIShell_CleatDaemonProviderNode *n = push_array(uishell_cleat_daemon_provider_arena, UIShell_CleatDaemonProviderNode, 1);
+      n->runtime_root = push_str8_copy(uishell_cleat_daemon_provider_arena, runtime_root);
       n->daemon_name = push_str8_copy(uishell_cleat_daemon_provider_arena, daemon_name);
       n->provider = result;
       n->next = uishell_cleat_daemon_provider_list;
@@ -3746,6 +3760,144 @@ uishell_cleat_daemon_provider_from_name(String8 daemon_name)
     }
   }
   return result;
+}
+
+internal cleat_provider *
+uishell_cleat_daemon_provider_from_name(String8 daemon_name)
+{
+  return uishell_cleat_daemon_provider_from_root_name(str8_zero(), daemon_name);
+}
+
+////////////////////////////////
+//~ uishell: remote cleat endpoints
+//
+// A Cleat endpoint on another host (#104): a Terminal View's
+// `cleat_transport "ssh"`, with `cleat_host` (the ssh destination),
+// `cleat_runtime_root` and `cleat_daemon` naming the daemon there and
+// `cleat_session` its session. The View's provider reaches it through
+// `ssh <host> cleat proxy` (`cleat_command` names another Cleat there, for
+// one not on the remote PATH), whose stdio carries the packet stream; the
+// user's ssh configuration is the authentication, and Wheelhouse stores no
+// credentials. Each View has its own bridge (docs/design/remote-terminals.md).
+
+// `arg` as one word for the remote login shell ssh hands its command to.
+internal String8
+uishell_cleat_remote_shell_word(Arena *arena, String8 arg)
+{
+  B32 plain = arg.size != 0;
+  for(U64 i = 0; i < arg.size; i++)
+  {
+    U8 c = arg.str[i];
+    plain = plain && (char_is_alpha(c) || char_is_digit(c, 10) || c == '/' || c == '.' || c == '_' || c == '-' || c == ':' || c == '@' || c == '+' || c == '=' || c == '~');
+  }
+  if(plain) { return arg; }
+  String8List parts = {0};
+  str8_list_push(arena, &parts, str8_lit("'"));
+  U64 start = 0;
+  for(U64 i = 0; i < arg.size; i++)
+  {
+    if(arg.str[i] != '\'') { continue; }
+    str8_list_push(arena, &parts, str8(arg.str+start, i-start));
+    str8_list_push(arena, &parts, str8_lit("'\\''"));
+    start = i+1;
+  }
+  str8_list_push(arena, &parts, str8(arg.str+start, arg.size-start));
+  str8_list_push(arena, &parts, str8_lit("'"));
+  return str8_list_join(arena, &parts, 0);
+}
+
+// The argv of the command a View's provider reaches `host`'s daemon through.
+// BatchMode makes ssh fail with a reason instead of prompting: there is no
+// terminal for it to ask on.
+internal U64
+uishell_cleat_remote_argv(Arena *arena, String8 host, String8 cleat, String8 runtime_root, String8 daemon, String8 *argv, U64 cap)
+{
+  String8List remote = {0};
+  str8_list_pushf(arena, &remote, "%S proxy", cleat.size != 0 ? uishell_cleat_remote_shell_word(arena, cleat) : str8_lit("cleat"));
+  if(daemon.size != 0) { str8_list_pushf(arena, &remote, "--daemon %S", uishell_cleat_remote_shell_word(arena, daemon)); }
+  if(runtime_root.size != 0) { str8_list_pushf(arena, &remote, "--runtime-root %S", uishell_cleat_remote_shell_word(arena, runtime_root)); }
+  StringJoin join = {.sep = str8_lit(" ")};
+  String8 words[] = {str8_lit("ssh"), str8_lit("-T"), str8_lit("-o"), str8_lit("BatchMode=yes"), str8_lit("--"), host,
+                     str8_list_join(arena, &remote, &join)};
+  U64 count = Min(cap, ArrayCount(words));
+  for(U64 i = 0; i < count; i++) { argv[i] = words[i]; }
+  return count;
+}
+
+internal cleat_provider *
+uishell_cleat_remote_provider_open(String8 host, String8 cleat, String8 runtime_root, String8 daemon)
+{
+  Temp scratch = scratch_begin(0, 0);
+  String8 argv[8];
+  U64 argc = uishell_cleat_remote_argv(scratch.arena, host, cleat, runtime_root, daemon, argv, ArrayCount(argv));
+  cleat_str args[8];
+  for(U64 i = 0; i < argc; i++) { args[i] = (cleat_str){argv[i].str, argv[i].size}; }
+  cleat_provider_desc desc =
+  {
+    .abi_version = CLEAT_PROVIDER_ABI_VERSION,
+    .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE,
+    .backend = CLEAT_PROVIDER_BACKEND_DAEMON,
+  };
+  cleat_provider_transport transport = {.size = sizeof(transport), .kind = CLEAT_TRANSPORT_COMMAND, .argv = args, .argc = argc};
+  cleat_provider *provider = cleat_provider_open_transport(&desc, &transport);
+  if(provider == 0)
+  {
+    StringJoin join = {.sep = str8_lit(" ")};
+    String8List list = {0};
+    for(U64 i = 0; i < argc; i++) { str8_list_push(scratch.arena, &list, argv[i]); }
+    log_user_errorf("Remote terminal: could not start %S", str8_list_join(scratch.arena, &list, &join));
+  }
+  scratch_end(scratch);
+  return provider;
+}
+
+// The provider's transport diagnostics (cleat_provider_transport_state_json):
+// whether it is retrying, and its last error and admission warning.
+typedef struct UIShell_CleatTransportState UIShell_CleatTransportState;
+struct UIShell_CleatTransportState
+{
+  B32 retrying;
+  String8 error;
+  String8 warning;
+};
+
+// A JSON string member's value, unescaped for display; empty when absent or
+// null. The state JSON is flat and Cleat's own, so this reads only that.
+internal String8
+uishell_cleat_json_string(Arena *arena, String8 json, String8 key)
+{
+  String8 needle = push_str8f(arena, "\"%S\":\"", key);
+  U64 at = str8_find_needle(json, 0, needle, 0);
+  if(at >= json.size) { return str8_zero(); }
+  String8List out = {0};
+  U64 start = at+needle.size;
+  for(U64 i = start; i < json.size; i++)
+  {
+    if(json.str[i] == '"') { str8_list_push(arena, &out, str8(json.str+start, i-start)); break; }
+    if(json.str[i] == '\\' && i+1 < json.size)
+    {
+      str8_list_push(arena, &out, str8(json.str+start, i-start));
+      U8 c = json.str[i+1];
+      str8_list_push(arena, &out, c == 'n' ? str8_lit(" ") : c == 't' ? str8_lit(" ") : push_str8_copy(arena, str8(json.str+i+1, 1)));
+      i++;
+      start = i+1;
+    }
+  }
+  return str8_list_join(arena, &out, 0);
+}
+
+internal UIShell_CleatTransportState
+uishell_cleat_transport_state(Arena *arena, cleat_provider *provider)
+{
+  UIShell_CleatTransportState state = {1};
+  U8 buffer[8192];
+  size_t len = 0;
+  if(provider == 0 || !cleat_provider_transport_state_json(provider, buffer, sizeof(buffer), &len) || len > sizeof(buffer)) { return state; }
+  String8 json = str8(buffer, len);
+  state.retrying = str8_find_needle(json, 0, str8_lit("\"retrying\":false"), 0) >= json.size;
+  state.error = uishell_cleat_json_string(arena, json, str8_lit("error"));
+  state.warning = uishell_cleat_json_string(arena, json, str8_lit("warning"));
+  return state;
 }
 
 internal WM_Key uishell_terminal_key_from_ui_event(UI_Event *evt);
@@ -4035,6 +4187,14 @@ uishell_terminal_hosting_is_daemon(String8 hosting)
   return str8_match(str8_prefix(hosting, 7), str8_lit("daemon:"), 0);
 }
 
+// A session reached over a provider transport (`remote:<kind>`): hosted by
+// its daemon there, so it can't be handed over or adopted from here.
+internal B32
+uishell_terminal_hosting_is_remote(String8 hosting)
+{
+  return str8_match(str8_prefix(hosting, 7), str8_lit("remote:"), 0);
+}
+
 internal UIShell_RuntimeSetting
 uishell_terminal_hosting_setting(Arena *arena, String8 hosting)
 {
@@ -4043,6 +4203,8 @@ uishell_terminal_hosting_setting(Arena *arena, String8 hosting)
   {
     result.value = push_str8_copy(arena, hosting);
     B32 daemon_hosted = uishell_terminal_hosting_is_daemon(result.value);
+    // A remote session offers no move; its action stays disabled (no command).
+    if(uishell_terminal_hosting_is_remote(result.value)) { result.action = str8_lit("Hosted remotely"); return result; }
     result.action = daemon_hosted ? str8_lit("Adopt") : str8_lit("Hand to daemon");
     result.command = daemon_hosted ? str8_lit("terminal_adopt") : str8_lit("terminal_transfer");
   }
@@ -4075,6 +4237,8 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
   Temp scratch = scratch_begin(0, 0);
   UIShell_TerminalViewState *tv = wh_view_state(ctx, UIShell_TerminalViewState);
   rd_view_state_from_view(uishell_regs()->view, 0)->release_user_data = uishell_terminal_runtime_release;
+  // Reconnecting a remote endpoint starts it afresh: a new bridge and attach.
+  if(tv->remote_reconnect) { uishell_terminal_runtime_release(tv); }
   tv->native_view = 1;
   tv->input_frame = rd_state->frame_index;
   tv->input_window = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window))->os;
@@ -4144,11 +4308,34 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     // backend selection is per-view workspace config: `daemon:1` (optionally
     // `daemon_name:"..."`) hosts the session in a cleat daemon so it survives
     // uishell; `session:"<id>"` attaches to an existing daemon session.
+    // A `cleat_session` endpoint (a direct view of a session its provider
+    // published) attaches to that session where it is: through the local
+    // daemon for `cleat_transport "local"`, over ssh for "ssh".
     String8 attach_session_id = ctx->resolution.session;
     String8 daemon_name = ctx->resolution.daemon_name;
+    String8 endpoint_session = wh_view_setting(ctx, str8_lit("cleat_session"));
+    String8 endpoint_transport = wh_view_setting(ctx, str8_lit("cleat_transport"));
+    String8 endpoint_root = wh_view_setting(ctx, str8_lit("cleat_runtime_root"));
+    B32 remote_backend = endpoint_session.size != 0 && str8_match(endpoint_transport, str8_lit("ssh"), 0);
+    if(endpoint_session.size != 0)
+    {
+      attach_session_id = endpoint_session;
+      daemon_name = wh_view_setting(ctx, str8_lit("cleat_daemon"));
+    }
     B32 daemon_backend = (attach_session_id.size != 0 || wh_view_setting_b32(ctx, str8_lit("daemon")));
     tv->daemon_backend = daemon_backend;
-    if(daemon_backend)
+    tv->remote_backend = remote_backend;
+    if(remote_backend)
+    {
+      tv->provider = uishell_cleat_remote_provider_open(wh_view_setting(ctx, str8_lit("cleat_host")), wh_view_setting(ctx, str8_lit("cleat_command")),
+                                                        endpoint_root, daemon_name);
+      if(tv->provider != 0) { cleat_provider_set_wake_callback(tv->provider, uishell_terminal_provider_wake, tv); }
+    }
+    else if(endpoint_session.size != 0)
+    {
+      tv->provider = uishell_cleat_daemon_provider_from_root_name(endpoint_root, daemon_name);
+    }
+    else if(daemon_backend)
     {
       tv->provider = uishell_cleat_daemon_provider_from_name(daemon_name);
     }
@@ -4198,7 +4385,8 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
       session_desc.id_len = attach_session_id.size;
       tv->session = cleat_session_attach(tv->provider, &session_desc);
     }
-    else if(tv->provider != 0)
+    // An endpoint names a session that exists; it never creates one.
+    else if(tv->provider != 0 && endpoint_session.size == 0)
     {
       tv->session = cleat_session_create(tv->provider, &session_desc);
       // persist the daemon session's identity so reopening this workspace
@@ -4216,15 +4404,18 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
   }
   B32 session_ready = (!fixture_mode && tv->provider != 0 && tv->session != 0);
   if(session_ready) { uishell_terminal_clipboard_register(tv, uishell_regs()->view, uishell_regs()->window); }
+  cleat_str hosting = {0};
+  B32 has_hosting = session_ready && cleat_session_hosting(tv->session, &hosting);
+  B32 daemon_hosted = has_hosting && uishell_terminal_hosting_is_daemon(str8((U8 *)hosting.ptr, hosting.len));
+  B32 remote_hosted = has_hosting && uishell_terminal_hosting_is_remote(str8((U8 *)hosting.ptr, hosting.len));
   for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
   {
-    if(session_ready && str8_match(cmd->name, str8_lit("terminal_transfer"), 0)) { uishell_terminal_move(tv, 0); }
-    else if(session_ready && str8_match(cmd->name, str8_lit("terminal_adopt"), 0)) { uishell_terminal_move(tv, 1); }
+    // A remote session's hosting is its daemon's, there: it moves nowhere.
+    B32 movable = session_ready && !remote_hosted;
+    if(str8_match(cmd->name, str8_lit("terminal_transfer"), 0)) { if(movable) { uishell_terminal_move(tv, 0); } }
+    else if(str8_match(cmd->name, str8_lit("terminal_adopt"), 0)) { if(movable) { uishell_terminal_move(tv, 1); } }
     else if(session_ready) { uishell_terminal_page_command(tv, cmd->name, rows); }
   }
-  cleat_str hosting = {0};
-  B32 daemon_hosted = session_ready && cleat_session_hosting(tv->session, &hosting) &&
-                      uishell_terminal_hosting_is_daemon(str8((U8 *)hosting.ptr, hosting.len));
   if(session_ready && (tv->cols != cols || tv->rows != rows))
   {
     uishell_terminal_clear_selection(tv);
@@ -4245,8 +4436,9 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
 
   if(session_ready && hosting.len != 0 && wh_view_setting_b32(ctx, str8_lit("show_hosting_overlay")))
   {
-    String8 title = push_str8f(scratch.arena, "%S · %s", str8((U8 *)hosting.ptr, hosting.len),
-                              daemon_hosted ? "Adopt" : "Hand to daemon");
+    String8 title = remote_hosted ? push_str8_copy(scratch.arena, str8((U8 *)hosting.ptr, hosting.len)) :
+                    push_str8f(scratch.arena, "%S · %s", str8((U8 *)hosting.ptr, hosting.len),
+                               daemon_hosted ? "Adopt" : "Hand to daemon");
     F32 height = floor_f32(ui_bottom_font_size()*1.8f);
     F32 width = fnt_dim_from_tag_size_string(ui_bottom_font(), ui_bottom_font_size(), 0, 0, title).x + ui_bottom_font_size()*2.f;
     UI_Parent(terminal_root_box) UI_CornerRadius(height*0.5f)
@@ -4259,7 +4451,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
                                              UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
                                              str8_lit("terminal_hosting"));
       ui_box_equip_display_string(box, title);
-      if(ui_clicked(ui_signal_from_box(box))) { uishell_terminal_move(tv, daemon_hosted); }
+      if(ui_clicked(ui_signal_from_box(box)) && !remote_hosted) { uishell_terminal_move(tv, daemon_hosted); }
     }
   }
 
@@ -4267,11 +4459,30 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
   // is an earlier sibling and draws on top. Streaming-as-controller is the
   // silent common case; connecting/disconnected/closed are status cues (the
   // connection heals itself), and streaming-as-watcher offers take-control.
-  if(daemon_hosted)
+  // A remote endpoint's bridge doesn't heal: once it gives up, the pill says
+  // why and reconnects on a click, keeping the last frame until then.
+  // A View whose bridge never started has no session to show; it offers the
+  // same reconnect.
+  B32 remote_unstarted = tv->remote_backend && tv->initialized && !session_ready && !fixture_mode;
+  if(daemon_hosted || remote_hosted || remote_unstarted)
   {
-    U32 connection_state = cleat_session_connection_state(tv->session);
-    U32 role = cleat_session_role(tv->session);
+    U32 connection_state = remote_unstarted ? CLEAT_SESSION_DISCONNECTED : cleat_session_connection_state(tv->session);
+    U32 role = remote_unstarted ? CLEAT_ROLE_WATCHER : cleat_session_role(tv->session);
     B32 watching = (connection_state == CLEAT_SESSION_STREAMING && role == CLEAT_ROLE_WATCHER);
+    UIShell_CleatTransportState transport = {1};
+    if(tv->remote_backend) { transport = uishell_cleat_transport_state(scratch.arena, tv->provider); }
+    if(tv->remote_backend && connection_state == CLEAT_SESSION_STREAMING && !tv->remote_warning_logged)
+    {
+      // The admission warning belongs in diagnostics, never in the content.
+      if(transport.warning.size != 0) { log_infof("Remote terminal %S: %S\n", wh_view_setting(ctx, str8_lit("cleat_host")), transport.warning); }
+      tv->remote_warning_logged = 1;
+    }
+    B32 given_up = tv->remote_backend && (remote_unstarted || (connection_state == CLEAT_SESSION_DISCONNECTED && !transport.retrying));
+    if(given_up && tv->remote_warning_logged)
+    {
+      log_infof("Remote terminal %S disconnected: %S\n", wh_view_setting(ctx, str8_lit("cleat_host")), transport.error);
+      tv->remote_warning_logged = 0;
+    }
     if(connection_state != CLEAT_SESSION_STREAMING || watching)
     {
       String8 status_text = str8_lit("connecting…");
@@ -4280,6 +4491,11 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
         default:{}break;
         case CLEAT_SESSION_DISCONNECTED:{status_text = str8_lit("reconnecting…");}break;
         case CLEAT_SESSION_CLOSED:      {status_text = str8_lit("session closed");}break;
+      }
+      if(given_up)
+      {
+        status_text = transport.error.size != 0 ? push_str8f(scratch.arena, "disconnected: %S — click to reconnect", transport.error) :
+                                                   str8_lit("disconnected — click to reconnect");
       }
       if(watching)
       {
@@ -4294,7 +4510,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
         ui_set_next_fixed_width(status_width);
         ui_set_next_fixed_height(status_height);
         UI_BoxFlags status_flags = UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawText|UI_BoxFlag_DrawDropShadow;
-        if(watching)
+        if(watching || given_up)
         {
           status_flags |= UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects;
         }
@@ -4304,8 +4520,14 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
         {
           cleat_session_take_control(tv->session);
         }
+        else if(given_up && ui_clicked(ui_signal_from_box(status_box)))
+        {
+          tv->remote_reconnect = 1;
+          rd_request_frame();
+        }
       }
-      if(!watching)
+      // A bridge that gave up is stable until the user acts.
+      if(!watching && !given_up)
       {
         // transient transport states animate toward resolution; watching is
         // stable and event-driven (role changes fire the provider wake)
